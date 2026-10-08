@@ -1638,61 +1638,44 @@ pub fn no_role_rules(role: crate::profile::Role, why: &str) -> String {
     format!("riff: the {role} starts with no permission rules of its profile: {why}.")
 }
 
-/// `riff forge app` in a worker.
-pub const FORGE_WORKER: &str =
-    "riff forge app does not run in a worker: the person saves the App in a terminal.";
-
-/// `riff forge check` with no App.
-pub const FORGE_NO_APP: &str =
-    "riff has no GitHub App on this machine. Save it first: riff forge app ID KEY";
-
-/// The answer of `riff forge app`.
+/// The first line of `riff forge check`: the App and the repository.
 ///
 /// ```
-/// use std::path::Path;
 /// assert_eq!(
-///     riff::text::forge_saved(7, Path::new("/k/app.pem")),
-///     "riff saved the GitHub App 7. Its key is in /k/app.pem, and only you read it. \
-///      You can delete the downloaded key file now. Check it with: riff forge check",
+///     riff::text::forge_check_head(7, "acme/app"),
+///     "riff-server checked the GitHub App 7 on acme/app:"
 /// );
 /// ```
-pub fn forge_saved(id: u64, key: &std::path::Path) -> String {
-    format!(
-        "riff saved the GitHub App {id}. Its key is in {}, and only you read it. \
-         You can delete the downloaded key file now. Check it with: riff forge check",
-        key.display()
-    )
+pub fn forge_check_head(app: u64, repo: &str) -> String {
+    format!("riff-server checked the GitHub App {app} on {repo}:")
 }
 
 /// One line of `riff forge check`: the role and the permissions of its
-/// token, never the token.
+/// token, or why it has no good token. It never holds the token.
 ///
 /// ```
-/// use riff::forge::{Access, Token};
-/// use riff::profile::Role;
+/// use riff::forge::{Access, TokenRole};
+/// use riff_core::wire::RoleCheck;
 ///
-/// let token = Token {
-///     role: Role::Verifier,
-///     token: "ghs_secret".into(),
-///     ends: std::time::SystemTime::now(),
+/// let good = RoleCheck {
+///     role: TokenRole::Verifier,
 ///     permissions: [("statuses".into(), Access::Write), ("contents".into(), Access::Read)].into(),
+///     error: None,
 /// };
-/// let line = riff::text::forge_token_line(&token);
-/// assert_eq!(line, "verifier: contents read, statuses write");
+/// assert_eq!(riff::text::forge_check_line(&good), "verifier: contents read, statuses write");
+/// let bad = RoleCheck { role: TokenRole::Lead, permissions: Default::default(), error: Some("no".into()) };
+/// assert_eq!(riff::text::forge_check_line(&bad), "lead: no");
 /// ```
-pub fn forge_token_line(token: &crate::forge::Token) -> String {
-    let rights: Vec<String> = token
+pub fn forge_check_line(check: &riff_core::wire::RoleCheck) -> String {
+    if let Some(error) = &check.error {
+        return format!("{}: {error}", check.role);
+    }
+    let rights: Vec<String> = check
         .permissions
         .iter()
-        .map(|(name, access)| {
-            let level = match access {
-                crate::forge::Access::Read => "read",
-                crate::forge::Access::Write => "write",
-            };
-            format!("{name} {level}")
-        })
+        .map(|(name, access)| format!("{name} {access}"))
         .collect();
-    format!("{}: {}", token.role, rights.join(", "))
+    format!("{}: {}", check.role, rights.join(", "))
 }
 
 /// The line of the wrapper of a worker when it cannot make the forge

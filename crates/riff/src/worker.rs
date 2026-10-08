@@ -410,7 +410,7 @@ pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) 
     let mut hup = signal(SignalKind::hangup())?;
     let folder = temp::Folder::make(name);
     let riff = crate::binary::this_on_disk()?;
-    let lead = Some(crate::profile::Role::Lead);
+    let lead = Some(forge::TokenRole::Lead);
     let (given, files, keep) = forge_token(folder.as_ref(), None, server, lead).await;
     let _keep = keep.map(AbortOnDrop);
     let forge = forge::ForgeEnv::of(&given, &files, &riff);
@@ -436,14 +436,15 @@ pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) 
 }
 
 /// The first forge token of a session ([`forge`]), its token files, and
-/// the task that keeps the token. The role is `fixed`, else it follows
-/// the claims of the worker `session`. With no token, the result names
-/// the cause, and the files hold no token.
+/// the task that keeps the token. riff-server gives the token. The role
+/// is `fixed` (the lead: the wrapper asks as the person), else it
+/// follows the claims of the worker `session`. With no token, the
+/// result names the cause, and the files hold no token.
 async fn forge_token(
     folder: Option<&temp::Folder>,
     session: Option<&str>,
     server: &str,
-    fixed: Option<crate::profile::Role>,
+    fixed: Option<forge::TokenRole>,
 ) -> (
     std::result::Result<forge::Token, forge::Error>,
     forge::Files,
@@ -455,39 +456,47 @@ async fn forge_token(
         return (Err(forge::Error::NoFolder), none, None);
     };
     let files = forge::Files::in_temp(folder.path());
-    let made = forge::App::of(settings::path()).and_then(|app| {
+    let made = (|| {
         let place = identity::here(None).map_err(forge::Error::Place)?;
-        let repo = place.repo_text();
-        if repo == "-" {
+        if place.repo_text() == "-" {
             let why = anyhow::anyhow!("this folder is in no repository");
             return Err(forge::Error::Place(why));
         }
-        let session = match (session, fixed) {
-            (Some(session), _) => Some(session.to_owned()),
-            (None, Some(_)) => None,
+        let me = match (session, fixed) {
+            (Some(session), _) => identity::agent(&place, session, server),
+            (None, Some(_)) => identity::person(&place, server),
             (None, None) => {
                 let why = anyhow::anyhow!("the worker has no session ID");
                 return Err(forge::Error::Place(why));
             }
         };
-        Ok((app, repo, place, session))
-    });
-    let (app, repo, place, id) = match made {
-        Ok(made) => made,
+        me.map_err(forge::Error::Place)
+    })();
+    let me = match made {
+        Ok(me) => me,
         Err(e) => return (Err(e), files, None),
     };
     let server = server.to_owned();
+    let ask: forge::Ask = {
+        let (me, server) = (me.clone(), server.clone());
+        Box::new(move || {
+            let (me, server) = (me.clone(), server.clone());
+            Box::pin(async move {
+                let api = Api::new(&server).signed_in(me.who().session())?;
+                api.forge_token(&me).await
+            })
+        })
+    };
     let claims = move || {
-        let (place, id, server) = (place.clone(), id.clone(), server.clone());
+        let (me, server) = (me.clone(), server.clone());
         async move {
-            let id = id?;
+            me.who().session()?;
             let api = Api::new(&server).one_try(forge::LOOK_EVERY / 2);
-            let me = identity::agent(&place, &id, api.base()).ok()?;
             let info = api.signed_in(me.who().session()).ok()?.me(&me).await.ok()?;
             Some(info.session?.uri.claims().to_vec())
         }
     };
-    let mut keeper = forge::Keeper::new(app, forge::GitHub::here(), repo, files.clone());
+    let mut keeper = forge::Keeper::new(files.clone(), ask);
     if let Some(role) = fixed {
         keeper = keeper.with_role(role);
     }

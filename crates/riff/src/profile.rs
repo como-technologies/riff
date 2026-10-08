@@ -34,9 +34,10 @@
 //! - [`Profile::of`] refuses a session whose paths give the home of the
 //!   person, a folder above it, or a place of a secret
 //!   ([`Session::secrets`]): the keyring, the D-Bus socket, the keys of
-//!   SSH and GnuPG, the sign-in of `gh`, the key of the GitHub App of
-//!   riff ([`crate::forge`]). So the home of a person that
-//!   is a git repository can never be the clone.
+//!   SSH and GnuPG, the sign-in of `gh`. The key of the GitHub App of
+//!   riff is never on a machine: riff-server holds it
+//!   ([`crate::forge`]). So the home of a person that is a git
+//!   repository can never be the clone.
 //! - [`Profile::of`] refuses a path that is not absolute or that has a
 //!   `..` component (01M4BR61PPQV7JJE5Y2G9Q90AF): it compares
 //!   components and does not resolve them. The apply step (#607)
@@ -58,7 +59,7 @@
 //!     P --> V["verifier: riff workers run"]
 //!     P --> T["test run: just test (#612)"]
 //!     L & W & V --> K["Landlock: files and ports (#607)"]
-//!     L & W & V --> G["forge token of the role (#610)"]
+//!     L & W & V --> G["forge token of the role from riff-server (#628)"]
 //!     L & W & V --> R["permission rules of Claude Code (#613)"]
 //!     T --> N["namespaces: home, /tmp, processes, loopback (#612)"]
 //! ```
@@ -325,7 +326,7 @@ impl Session {
     /// assert!(s.secrets().contains(&Path::new("/h/.local/share/keyrings").to_path_buf()));
     /// assert!(s.secrets().contains(&Path::new("/run/user/7/systemd").to_path_buf()));
     /// assert!(s.secrets().contains(&Path::new("/run/dbus").to_path_buf()));
-    /// assert!(s.secrets().contains(&Path::new("/h/.config/riff/forge").to_path_buf()));
+    /// assert!(!s.secrets().iter().any(|p| p.ends_with("riff/forge")), "no key of the App is on a machine");
     /// ```
     pub fn secrets(&self) -> Vec<PathBuf> {
         let home = |p: &str| self.home.join(p);
@@ -335,7 +336,6 @@ impl Session {
             home(".ssh"),
             home(".gnupg"),
             home(".config/gh"),
-            home(".config/riff/forge"),
             runtime("bus"),
             runtime("systemd"),
             runtime("keyring"),

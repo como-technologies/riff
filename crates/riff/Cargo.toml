@@ -25,7 +25,6 @@ clap.workspace = true
 futures.workspace = true
 getrandom.workspace = true
 gethostname.workspace = true
-jsonwebtoken = { workspace = true, features = ["use_pem"] }
 keyring.workspace = true
 keyring-core.workspace = true
 open.workspace = true
@@ -44,6 +43,7 @@ assert_cmd.workspace = true
 riff-server = { path = "../riff-server" }
 isolated = { path = "../isolated" }
 axum.workspace = true
+jsonwebtoken = { workspace = true, features = ["use_pem"] }
 rmcp = { workspace = true, features = ["client"] }
 tower.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

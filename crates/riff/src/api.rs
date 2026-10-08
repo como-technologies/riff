@@ -113,7 +113,8 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
-    DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
+    DenyOwner, End, ForgeCheck, ForgeCheckReply, ForgeToken, ForgeTokenReply, Free, FreeReply,
+    Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
     ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
     Members, MembersReply, Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post,
     Posted, REFUSED_HEADER, Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed,
@@ -1180,6 +1181,18 @@ impl Api {
     /// Gives the server what `me` saw of the items of its repository on
     /// the forge (01M41FZP2C4Z4J6WKRXZ5B31EH). With `all`, the facts
     /// replace each fact of the repository.
+    /// The forge token of `me`, from riff-server (#628). The server
+    /// picks the role and the repository from its own facts.
+    pub async fn forge_token(&self, me: &SessionUri) -> Result<ForgeTokenReply> {
+        self.call(&ForgeToken { me: me.clone() }).await
+    }
+
+    /// `riff forge check`: the server makes a token of each role for the
+    /// repository of `me`, and revokes it at once (#628).
+    pub async fn forge_check(&self, me: &SessionUri) -> Result<ForgeCheckReply> {
+        self.call(&ForgeCheck { me: me.clone() }).await
+    }
+
     pub async fn item_facts(&self, me: &SessionUri, items: Vec<ItemFact>, all: bool) -> Result<()> {
         let facts = ItemFacts {
             me: me.clone(),

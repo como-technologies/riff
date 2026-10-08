@@ -1,7 +1,6 @@
 //! The local client that finds sessions and wakes yours.
 
 use std::io::Read;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -569,21 +568,12 @@ impl From<ByArg> for riff::top::By {
 /// The subcommands of `riff forge`.
 #[derive(Subcommand)]
 enum ForgeCommand {
-    /// Save the GitHub App of riff on this machine
+    /// Ask riff-server for a token of each role, and show its permissions
     ///
-    /// It checks the private key, copies it to forge/app.pem beside the
-    /// riff settings, where only you read it, and saves the ID as
-    /// forge.app. You can delete the downloaded key file after it.
-    App {
-        /// The App ID, from the settings page of the App.
-        id: u64,
-        /// The private key file that GitHub gave you (.pem).
-        key: PathBuf,
-    },
-    /// Make a token of each role, and show its permissions
-    ///
-    /// Run it in the clone of a repository where the App is installed.
-    /// It shows no token.
+    /// Run it in the clone of a repository where the GitHub App of riff
+    /// is installed. riff-server makes a token of each role for this
+    /// repository, checks its rights, and revokes it at once. It shows
+    /// no token.
     Check,
     /// The git credential helper of a worker
     ///
@@ -1467,7 +1457,7 @@ async fn main() -> Result<()> {
         return cloud(command).await;
     }
     if let Command::Forge { command } = &command {
-        return forge(command).await;
+        return forge(command, &server).await;
     }
     if let Command::Pr {
         command: Pr::Wait { number, every },
@@ -2345,39 +2335,23 @@ async fn riff_of(
 /// (01M4262DY8NN30SC4REYX2G9DV).
 /// `riff forge`: the GitHub App of riff and the token of a role
 /// ([`riff::forge`]).
-async fn forge(command: &ForgeCommand) -> Result<()> {
+async fn forge(command: &ForgeCommand, server: &str) -> Result<()> {
     use riff::forge;
     match command {
-        ForgeCommand::App { id, key } => {
-            if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
-                anyhow::bail!(text::FORGE_WORKER);
-            }
-            let path = forge::App::save(&settings::path()?, *id, key)?;
-            println!("{}", text::forge_saved(*id, &path));
-            Ok(())
-        }
         ForgeCommand::Check => {
-            let settings = settings::path()?;
-            let app = forge::App::here(&settings)?.context(text::FORGE_NO_APP)?;
-            let repo = identity::here(None)?.repo_text();
+            let place = identity::here(None)?;
             anyhow::ensure!(
-                repo != "-",
+                place.repo_text() != "-",
                 "riff forge check runs in the clone of a repository"
             );
-            let github = forge::GitHub::here();
+            let me = identity::person(&place, server)?;
+            let api = Api::new(server).signed_in(None)?;
+            let check = api.forge_check(&me).await?;
+            println!("{}", text::forge_check_head(check.app, &check.repo));
             let mut failed = false;
-            for role in [
-                riff::profile::Role::Lead,
-                riff::profile::Role::Worker,
-                riff::profile::Role::Verifier,
-            ] {
-                match github.token(&app, &repo, role).await {
-                    Ok(token) => println!("{}", text::forge_token_line(&token)),
-                    Err(e) => {
-                        failed = true;
-                        println!("{role}: {e:#}");
-                    }
-                }
+            for role in &check.roles {
+                failed |= role.error.is_some();
+                println!("{}", text::forge_check_line(role));
             }
             anyhow::ensure!(!failed, "the App cannot make a token of each role");
             Ok(())
