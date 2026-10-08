@@ -4075,19 +4075,19 @@ Each row is a surface with a control, and the test of that control.
 
 ### The shared surfaces with no control yet
 
-Each row is a surface with no control yet. It names its issue, or a
-proposed accept. Mike signs off this table before the release 2.0.0.
+Each row is a surface with no control yet. It names its issue, or an
+accept. Mike signed off this table on 2026-10-08 (#644).
 
 <!-- open-surfaces -->
 | Surface | A session writes or asks | Read or run outside by | Risk | Decision |
 |---|---|---|---|---|
-| The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (proposed): a lock or a record holds no command |
+| The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (Mike, 2026-10-08): a lock or a record holds no command |
 | The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
 | The variables of a broker request | a bus address | `riff test-run` | a test run gets a variable that is not of cargo or the tests | #654 |
 | The worktrees of other sessions | the worktrees folder of the clone | the other sessions | a worker changes the work of another session | #645 |
-| Forge tokens in an allowed account | a session in a repository of the account | riff-server | each member of the riff gets a token for each repository of an allowed account where it has a session | Accept (proposed): the owner admits each member, and the token has the rights of the role only |
-| The lead token of a person | a token with no session | riff-server | the token lives up to one hour after the allow or the lead ends | Accept (proposed): one hour at most |
-| A session grant with no process | none | riff-server | the grant stays 7 days when `claude` does not start | Accept (proposed): only the session key uses it, and the key was only in the wrapper |
+| Forge tokens in an allowed account | a session in a repository of the account | riff-server | each member of the riff gets a token for each repository of an allowed account where it has a session | Accept (Mike, 2026-10-08): the owner admits each member, and the token has the rights of the role only |
+| The lead token of a person | a token with no session | riff-server | the token lives up to one hour after the allow or the lead ends | Accept (Mike, 2026-10-08): one hour at most |
+| A session grant with no process | none | riff-server | the grant stays 7 days when `claude` does not start | Accept (Mike, 2026-10-08): only the session key uses it, and the key was only in the wrapper |
 <!-- /open-surfaces -->
 
 To check the two tables, and that each test is there:
