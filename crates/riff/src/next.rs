@@ -98,6 +98,14 @@
 //! - The keys that clear the context and start the next item are
 //!   specific to an agent tool. They are in an [`Agent`] adapter, one
 //!   for each tool (01M3JQCD373XZWNSSQYBE561TM).
+//! - A worker in its sandbox reaches no tmux: the shim removes `TMUX`
+//!   and `TMUX_PANE`, and seccomp stops each unix socket. So the Stop
+//!   hook starts the check with no pane, and the check types through
+//!   the broker of the worker, on the pane of the session
+//!   ([`OwnPane`], [`crate::door`], 01M4DVW26Q5MX025XBW7JCK44S). The
+//!   broker runs outside the sandbox in that pane. The check does not
+//!   fast-forward the main clone there: the worker writes no file of it
+//!   (01M4DVW2B8W108N696GAYN3V1B).
 //! - riff never clears the lead: a worker is never the lead
 //!   (01M3X9XA3H6YF0QCYSNB2P0CT2), and only a worker comes into
 //!   MustClear.
@@ -114,7 +122,10 @@
 //! `riff workers stop PANE` does ([`crate::worker::stop`]). The count
 //! and the end are one step under the lock file [`LIMIT_LOCK`], so two
 //! workers that end their items at one time do not both end when only
-//! one is over the limit.
+//! one is over the limit. In its sandbox, the worker asks its broker
+//! for the step (`end-over-limit`, [`end_over_limit`],
+//! 01M4DVW290H2AQF6EQFHTY1EE1): the broker counts, posts the note and
+//! ends its own worker outside the sandbox.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -293,7 +304,9 @@ pub struct StopInput {
 }
 
 /// The check of the Stop hook of the worker `me`, whose agent runs in
-/// the tmux pane `pane` and works in `dir` (01M3XV0562D3H3P22CJDBPAZBH).
+/// the pane `own` and works in `dir` (01M3XV0562D3H3P22CJDBPAZBH). In
+/// its sandbox, `own` is the pane of its broker
+/// (01M4DVW26Q5MX025XBW7JCK44S).
 /// It asks the server with a keep-alive. When the worker must clear its
 /// context, it fast-forwards the main clone of `dir`
 /// (01M3MNP34M5PAZW9VWAYVGNSV2), tells the lead when the main clone
