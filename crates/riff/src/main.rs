@@ -2219,7 +2219,7 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
                 settings::set_workers_jobs(&path, *jobs)?;
             }
             let cores = riff::limits::Cores::here(&riff::machine::Machine::here());
-            let dir = riff::local::dir().map(|dir| riff::jobserver::dir(&dir));
+            let dir = riff::local::riff_dir().map(|dir| riff::jobserver::dir(&dir));
             let workers = dir.as_deref().map_or(0, riff::jobserver::workers);
             let limits = riff::limits::Limits::of(&path, &cores, workers)?;
             let pool = dir.as_deref().and_then(riff::jobserver::state);
