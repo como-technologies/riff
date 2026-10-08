@@ -911,11 +911,7 @@ impl Tokens {
     /// The sign-in and the session of a live session grant, used with
     /// the session key `jkt`. It changes nothing.
     pub fn granted(&self, grant: &str, jkt: &str, now: Instant) -> Result<(u64, String), Refused> {
-        let id = grant
-            .strip_prefix('g')
-            .and_then(|rest| rest.split_once('.'))
-            .and_then(|(id, _)| id.parse::<u64>().ok())
-            .ok_or(Refused::Unknown)?;
+        let id = grant_id(grant).ok_or(Refused::Unknown)?;
         let sign_in = self.sign_ins.get(&id).ok_or(Refused::Unknown)?;
         let Some(given) = sign_in.grant.as_ref().filter(|g| g.hash == hash(grant)) else {
             return Err(Refused::Unknown);
@@ -927,6 +923,42 @@ impl Tokens {
             return Err(Refused::Expired);
         }
         Ok((id, given.session.clone()))
+    }
+
+    /// Ends the session grant `grant`, used with its session key `jkt`,
+    /// and each token of it (01M4D0FTC5CCRBVNDBEXK2B4RJ). The wrapper of
+    /// the session calls it when `claude` ends. True when the grant was
+    /// in the store. A grant that is gone is no error; the wrong key is.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_server::token::{Refused, Tokens};
+    ///
+    /// let now = Instant::now();
+    /// let mut tokens = Tokens::default();
+    /// let person = tokens.sign_in("mike@comotechnologies.io", "device", now).unwrap();
+    /// let grant = tokens.grant(&person.access_token, "device", "a6cf", "session", now).unwrap();
+    /// let access = tokens.from_grant(&grant.access_token, "session", now).unwrap();
+    ///
+    /// // Only the session key ends the grant.
+    /// assert_eq!(tokens.end_grant(&grant.access_token, "device", now), Err(Refused::WrongKey));
+    /// assert_eq!(tokens.end_grant(&grant.access_token, "session", now), Ok(true));
+    /// assert_eq!(tokens.from_grant(&grant.access_token, "session", now), Err(Refused::Unknown));
+    /// assert!(tokens.caller(&access.access_token, "session", now).is_err());
+    /// assert_eq!(tokens.end_grant(&grant.access_token, "session", now), Ok(false));
+    ///
+    /// // The sign-in of the person stays.
+    /// assert!(tokens.caller(&person.access_token, "device", now).is_ok());
+    /// ```
+    pub fn end_grant(&mut self, grant: &str, jkt: &str, now: Instant) -> Result<bool, Refused> {
+        match self.granted(grant, jkt, now) {
+            Ok(_) | Err(Refused::Expired) => {
+                self.revoke(grant_id(grant).ok_or(Refused::Unknown)?);
+                Ok(true)
+            }
+            Err(Refused::WrongKey) => Err(Refused::WrongKey),
+            Err(_) => Ok(false),
+        }
     }
 
     /// The number of live chains: one for each sign-in that got a pair
@@ -1389,6 +1421,14 @@ pub(crate) fn random_token() -> String {
     // The OS random source fails only when the OS is broken.
     getrandom::fill(&mut bytes).expect("the OS gives random bytes");
     URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// The sign-in ID in a session grant `g{id}.{secret}`.
+fn grant_id(grant: &str) -> Option<u64> {
+    grant
+        .strip_prefix('g')
+        .and_then(|rest| rest.split_once('.'))
+        .and_then(|(id, _)| id.parse().ok())
 }
 
 fn hash(token: &str) -> Hash {

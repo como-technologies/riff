@@ -4335,6 +4335,11 @@
   sign-in that made it, and 7 days after its last swap. The server
   saves each grant before its reply, so a grant lives through a
   restart of the server.
+- **01M4D0FTC5CCRBVNDBEXK2B4RJ** When `claude` of a session ends, by
+  each way, its wrapper ends the grant of the session at riff-server,
+  with a proof of the session key. Each token of the grant ends with
+  it. A leave of the riff keeps the grant, so the session can join
+  again.
 - **01M4CVXJ7ZDAVRKJ8Y59R3KPDV** No process of a session reads the
   keyring of the person. The wrapper of the session, outside the
   sandbox, makes the session key and the grant from the sign-in of

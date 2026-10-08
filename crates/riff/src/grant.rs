@@ -166,13 +166,39 @@ impl Secrets {
     }
 }
 
+/// The secrets of a session for `claude`, and the grant to end when
+/// `claude` ends (01M4D0FTC5CCRBVNDBEXK2B4RJ).
+pub struct SessionEnv {
+    /// The pairs of the environment of `claude` ([`Secrets::env`]).
+    pub env: Vec<(&'static str, String)>,
+    /// The server, and the secrets whose grant ends.
+    grant: Option<(String, Secrets)>,
+}
+
+impl SessionEnv {
+    /// Ends the grant of the session at riff-server, with a proof of the
+    /// session key (01M4D0FTC5CCRBVNDBEXK2B4RJ). The wrapper calls it
+    /// when `claude` ends, by each way. With no grant it does nothing. A
+    /// failure is one line on stderr: the grant then ends after 7 days
+    /// with no swap.
+    pub async fn end(&self) {
+        let Some((server, secrets)) = &self.grant else {
+            return;
+        };
+        let api = Api::new(server).with_budget(crate::mcp::END_WAIT);
+        if let Err(e) = api.end_grant(&secrets.grant, &secrets.key).await {
+            eprintln!("riff: {e:#}");
+        }
+    }
+}
+
 /// The environment of the secrets of `session` for `claude`
-/// ([`Secrets::env`]): the session key, the grant and the user when this
+/// ([`SessionEnv`]): the session key, the grant and the user when this
 /// machine has a sign-in at the server of `api`, and the Claude plan
 /// token when the person keeps one. Only the wrapper, outside the
 /// sandbox, calls it. A failure is one line on stderr: `claude` starts
 /// with fewer secrets, and its riff calls fail with a clear error.
-pub async fn session_env(api: &Api, session: &str) -> Vec<(&'static str, String)> {
+pub async fn session_env(api: &Api, session: &str) -> SessionEnv {
     let signed_in = secrets::has_keyring()
         && login::stored(api.base()).is_ok_and(|s| s.is_some_and(|s| !s.ended()));
     let mut secrets = None;
@@ -186,9 +212,12 @@ pub async fn session_env(api: &Api, session: &str) -> Vec<(&'static str, String)
         eprintln!("riff: {e:#}");
         None
     });
-    let mut env = secrets.map_or_else(Vec::new, |s| s.env());
+    let mut env = secrets.as_ref().map_or_else(Vec::new, Secrets::env);
     env.extend(claude.map(|token| (CLAUDE_TOKEN_VAR, token)));
-    env
+    SessionEnv {
+        env,
+        grant: secrets.map(|s| (api.base().to_owned(), s)),
+    }
 }
 
 /// The session key and the grant of this process, from the

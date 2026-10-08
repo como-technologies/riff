@@ -131,8 +131,8 @@ fn the_run_has_the_loopback_network_only() {
 
 /// No variable of the parent reaches a test, but the allow list
 /// (01M4CVXJGYCT2HKHJP3BWBV0HC): `just test` gives `riff test-run` a
-/// marker `GH_TOKEN` and an unknown marker variable, and neither is
-/// here. The runtime folder and the agent of ssh are gone too.
+/// marker `GH_TOKEN`, two cargo registry tokens and an unknown marker
+/// variable, and none is here. The runtime folder and the agent of ssh are gone too.
 #[test]
 fn no_credential_and_no_unknown_variable_of_the_parent_reaches_a_test() {
     if !in_a_test_run() {
@@ -140,6 +140,8 @@ fn no_credential_and_no_unknown_variable_of_the_parent_reaches_a_test() {
     }
     for name in [
         "GH_TOKEN",
+        "CARGO_REGISTRY_TOKEN",
+        "CARGO_REGISTRIES_X_TOKEN",
         "RIFF_TEST_PARENT_MARKER",
         "XDG_RUNTIME_DIR",
         "SSH_AUTH_SOCK",

@@ -113,7 +113,7 @@ use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
+    Activity, AdminSet, GRANT_END_PATH, GrantEnd, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
     DenyOwner, End, ForgeAccounts, ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeCreate,
     ForgeCreateReply, ForgeCreated, ForgeCreatedReply, ForgeInstall, ForgeInstallReply, ForgeToken,
     ForgeTokenReply, Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
@@ -720,6 +720,35 @@ impl Api {
             },
         );
         Err(refused.into())
+    }
+
+    /// Ends the session grant `grant` with a proof of its session key
+    /// `key` (01M4D0FTC5CCRBVNDBEXK2B4RJ). A grant that is gone is no
+    /// error. The error names no secret.
+    pub async fn end_grant(&self, grant: &str, key: &Key) -> Result<()> {
+        let url = format!("{}{GRANT_END_PATH}", self.base());
+        let request = GrantEnd {
+            token: grant.to_owned(),
+        };
+        let response = self
+            .anonymous()
+            .send_with(
+                reqwest::Method::POST,
+                GRANT_END_PATH,
+                |r| {
+                    r.header("dpop", key.proof("POST", &url, None, now()))
+                        .form(&request)
+                },
+                Check::None,
+            )
+            .await?;
+        if response.status.is_success() {
+            return Ok(());
+        }
+        let error = response
+            .json::<TokenError>()
+            .map_or_else(|_| "no reason".to_owned(), |e| e.error);
+        bail!("riff-server did not end the session grant: {error}")
     }
 
     /// A client that sends a token on each request, when this device

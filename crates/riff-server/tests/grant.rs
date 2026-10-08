@@ -1,7 +1,8 @@
 //! The session grant over HTTP (01M4CVXJ3GCEB7B4632J7DD84A,
 //! 01M4CVXJ5RHHMPE4AYH7KV6E2R): the token endpoint makes a grant for a
 //! person token with two proofs, the grant lives through a restart, and
-//! only the session key swaps it for a token of its session.
+//! only the session key swaps it for a token of its session, or ends it
+//! (01M4D0FTC5CCRBVNDBEXK2B4RJ).
 
 use crate::common;
 
@@ -10,7 +11,7 @@ use std::time::Instant;
 
 use riff_core::dpop::Key;
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, GRANT_TOKEN_TYPE, TOKEN_EXCHANGE, TokenError, TokenReply,
+    ACCESS_TOKEN_TYPE, GRANT_END_PATH, GRANT_TOKEN_TYPE, TOKEN_EXCHANGE, TokenError, TokenReply,
 };
 use riff_server::store::{Memory, SIGN_INS, Store};
 
@@ -165,5 +166,61 @@ async fn a_grant_needs_a_person_token_and_a_new_key() {
 
     // A grant that the server does not know.
     let refused = reply(common::refresh(&url, &session_key, &swap("g9.nope")).await).await;
+    assert_eq!(refused.unwrap_err(), "invalid_grant");
+}
+
+/// `POST /v1/token/end` for `grant`, with a proof of `key`.
+async fn end(url: &str, key: &Key, grant: &str) -> reqwest::StatusCode {
+    let path = format!("{url}{GRANT_END_PATH}");
+    common::post(&path, key, None)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(encode(&[("token", grant)]))
+        .send()
+        .await
+        .unwrap()
+        .status()
+}
+
+/// The wrapper ends the grant when `claude` ends
+/// (01M4D0FTC5CCRBVNDBEXK2B4RJ): only the session key ends it, each
+/// token of it ends too, the end is saved, and a second end is no error.
+#[tokio::test]
+async fn only_the_session_key_ends_a_grant_and_its_tokens() {
+    let store = Memory::default();
+    let (service, url) = common::start_on(Arc::new(store.clone())).await;
+    let (device, session_key) = (Key::generate(), Key::generate());
+    let person = service
+        .tokens()
+        .sign_in(
+            "mike@comotechnologies.io",
+            &device.thumbprint(),
+            Instant::now(),
+        )
+        .unwrap();
+    let form = ask(&url, &person.access_token, "a6cf", &session_key);
+    let grant = reply(common::refresh(&url, &device, &form).await)
+        .await
+        .unwrap();
+    let access = reply(common::refresh(&url, &session_key, &swap(&grant.access_token)).await)
+        .await
+        .unwrap();
+
+    assert_eq!(end(&url, &device, &grant.access_token).await, 400);
+    assert_eq!(end(&url, &session_key, &grant.access_token).await, 200);
+    let refused = reply(common::refresh(&url, &session_key, &swap(&grant.access_token)).await).await;
+    assert_eq!(refused.unwrap_err(), "invalid_grant");
+    let now = Instant::now();
+    {
+        let tokens = service.tokens();
+        assert!(tokens.caller(&access.access_token, &session_key.thumbprint(), now).is_err());
+        assert!(tokens.caller(&person.access_token, &device.thumbprint(), now).is_ok());
+    }
+    assert_eq!(end(&url, &session_key, &grant.access_token).await, 200);
+
+    // The end lives through a restart.
+    service.shutdown().await.unwrap();
+    drop(service);
+    let (_restarted, url) = common::start_on(Arc::new(store)).await;
+    let refused = reply(common::refresh(&url, &session_key, &swap(&grant.access_token)).await).await;
     assert_eq!(refused.unwrap_err(), "invalid_grant");
 }

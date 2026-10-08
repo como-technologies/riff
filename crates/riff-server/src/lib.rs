@@ -218,7 +218,7 @@ use riff_core::record::Record;
 use riff_core::selector::Selector;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
-    Claim, DenyOwner, End, FactError, Free, GRANT_TOKEN_TYPE, Hold, ID_TOKEN_TYPE, Idle, IdleQuery,
+    Claim, DenyOwner, End, FactError, Free, GRANT_END_PATH, GRANT_TOKEN_TYPE, GrantEnd, Hold, ID_TOKEN_TYPE, Idle, IdleQuery,
     Invite, ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members,
     MembersReply, PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Read,
     ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner,
@@ -1990,6 +1990,7 @@ impl Service {
             // `riff login` and a refresh work with each version
             // (01M3MX4V43SF2XFCZWANHD19WV).
             .route(auth::TOKEN_PATH, post(token))
+            .route(GRANT_END_PATH, post(end_grant))
             .route("/v1/sign-in", get(sign_in_config))
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
@@ -3055,6 +3056,43 @@ async fn from_grant(
     s.tokens_change()
         .from_grant(grant, &proof.jkt, Instant::now())
         .map_err(|_| no("invalid_grant"))
+}
+
+/// Ends a session grant and each token of it
+/// (01M4D0FTC5CCRBVNDBEXK2B4RJ). The `DPoP` header is the proof of the
+/// session key of the grant. The end is saved before the reply.
+async fn end_grant(
+    AxumState(s): AxumState<Shared>,
+    headers: HeaderMap,
+    Form(r): Form<GrantEnd>,
+) -> Response {
+    let refuse = |error: TokenError| {
+        let status = match error.error.as_str() {
+            UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
+            _ => StatusCode::BAD_REQUEST,
+        };
+        (status, Json(error)).into_response()
+    };
+    let Ok(proof) = s.proof(&headers, "POST", GRANT_END_PATH, None) else {
+        return refuse(no("invalid_dpop_proof"));
+    };
+    if s.first_use(&proof).is_err() {
+        return refuse(no("invalid_dpop_proof"));
+    }
+    let mark = s.tokens_changes.load(Ordering::SeqCst);
+    let ended = s.tokens().end_grant(&r.token, &proof.jkt, Instant::now());
+    match ended {
+        Err(_) => return refuse(no("invalid_grant")),
+        Ok(true) => {
+            s.tokens_changes.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(false) => {}
+    }
+    if let Err(error) = s.save_tokens_since(mark).await {
+        tracing::error!("the token store was not saved: {error}");
+        return refuse(no(UNAVAILABLE));
+    }
+    StatusCode::OK.into_response()
 }
 
 /// Names the sign-in provider and the riff ID, for `riff login`. The

@@ -6,7 +6,8 @@
 //! No secret of the session goes into an output, a file or a commit
 //! (01M4CVXJA9WAN5M1RKNGETS8AY). The session gets the Claude plan token
 //! of its person and no API key (01M4CVXJCGRC59VVZEHBFA9MPG,
-//! 01M4C4WW8JS7QVC0ZYHWPSMWKN).
+//! 01M4C4WW8JS7QVC0ZYHWPSMWKN). The wrapper ends the grant when the
+//! session program ends (01M4D0FTC5CCRBVNDBEXK2B4RJ).
 
 use std::path::Path;
 use std::process::Command;
@@ -254,4 +255,14 @@ async fn a_session_works_with_only_its_environment_and_leaks_no_secret() {
         .output()
         .unwrap();
     assert!(!String::from_utf8_lossy(&log.stdout).contains(&grant));
+
+    // The wrapper ended the grant when claude ended
+    // (01M4D0FTC5CCRBVNDBEXK2B4RJ).
+    let key = Key::from_secret(&session_key).unwrap();
+    let now = std::time::Instant::now();
+    assert_eq!(
+        service.tokens().granted(&grant, &key.thumbprint(), now),
+        Err(riff_server::token::Refused::Unknown),
+        "{stderr}"
+    );
 }

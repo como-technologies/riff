@@ -316,8 +316,12 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     let mut cmd = forge.command(program, args, std::env::vars_os());
     // The secrets of the session come in its environment, never from
     // the keyring of the person (01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
-    if let Some(session) = &session {
-        cmd.envs(crate::grant::session_env(&Api::new(server), session).await);
+    let secrets = match &session {
+        Some(session) => Some(crate::grant::session_env(&Api::new(server), session).await),
+        None => None,
+    };
+    if let Some(secrets) = &secrets {
+        cmd.envs(secrets.env.iter().cloned());
     }
     cmd.env(WORKER, "1")
         .env(WRAPPER, std::process::id().to_string())
@@ -342,8 +346,8 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         .with_context(|| format!("cannot start {}", Path::new(&command[0]).display()))?;
     let status = tokio::select! {
         status = child.wait() => status?,
-        _ = term.recv() => return stop_child(&mut child).await,
-        _ = hup.recv() => return stop_child(&mut child).await,
+        _ = term.recv() => return end_grant(stop_child(&mut child).await, secrets.as_ref()).await,
+        _ = hup.recv() => return end_grant(stop_child(&mut child).await, secrets.as_ref()).await,
     };
     // A signal to the wrapper can come just after claude ended from the
     // same stop.
@@ -354,7 +358,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
             () = tokio::time::sleep(Duration::from_millis(200)) => false,
         };
     if stopped {
-        return Ok(0);
+        return end_grant(Ok(0), secrets.as_ref()).await;
     }
     let pane = std::env::var("TMUX_PANE").ok();
     let body = crate::text::worker_stopped(pane.as_deref(), session.as_deref(), &status);
@@ -368,6 +372,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     if let Some(session) = &session {
         end_worker(session, server).await;
     }
+    let code = end_grant(Ok(status.code().unwrap_or(1)), secrets.as_ref()).await;
     // An exit with a fault is a death (01M493YZZEW1FTDBNA090WT2AG).
     if !status.success()
         && let Some(session) = &session
@@ -381,7 +386,17 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
             eprintln!("riff: cannot tell the lead: {e:#}");
         }
     }
-    Ok(status.code().unwrap_or(1))
+    code
+}
+
+/// Ends the grant of the session of `secrets` after `claude` ended
+/// with `code`, by each way (01M4D0FTC5CCRBVNDBEXK2B4RJ), and gives
+/// `code` back.
+async fn end_grant(code: Result<i32>, secrets: Option<&crate::grant::SessionEnv>) -> Result<i32> {
+    if let Some(secrets) = secrets {
+        secrets.end().await;
+    }
+    code
 }
 
 /// The permission rules of a worker in this main clone, or the line
@@ -437,8 +452,9 @@ pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) 
         .chain(args.iter().map(Into::into))
         .collect();
     let mut cmd = forge.command(claude.as_os_str(), &args, std::env::vars_os());
+    let secrets = crate::grant::session_env(&Api::new(server), &session).await;
     cmd.env(identity::SESSION_VARS[0], &session)
-        .envs(crate::grant::session_env(&Api::new(server), &session).await)
+        .envs(secrets.env.iter().cloned())
         .env_remove(crate::next::Agent::context_var(&crate::next::ClaudeCode));
     if let Some(folder) = &folder {
         for var in temp::VARS {
@@ -448,11 +464,12 @@ pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) 
     let mut child = cmd
         .spawn()
         .with_context(|| format!("cannot start {}", claude.display()))?;
-    tokio::select! {
-        status = child.wait() => Ok(status?.code().unwrap_or(1)),
+    let code = tokio::select! {
+        status = child.wait() => status.map(|s| s.code().unwrap_or(1)).map_err(Into::into),
         _ = term.recv() => stop_child(&mut child).await,
         _ = hup.recv() => stop_child(&mut child).await,
-    }
+    };
+    end_grant(code, Some(&secrets)).await
 }
 
 /// The first forge token of a session ([`forge`]), its token files, and

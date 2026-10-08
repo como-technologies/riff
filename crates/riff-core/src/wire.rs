@@ -2413,6 +2413,19 @@ pub const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_tok
 /// `token_type`.
 pub const GRANT_TOKEN_TYPE: &str = "urn:riff:token-type:session-grant";
 
+/// The path of [`GrantEnd`].
+pub const GRANT_END_PATH: &str = "/v1/token/end";
+
+/// `POST /v1/token/end`, as `application/x-www-form-urlencoded`: ends a
+/// session grant and each token of it (01M4D0FTC5CCRBVNDBEXK2B4RJ). The
+/// `DPoP` header is the proof of the session key of the grant. As in
+/// RFC 7009, a grant that is gone gets a success too.
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GrantEnd {
+    /// The session grant.
+    pub token: String,
+}
+
 /// `POST /v1/token`, as `application/x-www-form-urlencoded`.
 ///
 /// | `grant_type` | Fields |

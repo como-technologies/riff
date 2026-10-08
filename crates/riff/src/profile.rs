@@ -589,7 +589,9 @@ pub const KEPT_VARS: &[&str] = &[
 ///
 /// - The account, the language and the terminal, as in [`KEPT_VARS`].
 /// - The tools of the build and the tests: cargo, rustup, rustc and the
-///   pool of build jobs.
+///   pool of build jobs. Each name is exact. A prefix stays only when no
+///   name under it can hold a credential or name a credential program:
+///   so no `CARGO_REGISTRY_TOKEN` and no `CARGO_REGISTRIES_` variable.
 /// - riff: the server of the tests.
 ///
 /// No runtime folder, no session bus, no agent socket, no credential
@@ -609,7 +611,14 @@ pub const TEST_RUN_VARS: &[&str] = &[
     "NO_COLOR",
     "CLICOLOR_FORCE",
     "CARGO",
-    "CARGO_",
+    "CARGO_HOME",
+    "CARGO_TARGET_DIR",
+    "CARGO_TARGET_",
+    "CARGO_BUILD_JOBS",
+    "CARGO_MAKEFLAGS",
+    "CARGO_INCREMENTAL",
+    "CARGO_NET_OFFLINE",
+    "CARGO_TERM_",
     "RUSTUP_HOME",
     "RUSTUP_TOOLCHAIN",
     "RUSTC",
@@ -635,6 +644,9 @@ pub const TEST_RUN_VARS: &[&str] = &[
 /// assert!(test_run_kept("CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER"));
 /// assert!(test_run_kept("MAKEFLAGS"));
 /// assert!(!test_run_kept("GH_TOKEN"));
+/// assert!(!test_run_kept("CARGO_REGISTRY_TOKEN"));
+/// assert!(!test_run_kept("CARGO_REGISTRIES_X_TOKEN"));
+/// assert!(!test_run_kept("CARGO_REGISTRY_CREDENTIAL_PROVIDER"));
 /// assert!(!test_run_kept("RIFF_TEST_MARKER"));
 /// assert!(!test_run_kept("XDG_RUNTIME_DIR"));
 /// assert!(!test_run_kept("SSH_AUTH_SOCK"));
