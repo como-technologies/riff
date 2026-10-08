@@ -1,9 +1,7 @@
-//! The written plugin passes the Claude Code validator, and `riff connect
-//! claude` installs it.
+//! The written plugin passes the Claude Code validator, and holds the
+//! skill.
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[test]
@@ -15,92 +13,25 @@ fn claude_accepts_the_written_plugin() {
         return;
     };
     assert!(out.status.success());
-    for path in [dir.path().to_owned(), dir.path().join(riff::plugin::NAME)] {
-        let out = Command::new("claude")
-            .args(["plugin", "validate", "--strict"])
-            .arg(&path)
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{}: {}{}",
-            path.display(),
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-}
-
-/// A riff that does not answer, so `riff connect claude` checks no
-/// real riff and opens no browser. It warns.
-const NO_SERVER: &str = "http://127.0.0.1:1";
-
-/// A fake `claude` command that logs its arguments. It fails `mcp
-/// remove`, as `claude` does when there is no old entry.
-fn fake_claude(dir: &Path, remove_status: u8) -> PathBuf {
-    let path = dir.join("claude");
-    let log = dir.join("log");
-    std::fs::write(
-        &path,
-        format!(
-            "#!/bin/sh\necho \"$*\" >> {}\n[ \"$1\" = mcp ] && exit {remove_status}\nexit 0\n",
-            log.display()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    path
-}
-
-/// `riff connect claude` with the fake `bin`. The Claude Code settings
-/// are in `data/home/.claude`, never in the real home.
-fn connect(bin: &Path, data: &Path, cwd: &Path) -> assert_cmd::assert::Assert {
-    Isolated::shared()
-        .assert_riff()
-        .args(["connect", "claude", "--claude"])
-        .arg(bin)
-        .env("RIFF_SERVER", NO_SERVER)
-        .env("XDG_DATA_HOME", data)
-        .env("HOME", data.join("home"))
-        .env_remove("CLAUDE_CONFIG_DIR")
-        .env_remove("RIFF_SESSION")
-        .env_remove("CLAUDE_CODE_SESSION_ID")
-        .current_dir(cwd)
-        .assert()
-}
-
-#[test]
-fn connect_writes_the_plugin_and_runs_claude() {
-    let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    let market = tmp.path().join("riff/claude-plugin");
-    connect(&bin, tmp.path(), tmp.path())
-        .success()
-        .stdout(format!(
-            "Added the riff plugin from {} to Claude Code.\n\
-             Added the riff status line to {}.\n\
-             riff is installed but off. To turn it on in a repository: cd REPO && riff enable\n",
-            market.display(),
-            tmp.path().join("home/.claude/settings.json").display()
-        ));
-    assert!(market.join("riff/.mcp.json").is_file());
-    // It installs the plugin in no scope: `riff enable` turns it on.
-    let log = std::fs::read_to_string(tmp.path().join("log")).unwrap();
-    assert_eq!(
-        log,
-        format!(
-            "mcp remove --scope user riff\n\
-             plugin marketplace add {}\n",
-            market.display()
-        )
+    let path = dir.path().join(riff::plugin::NAME);
+    let out = Command::new("claude")
+        .args(["plugin", "validate", "--strict"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}: {}{}",
+        path.display(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 
 #[test]
-fn connect_writes_the_skill_with_the_criteria_check() {
+fn the_plugin_has_the_skill_with_the_criteria_check() {
     let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    connect(&bin, tmp.path(), tmp.path()).success();
+    riff::plugin::write(&tmp.path().join("riff/claude-plugin")).unwrap();
     let skill = tmp
         .path()
         .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
@@ -113,10 +44,9 @@ fn connect_writes_the_skill_with_the_criteria_check() {
 }
 
 #[test]
-fn connect_writes_the_skill_with_the_verify_flow() {
+fn the_plugin_has_the_skill_with_the_verify_flow() {
     let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    connect(&bin, tmp.path(), tmp.path()).success();
+    riff::plugin::write(&tmp.path().join("riff/claude-plugin")).unwrap();
     let skill = tmp
         .path()
         .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
@@ -221,14 +151,13 @@ fn connect_writes_the_skill_with_the_verify_flow() {
     assert!(!verifier.contains("`keep`"), "{verifier}");
 }
 
-/// The skill that `riff connect` writes keeps a live security fault out
+/// The skill that riff writes keeps a live security fault out
 /// of the public text on the forge and out of a post
 /// (01M3W62QG36F9RD4SZ1X508T3A). The fault goes to the lead with `tell`.
 #[test]
-fn connect_writes_the_skill_with_no_live_security_fault_in_public_text() {
+fn the_plugin_has_the_skill_with_no_live_security_fault_in_public_text() {
     let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    connect(&bin, tmp.path(), tmp.path()).success();
+    riff::plugin::write(&tmp.path().join("riff/claude-plugin")).unwrap();
     let skill = tmp
         .path()
         .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
@@ -282,10 +211,9 @@ fn connect_writes_the_skill_with_no_live_security_fault_in_public_text() {
 /// The skill names one `riff` command for each step of a pull request
 /// (01M3NB6G132QG4TAEJ5QPRJNAE), and no `gh` recipe for those steps.
 #[test]
-fn connect_writes_the_skill_with_the_pull_request_commands() {
+fn the_plugin_has_the_skill_with_the_pull_request_commands() {
     let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    connect(&bin, tmp.path(), tmp.path()).success();
+    riff::plugin::write(&tmp.path().join("riff/claude-plugin")).unwrap();
     let skill = tmp
         .path()
         .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
@@ -350,10 +278,9 @@ fn connect_writes_the_skill_with_the_pull_request_commands() {
 }
 
 #[test]
-fn connect_writes_the_skill_with_the_waves() {
+fn the_plugin_has_the_skill_with_the_waves() {
     let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    connect(&bin, tmp.path(), tmp.path()).success();
+    riff::plugin::write(&tmp.path().join("riff/claude-plugin")).unwrap();
     let skill = tmp
         .path()
         .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
@@ -391,10 +318,9 @@ fn connect_writes_the_skill_with_the_waves() {
 /// merge, each with copyable commands (01M3MNP39172Y463WGQAW125KW,
 /// 01M3MNP3B8YJ699432D4PSFWDB).
 #[test]
-fn connect_writes_the_skill_with_git_hygiene() {
+fn the_plugin_has_the_skill_with_git_hygiene() {
     let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    connect(&bin, tmp.path(), tmp.path()).success();
+    riff::plugin::write(&tmp.path().join("riff/claude-plugin")).unwrap();
     let skill = tmp
         .path()
         .join("riff/claude-plugin/riff/skills/riff/SKILL.md");
@@ -452,142 +378,4 @@ fn connect_writes_the_skill_with_git_hygiene() {
             );
         }
     }
-}
-
-#[test]
-fn connect_says_when_it_removed_the_old_entry() {
-    let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 0);
-    let out = connect(&bin, tmp.path(), tmp.path()).success();
-    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    assert!(stdout.starts_with("Removed the old riff MCP server entry.\n"));
-}
-
-/// 01M3JFFJEW8BSRBZ9JQPKT0S8Z
-#[test]
-fn connect_adds_the_statusline_when_none_is_set() {
-    let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    let settings = tmp.path().join("home/.claude/settings.json");
-    let out = connect(&bin, tmp.path(), tmp.path()).success();
-    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    assert!(
-        stdout.contains(&format!(
-            "Added the riff status line to {}.",
-            settings.display()
-        )),
-        "{stdout}"
-    );
-    let text = std::fs::read_to_string(&settings).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(value["statusLine"]["command"], "riff statusline");
-    assert_eq!(value["statusLine"]["type"], "command");
-
-    // A second run changes nothing and says nothing of it.
-    let out = connect(&bin, tmp.path(), tmp.path()).success();
-    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    assert!(!stdout.contains("status line"), "{stdout}");
-    assert_eq!(std::fs::read_to_string(&settings).unwrap(), text);
-}
-
-#[test]
-fn connect_keeps_the_other_keys_in_their_order() {
-    let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    let settings = tmp.path().join("home/.claude/settings.json");
-    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
-    let old = "{\n  \"permissions\": { \"allow\": [\"Bash(ls)\"] },\n  \"model\": \"opus\"\n}\n";
-    std::fs::write(&settings, old).unwrap();
-    connect(&bin, tmp.path(), tmp.path()).success();
-    let text = std::fs::read_to_string(&settings).unwrap();
-    assert!(
-        text.starts_with("{\n  \"permissions\": { \"allow\": [\"Bash(ls)\"] },\n  \"model\": \"opus\",\n  \"statusLine\""),
-        "{text}"
-    );
-    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(value["model"], "opus");
-    assert_eq!(value["statusLine"]["command"], "riff statusline");
-}
-
-#[test]
-fn connect_leaves_another_statusline() {
-    let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    let settings = tmp.path().join("home/.claude/settings.json");
-    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
-    let old = "{\"statusLine\": {\"type\": \"command\", \"command\": \"mine\"}}";
-    std::fs::write(&settings, old).unwrap();
-    let out = connect(&bin, tmp.path(), tmp.path()).success();
-    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    assert!(stdout.contains("has another status line"), "{stdout}");
-    // It prints the command to add riff to that status line.
-    assert!(stdout.contains("calls `riff statusline`"), "{stdout}");
-    assert!(
-        stdout.contains("\"Find the pane of a session\""),
-        "{stdout}"
-    );
-    assert_eq!(std::fs::read_to_string(&settings).unwrap(), old);
-}
-
-#[test]
-fn connect_leaves_settings_that_are_not_json() {
-    let tmp = tempfile::tempdir().unwrap();
-    let bin = fake_claude(tmp.path(), 1);
-    let settings = tmp.path().join("home/.claude/settings.json");
-    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
-    std::fs::write(&settings, "{ not json").unwrap();
-    let out = connect(&bin, tmp.path(), tmp.path()).success();
-    let stdout = String::from_utf8_lossy(&out.get_output().stdout);
-    assert!(
-        stdout.contains("riff did not set the status line"),
-        "{stdout}"
-    );
-    assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{ not json");
-}
-
-#[test]
-fn connect_fails_when_claude_fails() {
-    let tmp = tempfile::tempdir().unwrap();
-    let out = connect(Path::new("false"), tmp.path(), tmp.path()).failure();
-    let stderr = String::from_utf8_lossy(&out.get_output().stderr);
-    assert!(stderr.contains("false plugin marketplace add"), "{stderr}");
-}
-
-/// The real `claude` command, with its own config directory.
-#[test]
-fn claude_installs_the_plugin_and_drops_the_old_entry() {
-    if Command::new("claude").arg("--version").output().is_err() {
-        eprintln!("skip: the claude command is not installed");
-        return;
-    }
-    let tmp = tempfile::tempdir().unwrap();
-    let config = tmp.path().join("config");
-    let claude = |args: &[&str]| {
-        let out = Command::new("claude")
-            .args(args)
-            .env("CLAUDE_CONFIG_DIR", &config)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "claude {args:?}: {out:?}");
-        String::from_utf8_lossy(&out.stdout).into_owned()
-    };
-    claude(&["mcp", "add", "--scope", "user", "riff", "--", "riff", "mcp"]);
-    for _ in 0..2 {
-        Isolated::shared()
-            .assert_riff()
-            .args(["connect", "claude"])
-            .env("RIFF_SERVER", NO_SERVER)
-            .env("XDG_DATA_HOME", tmp.path())
-            .env("CLAUDE_CONFIG_DIR", &config)
-            .current_dir(tmp.path())
-            .assert()
-            .success();
-    }
-    assert!(claude(&["plugin", "marketplace", "list"]).contains("riff"));
-    // riff is on nowhere: the user settings have no entry of the plugin.
-    let user = std::fs::read_to_string(config.join("settings.json")).unwrap();
-    assert_eq!(riff::enable::entry(&user), None, "{user}");
-    let settings = std::fs::read_to_string(config.join(".claude.json")).unwrap();
-    let settings: serde_json::Value = serde_json::from_str(&settings).unwrap();
-    assert_eq!(settings["mcpServers"], serde_json::json!({}));
 }

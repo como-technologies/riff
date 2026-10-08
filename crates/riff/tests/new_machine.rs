@@ -1,8 +1,9 @@
 //! A new machine is asked about the update by itself, once
-//! (01M3NT6WV8Q8EFZBK8DHYKW5CC). `riff connect claude` in a terminal
-//! asks and sets `update.auto`. The second time, it does not ask. With
-//! no terminal, it does not ask. A real `riff-server` with no sign-in
-//! stands in for the riff, and a fake `claude` does nothing.
+//! (01M3NT6WV8Q8EFZBK8DHYKW5CC). `riff` in a terminal asks and sets
+//! `update.auto`, before the picker. The second time, it does not ask.
+//! With no terminal, it does not ask. A real `riff-server` with no
+//! sign-in stands in for the riff. The person picks no repository, so
+//! riff starts no lead.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -20,7 +21,7 @@ async fn start_server() -> String {
     format!("http://{addr}")
 }
 
-/// A new machine: its own settings, data and a fake `claude`.
+/// A new machine: its own settings and data.
 struct Machine {
     dir: tempfile::TempDir,
     url: String,
@@ -28,19 +29,8 @@ struct Machine {
 
 impl Machine {
     async fn new() -> Machine {
-        let dir = tempfile::tempdir().unwrap();
-        let claude = dir.path().join("claude");
-        let out = Command::new("sh")
-            .args([
-                "-c",
-                "printf '#!/bin/sh\\nexit 0\\n' > \"$0\" && chmod 755 \"$0\"",
-            ])
-            .arg(&claude)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{out:?}");
         Machine {
-            dir,
+            dir: tempfile::tempdir().unwrap(),
             url: start_server().await,
         }
     }
@@ -49,14 +39,12 @@ impl Machine {
         self.dir.path().join("config.toml")
     }
 
-    /// `riff connect claude` on this machine.
-    fn connect(&self) -> Command {
+    /// `riff` on this machine.
+    fn start(&self) -> Command {
         let data = self.dir.path().join("data");
         std::fs::create_dir_all(&data).unwrap();
         let mut cmd = Isolated::shared().riff();
-        cmd.args(["connect", "claude", "--claude"])
-            .arg(self.dir.path().join("claude"))
-            .current_dir(self.dir.path())
+        cmd.current_dir(self.dir.path())
             .env("RIFF_SERVER", &self.url)
             .env("RIFF_HOME", self.dir.path())
             .env("XDG_DATA_HOME", &data)
@@ -67,7 +55,8 @@ impl Machine {
 }
 
 /// Runs `cmd` in a new pseudo-terminal with `typed` as the keys of the
-/// person, and returns what the terminal shows.
+/// person, and returns what the terminal shows. The person picks no
+/// repository, so the command fails at the end.
 fn in_a_terminal(mut cmd: Command, typed: &str) -> String {
     let pty = nix::pty::openpty(None, None).unwrap();
     let slave = std::fs::File::from(pty.slave);
@@ -88,8 +77,10 @@ fn in_a_terminal(mut cmd: Command, typed: &str) -> String {
     while let Ok(n @ 1..) = master.read(&mut buf) {
         shown.extend_from_slice(&buf[..n]);
     }
-    assert!(child.wait().unwrap().success(), "{shown:?}");
-    String::from_utf8_lossy(&shown).into_owned()
+    let shown = String::from_utf8_lossy(&shown).into_owned();
+    assert!(!child.wait().unwrap().success(), "{shown}");
+    assert!(shown.contains("you picked no repository"), "{shown}");
+    shown
 }
 
 fn has_key(settings: &Path) -> bool {
@@ -103,21 +94,20 @@ async fn a_new_machine_is_asked_once_in_a_terminal() {
 
     // No terminal: no question, and no key.
     let out = tokio::task::spawn_blocking({
-        let mut cmd = machine.connect();
+        let mut cmd = machine.start();
         move || cmd.stdin(Stdio::null()).output().unwrap()
     })
     .await
     .unwrap();
-    assert!(out.status.success(), "{out:?}");
+    assert!(!out.status.success(), "{out:?}");
     let text = format!("{out:?}");
     assert!(!text.contains(question), "{text}");
     assert!(!has_key(&machine.settings()), "{text}");
 
-    // The first time in a terminal: the question. The person says no.
-    // The scope question comes first (01M3XY2SNXQJRSH5QX82AFVM2S): the
-    // first Enter answers it. The second time riff has that answer too.
-    let cmd = machine.connect();
-    let shown = tokio::task::spawn_blocking(move || in_a_terminal(cmd, "\rn\r"))
+    // The first time in a terminal: the question. The person says no,
+    // then picks no repository.
+    let cmd = machine.start();
+    let shown = tokio::task::spawn_blocking(move || in_a_terminal(cmd, "n\r\r"))
         .await
         .unwrap();
     assert_eq!(shown.matches(question).count(), 1, "{shown}");
@@ -126,8 +116,8 @@ async fn a_new_machine_is_asked_once_in_a_terminal() {
     assert!(!update_auto(&machine.settings()).unwrap());
 
     // The second time: no question, and the answer stays.
-    let cmd = machine.connect();
-    let shown = tokio::task::spawn_blocking(move || in_a_terminal(cmd, "y\r"))
+    let cmd = machine.start();
+    let shown = tokio::task::spawn_blocking(move || in_a_terminal(cmd, "\r"))
         .await
         .unwrap();
     assert!(!shown.contains(question), "{shown}");
@@ -148,5 +138,5 @@ fn the_book_shows_the_question() {
     let part = &part[..part[5..].find("\n#").map_or(part.len(), |i| i + 5)];
     let question = format!("```text\n{}\n```", ASK_UPDATE_AUTO.trim_end());
     assert!(part.contains(&question), "{part}");
-    assert!(part.contains("```sh\nriff connect claude\n```"), "{part}");
+    assert!(part.contains("```sh\nriff\n```"), "{part}");
 }

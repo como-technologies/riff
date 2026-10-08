@@ -59,190 +59,113 @@ The plugin runs `riff hook`, `riff mcp`, `riff statusline` and
 shows the text of `riff hook`. `riff-server --help` lists the settings
 of the server.
 
-## Connect
+## What riff gives Claude
 
-`riff connect claude` adds the riff plugin to Claude Code. The plugin
-gives a session the riff tools, the riff skill, a start hook and an
-end hook. riff stays off in a session until you turn it on for the
-repository of the session.
+riff is not in your Claude config. It writes no riff MCP server,
+plugin, hook, permission rule or status line to `~/.claude` or to
+`.claude/` of a repository. A plain `claude` is plain Claude.
+
+riff gives each of these to each Claude Code session that it starts:
+your lead, and each worker. It passes them as flags of `claude`:
+
+| Flag | Gives the session |
+|---|---|
+| `--plugin-dir` | The riff plugin: the skill, the hooks, `/riff:leave` and `/riff:join`. riff writes it to `~/.local/share/riff/claude-plugin` at each start, so it always matches the `riff` binary. |
+| `--strict-mcp-config --mcp-config` | The riff tools, and the MCP servers of `workers.mcp`. No other MCP server. |
+| `--settings` | The riff status line, the permission rules of riff work, and the rules of the role. |
+
+riff also gives the session `RIFF_ON=1`. The hooks, the status line
+and `riff mcp` act only with it. So the plugin of an older riff does
+nothing in a plain `claude`.
 
 ```mermaid
 flowchart LR
-    B[riff binary] -- writes --> D["~/.local/share/riff/claude-plugin"]
-    D -- "claude plugin marketplace add" --> M[marketplace riff]
-    M -- "riff enable" --> P["plugin riff@riff<br/>on in a repository"]
+    R["riff<br/>riff workers start"] -- writes --> P[("plugin dir")]
+    R -- writes --> M[("MCP config")]
+    R --> C["claude --plugin-dir ...<br/>--strict-mcp-config --mcp-config ...<br/>--settings ...<br/>RIFF_ON=1"]
+    P --> C
+    M --> C
+    U["~/.claude<br/>.claude/ of a repository"] -. "no riff entry" .-> C
 ```
 
-Claude Code loads the plugin from that directory. After you update
-`riff`, run `riff connect claude` again.
+To use riff, start the riff with `riff` (see
+[Start the riff](#start-the-riff)). A session that you start with
+`claude` is not in the riff.
 
-In a terminal, `riff connect claude` asks one time where you want riff
-on:
+### The permission rules of riff work
 
-```text
-Where do you want riff on?
-  1) Only in this repository (default)
-  2) In each repository on this machine
-  3) Not now: I run `riff enable` later
-Your choice [1]:
-```
+In auto mode, Claude Code can block riff work: a riff tool, `riff
+workers start`, or a step of a pull request. A session cannot allow
+this itself. So riff gives each session that it starts these rules:
 
-riff keeps your answer, and asks no more. With no terminal, it asks
-nothing and changes nothing. `riff update` asks nothing too, also in a
-terminal: an update never turns riff on in more repositories, and
-never turns it off. On a machine where a release up to v0.8.0 turned
-riff on in each repository, the command asks nothing and keeps that.
-The last line of the command says where riff is on, and the command
-to change it.
+- Allow each riff tool, each `riff` command, and the steps of a pull
+  request with `gh`.
+- Deny a push to the default branch, and `gh pr merge --admin`.
 
-### Turn riff on or off for a repository
+You add no rule to a settings file.
 
-riff is off in a Claude Code session until you turn it on for the
-repository. Where riff is off, it does nothing: no call to the riff,
-no `git`, no text in the session, no tools, and an empty status line.
-A directory that is not in a git repository is always off.
+### Remove the entries of an older riff
 
-Run this in the repository:
+riff 1.3 and older wrote entries to your Claude config:
+`riff connect claude`, `riff enable` and `riff setup`. `riff` finds
+them each time that it starts. It looks in:
+
+- your user settings, `~/.claude/settings.json`;
+- `.claude/settings.json` and `.claude/settings.local.json` of each
+  clone that riff knows;
+- the plugins of Claude Code: the install of `riff@riff` and the
+  marketplace `riff`.
+
+It lists each entry and asks:
 
 ```sh
-riff enable
-```
-
-Then start a new Claude Code session there. To turn riff off again:
-
-```sh
-riff disable
-```
-
-`riff disable` changes only this repository. A session that runs
-keeps riff until it ends. To take it out now, run `/riff:leave` in it.
-
-`riff enable` writes one entry to a settings file of Claude Code:
-
-```json
-{
-  "enabledPlugins": {
-    "riff@riff": true
-  }
-}
-```
-
-Each other byte of the file stays. When the file is a symbolic link,
-riff writes the file that the link names, and shows its path.
-
-| Flag | File | Who gets riff |
-|---|---|---|
-| none, or `--local` | `.claude/settings.local.json` at the top of the repository | Only you, in this repository. |
-| `--shared` | `.claude/settings.json` at the top of the repository | Each person of the team who has riff, after you commit the file. |
-| `--global` | The user settings, `~/.claude/settings.json` | You, in each repository on this machine. |
-
-The first file that has the entry decides, in the order local,
-shared, global:
-
-```mermaid
-flowchart TD
-    G{in a git repository?} -- no --> OFF[riff is off]
-    G -- yes --> L{"local settings<br/>have the entry?"}
-    L -- yes --> V[its value decides]
-    L -- no --> S{"shared settings<br/>have the entry?"}
-    S -- yes --> V
-    S -- no --> U{"user settings<br/>have the entry?"}
-    U -- yes --> V
-    U -- no --> OFF
-```
-
-git does not track the local settings, so a linked worktree does not
-have them. In a linked worktree, riff reads the settings of the main
-clone too, and `riff enable` writes the local settings of the main
-clone. It asks git for the main clone first, and writes nothing when
-git does not know the worktree. It also writes nothing when the `.git`
-of the worktree is a symbolic link: git makes a file there, not a
-link.
-
-### Turn riff on for the team
-
-`--shared` writes the entry to the project settings. Commit the file.
-Then each person who ran `riff connect claude` has riff in each clone:
-
-```sh
-riff enable --shared
-```
-
-A person who does not want riff in a clone runs `riff disable` there.
-It writes `false` to the local settings of that clone.
-
-### Turn riff on in each repository
-
-`--global` turns riff on in each repository on this machine:
-
-```sh
-riff enable --global
-```
-
-`riff disable --global` takes that away. To keep riff out of one
-repository, run `riff disable` there.
-
-### Choose where riff is on with no question
-
-`--scope` answers the question of `riff connect claude`, for a script:
-
-```sh
-riff connect claude --scope repo
-riff connect claude --scope global
-riff connect claude --scope none
-```
-
-### See whether riff is on here
-
-`riff server` shows it in the line `repository`, with the file that
-decides and the command to change it:
-
-```sh
-riff server
+riff
 ```
 
 ```text
-repository  riff off. To turn it on: riff enable
+An older riff wrote these entries to files that git tracks:
+  /home/ada/app/.claude/settings.json: enabledPlugins."riff@riff"
+riff does not change a file that git tracks. Remove these entries in a pull request.
+An older riff wrote these entries to the Claude config:
+  /home/ada/.claude/settings.json: enabledPlugins."riff@riff"
+  /home/ada/.claude/settings.json: statusLine
+  the plugin marketplace riff
+riff gives Claude its plugin and settings at each start now, so it needs none of them. Remove them? [y/N]
 ```
 
-### After an update from a release before the opt-in
+Type `y` and press Enter to remove them. riff keeps each other entry.
+Press Enter to keep them: riff asks again at the next start.
 
-A release up to v0.8.0 turned riff on in each repository: it wrote the
-entry to the user settings. An update keeps that choice, and asks
-nothing, in a terminal and with no terminal. riff stays on in each
-repository of the machine, and you run no command.
+riff never changes a file that git tracks. When git tracks
+`.claude/settings.json` of a clone, remove the listed entries from it
+in a pull request. When all the entries are in tracked files, riff
+lists them and does not ask.
 
-To have riff only in some repositories, take the entry out, and turn
-riff on in each one:
+While an old entry stays, the sessions that riff starts are safe:
+riff turns off the old plugin `riff@riff` in their settings.
 
-```sh
-riff disable --global
-riff enable
-```
+### Move from riff 1.3 to 2.0
 
-### When the riff server is turned off in /mcp
+riff 2.0 starts each session itself. Do these steps once on each
+machine:
 
-The `/mcp` dialog of Claude Code can turn the riff server off. Claude
-Code keeps that for the project, so each new session there has no
-riff tools. The start hook tells the session, and the status line
-shows it:
+1. Update riff:
 
-```text
-riff 2a880834 (no tools: the riff server is off, turn it on in /mcp)
-```
+   ```sh
+   riff update
+   ```
 
-To turn it on, run `/mcp` in a session of the project, and turn the
-server `riff` on. A worker with no riff tools tells the lead with the
-`riff tell` command.
+2. End each Claude Code session of riff: your lead, and each worker
+   (`riff workers stop`). A session that riff 1.3 started has no
+   `RIFF_ON=1`, so its hooks do nothing now.
+3. Start the riff. Type `y` when riff asks to remove the old
+   entries:
 
-### Use another claude command
+   ```sh
+   riff
+   ```
 
-`riff connect claude` runs the `claude` command on your `PATH`.
-`--claude` names another one:
-
-```sh
-riff connect claude --claude ~/.local/bin/claude
-```
+4. Commit each `.claude/settings.json` of a clone that riff changed.
 
 ## The riff that riff uses
 
@@ -648,7 +571,7 @@ riff: `$XDG_RUNTIME_DIR/riff`, else `~/.local/state/riff`.
 ### A new machine asks about the update by itself
 
 On a machine with no `update.auto` key, for example a new or rebuilt
-machine, `riff login` and `riff connect claude` ask you once:
+machine, `riff login` and `riff` ask you once:
 
 ```text
 Update riff by itself when the riff gets a new release? [Y/n]
@@ -659,7 +582,7 @@ again. With no terminal, for example in a script, they do not ask.
 To ask again, remove the key, then run:
 
 ```sh
-riff connect claude
+riff
 ```
 
 ## Versions
@@ -3044,20 +2967,10 @@ riff 2a880834 lead
 riff dceb0b68 issue-82 blocked
 ```
 
-The short ID is the same as in `riff who`. `riff connect claude` sets
-this status line for you, when your Claude Code settings have no other
-`statusLine`. When they have one, riff leaves it, and says so. To use
-the riff status line then, put this in `~/.claude/settings.json` in
-place of your `statusLine`:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "riff statusline"
-  }
-}
-```
+The short ID is the same as in `riff who`. riff gives this status
+line to each session that it starts, in the flag settings of `claude`
+(see [What riff gives Claude](#what-riff-gives-claude)). Your settings
+file does not change.
 
 The status line changes after each answer of the session. Each time,
 it asks riff-server with the call `GET /v1/me`. The reply holds only
@@ -4225,16 +4138,15 @@ worker. Each pane runs `claude "Join the riff."` in the main worktree,
 with no Remote Control and no recap. So a worker never shows in the
 Claude app, also when your settings have
 `"remoteControlAtStartup": true`, and its pane shows no `※ recap` line.
+A worker also shows no suggested prompt: no person types into it.
 riff gives these settings on the command line of each worker. Your
 settings file does not change. Each worker joins the riff and finds its
 own work. A second `riff workers start` adds panes to the same window.
 Outside tmux, the command says that it needs tmux and starts nothing.
 
-A worker starts in the main clone. Where riff is off in the main
-clone, riff starts no worker: not with this command, not by itself,
-and not on a workers host. The command then names `riff enable`, and
-the lead gets one note when riff starts no worker by itself. See
-[Turn riff on or off for a repository](#turn-riff-on-or-off-for-a-repository).
+A worker starts in the main clone. riff gives it the plugin, the
+riff tools and `RIFF_ON=1`, as it does for the lead. See
+[What riff gives Claude](#what-riff-gives-claude).
 
 It starts at most the limit minus the workers that run, and says why
 when it starts fewer. A worker never starts workers. In Claude Code,

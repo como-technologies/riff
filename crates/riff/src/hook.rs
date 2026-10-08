@@ -387,7 +387,6 @@ impl EndInput {
     }
 }
 
-use crate::permissions::Rules;
 use crate::text::DATA_NOTE;
 
 /// Why the session started, as Claude Code gives it.
@@ -469,42 +468,6 @@ shows you as idle. Do not end this session: the lead gives you work with a reque
 server stops an idle worker when too many wait (01M3Q5A0NKY1FCS0YH6N6YD3GN). Your work on an \
 item ends at the verify request: write the state on the issue, release the item, and end your \
 turn. Do not wait for the verify.\n";
-
-/// The line of the start context that names the file that turned riff
-/// on, and how to turn it off (01M3XY2SYKG91SAB2FS1QNCZ2H). `None` when
-/// no file decides: `RIFF_ON` turned riff on.
-///
-/// ```
-/// use riff::enable::{Place, State};
-///
-/// let by = Some((Place::Local, "/r/.claude/settings.local.json".into()));
-/// let state = State { on: true, by, forced: false, repo: None };
-/// assert_eq!(
-///     riff::hook::on_line(&state).unwrap(),
-///     "- riff is on in this repository by /r/.claude/settings.local.json. To turn it off, \
-///      your user runs `riff disable` there in a terminal.\n"
-/// );
-/// assert_eq!(riff::hook::on_line(&State { by: None, forced: true, ..state }), None);
-/// ```
-pub fn on_line(state: &crate::enable::State) -> Option<String> {
-    let (_, file) = state.by.as_ref()?;
-    Some(format!(
-        "- riff is on in this repository by {}. To turn it off, your user runs `riff disable` \
-         there in a terminal.\n",
-        file.display()
-    ))
-}
-
-/// The line of the start context in a project where a person turned the
-/// riff server off in the `/mcp` dialog of Claude Code
-/// (01M3XY2T0R2Q39XYX8AYV7T0RK). The session has no riff tools, so it
-/// tells its lead with the `riff` command.
-pub const MCP_OFF_LINE: &str = "- The riff server is turned off for this project in Claude Code \
-(`disabledMcpServers` in its state file has `plugin:riff:riff`), so this session has no riff \
-tools. Tell your user to turn it on: `/mcp`, then the server riff. Until then, use the riff \
-commands with the Bash tool, for example `riff read`, and tell your lead now: run `riff tell \
-lead \"this session has no riff tools: the riff server is turned off for the project in \
-/mcp\"`.\n";
 
 /// The part of the SessionStart hook input that riff uses.
 #[derive(Debug, Default, Deserialize)]
@@ -675,35 +638,6 @@ pub fn mismatch_context(uri: Option<&SessionUri>, mismatch: &Mismatch) -> String
          the riff tools, until your user updates riff and starts this session again.\n",
     );
     out
-}
-
-/// The start line for the lead when the project lacks riff permission
-/// rules (01M3Q53RQGXMYVYGCQQMWA9380), or `None` when it has them all.
-///
-/// ```
-/// use riff::permissions::Rules;
-///
-/// let left = Rules { allow: vec!["mcp__riff".into()], deny: vec![] };
-/// let line = riff::hook::rules_line(&left, "/src/app".as_ref()).unwrap();
-/// assert!(line.contains("1 riff permission rule is missing"));
-/// assert!(line.contains("run `riff setup` in /src/app"));
-/// assert_eq!(riff::hook::rules_line(&Rules::default(), "/src/app".as_ref()), None);
-/// ```
-pub fn rules_line(missing: &Rules, top: &Path) -> Option<String> {
-    if missing.is_empty() {
-        return None;
-    }
-    let count = match missing.len() {
-        1 => "1 riff permission rule is".to_owned(),
-        n => format!("{n} riff permission rules are"),
-    };
-    Some(format!(
-        "- In the Claude Code settings of this project, {count} missing, so auto mode can \
-         block riff work. You cannot add them yourself. Tell your user in your first reply: \
-         run `riff setup` in {}, commit .claude/settings.json, and start the sessions \
-         again.\n",
-        top.display()
-    ))
 }
 
 /// The hook output that gives `context` to Claude Code.

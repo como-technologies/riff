@@ -688,9 +688,9 @@ the same files."
 )]
 impl ServerHandler for Tools {}
 
-/// The server of `riff mcp` in a directory where riff is off: it has
-/// no tool, and its instructions name `riff enable`
-/// (01M3XY2ST8R67SKTXJECAYJZRX).
+/// The server of `riff mcp` in a session that riff did not start: it
+/// has no tool, and its instructions say how to start the riff
+/// (01M3XY2ST8R67SKTXJECAYJZRX, 01M4BYH80CFW1TBGKVA2VN9ZBQ).
 struct Off;
 
 impl ServerHandler for Off {
@@ -701,7 +701,7 @@ impl ServerHandler for Off {
     }
 }
 
-/// `riff mcp` in a directory where riff is off. It serves a server with
+/// `riff mcp` in a session that riff did not start. It serves a server with
 /// no tool, whose instructions are [`text::MCP_OFF`], over stdio until
 /// the agent tool closes the stream. It makes no call to
 /// `riff-server`, and keeps no file of the session.
@@ -865,7 +865,6 @@ impl Tools {
             tmux: crate::terminal::Tmux::from_env(),
             claude: "claude".into(),
             gh: Arc::new(crate::pr::Gh::default()),
-            off_told: false.into(),
         };
         tokio::spawn(crate::rollout::run(env))
     }

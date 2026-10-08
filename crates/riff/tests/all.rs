@@ -64,7 +64,6 @@ mod rollout;
 mod sandbox;
 mod secrets;
 mod session;
-mod setup;
 mod signed;
 mod smoke;
 mod start;

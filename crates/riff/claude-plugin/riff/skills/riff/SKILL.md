@@ -329,8 +329,7 @@ private advisory.
 A live check of new code, for example a new plugin command, hook or
 skill text, runs in a dev session: `just dev` in the worktree. It needs
 no release and no update of the machine. Never run `riff update`,
-`cargo install` of riff, `just install` or `riff connect` in a
-worktree.
+`cargo install` of riff or `just install` in a worktree.
 
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The verifier names it in the result.

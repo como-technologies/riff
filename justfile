@@ -146,8 +146,9 @@ serve:
 # The installed riff and plugin stay the same. The trap stops the server also on Ctrl-C.
 # RIFF_HOME keeps the settings, local files and secrets of the tree in target/dev-home
 # (01M3MY2KWKBJCQ0BCNC6533RBW), never in the riff of the machine.
-# RIFF_ON=1 turns riff on for the dev session: the settings of the installed plugin do not
-# count for the plugin of the tree (01M3XY2SWEK0N8MC3MY4TMYTD3).
+# RIFF_ON=1 turns riff on for the dev session (01M3XY2SWEK0N8MC3MY4TMYTD3). The session gets the
+# plugin, the riff MCP server and the status line of the tree as flags, as riff gives them
+# (01M4BYH7Y3P1JMQR51TWFGVZ39).
 # Test this tree without the shared riff: its riff-server on a free port, Claude Code with its plugin. It loads .env
 dev *ARGS:
     #!/usr/bin/env bash
@@ -170,7 +171,8 @@ dev *ARGS:
     done
     echo "The riff of this tree: $RIFF_SERVER. The log of its server: $log"
     PATH="$tree/target/debug:$PATH" claude --plugin-dir "$tree/crates/riff/claude-plugin/riff" \
-        --settings '{"enabledPlugins":{"riff@riff":false}}'
+        --strict-mcp-config --mcp-config '{"mcpServers":{"riff":{"command":"riff","args":["mcp"]}}}' \
+        --settings '{"statusLine":{"type":"command","command":"riff statusline"}}'
 
 # Set up the GitHub repository for pull requests: auto-merge, squash only, the ruleset on main
 github REPO="como-technologies/riff":

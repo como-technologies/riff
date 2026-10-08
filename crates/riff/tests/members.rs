@@ -141,7 +141,7 @@ async fn the_owner_invites_lists_and_removes() {
         answer.contains(&format!("export RIFF_SERVER={}'", api.base())),
         "{answer}"
     );
-    assert!(answer.ends_with("\nriff connect claude"), "{answer}");
+    assert!(answer.ends_with("\nriff login"), "{answer}");
     let bob_key = Key::generate().thumbprint();
     let bob = service
         .admit("bob@gmail.com", false, &bob_key)

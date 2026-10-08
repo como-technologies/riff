@@ -134,22 +134,27 @@ pub fn session_name(repo: &str) -> String {
 }
 
 /// The flags of `claude` for the lead: Remote Control, so that the
-/// person can answer the lead from the Claude app, and the file of its
-/// flag settings, when it has one ([`write_lead_settings`]).
+/// person can answer the lead from the Claude app, the plugin and the
+/// MCP config of riff ([`crate::launch`], 01M4BYH7Y3P1JMQR51TWFGVZ39),
+/// and the file of its flag settings ([`write_lead_settings`]).
 ///
 /// ```
-/// assert_eq!(riff::start::lead_args(None), ["--remote-control"]);
+/// use riff::launch::Given;
+///
+/// let given = Given { plugin: "/d/riff".into(), mcp: "/s/workers-mcp.json".into() };
 /// assert_eq!(
-///     riff::start::lead_args(Some("/s/lead.json".as_ref())),
-///     ["--remote-control", "--settings", "/s/lead.json"],
+///     riff::start::lead_args(&given, "/s/lead.json".as_ref()),
+///     [
+///         "--remote-control", "--plugin-dir", "/d/riff", "--strict-mcp-config",
+///         "--mcp-config", "/s/workers-mcp.json", "--settings", "/s/lead.json",
+///     ],
 /// );
 /// ```
-pub fn lead_args(settings: Option<&Path>) -> Vec<String> {
+pub fn lead_args(given: &crate::launch::Given, settings: &Path) -> Vec<String> {
     let mut args = vec!["--remote-control".to_owned()];
-    if let Some(settings) = settings {
-        args.push("--settings".to_owned());
-        args.push(settings.to_string_lossy().into_owned());
-    }
+    args.extend(crate::launch::args(given));
+    args.push("--settings".to_owned());
+    args.push(settings.to_string_lossy().into_owned());
     args
 }
 
@@ -166,13 +171,12 @@ pub fn lead_settings_file(dir: &Path, name: &str) -> PathBuf {
     dir.join("lead").join(format!("{name}.json"))
 }
 
-/// Writes the permission rules of the profile of the lead to `file`,
-/// as flag settings of `claude` (01M4BT33R71HXAVQGHFD4ZFGR5,
-/// 01M4BW2SW96JS62ZYQNW6804TV). A file
-/// keeps the command of the tmux session short: the rules can be many.
+/// Writes the flag settings of the lead to `file`: the status line and
+/// `rules` ([`crate::launch::settings`], 01M4BT33R71HXAVQGHFD4ZFGR5,
+/// 01M4BW2SW96JS62ZYQNW6804TV). A file keeps the command of the tmux
+/// session short: the rules can be many.
 pub fn write_lead_settings(file: &Path, rules: &crate::permissions::Rules) -> Result<()> {
-    let args = crate::role_rules::flag(&[], rules);
-    let json = args.get(1).context("no flag settings")?;
+    let json = serde_json::Value::Object(crate::launch::settings(rules)).to_string();
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     }
@@ -193,18 +197,35 @@ pub fn lead_name(repo: &str) -> String {
 /// (01M4C4WQVZR49FDGPJMFW22GTM).
 ///
 /// ```
+/// use riff::launch::Given;
+///
+/// let given = Given { plugin: "/d/riff".into(), mcp: "/s/m.json".into() };
 /// assert_eq!(
-///     riff::start::lead_command("/bin/riff".as_ref(), "lead-como-riff", "claude".as_ref(), None),
-///     "'/bin/riff' 'workers' 'lead' '--name' 'lead-como-riff' 'claude' '--remote-control'",
+///     riff::start::lead_command(
+///         "/bin/riff".as_ref(),
+///         "lead-como-riff",
+///         "claude".as_ref(),
+///         &given,
+///         "/s/l.json".as_ref(),
+///     ),
+///     "'/bin/riff' 'workers' 'lead' '--name' 'lead-como-riff' 'claude' '--remote-control' \
+///      '--plugin-dir' '/d/riff' '--strict-mcp-config' '--mcp-config' '/s/m.json' \
+///      '--settings' '/s/l.json'",
 /// );
 /// ```
-pub fn lead_command(riff: &Path, name: &str, claude: &Path, settings: Option<&Path>) -> String {
+pub fn lead_command(
+    riff: &Path,
+    name: &str,
+    claude: &Path,
+    given: &crate::launch::Given,
+    settings: &Path,
+) -> String {
     let wrapper = [riff.to_string_lossy().into_owned()]
         .into_iter()
         .chain(["workers", "lead", "--name", name].map(str::to_owned));
     wrapper
         .chain(std::iter::once(claude.to_string_lossy().into_owned()))
-        .chain(lead_args(settings))
+        .chain(lead_args(given, settings))
         .map(|a| quote(&a))
         .collect::<Vec<_>>()
         .join(" ")

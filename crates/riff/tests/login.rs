@@ -170,8 +170,8 @@ async fn a_call_with_an_ended_sign_in_says_to_run_riff_login() {
     assert!(format!("{error:#}").contains("run riff login"), "{error:#}");
 }
 
-/// `riff connect claude` signs in only at a riff with sign-in, and only
-/// when this machine has no sign-in there (01M3JZN1ZZED3FXQEFNJ4KVCN5).
+/// `riff` signs in only at a riff with sign-in, and only when this
+/// machine has no sign-in there (01M4BYH84X7B2D9EFYGP11GP8Y).
 #[tokio::test]
 async fn ensure_signs_in_only_when_needed() {
     let (_, api) = start().await;
@@ -330,7 +330,7 @@ async fn a_new_riff_at_the_same_url_asks_for_riff_login() {
     next.who(&ada(), false).await.unwrap();
 }
 
-/// After a new riff at the same URL, `riff connect claude` signs in
+/// After a new riff at the same URL, `riff` signs in
 /// again: the old sign-in does not count.
 #[tokio::test]
 async fn ensure_signs_in_again_at_a_new_riff() {

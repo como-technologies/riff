@@ -21,19 +21,70 @@
   `RIFF_SERVER`. The riff of the first machine has sign-in with the
   OAuth client of the person, and the person signs in on each machine
   (01M3JZN229S3YA3BR6GN5H3MTY).
-- **01M3MEHCGZ4AG4C2A77J5HA3P7** The book page "Join a Riff" has the
+- **01M3MEHCGZ4AG4C2A77J5HA3P7** Replaced by 01M4BYH8BV4YQDD6D73YV3RHPH.
+- **01M4BYH8BV4YQDD6D73YV3RHPH** The book page "Join a Riff" has the
   steps to join a riff with sign-in: install `riff`, put the address of
-  the riff in `RIFF_SERVER`, and run `riff connect claude`. The steps
-  are the same for a second machine of the owner and for a person that
-  the owner invites. The page replaces "Add a Machine".
-- **R44** Only Claude Code is supported for now. `riff connect claude`
-  installs a Claude Code plugin: the MCP server, a skill, and a start
-  hook that wakes the session.
+  the riff in `RIFF_SERVER`, run `riff login`, then start the riff with
+  `riff`. The steps are the same for a second machine of the owner and
+  for a person that the owner invites.
+- **R44** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
+- **01M4BYH7Y3P1JMQR51TWFGVZ39** riff is not in the Claude config of the
+  person: no riff MCP server, plugin, hook, permission rule or status
+  line in `~/.claude` or in `.claude/` of a repository. A plain `claude`
+  is plain Claude. Each start of `claude` by riff (the lead, each
+  worker) passes `--plugin-dir` with the plugin, `--strict-mcp-config`
+  and `--mcp-config` with the riff MCP server, and `--settings` with the
+  status line and the permission rules of the role. riff writes the
+  plugin at each start to `$XDG_DATA_HOME/riff/claude-plugin`, else
+  `~/.local/share/riff/claude-plugin`. The plugin has no MCP server.
+- **01M4BYH80CFW1TBGKVA2VN9ZBQ** riff gives each `claude` that it starts
+  `RIFF_ON=1`. The hooks, `riff statusline` and `riff mcp` act only with
+  it. So a plain `claude` with the plugin of an older release does
+  nothing of riff.
+- **01M4BYH82P03FTXZBYC72BJ6F3** `riff` finds the riff entries that
+  older releases wrote to the Claude config:
+  `enabledPlugins."riff@riff"`, `extraKnownMarketplaces.riff`, the
+  `statusLine` of `riff statusline` and each rule of a riff tool or a
+  `riff` command, in the user settings and in `.claude/settings.json`
+  and `.claude/settings.local.json` of each clone that riff knows (there
+  also each rule that `riff setup` wrote), the install of `riff@riff`
+  and the marketplace `riff`. It lists them, and asks `[y/N]`. Only
+  `y` or `yes` is yes: Enter is no. On yes, it removes them with
+  `claude plugin uninstall`, `claude plugin marketplace remove` and an
+  edit of each settings file. It keeps each other entry. On no, it
+  asks again at the next start.
+- **01M4CMJPGS613K2FHQ6DKSY2WJ** riff never changes a file that git
+  tracks (`git ls-files --error-unmatch`). It lists the riff entries of
+  a tracked `.claude/settings.json` apart, and says to remove them in a
+  pull request. It does not uninstall a `project` install of
+  `riff@riff` whose `.claude/settings.json` git tracks. It changes only
+  the user config and untracked files, for example
+  `.claude/settings.local.json`. With only tracked entries, it does not
+  ask.
+- **01M4CMN13D97R2JKHYGFSAM313** The flag settings of the lead and of
+  each worker set `enabledPlugins."riff@riff"` to `false`. So the
+  plugin of an older release that the Claude config still turns on
+  does not run next to `--plugin-dir`.
+- **01M4BYH84X7B2D9EFYGP11GP8Y** `riff connect`, `riff enable`, `riff
+  disable` and `riff setup` are gone. `riff connect` stays as a hidden
+  command that does nothing, so that `riff update` of riff 1.3, which
+  runs it after the install, ends with success. `riff` signs in when the
+  riff has sign-in and this machine has no sign-in for it, as `riff
+  connect claude` did.
+- **01M4BYH874WQ16Q0337WQA8AMV** The flag settings of each session that
+  riff starts hold the rules of riff work: allow each riff tool
+  (`mcp__riff`), `Bash(riff)`, `Bash(riff *)`, the pull request steps
+  (`gh pr create`, `gh pr merge * --auto --squash`, `gh pr comment`, `gh
+  pr view`) and the statuses of the GitHub repository; deny a push to
+  the default branch and `gh pr merge --admin`.
+- **01M4BYH89ESJWCVY7Q6Y2F6E8Y** The lead gets the same MCP config as
+  the workers: the riff MCP server and the servers of `workers.mcp`.
+- **01M4BYH8E39RTG938XPETZHPP6** The release after 1.3 is 2.0.0. It has
+  no code for the old start. The book has "Move from riff 1.3 to 2.0",
+  and the release notes of 2.0.0 link it.
 - **R52** The plugin files live in the riff repository. The `riff`
   binary carries a copy of them, so the plugin matches the binary.
-- **R53** `riff connect claude` writes the plugin as a local marketplace
-  and installs it with the `claude` command. The same command updates
-  the plugin.
+- **R53** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
 - **R54** A new session can start in any directory of a repository.
   The start hook and the skill teach this start routine: read the
   repository thread, claim a work item, make a worktree for it, and
@@ -257,106 +308,34 @@
   work". In the main worktree, the context has no worktree line.
 - **01M3JN21YJSP7HM1JPS1TCFM9W** The update of each machine pulls each
   clone of the project with `git pull --ff-only`.
-- **R74** `riff connect claude` writes the plugin to
-  `$XDG_DATA_HOME/riff/claude-plugin`. Without `XDG_DATA_HOME`, it uses
-  `~/.local/share/riff/claude-plugin`.
-- **R75** `riff connect claude` removes the user-scope MCP server entry
-  `riff`, if it exists. The plugin gives the riff tools instead.
+- **R74** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
+- **R75** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
 - **R76** Replaced by 01M3XY2SNXQJRSH5QX82AFVM2S.
-- **R77** `riff connect claude` does not need a riff session or a git
-  repository. It works in any directory.
-- **01M3XY2SHGXQR9NVXF7QJBN09T** riff is off in a Claude Code session
-  until a person turns it on for the repository of the session. The
-  state is the entry `riff@riff` in the key `enabledPlugins` of the
-  Claude Code settings. The first file that has the entry decides, in
-  this order: the local settings of the repository
-  (`.claude/settings.local.json` at its top), its project settings
-  (`.claude/settings.json`), the user settings. A directory that is
-  not in a git repository is off.
+- **R77** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
+- **01M3XY2SHGXQR9NVXF7QJBN09T** Replaced by 01M4BYH80CFW1TBGKVA2VN9ZBQ.
 - **01M3XY2T2YEV7GT7DKJHSMMHYR** In a linked worktree, riff also reads
   the local settings and the project settings of the main clone. The
   local settings come before the project settings.
-- **01M3XY2SKQ27K3TE4NV28FHTVV** `riff enable` writes the entry `true`
-  to the local settings of the repository of the working directory:
-  in a linked worktree, to those of the main clone. `--shared` writes
-  it to the project settings. `--global` writes it to the user
-  settings. `riff disable` removes the entry from the same file. With
-  no flag, when another file then still turns riff on, `riff disable`
-  writes `false` to the local settings. Each command changes only the
-  entry of riff, as text: each other byte of the file stays. It
-  changes no other file, and says whether riff is on in the working
-  directory. With `--global`, the answer of
-  01M3XY2SNXQJRSH5QX82AFVM2S becomes `global` or `none`.
-- **01M3YCGKGP3VC93S8FA1G4K3QK** `riff enable` and `riff disable`
-  write through a symbolic link, and name the real path of the file
-  that they wrote. Before they write the local settings of the main
-  clone of a linked worktree, git must confirm the worktree: its
-  common directory (`git rev-parse --git-common-dir`) is the `.git` of
-  that main clone, and the file `gitdir` of the entry of the worktree
-  in the main clone names the `.git` file of the tree. If not, the
-  command writes nothing, and says why.
-- **01M3ZGT8ST7HCK6J7VZJ09XE0M** The `.git` of a linked worktree is
-  the file that the entry of the worktree names, not a symbolic link
-  to it. When `TOP/.git` is a symbolic link, `riff enable` and
-  `riff disable` write nothing, and say why. The check of the `gitdir`
-  file follows no link at the last part of a path.
-- **01M3XY2SNXQJRSH5QX82AFVM2S** `riff connect claude` adds the
-  marketplace to Claude Code with the `claude` command on the PATH.
-  `--claude PATH` names another one. It installs the plugin in no
-  scope, and turns riff on nowhere by itself. In a terminal, it asks
-  one time where the person wants riff on: only in this repository
-  (the default), in each repository on this machine, or not now.
-  `--scope repo|global|none` gives the answer with no question. riff
-  keeps the answer in its settings, `connect.scope`. With an answer
-  there, or with no terminal, it asks nothing and turns riff on
-  nowhere.
-- **01M3XY2SR3VJZAKEPC6CBCS292** An update never turns riff on for
-  each repository: only the answer `global` writes the entry `true` to
-  the user settings. `riff update` asks nothing, also in a terminal:
-  it runs `riff connect claude` with no terminal. With no terminal,
-  `riff connect claude` asks nothing, and a new install stays off. An
-  install of a release up to v0.8.0 is an old install: the user
-  settings have the entry `true`, because that release installed the
-  plugin in the user scope, and riff has no answer. Its choice is each
-  repository. On an old install `riff connect claude` asks nothing,
-  with a terminal and with no terminal: it keeps the entry, records
-  the answer `global`, and says in one line that riff stays on in each
-  repository and that `riff disable --global` changes it. So no person
-  does a thing at the update from v0.8.0. With `--scope repo` or
-  `--scope none`, `riff connect claude` removes that entry, and names
-  each repository of the Claude Code state file whose settings have a
-  riff permission rule, with the command `riff enable`.
-- **01M3XY2ST8R67SKTXJECAYJZRX** Where riff is off, each entry of the
-  plugin does nothing: `riff hook` and `riff statusline` make no call
-  to the server, run no `git`, and print nothing. `riff mcp` serves no
-  tool, makes no call to the server, and names `riff enable` in its
-  instructions. A `riff mcp` that an update starts again serves a
-  session that runs, so it goes on.
+- **01M3XY2SKQ27K3TE4NV28FHTVV** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
+- **01M3YCGKGP3VC93S8FA1G4K3QK** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
+- **01M3ZGT8ST7HCK6J7VZJ09XE0M** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
+- **01M3XY2SNXQJRSH5QX82AFVM2S** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
+- **01M3XY2SR3VJZAKEPC6CBCS292** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
+- **01M3XY2ST8R67SKTXJECAYJZRX** In a session that riff did not start
+  (01M4BYH80CFW1TBGKVA2VN9ZBQ), each entry of the plugin does nothing:
+  `riff hook` and `riff statusline` make no call to the server, run no
+  `git`, and print nothing. `riff mcp` serves no tool, makes no call to
+  the server, and says in its instructions how to start the riff. A
+  `riff mcp` that an update starts again serves a session that runs, so
+  it goes on.
 - **01M3XY2SWEK0N8MC3MY4TMYTD3** `RIFF_ON=1` turns riff on for the
-  processes that have it, also outside a repository. `just dev` and
-  the helper crate `isolated` set it. A worker that such a process
-  starts gets `RIFF_ON=1`.
-- **01M3XY2SYKG91SAB2FS1QNCZ2H** The state is obvious. The last line
-  of `riff connect claude` says where riff is on, or
-  `riff is installed but off`, with the command to change it.
-  `riff server` shows `riff on` or `riff off` for the working
-  directory, the file that decides, and the command to change it. The
-  start context names the file that turned riff on, and
-  `riff disable`.
-- **01M3XY2T0R2Q39XYX8AYV7T0RK** When the Claude Code state file has
-  `plugin:riff:riff` in `disabledMcpServers` of the project, a person
-  turned the riff server off there in `/mcp`. The start context then
-  says that the session has no riff tools, how to turn the server on,
-  and to tell the lead with `riff tell lead`. The status line says it
-  too.
-- **01M3XY2T542DCHBN95H9PX4AGQ** riff starts no worker where riff is
-  off in the main clone of the repository: `riff workers start`
-  starts nothing and names `riff enable`, and the rollout of the lead
-  and a workers host start none.
-- **01M3YCGKKRDNFC338K1JSK30JK** When riff is off in the main clone of
-  the lead, the rollout posts one note to the lead: the host, the
-  reason and `riff enable`. The next note comes only after riff was on
-  there again.
+  processes that have it, also outside a repository. `just dev` and the
+  helper crate `isolated` set it. Each worker gets it
+  (01M4BYH80CFW1TBGKVA2VN9ZBQ).
+- **01M3XY2SYKG91SAB2FS1QNCZ2H** Replaced by 01M4BYH80CFW1TBGKVA2VN9ZBQ.
+- **01M3XY2T0R2Q39XYX8AYV7T0RK** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
+- **01M3XY2T542DCHBN95H9PX4AGQ** Replaced by 01M4BYH80CFW1TBGKVA2VN9ZBQ.
+- **01M3YCGKKRDNFC338K1JSK30JK** Replaced by 01M4BYH80CFW1TBGKVA2VN9ZBQ.
 - **01M3NJDSQ23FFRMH8ZD4GC57WY** `riff --help` lists the commands that
   people use under the headings Get started, Work in the riff, Pull
   requests, Lead and Members, in that order. Each command has one
@@ -854,7 +833,7 @@
   the same worktree on a free local port. It never talks to the shared
   riff. `just dev` changes nothing that is installed.
 - **01M3MRDEVR5VPPV6B1BDDVYSBG** A worker never runs `riff update`,
-  `cargo install` of riff, `just install` or `riff connect`. The tests
+  `cargo install` of riff or `just install`. The tests
   run the binaries of the worktree with a home of their own, so the
   installed binaries stay the same.
 - **01M3MY2KWKBJCQ0BCNC6533RBW** A test run and `just dev` never touch
@@ -1629,8 +1608,8 @@
   riff once.
 - **01M3K0Q892KWM76R9DJC1P37JA** `riff update` updates riff on a
   machine: it installs `riff` and `riff-server` of a release from the
-  repository with `cargo`, then updates the plugin with
-  `riff connect claude`.
+  repository with `cargo`. Each `claude` that riff starts after it
+  gets the new plugin.
   When the server on the same machine runs another build than the new
   `riff-server`, it tells the person to start `riff-server` again. It
   does not restart it. That server is the server of `riff` when it is
@@ -2177,39 +2156,19 @@
   `riff top` keeps the titles and the board of its last good read of
   `gh`.
 - **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
-  line of a Claude Code session: `riff`, the short session ID of
-  `riff who`, `lead`, each claim, and `blocked`. It is the
-  `statusLine` command in the Claude Code settings. A plugin cannot
-  set it. It never fails, and it waits at most 2 seconds for
-  riff-server.
+  line of a Claude Code session: `riff`, the short session ID of `riff
+  who`, `lead`, each claim, and `blocked`. It is the `statusLine`
+  command in the flag settings of each session that riff starts
+  (01M4BYH7Y3P1JMQR51TWFGVZ39). It never fails, and it waits at most 2
+  seconds for riff-server.
 - **01M3T5GFVS8NMA992KHZN4VE17** `riff statusline` calls
   `GET /v1/me`, not `who`. The reply holds only the session of the
   caller: its state, claims and status, and the build of the server.
   The call changes nothing: it is not a call of the session, and it
   adds no session.
-- **01M3JFFJEW8BSRBZ9JQPKT0S8Z** `riff connect claude` adds the riff
-  status line to the user settings of Claude Code
-  (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)
-  when they have no `statusLine`. It keeps each other key, its place
-  and its format, and writes the file only when it changes. When
-  another `statusLine` is set, or the settings are not a JSON object,
-  it changes nothing and names the manual how-to.
-- **01M3Q53RNDJBDHVDFHJ9HCX9S1** `riff setup` adds the Claude Code
-  permission rules of riff work to the project settings,
-  `.claude/settings.json` at the top of the repository. Allow: each
-  riff tool (`mcp__plugin_riff_riff`, `mcp__riff`), `Bash(riff)`,
-  `Bash(riff *)`, and the pull request steps (`gh pr create`, `gh pr
-  merge --auto --squash`, `gh pr comment`, `gh pr view`, and the
-  statuses API of a GitHub `origin`). Deny: a push to the default
-  branch (`origin/HEAD`, else `main`) and `gh pr merge --admin`. It
-  adds only the missing rules. A rule in the user, project or local
-  settings counts as there. It keeps each other rule and key in its
-  order, and writes the file only when it changes. `riff setup
-  --check` changes nothing, names each missing rule, and exits with
-  status 1 when a rule is missing.
-- **01M3Q53RQGXMYVYGCQQMWA9380** When the project lacks a riff
-  permission rule, the start hook of the lead tells the lead to ask
-  its user to run `riff setup`.
+- **01M3JFFJEW8BSRBZ9JQPKT0S8Z** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
+- **01M3Q53RNDJBDHVDFHJ9HCX9S1** Replaced by 01M4BYH874WQ16Q0337WQA8AMV.
+- **01M3Q53RQGXMYVYGCQQMWA9380** Replaced by 01M4BYH874WQ16Q0337WQA8AMV.
 - **R41** A session joins the thread `OWNER/REPO` by default.
 - **R42** A cloud session uses the host `cloud`.
 - **R100** A session is a cloud session when `CLAUDE_CODE_REMOTE` is
@@ -2712,11 +2671,7 @@
 - **01M3JZN1XQVVNVD0MJVM8J91HC** A `riff-server` with an OAuth client
   (`RIFF_OIDC_CLIENT_ID`) requires sign-in, as with
   `--require-sign-in`.
-- **01M3JZN1ZZED3FXQEFNJ4KVCN5** `riff connect claude` installs the
-  plugin, then runs `riff login` when the riff has sign-in and this
-  machine has no sign-in for it. An old sign-in
-  (01M3JNVBRS35B3CD67367JF7SJ) does not count. When riff cannot check
-  or the sign-in fails, the command warns and says what to do.
+- **01M3JZN1ZZED3FXQEFNJ4KVCN5** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
 - **R15** `riff-server` accepts the accounts of its allowed domains, and
   the people of 01M3JN3AFA2SAX0CEC1Y6E4NM5. The allowed domains are a
   setting. The default is `comotechnologies.io`.
@@ -2740,7 +2695,7 @@
 - **01M3MEF4B33Z6WVJMDP29C7SS2** `riff invite EMAIL` prints the public
   address of the riff (the `--public-url` of `riff-server`) and the
   lines that the person runs to join: install `riff`, set
-  `RIFF_SERVER` to the address, and `riff connect claude`. The lines
+  `RIFF_SERVER` to the address, and `riff login`. The lines
   hold no secret.
 - **01M3MEFG6F102T1H8DFJ38EJ4A** The book page "Start a Team Riff"
   starts a riff with sign-in for a team, on a Linux host that the team
@@ -2889,7 +2844,7 @@
   `riff-server` refused one time only. It keeps the sign-in of the
   machine as ended, with its user and with no token. Then each `riff`
   process says that the sign-in ended with no call to `/v1/token`,
-  until `riff login`. `riff connect claude` signs in again.
+  until `riff login`. `riff` signs in again.
 - **01M3MX4V43SF2XFCZWANHD19WV** `riff-server` checks no version on
   `/v1/token` and `/v1/sign-in`, and `riff` checks none on their
   replies. So `riff login` and a refresh work when the versions do not
@@ -3025,6 +2980,10 @@
 - **01M3MN0D429T4Q80DYBE9S9XR7** `riff workers start` runs each worker
   with the flag settings `{"awaySummaryEnabled":false}` too. So a worker
   shows no recap of Claude Code. The user settings file does not change.
+- **01M4CGFMX16JY8W2P9JJDDTSFC** Each worker and each verifier gets
+  `"promptSuggestionEnabled": false` in its flag settings: no person
+  types into a worker, so it shows no suggested prompt. The lead keeps
+  the setting of the person.
 - **01M3ZJ1FAF7EJXP9CSET8ZY1K3** `riff workers start` turns off each
   installed plugin with a language server in the flag settings of each
   worker: `"enabledPlugins": {"PLUGIN": false}`. A plugin has a
@@ -3957,7 +3916,7 @@
   machine, and install nothing. The default is off. `riff update
   --auto` with no value shows the setting.
 - **01M3NT6WV8Q8EFZBK8DHYKW5CC** On a machine with no `update.auto`
-  key, `riff login` and `riff connect claude` ask the person once in a
+  key, `riff login` and `riff` ask the person once in a
   terminal: `Update riff by itself when the riff gets a new release?
   [Y/n]`. The answer sets the key: `n` or `no` is off, each other
   answer is on. With no terminal, they do not ask.
@@ -3979,8 +3938,8 @@
   the local files of riff, not in the working directory of the process
   that started it. It gets the place of that process, so the message
   to the lead finds the repository also when that directory is gone.
-- **01M3NT2Q30P9GCQGENWMP1NKN2** `riff update` runs `cargo`, `git`,
-  `riff connect` and `riff-server --version` in the home directory,
+- **01M3NT2Q30P9GCQGENWMP1NKN2** `riff update` runs `cargo`, `git`
+  and `riff-server --version` in the home directory,
   else in `/`. So it works in a removed directory.
 - **01M3NT2PYFHPB0C19Q2QB2AE6W** When the working directory of an
   update in the background is missing, the update stops before `cargo`

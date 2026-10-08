@@ -14,7 +14,7 @@
 //! | `GH_TOKEN`, `GITHUB_TOKEN` | removed: the `gh` of the machine has no sign-in in a test, so no test reaches the forge |
 //! | `RIFF_SERVER` | [`DEAD_SERVER`]: nothing listens there |
 //! | `RIFF_MACHINE` | [`MACHINE`]: the numbers of a machine with free memory and no load, so no test depends on the machine that runs it (01M3WFZ08D8VT9KD6HXY09NHSE) |
-//! | `RIFF_ON` | `1`: riff is on in each directory, so a test of a hook needs no repository with `riff enable`. A test of the state removes it (01M3XY2SWEK0N8MC3MY4TMYTD3) |
+//! | `RIFF_ON` | `1`: riff is on, as in a session that riff started, so a test of a hook needs no start by riff. A test of the state removes it (01M3XY2SWEK0N8MC3MY4TMYTD3) |
 //! | `RIFF_HOME` | a dir of its own: riff keeps its settings, local files and secrets there, and never opens the OS keyring |
 //! | `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR`, `TMPDIR` | dirs of its own |
 //! | `DBUS_SESSION_BUS_ADDRESS` | a bus that does not exist, so each call to the OS keyring fails |
@@ -28,7 +28,7 @@
 //! The `TMPDIR` of a worker is under the home of the person, and a home
 //! can be a git repository. A plain temp dir then is in that repository,
 //! and a test of "no repository" finds it, or writes to it, for example
-//! `riff enable` in a dir of the test. Three guards keep each test out
+//! the settings of a clone in a dir of the test. Three guards keep each test out
 //! of it:
 //!
 //! - `.cargo/config.toml` sets `TMPDIR` to `/var/tmp` for each cargo

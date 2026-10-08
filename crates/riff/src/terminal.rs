@@ -99,7 +99,10 @@ pub const WORKERS_WINDOW: &str = "riff-workers";
 pub const JOIN: &str = "Join the riff.";
 /// The flag settings of a worker: no Remote Control, also when the
 /// user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), no recap
-/// (01M3MN0D429T4Q80DYBE9S9XR7), and each plugin of `lsp` off: the
+/// (01M3MN0D429T4Q80DYBE9S9XR7), no suggested prompt
+/// (01M4CGFMX16JY8W2P9JJDDTSFC), the riff status line
+/// (01M4BYH7Y3P1JMQR51TWFGVZ39), the plugin of an older riff off
+/// (01M4CMN13D97R2JKHYGFSAM313), and each plugin of `lsp` off: the
 /// plugins with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3). A rule
 /// denies `riff cloud` (01M4262DY8NN30SC4REYX2G9DV).
 ///
@@ -107,25 +110,28 @@ pub const JOIN: &str = "Join the riff.";
 /// use riff::terminal::worker_settings;
 /// assert_eq!(
 ///     worker_settings(&[]),
-///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}"#,
+///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"riff@riff":false}}"#,
 /// );
 /// assert_eq!(
 ///     worker_settings(&["rust-analyzer-lsp@claude-plugins-official".into()]),
-///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@claude-plugins-official":false}}"#,
+///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"riff@riff":false,"rust-analyzer-lsp@claude-plugins-official":false}}"#,
 /// );
 /// ```
 pub fn worker_settings(lsp: &[String]) -> String {
-    let mut settings = serde_json::json!({
+    let off: serde_json::Map<String, serde_json::Value> =
+        std::iter::once(crate::old_config::PLUGIN)
+            .chain(lsp.iter().map(String::as_str))
+            .map(|p| (p.to_owned(), false.into()))
+            .collect();
+    serde_json::json!({
         "remoteControlAtStartup": false,
         "awaySummaryEnabled": false,
+        "promptSuggestionEnabled": false,
+        "statusLine": crate::launch::statusline(),
         "permissions": {"deny": ["Bash(riff cloud)", "Bash(riff cloud *)"]},
-    });
-    if !lsp.is_empty() {
-        let off: serde_json::Map<String, serde_json::Value> =
-            lsp.iter().map(|p| (p.clone(), false.into())).collect();
-        settings["enabledPlugins"] = off.into();
-    }
-    settings.to_string()
+        "enabledPlugins": off,
+    })
+    .to_string()
 }
 
 /// `args` of `claude` with its flag settings changed by `edit`. It
@@ -195,6 +201,8 @@ pub struct Program {
 pub struct Claude<'a> {
     /// The `claude` program.
     pub bin: &'a Path,
+    /// The root of the plugin (see [`crate::plugin::root`]).
+    pub plugin: &'a Path,
     /// The file with the only MCP servers of the worker (see
     /// [`crate::worker_mcp`]).
     pub mcp: &'a Path,
@@ -270,8 +278,9 @@ impl Program {
 
     /// A worker: `claude "Join the riff."` through `riff workers run`
     /// (see [`crate::worker`]) in the main worktree, with
-    /// `RIFF_WORKER=1`, its riff session ID in `RIFF_SESSION`, and the
-    /// flags of `claude` (see [`Claude`]).
+    /// `RIFF_WORKER=1`, `RIFF_ON=1`, its riff session ID in
+    /// `RIFF_SESSION`, and the flags of `claude` (see [`Claude`] and
+    /// [`crate::launch`]).
     /// With `slice`, the wrapper runs `claude` in a scope of that slice
     /// (see [`crate::limits`]).
     /// `--mcp-config` takes more than one value, so `--settings` comes
@@ -281,6 +290,7 @@ impl Program {
     /// use riff::terminal::{Claude, Program};
     /// let claude = Claude {
     ///     bin: "claude".as_ref(),
+    ///     plugin: "/d/riff".as_ref(),
     ///     mcp: "/run/riff/workers-mcp.json".as_ref(),
     ///     settings: r#"{"awaySummaryEnabled":false}"#,
     /// };
@@ -290,9 +300,10 @@ impl Program {
     /// );
     /// assert_eq!(
     ///     worker.command,
-    ///     r#"'/bin/riff' workers run 'claude' '--strict-mcp-config' '--mcp-config' '/run/riff/workers-mcp.json' '--settings' '{"awaySummaryEnabled":false}' 'Join the riff.'"#,
+    ///     r#"'/bin/riff' workers run 'claude' '--plugin-dir' '/d/riff' '--strict-mcp-config' '--mcp-config' '/run/riff/workers-mcp.json' '--settings' '{"awaySummaryEnabled":false}' 'Join the riff.'"#,
     /// );
     /// assert!(worker.env.contains(&("RIFF_WORKER".into(), "1".into())));
+    /// assert!(worker.env.contains(&("RIFF_ON".into(), "1".into())));
     /// assert!(worker.env.contains(&("RIFF_SESSION".into(), "w1".into())));
     /// assert!(worker.env.contains(&("RIFF_WORKER_SLICE".into(), "riff-workers.slice".into())));
     /// assert_eq!(worker.session.as_deref(), Some("w1"));
@@ -309,6 +320,7 @@ impl Program {
         let mut env = vec![
             ("RIFF_SERVER".into(), server.into()),
             ("RIFF_WORKER".into(), "1".into()),
+            (crate::launch::ON.0.into(), crate::launch::ON.1.into()),
             ("RIFF_SESSION".into(), session.into()),
         ];
         if let Some(slice) = slice {
@@ -318,12 +330,17 @@ impl Program {
             dir: main.to_owned(),
             env,
             command: format!(
-                "{} workers run {} {} {} {} {} {} {}",
+                "{} workers run {} {} {} {} {}",
                 quote(&riff.to_string_lossy()),
                 quote(&claude.bin.to_string_lossy()),
-                quote("--strict-mcp-config"),
-                quote("--mcp-config"),
-                quote(&claude.mcp.to_string_lossy()),
+                crate::launch::args(&crate::launch::Given {
+                    plugin: claude.plugin.to_owned(),
+                    mcp: claude.mcp.to_owned(),
+                })
+                .iter()
+                .map(|a| quote(a))
+                .collect::<Vec<_>>()
+                .join(" "),
                 quote("--settings"),
                 quote(claude.settings),
                 quote(JOIN)

@@ -5,8 +5,8 @@
 //!
 //! A real `riff-server` with no sign-in stands in for the riff. Each of
 //! its replies names a newer release. The update runs a fake `cargo`, a
-//! fake `riff` for `riff connect` and a fake `riff-server` that log their
-//! arguments. Each test is one machine: one [`Isolated`] environment.
+//! fake `riff` and a fake `riff-server` that log their arguments. The
+//! update runs no `riff` (01M4BYH7Y3P1JMQR51TWFGVZ39). Each test is one machine: one [`Isolated`] environment.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -245,10 +245,7 @@ async fn one_update_runs_for_the_machine_with_the_release_of_the_server() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     assert_eq!(log(machine.bin.path(), "cargo"), install(&newer_tag()));
-    assert_eq!(
-        log(machine.bin.path(), "riff"),
-        "connect claude --claude claude\n"
-    );
+    assert_eq!(log(machine.bin.path(), "riff"), "");
     let messages = machine.lead_messages("lead").await;
     let words = format!(
         "riff on pangolin updated itself from {} to {}.",

@@ -261,11 +261,24 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     let tmp = dir.path().join("tmp/w1").display().to_string();
     assert_eq!(settings["remoteControlAtStartup"], false);
     assert_eq!(settings["awaySummaryEnabled"], false);
+    // No suggested prompt: no person types into a worker (01M4CGFMX16JY8W2P9JJDDTSFC).
+    assert_eq!(settings["promptSuggestionEnabled"], false);
     assert_eq!(settings["enabledPlugins"]["rust-lsp@m"], false);
+    // The plugin of an older riff is off (01M4CMN13D97R2JKHYGFSAM313).
+    assert_eq!(settings["enabledPlugins"]["riff@riff"], false);
     assert_eq!(settings["env"]["TMPDIR"], tmp.as_str());
     assert_eq!(settings["env"]["CLAUDE_CODE_TMPDIR"], tmp.as_str());
     let deny = settings["permissions"]["deny"].as_array().unwrap();
     assert_eq!(deny[..2], ["Bash(riff cloud)", "Bash(riff cloud *)"]);
+    // The rules of riff work (01M4BYH874WQ16Q0337WQA8AMV).
+    assert!(
+        deny.iter().any(|r| r == "Bash(git push * main)"),
+        "{settings}"
+    );
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    for rule in ["mcp__riff", "Bash(riff)", "Bash(riff *)"] {
+        assert!(allow.iter().any(|r| r == rule), "{rule}: {settings}");
+    }
 }
 
 /// A fake home with a dot file and a folder of notes.
