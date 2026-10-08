@@ -354,7 +354,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     if let Some(stop) = &stop {
         cmd.env(STOP, stop);
     }
-    cmd.env(WRAPPER, std::process::id().to_string())
+    cmd
         // A tmux server that a context started gives each pane the
         // variable of that context. `claude` is of no context
         // (01M3ZV0QSFVCHRSEKYK57B88VA).
