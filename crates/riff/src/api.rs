@@ -428,9 +428,14 @@ struct Mark {
 
 /// Where the tokens of a signed-in [`Api`] come from.
 struct Auth {
+    /// The device key, or the session key of a session grant.
     key: Key,
     /// The session of a session client. `None` for a person.
     session: Option<String>,
+    /// The session grant of a session with its secrets in the
+    /// environment ([`crate::grant`]). Its tokens come from the grant,
+    /// never from the keyring.
+    grant: Option<String>,
     /// The session token, once the client has one.
     held: Mutex<Option<Held>>,
     /// Set once [`Api::check_riff`] passed.
@@ -730,12 +735,25 @@ impl Api {
         if let (Some(dir), Some(session)) = (local::marks(), session) {
             self = self.for_session(&dir, session);
         }
+        // A session with its secrets in the environment never opens the
+        // keyring (RID_NO_KEYRING).
+        if let (Some(session), Some((key, grant))) = (session, crate::grant::from_env()?) {
+            self.auth = Some(Arc::new(Auth {
+                key,
+                session: Some(session.to_owned()),
+                grant: Some(grant),
+                held: Mutex::new(None),
+                riff_checked: tokio::sync::OnceCell::new(),
+            }));
+            return Ok(self);
+        }
         if !secrets::has_keyring() || login::stored(self.base())?.is_none() {
             return Ok(self);
         }
         self.auth = Some(Arc::new(Auth {
             key: device::key(self.base())?,
             session: session.map(str::to_owned),
+            grant: None,
             held: Mutex::new(None),
             riff_checked: tokio::sync::OnceCell::new(),
         }));
@@ -790,9 +808,13 @@ impl Api {
     /// token for a new session token before the old one expires
     /// (01M3WFVADCDZM8XX590KAEMEYG).
     async fn access_token(&self, auth: &Auth) -> Result<String> {
-        auth.riff_checked
-            .get_or_try_init(|| self.check_riff())
-            .await?;
+        // The wrapper checked the riff of the sign-in before it made the
+        // grant.
+        if auth.grant.is_none() {
+            auth.riff_checked
+                .get_or_try_init(|| self.check_riff())
+                .await?;
+        }
         let Some(session) = &auth.session else {
             return login::access_token(&self.anonymous()).await;
         };
@@ -803,7 +825,10 @@ impl Api {
         {
             return Ok(live.access_token.clone());
         }
-        let reply = login::session_token(&self.anonymous(), session).await?;
+        let reply = match &auth.grant {
+            Some(grant) => crate::grant::access_token(&self.anonymous(), &auth.key, grant).await?,
+            None => login::session_token(&self.anonymous(), session).await?,
+        };
         let access_token = reply.access_token.clone();
         *held = Some(Held {
             expires_at: now() + reply.expires_in,

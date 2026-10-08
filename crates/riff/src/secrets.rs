@@ -45,6 +45,11 @@
 //!     Locked --> Answers: a look gets an answer (one line, one note to the lead)
 //! ```
 //!
+//! In a session with its secrets in the environment
+//! ([`crate::grant::in_session`]), each call is an error, and
+//! [`has_keyring`] is false: no process of a session opens the keyring
+//! of the person, also with `RIFF_HOME` (RID_NO_KEYRING).
+//!
 //! With `RIFF_HOME`, riff keeps each secret in a file of
 //! `$RIFF_HOME/secrets` and never opens the OS keyring
 //! (01M3MY2KSV73WS8D902YCH2PRX). Only the tests and `just dev` set it.
@@ -71,7 +76,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use keyring_core::{Entry, Error};
 
 /// The keyring service of each riff secret (R82).
@@ -207,8 +212,17 @@ pub fn refuses(name: &str) -> bool {
     get(name).is_err_and(|e| is_locked(&e))
 }
 
+/// The error of a keyring call in a session (RID_NO_KEYRING).
+fn in_session() -> Result<()> {
+    if crate::grant::in_session() {
+        bail!(crate::grant::NO_KEYRING);
+    }
+    Ok(())
+}
+
 /// Returns the secret with this name, or `None` if there is none.
 pub fn get(name: &str) -> Result<Option<String>> {
+    in_session()?;
     if let Some(dir) = files() {
         return file_get(&dir, name).map_err(file_locked);
     }
@@ -222,6 +236,7 @@ pub fn get(name: &str) -> Result<Option<String>> {
 
 /// Keeps a secret with this name. It replaces an older value.
 pub fn set(name: &str, value: &str) -> Result<()> {
+    in_session()?;
     if let Some(dir) = files() {
         return file_set(&dir, name, value).map_err(file_locked);
     }
@@ -235,6 +250,7 @@ pub fn set(name: &str, value: &str) -> Result<()> {
 
 /// Removes the secret with this name. A missing secret is not an error.
 pub fn delete(name: &str) -> Result<()> {
+    in_session()?;
     if let Some(dir) = files() {
         return file_delete(&dir, name).map_err(file_locked);
     }
@@ -251,6 +267,9 @@ pub fn delete(name: &str) -> Result<()> {
 /// riff can open the keyring of the OS. A keyring that does not answer
 /// counts as one, so that the next call says that it does not answer.
 pub fn has_keyring() -> bool {
+    if crate::grant::in_session() {
+        return false;
+    }
     files().is_some()
         || keyring_core::get_default_store().is_some()
         || in_time(KEYRING_WAIT, || keyring::Entry::store_status().is_ok()).unwrap_or(true)

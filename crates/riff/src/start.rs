@@ -497,14 +497,22 @@ impl RiffTmux {
 /// The variables of `parent` that the tmux server of riff gets: the kept
 /// variables of a session ([`crate::profile::kept`]), with no `TMUX` and
 /// no `TMUX_PANE`, so a pane of another tmux server does not reach that
-/// server (01M4C4WW15HGA1VEDFRBEMZAW7).
+/// server (01M4C4WW15HGA1VEDFRBEMZAW7). It also gets the
+/// [`crate::profile::WRAPPER_VARS`]: the wrapper of each session runs
+/// in a pane, outside the sandbox, and reads the keyring
+/// (RID_NO_KEYRING).
 ///
 /// ```
 /// use std::ffi::OsString;
-/// let parent = [("PATH", "/bin"), ("GH_TOKEN", "ghp_x"), ("TMUX", "/tmp/t,1,0")]
-///     .map(|(k, v)| (OsString::from(k), OsString::from(v)));
+/// let parent = [
+///     ("PATH", "/bin"),
+///     ("GH_TOKEN", "ghp_x"),
+///     ("TMUX", "/tmp/t,1,0"),
+///     ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
+/// ]
+/// .map(|(k, v)| (OsString::from(k), OsString::from(v)));
 /// let names: Vec<OsString> = riff::start::server_env(parent).into_iter().map(|(k, _)| k).collect();
-/// assert_eq!(names, ["PATH"]);
+/// assert_eq!(names, ["PATH", "DBUS_SESSION_BUS_ADDRESS"]);
 /// ```
 pub fn server_env(
     parent: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
@@ -513,7 +521,8 @@ pub fn server_env(
         .into_iter()
         .filter(|(name, _)| {
             name.to_str().is_some_and(|name| {
-                crate::profile::kept(name) && !["TMUX", "TMUX_PANE"].contains(&name)
+                (crate::profile::kept(name) || crate::profile::WRAPPER_VARS.contains(&name))
+                    && !["TMUX", "TMUX_PANE"].contains(&name)
             })
         })
         .collect()

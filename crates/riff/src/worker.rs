@@ -314,6 +314,11 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         .split_first()
         .context("the command of claude is empty")?;
     let mut cmd = forge.command(program, args, std::env::vars_os());
+    // The secrets of the session come in its environment, never from
+    // the keyring of the person (RID_NO_KEYRING).
+    if let Some(session) = &session {
+        cmd.envs(crate::grant::session_env(&Api::new(server), session).await);
+    }
     cmd.env(WORKER, "1")
         .env(WRAPPER, std::process::id().to_string())
         // A tmux server that a context started gives each pane the
@@ -417,15 +422,24 @@ pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) 
     let folder = temp::Folder::make(name);
     let riff = crate::binary::this_on_disk()?;
     let lead = Some(forge::TokenRole::Lead);
+    // The lead gets a session ID of its own, so that its grant acts
+    // only as it (RID_LEAD_SESSION).
+    let session = terminal::new_session_id();
     let (given, files, keep) = forge_token(folder.as_ref(), None, server, lead).await;
     let _keep = keep.map(AbortOnDrop);
     let forge = forge::ForgeEnv::of(&given, &files, &riff);
     if let Some(why) = forge.no_token() {
         eprintln!("{}", crate::text::forge_no_token(why));
     }
-    let args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
+    let args: Vec<std::ffi::OsString> = ["--session-id", &session]
+        .into_iter()
+        .map(Into::into)
+        .chain(args.iter().map(Into::into))
+        .collect();
     let mut cmd = forge.command(claude.as_os_str(), &args, std::env::vars_os());
-    cmd.env_remove(crate::next::Agent::context_var(&crate::next::ClaudeCode));
+    cmd.env(identity::SESSION_VARS[0], &session)
+        .envs(crate::grant::session_env(&Api::new(server), &session).await)
+        .env_remove(crate::next::Agent::context_var(&crate::next::ClaudeCode));
     if let Some(folder) = &folder {
         for var in temp::VARS {
             cmd.env(var, folder.path());

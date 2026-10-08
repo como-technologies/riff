@@ -528,13 +528,13 @@ impl Profile {
 /// - tmux, for the pane of the worker: `TMUX`, `TMUX_PANE`.
 /// - The folders of the person: `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
 ///   `XDG_STATE_HOME`, `XDG_CACHE_HOME`.
-/// - The runtime folder and the session bus of the person:
-///   `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`. No process in the
-///   session calls systemd: only the wrapper, outside the sandbox,
-///   does (01M4C2PY1DRWVWENJBM42D60M9). The `riff` of the session
-///   needs them for its local folder `$XDG_RUNTIME_DIR/riff`
-///   ([`crate::local`]) and for its keyring, until the secrets come
-///   in the environment (#611).
+/// - The runtime folder of the person: `XDG_RUNTIME_DIR`. No process
+///   in the session calls systemd: only the wrapper, outside the
+///   sandbox, does (01M4C2PY1DRWVWENJBM42D60M9). The `riff` of the
+///   session needs it for its local folder `$XDG_RUNTIME_DIR/riff`
+///   ([`crate::local`]). No session bus: the secrets of a session come
+///   in its environment, so no process of a session opens the keyring
+///   of the person ([`crate::grant`], RID_NO_KEYRING).
 /// - The network: the proxy and the certificates.
 /// - Claude Code: `CLAUDE_CONFIG_DIR`. No `ANTHROPIC_` variable: a
 ///   session gets its model access only from the plan sign-in of the
@@ -562,7 +562,6 @@ pub const KEPT_VARS: &[&str] = &[
     "XDG_STATE_HOME",
     "XDG_CACHE_HOME",
     "XDG_RUNTIME_DIR",
-    "DBUS_SESSION_BUS_ADDRESS",
     "HTTP_PROXY",
     "HTTPS_PROXY",
     "NO_PROXY",
@@ -583,6 +582,12 @@ pub const KEPT_VARS: &[&str] = &[
     "RIFF_WORKER_SLICE",
 ];
 
+/// The variables that the wrapper of a session keeps and `claude` does
+/// not get: the session bus of the person, for the keyring of the
+/// person (RID_NO_KEYRING). The tmux server of riff keeps them for the
+/// wrapper in each pane.
+pub const WRAPPER_VARS: &[&str] = &["DBUS_SESSION_BUS_ADDRESS"];
+
 /// True when the variable `name` of the parent reaches `claude`
 /// ([`KEPT_VARS`]).
 ///
@@ -601,6 +606,9 @@ pub const KEPT_VARS: &[&str] = &[
 /// assert!(!kept("ANTHROPIC_API_KEY"), "no API billing");
 /// assert!(!kept("ANTHROPIC_AUTH_TOKEN"));
 /// assert!(!kept("ANTHROPIC_BASE_URL"));
+/// assert!(!kept("DBUS_SESSION_BUS_ADDRESS"), "no keyring in a session");
+/// assert!(!kept("RIFF_SESSION_GRANT"), "only the wrapper sets the secrets");
+/// assert!(!kept("CLAUDE_CODE_OAUTH_TOKEN"));
 /// ```
 pub fn kept(name: &str) -> bool {
     KEPT_VARS.iter().any(|k| match k.strip_suffix('_') {
