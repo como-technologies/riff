@@ -247,6 +247,18 @@ fn a_worker_does_only_what_its_profile_allows() {
             format!("echo x > '{}/state/probe'", m.env.riff_home().display()),
         ),
         (
+            "tmux-conf",
+            format!("echo x >> '{}/state/tmux.conf'", m.env.riff_home().display()),
+        ),
+        (
+            "other-session",
+            format!(
+                "echo x > '{}/state/sessions/w2/probe'",
+                m.env.riff_home().display()
+            ),
+        ),
+        ("own-state", "echo x > \"$RIFF_STATE/probe\"".into()),
+        (
             "open-port",
             format!(
                 "exec 3<>/dev/tcp/127.0.0.1/{}",
@@ -275,7 +287,9 @@ fn a_worker_does_only_what_its_profile_allows() {
         result.display()
     ));
     let claude = m.claude(&body);
-    std::fs::create_dir_all(m.env.riff_home().join("state")).unwrap();
+    let state = m.env.riff_home().join("state");
+    std::fs::create_dir_all(state.join("sessions/w2")).unwrap();
+    std::fs::write(state.join("tmux.conf"), "# riff\n").unwrap();
     // The plugin and the git config of the person are there, so that a
     // "no" comes from the sandbox, not from a missing folder.
     std::fs::create_dir_all(home.join(".local/share/riff/claude-plugin")).unwrap();
@@ -306,7 +320,10 @@ fn a_worker_does_only_what_its_profile_allows() {
         "plugin no",
         "gitconfig no",
         "own-claude yes",
-        "state yes",
+        "state no",
+        "tmux-conf no",
+        "other-session no",
+        "own-state yes",
         "open-port yes",
         "closed-port no",
     ];
@@ -599,6 +616,47 @@ fn a_link_to_the_home_gives_no_sandbox_and_no_write() {
     assert_ne!(out.status.code(), Some(0), "{err}");
     assert!(err.contains("gives the home of the person"), "{err}");
     assert!(!m.home().join("new").exists(), "claude ran: {err}");
+}
+
+/// 01M4DWJ0KT7G2RX05X00YGVN21: a session writes its worktree, so it can
+/// put a link there. A target in the worktree that is a link to a
+/// folder outside it makes riff refuse the sandbox: `claude` does not
+/// start, and the folder gets no write.
+#[test]
+fn a_link_out_of_the_worktree_gives_no_sandbox_and_no_write() {
+    let m = Machine::new();
+    let tree = m.worktrees().join("issue-1");
+    let away = m.home().join(".config");
+    std::fs::create_dir_all(&away).unwrap();
+    std::os::unix::fs::symlink(&away, tree.join("target")).unwrap();
+    let claude = m.claude(&format!("echo x > '{}/new'", away.display()));
+
+    let out = m.run(&tree, &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_ne!(out.status.code(), Some(0), "{err}");
+    assert!(err.contains("is a link out of its root"), "{err}");
+    assert!(!away.join("new").exists(), "claude ran: {err}");
+}
+
+/// 01M4DWJ0AQX8N7J9T02VJ0XHF1: the sandbox makes the own state folder
+/// of the session, and the wrapper deletes it when the session ends.
+#[test]
+fn the_own_state_folder_lives_as_long_as_its_session() {
+    let m = Machine::new();
+    let result = m.worktrees().join("result");
+    let claude = m.claude(&format!(
+        "echo \"$RIFF_STATE\" > '{0}'; test -d \"$RIFF_STATE\" && echo there >> '{0}'",
+        result.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let own = m.env.riff_home().join("state/sessions/w1");
+    assert_eq!(
+        std::fs::read_to_string(&result).unwrap(),
+        format!("{}\nthere\n", own.canonicalize().unwrap_or(own.clone()).display())
+    );
+    assert!(!own.exists(), "the own folder stays after the end");
 }
 
 /// 01M4BTB7Q1ZT1WD2NMF6BAVWPB: `riff workers sandbox --show` prints the

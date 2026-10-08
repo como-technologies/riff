@@ -772,7 +772,7 @@ mod tests {
     fn of(pool: Option<&Path>) -> Vec<String> {
         let s = session();
         let p = Profile::of(Role::TestRun, &s).unwrap();
-        args(&p, &s, Path::new("/var/tmp/r"), &s.worktree, pool, None)
+        args(&p, &s, Path::new("/var/tmp/r"), &s.worktree, pool, &Fds::default())
     }
 
     #[test]
@@ -815,17 +815,24 @@ mod tests {
     }
 
     #[test]
-    fn the_pool_of_build_jobs_is_writable_in_the_run() {
-        let a = of(Some(Path::new("/run/user/1000/riff/jobs")));
-        assert!(
-            a.windows(3).any(|w| w
-                == [
-                    "--bind",
-                    "/run/user/1000/riff/jobs",
-                    "/run/user/1000/riff/jobs"
-                ]),
-            "{a:?}"
-        );
+    /// 01M4DWJ0F7G527GN26KSA934N7: the run reads the folder of the pool,
+    /// and writes only the pipe and the locks of a taker.
+    fn the_run_writes_only_the_files_of_the_pool_that_a_taker_writes() {
+        let riff = tempfile::tempdir().unwrap();
+        let jobs = crate::jobserver::dir(riff.path());
+        let _pool = crate::jobserver::Pool::hold(&jobs, 4, 1).unwrap();
+        let a = of(Some(&jobs));
+        let at = |p: &Path| p.display().to_string();
+        let ro = ["--ro-bind-try".to_owned(), at(&jobs), at(&jobs)];
+        assert!(a.windows(3).any(|w| w == ro), "{a:?}");
+        let mut written: Vec<String> = a
+            .windows(3)
+            .filter(|w| w[0] == "--bind" && w[1].starts_with(&at(&jobs)))
+            .map(|w| w[1].clone())
+            .collect();
+        written.sort();
+        let want = ["fifo", "hold.lock", "take.lock"].map(|f| at(&jobs.join(f)));
+        assert_eq!(written, want);
     }
 
     #[test]

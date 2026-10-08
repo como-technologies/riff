@@ -711,6 +711,7 @@ mod tests {
 
         // A link in the place of a file: the new file replaces the link.
         std::fs::remove_file(temp.path().join("forge/gh")).unwrap();
+        std::fs::remove_file(temp.path().join("forge/token")).unwrap();
         symlink(&bashrc, temp.path().join("forge/token")).unwrap();
         files.write(&token("ghs_2")).unwrap();
         assert_eq!(files.token().unwrap(), "ghs_2");

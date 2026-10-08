@@ -938,7 +938,7 @@ mod tests {
         let target = "/home/ada/src/app/.claude/worktrees/issue-12/target";
         let (temp, git) = ("/home/ada/.cache/riff/tmp/s1", "/home/ada/src/app/.git");
         let (state, claude) = (
-            "/run/user/1000/riff",
+            "/run/user/1000/riff/sessions/s1",
             "/home/ada/.local/share/riff/claude/s1",
         );
         let g = |p: &str| format!("{git}/{p}");
@@ -1190,6 +1190,48 @@ mod tests {
             Profile::of(Role::Worker, &home),
             Err(Refused::Up("/home/ada/x/..".into()))
         );
+    }
+
+    /// 01M4DWJ08GVFKV4EC6FNDZA1BD, 01M4DWJ0AQX8N7J9T02VJ0XHF1,
+    /// 01M4DWJ0F7G527GN26KSA934N7: each AI role reads the folder of riff
+    /// and writes no file of it: not the tmux config, the list of
+    /// clones, the deaths, the folder of the pool or the folder of
+    /// another session. It writes its own folder and the files of the
+    /// pool that a taker writes.
+    #[test]
+    fn no_ai_role_writes_the_folder_of_riff() {
+        let riff = Path::new("/run/user/1000/riff");
+        let jobs = riff.join("jobs");
+        let s = Session {
+            pool: ["fifo", "take.lock", "hold.lock"]
+                .map(|f| jobs.join(f))
+                .to_vec(),
+            ..session()
+        };
+        for role in [Role::Lead, Role::Worker, Role::Verifier] {
+            let p = Profile::of(role, &s).unwrap();
+            for file in [
+                "tmux.conf",
+                "clones",
+                "worker-deaths",
+                "jobs/size",
+                "jobs/workers/1-2",
+                "jobs/init.lock",
+                "no-jobserver",
+                "sessions/w2/context-w2",
+                "sessions/probe",
+            ] {
+                let path = riff.join(file);
+                assert!(!p.writes(&path) && p.reads(&path), "{role}: {file}");
+            }
+            assert!(!p.writes(riff), "{role}");
+            assert!(p.writes(&s.own.join("mcp-42")), "{role}");
+            for file in &s.pool {
+                assert!(p.writes(file), "{role}: {}", file.display());
+            }
+        }
+        let t = Profile::of(Role::TestRun, &s).unwrap();
+        assert!(!t.reads(riff) && !t.writes(&s.own));
     }
 
     #[test]
