@@ -190,6 +190,7 @@ pub mod listen;
 pub mod log;
 pub mod logline;
 pub mod oidc;
+pub mod outside;
 pub mod owner;
 pub mod state;
 pub mod store;
@@ -246,7 +247,8 @@ use crate::trace::DeniedCode;
 use riff_core::forge::TokenRole;
 use riff_core::wire::{
     ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeCreate, ForgeCreateReply, ForgeCreated,
-    ForgeCreatedReply, ForgeInstall, ForgeInstallReply, ForgeToken, ForgeTokenReply,
+    ForgeCreatedReply, ForgeInstall, ForgeInstallReply, ForgeToken, ForgeTokenReply, OutsideAsk,
+    OutsideDecide, OutsideList, OutsideRequest, OutsideRequests, OutsideState, OutsideTake,
 };
 
 /// The least time between two writes of the token store (R127): the
@@ -357,6 +359,8 @@ struct Server {
     facts: Mutex<Facts>,
     /// The forge tokens of the sessions (#628).
     forge: forge::Forge,
+    /// The requests to run a command outside the profile (#614).
+    outside: Mutex<outside::Outside>,
 }
 
 /// The last checkpoint, and why the server writes none.
@@ -1474,6 +1478,7 @@ impl Service {
         );
         let service = Service(Arc::new(Server {
             forge,
+            outside: Mutex::new(outside::Outside::default()),
             config,
             engine,
             tokens,
@@ -1944,6 +1949,8 @@ impl Service {
             .route(PlanShow::PATH, post(plan_show))
             .route(ForgeToken::PATH, post(forge_token))
             .route(ForgeCheck::PATH, post(forge_check))
+            .route(OutsideAsk::PATH, post(outside_ask))
+            .route(OutsideTake::PATH, post(outside_take))
             .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
@@ -1980,6 +1987,8 @@ impl Service {
             .route(ForgeCreate::PATH, post(forge_create))
             .route(ForgeCreated::PATH, post(forge_created))
             .route(ForgeInstall::PATH, post(forge_install))
+            .route(OutsideList::PATH, post(outside_list))
+            .route(OutsideDecide::PATH, post(outside_decide))
             .route_layer(guard());
         let mut facts = Router::new().route("/v1/server", get(server_facts));
         if self.0.config.require_sign_in {
@@ -2450,6 +2459,115 @@ async fn forge_check(
         .engine
         .peek(&caller, |state| forge_facts(state, &r.me))??;
     Ok(Json(s.forge.check(&repo).await?))
+}
+
+/// The post of the server about the last step of `request`, to the
+/// thread of the repository of the session that asked
+/// (01M4DA9PPFBVPHP57JZQDF4R7R). The ask wakes the lead of the person;
+/// each other step is a note.
+async fn outside_news(s: &Server, request: &OutsideRequest) {
+    let Some(thread) = request.by.default_thread() else {
+        return;
+    };
+    let text = outside::news(request);
+    tracing::info!(id = %request.id, state = ?request.state, "{text}");
+    let (to, kind) = if request.state == OutsideState::Asked {
+        let lead = Selector {
+            user: Some(request.by.who().user().to_owned()),
+            repo: Some(thread.to_string()),
+            lead: Some(true),
+            ..Selector::default()
+        };
+        (vec![lead], Kind::Message)
+    } else {
+        let me = Selector {
+            session: request.by.who().session().map(str::to_owned),
+            ..Selector::default()
+        };
+        (vec![me], Kind::Note)
+    };
+    s.announce_each(vec![Server::news(Some(thread), to, &text, kind)])
+        .await;
+}
+
+/// The refusal of a request to run a command outside the profile.
+fn outside_refused(reason: String) -> (StatusCode, String) {
+    Failed::Refused(Refused::new(Code::BadRequest, &reason)).into()
+}
+
+/// `POST /v1/outside/ask`: `riff outside ask` in a session (#614,
+/// 01M4DA9PFR6V3K3FE1568277H3).
+async fn outside_ask(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<OutsideAsk>,
+) -> Reply<OutsideRequest> {
+    admit(&s, &proof, &r.me)?;
+    let asked = s
+        .outside
+        .lock()
+        .expect("the outside requests")
+        .ask(&r.me, r.command, &r.cwd, &r.reason, Instant::now())
+        .map_err(outside_refused)?;
+    outside_news(&s, &asked).await;
+    Ok(Json(asked))
+}
+
+/// `POST /v1/outside/take`: the broker of the session takes its request
+/// (01M4DA9PM89KP332T6BR7V0CDT).
+async fn outside_take(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<OutsideTake>,
+) -> Reply<OutsideRequest> {
+    admit(&s, &proof, &r.me)?;
+    let took = s
+        .outside
+        .lock()
+        .expect("the outside requests")
+        .take(&r.id, r.me.who(), Instant::now())
+        .map_err(outside_refused)?;
+    if took.taken {
+        outside_news(&s, &took).await;
+    }
+    Ok(Json(took))
+}
+
+/// `POST /v1/outside/list`: `riff outside list`. Only the owner or an
+/// admin.
+async fn outside_list(
+    AxumState(s): AxumState<Shared>,
+    Extension(signed_in): Extension<SignedIn>,
+    Json(_): Json<OutsideList>,
+) -> Reply<OutsideRequests> {
+    need_admin(&s, signed_in.who.user(), "list the requests to run outside the sandbox")?;
+    let requests = s
+        .outside
+        .lock()
+        .expect("the outside requests")
+        .list(Instant::now());
+    Ok(Json(OutsideRequests { requests }))
+}
+
+/// `POST /v1/outside/decide`: `riff outside approve ID` or `riff outside
+/// deny ID` (01M4DA9PJ0MJPBQRTA79CVXEA2). Only the owner or an admin,
+/// with a token of a person: the token of a session never decides.
+async fn outside_decide(
+    AxumState(s): AxumState<Shared>,
+    Extension(signed_in): Extension<SignedIn>,
+    Json(r): Json<OutsideDecide>,
+) -> Reply<OutsideRequest> {
+    need_admin(&s, signed_in.who.user(), "approve a request to run outside the sandbox")?;
+    let decided = s
+        .outside
+        .lock()
+        .expect("the outside requests")
+        .decide(&r.id, &signed_in.who, r.approve, Instant::now())
+        .map_err(|reason| -> (StatusCode, String) {
+            Failed::Refused(Refused::new(Code::NotAllowed, &reason)).into()
+        })?;
+    outside_news(&s, &decided).await;
+    Ok(Json(decided))
 }
 
 /// Refuses `user` when it is not the owner or an admin.

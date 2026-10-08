@@ -4524,6 +4524,29 @@
   and a session bus where no bus listens. No credential of the person
   and no secret of a session reaches a test.
 
+- **01M4DA9PFR6V3K3FE1568277H3** `riff outside ask --reason REASON --
+  PROGRAM ARGS` in a session asks riff-server to run one named command
+  outside the profile of the session, one time, in the folder of the
+  session. riff-server keeps the request in its memory: a restart of
+  the server drops each open request.
+- **01M4DA9PJ0MJPBQRTA79CVXEA2** Only the owner or an admin approves or
+  denies a request, with `riff outside approve ID` or `riff outside
+  deny ID`, and only with a token of a person. riff-server refuses an
+  approval with the token of a session, and an approval by the session
+  that asked.
+- **01M4DA9PM89KP332T6BR7V0CDT** The broker of the session runs an
+  approved request one time: it takes the command and the folder from
+  riff-server, not from the session. riff-server gives a request to
+  the broker of its session only once.
+- **01M4DA9PPFBVPHP57JZQDF4R7R** riff-server posts each step of a
+  request to the thread of its repository: the ask wakes the lead of
+  the person, and the approval, the denial and the run are notes. Each
+  post names the request, the session that asked, the command, the
+  folder, the reason and who approved or denied it.
+- **01M4DA9PRPZ2JDKC2PK79AT5AA** The broker refuses a request folder
+  with a `..` part. It runs each operation in the resolved folder that
+  it checked, not in the folder of the request, and sets `PWD` to it.
+
 ## Open
 
 None.

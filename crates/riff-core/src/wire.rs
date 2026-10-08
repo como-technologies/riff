@@ -75,6 +75,8 @@
 //! | `POST /v1/forge/create` | [`ForgeCreate`] | [`ForgeCreateReply`] | an admin |
 //! | `POST /v1/forge/created` | [`ForgeCreated`] | [`ForgeCreatedReply`] | the admin of the `state` |
 //! | `POST /v1/forge/install` | [`ForgeInstall`] | [`ForgeInstallReply`] | each person |
+//! | `POST /v1/outside/list` | [`OutsideList`] | [`OutsideRequests`] | an admin |
+//! | `POST /v1/outside/decide` | [`OutsideDecide`] | [`OutsideRequest`] | an admin, with a token of a person |
 //!
 //! A person who is not an admin gets status 403 from `invite`,
 //! `remove` and `log`. A person who is not the owner gets status 403 from
@@ -248,6 +250,10 @@ calls! {
     ForgeCreate => "/v1/forge/create", ForgeCreateReply;
     ForgeCreated => "/v1/forge/created", ForgeCreatedReply;
     ForgeInstall => "/v1/forge/install", ForgeInstallReply;
+    OutsideAsk => "/v1/outside/ask", OutsideRequest;
+    OutsideTake => "/v1/outside/take", OutsideRequest;
+    OutsideList => "/v1/outside/list", OutsideRequests;
+    OutsideDecide => "/v1/outside/decide", OutsideRequest;
 }
 
 /// `POST /v1/register`: a session says that it exists and where it
@@ -576,6 +582,106 @@ pub struct ForgeInstallReply {
     /// True when the App is installed on `owner`.
     #[serde(default)]
     pub installed: bool,
+}
+
+/// `POST /v1/outside/ask`: `riff outside ask` (#614). A session asks
+/// to run one named command outside its profile, one time
+/// (01M4DA9PFR6V3K3FE1568277H3). Only a session asks: `me` names one.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OutsideAsk {
+    pub me: SessionUri,
+    /// The program and its arguments.
+    pub command: Vec<String>,
+    /// The folder of the command: a folder of the worktree of the
+    /// session.
+    pub cwd: String,
+    /// Why the session needs the command outside its profile.
+    pub reason: String,
+}
+
+/// `POST /v1/outside/take`: the broker of the session that asked takes
+/// the request `id` (01M4DA9PM89KP332T6BR7V0CDT). The reply is the
+/// request. When it is approved, the server marks it as run, and gives
+/// it with `taken` true only this one time.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OutsideTake {
+    pub me: SessionUri,
+    pub id: String,
+}
+
+/// `POST /v1/outside/list`: `riff outside list`. The open requests and
+/// the requests of the last hour. Only the owner or an admin.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OutsideList {
+    pub me: SessionUri,
+}
+
+/// `POST /v1/outside/decide`: `riff outside approve ID` or `riff outside
+/// deny ID` (01M4DA9PJ0MJPBQRTA79CVXEA2). Only the owner or an admin,
+/// with a token of a person, never of a session.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OutsideDecide {
+    pub me: SessionUri,
+    pub id: String,
+    /// True approves, false denies.
+    pub approve: bool,
+}
+
+/// The state of a request to run a command outside the profile.
+///
+/// ```
+/// use riff_core::wire::OutsideState;
+///
+/// assert_eq!(serde_json::to_string(&OutsideState::Asked).unwrap(), r#""asked""#);
+/// assert!(OutsideState::Asked.open());
+/// assert!(OutsideState::Approved.open());
+/// assert!(!OutsideState::Ran.open());
+/// assert!(!OutsideState::Denied.open());
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OutsideState {
+    /// It waits for an admin.
+    Asked,
+    /// An admin approved it. The broker did not take it yet.
+    Approved,
+    /// An admin denied it.
+    Denied,
+    /// The broker took it, to run it one time.
+    Ran,
+}
+
+impl OutsideState {
+    /// True while the request can still run.
+    pub fn open(self) -> bool {
+        matches!(self, OutsideState::Asked | OutsideState::Approved)
+    }
+}
+
+/// A request to run a command outside the profile (#614).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OutsideRequest {
+    /// The ID of the request, for example `7f3a9c21`.
+    pub id: String,
+    /// The session that asked.
+    pub by: SessionUri,
+    pub command: Vec<String>,
+    pub cwd: String,
+    pub reason: String,
+    pub state: OutsideState,
+    /// The admin that approved or denied it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by: Option<String>,
+    /// True only in the one reply to [`OutsideTake`] that gives the
+    /// approved request to the broker.
+    #[serde(default)]
+    pub taken: bool,
+}
+
+/// The reply to [`OutsideList`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OutsideRequests {
+    pub requests: Vec<OutsideRequest>,
 }
 
 /// The check of the token of one role.

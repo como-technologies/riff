@@ -772,6 +772,43 @@ mod tests {
                 installed: false,
             });
         }
+        {
+            use crate::wire::{
+                OutsideAsk, OutsideDecide, OutsideList, OutsideRequest, OutsideRequests,
+                OutsideState, OutsideTake,
+            };
+            c.trip(&OutsideAsk {
+                me: me(),
+                command: vec!["sudo".into(), "true".into()],
+                cwd: "/w".into(),
+                reason: "a test".into(),
+            });
+            c.trip(&OutsideTake {
+                me: me(),
+                id: "7f3a9c21".into(),
+            });
+            c.trip(&OutsideList { me: me() });
+            c.trip(&OutsideDecide {
+                me: me(),
+                id: "7f3a9c21".into(),
+                approve: true,
+            });
+            let request = OutsideRequest {
+                id: "7f3a9c21".into(),
+                by: me(),
+                command: vec!["true".into()],
+                cwd: "/w".into(),
+                reason: "a test".into(),
+                state: OutsideState::Approved,
+                decided_by: Some("mike".into()),
+                taken: true,
+            };
+            c.trip(&request);
+            c.trip(&OutsideState::Ran);
+            c.trip(&OutsideRequests {
+                requests: vec![request],
+            });
+        }
         c.trip(&SetIdle {
             me: me(),
             per_host: Some(1),
