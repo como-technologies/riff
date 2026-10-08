@@ -3506,7 +3506,8 @@ your sign-in from your keyring and gives `claude` these variables:
 | `CLAUDE_CODE_OAUTH_TOKEN` | The token of your Claude plan, when you gave it to riff |
 
 The forge token of the role comes in files of the temp folder of the
-session (see [The forge token of each role](#the-forge-token-of-each-role)).
+session. See
+[The forge token of each role](#the-forge-token-of-each-role).
 
 ```mermaid
 sequenceDiagram
