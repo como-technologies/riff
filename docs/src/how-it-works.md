@@ -4005,6 +4005,7 @@ Each row is a surface with a control, and the test of that control.
 | The stop file | `.riff-stop` in its temp folder | the wrapper | the wrapper reads only that the file is there | `the_server_stops_an_idle_worker_through_its_wrapper` |
 | The lead | the worktrees of the clone and the git parts of a worker; an operation of its broker | each git command of riff, tmux, the processes of its workers | the lead writes no config, hooks, info, packed-refs or other file of the clone; its tmux steps and signals are operations of its broker, only on the workers with the clone mark of its clone | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker`, `the_lead_writes_no_config_hooks_info_or_packed_refs_of_the_clone`, `a_stop_of_a_worker_of_another_clone_stops_nothing`, `only_the_broker_of_a_lead_runs_the_operations_of_the_lead` |
 | The MCP config of a session | a write of `workers-mcp.json` | the `claude` of the lead and of each worker | the file is in the given folder of riff, outside each write path | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker` |
+| The refs of the clone | a worker: its refs, also `refs/remotes/origin/HEAD`, and the `HEAD` of its worktree | the fast-forward of the main clone, `riff worktrees clean`, the rules of riff | riff asks `origin` for the default branch and names each ref in full; the branch of a worktree comes from its name; riff refuses a branch name that starts with `-`, and puts `--` before each name | `the_fast_forward_takes_the_default_branch_from_origin_not_from_a_planted_ref`, `the_default_branch_comes_from_origin_not_from_a_planted_ref`, `worktrees_clean_takes_the_branch_from_the_name_not_from_the_head`, `worktrees_clean_puts_two_dashes_before_each_name` |
 <!-- /surfaces -->
 
 ### The shared surfaces with no control yet
@@ -4023,7 +4024,6 @@ proposed accept. Mike signs off this table before the release 2.0.0.
 | The said-once files and the update files | `no-jobserver`, `no-systemd` and the like, `update.lock`, `update-tried`, `update.log` | riff, the update of riff | riff says a thing one time too few, an update waits, a file of the person changes | Accept (proposed): they hold no command; #655 makes each write of riff there follow no link |
 | The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (proposed): a lock or a record holds no command |
 | The forge token files | its temp folder | the wrapper | a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-| The refs of the clone | a worker: `refs` | the fast-forward of the main clone, `riff worktrees clean`, the rules of riff | riff moves a branch to a commit or a name that a session picked | #656: merge before 2.0.0, or Mike accepts at the sign-off |
 | The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
 | The variables of a broker request | a bus address | `riff test-run` | a test run gets a variable that is not of cargo or the tests | #654 |
 | The worktrees of other sessions | the worktrees folder of the clone | the other sessions | a worker changes the work of another session | #645 |
@@ -5230,7 +5230,8 @@ riff worktrees clean
 | a lock whose process is gone | unlocks it, then goes on |
 | a lock of a live process, or a lock with no process ID | keeps it |
 | a live session of `riff who` works in it | keeps it |
-| work that is not committed, and no live owner | commits it as WIP, pushes its branch, and posts a note to the lead |
+| work that is not committed, no live owner, and its `HEAD` on its own branch | commits it as WIP, pushes its branch, and posts a note to the lead |
+| work that is not committed, and its `HEAD` on another branch or detached | keeps it |
 | clean, and its `HEAD` is on the default branch of `origin`: no commit of its own | removes it and its branch |
 | clean, and a merged pull request has its `HEAD` as head, also when the branch is gone | removes it and its branch |
 | clean, detached, and its commit is on `origin` | removes it |
@@ -5243,6 +5244,14 @@ It prints one line for each worktree, with what it did and why:
 /home/mike/src/riff/.claude/worktrees/verify-issue-14-a6cf: removed: its commit is the head of the merged pull request #41
 /home/mike/src/riff/.claude/worktrees/issue-13: kept: a live session works in it
 ```
+
+riff takes the branch of a worktree from its name, not from its
+`HEAD`: the worktree `.claude/worktrees/issue-12` has the branch
+`worktree-issue-12`. A session writes its `HEAD` and the refs of the
+clone, so riff trusts neither. It saves, pushes and deletes only that
+branch, and never the default branch. It asks `origin` for the default
+branch (`git ls-remote --symref origin HEAD`), and does not read
+`origin/HEAD` of the clone.
 
 `riff workers start` and the start of `riff workers host` run it too.
 A workers host and the `riff mcp` of the lead also run it each 10

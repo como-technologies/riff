@@ -11,14 +11,15 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     A[riff workers start / the clear of a worker] --> B{origin/HEAD?}
+//!     A[riff workers start / the clear of a worker] --> B{an origin?}
 //!     B -- no --> Z[no remote: change nothing, say nothing]
-//!     B -- yes --> C{on the default branch, no local changes?}
+//!     B -- yes --> L[git ls-remote --symref origin HEAD: the default branch]
+//!     L --> C{on the default branch, no local changes?}
 //!     C -- no --> K[change nothing, say why]
 //!     C -- yes --> D[git fetch --prune origin]
 //!     D --> E{local commits that origin does not have?}
 //!     E -- yes --> K
-//!     E -- no --> F[git merge --ff-only origin/BRANCH]
+//!     E -- no --> F[git merge --ff-only refs/remotes/origin/BRANCH]
 //! ```
 //!
 //! When the main clone is not on the default branch, has local changes
@@ -27,6 +28,14 @@
 //! person who runs `riff workers start` reads it. The clear of a
 //! worker tells the lead. A step that fails never stops the command or
 //! the clear.
+//!
+//! A session writes the refs of the clone, also
+//! `refs/remotes/origin/HEAD`. So riff takes the default branch from
+//! `origin` itself ([`default_branch`]), and names each ref in full,
+//! for example `refs/remotes/origin/main` (01M4DVXP20SHYTFE1D4NVF0FSF).
+//! A tag or a branch `origin/main` of a session does not change what
+//! riff moves. riff reads other refs only in a sandbox: in the start
+//! hook and `leave` of a session, and in the rollout of the lead.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -37,7 +46,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fresh {
     /// The dir is not the top of a git worktree, or the clone has no
-    /// `origin/HEAD`, so riff did nothing.
+    /// `origin`, so riff did nothing.
     NoRemote,
     /// The default branch was at `origin` already.
     Current {
