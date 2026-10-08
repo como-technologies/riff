@@ -279,13 +279,7 @@ pub fn serve(socket: OwnedFd, root: &Path, clone: &Path, riff: &Path) -> Result<
 
 /// Runs `request`, or says why not. The test run gets the worktree and
 /// the clone of the session from the broker (01M4D7TB7FZAMASMQG9K7M3Q0D).
-fn answer(
-    request: &Request,
-    root: &Path,
-    clone: &Path,
-    riff: &Path,
-    stdio: Vec<OwnedFd>,
-) -> Reply {
+fn answer(request: &Request, root: &Path, clone: &Path, riff: &Path, stdio: Vec<OwnedFd>) -> Reply {
     if let Some(why) = refusal(request, root) {
         return Reply::Refused(why);
     }
