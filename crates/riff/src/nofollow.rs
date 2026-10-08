@@ -149,12 +149,14 @@ impl Dir {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         );
-        let flags = OFlag::O_WRONLY
-            | OFlag::O_CREAT
-            | OFlag::O_EXCL
-            | OFlag::O_NOFOLLOW
-            | OFlag::O_CLOEXEC;
-        let fd = openat(self.fd(), new.as_str(), flags, Mode::from_bits_truncate(mode))?;
+        let flags =
+            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+        let fd = openat(
+            self.fd(),
+            new.as_str(),
+            flags,
+            Mode::from_bits_truncate(mode),
+        )?;
         let written = File::from(fd).write_all(bytes);
         let renamed = written.and_then(|()| {
             renameat(self.fd(), new.as_str(), self.fd(), name).map_err(io::Error::from)

@@ -17,8 +17,8 @@
 //!
 //! | | lead | worker | verifier | test run |
 //! |---|---|---|---|---|
-//! | Write | the worktrees of the clone, a part of the git dir of the clone, the riff state, its temp, its Claude folder | its worktree, its target, a part of the git dir of the clone ([`GIT_WRITES`]), the riff state, its temp, its Claude folder | its verify worktree, its target, a part of the git dir of the clone, the riff state, its temp, its Claude folder | its temp, its target |
-//! | Read | the system, its tools, its permission rules, the clone, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, its worktree and the git dir of the clone |
+//! | Write | the worktrees of the clone, a part of the git dir of the clone, its own state folder and three files of the pool of build jobs, its temp, its Claude folder | its worktree, its target, a part of the git dir of the clone ([`GIT_WRITES`]), its own state folder and three files of the pool of build jobs, its temp, its Claude folder | its verify worktree, its target, a part of the git dir of the clone, its own state folder and three files of the pool of build jobs, its temp, its Claude folder | its temp, its target |
+//! | Read | the system, its tools, its permission rules, the clone, the folder of riff, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, its worktree and the git dir of the clone |
 //! | Read the home of the person | no, except the paths above | no | no | no |
 //! | Network | riff server, forge, registries, model | the same | the same | loopback only |
 //! | Keyring, D-Bus and systemd of the person | no | no | no | no |
@@ -581,9 +581,7 @@ impl Profile {
         reads.extend(s.tools.iter().cloned());
         match role {
             Role::TestRun => reads.extend([s.worktree.clone(), git]),
-            Role::Worker | Role::Verifier => {
-                reads.extend([git, s.rules.clone(), s.state.clone()])
-            }
+            Role::Worker | Role::Verifier => reads.extend([git, s.rules.clone(), s.state.clone()]),
             Role::Lead => reads.extend([s.clone.clone(), s.rules.clone(), s.state.clone()]),
         }
         let network = match role {

@@ -4111,14 +4111,14 @@
   profile.
 - **01M4BPK72ZBZABCTWS9YM1M9QX** The lead writes the worktrees of the
   clone, a part of the git dir of the clone
-  (01M4DDWPN8FADA663TTZSVD698), the local files of riff, its temp
+  (01M4DDWPN8FADA663TTZSVD698), its own state folder of riff, its temp
   folder and its Claude Code folder. It reads the rest of the clone.
   It connects to the riff server, the forge, the package registries
   and the model API. On the forge, it reads, plans,
   comments, pushes a branch and opens a pull request.
 - **01M4BPK7AKTJD9Y9WVJQKTQY6M** A worker writes its worktree, its
   target folder, a part of the git dir of the clone
-  (01M4CN0W3V733V6R2SG1YYZRCN), the local files of riff,
+  (01M4CN0W3V733V6R2SG1YYZRCN), its own state folder of riff,
   its temp folder and its Claude Code folder. It does not write the
   rest of the clone. Its network is the network of the lead. On the
   forge, it reads, comments, pushes a branch and opens a pull request.
@@ -4611,6 +4611,34 @@
   the broker ends only after each operation of the own pane or of the
   lead that runs. So an `end-over-limit` that closes the pane of its
   worker still ends the session.
+- **01M4DWJ08GVFKV4EC6FNDZA1BD** The folder of riff
+  (`local::riff_dir`: `$RIFF_HOME/state`, else
+  `$XDG_RUNTIME_DIR/riff`, else `$XDG_STATE_HOME/riff`) holds each
+  file that riff outside each sandbox writes or trusts: the tmux
+  config, the list of clones, the deaths of workers, the pool of build
+  jobs. Only riff outside each sandbox writes it. Each AI role reads
+  it.
+- **01M4DWJ0AQX8N7J9T02VJ0XHF1** Each AI session writes only its own
+  state folder, `sessions/SESSION` in the folder of riff. The sandbox
+  sets `RIFF_STATE` to it for `claude`, and `local::dir` and
+  `local::marks` give it in the session. The wrapper deletes it when
+  its session ends.
+- **01M4DWJ0CZDM0AX98TY8CCTC9F** Each write of riff outside each
+  sandbox into a folder that a session writes opens that folder, and
+  each part in it relative to the open folder, with no follow of a
+  link (`O_NOFOLLOW`). A link makes the write fail, and its target does
+  not change. A test run binds the `home` and `tmp` of its run folder
+  from their open file descriptors.
+- **01M4DWJ0F7G527GN26KSA934N7** An AI role writes only the pipe,
+  `take.lock` and `hold.lock` of the pool of build jobs. A test run
+  reads the folder of the pool, and writes only these three files.
+- **01M4DWJ0HK490A9KF6FTQ61F2X** `riff workers reap` reads the start of
+  the context of a worker only from the own folder of that worker,
+  with no follow of a link.
+- **01M4DWJ0KT7G2RX05X00YGVN21** riff takes no write path of a profile
+  from a link that a session can plant. A write path in the worktree
+  stays in the worktree after riff resolves each link, or riff refuses
+  to start the session.
 
 - **01M4DVXP20SHYTFE1D4NVF0FSF** riff outside each sandbox takes the
   default branch from `origin` itself (`git ls-remote --symref origin

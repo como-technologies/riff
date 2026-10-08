@@ -772,7 +772,14 @@ mod tests {
     fn of(pool: Option<&Path>) -> Vec<String> {
         let s = session();
         let p = Profile::of(Role::TestRun, &s).unwrap();
-        args(&p, &s, Path::new("/var/tmp/r"), &s.worktree, pool, &Fds::default())
+        args(
+            &p,
+            &s,
+            Path::new("/var/tmp/r"),
+            &s.worktree,
+            pool,
+            &Fds::default(),
+        )
     }
 
     #[test]
@@ -833,6 +840,45 @@ mod tests {
         written.sort();
         let want = ["fifo", "hold.lock", "take.lock"].map(|f| at(&jobs.join(f)));
         assert_eq!(written, want);
+    }
+
+    /// 01M4DWJ0CZDM0AX98TY8CCTC9F: the session writes its temp folder. A
+    /// link that it puts in the place of `home` or `tmp` after riff made
+    /// them changes nothing: the run binds the folders that riff made,
+    /// from their open file descriptors.
+    #[test]
+    fn a_run_folder_binds_the_folders_that_riff_made() {
+        let temp = tempfile::tempdir().unwrap();
+        let away = tempfile::tempdir().unwrap();
+        let run = Run::new(temp.path()).unwrap();
+        let fds = run.fds();
+        for part in ["home", "tmp"] {
+            let path = run.path().join(part);
+            std::fs::rename(&path, temp.path().join(format!("old-{part}"))).unwrap();
+            std::os::unix::fs::symlink(away.path(), &path).unwrap();
+        }
+        let open = |fd: Option<RawFd>| std::fs::read_link(format!("/proc/self/fd/{}", fd.unwrap()));
+        assert_eq!(open(fds.home).unwrap(), temp.path().join("old-home"));
+        assert_eq!(open(fds.tmp).unwrap(), temp.path().join("old-tmp"));
+        assert_eq!(open(fds.var_tmp).unwrap(), temp.path().join("old-tmp"));
+        let s = session();
+        let p = Profile::of(Role::TestRun, &s).unwrap();
+        let a = args(&p, &s, run.path(), &s.worktree, None, &fds);
+        let line = a.join(" ");
+        let fd = |fd: Option<RawFd>| fd.unwrap().to_string();
+        assert!(
+            line.contains(&format!("--bind-fd {} /home/ada ", fd(fds.home))),
+            "{line}"
+        );
+        assert!(
+            line.contains(&format!("--bind-fd {} /tmp ", fd(fds.tmp))),
+            "{line}"
+        );
+        assert!(
+            line.contains(&format!("--bind-fd {} /var/tmp ", fd(fds.var_tmp))),
+            "{line}"
+        );
+        assert!(!line.contains(&run.path().display().to_string()), "{line}");
     }
 
     #[test]

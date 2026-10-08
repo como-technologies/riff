@@ -513,6 +513,27 @@ pub fn context_start(riff: &Path, session: &str) -> Option<u64> {
 mod tests {
     use super::*;
 
+    /// 01M4DWJ0HK490A9KF6FTQ61F2X: `riff workers reap` reads the start of
+    /// a context only from the own folder of that worker, and follows no
+    /// link there. A start in the folder of riff or of another session
+    /// counts for nothing.
+    #[test]
+    fn the_reap_reads_the_start_only_from_the_own_folder_of_the_worker() {
+        let riff = tempfile::tempdir().unwrap();
+        mark(riff.path(), "w2").unwrap();
+        let good = crate::local::own(riff.path(), "w2").join("context-w2");
+        let text = std::fs::read_to_string(&good).unwrap();
+        std::fs::write(riff.path().join("context-w1"), &text).unwrap();
+        let other = crate::local::own(riff.path(), "w2").join("context-w1");
+        std::fs::write(other, &text).unwrap();
+        assert_eq!(context_start(riff.path(), "w1"), None);
+        let own = crate::local::own(riff.path(), "w1");
+        std::fs::create_dir_all(&own).unwrap();
+        std::os::unix::fs::symlink(&good, own.join("context-w1")).unwrap();
+        assert_eq!(context_start(riff.path(), "w1"), None);
+        assert_eq!(context_start(riff.path(), "w2"), own_start());
+    }
+
     fn p(pid: u32, ppid: u32, worker: Option<&str>, context: bool) -> Proc {
         Proc {
             pid,

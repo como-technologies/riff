@@ -3133,8 +3133,8 @@ flowchart LR
 
 | | lead | worker | verifier | test run |
 |---|---|---|---|---|
-| Write | the worktrees of the clone, the objects, refs, logs and worktrees of the git dir of the clone, the riff state, its temp, its Claude folder | its worktree, its target, the objects, refs, logs and worktrees of the git dir of the clone, the riff state, its temp, its Claude folder | the same as a worker, for its verify worktree | its temp, its target |
-| Read | the system, its tools, its permission rules, the clone, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, and its worktree |
+| Write | the worktrees of the clone, the objects, refs, logs and worktrees of the git dir of the clone, its own state folder, its temp, its Claude folder | its worktree, its target, the objects, refs, logs and worktrees of the git dir of the clone, its own state folder, its temp, its Claude folder | the same as a worker, for its verify worktree | its temp, its target |
+| Read | the system, its tools, its permission rules, the clone, the folder of riff, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, and its worktree |
 | Network | riff server, forge, registries, model | the same | the same | loopback only |
 | Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
 
@@ -3155,6 +3155,8 @@ that is not absolute or that has a `..` part.
   the plugin to `~/.local/share/riff/claude-plugin`. Each session
   reads them, and no session writes them. So no session changes the
   MCP servers or the hooks of the next `claude`.
+- **The state of riff.** See "The folders of riff and of a session"
+  below.
 - **The git dir of the clone.** No session writes the `config`, the
   `hooks`, the `info` or the `packed-refs` of the git dir of the
   clone: git runs or reads them later, outside each sandbox. The lead
@@ -3499,6 +3501,39 @@ The sandbox wave (Wave 22) puts the profiles to work, one part at a
 time. "The shared surfaces with no control yet" in "The threat model
 of the sandbox" lists each part that is left, with its issue. The
 release 2.0.0 comes with each part.
+
+### The folders of riff and of a session
+
+riff keeps its state on your machine in the folder of riff:
+`$RIFF_HOME/state`, else `$XDG_RUNTIME_DIR/riff`, else
+`~/.local/state/riff`. Only riff outside each sandbox writes it. Each
+session in a sandbox reads it, and writes only its own folder in it.
+
+| Folder | Who writes it | What it holds |
+|---|---|---|
+| the folder of riff | only riff outside each sandbox | the tmux config, the list of clones, the deaths of workers, the pool of build jobs |
+| `sessions/SESSION` in it | only the session SESSION | the files of that session, for example the start of its context |
+| `jobs/fifo`, `jobs/take.lock`, `jobs/hold.lock` in it | riff, each session and each test run | the tokens of the pool of build jobs |
+| the temp folder of a session | the session; riff writes its forge token there with no follow of a link | the temp files and the forge token of the session |
+
+```mermaid
+flowchart LR
+    O["riff outside"] -->|"writes"| R["the folder of riff"]
+    S["a session in its sandbox"] -->|"reads"| R
+    S -->|"writes"| W["sessions/SESSION"]
+    O -->|"reads, no follow of a link"| W
+```
+
+When riff outside writes or reads a file in a folder that a session
+writes, it follows no link. A link there makes the step fail, and
+your file at the end of the link does not change. riff deletes the
+folder of a session when the session ends.
+
+To see the folder of each session that runs on this machine:
+
+```sh
+ls "${XDG_RUNTIME_DIR:-$HOME/.local/state}/riff/sessions"
+```
 
 ### See the permission rules of a worker
 
@@ -4011,6 +4046,11 @@ Each row is a surface with a control, and the test of that control.
 | The MCP config of a session | a write of `workers-mcp.json` | the `claude` of the lead and of each worker | the file is in the given folder of riff, outside each write path | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker` |
 | The refs of the clone | a worker: its refs, also `refs/remotes/origin/HEAD`, and the `HEAD` of its worktree | the fast-forward of the main clone, `riff worktrees clean`, the rules of riff | riff asks `origin` for the default branch and names each ref in full; the branch of a worktree comes from its name; riff refuses a branch name that starts with `-`, and puts `--` before each name | `the_fast_forward_takes_the_default_branch_from_origin_not_from_a_planted_ref`, `the_default_branch_comes_from_origin_not_from_a_planted_ref`, `worktrees_clean_takes_the_branch_from_the_name_not_from_the_head`, `worktrees_clean_puts_two_dashes_before_each_name` |
 | The pane of a session | an operation of the own pane: read, type, the end over the limit | tmux, the end of its worker | each acts only on the pane of the session that asks, and takes no pane | `the_operations_of_the_own_pane_act_only_on_the_pane_of_the_session`, `a_worker_in_its_sandbox_gets_clear_in_its_own_pane_through_the_broker`, `a_worker_in_its_sandbox_over_the_limit_ends_through_the_broker` |
+| The folder of riff | a read of `tmux.conf`, `clones`, `worker-deaths` and the pool | `riff` at its start, the tmux server, the rollout, the wrapper, each workers host | no session writes the folder of riff; each AI role writes only its own folder in it | `no_ai_role_writes_the_folder_of_riff`, `a_worker_does_only_what_its_profile_allows` |
+| The own folder of a session | its files, for example the start of its context | `riff workers reap` | the reap reads only the own folder of that worker, with no follow of a link | `the_reap_reads_the_start_only_from_the_own_folder_of_the_worker` |
+| The pool of build jobs | a token of the pipe | the wrapper of each worker, `riff test-run` | a session and a test run write only the pipe and the locks of a taker | `no_ai_role_writes_the_folder_of_riff`, `the_run_writes_only_the_files_of_the_pool_that_a_taker_writes` |
+| The temp folder of a session | a link in the place of a file or a folder | the wrapper (the forge token), `riff test-run` (the run folder), the broker (the sign-in lock) | each write opens the folder and the file with no follow of a link | `a_planted_link_in_the_temp_folder_gets_no_token`, `a_run_folder_binds_the_folders_that_riff_made`, `a_planted_link_gets_no_sign_in_lock` |
+| The write paths of a profile | a link in its worktree | the sandbox, at its start | each write path in the worktree stays in the worktree, or the session does not start | `a_link_out_of_the_worktree_gives_no_sandbox_and_no_write` |
 <!-- /surfaces -->
 
 ### The shared surfaces with no control yet
@@ -4021,14 +4061,7 @@ proposed accept. Mike signs off this table before the release 2.0.0.
 <!-- open-surfaces -->
 | Surface | A session writes or asks | Read or run outside by | Risk | Decision |
 |---|---|---|---|---|
-| The tmux config of riff | `tmux.conf` in the riff state folder | the tmux server of riff, at its start | a program runs outside a sandbox, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-| The list of clones | `clones` in the riff state folder | `riff`, at its start | riff starts the lead in a folder that a session picked | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-| The deaths of workers | `worker-deaths` in the riff state folder | the rollout, each workers host | riff starts or stops workers on a false count, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-| The context files of a worker | the start time of a context in the riff state folder | `riff workers reap` | the reap stops the wrong processes of a worker | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-| The pool of build jobs | `jobs` in the riff state folder | the wrapper of each worker | a session takes the build jobs of other workers, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-| The said-once files and the update files | `no-jobserver`, `no-systemd` and the like, `update.lock`, `update-tried`, `update.log` | riff, the update of riff | riff says a thing one time too few, an update waits, a file of the person changes | Accept (proposed): they hold no command; #655 makes each write of riff there follow no link |
 | The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (proposed): a lock or a record holds no command |
-| The forge token files | its temp folder | the wrapper | a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
 | The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
 | The variables of a broker request | a bus address | `riff test-run` | a test run gets a variable that is not of cargo or the tests | #654 |
 | The worktrees of other sessions | the worktrees folder of the clone | the other sessions | a worker changes the work of another session | #645 |

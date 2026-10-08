@@ -248,7 +248,10 @@ fn a_worker_does_only_what_its_profile_allows() {
         ),
         (
             "tmux-conf",
-            format!("echo x >> '{}/state/tmux.conf'", m.env.riff_home().display()),
+            format!(
+                "echo x >> '{}/state/tmux.conf'",
+                m.env.riff_home().display()
+            ),
         ),
         (
             "other-session",
@@ -654,7 +657,10 @@ fn the_own_state_folder_lives_as_long_as_its_session() {
     let own = m.env.riff_home().join("state/sessions/w1");
     assert_eq!(
         std::fs::read_to_string(&result).unwrap(),
-        format!("{}\nthere\n", own.canonicalize().unwrap_or(own.clone()).display())
+        format!(
+            "{}\nthere\n",
+            own.canonicalize().unwrap_or(own.clone()).display()
+        )
     );
     assert!(!own.exists(), "the own folder stays after the end");
 }

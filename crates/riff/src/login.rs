@@ -650,6 +650,27 @@ fn now() -> u64 {
 mod tests {
     use super::*;
 
+    /// 01M4DWJ0CZDM0AX98TY8CCTC9F: a link in the place of the sign-in lock
+    /// makes the open fail, and makes no file at its target.
+    #[test]
+    fn a_planted_link_gets_no_sign_in_lock() {
+        let temp = tempfile::tempdir().unwrap();
+        let person = tempfile::tempdir().unwrap();
+        let bashrc = person.path().join("bashrc");
+        std::fs::write(&bashrc, "mine").unwrap();
+        for (name, target) in [
+            ("a.lock", person.path().join("new")),
+            ("b.lock", bashrc.clone()),
+        ] {
+            let planted = temp.path().join(name);
+            std::os::unix::fs::symlink(&target, &planted).unwrap();
+            assert!(open_lock(&planted).is_err(), "{name}");
+        }
+        assert!(!person.path().join("new").exists());
+        assert_eq!(std::fs::read_to_string(&bashrc).unwrap(), "mine");
+        open_lock(&temp.path().join("c.lock")).unwrap();
+    }
+
     #[test]
     fn verifiers_are_random_and_long_enough() {
         let a = random();
