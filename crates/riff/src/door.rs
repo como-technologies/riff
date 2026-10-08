@@ -24,6 +24,13 @@
 //! | `workers-stop` | none, or a pane or session | [`crate::worker::stop`] on the workers of its clone | [`Stopped`] |
 //! | `workers-reap` | none, or a pane or session | [`crate::worker::reap`] on the workers of its clone | the lines |
 //! | `oom-journal` | none | the lines of `systemd-oomd` ([`crate::reap::journal`]) | the text |
+//! | `pane-screen` | none | the text of the pane of the lead | the text |
+//! | `pane-type` | the text | types the text and Enter into the pane of the lead | nothing |
+//!
+//! - **The own pane.** `pane-screen` and `pane-type` act only on the
+//!   pane of the session that asks: the `TMUX_PANE` of the broker. The
+//!   compact check of the lead reads its pane and types `/compact`
+//!   there ([`crate::compact`], [`OwnPane`]).
 //!
 //! - **The clone** (01M4DDWPEGBAXKTS0X3THFB8VZ). tmux marks each worker
 //!   pane with its main clone ([`CLONE_MARK`], 01M4DDWPJZFHQ4N7CHPQ5VC1QF).
@@ -61,6 +68,8 @@
 //! assert!(refusal("workers-start", &["x".into()]).is_some());
 //! assert!(refusal("workers-stop", &["%7".into(), "%8".into()]).is_some());
 //! assert!(refusal("tail-pane", &["sh".into()]).is_some());
+//! assert!(refusal("pane-type", &[]).is_some());
+//! assert_eq!(refusal("pane-type", &["/compact".into()]), None);
 //! ```
 
 use std::ffi::OsString;
@@ -80,13 +89,15 @@ use crate::worker::{Started, Stopped};
 pub use crate::terminal::CLONE_MARK;
 
 /// The operations of the broker of a lead (01M4DDWPC693RNWHY7P7XBZ9TB).
-pub const OPS: [&str; 6] = [
+pub const OPS: [&str; 8] = [
     "worker-panes",
     "tail-pane",
     "workers-start",
     "workers-stop",
     "workers-reap",
     "oom-journal",
+    "pane-screen",
+    "pane-type",
 ];
 
 /// The most workers that one `workers-start` asks for.
@@ -100,10 +111,11 @@ pub fn refusal(op: &str, args: &[OsString]) -> Option<String> {
         return Some(crate::text::broker_no_op(op));
     }
     let max = match op {
-        "workers-start" | "workers-stop" | "workers-reap" => 1,
+        "workers-start" | "workers-stop" | "workers-reap" | "pane-type" => 1,
         _ => 0,
     };
-    if args.len() > max || (op == "workers-start" && args.is_empty()) {
+    let needs = matches!(op, "workers-start" | "pane-type");
+    if args.len() > max || (needs && args.is_empty()) {
         return Some(crate::text::door_args(op));
     }
     if op == "workers-start" && count(&args[0]).is_none() {
@@ -260,6 +272,44 @@ impl Terminal for Door {
     }
 }
 
+/// The pane of this session: a tmux pane, or the pane of the broker of
+/// the lead in its sandbox.
+#[derive(Debug, Clone)]
+pub enum OwnPane {
+    /// The pane, in the tmux of the machine.
+    Tmux(Tmux, String),
+    /// The pane of the broker.
+    Broker(RawFd),
+}
+
+impl OwnPane {
+    /// The pane `pane` of this session, else the pane of its broker,
+    /// else `None`.
+    pub fn of(pane: Option<&str>) -> Option<Self> {
+        match (pane, crate::broker::here()) {
+            (Some(pane), _) => Some(OwnPane::Tmux(Tmux::machine(), pane.to_owned())),
+            (None, Some(fd)) => Some(OwnPane::Broker(fd)),
+            (None, None) => None,
+        }
+    }
+
+    /// The text that the pane shows now.
+    pub fn screen(&self) -> Result<String> {
+        match self {
+            OwnPane::Tmux(tmux, pane) => tmux.screen(pane),
+            OwnPane::Broker(fd) => call(*fd, "pane-screen", &[]),
+        }
+    }
+
+    /// Types `text` into the pane, then Enter.
+    pub fn type_line(&self, text: &str) -> Result<()> {
+        match self {
+            OwnPane::Tmux(tmux, pane) => tmux.type_line(pane, text),
+            OwnPane::Broker(fd) => call(*fd, "pane-type", &[text.into()]),
+        }
+    }
+}
+
 fn pane_arg(pane: Option<&str>) -> Vec<OsString> {
     pane.map(OsString::from).into_iter().collect()
 }
@@ -403,6 +453,16 @@ fn run(lead: &Lead, op: &str, arg: Option<&OsString>) -> Result<String> {
             json(&crate::worker::reap(&of_clone()?, pane.as_deref(), &dir)?)
         }
         "oom-journal" => json(&crate::reap::journal()),
+        "pane-screen" => {
+            let tmux = tmux()?;
+            json(&tmux.screen(tmux.pane())?)
+        }
+        "pane-type" => {
+            let tmux = tmux()?;
+            let text = arg.context("no text")?.to_string_lossy();
+            tmux.type_line(tmux.pane(), &text)?;
+            json(&())
+        }
         _ => bail!("{}", crate::text::broker_no_op(op)),
     }
 }

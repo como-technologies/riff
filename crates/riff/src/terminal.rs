@@ -447,6 +447,12 @@ impl Tmux {
         machine
     }
 
+    /// The pane of the session, or an empty text for the tmux of the
+    /// machine.
+    pub fn pane(&self) -> &str {
+        &self.pane
+    }
+
     /// The socket name of the server, when it is not the server of
     /// `TMUX`.
     pub fn socket(&self) -> Option<&str> {

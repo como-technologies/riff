@@ -36,9 +36,11 @@ esac
 "#;
 
 /// Writes the arguments, and the `RIFF_SERVER` and `RIFF_ON` that it
-/// got, and its environment.
+/// got, and its environment. It runs in the sandbox of the lead, so it
+/// writes them to the riff state, a write path of the lead
+/// (01M4DDWP9XSA14E0YF211XZYKR).
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
-dir=$(dirname "$0")
+dir="$RIFF_HOME/state"
 printf '%s\n' "$*" >> "$dir/claude.log"
 printf '%s %s\n' "$RIFF_SERVER" "$RIFF_ON" >> "$dir/claude.log"
 env > "$dir/claude.env"
@@ -104,6 +106,11 @@ impl Machine {
 
     fn read(&self, name: &str) -> String {
         std::fs::read_to_string(self.fake.path().join(name)).unwrap_or_default()
+    }
+
+    /// A file of the fake `claude`: in the riff state.
+    fn claude(&self, name: &str) -> String {
+        std::fs::read_to_string(self.home.path().join("state").join(name)).unwrap_or_default()
     }
 
     /// `riff ARGS` in `dir`, outside tmux, with `answer` on stdin.
@@ -248,7 +255,7 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     // lead (01M4C4WW15HGA1VEDFRBEMZAW7, 01M4BYVSNQ5SY2GRGT73FV0Z3E).
     let server_env = m.read("server.env");
     assert!(server_env.contains("RIFF_SERVER="), "{server_env}");
-    let claude_env = m.read("claude.env");
+    let claude_env = m.claude("claude.env");
     assert!(claude_env.contains("GH_CONFIG_DIR="), "{claude_env}");
     for env in [&server_env, &claude_env] {
         assert!(!env.contains(MARKER), "{env}");
@@ -257,7 +264,7 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     // The fake claude ran with a session ID of its own
     // (01M4CVXJEQK32SRQ957X6NAEMH), the flags of the lead, the server and
     // RIFF_ON=1 (01M4BYH80CFW1TBGKVA2VN9ZBQ).
-    let log = m.read("claude.log");
+    let log = m.claude("claude.log");
     let session = claude_env
         .lines()
         .find_map(|l| l.strip_prefix("RIFF_SESSION="))
@@ -292,8 +299,9 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     assert!(!riff.join(".claude/settings.json").exists());
     assert!(!riff.join(".claude/settings.local.json").exists());
     // Its flag settings hold the permission rules of the profile of the
-    // lead (01M4BT33R71HXAVQGHFD4ZFGR5): it edits the clone, and the
-    // rules deny the rest of the home.
+    // lead (01M4BT33R71HXAVQGHFD4ZFGR5): it edits the worktrees of the
+    // clone and reads the rest of it (01M4DDWPN8FADA663TTZSVD698), and
+    // the rules deny the rest of the home.
     let settings: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
     let rules = |list: &str| -> Vec<String> {
@@ -304,8 +312,12 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
             .map(|r| r.as_str().unwrap().to_owned())
             .collect()
     };
-    let edit = format!("Edit(/{}/**)", riff.display());
+    let edit = format!("Edit(/{}/.claude/worktrees/**)", riff.display());
     assert!(rules("allow").contains(&edit), "{settings}");
+    let read = format!("Read(/{}/**)", riff.display());
+    assert!(rules("allow").contains(&read), "{settings}");
+    let clone = format!("Edit(/{}/**)", riff.display());
+    assert!(!rules("allow").contains(&clone), "{settings}");
     assert!(!rules("deny").is_empty(), "{settings}");
     // The status line and the rules of riff work
     // (01M4BYH874WQ16Q0337WQA8AMV).
@@ -342,7 +354,7 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     let log = m.read("log");
     assert_eq!(log.matches("new-session").count(), 1, "{log}");
     assert_eq!(log.matches("attach-session").count(), 2, "{log}");
-    let log = m.read("claude.log");
+    let log = m.claude("claude.log");
     assert_eq!(log.lines().count(), 2);
 
     // The new clone is known now too.
@@ -436,7 +448,7 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
     assert_eq!(before(&user), user_text);
     assert_eq!(before(&local), local_text);
     assert_eq!(before(&shared), shared_text);
-    assert_eq!(m.read("claude.log"), "");
+    assert_eq!(m.claude("claude.log"), "");
 
     // A yes removes them, and riff starts the lead.
     let out = m.riff(&riff, &[], "y\n1\n");
@@ -455,7 +467,7 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
     assert_eq!(before(&shared), shared_text);
     assert_eq!(mode(&user), 0o600);
     assert_eq!(mode(&local), 0o600);
-    let calls = m.read("claude.log");
+    let calls = m.claude("claude.log");
     let plugin: Vec<&str> = calls.lines().filter(|l| l.starts_with("plugin ")).collect();
     assert_eq!(
         plugin,

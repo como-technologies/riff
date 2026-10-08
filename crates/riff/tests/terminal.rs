@@ -197,7 +197,8 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     );
 
     // Each worker has its own riff session ID, in RIFF_SESSION and in
-    // the mark of its pane (01M3JPQT9BA7JVMZPV68FY4MQ6).
+    // the mark of its pane (01M3JPQT9BA7JVMZPV68FY4MQ6). Each pane has
+    // the mark of its main clone (01M4DDWPJZFHQ4N7CHPQ5VC1QF).
     let log = m.log();
     let ids = marked_sessions(&log);
     assert_eq!(ids.len(), 3, "{log}");
@@ -239,11 +240,14 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
             ),
             "set-option -w -t @7 @riff workers".to_owned(),
             format!("set-option -p -t %1 @riff-session {}", ids[0]),
+            format!("set-option -p -t %1 @riff-clone {dir}"),
             format!("split-window -t @7 {}", pane(&ids[1])),
             format!("set-option -p -t %2 @riff-session {}", ids[1]),
+            format!("set-option -p -t %2 @riff-clone {dir}"),
             "select-layout -t @7 tiled".to_owned(),
             format!("split-window -t @7 {}", pane(&ids[2])),
             format!("set-option -p -t %3 @riff-session {}", ids[2]),
+            format!("set-option -p -t %3 @riff-clone {dir}"),
             "select-layout -t @7 tiled".to_owned(),
         ]
     );
