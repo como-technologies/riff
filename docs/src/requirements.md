@@ -1894,7 +1894,8 @@
   tool: each branch of `origin` with its last commit, and each worktree
   on the machine with the count of its files that are not committed
   and of its commits that are not pushed. riff runs
-  `git fetch --prune origin` first, for at most 5 seconds. A branch or
+  `git fetch origin` first, with no `--prune`, for at most 5 seconds.
+  A branch or
   a worktree belongs to the item when its name holds the item as a
   whole word. A verify claim gets no such line. riff does not show the
   subject of a commit.
@@ -4283,6 +4284,15 @@
   more rights than a worker. With no Landlock, the step does not run.
   The push of a WIP commit stays outside, with the git dirs of riff
   and no hook.
+- **01M4D7TB7FZAMASMQG9K7M3Q0D** A test run takes its clone and its
+  worktree from riff. In a session, the broker gives the clone and the
+  worktree of the session, from its start. The folder of the request
+  only picks where the command runs in that worktree. No `.git` file or
+  folder in the worktree changes the clone, the worktree or the git dir
+  that the profile of the test run reads. With no broker, a test run in
+  a worktree of the agent tool takes the outermost
+  `.claude/worktrees/NAME` of its folder and its clone, never a
+  repository in that worktree.
 - **01M4D4BZ41AH29KSA9B0VZB8DQ** No role and no test run reads
   `credentials.toml` or `credentials` of a cargo home: they hold the
   registry tokens of the person, and `Session::secrets` names them in

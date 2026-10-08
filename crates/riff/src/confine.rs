@@ -976,6 +976,38 @@ pub fn agent_worktree(path: &Path) -> Option<(PathBuf, std::ffi::OsString)> {
         })
 }
 
+/// The main clone and the name of the outermost worktree of the agent
+/// tool that holds `path`: the first `.claude/worktrees/NAME` of the
+/// path. A test run takes its clone from it, so a clone that a session
+/// makes in its worktree never becomes the clone of a test run
+/// (01M4D7TB7FZAMASMQG9K7M3Q0D).
+///
+/// ```
+/// use std::path::{Path, PathBuf};
+/// let of = |p: &str| riff::confine::outer_worktree(Path::new(p));
+/// assert_eq!(
+///     of("/src/app/.claude/worktrees/w/a/.claude/worktrees/x"),
+///     Some((PathBuf::from("/src/app"), "w".into()))
+/// );
+/// assert_eq!(of("/src/app/.claude/worktrees/w"), Some((PathBuf::from("/src/app"), "w".into())));
+/// assert_eq!(of("/src/app/.claude/worktrees"), None);
+/// assert_eq!(of("/src/app"), None);
+/// ```
+pub fn outer_worktree(path: &Path) -> Option<(PathBuf, std::ffi::OsString)> {
+    use std::path::Component;
+    let parts: Vec<Component> = path.components().collect();
+    parts.windows(3).enumerate().find_map(|(i, w)| match w {
+        [
+            Component::Normal(a),
+            Component::Normal(b),
+            Component::Normal(name),
+        ] if *a == ".claude" && *b == "worktrees" => {
+            Some((parts[..i].iter().collect(), (*name).to_owned()))
+        }
+        _ => None,
+    })
+}
+
 /// Stops this thread and each later child from making a unix socket
 /// with a name: `socket(AF_UNIX, ...)` and `io_uring_setup` fail with
 /// `EACCES` (01M4C5AQV8AT8F5WKNF1C9CE5F). A pair of sockets
@@ -1033,7 +1065,11 @@ pub fn run(
     no_core_dumps()?;
     // The broker stays outside the sandbox (01M4C5AQGCA3TFZDW23HYKS83S).
     // The session keeps its end of the socket across the exec.
-    let broker = crate::broker::start(&crate::binary::this_on_disk()?, &session.worktree)?;
+    let broker = crate::broker::start(
+        &crate::binary::this_on_disk()?,
+        &session.worktree,
+        &session.clone,
+    )?;
     nix::fcntl::fcntl(
         &broker,
         nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::empty()),

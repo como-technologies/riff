@@ -37,6 +37,15 @@
 //!   test run refuses a target outside it, also through a symlink. The
 //!   pool of build jobs is the `MAKEFLAGS` of the session. So a session
 //!   cannot make a test run write in the home of the person.
+//! - **The clone and the worktree of a test run**
+//!   (01M4D7TB7FZAMASMQG9K7M3Q0D). They come from the broker too:
+//!   `riff workers sandbox` gives it the clone and the worktree of the
+//!   session at the start, and it sets
+//!   [`WORKTREE_VAR`](crate::sandbox::WORKTREE_VAR) and
+//!   [`CLONE_VAR`](crate::sandbox::CLONE_VAR). The folder of the request
+//!   only picks where the command runs. So no `.git` file or folder that
+//!   a session writes makes a test run read the git dir of another
+//!   repository ([`crate::sandbox::place`]).
 //! - **The end.** The broker ends when each process of the session
 //!   closed its end of the socket pair.
 //!
@@ -192,9 +201,9 @@ pub fn refusal(request: &Request, root: &Path) -> Option<String> {
 }
 
 /// Starts the broker outside the sandbox: `riff workers broker --root
-/// ROOT`, with the program `riff`. Returns the end of the session, for
-/// [`VAR`]. The broker gets the other end as its stdin.
-pub fn start(riff: &Path, root: &Path) -> Result<OwnedFd> {
+/// ROOT --clone CLONE`, with the program `riff`. Returns the end of the
+/// session, for [`VAR`]. The broker gets the other end as its stdin.
+pub fn start(riff: &Path, root: &Path, clone: &Path) -> Result<OwnedFd> {
     let (session, broker) = socketpair(
         AddressFamily::Unix,
         SockType::SeqPacket,
@@ -205,6 +214,8 @@ pub fn start(riff: &Path, root: &Path) -> Result<OwnedFd> {
     Command::new(riff)
         .args(["workers", "broker", "--root"])
         .arg(root)
+        .arg("--clone")
+        .arg(clone)
         .env_remove(VAR)
         .stdin(Stdio::from(broker))
         // No pipe of the session stays open in the broker: it lives as
@@ -216,11 +227,13 @@ pub fn start(riff: &Path, root: &Path) -> Result<OwnedFd> {
     Ok(session)
 }
 
-/// Serves the requests on `socket` for the root `root` until each
-/// process of the session closed its end. Each request runs in a thread
-/// of its own. `riff` is the riff that runs a test run.
-pub fn serve(socket: OwnedFd, root: &Path, riff: &Path) -> Result<()> {
+/// Serves the requests on `socket` for the root `root` of the clone
+/// `clone` until each process of the session closed its end. Each
+/// request runs in a thread of its own. `riff` is the riff that runs a
+/// test run.
+pub fn serve(socket: OwnedFd, root: &Path, clone: &Path, riff: &Path) -> Result<()> {
     let root = crate::confine::resolve(root);
+    let clone = crate::confine::resolve(clone);
     loop {
         let mut buf = vec![0u8; MAX];
         let mut space = nix::cmsg_space!([RawFd; 4]);
@@ -250,22 +263,29 @@ pub fn serve(socket: OwnedFd, root: &Path, riff: &Path) -> Result<()> {
         if len == 0 && fds.is_empty() {
             return Ok(());
         }
-        let (root, riff) = (root.clone(), riff.to_path_buf());
+        let (root, clone, riff) = (root.clone(), clone.clone(), riff.to_path_buf());
         let request = serde_json::from_slice::<Request>(&buf[..len]);
         std::thread::spawn(move || {
             let mut fds = fds.into_iter();
             let Some(reply) = fds.next() else { return };
             let answer = match request {
                 Err(e) => Reply::Refused(format!("a request that riff cannot read: {e}")),
-                Ok(request) => answer(&request, &root, &riff, fds.collect()),
+                Ok(request) => answer(&request, &root, &clone, &riff, fds.collect()),
             };
             let _ = send(&reply, &answer, &[]);
         });
     }
 }
 
-/// Runs `request`, or says why not.
-fn answer(request: &Request, root: &Path, riff: &Path, stdio: Vec<OwnedFd>) -> Reply {
+/// Runs `request`, or says why not. The test run gets the worktree and
+/// the clone of the session from the broker (01M4D7TB7FZAMASMQG9K7M3Q0D).
+fn answer(
+    request: &Request,
+    root: &Path,
+    clone: &Path,
+    riff: &Path,
+    stdio: Vec<OwnedFd>,
+) -> Reply {
     if let Some(why) = refusal(request, root) {
         return Reply::Refused(why);
     }
@@ -283,6 +303,8 @@ fn answer(request: &Request, root: &Path, riff: &Path, stdio: Vec<OwnedFd>) -> R
             crate::sandbox::WITHIN_VAR,
             within(root, std::env::var_os("CARGO_TARGET_DIR")),
         )
+        .env(crate::sandbox::WORKTREE_VAR, root)
+        .env(crate::sandbox::CLONE_VAR, clone)
         .stdin(Stdio::from(stdin))
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -392,7 +414,7 @@ mod tests {
         )
         .unwrap();
         let (root, riff) = (root.to_path_buf(), riff.to_path_buf());
-        std::thread::spawn(move || serve(broker, &root, &riff));
+        std::thread::spawn(move || serve(broker, &root, &root, &riff));
         session
     }
 
@@ -443,7 +465,7 @@ mod tests {
         std::fs::write(
             &riff,
             format!(
-                "#!/bin/sh\necho \"[$CARGO_TARGET_DIR] [$MAKEFLAGS] [$LD_PRELOAD] [$RIFF_BROKER] [$RIFF_TEST_RUN_WITHIN] [$CARGO_TERM_COLOR] $*\" > '{}'\n",
+                "#!/bin/sh\necho \"[$CARGO_TARGET_DIR] [$MAKEFLAGS] [$LD_PRELOAD] [$RIFF_BROKER] [$RIFF_TEST_RUN_WITHIN] [$RIFF_TEST_RUN_WORKTREE] [$RIFF_TEST_RUN_CLONE] [$CARGO_TERM_COLOR] $*\" > '{}'\n",
                 seen.display()
             ),
         )
@@ -462,11 +484,14 @@ mod tests {
             ("LD_PRELOAD".into(), "/evil.so".into()),
             ("RIFF_BROKER".into(), "9".into()),
             ("RIFF_TEST_RUN_WITHIN".into(), "/".into()),
+            ("RIFF_TEST_RUN_WORKTREE".into(), "/".into()),
+            ("RIFF_TEST_RUN_CLONE".into(), "/home".into()),
             ("CARGO_TERM_COLOR".into(), "never".into()),
         ];
         assert_eq!(ask(session.as_raw_fd(), &req).unwrap(), Reply::Code(0));
-        // The folders come from the broker (01M4CN0W1F0Y7955C6Q1XB601G):
-        // its own target and pool, and its root as the bound of the target.
+        // The folders come from the broker (01M4CN0W1F0Y7955C6Q1XB601G,
+        // 01M4D7TB7FZAMASMQG9K7M3Q0D): its own target and pool, its root
+        // as the bound of the target, and its root and clone.
         let own = |name: &str| std::env::var(name).unwrap_or_default();
         let within = within(
             &crate::confine::resolve(root.path()),
@@ -475,10 +500,11 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&seen).unwrap(),
             format!(
-                "[{}] [{}] [] [] [{}] [never] test-run -- cargo test\n",
+                "[{}] [{}] [] [] [{}] [{3}] [{3}] [never] test-run -- cargo test\n",
                 own("CARGO_TARGET_DIR"),
                 own("MAKEFLAGS"),
-                within.display()
+                within.display(),
+                crate::confine::resolve(root.path()).display()
             )
         );
     }

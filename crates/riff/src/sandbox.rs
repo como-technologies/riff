@@ -22,7 +22,10 @@
 //!
 //! In a sandbox of a session, the broker ([`crate::broker`]) runs the
 //! test run, and sets [`WITHIN_VAR`]: the target must be in that
-//! folder (01M4CN0RRJF5EWGE0VDSX3442B).
+//! folder (01M4CN0RRJF5EWGE0VDSX3442B). It also sets [`WORKTREE_VAR`]
+//! and [`CLONE_VAR`]: the test run takes its worktree and its clone
+//! from riff, not from git in the folder of the request ([`place`],
+//! 01M4D7TB7FZAMASMQG9K7M3Q0D).
 //!
 //! The run gets its environment from nothing (`--clearenv`), then only
 //! the variables of [`crate::profile::TEST_RUN_VARS`] of the parent
@@ -133,6 +136,16 @@ pub fn env_args(parent: impl IntoIterator<Item = (OsString, OsString)>) -> Vec<S
 /// (01M4CN0RRJF5EWGE0VDSX3442B).
 pub const WITHIN_VAR: &str = "RIFF_TEST_RUN_WITHIN";
 
+/// The variable that names the worktree of the session of a test run:
+/// the root of the broker. The broker sets it, never the request of a
+/// session (01M4D7TB7FZAMASMQG9K7M3Q0D).
+pub const WORKTREE_VAR: &str = "RIFF_TEST_RUN_WORKTREE";
+
+/// The variable that names the clone of the session of a test run. The
+/// broker sets it, never the request of a session
+/// (01M4D7TB7FZAMASMQG9K7M3Q0D).
+pub const CLONE_VAR: &str = "RIFF_TEST_RUN_CLONE";
+
 /// What a host needs before a test run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Missing {
@@ -226,23 +239,82 @@ pub fn check_in(path: Option<OsString>, profile: &Path) -> Result<PathBuf, Missi
     }
 }
 
-/// The session of a test run in `dir`, from the environment and from
-/// git: the worktree is the top of the git worktree of `dir` (else
-/// `dir`), the clone is the folder of its common git dir, the target is
-/// `CARGO_TARGET_DIR` (else the `target` of the worktree), and the temp
-/// folder is the temp folder of the process.
-pub fn here(dir: &Path) -> Result<Session> {
-    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
-    let home = PathBuf::from(var("HOME").context("riff test-run needs HOME")?);
+/// The worktree and the clone of a test run in `dir`
+/// (01M4D7TB7FZAMASMQG9K7M3Q0D). They come from riff, never from a
+/// `.git` file or folder that a session writes:
+///
+/// - `given`: the worktree and the clone of the session, from the
+///   broker. When the worktree is the folder of the worktrees of the
+///   clone, the worktree of the run is its folder `NAME` that holds
+///   `dir`.
+/// - Else, in a worktree of the agent tool, the outermost
+///   `.claude/worktrees/NAME` of `dir` and its clone
+///   ([`crate::confine::outer_worktree`]).
+/// - Else, the top of the git worktree of `dir` (else `dir`) and the
+///   folder of its common git dir: a person runs `riff test-run` in a
+///   folder of their own.
+///
+/// ```
+/// use riff::sandbox::place;
+/// use std::path::{Path, PathBuf};
+///
+/// let given = Some((PathBuf::from("/src/app/.claude/worktrees"), PathBuf::from("/src/app")));
+/// let dir = Path::new("/src/app/.claude/worktrees/issue-1/n");
+/// assert_eq!(
+///     place(dir, given.clone()),
+///     (PathBuf::from("/src/app/.claude/worktrees/issue-1"), PathBuf::from("/src/app"))
+/// );
+/// // The folder of the worktrees itself is the worktree of the run.
+/// assert_eq!(
+///     place(Path::new("/src/app/.claude/worktrees"), given),
+///     (PathBuf::from("/src/app/.claude/worktrees"), PathBuf::from("/src/app"))
+/// );
+/// // A worktree of an item is the worktree of each run in it.
+/// let given = Some((PathBuf::from("/src/app/.claude/worktrees/w"), PathBuf::from("/src/app")));
+/// assert_eq!(
+///     place(Path::new("/src/app/.claude/worktrees/w/n"), given),
+///     (PathBuf::from("/src/app/.claude/worktrees/w"), PathBuf::from("/src/app"))
+/// );
+/// // A nested `.claude/worktrees` is a folder of the worktree, not a clone.
+/// let dir = Path::new("/src/app/.claude/worktrees/w/a/.claude/worktrees/x");
+/// assert_eq!(
+///     place(dir, None),
+///     (PathBuf::from("/src/app/.claude/worktrees/w"), PathBuf::from("/src/app"))
+/// );
+/// ```
+pub fn place(dir: &Path, given: Option<(PathBuf, PathBuf)>) -> (PathBuf, PathBuf) {
+    if let Some((root, clone)) = given {
+        let worktrees = clone.join(crate::worktrees::AGENT_DIR);
+        let worktree = match dir.strip_prefix(&worktrees).map(Path::components) {
+            Ok(mut parts) if root == worktrees => parts
+                .next()
+                .map_or_else(|| root.clone(), |name| worktrees.join(name)),
+            _ => root,
+        };
+        return (worktree, clone);
+    }
+    if let Some((clone, name)) = crate::confine::outer_worktree(dir) {
+        return (clone.join(crate::worktrees::AGENT_DIR).join(name), clone);
+    }
     let worktree = git(dir, &["rev-parse", "--show-toplevel"]).unwrap_or_else(|| dir.to_owned());
-    let common = git(
+    let clone = git(
         dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    );
-    let clone = common
-        .as_deref()
-        .and_then(Path::parent)
-        .map_or_else(|| worktree.clone(), Path::to_owned);
+    )
+    .as_deref()
+    .and_then(Path::parent)
+    .map_or_else(|| worktree.clone(), Path::to_owned);
+    (worktree, clone)
+}
+
+/// The session of a test run in `dir`, from the environment and from
+/// riff: the worktree and the clone of [`place`] with `given`, the
+/// target is `CARGO_TARGET_DIR` (else the `target` of the worktree),
+/// and the temp folder is the temp folder of the process.
+pub fn here(dir: &Path, given: Option<(PathBuf, PathBuf)>) -> Result<Session> {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    let home = PathBuf::from(var("HOME").context("riff test-run needs HOME")?);
+    let (worktree, clone) = place(dir, given);
     let target = var("CARGO_TARGET_DIR").map_or_else(|| worktree.join("target"), PathBuf::from);
     let target = if target.is_absolute() {
         target
@@ -520,7 +592,11 @@ pub fn test_run(program: &OsStr, program_args: &[OsString]) -> Result<i32> {
     crate::confine::no_core_dumps()?;
     let bwrap = check()?;
     let cwd = std::env::current_dir()?;
-    let mut session = here(&cwd)?;
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    let given = var(WORKTREE_VAR)
+        .zip(var(CLONE_VAR))
+        .map(|(w, c)| (PathBuf::from(w), PathBuf::from(c)));
+    let mut session = here(&cwd, given)?;
     let within = std::env::var_os(WITHIN_VAR)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from);
@@ -677,7 +753,7 @@ mod tests {
         };
         ok(&["init", "-q"], &top);
         std::fs::create_dir(top.join("src")).unwrap();
-        let s = here(&top.join("src")).unwrap();
+        let s = here(&top.join("src"), None).unwrap();
         assert_eq!(s.worktree, top);
         assert_eq!(s.clone, top);
     }

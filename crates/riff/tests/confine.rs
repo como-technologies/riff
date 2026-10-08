@@ -511,6 +511,43 @@ fn a_test_run_writes_no_folder_that_the_request_names() {
     assert!(got.ends_with("code 1\n"), "{got}");
 }
 
+/// 01M4D7TB7FZAMASMQG9K7M3Q0D: a worker plants a `.git` file that names
+/// another repository of the person in a folder of its worktree, and
+/// asks for a test run there. The test run takes the clone of the
+/// session from the broker: it reads no git dir of the other
+/// repository.
+#[test]
+fn a_planted_git_file_gives_a_test_run_no_other_git_dir() {
+    let m = Machine::outside_tmp();
+    let result = m.worktrees().join("result");
+    // Another repository of the person, outside the clone and outside
+    // /tmp, so a bind of it would show in the run.
+    let other = m.clone().parent().unwrap().join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    git(&other, &["init", "-q"]);
+    std::fs::write(other.join(".git/secret"), "a token\n").unwrap();
+    let bin = Isolated::shared().riff_path();
+    let claude = m.claude(&format!(
+        "mkdir -p \"$(dirname \"$0\")/issue-1/n\" && cd \"$(dirname \"$0\")/issue-1/n\"\n\
+         echo 'gitdir: {2}/.git' > .git\n\
+         '{1}' test-run -- sh -c 'if cat \"{2}/.git/secret\"; then echo read yes; else echo read no; fi' > '{0}' 2>&1\n\
+         echo \"code $?\" >> '{0}'",
+        result.display(),
+        bin.display(),
+        other.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let got = std::fs::read_to_string(&result).unwrap();
+    if got.contains("bubblewrap") || got.contains("apparmor") {
+        println!("skip: this machine has no bubblewrap for a test run: {got}");
+        return;
+    }
+    assert!(!got.contains("a token"), "{got}");
+    assert!(got.ends_with("read no\ncode 0\n"), "{got}");
+}
+
 /// 01M4BR61PPQV7JJE5Y2G9Q90AF, 01M4BTB7757XF8RZ6MRXKTM8SB: a worktree
 /// path that is a link to the home of the person gives no profile, so
 /// `claude` does not start and the home gets no write. The same for a

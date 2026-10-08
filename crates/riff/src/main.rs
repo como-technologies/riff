@@ -1113,6 +1113,9 @@ enum Workers {
         /// The worktree of the session.
         #[arg(long)]
         root: std::path::PathBuf,
+        /// The clone of the session.
+        #[arg(long)]
+        clone: std::path::PathBuf,
     },
     /// Run git in a worktree with the sandbox of a worker
     ///
@@ -2307,10 +2310,10 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
                 }
             }
         }
-        Some(Workers::Broker { root }) => {
+        Some(Workers::Broker { root, clone }) => {
             use std::os::fd::AsFd;
             let socket = std::io::stdin().as_fd().try_clone_to_owned()?;
-            riff::broker::serve(socket, root, &riff::binary::this_on_disk()?)
+            riff::broker::serve(socket, root, clone, &riff::binary::this_on_disk()?)
         }
         Some(Workers::Git { worktree, args }) => riff::confine::run_git(server, worktree, args),
         Some(Workers::TestRun { program, args }) => {

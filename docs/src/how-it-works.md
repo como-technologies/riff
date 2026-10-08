@@ -3244,6 +3244,12 @@ the broker, not from the request: the target of the session and the
 pool of build jobs. A target that is a link to a folder outside the
 worktree gives no test run.
 
+A test run takes its clone and its worktree from riff, not from git.
+The broker gets them when the session starts. The folder of the
+request only picks where the command runs. So a `.git` file that a
+session writes in its worktree cannot make a test run read another
+repository.
+
 #### Commit and push in a worker
 
 A worker writes only the parts of the git dir of the clone that a
