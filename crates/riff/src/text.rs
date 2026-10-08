@@ -1351,7 +1351,7 @@ pub fn workers_limited(left: u16, limit: u16, run: usize) -> String {
 }
 
 /// The line of `riff mcp` when the server asks its idle worker to stop
-/// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+/// (01M4BTB7G5Q0HPP057KMBXBTE1).
 pub const IDLE_STOP: &str =
     "the server stops this idle worker. riff stops its riff workers run, and claude ends.";
 
@@ -4592,6 +4592,134 @@ pub fn claude_token_removed(had: bool) -> String {
     } else {
         "riff keeps no Claude plan token on this machine.".into()
     }
+}
+
+/// The refusal of the broker for an operation that is not in its list
+/// (01M4C5AQM63F58YQ9VA391513D).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::broker_no_op("shell"),
+///     "the broker has no operation shell. It has: test-run."
+/// );
+/// ```
+pub fn broker_no_op(op: &str) -> String {
+    format!(
+        "the broker has no operation {op}. It has: {}.",
+        crate::broker::OPS.join(", ")
+    )
+}
+
+/// The refusal of the broker for a folder outside its root.
+pub fn broker_not_in(cwd: &Path, root: &Path) -> String {
+    format!(
+        "the folder {} is not in {}, the worktree of the session",
+        cwd.display(),
+        root.display()
+    )
+}
+
+/// The error of `riff test-run` for a target outside the folder that
+/// the broker names (01M4CN0RRJF5EWGE0VDSX3442B).
+pub fn target_not_in(target: &Path, within: &Path) -> String {
+    format!(
+        "the target {} of the test run is not in {}, the folder that the broker allows",
+        target.display(),
+        within.display()
+    )
+}
+
+/// The refusal of the broker for a request with no program.
+pub const BROKER_NO_PROGRAM: &str = "the request names no program";
+
+/// The error of `riff test-run` when the broker refuses it.
+pub fn broker_refused(why: &str) -> String {
+    format!("the broker of the sandbox runs nothing: {why}")
+}
+
+/// The error of `riff workers sandbox` on a kernel with no Landlock
+/// (01M4BTB74RD24WH59FA65KZ8J0).
+pub const NO_LANDLOCK: &str = "the kernel has no Landlock, so riff starts no session. \
+Use a kernel with Landlock on: `cat /sys/kernel/security/lsm` names landlock.";
+
+/// The ports of a sandbox, with each run of ports as one range.
+///
+/// ```
+/// assert_eq!(riff::text::port_list(&[443, 7000, 7001, 7002, 7878]), "443, 7000-7002, 7878");
+/// assert_eq!(riff::text::port_list(&[]), "none");
+/// ```
+pub fn port_list(ports: &[u16]) -> String {
+    let mut runs: Vec<(u16, u16)> = vec![];
+    for &port in ports {
+        match runs.last_mut() {
+            Some((_, high)) if u32::from(*high) + 1 == u32::from(port) => *high = port,
+            _ => runs.push((port, port)),
+        }
+    }
+    if runs.is_empty() {
+        return "none".into();
+    }
+    runs.iter()
+        .map(|&(low, high)| match low == high {
+            true => low.to_string(),
+            false => format!("{low}-{high}"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The line of `riff workers sandbox` when it applied the sandbox.
+///
+/// ```
+/// use riff::confine::Applied;
+///
+/// let a = Applied { abi: 8, full: false, paths: 21, ports: 28234 };
+/// assert_eq!(
+///     a.to_string(),
+///     "the sandbox is on: Landlock ABI 8 (a part of the rights of ABI 9), 21 path rules, 28234 port rules."
+/// );
+/// ```
+pub fn sandbox_applied(
+    f: &mut std::fmt::Formatter<'_>,
+    a: &crate::confine::Applied,
+) -> std::fmt::Result {
+    let part = match a.full {
+        true => "each right".to_owned(),
+        false => format!(
+            "a part of the rights of ABI {}",
+            crate::confine::ABI_WANTED as i32
+        ),
+    };
+    write!(
+        f,
+        "the sandbox is on: Landlock ABI {} ({part}), {} path rules, {} port rules.",
+        a.abi, a.paths, a.ports
+    )
+}
+
+/// The text of `riff workers sandbox --show` (01M4BTB7Q1ZT1WD2NMF6BAVWPB):
+/// the role, each write path, each read path, the ports, and what the
+/// kernel applies.
+pub fn sandbox_show(
+    profile: &crate::profile::Profile,
+    ports: &[u16],
+    applied: Result<&crate::confine::Applied, String>,
+) -> String {
+    let mut out = format!("The sandbox of the {} here:\nWrite:\n", profile.role());
+    for p in profile.write_paths() {
+        let _ = writeln!(out, "  {}", p.display());
+    }
+    out.push_str("Read:\n");
+    for p in profile.read_paths() {
+        let _ = writeln!(out, "  {}", p.display());
+    }
+    let _ = writeln!(out, "Devices: {}", crate::confine::DEVICES.join(", "));
+    let _ = writeln!(out, "Connect to the TCP ports: {}", port_list(ports));
+    let _ = match applied {
+        Ok(a) => writeln!(out, "{a}"),
+        Err(e) => writeln!(out, "riff cannot apply it: {e}"),
+    };
+    out
 }
 
 #[cfg(test)]

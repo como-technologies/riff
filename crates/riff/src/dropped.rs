@@ -19,7 +19,7 @@
 //!     Note over A: killed
 //!     S->>S: the claim is free
 //!     B->>S: claim issue-12
-//!     B->>O: git fetch --prune origin
+//!     B->>O: git fetch origin
 //!     B->>B: "Earlier work on issue-12: the pushed branch ..."
 //!     B->>B: goes on from origin/worktree-issue-12
 //! ```
@@ -71,7 +71,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::Duration;
 
 use riff_core::name::SessionUri;
@@ -227,14 +227,17 @@ pub fn item_of(branch: &str) -> Option<&str> {
         .filter(|item| !item.is_empty() && !item.starts_with("verify-"))
 }
 
-/// Runs `git fetch --prune origin` in the clone of `dir` for at most
-/// `wait`. False when the fetch fails or takes longer, for example with
-/// no remote.
+/// Runs `git fetch origin` in the clone of `dir` for at most `wait`.
+/// False when the fetch fails or takes longer, for example with no
+/// remote. It does not prune: a session cannot write the `packed-refs`
+/// of the clone, and riff prunes outside the sandbox
+/// (01M4CN0W3V733V6R2SG1YYZRCN).
 pub async fn fetch(dir: &Path, wait: Duration) -> bool {
-    let fetch = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["fetch", "--quiet", "--prune", "origin"])
+    let Ok(git) = crate::confine::git_in(dir) else {
+        return false;
+    };
+    let fetch = tokio::process::Command::from(git)
+        .args(["fetch", "--quiet", "origin"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -394,6 +397,8 @@ pub fn start_lines(free: &[Earlier]) -> Option<String> {
 
 /// A linked worktree of the clone.
 struct Worktree {
+    /// The main worktree of the clone.
+    main: PathBuf,
     path: PathBuf,
     /// The last part of the path.
     name: String,
@@ -403,12 +408,12 @@ struct Worktree {
 
 impl Worktree {
     fn kept(self) -> Kept {
-        let changed =
-            git(&self.path, &["status", "--porcelain"]).map_or(0, |out| out.lines().count());
+        let changed = sandboxed(&self.main, &self.path, &["status", "--porcelain"])
+            .map_or(0, |out| out.lines().count());
         let ahead = ["rev-list", "--count", "HEAD", "--not", "--remotes=origin"];
         let not_pushed = git(&self.path, &ahead)
             .and_then(|n| n.trim().parse().ok())
-            .filter(|&n| n == 0 || !on_default(&self.path))
+            .filter(|&n| n == 0 || !on_default(&self.main, &self.path))
             .unwrap_or(0);
         Kept {
             path: self.path,
@@ -422,7 +427,7 @@ impl Worktree {
 /// `dir`: a merge of `HEAD` into it gives the same tree. So a worktree
 /// whose branch merged with a squash has no commit that is not pushed
 /// (01M3ZT825YAA5FW85YXH7JR1K0).
-fn on_default(dir: &Path) -> bool {
+fn on_default(main: &Path, dir: &Path) -> bool {
     let base = git(dir, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
         .unwrap_or_else(|| "origin/main".to_owned());
     let tree = git(
@@ -434,7 +439,7 @@ fn on_default(dir: &Path) -> bool {
             &format!("{base}^{{tree}}"),
         ],
     );
-    let merged = git(dir, &["merge-tree", "--write-tree", &base, "HEAD"]);
+    let merged = sandboxed(main, dir, &["merge-tree", "--write-tree", &base, "HEAD"]);
     match (tree, merged) {
         (Some(tree), Some(merged)) => merged.lines().next() == Some(tree.as_str()),
         _ => false,
@@ -463,14 +468,22 @@ fn pushed(dir: &Path) -> Vec<Pushed> {
         .collect()
 }
 
-/// Each linked worktree of the clone of `dir` whose directory is there.
+/// Each linked worktree of the clone of `dir` whose directory is there,
+/// in the worktree folder of the clone (01M4CW0CH4F861MWQSQACEX54X).
 /// The main worktree is not in the list.
 fn worktrees(dir: &Path) -> Vec<Worktree> {
     let Some(out) = git(dir, &["worktree", "list", "--porcelain"]) else {
         return Vec::new();
     };
-    out.split("\n\n")
-        .skip(1)
+    let mut blocks = out.split("\n\n");
+    let Some(main) = blocks
+        .next()
+        .and_then(|b| b.lines().next()?.strip_prefix("worktree "))
+        .map(PathBuf::from)
+    else {
+        return Vec::new();
+    };
+    blocks
         .filter_map(|block| {
             let field = |name: &str| {
                 block
@@ -481,17 +494,32 @@ fn worktrees(dir: &Path) -> Vec<Worktree> {
                 return None;
             }
             let path = PathBuf::from(field("worktree ")?);
+            crate::confine::git_in_tree(&main, &path).ok()?;
             let name = path.file_name()?.to_string_lossy().into_owned();
             let branch = field("branch refs/heads/").unwrap_or_default().to_owned();
-            Some(Worktree { path, name, branch })
+            Some(Worktree {
+                main: main.clone(),
+                path,
+                name,
+                branch,
+            })
         })
         .collect()
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    output(crate::confine::git_in(dir).ok()?, args)
+}
+
+/// [`git`] in the worktree `tree` of the clone `main` with the sandbox
+/// of a worker, for a step that reads the files of the worktree
+/// (01M4D06XN4D19G1B2NBRFH34B3).
+fn sandboxed(main: &Path, tree: &Path, args: &[&str]) -> Option<String> {
+    output(crate::confine::worker_git(main, tree).ok()?, args)
+}
+
+fn output(mut git: std::process::Command, args: &[&str]) -> Option<String> {
+    let out = git
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())
@@ -508,7 +536,7 @@ mod tests {
     use super::*;
 
     fn run(dir: &Path, args: &[&str]) {
-        let out = Command::new("git")
+        let out = crate::confine::git()
             .arg("-C")
             .arg(dir)
             .args(args)

@@ -158,22 +158,21 @@ pub fn lead_args(given: &crate::launch::Given, settings: &Path) -> Vec<String> {
     args
 }
 
-/// The file of the flag settings of the lead of the tmux session
-/// `name` in the folder `dir`.
+/// The name of the temp folder, the Claude folder and the rules file of
+/// the lead of `repo` (01M4BTB7BPA38ARM789WBV507D, 01M4BTB7DY1Y74PP3JWKVX58JQ). The
+/// rules file is outside each write path of the lead, so the lead
+/// cannot change its own rules.
 ///
 /// ```
-/// assert_eq!(
-///     riff::start::lead_settings_file("/s".as_ref(), "como/riff"),
-///     std::path::Path::new("/s/lead/como/riff.json"),
-/// );
+/// assert_eq!(riff::start::lead_name("como/riff.x"), "lead-como-riff.x");
 /// ```
-pub fn lead_settings_file(dir: &Path, name: &str) -> PathBuf {
-    dir.join("lead").join(format!("{name}.json"))
+pub fn lead_name(repo: &str) -> String {
+    format!("lead-{}", repo.replace(['/', ':'], "-"))
 }
 
 /// Writes the flag settings of the lead to `file`: the status line and
 /// `rules` ([`crate::launch::settings`], 01M4BT33R71HXAVQGHFD4ZFGR5,
-/// 01M4BW2SW96JS62ZYQNW6804TV). A file keeps the command of the tmux
+/// 01M4C1QS79MM15F852SW6W7671). A file keeps the command of the tmux
 /// session short: the rules can be many.
 pub fn write_lead_settings(file: &Path, rules: &crate::permissions::Rules) -> Result<()> {
     let json = serde_json::Value::Object(crate::launch::settings(rules)).to_string();
@@ -181,15 +180,6 @@ pub fn write_lead_settings(file: &Path, rules: &crate::permissions::Rules) -> Re
         std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     }
     std::fs::write(file, json).with_context(|| format!("cannot write {}", file.display()))
-}
-
-/// The name of the temp folder of the lead of `repo`.
-///
-/// ```
-/// assert_eq!(riff::start::lead_name("como/riff.x"), "lead-como-riff.x");
-/// ```
-pub fn lead_name(repo: &str) -> String {
-    format!("lead-{}", repo.replace(['/', ':'], "-"))
 }
 
 /// The shell command of the lead `name`: `riff workers lead`, which runs

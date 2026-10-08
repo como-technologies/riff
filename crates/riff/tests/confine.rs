@@ -1,0 +1,579 @@
+//! The sandbox of a worker (01M4BTB72DY0C5Y0EJVR0ZH6FZ): `riff workers
+//! run` starts a fake `claude` under the worker profile, and the fake
+//! tries each thing that the profile allows or refuses.
+
+use isolated::Isolated;
+use std::net::TcpListener;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Output, Stdio};
+
+/// A machine of a person: a fake home with its secrets and its Claude
+/// folder, and a git worktree outside the home.
+struct Machine {
+    env: Isolated,
+    /// The folder of the main clone.
+    root: PathBuf,
+    /// The temp folder that holds `root`, when it is not in `env`.
+    _own: Option<tempfile::TempDir>,
+}
+
+impl Machine {
+    fn new() -> Self {
+        let env = Isolated::new();
+        let root = env.path().join("main");
+        Self::with(env, root, None)
+    }
+
+    /// A machine whose clone is in `target/tmp` of this build, not in
+    /// `/tmp` or `/var/tmp`: a test run hides both behind a new empty
+    /// folder.
+    fn outside_tmp() -> Self {
+        let exe = std::env::current_exe().unwrap();
+        let tmp = exe.ancestors().nth(3).unwrap().join("tmp");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let own = tempfile::tempdir_in(tmp).unwrap();
+        let root = own.path().join("main");
+        Self::with(Isolated::new(), root, Some(own))
+    }
+
+    fn with(env: Isolated, root: PathBuf, own: Option<tempfile::TempDir>) -> Self {
+        let m = Machine {
+            env,
+            root,
+            _own: own,
+        };
+        let home = m.env.home();
+        for (file, text) in [
+            (".bashrc", "# the bashrc of the person\n"),
+            (".ssh/id_ed25519", "a key\n"),
+            (".claude/settings.json", "{}\n"),
+            (".local/share/riff/rules/w1.json", "{}\n"),
+        ] {
+            let path = home.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        git(&m.clone(), &["init", "-q"]);
+        m
+    }
+
+    fn home(&self) -> PathBuf {
+        self.env.home()
+    }
+
+    /// The main clone, where a worker starts.
+    fn clone(&self) -> PathBuf {
+        std::fs::create_dir_all(&self.root).unwrap();
+        self.root.canonicalize().unwrap()
+    }
+
+    /// The folder of the worktrees of the clone: the worktree of the
+    /// profile of a worker with no item (01M4BT341H1M1N1MT947HXNXDR).
+    /// It holds the git worktree `issue-1`.
+    fn worktrees(&self) -> PathBuf {
+        let dir = self.clone().join(".claude/worktrees");
+        if !dir.join("issue-1").exists() {
+            let clone = self.clone();
+            git(
+                &clone,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "x",
+                ],
+            );
+            git(
+                &clone,
+                &["worktree", "add", "-q", ".claude/worktrees/issue-1"],
+            );
+        }
+        dir
+    }
+
+    /// A fake `claude` in the folder of the worktrees that runs `body`
+    /// with bash.
+    fn claude(&self, body: &str) -> PathBuf {
+        let path = self.worktrees().join("claude");
+        std::fs::write(&path, format!("#!/bin/bash\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    /// `riff workers run CLAUDE` in `dir`, as the worker session `w1`.
+    fn run(&self, dir: &Path, claude: &Path, vars: &[(&str, &std::ffi::OsStr)]) -> Output {
+        let mut cmd = self.env.riff();
+        cmd.args(["workers", "run"])
+            .arg(claude)
+            .current_dir(dir)
+            .env("RIFF_SESSION", "w1")
+            .env("RIFF_USER", "mike")
+            .env("RIFF_HOST", "pangolin")
+            .env("TMUX_PANE", "%5");
+        for (name, value) in vars {
+            cmd.env(name, value);
+        }
+        cmd.output().unwrap()
+    }
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let ok = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "git {args:?}");
+}
+
+/// A process outside the sandbox. Its drop ends it.
+struct Outside(Child);
+
+impl Outside {
+    fn start() -> Self {
+        Outside(
+            Command::new("sleep")
+                .arg("300")
+                .stdin(Stdio::null())
+                .spawn()
+                .unwrap(),
+        )
+    }
+}
+
+impl Drop for Outside {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A TCP port on loopback with a listener, out of the local port range
+/// of the kernel, so no rule of the sandbox allows it.
+fn port_out_of_range() -> TcpListener {
+    let local = riff::confine::local_ports();
+    (20000..u16::MAX)
+        .filter(|p| !local.contains(p))
+        .find_map(|p| TcpListener::bind(("127.0.0.1", p)).ok())
+        .expect("a free port out of the local range")
+}
+
+/// The Landlock ABI in the line of the sandbox, or 0.
+fn abi(err: &str) -> i32 {
+    err.split("Landlock ABI ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
+/// 01M4BTB72DY0C5Y0EJVR0ZH6FZ, 01M4BTB79FZ5RAFXMZRRJZNCH9,
+/// 01M4BTB7BPA38ARM789WBV507D, 01M4BTB7DY1Y74PP3JWKVX58JQ: a worker
+/// writes its worktree, its own Claude folder and the riff state. It
+/// cannot write or read the home of the person, its secrets, the Claude
+/// folder of the person or its own permission rules. It connects to the
+/// local port range and not to another port. It cannot signal a
+/// process outside the sandbox (ABI 6), or read its environment.
+#[test]
+fn a_worker_does_only_what_its_profile_allows() {
+    let m = Machine::new();
+    let outside = Outside::start();
+    let closed = port_out_of_range();
+    let open = TcpListener::bind("127.0.0.1:0").unwrap();
+    let home = m.home();
+    let result = m.worktrees().join("result");
+    let tries = [
+        (
+            "worktree",
+            format!("echo x > '{}/issue-1/new'", m.worktrees().display()),
+        ),
+        (
+            "git-objects",
+            format!("echo x > '{}/.git/objects/probe'", m.clone().display()),
+        ),
+        (
+            "git-config",
+            format!("echo x >> '{}/.git/config'", m.clone().display()),
+        ),
+        (
+            "git-hook",
+            format!("echo x > '{}/.git/hooks/post-merge'", m.clone().display()),
+        ),
+        (
+            "git-root",
+            format!("echo x > '{}/.git/probe'", m.clone().display()),
+        ),
+        ("clone", format!("echo x > '{}/new'", m.clone().display())),
+        ("home", format!("echo x > '{}/new'", home.display())),
+        ("bashrc", format!("cat '{}/.bashrc'", home.display())),
+        ("ssh", format!("cat '{}/.ssh/id_ed25519'", home.display())),
+        (
+            "person-claude",
+            format!("echo x > '{}/.claude/settings.json'", home.display()),
+        ),
+        (
+            "rules",
+            format!(
+                "echo x > '{}/.local/share/riff/rules/w1.json'",
+                home.display()
+            ),
+        ),
+        (
+            "own-claude",
+            "echo x > \"$CLAUDE_CONFIG_DIR/settings.json\"".into(),
+        ),
+        (
+            "state",
+            format!("echo x > '{}/state/probe'", m.env.riff_home().display()),
+        ),
+        (
+            "open-port",
+            format!(
+                "exec 3<>/dev/tcp/127.0.0.1/{}",
+                open.local_addr().unwrap().port()
+            ),
+        ),
+        (
+            "closed-port",
+            format!(
+                "exec 3<>/dev/tcp/127.0.0.1/{}",
+                closed.local_addr().unwrap().port()
+            ),
+        ),
+        ("signal", format!("kill -0 {}", outside.0.id())),
+        ("environ", format!("cat /proc/{}/environ", outside.0.id())),
+    ];
+    let mut body = format!(": > '{}'\n", result.display());
+    for (name, command) in &tries {
+        body.push_str(&format!(
+            "if ( {command} ) >/dev/null 2>&1; then echo '{name} yes'; else echo '{name} no'; fi >> '{}'\n",
+            result.display()
+        ));
+    }
+    body.push_str(&format!(
+        "echo \"claude-dir $CLAUDE_CONFIG_DIR\" >> '{}'\n",
+        result.display()
+    ));
+    let claude = m.claude(&body);
+    std::fs::create_dir_all(m.env.riff_home().join("state")).unwrap();
+
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert!(
+        err.contains("riff: the sandbox is on: Landlock ABI"),
+        "{err}"
+    );
+    let got = std::fs::read_to_string(&result).unwrap();
+    let mut want = vec![
+        "worktree yes",
+        "git-objects yes",
+        "git-config no",
+        "git-hook no",
+        "git-root no",
+        "clone no",
+        "home no",
+        "bashrc no",
+        "ssh no",
+        "person-claude no",
+        "rules no",
+        "own-claude yes",
+        "state yes",
+        "open-port yes",
+        "closed-port no",
+    ];
+    // The scope of signals needs ABI 6 (Linux 6.12).
+    let signal = match abi(&err) >= 6 {
+        true => "signal no",
+        false => {
+            println!("skip: the scope of signals needs Landlock ABI 6");
+            got.lines().find(|l| l.starts_with("signal ")).unwrap()
+        }
+    };
+    want.extend([signal, "environ no"]);
+    let lines: Vec<&str> = got.lines().collect();
+    assert_eq!(&lines[..want.len()], &want[..], "{got}");
+    let claude_dir = home.join(".local/share/riff/claude/w1");
+    assert_eq!(
+        lines[want.len()],
+        format!("claude-dir {}", claude_dir.display())
+    );
+    assert!(!home.join("new").exists());
+    assert_eq!(
+        std::fs::read_to_string(home.join(".claude/settings.json")).unwrap(),
+        "{}\n"
+    );
+}
+
+/// 01M4CN0W3V733V6R2SG1YYZRCN: a worker commits in its worktree, and
+/// fetches and pushes it, with no write of the config and the hooks of
+/// the clone. The config and the hooks stay as they were.
+#[test]
+fn a_worker_commits_and_pushes_with_no_write_of_the_git_config() {
+    let m = Machine::new();
+    let worktrees = m.worktrees();
+    // A remote that the sandbox writes: in the folder of the worktrees.
+    let remote = worktrees.join("remote.git");
+    git(&worktrees, &["init", "-q", "--bare", "remote.git"]);
+    git(
+        &m.clone(),
+        &["remote", "add", "origin", &remote.display().to_string()],
+    );
+    git(&m.clone(), &["push", "-q", "origin", "HEAD:main"]);
+    git(&m.clone(), &["fetch", "-q", "origin"]);
+    git(&m.clone(), &["pack-refs", "--all"]);
+    let config = std::fs::read_to_string(m.clone().join(".git/config")).unwrap();
+    let hooks = m.clone().join(".git/hooks");
+    let hooks_before = std::fs::read_dir(&hooks).map_or(0, |d| d.count());
+    let result = worktrees.join("result");
+    let claude = m.claude(&format!(
+        "cd \"$(dirname \"$0\")/issue-1\"\n\
+         r() {{ \"$@\" >/dev/null 2>&1; echo \"$1 $2 $?\" >> '{0}'; }}\n\
+         : > '{0}'\n\
+         echo x > f\n\
+         r git add f\n\
+         r git -c user.name=t -c user.email=t@t commit -q -m one\n\
+         r git push -q --force-with-lease --force-if-includes origin HEAD\n\
+         r git fetch -q origin\n\
+         r git rebase -q origin/main\n\
+         r git config branch.x.remote origin",
+        result.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&result).unwrap(),
+        "git add 0\ngit -c 0\ngit push 0\ngit fetch 0\ngit rebase 0\ngit config 255\n"
+    );
+    let heads = Command::new("git")
+        .args([
+            "--git-dir",
+            &remote.display().to_string(),
+            "branch",
+            "--list",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&heads.stdout).contains("issue-1"),
+        "the push did not reach the remote: {}",
+        String::from_utf8_lossy(&heads.stdout)
+    );
+    assert_eq!(
+        std::fs::read_to_string(m.clone().join(".git/config")).unwrap(),
+        config
+    );
+    assert_eq!(
+        std::fs::read_dir(&hooks).map_or(0, |d| d.count()),
+        hooks_before
+    );
+}
+
+/// 01M4C5AQQX543ZFJ7J005HC5E9, 01M4C5AQV8AT8F5WKNF1C9CE5F,
+/// 01M4C5AQYT6V1MJ37JXJ3PNYQ2: a worker reaches no tmux server of the
+/// person, and gets no `TMUX`. A pair of sockets still works.
+#[test]
+fn a_worker_reaches_no_tmux_server() {
+    use std::os::unix::fs::MetadataExt;
+    let m = Machine::new();
+    let tmp = m.env.path().join("tmux-tmp");
+    let uid = std::fs::metadata("/proc/self").unwrap().uid();
+    let dir = tmp.join(format!("tmux-{uid}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket = dir.join("riff");
+    let _server = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    // Outside the sandbox, the connect works.
+    std::os::unix::net::UnixStream::connect(&socket).unwrap();
+    let result = m.worktrees().join("result");
+    let python = |code: &str| format!("python3 -c \"import socket; {code}\"");
+    let tries = [
+        (
+            "tmux-socket",
+            python(&format!(
+                "socket.socket(socket.AF_UNIX).connect('{}')",
+                socket.display()
+            )),
+        ),
+        ("socketpair", python("socket.socketpair()")),
+    ];
+    let mut body = format!(": > '{}'\n", result.display());
+    for (name, command) in &tries {
+        body.push_str(&format!(
+            "if ( {command} ) >/dev/null 2>&1; then echo '{name} yes'; else echo '{name} no'; fi >> '{}'\n",
+            result.display()
+        ));
+    }
+    body.push_str(&format!(
+        "echo \"tmux-vars [$TMUX] [$TMUX_PANE]\" >> '{0}'\n\
+         grep core /proc/self/limits | tr -s ' ' >> '{0}'\n",
+        result.display()
+    ));
+    let claude = m.claude(&body);
+    let tmux = format!("{},1,0", socket.display());
+    let out = m.run(
+        &m.clone(),
+        &claude,
+        &[("TMUX_TMPDIR", tmp.as_os_str()), ("TMUX", tmux.as_ref())],
+    );
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&result).unwrap(),
+        // No core dump and no crash helper (01M4C6HE4D4ADJVBCC6EW8FP0X).
+        "tmux-socket no\nsocketpair yes\ntmux-vars [] []\nMax core file size 1 1 bytes \n"
+    );
+}
+
+/// 01M4C5AQGCA3TFZDW23HYKS83S: `riff test-run` in a worker cannot make
+/// its namespaces in the sandbox, so the broker runs it outside. The
+/// program runs in the test run, and its output and its exit code come
+/// back to the worker.
+#[test]
+fn a_test_run_in_a_worker_runs_through_the_broker() {
+    let m = Machine::outside_tmp();
+    let result = m.worktrees().join("result");
+    let bin = Isolated::shared().riff_path();
+    let claude = m.claude(&format!(
+        "cd \"$(dirname \"$0\")/issue-1\"\n\
+         '{1}' test-run -- sh -c 'echo \"run [$RIFF_TEST_RUN] [$RIFF_BROKER]\"; grep core /proc/self/limits | tr -s \" \"; exit 3' > '{0}' 2>&1\n\
+         echo \"code $?\" >> '{0}'\n\
+         echo \"broker [${{RIFF_BROKER:+set}}]\" >> '{0}'",
+        result.display(),
+        bin.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let got = std::fs::read_to_string(&result).unwrap();
+    if got.contains("bubblewrap") || got.contains("apparmor") {
+        println!("skip: this machine has no bubblewrap for a test run: {got}");
+        assert!(got.ends_with("code 1\nbroker [set]\n"), "{got}");
+        return;
+    }
+    assert_eq!(
+        got,
+        "run [1] []\nMax core file size 1 1 bytes \ncode 3\nbroker [set]\n"
+    );
+}
+
+/// 01M4CN0W1F0Y7955C6Q1XB601G, 01M4CN0RRJF5EWGE0VDSX3442B: a request to
+/// the broker cannot name the folder that a test run writes. A
+/// `CARGO_TARGET_DIR` of the request is not the target of the run, and a
+/// target that is a link to a folder outside the worktree gives no run.
+/// The folder outside gets no file.
+#[test]
+fn a_test_run_writes_no_folder_that_the_request_names() {
+    let m = Machine::outside_tmp();
+    let result = m.worktrees().join("result");
+    // A folder of the person outside the worktree, and outside /tmp, so
+    // a bind of it would show in the run.
+    let outside = m.clone().parent().unwrap().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    let bin = Isolated::shared().riff_path();
+    let claude = m.claude(&format!(
+        "cd \"$(dirname \"$0\")/issue-1\"\n\
+         CARGO_TARGET_DIR='{2}' '{1}' test-run -- sh -c 'w() {{ if echo x > \"$2\"; then echo \"$1 yes\"; else echo \"$1 no\"; fi; }}; w outside \"{2}/evil\"; w target target/probe' > '{0}' 2>/dev/null\n\
+         echo \"code $?\" >> '{0}'\n\
+         rm -rf target && ln -s '{2}' target\n\
+         '{1}' test-run -- sh -c 'echo x > target/link' >> '{0}' 2>&1\n\
+         echo \"code $?\" >> '{0}'",
+        result.display(),
+        bin.display(),
+        outside.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[("CARGO_TARGET_DIR", "".as_ref())]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let got = std::fs::read_to_string(&result).unwrap();
+    assert_eq!(
+        std::fs::read_dir(&outside).unwrap().count(),
+        0,
+        "a test run wrote outside the worktree: {got}"
+    );
+    if got.contains("bubblewrap") || got.contains("apparmor") {
+        println!("skip: this machine has no bubblewrap for a test run: {got}");
+        return;
+    }
+    // The run writes the target of the worktree, not the folder of the
+    // request.
+    assert!(got.starts_with("outside no\ntarget yes\ncode 0\n"), "{got}");
+    assert!(got.contains("is not in"), "{got}");
+    assert!(got.ends_with("code 1\n"), "{got}");
+}
+
+/// 01M4BR61PPQV7JJE5Y2G9Q90AF, 01M4BTB7757XF8RZ6MRXKTM8SB: a worktree
+/// path that is a link to the home of the person gives no profile, so
+/// `claude` does not start and the home gets no write. The same for a
+/// target dir that is a link to the home.
+#[test]
+fn a_link_to_the_home_gives_no_sandbox_and_no_write() {
+    let m = Machine::new();
+    git(&m.home(), &["init", "-q"]);
+    let link = m.env.path().join("link");
+    std::os::unix::fs::symlink(m.home(), &link).unwrap();
+    let mark = format!("echo x > '{}/new'", m.home().display());
+    let claude = m.claude(&mark);
+
+    let out = m.run(&link, &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_ne!(out.status.code(), Some(0), "{err}");
+    assert!(err.contains("gives the home of the person"), "{err}");
+    assert!(!m.home().join("new").exists(), "claude ran: {err}");
+
+    let target = m.env.path().join("target-link");
+    std::os::unix::fs::symlink(m.home(), &target).unwrap();
+    let out = m.run(
+        &m.clone(),
+        &claude,
+        &[("CARGO_TARGET_DIR", target.as_os_str())],
+    );
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_ne!(out.status.code(), Some(0), "{err}");
+    assert!(err.contains("gives the home of the person"), "{err}");
+    assert!(!m.home().join("new").exists(), "claude ran: {err}");
+}
+
+/// 01M4BTB7Q1ZT1WD2NMF6BAVWPB: `riff workers sandbox --show` prints the
+/// sandbox of the role here, and what the kernel applies, and runs
+/// nothing.
+#[test]
+fn show_prints_the_sandbox_here() {
+    let m = Machine::new();
+    let out = m
+        .env
+        .riff()
+        .args(["workers", "sandbox", "--show"])
+        .current_dir(m.clone())
+        .env("RIFF_SESSION", "w1")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        text.starts_with("The sandbox of the worker here:\nWrite:\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("  {}\n", m.worktrees().display())),
+        "{text}"
+    );
+    assert!(
+        text.contains("Connect to the TCP ports: 9, "),
+        "the dead server of the test is on port 9: {text}"
+    );
+    assert!(text.contains("the sandbox is on: Landlock ABI"), "{text}");
+    assert!(
+        !text.contains(&format!("  {}\n", m.home().display())),
+        "{text}"
+    );
+}

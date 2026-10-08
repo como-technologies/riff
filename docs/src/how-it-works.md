@@ -1241,12 +1241,17 @@ The rule for a person who looks at such a branch:
   each pull request, and no WIP commit shows there.
 - The forge deletes the branch when the pull request merges.
 
-To see the commits of the branch of an item, for `issue-12`:
+To see the commits of the branch of an item, for `issue-12`, in a
+terminal of your own:
 
 ```sh
 git fetch --prune origin
 git log --oneline origin/main..origin/worktree-issue-12
 ```
+
+`git fetch --prune` is a step for a person, not for a session. A
+session in its sandbox fetches with no `--prune` (see "Commit and push
+in a worker").
 
 ### See the earlier work on an item
 
@@ -3116,9 +3121,20 @@ processes of the role may read, write and reach. The sandbox of a
 session, its forge token and its permission rules come from that one
 profile.
 
+```mermaid
+flowchart LR
+    S["the paths of a session"] --> P["the profile of its role"]
+    P --> F["files and ports: Landlock"]
+    P --> T["forge token"]
+    P --> R["permission rules"]
+```
+
+### What a session may do
+
 | | lead | worker | verifier | test run |
 |---|---|---|---|---|
-| Write | the clone, the riff state, its temp, its Claude folder | its worktree, its target, the git dir of the clone, the riff state, its temp, its Claude folder | the same as a worker, for its verify worktree | its temp, its target |
+| Write | the clone, the riff state, its temp, its Claude folder | its worktree, its target, the objects, refs, logs and worktrees of the git dir of the clone, the riff state, its temp, its Claude folder | the same as a worker, for its verify worktree | its temp, its target |
+| Read | the system, its tools, its permission rules, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, and its worktree |
 | Network | riff server, forge, registries, model | the same | the same | loopback only |
 | Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
 
@@ -3127,16 +3143,199 @@ SSH or GnuPG keys, or the sign-in of `gh`. The key of the GitHub App
 of riff is never on your machine. riff refuses a path of a session
 that is not absolute or that has a `..` part.
 
+- **Its own Claude folder.** Each session gets its own Claude folder:
+  `~/.local/share/riff/claude/SESSION` (or `$XDG_DATA_HOME/riff/...`).
+  No session writes your `~/.claude`, so no session changes your
+  settings, your sign-in or your memory.
+- **Its permission rules.** The file of the permission rules of a
+  session is `~/.local/share/riff/rules/SESSION.json`. The session
+  reads it and cannot write it.
+- **Ports.** A session connects to the TCP ports of its profile (443
+  and the port of the riff server), and to the local port range of
+  the kernel, so that a test server on port 0 works.
+- **Other processes.** A session cannot send a signal to a process
+  outside its sandbox, or read its environment in
+  `/proc/PID/environ`.
+- **No crash report.** A crash in a session or in its test run makes
+  no core file, and starts no crash dialog on your desktop: the core
+  size limit is 1 byte.
+- **No tmux and no unix socket with a name.** A session cannot reach
+  your tmux servers, also not the tmux server of riff. riff removes
+  `TMUX` and `TMUX_PANE`, and a session cannot make a unix socket with
+  a name: not for tmux, D-Bus, your keyring or an SSH agent. A pair of
+  sockets still works.
+
+#### How riff applies the sandbox
+
+Each worker pane runs `riff workers run`. It starts `claude` through
+`riff workers sandbox`, the last step before `claude`. The lead does
+not run in a sandbox yet. `riff workers
+sandbox` makes the profile from the paths of the session, follows each
+symlink, and restricts itself with Landlock. Then it runs `claude` in
+its place. Each child of `claude` (Bash, `cargo`, the tests) gets the
+same sandbox, and cannot make it wider.
+
 ```mermaid
 flowchart LR
-    S["the paths of a session"] --> P["the profile of its role"]
-    P --> F["files and ports"]
-    P --> T["forge token"]
-    P --> R["permission rules"]
+    W["riff workers run"] --> S["systemd-run, nice"]
+    S --> X["riff workers sandbox"]
+    X -->|"Landlock"| C["claude and each child"]
 ```
 
+riff starts no session with no sandbox. On a kernel with no Landlock,
+the pane shows one error line, and `claude` does not start. Check that
+your kernel has Landlock:
+
+```sh
+cat /sys/kernel/security/lsm
+```
+
+The list names `landlock`. riff uses each right of the kernel. Linux
+7.0 has Landlock ABI 8. ABI 8 cannot stop a connect to a unix socket
+with a path, for example your D-Bus socket. Linux 7.1 (ABI 9) can. So
+riff also applies a seccomp filter: no session makes a unix socket
+with a name, on each kernel.
+
+#### Run the tests of a worker
+
+A session in the sandbox cannot make the namespaces of a test run.
+So `riff workers sandbox` starts a broker before the sandbox: `riff
+workers broker`, outside the sandbox. In a worker, `riff test-run`
+(and so `just test` and `just check`) asks the broker, and the broker
+runs the test run outside the sandbox, with the output in the pane of
+the worker:
+
+```mermaid
+sequenceDiagram
+    participant W as riff test-run in the worker
+    participant B as riff workers broker
+    participant T as riff test-run outside
+    W->>B: test-run, the folder, the output
+    B->>B: check the list of operations, the folder, the variables
+    B->>T: run it in the sandbox of a test run
+    T-->>W: the output
+    B-->>W: the exit code
+```
+
+Run the tests in a worker as everywhere:
+
+```sh
+just check
+```
+
+The broker runs only the operations of its list (today `test-run`), in
+the worktree of the session. It refuses each other request. It takes
+only the variables of cargo and of the tests from the request: never
+`PATH` or `LD_PRELOAD`. The folders that a test run writes come from
+the broker, not from the request: the target of the session and the
+pool of build jobs. A target that is a link to a folder outside the
+worktree gives no test run.
+
+#### Commit and push in a worker
+
+A worker writes only the parts of the git dir of the clone that a
+commit, a fetch and a push of its worktree need. It cannot write the
+`config` or the `hooks` of the clone: git runs the programs that they
+name, also outside each sandbox. riff runs its own git commands with
+no hooks. So in a worker, push with no `-u`, and fetch with no
+`--prune`:
+
+```sh
+git fetch -q origin
+git push -q --force-with-lease --force-if-includes origin HEAD
+```
+
+riff prunes the main clone outside the sandbox, when it fast-forwards
+it. `riff claim` fetches with no `--prune` too.
+
+#### riff sets the git dirs of a worktree
+
+A session writes its worktree and `.git/worktrees/NAME` of the clone.
+So it can change the `.git` file of its worktree, or the `commondir`
+or `gitdir` file there, to name a git dir of its own. A config in that
+git dir can name a program, for example a filter. So riff does not
+read the git dirs from these files. Each git command that riff runs in
+a worktree gets them from riff:
+
+| Variable | Value |
+|---|---|
+| `GIT_DIR` | `MAIN/.git/worktrees/NAME` |
+| `GIT_COMMON_DIR` | `MAIN/.git` |
+| `GIT_WORK_TREE` | `MAIN/.claude/worktrees/NAME` |
+
+```mermaid
+flowchart LR
+    R["riff: git in a worktree"] --> C{"in .claude/worktrees of the clone,<br/>no link, git knows NAME"}
+    C -->|yes| G["git with GIT_DIR, GIT_COMMON_DIR,<br/>GIT_WORK_TREE from riff"]
+    C -->|no| K["no git: kept, with the reason"]
+```
+
+riff runs no git in a worktree that is a link, that is not in
+`.claude/worktrees` of the clone, or that has no
+`.git/worktrees/NAME`. It also runs none when the clone sets
+`extensions.worktreeConfig`, or when the `commondir` file of the
+worktree names another git dir. Then `riff worktrees clean` keeps the
+worktree and prints `kept: it is not a worktree of an agent session`.
+
+A git of riff also goes into no submodule: a submodule that a session
+makes has a config of its own. riff sets `diff.ignoreSubmodules=all`
+and `submodule.recurse=false` for each git command.
+
+#### riff reads a worktree with the rights of a worker
+
+git can start a program when it reads the files of a worktree, for
+example a filter of `git lfs` for each file that `.gitattributes`
+names. A session writes `.gitattributes`. So each git step of riff
+that reads the files of a worktree (`status`, `add`, `commit`,
+`merge-tree`) runs in a child, `riff workers git`, with the sandbox of
+a worker on that worktree. A program that git starts there writes only
+what a worker writes, for example not in your home. With no Landlock,
+the step does not run. The push of a WIP commit needs the network and
+your sign-in, so it stays outside, with the git dirs of riff and no
+hook.
+
+```mermaid
+flowchart LR
+    C["riff worktrees clean"] --> W["riff workers git: Landlock and seccomp of a worker"]
+    W --> S["git status, add, commit"]
+    C --> P["git push: outside, git dirs of riff, no hook"]
+```
+
+To run git in a worktree as riff does, for `issue-12`, in the main
+clone:
+
+```sh
+riff workers git --worktree .claude/worktrees/issue-12 -- status
+```
+
+#### See the sandbox of a worker
+
+Each worker pane shows one line when its sandbox is on:
+
+```text
+riff: the sandbox is on: Landlock ABI 8 (a part of the rights of ABI 9), 41 path rules, 28234 port rules.
+```
+
+To see each path and port of the sandbox, run this in the worktree of
+the worker, as that session (with its `RIFF_SESSION` and `TMPDIR`):
+
+```sh
+riff workers sandbox --show
+```
+
+It prints the write paths, the read paths, the devices, the ports, and
+what your kernel applies. It starts no program. Add `--role lead` or
+`--role verifier` for another role. Add `--name NAME` for the Claude
+folder and the rules file of another session than `RIFF_SESSION`, for
+example `--name lead-como-technologies-riff`.
+
+#### Not yet in the sandbox
+
 The sandbox wave (Wave 22) puts the profiles to work, one part at a
-time.
+time. Until its other items are done, a worker in the sandbox has no
+sign-in of Claude in its new Claude folder, no `gh`
+sign-in, and no keyring for the sign-in of riff. The lead does not
+run in a sandbox yet. The release 2.0.0 comes with each part.
 
 ### See the permission rules of a worker
 
@@ -3964,12 +4163,12 @@ Control (see
 `claude --remote-control`. The lead gets a temp folder of its own and
 the forge token of the lead, and none of your credentials (see
 [The forge token of each role](#the-forge-token-of-each-role)). The
-lead also gets the permission rules of
-its profile (see [The sandbox of each role](#the-sandbox-of-each-role)).
-riff writes them to a file in its local folder, at each start of a
-lead, for example `lead/como-technologies/riff.json`. When riff cannot
-make them, it says why in one line and starts the lead with no rules
-of a profile. When the session runs, riff shows it and
+lead also gets the permission rules of its profile (see
+[The sandbox of each role](#the-sandbox-of-each-role)). riff writes
+the rules at each start of a lead, to its rules file, for example
+`~/.local/share/riff/rules/lead-como-technologies-riff.json`. When riff
+cannot make the rules, it says why in one line and starts the lead
+with no rules of a profile. When the session runs, riff shows it and
 starts no second lead. To leave the session and keep it running, press
 `Ctrl-b d`. Run `riff` again to come back.
 
@@ -5571,7 +5770,7 @@ sequenceDiagram
     S->>L: note: the server stops the idle worker
     M->>S: keep-alive, each 10 s
     S-->>M: stop
-    M->>W: stop
+    M->>W: write the stop file
     W-->>W: claude ends, the pane closes
     M->>S: end: the session leaves riff who
     opt the worker still runs 60 s after the ask
@@ -5580,7 +5779,9 @@ sequenceDiagram
 ```
 
 The watch of a worker also sends a keep-alive each 10 seconds, and
-stops the wrapper in the same way. So a worker whose `riff mcp` ended,
+writes the stop file in the same way. `riff workers run` looks for
+the file each 250 ms. A signal cannot stop it: the sandbox stops each
+signal to a process outside it. So a worker whose `riff mcp` ended,
 for example at a self-update, also stops.
 
 A worker that the lead wakes, or that claims work, before its next

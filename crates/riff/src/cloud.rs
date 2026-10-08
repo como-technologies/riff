@@ -574,9 +574,9 @@ pub fn dir(here: &Path) -> Result<PathBuf> {
 
 /// The top of the git work tree of `here`, or `None` outside one.
 pub fn top(here: &Path) -> Option<PathBuf> {
-    let out = Command::new("git")
+    let out = crate::confine::git_in(here)
+        .ok()?
         .args(["rev-parse", "--show-toplevel"])
-        .current_dir(here)
         .stderr(Stdio::null())
         .output()
         .ok()
@@ -1512,7 +1512,7 @@ pub fn commit_tag(tag: &str) -> bool {
 /// lines. Cloud Build gets the source with no git, so the image reads
 /// the build from this file (01M3JEE7YXQPWS65FBVTASAEBX).
 pub fn build_id(top: &Path) -> Result<String> {
-    let out = Command::new("git")
+    let out = crate::confine::git_in(top)?
         .args([
             "log",
             "-1",
@@ -1525,7 +1525,6 @@ pub fn build_id(top: &Path) -> Result<String> {
             "Cargo.lock",
         ])
         .env("TZ", "UTC")
-        .current_dir(top)
         .output()
         .context("cannot run git")?;
     let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();

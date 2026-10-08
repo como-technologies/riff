@@ -272,7 +272,7 @@ commit. A second full run of the same commit finds nothing new.
    run the full check: the forge runs it (see "One full run for each
    commit").
 2. Push your branch, so that a session on another machine can fetch
-   it: `git push --force-with-lease --force-if-includes -u origin HEAD`.
+   it: `git push --force-with-lease --force-if-includes origin HEAD`.
 3. Open a pull request for the branch with one command:
    `riff pr open --title "TITLE" --file summary.md`. It links the
    issue of your claim, gives the pull request the wave of the issue,
@@ -519,8 +519,12 @@ item.
 Before `EnterWorktree`, fetch:
 
 ```sh
-git fetch -q --prune origin
+git fetch -q origin
 ```
+
+Do not prune. A session in its sandbox cannot write the config, the
+hooks or the packed refs of the clone. riff prunes the main clone
+outside the sandbox.
 
 In the new worktree, before any change, put the branch on the fresh
 default branch. The worktree holds no work yet, so no work is lost:
@@ -547,12 +551,14 @@ Run this in your worktree, never on the default branch:
 ```sh
 git add -A
 git diff --cached --quiet || git commit -q -m "WIP: STEP"
-git push -q --force-with-lease --force-if-includes -u origin HEAD
+git push -q --force-with-lease --force-if-includes origin HEAD
 ```
 
 - A WIP commit says `WIP` in its subject. STEP is your step in a few
   words, for example `WIP: the tests of the claim`.
 - A WIP commit needs no rebase and no pass of the checks.
+- The push sets no upstream: the git config of the clone has no
+  write in the sandbox. Name the remote and the branch in each pull.
 - This is the only WIP block of the skill. The push also works after
   a rebase. It replaces the pushed branch only when your branch holds
   each commit of it that you fetched. So it never drops the newer work
@@ -583,7 +589,7 @@ After you remove the worktree (see "Remove a stale worktree"), prune
 from the main worktree. Then check that nothing of the item is left:
 
 ```sh
-git -C MAIN fetch -q --prune origin
+git -C MAIN fetch -q origin
 git -C MAIN worktree prune
 git -C MAIN worktree list | grep issue-12
 git -C MAIN branch --list '*issue-12*'
@@ -1049,7 +1055,7 @@ work that no live session owns. To look yourself, use your item in
 place of `issue-12`:
 
 ```sh
-git fetch -q --prune origin
+git fetch -q origin
 git branch -r --list '*issue-12*'
 git worktree list | grep issue-12
 ```

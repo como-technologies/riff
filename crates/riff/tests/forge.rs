@@ -374,7 +374,10 @@ async fn run_worker(outcome: &Outcome) -> (String, String) {
         tempfile::tempdir().unwrap()
     };
     let root = dir.path();
-    let home = root.join("home");
+    // The home is outside the clone: a clone above the home makes no
+    // profile (01M4BPK80NK50S2V26Z8BDT0XM).
+    let homes = tempfile::tempdir().unwrap();
+    let home = homes.path().join("home");
     std::fs::create_dir_all(home.join(".config/gh")).unwrap();
     std::fs::write(
         home.join(".config/gh/hosts.yml"),
@@ -391,9 +394,11 @@ async fn run_worker(outcome: &Outcome) -> (String, String) {
     .unwrap();
     let riff_home = root.join("riff-home");
     std::fs::create_dir_all(&riff_home).unwrap();
-    let out = root.join("out");
+    // The sandbox of a worker in its main clone writes the folder of the
+    // worktrees (01M4BT341H1M1N1MT947HXNXDR).
+    let out = root.join(".claude/worktrees/out");
     std::fs::create_dir_all(&out).unwrap();
-    let claude = root.join("claude");
+    let claude = out.join("claude");
     let o = out.display();
     std::fs::write(
         &claude,
@@ -436,6 +441,17 @@ async fn run_worker(outcome: &Outcome) -> (String, String) {
     let seen = ["env", "git", "gh"]
         .map(|f| std::fs::read_to_string(out.join(f)).unwrap_or_default())
         .join("\n");
+    // With no repository or no session, the sandbox starts nothing
+    // (01M4BTB7757XF8RZ6MRXKTM8SB): an even safer end.
+    if !outcome.repo || !outcome.session {
+        assert!(seen.trim().is_empty(), "{}: {seen}", outcome.name);
+        assert!(
+            stderr.contains("the sandbox needs"),
+            "{}: {stderr}",
+            outcome.name
+        );
+        return (seen, stderr);
+    }
     assert!(
         !seen.is_empty(),
         "{}: claude did not run: {stderr}",
@@ -488,6 +504,9 @@ async fn no_outcome_of_the_token_step_gives_claude_a_credential_of_the_person() 
     for outcome in &outcomes {
         let (seen_by_claude, stderr) = run_worker(outcome).await;
         let name = outcome.name;
+        if !outcome.repo || !outcome.session {
+            continue;
+        }
         let seen_by_claude = seen_by_claude.as_str();
         assert!(
             !seen_by_claude.contains(MARKER),

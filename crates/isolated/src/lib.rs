@@ -31,9 +31,9 @@
 //! the settings of a clone in a dir of the test. Three guards keep each test out
 //! of it:
 //!
-//! - `.cargo/config.toml` sets `TMPDIR` to `/var/tmp` for each cargo
-//!   run in the repository, also a plain `cargo test`
-//!   (01M49NP2907J4SH4S6MAY09VXE).
+//! - `.cargo/config.toml` sets `TMPDIR` to `/var/tmp` for a cargo run
+//!   with no `TMPDIR`, and a test run has its own `/tmp`
+//!   (01M4C5WFP1CGG4PYPEP2NVRGKQ).
 //! - The temp dir of an [`Isolated`] is outside each git repository,
 //!   also when cargo runs from another dir (01M49NP2JW8JFWYY56K7AK3H05).
 //! - A test that needs a place outside each git repository gets its

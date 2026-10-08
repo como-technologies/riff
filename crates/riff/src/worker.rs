@@ -4,14 +4,15 @@
 //!
 //! Each worker pane of `riff workers start` runs `claude` through
 //! `riff workers run` (01M493YZVZGA7TSRJH6F67VN0H). The wrapper starts
-//! `claude`, and waits. It gives `claude` its own process ID in
-//! [`WRAPPER`]. A worker ends in one of three ways:
+//! `claude` in the sandbox of a worker ([`crate::confine`]), and waits.
+//! It gives `claude` the path of a stop file in [`STOP`]. A worker ends
+//! in one of three ways:
 //!
 //! | End | Who acts | The lead gets |
 //! |---|---|---|
 //! | `claude` exits on its own, for example after a crash | the wrapper | a note with the pane, the session ID and the exit code |
 //! | `riff workers stop` | the command | nothing: the person or the lead asked for it |
-//! | the server stops an idle worker | `riff mcp` of the worker sends SIGTERM to the wrapper | a note of the server |
+//! | the server stops an idle worker | `riff mcp` of the worker writes the stop file, and the wrapper stops `claude` | a note of the server |
 //! | the pane dies with the wrapper, for example a memory kill | `riff workers host`, or `riff mcp` of the lead ([`crate::reap`]) | a note with the pane, the session, the item and the cause |
 //!
 //! The wrapper never starts `claude` again. The rollout starts a new
@@ -27,8 +28,8 @@
 //! (01M3K0AXRNA0F2920E9QCSDFQZ). When more idle workers wait on its host
 //! than the riff keeps, the server asks it to stop
 //! (01M3Q5A0NKY1FCS0YH6N6YD3GN). The reply to the next keep-alive of
-//! `riff mcp` carries the ask, and `riff mcp` stops the wrapper
-//! (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+//! `riff mcp` carries the ask. `riff mcp` writes the stop file, and the
+//! wrapper stops `claude` (01M4BTB7G5Q0HPP057KMBXBTE1).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -39,7 +40,7 @@
 //!     participant S as riff-server
 //!     participant L as lead
 //!     P->>W: start
-//!     W->>C: start, RIFF_WORKER=1, RIFF_WORKER_WRAPPER=pid
+//!     W->>C: start in the sandbox, RIFF_WORKER=1, RIFF_WORKER_STOP=file
 //!     C->>M: start
 //!     alt claude exits
 //!         C-->>W: exit code
@@ -52,7 +53,7 @@
 //!     else the server stops an idle worker
 //!         M->>S: keep-alive
 //!         S-->>M: stop
-//!         M->>W: SIGTERM
+//!         M->>W: write the stop file
 //!         W->>C: SIGTERM
 //!     end
 //! ```
@@ -106,9 +107,18 @@ use crate::{
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
 
-/// The variable with the process ID of the `riff workers run` wrapper
-/// of a worker (01M3Q5A0QZTSTXHHNYCE8HFJSB).
-pub const WRAPPER: &str = "RIFF_WORKER_WRAPPER";
+/// The variable with the path of the stop file of a worker
+/// (01M4BTB7G5Q0HPP057KMBXBTE1). A process of the worker writes the file
+/// to ask its `riff workers run` wrapper to stop `claude`. A signal
+/// cannot do it: the sandbox stops each signal to a process outside it
+/// ([`crate::confine`]).
+pub const STOP: &str = "RIFF_WORKER_STOP";
+
+/// The name of the stop file in the temp folder of a worker.
+pub const STOP_FILE: &str = ".riff-stop";
+
+/// How often the wrapper looks for the stop file.
+pub const STOP_EVERY: Duration = Duration::from_millis(250);
 
 /// How long the wrapper waits for `claude` after it sends SIGTERM.
 pub const STOP_WAIT: Duration = Duration::from_secs(5);
@@ -132,34 +142,47 @@ pub fn is_worker_value(value: Option<&str>) -> bool {
     value == Some("1")
 }
 
-/// The process ID of the wrapper of this worker, from [`WRAPPER`].
+/// The stop file of this worker, from [`STOP`].
 ///
 /// ```
-/// assert_eq!(riff::worker::wrapper_value(Some("4242")), Some(4242));
-/// assert_eq!(riff::worker::wrapper_value(Some("x")), None);
-/// assert_eq!(riff::worker::wrapper_value(None), None);
+/// use std::path::Path;
+///
+/// assert_eq!(riff::worker::stop_value(Some("/t/.riff-stop".into())), Some("/t/.riff-stop".into()));
+/// assert_eq!(riff::worker::stop_value(Some("".into())), None);
+/// assert_eq!(riff::worker::stop_value(None), None);
 /// ```
-pub fn wrapper() -> Option<u32> {
-    wrapper_value(std::env::var(WRAPPER).ok().as_deref())
+pub fn stop_file() -> Option<PathBuf> {
+    stop_value(std::env::var_os(STOP))
 }
 
-/// Sends SIGTERM to the `riff workers run` wrapper `pid` of this worker.
-/// The wrapper stops `claude` (01M3Q5A0QZTSTXHHNYCE8HFJSB).
-pub fn stop_wrapper(pid: u32) {
-    let _ = std::process::Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status();
+/// [`stop_file`] for the value of `RIFF_WORKER_STOP`.
+pub fn stop_value(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    value.filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
-/// The wrapper of this process when it is a worker: `RIFF_WORKER` is 1
-/// and `RIFF_WORKER_WRAPPER` names the wrapper.
-pub fn wrapper_of_worker() -> Option<u32> {
-    is_worker().then(wrapper).flatten()
+/// Asks the `riff workers run` wrapper of this worker to stop `claude`:
+/// it writes the stop file `file` (01M4BTB7G5Q0HPP057KMBXBTE1).
+pub fn ask_stop(file: &Path) {
+    if let Err(e) = std::fs::write(file, b"stop\n") {
+        eprintln!("riff: cannot write the stop file {}: {e}", file.display());
+    }
 }
 
-/// [`wrapper`] for the value of `RIFF_WORKER_WRAPPER`.
-pub fn wrapper_value(value: Option<&str>) -> Option<u32> {
-    value?.parse().ok()
+/// The stop file of this process when it is a worker: `RIFF_WORKER` is
+/// 1 and `RIFF_WORKER_STOP` names the file.
+pub fn stop_file_of_worker() -> Option<PathBuf> {
+    is_worker().then(stop_file).flatten()
+}
+
+/// Waits until the stop file `file` exists. With no file, it never
+/// ends.
+async fn stop_asked(file: Option<&Path>) {
+    let Some(file) = file else {
+        return std::future::pending().await;
+    };
+    while !file.exists() {
+        tokio::time::sleep(STOP_EVERY).await;
+    }
 }
 
 /// Holds the pool of build jobs of this machine in `dir` with the
@@ -290,7 +313,11 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     let unit = session
         .as_deref()
         .map(|session| workload::scope_unit(session, std::process::id()));
-    let command = limits::command(claude, &args, nice, slice.as_deref(), unit.as_deref());
+    // The sandbox is the last step before `claude`
+    // (01M4BTB72DY0C5Y0EJVR0ZH6FZ).
+    let riff = crate::binary::this_on_disk()?;
+    let sandboxed = sandboxed(server, claude, &args);
+    let command = limits::command(&riff, &sandboxed, nice, slice.as_deref(), unit.as_deref());
     // The pool lives while this wrapper lives (01M3ZGZMJ9RF1C4AHG78GQ2NM4).
     let pool = hold_pool(dir.as_deref(), &limit);
     // A worker past the count of the pool keeps one token out of it.
@@ -299,7 +326,6 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         (Some(pool), Some(member)) => (Some(Share::start(pool, member)), None),
         (_, member) => (None, member),
     };
-    let riff = crate::binary::this_on_disk()?;
     // The forge token of the role of this session. `claude` gets an empty
     // environment with only the kept variables and the forge variables,
     // so no credential of the person reaches it, also with no token
@@ -323,8 +349,12 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     if let Some(secrets) = &secrets {
         cmd.envs(secrets.env.iter().cloned());
     }
-    cmd.env(WORKER, "1")
-        .env(WRAPPER, std::process::id().to_string())
+    let stop = folder.as_ref().map(|f| f.path().join(STOP_FILE));
+    cmd.env(WORKER, "1").env_remove(STOP);
+    if let Some(stop) = &stop {
+        cmd.env(STOP, stop);
+    }
+    cmd.env(WRAPPER, std::process::id().to_string())
         // A tmux server that a context started gives each pane the
         // variable of that context. `claude` is of no context
         // (01M3ZV0QSFVCHRSEKYK57B88VA).
@@ -348,10 +378,16 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         status = child.wait() => status?,
         _ = term.recv() => return end_grant(stop_child(&mut child).await, secrets.as_ref()).await,
         _ = hup.recv() => return end_grant(stop_child(&mut child).await, secrets.as_ref()).await,
+        () = stop_asked(stop.as_deref()) => {
+            return end_grant(stop_child(&mut child).await, secrets.as_ref()).await
+        }
     };
     // A signal to the wrapper can come just after claude ended from the
     // same stop.
+    // The same is true of the stop file: `claude` can end before the
+    // wrapper sees it.
     let stopped = status.signal() == Some(SIGHUP)
+        || stop.as_deref().is_some_and(Path::exists)
         || tokio::select! {
             _ = term.recv() => true,
             _ = hup.recv() => true,
@@ -407,11 +443,12 @@ pub fn profile_rules(
     server: &str,
 ) -> std::result::Result<crate::permissions::Rules, String> {
     let no = |why: &str| crate::text::no_role_rules(crate::profile::Role::Worker, why);
-    let here = std::env::current_dir().map_err(|e| no(&e.to_string()))?;
-    let clone = identity::main_worktree(&here).ok_or_else(|| no("it runs in no git repository"))?;
     let temp = temp.map_or_else(std::env::temp_dir, Path::to_path_buf);
-    let session = crate::role_rules::clone_session(&clone, &temp, claude, server)
-        .ok_or_else(|| no("it has no HOME, or the server URL has no host"))?;
+    let here = std::env::current_dir().map_err(|e| no(&e.to_string()))?;
+    let name =
+        std::env::var(identity::SESSION_VARS[0]).map_err(|_| no("it has no RIFF_SESSION"))?;
+    let session = crate::role_rules::clone_session(&here, &temp, claude, server, &name)
+        .map_err(|e| no(&e))?;
     crate::role_rules::here(crate::profile::Role::Worker, &session)
 }
 
@@ -575,6 +612,20 @@ async fn end_worker(session: &str, server: &str) {
     if let Err(e) = ended.await {
         eprintln!("riff: the end call of the session {session} failed: {e:#}");
     }
+}
+
+/// The arguments of `riff` that run `claude` with `args` in the sandbox
+/// of a worker, with the riff server `server`
+/// (01M4BTB72DY0C5Y0EJVR0ZH6FZ).
+///
+/// ```
+/// use std::path::Path;
+///
+/// let args = riff::worker::sandboxed("http://s:1", Path::new("/b/claude"), &["-c".into()]);
+/// assert_eq!(args, ["--server", "http://s:1", "workers", "sandbox", "--role", "worker", "--", "/b/claude", "-c"]);
+/// ```
+pub fn sandboxed(server: &str, claude: &Path, args: &[String]) -> Vec<String> {
+    crate::confine::shim(server, crate::profile::Role::Worker, None, claude, args)
 }
 
 /// Stops `claude` with SIGTERM, then kills it after [`STOP_WAIT`].

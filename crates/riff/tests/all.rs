@@ -19,6 +19,7 @@ mod cli;
 mod cloud;
 mod compact;
 mod conduct;
+mod confine;
 mod dev;
 mod enable;
 mod end;

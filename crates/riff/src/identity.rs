@@ -36,7 +36,6 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use riff_core::name::{Place, Repo, SessionUri, Who, sanitize};
@@ -449,12 +448,7 @@ fn base_name(path: &str) -> String {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .ok()?;
+    let out = crate::confine::git_in(dir).ok()?.args(args).output().ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())

@@ -804,3 +804,160 @@ fn the_skill_names_the_riff_commands_and_no_raw_command() {
         assert!(lines.is_empty(), "the skill has {raw:?}: {lines:?}");
     }
 }
+
+/// A git dir that a session made: its config names a clean filter that
+/// makes the file `marker`, its `.gitattributes` gives the filter to
+/// each file, and a file of its index is changed on the disk. So each
+/// `git status` and `git add` with this git dir runs the program.
+fn planted_git_dir(r: &Riff, marker: &Path) -> PathBuf {
+    let evil = plant(r.root.path(), "evil");
+    arm(&evil, marker);
+    evil.canonicalize().unwrap()
+}
+
+/// A repository `dir/name` with one commit: a `.gitattributes` that
+/// gives the filter `x` to each file, and a file `a.txt`.
+fn plant(dir: &Path, name: &str) -> PathBuf {
+    let evil = dir.join(name);
+    git(dir, &["init", "-q", name]);
+    std::fs::write(evil.join(".gitattributes"), "* filter=x\n").unwrap();
+    std::fs::write(evil.join("a.txt"), "a\n").unwrap();
+    git(&evil, &["add", "-A"]);
+    git(&evil, &["commit", "-q", "-m", "planted"]);
+    evil
+}
+
+/// Gives the repository `evil` a filter `x` that makes `marker`, and
+/// changes its `a.txt` on the disk.
+fn arm(evil: &Path, marker: &Path) {
+    let config = evil.join(".git/config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str(&format!(
+        "[filter \"x\"]\n\tclean = \"touch '{}'; cat\"\n\tsmudge = cat\n",
+        marker.display()
+    ));
+    std::fs::write(&config, text).unwrap();
+    std::fs::write(evil.join("a.txt"), "b\n").unwrap();
+}
+
+/// 01M4CW0CEV2ZT3FRET36EB0GMM, 01M4CW0CH4F861MWQSQACEX54X: `riff
+/// worktrees clean` takes the git dirs of a worktree from riff, not from
+/// the files that a session can write. A changed `.git` file, a changed
+/// `commondir` and a changed `gitdir` each name a git dir with a
+/// program, and riff runs no such program.
+#[tokio::test(flavor = "multi_thread")]
+async fn worktrees_clean_runs_no_program_of_a_git_dir_that_a_session_names() {
+    let r = Riff::new().await;
+    let main = r.main();
+    git(&main, &["config", "user.name", "t"]);
+    git(&main, &["config", "user.email", "t@t"]);
+    git(&main, &["config", "commit.gpgsign", "false"]);
+    let marker = r.root.path().join("ran");
+    let evil = planted_git_dir(&r, &marker);
+    let evil_git = evil.join(".git");
+    let work = |tree: &Path| {
+        std::fs::write(tree.join(".gitattributes"), "* filter=x\n").unwrap();
+        std::fs::write(tree.join("work.txt"), "not committed").unwrap();
+    };
+    let admin = |name: &str| main.join(".git/worktrees").join(name);
+    let point = |file: PathBuf, text: String| std::fs::write(file, text).unwrap();
+
+    let dot_git = worktree(&r, "issue-9");
+    work(&dot_git);
+    point(
+        dot_git.join(".git"),
+        format!("gitdir: {}\n", evil_git.display()),
+    );
+    let common = worktree(&r, "issue-10");
+    work(&common);
+    point(
+        admin("issue-10").join("commondir"),
+        format!("{}\n", evil_git.display()),
+    );
+    worktree(&r, "issue-11");
+    point(
+        admin("issue-11").join("gitdir"),
+        format!("{}\n", evil_git.display()),
+    );
+    // A submodule that the session made in its worktree, with a config
+    // of its own (01M4CXPPVEPFYD86PN9V2Q6EKB).
+    let nested = worktree(&r, "issue-12");
+    let sub = plant(&nested, "sub");
+    git(&nested, &["add", "sub"]);
+    git(&nested, &["commit", "-q", "-m", "a submodule"]);
+    arm(&sub, &marker);
+    assert!(!marker.exists());
+
+    let out = r.riff(&main, &["worktrees", "clean"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let printed = stdout(&out);
+    assert!(
+        !marker.exists(),
+        "riff ran the program of a planted git dir: {printed}"
+    );
+    let line = |path: &Path| {
+        let start = format!("{}: ", path.display());
+        printed
+            .lines()
+            .find_map(|l| l.strip_prefix(&start).map(str::to_owned))
+            .unwrap_or_else(|| panic!("no line for {}: {printed}", path.display()))
+    };
+    let saved = "saved: a WIP commit on worktree-issue-9";
+    assert!(line(&dot_git).starts_with(saved), "{printed}");
+    for tree in [&common, &evil] {
+        assert_eq!(line(tree), "kept: it is not a worktree of an agent session");
+    }
+    assert!(line(&nested).starts_with("kept: "), "{printed}");
+    // The check of the test itself: the planted git dir and the
+    // submodule run their program.
+    git(&evil, &["status", "--porcelain"]);
+    assert!(marker.exists(), "the planted git dir runs no program");
+    std::fs::remove_file(&marker).unwrap();
+    git(&nested, &["status", "--porcelain"]);
+    assert!(marker.exists(), "the submodule runs no program");
+}
+
+/// 01M4D06XN4D19G1B2NBRFH34B3: `riff worktrees clean` runs the git steps
+/// that read the files of a worktree with the sandbox of a worker. A
+/// filter of the clone runs in the save of the work, and it writes in
+/// the worktree, but not in the home of the person.
+#[tokio::test(flavor = "multi_thread")]
+async fn worktrees_clean_reads_a_worktree_with_the_rights_of_a_worker() {
+    let r = Riff::new().await;
+    let main = r.main();
+    let home = r.root.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let tree = worktree(&r, "issue-13");
+    let in_tree = tree.join("in-tree");
+    let in_home = home.join("in-home");
+    git(&main, &["config", "user.name", "t"]);
+    git(&main, &["config", "user.email", "t@t"]);
+    git(&main, &["config", "commit.gpgsign", "false"]);
+    let filter = format!(
+        "touch '{}'; touch '{}'; cat",
+        in_tree.display(),
+        in_home.display()
+    );
+    git(&main, &["config", "filter.x.clean", &filter]);
+    std::fs::write(tree.join(".gitattributes"), "* filter=x\n").unwrap();
+    std::fs::write(tree.join("work.txt"), "not committed").unwrap();
+
+    let out = r
+        .riff(&main, &["worktrees", "clean"])
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let printed = stdout(&out);
+    let start = format!("{}: ", tree.display());
+    let line = printed
+        .lines()
+        .find_map(|l| l.strip_prefix(&start))
+        .unwrap_or_else(|| panic!("no line: {printed}"));
+    assert!(
+        line.starts_with("saved: a WIP commit on worktree-issue-13"),
+        "{printed}"
+    );
+    assert!(in_tree.exists(), "the filter did not run: {printed}");
+    assert!(!in_home.exists(), "the filter wrote in the home: {printed}");
+}

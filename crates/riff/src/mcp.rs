@@ -127,9 +127,9 @@ pub struct Tools {
     /// True in a worker session: each register says so
     /// (01M3NT4M159EHN5W8JRTQ417N4).
     worker: bool,
-    /// The process ID of the `riff workers run` wrapper of a worker. The
-    /// tools stop it when the server asks (01M3Q5A0QZTSTXHHNYCE8HFJSB).
-    wrapper: Option<u32>,
+    /// The stop file of the `riff workers run` wrapper of a worker. The
+    /// tools write it when the server asks (01M4BTB7G5Q0HPP057KMBXBTE1).
+    wrapper: Option<std::path::PathBuf>,
     /// What counts the tokens of each claim of the session
     /// ([`crate::usage`]). `None` counts nothing.
     meter: Option<Arc<Meter>>,
@@ -279,10 +279,10 @@ impl Tools {
         self
     }
 
-    /// Stops the process `wrapper`, the `riff workers run` of this
-    /// worker, when the server asks this idle worker to stop
-    /// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
-    pub fn in_wrapper(mut self, wrapper: Option<u32>) -> Self {
+    /// Writes the stop file `wrapper` of the `riff workers run` of this
+    /// worker when the server asks this idle worker to stop
+    /// (01M4BTB7G5Q0HPP057KMBXBTE1).
+    pub fn in_wrapper(mut self, wrapper: Option<std::path::PathBuf>) -> Self {
         self.wrapper = wrapper;
         self
     }
@@ -795,8 +795,8 @@ impl Tools {
     /// Sends a keep-alive each [`ALIVE_EVERY`] for as long as the tools
     /// run (R204), in a worker each [`WORKER_ALIVE_EVERY`]. A failed
     /// keep-alive is not reported: the next one tries again. When the
-    /// reply asks this idle worker to stop, it stops its wrapper
-    /// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+    /// reply asks this idle worker to stop, it writes the stop file of
+    /// its wrapper (01M4BTB7G5Q0HPP057KMBXBTE1).
     pub fn keep_alive(&self) -> tokio::task::JoinHandle<()> {
         self.keep_alive_every(if self.worker {
             WORKER_ALIVE_EVERY
@@ -842,16 +842,16 @@ impl Tools {
         })
     }
 
-    /// Sends SIGTERM to the wrapper of this worker. The wrapper stops
-    /// `claude`; then the input of the tools closes, and they end the
-    /// session (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+    /// Writes the stop file of this worker. The wrapper stops `claude`;
+    /// then the input of the tools closes, and they end the session
+    /// (01M4BTB7G5Q0HPP057KMBXBTE1).
     fn stop_wrapper(&self) {
-        let Some(pid) = self.wrapper.filter(|_| self.worker) else {
+        let Some(file) = self.wrapper.as_deref().filter(|_| self.worker) else {
             eprintln!("riff: {}", crate::text::IDLE_STOP_NO_WRAPPER);
             return;
         };
         eprintln!("riff: {}", crate::text::IDLE_STOP);
-        crate::worker::stop_wrapper(pid);
+        crate::worker::ask_stop(file);
     }
 
     /// Runs the rollout of workers for as long as the tools run
@@ -1116,7 +1116,7 @@ pub async fn serve(
         .with_earlier_work()
         .with_meter(Meter::here())
         .as_worker(worker)
-        .in_wrapper(crate::worker::wrapper());
+        .in_wrapper(crate::worker::stop_file());
     // Start even if the server is down: each tool call reports the error.
     if tools.left() {
         drop(registered);

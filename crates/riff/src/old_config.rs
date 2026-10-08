@@ -245,10 +245,10 @@ pub fn tracked(file: &Path) -> bool {
     let (Some(dir), Some(name)) = (file.parent(), file.file_name()) else {
         return false;
     };
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["ls-files", "--error-unmatch", "--"])
+    let Ok(mut git) = crate::confine::git_in(dir) else {
+        return false;
+    };
+    git.args(["ls-files", "--error-unmatch", "--"])
         .arg(name)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

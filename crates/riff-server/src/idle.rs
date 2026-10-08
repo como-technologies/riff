@@ -13,15 +13,16 @@
 //!
 //! The ask is a mark on the session. The `riff mcp` of a worker sends a
 //! keep-alive each [`riff_core::wire::WORKER_ALIVE_EVERY`]. The reply
-//! carries the mark. Then `riff mcp` stops the `riff workers run`
-//! wrapper of its worker, which stops `claude`, so the tmux pane closes.
+//! carries the mark. Then `riff mcp` writes the stop file of the
+//! `riff workers run` wrapper of its worker. The wrapper stops `claude`,
+//! so the tmux pane closes.
 //! `riff mcp` ends the session when its input closes: the session leaves
-//! `riff who` (01M3Q5A0QZTSTXHHNYCE8HFJSB). This works on each machine,
+//! `riff who` (01M4BTB7G5Q0HPP057KMBXBTE1). This works on each machine,
 //! with or without a workers host.
 //!
 //! The watch of a worker sends a keep-alive each
 //! [`riff_core::wire::WORKER_ALIVE_EVERY`] too, and acts on the mark in
-//! the same way (01M4385Z5BN03E6HTEB5GQVZ8X). So a worker whose `riff
+//! the same way (01M4BTB7JGK4BASDVR5WMRTGPM). So a worker whose `riff
 //! mcp` ended, for example at a self-update, stops too.
 //!
 //! A call of the worker takes the mark back. The end of its watch at a

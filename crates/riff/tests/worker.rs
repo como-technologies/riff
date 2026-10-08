@@ -45,16 +45,22 @@ fn repo() -> tempfile::TempDir {
             .success();
         assert!(ok);
     }
+    std::fs::create_dir_all(dir.path().join(OUT)).unwrap();
     dir
 }
+
+/// The folder where the fake `claude` lives and writes what it sees:
+/// the folder of the worktrees of the clone, which the sandbox of a
+/// worker writes (01M4BT341H1M1N1MT947HXNXDR).
+const OUT: &str = ".claude/worktrees";
 
 /// A fake `claude` in `dir` that runs `script`, and counts its starts in
 /// the file `starts`.
 fn fake_claude(dir: &Path, script: &str) -> PathBuf {
-    let path = dir.join("claude");
+    let path = dir.join(OUT).join("claude");
     let body = format!(
         "#!/bin/sh\necho start >> '{}'\n{script}\n",
-        dir.join("starts").display()
+        dir.join(OUT).join("starts").display()
     );
     std::fs::write(&path, body).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -90,7 +96,7 @@ async fn lead_reads(api: &Api, lead: &SessionUri) -> String {
 }
 
 fn starts(dir: &Path) -> usize {
-    std::fs::read_to_string(dir.join("starts"))
+    std::fs::read_to_string(dir.join(OUT).join("starts"))
         .unwrap_or_default()
         .lines()
         .count()
@@ -211,7 +217,7 @@ async fn the_wrapper_marks_claude_as_a_worker() {
     let api = start_server().await;
     lead(&api).await;
     let dir = repo();
-    let seen = dir.path().join("seen");
+    let seen = dir.path().join(OUT).join("seen");
     let claude = fake_claude(
         dir.path(),
         &format!("echo \"$RIFF_WORKER\" > '{}'", seen.display()),
@@ -234,7 +240,7 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     let api = start_server().await;
     lead(&api).await;
     let dir = repo();
-    let seen = dir.path().join("seen");
+    let seen = dir.path().join(OUT).join("seen");
     let claude = fake_claude(
         dir.path(),
         &format!("printf '%s\\n' \"$@\" > '{}'", seen.display()),
@@ -316,7 +322,7 @@ async fn the_wrapper_gives_claude_the_rules_of_the_profile() {
     lead(&api).await;
     let dir = repo();
     let home = home();
-    let seen = dir.path().join("seen");
+    let seen = dir.path().join(OUT).join("seen");
     let claude = fake_claude(
         dir.path(),
         &format!("printf '%s\\n' \"$@\" > '{}'", seen.display()),
@@ -357,8 +363,13 @@ async fn the_wrapper_gives_claude_the_rules_of_the_profile() {
         deny.contains(&rule("Edit", &h.join("notes"), "/**")),
         "{deny:?}"
     );
-    let settings_file = h.join(".claude/settings.json");
-    assert!(deny.contains(&rule("Edit", &settings_file, "")), "{deny:?}");
+    // The session has its own Claude folder (01M4BTB7BPA38ARM789WBV507D),
+    // and no rule lets it edit the settings there.
+    assert!(
+        deny.iter()
+            .any(|r| r.starts_with("Edit(/") && r.ends_with("/riff/claude/w1/settings.json)")),
+        "{deny:?}"
+    );
     assert!(deny.contains(&"Edit(//**/.claude/settings.local.json)".to_owned()));
 }
 
@@ -379,7 +390,17 @@ async fn riff_workers_rules_prints_the_rules_of_a_worker() {
     let settings: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let (allow, deny) = rules(&settings);
     let git = dir.path().canonicalize().unwrap().join(".git");
-    assert!(allow.contains(&rule("Edit", &git, "/**")), "{allow:?}");
+    // 01M4CN0W3V733V6R2SG1YYZRCN: the objects and the refs, not the
+    // config and the hooks.
+    assert!(
+        allow.contains(&rule("Edit", &git.join("objects"), "/**")),
+        "{allow:?}"
+    );
+    assert!(
+        allow.contains(&rule("Edit", &git.join("refs"), "/**")),
+        "{allow:?}"
+    );
+    assert!(!allow.contains(&rule("Edit", &git, "/**")), "{allow:?}");
     let bashrc = home.path().join(".bashrc");
     assert!(deny.contains(&rule("Read", &bashrc, "")), "{deny:?}");
 }
@@ -392,7 +413,7 @@ async fn the_worker_gets_a_temp_folder_and_its_end_deletes_it() {
     let api = start_server().await;
     lead(&api).await;
     let dir = repo();
-    let seen = dir.path().join("seen");
+    let seen = dir.path().join(OUT).join("seen");
     let claude = fake_claude(
         dir.path(),
         &format!(
@@ -453,7 +474,7 @@ async fn a_live_process_keeps_the_temp_folder_until_the_tidy() {
     let api = start_server().await;
     lead(&api).await;
     let dir = repo();
-    let pid = dir.path().join("pid");
+    let pid = dir.path().join(OUT).join("pid");
     let claude = fake_claude(
         dir.path(),
         &format!(
@@ -477,11 +498,13 @@ async fn a_live_process_keeps_the_temp_folder_until_the_tidy() {
     let killed = Command::new("kill").arg(pid.trim()).status().unwrap();
     assert!(killed.success());
     let begin = Instant::now();
-    while riff::temp::users()
-        .iter()
-        .any(|u| u.pid.to_string() == pid.trim())
-    {
-        assert!(begin.elapsed() < Duration::from_secs(60), "the sleep lives");
+    // The broker of the sandbox ends with the last process of the
+    // session, so wait for each user of the folder.
+    while riff::temp::users().iter().any(|u| u.uses(&folder)) {
+        assert!(
+            begin.elapsed() < Duration::from_secs(60),
+            "a process uses the folder"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert_eq!(
@@ -578,9 +601,9 @@ async fn a_hangup_stops_the_worker_with_no_message() {
 }
 
 /// The server stops an idle worker (01M3Q5A0NKY1FCS0YH6N6YD3GN,
-/// 01M3Q5A0QZTSTXHHNYCE8HFJSB): the `riff mcp` of the worker gets the
-/// ask in the reply to its keep-alive, and stops its wrapper. The
-/// wrapper exits with 0, the session leaves `riff who`, and the lead
+/// 01M4BTB7G5Q0HPP057KMBXBTE1): the `riff mcp` of the worker gets the
+/// ask in the reply to its keep-alive, and writes the stop file of its
+/// wrapper. The wrapper exits with 0, the session leaves `riff who`, and the lead
 /// gets a note (01M3Q5A0WRQT4SGPSD0CQFF011).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_server_stops_an_idle_worker_through_its_wrapper() {
@@ -701,7 +724,7 @@ async fn a_wake_of_the_lead_takes_back_the_ask_to_stop() {
 
 /// A worker whose `riff mcp` ended, for example at a self-update, has
 /// only its watch. The watch gets the ask to stop in the reply to its
-/// keep-alive, and stops the wrapper (01M4385Z5BN03E6HTEB5GQVZ8X). So the
+/// keep-alive, and stops the wrapper (01M4BTB7JGK4BASDVR5WMRTGPM). So the
 /// worker is gone within one minute.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_watch_of_a_worker_with_no_riff_mcp_stops_its_wrapper() {

@@ -337,9 +337,7 @@ pub fn others_here(me: &SessionUri, who: &[SessionInfo]) -> Vec<SessionUri> {
 }
 
 async fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(dir)
+    let out = tokio::process::Command::from(crate::confine::git_in(dir).ok()?)
         .args(args)
         .stdin(Stdio::null())
         .output()

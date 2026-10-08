@@ -2414,7 +2414,7 @@ pub async fn keep_alive(api: &Api, me: &SessionUri, every: Duration) {
 }
 
 /// [`keep_alive`] that ends when a reply asks this session to stop: the
-/// server stops an idle worker (01M4385Z5BN03E6HTEB5GQVZ8X).
+/// server stops an idle worker (01M4BTB7JGK4BASDVR5WMRTGPM).
 pub async fn keep_alive_until_stop(api: &Api, me: &SessionUri, every: Duration) {
     let mut tick = tokio::time::interval(every);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

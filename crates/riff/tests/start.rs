@@ -202,8 +202,12 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     );
     let log = m.read("log");
     let lines: Vec<&str> = log.lines().collect();
-    let settings =
-        riff::start::lead_settings_file(&m.home.path().join("state"), "como-technologies/riff");
+    // The rules file of the lead is outside each write path of the lead
+    // (01M4BTB7DY1Y74PP3JWKVX58JQ).
+    let settings = m
+        .user
+        .path()
+        .join(".local/share/riff/rules/lead-como-technologies-riff.json");
     let mcp = m.home.path().join("state").join(riff::worker_mcp::FILE);
     let plugin = m.plugin();
     assert_eq!(lines.len(), 3, "{log}");
@@ -334,7 +338,8 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     let log = m.read("log");
     assert_eq!(log.matches("new-session").count(), 1, "{log}");
     assert_eq!(log.matches("attach-session").count(), 2, "{log}");
-    assert_eq!(m.read("claude.log").lines().count(), 2);
+    let log = m.read("claude.log");
+    assert_eq!(log.lines().count(), 2);
 
     // The new clone is known now too.
     let clones = std::fs::read_to_string(m.home.path().join("state").join("clones")).unwrap();

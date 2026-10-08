@@ -637,9 +637,8 @@ pub fn result_to(issue: u64, me: &SessionUri, sessions: &[SessionInfo]) -> Vec<S
 /// The commit `HEAD` of the git worktree `dir`: the commit that the
 /// verifier tested.
 pub fn head_here(dir: &Path) -> Result<String> {
-    let out = Command::new("git")
+    let out = crate::confine::git_in(dir)?
         .args(["rev-parse", "--verify", "HEAD"])
-        .current_dir(dir)
         .output()
         .context("cannot run git")?;
     if !out.status.success() {
