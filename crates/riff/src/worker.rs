@@ -479,7 +479,7 @@ async fn forge_token(
     // The server gives a token only to a session that it knows: the
     // worker registers before `claude` starts (#628).
     if fixed.is_none() {
-        register_worker(&me, &server).await;
+        register_worker(&me, server).await;
     }
     let server = server.to_owned();
     let ask: forge::Ask = {

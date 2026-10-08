@@ -576,5 +576,10 @@ async fn riff_forge_allow_sends_the_account_and_shows_the_list() {
     assert_eq!(seen[0]["allowed"], true);
     assert_eq!(seen[1]["allowed"], false);
     assert!(seen[2].get("owner").is_none());
-    assert!(seen[0]["me"].as_str().unwrap().starts_with("riff://mike@pangolin"));
+    assert!(
+        seen[0]["me"]
+            .as_str()
+            .unwrap()
+            .starts_with("riff://mike@pangolin")
+    );
 }

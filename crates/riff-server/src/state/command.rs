@@ -798,12 +798,12 @@ mod tests {
     /// by the own name, and the sign-ins of another person.
     fn needs(kind: CommandKind, caller: &Caller) -> Vec<Role> {
         use riff_core::record::{Plan, PlanSet};
+        use riff_core::wire::ForgeAllow;
         use riff_core::wire::{
             Claim, DenyOwner, End, Free, Hold, Invite, Join, Kind, Lead, Leave, PassOwner, Pause,
             PlanOff, Post, Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin,
             SetIdle, SetPlan, Start, StartReason, TakeOwner,
         };
-        use riff_core::wire::ForgeAllow;
 
         use crate::state::{
             Admit, Announce, EndOwner, Forget, GrantOwner, Import, MakeRiff, NameOwner,

@@ -253,12 +253,11 @@ use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::record::{Change, Envelope, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Activity, AliveReply, BlockedInfo, Claim, End, Facts, Freed, Idle, ItemFact, Join, Keys, Kind,
-    Lead, LeadReply, Leave, Message, Pause, PlanReply, Post, Register, Release, ReleaseFor,
-    ForgeAccounts, ForgeAllow, ReleaseReply, Resume, RiffReply, RiffState, SessionInfo,
-    SessionState, SetBlocked, SetIdle,
-    SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
-    Waits, Wake,
+    Activity, AliveReply, BlockedInfo, Claim, End, Facts, ForgeAccounts, ForgeAllow, Freed, Idle,
+    ItemFact, Join, Keys, Kind, Lead, LeadReply, Leave, Message, Pause, PlanReply, Post, Register,
+    Release, ReleaseFor, ReleaseReply, Resume, RiffReply, RiffState, SessionInfo, SessionState,
+    SetBlocked, SetIdle, SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo,
+    Tailed, ThreadInfo, Waits, Wake,
 };
 
 /// A blocked session that the look of the lead found, with its reason

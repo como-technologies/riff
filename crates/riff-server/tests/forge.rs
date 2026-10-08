@@ -390,7 +390,11 @@ async fn a_person_gets_a_lead_token_only_for_a_repository_where_it_has_a_lead() 
         .call(&base, stranger, "forge/check", json!({ "me": stranger }))
         .await;
     assert_eq!(status, 403);
-    assert_eq!(github.asked().len(), 1, "no call to GitHub for stranger/app");
+    assert_eq!(
+        github.asked().len(),
+        1,
+        "no call to GitHub for stranger/app"
+    );
 }
 
 #[tokio::test]
@@ -417,7 +421,10 @@ async fn only_an_allowed_account_gets_tokens() {
     // The list, and the end of the allow.
     let list = json!({ "me": "riff://mike@pangolin" });
     let (status, text) = mike.call(&base, PERSON, "forge/allow", list).await;
-    assert_eq!((status, text.as_str()), (200, r#"{"accounts":["stranger"]}"#));
+    assert_eq!(
+        (status, text.as_str()),
+        (200, r#"{"accounts":["stranger"]}"#)
+    );
     let off = json!({ "me": "riff://mike@pangolin", "owner": "stranger", "allowed": false });
     let (status, text) = mike.call(&base, PERSON, "forge/allow", off).await;
     assert_eq!((status, text.as_str()), (200, r#"{"accounts":[]}"#));
