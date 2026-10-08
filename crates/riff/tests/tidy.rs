@@ -29,11 +29,12 @@ esac
 exit 0
 "#;
 
-/// `gh pr view BRANCH` prints the file `pr-BRANCH.json`, else fails.
+/// `gh pr view --json FIELDS -- BRANCH` prints the file `pr-BRANCH.json`,
+/// else fails.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
-if [ "$1 $2" = "pr view" ] && [ -f "$dir/pr-$3.json" ]; then cat "$dir/pr-$3.json"; exit 0; fi
-echo "no pull requests found for branch \"$3\"" >&2
+if [ "$1 $2 $5" = "pr view --" ] && [ -f "$dir/pr-$6.json" ]; then cat "$dir/pr-$6.json"; exit 0; fi
+echo "no pull requests found for branch \"$6\"" >&2
 exit 1
 "#;
 

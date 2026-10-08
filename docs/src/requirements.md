@@ -4591,6 +4591,21 @@
   writes no `config`, `hooks`, `info` or `packed-refs` of the git dir,
   and no other file of the clone.
 
+- **01M4DVXP20SHYTFE1D4NVF0FSF** riff outside each sandbox takes the
+  default branch from `origin` itself (`git ls-remote --symref origin
+  HEAD`), never from `refs/remotes/origin/HEAD` or another ref that a
+  session writes. It names each ref by its full name, for example
+  `refs/remotes/origin/main`. It refuses a branch name that starts
+  with `-` or that git refuses. The fast-forward of the main clone,
+  `riff worktrees clean` and the rules of riff use it.
+- **01M4DVXP49BXNJD1Y289PCEH31** `riff worktrees clean` takes the
+  branch of a worktree from the name of the worktree:
+  `.claude/worktrees/NAME` has the branch `worktree-NAME`. It never
+  takes it from the `HEAD` of the worktree. It saves, pushes or
+  deletes only that branch, and only when the `HEAD` of the worktree
+  names it. It never pushes to the default branch. It puts `--` before
+  each name in each git and `gh` call.
+
 ## Open
 
 None.
