@@ -711,8 +711,8 @@ mod tests {
             use crate::forge::{Access, TokenRole};
             use crate::wire::{
                 ForgeAccounts, ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeCreate,
-                ForgeCreateReply, ForgeCreated, ForgeCreatedReply, ForgeInstall,
-                ForgeInstallReply, ForgeToken, ForgeTokenReply, RoleCheck,
+                ForgeCreateReply, ForgeCreated, ForgeCreatedReply, ForgeInstall, ForgeInstallReply,
+                ForgeToken, ForgeTokenReply, RoleCheck,
             };
             let permissions = BTreeMap::from([
                 ("contents".to_owned(), Access::Write),

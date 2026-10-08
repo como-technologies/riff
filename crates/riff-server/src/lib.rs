@@ -2561,15 +2561,8 @@ async fn forge_created_page(
     Query(q): Query<ForgePage>,
 ) -> Response {
     match s.forge.created(&q.code, &q.state).await {
-        Ok(install) => (
-            StatusCode::SEE_OTHER,
-            [(header::LOCATION, install)],
-        )
-            .into_response(),
-        Err(why) => page(
-            StatusCode::BAD_REQUEST,
-            forge::manifest::text_page(&why),
-        ),
+        Ok(install) => (StatusCode::SEE_OTHER, [(header::LOCATION, install)]).into_response(),
+        Err(why) => page(StatusCode::BAD_REQUEST, forge::manifest::text_page(&why)),
     }
 }
 

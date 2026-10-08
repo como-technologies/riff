@@ -278,7 +278,7 @@ impl fmt::Display for Refusal {
                 "a riff with no sign-in gives no forge token: the server cannot know the person",
             ),
             Refusal::NoApp => f.write_str(
-                "this riff has no GitHub App. An admin of the riff gives it one: riff cloud forge",
+                "this riff has no GitHub App. An admin of the riff makes it: riff forge create --org ORG",
             ),
             Refusal::NoRepository => f.write_str("the session is in no repository"),
             Refusal::NoSession => f.write_str(
@@ -380,11 +380,7 @@ impl Forge {
 
     /// The forge tokens of `settings`, with the App kept in `store`, and
     /// the GitHub API at `api` when `settings` has none.
-    pub fn with_store(
-        settings: Option<Settings>,
-        store: Option<store::Store>,
-        api: &str,
-    ) -> Forge {
+    pub fn with_store(settings: Option<Settings>, store: Option<store::Store>, api: &str) -> Forge {
         let api = settings
             .as_ref()
             .map_or(api, |s| s.api.as_str())

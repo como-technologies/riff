@@ -272,7 +272,8 @@ fn create_makes_the_secret_of_the_github_app() {
     let ran = Cloud::new().run(&["create", "shared"]).ok();
     ran.line("secrets describe riff-forge-app-key ");
     assert!(
-        !ran.calls.contains("secrets versions add riff-forge-app-key"),
+        !ran.calls
+            .contains("secrets versions add riff-forge-app-key"),
         "{}",
         ran.calls
     );

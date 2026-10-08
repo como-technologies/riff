@@ -108,7 +108,11 @@ impl FakeGitHub {
 
     /// The App is now installed on `repo` with the installation `id`.
     pub fn install(&self, repo: &str, id: u64) {
-        self.inner.lock().unwrap().installs.insert(repo.to_owned(), id);
+        self.inner
+            .lock()
+            .unwrap()
+            .installs
+            .insert(repo.to_owned(), id);
     }
 
     /// From now on, each token also has the permission `name` at

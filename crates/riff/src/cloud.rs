@@ -877,8 +877,10 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
             )?;
         }
     }
-    // riff-server reads and writes only its bucket, and reads only its
-    // secret (R134). The build account may only build and store images.
+    // riff-server reads and writes only its bucket, reads only its
+    // sign-in secret, and reads and adds versions only to the secret of
+    // its GitHub App (R134). The build account may only build and store
+    // images.
     let run = format!("serviceAccount:{}", s.account(&s.run_account));
     gcloud.bind(&with(
         &[

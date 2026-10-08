@@ -120,7 +120,11 @@ async fn riff_forge_create_makes_the_app_and_only_the_store_gets_the_key() {
     let (service, base, store) = start(&github).await;
     let mike = Person::sign_in(&service, "mike@comotechnologies.io").await;
     let (status, text) = mike
-        .call(&base, "forge/install", json!({ "me": PERSON, "owner": "acme" }))
+        .call(
+            &base,
+            "forge/install",
+            json!({ "me": PERSON, "owner": "acme" }),
+        )
         .await;
     assert_eq!(status, 409, "no App yet: {text}");
     let start = mike.create(&base, "acme").await;
@@ -198,13 +202,20 @@ async fn riff_forge_create_makes_the_app_and_only_the_store_gets_the_key() {
 
     // The server uses the new App at once: its JWT reads the App.
     let (status, text) = mike
-        .call(&base, "forge/install", json!({ "me": PERSON, "owner": "acme" }))
+        .call(
+            &base,
+            "forge/install",
+            json!({ "me": PERSON, "owner": "acme" }),
+        )
         .await;
     assert_eq!(status, 200, "{text}");
     replies.push(text);
 
     for reply in &replies {
-        assert!(!reply.contains("PRIVATE KEY"), "a reply holds the key: {reply}");
+        assert!(
+            !reply.contains("PRIVATE KEY"),
+            "a reply holds the key: {reply}"
+        );
     }
 }
 

@@ -313,7 +313,13 @@ impl Forge {
         let org = self.starts.take(state, Instant::now())?;
         match self.convert(code).await {
             Ok((app, slug, target)) => {
-                self.starts.end(state, End::Made { app, slug: slug.clone() });
+                self.starts.end(
+                    state,
+                    End::Made {
+                        app,
+                        slug: slug.clone(),
+                    },
+                );
                 tracing::info!(target: TARGET, result = "app", app, org, "the new GitHub App");
                 Ok(install_url(&slug, target))
             }
@@ -408,7 +414,10 @@ impl Forge {
         let jwt = s.app.jwt(now_secs()).map_err(Refusal::GitHub)?;
         let what = "the GitHub App";
         let slug = match self
-            .send::<AppReply>(self.http.get(format!("{}/app", s.api)).bearer_auth(jwt), what)
+            .send::<AppReply>(
+                self.http.get(format!("{}/app", s.api)).bearer_auth(jwt),
+                what,
+            )
             .await?
         {
             (_, Some(app)) => app.slug,

@@ -182,9 +182,9 @@ impl Store {
         let bytes = STANDARD
             .decode(access.payload.data)
             .map_err(|_| format!("the secret {name} holds no base64"))?;
-        serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|_| format!("the secret {name} holds no App: give it one with riff forge create"))
+        serde_json::from_slice(&bytes).map(Some).map_err(|_| {
+            format!("the secret {name} holds no App: give it one with riff forge create")
+        })
     }
 
     /// Adds `stored` as the new latest version.

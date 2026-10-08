@@ -645,7 +645,10 @@ async fn riff_forge_create_and_install_refuse_in_a_worker_and_an_agent_session()
     let runs: [(&[&str], (&str, &str)); 4] = [
         (&["create", "--org", "acme"], ("RIFF_WORKER", "1")),
         (&["create", "--org", "acme"], ("RIFF_SESSION", "s1")),
-        (&["create", "--org", "acme"], ("CLAUDE_CODE_SESSION_ID", "s1")),
+        (
+            &["create", "--org", "acme"],
+            ("CLAUDE_CODE_SESSION_ID", "s1"),
+        ),
         (&["install", "acme"], ("RIFF_WORKER", "1")),
     ];
     for (args, (name, value)) in runs {
@@ -706,7 +709,11 @@ async fn riff_forge_install_opens_the_install_page_of_the_account() {
         "{text} {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(opened(dir.path()), [page], "riff opens the install page once");
+    assert_eq!(
+        opened(dir.path()),
+        [page],
+        "riff opens the install page once"
+    );
     let asks = asks.lock().unwrap().clone();
     assert_eq!(asks.len(), 2);
     assert_eq!(asks[0]["owner"], "n8behavior");

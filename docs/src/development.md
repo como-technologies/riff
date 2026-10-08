@@ -872,9 +872,12 @@ Without `--client-id`, the server has no sign-in.
 A riff-server with sign-in gives each session a forge token with the
 GitHub App of riff (see
 [The forge token of each role](how-it-works.md#the-forge-token-of-each-role)).
-On Cloud Run, `riff cloud forge` does this. For a server that you run
-yourself, give it the App ID in `--forge-app` and the private key in
-the variable `RIFF_FORGE_KEY`. Never put the key on a command line:
+On Cloud Run, riff-server reads the App from its secret in Secret
+Manager, `--forge-secret` (see
+[Make the GitHub App of riff](how-it-works.md#make-the-github-app-of-riff)).
+For a server that you run yourself, give it the App ID in
+`--forge-app` and the private key in the variable `RIFF_FORGE_KEY`.
+Never put the key on a command line:
 
 ```sh
 RIFF_FORGE_KEY="$(cat riff.private-key.pem)" riff-server --client-id ID --forge-app APP_ID

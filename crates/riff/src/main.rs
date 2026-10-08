@@ -512,11 +512,11 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
-    /// Check the forge token of each role
+    /// Make, install and check the GitHub App of riff
     ///
     /// riff-server makes a token for each session with the GitHub App of
-    /// riff, with only the rights of its role. An admin gives the riff
-    /// its App first: see "Give the riff its GitHub App" in the book.
+    /// riff, with only the rights of its role. An admin makes the App
+    /// first with riff forge create.
     Forge {
         #[command(subcommand)]
         command: ForgeCommand,
