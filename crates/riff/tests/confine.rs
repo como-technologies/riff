@@ -724,7 +724,10 @@ fn a_worktree_below_a_worktree_gives_no_sandbox() {
     let clone = m.clone();
     std::fs::write(
         deep.join(".git"),
-        format!("gitdir: {}\n", clone.join(".git/worktrees/issue-1").display()),
+        format!(
+            "gitdir: {}\n",
+            clone.join(".git/worktrees/issue-1").display()
+        ),
     )
     .unwrap();
     refuses_at(&m, &deep, &clone, "is not the clone");

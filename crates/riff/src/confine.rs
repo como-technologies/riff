@@ -1183,7 +1183,7 @@ pub fn run_git(server: &str, tree: &Path, args: &[OsString]) -> Result<()> {
 /// let other = tempfile::tempdir().unwrap();
 /// std::os::unix::fs::symlink(other.path(), main.join(".claude/worktrees/x")).unwrap();
 /// let e = riff::confine::git_in_tree(&main, &main.join(".claude/worktrees/x")).unwrap_err();
-/// assert!(format!("{e:#}").contains("it is a link"), "{e:#}");
+/// assert!(format!("{e:#}").contains("is a link"), "{e:#}");
 /// ```
 pub fn git_in_tree(main: &Path, tree: &Path) -> Result<std::process::Command> {
     let main = main
