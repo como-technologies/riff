@@ -537,7 +537,7 @@ fn run(here: &Here, op: &str, arg: Option<&OsString>) -> Result<String> {
             json(&stopped)
         }
         "workers-reap" => {
-            let dir = crate::local::dir().context("no HOME: riff has no local dir")?;
+            let dir = crate::local::riff_dir().context("no HOME: riff has no local dir")?;
             json(&crate::worker::reap(&of_clone()?, pane.as_deref(), &dir)?)
         }
         "oom-journal" => json(&crate::reap::journal()),

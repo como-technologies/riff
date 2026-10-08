@@ -17,8 +17,8 @@
 //!
 //! | | lead | worker | verifier | test run |
 //! |---|---|---|---|---|
-//! | Write | the worktrees of the clone, a part of the git dir of the clone, the riff state, its temp, its Claude folder | its worktree, its target, a part of the git dir of the clone ([`GIT_WRITES`]), the riff state, its temp, its Claude folder | its verify worktree, its target, a part of the git dir of the clone, the riff state, its temp, its Claude folder | its temp, its target |
-//! | Read | the system, its tools, its permission rules, the clone, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, its worktree and the git dir of the clone |
+//! | Write | the worktrees of the clone, a part of the git dir of the clone, its own state folder and three files of the pool of build jobs, its temp, its Claude folder | its worktree, its target, a part of the git dir of the clone ([`GIT_WRITES`]), its own state folder and three files of the pool of build jobs, its temp, its Claude folder | its verify worktree, its target, a part of the git dir of the clone, its own state folder and three files of the pool of build jobs, its temp, its Claude folder | its temp, its target |
+//! | Read | the system, its tools, its permission rules, the clone, the folder of riff, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, its worktree and the git dir of the clone |
 //! | Read the home of the person | no, except the paths above | no | no | no |
 //! | Network | riff server, forge, registries, model | the same | the same | loopback only |
 //! | Keyring, D-Bus and systemd of the person | no | no | no | no |
@@ -91,6 +91,8 @@
 //!     claude: "/home/ada/.local/share/riff/claude/s1".into(),
 //!     rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
 //!     state: "/run/user/1000/riff".into(),
+//!     own: "/run/user/1000/riff/sessions/s1".into(),
+//!     pool: vec![],
 //!     tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
 //!     server: Endpoint::of_url("https://riff.example.com").unwrap(),
 //! };
@@ -308,8 +310,18 @@ pub struct Session {
     /// The file of the permission rules of the session (#613). Each AI
     /// role reads it, and no role writes it (01M4BTB7DY1Y74PP3JWKVX58JQ).
     pub rules: PathBuf,
-    /// The local files of riff (see [`local::dir`](crate::local::dir)).
+    /// The folder of riff ([`local::riff_dir`](crate::local::riff_dir)).
+    /// Each AI role reads it, and no role writes it
+    /// (01M4DWJ08GVFKV4EC6FNDZA1BD).
     pub state: PathBuf,
+    /// The own state folder of the session
+    /// ([`local::own`](crate::local::own)): the only part of the state
+    /// that an AI role writes (01M4DWJ0AQX8N7J9T02VJ0XHF1).
+    pub own: PathBuf,
+    /// The files of the pool of build jobs that a session writes
+    /// ([`jobserver::session_files`](crate::jobserver::session_files)),
+    /// when a pool is there (01M4DWJ0F7G527GN26KSA934N7).
+    pub pool: Vec<PathBuf>,
     /// The other paths that each role reads: the toolchain, the
     /// binaries of riff and Claude Code, the settings of riff.
     pub tools: Vec<PathBuf>,
@@ -338,6 +350,8 @@ impl Session {
     ///     claude: "/h/.local/share/riff/claude/s1".into(),
     ///     rules: "/h/.local/share/riff/rules/s1.json".into(),
     ///     state: "/run/user/7/riff".into(),
+    ///     own: "/run/user/7/riff/sessions/s1".into(),
+    ///     pool: vec![],
     ///     tools: vec![],
     ///     server: Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
     /// };
@@ -378,7 +392,7 @@ impl Session {
     /// # let s = Session {
     /// #     home: "/h".into(), runtime: "/run/user/7".into(), clone: "/h/app".into(),
     /// #     worktree: "/h/app".into(), target: "/h/app/target".into(), temp: "/h/tmp".into(),
-    /// #     claude: "/h/c".into(), rules: "/h/r.json".into(), state: "/run/user/7/riff".into(),
+    /// #     claude: "/h/c".into(), rules: "/h/r.json".into(), state: "/run/user/7/riff".into(), own: "/run/user/7/riff/sessions/s1".into(), pool: vec![],
     /// #     tools: vec![], server: Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
     /// # };
     /// assert_eq!(s.refuses("/usr/bin".as_ref()), None);
@@ -489,6 +503,21 @@ pub enum Refused {
     /// A write path of the profile holds the file of the permission
     /// rules of the session (01M4BTB7DY1Y74PP3JWKVX58JQ).
     Rules(PathBuf),
+    /// A write path of the profile, with each link resolved, is outside
+    /// its root: the second path (01M4DWJ0KT7G2RX05X00YGVN21).
+    OutOfRoot(PathBuf, PathBuf),
+    /// The dir where the sandbox starts has a link below the worktree
+    /// folder of its clone: the second path is where the link goes
+    /// (01M4EPNXVSA592BFRKG4ZB9AWB).
+    Link(PathBuf, PathBuf),
+    /// The clone of git, the first path, is not the dir where the
+    /// sandbox starts, the second path, or a folder above it
+    /// (01M4EPNY387PPG93H7HYNZ07N5).
+    OtherClone(PathBuf, PathBuf),
+    /// The worktree of git, the first path, is not the clone, the second
+    /// path, its worktree folder or one folder in it
+    /// (01M4EPNYARVEJXA5419QGQMHD5).
+    NotInClone(PathBuf, PathBuf),
 }
 
 impl fmt::Display for Refused {
@@ -505,6 +534,30 @@ impl fmt::Display for Refused {
                 f,
                 "the path {} gives a secret of the person; no role may have it",
                 p.display()
+            ),
+            Refused::OutOfRoot(p, root) => write!(
+                f,
+                "the write path {} is a link out of its root {}",
+                p.display(),
+                root.display()
+            ),
+            Refused::Link(p, to) => write!(
+                f,
+                "the start dir {} has a link in the worktree folder of its clone, to {}",
+                p.display(),
+                to.display()
+            ),
+            Refused::OtherClone(clone, start) => write!(
+                f,
+                "the git dir is of the clone {}, and the start dir {} is not in it",
+                clone.display(),
+                start.display()
+            ),
+            Refused::NotInClone(p, clone) => write!(
+                f,
+                "the worktree {} is not the clone {}, its worktree folder, or one folder in it",
+                p.display(),
+                clone.display()
             ),
             Refused::Rules(p) => write!(
                 f,
@@ -523,7 +576,7 @@ impl Profile {
     pub fn of(role: Role, session: &Session) -> Result<Self, Refused> {
         let s = session;
         let git = s.clone.join(".git");
-        let ai = || vec![s.state.clone(), s.claude.clone()];
+        let ai = || vec![s.own.clone(), s.claude.clone()];
         let agent = matches!(role, Role::Lead | Role::Worker | Role::Verifier);
         let more = match role {
             // 01M4DDWPN8FADA663TTZSVD698
@@ -542,7 +595,11 @@ impl Profile {
             Role::TestRun => vec![s.target.clone()],
         };
         let files = match agent {
-            true => GIT_WRITE_FILES.iter().map(|p| git.join(p)).collect(),
+            true => GIT_WRITE_FILES
+                .iter()
+                .map(|p| git.join(p))
+                .chain(s.pool.iter().cloned())
+                .collect(),
             false => vec![],
         };
         let writes = Writes {
@@ -554,8 +611,8 @@ impl Profile {
         reads.extend(s.tools.iter().cloned());
         match role {
             Role::TestRun => reads.extend([s.worktree.clone(), git]),
-            Role::Worker | Role::Verifier => reads.extend([git, s.rules.clone()]),
-            Role::Lead => reads.extend([s.clone.clone(), s.rules.clone()]),
+            Role::Worker | Role::Verifier => reads.extend([git, s.rules.clone(), s.state.clone()]),
+            Role::Lead => reads.extend([s.clone.clone(), s.rules.clone(), s.state.clone()]),
         }
         let network = match role {
             Role::TestRun => Network::Loopback,
@@ -884,6 +941,8 @@ mod tests {
             claude: "/home/ada/.local/share/riff/claude/s1".into(),
             rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
             state: "/run/user/1000/riff".into(),
+            own: "/run/user/1000/riff/sessions/s1".into(),
+            pool: vec![],
             tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
             server: Endpoint::of_url("https://riff.example.com").unwrap(),
         }
@@ -907,7 +966,7 @@ mod tests {
         let target = "/home/ada/src/app/.claude/worktrees/issue-12/target";
         let (temp, git) = ("/home/ada/.cache/riff/tmp/s1", "/home/ada/src/app/.git");
         let (state, claude) = (
-            "/run/user/1000/riff",
+            "/run/user/1000/riff/sessions/s1",
             "/home/ada/.local/share/riff/claude/s1",
         );
         let g = |p: &str| format!("{git}/{p}");
@@ -1106,6 +1165,7 @@ mod tests {
         }
         let runtime = Session {
             state: "/run/user/1000".into(),
+            own: "/run/user/1000/sessions/s1".into(),
             ..session()
         };
         assert_eq!(
@@ -1158,6 +1218,48 @@ mod tests {
             Profile::of(Role::Worker, &home),
             Err(Refused::Up("/home/ada/x/..".into()))
         );
+    }
+
+    /// 01M4DWJ08GVFKV4EC6FNDZA1BD, 01M4DWJ0AQX8N7J9T02VJ0XHF1,
+    /// 01M4DWJ0F7G527GN26KSA934N7: each AI role reads the folder of riff
+    /// and writes no file of it: not the tmux config, the list of
+    /// clones, the deaths, the folder of the pool or the folder of
+    /// another session. It writes its own folder and the files of the
+    /// pool that a taker writes.
+    #[test]
+    fn no_ai_role_writes_the_folder_of_riff() {
+        let riff = Path::new("/run/user/1000/riff");
+        let jobs = riff.join("jobs");
+        let s = Session {
+            pool: ["fifo", "take.lock", "hold.lock"]
+                .map(|f| jobs.join(f))
+                .to_vec(),
+            ..session()
+        };
+        for role in [Role::Lead, Role::Worker, Role::Verifier] {
+            let p = Profile::of(role, &s).unwrap();
+            for file in [
+                "tmux.conf",
+                "clones",
+                "worker-deaths",
+                "jobs/size",
+                "jobs/workers/1-2",
+                "jobs/init.lock",
+                "no-jobserver",
+                "sessions/w2/context-w2",
+                "sessions/probe",
+            ] {
+                let path = riff.join(file);
+                assert!(!p.writes(&path) && p.reads(&path), "{role}: {file}");
+            }
+            assert!(!p.writes(riff), "{role}");
+            assert!(p.writes(&s.own.join("mcp-42")), "{role}");
+            for file in &s.pool {
+                assert!(p.writes(file), "{role}: {}", file.display());
+            }
+        }
+        let t = Profile::of(Role::TestRun, &s).unwrap();
+        assert!(!t.reads(riff) && !t.writes(&s.own));
     }
 
     #[test]

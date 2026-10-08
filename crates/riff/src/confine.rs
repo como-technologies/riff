@@ -139,6 +139,11 @@
 //! | The MCP config of a session | a write of `workers-mcp.json` | the `claude` of the lead and of each worker | the file is in the given folder of riff, outside each write path | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker` |
 //! | The refs of the clone | a worker: its refs, also `refs/remotes/origin/HEAD`, and the `HEAD` of its worktree | the fast-forward of the main clone, `riff worktrees clean`, the rules of riff | riff asks `origin` for the default branch and names each ref in full; the branch of a worktree comes from its name; riff refuses a branch name that starts with `-`, and puts `--` before each name | `the_fast_forward_takes_the_default_branch_from_origin_not_from_a_planted_ref`, `the_default_branch_comes_from_origin_not_from_a_planted_ref`, `worktrees_clean_takes_the_branch_from_the_name_not_from_the_head`, `worktrees_clean_puts_two_dashes_before_each_name` |
 //! | The pane of a session | an operation of the own pane: read, type, the end over the limit | tmux, the end of its worker | each acts only on the pane of the session that asks, and takes no pane | `the_operations_of_the_own_pane_act_only_on_the_pane_of_the_session`, `a_worker_in_its_sandbox_gets_clear_in_its_own_pane_through_the_broker`, `a_worker_in_its_sandbox_over_the_limit_ends_through_the_broker` |
+//! | The folder of riff | a read of `tmux.conf`, `clones`, `worker-deaths` and the pool | `riff` at its start, the tmux server, the rollout, the wrapper, each workers host | no session writes the folder of riff; each AI role writes only its own folder in it | `no_ai_role_writes_the_folder_of_riff`, `a_worker_does_only_what_its_profile_allows` |
+//! | The own folder of a session | its files, for example the start of its context | `riff workers reap` | the reap reads only the own folder of that worker, with no follow of a link | `the_reap_reads_the_start_only_from_the_own_folder_of_the_worker` |
+//! | The pool of build jobs | a token of the pipe | the wrapper of each worker, `riff test-run` | a session and a test run write only the pipe and the locks of a taker | `no_ai_role_writes_the_folder_of_riff`, `the_run_writes_only_the_files_of_the_pool_that_a_taker_writes` |
+//! | The temp folder of a session | a link in the place of a file or a folder | the wrapper (the forge token), `riff test-run` (the run folder), the broker (the sign-in lock) | each write opens the folder and the file with no follow of a link | `a_planted_link_in_the_temp_folder_gets_no_token`, `a_run_folder_binds_the_folders_that_riff_made`, `a_planted_link_gets_no_sign_in_lock` |
+//! | The write paths of a profile | a link or a `.git` file in its worktree | the sandbox, at its start | the start dir has no link below the worktree folder; the clone of git is the start dir or above it; the worktree is the clone, its worktree folder or one folder in it; the target stays in the worktree; else the session does not start | `a_link_out_of_the_worktree_gives_no_sandbox_and_no_write`, `a_link_in_the_worktree_folder_to_another_repository_gives_no_sandbox`, `a_git_file_that_names_another_clone_gives_no_sandbox`, `a_worktree_below_a_worktree_gives_no_sandbox` |
 //! <!-- /surfaces -->
 //!
 //! ## The shared surfaces with no control yet
@@ -149,14 +154,7 @@
 //! <!-- open-surfaces -->
 //! | Surface | A session writes or asks | Read or run outside by | Risk | Decision |
 //! |---|---|---|---|---|
-//! | The tmux config of riff | `tmux.conf` in the riff state folder | the tmux server of riff, at its start | a program runs outside a sandbox, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-//! | The list of clones | `clones` in the riff state folder | `riff`, at its start | riff starts the lead in a folder that a session picked | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-//! | The deaths of workers | `worker-deaths` in the riff state folder | the rollout, each workers host | riff starts or stops workers on a false count, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-//! | The context files of a worker | the start time of a context in the riff state folder | `riff workers reap` | the reap stops the wrong processes of a worker | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-//! | The pool of build jobs | `jobs` in the riff state folder | the wrapper of each worker | a session takes the build jobs of other workers, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
-//! | The said-once files and the update files | `no-jobserver`, `no-systemd` and the like, `update.lock`, `update-tried`, `update.log` | riff, the update of riff | riff says a thing one time too few, an update waits, a file of the person changes | Accept (proposed): they hold no command; #655 makes each write of riff there follow no link |
 //! | The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (proposed): a lock or a record holds no command |
-//! | The forge token files | its temp folder | the wrapper | a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
 //! | The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
 //! | The variables of a broker request | a bus address | `riff test-run` | a test run gets a variable that is not of cargo or the tests | #654 |
 //! | The worktrees of other sessions | the worktrees folder of the clone | the other sessions | a worker changes the work of another session | #645 |
@@ -197,7 +195,7 @@ use landlock::{
     RulesetAttr, RulesetCreatedAttr, RulesetStatus, Scope,
 };
 
-use crate::profile::{Endpoint, Profile, Role, Session};
+use crate::profile::{Endpoint, Profile, Refused, Role, Session};
 
 /// The highest Landlock ABI that riff asks for. The kernel applies the
 /// rights of its own ABI (01M4BTB74RD24WH59FA65KZ8J0).
@@ -262,7 +260,7 @@ pub fn ports(profile: &Profile) -> Vec<u16> {
 /// # let s = Session {
 /// #     home: "/h".into(), runtime: "/run/user/7".into(), clone: "/h/app".into(),
 /// #     worktree: "/h/app".into(), target: "/h/app/target".into(), temp: "/h/tmp".into(),
-/// #     claude: "/h/c".into(), rules: "/h/r.json".into(), state: "/run/user/7/riff".into(),
+/// #     claude: "/h/c".into(), rules: "/h/r.json".into(), state: "/run/user/7/riff".into(), own: "/run/user/7/riff/sessions/s1".into(), pool: vec![],
 /// #     tools: vec![], server: Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
 /// # };
 /// let worker = Profile::of(Role::Worker, &s).unwrap();
@@ -373,21 +371,29 @@ pub struct Here {
     pub temp: PathBuf,
     /// The data root of riff ([`data_from`]).
     pub data: PathBuf,
-    /// The local files of riff ([`crate::local::dir`]).
+    /// The folder of riff ([`crate::local::riff_dir`]).
     pub state: PathBuf,
+    /// The own state folder of the session ([`crate::local::own`]). In
+    /// a session, a sandbox of its own (`riff workers git`) keeps the
+    /// own folder of that session ([`crate::local::OWN_VAR`]).
+    pub own: PathBuf,
     /// The paths that each role reads: each folder of `PATH`, the
     /// toolchain, the folders of the programs, the settings of riff and
     /// of git.
     pub tools: Vec<PathBuf>,
     /// The riff server.
     pub server: Endpoint,
+    /// The dir where the sandbox starts, as riff got it: absolute, with
+    /// no link resolved. [`Here::session`] checks the worktree and the
+    /// clone against it (01M4EPNXVSA592BFRKG4ZB9AWB).
+    pub start: PathBuf,
 }
 
 impl Here {
     /// The facts of this process in its current dir, with the riff
     /// server `server`.
     pub fn of_process(server: &str) -> Result<Self> {
-        Self::of_dir(&std::env::current_dir()?, server, None)
+        Self::of_dir(&start_dir()?, server, None)
     }
 
     /// The facts of this process in the dir `cwd`, with the riff server
@@ -416,7 +422,9 @@ impl Here {
         let temp = std::env::temp_dir();
         let data =
             data_from(var("XDG_DATA_HOME"), var("HOME")).context("the sandbox needs HOME")?;
-        let state = crate::local::dir().context("the sandbox needs a local dir of riff")?;
+        let state = crate::local::riff_dir().context("the sandbox needs a local dir of riff")?;
+        let own = var(crate::local::OWN_VAR)
+            .map_or_else(|| crate::local::own(&state, &session), PathBuf::from);
         let mut tools: Vec<PathBuf> = var("PATH")
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default();
@@ -453,6 +461,8 @@ impl Here {
         }
         let server = Endpoint::of_url(server)
             .with_context(|| format!("the sandbox cannot read the server URL {server}"))?;
+        let start =
+            std::path::absolute(cwd).with_context(|| format!("no path {}", cwd.display()))?;
         Ok(Self {
             session,
             home,
@@ -463,8 +473,10 @@ impl Here {
             temp,
             data,
             state,
+            own,
             tools,
             server,
+            start,
         })
     }
 
@@ -488,7 +500,10 @@ impl Here {
     /// The [`Session`] of these facts, with each path resolved
     /// ([`resolve`]). A tool path that gives the home of the person or a
     /// secret is left out (01M4BTB7757XF8RZ6MRXKTM8SB). Each other path
-    /// goes as it is: [`Profile::of`] checks it.
+    /// goes as it is: [`Profile::of`] checks it. A worktree or a clone
+    /// that a session can plant is refused ([`in_clone`]), and so is a
+    /// target in the worktree that a link takes out of the worktree
+    /// (01M4DWJ0KT7G2RX05X00YGVN21).
     ///
     /// ```
     /// use riff::profile::Endpoint;
@@ -504,10 +519,12 @@ impl Here {
     ///     temp: "/nowhere/tmp/s1".into(),
     ///     data: "/nowhere/h/.local/share/riff".into(),
     ///     state: "/nowhere/run/riff".into(),
+    ///     own: "/nowhere/run/riff/sessions/s1".into(),
     ///     tools: vec!["/usr/bin".into(), "/nowhere/h".into(), "/nowhere/h/.ssh".into()],
     ///     server: Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
+    ///     start: "/nowhere/h/app".into(),
     /// };
-    /// let s = here.session();
+    /// let s = here.session().unwrap();
     /// assert_eq!(s.clone, std::path::Path::new("/nowhere/h/app"));
     /// // A worker starts in the main clone: it gets the folder of the
     /// // worktrees.
@@ -518,7 +535,7 @@ impl Here {
     /// // the home and a secret go.
     /// assert_eq!(s.tools, ["/usr/bin", "/nowhere/h/app/.cargo"].map(std::path::PathBuf::from));
     /// ```
-    pub fn session(&self) -> Session {
+    pub fn session(&self) -> Result<Session, Refused> {
         let common = resolve(&self.common);
         let clone = match common.file_name() {
             Some(name) if name == ".git" => {
@@ -528,13 +545,14 @@ impl Here {
         };
         let worktrees = clone.join(".claude/worktrees");
         let mut worktree = resolve(&self.worktree);
+        in_clone(&self.start, &clone, &worktree)?;
         if worktree == clone {
             worktree = worktrees.clone();
         }
         let target = match &self.target {
             Some(target) => resolve(target),
             None if worktree == worktrees => worktree.clone(),
-            None => worktree.join("target"),
+            None => in_root(&worktree, "target")?,
         };
         let mut session = Session {
             home: resolve(&self.home),
@@ -546,6 +564,8 @@ impl Here {
             claude: resolve(&claude_dir(&self.data, &self.session)),
             rules: resolve(&rules_file(&self.data, &self.session)),
             state: resolve(&self.state),
+            own: resolve(&self.own),
+            pool: crate::jobserver::session_files(&resolve(&self.state)),
             tools: vec![],
             server: self.server.clone(),
         };
@@ -559,7 +579,115 @@ impl Here {
             }
         }
         session.tools = tools;
-        session
+        Ok(session)
+    }
+}
+
+/// Checks the place where a sandbox starts: `start`, the dir as riff
+/// got it, and `clone` and `worktree`, the clone and the worktree that
+/// git resolved there. A session writes the worktree folder of its
+/// clone, so it can put a link or a `.git` file there. [`git_in`]
+/// refuses a link in the place of a worktree, but takes a folder in a
+/// worktree with a `.git` for a repository of the session, for example
+/// the clone of a test. riff refuses:
+///
+/// - a link in `start` below the first worktree folder
+///   (01M4EPNXVSA592BFRKG4ZB9AWB);
+/// - a `clone` that is not `start` or a folder above it, for example
+///   from a `.git` file that names the git dir of another repository
+///   (01M4EPNY387PPG93H7HYNZ07N5);
+/// - a `worktree` that is not `clone`, its worktree folder or one
+///   folder in it (01M4EPNYARVEJXA5419QGQMHD5).
+///
+/// ```
+/// use riff::confine::in_clone;
+/// use riff::profile::Refused;
+///
+/// let dir = tempfile::tempdir()?;
+/// let app = dir.path().canonicalize()?.join("app");
+/// let tree = app.join(".claude/worktrees/w");
+/// std::fs::create_dir_all(&tree)?;
+/// in_clone(&app, &app, &app)?;
+/// in_clone(&tree, &app, &tree)?;
+/// // A link in the worktree folder to another repository.
+/// let other = dir.path().canonicalize()?.join("other");
+/// std::fs::create_dir_all(&other)?;
+/// let link = app.join(".claude/worktrees/x");
+/// std::os::unix::fs::symlink(&other, &link)?;
+/// assert!(matches!(in_clone(&link, &other, &other), Err(Refused::Link(..))));
+/// // A `.git` file of the worktree that names another clone.
+/// assert!(matches!(in_clone(&tree, &other, &tree), Err(Refused::OtherClone(..))));
+/// // A repository below a worktree.
+/// let deep = tree.join("sub");
+/// assert!(matches!(in_clone(&deep, &app, &deep), Err(Refused::NotInClone(..))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn in_clone(start: &Path, clone: &Path, worktree: &Path) -> Result<(), Refused> {
+    use std::path::Component;
+    let real = resolve(start);
+    let parts: Vec<Component> = start.components().collect();
+    let first = parts.windows(2).position(|w| {
+        matches!(w, [Component::Normal(a), Component::Normal(b)] if *a == ".claude" && *b == "worktrees")
+    });
+    if let Some(i) = first {
+        let top: PathBuf = parts[..i].iter().collect();
+        let rest: PathBuf = parts[i..].iter().collect();
+        if real != resolve(&top).join(&rest) {
+            return Err(Refused::Link(start.to_owned(), real));
+        }
+    }
+    if !real.starts_with(clone) {
+        return Err(Refused::OtherClone(clone.to_owned(), real));
+    }
+    let worktrees = clone.join(crate::worktrees::AGENT_DIR);
+    let fits = worktree == clone
+        || worktree == worktrees
+        || (worktree.parent() == Some(&worktrees)
+            && matches!(worktree.file_name(), Some(n) if n != ".." && n != "."));
+    match fits {
+        true => Ok(()),
+        false => Err(Refused::NotInClone(worktree.to_owned(), clone.to_owned())),
+    }
+}
+
+/// The dir where this process starts, as its path text: `PWD` when it
+/// names the current dir, else the current dir. The kernel resolves
+/// each link of the current dir, so only `PWD` keeps a link that a shell
+/// went through, for [`in_clone`] (01M4EPNXVSA592BFRKG4ZB9AWB).
+pub fn start_dir() -> Result<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let cwd = std::env::current_dir().context("no current dir")?;
+    let same = |p: &Path| match (std::fs::metadata(p), std::fs::metadata(&cwd)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    };
+    Ok(std::env::var_os("PWD")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && same(p))
+        .unwrap_or(cwd))
+}
+
+/// The path `name` in the folder `root`, with each link resolved. A
+/// session writes `root`, so it can put a link at `name`: a path that
+/// the link takes out of `root` is refused (01M4DWJ0KT7G2RX05X00YGVN21).
+///
+/// ```
+/// use riff::confine::in_root;
+/// use riff::profile::Refused;
+///
+/// let tree = tempfile::tempdir()?;
+/// let root = tree.path().canonicalize()?;
+/// assert_eq!(in_root(&root, "target")?, root.join("target"));
+/// let away = tempfile::tempdir()?;
+/// std::os::unix::fs::symlink(away.path(), root.join("target"))?;
+/// assert!(matches!(in_root(&root, "target"), Err(Refused::OutOfRoot(..))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn in_root(root: &Path, name: &str) -> Result<PathBuf, Refused> {
+    let path = resolve(&root.join(name));
+    match path.starts_with(root) {
+        true => Ok(path),
+        false => Err(Refused::OutOfRoot(path, root.to_owned())),
     }
 }
 
@@ -652,8 +780,9 @@ pub fn shim(
 /// The profile of `role` for the session of `here`: each path resolved,
 /// and checked by [`Profile::of`].
 pub fn profile(role: Role, here: &Here) -> Result<Profile> {
-    let session = here.session();
-    Profile::of(role, &session).with_context(|| format!("riff makes no sandbox for the {role}"))
+    here.session()
+        .and_then(|session| Profile::of(role, &session))
+        .with_context(|| format!("riff makes no sandbox for the {role}"))
 }
 
 /// The sandbox that riff applied to this process.
@@ -691,9 +820,11 @@ pub fn apply(profile: &Profile, ports: &[u16]) -> Result<Applied> {
     let files: Vec<&Path> = profile.write_files().collect();
     for path in profile.write_paths() {
         let _ = match files.contains(&path) {
+            // No open of a file that is there: an open of the named pipe of
+            // the pool waits for a reader.
             true => std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
+                .write(true)
+                .create_new(true)
                 .open(path)
                 .map(drop),
             false => std::fs::create_dir_all(path),
@@ -1017,8 +1148,8 @@ pub fn run_git(server: &str, tree: &Path, args: &[OsString]) -> Result<()> {
     let mut git = git_in_tree(&main, &tree)?;
     let here = Here::of_dir(&tree, server, Some(GIT_NAME))?;
     // The temp dir of this process can be `/tmp`, which holds the tmux
-    // sockets of the person: git gets a temp folder in the riff state.
-    let temp = here.state.join(GIT_NAME);
+    // sockets of the person: git gets its own state folder as its temp.
+    let temp = here.own.clone();
     std::fs::create_dir_all(&temp).with_context(|| format!("cannot make {}", temp.display()))?;
     let here = here.with_temp(&temp);
     let profile = profile(Role::Worker, &here)?;
@@ -1048,6 +1179,11 @@ pub fn run_git(server: &str, tree: &Path, args: &[OsString]) -> Result<()> {
 /// let e = riff::confine::git_in_tree(&main, dir.path()).unwrap_err();
 /// assert!(format!("{e:#}").contains("not in the worktree folder"), "{e:#}");
 /// assert!(riff::confine::git_in_tree(&main, &main.join(".claude/worktrees/w/sub")).is_err());
+/// // A link in the worktree folder to another repository.
+/// let other = tempfile::tempdir().unwrap();
+/// std::os::unix::fs::symlink(other.path(), main.join(".claude/worktrees/x")).unwrap();
+/// let e = riff::confine::git_in_tree(&main, &main.join(".claude/worktrees/x")).unwrap_err();
+/// assert!(format!("{e:#}").contains("is a link"), "{e:#}");
 /// ```
 pub fn git_in_tree(main: &Path, tree: &Path) -> Result<std::process::Command> {
     let main = main
@@ -1156,9 +1292,9 @@ pub fn run(
     args: &[OsString],
 ) -> Result<()> {
     use std::os::unix::process::CommandExt;
-    let here = Here::of_dir(&std::env::current_dir()?, server, name)?.with_program(program);
+    let here = Here::of_dir(&start_dir()?, server, name)?.with_program(program);
     let profile = profile(role, &here)?;
-    let session = here.session();
+    let session = here.session()?;
     // No crash in the session or its test runs starts the crash helper
     // of the system (01M4C6HE4D4ADJVBCC6EW8FP0X).
     no_core_dumps()?;
@@ -1182,6 +1318,7 @@ pub fn run(
     let mut cmd = std::process::Command::new(program);
     cmd.args(args)
         .env(CLAUDE_CONFIG_DIR, &session.claude)
+        .env(crate::local::OWN_VAR, &session.own)
         .env(crate::broker::VAR, broker.as_raw_fd().to_string())
         .env_remove("TMUX")
         .env_remove("TMUX_PANE");
@@ -1206,7 +1343,7 @@ pub fn run(
 /// of it. The apply runs in a thread of its own: Landlock restricts
 /// only that thread, so this process stays free.
 pub fn show(role: Role, server: &str, name: Option<&str>) -> Result<String> {
-    let here = Here::of_dir(&std::env::current_dir()?, server, name)?;
+    let here = Here::of_dir(&start_dir()?, server, name)?;
     let profile = profile(role, &here)?;
     let ports = ports(&profile);
     let applied = std::thread::scope(|s| s.spawn(|| apply(&profile, &ports)).join())

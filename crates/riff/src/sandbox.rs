@@ -73,12 +73,14 @@
 //!     claude: "/home/ada/.claude".into(),
 //!     rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
 //!     state: "/run/user/1000/riff".into(),
+//!     own: "/run/user/1000/riff/sessions/s1".into(),
+//!     pool: vec![],
 //!     tools: vec!["/home/ada/.cargo/bin".into()],
 //!     server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
 //! };
 //! let profile = Profile::of(Role::TestRun, &session)?;
 //! let run = Path::new("/var/tmp/riff-test-run.x");
-//! let args = riff::sandbox::args(&profile, &session, run, Path::new("/home/ada/src/app"), None, None);
+//! let args = riff::sandbox::args(&profile, &session, run, Path::new("/home/ada/src/app"), None, &Default::default());
 //! let line = args.join(" ");
 //! assert!(line.starts_with("--unshare-all --die-with-parent"));
 //! assert!(line.contains("--bind /var/tmp/riff-test-run.x/home /home/ada "));
@@ -339,7 +341,12 @@ pub fn here(dir: &Path, given: Option<(PathBuf, PathBuf)>) -> Result<Session> {
         claude: var("CLAUDE_CONFIG_DIR").map_or_else(|| home.join(".claude"), PathBuf::from),
         // A test run has no permission rules: no AI runs in it.
         rules: home.join(".local/share/riff/rules/test-run.json"),
-        state: crate::local::dir().unwrap_or_else(|| runtime.join("riff")),
+        state: crate::local::riff_dir().unwrap_or_else(|| runtime.join("riff")),
+        // A test run writes no state.
+        own: crate::local::riff_dir()
+            .unwrap_or_else(|| runtime.join("riff"))
+            .join(crate::local::SESSIONS),
+        pool: vec![],
         temp: std::env::temp_dir(),
         home,
         runtime,
@@ -367,15 +374,19 @@ fn git(dir: &Path, args: &[&str]) -> Option<PathBuf> {
 /// The arguments of `bwrap` for a test run of `profile`, with the run
 /// folder `run` (it holds `home` and `tmp`), the working folder `cwd`,
 /// and the folder of the pipe of the pool of build jobs, when there is
-/// one. `target` is an open file descriptor of the target
-/// ([`open_target`]): with one, the run binds the target from it. The
-/// arguments end before the program.
+/// one. `fds` holds open file descriptors of the target
+/// ([`open_target`]) and of the run folders ([`Run::fds`]): the run
+/// binds each folder that has one from it. The arguments end before the
+/// program.
 ///
 /// - The run has new namespaces: user, PID, network, IPC, UTS and
 ///   cgroup. It dies with riff, in a new session.
 /// - Each read path of the profile, with no write. Each write path,
 ///   with write, except the temp folder: the run writes only its run
 ///   folder there. `run/home` is at the path of the home.
+/// - The folder of the pool with no write, and only the files of the
+///   pool that a taker writes ([`crate::jobserver::pool_files`]) with
+///   write (01M4DWJ0F7G527GN26KSA934N7).
 /// - A parent comes before its children, so a child path is not under
 ///   a later bind. `/tmp` and `/var/tmp` come last.
 ///
@@ -393,6 +404,8 @@ fn git(dir: &Path, args: &[&str]) -> Option<PathBuf> {
 ///     claude: "/h/.claude".into(),
 ///     rules: "/h/.local/share/riff/rules/s1.json".into(),
 ///     state: "/run/user/7/riff".into(),
+///     own: "/run/user/7/riff/sessions/s1".into(),
+///     pool: vec![],
 ///     tools: vec!["/h/.cargo/bin".into()],
 ///     server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
 /// };
@@ -403,15 +416,15 @@ fn git(dir: &Path, args: &[&str]) -> Option<PathBuf> {
 ///     Path::new("/h/.cache/tmp/r"),
 ///     Path::new("/h/app/.claude/worktrees/w"),
 ///     Some(Path::new("/run/riff/jobs")),
-///     Some(9),
+///     &riff::sandbox::Fds { target: Some(9), ..Default::default() },
 /// );
 /// let at = |s: &str| args.iter().position(|a| a == s).unwrap();
 /// // The home comes before the tools, the worktree before its target.
 /// assert!(at("/h/.cache/tmp/r/home") < at("/h/.cargo/bin"));
 /// assert!(at("/h/app/.claude/worktrees/w") < at("/h/app/.claude/worktrees/w/target"));
-/// // The run reads the git dir of the clone, and writes the pool.
+/// // The run reads the git dir of the clone and the folder of the pool.
 /// assert!(args.windows(3).any(|w| w == ["--ro-bind-try", "/h/app/.git", "/h/app/.git"]));
-/// assert!(args.windows(3).any(|w| w == ["--bind", "/run/riff/jobs", "/run/riff/jobs"]));
+/// assert!(args.windows(3).any(|w| w == ["--ro-bind-try", "/run/riff/jobs", "/run/riff/jobs"]));
 /// // The target comes from its open file descriptor.
 /// assert!(args.windows(3).any(|w| w == ["--bind-fd", "9", "/h/app/.claude/worktrees/w/target"]));
 /// // No bind gives the temp folder as a whole.
@@ -425,7 +438,7 @@ pub fn args(
     run: &Path,
     cwd: &Path,
     pool: Option<&Path>,
-    target: Option<RawFd>,
+    fds: &Fds,
 ) -> Vec<String> {
     #[derive(Clone, Copy)]
     enum Mount {
@@ -441,7 +454,14 @@ pub fn args(
             .filter(|p| *p != session.temp)
             .map(|p| (p.to_owned(), Mount::Write)),
     );
-    mounts.extend(pool.map(|p| (p.to_owned(), Mount::Write)));
+    if let Some(pool) = pool {
+        mounts.push((pool.to_owned(), Mount::Read));
+        mounts.extend(
+            crate::jobserver::pool_files(pool)
+                .into_iter()
+                .map(|f| (f, Mount::Write)),
+        );
+    }
     mounts.sort_by_key(|(p, _)| p.components().count());
 
     let text = |p: &Path| p.display().to_string();
@@ -454,17 +474,15 @@ pub fn args(
             (_, "/dev") => args.extend(["--dev".into(), path]),
             (_, "/proc") => args.extend(["--proc".into(), path]),
             (Mount::Read, _) => args.extend(["--ro-bind-try".into(), path.clone(), path]),
-            (Mount::Write, _) if Path::new(&path) == session.target && target.is_some() => {
-                let fd = target.map(|fd| fd.to_string()).unwrap_or_default();
-                args.extend(["--bind-fd".into(), fd, path])
+            (Mount::Write, _) if Path::new(&path) == session.target && fds.target.is_some() => {
+                args.extend(bind(fds.target, &session.target, &path))
             }
             (Mount::Write, _) => args.extend(["--bind".into(), path.clone(), path]),
-            (Mount::Home, _) => args.extend(["--bind".into(), text(&run.join("home")), path]),
+            (Mount::Home, _) => args.extend(bind(fds.home, &run.join("home"), &path)),
         }
     }
-    let tmp = text(&run.join("tmp"));
-    for at in ["/tmp", "/var/tmp"] {
-        args.extend(["--bind".into(), tmp.clone(), at.into()]);
+    for (at, fd) in [("/tmp", fds.tmp), ("/var/tmp", fds.var_tmp)] {
+        args.extend(bind(fd, &run.join("tmp"), at));
     }
     args.push("--clearenv".into());
     args.extend(["--setenv".into(), "TMPDIR".into(), "/tmp".into()]);
@@ -476,6 +494,39 @@ pub fn args(
     ]);
     args.extend(["--chdir".into(), text(cwd)]);
     args
+}
+
+/// The open folders that a test run binds from their file descriptor
+/// ([`args`]). A folder with none binds from its path.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Fds {
+    /// The target ([`open_target`]).
+    pub target: Option<RawFd>,
+    /// The `home` of the run folder ([`Run::fds`]).
+    pub home: Option<RawFd>,
+    /// The `tmp` of the run folder, for `/tmp`.
+    pub tmp: Option<RawFd>,
+    /// The `tmp` of the run folder again, for `/var/tmp`.
+    pub var_tmp: Option<RawFd>,
+}
+
+impl Fds {
+    /// Each file descriptor of these folders.
+    fn each(&self) -> Vec<RawFd> {
+        [self.target, self.home, self.tmp, self.var_tmp]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+}
+
+/// The arguments of `bwrap` that bind `path` (or the open folder `fd`)
+/// on `at`.
+fn bind(fd: Option<RawFd>, path: &Path, at: &str) -> [String; 3] {
+    match fd {
+        Some(fd) => ["--bind-fd".into(), fd.to_string(), at.into()],
+        None => ["--bind".into(), path.display().to_string(), at.into()],
+    }
 }
 
 /// Makes the target `target` of a test run and opens it. Returns the
@@ -542,6 +593,8 @@ pub fn open_target(target: &Path, within: Option<&Path>) -> Result<(OwnedFd, Pat
 ///     claude: "/home/ada/.claude".into(),
 ///     rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
 ///     state: "/run/user/1000/riff".into(),
+///     own: "/run/user/1000/riff/sessions/s1".into(),
+///     pool: vec![],
 ///     tools: vec![],
 ///     server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
 /// };
@@ -559,7 +612,32 @@ pub fn for_run(session: Session, run: &Path) -> Session {
 
 /// A run folder in the temp folder: `home` and `tmp`, both empty. riff
 /// removes it when the run ends.
-pub struct Run(tempfile::TempDir);
+///
+/// The session writes its temp folder. So riff opens `home` and `tmp`
+/// with no follow of a link, and the run binds them from the open
+/// folders (01M4DWJ0CZDM0AX98TY8CCTC9F): a link that the session puts
+/// there after the open changes nothing.
+///
+/// ```
+/// let temp = tempfile::tempdir()?;
+/// let run = riff::sandbox::Run::new(temp.path())?;
+/// let fds = run.fds();
+/// let home = run.path().join("home");
+/// // The session puts a link in the place of `home`.
+/// let away = tempfile::tempdir()?;
+/// std::fs::rename(&home, temp.path().join("old"))?;
+/// std::os::unix::fs::symlink(away.path(), &home)?;
+/// // The open folder is still the folder that riff made.
+/// let open = std::fs::read_link(format!("/proc/self/fd/{}", fds.home.unwrap()))?;
+/// assert_eq!(open, temp.path().join("old"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub struct Run {
+    dir: tempfile::TempDir,
+    home: crate::nofollow::Dir,
+    tmp: crate::nofollow::Dir,
+    var_tmp: crate::nofollow::Dir,
+}
 
 impl Run {
     /// Makes a new run folder in `temp`.
@@ -568,15 +646,36 @@ impl Run {
             .prefix("riff-test-run.")
             .tempdir_in(temp)
             .with_context(|| format!("make a run folder in {}", temp.display()))?;
+        let fail = || format!("make the run folder {}", dir.path().display());
+        let open = crate::nofollow::Dir::open(dir.path()).with_context(fail)?;
         for part in ["home", "tmp"] {
-            std::fs::create_dir(dir.path().join(part))?;
+            nix::sys::stat::mkdirat(open.fd(), part, nix::sys::stat::Mode::S_IRWXU)
+                .with_context(fail)?;
         }
-        Ok(Self(dir))
+        let home = open.sub("home", None).with_context(fail)?;
+        let tmp = open.sub("tmp", None).with_context(fail)?;
+        let var_tmp = open.sub("tmp", None).with_context(fail)?;
+        Ok(Self {
+            dir,
+            home,
+            tmp,
+            var_tmp,
+        })
     }
 
     /// The path of the run folder.
     pub fn path(&self) -> &Path {
-        self.0.path()
+        self.dir.path()
+    }
+
+    /// The open folders `home` and `tmp` of the run, for [`args`].
+    pub fn fds(&self) -> Fds {
+        Fds {
+            target: None,
+            home: Some(self.home.fd().as_raw_fd()),
+            tmp: Some(self.tmp.fd().as_raw_fd()),
+            var_tmp: Some(self.var_tmp.fd().as_raw_fd()),
+        }
     }
 }
 
@@ -606,7 +705,10 @@ pub fn test_run(program: &OsStr, program_args: &[OsString]) -> Result<i32> {
         .ok()
         .and_then(|m| crate::jobserver::fifo_of(&m))
         .and_then(|f| f.parent().map(Path::to_owned));
-    let fd = target.as_raw_fd();
+    let fds = Fds {
+        target: Some(target.as_raw_fd()),
+        ..run.fds()
+    };
     let mut cmd = Command::new(bwrap);
     cmd.args(args(
         &profile,
@@ -614,20 +716,23 @@ pub fn test_run(program: &OsStr, program_args: &[OsString]) -> Result<i32> {
         run.path(),
         &cwd,
         pool.as_deref(),
-        Some(fd),
+        &fds,
     ))
     .args(env_args(std::env::vars_os()))
     .arg("--")
     .arg(program)
     .args(program_args);
-    // Only bwrap gets the target: the file descriptor loses its
+    // Only bwrap gets the open folders: each file descriptor loses its
     // close-on-exec flag in the child, after the fork.
+    let each = fds.each();
     // SAFETY: the closure calls only fcntl, which is safe after a fork.
     unsafe {
         use std::os::unix::process::CommandExt;
         cmd.pre_exec(move || {
-            if nix::libc::fcntl(fd, nix::libc::F_SETFD, 0) == -1 {
-                return Err(std::io::Error::last_os_error());
+            for &fd in &each {
+                if nix::libc::fcntl(fd, nix::libc::F_SETFD, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
             }
             Ok(())
         });
@@ -657,6 +762,8 @@ mod tests {
             claude: "/home/ada/.claude".into(),
             rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
             state: "/run/user/1000/riff".into(),
+            own: "/run/user/1000/riff/sessions/s1".into(),
+            pool: vec![],
             tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
             server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
         }
@@ -665,7 +772,14 @@ mod tests {
     fn of(pool: Option<&Path>) -> Vec<String> {
         let s = session();
         let p = Profile::of(Role::TestRun, &s).unwrap();
-        args(&p, &s, Path::new("/var/tmp/r"), &s.worktree, pool, None)
+        args(
+            &p,
+            &s,
+            Path::new("/var/tmp/r"),
+            &s.worktree,
+            pool,
+            &Fds::default(),
+        )
     }
 
     #[test]
@@ -708,17 +822,63 @@ mod tests {
     }
 
     #[test]
-    fn the_pool_of_build_jobs_is_writable_in_the_run() {
-        let a = of(Some(Path::new("/run/user/1000/riff/jobs")));
+    /// 01M4DWJ0F7G527GN26KSA934N7: the run reads the folder of the pool,
+    /// and writes only the pipe and the locks of a taker.
+    fn the_run_writes_only_the_files_of_the_pool_that_a_taker_writes() {
+        let riff = tempfile::tempdir().unwrap();
+        let jobs = crate::jobserver::dir(riff.path());
+        let _pool = crate::jobserver::Pool::hold(&jobs, 4, 1).unwrap();
+        let a = of(Some(&jobs));
+        let at = |p: &Path| p.display().to_string();
+        let ro = ["--ro-bind-try".to_owned(), at(&jobs), at(&jobs)];
+        assert!(a.windows(3).any(|w| w == ro), "{a:?}");
+        let mut written: Vec<String> = a
+            .windows(3)
+            .filter(|w| w[0] == "--bind" && w[1].starts_with(&at(&jobs)))
+            .map(|w| w[1].clone())
+            .collect();
+        written.sort();
+        let want = ["fifo", "hold.lock", "take.lock"].map(|f| at(&jobs.join(f)));
+        assert_eq!(written, want);
+    }
+
+    /// 01M4DWJ0CZDM0AX98TY8CCTC9F: the session writes its temp folder. A
+    /// link that it puts in the place of `home` or `tmp` after riff made
+    /// them changes nothing: the run binds the folders that riff made,
+    /// from their open file descriptors.
+    #[test]
+    fn a_run_folder_binds_the_folders_that_riff_made() {
+        let temp = tempfile::tempdir().unwrap();
+        let away = tempfile::tempdir().unwrap();
+        let run = Run::new(temp.path()).unwrap();
+        let fds = run.fds();
+        for part in ["home", "tmp"] {
+            let path = run.path().join(part);
+            std::fs::rename(&path, temp.path().join(format!("old-{part}"))).unwrap();
+            std::os::unix::fs::symlink(away.path(), &path).unwrap();
+        }
+        let open = |fd: Option<RawFd>| std::fs::read_link(format!("/proc/self/fd/{}", fd.unwrap()));
+        assert_eq!(open(fds.home).unwrap(), temp.path().join("old-home"));
+        assert_eq!(open(fds.tmp).unwrap(), temp.path().join("old-tmp"));
+        assert_eq!(open(fds.var_tmp).unwrap(), temp.path().join("old-tmp"));
+        let s = session();
+        let p = Profile::of(Role::TestRun, &s).unwrap();
+        let a = args(&p, &s, run.path(), &s.worktree, None, &fds);
+        let line = a.join(" ");
+        let fd = |fd: Option<RawFd>| fd.unwrap().to_string();
         assert!(
-            a.windows(3).any(|w| w
-                == [
-                    "--bind",
-                    "/run/user/1000/riff/jobs",
-                    "/run/user/1000/riff/jobs"
-                ]),
-            "{a:?}"
+            line.contains(&format!("--bind-fd {} /home/ada ", fd(fds.home))),
+            "{line}"
         );
+        assert!(
+            line.contains(&format!("--bind-fd {} /tmp ", fd(fds.tmp))),
+            "{line}"
+        );
+        assert!(
+            line.contains(&format!("--bind-fd {} /var/tmp ", fd(fds.var_tmp))),
+            "{line}"
+        );
+        assert!(!line.contains(&run.path().display().to_string()), "{line}");
     }
 
     #[test]

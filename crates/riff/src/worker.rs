@@ -291,6 +291,11 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     let folder = std::env::var(identity::SESSION_VARS[0])
         .ok()
         .and_then(|session| temp::Folder::make(&session));
+    // The own state folder of this worker: its drop deletes it after
+    // `claude` ends (01M4DWJ0AQX8N7J9T02VJ0XHF1).
+    let _own = std::env::var(identity::SESSION_VARS[0])
+        .ok()
+        .and_then(|session| crate::local::Own::of(&session));
     let args = match &folder {
         Some(folder) => temp::with_env(args, folder.path()),
         None => args.to_vec(),
@@ -473,6 +478,7 @@ pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) 
     let mut term = signal(SignalKind::terminate())?;
     let mut hup = signal(SignalKind::hangup())?;
     let folder = temp::Folder::make(name);
+    let _own = crate::local::Own::of(name);
     let riff = crate::binary::this_on_disk()?;
     let lead = Some(forge::TokenRole::Lead);
     // The lead gets a session ID of its own, so that its grant acts

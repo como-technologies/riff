@@ -36,11 +36,13 @@ esac
 "#;
 
 /// Writes the arguments, and the `RIFF_SERVER` and `RIFF_ON` that it
-/// got, and its environment. It runs in the sandbox of the lead, so it
-/// writes them to the riff state, a write path of the lead
-/// (01M4DDWP9XSA14E0YF211XZYKR).
+/// got, and its environment. In the sandbox of the lead, it writes them
+/// to its own Claude folder, a write path of the lead that stays after
+/// the end (01M4DDWP9XSA14E0YF211XZYKR): the lead writes no file of the
+/// folder of riff (01M4DWJ08GVFKV4EC6FNDZA1BD). Outside, it writes them
+/// to the folder of riff.
 const FAKE_CLAUDE: &str = r#"#!/bin/sh
-dir="$RIFF_HOME/state"
+dir="${CLAUDE_CONFIG_DIR:-$RIFF_HOME/state}"
 printf '%s\n' "$*" >> "$dir/claude.log"
 printf '%s %s\n' "$RIFF_SERVER" "$RIFF_ON" >> "$dir/claude.log"
 env > "$dir/claude.env"
@@ -108,9 +110,20 @@ impl Machine {
         std::fs::read_to_string(self.fake.path().join(name)).unwrap_or_default()
     }
 
-    /// A file of the fake `claude`: in the riff state.
+    /// A file of the fake `claude`: in the folder of riff, then in the
+    /// Claude folder of the lead.
     fn claude(&self, name: &str) -> String {
-        std::fs::read_to_string(self.home.path().join("state").join(name)).unwrap_or_default()
+        let outside = self.home.path().join("state").join(name);
+        let dirs = self.user.path().join(".local/share/riff/claude");
+        let lead = std::fs::read_dir(dirs)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|d| d.path().join(name));
+        std::iter::once(outside)
+            .chain(lead)
+            .filter_map(|f| std::fs::read_to_string(f).ok())
+            .collect()
     }
 
     /// `riff ARGS` in `dir`, outside tmux, with `answer` on stdin.

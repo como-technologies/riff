@@ -16,7 +16,7 @@
 //! | of a context | it has also the variable of the agent tool ([`crate::next::Agent::context_var`]): Claude Code gives it to each command of its Bash tool and to each hook, not to `claude` and not to its MCP servers. |
 //! | the watch | `riff watch`. riff keeps it and its parents: a worker keeps its watch over a clear (01M3JQCD16CNWN5FCQBRKHXYMP). |
 //! | the caller | this process and its parents. riff never stops them. |
-//! | the start of the context | the start hook writes the start of its own process to the file `context-ID` of the local dir ([`mark`]). The file names the boot. |
+//! | the start of the context | the start hook writes the start of its own process to the file `context-ID` of the own folder of the worker ([`mark`], [`crate::local::own`]). The file names the boot. |
 //!
 //! ```mermaid
 //! flowchart TD
@@ -465,35 +465,46 @@ fn boot() -> Option<String> {
     Some(id.trim().to_owned())
 }
 
-fn context_file(dir: &Path, session: &str) -> PathBuf {
-    dir.join(format!("context-{}", riff_core::name::sanitize(session)))
+fn context_name(session: &str) -> String {
+    format!("context-{}", riff_core::name::sanitize(session))
 }
 
-/// Writes the start of the context of the worker `session` to the
-/// local dir `dir`: the boot and the start of this process
-/// (01M3ZV0TJX2H77RW6ZA3ERZT9H).
-pub fn mark(dir: &Path, session: &str) -> std::io::Result<()> {
+/// Writes the start of the context of the worker `session` to its own
+/// folder in the folder of riff `riff` ([`crate::local::own`]): the
+/// boot and the start of this process (01M3ZV0TJX2H77RW6ZA3ERZT9H).
+pub fn mark(riff: &Path, session: &str) -> std::io::Result<()> {
     let (Some(boot), Some(start)) = (boot(), own_start()) else {
         return Ok(());
     };
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(context_file(dir, session), format!("{boot} {start}\n"))
+    let dir = crate::local::own(riff, session);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join(context_name(session)), format!("{boot} {start}\n"))
 }
 
 /// The start of the context of the worker `session` from [`mark`], or
-/// `None` when the file is missing or is of an earlier boot.
+/// `None` when the file is missing or is of an earlier boot. riff
+/// outside each sandbox reads it, from the own folder of the worker and
+/// with no follow of a link (01M4DWJ0HK490A9KF6FTQ61F2X).
 ///
 /// ```
 /// let run = tempfile::tempdir()?;
 /// assert_eq!(riff::workload::context_start(run.path(), "w1"), None);
 /// riff::workload::mark(run.path(), "w1")?;
 /// assert_eq!(riff::workload::context_start(run.path(), "w1"), riff::workload::own_start());
-/// std::fs::write(run.path().join("context-w1"), "an-old-boot 5\n")?;
+/// let own = riff::local::own(run.path(), "w1");
+/// std::fs::write(own.join("context-w1"), "an-old-boot 5\n")?;
+/// assert_eq!(riff::workload::context_start(run.path(), "w1"), None);
+/// // A link to a good start in another folder gives none.
+/// riff::workload::mark(run.path(), "w2")?;
+/// let good = riff::local::own(run.path(), "w2").join("context-w2");
+/// std::fs::remove_file(own.join("context-w1"))?;
+/// std::os::unix::fs::symlink(&good, own.join("context-w1"))?;
 /// assert_eq!(riff::workload::context_start(run.path(), "w1"), None);
 /// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn context_start(dir: &Path, session: &str) -> Option<u64> {
-    let text = std::fs::read_to_string(context_file(dir, session)).ok()?;
+pub fn context_start(riff: &Path, session: &str) -> Option<u64> {
+    let dir = crate::nofollow::Dir::open(&crate::local::own(riff, session)).ok()?;
+    let text = dir.read(&context_name(session)).ok()?;
     let (at, start) = text.trim().split_once(' ')?;
     (Some(at) == boot().as_deref()).then(|| start.parse().ok())?
 }
@@ -501,6 +512,27 @@ pub fn context_start(dir: &Path, session: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 01M4DWJ0HK490A9KF6FTQ61F2X: `riff workers reap` reads the start of
+    /// a context only from the own folder of that worker, and follows no
+    /// link there. A start in the folder of riff or of another session
+    /// counts for nothing.
+    #[test]
+    fn the_reap_reads_the_start_only_from_the_own_folder_of_the_worker() {
+        let riff = tempfile::tempdir().unwrap();
+        mark(riff.path(), "w2").unwrap();
+        let good = crate::local::own(riff.path(), "w2").join("context-w2");
+        let text = std::fs::read_to_string(&good).unwrap();
+        std::fs::write(riff.path().join("context-w1"), &text).unwrap();
+        let other = crate::local::own(riff.path(), "w2").join("context-w1");
+        std::fs::write(other, &text).unwrap();
+        assert_eq!(context_start(riff.path(), "w1"), None);
+        let own = crate::local::own(riff.path(), "w1");
+        std::fs::create_dir_all(&own).unwrap();
+        std::os::unix::fs::symlink(&good, own.join("context-w1")).unwrap();
+        assert_eq!(context_start(riff.path(), "w1"), None);
+        assert_eq!(context_start(riff.path(), "w2"), own_start());
+    }
 
     fn p(pid: u32, ppid: u32, worker: Option<&str>, context: bool) -> Proc {
         Proc {

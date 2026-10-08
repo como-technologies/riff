@@ -113,6 +113,7 @@ pub mod machine;
 pub mod mcp;
 pub mod monitor;
 pub mod next;
+pub mod nofollow;
 pub mod old_config;
 pub mod outside;
 pub mod permissions;

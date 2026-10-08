@@ -198,9 +198,41 @@ pub fn count_in(dir: &Path, now: u64) -> usize {
         .unwrap_or(0)
 }
 
-/// The deaths of the workers of this machine in the last [`WINDOW`].
+/// The deaths of the workers of this machine in the last [`WINDOW`]:
+/// the deaths in the folder of riff, which riff outside each sandbox
+/// writes, and in the own folder of the lead in its sandbox, where its
+/// `riff mcp` writes (01M4DWJ0AQX8N7J9T02VJ0XHF1). Each worker counts
+/// once.
 pub fn here() -> usize {
-    crate::local::dir().map_or(0, |dir| count_in(&dir, crate::monitor::now_secs()))
+    let dirs = [crate::local::riff_dir(), crate::local::dir()];
+    count_of(dirs.iter().flatten(), crate::monitor::now_secs())
+}
+
+/// The deaths in the [`WINDOW`] before `now`, from the file [`FILE`] of
+/// each of `dirs`. Each worker counts once.
+///
+/// ```
+/// use riff::deaths::{count_of, record};
+///
+/// let (a, b) = (tempfile::tempdir()?, tempfile::tempdir()?);
+/// record(a.path(), "w1", 100)?;
+/// record(b.path(), "w1", 101)?;
+/// record(b.path(), "w2", 102)?;
+/// assert_eq!(count_of([a.path(), b.path()], 110), 2);
+/// assert_eq!(count_of([a.path(), a.path()], 110), 1);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn count_of<P: AsRef<Path>>(dirs: impl IntoIterator<Item = P>, now: u64) -> usize {
+    let mut all = Deaths(Vec::new());
+    for dir in dirs {
+        let text = std::fs::read_to_string(dir.as_ref().join(FILE)).unwrap_or_default();
+        for (at, session) in Deaths::parse(&text).0 {
+            if !all.has(&session) {
+                all.0.push((at, session));
+            }
+        }
+    }
+    all.count(now)
 }
 
 /// Records the death of the worker `session` of this machine now. An
