@@ -136,15 +136,8 @@ riff cloud forge NAME APP_ID ~/Downloads/riff.private-key.pem
 ```
 
 The key goes to Secret Manager. The App ID goes to the settings file.
-
-After the deploy, sign in as the owner, and allow the GitHub account
-of your repositories. riff-server makes tokens only for an allowed
-account (see
-[Allow an account](how-it-works.md#allow-an-account)):
-
-```sh
-riff forge allow OWNER
-```
+After the deploy and your sign-in, allow your GitHub account (see
+"Allow your GitHub account" below).
 
 ### Deploy the riff
 
@@ -210,6 +203,17 @@ opens:
 
 ```sh
 riff login
+```
+
+## Allow your GitHub account
+
+A riff with a GitHub App makes forge tokens only for the GitHub
+accounts that the owner or an admin allowed. Allow the organization or
+the personal account of your repositories, for example `acme` (see
+[Allow an account](how-it-works.md#allow-an-account)):
+
+```sh
+riff forge allow OWNER
 ```
 
 ## Invite a person

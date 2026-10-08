@@ -357,6 +357,12 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     if let Err(e) = note_lead(server, &body).await {
         eprintln!("riff: cannot post the note to the lead: {e:#}");
     }
+    // The wrapper registered the session, so it ends it: the session
+    // leaves `who`, its claims are free, and its forge token goes
+    // (01M4CNN39TTK36GX34RCWKES80).
+    if let Some(session) = &session {
+        end_worker(session, server).await;
+    }
     // An exit with a fault is a death (01M493YZZEW1FTDBNA090WT2AG).
     if !status.success()
         && let Some(session) = &session
@@ -524,6 +530,19 @@ async fn register_worker(me: &riff_core::name::SessionUri, server: &str) {
     };
     if let Err(e) = registered.await {
         eprintln!("riff: {e:#}");
+    }
+}
+
+/// Sends the end call of the worker session `session` of this
+/// directory. A failure only gives a line.
+async fn end_worker(session: &str, server: &str) {
+    let ended = async {
+        let me = identity::agent(&identity::here(None)?, session, server)?;
+        let api = Api::new(server).with_budget(crate::mcp::END_WAIT);
+        api.signed_in(Some(session))?.end(&me).await
+    };
+    if let Err(e) = ended.await {
+        eprintln!("riff: the end call of the session {session} failed: {e:#}");
     }
 }
 
