@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+pub mod github;
+
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

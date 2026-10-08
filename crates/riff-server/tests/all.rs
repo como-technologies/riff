@@ -13,6 +13,7 @@ mod cut;
 mod direct;
 mod dpop;
 mod facts;
+mod forge;
 mod format;
 mod gcs;
 mod help;

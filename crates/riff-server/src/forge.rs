@@ -576,3 +576,105 @@ impl Forge {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/common/github.rs"]
+mod fake_github;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logline::testing::Capture;
+    use fake_github::FakeGitHub;
+
+    const KEY: &str = include_str!("../testdata/test-only-rsa-key.pem");
+
+    fn who(text: &str) -> Who {
+        let uri: riff_core::name::SessionUri = text.parse().unwrap();
+        uri.who().clone()
+    }
+
+    async fn forge() -> (Forge, FakeGitHub) {
+        let github = FakeGitHub::start(&[("acme/app", 11)]).await;
+        let settings = Settings::of(Some("7"), Some(KEY), Some(&github.url)).unwrap();
+        (Forge::new(settings), github)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn each_token_and_each_revoke_has_a_log_line_with_no_token() {
+        let capture = Capture::start();
+        let (forge, github) = forge().await;
+        let w = who("riff://mike@pangolin/acme/app?session=w1");
+        let worker = forge.give(&w, "acme/app", TokenRole::Worker).await.unwrap();
+        let verifier = forge
+            .give(&w, "acme/app", TokenRole::Verifier)
+            .await
+            .unwrap();
+        assert_eq!(github.revoked(), [worker.token.clone()]);
+        let lines = capture.lines();
+        let tokens = capture.results("token");
+        assert_eq!(tokens.len(), 2, "{lines:?}");
+        assert_eq!(tokens[0]["session"], "mike/w1");
+        assert_eq!(tokens[0]["repo"], "acme/app");
+        assert_eq!(tokens[0]["role"], "worker");
+        assert_eq!(tokens[1]["role"], "verifier");
+        assert!(tokens[1]["ends_ms"].as_u64().unwrap() > 0);
+        let revoked = capture.results("revoked");
+        assert_eq!(revoked.len(), 1, "{lines:?}");
+        assert_eq!(revoked[0]["role"], "worker");
+        let text = capture.text();
+        for token in [&worker.token, &verifier.token] {
+            assert!(
+                !text.contains(token.as_str()),
+                "a line holds a token: {text}"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn settle_revokes_a_token_whose_role_changed_and_keeps_the_lead() {
+        let (forge, github) = forge().await;
+        let w = who("riff://mike@pangolin/acme/app?session=w1");
+        let v = who("riff://mike@pangolin/acme/app?session=v1");
+        let lead = who("riff://mike@pangolin/acme/app");
+        let worker = forge.give(&w, "acme/app", TokenRole::Worker).await.unwrap();
+        let verifier = forge
+            .give(&v, "acme/app", TokenRole::Verifier)
+            .await
+            .unwrap();
+        let led = forge.give(&lead, "acme/app", TokenRole::Lead).await.unwrap();
+        // w1 claimed a verify; v1 still verifies; the lead has no facts.
+        forge
+            .settle(|who| match who.session() {
+                Some("w1" | "v1") => Some((TokenRole::Verifier, "acme/app".into())),
+                _ => None,
+            })
+            .await;
+        assert_eq!(github.revoked(), [worker.token]);
+        assert_eq!(forge.held_role(&w, "acme/app"), None);
+        assert_eq!(forge.held_role(&v, "acme/app"), Some(TokenRole::Verifier));
+        assert_eq!(forge.held_role(&lead, "acme/app"), Some(TokenRole::Lead));
+        // A session that ended loses its token.
+        forge.settle(|_| None).await;
+        assert_eq!(github.revoked().last(), Some(&verifier.token));
+        assert!(!github.revoked().contains(&led.token));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_token_of_the_same_role_stays_good_until_it_ends() {
+        let (forge, github) = forge().await;
+        let w = who("riff://mike@pangolin/acme/app?session=w1");
+        forge.give(&w, "acme/app", TokenRole::Worker).await.unwrap();
+        forge.give(&w, "acme/app", TokenRole::Worker).await.unwrap();
+        assert!(github.revoked().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_server_with_no_app_refuses() {
+        let forge = Forge::new(None);
+        let w = who("riff://mike@pangolin/acme/app?session=w1");
+        let refused = forge.give(&w, "acme/app", TokenRole::Worker).await;
+        assert_eq!(refused.unwrap_err(), Refusal::NoApp);
+        assert_eq!(forge.check("acme/app").await.unwrap_err(), Refusal::NoApp);
+    }
+}
