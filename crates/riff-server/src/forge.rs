@@ -788,6 +788,30 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn a_new_app_of_riff_forge_create_is_in_the_store_and_in_no_log_line() {
+        let capture = Capture::start();
+        let github = FakeGitHub::start(&[]).await;
+        github.convert_to("code1", 99, KEY);
+        let store = store::Store::memory();
+        let forge = Forge::with_store(None, Some(store.clone()), &github.url);
+        assert_eq!(forge.app(), None);
+        let state = forge
+            .starts()
+            .begin("acme", "mike", std::time::Instant::now());
+        let install = forge.created("code1", &state).await.unwrap();
+        assert!(install.contains("/apps/riff-acme/"), "{install}");
+        assert_eq!(forge.app(), Some(99), "the server uses the App at once");
+        assert_eq!(store.versions().len(), 1);
+        assert_eq!(capture.results("app").len(), 1, "{:?}", capture.lines());
+        let text = capture.text();
+        let body = KEY.lines().nth(1).unwrap();
+        assert!(
+            !text.contains("PRIVATE KEY") && !text.contains(body),
+            "a line holds the key: {text}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn a_server_with_no_app_refuses() {
         let forge = Forge::new(None);
         let w = who("riff://mike@pangolin/acme/app?session=w1");
