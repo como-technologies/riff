@@ -4639,6 +4639,17 @@
   from a link that a session can plant. A write path in the worktree
   stays in the worktree after riff resolves each link, or riff refuses
   to start the session.
+- **01M4EPNXVSA592BFRKG4ZB9AWB** The sandbox takes the dir where it
+  starts as its path text: `PWD` when it names the current dir, else
+  the current dir. riff refuses to start the session when that path
+  has a link below the first worktree folder (`.claude/worktrees`) in
+  it.
+- **01M4EPNY387PPG93H7HYNZ07N5** The clone of a profile, from the git
+  dir that git resolves, is the dir where the sandbox starts or a
+  folder above it. Else riff refuses to start the session.
+- **01M4EPNYARVEJXA5419QGQMHD5** The worktree of a profile, from git,
+  is the clone, the worktree folder of the clone, or one folder in it.
+  Else riff refuses to start the session.
 
 - **01M4DVXP20SHYTFE1D4NVF0FSF** riff outside each sandbox takes the
   default branch from `origin` itself (`git ls-remote --symref origin

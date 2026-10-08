@@ -3529,6 +3529,26 @@ writes, it follows no link. A link there makes the step fail, and
 your file at the end of the link does not change. riff deletes the
 folder of a session when the session ends.
 
+A session also writes the worktree folder of the clone
+(`.claude/worktrees`), so it can put a link or a `.git` file there.
+When a sandbox starts, riff refuses to make the profile, and the
+session does not start, when:
+
+- the start dir has a link below the worktree folder. riff takes the
+  start dir from `PWD`, so it sees the link that your shell went
+  through;
+- git gives a clone that is not the start dir or a folder above it,
+  for example from a `.git` file that names the git dir of another
+  repository;
+- git gives a worktree that is not the clone, the worktree folder, or
+  one folder in it.
+
+To see whether riff makes a profile in a folder, run this there:
+
+```sh
+riff workers sandbox --show
+```
+
 To see the folder of each session that runs on this machine:
 
 ```sh
@@ -4050,7 +4070,7 @@ Each row is a surface with a control, and the test of that control.
 | The own folder of a session | its files, for example the start of its context | `riff workers reap` | the reap reads only the own folder of that worker, with no follow of a link | `the_reap_reads_the_start_only_from_the_own_folder_of_the_worker` |
 | The pool of build jobs | a token of the pipe | the wrapper of each worker, `riff test-run` | a session and a test run write only the pipe and the locks of a taker | `no_ai_role_writes_the_folder_of_riff`, `the_run_writes_only_the_files_of_the_pool_that_a_taker_writes` |
 | The temp folder of a session | a link in the place of a file or a folder | the wrapper (the forge token), `riff test-run` (the run folder), the broker (the sign-in lock) | each write opens the folder and the file with no follow of a link | `a_planted_link_in_the_temp_folder_gets_no_token`, `a_run_folder_binds_the_folders_that_riff_made`, `a_planted_link_gets_no_sign_in_lock` |
-| The write paths of a profile | a link in its worktree | the sandbox, at its start | each write path in the worktree stays in the worktree, or the session does not start | `a_link_out_of_the_worktree_gives_no_sandbox_and_no_write` |
+| The write paths of a profile | a link or a `.git` file in its worktree | the sandbox, at its start | the start dir has no link below the worktree folder; the clone of git is the start dir or above it; the worktree is the clone, its worktree folder or one folder in it; the target stays in the worktree; else the session does not start | `a_link_out_of_the_worktree_gives_no_sandbox_and_no_write`, `a_link_in_the_worktree_folder_to_another_repository_gives_no_sandbox`, `a_git_file_that_names_another_clone_gives_no_sandbox`, `a_worktree_below_a_worktree_gives_no_sandbox` |
 <!-- /surfaces -->
 
 ### The shared surfaces with no control yet
