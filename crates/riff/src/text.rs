@@ -1984,6 +1984,80 @@ pub fn no_role_rules(role: crate::profile::Role, why: &str) -> String {
     format!("riff: the {role} starts with no permission rules of its profile: {why}.")
 }
 
+/// `riff forge app` in a worker.
+pub const FORGE_WORKER: &str =
+    "riff forge app does not run in a worker: the person saves the App in a terminal.";
+
+/// `riff forge check` with no App.
+pub const FORGE_NO_APP: &str =
+    "riff has no GitHub App on this machine. Save it first: riff forge app ID KEY";
+
+/// The answer of `riff forge app`.
+///
+/// ```
+/// use std::path::Path;
+/// assert_eq!(
+///     riff::text::forge_saved(7, Path::new("/k/app.pem")),
+///     "riff saved the GitHub App 7. Its key is in /k/app.pem, and only you read it. \
+///      You can delete the downloaded key file now. Check it with: riff forge check",
+/// );
+/// ```
+pub fn forge_saved(id: u64, key: &std::path::Path) -> String {
+    format!(
+        "riff saved the GitHub App {id}. Its key is in {}, and only you read it. \
+         You can delete the downloaded key file now. Check it with: riff forge check",
+        key.display()
+    )
+}
+
+/// One line of `riff forge check`: the role and the permissions of its
+/// token, never the token.
+///
+/// ```
+/// use riff::forge::{Access, Token};
+/// use riff::profile::Role;
+///
+/// let token = Token {
+///     role: Role::Verifier,
+///     token: "ghs_secret".into(),
+///     ends: std::time::SystemTime::now(),
+///     permissions: [("statuses".into(), Access::Write), ("contents".into(), Access::Read)].into(),
+/// };
+/// let line = riff::text::forge_token_line(&token);
+/// assert_eq!(line, "verifier: contents read, statuses write");
+/// ```
+pub fn forge_token_line(token: &crate::forge::Token) -> String {
+    let rights: Vec<String> = token
+        .permissions
+        .iter()
+        .map(|(name, access)| {
+            let level = match access {
+                crate::forge::Access::Read => "read",
+                crate::forge::Access::Write => "write",
+            };
+            format!("{name} {level}")
+        })
+        .collect();
+    format!("{}: {}", token.role, rights.join(", "))
+}
+
+/// The line of the wrapper of a worker when it cannot make the forge
+/// token of its session (#610).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::forge_no_token("no App"),
+///     "riff: no forge token for this session: no App. gh and git push fail until riff makes \
+///      one. Run riff forge check.",
+/// );
+/// ```
+pub fn forge_no_token(why: &str) -> String {
+    format!(
+        "riff: no forge token for this session: {why}. gh and git push fail until riff makes \
+         one. Run riff forge check."
+    )
+}
+
 /// What `riff workers start` says one time when riff cannot make the
 /// pool of build jobs (01M3ZGZMRHXRBP762QPVCV0YX8).
 ///

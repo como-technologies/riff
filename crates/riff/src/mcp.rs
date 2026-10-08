@@ -528,6 +528,11 @@ and the pull request of the item with the state of its verify."
         let reply = self.api.claim(&me, &thread, &a.item).await.map_err(err)?;
         let mut out = text::claimed(&reply, &thread, &a.item);
         if reply.granted {
+            // The role of the forge token follows the claims
+            // (01M4BV70C3P5CZFBSFYFWEWRRA).
+            if let Some(files) = crate::forge::Files::here() {
+                files.ask();
+            }
             let (thread, item) = (thread.to_string(), a.item.clone());
             self.count(&me, move |meter, id| meter.started(id, &thread, &item))
                 .await;
@@ -564,6 +569,9 @@ the claim of another session of your user, for example one that is gone or that 
             }
             None => {
                 let reply = self.api.release(&me, &thread, &a.item).await.map_err(err)?;
+                if let Some(files) = crate::forge::Files::here() {
+                    files.ask();
+                }
                 let mut out = text::released(&thread, &a.item, reply);
                 let (thread, item) = (thread.to_string(), a.item);
                 let counted = self

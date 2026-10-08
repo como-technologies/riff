@@ -100,8 +100,8 @@ use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
 use crate::{
-    enable, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp, worker_mcp,
-    workload,
+    enable, forge, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp,
+    worker_mcp, workload,
 };
 
 /// The variable that marks a worker session.
@@ -298,9 +298,21 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         (_, member) => (None, member),
     };
     let riff = crate::binary::this_on_disk()?;
-    let mut cmd = tokio::process::Command::new(&command[0]);
-    cmd.args(&command[1..])
-        .env(WORKER, "1")
+    // The forge token of the role of this session. `claude` gets an empty
+    // environment with only the kept variables and the forge variables,
+    // so no credential of the person reaches it, also with no token
+    // (01M4BV707FYHJDNC1499YAWR8D, 01M4BYVSNQ5SY2GRGT73FV0Z3E).
+    let (given, files, keep) = forge_token(folder.as_ref(), session.as_deref(), server, None).await;
+    let _keep = keep.map(AbortOnDrop);
+    let forge = forge::ForgeEnv::of(&given, &files, &riff);
+    if let Some(why) = forge.no_token() {
+        eprintln!("{}", crate::text::forge_no_token(why));
+    }
+    let (program, args) = command
+        .split_first()
+        .context("the command of claude is empty")?;
+    let mut cmd = forge.command(program, args, std::env::vars_os());
+    cmd.env(WORKER, "1")
         .env(WRAPPER, std::process::id().to_string())
         // A tmux server that a context started gives each pane the
         // variable of that context. `claude` is of no context
@@ -373,6 +385,117 @@ pub fn profile_rules(
     let session = crate::role_rules::clone_session(&clone, &temp, claude, server)
         .ok_or_else(|| no("it has no HOME, or the server URL has no host"))?;
     crate::role_rules::here(crate::profile::Role::Worker, &session)
+}
+
+/// Stops a task when it drops.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Runs `claude` with `args` as the lead `name`, and waits
+/// (01M4C4WQVZR49FDGPJMFW22GTM). The pane of the lead in the tmux server
+/// of riff runs it. Like a worker, the lead gets a temp folder of its
+/// own and the forge token of its role, the lead, and `claude` starts
+/// through [`forge::ForgeEnv`]: no credential of the person reaches it.
+/// It gives no limits of a worker. Returns the exit code of `claude`,
+/// or 0 after a stop.
+pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) -> Result<i32> {
+    let mut term = signal(SignalKind::terminate())?;
+    let mut hup = signal(SignalKind::hangup())?;
+    let folder = temp::Folder::make(name);
+    let riff = crate::binary::this_on_disk()?;
+    let lead = Some(crate::profile::Role::Lead);
+    let (given, files, keep) = forge_token(folder.as_ref(), None, server, lead).await;
+    let _keep = keep.map(AbortOnDrop);
+    let forge = forge::ForgeEnv::of(&given, &files, &riff);
+    if let Some(why) = forge.no_token() {
+        eprintln!("{}", crate::text::forge_no_token(why));
+    }
+    let args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
+    let mut cmd = forge.command(claude.as_os_str(), &args, std::env::vars_os());
+    cmd.env_remove(crate::next::Agent::context_var(&crate::next::ClaudeCode));
+    if let Some(folder) = &folder {
+        for var in temp::VARS {
+            cmd.env(var, folder.path());
+        }
+    }
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("cannot start {}", claude.display()))?;
+    tokio::select! {
+        status = child.wait() => Ok(status?.code().unwrap_or(1)),
+        _ = term.recv() => stop_child(&mut child).await,
+        _ = hup.recv() => stop_child(&mut child).await,
+    }
+}
+
+/// The first forge token of a session ([`forge`]), its token files, and
+/// the task that keeps the token. The role is `fixed`, else it follows
+/// the claims of the worker `session`. With no token, the result names
+/// the cause, and the files hold no token.
+async fn forge_token(
+    folder: Option<&temp::Folder>,
+    session: Option<&str>,
+    server: &str,
+    fixed: Option<crate::profile::Role>,
+) -> (
+    std::result::Result<forge::Token, forge::Error>,
+    forge::Files,
+    Option<tokio::task::JoinHandle<()>>,
+) {
+    let Some(folder) = folder else {
+        // Files in no folder: no program finds a token.
+        let none = forge::Files::in_temp(Path::new("/nonexistent"));
+        return (Err(forge::Error::NoFolder), none, None);
+    };
+    let files = forge::Files::in_temp(folder.path());
+    let made = forge::App::of(settings::path()).and_then(|app| {
+        let place = identity::here(None).map_err(forge::Error::Place)?;
+        let repo = place.repo_text();
+        if repo == "-" {
+            let why = anyhow::anyhow!("this folder is in no repository");
+            return Err(forge::Error::Place(why));
+        }
+        let session = match (session, fixed) {
+            (Some(session), _) => Some(session.to_owned()),
+            (None, Some(_)) => None,
+            (None, None) => {
+                let why = anyhow::anyhow!("the worker has no session ID");
+                return Err(forge::Error::Place(why));
+            }
+        };
+        Ok((app, repo, place, session))
+    });
+    let (app, repo, place, id) = match made {
+        Ok(made) => made,
+        Err(e) => return (Err(e), files, None),
+    };
+    let server = server.to_owned();
+    let claims = move || {
+        let (place, id, server) = (place.clone(), id.clone(), server.clone());
+        async move {
+            let id = id?;
+            let api = Api::new(&server).one_try(forge::LOOK_EVERY / 2);
+            let me = identity::agent(&place, &id, api.base()).ok()?;
+            let info = api.signed_in(me.who().session()).ok()?.me(&me).await.ok()?;
+            Some(info.session?.uri.claims().to_vec())
+        }
+    };
+    let mut keeper = forge::Keeper::new(app, forge::GitHub::here(), repo, files.clone());
+    if let Some(role) = fixed {
+        keeper = keeper.with_role(role);
+    }
+    // The first token comes before `claude` starts.
+    let first = keeper.first(claims().await.as_deref()).await;
+    (
+        first,
+        files,
+        Some(tokio::spawn(forge::keep(keeper, claims))),
+    )
 }
 
 /// Stops `claude` with SIGTERM, then kills it after [`STOP_WAIT`].

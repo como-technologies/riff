@@ -34,7 +34,8 @@
 //! - [`Profile::of`] refuses a session whose paths give the home of the
 //!   person, a folder above it, or a place of a secret
 //!   ([`Session::secrets`]): the keyring, the D-Bus socket, the keys of
-//!   SSH and GnuPG, the sign-in of `gh`. So the home of a person that
+//!   SSH and GnuPG, the sign-in of `gh`, the key of the GitHub App of
+//!   riff ([`crate::forge`]). So the home of a person that
 //!   is a git repository can never be the clone.
 //! - [`Profile::of`] refuses a path that is not absolute or that has a
 //!   `..` component (01M4BR61PPQV7JJE5Y2G9Q90AF): it compares
@@ -324,6 +325,7 @@ impl Session {
     /// assert!(s.secrets().contains(&Path::new("/h/.local/share/keyrings").to_path_buf()));
     /// assert!(s.secrets().contains(&Path::new("/run/user/7/systemd").to_path_buf()));
     /// assert!(s.secrets().contains(&Path::new("/run/dbus").to_path_buf()));
+    /// assert!(s.secrets().contains(&Path::new("/h/.config/riff/forge").to_path_buf()));
     /// ```
     pub fn secrets(&self) -> Vec<PathBuf> {
         let home = |p: &str| self.home.join(p);
@@ -333,6 +335,7 @@ impl Session {
             home(".ssh"),
             home(".gnupg"),
             home(".config/gh"),
+            home(".config/riff/forge"),
             runtime("bus"),
             runtime("systemd"),
             runtime("keyring"),
@@ -510,6 +513,100 @@ impl Profile {
     pub fn reads(&self, path: &Path) -> bool {
         self.writes(path) || self.read_paths().any(|p| path.starts_with(p))
     }
+}
+
+/// The variables of the parent that reach `claude` in a session
+/// (01M4BYVSR06B9HNX4SP83SY2SX). riff starts `claude` with an empty
+/// environment, and then sets only these and the variables of riff
+/// itself, so no credential of the person reaches a session
+/// (01M4BYVSNQ5SY2GRGT73FV0Z3E). A name that ends in `_` is a prefix.
+///
+/// - The account and the shell: `HOME`, `USER`, `LOGNAME`, `SHELL`,
+///   `PATH`.
+/// - The language and the terminal: `LANG`, `LANGUAGE`, `LC_`, `TZ`,
+///   `TERM`, `COLORTERM`, `NO_COLOR`, `CLICOLOR_FORCE`.
+/// - tmux, for the pane of the worker: `TMUX`, `TMUX_PANE`.
+/// - The folders of the person: `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+///   `XDG_STATE_HOME`, `XDG_CACHE_HOME`.
+/// - The runtime folder and the session bus of the person:
+///   `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`. No process in the
+///   session calls systemd: only the wrapper, outside the sandbox,
+///   does (01M4C2PY1DRWVWENJBM42D60M9). The `riff` of the session
+///   needs them for its local folder `$XDG_RUNTIME_DIR/riff`
+///   ([`crate::local`]) and for its keyring, until the secrets come
+///   in the environment (#611).
+/// - The network: the proxy and the certificates.
+/// - Claude Code: `CLAUDE_CONFIG_DIR`. No `ANTHROPIC_` variable: a
+///   session gets its model access only from the plan sign-in of the
+///   person, so its use counts on the plan, never on API billing
+///   (01M4C4WW8JS7QVC0ZYHWPSMWKN).
+/// - riff: the server, the session, the person and the machine.
+pub const KEPT_VARS: &[&str] = &[
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "PATH",
+    "LANG",
+    "LANGUAGE",
+    "LC_",
+    "TZ",
+    "TERM",
+    "COLORTERM",
+    "NO_COLOR",
+    "CLICOLOR_FORCE",
+    "TMUX",
+    "TMUX_PANE",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+    "CLAUDE_CONFIG_DIR",
+    "RIFF_SERVER",
+    "RIFF_SESSION",
+    "RIFF_HOME",
+    "RIFF_USER",
+    "RIFF_HOST",
+    "RIFF_ON",
+    "RIFF_MACHINE",
+    "RIFF_WORKER_SLICE",
+];
+
+/// True when the variable `name` of the parent reaches `claude`
+/// ([`KEPT_VARS`]).
+///
+/// ```
+/// use riff::profile::kept;
+///
+/// assert!(kept("PATH"));
+/// assert!(kept("LC_ALL"));
+/// assert!(kept("RIFF_SESSION"));
+/// assert!(!kept("GH_TOKEN"));
+/// assert!(!kept("GITHUB_TOKEN"));
+/// assert!(!kept("SSH_AUTH_SOCK"));
+/// assert!(!kept("GIT_CONFIG_COUNT"));
+/// assert!(!kept("RIFF_TEST_MARKER"));
+/// assert!(!kept("LC"), "a prefix names no variable by itself");
+/// assert!(!kept("ANTHROPIC_API_KEY"), "no API billing");
+/// assert!(!kept("ANTHROPIC_AUTH_TOKEN"));
+/// assert!(!kept("ANTHROPIC_BASE_URL"));
+/// ```
+pub fn kept(name: &str) -> bool {
+    KEPT_VARS.iter().any(|k| match k.strip_suffix('_') {
+        Some(_) => name.len() > k.len() && name.starts_with(k),
+        None => name == *k,
+    })
 }
 
 /// Refuses a path that is not absolute or that has a `..` component:

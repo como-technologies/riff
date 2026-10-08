@@ -3197,8 +3197,9 @@ profile.
 | Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
 
 No role reads your home as a whole, your keyring, your D-Bus, your
-SSH or GnuPG keys, or the sign-in of `gh`. riff refuses a path of a
-session that is not absolute or that has a `..` part.
+SSH or GnuPG keys, the sign-in of `gh`, or the key of the GitHub App
+of riff. riff refuses a path of a session that is not absolute or that
+has a `..` part.
 
 ```mermaid
 flowchart LR
@@ -3267,6 +3268,118 @@ gives the workers on your machine:
 ```sh
 systemctl --user status riff-workers.slice
 ```
+
+## The forge token of each role
+
+The lead and the workers never get your sign-in. riff starts
+`claude` with an empty environment, and adds only a short list of
+variables (the `KEPT_VARS` of `riff::profile`). So `GH_TOKEN`, your
+`gh` sign-in, your git helpers and your ssh agent never reach a
+session. The tmux server of riff also starts with only these
+variables, so its panes do not hold them either.
+
+No `ANTHROPIC_` variable reaches `claude`, also not
+`ANTHROPIC_API_KEY`. A session uses only the plan sign-in of your
+Claude Code, so its use counts on your plan, and API billing never
+starts by accident.
+
+With the GitHub App of riff, each worker gets a token of its role, and
+GitHub refuses each other step. riff makes the token outside the
+sandbox, and gives the session only the token, never the key of the
+App. With no App, a worker has no forge token: `gh` and `git push`
+fail. Make the App first (see "Make the GitHub App of riff").
+
+```mermaid
+flowchart LR
+    P[your environment] -->|only the kept variables| T[tmux server of riff]
+    T --> C[claude of the lead or a worker]
+    F[riff forge token files] -->|GH_CONFIG_DIR, git helper of riff| C
+    P -. GH_TOKEN, gh sign-in, git helpers, ssh agent .-> N[stays out]
+```
+
+| Role | GitHub permissions of its token |
+|---|---|
+| lead, worker | contents, issues, pull requests: write; actions, checks, statuses, metadata: read |
+| verifier | issues, pull requests, statuses: write; actions, checks, contents, metadata: read |
+| test run | no token |
+
+- A worker token pushes a branch and opens a pull request. It cannot
+  set the `riff/verify` status.
+- A verifier token sets the status. It cannot push or merge.
+- No token can approve a deploy, change a ruleset or a workflow, or
+  push a `v*` tag.
+- GitHub keeps the waves and the labels with the comments on issues, so
+  the lead and worker tokens are the same. riff-server keeps the plan
+  to the lead.
+
+The lead always gets the lead token. `riff workers lead` starts it
+and keeps its token, like `riff workers run` for a worker. A worker
+that claims a `verify-` item gets the verifier token. After the
+release, it gets the worker token again. At each change of role,
+riff revokes the old token first, so a session never holds two tokens.
+A token lasts one hour; riff makes a new one 10 minutes before the end.
+
+```mermaid
+sequenceDiagram
+    participant W as riff workers run
+    participant S as riff-server
+    participant G as GitHub
+    participant C as the worker (claude, gh, git)
+    W->>S: the claims of the session
+    W->>G: the App asks for a token of the role
+    G-->>W: a token for one hour
+    W->>C: the token, in the temp folder of the session
+    C->>W: a claim or a release
+    W->>G: revoke the old token
+    W->>G: a token of the new role
+```
+
+### Make the GitHub App of riff
+
+Do these steps one time, as an owner of the GitHub account of the
+repository.
+
+1. On GitHub, open Settings, Developer settings, GitHub Apps, and
+   click "New GitHub App".
+2. Give it a name, for example `riff-ACCOUNT`, and a homepage URL, for
+   example the URL of the repository.
+3. Clear "Active" under Webhook.
+4. Under Repository permissions, set: Actions: read, Checks: read,
+   Commit statuses: read and write, Contents: read and write, Issues:
+   read and write, Metadata: read, Pull requests: read and write. Set
+   no other permission.
+5. Under "Where can this GitHub App be installed?", select "Only on
+   this account". Click "Create GitHub App".
+6. Write down the App ID. Click "Generate a private key". GitHub
+   downloads a `.pem` file.
+7. Click "Install App", and install it on the repositories of the
+   riff only.
+
+Then save the App on each machine that runs workers:
+
+```sh
+riff forge app APP_ID ~/Downloads/riff-ACCOUNT.private-key.pem
+```
+
+riff copies the key to `forge/app.pem` beside the riff settings, where
+only you read it, and saves the ID as `forge.app`. Delete the
+downloaded file.
+
+### Check the GitHub App
+
+Run this in the clone of a repository of the riff. It makes a token of
+each role and shows its permissions, never the token:
+
+```sh
+riff forge check
+```
+
+Each line shows a role and its permissions. A line with an error names
+the permission that the App lacks: add it in the settings of the App,
+then accept the new permissions on the installation.
+
+Workers that start after the save get their tokens. Stop the old
+workers with `riff workers stop`; the rollout starts new ones.
 
 ## A restart
 
@@ -3650,7 +3763,10 @@ riff then shows the tmux session of that repository. When it does not
 run yet, riff starts it with the lead in the main clone, with Remote
 Control (see
 [Answer your lead from the Claude app](#answer-your-lead-from-the-claude-app)):
-`claude --remote-control`. The lead also gets the permission rules of
+`claude --remote-control`. The lead gets a temp folder of its own and
+the forge token of the lead, and none of your credentials (see
+[The forge token of each role](#the-forge-token-of-each-role)). The
+lead also gets the permission rules of
 its profile (see [The sandbox of each role](#the-sandbox-of-each-role)).
 riff writes them to a file in its local folder, at each start of a
 lead, for example `lead/como-technologies/riff.json`. When riff cannot
@@ -3660,7 +3776,8 @@ starts no second lead. To leave the session and keep it running, press
 `Ctrl-b d`. Run `riff` again to come back.
 
 riff runs its own tmux server, with the socket `riff` and a config of
-its own. Your `~/.tmux.conf` does not change a riff pane. To list the
+its own. Your `~/.tmux.conf` does not change a riff pane. The server
+gets only the kept variables of your environment. To list the
 sessions of that server by hand:
 
 ```sh

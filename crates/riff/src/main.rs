@@ -1,6 +1,7 @@
 //! The local client that finds sessions and wakes yours.
 
 use std::io::Read;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -550,6 +551,15 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
+    /// Give each worker a forge token of its role
+    ///
+    /// The GitHub App of riff makes a token for each worker session with
+    /// only the rights of its role. Make the App first: see "Make the
+    /// GitHub App of riff" in the book.
+    Forge {
+        #[command(subcommand)]
+        command: ForgeCommand,
+    },
     /// Start, list and stop the workers of this machine
     ///
     /// Workers are agent sessions in tmux. With no subcommand, it lists
@@ -593,6 +603,36 @@ impl From<ByArg> for riff::top::By {
             ByArg::Repo => Self::Repo,
         }
     }
+}
+
+/// The subcommands of `riff forge`.
+#[derive(Subcommand)]
+enum ForgeCommand {
+    /// Save the GitHub App of riff on this machine
+    ///
+    /// It checks the private key, copies it to forge/app.pem beside the
+    /// riff settings, where only you read it, and saves the ID as
+    /// forge.app. You can delete the downloaded key file after it.
+    App {
+        /// The App ID, from the settings page of the App.
+        id: u64,
+        /// The private key file that GitHub gave you (.pem).
+        key: PathBuf,
+    },
+    /// Make a token of each role, and show its permissions
+    ///
+    /// Run it in the clone of a repository where the App is installed.
+    /// It shows no token.
+    Check,
+    /// The git credential helper of a worker
+    ///
+    /// git runs it. It gives the forge token of the session for
+    /// https://github.com.
+    #[command(hide = true)]
+    Credential {
+        /// The operation of git: get, store or erase.
+        operation: String,
+    },
 }
 
 /// The subcommands of `riff cloud`.
@@ -982,6 +1022,22 @@ enum Workers {
     /// runs it.
     #[command(hide = true)]
     Run {
+        /// The claude command.
+        claude: std::path::PathBuf,
+        /// The arguments of CLAUDE.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Run CLAUDE as the lead, and wait
+    ///
+    /// CLAUDE gets a temp folder of its own, the forge token of the lead
+    /// and an empty environment with only the kept variables. The pane of
+    /// the lead in the tmux server of riff runs it.
+    #[command(hide = true)]
+    Lead {
+        /// The name of the temp folder of the lead.
+        #[arg(long)]
+        name: String,
         /// The claude command.
         claude: std::path::PathBuf,
         /// The arguments of CLAUDE.
@@ -1543,6 +1599,9 @@ async fn main() -> Result<()> {
     if let Command::Cloud { command } = &command {
         return cloud(command).await;
     }
+    if let Command::Forge { command } = &command {
+        return forge(command).await;
+    }
     if let Command::Pr {
         command: Pr::Wait { number, every },
     } = &command
@@ -1943,6 +2002,7 @@ async fn main() -> Result<()> {
         | Command::Update { .. }
         | Command::Workers { .. }
         | Command::Cloud { .. }
+        | Command::Forge { .. }
         | Command::Worktrees(_)
         | Command::Lead {
             command: Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. }),
@@ -2211,6 +2271,9 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
         Some(Workers::Run { claude, args }) => {
             std::process::exit(worker::run(claude, args, server).await?)
         }
+        Some(Workers::Lead { name, claude, args }) => {
+            std::process::exit(worker::run_lead(claude, args, server, name).await?)
+        }
         Some(Workers::TestRun { program, args }) => {
             std::process::exit(riff::jobserver::test_run(program, args).await?)
         }
@@ -2305,8 +2368,11 @@ async fn start(server: &str) -> Result<()> {
     } else {
         let env = vec![("RIFF_SERVER".to_owned(), server.to_owned())];
         let claude = std::path::Path::new("claude");
-        let settings = lead_settings(&dir, &name, &clone.path, claude, server);
-        let command = start::lead_command(claude, settings.as_deref());
+        let lead = start::lead_name(&clone.repo);
+        let temp = riff::temp::here(&lead).unwrap_or_else(std::env::temp_dir);
+        let settings = lead_settings(&dir, &name, &clone.path, &temp, claude, server);
+        let riff = riff::binary::this_on_disk()?;
+        let command = start::lead_command(&riff, &lead, claude, settings.as_deref());
         tmux.new_session(&name, &clone.path, &env, &command)?;
         println!("{}", text::lead_started(&clone.repo, &clone.path));
     }
@@ -2321,18 +2387,19 @@ async fn start(server: &str) -> Result<()> {
     Ok(())
 }
 
-/// Writes the permission rules of the lead of `clone` to its file in
-/// `dir`, and gives the file. With no rules, it says why and gives
-/// `None` (01M4BT33Z914GBHCGCAXFVQ2X7).
+/// Writes the permission rules of the lead of `clone`, with the temp
+/// folder `temp`, to its file in `dir`, and gives the file. With no
+/// rules, it says why and gives `None` (01M4BT33Z914GBHCGCAXFVQ2X7).
 fn lead_settings(
     dir: &std::path::Path,
     name: &str,
     clone: &std::path::Path,
+    temp: &std::path::Path,
     claude: &std::path::Path,
     server: &str,
 ) -> Option<std::path::PathBuf> {
     let role = riff::profile::Role::Lead;
-    let rules = riff::role_rules::clone_session(clone, &std::env::temp_dir(), claude, server)
+    let rules = riff::role_rules::clone_session(clone, temp, claude, server)
         .ok_or_else(|| text::no_role_rules(role, "it has no HOME, or the server URL has no host"))
         .and_then(|session| riff::role_rules::here(role, &session));
     let file = start::lead_settings_file(dir, name);
@@ -2371,6 +2438,58 @@ async fn riff_of(
 
 /// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A worker never runs it
 /// (01M4262DY8NN30SC4REYX2G9DV).
+/// `riff forge`: the GitHub App of riff and the token of a role
+/// ([`riff::forge`]).
+async fn forge(command: &ForgeCommand) -> Result<()> {
+    use riff::forge;
+    match command {
+        ForgeCommand::App { id, key } => {
+            if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
+                anyhow::bail!(text::FORGE_WORKER);
+            }
+            let path = forge::App::save(&settings::path()?, *id, key)?;
+            println!("{}", text::forge_saved(*id, &path));
+            Ok(())
+        }
+        ForgeCommand::Check => {
+            let settings = settings::path()?;
+            let app = forge::App::here(&settings)?.context(text::FORGE_NO_APP)?;
+            let repo = identity::here(None)?.repo_text();
+            anyhow::ensure!(
+                repo != "-",
+                "riff forge check runs in the clone of a repository"
+            );
+            let github = forge::GitHub::here();
+            let mut failed = false;
+            for role in [
+                riff::profile::Role::Lead,
+                riff::profile::Role::Worker,
+                riff::profile::Role::Verifier,
+            ] {
+                match github.token(&app, &repo, role).await {
+                    Ok(token) => println!("{}", text::forge_token_line(&token)),
+                    Err(e) => {
+                        failed = true;
+                        println!("{role}: {e:#}");
+                    }
+                }
+            }
+            anyhow::ensure!(!failed, "the App cannot make a token of each role");
+            Ok(())
+        }
+        ForgeCommand::Credential { operation } => {
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input)?;
+            let files = forge::Files::here();
+            let answer = forge::credential(operation, &input, || {
+                files.context("this session has no forge token")?.token()
+            })?;
+            print!("{answer}");
+            Ok(())
+        }
+    }
+}
+
 async fn cloud(command: &CloudCommand) -> Result<()> {
     if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
         anyhow::bail!(text::CLOUD_WORKER);
