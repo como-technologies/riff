@@ -88,6 +88,11 @@ pub const GITHUB_API: &str = "https://api.github.com";
 /// The target of the log lines of the forge tokens.
 pub const TARGET: &str = "riff_server::forge";
 
+/// The server compares the held tokens with the facts this often, so a
+/// session that died with no `end` call loses its token soon after its
+/// claims end.
+pub const SETTLE_EVERY: Duration = Duration::from_secs(60);
+
 /// The longest wait for a call to GitHub.
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -207,6 +212,11 @@ pub enum Refusal {
     NoApp,
     /// The session is in no repository.
     NoRepository,
+    /// The server does not know the session, or it ended, or it had no
+    /// sign of life for the claim grace.
+    NoSession,
+    /// The person is not the lead of the repository.
+    NotLead { repo: String },
     /// The App is not installed on the repository.
     NoInstallation { repo: String },
     /// GitHub gave no token of the role.
@@ -217,7 +227,9 @@ impl Refusal {
     /// The HTTP status of the refusal.
     pub fn status(&self) -> StatusCode {
         match self {
-            Refusal::NoSignIn => StatusCode::FORBIDDEN,
+            Refusal::NoSignIn | Refusal::NoSession | Refusal::NotLead { .. } => {
+                StatusCode::FORBIDDEN
+            }
             Refusal::NoRepository => StatusCode::BAD_REQUEST,
             Refusal::NoApp | Refusal::NoInstallation { .. } => StatusCode::CONFLICT,
             Refusal::GitHub(_) => StatusCode::BAD_GATEWAY,
@@ -246,6 +258,15 @@ impl fmt::Display for Refusal {
                 "this riff has no GitHub App. An admin of the riff gives it one: riff cloud forge",
             ),
             Refusal::NoRepository => f.write_str("the session is in no repository"),
+            Refusal::NoSession => f.write_str(
+                "the server does not know this session, or it ended: a session gets a forge \
+                 token only while it is in the riff",
+            ),
+            Refusal::NotLead { repo } => write!(
+                f,
+                "you are not the lead of {repo}: only the lead of a repository gets a lead \
+                 token with no session"
+            ),
             Refusal::NoInstallation { repo } => {
                 let owner = repo.split('/').next().unwrap_or(repo);
                 write!(
@@ -467,8 +488,11 @@ impl Forge {
     /// picked `role` from the facts of the server. For a session (a
     /// `who` with a session ID), it first revokes each other token of
     /// that session: of another role, or of another repository. So a
-    /// session never holds the rights of two roles. A token of the same
-    /// role stays good until it ends: the wrapper can still use it.
+    /// session never holds the rights of two roles. At a renew (a token
+    /// of the same role), it revokes the old token after it made the new
+    /// one, so a session never holds two good tokens. A token of the
+    /// lead of a person (a `who` with no session) stays good until it
+    /// ends: two wrappers of the same person can share the role.
     pub async fn give(
         &self,
         who: &Who,
@@ -476,10 +500,11 @@ impl Forge {
         role: TokenRole,
     ) -> Result<ForgeTokenReply, Refusal> {
         self.settings()?;
+        let session = who.session().is_some();
         let old: Vec<((Who, String), Held)> = {
             let mut held = self.held();
             let other = |(w, r): &(Who, String), h: &Held| {
-                w == who && (r == repo || who.session().is_some()) && (r != repo || h.role != role)
+                w == who && (r == repo || session) && (r != repo || h.role != role)
             };
             let keys: Vec<(Who, String)> = held
                 .iter()
@@ -494,7 +519,7 @@ impl Forge {
             self.revoke_held(&w, &r, h, "the role changed").await;
         }
         let token = self.make(repo, role).await?;
-        self.held().insert(
+        let renewed = self.held().insert(
             (who.clone(), repo.to_owned()),
             Held {
                 role,
@@ -510,6 +535,10 @@ impl Forge {
             ends_ms = token.ends_ms,
             "token"
         );
+        if let Some(old) = renewed.filter(|old| session && old.token != token.token) {
+            self.revoke_held(who, repo, old, "a new token of the role")
+                .await;
+        }
         Ok(token)
     }
 
@@ -662,11 +691,28 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn a_token_of_the_same_role_stays_good_until_it_ends() {
+    async fn a_renew_revokes_the_old_token_after_it_makes_the_new_one() {
         let (forge, github) = forge().await;
         let w = who("riff://mike@pangolin/acme/app?session=w1");
-        forge.give(&w, "acme/app", TokenRole::Worker).await.unwrap();
-        forge.give(&w, "acme/app", TokenRole::Worker).await.unwrap();
+        let old = forge.give(&w, "acme/app", TokenRole::Worker).await.unwrap();
+        let new = forge.give(&w, "acme/app", TokenRole::Worker).await.unwrap();
+        assert_eq!(github.revoked(), [old.token]);
+        assert!(!github.revoked().contains(&new.token));
+        assert_eq!(forge.held_role(&w, "acme/app"), Some(TokenRole::Worker));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_lead_token_of_a_person_stays_good_until_it_ends() {
+        let (forge, github) = forge().await;
+        let lead = who("riff://mike@pangolin/acme/app");
+        forge
+            .give(&lead, "acme/app", TokenRole::Lead)
+            .await
+            .unwrap();
+        forge
+            .give(&lead, "acme/app", TokenRole::Lead)
+            .await
+            .unwrap();
         assert!(github.revoked().is_empty());
     }
 

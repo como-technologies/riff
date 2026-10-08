@@ -336,7 +336,7 @@ pub struct Settings {
     pub client_id: String,
     /// The name of the secret of the private key of the GitHub App of
     /// riff in Secret Manager (#628).
-    pub forge_secret: String,
+    pub forge_secret_name: String,
     /// The ID of the GitHub App of riff, or empty before `riff cloud
     /// forge`. With no App, the server gives no forge token.
     pub forge_app: String,
@@ -395,7 +395,7 @@ impl Settings {
             github_environment: get("CLOUD_GITHUB_ENVIRONMENT"),
             repository: get("CLOUD_REPOSITORY"),
             client_id: get("RIFF_OIDC_CLIENT_ID"),
-            forge_secret: match get("CLOUD_FORGE_SECRET") {
+            forge_secret_name: match get("CLOUD_FORGE_SECRET") {
                 secret if secret.is_empty() => format!("{name}-forge-app-key"),
                 secret => secret,
             },
@@ -439,7 +439,7 @@ impl Settings {
             github_environment: String::new(),
             repository: "riff".into(),
             client_id: String::new(),
-            forge_secret: format!("{name}-forge-app-key"),
+            forge_secret_name: format!("{name}-forge-app-key"),
             forge_app: String::new(),
             confirm: false,
         }
@@ -481,7 +481,7 @@ impl Settings {
             ("CLOUD_REPOSITORY", self.repository.clone()),
             ("CLOUD_CONFIRM", self.confirm.to_string()),
             ("RIFF_OIDC_CLIENT_ID", self.client_id.clone()),
-            ("CLOUD_FORGE_SECRET", self.forge_secret.clone()),
+            ("CLOUD_FORGE_SECRET", self.forge_secret_name.clone()),
             ("RIFF_FORGE_APP", self.forge_app.clone()),
         ]
     }
@@ -1343,15 +1343,15 @@ pub fn forge(gcloud: &Gcloud, s: &Settings, path: &Path, app: u64, pem: &str) ->
         all.extend_from_slice(&project);
         all
     };
-    if gcloud.exists(&with(&["secrets", "describe", &s.forge_secret]))? {
-        println!("Secret {}: exists.", s.forge_secret);
+    if gcloud.exists(&with(&["secrets", "describe", &s.forge_secret_name]))? {
+        println!("Secret {}: exists.", s.forge_secret_name);
     } else {
-        println!("Secret {}: making it.", s.forge_secret);
+        println!("Secret {}: making it.", s.forge_secret_name);
         gcloud.run(
             &with(&[
                 "secrets",
                 "create",
-                &s.forge_secret,
+                &s.forge_secret_name,
                 "--replication-policy",
                 "automatic",
             ]),
@@ -1363,16 +1363,16 @@ pub fn forge(gcloud: &Gcloud, s: &Settings, path: &Path, app: u64, pem: &str) ->
             "secrets",
             "versions",
             "add",
-            &s.forge_secret,
+            &s.forge_secret_name,
             "--data-file=-",
         ]),
         Some(pem),
     )?;
-    println!("Secret {}: stored.", s.forge_secret);
+    println!("Secret {}: stored.", s.forge_secret_name);
     gcloud.bind(&with(&[
         "secrets",
         "add-iam-policy-binding",
-        &s.forge_secret,
+        &s.forge_secret_name,
         "--member",
         &format!("serviceAccount:{}", s.account(&s.run_account)),
         "--role",
@@ -1544,7 +1544,7 @@ pub fn deploy(gcloud: &Gcloud, s: &Settings, source: &Source, owner: &str) -> Re
     let mut secrets = format!("RIFF_OIDC_CLIENT_SECRET={}:latest", s.secret_name);
     if !s.forge_app.is_empty() {
         env.push_str(&format!(",RIFF_FORGE_APP={}", s.forge_app));
-        secrets.push_str(&format!(",RIFF_FORGE_KEY={}:latest", s.forge_secret));
+        secrets.push_str(&format!(",RIFF_FORGE_KEY={}:latest", s.forge_secret_name));
     }
     deploy.extend(args(&["--set-env-vars", &env, "--set-secrets", &secrets]));
     gcloud.show(&deploy)?;

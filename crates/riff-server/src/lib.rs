@@ -242,7 +242,7 @@ use crate::state::{
 use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::Tokens;
 use crate::trace::DeniedCode;
-use riff_core::forge::{TokenRole, role_of};
+use riff_core::forge::TokenRole;
 use riff_core::wire::{ForgeCheck, ForgeCheckReply, ForgeToken, ForgeTokenReply};
 
 /// The least time between two writes of the token store (R127): the
@@ -1097,6 +1097,38 @@ impl Server {
         self.announce_each(posts).await;
     }
 
+    /// Revokes each forge token whose role or repository is not the
+    /// role and the repository of the facts now ([`forge::Forge::settle`],
+    /// [`State::forge_fact`]). The session `ended` lost its token: it
+    /// sent its `end` call.
+    async fn settle_forge(&self, ended: Option<&Who>) {
+        let now = Instant::now();
+        let facts: Vec<(Who, Option<(TokenRole, String)>)> = self.engine.read(|state| {
+            self.forge
+                .holders()
+                .into_iter()
+                .map(|who| {
+                    if ended == Some(&who) {
+                        return (who, None);
+                    }
+                    let fact = state
+                        .me(&who, now, now_ms())
+                        .and_then(|info| state.forge_fact(&info.uri, now))
+                        .map(|(role, thread)| (role, thread.to_string()));
+                    (who, fact)
+                })
+                .collect()
+        });
+        self.forge
+            .settle(|who| {
+                facts
+                    .iter()
+                    .find(|(w, _)| w == who)
+                    .and_then(|(_, f)| f.clone())
+            })
+            .await;
+    }
+
     /// Asks each idle worker past the limit to stop, and posts a note to
     /// the lead of its user for the first ask of each. Posts one more
     /// note for each worker that still runs after the ask (see [`idle`]).
@@ -1454,6 +1486,7 @@ impl Service {
         service.forget_sessions();
         service.watch_owner();
         service.watch_idle_workers();
+        service.watch_forge_tokens();
         service
     }
 
@@ -1666,6 +1699,34 @@ impl Service {
                 }
                 if server.serving() {
                     server.stop_idle_workers().await;
+                }
+            }
+        });
+    }
+
+    /// Starts the task that compares the forge tokens with the facts
+    /// each [`forge::SETTLE_EVERY`]: a session that died with no `end`
+    /// call loses its claims after the claim grace, and then its token
+    /// ([`Server::settle_forge`]). A server with no async runtime starts
+    /// no task. The task ends when the service ends.
+    fn watch_forge_tokens(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let server = Arc::downgrade(&self.0);
+        runtime.spawn(async move {
+            let mut tick = tokio::time::interval(forge::SETTLE_EVERY);
+            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let Some(server) = server.upgrade() else {
+                    break;
+                };
+                if server.is_stopped() {
+                    break;
+                }
+                if server.serving() && !server.forge.holders().is_empty() {
+                    server.settle_forge(None).await;
                 }
             }
         });
@@ -2296,57 +2357,25 @@ where
     let reply = command::<C>(AxumState(s.engine.clone()), call).await;
     if reply.is_ok() && !s.forge.holders().is_empty() {
         let s = s.clone();
-        tokio::spawn(async move {
-            let (now, now_ms) = (Instant::now(), now_ms());
-            let facts: Vec<(Who, Option<(TokenRole, String)>)> = s.engine.read(|state| {
-                s.forge
-                    .holders()
-                    .into_iter()
-                    .map(|who| {
-                        if ended.as_ref() == Some(&who) {
-                            return (who, None);
-                        }
-                        let fact = state.me(&who, now, now_ms).and_then(|info| {
-                            let repo = info.uri.default_thread()?.to_string();
-                            Some((role_of(info.uri.lead(), info.uri.claims()), repo))
-                        });
-                        (who, fact)
-                    })
-                    .collect()
-            });
-            s.forge
-                .settle(|who| {
-                    facts
-                        .iter()
-                        .find(|(w, _)| w == who)
-                        .and_then(|(_, f)| f.clone())
-                })
-                .await;
-        });
+        tokio::spawn(async move { s.settle_forge(ended.as_ref()).await });
     }
     reply
 }
 
 /// The role and the repository of the forge token of `me`, from the
-/// facts of the server (#628). A `me` with no session is the lead of
-/// its person: the wrapper of the lead asks before its session starts.
-/// A session that the server knows gets the role of its facts, at the
-/// repository of its facts. Each other session is a worker.
+/// facts of the server (#628): [`State::forge_fact`]. A session that the
+/// server does not know gets no token. A `me` with no session gets the
+/// lead token only when its person is the lead of its repository.
 fn forge_facts(state: &State, me: &SessionUri) -> Result<(TokenRole, String), forge::Refusal> {
-    let repo = |uri: &SessionUri| {
-        uri.default_thread()
-            .map(|t| t.to_string())
-            .ok_or(forge::Refusal::NoRepository)
-    };
-    if me.who().session().is_none() {
-        return Ok((TokenRole::Lead, repo(me)?));
-    }
-    match state.me(me.who(), Instant::now(), now_ms()) {
-        Some(info) => Ok((
-            role_of(info.uri.lead(), info.uri.claims()),
-            repo(&info.uri)?,
-        )),
-        None => Ok((TokenRole::Worker, repo(me)?)),
+    match state.forge_fact(me, Instant::now()) {
+        Some((role, thread)) => Ok((role, thread.to_string())),
+        None if me.who().session().is_some() => Err(forge::Refusal::NoSession),
+        None => Err(match me.default_thread() {
+            Some(thread) => forge::Refusal::NotLead {
+                repo: thread.to_string(),
+            },
+            None => forge::Refusal::NoRepository,
+        }),
     }
 }
 
@@ -2376,11 +2405,10 @@ async fn forge_check(
     if proof.signed_in.is_none() {
         return Err(forge::Refusal::NoSignIn.into());
     }
-    admit(&s, &proof, &r.me)?;
-    let repo =
-        r.me.default_thread()
-            .ok_or(forge::Refusal::NoRepository)?
-            .to_string();
+    let caller = admit(&s, &proof, &r.me)?;
+    let (_, repo) = s
+        .engine
+        .peek(&caller, |state| forge_facts(state, &r.me))??;
     Ok(Json(s.forge.check(&repo).await?))
 }
 

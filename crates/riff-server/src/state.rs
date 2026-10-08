@@ -2542,6 +2542,65 @@ impl State {
         self.written_view().live_leads(user, now)
     }
 
+    /// The role and the repository of the forge token of `me`, from the
+    /// facts of the state (#628, 01M4CHQR3Q566ZFFGQEQMJ3HAS). `None`
+    /// when `me` gets no token:
+    ///
+    /// - A session gets the role of its lead mark and its claims, at the
+    ///   repository of its place in the state, while its claims hold. A
+    ///   session that the state does not know, that ended, or that had
+    ///   no sign of life for [`CLAIM_GRACE`] gets none.
+    /// - A person (a `me` with no session) gets the lead role at the
+    ///   repository of `me` only while the person has a lead there.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::forge::TokenRole;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::{CLAIM_GRACE, State};
+    ///
+    /// let lead: SessionUri = "riff://mike@pangolin/acme/app?session=a1".parse()?;
+    /// let worker: SessionUri = "riff://mike@pangolin/acme/app?session=w1".parse()?;
+    /// let person: SessionUri = "riff://mike@pangolin/acme/app".parse()?;
+    /// let stranger: SessionUri = "riff://mike@pangolin/stranger/app".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// assert_eq!(state.forge_fact(&person, now), None);
+    /// state.register(&lead, now);
+    /// state.register(&worker, now);
+    /// let app = || "acme/app".parse().unwrap();
+    /// assert_eq!(state.forge_fact(&lead, now), Some((TokenRole::Lead, app())));
+    /// assert_eq!(state.forge_fact(&worker, now), Some((TokenRole::Worker, app())));
+    /// assert_eq!(state.forge_fact(&person, now), Some((TokenRole::Lead, app())));
+    /// // The person is the lead of no other repository.
+    /// assert_eq!(state.forge_fact(&stranger, now), None);
+    /// // A session that the state does not know gets no token.
+    /// let other: SessionUri = "riff://mike@pangolin/stranger/app?session=x1".parse()?;
+    /// assert_eq!(state.forge_fact(&other, now), None);
+    /// // A session with no sign of life for CLAIM_GRACE gets none.
+    /// assert_eq!(state.forge_fact(&worker, now + CLAIM_GRACE), None);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn forge_fact(
+        &self,
+        me: &SessionUri,
+        now: Instant,
+    ) -> Option<(riff_core::forge::TokenRole, ThreadName)> {
+        let view = self.written_view();
+        let who = me.who();
+        if who.session().is_none() {
+            let thread = me.default_thread()?;
+            view.lead_of(&(who.user().to_owned(), thread.clone()), now)?;
+            return Some((riff_core::forge::TokenRole::Lead, thread));
+        }
+        if !view.holds(who, now) {
+            return None;
+        }
+        let uri = view.uri(who, now);
+        let thread = uri.default_thread()?;
+        Some((riff_core::forge::role_of(uri.lead(), uri.claims()), thread))
+    }
+
     /// True when `user` shows a sign of life at `now`: a session of the
     /// user that is not gone, or a call of the user at `since` or later,
     /// also a call as a person (01M3Q546335NBTKG5BHQ27QC93). A person

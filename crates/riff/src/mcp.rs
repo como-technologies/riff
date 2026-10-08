@@ -1124,6 +1124,12 @@ pub async fn serve(
         if let Err(e) = api.register_as(&me, worker).await {
             eprintln!("riff: {e:#}");
         }
+        // The server knows the session now: the wrapper asks for its
+        // forge token at once. The wrapper of the lead gets the lead
+        // token when this session is the lead (#628).
+        if let Some(files) = crate::forge::Files::here() {
+            files.ask();
+        }
         // The receiver can be gone: nothing waits for the register.
         let _ = registered.send(());
     }

@@ -476,6 +476,11 @@ async fn forge_token(
         Ok(me) => me,
         Err(e) => return (Err(e), files, None),
     };
+    // The server gives a token only to a session that it knows: the
+    // worker registers before `claude` starts (#628).
+    if fixed.is_none() {
+        register_worker(&me, &server).await;
+    }
     let server = server.to_owned();
     let ask: forge::Ask = {
         let (me, server) = (me.clone(), server.clone());
@@ -507,6 +512,19 @@ async fn forge_token(
         files,
         Some(tokio::spawn(forge::keep(keeper, claims))),
     )
+}
+
+/// Registers the worker session `me` at `server`, so that the server
+/// knows it before its first forge token. A failure only gives a line:
+/// the ask of the token then names the cause.
+async fn register_worker(me: &riff_core::name::SessionUri, server: &str) {
+    let registered = async {
+        let api = Api::new(server).signed_in(me.who().session())?;
+        api.register_as(me, true).await
+    };
+    if let Err(e) = registered.await {
+        eprintln!("riff: {e:#}");
+    }
 }
 
 /// Stops `claude` with SIGTERM, then kills it after [`STOP_WAIT`].
