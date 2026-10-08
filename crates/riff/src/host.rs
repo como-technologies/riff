@@ -971,11 +971,11 @@ impl Host {
             Request::StopOne(one) => {
                 match worker::stop(&self.tmux, Some(&one), &self.server).await {
                     Ok(stopped) => {
-                    for line in &stopped.lines {
-                        println!("{line}");
+                        for line in &stopped.lines {
+                            println!("{line}");
+                        }
+                        format!("{host}: {}", text::workers_stopped(stopped.count))
                     }
-                    format!("{host}: {}", text::workers_stopped(stopped.count))
-                }
                     Err(e) => format!("{host}: riff workers stop failed: {e:#}"),
                 }
             }

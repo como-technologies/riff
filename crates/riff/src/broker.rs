@@ -285,7 +285,14 @@ pub fn start(
     )
     .context("cannot make the socket pair of the broker")?;
     Command::new(riff)
-        .args(["--server", server, "workers", "broker", "--role", role.name()])
+        .args([
+            "--server",
+            server,
+            "workers",
+            "broker",
+            "--role",
+            role.name(),
+        ])
         .arg("--root")
         .arg(root)
         .arg("--clone")

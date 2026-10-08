@@ -888,7 +888,10 @@ fn a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker() {
     );
     // The broker started the worker in the tmux of the lead, with the
     // clone mark, and killed only its pane.
-    let mark = format!("set-option -p -t {pane} @riff-clone {}", m.clone().display());
+    let mark = format!(
+        "set-option -p -t {pane} @riff-clone {}",
+        m.clone().display()
+    );
     assert!(log.contains(&mark), "{log}");
     assert!(log.contains(&format!("kill-pane -t {pane}")), "{log}");
     assert!(!log.contains("kill-pane -t %50"), "{log}");

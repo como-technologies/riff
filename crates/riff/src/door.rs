@@ -332,7 +332,9 @@ pub fn call<T: DeserializeOwned>(broker: RawFd, op: &str, args: &[OsString]) -> 
     let (read, write) = nix::unistd::pipe().context("cannot make a pipe for the broker")?;
     let reader = std::thread::spawn(move || {
         let mut text = Vec::new();
-        std::fs::File::from(read).read_to_end(&mut text).map(|_| text)
+        std::fs::File::from(read)
+            .read_to_end(&mut text)
+            .map(|_| text)
     });
     let request = Request {
         op: op.into(),
@@ -613,7 +615,10 @@ mod tests {
         }
         mine.kill("%1").unwrap();
         assert_eq!(*fake.killed.borrow(), ["%1"]);
-        assert!(mine.beside("tail", &Program::tail("/r".as_ref(), "/".as_ref(), "s")).is_err());
+        assert!(
+            mine.beside("tail", &Program::tail("/r".as_ref(), "/".as_ref(), "s"))
+                .is_err()
+        );
     }
 
     /// 01M4DDWPEGBAXKTS0X3THFB8VZ: a stop of a worker of another clone

@@ -1551,10 +1551,9 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                     self.claude.clone(),
                     self.api.base().to_owned(),
                 );
-                let started = tokio::task::spawn_blocking(move || {
-                    door.start(1, &claude, &base, &dir)
-                })
-                .await??;
+                let started =
+                    tokio::task::spawn_blocking(move || door.start(1, &claude, &base, &dir))
+                        .await??;
                 let started = match started {
                     Ok(started) => started,
                     Err(why) => bail!(why),
