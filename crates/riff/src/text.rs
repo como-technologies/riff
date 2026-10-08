@@ -4646,8 +4646,8 @@ pub fn door_not_lead(op: &str) -> String {
     format!("the operation {op} is only for the lead")
 }
 
-/// The refusal of the broker of a lead for the wrong number of
-/// arguments.
+/// The refusal of the broker for the wrong number of arguments of an
+/// operation of [`crate::door`].
 ///
 /// ```
 /// assert_eq!(
@@ -4675,8 +4675,15 @@ pub fn door_count(count: &str) -> String {
     )
 }
 
-/// The refusal of the broker of a lead that runs outside tmux.
-pub const DOOR_NO_TMUX: &str = "the lead does not run in tmux, so its broker has no tmux";
+/// The refusal of a broker whose session runs outside tmux.
+pub const DOOR_NO_TMUX: &str = "the session does not run in tmux, so its broker has no tmux";
+
+/// The error of `riff hook clear` with no pane and no broker.
+pub const CLEAR_NO_PANE: &str = "the worker has no tmux pane and no broker";
+
+/// The refusal of an `end-over-limit` of a broker with no
+/// `RIFF_SESSION` (01M4DVW290H2AQF6EQFHTY1EE1).
+pub const DOOR_NO_SESSION: &str = "the broker has no RIFF_SESSION, so it ends no worker";
 
 /// The refusal of a step on the panes that the broker of a lead does
 /// not run: it adds only the `riff tail` pane, and it starts, stops and
