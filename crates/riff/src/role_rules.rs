@@ -312,7 +312,7 @@ mod tests {
             claude: "/home/ada/.local/share/riff/claude/s1".into(),
             rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
             state: "/run/user/1000/riff".into(),
-            tools: vec!["/home/ada/.cargo".into(), "/home/ada/.rustup".into()],
+            tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
             server: Endpoint::of_url("https://riff.example.com").unwrap(),
         }
     }

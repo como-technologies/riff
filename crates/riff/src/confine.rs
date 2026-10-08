@@ -292,12 +292,10 @@ impl Here {
             .unwrap_or_default();
         let cargo = var("CARGO_HOME").map_or_else(|| home.join(".cargo"), PathBuf::from);
         let rustup = var("RUSTUP_HOME").map_or_else(|| home.join(".rustup"), PathBuf::from);
-        tools.extend([
-            cargo,
-            rustup,
-            home.join(".gitconfig"),
-            home.join(".config/git"),
-        ]);
+        // Not the cargo home itself: it holds the registry tokens
+        // (01M4D4BZ41AH29KSA9B0VZB8DQ).
+        tools.extend(crate::profile::cargo_reads(&cargo));
+        tools.extend([rustup, home.join(".gitconfig"), home.join(".config/git")]);
         tools.extend(crate::plugin::dir().ok());
         // `claude` on the PATH is a link to the folder of its version.
         tools.extend(
@@ -743,14 +741,25 @@ pub fn git_in(dir: &Path) -> Result<std::process::Command> {
     let abs = std::path::absolute(dir).with_context(|| format!("no path {}", dir.display()))?;
     let mut git = git();
     git.arg("-C").arg(&abs);
-    let Some((main, name)) = agent_worktree(&abs) else {
-        if let Some((main, name)) = abs.canonicalize().ok().as_deref().and_then(agent_worktree) {
-            bail!(
-                "riff runs no git in {}: it is a link to the worktree {}",
-                abs.display(),
-                main.join(crate::worktrees::AGENT_DIR).join(name).display()
-            );
-        }
+    let lexical = agent_worktree(&abs);
+    if lexical.is_none()
+        && let Some((main, name)) = abs.canonicalize().ok().as_deref().and_then(agent_worktree)
+    {
+        bail!(
+            "riff runs no git in {}: it is a link to the worktree {}",
+            abs.display(),
+            main.join(crate::worktrees::AGENT_DIR).join(name).display()
+        );
+    }
+    // A repository in the worktree, for example the clone of a test,
+    // holds its own files.
+    let agent = lexical.filter(|(main, name)| {
+        let tree = main.join(crate::worktrees::AGENT_DIR).join(name);
+        !abs.ancestors()
+            .take_while(|a| *a != tree)
+            .any(|a| a.join(".git").exists())
+    });
+    let Some((main, name)) = agent else {
         let common = abs.join(".git");
         if common.is_dir() {
             git.env("GIT_COMMON_DIR", common);
@@ -886,16 +895,19 @@ pub fn run_git(server: &str, tree: &Path, args: &[OsString]) -> Result<()> {
 /// clone `main` names (01M4CW0CH4F861MWQSQACEX54X). A session writes
 /// the `gitdir` file of its worktree, so the list can name any folder,
 /// for example one with a `.git` folder of the session. riff runs git
-/// only in a worktree in the worktree folder of `main`.
+/// only in a worktree that is a folder `NAME` of the worktree folder of
+/// `main`, not in a folder below it: that can be a repository of the
+/// session.
 ///
 /// ```
 /// let dir = tempfile::tempdir().unwrap();
 /// let main = dir.path().canonicalize().unwrap();
 /// std::fs::create_dir_all(main.join(".git/worktrees/w")).unwrap();
-/// std::fs::create_dir_all(main.join(".claude/worktrees/w")).unwrap();
+/// std::fs::create_dir_all(main.join(".claude/worktrees/w/sub/.git")).unwrap();
 /// assert!(riff::confine::git_in_tree(&main, &main.join(".claude/worktrees/w")).is_ok());
 /// let e = riff::confine::git_in_tree(&main, dir.path()).unwrap_err();
 /// assert!(format!("{e:#}").contains("not in the worktree folder"), "{e:#}");
+/// assert!(riff::confine::git_in_tree(&main, &main.join(".claude/worktrees/w/sub")).is_err());
 /// ```
 pub fn git_in_tree(main: &Path, tree: &Path) -> Result<std::process::Command> {
     let main = main
@@ -903,7 +915,11 @@ pub fn git_in_tree(main: &Path, tree: &Path) -> Result<std::process::Command> {
         .with_context(|| format!("no clone {}", main.display()))?;
     let abs = std::path::absolute(tree).with_context(|| format!("no path {}", tree.display()))?;
     match agent_worktree(&abs) {
-        Some((clone, _)) if clone == main => git_in(&abs),
+        Some((clone, name))
+            if clone == main && abs == main.join(crate::worktrees::AGENT_DIR).join(&name) =>
+        {
+            git_in(&abs)
+        }
         _ => bail!(
             "riff runs no git in {}: it is not in the worktree folder {}",
             abs.display(),
@@ -913,14 +929,21 @@ pub fn git_in_tree(main: &Path, tree: &Path) -> Result<std::process::Command> {
 }
 
 /// The main clone and the name of the worktree of the agent tool that
-/// holds `path`: the first `.claude/worktrees/NAME` of the path. The
-/// first, because a session can make a folder with that name in its
-/// own worktree.
+/// holds `path`: the last `.claude/worktrees/NAME` of the path. A clone
+/// in a worktree, for example a clone of a test, is the repository of
+/// its files. A session can make such a clone, so a git step that reads
+/// files runs in the sandbox of a worker ([`worker_git`]), and a
+/// worktree from `git worktree list` must be in the clone of the list
+/// ([`git_in_tree`]).
 ///
 /// ```
 /// use std::path::{Path, PathBuf};
 /// let of = |p: &str| riff::confine::agent_worktree(Path::new(p));
-/// assert_eq!(of("/src/app/.claude/worktrees/w/a/.claude/worktrees/x"), Some((PathBuf::from("/src/app"), "w".into())));
+/// assert_eq!(
+///     of("/src/app/.claude/worktrees/w/a/.claude/worktrees/x"),
+///     Some((PathBuf::from("/src/app/.claude/worktrees/w/a"), "x".into()))
+/// );
+/// assert_eq!(of("/src/app/.claude/worktrees/w/src"), Some((PathBuf::from("/src/app"), "w".into())));
 /// assert_eq!(of("/src/app/.claude/worktrees"), None);
 /// assert_eq!(of("/src/app/.claude/worktrees/.."), None);
 /// assert_eq!(of("/src/app"), None);
@@ -928,16 +951,20 @@ pub fn git_in_tree(main: &Path, tree: &Path) -> Result<std::process::Command> {
 pub fn agent_worktree(path: &Path) -> Option<(PathBuf, std::ffi::OsString)> {
     use std::path::Component;
     let parts: Vec<Component> = path.components().collect();
-    parts.windows(3).enumerate().find_map(|(i, w)| match w {
-        [
-            Component::Normal(a),
-            Component::Normal(b),
-            Component::Normal(name),
-        ] if *a == ".claude" && *b == "worktrees" => {
-            Some((parts[..i].iter().collect(), (*name).to_owned()))
-        }
-        _ => None,
-    })
+    parts
+        .windows(3)
+        .enumerate()
+        .rev()
+        .find_map(|(i, w)| match w {
+            [
+                Component::Normal(a),
+                Component::Normal(b),
+                Component::Normal(name),
+            ] if *a == ".claude" && *b == "worktrees" => {
+                Some((parts[..i].iter().collect(), (*name).to_owned()))
+            }
+            _ => None,
+        })
 }
 
 /// Stops this thread and each later child from making a unix socket

@@ -3165,6 +3165,19 @@ that is not absolute or that has a `..` part.
   a name: not for tmux, D-Bus, your keyring or an SSH agent. A pair of
   sockets still works.
 
+#### Keep your cargo registry token out of the sessions
+
+riff gives no cargo registry token to a session or a test run. A
+session and a test run read only the parts of your cargo home that
+cargo needs: `bin`, `registry`, `git`, `config.toml` and `config`. They
+do not read `credentials.toml` or `credentials`, where `cargo login`
+keeps your token. So keep the token in `credentials.toml`, not in
+`config.toml`. `cargo login` does it for you:
+
+```sh
+cargo login
+```
+
 #### How riff applies the sandbox
 
 Each worker pane runs `riff workers run`. It starts `claude` through

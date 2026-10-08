@@ -70,7 +70,7 @@
 //!     claude: "/home/ada/.claude".into(),
 //!     rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
 //!     state: "/run/user/1000/riff".into(),
-//!     tools: vec!["/home/ada/.cargo".into()],
+//!     tools: vec!["/home/ada/.cargo/bin".into()],
 //!     server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
 //! };
 //! let profile = Profile::of(Role::TestRun, &session)?;
@@ -257,10 +257,11 @@ pub fn here(dir: &Path) -> Result<Session> {
         },
         PathBuf::from,
     );
-    let tools = vec![
-        var("CARGO_HOME").map_or_else(|| home.join(".cargo"), PathBuf::from),
-        var("RUSTUP_HOME").map_or_else(|| home.join(".rustup"), PathBuf::from),
-    ];
+    // Not the cargo home itself: it holds the registry tokens
+    // (01M4D4BZ41AH29KSA9B0VZB8DQ).
+    let cargo = var("CARGO_HOME").map_or_else(|| home.join(".cargo"), PathBuf::from);
+    let mut tools = crate::profile::cargo_reads(&cargo);
+    tools.push(var("RUSTUP_HOME").map_or_else(|| home.join(".rustup"), PathBuf::from));
     let server = var("RIFF_SERVER")
         .and_then(|s| Endpoint::of_url(&s.to_string_lossy()))
         .or_else(|| Endpoint::of_url("http://127.0.0.1:9"))
@@ -323,7 +324,7 @@ fn git(dir: &Path, args: &[&str]) -> Option<PathBuf> {
 ///     claude: "/h/.claude".into(),
 ///     rules: "/h/.local/share/riff/rules/s1.json".into(),
 ///     state: "/run/user/7/riff".into(),
-///     tools: vec!["/h/.cargo".into()],
+///     tools: vec!["/h/.cargo/bin".into()],
 ///     server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
 /// };
 /// let profile = Profile::of(Role::TestRun, &session)?;
@@ -337,7 +338,7 @@ fn git(dir: &Path, args: &[&str]) -> Option<PathBuf> {
 /// );
 /// let at = |s: &str| args.iter().position(|a| a == s).unwrap();
 /// // The home comes before the tools, the worktree before its target.
-/// assert!(at("/h/.cache/tmp/r/home") < at("/h/.cargo"));
+/// assert!(at("/h/.cache/tmp/r/home") < at("/h/.cargo/bin"));
 /// assert!(at("/h/app/.claude/worktrees/w") < at("/h/app/.claude/worktrees/w/target"));
 /// // The run reads the git dir of the clone, and writes the pool.
 /// assert!(args.windows(3).any(|w| w == ["--ro-bind-try", "/h/app/.git", "/h/app/.git"]));
@@ -583,7 +584,7 @@ mod tests {
             claude: "/home/ada/.claude".into(),
             rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
             state: "/run/user/1000/riff".into(),
-            tools: vec!["/home/ada/.cargo".into(), "/home/ada/.rustup".into()],
+            tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
             server: Endpoint::of_url("http://127.0.0.1:9").unwrap(),
         }
     }

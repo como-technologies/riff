@@ -577,3 +577,71 @@ fn show_prints_the_sandbox_here() {
         "{text}"
     );
 }
+
+/// 01M4D4BZ41AH29KSA9B0VZB8DQ: a worker and a test run read the
+/// programs of the cargo home, but not its registry tokens: a planted
+/// `credentials.toml` and `credentials` stay unreadable in both.
+#[test]
+fn no_session_and_no_test_run_reads_the_cargo_registry_tokens() {
+    let m = Machine::outside_tmp();
+    let plant = |cargo: &Path| {
+        for (file, text) in [
+            ("credentials.toml", "[registry]\ntoken = \"cio_planted\"\n"),
+            ("credentials", "[registry]\ntoken = \"cio_planted\"\n"),
+            ("bin/tool", "a tool\n"),
+        ] {
+            let path = cargo.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    };
+    let tries = |cargo: &Path| {
+        format!(
+            "r() {{ if cat \"$2\" >/dev/null 2>&1; then echo \"$1 yes\"; else echo \"$1 no\"; fi; }}; \
+             r toml {0}/credentials.toml; r old {0}/credentials; r bin {0}/bin/tool",
+            cargo.display()
+        )
+    };
+
+    // A session has the cargo home ~/.cargo.
+    let home_cargo = m.home().join(".cargo");
+    plant(&home_cargo);
+    let result = m.worktrees().join("result");
+    let claude = m.claude(&format!(
+        "sh -c '{}' > '{}'",
+        tries(&home_cargo),
+        result.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let got = std::fs::read_to_string(&result).unwrap();
+    assert_eq!(got, "toml no\nold no\nbin yes\n");
+
+    // A test run, with a cargo home outside /tmp and /var/tmp: the run
+    // has its own of both.
+    if std::env::var_os("RIFF_TEST_RUN").is_some() {
+        println!("skip: a test run cannot start a test run");
+        return;
+    }
+    let cargo = m.clone().parent().unwrap().join("cargo-home");
+    plant(&cargo);
+    let out = m
+        .env
+        .riff()
+        .args(["test-run", "--", "sh", "-c", &tries(&cargo)])
+        .current_dir(m.worktrees().join("issue-1"))
+        .env("CARGO_HOME", &cargo)
+        .output()
+        .unwrap();
+    let got = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if got.contains("bubblewrap") || got.contains("apparmor") {
+        println!("skip: this machine has no bubblewrap for a test run: {got}");
+        return;
+    }
+    assert_eq!(got, "toml no\nold no\nbin yes\n");
+}

@@ -87,7 +87,7 @@
 //!     claude: "/home/ada/.local/share/riff/claude/s1".into(),
 //!     rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
 //!     state: "/run/user/1000/riff".into(),
-//!     tools: vec!["/home/ada/.cargo".into(), "/home/ada/.rustup".into()],
+//!     tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
 //!     server: Endpoint::of_url("https://riff.example.com").unwrap(),
 //! };
 //! let worker = Profile::of(Role::Worker, &session)?;
@@ -342,11 +342,14 @@ impl Session {
     /// assert!(s.secrets().contains(&Path::new("/run/user/7/systemd").to_path_buf()));
     /// assert!(s.secrets().contains(&Path::new("/run/dbus").to_path_buf()));
     /// assert!(!s.secrets().iter().any(|p| p.ends_with("riff/forge")), "no key of the App is on a machine");
+    /// assert!(s.secrets().contains(&Path::new("/h/.cargo/credentials.toml").to_path_buf()));
+    /// assert!(s.secrets().contains(&Path::new("/h/.cargo/credentials").to_path_buf()));
     /// ```
     pub fn secrets(&self) -> Vec<PathBuf> {
         let home = |p: &str| self.home.join(p);
         let runtime = |p: &str| self.runtime.join(p);
-        vec![
+        let cargo = CARGO_CREDENTIALS.map(|f| self.home.join(".cargo").join(f));
+        let mut secrets = vec![
             home(".local/share/keyrings"),
             home(".ssh"),
             home(".gnupg"),
@@ -357,7 +360,9 @@ impl Session {
             runtime("gnupg"),
             SYSTEM_BUS.into(),
             tmux_dir(),
-        ]
+        ];
+        secrets.extend(cargo);
+        secrets
     }
 
     /// Why no profile may hold `path`, or `None`: the path is not
@@ -434,6 +439,29 @@ pub struct Profile {
 
 /// The folder of the socket of the D-Bus system bus.
 pub const SYSTEM_BUS: &str = "/run/dbus";
+
+/// The files of a cargo home that hold the registry tokens of the
+/// person (01M4D4BZ41AH29KSA9B0VZB8DQ).
+pub const CARGO_CREDENTIALS: [&str; 2] = ["credentials.toml", "credentials"];
+
+/// The parts of a cargo home that cargo reads in a session or a test
+/// run (01M4D4BZ41AH29KSA9B0VZB8DQ): its programs, the crates that it
+/// fetched, and its settings. Not the cargo home itself, so that no
+/// role reads [`CARGO_CREDENTIALS`].
+///
+/// ```
+/// let parts = riff::profile::cargo_reads(std::path::Path::new("/h/.cargo"));
+/// assert!(parts.contains(&"/h/.cargo/bin".into()));
+/// assert!(parts.contains(&"/h/.cargo/registry".into()));
+/// assert!(parts.contains(&"/h/.cargo/config.toml".into()));
+/// assert!(!parts.contains(&"/h/.cargo".into()));
+/// assert!(!parts.iter().any(|p| p.ends_with("credentials.toml")));
+/// ```
+pub fn cargo_reads(cargo: &Path) -> Vec<PathBuf> {
+    ["bin", "registry", "git", "config.toml", "config"]
+        .map(|part| cargo.join(part))
+        .into()
+}
 
 /// The folders of the system that each role reads.
 pub const SYSTEM: [&str; 10] = [
@@ -846,7 +874,7 @@ mod tests {
             claude: "/home/ada/.local/share/riff/claude/s1".into(),
             rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
             state: "/run/user/1000/riff".into(),
-            tools: vec!["/home/ada/.cargo".into(), "/home/ada/.rustup".into()],
+            tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
             server: Endpoint::of_url("https://riff.example.com").unwrap(),
         }
     }

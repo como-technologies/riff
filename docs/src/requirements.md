@@ -4280,6 +4280,12 @@
   more rights than a worker. With no Landlock, the step does not run.
   The push of a WIP commit stays outside, with the git dirs of riff
   and no hook.
+- **01M4D4BZ41AH29KSA9B0VZB8DQ** No role and no test run reads
+  `credentials.toml` or `credentials` of a cargo home: they hold the
+  registry tokens of the person, and `Session::secrets` names them in
+  `~/.cargo`. A profile and a test run read only `bin`, `registry`,
+  `git`, `config.toml` and `config` of the cargo home, not the cargo
+  home itself.
 - **01M4CW0CH4F861MWQSQACEX54X** riff runs git in a worktree from
   `git worktree list` only when it is in `.claude/worktrees` of the
   clone. `riff worktrees clean` keeps each other linked worktree and
