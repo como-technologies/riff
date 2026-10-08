@@ -11,7 +11,10 @@
 //! [`Profile`] of the role, restricts itself with Landlock, and then
 //! runs `claude` in its place. Each child of `claude` (the Bash
 //! commands, `cargo`, the tests) inherits the sandbox. No child can
-//! remove it or make it wider.
+//! remove it or make it wider. `riff workers lead` starts the lead the
+//! same way, with `--role lead` (01M4DDWP9XSA14E0YF211XZYKR). Its steps
+//! in tmux and on the processes of its workers go through its broker
+//! ([`crate::door`]).
 //!
 //! | Landlock limits | From |
 //! |---|---|
@@ -71,7 +74,7 @@
 //! | Actor | Holds | Runs |
 //! |---|---|---|
 //! | You | your home, your keyring, your SSH keys, the sign-in of `gh`, your Claude plan token | outside each sandbox |
-//! | The lead | its grant, the forge token of the lead | with no sandbox yet (#630) |
+//! | The lead | its grant, the forge token of the lead | in its sandbox; its broker runs its tmux steps |
 //! | A worker or a verifier | its grant, the forge token of its role, its worktree | in its sandbox |
 //! | A test run | its temp folder and its target | in its own namespaces, with loopback only |
 //! | riff outside: the wrapper, the broker, `riff worktrees clean`, `riff workers host`, the start of `riff` | your rights | outside each sandbox, as you |
@@ -132,6 +135,8 @@
 //! | The user manager of systemd | a call | systemd | no profile reaches a bus of systemd | `the_worker_profile_has_no_access_to_the_systemd_user_bus` |
 //! | A host request | a request in the name of the lead | `riff workers host` | only a signed request of the lead | `a_host_refuses_a_request_that_is_not_from_the_lead` |
 //! | The stop file | `.riff-stop` in its temp folder | the wrapper | the wrapper reads only that the file is there | `the_server_stops_an_idle_worker_through_its_wrapper` |
+//! | The lead | the worktrees of the clone and the git parts of a worker; an operation of its broker | each git command of riff, tmux, the processes of its workers | the lead writes no config, hooks, info, packed-refs or other file of the clone; its tmux steps and signals are operations of its broker, only on the workers with the clone mark of its clone | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker`, `the_lead_writes_no_config_hooks_info_or_packed_refs_of_the_clone`, `a_stop_of_a_worker_of_another_clone_stops_nothing`, `only_the_broker_of_a_lead_runs_the_operations_of_the_lead` |
+//! | The MCP config of a session | a write of `workers-mcp.json` | the `claude` of the lead and of each worker | the file is in the given folder of riff, outside each write path | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker` |
 //! <!-- /surfaces -->
 //!
 //! ## The shared surfaces with no control yet
@@ -142,8 +147,6 @@
 //! <!-- open-surfaces -->
 //! | Surface | A session writes or asks | Read or run outside by | Risk | Decision |
 //! |---|---|---|---|---|
-//! | The lead | the clone, also its git config and hooks | each git command of riff, the person | the lead runs with no sandbox | #630 |
-//! | The MCP config of a session | `workers-mcp.json` in the riff state folder | the `claude` of the lead and of each worker | a program runs outside a sandbox | #630 |
 //! | The tmux config of riff | `tmux.conf` in the riff state folder | the tmux server of riff, at its start | a program runs outside a sandbox, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
 //! | The list of clones | `clones` in the riff state folder | `riff`, at its start | riff starts the lead in a folder that a session picked | #655: merge before 2.0.0, or Mike accepts at the sign-off |
 //! | The deaths of workers | `worker-deaths` in the riff state folder | the rollout, each workers host | riff starts or stops workers on a false count, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
@@ -308,6 +311,32 @@ pub fn claude_dir(data: &Path, session: &str) -> PathBuf {
     data.join("claude").join(session)
 }
 
+/// The folder of the files that riff gives `claude` at each start, in
+/// the data root `data`: the MCP config of the lead and of each worker
+/// ([`crate::worker_mcp`]). Each AI role reads it, and no role writes
+/// it (01M4DDWPGRM1P4A76GFHPQHMQF): so no session changes the MCP
+/// servers of the next `claude`. The plugin
+/// ([`crate::plugin::dir`]) and the rules files ([`rules_file`]) are in
+/// the data root too, outside each write path.
+///
+/// ```
+/// assert_eq!(
+///     riff::confine::given_dir("/d".as_ref()),
+///     std::path::Path::new("/d/given")
+/// );
+/// ```
+pub fn given_dir(data: &Path) -> PathBuf {
+    data.join("given")
+}
+
+/// [`given_dir`] of this process: in `XDG_DATA_HOME`, else in `HOME`.
+pub fn given_here() -> Result<PathBuf> {
+    let var = |name: &str| std::env::var_os(name);
+    data_from(var("XDG_DATA_HOME"), var("HOME"))
+        .map(|data| given_dir(&data))
+        .context("cannot find the data folder of riff: set HOME")
+}
+
 /// The file of the permission rules of `session` in the data root
 /// `data`: outside each write path of a profile
 /// (01M4BTB7DY1Y74PP3JWKVX58JQ).
@@ -398,6 +427,7 @@ impl Here {
         tools.extend(crate::profile::cargo_reads(&cargo));
         tools.extend([rustup, home.join(".gitconfig"), home.join(".config/git")]);
         tools.extend(crate::plugin::dir().ok());
+        tools.push(given_dir(&data));
         // `claude` on the PATH is a link to the folder of its version.
         tools.extend(
             on_path(Path::new("claude"))
@@ -1137,6 +1167,7 @@ pub fn run(
     let broker = crate::broker::start(
         &crate::binary::this_on_disk()?,
         server,
+        role,
         &session.worktree,
         &session.clone,
     )?;

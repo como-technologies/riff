@@ -91,6 +91,10 @@ use crate::api::Api;
 pub const TAIL: &str = "tail";
 /// The pane option that holds the riff session ID of a worker.
 pub const SESSION_MARK: &str = "@riff-session";
+/// The pane option that holds the main clone of a worker: the broker
+/// of a lead acts only on the workers of its own clone
+/// ([`crate::door`]).
+pub const CLONE_MARK: &str = "@riff-clone";
 /// The mark of the window of the workers.
 pub const WORKERS: &str = "workers";
 /// The name of the window of the workers.
@@ -211,7 +215,7 @@ pub struct Claude<'a> {
 }
 
 /// A worker pane of this machine.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorkerPane {
     /// The tmux pane, for example `%3`.
     pub pane: String,
@@ -443,6 +447,12 @@ impl Tmux {
         machine
     }
 
+    /// The pane of the session, or an empty text for the tmux of the
+    /// machine.
+    pub fn pane(&self) -> &str {
+        &self.pane
+    }
+
     /// The socket name of the server, when it is not the server of
     /// `TMUX`.
     pub fn socket(&self) -> Option<&str> {
@@ -482,10 +492,24 @@ impl Tmux {
         Ok(Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned()))
     }
 
-    /// Marks `pane` with the session of `program`, if it has one.
+    /// The main clone of the worker in `pane` ([`CLONE_MARK`]), or
+    /// `None` when the pane has no such mark.
+    pub fn pane_clone(&self, pane: &str) -> Option<PathBuf> {
+        let format = format!("#{{{CLONE_MARK}}}");
+        let clone = self
+            .try_run(&["display-message", "-p", "-t", pane, &format])
+            .ok()?
+            .ok()?;
+        (!clone.is_empty()).then(|| PathBuf::from(clone))
+    }
+
+    /// Marks `pane` with the session of `program` and its folder, the
+    /// main clone, if it has a session.
     fn mark(&self, pane: &str, program: &Program) -> Result<()> {
         if let Some(session) = &program.session {
             self.run(&["set-option", "-p", "-t", pane, SESSION_MARK, session])?;
+            let clone = program.dir.to_string_lossy();
+            self.run(&["set-option", "-p", "-t", pane, CLONE_MARK, &clone])?;
         }
         Ok(())
     }

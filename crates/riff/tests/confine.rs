@@ -703,3 +703,206 @@ fn no_session_and_no_test_run_reads_the_cargo_registry_tokens() {
     }
     assert_eq!(got, "toml no\nold no\nbin yes\n");
 }
+
+/// A fake `tmux` for the broker of a lead: it writes each call to
+/// `log`, and keeps the worker panes, their clone marks and the windows
+/// in files next to it.
+const FAKE_TMUX: &str = r#"#!/bin/sh
+[ "$1" = -L ] && shift 2
+dir=$(dirname "$0")
+printf '%s\n' "$*" >> "$dir/log"
+n=$(grep -c -e '^split-window' -e '^new-window' "$dir/log")
+case "$1" in
+  list-panes)
+    if [ "$2" = "-a" ]; then cat "$dir/workers" 2>/dev/null; else cat "$dir/panes" 2>/dev/null; fi ;;
+  list-windows) cat "$dir/windows" 2>/dev/null ;;
+  display-message)
+    case "$5" in
+      '#{@riff-clone}') grep "^$4 " "$dir/clones" 2>/dev/null | cut -d' ' -f2- ;;
+      '#{window_id}') echo "@0" ;;
+    esac ;;
+  new-window) echo "@7 %$((n + 10))" ;;
+  split-window) echo "%$((n + 10))" ;;
+  set-option)
+    case "$2 $5" in
+      "-p @riff-session") echo "$4 $6" >> "$dir/workers" ;;
+      "-p @riff-clone") echo "$4 $6" >> "$dir/clones" ;;
+      "-p @riff") echo "$6" >> "$dir/panes" ;;
+      "-w @riff") echo "$4 $6" >> "$dir/windows" ;;
+    esac ;;
+  kill-pane)
+    grep -v "^$3 " "$dir/workers" > "$dir/workers.new"
+    mv "$dir/workers.new" "$dir/workers" ;;
+esac
+exit 0
+"#;
+
+/// A client of the broker in python: it sends the operation `$1` with
+/// the arguments after it, with a pipe as stdout, and prints the reply
+/// and the JSON on the pipe. The serde form of an `OsString` is
+/// `{"Unix": [bytes]}`.
+const ASK: &str = r#"
+import array, json, os, socket, sys
+broker = socket.socket(fileno=int(os.environ["RIFF_BROKER"]))
+mine, theirs = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+r, w = os.pipe()
+args = [{"Unix": list(a.encode())} for a in sys.argv[2:]]
+req = json.dumps({"op": sys.argv[1], "args": args, "cwd": os.getcwd(), "env": []})
+fds = array.array("i", [theirs.fileno(), 0, w, 2])
+broker.sendmsg([req.encode()], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds)])
+theirs.close()
+os.close(w)
+out = b""
+while True:
+    chunk = os.read(r, 65536)
+    if not chunk:
+        break
+    out += chunk
+print(mine.recv(1 << 20).decode())
+print(out.decode())
+"#;
+
+/// 01M4DDWP9XSA14E0YF211XZYKR, 01M4DDWPC693RNWHY7P7XBZ9TB,
+/// 01M4DDWPEGBAXKTS0X3THFB8VZ, 01M4DDWPGRM1P4A76GFHPQHMQF,
+/// 01M4DDWPN8FADA663TTZSVD698: `riff workers lead` runs a fake
+/// `claude` in the sandbox of the lead. It starts a worker and stops it
+/// through the broker; the broker refuses a stop of a worker of
+/// another clone. A direct connect to the tmux socket, a signal to a
+/// process outside, and a write of the MCP config, the rules, the git
+/// config or a file of the clone fail.
+#[test]
+fn a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker() {
+    use std::os::unix::fs::MetadataExt;
+    let m = Machine::new();
+    let home = m.home();
+    let rules = home.join(".local/share/riff/rules/lead-t.json");
+    std::fs::write(&rules, "{}\n").unwrap();
+    // The limit of workers of the machine.
+    let out = m
+        .env
+        .riff()
+        .args(["workers", "limit", "2"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    // The fake tmux, with the worker of another clone in the pane %50.
+    let fake = m.env.path().join("tmux-bin");
+    std::fs::create_dir_all(&fake).unwrap();
+    std::fs::write(fake.join("tmux"), FAKE_TMUX).unwrap();
+    std::fs::set_permissions(fake.join("tmux"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(fake.join("workers"), "%50 s-other-0000\n").unwrap();
+    std::fs::write(fake.join("clones"), "%50 /nowhere/other\n").unwrap();
+    // The tmux socket of the person.
+    let uid = std::fs::metadata("/proc/self").unwrap().uid();
+    let tmp = m.env.path().join("tmux-tmp");
+    let socket = tmp.join(format!("tmux-{uid}/riff"));
+    std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+    let _server = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    let outside = Outside::start();
+
+    let trees = m.worktrees();
+    let result = trees.join("result");
+    let ask = trees.join("ask.py");
+    std::fs::write(&ask, ASK).unwrap();
+    let bin = Isolated::shared().riff_path();
+    let mcp = home.join(".local/share/riff/given/workers-mcp.json");
+    let tries = [
+        (
+            "tmux-socket",
+            format!(
+                "python3 -c \"import socket; socket.socket(socket.AF_UNIX).connect('{}')\"",
+                socket.display()
+            ),
+        ),
+        ("signal", format!("kill -0 {}", outside.0.id())),
+        ("mcp", format!("echo x >> '{}'", mcp.display())),
+        ("rules", format!("echo x >> '{}'", rules.display())),
+        (
+            "git-config",
+            format!("echo x >> '{}/.git/config'", m.clone().display()),
+        ),
+        ("clone", format!("echo x >> '{}/new'", m.clone().display())),
+    ];
+    let mut body = format!(
+        ": > '{r}'\n\
+         python3 '{ask}' workers-start 1 > '{r}.start' 2>&1\n\
+         pane=$(python3 -c \"import json,sys; print(json.loads(open(sys.argv[1]).read().splitlines()[1])['Ok']['panes'][0]['pane'])\" '{r}.start')\n\
+         echo \"started [$pane]\" >> '{r}'\n\
+         '{bin}' workers stop %50 >> '{r}.other' 2>&1; echo \"other $?\" >> '{r}'\n\
+         '{bin}' workers stop \"$pane\" >> '{r}.stop' 2>&1; echo \"stop $?\" >> '{r}'\n\
+         python3 '{ask}' pane-type hello > '{r}.type' 2>&1\n",
+        r = result.display(),
+        ask = ask.display(),
+        bin = bin.display(),
+    );
+    for (name, command) in &tries {
+        body.push_str(&format!(
+            "if ( {command} ) >/dev/null 2>&1; then echo '{name} yes'; else echo '{name} no'; fi >> '{}'\n",
+            result.display()
+        ));
+    }
+    let claude = m.claude(&body);
+    let path = format!("{}:{}", fake.display(), std::env::var("PATH").unwrap());
+    let tmux = format!("{},1,0", socket.display());
+    let out = m
+        .env
+        .riff()
+        .args(["workers", "lead", "--name", "lead-t"])
+        .arg(&claude)
+        .current_dir(m.clone())
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("PATH", path)
+        .env("TMUX_TMPDIR", &tmp)
+        .env("TMUX", &tmux)
+        .env("TMUX_PANE", "%0")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let read = |suffix: &str| {
+        std::fs::read_to_string(format!("{}{suffix}", result.display())).unwrap_or_default()
+    };
+    let log = std::fs::read_to_string(fake.join("log")).unwrap_or_default();
+    let got = read("");
+    let pane = got
+        .lines()
+        .find_map(|l| l.strip_prefix("started ["))
+        .and_then(|l| l.strip_suffix(']'))
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        pane.starts_with('%'),
+        "{got}\nstart: {}\nlog: {log}\n{err}",
+        read(".start")
+    );
+    assert_eq!(
+        got,
+        format!(
+            "started [{pane}]\nother 1\nstop 0\ntmux-socket no\nsignal no\nmcp no\nrules no\ngit-config no\nclone no\n"
+        ),
+        "start: {}\nother: {}\nstop: {}\nlog: {log}",
+        read(".start"),
+        read(".other"),
+        read(".stop"),
+    );
+    // The broker started the worker in the tmux of the lead, with the
+    // clone mark, and killed only its pane.
+    let mark = format!(
+        "set-option -p -t {pane} @riff-clone {}",
+        m.clone().display()
+    );
+    assert!(log.contains(&mark), "{log}");
+    assert!(log.contains(&format!("kill-pane -t {pane}")), "{log}");
+    assert!(!log.contains("kill-pane -t %50"), "{log}");
+    // The broker types only into the pane of the lead.
+    assert!(log.contains("send-keys -t %0 -l hello"), "{log}");
+    let other = read(".other");
+    assert!(other.contains("no worker runs in the pane %50"), "{other}");
+    let stop = read(".stop");
+    assert!(stop.contains("Stopped 1"), "{stop}");
+    assert_eq!(
+        std::fs::read_to_string(fake.join("workers")).unwrap(),
+        "%50 s-other-0000\n"
+    );
+}

@@ -19,6 +19,11 @@
 //! | `test-run` | `riff test-run -- PROGRAM ARGS` of the riff outside, in a folder of the worktree of the session |
 //! | `outside` | the one command of a request that an admin approved (`riff outside ask`) |
 //!
+//! The broker of a lead (`--role lead`) also runs the operations of the
+//! lead in tmux and on the processes of its workers
+//! ([`crate::door::OPS`], 01M4DDWPC693RNWHY7P7XBZ9TB). The broker of
+//! each other role refuses them.
+//!
 //! - **One request, one reply socket.** The session sends each request
 //!   as one message with four file descriptors: the reply end of a
 //!   socket pair of its own, and its stdin, stdout and stderr. So many
@@ -265,7 +270,13 @@ pub fn check(request: &Request, root: &Path) -> Result<PathBuf, String> {
 /// broker --root ROOT --clone CLONE`, with the program `riff`. Returns
 /// the end of the session, for [`VAR`]. The broker gets the other end as
 /// its stdin.
-pub fn start(riff: &Path, server: &str, root: &Path, clone: &Path) -> Result<OwnedFd> {
+pub fn start(
+    riff: &Path,
+    server: &str,
+    role: crate::profile::Role,
+    root: &Path,
+    clone: &Path,
+) -> Result<OwnedFd> {
     let (session, broker) = socketpair(
         AddressFamily::Unix,
         SockType::SeqPacket,
@@ -274,7 +285,15 @@ pub fn start(riff: &Path, server: &str, root: &Path, clone: &Path) -> Result<Own
     )
     .context("cannot make the socket pair of the broker")?;
     Command::new(riff)
-        .args(["--server", server, "workers", "broker", "--root"])
+        .args([
+            "--server",
+            server,
+            "workers",
+            "broker",
+            "--role",
+            role.name(),
+        ])
+        .arg("--root")
         .arg(root)
         .arg("--clone")
         .arg(clone)
@@ -293,7 +312,16 @@ pub fn start(riff: &Path, server: &str, root: &Path, clone: &Path) -> Result<Own
 /// `clone` until each process of the session closed its end. Each
 /// request runs in a thread of its own. `riff` is the riff that runs a
 /// test run. `take` takes a request of `outside` from riff-server.
-pub fn serve(socket: OwnedFd, root: &Path, clone: &Path, riff: &Path, take: Take) -> Result<()> {
+/// `lead` is the broker of a lead: only it runs the operations of
+/// [`crate::door`] (01M4DDWPC693RNWHY7P7XBZ9TB).
+pub fn serve(
+    socket: OwnedFd,
+    root: &Path,
+    clone: &Path,
+    riff: &Path,
+    take: Take,
+    lead: Option<crate::door::Lead>,
+) -> Result<()> {
     let root = crate::confine::resolve(root);
     let clone = crate::confine::resolve(clone);
     loop {
@@ -327,12 +355,19 @@ pub fn serve(socket: OwnedFd, root: &Path, clone: &Path, riff: &Path, take: Take
         }
         let (root, clone, riff) = (root.clone(), clone.clone(), riff.to_path_buf());
         let take = take.clone();
+        let lead = lead.clone();
         let request = serde_json::from_slice::<Request>(&buf[..len]);
         std::thread::spawn(move || {
             let mut fds = fds.into_iter();
             let Some(reply) = fds.next() else { return };
             let answer = match request {
                 Err(e) => Reply::Refused(format!("a request that riff cannot read: {e}")),
+                Ok(request) if crate::door::OPS.contains(&request.op.as_str()) => {
+                    // stdin, stdout, stderr: the door writes its reply
+                    // to stdout.
+                    let stdout = fds.nth(1);
+                    crate::door::answer(lead.as_ref(), &request, stdout)
+                }
                 Ok(request) if request.op == "outside" => outside(
                     &request,
                     &root,
@@ -476,6 +511,12 @@ fn send<T: Serialize>(socket: &OwnedFd, value: &T, fds: &[RawFd]) -> Result<()> 
 /// Sends `request` to the broker on the file descriptor `broker`, with
 /// the stdio of this process, and waits for the reply.
 pub fn ask(broker: RawFd, request: &Request) -> Result<Reply> {
+    ask_with(broker, request, [0, 1, 2])
+}
+
+/// [`ask`] with `stdio` as the stdin, the stdout and the stderr of the
+/// request.
+pub fn ask_with(broker: RawFd, request: &Request, stdio: [RawFd; 3]) -> Result<Reply> {
     let (mine, theirs) = socketpair(
         AddressFamily::Unix,
         SockType::SeqPacket,
@@ -484,7 +525,7 @@ pub fn ask(broker: RawFd, request: &Request) -> Result<Reply> {
     )
     .context("cannot make the reply socket")?;
     let body = serde_json::to_vec(request)?;
-    let fds = [theirs.as_raw_fd(), 0, 1, 2];
+    let fds = [theirs.as_raw_fd(), stdio[0], stdio[1], stdio[2]];
     sendmsg::<()>(
         broker,
         &[IoSlice::new(&body)],
@@ -545,7 +586,7 @@ mod tests {
         .unwrap();
         let (root, riff) = (root.to_path_buf(), riff.to_path_buf());
         let take: Take = std::sync::Arc::new(|_| anyhow::bail!("no riff-server in this test"));
-        std::thread::spawn(move || serve(broker, &root, &root, &riff, take));
+        std::thread::spawn(move || serve(broker, &root, &root, &riff, take, None));
         session
     }
 

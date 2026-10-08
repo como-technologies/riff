@@ -466,8 +466,9 @@ impl Drop for AbortOnDrop {
 /// of riff runs it. Like a worker, the lead gets a temp folder of its
 /// own and the forge token of its role, the lead, and `claude` starts
 /// through [`forge::ForgeEnv`]: no credential of the person reaches it.
-/// It gives no limits of a worker. Returns the exit code of `claude`,
-/// or 0 after a stop.
+/// It gives no limits of a worker. `claude` runs in the sandbox of the
+/// lead ([`lead_sandboxed`], 01M4DDWP9XSA14E0YF211XZYKR). Returns the
+/// exit code of `claude`, or 0 after a stop.
 pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) -> Result<i32> {
     let mut term = signal(SignalKind::terminate())?;
     let mut hup = signal(SignalKind::hangup())?;
@@ -483,12 +484,18 @@ pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) 
     if let Some(why) = forge.no_token() {
         eprintln!("{}", crate::text::forge_no_token(why));
     }
-    let args: Vec<std::ffi::OsString> = ["--session-id", &session]
+    let args: Vec<String> = ["--session-id", &session]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(args.iter().cloned())
+        .collect();
+    // The lead runs in the sandbox of its role, after its broker starts
+    // (01M4DDWP9XSA14E0YF211XZYKR).
+    let shim: Vec<std::ffi::OsString> = lead_sandboxed(server, name, claude, &args)
         .into_iter()
         .map(Into::into)
-        .chain(args.iter().map(Into::into))
         .collect();
-    let mut cmd = forge.command(claude.as_os_str(), &args, std::env::vars_os());
+    let mut cmd = forge.command(riff.as_os_str(), &shim, std::env::vars_os());
     let secrets = crate::grant::session_env(&Api::new(server), &session).await;
     cmd.env(identity::SESSION_VARS[0], &session)
         .envs(secrets.env.iter().cloned())
@@ -628,6 +635,24 @@ pub fn sandboxed(server: &str, claude: &Path, args: &[String]) -> Vec<String> {
     crate::confine::shim(server, crate::profile::Role::Worker, None, claude, args)
 }
 
+/// The arguments of `riff` that run `claude` with `args` in the sandbox
+/// of the lead `name`, with the riff server `server`
+/// (01M4DDWP9XSA14E0YF211XZYKR). The name gives the Claude folder and
+/// the rules file of the lead.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let args = riff::worker::lead_sandboxed("http://s:1", "lead-o-r", Path::new("claude"), &["-c".into()]);
+/// assert_eq!(
+///     args,
+///     ["--server", "http://s:1", "workers", "sandbox", "--role", "lead", "--name", "lead-o-r", "--", "claude", "-c"],
+/// );
+/// ```
+pub fn lead_sandboxed(server: &str, name: &str, claude: &Path, args: &[String]) -> Vec<String> {
+    crate::confine::shim(server, crate::profile::Role::Lead, Some(name), claude, args)
+}
+
 /// Stops `claude` with SIGTERM, then kills it after [`STOP_WAIT`].
 async fn stop_child(child: &mut tokio::process::Child) -> Result<i32> {
     if let Some(pid) = child.id() {
@@ -699,7 +724,7 @@ pub fn exit_words(status: &ExitStatus) -> String {
 }
 
 /// The workers that one start opened.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Started {
     /// The pane and the session of each new worker.
     pub panes: Vec<WorkerPane>,
@@ -802,8 +827,9 @@ pub fn start(
 /// (01M3ZV0TMNQDK9WC3BR1NPGAC2), then sends the end call of the session
 /// (01M3JPQTDFW3C7QBSZZ2M831MH).
 /// `pane` is a pane, or the session ID of a worker or its start
-/// (01M3Q5A0Z5DK0YV1MWTM4AQD5Z). Returns the number of stopped workers.
-pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Result<usize> {
+/// (01M3Q5A0Z5DK0YV1MWTM4AQD5Z). Returns the number of stopped workers,
+/// and a line for each process that lived after its pane.
+pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Result<Stopped> {
     let mut panes = tmux.worker_panes()?;
     if let Some(pane) = pane {
         panes.retain(|w| is_one(w, pane));
@@ -814,6 +840,7 @@ pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Resu
     let here = identity::place(&identity::working_dir()?)?;
     let api = Api::new(server);
     let var = crate::next::Agent::context_var(&crate::next::ClaudeCode);
+    let mut lines = Vec::new();
     for worker in &panes {
         tmux.kill(&worker.pane)?;
         // Each process of the worker, also one that left the pane
@@ -823,7 +850,7 @@ pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Resu
         workload::say_here(found.by, &worker.session);
         let stopped = workload::stop(&found.procs, var);
         if !stopped.is_empty() {
-            println!("{}", text::stopped_after_pane(&worker.pane, &stopped));
+            lines.push(text::stopped_after_pane(&worker.pane, &stopped));
         }
         // The wrapper deletes the folder when `claude` ended. This is for
         // a wrapper that died with the pane (01M41VAGQ2VA2Q0VSFJNG4H08W).
@@ -844,7 +871,19 @@ pub async fn stop(tmux: &dyn Terminal, pane: Option<&str>, server: &str) -> Resu
             );
         }
     }
-    Ok(panes.len())
+    Ok(Stopped {
+        count: panes.len(),
+        lines,
+    })
+}
+
+/// What [`stop`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Stopped {
+    /// The number of stopped workers.
+    pub count: usize,
+    /// A line for each worker with processes that lived after its pane.
+    pub lines: Vec<String>,
 }
 
 /// Stops the orphan processes of each worker of `tmux`, or of the one

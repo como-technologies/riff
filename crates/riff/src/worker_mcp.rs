@@ -36,9 +36,11 @@
 //! and the hooks of the plugin still load. They name no tool by its
 //! full name.
 //!
-//! The file is in the local files of riff (see [`local`](crate::local)),
-//! readable only by the person, because a server config can hold a
-//! token. The command line of a worker names only the file.
+//! The file is in the given folder of riff
+//! ([`given_dir`](crate::confine::given_dir)): each session reads it,
+//! and no session writes it (01M4DDWPGRM1P4A76GFHPQHMQF). Only the
+//! person reads it, because a server config can hold a token. The
+//! command line of a worker names only the file.
 
 use std::path::{Path, PathBuf};
 
@@ -200,6 +202,6 @@ pub fn prepare(main: &Path, riff: &Path) -> Result<PathBuf> {
     for name in missing {
         eprintln!("{}", crate::text::worker_mcp_missing(&name));
     }
-    let dir = crate::local::dir().context("cannot find the local files of riff: set HOME")?;
-    write(&dir, &config)
+    // No session writes it (01M4DDWPGRM1P4A76GFHPQHMQF).
+    write(&crate::confine::given_here()?, &config)
 }

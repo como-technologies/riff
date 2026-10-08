@@ -4108,10 +4108,12 @@
   its network and its rights on the forge. riff builds it from the
   paths of the session. Each part of the sandbox reads this one
   profile.
-- **01M4BPK72ZBZABCTWS9YM1M9QX** The lead writes the clone with its
-  worktrees, the local files of riff, its temp folder and its Claude
-  Code folder. It connects to the riff server, the forge, the package
-  registries and the model API. On the forge, it reads, plans,
+- **01M4BPK72ZBZABCTWS9YM1M9QX** The lead writes the worktrees of the
+  clone, a part of the git dir of the clone
+  (01M4DDWPN8FADA663TTZSVD698), the local files of riff, its temp
+  folder and its Claude Code folder. It reads the rest of the clone.
+  It connects to the riff server, the forge, the package registries
+  and the model API. On the forge, it reads, plans,
   comments, pushes a branch and opens a pull request.
 - **01M4BPK7AKTJD9Y9WVJQKTQY6M** A worker writes its worktree, its
   target folder, a part of the git dir of the clone
@@ -4561,6 +4563,33 @@
 - **01M4DEF6N91TDDK6201BBNNDTC** The broker does no work when it
   starts. It finds its session and signs in to riff-server at the
   first `outside` request, so it ends at once when its session ends.
+- **01M4DDWP9XSA14E0YF211XZYKR** The lead runs in the sandbox of the
+  lead profile. `riff workers lead` starts `claude` through `riff
+  workers sandbox --role lead --name NAME`, after the broker of the
+  lead starts.
+- **01M4DDWPC693RNWHY7P7XBZ9TB** Each tmux step and each signal of the
+  lead is an operation of the broker of the lead: `worker-panes`,
+  `tail-pane`, `workers-start`, `workers-stop`, `workers-reap`,
+  `oom-journal`, `pane-screen` and `pane-type`. The broker of a worker
+  or a verifier refuses each of them. `pane-screen` and `pane-type`
+  act only on the pane of the lead.
+- **01M4DDWPEGBAXKTS0X3THFB8VZ** The broker of a lead stops and reaps
+  only the workers with the clone mark of its own clone, also when the
+  lead names the pane or the session of another worker. A start takes
+  only a count from 1 to 64: the program, the server and the clone
+  come from the broker.
+- **01M4DDWPJZFHQ4N7CHPQ5VC1QF** tmux marks each worker pane with its
+  main clone, in the pane option `@riff-clone`.
+- **01M4DDWPGRM1P4A76GFHPQHMQF** Each file that riff gives `claude` at a
+  start is in a folder that no session writes: the MCP config in
+  `DATA/given`, the plugin in `DATA/claude-plugin`, the rules in
+  `DATA/rules`. `DATA` is `$XDG_DATA_HOME/riff`, else
+  `~/.local/share/riff`. Each AI role reads them.
+- **01M4DDWPN8FADA663TTZSVD698** The lead writes the worktrees of the
+  clone, and the `objects`, `refs`, `logs`, `worktrees` and
+  `FETCH_HEAD` of its git dir. It reads the rest of the clone. It
+  writes no `config`, `hooks`, `info` or `packed-refs` of the git dir,
+  and no other file of the clone.
 
 ## Open
 
