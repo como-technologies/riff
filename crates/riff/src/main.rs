@@ -616,6 +616,20 @@ enum CloudCommand {
         /// The name of the instance.
         name: String,
     },
+    /// Give an instance the GitHub App of riff
+    ///
+    /// riff-server makes the forge token of each session with this App.
+    /// It stores the private key in Secret Manager, where only the
+    /// service account of riff-server reads it, and the App ID in the
+    /// settings file. The next deploy gives both to riff-server.
+    Forge {
+        /// The name of the instance.
+        name: String,
+        /// The App ID, from the settings page of the App.
+        app: u64,
+        /// The private key file that GitHub gave you (.pem).
+        key: std::path::PathBuf,
+    },
     /// Deploy riff-server to an instance
     ///
     /// With a release tag, it deploys the image of that release from the
@@ -2398,6 +2412,12 @@ async fn cloud(command: &CloudCommand) -> Result<()> {
             let id = cloud::read_line("Client ID: ")?;
             let secret = cloud::read_hidden("Client secret (hidden): ")?;
             cloud::signin(&gcloud, &s, &cloud::file(&dir, name), &id, &secret)
+        }
+        CloudCommand::Forge { name, app, key } => {
+            let s = cloud::load(&dir, name)?;
+            let pem = std::fs::read_to_string(key)
+                .with_context(|| format!("cannot read {}", key.display()))?;
+            cloud::forge(&gcloud, &s, &cloud::file(&dir, name), *app, &pem)
         }
         CloudCommand::Deploy { name, tag, confirm } => {
             let s = cloud::load(&dir, name)?;

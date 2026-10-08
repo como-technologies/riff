@@ -4091,6 +4091,30 @@ pub const CLOUD_BAD_CLIENT_ID: &str = "A Google client ID ends in .apps.googleus
 /// The refusal of an empty client secret.
 pub const CLOUD_EMPTY_SECRET: &str = "The client secret is empty.";
 
+/// The refusal of `riff cloud forge` with a file that is no private key.
+pub const CLOUD_BAD_FORGE_KEY: &str = "The file is no private key in PEM form. Give the .pem file \
+     that GitHub gave you for the App.";
+
+/// What `riff cloud forge` says at its end.
+///
+/// ```
+/// use std::path::Path;
+/// assert_eq!(
+///     riff::text::cloud_forge_written(7, Path::new("deploy/cloud/shared.env"), "shared"),
+///     "App ID 7: written to deploy/cloud/shared.env. Commit that file when it is in a \
+///      repository. Delete the downloaded key file now. riff-server gets the App at the next \
+///      deploy: riff cloud deploy shared"
+/// );
+/// ```
+pub fn cloud_forge_written(app: u64, path: &Path, name: &str) -> String {
+    format!(
+        "App ID {app}: written to {}. Commit that file when it is in a repository. Delete the \
+         downloaded key file now. riff-server gets the App at the next deploy: riff cloud deploy \
+         {name}",
+        path.display()
+    )
+}
+
 /// The refusal of a name that cannot name an instance.
 pub fn cloud_bad_name(name: &str) -> String {
     format!(
