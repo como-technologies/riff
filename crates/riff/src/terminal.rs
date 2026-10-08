@@ -118,10 +118,11 @@ pub const JOIN: &str = "Join the riff.";
 /// );
 /// ```
 pub fn worker_settings(lsp: &[String]) -> String {
-    let off: serde_json::Map<String, serde_json::Value> = std::iter::once(crate::old_config::PLUGIN)
-        .chain(lsp.iter().map(String::as_str))
-        .map(|p| (p.to_owned(), false.into()))
-        .collect();
+    let off: serde_json::Map<String, serde_json::Value> =
+        std::iter::once(crate::old_config::PLUGIN)
+            .chain(lsp.iter().map(String::as_str))
+            .map(|p| (p.to_owned(), false.into()))
+            .collect();
     serde_json::json!({
         "remoteControlAtStartup": false,
         "awaySummaryEnabled": false,
