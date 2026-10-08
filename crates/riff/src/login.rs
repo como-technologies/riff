@@ -446,16 +446,32 @@ pub fn lock_path(server: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("riff-sign-in-{name}.lock"))
 }
 
+/// Opens the lock file `path` with no follow of a link: the temp dir of
+/// the broker is the temp folder of its session, which the session
+/// writes (01M4DWJ0CZDM0AX98TY8CCTC9F).
+///
+/// ```
+/// let temp = tempfile::tempdir()?;
+/// let person = tempfile::tempdir()?;
+/// let lock = temp.path().join("riff-sign-in-x.lock");
+/// riff::login::open_lock(&lock)?;
+/// let planted = temp.path().join("riff-sign-in-y.lock");
+/// std::os::unix::fs::symlink(person.path().join("new"), &planted)?;
+/// assert!(riff::login::open_lock(&planted).is_err());
+/// assert!(!person.path().join("new").exists());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn open_lock(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    let dir = path.parent().unwrap_or(std::path::Path::new("/"));
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    crate::nofollow::Dir::open(dir)?.create(name, 0o600)
+}
+
 /// Waits for the refresh lock of `server`. The lock ends when the file
 /// closes.
 async fn refresh_lock(server: &str) -> Result<std::fs::File> {
     let path = lock_path(server);
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .with_context(|| format!("cannot open {}", path.display()))?;
+    let file = open_lock(&path).with_context(|| format!("cannot open {}", path.display()))?;
     tokio::task::spawn_blocking(move || file.lock().map(|()| file))
         .await?
         .with_context(|| format!("cannot lock {}", path.display()))

@@ -41,6 +41,36 @@
 //! lock is stale, and riff ignores it. So a PID that the system gives
 //! to a new process again does not find a stale session.
 //!
+//! # The folder of riff and the own folder of a session
+//!
+//! A session in a sandbox must not write a file that riff outside each
+//! sandbox trusts (01M4DDZ8B3QBZATBPNHVFDH7BR). So the state has two
+//! parts:
+//!
+//! | Folder | Who writes it | Files |
+//! |---|---|---|
+//! | [`riff_dir`] | only riff outside each sandbox (01M4DWJ08GVFKV4EC6FNDZA1BD) | `tmux.conf`, `clones`, `worker-deaths`, the pool of build jobs, the said-once files of riff outside, `host-USER-REPO`, the files of the monitor of a host, the update of riff outside |
+//! | [`own`]: `RIFF/sessions/SESSION` | only the session SESSION (01M4DWJ0AQX8N7J9T02VJ0XHF1) | each file above that a process of the session writes, and `context-ID` |
+//!
+//! The sandbox sets [`OWN_VAR`] for `claude`. So [`dir`] and [`marks`]
+//! give the own folder to each process of the session, and the code of
+//! a session needs no change. Each AI role reads [`riff_dir`], and
+//! writes only its own folder and three files of the pool of build
+//! jobs (01M4DWJ0F7G527GN26KSA934N7). The wrapper removes the own
+//! folder when its session ends.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     O["riff outside"] -->|"writes"| R["RIFF: tmux.conf, clones, worker-deaths, jobs"]
+//!     S["a session in its sandbox"] -->|"reads"| R
+//!     S -->|"writes"| W["RIFF/sessions/SESSION"]
+//!     O -->|"reads with no follow of a link"| W
+//! ```
+//!
+//! riff outside reads a file of an own folder, for example `context-ID`
+//! for `riff workers reap`, with [`crate::nofollow::Dir`]
+//! (01M4DWJ0HK490A9KF6FTQ61F2X).
+//!
 //! The files are in [`dir`]. A reader looks for `mcp-PID` of each
 //! process above it, nearest first, up to [`MAX_DEPTH`] processes.
 //!
@@ -72,11 +102,34 @@ pub const MAX_DEPTH: usize = 8;
 #[derive(Debug)]
 pub struct Held(File);
 
-/// The directory of the files: `$RIFF_HOME/state` (see
+/// The variable that names the own state folder of a session in its
+/// sandbox ([`own`]). The sandbox sets it for `claude`
+/// (01M4DWJ0AQX8N7J9T02VJ0XHF1).
+pub const OWN_VAR: &str = "RIFF_STATE";
+
+/// The folder in [`riff_dir`] that holds the own folder of each session.
+pub const SESSIONS: &str = "sessions";
+
+/// The directory of the files of this process: the own folder of its
+/// session in a sandbox ([`OWN_VAR`]), else [`riff_dir`].
+pub fn dir() -> Option<PathBuf> {
+    own_here().or_else(riff_dir)
+}
+
+/// The own folder of the session of this process, from [`OWN_VAR`].
+/// `None` outside a sandbox.
+fn own_here() -> Option<PathBuf> {
+    std::env::var_os(OWN_VAR)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+/// The folder of riff: `$RIFF_HOME/state` (see
 /// [`home`](crate::home)), else `$XDG_RUNTIME_DIR/riff`, else
 /// `$XDG_STATE_HOME/riff`, else `$HOME/.local/state/riff`. `None`
-/// without `HOME`.
-pub fn dir() -> Option<PathBuf> {
+/// without `HOME`. Only riff outside each sandbox writes it; each AI
+/// role reads it (01M4DWJ08GVFKV4EC6FNDZA1BD).
+pub fn riff_dir() -> Option<PathBuf> {
     if let Some(home) = crate::home::dir() {
         return Some(home.join("state"));
     }
@@ -87,7 +140,70 @@ pub fn dir() -> Option<PathBuf> {
     )
 }
 
-/// [`dir`] from the values of `XDG_RUNTIME_DIR`, `XDG_STATE_HOME` and
+/// The own state folder of the session `session` in the folder of riff
+/// `riff`: `RIFF/sessions/SESSION`. Only that session writes it
+/// (01M4DWJ0AQX8N7J9T02VJ0XHF1).
+///
+/// ```
+/// use riff::local::own;
+/// use std::path::Path;
+///
+/// assert_eq!(own("/run/riff".as_ref(), "w1"), Path::new("/run/riff/sessions/w1"));
+/// assert_eq!(own("/run/riff".as_ref(), "../x"), Path::new("/run/riff/sessions/..-x"));
+/// assert_eq!(own("/run/riff".as_ref(), ".."), Path::new("/run/riff/sessions/-"));
+/// assert_eq!(own("/run/riff".as_ref(), ""), Path::new("/run/riff/sessions/-"));
+/// ```
+pub fn own(riff: &Path, session: &str) -> PathBuf {
+    let name = riff_core::name::sanitize(session);
+    let name = match name.chars().all(|c| c == '.') {
+        true => "-".to_owned(),
+        false => name,
+    };
+    riff.join(SESSIONS).join(name)
+}
+
+/// The own folder of a session for its wrapper: the drop deletes it
+/// when the session ends (01M4DWJ0AQX8N7J9T02VJ0XHF1). The sandbox makes
+/// it before `claude` starts.
+///
+/// ```
+/// let riff = tempfile::tempdir()?;
+/// let own = riff::local::Own::at(riff::local::own(riff.path(), "w1"));
+/// std::fs::create_dir_all(own.path())?;
+/// std::fs::write(own.path().join("mcp-42"), "w1")?;
+/// let path = own.path().to_owned();
+/// drop(own);
+/// assert!(!path.exists());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[derive(Debug)]
+pub struct Own(PathBuf);
+
+impl Own {
+    /// The own folder of the session `session` in [`riff_dir`].
+    pub fn of(session: &str) -> Option<Own> {
+        Some(Own::at(own(&riff_dir()?, session)))
+    }
+
+    /// The own folder at `path`.
+    pub fn at(path: PathBuf) -> Own {
+        Own(path)
+    }
+
+    /// The path of the folder.
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Own {
+    fn drop(&mut self) {
+        // It follows no link in the folder.
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// [`riff_dir`] from the values of `XDG_RUNTIME_DIR`, `XDG_STATE_HOME` and
 /// `HOME`. An empty value counts as unset.
 ///
 /// ```
@@ -364,6 +480,9 @@ pub fn update_log(dir: &Path) -> PathBuf {
 /// `$XDG_RUNTIME_DIR`: the system clears that directory at a logout,
 /// and the mark must hold until a join (01M3XQVJVJDX81QY38219SN96B).
 pub fn marks() -> Option<PathBuf> {
+    if let Some(own) = own_here() {
+        return Some(own);
+    }
     if let Some(home) = crate::home::dir() {
         return Some(home.join("state"));
     }

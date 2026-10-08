@@ -2169,7 +2169,7 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             ask_host(host, request, server).await
         }
         Some(Workers::Reap { pane }) => {
-            let dir = local::dir().context("no HOME: riff has no local dir")?;
+            let dir = local::riff_dir().context("no HOME: riff has no local dir")?;
             for line in riff::door::Door::of_machine().reap(pane.as_deref(), &dir)? {
                 println!("{line}");
             }
@@ -3277,7 +3277,7 @@ async fn session_start(server: &str) -> String {
         // (01M3ZV0TJX2H77RW6ZA3ERZT9H).
         if riff::worker::is_worker()
             && input.source.is_new_start()
-            && let Some(dir) = local::dir()
+            && let Some(dir) = local::riff_dir()
             && let Err(e) = riff::workload::mark(&dir, id)
         {
             eprintln!("riff: cannot write the start of the context: {e:#}");

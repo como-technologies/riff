@@ -197,7 +197,7 @@ use landlock::{
     RulesetAttr, RulesetCreatedAttr, RulesetStatus, Scope,
 };
 
-use crate::profile::{Endpoint, Profile, Role, Session};
+use crate::profile::{Endpoint, Profile, Refused, Role, Session};
 
 /// The highest Landlock ABI that riff asks for. The kernel applies the
 /// rights of its own ABI (01M4BTB74RD24WH59FA65KZ8J0).
@@ -262,7 +262,7 @@ pub fn ports(profile: &Profile) -> Vec<u16> {
 /// # let s = Session {
 /// #     home: "/h".into(), runtime: "/run/user/7".into(), clone: "/h/app".into(),
 /// #     worktree: "/h/app".into(), target: "/h/app/target".into(), temp: "/h/tmp".into(),
-/// #     claude: "/h/c".into(), rules: "/h/r.json".into(), state: "/run/user/7/riff".into(),
+/// #     claude: "/h/c".into(), rules: "/h/r.json".into(), state: "/run/user/7/riff".into(), own: "/run/user/7/riff/sessions/s1".into(), pool: vec![],
 /// #     tools: vec![], server: Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
 /// # };
 /// let worker = Profile::of(Role::Worker, &s).unwrap();
@@ -373,8 +373,12 @@ pub struct Here {
     pub temp: PathBuf,
     /// The data root of riff ([`data_from`]).
     pub data: PathBuf,
-    /// The local files of riff ([`crate::local::dir`]).
+    /// The folder of riff ([`crate::local::riff_dir`]).
     pub state: PathBuf,
+    /// The own state folder of the session ([`crate::local::own`]). In
+    /// a session, a sandbox of its own (`riff workers git`) keeps the
+    /// own folder of that session ([`crate::local::OWN_VAR`]).
+    pub own: PathBuf,
     /// The paths that each role reads: each folder of `PATH`, the
     /// toolchain, the folders of the programs, the settings of riff and
     /// of git.
@@ -416,7 +420,9 @@ impl Here {
         let temp = std::env::temp_dir();
         let data =
             data_from(var("XDG_DATA_HOME"), var("HOME")).context("the sandbox needs HOME")?;
-        let state = crate::local::dir().context("the sandbox needs a local dir of riff")?;
+        let state = crate::local::riff_dir().context("the sandbox needs a local dir of riff")?;
+        let own = var(crate::local::OWN_VAR)
+            .map_or_else(|| crate::local::own(&state, &session), PathBuf::from);
         let mut tools: Vec<PathBuf> = var("PATH")
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default();
@@ -463,6 +469,7 @@ impl Here {
             temp,
             data,
             state,
+            own,
             tools,
             server,
         })
@@ -488,7 +495,9 @@ impl Here {
     /// The [`Session`] of these facts, with each path resolved
     /// ([`resolve`]). A tool path that gives the home of the person or a
     /// secret is left out (01M4BTB7757XF8RZ6MRXKTM8SB). Each other path
-    /// goes as it is: [`Profile::of`] checks it.
+    /// goes as it is: [`Profile::of`] checks it. A target in the worktree
+    /// that a link takes out of the worktree is refused
+    /// (01M4DWJ0KT7G2RX05X00YGVN21).
     ///
     /// ```
     /// use riff::profile::Endpoint;
@@ -504,10 +513,11 @@ impl Here {
     ///     temp: "/nowhere/tmp/s1".into(),
     ///     data: "/nowhere/h/.local/share/riff".into(),
     ///     state: "/nowhere/run/riff".into(),
+    ///     own: "/nowhere/run/riff/sessions/s1".into(),
     ///     tools: vec!["/usr/bin".into(), "/nowhere/h".into(), "/nowhere/h/.ssh".into()],
     ///     server: Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
     /// };
-    /// let s = here.session();
+    /// let s = here.session().unwrap();
     /// assert_eq!(s.clone, std::path::Path::new("/nowhere/h/app"));
     /// // A worker starts in the main clone: it gets the folder of the
     /// // worktrees.
@@ -518,7 +528,7 @@ impl Here {
     /// // the home and a secret go.
     /// assert_eq!(s.tools, ["/usr/bin", "/nowhere/h/app/.cargo"].map(std::path::PathBuf::from));
     /// ```
-    pub fn session(&self) -> Session {
+    pub fn session(&self) -> Result<Session, Refused> {
         let common = resolve(&self.common);
         let clone = match common.file_name() {
             Some(name) if name == ".git" => {
@@ -534,7 +544,7 @@ impl Here {
         let target = match &self.target {
             Some(target) => resolve(target),
             None if worktree == worktrees => worktree.clone(),
-            None => worktree.join("target"),
+            None => in_root(&worktree, "target")?,
         };
         let mut session = Session {
             home: resolve(&self.home),
@@ -546,6 +556,8 @@ impl Here {
             claude: resolve(&claude_dir(&self.data, &self.session)),
             rules: resolve(&rules_file(&self.data, &self.session)),
             state: resolve(&self.state),
+            own: resolve(&self.own),
+            pool: crate::jobserver::session_files(&resolve(&self.state)),
             tools: vec![],
             server: self.server.clone(),
         };
@@ -559,7 +571,31 @@ impl Here {
             }
         }
         session.tools = tools;
-        session
+        Ok(session)
+    }
+}
+
+/// The path `name` in the folder `root`, with each link resolved. A
+/// session writes `root`, so it can put a link at `name`: a path that
+/// the link takes out of `root` is refused (01M4DWJ0KT7G2RX05X00YGVN21).
+///
+/// ```
+/// use riff::confine::in_root;
+/// use riff::profile::Refused;
+///
+/// let tree = tempfile::tempdir()?;
+/// let root = tree.path().canonicalize()?;
+/// assert_eq!(in_root(&root, "target")?, root.join("target"));
+/// let away = tempfile::tempdir()?;
+/// std::os::unix::fs::symlink(away.path(), root.join("target"))?;
+/// assert!(matches!(in_root(&root, "target"), Err(Refused::OutOfRoot(..))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn in_root(root: &Path, name: &str) -> Result<PathBuf, Refused> {
+    let path = resolve(&root.join(name));
+    match path.starts_with(root) {
+        true => Ok(path),
+        false => Err(Refused::OutOfRoot(path, root.to_owned())),
     }
 }
 
@@ -652,8 +688,9 @@ pub fn shim(
 /// The profile of `role` for the session of `here`: each path resolved,
 /// and checked by [`Profile::of`].
 pub fn profile(role: Role, here: &Here) -> Result<Profile> {
-    let session = here.session();
-    Profile::of(role, &session).with_context(|| format!("riff makes no sandbox for the {role}"))
+    here.session()
+        .and_then(|session| Profile::of(role, &session))
+        .with_context(|| format!("riff makes no sandbox for the {role}"))
 }
 
 /// The sandbox that riff applied to this process.
@@ -691,9 +728,11 @@ pub fn apply(profile: &Profile, ports: &[u16]) -> Result<Applied> {
     let files: Vec<&Path> = profile.write_files().collect();
     for path in profile.write_paths() {
         let _ = match files.contains(&path) {
+            // No open of a file that is there: an open of the named pipe of
+            // the pool waits for a reader.
             true => std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
+                .write(true)
+                .create_new(true)
                 .open(path)
                 .map(drop),
             false => std::fs::create_dir_all(path),
@@ -1017,8 +1056,8 @@ pub fn run_git(server: &str, tree: &Path, args: &[OsString]) -> Result<()> {
     let mut git = git_in_tree(&main, &tree)?;
     let here = Here::of_dir(&tree, server, Some(GIT_NAME))?;
     // The temp dir of this process can be `/tmp`, which holds the tmux
-    // sockets of the person: git gets a temp folder in the riff state.
-    let temp = here.state.join(GIT_NAME);
+    // sockets of the person: git gets its own state folder as its temp.
+    let temp = here.own.clone();
     std::fs::create_dir_all(&temp).with_context(|| format!("cannot make {}", temp.display()))?;
     let here = here.with_temp(&temp);
     let profile = profile(Role::Worker, &here)?;
@@ -1158,7 +1197,7 @@ pub fn run(
     use std::os::unix::process::CommandExt;
     let here = Here::of_dir(&std::env::current_dir()?, server, name)?.with_program(program);
     let profile = profile(role, &here)?;
-    let session = here.session();
+    let session = here.session()?;
     // No crash in the session or its test runs starts the crash helper
     // of the system (01M4C6HE4D4ADJVBCC6EW8FP0X).
     no_core_dumps()?;
@@ -1182,6 +1221,7 @@ pub fn run(
     let mut cmd = std::process::Command::new(program);
     cmd.args(args)
         .env(CLAUDE_CONFIG_DIR, &session.claude)
+        .env(crate::local::OWN_VAR, &session.own)
         .env(crate::broker::VAR, broker.as_raw_fd().to_string())
         .env_remove("TMUX")
         .env_remove("TMUX_PANE");

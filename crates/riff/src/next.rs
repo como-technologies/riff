@@ -507,7 +507,7 @@ pub fn clear_lock(session: &str) -> Result<std::fs::File> {
 /// (01M3ZV0TJX2H77RW6ZA3ERZT9H) is later. So the check is of an old
 /// context (01M43STEE72Q9TD8ZNFS3273M3). False with no start.
 pub fn newer_context(session: &str, since: Option<u64>) -> bool {
-    let started = local::dir().and_then(|dir| crate::workload::context_start(&dir, session));
+    let started = local::riff_dir().and_then(|dir| crate::workload::context_start(&dir, session));
     newer(started, since)
 }
 

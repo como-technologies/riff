@@ -172,6 +172,43 @@ pub fn dir(local: &Path) -> PathBuf {
     local.join(DIR)
 }
 
+/// The files of the pool in the folder of riff `riff` that a session
+/// writes: the pipe and the locks of a taker (01M4DWJ0F7G527GN26KSA934N7).
+/// Only riff outside each sandbox writes the rest of [`DIR`]. Empty when
+/// no pipe is there.
+///
+/// ```
+/// use riff::jobserver::{Pool, dir, session_files};
+///
+/// let riff = tempfile::tempdir()?;
+/// assert!(session_files(riff.path()).is_empty());
+/// let pool = Pool::hold(&dir(riff.path()), 4, 1)?;
+/// let files = session_files(riff.path());
+/// let names: Vec<_> = files.iter().filter_map(|f| f.file_name()?.to_str()).collect();
+/// assert_eq!(names, ["fifo", "take.lock", "hold.lock"]);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn session_files(riff: &Path) -> Vec<PathBuf> {
+    pool_files(&dir(riff))
+}
+
+/// [`session_files`] of the pool folder `dir`.
+pub fn pool_files(dir: &Path) -> Vec<PathBuf> {
+    use std::os::unix::fs::FileTypeExt;
+    let fifo = dir.join(FIFO);
+    if !std::fs::symlink_metadata(&fifo).is_ok_and(|m| m.file_type().is_fifo()) {
+        return Vec::new();
+    }
+    let mut files = vec![fifo];
+    files.extend(
+        [TAKE, HOLD]
+            .map(|f| dir.join(f))
+            .into_iter()
+            .filter(|f| std::fs::symlink_metadata(f).is_ok_and(|m| m.is_file())),
+    );
+    files
+}
+
 /// The value of `MAKEFLAGS` for the pipe `fifo`.
 ///
 /// ```
@@ -277,6 +314,8 @@ impl Pool {
         let _init = lock(&dir.join(INIT), FlockArg::LockExclusive)?;
         let path = dir.join(FIFO);
         let hold = open_lock(&dir.join(HOLD))?;
+        // A taker in a sandbox opens it, and cannot make it.
+        drop(open_lock(&dir.join(TAKE))?);
         let (hold, size, counted, new) = match Flock::lock(hold, FlockArg::LockExclusiveNonblock) {
             Ok(hold) => {
                 match std::fs::remove_file(&path) {

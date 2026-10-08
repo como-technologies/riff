@@ -261,37 +261,71 @@ impl Files {
         self.dir.join("ask")
     }
 
+    /// The folder of the files, open with no follow of a link
+    /// ([`Dir`](crate::nofollow::Dir)): the session writes its temp
+    /// folder (01M4DWJ0CZDM0AX98TY8CCTC9F). With `make`, it makes the
+    /// folder when it is not there.
+    fn open(&self, make: bool) -> std::io::Result<crate::nofollow::Dir> {
+        let parent = self.dir.parent().unwrap_or(Path::new("/"));
+        let name = self.dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        // No session writes the folder above the temp folder.
+        if make {
+            std::fs::create_dir_all(parent)?;
+        }
+        crate::nofollow::Dir::open(parent)?.sub(name, make.then_some(0o700))
+    }
+
     /// Writes `token` for git and for `gh`. Each file is new and renamed
     /// into place, so a reader sees the old token or the new one. Only
-    /// the person reads them.
+    /// the person reads them. A link that the session put in the place
+    /// of a folder makes it fail, and the target of the link does not
+    /// change.
+    ///
+    /// ```
+    /// use riff::forge::{Files, Token, TokenRole};
+    ///
+    /// let temp = tempfile::tempdir()?;
+    /// let files = Files::in_temp(temp.path());
+    /// let token = Token {
+    ///     role: TokenRole::Worker,
+    ///     token: "ghs_1".into(),
+    ///     ends: std::time::SystemTime::now(),
+    ///     permissions: Default::default(),
+    /// };
+    /// files.write(&token)?;
+    /// assert_eq!(files.token()?, "ghs_1");
+    /// files.clear()?;
+    /// assert!(files.token().is_err());
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
     pub fn write(&self, token: &Token) -> Result<()> {
-        use std::os::unix::fs::DirBuilderExt;
-        let gh = self.gh_dir();
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&gh)
-            .with_context(|| format!("cannot make {}", gh.display()))?;
-        put(&self.token_path(), &token.token)?;
+        let fail = || format!("cannot write the forge token in {}", self.dir.display());
+        let dir = self.open(true).with_context(fail)?;
+        dir.put("token", token.token.as_bytes(), 0o600)
+            .with_context(fail)?;
         let hosts = format!(
             "github.com:\n    oauth_token: {}\n    user: {TOKEN_USER}\n",
             token.token
         );
-        put(&gh.join("hosts.yml"), &hosts)
+        dir.sub("gh", Some(0o700))
+            .and_then(|gh| gh.put("hosts.yml", hosts.as_bytes(), 0o600))
+            .with_context(fail)
     }
 
     /// Removes the token for git and for `gh`. A file that is not there
     /// is no fault.
     pub fn clear(&self) -> Result<()> {
-        for path in [self.token_path(), self.gh_dir().join("hosts.yml")] {
-            match std::fs::remove_file(&path) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                    return Err(e).with_context(|| format!("cannot remove {}", path.display()));
-                }
-                _ => {}
-            }
+        let fail = || format!("cannot remove the forge token in {}", self.dir.display());
+        let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+        let dir = match self.open(false) {
+            Err(e) if gone(&e) => return Ok(()),
+            dir => dir.with_context(fail)?,
+        };
+        dir.remove("token").with_context(fail)?;
+        match dir.sub("gh", None) {
+            Err(e) if gone(&e) => Ok(()),
+            gh => gh.and_then(|gh| gh.remove("hosts.yml")).with_context(fail),
         }
-        Ok(())
     }
 
     /// The token that [`Files::write`] wrote last.
@@ -414,21 +448,6 @@ impl ForgeEnv {
         }
         cmd
     }
-}
-
-/// Writes `text` to `path` with only the person as reader: a new file,
-/// renamed into place.
-fn put(path: &Path, text: &str) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let fail = || format!("cannot write {}", path.display());
-    let mut new = tempfile::NamedTempFile::new_in(dir).with_context(fail)?;
-    new.as_file()
-        .set_permissions(std::fs::Permissions::from_mode(0o600))
-        .with_context(fail)?;
-    std::io::Write::write_all(&mut new, text.as_bytes()).with_context(fail)?;
-    new.persist(path).map_err(|e| e.error).with_context(fail)?;
-    Ok(())
 }
 
 /// The answer of `riff forge credential OPERATION` to git, for the
@@ -657,6 +676,48 @@ impl Default for Poll {
 mod tests {
     use super::*;
     use crate::profile::Right;
+
+    fn token(text: &str) -> Token {
+        Token {
+            role: TokenRole::Worker,
+            token: text.into(),
+            ends: SystemTime::now(),
+            permissions: BTreeMap::new(),
+        }
+    }
+
+    /// 01M4DWJ0CZDM0AX98TY8CCTC9F: the wrapper writes the token files in
+    /// the temp folder of the session, which the session writes. A link
+    /// that the session put there makes the wrapper refuse, and the
+    /// target of the link does not change.
+    #[test]
+    fn a_planted_link_in_the_temp_folder_gets_no_token() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let person = tempfile::tempdir().unwrap();
+        let bashrc = person.path().join("bashrc");
+        std::fs::write(&bashrc, "mine").unwrap();
+        let files = Files::in_temp(temp.path());
+
+        // A link in the place of the folder `forge` or `gh`.
+        symlink(person.path(), temp.path().join("forge")).unwrap();
+        assert!(files.write(&token("ghs_1")).is_err());
+        assert!(files.clear().is_err());
+        std::fs::remove_file(temp.path().join("forge")).unwrap();
+        std::fs::create_dir(temp.path().join("forge")).unwrap();
+        symlink(person.path(), temp.path().join("forge/gh")).unwrap();
+        assert!(files.write(&token("ghs_1")).is_err());
+        assert_eq!(std::fs::read_dir(person.path()).unwrap().count(), 1);
+
+        // A link in the place of a file: the new file replaces the link.
+        std::fs::remove_file(temp.path().join("forge/gh")).unwrap();
+        symlink(&bashrc, temp.path().join("forge/token")).unwrap();
+        files.write(&token("ghs_2")).unwrap();
+        assert_eq!(files.token().unwrap(), "ghs_2");
+        assert_eq!(std::fs::read_to_string(&bashrc).unwrap(), "mine");
+        files.clear().unwrap();
+        assert_eq!(std::fs::read_to_string(&bashrc).unwrap(), "mine");
+    }
 
     /// The GitHub permissions of one right of a role.
     fn grants(right: Right) -> &'static [(&'static str, Access)] {

@@ -56,6 +56,8 @@
 //!     claude: "/home/ada/.local/share/riff/claude/s1".into(),
 //!     rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
 //!     state: "/run/user/1000/riff".into(),
+//!     own: "/run/user/1000/riff/sessions/s1".into(),
+//!     pool: vec![],
 //!     tools: vec![],
 //!     server: Endpoint::of_url("https://riff.example.com").unwrap(),
 //! };
@@ -245,7 +247,10 @@ pub fn clone_session(
 ) -> Result<Session, String> {
     let here =
         crate::confine::Here::of_dir(clone, server, Some(name)).map_err(|e| format!("{e:#}"))?;
-    Ok(here.with_temp(temp).with_program(claude).session())
+    here.with_temp(temp)
+        .with_program(claude)
+        .session()
+        .map_err(|e| e.to_string())
 }
 
 /// The rules of `role` for `session`, from the disk, or the line that
@@ -312,6 +317,8 @@ mod tests {
             claude: "/home/ada/.local/share/riff/claude/s1".into(),
             rules: "/home/ada/.local/share/riff/rules/s1.json".into(),
             state: "/run/user/1000/riff".into(),
+            own: "/run/user/1000/riff/sessions/s1".into(),
+            pool: vec![],
             tools: vec!["/home/ada/.cargo/bin".into(), "/home/ada/.rustup".into()],
             server: Endpoint::of_url("https://riff.example.com").unwrap(),
         }
