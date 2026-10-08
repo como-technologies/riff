@@ -3946,7 +3946,7 @@ thing that its sandbox allows.
 | Actor | Holds | Runs |
 |---|---|---|
 | You | your home, your keyring, your SSH keys, the sign-in of `gh`, your Claude plan token | outside each sandbox |
-| The lead | its grant, the forge token of the lead | with no sandbox yet (#630) |
+| The lead | its grant, the forge token of the lead | in its sandbox; its broker runs its tmux steps |
 | A worker or a verifier | its grant, the forge token of its role, its worktree | in its sandbox |
 | A test run | its temp folder and its target | in its own namespaces, with loopback only |
 | riff outside: the wrapper, the broker, `riff worktrees clean`, `riff workers host`, the start of `riff` | your rights | outside each sandbox, as you |
@@ -4003,6 +4003,8 @@ Each row is a surface with a control, and the test of that control.
 | The user manager of systemd | a call | systemd | no profile reaches a bus of systemd | `the_worker_profile_has_no_access_to_the_systemd_user_bus` |
 | A host request | a request in the name of the lead | `riff workers host` | only a signed request of the lead | `a_host_refuses_a_request_that_is_not_from_the_lead` |
 | The stop file | `.riff-stop` in its temp folder | the wrapper | the wrapper reads only that the file is there | `the_server_stops_an_idle_worker_through_its_wrapper` |
+| The lead | the worktrees of the clone and the git parts of a worker; an operation of its broker | each git command of riff, tmux, the processes of its workers | the lead writes no config, hooks, info, packed-refs or other file of the clone; its tmux steps and signals are operations of its broker, only on the workers with the clone mark of its clone | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker`, `the_lead_writes_no_config_hooks_info_or_packed_refs_of_the_clone`, `a_stop_of_a_worker_of_another_clone_stops_nothing`, `only_the_broker_of_a_lead_runs_the_operations_of_the_lead` |
+| The MCP config of a session | a write of `workers-mcp.json` | the `claude` of the lead and of each worker | the file is in the given folder of riff, outside each write path | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker` |
 <!-- /surfaces -->
 
 ### The shared surfaces with no control yet
@@ -4013,8 +4015,6 @@ proposed accept. Mike signs off this table before the release 2.0.0.
 <!-- open-surfaces -->
 | Surface | A session writes or asks | Read or run outside by | Risk | Decision |
 |---|---|---|---|---|
-| The lead | the clone, also its git config and hooks | each git command of riff, the person | the lead runs with no sandbox | #630 |
-| The MCP config of a session | `workers-mcp.json` in the riff state folder | the `claude` of the lead and of each worker | a program runs outside a sandbox | #630 |
 | The tmux config of riff | `tmux.conf` in the riff state folder | the tmux server of riff, at its start | a program runs outside a sandbox, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
 | The list of clones | `clones` in the riff state folder | `riff`, at its start | riff starts the lead in a folder that a session picked | #655: merge before 2.0.0, or Mike accepts at the sign-off |
 | The deaths of workers | `worker-deaths` in the riff state folder | the rollout, each workers host | riff starts or stops workers on a false count, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
