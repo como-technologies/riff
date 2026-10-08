@@ -2540,7 +2540,11 @@ async fn outside_list(
     Extension(signed_in): Extension<SignedIn>,
     Json(_): Json<OutsideList>,
 ) -> Reply<OutsideRequests> {
-    need_admin(&s, signed_in.who.user(), "list the requests to run outside the sandbox")?;
+    need_admin(
+        &s,
+        signed_in.who.user(),
+        "list the requests to run outside the sandbox",
+    )?;
     let requests = s
         .outside
         .lock()
@@ -2557,7 +2561,11 @@ async fn outside_decide(
     Extension(signed_in): Extension<SignedIn>,
     Json(r): Json<OutsideDecide>,
 ) -> Reply<OutsideRequest> {
-    need_admin(&s, signed_in.who.user(), "approve a request to run outside the sandbox")?;
+    need_admin(
+        &s,
+        signed_in.who.user(),
+        "approve a request to run outside the sandbox",
+    )?;
     let decided = s
         .outside
         .lock()

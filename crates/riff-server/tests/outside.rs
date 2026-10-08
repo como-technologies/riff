@@ -117,7 +117,7 @@ async fn an_admin_approves_and_the_session_that_asked_takes_it_one_time() {
     assert_eq!(waits.state, OutsideState::Asked);
 
     let list: OutsideRequests = mike.ok(&base, "outside/list", json!({ "me": MIKE })).await;
-    assert_eq!(list.requests, [asked.clone()]);
+    assert_eq!(list.requests, std::slice::from_ref(&asked));
     let approved: OutsideRequest = mike.ok(&base, "outside/decide", approve(MIKE)).await;
     assert_eq!(approved.state, OutsideState::Approved);
     assert_eq!(approved.decided_by.as_deref(), Some("mike"));
@@ -145,7 +145,10 @@ async fn an_admin_approves_and_the_session_that_asked_takes_it_one_time() {
         .collect();
     assert_eq!(bodies.len(), 3, "{bodies:#?}");
     for body in &bodies {
-        assert!(body.contains("mike/a6cf asks to run `sudo true` in /w/issue-1"), "{body}");
+        assert!(
+            body.contains("mike/a6cf asks to run `sudo true` in /w/issue-1"),
+            "{body}"
+        );
         assert!(body.contains("reason: the test needs root"), "{body}");
     }
     assert!(bodies[1].contains("approved by mike"), "{}", bodies[1]);

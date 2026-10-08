@@ -13,8 +13,8 @@ use chrono::{DateTime, NaiveDate, TimeZone};
 use crate::pr::{Reported, Verdict};
 use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{OutsideRequest, OutsideState};
 use riff_core::selector::Selector;
+use riff_core::wire::{OutsideRequest, OutsideState};
 
 use crate::api::{Checked, Claimed, Inbox, Told};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
@@ -4734,9 +4734,14 @@ pub fn outside_list(requests: &[OutsideRequest]) -> String {
     for r in requests {
         let state = match r.state {
             OutsideState::Asked => "asked".to_owned(),
-            OutsideState::Approved => format!("approved by {}", r.decided_by.as_deref().unwrap_or("?")),
+            OutsideState::Approved => {
+                format!("approved by {}", r.decided_by.as_deref().unwrap_or("?"))
+            }
             OutsideState::Denied => format!("denied by {}", r.decided_by.as_deref().unwrap_or("?")),
-            OutsideState::Ran => format!("ran, approved by {}", r.decided_by.as_deref().unwrap_or("?")),
+            OutsideState::Ran => format!(
+                "ran, approved by {}",
+                r.decided_by.as_deref().unwrap_or("?")
+            ),
         };
         let _ = writeln!(
             out,

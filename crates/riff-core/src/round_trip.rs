@@ -804,7 +804,9 @@ mod tests {
                 taken: true,
             };
             c.trip(&request);
-            c.trip(&OutsideState::Ran);
+            for state in [OutsideState::Asked, OutsideState::Denied, OutsideState::Ran] {
+                c.trip(&state);
+            }
             c.trip(&OutsideRequests {
                 requests: vec![request],
             });

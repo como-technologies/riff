@@ -146,7 +146,10 @@ impl Outside {
         self.sweep(now);
         let request = self.get(id)?;
         if request.state != OutsideState::Asked {
-            return Err(format!("the request {id} is {}, not asked", name(request.state)));
+            return Err(format!(
+                "the request {id} is {}, not asked",
+                name(request.state)
+            ));
         }
         request.state = if approve {
             OutsideState::Approved
@@ -187,7 +190,9 @@ impl Outside {
         self.requests
             .get_mut(id)
             .map(|(request, _)| request)
-            .ok_or_else(|| format!("the server has no request {id}: it is old, or the server started again"))
+            .ok_or_else(|| {
+                format!("the server has no request {id}: it is old, or the server started again")
+            })
     }
 
     /// Forgets each request older than [`LIFE`].
@@ -336,7 +341,11 @@ mod tests {
         assert!(outside.ask(&me, vec![], "/w", "r", now).is_err());
         assert!(outside.ask(&me, cmd(), "/w", " ", now).is_err());
         assert!(outside.ask(&me, cmd(), "w", "r", now).is_err());
-        assert!(outside.ask(&me, cmd(), "/w", &"r".repeat(MAX), now).is_err());
+        assert!(
+            outside
+                .ask(&me, cmd(), "/w", &"r".repeat(MAX), now)
+                .is_err()
+        );
         assert!(outside.list(now).is_empty());
     }
 

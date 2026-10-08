@@ -73,12 +73,14 @@ pub async fn ask(server: &str, reason: &str, program: &OsString, args: &[OsStrin
 /// own: the broker serves each request in a thread.
 pub fn take(server: &str, me: SessionUri) -> Result<broker::Take> {
     let api = Api::new(server).signed_in(me.who().session())?;
-    Ok(std::sync::Arc::new(move |id: &str| -> Result<OutsideRequest> {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(api.outside_take(&me, id))
-    }))
+    Ok(std::sync::Arc::new(
+        move |id: &str| -> Result<OutsideRequest> {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?
+                .block_on(api.outside_take(&me, id))
+        },
+    ))
 }
 
 /// `riff outside list`, `riff outside approve` and `riff outside deny`
@@ -92,7 +94,9 @@ fn person(server: &str, command: &str) -> Result<(Api, SessionUri)> {
 /// `riff outside list`.
 pub async fn list(server: &str) -> Result<String> {
     let (api, me) = person(server, "riff outside list")?;
-    Ok(crate::text::outside_list(&api.outside_list(&me).await?.requests))
+    Ok(crate::text::outside_list(
+        &api.outside_list(&me).await?.requests,
+    ))
 }
 
 /// `riff outside approve ID` (`approve` true) or `riff outside deny ID`.

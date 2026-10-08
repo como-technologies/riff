@@ -333,9 +333,14 @@ pub fn serve(socket: OwnedFd, root: &Path, clone: &Path, riff: &Path, take: Take
             let Some(reply) = fds.next() else { return };
             let answer = match request {
                 Err(e) => Reply::Refused(format!("a request that riff cannot read: {e}")),
-                Ok(request) if request.op == "outside" => {
-                    outside(&request, &root, fds.collect(), &take, OUTSIDE_EVERY, OUTSIDE_WAIT)
-                }
+                Ok(request) if request.op == "outside" => outside(
+                    &request,
+                    &root,
+                    fds.collect(),
+                    &take,
+                    OUTSIDE_EVERY,
+                    OUTSIDE_WAIT,
+                ),
                 Ok(request) => answer(&request, &root, &clone, &riff, fds.collect()),
             };
             let _ = send(&reply, &answer, &[]);
@@ -586,7 +591,11 @@ mod tests {
     /// A fake `riff` in `dir` that writes its `PWD` to the file `seen`.
     fn pwd_riff(dir: &Path, seen: &Path) -> PathBuf {
         let riff = dir.join("riff");
-        std::fs::write(&riff, format!("#!/bin/sh\necho \"$PWD\" > '{}'\n", seen.display())).unwrap();
+        std::fs::write(
+            &riff,
+            format!("#!/bin/sh\necho \"$PWD\" > '{}'\n", seen.display()),
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&riff, std::fs::Permissions::from_mode(0o755)).unwrap();
         riff
@@ -617,7 +626,10 @@ mod tests {
         // request: a change of the link after the check moves nothing.
         let reply = ask(session.as_raw_fd(), &request("test-run", &link)).unwrap();
         assert_eq!(reply, Reply::Code(0));
-        assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), sub.to_str().unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&seen).unwrap().trim(),
+            sub.to_str().unwrap()
+        );
     }
 
     /// The stdio of a request of a test: no stdin, and stdout and stderr
@@ -636,7 +648,9 @@ mod tests {
     fn outside_request(state: OutsideState, cwd: &Path, command: &[&str]) -> OutsideRequest {
         OutsideRequest {
             id: "7f3a9c21".into(),
-            by: "riff://mike@pangolin/acme/app?session=a6cf".parse().unwrap(),
+            by: "riff://mike@pangolin/acme/app?session=a6cf"
+                .parse()
+                .unwrap(),
             command: command.iter().map(|c| c.to_string()).collect(),
             cwd: cwd.to_string_lossy().into_owned(),
             reason: "a test".into(),
@@ -714,8 +728,14 @@ mod tests {
         let mut old = outside_request(OutsideState::Ran, &root, &command);
         old.taken = false;
         let reply = outside_of(&root, &takes(vec![old]), &out);
-        assert!(matches!(&reply, Reply::Refused(text) if text.contains("ran before")), "{reply:?}");
-        assert!(!ran.exists(), "the broker ran a command that it must refuse");
+        assert!(
+            matches!(&reply, Reply::Refused(text) if text.contains("ran before")),
+            "{reply:?}"
+        );
+        assert!(
+            !ran.exists(),
+            "the broker ran a command that it must refuse"
+        );
     }
 
     #[test]

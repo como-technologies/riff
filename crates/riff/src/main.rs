@@ -533,7 +533,7 @@ enum Command {
         #[command(subcommand)]
         command: ForgeCommand,
     },
-    /// Run one command outside the sandbox, after an admin approves it
+    /// Run one command outside the sandbox, when an admin approves
     ///
     /// The sandbox of a session is always on. A session asks to run one
     /// command outside it, one time, with a reason. The owner or an admin
