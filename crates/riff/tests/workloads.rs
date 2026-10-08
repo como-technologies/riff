@@ -39,17 +39,21 @@ esac
 exit 0
 "#;
 
-/// `gh pr view BRANCH` prints the file `pr-BRANCH.json`, else fails.
+/// `gh pr view --json number,state,headRefOid -- BRANCH` prints the file
+/// `pr-BRANCH.json`, else fails.
 /// `gh pr list --state merged --search SHA` prints the file
 /// `merged-SHA.json`, else `[]`.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
-if [ "$1 $2" = "pr view" ] && [ -f "$dir/pr-$3.json" ]; then cat "$dir/pr-$3.json"; exit 0; fi
+# riff puts -- before the branch (01M4DVXP49BXNJD1Y289PCEH31).
+if [ "$1 $2 $3 $4 $5" = "pr view --json number,state,headRefOid --" ] && [ -f "$dir/pr-$6.json" ]; then
+  cat "$dir/pr-$6.json"; exit 0
+fi
 if [ "$1 $2 $3 $4 $5" = "pr list --state merged --search" ]; then
   if [ -f "$dir/merged-$6.json" ]; then cat "$dir/merged-$6.json"; else echo '[]'; fi
   exit 0
 fi
-echo "no pull requests found for branch \"$3\"" >&2
+echo "no pull requests found for branch \"$6\"" >&2
 exit 1
 "#;
 
@@ -639,7 +643,7 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
     assert_eq!(
         line(&dead),
         "unlocked: the process of its lock is gone; kept: riff found no pull request: gh pr \
-         view worktree-issue-1 --json number,state,headRefOid: no pull requests found for \
+         view --json number,state,headRefOid -- worktree-issue-1: no pull requests found for \
          branch \"worktree-issue-1\""
     );
     assert_eq!(line(&live), "kept: a live process holds its lock");
@@ -751,6 +755,145 @@ async fn worktrees_clean_removes_a_worktree_with_no_work_of_its_own() {
             .trim()
             .is_empty()
     );
+}
+
+/// The `HEAD` of the worktree `name` of the clone of `r` names the
+/// branch `branch`, as a session can write it.
+fn head_names(r: &Riff, name: &str, branch: &str) {
+    let head = r.main().join(".git/worktrees").join(name).join("HEAD");
+    std::fs::write(head, format!("ref: refs/heads/{branch}\n")).unwrap();
+}
+
+/// The commit of `branch` in the `origin` of `r`, or `None`.
+fn on_origin(r: &Riff, branch: &str) -> Option<String> {
+    let refs = git(&r.root.path().join("origin.git"), &["show-ref"]);
+    let name = format!(" refs/heads/{branch}");
+    refs.lines()
+        .find_map(|l| l.strip_suffix(name.as_str()).map(str::to_owned))
+}
+
+/// 01M4DVXP49BXNJD1Y289PCEH31: `riff worktrees clean` takes the branch
+/// of a worktree from its name, not from its `HEAD`. It saves and pushes
+/// no work of a worktree whose `HEAD` names the default branch or a
+/// branch that starts with `-`, and it deletes no branch that the `HEAD`
+/// of a worktree names but that is not its own.
+#[tokio::test(flavor = "multi_thread")]
+async fn worktrees_clean_takes_the_branch_from_the_name_not_from_the_head() {
+    let r = Riff::new().await;
+    let main = r.main();
+    let before = on_origin(&r, "main").unwrap();
+
+    let on_main = worktree(&r, "issue-20");
+    head_names(&r, "issue-20", "main");
+    std::fs::write(on_main.join("work.txt"), "work").unwrap();
+    let dash = worktree(&r, "issue-21");
+    head_names(&r, "issue-21", "-f");
+    std::fs::write(dash.join("work.txt"), "work").unwrap();
+    git(&main, &["branch", "keep-me"]);
+    let other = worktree(&r, "issue-22");
+    head_names(&r, "issue-22", "keep-me");
+
+    let out = r.riff(&main, &["worktrees", "clean"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let printed = stdout(&out);
+    let line = |path: &Path| {
+        let start = format!("{}: ", path.display());
+        printed
+            .lines()
+            .find_map(|l| l.strip_prefix(&start).map(str::to_owned))
+            .unwrap_or_else(|| panic!("no line for {}: {printed}", path.display()))
+    };
+    assert_eq!(line(&on_main), "kept: it has work on no branch of its own");
+    assert_eq!(line(&dash), "kept: it has work on no branch of its own");
+    assert_eq!(
+        line(&other),
+        "removed: its HEAD is on the default branch of origin: it has no commit of its own"
+    );
+
+    assert_eq!(on_origin(&r, "main").unwrap(), before, "origin main moved");
+    assert_eq!(on_origin(&r, "-f"), None);
+    assert_eq!(on_origin(&r, "worktree-issue-20"), None);
+    let branches = git(&main, &["branch", "--list", "--format=%(refname)"]);
+    for branch in ["refs/heads/main", "refs/heads/keep-me"] {
+        assert!(
+            branches.lines().any(|b| b == branch),
+            "{branch}: {branches}"
+        );
+    }
+    assert!(on_main.join("work.txt").exists());
+    assert!(dash.join("work.txt").exists());
+}
+
+/// 01M4DVXP49BXNJD1Y289PCEH31: each git call of `riff worktrees clean`
+/// that names a worktree, a branch, a commit or a remote has `--`
+/// before the names. `GIT_TRACE` shows each call. The fake `gh` answers
+/// only with `--` before the branch.
+#[tokio::test(flavor = "multi_thread")]
+async fn worktrees_clean_puts_two_dashes_before_each_name() {
+    let r = Riff::new().await;
+    let main = r.main();
+    let merged = worktree(&r, "issue-30");
+    git(
+        &merged,
+        &["commit", "-q", "--allow-empty", "-m", "the work"],
+    );
+    git(&merged, &["push", "-q", "origin", "HEAD"]);
+    lock(
+        &r,
+        &merged,
+        "claude session issue-30 (pid 999999999 start 5)",
+    );
+    let head = git(&merged, &["rev-parse", "HEAD"]).trim().to_owned();
+    std::fs::write(
+        r.fake.path().join("pr-worktree-issue-30.json"),
+        format!(r#"{{"number":41,"state":"MERGED","headRefOid":"{head}"}}"#),
+    )
+    .unwrap();
+    let dirty = worktree(&r, "issue-31");
+    std::fs::write(dirty.join("work.txt"), "not committed").unwrap();
+    git(&dirty, &["config", "user.name", "t"]);
+    git(&dirty, &["config", "user.email", "t@t"]);
+    git(&dirty, &["config", "commit.gpgsign", "false"]);
+    let trace = r.run.path().join("git-trace.log");
+
+    let out = r
+        .riff(&main, &["worktrees", "clean"])
+        .env("GIT_TRACE", &trace)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let printed = stdout(&out);
+    assert!(
+        printed.contains(
+            "unlocked: the process of its lock is gone; removed with its branch \
+             worktree-issue-30: its pull request #41 is merged"
+        ),
+        "{printed}"
+    );
+    assert!(
+        printed.contains("saved: a WIP commit on worktree-issue-31"),
+        "{printed}"
+    );
+
+    let trace = std::fs::read_to_string(&trace).unwrap();
+    let calls: Vec<&str> = trace
+        .lines()
+        .filter_map(|l| l.split_once("trace: built-in: git ").map(|(_, call)| call))
+        .collect();
+    for command in [
+        "worktree unlock",
+        "worktree remove",
+        "update-ref",
+        "push",
+        "ls-remote",
+        "merge-base",
+    ] {
+        let found: Vec<&&str> = calls.iter().filter(|c| c.starts_with(command)).collect();
+        assert!(!found.is_empty(), "no git {command}: {trace}");
+        for call in found {
+            assert!(call.contains(" -- "), "no -- in git {call}");
+        }
+    }
 }
 
 /// The book has a how-to with an `sh` block for each new command, and

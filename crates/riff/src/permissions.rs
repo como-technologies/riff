@@ -12,7 +12,7 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     G["origin, origin/HEAD"] --> R["rules()"]
+//!     G["origin: its URL, and its HEAD on the remote"] --> R["rules()"]
 //!     R --> S["--settings of claude"]
 //! ```
 //!
@@ -102,7 +102,8 @@ pub struct Project {
     pub top: PathBuf,
     /// OWNER and REPO of a GitHub `origin`.
     pub repo: Option<(String, String)>,
-    /// The default branch: the branch of `origin/HEAD`, else `main`.
+    /// The default branch, from `origin` itself, else `main`
+    /// ([`crate::hygiene::default_branch`], 01M4DVXP20SHYTFE1D4NVF0FSF).
     pub branch: String,
 }
 
@@ -111,15 +112,11 @@ impl Project {
     pub fn of(dir: &Path) -> Project {
         let top =
             git(dir, &["rev-parse", "--show-toplevel"]).map_or_else(|| dir.into(), Into::into);
-        let repo = git(dir, &["remote", "get-url", "origin"])
+        let repo = git(dir, &["remote", "get-url", "--", "origin"])
             .filter(|url| url.contains("github.com"))
             .and_then(|url| parse_remote(&url));
-        let branch = git(
-            dir,
-            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-        )
-        .and_then(|b| b.strip_prefix("origin/").map(str::to_owned))
-        .unwrap_or_else(|| "main".into());
+        let branch = crate::hygiene::default_branch(dir, crate::hygiene::REMOTE_WAIT)
+            .unwrap_or_else(|_| "main".into());
         Project { top, repo, branch }
     }
 
@@ -155,26 +152,63 @@ mod tests {
     }
 
     #[test]
-    fn a_github_clone_gets_its_repo_and_its_default_branch() {
+    fn a_github_clone_gets_its_repo() {
         let dir = tempfile::tempdir().unwrap();
         git_in(dir.path(), &["init", "-q", "-b", "trunk"]);
         git_in(
             dir.path(),
             &["remote", "add", "origin", "git@github.com:acme/app.git"],
         );
-        git_in(
-            dir.path(),
-            &[
-                "symbolic-ref",
-                "refs/remotes/origin/HEAD",
-                "refs/remotes/origin/trunk",
-            ],
-        );
         let sub = dir.path().join("src");
         std::fs::create_dir(&sub).unwrap();
         let project = Project::of(&sub);
         assert_eq!(project.top, dir.path().canonicalize().unwrap());
         assert_eq!(project.repo, Some(("acme".into(), "app".into())));
+    }
+
+    /// 01M4DVXP20SHYTFE1D4NVF0FSF: the default branch comes from
+    /// `origin`, not from a `refs/remotes/origin/HEAD` that a session
+    /// wrote.
+    #[test]
+    fn the_default_branch_comes_from_origin_not_from_a_planted_ref() {
+        let dir = tempfile::tempdir().unwrap();
+        let (origin, clone) = (dir.path().join("origin.git"), dir.path().join("clone"));
+        git_in(
+            dir.path(),
+            &["init", "-q", "--bare", "-b", "trunk", "origin.git"],
+        );
+        git_in(dir.path(), &["init", "-q", "-b", "trunk", "clone"]);
+        git_in(
+            &clone,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "one",
+            ],
+        );
+        git_in(
+            &clone,
+            &["remote", "add", "origin", &origin.to_string_lossy()],
+        );
+        git_in(&clone, &["push", "-q", "origin", "trunk", "trunk:evil"]);
+        git_in(&clone, &["fetch", "-q", "origin"]);
+        git_in(
+            &clone,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/evil",
+            ],
+        );
+        let project = Project::of(&clone);
         assert_eq!(project.branch, "trunk");
         assert!(
             project

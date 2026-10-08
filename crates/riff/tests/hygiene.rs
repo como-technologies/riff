@@ -265,6 +265,45 @@ fn the_fast_forward_never_moves_a_clone_above_its_dir() {
     ));
 }
 
+/// 01M4DVXP20SHYTFE1D4NVF0FSF: the fast-forward takes the default
+/// branch from `origin`, and each ref by its full name. A session that
+/// points `refs/remotes/origin/HEAD` at its own branch, and makes a tag
+/// `origin/main` and a branch `origin/main`, does not move the clone to
+/// its commit.
+#[test]
+fn the_fast_forward_takes_the_default_branch_from_origin_not_from_a_planted_ref() {
+    let clone = Clone::behind();
+    let main = clone.main();
+    let seed = clone.root.path().join("seed");
+    git(&seed, &["commit", "-q", "--allow-empty", "-m", "planted"]);
+    git(&seed, &["push", "-q", "origin", "HEAD:evil"]);
+    git(&seed, &["reset", "-q", "--hard", "HEAD~1"]);
+    git(&main, &["fetch", "-q", "origin"]);
+    let planted = git(&main, &["rev-parse", "refs/remotes/origin/evil"]);
+    git(
+        &main,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/evil",
+        ],
+    );
+    git(&main, &["tag", "origin/main", &planted]);
+    git(&main, &["branch", "origin/main", &planted]);
+
+    assert!(matches!(
+        riff::hygiene::fast_forward(&main),
+        riff::hygiene::Fresh::Forwarded { ref branch, commits: 2, .. } if branch == "main"
+    ));
+    assert_eq!(clone.head(), clone.remote_head());
+    assert_ne!(clone.head(), planted);
+    assert_eq!(
+        git(&main, &["symbolic-ref", "HEAD"]),
+        "refs/heads/main",
+        "the clone stays on its branch"
+    );
+}
+
 #[test]
 fn workers_start_keeps_a_main_clone_with_local_changes() {
     let clone = Clone::behind();
