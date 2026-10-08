@@ -865,9 +865,9 @@ impl Top<'_> {
     ///   `admin`, and [`state::person`]. Each member of `who` gets a
     ///   line, also when away, when [`Top::show`] has no filter of a
     ///   host or a repository.
-    /// - A repository line: its short name when the repositories of the
-    ///   sessions have one owner, else `OWNER/REPO`
-    ///   (01M3WNHCD659FH3Z5VYYH69WWR).
+    /// - A repository line: [`text::Label::repo`], the name of the
+    ///   repository in the label of each of its sessions
+    ///   (01M3WNHCD659FH3Z5VYYH69WWR, 01M4CPVJ9ANPEBTWY9GETE2DGW).
     /// - A session: the first line has the short session ID, its
     ///   worktree `#WORKTREE`, the role tag `lead` or `worker`, and the
     ///   state word that the server derives
@@ -1197,7 +1197,7 @@ impl Top<'_> {
             }
             Level::Host => vec![(safe(&row.key), anstyle::Style::new())],
             Level::Repo => {
-                let name = row.sessions.first().map(|s| self.repo_name(s));
+                let name = row.sessions.first().map(|s| Self::repo_name(s));
                 vec![(
                     name.unwrap_or_else(|| safe(&row.key)),
                     anstyle::Style::new(),
@@ -1320,28 +1320,12 @@ impl Top<'_> {
             .collect()
     }
 
-    /// The name of the repository of `s`: its short name when the
-    /// repositories of the sessions have one owner, else `OWNER/REPO`,
-    /// and `-` outside git (01M3WNHCD659FH3Z5VYYH69WWR).
-    fn repo_name(&self, s: &SessionInfo) -> String {
-        let place = s.uri.place();
-        match place.repo() {
-            Repo::Git { name, .. } if self.one_owner() => safe(name),
-            _ => safe(&place.repo_text()),
-        }
-    }
-
-    /// True when the repositories of the sessions have one owner.
-    fn one_owner(&self) -> bool {
-        let mut owners = self
-            .sessions
-            .iter()
-            .filter_map(|s| match s.uri.place().repo() {
-                Repo::Git { owner, .. } => Some(owner),
-                Repo::None => None,
-            });
-        let first = owners.next();
-        owners.all(|owner| Some(owner) == first)
+    /// The name of the repository of `s`: [`text::Label::repo`], so the
+    /// repository row and the status line of `s` show one name
+    /// (01M3WNHCD659FH3Z5VYYH69WWR, 01M4CPVJ9ANPEBTWY9GETE2DGW).
+    fn repo_name(s: &SessionInfo) -> String {
+        let label = text::Label::of(&s.uri);
+        safe(&label.repo.unwrap_or_else(|| s.uri.place().repo_text()))
     }
 }
 
@@ -1504,6 +1488,39 @@ mod tests {
             assert_eq!(label, text::name(&s.uri), "{text}");
             let id = s.uri.who().session().unwrap();
             let line = text::statusline(id, Some(&s));
+            assert!(line.starts_with(&format!("{label} ")), "{line} {text}");
+        }
+    }
+
+    /// With repositories of two owners, the repository row of
+    /// `riff top` and the status line of each session still give one
+    /// name: the name of [`text::Label::repo`]
+    /// (01M3WNHCD659FH3Z5VYYH69WWR, 01M4CPVJ9ANPEBTWY9GETE2DGW).
+    #[test]
+    fn two_owners_give_one_label_in_top_and_the_status_line() {
+        use SessionState::{Busy, Idle};
+        let worker = info(
+            "riff://mike@pangolin/o/riff?session=8c7f26da-5cd6&claim=issue-604#issue-604",
+            Busy,
+        );
+        let other = info("riff://mike@pangolin/n/dotfiles?session=dbb36565-00e9", Idle);
+        let sessions = [worker, other];
+        let text = shown(&sessions, &BTreeMap::new(), &Show::default());
+        let rows = tree(&text);
+        for s in &sessions {
+            let label = text::Label::of(&s.uri);
+            let short = label.id.clone().unwrap();
+            let at = rows
+                .iter()
+                .position(|r| r.split_whitespace().any(|w| w == short))
+                .unwrap_or_else(|| panic!("{short}: {text}"));
+            let repo = rows[at - 1]
+                .split_whitespace()
+                .find(|w| !matches!(*w, "│" | "├─" | "└─"))
+                .unwrap();
+            assert_eq!(Some(repo), label.repo.as_deref(), "{text}");
+            let id = s.uri.who().session().unwrap();
+            let line = text::statusline(id, Some(s));
             assert!(line.starts_with(&format!("{label} ")), "{line} {text}");
         }
     }

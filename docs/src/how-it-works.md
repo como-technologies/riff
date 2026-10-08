@@ -956,9 +956,9 @@ mike  owner  online  6 sessions: 1 busy, 3 idle, 1 blocked, 2 claims
   the example, brett has one host and one repository, so the person,
   the host and the repository are on one line. So a small riff stays
   short.
-- A repository line has the short name of the repository. When the
-  repositories have more than one owner, it has the owner too:
-  `como-technologies/riff`.
+- A repository line has the short name of the repository, for example
+  `riff`. The status line and `riff who` use the same name. Two
+  repositories of two owners can have the same short name.
 - A session: the first line has the short session ID, the worktree of
   the session (`#issue-7` in the worktree `issue-7`, nothing in the
   main worktree), the tag `lead` or `worker`, and the state of the

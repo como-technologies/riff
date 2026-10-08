@@ -2108,9 +2108,10 @@
 - **01M3WNHCD659FH3Z5VYYH69WWR** The first line of a session in
   `riff top` names its worktree after the short session ID:
   `#WORKTREE`, or nothing in the main worktree. The session is under
-  the line of its repository. A repository line has the short name of
-  the repository when the repositories of the sessions have one owner,
-  else `OWNER/REPO`. The wave line names the repository of its board:
+  the line of its repository. A repository line has the name of the
+  repository in the label of its sessions
+  (01M4CPVJ9ANPEBTWY9GETE2DGW): the short name, also when the
+  repositories of the sessions have more than one owner. The wave line names the repository of its board:
   `Wave N (OWNER/REPO)`. Only a claim in that repository is on its
   board, and a session shows the title of an issue of its own
   repository.
