@@ -583,6 +583,141 @@ mod tests {
         assert!(ran.exists(), "the broker did not run test-run");
     }
 
+    /// A fake `riff` in `dir` that writes its `PWD` to the file `seen`.
+    fn pwd_riff(dir: &Path, seen: &Path) -> PathBuf {
+        let riff = dir.join("riff");
+        std::fs::write(&riff, format!("#!/bin/sh\necho \"$PWD\" > '{}'\n", seen.display())).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&riff, std::fs::Permissions::from_mode(0o755)).unwrap();
+        riff
+    }
+
+    #[test]
+    fn the_broker_refuses_a_parent_part_and_runs_in_the_folder_that_it_checked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::confine::resolve(tmp.path());
+        let (sub, link) = (root.join("sub"), root.join("link"));
+        std::fs::create_dir(&sub).unwrap();
+        std::os::unix::fs::symlink(&sub, &link).unwrap();
+        let seen = root.join("seen");
+        let session = broker(&root, &pwd_riff(&root, &seen));
+
+        // A `..` part is refused, also one that stays in the root.
+        for cwd in [root.join("sub/.."), root.join("../x"), link.join("..")] {
+            let reply = ask(session.as_raw_fd(), &request("test-run", &cwd)).unwrap();
+            assert!(
+                matches!(&reply, Reply::Refused(why) if why.contains("..")),
+                "{}: {reply:?}",
+                cwd.display()
+            );
+        }
+        assert!(!seen.exists(), "the broker ran a request with a .. part");
+
+        // The run is in the resolved folder, not in the link of the
+        // request: a change of the link after the check moves nothing.
+        let reply = ask(session.as_raw_fd(), &request("test-run", &link)).unwrap();
+        assert_eq!(reply, Reply::Code(0));
+        assert_eq!(std::fs::read_to_string(&seen).unwrap().trim(), sub.to_str().unwrap());
+    }
+
+    /// The stdio of a request of a test: no stdin, and stdout and stderr
+    /// to `out`.
+    fn stdio(out: &Path) -> Vec<OwnedFd> {
+        let file = std::fs::File::create(out).unwrap();
+        vec![
+            std::fs::File::open("/dev/null").unwrap().into(),
+            file.try_clone().unwrap().into(),
+            file.into(),
+        ]
+    }
+
+    /// A request of the server with the state `state`, the folder `cwd`
+    /// and the command `command`.
+    fn outside_request(state: OutsideState, cwd: &Path, command: &[&str]) -> OutsideRequest {
+        OutsideRequest {
+            id: "7f3a9c21".into(),
+            by: "riff://mike@pangolin/acme/app?session=a6cf".parse().unwrap(),
+            command: command.iter().map(|c| c.to_string()).collect(),
+            cwd: cwd.to_string_lossy().into_owned(),
+            reason: "a test".into(),
+            state,
+            decided_by: Some("dan".into()),
+            taken: state == OutsideState::Ran,
+        }
+    }
+
+    /// A take that gives `replies` in turn, then the last one again.
+    fn takes(replies: Vec<OutsideRequest>) -> Take {
+        let replies = std::sync::Mutex::new(replies);
+        std::sync::Arc::new(move |id: &str| {
+            assert_eq!(id, "7f3a9c21");
+            let mut replies = replies.lock().unwrap();
+            Ok(if replies.len() > 1 {
+                replies.remove(0)
+            } else {
+                replies[0].clone()
+            })
+        })
+    }
+
+    fn outside_of(root: &Path, take: &Take, out: &Path) -> Reply {
+        let mut req = request("outside", root);
+        req.args = vec!["7f3a9c21".into()];
+        let short = std::time::Duration::from_millis(10);
+        outside(&req, root, stdio(out), take, short, short * 20)
+    }
+
+    #[test]
+    fn the_broker_runs_an_approved_command_one_time_in_the_folder_of_the_server() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::confine::resolve(tmp.path());
+        let (sub, link) = (root.join("sub"), root.join("link"));
+        std::fs::create_dir(&sub).unwrap();
+        std::os::unix::fs::symlink(&sub, &link).unwrap();
+        let out = root.join("out");
+        let command = ["sh", "-c", "echo \"$PWD [$RIFF_BROKER]\"; exit 3"];
+        let take = takes(vec![
+            outside_request(OutsideState::Asked, &link, &command),
+            outside_request(OutsideState::Ran, &link, &command),
+        ]);
+        assert_eq!(outside_of(&root, &take, &out), Reply::Code(3));
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap(),
+            format!("{} []\n", sub.display()),
+            "the command runs in the resolved folder, with no broker"
+        );
+    }
+
+    #[test]
+    fn the_broker_runs_nothing_that_is_denied_old_or_outside_its_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::confine::resolve(tmp.path());
+        let out = root.join("out");
+        let ran = root.join("ran");
+        let command = ["touch", ran.to_str().unwrap()];
+        let cases = [
+            (OutsideState::Denied, root.clone(), "dan denied"),
+            (OutsideState::Asked, root.clone(), "no admin decided"),
+            (OutsideState::Ran, PathBuf::from("/"), "not in"),
+            (OutsideState::Ran, root.join("x/.."), ".."),
+        ];
+        for (state, cwd, why) in cases {
+            let take = takes(vec![outside_request(state, &cwd, &command)]);
+            let reply = outside_of(&root, &take, &out);
+            assert!(
+                matches!(&reply, Reply::Refused(text) if text.contains(why)),
+                "{state:?} in {}: {reply:?}",
+                cwd.display()
+            );
+        }
+        // A request that ran before, with no `taken`, does not run again.
+        let mut old = outside_request(OutsideState::Ran, &root, &command);
+        old.taken = false;
+        let reply = outside_of(&root, &takes(vec![old]), &out);
+        assert!(matches!(&reply, Reply::Refused(text) if text.contains("ran before")), "{reply:?}");
+        assert!(!ran.exists(), "the broker ran a command that it must refuse");
+    }
+
     #[test]
     fn the_broker_keeps_only_the_variables_of_the_tests() {
         let root = tempfile::tempdir().unwrap();

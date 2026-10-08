@@ -605,7 +605,7 @@ async fn riff_forge_allow_sends_the_account_and_shows_the_list() {
 
 /// A riff-server on a free port with the routes of `router`. Each other
 /// call goes to a real server.
-async fn serve(router: axum::Router) -> String {
+pub(crate) async fn serve(router: axum::Router) -> String {
     let router = router
         .layer(axum::middleware::map_response(
             |mut r: axum::response::Response| async move {

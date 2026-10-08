@@ -25,6 +25,7 @@ mod enable;
 mod end;
 mod forge;
 mod forge_text;
+mod outside;
 mod fresh;
 mod github;
 mod help;
