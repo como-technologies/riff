@@ -4111,8 +4111,9 @@
 - **01M4BPK72ZBZABCTWS9YM1M9QX** The lead writes the worktrees of the
   clone, a part of the git dir of the clone
   (01M4DDWPN8FADA663TTZSVD698), the local files of riff, its temp
-  folder and its Claude Code folder. It reads the rest of the clone. It connects to the riff server, the forge, the package
-  registries and the model API. On the forge, it reads, plans,
+  folder and its Claude Code folder. It reads the rest of the clone.
+  It connects to the riff server, the forge, the package registries
+  and the model API. On the forge, it reads, plans,
   comments, pushes a branch and opens a pull request.
 - **01M4BPK7AKTJD9Y9WVJQKTQY6M** A worker writes its worktree, its
   target folder, a part of the git dir of the clone

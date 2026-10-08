@@ -4425,8 +4425,9 @@ Control (see
 the forge token of the lead, and none of your credentials (see
 [The forge token of each role](#the-forge-token-of-each-role)). The
 lead runs in the sandbox of its role, and gets the permission rules of
-its profile (see [The lead in its sandbox](#the-lead-in-its-sandbox)). riff writes
-the rules at each start of a lead, to its rules file, for example
+its profile (see
+[The lead in its sandbox](#the-lead-in-its-sandbox)). riff writes the
+rules at each start of a lead, to its rules file, for example
 `~/.local/share/riff/rules/lead-como-technologies-riff.json`. When riff
 cannot make the rules, it says why in one line and starts the lead
 with no rules of a profile. When the session runs, riff shows it and
