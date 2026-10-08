@@ -13,6 +13,7 @@ use chrono::{DateTime, NaiveDate, TimeZone};
 use crate::pr::{Reported, Verdict};
 use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
+use riff_core::wire::{OutsideRequest, OutsideState};
 use riff_core::selector::Selector;
 
 use crate::api::{Checked, Claimed, Inbox, Told};
@@ -4600,7 +4601,7 @@ pub fn claude_token_removed(had: bool) -> String {
 /// ```
 /// assert_eq!(
 ///     riff::text::broker_no_op("shell"),
-///     "the broker has no operation shell. It has: test-run."
+///     "the broker has no operation shell. It has: test-run, outside."
 /// );
 /// ```
 pub fn broker_no_op(op: &str) -> String {
@@ -4631,6 +4632,138 @@ pub fn target_not_in(target: &Path, within: &Path) -> String {
 
 /// The refusal of the broker for a request with no program.
 pub const BROKER_NO_PROGRAM: &str = "the request names no program";
+
+/// The refusal of the broker for a folder with a `..` part
+/// (01M4DA9PRPZ2JDKC2PK79AT5AA).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::broker_parent("/w/../etc".as_ref()),
+///     "the folder /w/../etc has a .. part: give the folder with no .."
+/// );
+/// ```
+pub fn broker_parent(cwd: &Path) -> String {
+    format!(
+        "the folder {} has a .. part: give the folder with no ..",
+        cwd.display()
+    )
+}
+
+/// The refusal of the broker for an `outside` with no single ID.
+pub const BROKER_OUTSIDE_ID: &str = "the operation outside needs one ID of a request";
+
+/// The refusal of the broker for a request that an admin denied.
+///
+/// ```
+/// use riff_core::wire::{OutsideRequest, OutsideState};
+///
+/// let request = OutsideRequest {
+///     id: "7f3a9c21".into(),
+///     by: "riff://mike@pangolin/acme/app?session=a6cf".parse().unwrap(),
+///     command: vec!["true".into()],
+///     cwd: "/w".into(),
+///     reason: "r".into(),
+///     state: OutsideState::Denied,
+///     decided_by: Some("dan".into()),
+///     taken: false,
+/// };
+/// assert_eq!(riff::text::outside_denied(&request), "dan denied the request 7f3a9c21");
+/// ```
+pub fn outside_denied(request: &OutsideRequest) -> String {
+    format!(
+        "{} denied the request {}",
+        request.decided_by.as_deref().unwrap_or("an admin"),
+        request.id
+    )
+}
+
+/// The refusal of the broker for a request that ran before.
+pub fn outside_closed(id: &str) -> String {
+    format!("the request {id} ran before: a request runs one time. Ask again.")
+}
+
+/// The refusal of the broker when no admin decides in time.
+pub fn outside_no_decision(id: &str) -> String {
+    format!("no admin decided the request {id} in time. Ask again.")
+}
+
+/// What `riff outside ask` prints after the ask (#614).
+///
+/// ```
+/// let text = riff::text::outside_asked("7f3a9c21");
+/// assert!(text.contains("riff outside approve 7f3a9c21"), "{text}");
+/// ```
+pub fn outside_asked(id: &str) -> String {
+    format!(
+        "riff: the request {id} waits for the owner or an admin. They run, in a terminal: \
+         riff outside approve {id}"
+    )
+}
+
+/// The error of `riff outside ask` in a process with no broker.
+pub const OUTSIDE_NO_BROKER: &str = "riff outside ask runs in a session in its sandbox. \
+This process has no sandbox: run the command yourself.";
+
+/// The lines of `riff outside list`, or a line that says that no
+/// request waits.
+///
+/// ```
+/// use riff_core::wire::{OutsideRequest, OutsideState};
+///
+/// assert_eq!(riff::text::outside_list(&[]), "riff: no request to run outside the sandbox.\n");
+/// let request = OutsideRequest {
+///     id: "7f3a9c21".into(),
+///     by: "riff://mike@pangolin/acme/app?session=a6cf".parse().unwrap(),
+///     command: vec!["sudo".into(), "true".into()],
+///     cwd: "/w".into(),
+///     reason: "the test needs root".into(),
+///     state: OutsideState::Asked,
+///     decided_by: None,
+///     taken: false,
+/// };
+/// assert_eq!(
+///     riff::text::outside_list(&[request]),
+///     "7f3a9c21  asked  mike/a6cf  `sudo true` in /w\n    reason: the test needs root\n"
+/// );
+/// ```
+pub fn outside_list(requests: &[OutsideRequest]) -> String {
+    if requests.is_empty() {
+        return "riff: no request to run outside the sandbox.\n".into();
+    }
+    let mut out = String::new();
+    for r in requests {
+        let state = match r.state {
+            OutsideState::Asked => "asked".to_owned(),
+            OutsideState::Approved => format!("approved by {}", r.decided_by.as_deref().unwrap_or("?")),
+            OutsideState::Denied => format!("denied by {}", r.decided_by.as_deref().unwrap_or("?")),
+            OutsideState::Ran => format!("ran, approved by {}", r.decided_by.as_deref().unwrap_or("?")),
+        };
+        let _ = writeln!(
+            out,
+            "{}  {state}  {}  `{}` in {}\n    reason: {}",
+            r.id,
+            r.by.who(),
+            r.command.join(" "),
+            r.cwd,
+            r.reason
+        );
+    }
+    out
+}
+
+/// What `riff outside approve` and `riff outside deny` print.
+pub fn outside_decided(request: &OutsideRequest) -> String {
+    let done = match request.state {
+        OutsideState::Approved => "approved: the broker of the session runs it one time",
+        _ => "denied: it does not run",
+    };
+    format!(
+        "riff: the request {} of {} (`{}`) is {done}.",
+        request.id,
+        request.by.who(),
+        request.command.join(" ")
+    )
+}
 
 /// The error of `riff test-run` when the broker refuses it.
 pub fn broker_refused(why: &str) -> String {

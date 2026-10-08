@@ -12,18 +12,23 @@
 //!
 //! The broker runs only the operations of [`OPS`], never a free
 //! command (01M4C5AQM63F58YQ9VA391513D). Each other operation gets a
-//! refusal. Today the list has one operation:
+//! refusal. The list has two operations:
 //!
 //! | Operation | What the broker does |
 //! |---|---|
 //! | `test-run` | `riff test-run -- PROGRAM ARGS` of the riff outside, in a folder of the worktree of the session |
+//! | `outside` | the one command of a request that an admin approved (`riff outside ask`) |
 //!
 //! - **One request, one reply socket.** The session sends each request
 //!   as one message with four file descriptors: the reply end of a
 //!   socket pair of its own, and its stdin, stdout and stderr. So many
 //!   processes of the session can ask at the same time.
-//! - **The folder.** The folder of a request must be in the root of the
-//!   broker: the worktree of the session.
+//! - **The folder** (01M4DA9PRPZ2JDKC2PK79AT5AA). The folder of a request
+//!   must be in the root of the broker: the worktree of the session. The
+//!   broker refuses a folder with a `..` part. It runs the operation in
+//!   the resolved folder that it checked ([`place`]), not in the folder
+//!   of the request, and sets `PWD` to it. So a link that the session
+//!   changes after the check does not move the operation.
 //! - **The environment.** The broker runs the operation with its own
 //!   environment. From the request, it takes only the variables of
 //!   [`kept_var`]: the variables of cargo and of the tests. So a request
@@ -46,6 +51,13 @@
 //!   only picks where the command runs. So no `.git` file or folder that
 //!   a session writes makes a test run read the git dir of another
 //!   repository ([`crate::sandbox::place`]).
+//! - **A command outside the profile** (#614, 01M4DA9PM89KP332T6BR7V0CDT).
+//!   `riff outside ask` sends the operation `outside` with the ID of a
+//!   request at riff-server. The broker asks riff-server for the
+//!   request each [`OUTSIDE_EVERY`], until an admin decides, for at most
+//!   [`OUTSIDE_WAIT`]. It runs only the command and the folder that
+//!   riff-server gives, one time, with the environment of the broker
+//!   and no secret of the session.
 //! - **The end.** The broker ends when each process of the session
 //!   closed its end of the socket pair.
 //!
@@ -72,13 +84,33 @@ use nix::sys::socket::{
     AddressFamily, ControlMessage, ControlMessageOwned, MsgFlags, SockFlag, SockType, recvmsg,
     sendmsg, socketpair,
 };
+use riff_core::wire::{OutsideRequest, OutsideState};
 use serde::{Deserialize, Serialize};
 
 /// The variable with the file descriptor of the broker in a session.
 pub const VAR: &str = "RIFF_BROKER";
 
 /// The operations of the broker (01M4C5AQM63F58YQ9VA391513D).
-pub const OPS: [&str; 1] = ["test-run"];
+pub const OPS: [&str; 2] = ["test-run", "outside"];
+
+/// How often the broker asks riff-server for a request of `outside`.
+pub const OUTSIDE_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How long the broker waits for an admin to decide a request of
+/// `outside`: the life of a request at riff-server.
+pub const OUTSIDE_WAIT: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// The variables of the broker that a command of `outside` does not get:
+/// the secrets of the session (01M4CVXJA9WAN5M1RKNGETS8AY).
+const SECRET_VARS: [&str; 3] = [
+    crate::grant::KEY_VAR,
+    crate::grant::GRANT_VAR,
+    crate::grant::CLAUDE_TOKEN_VAR,
+];
+
+/// The step of the broker that takes a request of `outside` from
+/// riff-server, by its ID ([`riff_core::wire::OutsideTake`]).
+pub type Take = std::sync::Arc<dyn Fn(&str) -> Result<OutsideRequest> + Send + Sync>;
 
 /// The largest request or reply.
 const MAX: usize = 1 << 20;
@@ -170,40 +202,70 @@ pub fn within(root: &Path, own: Option<OsString>) -> PathBuf {
         .map_or_else(|| root.to_path_buf(), PathBuf::from)
 }
 
-/// Why the broker runs nothing for `request` in the root `root`, or
-/// `None` (01M4C5AQM63F58YQ9VA391513D).
+/// The resolved folder of `cwd`, when it is in the root `root`, else
+/// why not (01M4DA9PRPZ2JDKC2PK79AT5AA). A `..` part is refused.
 ///
 /// ```
-/// use riff::broker::{Request, refusal};
+/// use riff::broker::place;
+/// use std::path::Path;
 ///
-/// let request = |op: &str, cwd: &str| Request {
+/// assert_eq!(place(Path::new("/w/issue-1"), Path::new("/w")), Ok("/w/issue-1".into()));
+/// assert!(place(Path::new("/w/../etc"), Path::new("/w")).unwrap_err().contains(".."));
+/// assert!(place(Path::new("/w/x/.."), Path::new("/w")).unwrap_err().contains(".."));
+/// assert!(place(Path::new("/etc"), Path::new("/w")).unwrap_err().contains("not in"));
+/// ```
+pub fn place(cwd: &Path, root: &Path) -> Result<PathBuf, String> {
+    if cwd
+        .components()
+        .any(|part| part == std::path::Component::ParentDir)
+    {
+        return Err(crate::text::broker_parent(cwd));
+    }
+    let cwd = crate::confine::resolve(cwd);
+    if !cwd.starts_with(root) {
+        return Err(crate::text::broker_not_in(&cwd, root));
+    }
+    Ok(cwd)
+}
+
+/// The resolved folder where the broker runs `request` in the root
+/// `root`, or why the broker runs nothing (01M4C5AQM63F58YQ9VA391513D).
+///
+/// ```
+/// use riff::broker::{Request, check};
+///
+/// let request = |op: &str, cwd: &str, args: &[&str]| Request {
 ///     op: op.into(),
-///     args: vec!["cargo".into(), "test".into()],
+///     args: args.iter().map(Into::into).collect(),
 ///     cwd: cwd.into(),
 ///     env: vec![],
 /// };
-/// assert_eq!(refusal(&request("test-run", "/w/issue-1"), "/w".as_ref()), None);
-/// assert!(refusal(&request("shell", "/w"), "/w".as_ref()).unwrap().contains("no operation shell"));
-/// assert!(refusal(&request("test-run", "/etc"), "/w".as_ref()).unwrap().contains("not in"));
+/// let test = ["cargo", "test"];
+/// assert_eq!(check(&request("test-run", "/w/issue-1", &test), "/w".as_ref()), Ok("/w/issue-1".into()));
+/// assert!(check(&request("shell", "/w", &test), "/w".as_ref()).unwrap_err().contains("no operation shell"));
+/// assert!(check(&request("test-run", "/etc", &test), "/w".as_ref()).unwrap_err().contains("not in"));
+/// assert!(check(&request("test-run", "/w/../etc", &test), "/w".as_ref()).unwrap_err().contains(".."));
+/// assert!(check(&request("test-run", "/w", &[]), "/w".as_ref()).is_err());
+/// assert!(check(&request("outside", "/w", &["7f3a9c21"]), "/w".as_ref()).is_ok());
+/// assert!(check(&request("outside", "/w", &test), "/w".as_ref()).is_err());
 /// ```
-pub fn refusal(request: &Request, root: &Path) -> Option<String> {
+pub fn check(request: &Request, root: &Path) -> Result<PathBuf, String> {
     if !OPS.contains(&request.op.as_str()) {
-        return Some(crate::text::broker_no_op(&request.op));
+        return Err(crate::text::broker_no_op(&request.op));
     }
-    let cwd = crate::confine::resolve(&request.cwd);
-    if !cwd.starts_with(root) {
-        return Some(crate::text::broker_not_in(&cwd, root));
+    let cwd = place(&request.cwd, root)?;
+    match request.op.as_str() {
+        "outside" if request.args.len() != 1 => Err(crate::text::BROKER_OUTSIDE_ID.to_owned()),
+        _ if request.args.is_empty() => Err(crate::text::BROKER_NO_PROGRAM.to_owned()),
+        _ => Ok(cwd),
     }
-    if request.args.is_empty() {
-        return Some(crate::text::BROKER_NO_PROGRAM.to_owned());
-    }
-    None
 }
 
-/// Starts the broker outside the sandbox: `riff workers broker --root
-/// ROOT --clone CLONE`, with the program `riff`. Returns the end of the
-/// session, for [`VAR`]. The broker gets the other end as its stdin.
-pub fn start(riff: &Path, root: &Path, clone: &Path) -> Result<OwnedFd> {
+/// Starts the broker outside the sandbox: `riff --server SERVER workers
+/// broker --root ROOT --clone CLONE`, with the program `riff`. Returns
+/// the end of the session, for [`VAR`]. The broker gets the other end as
+/// its stdin.
+pub fn start(riff: &Path, server: &str, root: &Path, clone: &Path) -> Result<OwnedFd> {
     let (session, broker) = socketpair(
         AddressFamily::Unix,
         SockType::SeqPacket,
@@ -212,7 +274,7 @@ pub fn start(riff: &Path, root: &Path, clone: &Path) -> Result<OwnedFd> {
     )
     .context("cannot make the socket pair of the broker")?;
     Command::new(riff)
-        .args(["workers", "broker", "--root"])
+        .args(["--server", server, "workers", "broker", "--root"])
         .arg(root)
         .arg("--clone")
         .arg(clone)
@@ -230,8 +292,8 @@ pub fn start(riff: &Path, root: &Path, clone: &Path) -> Result<OwnedFd> {
 /// Serves the requests on `socket` for the root `root` of the clone
 /// `clone` until each process of the session closed its end. Each
 /// request runs in a thread of its own. `riff` is the riff that runs a
-/// test run.
-pub fn serve(socket: OwnedFd, root: &Path, clone: &Path, riff: &Path) -> Result<()> {
+/// test run. `take` takes a request of `outside` from riff-server.
+pub fn serve(socket: OwnedFd, root: &Path, clone: &Path, riff: &Path, take: Take) -> Result<()> {
     let root = crate::confine::resolve(root);
     let clone = crate::confine::resolve(clone);
     loop {
@@ -264,12 +326,16 @@ pub fn serve(socket: OwnedFd, root: &Path, clone: &Path, riff: &Path) -> Result<
             return Ok(());
         }
         let (root, clone, riff) = (root.clone(), clone.clone(), riff.to_path_buf());
+        let take = take.clone();
         let request = serde_json::from_slice::<Request>(&buf[..len]);
         std::thread::spawn(move || {
             let mut fds = fds.into_iter();
             let Some(reply) = fds.next() else { return };
             let answer = match request {
                 Err(e) => Reply::Refused(format!("a request that riff cannot read: {e}")),
+                Ok(request) if request.op == "outside" => {
+                    outside(&request, &root, fds.collect(), &take, OUTSIDE_EVERY, OUTSIDE_WAIT)
+                }
                 Ok(request) => answer(&request, &root, &clone, &riff, fds.collect()),
             };
             let _ = send(&reply, &answer, &[]);
@@ -280,9 +346,10 @@ pub fn serve(socket: OwnedFd, root: &Path, clone: &Path, riff: &Path) -> Result<
 /// Runs `request`, or says why not. The test run gets the worktree and
 /// the clone of the session from the broker (01M4D7TB7FZAMASMQG9K7M3Q0D).
 fn answer(request: &Request, root: &Path, clone: &Path, riff: &Path, stdio: Vec<OwnedFd>) -> Reply {
-    if let Some(why) = refusal(request, root) {
-        return Reply::Refused(why);
-    }
+    let cwd = match check(request, root) {
+        Ok(cwd) => cwd,
+        Err(why) => return Reply::Refused(why),
+    };
     let [stdin, stdout, stderr]: [OwnedFd; 3] = match stdio.try_into() {
         Ok(stdio) => stdio,
         Err(_) => return Reply::Refused("a request needs stdin, stdout and stderr".into()),
@@ -291,7 +358,8 @@ fn answer(request: &Request, root: &Path, clone: &Path, riff: &Path, stdio: Vec<
     cmd.arg("test-run")
         .arg("--")
         .args(&request.args)
-        .current_dir(&request.cwd)
+        .current_dir(&cwd)
+        .env("PWD", &cwd)
         .env_remove(VAR)
         .env(
             crate::sandbox::WITHIN_VAR,
@@ -307,6 +375,11 @@ fn answer(request: &Request, root: &Path, clone: &Path, riff: &Path, stdio: Vec<
             cmd.env(name, value);
         }
     }
+    run(&mut cmd, riff)
+}
+
+/// Runs `cmd`, and gives its exit code, or 128 and the signal.
+fn run(cmd: &mut Command, program: &Path) -> Reply {
     match cmd.status() {
         Ok(status) => {
             use std::os::unix::process::ExitStatusExt;
@@ -316,8 +389,66 @@ fn answer(request: &Request, root: &Path, clone: &Path, riff: &Path, stdio: Vec<
                     .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
             )
         }
-        Err(e) => Reply::Refused(format!("cannot run {}: {e}", riff.display())),
+        Err(e) => Reply::Refused(format!("cannot run {}: {e}", program.display())),
     }
+}
+
+/// The operation `outside` (#614, 01M4DA9PM89KP332T6BR7V0CDT): takes the
+/// request of the ID in `request` with `take`, each `every`, until an
+/// admin decides, for at most `wait`. Runs the approved command one
+/// time, in the folder of riff-server that it checks again.
+fn outside(
+    request: &Request,
+    root: &Path,
+    stdio: Vec<OwnedFd>,
+    take: &Take,
+    every: std::time::Duration,
+    wait: std::time::Duration,
+) -> Reply {
+    if let Err(why) = check(request, root) {
+        return Reply::Refused(why);
+    }
+    let [stdin, stdout, stderr]: [OwnedFd; 3] = match stdio.try_into() {
+        Ok(stdio) => stdio,
+        Err(_) => return Reply::Refused("a request needs stdin, stdout and stderr".into()),
+    };
+    let id = request.args[0].to_string_lossy().into_owned();
+    let end = std::time::Instant::now() + wait;
+    let taken = loop {
+        match take(&id) {
+            Err(e) => return Reply::Refused(format!("{e:#}")),
+            Ok(got) if got.taken => break got,
+            Ok(got) if got.state == OutsideState::Denied => {
+                return Reply::Refused(crate::text::outside_denied(&got));
+            }
+            Ok(got) if !got.state.open() => {
+                return Reply::Refused(crate::text::outside_closed(&id));
+            }
+            Ok(_) if std::time::Instant::now() >= end => {
+                return Reply::Refused(crate::text::outside_no_decision(&id));
+            }
+            Ok(_) => std::thread::sleep(every),
+        }
+    };
+    let cwd = match place(Path::new(&taken.cwd), root) {
+        Ok(cwd) => cwd,
+        Err(why) => return Reply::Refused(why),
+    };
+    let Some((program, args)) = taken.command.split_first() else {
+        return Reply::Refused(crate::text::BROKER_NO_PROGRAM.to_owned());
+    };
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .current_dir(&cwd)
+        .env("PWD", &cwd)
+        .env_remove(VAR)
+        .stdin(Stdio::from(stdin))
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    for name in SECRET_VARS {
+        cmd.env_remove(name);
+    }
+    run(&mut cmd, Path::new(program))
 }
 
 /// Sends `value` as one message on `socket`, with the file descriptors
@@ -408,7 +539,8 @@ mod tests {
         )
         .unwrap();
         let (root, riff) = (root.to_path_buf(), riff.to_path_buf());
-        std::thread::spawn(move || serve(broker, &root, &root, &riff));
+        let take: Take = std::sync::Arc::new(|_| anyhow::bail!("no riff-server in this test"));
+        std::thread::spawn(move || serve(broker, &root, &root, &riff, take));
         session
     }
 

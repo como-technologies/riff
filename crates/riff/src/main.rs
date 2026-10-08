@@ -533,6 +533,16 @@ enum Command {
         #[command(subcommand)]
         command: ForgeCommand,
     },
+    /// Run one command outside the sandbox, after an admin approves it
+    ///
+    /// The sandbox of a session is always on. A session asks to run one
+    /// command outside it, one time, with a reason. The owner or an admin
+    /// approves or denies the request in a terminal. riff-server posts
+    /// each step to the thread of the repository.
+    Outside {
+        #[command(subcommand)]
+        command: OutsideCommand,
+    },
     /// Start, list and stop the workers of this machine
     ///
     /// Workers are agent sessions in tmux. With no subcommand, it lists
@@ -576,6 +586,44 @@ impl From<ByArg> for riff::top::By {
             ByArg::Repo => Self::Repo,
         }
     }
+}
+
+/// The subcommands of `riff outside`.
+#[derive(Subcommand)]
+enum OutsideCommand {
+    /// Ask to run one command outside the sandbox of this session
+    ///
+    /// Run it in a session in its sandbox. riff-server keeps the request
+    /// for one hour and tells the lead. When the owner or an admin
+    /// approves it, the broker of the session runs the command one time,
+    /// in the current folder, and riff exits with its exit code.
+    Ask {
+        /// Why the session needs the command outside its sandbox.
+        #[arg(long)]
+        reason: String,
+        /// The program and its arguments.
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<std::ffi::OsString>,
+    },
+    /// List the requests of the last hour
+    ///
+    /// Only the owner or an admin, in a terminal.
+    List,
+    /// Approve a request: the session runs its command one time
+    ///
+    /// Only the owner or an admin, in a terminal: never in a worker or an
+    /// agent session.
+    Approve {
+        /// The ID of the request, from riff outside list.
+        id: String,
+    },
+    /// Deny a request: its command does not run
+    ///
+    /// Only the owner or an admin, in a terminal.
+    Deny {
+        /// The ID of the request, from riff outside list.
+        id: String,
+    },
 }
 
 /// The subcommands of `riff forge`.
@@ -1602,6 +1650,22 @@ async fn main() -> Result<()> {
     if let Command::Forge { command } = &command {
         return forge(command, &server).await;
     }
+    if let Command::Outside { command } = &command {
+        match command {
+            OutsideCommand::Ask { reason, command } => {
+                let (program, args) = command.split_first().expect("clap needs a command");
+                std::process::exit(riff::outside::ask(&server, reason, program, args).await?);
+            }
+            OutsideCommand::List => print!("{}", riff::outside::list(&server).await?),
+            OutsideCommand::Approve { id } => {
+                println!("{}", riff::outside::decide(&server, id, true).await?);
+            }
+            OutsideCommand::Deny { id } => {
+                println!("{}", riff::outside::decide(&server, id, false).await?);
+            }
+        }
+        return Ok(());
+    }
     if let Command::Pr {
         command: Pr::Wait { number, every },
     } = &command
@@ -2000,6 +2064,7 @@ async fn main() -> Result<()> {
         | Command::Workers { .. }
         | Command::Cloud { .. }
         | Command::Forge { .. }
+        | Command::Outside { .. }
         | Command::Worktrees(_)
         | Command::Lead {
             command: Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. }),
@@ -2313,7 +2378,17 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
         Some(Workers::Broker { root, clone }) => {
             use std::os::fd::AsFd;
             let socket = std::io::stdin().as_fd().try_clone_to_owned()?;
-            riff::broker::serve(socket, root, clone, &riff::binary::this_on_disk()?)
+            // The session of the sandbox: the broker takes its requests
+            // of `riff outside` (#614). With no session, a test run
+            // still works.
+            let take = identity::here(None)
+                .and_then(|here| identity::session(&here, server))
+                .and_then(|me| riff::outside::take(server, me))
+                .unwrap_or_else(|e| {
+                    let why = format!("{e:#}");
+                    std::sync::Arc::new(move |_: &str| anyhow::bail!("{why}"))
+                });
+            riff::broker::serve(socket, root, clone, &riff::binary::this_on_disk()?, take)
         }
         Some(Workers::Git { worktree, args }) => riff::confine::run_git(server, worktree, args),
         Some(Workers::TestRun { program, args }) => {
