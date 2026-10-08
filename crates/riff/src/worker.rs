@@ -303,7 +303,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     // The forge token of the role of this session. `claude` gets an empty
     // environment with only the kept variables and the forge variables,
     // so no credential of the person reaches it, also with no token
-    // (01M4BV707FYHJDNC1499YAWR8D, 01M4BYVSNQ5SY2GRGT73FV0Z3E).
+    // (01M4CHQR3Q566ZFFGQEQMJ3HAS, 01M4BYVSNQ5SY2GRGT73FV0Z3E).
     let (given, files, keep) = forge_token(folder.as_ref(), session.as_deref(), server, None).await;
     let _keep = keep.map(AbortOnDrop);
     let forge = forge::ForgeEnv::of(&given, &files, &riff);

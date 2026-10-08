@@ -38,7 +38,8 @@
 //! flowchart LR
 //!     C["riff cloud create"] --> F["NAME.env"]
 //!     F --> S["riff cloud signin"]
-//!     S --> D["riff cloud deploy"]
+//!     S --> G["riff cloud forge"]
+//!     G --> D["riff cloud deploy"]
 //!     D --> R["Cloud Run service<br/>bucket, secret, accounts"]
 //!     L["list, status, log"] --> R
 //!     X["riff cloud delete"] --> R

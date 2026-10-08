@@ -511,11 +511,11 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
-    /// Give each worker a forge token of its role
+    /// Check the forge token of each role
     ///
-    /// The GitHub App of riff makes a token for each worker session with
-    /// only the rights of its role. Make the App first: see "Make the
-    /// GitHub App of riff" in the book.
+    /// riff-server makes a token for each session with the GitHub App of
+    /// riff, with only the rights of its role. An admin gives the riff
+    /// its App first: see "Give the riff its GitHub App" in the book.
     Forge {
         #[command(subcommand)]
         command: ForgeCommand,
@@ -2347,7 +2347,7 @@ async fn riff_of(
 
 /// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A worker never runs it
 /// (01M4262DY8NN30SC4REYX2G9DV).
-/// `riff forge`: the GitHub App of riff and the token of a role
+/// `riff forge`: the token of a role, from riff-server
 /// ([`riff::forge`]).
 async fn forge(command: &ForgeCommand, server: &str) -> Result<()> {
     use riff::forge;

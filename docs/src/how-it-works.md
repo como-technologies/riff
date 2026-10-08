@@ -3110,8 +3110,8 @@ profile.
 | Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
 
 No role reads your home as a whole, your keyring, your D-Bus, your
-SSH or GnuPG keys, the sign-in of `gh`, or the key of the GitHub App
-of riff. riff refuses a path of a session that is not absolute or that
+SSH or GnuPG keys, or the sign-in of `gh`. The key of the GitHub App
+of riff is never on your machine. riff refuses a path of a session that is not absolute or that
 has a `..` part.
 
 ```mermaid
@@ -3196,11 +3196,11 @@ No `ANTHROPIC_` variable reaches `claude`, also not
 Claude Code, so its use counts on your plan, and API billing never
 starts by accident.
 
-With the GitHub App of riff, each worker gets a token of its role, and
-GitHub refuses each other step. riff makes the token outside the
-sandbox, and gives the session only the token, never the key of the
-App. With no App, a worker has no forge token: `gh` and `git push`
-fail. Make the App first (see "Make the GitHub App of riff").
+riff-server gives each session a forge token of its role, with the
+GitHub App of riff. GitHub refuses each other step of the session. The
+private key of the App lives in Secret Manager. Only the service
+account of riff-server reads it. It is never on your machine, and no
+session ever sees it.
 
 ```mermaid
 flowchart LR
@@ -3225,63 +3225,111 @@ flowchart LR
   the lead and worker tokens are the same. riff-server keeps the plan
   to the lead.
 
-The lead always gets the lead token. `riff workers lead` starts it
-and keeps its token, like `riff workers run` for a worker. A worker
-that claims a `verify-` item gets the verifier token. After the
-release, it gets the worker token again. At each change of role,
-riff revokes the old token first, so a session never holds two tokens.
-A token lasts one hour; riff makes a new one 10 minutes before the end.
+### How riff-server picks the role
+
+The wrapper of each session (`riff workers run` for a worker, `riff
+workers lead` for the lead) runs outside the sandbox. It asks
+riff-server for the token of its session. riff-server picks the role
+from its own facts, never from the ask:
+
+- The lead of a person gets the lead token. Its wrapper asks before
+  the session of the lead starts, so it asks as the person.
+- A session with a `verify-` claim gets the verifier token.
+- Each other session gets the worker token.
+
+The token is for the repository of the session only. One App serves
+each repository where it is installed: in an organization or in a
+personal account. riff-server finds the installation of the App on
+that repository.
+
+### The life of a token
+
+A token lasts one hour. The wrapper asks for a new one 10 minutes
+before the end. At a claim, a release or the end of a session,
+riff-server compares the role of each token with its facts. It revokes
+each token whose role changed. The wrapper removes the old token files
+and asks for a token of the new role. So a session never holds the
+rights of two roles.
 
 ```mermaid
 sequenceDiagram
-    participant W as riff workers run
+    participant W as riff workers run (outside the sandbox)
     participant S as riff-server
+    participant K as Secret Manager
     participant G as GitHub
-    participant C as the worker (claude, gh, git)
-    W->>S: the claims of the session
-    W->>G: the App asks for a token of the role
-    G-->>W: a token for one hour
-    W->>C: the token, in the temp folder of the session
-    C->>W: a claim or a release
-    W->>G: revoke the old token
-    W->>G: a token of the new role
+    W->>S: POST /v1/forge/token (signed-in session)
+    S->>S: role from the facts of the server: lead, a verify- claim, else worker
+    K-->>S: the App key, at the deploy
+    S->>G: JWT, then access_tokens for the one repository and the rights of the role
+    G-->>S: a token for one hour
+    S->>G: revoke the old token of this session, when the role changed
+    S-->>W: the token and its end time
+    W->>W: token files for gh and git
 ```
 
-### Make the GitHub App of riff
+### What you see in the log
 
-Do these steps one time, as an owner of the GitHub account of the
-repository.
+riff-server writes one line for each token in its log: the session,
+the repository, the role and the end time. It writes one line for each
+revoke. A line never holds a token. To see them:
+
+```sh
+riff cloud log shared
+```
+
+### With no App or no sign-in
+
+The session starts with no forge token, and its pane shows a line
+`riff: no forge token for this session` with the reason. `gh` and
+`git push` fail in the session. The reasons:
+
+- The riff has no sign-in: riff-server cannot know the person, so it
+  gives no token.
+- The riff has no GitHub App: an admin gives it one (see "Give the riff
+  its GitHub App").
+- The App is not installed on the repository: the line names
+  `riff forge install OWNER`. Until riff has that command, install the
+  App from its page on GitHub (step 7 below).
+
+### Give the riff its GitHub App
+
+An admin of the riff does these steps one time.
 
 1. On GitHub, open Settings, Developer settings, GitHub Apps, and
    click "New GitHub App".
-2. Give it a name, for example `riff-ACCOUNT`, and a homepage URL, for
-   example the URL of the repository.
+2. Give it a name, for example `riff`, and a homepage URL, for
+   example the URL of the riff repository.
 3. Clear "Active" under Webhook.
 4. Under Repository permissions, set: Actions: read, Checks: read,
    Commit statuses: read and write, Contents: read and write, Issues:
    read and write, Metadata: read, Pull requests: read and write. Set
    no other permission.
-5. Under "Where can this GitHub App be installed?", select "Only on
-   this account". Click "Create GitHub App".
+5. Under "Where can this GitHub App be installed?", select "Any
+   account". Click "Create GitHub App".
 6. Write down the App ID. Click "Generate a private key". GitHub
    downloads a `.pem` file.
 7. Click "Install App", and install it on the repositories of the
-   riff only.
+   riff. A person of another account installs it on their own
+   repositories from the public page of the App.
 
-Then save the App on each machine that runs workers:
+Then give the App to the riff, and deploy. Run this in the clone of
+the repository that holds the cloud settings:
 
 ```sh
-riff forge app APP_ID ~/Downloads/riff-ACCOUNT.private-key.pem
+riff cloud forge shared APP_ID ~/Downloads/riff.private-key.pem
+riff cloud deploy shared
 ```
 
-riff copies the key to `forge/app.pem` beside the riff settings, where
-only you read it, and saves the ID as `forge.app`. Delete the
-downloaded file.
+`riff cloud forge` stores the key in Secret Manager, lets only the
+service account of riff-server read it, and writes the App ID to
+`deploy/cloud/shared.env`. Commit that file. Delete the downloaded
+key file. The deploy gives the App to riff-server.
 
 ### Check the GitHub App
 
-Run this in the clone of a repository of the riff. It makes a token of
-each role and shows its permissions, never the token:
+Run this in the clone of a repository of the riff. riff-server makes a
+token of each role, shows its permissions, and revokes it at once. It
+never shows the token:
 
 ```sh
 riff forge check
@@ -3291,7 +3339,7 @@ Each line shows a role and its permissions. A line with an error names
 the permission that the App lacks: add it in the settings of the App,
 then accept the new permissions on the installation.
 
-Workers that start after the save get their tokens. Stop the old
+Workers that start after the deploy get their tokens. Stop the old
 workers with `riff workers stop`; the rollout starts new ones.
 
 ## A restart

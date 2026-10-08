@@ -529,7 +529,7 @@ and the pull request of the item with the state of its verify."
         let mut out = text::claimed(&reply, &thread, &a.item);
         if reply.granted {
             // The role of the forge token follows the claims
-            // (01M4BV70C3P5CZFBSFYFWEWRRA).
+            // (01M4CHQR3Q566ZFFGQEQMJ3HAS).
             if let Some(files) = crate::forge::Files::here() {
                 files.ask();
             }
