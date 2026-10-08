@@ -4645,7 +4645,7 @@ mod tests {
 }
 
 /// The line of `riff claude-token` before it reads a terminal
-/// (RID_CLAUDE_TOKEN).
+/// (01M4CVXJCGRC59VVZEHBFA9MPG).
 pub const CLAUDE_TOKEN_PASTE: &str = "Paste the output of claude setup-token, then press \
      Enter and Ctrl-D.";
 

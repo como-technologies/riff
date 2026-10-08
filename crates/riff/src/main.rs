@@ -1317,7 +1317,7 @@ async fn main() -> Result<()> {
         }
         _ => {}
     }
-    // The Claude plan token needs no riff server (RID_CLAUDE_TOKEN).
+    // The Claude plan token needs no riff server (01M4CVXJCGRC59VVZEHBFA9MPG).
     if let Command::ClaudeToken { remove } = &command {
         return claude_token(*remove);
     }
@@ -1952,7 +1952,7 @@ async fn main() -> Result<()> {
 }
 
 /// `riff claude-token`: keeps the Claude plan token from stdin, or
-/// removes it (RID_CLAUDE_TOKEN). The output names no token.
+/// removes it (01M4CVXJCGRC59VVZEHBFA9MPG). The output names no token.
 fn claude_token(remove: bool) -> Result<()> {
     if remove {
         let had = riff::grant::remove_claude_token()?;

@@ -4,7 +4,7 @@
 //! # Design
 //!
 //! No process of a session reads the keyring of the person
-//! (RID_NO_KEYRING). The wrapper of the session (`riff workers run`
+//! (01M4CVXJ7ZDAVRKJ8Y59R3KPDV). The wrapper of the session (`riff workers run`
 //! and `riff workers lead`) runs outside the sandbox. Before it starts
 //! `claude`, it reads the sign-in of the person from the keyring and
 //! makes the secrets of the session ([`Secrets::make`]):
@@ -24,7 +24,7 @@
 //! session access token of its own, with a proof of the session key
 //! ([`crate::api::Api::signed_in`]). The session key signs the posts of
 //! the session. riff-server lists it with the keys of the person, so
-//! the readers verify the posts (RID_GRANT).
+//! the readers verify the posts (01M4CVXJ3GCEB7B4632J7DD84A).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -44,7 +44,7 @@
 //!
 //! With a grant in the environment, riff never opens the keyring
 //! ([`in_session`], [`crate::secrets`]). The [`Debug`] of [`Secrets`]
-//! names no secret, and no error text holds one (RID_NO_LEAK).
+//! names no secret, and no error text holds one (01M4CVXJA9WAN5M1RKNGETS8AY).
 //!
 //! # Example
 //!
@@ -84,20 +84,20 @@ pub const GRANT_VAR: &str = "RIFF_SESSION_GRANT";
 pub const USER_VAR: &str = "RIFF_USER";
 
 /// The variable that gives Claude Code the plan token of the person
-/// (RID_CLAUDE_TOKEN).
+/// (01M4CVXJCGRC59VVZEHBFA9MPG).
 pub const CLAUDE_TOKEN_VAR: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 
 /// The keyring name of the Claude plan token of the person. One token
 /// for each machine, for each server.
 pub const CLAUDE_TOKEN_SECRET: &str = "claude-oauth-token";
 
-/// The text of a keyring call in a session (RID_NO_KEYRING).
+/// The text of a keyring call in a session (01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
 pub const NO_KEYRING: &str = "a riff session has no keyring: its secrets come in its \
      environment from riff workers run";
 
 /// True when this process is in a session with its secrets in the
 /// environment: [`GRANT_VAR`] is set. Then riff never opens the keyring
-/// (RID_NO_KEYRING).
+/// (01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
 pub fn in_session() -> bool {
     std::env::var_os(GRANT_VAR).is_some_and(|v| !v.is_empty())
 }
@@ -242,7 +242,7 @@ async fn ask(api: &Api, session: &str, key: &Key, person: &str) -> Result<TokenR
 }
 
 /// Swaps the session grant `grant` for a session access token, with a
-/// proof of the session key `key` (RID_GRANT).
+/// proof of the session key `key` (01M4CVXJ3GCEB7B4632J7DD84A).
 pub async fn access_token(api: &Api, key: &Key, grant: &str) -> Result<TokenReply> {
     let request = TokenRequest {
         grant_type: TOKEN_EXCHANGE.into(),
@@ -256,7 +256,7 @@ pub async fn access_token(api: &Api, key: &Key, grant: &str) -> Result<TokenRepl
 }
 
 /// The Claude plan token that the person keeps on this machine
-/// (RID_CLAUDE_TOKEN), or `None`. `riff claude-token` keeps it.
+/// (01M4CVXJCGRC59VVZEHBFA9MPG), or `None`. `riff claude-token` keeps it.
 pub fn claude_token() -> Result<Option<String>> {
     secrets::get(CLAUDE_TOKEN_SECRET).context("riff cannot read the Claude plan token")
 }

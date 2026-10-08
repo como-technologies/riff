@@ -2406,7 +2406,7 @@ pub const ID_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:id_token";
 /// person access token for a session access token (R19).
 pub const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
 
-/// The token type of a session grant (RID_GRANT): the
+/// The token type of a session grant (01M4CVXJ3GCEB7B4632J7DD84A): the
 /// `requested_token_type` of a [`TOKEN_EXCHANGE`] that makes one, and the
 /// `subject_token_type` of a [`TOKEN_EXCHANGE`] that swaps one for a
 /// session access token. The reply that makes a grant has it as

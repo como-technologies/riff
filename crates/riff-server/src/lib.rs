@@ -2997,7 +2997,7 @@ async fn for_session(
 }
 
 /// Swaps a person access token for a session grant on a new session
-/// key (RID_GRANT). The request carries two proofs: the `DPoP` header
+/// key (01M4CVXJ3GCEB7B4632J7DD84A). The request carries two proofs: the `DPoP` header
 /// from the device key of the person token, and `session_proof` from
 /// the session key. The reply comes after the write of the token store,
 /// so the grant lives through a restart of the server.
@@ -3034,7 +3034,7 @@ async fn grant(
     Ok(reply)
 }
 
-/// Swaps a session grant for a session access token (RID_GRANT). The
+/// Swaps a session grant for a session access token (01M4CVXJ3GCEB7B4632J7DD84A). The
 /// `DPoP` header is the proof of the session key of the grant.
 async fn from_grant(
     s: &Server,

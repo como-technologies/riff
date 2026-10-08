@@ -534,7 +534,7 @@ impl Profile {
 ///   session needs it for its local folder `$XDG_RUNTIME_DIR/riff`
 ///   ([`crate::local`]). No session bus: the secrets of a session come
 ///   in its environment, so no process of a session opens the keyring
-///   of the person ([`crate::grant`], RID_NO_KEYRING).
+///   of the person ([`crate::grant`], 01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
 /// - The network: the proxy and the certificates.
 /// - Claude Code: `CLAUDE_CONFIG_DIR`. No `ANTHROPIC_` variable: a
 ///   session gets its model access only from the plan sign-in of the
@@ -583,7 +583,7 @@ pub const KEPT_VARS: &[&str] = &[
 ];
 
 /// The variables of the parent that reach a test run
-/// (RID_TEST_RUN_ENV). `riff test-run` starts the run with an empty
+/// (01M4CVXJGYCT2HKHJP3BWBV0HC). `riff test-run` starts the run with an empty
 /// environment, and then sets only these ([`crate::sandbox`]). A name
 /// that ends in `_` is a prefix.
 ///
@@ -657,7 +657,7 @@ fn in_list(list: &[&str], name: &str) -> bool {
 
 /// The variables that the wrapper of a session keeps and `claude` does
 /// not get: the session bus of the person, for the keyring of the
-/// person (RID_NO_KEYRING). The tmux server of riff keeps them for the
+/// person (01M4CVXJ7ZDAVRKJ8Y59R3KPDV). The tmux server of riff keeps them for the
 /// wrapper in each pane.
 pub const WRAPPER_VARS: &[&str] = &["DBUS_SESSION_BUS_ADDRESS"];
 

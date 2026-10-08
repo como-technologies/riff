@@ -17,6 +17,7 @@ mod forge;
 mod forge_create;
 mod format;
 mod gcs;
+mod grant;
 mod help;
 mod import;
 mod lease;

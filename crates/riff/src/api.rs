@@ -736,7 +736,7 @@ impl Api {
             self = self.for_session(&dir, session);
         }
         // A session with its secrets in the environment never opens the
-        // keyring (RID_NO_KEYRING).
+        // keyring (01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
         if let (Some(session), Some((key, grant))) = (session, crate::grant::from_env()?) {
             self.auth = Some(Arc::new(Auth {
                 key,

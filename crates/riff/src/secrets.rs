@@ -48,7 +48,7 @@
 //! In a session with its secrets in the environment
 //! ([`crate::grant::in_session`]), each call is an error, and
 //! [`has_keyring`] is false: no process of a session opens the keyring
-//! of the person, also with `RIFF_HOME` (RID_NO_KEYRING).
+//! of the person, also with `RIFF_HOME` (01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
 //!
 //! With `RIFF_HOME`, riff keeps each secret in a file of
 //! `$RIFF_HOME/secrets` and never opens the OS keyring
@@ -212,7 +212,7 @@ pub fn refuses(name: &str) -> bool {
     get(name).is_err_and(|e| is_locked(&e))
 }
 
-/// The error of a keyring call in a session (RID_NO_KEYRING).
+/// The error of a keyring call in a session (01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
 fn in_session() -> Result<()> {
     if crate::grant::in_session() {
         bail!(crate::grant::NO_KEYRING);

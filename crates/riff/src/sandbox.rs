@@ -24,7 +24,7 @@
 //! ([`env_args`]), `TMPDIR=/tmp`, [`TEST_RUN_VAR`] and a session bus
 //! that fails each call ([`NO_BUS`]). So no credential of the person,
 //! for example `GH_TOKEN`, and no secret of a session reaches a test
-//! (RID_TEST_RUN_ENV). riff removes the folder of the run at the end
+//! (01M4CVXJGYCT2HKHJP3BWBV0HC). riff removes the folder of the run at the end
 //! (01M4BTG72XPKSTDF4KYRKS4Z0D).
 //!
 //! Before each run, [`check`] looks for `bwrap` and makes one empty
@@ -101,7 +101,7 @@ pub const NO_BUS: &str = "unix:path=/nonexistent/riff-test-bus";
 
 /// The `--setenv` arguments of `bwrap` for each variable of `parent`
 /// that a test run keeps ([`crate::profile::test_run_kept`],
-/// RID_TEST_RUN_ENV).
+/// 01M4CVXJGYCT2HKHJP3BWBV0HC).
 ///
 /// ```
 /// use std::ffi::OsString;

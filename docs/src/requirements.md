@@ -4229,11 +4229,11 @@
   `forge::ForgeEnv` is the only way to make the command of `claude`.
 - **01M4BYVSR06B9HNX4SP83SY2SX** The kept variables are one list,
   `profile::KEPT_VARS`: the account, the language and the terminal,
-  tmux, the XDG folders of the person, the runtime folder and the
-  session bus of the person for the local folder and the keyring of
-  riff, the proxy and the certificates, `CLAUDE_CONFIG_DIR`, and the
-  riff variables of the server, the session, the person and the
-  machine.
+  tmux, the XDG folders of the person, the runtime folder of the
+  person for the local folder of riff, the proxy and the certificates,
+  `CLAUDE_CONFIG_DIR`, and the riff variables of the server, the
+  session, the person and the machine. The session bus of the person
+  is not on the list.
 - **01M4C4WW8JS7QVC0ZYHWPSMWKN** A session never gets an API key of
   Anthropic: no `ANTHROPIC_` variable reaches `claude`. A session gets
   its model access only from the plan sign-in of its person, so its
@@ -4317,10 +4317,47 @@
   repositories. riff waits for the install for at most 10 minutes, then
   runs `riff forge check` in a clone of a repository of OWNER.
 - **01M4C4WW15HGA1VEDFRBEMZAW7** riff starts its tmux server with an
-  empty environment and only the kept variables, with no `TMUX` and no
+  empty environment and only the kept variables and the session bus of
+  the person for the wrapper of each session, with no `TMUX` and no
   `TMUX_PANE`. Its config sets no variable to copy from a client at an
   attach. So the global environment of the server and each of its
   panes hold no credential of the person.
+
+- **01M4CVXJ3GCEB7B4632J7DD84A** riff-server gives a session grant
+  for a token exchange with a live person access token, the proof of
+  its device key, a session ID and the proof of a new session key. The
+  grant acts only as that session, works only with that session key,
+  and does not rotate. A swap of the grant with a proof of the session
+  key gives a session access token. A token of a grant gives no other
+  token. The session key is one of the keys of the person, so the
+  readers verify the posts of the session.
+- **01M4CVXJ5RHHMPE4AYH7KV6E2R** A session grant ends with the
+  sign-in that made it, and 7 days after its last swap. The server
+  saves each grant before its reply, so a grant lives through a
+  restart of the server.
+- **01M4CVXJ7ZDAVRKJ8Y59R3KPDV** No process of a session reads the
+  keyring of the person. The wrapper of the session, outside the
+  sandbox, makes the session key and the grant from the sign-in of
+  the person, and gives them to `claude` in `RIFF_SESSION_KEY` and
+  `RIFF_SESSION_GRANT`, with the user in `RIFF_USER`. With a grant in
+  the environment, each keyring call of riff is an error. The session
+  bus of the person does not reach `claude`.
+- **01M4CVXJA9WAN5M1RKNGETS8AY** No secret of a session goes into a
+  message, a log line, an error text, a commit or a file of the
+  worktree. The debug form of the secrets names no secret.
+- **01M4CVXJCGRC59VVZEHBFA9MPG** `riff claude-token` keeps the Claude
+  plan token of the person (the output of `claude setup-token`) in the
+  keyring of that person on that machine. The wrapper gives it to each
+  session of that person as `CLAUDE_CODE_OAUTH_TOKEN`. The token never
+  goes to riff-server or to another person.
+- **01M4CVXJEQK32SRQ957X6NAEMH** The wrapper of the lead gives the
+  lead a new session ID in `RIFF_SESSION` and `claude --session-id`,
+  so that the grant of the lead acts only as the lead.
+- **01M4CVXJGYCT2HKHJP3BWBV0HC** `riff test-run` starts the run with
+  an empty environment, then sets only the variables of
+  `profile::TEST_RUN_VARS` of the parent, `TMPDIR`, `RIFF_TEST_RUN`
+  and a session bus where no bus listens. No credential of the person
+  and no secret of a session reaches a test.
 
 ## Open
 

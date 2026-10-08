@@ -500,7 +500,7 @@ impl RiffTmux {
 /// server (01M4C4WW15HGA1VEDFRBEMZAW7). It also gets the
 /// [`crate::profile::WRAPPER_VARS`]: the wrapper of each session runs
 /// in a pane, outside the sandbox, and reads the keyring
-/// (RID_NO_KEYRING).
+/// (01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
 ///
 /// ```
 /// use std::ffi::OsString;

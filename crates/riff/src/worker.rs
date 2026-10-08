@@ -315,7 +315,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         .context("the command of claude is empty")?;
     let mut cmd = forge.command(program, args, std::env::vars_os());
     // The secrets of the session come in its environment, never from
-    // the keyring of the person (RID_NO_KEYRING).
+    // the keyring of the person (01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
     if let Some(session) = &session {
         cmd.envs(crate::grant::session_env(&Api::new(server), session).await);
     }
@@ -423,7 +423,7 @@ pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) 
     let riff = crate::binary::this_on_disk()?;
     let lead = Some(forge::TokenRole::Lead);
     // The lead gets a session ID of its own, so that its grant acts
-    // only as it (RID_LEAD_SESSION).
+    // only as it (01M4CVXJEQK32SRQ957X6NAEMH).
     let session = terminal::new_session_id();
     let (given, files, keep) = forge_token(folder.as_ref(), None, server, lead).await;
     let _keep = keep.map(AbortOnDrop);
