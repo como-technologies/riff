@@ -739,6 +739,15 @@ pub fn git() -> std::process::Command {
 /// ```
 pub fn git_in(dir: &Path) -> Result<std::process::Command> {
     let abs = std::path::absolute(dir).with_context(|| format!("no path {}", dir.display()))?;
+    if abs
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        bail!(
+            "riff runs no git in {}: the path has a `..` part",
+            abs.display()
+        );
+    }
     let mut git = git();
     git.arg("-C").arg(&abs);
     let lexical = agent_worktree(&abs);
@@ -1101,7 +1110,7 @@ mod tests {
         let link = refused(&trees.join("link"));
         assert!(link.contains("is a link"), "{link}");
         let out = refused(&trees.join("w/../../../.git"));
-        assert!(out.contains("a link out of it"), "{out}");
+        assert!(out.contains("a `..` part"), "{out}");
         let other = main.join("other");
         std::os::unix::fs::symlink(trees.join("w"), &other).unwrap();
         let to = refused(&other);

@@ -4268,7 +4268,10 @@
   that no part of these paths is a link, that `MAIN/.git` and
   `MAIN/.git/worktrees/NAME` are folders, that the clone does not set
   `extensions.worktreeConfig`, and that a `commondir` file there names
-  `MAIN/.git`. When a check fails, riff runs no
+  `MAIN/.git`. riff runs no git in a path with a `..` part. A folder
+  between the worktree and the path with its own `.git` is a
+  repository of its own: riff runs git there with no git dirs of the
+  worktree. When a check fails, riff runs no
   git there, and the error names the worktree. A git command in each
   other folder gets `GIT_COMMON_DIR` of the `.git` folder of that
   folder, when it has one. A `riff claim` fetches with no `--prune`.
