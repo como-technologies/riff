@@ -181,6 +181,7 @@
 pub mod auth;
 pub mod checkpoint;
 pub mod engine;
+pub mod forge;
 pub mod gcs;
 pub mod idle;
 pub mod import;
@@ -230,7 +231,9 @@ use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
-use crate::engine::{Admitted, Engine, Failed, SignIns, command};
+use crate::engine::{Admitted, Authenticated, Engine, Failed, Routed, SignIns, command};
+use riff_core::forge::{TokenRole, role_of};
+use riff_core::wire::{ForgeCheck, ForgeCheckReply, ForgeToken, ForgeTokenReply};
 use crate::import::Old;
 use crate::lease::Lease;
 use crate::oidc::Identity;
@@ -348,6 +351,8 @@ struct Server {
     checkpoints: Mutex<Checkpoints>,
     /// What `GET /v1/server` tells about this instance.
     facts: Mutex<Facts>,
+    /// The forge tokens of the sessions (#628).
+    forge: forge::Forge,
 }
 
 /// The last checkpoint, and why the server writes none.
@@ -1422,7 +1427,9 @@ impl Service {
             engine.name_owner(&owner);
         }
         let save_every = config.save_every;
+        let forge = forge::Forge::new(config.forge.clone());
         let service = Service(Arc::new(Server {
+            forge,
             config,
             engine,
             tokens,
@@ -1828,13 +1835,13 @@ impl Service {
         let commands = Router::new()
             .route(Register::PATH, post(command::<Register>))
             .route(Start::PATH, post(command::<Start>))
-            .route(End::PATH, post(command::<End>))
+            .route(End::PATH, post(settling::<End>))
             .route(Join::PATH, post(command::<Join>))
             .route(Leave::PATH, post(command::<Leave>))
             .route(Post::PATH, post(command::<Post>))
-            .route(Claim::PATH, post(command::<Claim>))
-            .route(Release::PATH, post(command::<Release>))
-            .route(ReleaseFor::PATH, post(command::<ReleaseFor>))
+            .route(Claim::PATH, post(settling::<Claim>))
+            .route(Release::PATH, post(settling::<Release>))
+            .route(ReleaseFor::PATH, post(settling::<ReleaseFor>))
             .route(Lead::PATH, post(command::<Lead>))
             .route(Pause::PATH, post(command::<Pause>))
             .route(Resume::PATH, post(command::<Resume>))
@@ -1860,6 +1867,8 @@ impl Service {
             .route(RiffQuery::PATH, post(riff))
             .route(PlanSeen::PATH, post(plan_seen))
             .route(PlanShow::PATH, post(plan_show))
+            .route(ForgeToken::PATH, post(forge_token))
+            .route(ForgeCheck::PATH, post(forge_check))
             .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
@@ -2268,6 +2277,105 @@ async fn me(
         session,
         build: build::VERSION.into(),
     }))
+}
+
+/// A command that can change the role of the forge token of a session:
+/// a claim, a release, the end of a session. After the command, the
+/// server revokes each token whose role changed ([`forge::Forge::settle`]).
+/// The revoke runs after the reply, so a slow GitHub does not hold up
+/// the command.
+async fn settling<C: Routed>(
+    AxumState(s): AxumState<Shared>,
+    call: Authenticated<C>,
+) -> Result<Response, Failed>
+where
+    <C as Call>::Reply: serde::Serialize,
+{
+    let reply = command::<C>(AxumState(s.engine.clone()), call).await;
+    if reply.is_ok() && !s.forge.holders().is_empty() {
+        let s = s.clone();
+        tokio::spawn(async move {
+            let (now, now_ms) = (Instant::now(), now_ms());
+            let facts: Vec<(Who, Option<(TokenRole, String)>)> = s.engine.read(|state| {
+                s.forge
+                    .holders()
+                    .into_iter()
+                    .map(|who| {
+                        let fact = state.me(&who, now, now_ms).and_then(|info| {
+                            let repo = info.uri.default_thread()?.to_string();
+                            Some((role_of(info.uri.lead(), info.uri.claims()), repo))
+                        });
+                        (who, fact)
+                    })
+                    .collect()
+            });
+            s.forge
+                .settle(|who| {
+                    facts
+                        .iter()
+                        .find(|(w, _)| w == who)
+                        .and_then(|(_, f)| f.clone())
+                })
+                .await;
+        });
+    }
+    reply
+}
+
+/// The role and the repository of the forge token of `me`, from the
+/// facts of the server (#628). A `me` with no session is the lead of
+/// its person: the wrapper of the lead asks before its session starts.
+/// A session that the server knows gets the role of its facts, at the
+/// repository of its facts. Each other session is a worker.
+fn forge_facts(state: &State, me: &SessionUri) -> Result<(TokenRole, String), forge::Refusal> {
+    let repo = |uri: &SessionUri| {
+        uri.default_thread()
+            .map(|t| t.to_string())
+            .ok_or(forge::Refusal::NoRepository)
+    };
+    if me.who().session().is_none() {
+        return Ok((TokenRole::Lead, repo(me)?));
+    }
+    match state.me(me.who(), Instant::now(), now_ms()) {
+        Some(info) => Ok((
+            role_of(info.uri.lead(), info.uri.claims()),
+            repo(&info.uri)?,
+        )),
+        None => Ok((TokenRole::Worker, repo(me)?)),
+    }
+}
+
+/// `POST /v1/forge/token`: the forge token of the caller (#628). Only a
+/// call with a sign-in gets one.
+async fn forge_token(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<ForgeToken>,
+) -> Reply<ForgeTokenReply> {
+    if proof.signed_in.is_none() {
+        return Err(forge::Refusal::NoSignIn.into());
+    }
+    let caller = admit(&s, &proof, &r.me)?;
+    let (role, repo) = s.engine.peek(&caller, |state| forge_facts(state, &r.me))??;
+    Ok(Json(s.forge.give(r.me.who(), &repo, role).await?))
+}
+
+/// `POST /v1/forge/check`: `riff forge check` (#628). It holds no token.
+async fn forge_check(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<ForgeCheck>,
+) -> Reply<ForgeCheckReply> {
+    if proof.signed_in.is_none() {
+        return Err(forge::Refusal::NoSignIn.into());
+    }
+    admit(&s, &proof, &r.me)?;
+    let repo = r
+        .me
+        .default_thread()
+        .ok_or(forge::Refusal::NoRepository)?
+        .to_string();
+    Ok(Json(s.forge.check(&repo).await?))
 }
 
 /// The facts of this instance, for `riff server`
