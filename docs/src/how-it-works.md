@@ -3293,7 +3293,7 @@ sequenceDiagram
     participant G as GitHub
     W->>S: POST /v1/forge/token (signed-in session)
     S->>S: role from the facts of the server: lead, a verify- claim, else worker
-    K-->>S: the App key, at the deploy
+    K-->>S: the App, at the start of the server
     S->>G: JWT, then access_tokens for the one repository and the rights of the role
     G-->>S: a token for one hour
     S->>G: revoke the old token of this session, when the role changed
@@ -3319,20 +3319,78 @@ The session starts with no forge token, and its pane shows a line
 
 - The riff has no sign-in: riff-server cannot know the person, so it
   gives no token.
-- The riff has no GitHub App: an admin gives it one (see "Give the riff
-  its GitHub App").
+- The riff has no GitHub App: an admin makes it (see "Make the GitHub
+  App of riff").
 - No admin allowed the account of the repository: the line names
   `riff forge allow OWNER` (see "Allow an account").
 - riff-server does not know the session, or it ended.
 - The person has no lead in the repository: the lead token waits
   until the session of the lead starts.
 - The App is not installed on the repository: the line names
-  `riff forge install OWNER`. Until riff has that command, install the
-  App from its page on GitHub (step 7 below).
+  `riff forge install OWNER` (see "Add an org or a personal account to
+  the riff").
 
-### Give the riff its GitHub App
+### Make the GitHub App of riff
 
-An admin of the riff does these steps one time.
+An owner or an admin of the riff makes the App one time, with one
+command. Run it in a terminal, not in a worker or an agent session.
+Put the GitHub organization that owns the App in place of `OWNER`, for
+example `como-technologies`:
+
+```sh
+riff forge create --org OWNER
+```
+
+Your browser opens on a page of riff-server. The page sends the
+manifest of the App to GitHub: its name `riff-OWNER`, the permissions of
+the roles and no more, no webhook, and "Any account" can install it.
+
+1. On GitHub, click "Create GitHub App". You can change the name
+   first.
+2. GitHub sends the browser back to riff-server. riff-server gets the
+   App ID and the private key from GitHub, and puts them in the secret
+   of the App in Secret Manager. The key never goes to your machine.
+3. The browser opens the install page of the App on `OWNER`. Pick the
+   repositories of the riff, and click "Install".
+
+The command waits for the install, at most 10 minutes. Then it allows
+`OWNER` (see "Allow an account"), and runs `riff forge check` when you
+run it in a clone of a repository of `OWNER`.
+
+```mermaid
+sequenceDiagram
+    participant R as riff forge create
+    participant B as browser
+    participant S as riff-server
+    participant G as GitHub
+    R->>S: a new start (an owner or an admin)
+    S-->>R: the start page, good for 10 minutes
+    R->>B: open the start page
+    B->>G: the manifest of the App
+    Note over B,G: click "Create GitHub App"
+    G-->>B: back to riff-server, with a code
+    B->>S: the code
+    S->>G: the code for the App ID and the key
+    S->>S: the key goes to Secret Manager
+    S-->>B: the install page of the App
+    R->>S: the App is installed?
+    R->>S: allow OWNER, then riff forge check
+```
+
+The riff of a cloud instance needs the secret of the App first.
+`riff cloud create NAME` makes it, and lets only riff-server read it
+and add a version. For an instance that you made before, run it again,
+and deploy:
+
+```sh
+riff cloud create shared
+riff cloud deploy shared
+```
+
+### Make the App by hand
+
+With no browser on the machine of the admin, make the App on GitHub,
+and give it to the riff with its key file:
 
 1. On GitHub, open Settings, Developer settings, GitHub Apps, and
    click "New GitHub App".
@@ -3348,23 +3406,41 @@ An admin of the riff does these steps one time.
 6. Write down the App ID. Click "Generate a private key". GitHub
    downloads a `.pem` file.
 7. Click "Install App", and install it on the repositories of the
-   riff. A person of another account installs it on their own
-   repositories from the public page of the App.
+   riff.
 
-Then give the App to the riff, and deploy. Run this in the clone of
-the repository that holds the cloud settings:
+Then store the App in its secret, and start the server again with a
+deploy. Run this in the clone of the repository that holds the cloud
+settings:
 
 ```sh
 riff cloud forge shared APP_ID ~/Downloads/riff.private-key.pem
 riff cloud deploy shared
 ```
 
-`riff cloud forge` stores the key in Secret Manager, lets only the
-service account of riff-server read it, and writes the App ID to
-`deploy/cloud/shared.env`. Commit that file. Delete the downloaded
-key file. The deploy gives the App to riff-server.
+`riff cloud forge` stores the App ID and the key as one version of the
+secret of the App, and lets only the service account of riff-server
+read it. Delete the downloaded key file.
 
 Then allow the accounts of the riff. See "Allow an account".
+
+### Add an org or a personal account to the riff
+
+The App of riff is public: each GitHub account can install it. To add
+an account, for example the personal account `n8behavior`, the owner
+or an admin of the riff allows it. Then a person of that account
+installs the App:
+
+```sh
+riff forge allow n8behavior
+riff forge install n8behavior
+```
+
+`riff forge install` opens the install page of the App, with
+`n8behavior` as the account. The person of that account picks the
+repositories and clicks "Install". The command waits for the install,
+at most 10 minutes. Then it runs `riff forge check` when you run it in
+a clone of a repository of that account. Run it in a terminal, not in
+a worker or an agent session.
 
 ### Allow an account
 

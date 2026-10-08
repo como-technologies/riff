@@ -86,9 +86,9 @@ for the commands.
 ```mermaid
 flowchart LR
     C["riff cloud create"] --> S["riff cloud signin"]
-    S --> F["riff cloud forge"]
-    F --> D["riff cloud deploy"]
+    S --> D["riff cloud deploy"]
     D --> L["riff cloud list<br/>status, log"]
+    D --> F["riff login<br/>riff forge create"]
 ```
 
 ### Make the riff
@@ -122,22 +122,6 @@ riff cloud signin NAME
 It shows the steps to make the sign-in client in the console of
 Google. Then it asks for the client ID and the client secret. The
 secret goes to Secret Manager. The ID goes to the settings file.
-
-### Give the riff a GitHub App
-
-With a GitHub App, the riff gives each session a GitHub token of its
-role. Without it, `gh` and `git push` fail in the sessions. Make the
-App first (see
-[Give the riff its GitHub App](how-it-works.md#give-the-riff-its-github-app)).
-Then store it:
-
-```sh
-riff cloud forge NAME APP_ID ~/Downloads/riff.private-key.pem
-```
-
-The key goes to Secret Manager. The App ID goes to the settings file.
-After the deploy and your sign-in, allow your GitHub account (see
-"Allow your GitHub account" below).
 
 ### Deploy the riff
 
@@ -205,16 +189,25 @@ opens:
 riff login
 ```
 
-## Allow your GitHub account
+## Make the GitHub App of the riff
 
-A riff with a GitHub App makes forge tokens only for the GitHub
-accounts that the owner or an admin allowed. Allow the organization or
-the personal account of your repositories, for example `acme` (see
-[Allow an account](how-it-works.md#allow-an-account)):
+With a GitHub App, the riff gives each session a GitHub token of its
+role. Without it, `gh` and `git push` fail in the sessions. Make the
+App with one command, in a clone of a repository of your GitHub
+organization, for example `acme`. Run it in a terminal, not in an
+agent session:
 
 ```sh
-riff forge allow OWNER
+riff forge create --org OWNER
 ```
+
+Your browser opens. Click "Create GitHub App" on GitHub, then install
+the App on the repositories of the riff. GitHub gives the private key
+to the riff only. riff then allows `OWNER` and checks the token of each
+role (see
+[Make the GitHub App of riff](how-it-works.md#make-the-github-app-of-riff)).
+To add another organization or a personal account, see
+[Add an org or a personal account to the riff](how-it-works.md#add-an-org-or-a-personal-account-to-the-riff).
 
 ## Invite a person
 

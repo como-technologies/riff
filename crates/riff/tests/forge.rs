@@ -583,3 +583,226 @@ async fn riff_forge_allow_sends_the_account_and_shows_the_list() {
             .starts_with("riff://mike@pangolin")
     );
 }
+
+/// A riff-server on a free port with the routes of `router`. Each other
+/// call goes to a real server.
+async fn serve(router: axum::Router) -> String {
+    let router = router
+        .layer(axum::middleware::map_response(
+            |mut r: axum::response::Response| async move {
+                let build = riff_core::build::VERSION.parse().unwrap();
+                r.headers_mut().insert(riff_core::build::HEADER, build);
+                r
+            },
+        ))
+        .fallback_service(riff_server::router());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    url
+}
+
+/// A program for `RIFF_BROWSER`: it writes each page that riff opens to
+/// the file `opened` in `dir`.
+fn browser(dir: &std::path::Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let program = dir.join("browser");
+    let opened = dir.join("opened");
+    std::fs::write(
+        &program,
+        format!("#!/bin/sh\necho \"$1\" >> '{}'\n", opened.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    program
+}
+
+/// Each page that the browser of [`browser`] opened.
+fn opened(dir: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(dir.join("opened"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// 01M4CTAYZW24PDP2PDK72PT6J1: a person runs `riff forge create` and
+/// `riff forge install` in a terminal. A worker and an agent session
+/// get a refusal, and riff calls no server.
+#[tokio::test]
+async fn riff_forge_create_and_install_refuse_in_a_worker_and_an_agent_session() {
+    let seen = Arc::new(Mutex::new(0));
+    let s = seen.clone();
+    let url = serve(axum::Router::new().route(
+        "/v1/forge/create",
+        post(move || async move {
+            *s.lock().unwrap() += 1;
+            Json(Value::Null)
+        }),
+    ))
+    .await;
+    let env = Isolated::new();
+    let runs: [(&[&str], (&str, &str)); 4] = [
+        (&["create", "--org", "acme"], ("RIFF_WORKER", "1")),
+        (&["create", "--org", "acme"], ("RIFF_SESSION", "s1")),
+        (
+            &["create", "--org", "acme"],
+            ("CLAUDE_CODE_SESSION_ID", "s1"),
+        ),
+        (&["install", "acme"], ("RIFF_WORKER", "1")),
+    ];
+    for (args, (name, value)) in runs {
+        let mut cmd = env.riff();
+        cmd.arg("forge")
+            .args(args)
+            .env("RIFF_SERVER", &url)
+            .env("RIFF_USER", "mike")
+            .env("RIFF_HOST", "pangolin")
+            .env(name, value);
+        let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+            .await
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(!out.status.success(), "{args:?} {name}: {stderr}");
+        assert!(
+            stderr.contains("not in a worker or an agent session"),
+            "{args:?} {name}: {stderr}"
+        );
+    }
+    assert_eq!(*seen.lock().unwrap(), 0, "riff called no server");
+}
+
+/// 01M4CTAZ24PM55TKMP714K3CC4: `riff forge install n8behavior` opens the
+/// install page of the App with that account as the target, waits for
+/// the install, and says where to run the check.
+#[tokio::test]
+async fn riff_forge_install_opens_the_install_page_of_the_account() {
+    let page = "https://github.com/apps/riff-acme/installations/new/permissions?target_id=10";
+    let asks = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let a = asks.clone();
+    let url = serve(axum::Router::new().route(
+        "/v1/forge/install",
+        post(move |Json(body): Json<Value>| async move {
+            let mut asks = a.lock().unwrap();
+            asks.push(body);
+            // The person installs the App before the second ask.
+            Json(json!({ "url": page, "installed": asks.len() > 1 }))
+        }),
+    ))
+    .await;
+    let env = Isolated::new();
+    let dir = tempfile::tempdir().unwrap();
+    let repo = clone();
+    let mut cmd = env.riff();
+    cmd.args(["forge", "install", "n8behavior"])
+        .current_dir(repo.path())
+        .env("RIFF_SERVER", &url)
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env(forge::BROWSER_VAR, browser(dir.path()));
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "{text} {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        opened(dir.path()),
+        [page],
+        "riff opens the install page once"
+    );
+    let asks = asks.lock().unwrap().clone();
+    assert_eq!(asks.len(), 2);
+    assert_eq!(asks[0]["owner"], "n8behavior");
+    assert!(
+        text.contains("The GitHub App of riff is installed on n8behavior."),
+        "{text}"
+    );
+    assert!(
+        text.contains("run riff forge check in a clone of a repository of n8behavior"),
+        "{text}"
+    );
+}
+
+/// 01M4CTAYZW24PDP2PDK72PT6J1: `riff forge create --org` opens the start
+/// page of the server, waits for the App and its install, allows the
+/// org, and runs `riff forge check` in a clone of the org.
+#[tokio::test]
+async fn riff_forge_create_opens_the_start_page_then_allows_and_checks() {
+    let start = "http://riff.test/forge/new?state=s1";
+    let seen = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+    let route = |path: &'static str, seen: Arc<Mutex<Vec<(String, Value)>>>| {
+        post(move |Json(body): Json<Value>| async move {
+            let mut seen = seen.lock().unwrap();
+            seen.push((path.to_owned(), body));
+            let polls = seen.iter().filter(|(p, _)| p == "created").count();
+            Json(match path {
+                "create" => json!({ "url": start, "state": "s1" }),
+                // The App comes at the first ask, the install at the
+                // second.
+                "created" => json!({ "app": 7, "slug": "riff-acme", "installed": polls > 1 }),
+                "allow" => json!({ "accounts": ["como-technologies"] }),
+                _ => serde_json::to_value(ForgeCheckReply {
+                    repo: "como-technologies/riff".into(),
+                    app: 7,
+                    roles: TokenRole::ALL
+                        .into_iter()
+                        .map(|role| RoleCheck {
+                            role,
+                            permissions: reply(role, 0).permissions,
+                            error: None,
+                        })
+                        .collect(),
+                })
+                .unwrap(),
+            })
+        })
+    };
+    let url = serve(
+        axum::Router::new()
+            .route("/v1/forge/create", route("create", seen.clone()))
+            .route("/v1/forge/created", route("created", seen.clone()))
+            .route("/v1/forge/allow", route("allow", seen.clone()))
+            .route("/v1/forge/check", route("check", seen.clone())),
+    )
+    .await;
+    let env = Isolated::new();
+    let dir = tempfile::tempdir().unwrap();
+    let repo = clone();
+    let mut cmd = env.riff();
+    cmd.args(["forge", "create", "--org", "como-technologies"])
+        .current_dir(repo.path())
+        .env("RIFF_SERVER", &url)
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env(forge::BROWSER_VAR, browser(dir.path()));
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "{text} {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(opened(dir.path()), [start]);
+    let seen = seen.lock().unwrap().clone();
+    let paths: Vec<&str> = seen.iter().map(|(p, _)| p.as_str()).collect();
+    assert_eq!(paths, ["create", "created", "created", "allow", "check"]);
+    assert_eq!(seen[0].1["org"], "como-technologies");
+    assert_eq!(seen[1].1["state"], "s1");
+    assert_eq!(seen[3].1["owner"], "como-technologies");
+    assert_eq!(seen[3].1["allowed"], true);
+    for line in [
+        "riff-server has the new GitHub App 7 (riff-acme).",
+        "The GitHub App of riff is installed on como-technologies.",
+        "riff-server makes forge tokens for the repositories of: como-technologies",
+        "riff-server checked the GitHub App 7 on como-technologies/riff",
+        "verifier: actions read",
+    ] {
+        assert!(text.contains(line), "{line} is not in: {text}");
+    }
+}

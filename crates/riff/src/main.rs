@@ -512,11 +512,11 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
-    /// Check the forge token of each role
+    /// Make, install and check the GitHub App of riff
     ///
     /// riff-server makes a token for each session with the GitHub App of
-    /// riff, with only the rights of its role. An admin gives the riff
-    /// its App first: see "Give the riff its GitHub App" in the book.
+    /// riff, with only the rights of its role. An admin makes the App
+    /// first with riff forge create.
     Forge {
         #[command(subcommand)]
         command: ForgeCommand,
@@ -576,6 +576,29 @@ enum ForgeCommand {
     /// repository, checks its rights, and revokes it at once. It shows
     /// no token.
     Check,
+    /// Make the GitHub App of riff with one command
+    ///
+    /// Only the owner or an admin of the riff runs it, in a terminal:
+    /// never in a worker or an agent session. riff opens the browser on a
+    /// page of riff-server that sends the manifest of the App to GitHub.
+    /// Click "Create GitHub App", then install the App on the
+    /// repositories of ORG. GitHub gives the private key to riff-server
+    /// only. Then riff allows ORG and runs riff forge check.
+    Create {
+        /// The GitHub organization that owns the App, for example acme.
+        #[arg(long)]
+        org: String,
+    },
+    /// Install the GitHub App of riff on a GitHub account
+    ///
+    /// riff opens the install page of the App for OWNER, an organization
+    /// or a personal account. A person of OWNER picks the repositories.
+    /// riff waits for the install, then runs riff forge check. Run it in
+    /// a terminal, not in a worker or an agent session.
+    Install {
+        /// The GitHub account, for example acme.
+        owner: String,
+    },
     /// Allow a GitHub account to get forge tokens
     ///
     /// riff-server makes forge tokens only for the repositories of the
@@ -631,12 +654,13 @@ enum CloudCommand {
         /// The name of the instance.
         name: String,
     },
-    /// Give an instance the GitHub App of riff
+    /// Give an instance a GitHub App of riff made by hand
     ///
     /// riff-server makes the forge token of each session with this App.
-    /// It stores the private key in Secret Manager, where only the
-    /// service account of riff-server reads it, and the App ID in the
-    /// settings file. The next deploy gives both to riff-server.
+    /// It stores the App ID and the private key in the secret of the App
+    /// in Secret Manager, where only the service account of riff-server
+    /// reads it. riff-server reads it at its next start. riff forge create
+    /// makes the App with no key file.
     Forge {
         /// The name of the instance.
         name: String,
@@ -2375,15 +2399,54 @@ async fn forge(command: &ForgeCommand, server: &str) -> Result<()> {
             );
             let me = identity::person(&place, server)?;
             let api = Api::new(server).signed_in(None)?;
-            let check = api.forge_check(&me).await?;
-            println!("{}", text::forge_check_head(check.app, &check.repo));
-            let mut failed = false;
-            for role in &check.roles {
-                failed |= role.error.is_some();
-                println!("{}", text::forge_check_line(role));
+            forge_check(&api, &me).await
+        }
+        ForgeCommand::Create { org } => {
+            forge::refuse_in_session("riff forge create")?;
+            let place = identity::here(None)?;
+            let me = identity::person(&place, server)?;
+            let api = Api::new(server).signed_in(None)?;
+            let start = api.forge_create(&me, org).await?;
+            forge::open_page(&start.url);
+            let mut poll = forge::Poll::new();
+            let mut made = false;
+            let mut installed = false;
+            while !installed && poll.next().await {
+                let reply = api.forge_created(&me, &start.state).await?;
+                if let Some(error) = &reply.error {
+                    anyhow::bail!("riff forge create failed: {error}");
+                }
+                if let (false, Some(app), Some(slug)) = (made, reply.app, &reply.slug) {
+                    made = true;
+                    println!("{}", text::forge_app_made(app, slug, org));
+                }
+                installed = reply.installed;
             }
-            anyhow::ensure!(!failed, "the App cannot make a token of each role");
-            Ok(())
+            anyhow::ensure!(installed, text::FORGE_WAIT_END);
+            println!("{}", text::forge_installed(org));
+            let accounts = api.forge_allow(&me, Some(org), true).await?;
+            println!("{}", text::forge_accounts(&accounts.accounts));
+            forge_check_of(&api, &me, org).await
+        }
+        ForgeCommand::Install { owner } => {
+            forge::refuse_in_session("riff forge install")?;
+            let place = identity::here(None)?;
+            let me = identity::person(&place, server)?;
+            let api = Api::new(server).signed_in(None)?;
+            let mut poll = forge::Poll::new();
+            let mut installed = false;
+            let mut opened = false;
+            while !installed && poll.next().await {
+                let reply = api.forge_install(&me, owner).await?;
+                installed = reply.installed;
+                if !installed && !opened {
+                    opened = true;
+                    forge::open_page(&reply.url);
+                }
+            }
+            anyhow::ensure!(installed, text::FORGE_WAIT_END);
+            println!("{}", text::forge_installed(owner));
+            forge_check_of(&api, &me, owner).await
         }
         ForgeCommand::Allow { owner, remove } => {
             let me = identity::person(&identity::here(None)?, server)?;
@@ -2403,6 +2466,34 @@ async fn forge(command: &ForgeCommand, server: &str) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// `riff forge check` for `me`: one line for each role.
+async fn forge_check(api: &Api, me: &SessionUri) -> Result<()> {
+    let check = api.forge_check(me).await?;
+    println!("{}", text::forge_check_head(check.app, &check.repo));
+    let mut failed = false;
+    for role in &check.roles {
+        failed |= role.error.is_some();
+        println!("{}", text::forge_check_line(role));
+    }
+    anyhow::ensure!(!failed, "the App cannot make a token of each role");
+    Ok(())
+}
+
+/// `riff forge check` at the end of `riff forge create` and `riff forge
+/// install`: in the clone of a repository of the GitHub account
+/// `owner`. Elsewhere it says where to run it.
+async fn forge_check_of(api: &Api, me: &SessionUri, owner: &str) -> Result<()> {
+    let ours = matches!(
+        me.place().repo(),
+        riff_core::name::Repo::Git { owner: o, .. } if o.eq_ignore_ascii_case(owner)
+    );
+    if !ours {
+        println!("{}", text::forge_check_elsewhere(owner));
+        return Ok(());
+    }
+    forge_check(api, me).await
 }
 
 async fn cloud(command: &CloudCommand) -> Result<()> {
@@ -2442,7 +2533,7 @@ async fn cloud(command: &CloudCommand) -> Result<()> {
             let app = app
                 .parse()
                 .with_context(|| format!("{app} is no App ID: give the number of the App"))?;
-            cloud::forge(&gcloud, &s, &cloud::file(&dir, name), app, &pem)
+            cloud::forge(&gcloud, &s, app, &pem)
         }
         CloudCommand::Deploy { name, tag, confirm } => {
             let s = cloud::load(&dir, name)?;

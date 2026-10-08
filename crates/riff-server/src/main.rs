@@ -98,6 +98,12 @@ struct Cli {
     #[arg(long, env = "RIFF_FORGE_KEY", hide_env_values = true, hide = true)]
     forge_key: Option<String>,
 
+    /// The secret of the GitHub App in Secret Manager,
+    /// projects/PROJECT/secrets/NAME. The server reads the App from it at
+    /// its start, and riff forge create writes a new App to it.
+    #[arg(long, env = "RIFF_FORGE_SECRET")]
+    forge_secret: Option<String>,
+
     /// The base URL of the GitHub API, for a test with a fake API.
     #[arg(long, env = "RIFF_GITHUB_API", hide_env_values = true, hide = true)]
     github_api: Option<String>,
@@ -214,6 +220,28 @@ enum Stop {
 impl From<std::io::Error> for Stop {
     fn from(error: std::io::Error) -> Self {
         Stop::Told(error.to_string())
+    }
+}
+
+/// The GitHub App of the server: from `RIFF_FORGE_APP` and
+/// `RIFF_FORGE_KEY` when they are set, else from the latest version of
+/// the store.
+async fn forge_settings(
+    app: Option<&str>,
+    key: Option<&str>,
+    api: Option<&str>,
+    store: Option<&riff_server::forge::store::Store>,
+) -> Result<Option<riff_server::forge::Settings>, String> {
+    use riff_server::forge::Settings;
+    if let Some(settings) = Settings::of(app, key, api)? {
+        return Ok(Some(settings));
+    }
+    let Some(store) = store else {
+        return Ok(None);
+    };
+    match store.read().await? {
+        Some(stored) => Settings::of(Some(&stored.app.to_string()), Some(&stored.key), api),
+        None => Ok(None),
     }
 }
 
@@ -348,16 +376,28 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
     } else {
         tracing::warn!("no RIFF_OIDC_CLIENT_ID: nobody can sign in");
     }
-    match riff_server::forge::Settings::of(
+    if let Some(api) = cli.github_api.as_deref().filter(|a| !a.trim().is_empty()) {
+        config.github_api = api.trim().trim_end_matches('/').to_owned();
+    }
+    config.forge_store = cli
+        .forge_secret
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+        .map(riff_server::forge::store::Store::secret);
+    let forge = forge_settings(
         cli.forge_app.as_deref(),
         cli.forge_key.as_deref(),
         cli.github_api.as_deref(),
-    ) {
+        config.forge_store.as_ref(),
+    );
+    match forge.await {
         Ok(Some(forge)) => {
             tracing::info!("forge tokens with the GitHub App {}", forge.app.id());
             config.forge = Some(forge);
         }
-        Ok(None) => tracing::info!("no GitHub App: the server gives no forge token"),
+        Ok(None) => tracing::info!(
+            "no GitHub App: the server gives no forge token. An admin runs: riff forge create"
+        ),
         Err(why) => tracing::error!("no forge tokens: {why}"),
     }
     let store: Option<Arc<dyn Store>> = match (&cli.bucket, &cli.dir) {

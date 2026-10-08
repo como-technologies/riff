@@ -823,7 +823,7 @@ pub struct PlanEnded {
 
 /// The owner or an admin allows the GitHub account `owner`, or allows it
 /// no more: the server makes forge tokens only for the repositories of
-/// an allowed account (01M4CHQR1E5HFV6KSTSM72H0QV). `owner` is in lower
+/// an allowed account (01M4CTAYRSC27Q6AAGTH9CBD7Q). `owner` is in lower
 /// case.
 ///
 /// ```

@@ -710,8 +710,9 @@ mod tests {
         {
             use crate::forge::{Access, TokenRole};
             use crate::wire::{
-                ForgeAccounts, ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeToken,
-                ForgeTokenReply, RoleCheck,
+                ForgeAccounts, ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeCreate,
+                ForgeCreateReply, ForgeCreated, ForgeCreatedReply, ForgeInstall, ForgeInstallReply,
+                ForgeToken, ForgeTokenReply, RoleCheck,
             };
             let permissions = BTreeMap::from([
                 ("contents".to_owned(), Access::Write),
@@ -743,6 +744,32 @@ mod tests {
             });
             c.trip(&ForgeAccounts {
                 accounts: vec!["acme".into()],
+            });
+            c.trip(&ForgeCreate {
+                me: me(),
+                org: "acme".into(),
+            });
+            c.trip(&ForgeCreateReply {
+                url: "https://riff.example/forge/new?state=s".into(),
+                state: "s".into(),
+            });
+            c.trip(&ForgeCreated {
+                me: me(),
+                state: "s".into(),
+            });
+            c.trip(&ForgeCreatedReply {
+                app: Some(7),
+                slug: Some("riff-acme".into()),
+                installed: true,
+                error: Some("no".into()),
+            });
+            c.trip(&ForgeInstall {
+                me: me(),
+                owner: "acme".into(),
+            });
+            c.trip(&ForgeInstallReply {
+                url: "https://github.com/apps/riff-acme/installations/new".into(),
+                installed: false,
             });
         }
         c.trip(&SetIdle {

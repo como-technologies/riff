@@ -72,6 +72,9 @@
 //! | `POST /v1/log` | [`LogQuery`] | [`LogReply`] | an admin |
 //! | `POST /v1/admin` | [`SetAdmin`] | [`AdminSet`] | the owner |
 //! | `POST /v1/owner` | [`PassOwner`] | [`OwnerPassed`] | the owner |
+//! | `POST /v1/forge/create` | [`ForgeCreate`] | [`ForgeCreateReply`] | an admin |
+//! | `POST /v1/forge/created` | [`ForgeCreated`] | [`ForgeCreatedReply`] | the admin of the `state` |
+//! | `POST /v1/forge/install` | [`ForgeInstall`] | [`ForgeInstallReply`] | each person |
 //!
 //! A person who is not an admin gets status 403 from `invite`,
 //! `remove` and `log`. A person who is not the owner gets status 403 from
@@ -242,6 +245,9 @@ calls! {
     ForgeToken => "/v1/forge/token", ForgeTokenReply;
     ForgeCheck => "/v1/forge/check", ForgeCheckReply;
     ForgeAllow => "/v1/forge/allow", ForgeAccounts;
+    ForgeCreate => "/v1/forge/create", ForgeCreateReply;
+    ForgeCreated => "/v1/forge/created", ForgeCreatedReply;
+    ForgeInstall => "/v1/forge/install", ForgeInstallReply;
 }
 
 /// `POST /v1/register`: a session says that it exists and where it
@@ -464,7 +470,7 @@ pub struct ForgeCheckReply {
 
 /// `POST /v1/forge/allow`: `riff forge allow`. The server makes forge
 /// tokens only for the repositories of the GitHub accounts that the
-/// owner or an admin allowed (01M4CHQR1E5HFV6KSTSM72H0QV). `owner` is an
+/// owner or an admin allowed (01M4CTAYRSC27Q6AAGTH9CBD7Q). `owner` is an
 /// organization or a personal account. With `allowed` true, the server
 /// allows it; with false, it allows it no more. With no `owner`, the
 /// command changes nothing and gives the list. Only the owner or an admin
@@ -495,6 +501,81 @@ pub struct ForgeAllow {
 pub struct ForgeAccounts {
     #[serde(default)]
     pub accounts: Vec<String>,
+}
+
+/// `POST /v1/forge/create`: `riff forge create --org ORG` (#627). The
+/// server makes a new `state` for the admin, good for 10 minutes, and
+/// replies with the URL of its start page. The page posts the manifest
+/// of the GitHub App of riff to GitHub, on the account `org`. Only the
+/// owner or an admin can send it.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeCreate {
+    pub me: SessionUri,
+    /// The GitHub organization that owns the new App, for example acme.
+    pub org: String,
+}
+
+/// The reply to [`ForgeCreate`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeCreateReply {
+    /// The start page on the server: open it in the browser.
+    pub url: String,
+    /// The `state` of this start. [`ForgeCreated`] names it.
+    pub state: String,
+}
+
+/// `POST /v1/forge/created`: `riff forge create` asks how far the start
+/// `state` is. Only the admin that made the `state` can ask.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeCreated {
+    pub me: SessionUri,
+    pub state: String,
+}
+
+/// The reply to [`ForgeCreated`]. With no `app`, GitHub did not send the
+/// browser back yet.
+///
+/// ```
+/// use riff_core::wire::ForgeCreatedReply;
+///
+/// let waiting: ForgeCreatedReply = serde_json::from_str("{}").unwrap();
+/// assert!(waiting.app.is_none() && !waiting.installed);
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeCreatedReply {
+    /// The ID of the new App, after the server stored it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<u64>,
+    /// The name of the App in its URL, for example `riff-acme`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    /// True when the App is installed on the account of the start.
+    #[serde(default)]
+    pub installed: bool,
+    /// Why the start failed, if it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// `POST /v1/forge/install`: `riff forge install OWNER` (#627). The
+/// server replies with the install page of the App for the GitHub
+/// account `owner`, an organization or a person, and whether the App is
+/// installed there now.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeInstall {
+    pub me: SessionUri,
+    /// The GitHub account, for example acme.
+    pub owner: String,
+}
+
+/// The reply to [`ForgeInstall`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeInstallReply {
+    /// The install page of the App, with `owner` as the target.
+    pub url: String,
+    /// True when the App is installed on `owner`.
+    #[serde(default)]
+    pub installed: bool,
 }
 
 /// The check of the token of one role.

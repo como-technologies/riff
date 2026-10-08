@@ -251,7 +251,7 @@ async fn a_server_with_no_app_gives_no_forge_token() {
     mike.register(&base, LIB, true).await;
     let (status, text) = mike.forge(&base, LIB).await;
     assert_eq!(status, 409);
-    assert!(text.contains("riff cloud forge"), "{text}");
+    assert!(text.contains("riff forge create"), "{text}");
 }
 
 #[tokio::test]

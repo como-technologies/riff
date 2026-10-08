@@ -1618,7 +1618,8 @@
 - **R32** The OIDC client secret is in Secret Manager. Cloud Run gives
   it to `riff-server` as `RIFF_OIDC_CLIENT_SECRET`.
 - **R134** `riff-server` runs as its own service account. The account
-  can read and write only its bucket, and read only its secret. The
+  can read and write only its bucket, read only its sign-in secret, and
+  read and add versions only to the secret of its GitHub App. The
   bucket is private.
 - **R135** The image holds only the `riff-server` binary and CA
   certificates. It runs as a user that is not root.
@@ -4241,12 +4242,7 @@
   `riff workers lead`, like a worker through `riff workers run`: a temp
   folder of its own, the forge token of the lead, and `claude` through
   `forge::ForgeEnv`. The token of the lead does not follow the claims.
-- **01M4CHQR1E5HFV6KSTSM72H0QV** riff-server makes each forge token with
-  the one GitHub App of riff. The private key of the App is in Secret
-  Manager, and only the service account of riff-server reads it.
-  `riff cloud forge NAME APP_ID KEY` stores the key there and the App
-  ID in the cloud settings. `riff cloud deploy` gives both to the
-  server. The key is never on the machine of a person.
+- **01M4CHQR1E5HFV6KSTSM72H0QV** Replaced by 01M4CTAYRSC27Q6AAGTH9CBD7Q.
 - **01M4CHQR3Q566ZFFGQEQMJ3HAS** Replaced by 01M4CNN37FYYB99BS6QV2FFWZ8.
 - **01M4CNN37FYYB99BS6QV2FFWZ8** The wrapper of a session asks
   riff-server for its token with the URI of the session. The server
@@ -4287,6 +4283,39 @@
   owner or an admin allowed with `riff forge allow OWNER`. Each allow
   and each end of an allow (`--remove`) is a `forge_allowed` record in
   the log. `riff forge allow` with no OWNER lists the accounts.
+- **01M4CTAYRSC27Q6AAGTH9CBD7Q** riff-server makes each forge token with
+  the one GitHub App of riff. The App ID and its private key are one
+  secret in Secret Manager. `riff cloud create` makes the secret, and
+  only the service account of riff-server reads it and adds a version.
+  The deploy names the secret, and riff-server reads its latest
+  version at its start. `riff forge create` puts the App there, and
+  riff-server uses it at once. `riff cloud forge NAME APP_ID KEY`
+  stores an App made by hand. With `riff forge create`, the key is
+  never on the machine of a person.
+- **01M4CTAYV4P2M8Q85ESWS0B59C** `riff forge create --org ORG` makes the
+  App with the GitHub App manifest flow, on the organization ORG. The
+  manifest asks for the permissions of the roles at the highest level
+  that a role needs, and no more. It has no webhook and no event. The
+  App is public, so each account can install it. GitHub gives the code
+  of the new App to riff-server, and riff-server swaps it for the App
+  ID and the key. The key is in no reply and in no log line.
+- **01M4CTAYXHW701XPW2X10H8HH8** riff-server gives each start of
+  `riff forge create` a new random `state`. It is good for 10 minutes
+  and for one return of GitHub. Only the admin that made it can see
+  how far it is. A wrong, old or used `state` is refused, and
+  riff-server swaps no code for it.
+- **01M4CTAYZW24PDP2PDK72PT6J1** Only the owner or an admin can run
+  `riff forge create`. `riff forge create` and `riff forge install`
+  refuse when `RIFF_WORKER` is set, and in an agent session: a person
+  runs them in a terminal. `riff forge create` opens the browser on the
+  start page of riff-server, waits for the App and its install on ORG
+  for at most 10 minutes, allows ORG, and runs `riff forge check` in a
+  clone of a repository of ORG.
+- **01M4CTAZ24PM55TKMP714K3CC4** `riff forge install OWNER` opens the
+  install page of the App with the GitHub account OWNER, an
+  organization or a person, as the target. A person of OWNER picks the
+  repositories. riff waits for the install for at most 10 minutes, then
+  runs `riff forge check` in a clone of a repository of OWNER.
 - **01M4C4WW15HGA1VEDFRBEMZAW7** riff starts its tmux server with an
   empty environment and only the kept variables, with no `TMUX` and no
   `TMUX_PANE`. Its config sets no variable to copy from a client at an

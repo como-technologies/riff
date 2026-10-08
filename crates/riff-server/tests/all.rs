@@ -14,6 +14,7 @@ mod direct;
 mod dpop;
 mod facts;
 mod forge;
+mod forge_create;
 mod format;
 mod gcs;
 mod help;

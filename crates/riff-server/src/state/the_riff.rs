@@ -166,7 +166,7 @@ pub struct TheRiff {
     /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
     pub(super) idle: Idle,
     /// The GitHub accounts that get forge tokens, in lower case
-    /// (01M4CHQR1E5HFV6KSTSM72H0QV).
+    /// (01M4CTAYRSC27Q6AAGTH9CBD7Q).
     pub(super) forge_accounts: BTreeSet<String>,
 }
 
@@ -575,7 +575,7 @@ impl Command for SetIdle {
 }
 
 /// Allows the GitHub account `owner`, or allows it no more
-/// (01M4CHQR1E5HFV6KSTSM72H0QV). It needs the owner or an admin, as a
+/// (01M4CTAYRSC27Q6AAGTH9CBD7Q). It needs the owner or an admin, as a
 /// person. A command that changes nothing writes no record. The reply is
 /// the list of the written copy.
 impl Command for ForgeAllow {
