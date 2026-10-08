@@ -247,12 +247,11 @@ pub fn check_in(path: Option<OsString>, profile: &Path) -> Result<PathBuf, Missi
 ///   broker. When the worktree is the folder of the worktrees of the
 ///   clone, the worktree of the run is its folder `NAME` that holds
 ///   `dir`.
-/// - Else, in a worktree of the agent tool, the outermost
-///   `.claude/worktrees/NAME` of `dir` and its clone
-///   ([`crate::confine::outer_worktree`]).
 /// - Else, the top of the git worktree of `dir` (else `dir`) and the
-///   folder of its common git dir: a person runs `riff test-run` in a
-///   folder of their own.
+///   folder of its common git dir. With no broker, `riff test-run`
+///   runs outside each sandbox: a person or a test starts it. A session
+///   in its sandbox cannot start one with no broker: it cannot make
+///   the namespaces of `bwrap`.
 ///
 /// ```
 /// use riff::sandbox::place;
@@ -275,10 +274,11 @@ pub fn check_in(path: Option<OsString>, profile: &Path) -> Result<PathBuf, Missi
 ///     place(Path::new("/src/app/.claude/worktrees/w/n"), given),
 ///     (PathBuf::from("/src/app/.claude/worktrees/w"), PathBuf::from("/src/app"))
 /// );
-/// // A nested `.claude/worktrees` is a folder of the worktree, not a clone.
+/// // A folder of the worktree with a `.git` of its own changes nothing.
+/// let given = Some((PathBuf::from("/src/app/.claude/worktrees"), PathBuf::from("/src/app")));
 /// let dir = Path::new("/src/app/.claude/worktrees/w/a/.claude/worktrees/x");
 /// assert_eq!(
-///     place(dir, None),
+///     place(dir, given),
 ///     (PathBuf::from("/src/app/.claude/worktrees/w"), PathBuf::from("/src/app"))
 /// );
 /// ```
@@ -292,9 +292,6 @@ pub fn place(dir: &Path, given: Option<(PathBuf, PathBuf)>) -> (PathBuf, PathBuf
             _ => root,
         };
         return (worktree, clone);
-    }
-    if let Some((clone, name)) = crate::confine::outer_worktree(dir) {
-        return (clone.join(crate::worktrees::AGENT_DIR).join(name), clone);
     }
     let worktree = git(dir, &["rev-parse", "--show-toplevel"]).unwrap_or_else(|| dir.to_owned());
     let clone = git(

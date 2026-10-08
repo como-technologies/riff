@@ -4289,10 +4289,11 @@
   worktree of the session, from its start. The folder of the request
   only picks where the command runs in that worktree. No `.git` file or
   folder in the worktree changes the clone, the worktree or the git dir
-  that the profile of the test run reads. With no broker, a test run in
-  a worktree of the agent tool takes the outermost
-  `.claude/worktrees/NAME` of its folder and its clone, never a
-  repository in that worktree.
+  that the profile of the test run reads. When the worktree of the
+  session is the folder of the worktrees of the clone, the worktree of
+  the run is its folder `NAME` that holds the folder of the request.
+  With no broker, `riff test-run` runs outside each sandbox, and takes
+  them from git in its folder.
 - **01M4D4BZ41AH29KSA9B0VZB8DQ** No role and no test run reads
   `credentials.toml` or `credentials` of a cargo home: they hold the
   registry tokens of the person, and `Session::secrets` names them in
