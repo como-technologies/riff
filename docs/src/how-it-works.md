@@ -3236,8 +3236,11 @@ Run the tests in a worker as everywhere:
 just check
 ```
 
-The broker runs only the operations of its list (today `test-run`), in
-the worktree of the session. It refuses each other request. It takes
+The broker runs only the operations of its list (`test-run` and
+`outside`), in the worktree of the session. It refuses each other
+request. It refuses a folder with a `..` part. It runs in the real
+folder that it checked, not in the folder of the request, so a link
+that changes after the check does not move the run. It takes
 only the variables of cargo and of the tests from the request: never
 `PATH` or `LD_PRELOAD`. The folders that a test run writes come from
 the broker, not from the request: the target of the session and the
@@ -3249,6 +3252,73 @@ The broker gets them when the session starts. The folder of the
 request only picks where the command runs. So a `.git` file that a
 session writes in its worktree cannot make a test run read another
 repository.
+
+#### Run one command outside the sandbox
+
+The sandbox is always on. No switch turns it off. When a session needs
+one command outside its sandbox, for example a command with `sudo`,
+it asks. The owner or an admin of the riff approves or denies the
+request. Then the broker runs the command one time.
+
+```mermaid
+sequenceDiagram
+    participant S as riff outside ask (the session)
+    participant R as riff-server
+    participant A as an admin, in a terminal
+    participant B as the broker (outside)
+    S->>R: the command, the folder, the reason
+    R-->>A: a message to the lead: the request and its ID
+    S->>B: run the request ID
+    A->>R: riff outside approve ID
+    B->>R: take the request (one time)
+    B->>B: check the folder, run the command
+    B-->>S: the exit code
+```
+
+The session asks in its worktree. Give the reason, then the command
+after `--`:
+
+```sh
+riff outside ask --reason "the test needs root" -- sudo true
+```
+
+riff prints the ID of the request, and waits for a decision for up to
+one hour. The exit code of `riff outside ask` is the exit code of the
+command.
+
+The owner or an admin sees the requests of the last hour in a
+terminal:
+
+```sh
+riff outside list
+```
+
+Approve a request by its ID:
+
+```sh
+riff outside approve 7f3a9c21
+```
+
+Or deny it:
+
+```sh
+riff outside deny 7f3a9c21
+```
+
+- Only the owner or an admin decides, with the sign-in of a person in
+  a terminal. A worker or an agent session gets a refusal. riff-server
+  refuses the token of a session, so no session approves its own
+  request.
+- The broker runs the command and the folder that riff-server keeps,
+  not what the session sends. The folder must be in the worktree of the
+  session. The command gets the environment of the broker, with no
+  secret of the session.
+- A request runs one time. To run the command again, ask again.
+- riff-server keeps the requests in its memory for one hour. A restart
+  of the server drops them.
+- riff-server posts each step to the thread of the repository: who
+  asked, the command, the folder, the reason, and who approved or
+  denied it. The ask wakes your lead.
 
 #### Commit and push in a worker
 
