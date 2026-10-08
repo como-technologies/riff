@@ -63,7 +63,7 @@ use riff_core::name::SessionUri;
 use riff_core::wire::SessionInfo;
 
 use crate::api::Api;
-use crate::terminal::{Terminal, Tmux, WorkerPane};
+use crate::terminal::WorkerPane;
 use crate::text;
 
 /// The time between two looks at the worker panes.
@@ -73,7 +73,7 @@ pub const EVERY: Duration = Duration::from_secs(5);
 const JOURNAL_SINCE: &str = "-10min";
 
 /// A worker pane that riff watches.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Watched {
     pub pane: WorkerPane,
     /// The systemd scope of the pane, if riff found it.
@@ -214,11 +214,20 @@ pub fn journal() -> Option<String> {
     (out.status.success() && !text.trim().is_empty()).then_some(text)
 }
 
-/// One look at the worker panes of `tmux` (see [`Reaper::look`]). A
-/// look that cannot list the panes gives nothing, and forgets nothing.
-pub fn lost(reaper: &mut Reaper, tmux: &Tmux) -> Vec<Watched> {
-    match tmux.worker_panes() {
-        Ok(panes) => reaper.look(&panes, |w| tmux.pane_pid(&w.pane).and_then(scope_of)),
+/// One look at the worker panes of `door` (see [`Reaper::look`]): tmux,
+/// or the broker of a lead in its sandbox ([`crate::door`]). A look that
+/// cannot list the panes gives nothing, and forgets nothing.
+pub fn lost(reaper: &mut Reaper, door: &crate::door::Door) -> Vec<Watched> {
+    match door.watched() {
+        Ok(watched) => {
+            let panes: Vec<WorkerPane> = watched.iter().map(|w| w.pane.clone()).collect();
+            reaper.look(&panes, |p| {
+                watched
+                    .iter()
+                    .find(|w| w.pane == *p)
+                    .and_then(|w| w.scope.clone())
+            })
+        }
         Err(e) => {
             eprintln!("riff: cannot list the worker panes: {e:#}");
             Vec::new()

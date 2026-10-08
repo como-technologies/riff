@@ -118,6 +118,7 @@ impl Machine {
             .current_dir(dir)
             .env("PATH", path)
             .env("RIFF_HOME", self.run.path())
+            .env("XDG_DATA_HOME", self.run.path().join("data"))
             .env("RIFF_SERVER", &self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "pangolin")
@@ -143,7 +144,10 @@ impl Machine {
 
     /// The MCP config file of the workers.
     fn mcp_file(&self) -> PathBuf {
-        self.run.path().join("state").join(riff::worker_mcp::FILE)
+        self.run
+            .path()
+            .join("data/riff/given")
+            .join(riff::worker_mcp::FILE)
     }
 
     /// The MCP config of the workers, as JSON.

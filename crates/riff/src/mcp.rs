@@ -862,7 +862,7 @@ impl Tools {
         let env = crate::rollout::Live {
             api: self.api.clone(),
             me: move || tools.me(),
-            tmux: crate::terminal::Tmux::from_env(),
+            door: crate::door::Door::of_session(),
             claude: "claude".into(),
             gh: Arc::new(crate::pr::Gh::default()),
         };
@@ -887,9 +887,11 @@ impl Tools {
     pub fn reap(&self) -> tokio::task::JoinHandle<()> {
         use crate::reap::{self, Reaper};
         let tools = self.clone();
-        let tmux = crate::terminal::Tmux::from_env();
+        // In the sandbox of the lead, the broker looks at the panes
+        // (01M4DDWPC693RNWHY7P7XBZ9TB).
+        let door = crate::door::Door::of_session();
         tokio::spawn(async move {
-            let Some(tmux) = tmux else { return };
+            let Some(door) = door else { return };
             let mut reaper = Reaper::default();
             let mut tick = tokio::time::interval(reap::EVERY);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -897,9 +899,9 @@ impl Tools {
                 tick.tick().await;
                 // tmux and /proc: keep them off the runtime.
                 let looked = {
-                    let tmux = tmux.clone();
+                    let door = door.clone();
                     tokio::task::spawn_blocking(move || {
-                        let lost = reap::lost(&mut reaper, &tmux);
+                        let lost = reap::lost(&mut reaper, &door);
                         (reaper, lost)
                     })
                     .await
@@ -928,7 +930,7 @@ impl Tools {
                     &me,
                     &sessions,
                     &lost,
-                    reap::journal,
+                    || door.journal(),
                     crate::deaths::record_here,
                 )
                 .await;

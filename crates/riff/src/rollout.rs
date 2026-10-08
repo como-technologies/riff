@@ -134,8 +134,8 @@ use crate::disk::Disk;
 use crate::host::{self, Request};
 use crate::machine::Machine;
 use crate::pr::Gh;
-use crate::terminal::{Terminal, Tmux, WorkerPane};
-use crate::{identity, settings, text, worker};
+use crate::terminal::WorkerPane;
+use crate::{identity, settings, text};
 
 /// How often a rollout that is off looks at its setting again.
 pub const OFF_WAIT: Duration = Duration::from_secs(10);
@@ -1406,8 +1406,9 @@ pub struct Live<M> {
     pub api: Api,
     /// The session now: it can move.
     pub me: M,
-    /// The tmux of the lead, if it runs in tmux.
-    pub tmux: Option<Tmux>,
+    /// The tmux of the lead, if it runs in tmux: in the sandbox of the
+    /// lead, its broker ([`crate::door`]).
+    pub door: Option<crate::door::Door>,
     pub claude: PathBuf,
     pub gh: Arc<Gh>,
 }
@@ -1470,10 +1471,10 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         let mut panes = Vec::new();
         let settings = settings::path()?;
         let limit = settings::workers_limit(&settings)?;
-        if let Some(tmux) = &self.tmux
+        if let Some(door) = &self.door
             && limit > 0
         {
-            let here = tmux.worker_panes()?;
+            let here = door.worker_panes()?;
             places.push(Place {
                 host: me.place().host().to_owned(),
                 session: None,
@@ -1540,18 +1541,18 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                     .await?;
             }
             None => {
-                let Some(tmux) = &self.tmux else {
+                let Some(door) = &self.door else {
                     bail!("the lead does not run in tmux");
                 };
                 let dir = identity::working_dir()?;
                 // The start runs git and tmux: keep them off the runtime.
-                let (tmux, claude, base) = (
-                    tmux.clone(),
+                let (door, claude, base) = (
+                    door.clone(),
                     self.claude.clone(),
                     self.api.base().to_owned(),
                 );
                 let started = tokio::task::spawn_blocking(move || {
-                    worker::start(&tmux, 1, &claude, &base, &dir)
+                    door.start(1, &claude, &base, &dir)
                 })
                 .await??;
                 let started = match started {

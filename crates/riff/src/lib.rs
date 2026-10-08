@@ -89,6 +89,7 @@ pub mod deaths;
 pub mod device;
 pub mod disk;
 pub mod docs;
+pub mod door;
 pub mod dropped;
 pub mod enable;
 pub mod forge;

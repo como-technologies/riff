@@ -4633,6 +4633,69 @@ pub fn target_not_in(target: &Path, within: &Path) -> String {
 /// The refusal of the broker for a request with no program.
 pub const BROKER_NO_PROGRAM: &str = "the request names no program";
 
+/// The refusal of a broker that is not the broker of a lead, for an
+/// operation of the lead (01M4DDWPC693RNWHY7P7XBZ9TB).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::door_not_lead("workers-stop"),
+///     "the operation workers-stop is only for the lead",
+/// );
+/// ```
+pub fn door_not_lead(op: &str) -> String {
+    format!("the operation {op} is only for the lead")
+}
+
+/// The refusal of the broker of a lead for the wrong number of
+/// arguments.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::door_args("tail-pane"),
+///     "the operation tail-pane takes other arguments: see riff::door",
+/// );
+/// ```
+pub fn door_args(op: &str) -> String {
+    format!("the operation {op} takes other arguments: see riff::door")
+}
+
+/// The refusal of the broker of a lead for a count of workers out of
+/// its range.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::door_count("0"),
+///     "the count 0 is not a number from 1 to 64",
+/// );
+/// ```
+pub fn door_count(count: &str) -> String {
+    format!(
+        "the count {count} is not a number from 1 to {}",
+        crate::door::MAX_START
+    )
+}
+
+/// The refusal of the broker of a lead that runs outside tmux.
+pub const DOOR_NO_TMUX: &str = "the lead does not run in tmux, so its broker has no tmux";
+
+/// The refusal of a step on the panes that the broker of a lead does
+/// not run: it adds only the `riff tail` pane, and it starts, stops and
+/// reaps workers with its own operations.
+pub const DOOR_NO_LAYOUT: &str = "the broker of a lead does not run this step on the panes";
+
+/// The refusal of the broker of a lead for a pane that is not a worker
+/// of its clone (01M4DDWPEGBAXKTS0X3THFB8VZ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::door_other_clone("%7", "/src/app".as_ref()),
+///     "the pane %7 is not a worker of /src/app",
+/// );
+/// ```
+pub fn door_other_clone(pane: &str, clone: &std::path::Path) -> String {
+    format!("the pane {pane} is not a worker of {}", clone.display())
+}
+
 /// The refusal of the broker for a folder with a `..` part
 /// (01M4DA9PRPZ2JDKC2PK79AT5AA).
 ///

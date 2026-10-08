@@ -722,7 +722,7 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
                 }
             }
         }
-        let lost = reap::lost(&mut reaper, &host.tmux);
+        let lost = reap::lost(&mut reaper, &crate::door::Door::Tmux(host.tmux.clone()));
         if !lost.is_empty() {
             host.reap(&lost).await;
             changed = true;
@@ -960,12 +960,22 @@ impl Host {
                 }
             }
             Request::Stop => match worker::stop(&self.tmux, None, &self.server).await {
-                Ok(n) => format!("{host}: {}", text::workers_stopped(n)),
+                Ok(stopped) => {
+                    for line in &stopped.lines {
+                        println!("{line}");
+                    }
+                    format!("{host}: {}", text::workers_stopped(stopped.count))
+                }
                 Err(e) => format!("{host}: riff workers stop failed: {e:#}"),
             },
             Request::StopOne(one) => {
                 match worker::stop(&self.tmux, Some(&one), &self.server).await {
-                    Ok(n) => format!("{host}: {}", text::workers_stopped(n)),
+                    Ok(stopped) => {
+                    for line in &stopped.lines {
+                        println!("{line}");
+                    }
+                    format!("{host}: {}", text::workers_stopped(stopped.count))
+                }
                     Err(e) => format!("{host}: riff workers stop failed: {e:#}"),
                 }
             }

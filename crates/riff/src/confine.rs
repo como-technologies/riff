@@ -308,6 +308,32 @@ pub fn claude_dir(data: &Path, session: &str) -> PathBuf {
     data.join("claude").join(session)
 }
 
+/// The folder of the files that riff gives `claude` at each start, in
+/// the data root `data`: the MCP config of the lead and of each worker
+/// ([`crate::worker_mcp`]). Each AI role reads it, and no role writes
+/// it (01M4DDWPGRM1P4A76GFHPQHMQF): so no session changes the MCP
+/// servers of the next `claude`. The plugin
+/// ([`crate::plugin::dir`]) and the rules files ([`rules_file`]) are in
+/// the data root too, outside each write path.
+///
+/// ```
+/// assert_eq!(
+///     riff::confine::given_dir("/d".as_ref()),
+///     std::path::Path::new("/d/given")
+/// );
+/// ```
+pub fn given_dir(data: &Path) -> PathBuf {
+    data.join("given")
+}
+
+/// [`given_dir`] of this process: in `XDG_DATA_HOME`, else in `HOME`.
+pub fn given_here() -> Result<PathBuf> {
+    let var = |name: &str| std::env::var_os(name);
+    data_from(var("XDG_DATA_HOME"), var("HOME"))
+        .map(|data| given_dir(&data))
+        .context("cannot find the data folder of riff: set HOME")
+}
+
 /// The file of the permission rules of `session` in the data root
 /// `data`: outside each write path of a profile
 /// (01M4BTB7DY1Y74PP3JWKVX58JQ).
@@ -398,6 +424,7 @@ impl Here {
         tools.extend(crate::profile::cargo_reads(&cargo));
         tools.extend([rustup, home.join(".gitconfig"), home.join(".config/git")]);
         tools.extend(crate::plugin::dir().ok());
+        tools.push(given_dir(&data));
         // `claude` on the PATH is a link to the folder of its version.
         tools.extend(
             on_path(Path::new("claude"))
@@ -1137,6 +1164,7 @@ pub fn run(
     let broker = crate::broker::start(
         &crate::binary::this_on_disk()?,
         server,
+        role,
         &session.worktree,
         &session.clone,
     )?;

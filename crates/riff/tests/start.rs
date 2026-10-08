@@ -208,7 +208,11 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
         .user
         .path()
         .join(".local/share/riff/rules/lead-como-technologies-riff.json");
-    let mcp = m.home.path().join("state").join(riff::worker_mcp::FILE);
+    let mcp = m
+        .user
+        .path()
+        .join(".local/share/riff/given")
+        .join(riff::worker_mcp::FILE);
     let plugin = m.plugin();
     assert_eq!(lines.len(), 3, "{log}");
     assert_eq!(

@@ -9,7 +9,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::link::STREAM_RETRY;
-use riff::terminal::{Program, Terminal, Tmux};
+use riff::terminal::Program;
 use riff::{
     activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, launch,
     lifecycle, local, login, mcp, next, pr, settings, start, terminal, text, usage, view, worker,
@@ -1158,6 +1158,10 @@ enum Workers {
     /// the operations of its list, in the folder ROOT.
     #[command(hide = true)]
     Broker {
+        /// The role of the session. Only the broker of a lead runs the
+        /// operations of the lead.
+        #[arg(long, value_enum, default_value_t = SandboxRole::Worker)]
+        role: SandboxRole,
         /// The worktree of the session.
         #[arg(long)]
         root: std::path::PathBuf,
@@ -2164,7 +2168,7 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
         }
         Some(Workers::Reap { pane }) => {
             let dir = local::dir().context("no HOME: riff has no local dir")?;
-            for line in riff::worker::reap(&Tmux::machine(), pane.as_deref(), &dir)? {
+            for line in riff::door::Door::of_machine().reap(pane.as_deref(), &dir)? {
                 println!("{line}");
             }
             Ok(())
@@ -2375,13 +2379,20 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
                 }
             }
         }
-        Some(Workers::Broker { root, clone }) => {
+        Some(Workers::Broker { role, root, clone }) => {
             use std::os::fd::AsFd;
             let socket = std::io::stdin().as_fd().try_clone_to_owned()?;
             // The session of the sandbox: the broker takes its requests
             // of `riff outside` (#614), at the first request.
             let take = riff::outside::take(server);
-            riff::broker::serve(socket, root, clone, &riff::binary::this_on_disk()?, take)
+            // Only the broker of a lead runs the steps of the lead in tmux
+            // and on the processes of its workers (01M4DDWPC693RNWHY7P7XBZ9TB).
+            let lead = match role {
+                SandboxRole::Lead => Some(riff::door::Lead::here(clone, server)?),
+                SandboxRole::Worker | SandboxRole::Verifier => None,
+            };
+            let riff = riff::binary::this_on_disk()?;
+            riff::broker::serve(socket, root, clone, &riff, take, lead)
         }
         Some(Workers::Git { worktree, args }) => riff::confine::run_git(server, worktree, args),
         Some(Workers::TestRun { program, args }) => {
@@ -2400,11 +2411,13 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
         eprintln!("{why}");
         std::process::exit(1);
     }
-    let Some(tmux) = Tmux::from_env() else {
+    // In the sandbox of the lead, the broker starts them
+    // (01M4DDWPC693RNWHY7P7XBZ9TB).
+    let Some(door) = riff::door::Door::of_session() else {
         eprintln!("{}", text::NO_TMUX);
         std::process::exit(1);
     };
-    let started = match worker::start(&tmux, count, claude, server, &identity::working_dir()?)? {
+    let started = match door.start(count, claude, server, &identity::working_dir()?)? {
         Ok(started) => started,
         Err(why) => {
             eprintln!("{why}");
@@ -3038,7 +3051,7 @@ fn start_compact_check(id: &str, transcript: Option<&std::path::Path>) -> Result
 /// Lists the workers of this machine, with their claims and status in
 /// `riff who` (01M3JPQTBDGT54WN7FZP9CD6B5).
 async fn list_workers(long: bool, server: &str) -> Result<()> {
-    let panes = Tmux::machine().worker_panes()?;
+    let panes = riff::door::Door::of_machine().worker_panes()?;
     let who = async {
         let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server);
@@ -3156,8 +3169,11 @@ async fn ask_host(host: &str, request: riff::host::Request, server: &str) -> Res
 /// pane, then sends the end call of the session
 /// (01M3JPQTDFW3C7QBSZZ2M831MH).
 async fn stop_workers(pane: Option<&str>, server: &str) -> Result<()> {
-    let stopped = worker::stop(&Tmux::machine(), pane, server).await?;
-    println!("{}", text::workers_stopped(stopped));
+    let stopped = riff::door::Door::of_machine().stop(pane, server).await?;
+    for line in &stopped.lines {
+        println!("{line}");
+    }
+    println!("{}", text::workers_stopped(stopped.count));
     Ok(())
 }
 
@@ -3167,7 +3183,9 @@ async fn stop_workers(pane: Option<&str>, server: &str) -> Result<()> {
 /// (01M3XM68N5M5DKB86W5079X2G9). An error goes to stderr: the tools
 /// still work.
 async fn tail_beside_lead(api: &Api, me: &SessionUri) {
-    let Some(tmux) = Tmux::from_env() else {
+    // In the sandbox of the lead, the broker adds the pane
+    // (01M4DDWPC693RNWHY7P7XBZ9TB).
+    let Some(tmux) = riff::door::Door::of_session() else {
         return;
     };
     let added = async {
@@ -3612,7 +3630,9 @@ fn machine_here(me: &SessionUri) -> Option<riff::top::Machine> {
     if limit == 0 {
         return None;
     }
-    let panes = Tmux::machine().worker_panes().unwrap_or_default();
+    let panes = riff::door::Door::of_machine()
+        .worker_panes()
+        .unwrap_or_default();
     let main = identity::working_dir()
         .ok()
         .and_then(|dir| identity::main_worktree(&dir));

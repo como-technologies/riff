@@ -286,7 +286,7 @@ async fn the_tasks_of_riff_mcp_send_no_request_after_a_leave() {
     let rollout = Live {
         api: api.clone(),
         me,
-        tmux: None,
+        door: None,
         claude: "claude".into(),
         gh: Arc::new(riff::pr::Gh::default()),
     };

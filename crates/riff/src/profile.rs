@@ -17,8 +17,8 @@
 //!
 //! | | lead | worker | verifier | test run |
 //! |---|---|---|---|---|
-//! | Write | the clone, its worktrees, the riff state, its temp, its Claude folder | its worktree, its target, a part of the git dir of the clone ([`GIT_WRITES`]), the riff state, its temp, its Claude folder | its verify worktree, its target, a part of the git dir of the clone, the riff state, its temp, its Claude folder | its temp, its target |
-//! | Read | the system, its tools, its permission rules, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, its worktree and the git dir of the clone |
+//! | Write | the worktrees of the clone, a part of the git dir of the clone, the riff state, its temp, its Claude folder | its worktree, its target, a part of the git dir of the clone ([`GIT_WRITES`]), the riff state, its temp, its Claude folder | its verify worktree, its target, a part of the git dir of the clone, the riff state, its temp, its Claude folder | its temp, its target |
+//! | Read | the system, its tools, its permission rules, the clone, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, its worktree and the git dir of the clone |
 //! | Read the home of the person | no, except the paths above | no | no | no |
 //! | Network | riff server, forge, registries, model | the same | the same | loopback only |
 //! | Keyring, D-Bus and systemd of the person | no | no | no | no |
@@ -56,6 +56,10 @@
 //!   and the `hooks` of the clone name programs that git runs later
 //!   outside each sandbox: no session writes them
 //!   (01M4CN0W3V733V6R2SG1YYZRCN).
+//! - The lead writes the same parts of the git dir, and the worktrees
+//!   of the clone ([`crate::worktrees::AGENT_DIR`]): it tidies them. It
+//!   reads the rest of the clone, and writes no file of it
+//!   (01M4DDWPN8FADA663TTZSVD698). Its workers change the code.
 //! - A test run has the loopback network only, in a network namespace
 //!   of its own (#612). Each other role connects only to the TCP ports
 //!   of [`Network::ports`].
@@ -520,9 +524,15 @@ impl Profile {
         let s = session;
         let git = s.clone.join(".git");
         let ai = || vec![s.state.clone(), s.claude.clone()];
-        let agent = matches!(role, Role::Worker | Role::Verifier);
+        let agent = matches!(role, Role::Lead | Role::Worker | Role::Verifier);
         let more = match role {
-            Role::Lead => [vec![s.clone.clone()], ai()].concat(),
+            // 01M4DDWPN8FADA663TTZSVD698
+            Role::Lead => [
+                vec![s.clone.join(crate::worktrees::AGENT_DIR)],
+                GIT_WRITES.iter().map(|p| git.join(p)).collect(),
+                ai(),
+            ]
+            .concat(),
             Role::Worker | Role::Verifier => [
                 vec![s.worktree.clone(), s.target.clone()],
                 GIT_WRITES.iter().map(|p| git.join(p)).collect(),
@@ -545,7 +555,7 @@ impl Profile {
         match role {
             Role::TestRun => reads.extend([s.worktree.clone(), git]),
             Role::Worker | Role::Verifier => reads.extend([git, s.rules.clone()]),
-            Role::Lead => reads.push(s.rules.clone()),
+            Role::Lead => reads.extend([s.clone.clone(), s.rules.clone()]),
         }
         let network = match role {
             Role::TestRun => Network::Loopback,
@@ -900,10 +910,6 @@ mod tests {
             "/run/user/1000/riff",
             "/home/ada/.local/share/riff/claude/s1",
         );
-        assert_eq!(
-            writes(Role::Lead),
-            paths(&[temp, "/home/ada/src/app", state, claude])
-        );
         let g = |p: &str| format!("{git}/{p}");
         let (objects, refs, logs, worktrees, fetch) = (
             g("objects"),
@@ -911,6 +917,13 @@ mod tests {
             g("logs"),
             g("worktrees"),
             g("FETCH_HEAD"),
+        );
+        let trees = "/home/ada/src/app/.claude/worktrees";
+        assert_eq!(
+            writes(Role::Lead),
+            paths(&[
+                temp, trees, &objects, &refs, &logs, &worktrees, state, claude, &fetch
+            ])
         );
         let agent = paths(&[
             temp, wt, target, &objects, &refs, &logs, &worktrees, state, claude, &fetch,
@@ -941,8 +954,35 @@ mod tests {
         assert!(!w.writes(Path::new(
             "/home/ada/src/app/.claude/worktrees/issue-7/Cargo.toml"
         )));
+    }
+
+    /// 01M4DDWPN8FADA663TTZSVD698: the lead writes the worktrees of the
+    /// clone and the git dir as a worker does, and no file of the clone
+    /// that git runs or reads later outside each sandbox.
+    #[test]
+    fn the_lead_writes_no_config_hooks_info_or_packed_refs_of_the_clone() {
         let lead = Profile::of(Role::Lead, &session()).unwrap();
-        assert!(lead.writes(Path::new("/home/ada/src/app/Cargo.toml")));
+        let clone = Path::new("/home/ada/src/app");
+        for runs in [
+            ".git/config",
+            ".git/hooks/post-merge",
+            ".git/info/attributes",
+            ".git/packed-refs",
+            "Cargo.toml",
+            ".cargo/config.toml",
+        ] {
+            let path = clone.join(runs);
+            assert!(!lead.writes(&path) && lead.reads(&path), "{runs}");
+        }
+        for writes in [
+            ".git/refs/heads/x",
+            ".git/objects/ab",
+            ".git/worktrees/issue-12/HEAD",
+            ".git/FETCH_HEAD",
+            ".claude/worktrees/issue-12/Cargo.toml",
+        ] {
+            assert!(lead.writes(&clone.join(writes)), "{writes}");
+        }
     }
 
     #[test]
