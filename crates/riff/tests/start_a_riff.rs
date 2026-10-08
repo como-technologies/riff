@@ -194,6 +194,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
         [
             "riff cloud create NAME --project PROJECT --region REGION",
             "riff cloud signin NAME",
+            "riff cloud forge NAME APP_ID ~/Downloads/riff.private-key.pem",
             "riff cloud deploy NAME",
             "riff cloud list",
             "riff cloud status NAME",
@@ -201,6 +202,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff cloud delete NAME",
             "riff cloud list",
             "riff login",
+            "riff forge allow OWNER",
             "riff invite EMAIL",
             "riff tail",
             "riff owner --take",

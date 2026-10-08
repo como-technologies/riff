@@ -177,9 +177,10 @@ use axum::response::{IntoResponse, Response};
 use riff_core::name::{SessionUri, Who};
 use riff_core::record::{Change, Record};
 use riff_core::wire::{
-    AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, Free, Hold, Invite, Join, Keys, Lead,
-    Leave, PassOwner, Pause, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER, Register, Release,
-    ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, SetPlan, Start, Tailed, TakeOwner, Wake,
+    AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, ForgeAllow, Free, Hold, Invite, Join,
+    Keys, Lead, Leave, PassOwner, Pause, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER, Register,
+    Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, SetPlan, Start, Tailed,
+    TakeOwner, Wake,
 };
 use tokio::sync::{Notify, broadcast, oneshot};
 
@@ -274,7 +275,7 @@ macro_rules! routed {
 
 routed!(
     Register, Start, End, Join, Leave, Claim, Release, ReleaseFor, Lead, Pause, Resume, SetIdle,
-    Hold, Free, SetPlan, PlanOff
+    Hold, Free, SetPlan, PlanOff, ForgeAllow
 );
 
 /// Gives each command of the people its [`Routed`]. Its body names no
@@ -489,6 +490,11 @@ impl<C> Authenticated<C> {
     /// only (01M48VFX22S4811DYBBD7QDW24).
     pub fn with_call(self, call: Option<String>) -> Authenticated<C> {
         Authenticated { call, ..self }
+    }
+
+    /// The session that makes the call.
+    pub fn me(&self) -> &SessionUri {
+        self.admitted.caller.me()
     }
 }
 

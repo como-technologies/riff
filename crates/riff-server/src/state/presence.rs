@@ -426,7 +426,8 @@ impl Presence {
             | Change::ItemHeld(_)
             | Change::ItemFreed(_)
             | Change::PlanSet(_)
-            | Change::PlanEnded(_) => {}
+            | Change::PlanEnded(_)
+            | Change::ForgeAllowed(_) => {}
         }
     }
 

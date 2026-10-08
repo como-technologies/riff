@@ -42,6 +42,10 @@
 //!   has nothing left. Its last `plan_set` has no caller. So
 //!   `replayed.json` has a plan and a hold in one repository, and only
 //!   a hold in another.
+//! - `fixtures/1.4.0`: the GitHub accounts that get forge tokens.
+//!   `log.jsonl` allows two accounts, ends the allow of one, and allows
+//!   a third with a record with no caller. So `replayed.json` has two
+//!   accounts.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -60,8 +64,11 @@ const HOLDS: &str = "1.1.0";
 /// The release of the fixtures of the plan.
 const PLANS: &str = "1.3.0";
 
+/// The release of the fixtures of the forge accounts.
+const FORGE: &str = "1.4.0";
+
 /// Each release with a directory of its own and a `kinds.json`.
-const RELEASES: [&str; 3] = ["1.0.0", HOLDS, PLANS];
+const RELEASES: [&str; 4] = ["1.0.0", HOLDS, PLANS, FORGE];
 
 fn bytes(name: &str) -> Vec<u8> {
     bytes_of("1.0.0", name)
@@ -181,7 +188,7 @@ fn the_list_of_the_release_has_no_riff_state_set() {
 #[test]
 fn the_fixture_log_has_a_record_of_each_kind() {
     let mut all = BTreeSet::new();
-    for release in [HOLDS, PLANS] {
+    for release in [HOLDS, PLANS, FORGE] {
         let log = records_of(release, "log.jsonl");
         let new: Kinds = serde_json::from_slice(&bytes_of(release, "kinds.json")).unwrap();
         let found = set(log.iter().map(|record| record.change.kind()));
@@ -467,6 +474,40 @@ fn the_log_of_the_plans_gives_its_checkpoint_at_each_position() {
         let loaded = State::load(Some(saved.state), after.to_vec(), now, 0);
         assert!(loaded.same_log_state(&full), "a start from {at}");
     }
+}
+
+/// The log of the forge accounts: this build writes its bytes, a replay
+/// gives `replayed.json` with the field `forge_accounts`, and a load of
+/// the checkpoint at each position gives the state of a replay
+/// (01M4CHQR1E5HFV6KSTSM72H0QV).
+#[test]
+fn the_log_of_the_forge_accounts_gives_its_checkpoint_at_each_position() {
+    let records = records_of(FORGE, "log.jsonl");
+    assert_eq!(log::encode(&records), bytes_of(FORGE, "log.jsonl"));
+    let expected = checkpoint::decode(&bytes_of(FORGE, "replayed.json")).unwrap();
+    assert_eq!(
+        checkpoint::encode(&expected),
+        bytes_of(FORGE, "replayed.json")
+    );
+
+    let now = Instant::now();
+    let full = State::replay(records.clone(), now, 0);
+    assert_eq!(written(&full, &expected), bytes_of(FORGE, "replayed.json"));
+    assert!(full.forge_allows("acme") && full.forge_allows("ann"));
+    assert!(!full.forge_allows("stranger"));
+
+    for at in 0..=records.len() {
+        let (before, after) = records.split_at(at);
+        let state = State::replay(before.to_vec(), now, 0);
+        let saved = checkpoint::decode(&written(&state, &expected)).unwrap();
+        let alone = State::load(Some(saved.state.clone()), [], now, 0);
+        assert!(alone.same_log_state(&state), "the checkpoint at {at}");
+        let loaded = State::load(Some(saved.state), after.to_vec(), now, 0);
+        assert!(loaded.same_log_state(&full), "a start from {at}");
+    }
+    // A riff with no allowed account writes no field `forge_accounts`.
+    let plans = String::from_utf8(bytes_of(PLANS, "replayed.json")).unwrap();
+    assert!(!plans.contains("forge_accounts"));
 }
 
 /// A riff with no hold writes no part `plans`: the log of 1.0.0 gives

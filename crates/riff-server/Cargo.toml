@@ -18,7 +18,7 @@ chrono.workspace = true
 clap.workspace = true
 futures.workspace = true
 getrandom.workspace = true
-jsonwebtoken.workspace = true
+jsonwebtoken = { workspace = true, features = ["use_pem"] }
 reqwest.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -34,7 +34,6 @@ isolated = { path = "../isolated" }
 riff-core = { workspace = true, features = ["test-support"] }
 assert_cmd.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
-jsonwebtoken = { workspace = true, features = ["use_pem"] }
 tempfile.workspace = true
 tower.workspace = true
 

@@ -1,7 +1,6 @@
 //! The local client that finds sessions and wakes yours.
 
 use std::io::Read;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -512,11 +511,11 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
-    /// Give each worker a forge token of its role
+    /// Check the forge token of each role
     ///
-    /// The GitHub App of riff makes a token for each worker session with
-    /// only the rights of its role. Make the App first: see "Make the
-    /// GitHub App of riff" in the book.
+    /// riff-server makes a token for each session with the GitHub App of
+    /// riff, with only the rights of its role. An admin gives the riff
+    /// its App first: see "Give the riff its GitHub App" in the book.
     Forge {
         #[command(subcommand)]
         command: ForgeCommand,
@@ -569,22 +568,27 @@ impl From<ByArg> for riff::top::By {
 /// The subcommands of `riff forge`.
 #[derive(Subcommand)]
 enum ForgeCommand {
-    /// Save the GitHub App of riff on this machine
+    /// Show the rights of the token of each role
     ///
-    /// It checks the private key, copies it to forge/app.pem beside the
-    /// riff settings, where only you read it, and saves the ID as
-    /// forge.app. You can delete the downloaded key file after it.
-    App {
-        /// The App ID, from the settings page of the App.
-        id: u64,
-        /// The private key file that GitHub gave you (.pem).
-        key: PathBuf,
-    },
-    /// Make a token of each role, and show its permissions
-    ///
-    /// Run it in the clone of a repository where the App is installed.
-    /// It shows no token.
+    /// Run it in the clone of a repository where the GitHub App of riff
+    /// is installed. riff-server makes a token of each role for this
+    /// repository, checks its rights, and revokes it at once. It shows
+    /// no token.
     Check,
+    /// Allow a GitHub account to get forge tokens
+    ///
+    /// riff-server makes forge tokens only for the repositories of the
+    /// GitHub accounts (organizations and personal accounts) that the
+    /// owner or an admin of the riff allowed. An installation of the App
+    /// on another account gives no token. With no OWNER, it lists the
+    /// allowed accounts. Only the owner or an admin can run it.
+    Allow {
+        /// The GitHub account, for example acme.
+        owner: Option<String>,
+        /// Allow OWNER no more. Its sessions lose their tokens.
+        #[arg(long, requires = "owner")]
+        remove: bool,
+    },
     /// The git credential helper of a worker
     ///
     /// git runs it. It gives the forge token of the session for
@@ -625,6 +629,20 @@ enum CloudCommand {
     Signin {
         /// The name of the instance.
         name: String,
+    },
+    /// Give an instance the GitHub App of riff
+    ///
+    /// riff-server makes the forge token of each session with this App.
+    /// It stores the private key in Secret Manager, where only the
+    /// service account of riff-server reads it, and the App ID in the
+    /// settings file. The next deploy gives both to riff-server.
+    Forge {
+        /// The name of the instance.
+        name: String,
+        /// The App ID, from the settings page of the App.
+        app: String,
+        /// The private key file that GitHub gave you (.pem).
+        key: std::path::PathBuf,
     },
     /// Deploy riff-server to an instance
     ///
@@ -1467,7 +1485,7 @@ async fn main() -> Result<()> {
         return cloud(command).await;
     }
     if let Command::Forge { command } = &command {
-        return forge(command).await;
+        return forge(command, &server).await;
     }
     if let Command::Pr {
         command: Pr::Wait { number, every },
@@ -2343,43 +2361,34 @@ async fn riff_of(
 
 /// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A worker never runs it
 /// (01M4262DY8NN30SC4REYX2G9DV).
-/// `riff forge`: the GitHub App of riff and the token of a role
+/// `riff forge`: the token of a role, from riff-server
 /// ([`riff::forge`]).
-async fn forge(command: &ForgeCommand) -> Result<()> {
+async fn forge(command: &ForgeCommand, server: &str) -> Result<()> {
     use riff::forge;
     match command {
-        ForgeCommand::App { id, key } => {
-            if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
-                anyhow::bail!(text::FORGE_WORKER);
-            }
-            let path = forge::App::save(&settings::path()?, *id, key)?;
-            println!("{}", text::forge_saved(*id, &path));
-            Ok(())
-        }
         ForgeCommand::Check => {
-            let settings = settings::path()?;
-            let app = forge::App::here(&settings)?.context(text::FORGE_NO_APP)?;
-            let repo = identity::here(None)?.repo_text();
+            let place = identity::here(None)?;
             anyhow::ensure!(
-                repo != "-",
+                place.repo_text() != "-",
                 "riff forge check runs in the clone of a repository"
             );
-            let github = forge::GitHub::here();
+            let me = identity::person(&place, server)?;
+            let api = Api::new(server).signed_in(None)?;
+            let check = api.forge_check(&me).await?;
+            println!("{}", text::forge_check_head(check.app, &check.repo));
             let mut failed = false;
-            for role in [
-                riff::profile::Role::Lead,
-                riff::profile::Role::Worker,
-                riff::profile::Role::Verifier,
-            ] {
-                match github.token(&app, &repo, role).await {
-                    Ok(token) => println!("{}", text::forge_token_line(&token)),
-                    Err(e) => {
-                        failed = true;
-                        println!("{role}: {e:#}");
-                    }
-                }
+            for role in &check.roles {
+                failed |= role.error.is_some();
+                println!("{}", text::forge_check_line(role));
             }
             anyhow::ensure!(!failed, "the App cannot make a token of each role");
+            Ok(())
+        }
+        ForgeCommand::Allow { owner, remove } => {
+            let me = identity::person(&identity::here(None)?, server)?;
+            let api = Api::new(server).signed_in(None)?;
+            let accounts = api.forge_allow(&me, owner.as_deref(), !remove).await?;
+            println!("{}", text::forge_accounts(&accounts.accounts));
             Ok(())
         }
         ForgeCommand::Credential { operation } => {
@@ -2424,6 +2433,15 @@ async fn cloud(command: &CloudCommand) -> Result<()> {
             let id = cloud::read_line("Client ID: ")?;
             let secret = cloud::read_hidden("Client secret (hidden): ")?;
             cloud::signin(&gcloud, &s, &cloud::file(&dir, name), &id, &secret)
+        }
+        CloudCommand::Forge { name, app, key } => {
+            let s = cloud::load(&dir, name)?;
+            let pem = std::fs::read_to_string(key)
+                .with_context(|| format!("cannot read {}", key.display()))?;
+            let app = app
+                .parse()
+                .with_context(|| format!("{app} is no App ID: give the number of the App"))?;
+            cloud::forge(&gcloud, &s, &cloud::file(&dir, name), app, &pem)
         }
         CloudCommand::Deploy { name, tag, confirm } => {
             let s = cloud::load(&dir, name)?;

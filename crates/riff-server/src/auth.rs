@@ -105,6 +105,9 @@ pub struct Config {
     pub checkpoint: crate::checkpoint::Settings,
     /// The least time between two writes of the token store (R127).
     pub save_every: std::time::Duration,
+    /// The GitHub App that makes the forge tokens (#628). Without it,
+    /// the server gives no forge token.
+    pub forge: Option<crate::forge::Settings>,
 }
 
 impl Default for Config {
@@ -128,6 +131,7 @@ impl Config {
             log: crate::log::Timing::default(),
             checkpoint: crate::checkpoint::Settings::default(),
             save_every: crate::SAVE_EVERY,
+            forge: None,
         }
     }
 

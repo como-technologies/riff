@@ -86,7 +86,8 @@ for the commands.
 ```mermaid
 flowchart LR
     C["riff cloud create"] --> S["riff cloud signin"]
-    S --> D["riff cloud deploy"]
+    S --> F["riff cloud forge"]
+    F --> D["riff cloud deploy"]
     D --> L["riff cloud list<br/>status, log"]
 ```
 
@@ -121,6 +122,22 @@ riff cloud signin NAME
 It shows the steps to make the sign-in client in the console of
 Google. Then it asks for the client ID and the client secret. The
 secret goes to Secret Manager. The ID goes to the settings file.
+
+### Give the riff a GitHub App
+
+With a GitHub App, the riff gives each session a GitHub token of its
+role. Without it, `gh` and `git push` fail in the sessions. Make the
+App first (see
+[Give the riff its GitHub App](how-it-works.md#give-the-riff-its-github-app)).
+Then store it:
+
+```sh
+riff cloud forge NAME APP_ID ~/Downloads/riff.private-key.pem
+```
+
+The key goes to Secret Manager. The App ID goes to the settings file.
+After the deploy and your sign-in, allow your GitHub account (see
+"Allow your GitHub account" below).
 
 ### Deploy the riff
 
@@ -186,6 +203,17 @@ opens:
 
 ```sh
 riff login
+```
+
+## Allow your GitHub account
+
+A riff with a GitHub App makes forge tokens only for the GitHub
+accounts that the owner or an admin allowed. Allow the organization or
+the personal account of your repositories, for example `acme` (see
+[Allow an account](how-it-works.md#allow-an-account)):
+
+```sh
+riff forge allow OWNER
 ```
 
 ## Invite a person

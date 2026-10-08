@@ -1,21 +1,25 @@
-//! The forge token of a role: a GitHub App gives each session a token
-//! with only the rights of its role (#610).
+//! The forge token of a role: riff-server gives each session a token
+//! with only the rights of its role (#610, #628).
 //!
 //! # Design
 //!
-//! The person makes one GitHub App and installs it on the repository.
-//! `riff forge app ID KEY` saves its ID in the settings (`forge.app`)
-//! and its private key in [`App::key_path`], a file that only the
-//! person reads (01M4BV7057YSHEMEHKXK20X0GJ). No profile reads that
-//! folder ([`crate::profile::Session::secrets`]), so a session never
-//! sees the key.
+//! riff-server holds the GitHub App of riff and makes each token
+//! (`riff_server::forge`). The private key of the App is never on a
+//! machine (01M4CHQR1E5HFV6KSTSM72H0QV).
 //!
-//! `riff workers run` stays outside the sandbox of `claude`. It makes an
-//! installation token for the role of the session: the GitHub API
-//! `POST /app/installations/ID/access_tokens` with the repository of
-//! the session and the [`permissions`] of the role
-//! (01M4BV707FYHJDNC1499YAWR8D). It refuses a token with a right that
-//! it did not ask for, or with fewer rights than the role needs.
+//! `riff workers run` stays outside the sandbox of `claude`. It asks
+//! riff-server for the token of its session ([`Keeper`]): `POST
+//! /v1/forge/token` with the URI of the session, signed in as the
+//! person. The server picks the role and the repository from its own
+//! facts, so a session cannot ask for more rights
+//! (01M4CNN37FYYB99BS6QV2FFWZ8). The server gives a token only to a
+//! session that it knows, so the wrapper of a worker registers its
+//! session before its first ask. The wrapper of the lead asks with the
+//! URI of the person, before the session of the lead starts: the server
+//! gives it the lead token while the person has a lead in the
+//! repository. Until then, the wrapper asks each [`LOOK_EVERY`], and
+//! `riff mcp` asks it at once when its session registers
+//! ([`Files::ask`]).
 //!
 //! A token ends after one hour. A process cannot change the
 //! environment of `claude` after its start. So the token is in files of
@@ -28,54 +32,34 @@
 //! - [`ForgeEnv`] is the only way to make the command of `claude`. It
 //!   starts from an empty environment with only the
 //!   [`crate::profile::KEPT_VARS`], so no credential of the person
-//!   reaches the session, also with no App or no token
+//!   reaches the session, also with no token
 //!   (01M4BV709WGHZ57AM3STC15B69, 01M4BYVSNQ5SY2GRGT73FV0Z3E). Each
 //!   cause of no token is an [`Error`].
 //!
-//! The role of a worker session follows its claims ([`role_of`]): a
-//! `verify-` claim gives the verifier token, each other case the
-//! worker token. The wrapper reads the claims from riff-server, not
-//! from the session, so a session cannot ask for more rights
-//! (01M4BV70C3P5CZFBSFYFWEWRRA). It looks each [`LOOK_EVERY`], and at
-//! once when `riff mcp` asks after a claim or a release
-//! ([`Files::ask`]). It makes a new token when the role changes, or
-//! [`RENEW_BEFORE`] before the token ends ([`due`],
-//! 01M4BV70JZNMT3X99E77GC58K9). At a change of role, it revokes the
-//! old token first ([`GitHub::revoke`], 01M4BYGV74T1R2H9D1RX6RTC6Z).
+//! The wrapper reads the claims of its session from riff-server each
+//! [`LOOK_EVERY`], and at once when `riff mcp` asks after a claim or a
+//! release ([`Files::ask`]). It asks for a new token when the role of
+//! the claims changes, or [`RENEW_BEFORE`] before the token ends
+//! ([`due`], 01M4BV70JZNMT3X99E77GC58K9). At a change of role, it
+//! removes the old token files first, and riff-server revokes the old
+//! token (01M4CNN39TTK36GX34RCWKES80). At a renew, riff-server revokes
+//! the old token after it makes the new one.
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant W as riff workers run (outside the sandbox)
 //!     participant S as riff-server
-//!     participant G as GitHub API
 //!     participant C as claude, gh, git (in the sandbox)
-//!     W->>S: GET /v1/me: the claims of the session
-//!     W->>G: JWT of the App: POST access_tokens (repository, permissions of the role)
-//!     G-->>W: token, ends in 1 hour
+//!     W->>S: POST /v1/forge/token: the URI of the session
+//!     S-->>W: token of the role, ends in 1 hour
 //!     W->>C: token files in the temp folder
 //!     C->>C: gh reads hosts.yml, git runs riff forge credential
 //!     C->>W: riff mcp claim: the ask file
-//!     W->>S: the claims again
-//!     W->>G: a token of the new role
+//!     W->>S: GET /v1/me: the claims, then a token of the new role
 //! ```
 //!
-//! | Role | GitHub permissions |
-//! |---|---|
-//! | lead | metadata, actions, checks, statuses: read; contents, issues, pull requests: write |
-//! | worker | the same as the lead |
-//! | verifier | metadata, actions, checks, contents: read; issues, pull requests, statuses: write |
-//! | test run | no token (01M4BV70N7HRW7KQ9ER9D9CDT9) |
-//!
-//! - No role gets `administration`, `deployments`, `environments` or
-//!   `workflows`. So no token approves a deploy, changes a ruleset or
-//!   changes a workflow (01M4BV70ED4R56M31119BYJ93S).
-//! - Only the verifier sets a commit status, and only the lead and the
-//!   worker write the code. So no token can both set `riff/verify` and
-//!   merge. The ruleset `releases` stops the push of a `v*` tag, and the
-//!   ruleset `main` stops each push to `main` (01M4BV70GQ42MY0YHMRS47EK1E).
-//! - GitHub keeps milestones and labels in `issues`, and a worker needs
-//!   `issues: write` for its comments. So the lead and the worker get
-//!   the same permissions. riff-server keeps the plan to the lead.
+//! The table of rights is in [`riff_core::forge`]. [`permissions`]
+//! gives the rights of a role of a [`Role`] of the profile:
 //!
 //! ```
 //! use riff::forge::{Access, permissions};
@@ -84,33 +68,26 @@
 //! let worker = permissions(Role::Worker);
 //! assert_eq!(worker["contents"], Access::Write);
 //! assert!(!worker.contains_key("administration"));
-//! assert!(!worker.contains_key("workflows"));
 //! assert_eq!(permissions(Role::Verifier)["statuses"], Access::Write);
-//! assert_eq!(permissions(Role::Verifier)["contents"], Access::Read);
 //! assert!(permissions(Role::TestRun).is_empty());
 //! ```
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use anyhow::{Context, Result};
+use futures::future::BoxFuture;
+pub use riff_core::forge::{Access, TokenRole};
+use riff_core::wire::ForgeTokenReply;
 
-use crate::profile::{Right, Role};
-
-/// The variable that names the base URL of the GitHub API. A test sets
-/// it to a fake API.
-pub const API_VAR: &str = "RIFF_GITHUB_API";
-
-/// The GitHub API when [`API_VAR`] is not set.
-pub const GITHUB_API: &str = "https://api.github.com";
+use crate::profile::Role;
 
 /// The variable that names the folder of the token files ([`Files`]).
 pub const DIR_VAR: &str = "RIFF_FORGE_DIR";
 
-/// The wrapper makes a new token this long before the old one ends.
+/// The wrapper asks for a new token this long before the old one ends.
 pub const RENEW_BEFORE: Duration = Duration::from_secs(10 * 60);
 
 /// The wrapper reads the claims of its session this often.
@@ -122,208 +99,64 @@ pub const ASK_EVERY: Duration = Duration::from_secs(1);
 /// The user name that git sends with an installation token.
 pub const TOKEN_USER: &str = "x-access-token";
 
-/// A level of a GitHub permission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Access {
-    /// Read only.
-    Read,
-    /// Read and write.
-    Write,
-}
-
-/// The GitHub permissions of one right of a role.
-fn grants(right: Right) -> &'static [(&'static str, Access)] {
-    use Access::{Read, Write};
-    match right {
-        Right::Read => &[
-            ("metadata", Read),
-            ("contents", Read),
-            ("issues", Read),
-            ("pull_requests", Read),
-            ("checks", Read),
-            ("statuses", Read),
-            ("actions", Read),
-        ],
-        // GitHub keeps milestones and labels in `issues`.
-        Right::Plan | Right::Comment => &[("issues", Write), ("pull_requests", Write)],
-        Right::Push => &[("contents", Write)],
-        Right::PullRequest => &[("pull_requests", Write)],
-        Right::Verify => &[("statuses", Write)],
+/// The role of the token of a [`Role`] of the profile. The test run
+/// gets no token (01M4BV70N7HRW7KQ9ER9D9CDT9).
+///
+/// ```
+/// use riff::forge::{TokenRole, token_role};
+/// use riff::profile::Role;
+///
+/// assert_eq!(token_role(Role::Lead), Some(TokenRole::Lead));
+/// assert_eq!(token_role(Role::TestRun), None);
+/// ```
+pub fn token_role(role: Role) -> Option<TokenRole> {
+    match role {
+        Role::Lead => Some(TokenRole::Lead),
+        Role::Worker => Some(TokenRole::Worker),
+        Role::Verifier => Some(TokenRole::Verifier),
+        Role::TestRun => None,
     }
 }
 
-/// The GitHub permissions of `role`: the highest level that one of its
-/// rights gives for each permission. Empty for the test run.
+/// The GitHub permissions of `role`. Empty for the test run.
 pub fn permissions(role: Role) -> BTreeMap<&'static str, Access> {
-    let mut all = BTreeMap::new();
-    for right in role.rights() {
-        for &(name, access) in grants(*right) {
-            let level = all.entry(name).or_insert(access);
-            *level = (*level).max(access);
-        }
-    }
-    all
+    token_role(role).map_or_else(BTreeMap::new, riff_core::forge::permissions)
 }
 
-/// The role of the token of a worker session with `claims`: a
-/// `verify-` claim gives the verifier, each other case the worker.
+/// The role of the token of a worker session with `claims`, as the
+/// server picks it: a `verify-` claim gives the verifier, each other
+/// case the worker.
 ///
 /// ```
-/// use riff::forge::role_of;
-/// use riff::profile::Role;
+/// use riff::forge::{TokenRole, role_of};
 ///
-/// assert_eq!(role_of(&["verify-issue-12".into()]), Role::Verifier);
-/// assert_eq!(role_of(&["issue-12".into()]), Role::Worker);
-/// assert_eq!(role_of(&[]), Role::Worker);
+/// assert_eq!(role_of(&["verify-issue-12".into()]), TokenRole::Verifier);
+/// assert_eq!(role_of(&["issue-12".into()]), TokenRole::Worker);
+/// assert_eq!(role_of(&[]), TokenRole::Worker);
 /// ```
-pub fn role_of(claims: &[String]) -> Role {
-    if claims.iter().any(|c| c.starts_with("verify-")) {
-        Role::Verifier
-    } else {
-        Role::Worker
-    }
+pub fn role_of(claims: &[String]) -> TokenRole {
+    riff_core::forge::role_of(false, claims)
 }
 
-/// True when the wrapper must make a new token: it has none, its token
-/// is of another role, or its token ends in less than [`RENEW_BEFORE`].
+/// True when the wrapper must ask for a new token: it has none, its
+/// token is of another role, or its token ends in less than
+/// [`RENEW_BEFORE`].
 ///
 /// ```
-/// use riff::forge::{RENEW_BEFORE, due};
-/// use riff::profile::Role;
+/// use riff::forge::{RENEW_BEFORE, TokenRole, due};
 /// use std::time::{Duration, SystemTime};
 ///
 /// let now = SystemTime::now();
 /// let hour = now + Duration::from_secs(3600);
-/// assert!(due(None, Role::Worker, now));
-/// assert!(!due(Some((Role::Worker, hour)), Role::Worker, now));
-/// assert!(due(Some((Role::Worker, hour)), Role::Verifier, now));
-/// assert!(due(Some((Role::Worker, now + RENEW_BEFORE)), Role::Worker, now));
+/// assert!(due(None, TokenRole::Worker, now));
+/// assert!(!due(Some((TokenRole::Worker, hour)), TokenRole::Worker, now));
+/// assert!(due(Some((TokenRole::Worker, hour)), TokenRole::Verifier, now));
+/// assert!(due(Some((TokenRole::Worker, now + RENEW_BEFORE)), TokenRole::Worker, now));
 /// ```
-pub fn due(held: Option<(Role, SystemTime)>, role: Role, now: SystemTime) -> bool {
+pub fn due(held: Option<(TokenRole, SystemTime)>, role: TokenRole, now: SystemTime) -> bool {
     match held {
         None => true,
         Some((held, ends)) => held != role || ends <= now + RENEW_BEFORE,
-    }
-}
-
-/// The GitHub App of riff: its ID and its private key.
-pub struct App {
-    id: u64,
-    key: jsonwebtoken::EncodingKey,
-}
-
-impl fmt::Debug for App {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("App")
-            .field("id", &self.id)
-            .finish_non_exhaustive()
-    }
-}
-
-impl App {
-    /// The App with the ID `id` and the private key `pem` (PKCS#1 or
-    /// PKCS#8, as GitHub gives it).
-    pub fn new(id: u64, pem: &[u8]) -> Result<App> {
-        let key = jsonwebtoken::EncodingKey::from_rsa_pem(pem)
-            .context("the key is not an RSA private key in PEM form")?;
-        Ok(App { id, key })
-    }
-
-    /// The ID of the App.
-    pub fn id(&self) -> u64 {
-        self.id
-    }
-
-    /// The file of the private key, next to the settings file
-    /// `settings`: `forge/app.pem`.
-    ///
-    /// ```
-    /// use std::path::Path;
-    /// let key = riff::forge::App::key_path(Path::new("/h/.config/riff/config.toml"));
-    /// assert_eq!(key, Path::new("/h/.config/riff/forge/app.pem"));
-    /// ```
-    pub fn key_path(settings: &Path) -> PathBuf {
-        settings
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("forge")
-            .join("app.pem")
-    }
-
-    /// The App of the settings file `settings`. `None` when it has no
-    /// `forge.app`: then riff gives no forge token.
-    pub fn here(settings: &Path) -> Result<Option<App>> {
-        match App::of(Ok(settings.to_owned())) {
-            Ok(app) => Ok(Some(app)),
-            Err(Error::NotSet) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// The App of the settings file `settings`, or why there is none.
-    pub fn of(settings: Result<PathBuf>) -> std::result::Result<App, Error> {
-        let settings = settings.map_err(Error::BadSetting)?;
-        let id = crate::settings::forge_app(&settings)
-            .map_err(Error::BadSetting)?
-            .ok_or(Error::NotSet)?;
-        let path = Self::key_path(&settings);
-        let pem = std::fs::read(&path)
-            .with_context(|| format!("cannot read the key of the App in {}", path.display()))
-            .map_err(Error::Key)?;
-        App::new(id, &pem)
-            .with_context(|| format!("{}", path.display()))
-            .map_err(Error::Key)
-    }
-
-    /// Saves the App: its key from `pem_file` to [`App::key_path`], with
-    /// only the person as reader, and `id` as `forge.app` in `settings`.
-    /// It checks the key first.
-    pub fn save(settings: &Path, id: u64, pem_file: &Path) -> Result<PathBuf> {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-        let pem = std::fs::read(pem_file)
-            .with_context(|| format!("cannot read {}", pem_file.display()))?;
-        App::new(id, &pem).with_context(|| format!("{}", pem_file.display()))?;
-        let path = Self::key_path(settings);
-        let dir = path.parent().unwrap_or(Path::new("."));
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
-            .with_context(|| format!("cannot make {}", dir.display()))?;
-        let fail = || format!("cannot write {}", path.display());
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-            .with_context(fail)?;
-        // A file that exists keeps its mode at the open.
-        file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))
-            .with_context(fail)?;
-        std::io::Write::write_all(&mut file, &pem).with_context(fail)?;
-        crate::settings::set_forge_app(settings, id)?;
-        Ok(path)
-    }
-
-    /// The JWT of the App at the Unix time `now`: it is good from one
-    /// minute before `now` (for a clock that runs late) for ten minutes,
-    /// the longest time that GitHub takes.
-    pub fn jwt(&self, now: u64) -> Result<String> {
-        #[derive(Serialize)]
-        struct Claims {
-            iat: u64,
-            exp: u64,
-            iss: String,
-        }
-        let claims = Claims {
-            iat: now.saturating_sub(60),
-            exp: now + 9 * 60,
-            iss: self.id.to_string(),
-        };
-        let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
-        jsonwebtoken::encode(&header, &claims, &self.key).context("cannot sign the JWT of the App")
     }
 }
 
@@ -332,18 +165,13 @@ impl App {
 /// (01M4BYVSNQ5SY2GRGT73FV0Z3E).
 #[derive(Debug)]
 pub enum Error {
-    /// The settings name no GitHub App.
-    NotSet,
-    /// riff cannot read the settings, or `forge.app` is no App ID.
-    BadSetting(anyhow::Error),
-    /// riff cannot read the key of the App.
-    Key(anyhow::Error),
     /// The session has no temp folder for the token files.
     NoFolder,
     /// The session has no ID, or its folder is in no repository.
     Place(anyhow::Error),
-    /// GitHub gave no token of the role.
-    Api(anyhow::Error),
+    /// riff-server gave no token: for example no sign-in, no App, or
+    /// no installation of the App on the repository.
+    Server(anyhow::Error),
     /// riff cannot write the token files.
     Files(anyhow::Error),
 }
@@ -351,13 +179,8 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::NotSet => f.write_str("the settings name no GitHub App"),
             Error::NoFolder => f.write_str("the session has no temp folder"),
-            Error::BadSetting(e)
-            | Error::Key(e)
-            | Error::Place(e)
-            | Error::Api(e)
-            | Error::Files(e) => write!(f, "{e:#}"),
+            Error::Place(e) | Error::Server(e) | Error::Files(e) => write!(f, "{e:#}"),
         }
     }
 }
@@ -367,8 +190,8 @@ impl std::error::Error for Error {}
 /// A token of a role for one repository.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Token {
-    /// The role that the token is for.
-    pub role: Role,
+    /// The role that the server picked.
+    pub role: TokenRole,
     /// The token. Never print it.
     pub token: String,
     /// When the token ends.
@@ -387,178 +210,14 @@ impl fmt::Debug for Token {
     }
 }
 
-/// Checks the permissions that GitHub gave against the permissions of
-/// `role`: each one that the role needs, and none more.
-///
-/// ```
-/// use riff::forge::{Access, check_given, permissions};
-/// use riff::profile::Role;
-///
-/// let given = |r| permissions(r).into_iter().map(|(k, v)| (k.to_owned(), v)).collect();
-/// assert!(check_given(Role::Worker, &given(Role::Worker)).is_ok());
-/// // The lead has more rights than the worker.
-/// assert!(check_given(Role::Verifier, &given(Role::Lead)).is_err());
-/// // The App lacks a permission of the role.
-/// assert!(check_given(Role::Verifier, &given(Role::Worker)).is_err());
-/// ```
-pub fn check_given(role: Role, given: &BTreeMap<String, Access>) -> Result<()> {
-    let asked = permissions(role);
-    let more: Vec<String> = given
-        .iter()
-        .filter(|(name, level)| asked.get(name.as_str()).is_none_or(|a| *level > a))
-        .map(|(name, level)| format!("{name}: {level:?}"))
-        .collect();
-    if !more.is_empty() {
-        bail!(
-            "GitHub gave the {role} token rights that it did not ask for: {}",
-            more.join(", ")
-        );
-    }
-    let less: Vec<String> = asked
-        .iter()
-        .filter(|(name, level)| given.get(**name).is_none_or(|g| g < level))
-        .map(|(name, level)| format!("{name}: {level:?}"))
-        .collect();
-    if !less.is_empty() {
-        bail!(
-            "the GitHub App does not have these permissions of the {role}: {}. Add them in the settings of the App",
-            less.join(", ")
-        );
-    }
-    Ok(())
-}
-
-/// The GitHub API.
-#[derive(Debug, Clone)]
-pub struct GitHub {
-    base: String,
-    http: reqwest::Client,
-}
-
-#[derive(Deserialize)]
-struct Installation {
-    id: u64,
-}
-
-#[derive(Serialize)]
-struct Ask<'a> {
-    repositories: [&'a str; 1],
-    permissions: BTreeMap<&'static str, Access>,
-}
-
-#[derive(Deserialize)]
-struct Given {
-    token: String,
-    expires_at: chrono::DateTime<chrono::Utc>,
-    #[serde(default)]
-    permissions: BTreeMap<String, Access>,
-}
-
-impl GitHub {
-    /// The API at `base`, for example [`GITHUB_API`].
-    pub fn new(base: &str) -> GitHub {
-        GitHub {
-            base: base.trim_end_matches('/').to_owned(),
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .unwrap_or_default(),
+impl From<ForgeTokenReply> for Token {
+    fn from(reply: ForgeTokenReply) -> Token {
+        Token {
+            role: reply.role,
+            token: reply.token,
+            ends: UNIX_EPOCH + Duration::from_millis(reply.ends_ms),
+            permissions: reply.permissions,
         }
-    }
-
-    /// The API of [`API_VAR`], else [`GITHUB_API`].
-    pub fn here() -> GitHub {
-        let base = std::env::var(API_VAR).ok().filter(|b| !b.is_empty());
-        GitHub::new(base.as_deref().unwrap_or(GITHUB_API))
-    }
-
-    async fn reply(
-        &self,
-        request: reqwest::RequestBuilder,
-        what: &str,
-    ) -> Result<reqwest::Response> {
-        request
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", "riff")
-            .send()
-            .await
-            .with_context(|| format!("cannot reach the GitHub API for {what}"))
-    }
-
-    async fn send<T: serde::de::DeserializeOwned>(
-        &self,
-        request: reqwest::RequestBuilder,
-        what: &str,
-    ) -> Result<T> {
-        let response = self.reply(request, what).await?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            bail!("the GitHub API refused {what}: {status}: {}", body.trim());
-        }
-        response
-            .json()
-            .await
-            .with_context(|| format!("the GitHub API gave no valid reply for {what}"))
-    }
-
-    /// The ID of the installation of `app` on `repo` (`OWNER/NAME`).
-    pub async fn installation(&self, app: &App, repo: &str, now: u64) -> Result<u64> {
-        let url = format!("{}/repos/{repo}/installation", self.base);
-        let request = self.http.get(url).bearer_auth(app.jwt(now)?);
-        let what = format!("the installation of the App on {repo}");
-        Ok(self.send::<Installation>(request, &what).await?.id)
-    }
-
-    /// A token of `role` for `repo` (`OWNER/NAME`) only, with only the
-    /// [`permissions`] of the role. It refuses the test run, and a
-    /// token whose rights do not match the role ([`check_given`]).
-    pub async fn token(&self, app: &App, repo: &str, role: Role) -> Result<Token> {
-        let permissions = permissions(role);
-        if permissions.is_empty() {
-            bail!("the {role} gets no forge token");
-        }
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let installation = self.installation(app, repo, now).await?;
-        let name = repo.rsplit('/').next().unwrap_or(repo);
-        let url = format!(
-            "{}/app/installations/{installation}/access_tokens",
-            self.base
-        );
-        let request = self.http.post(url).bearer_auth(app.jwt(now)?).json(&Ask {
-            repositories: [name],
-            permissions,
-        });
-        let given: Given = self
-            .send(request, &format!("a {role} token for {repo}"))
-            .await?;
-        check_given(role, &given.permissions)?;
-        Ok(Token {
-            role,
-            token: given.token,
-            ends: given.expires_at.into(),
-            permissions: given.permissions,
-        })
-    }
-
-    /// Revokes `token`. A token that GitHub does not take any more
-    /// (401) counts as revoked.
-    pub async fn revoke(&self, token: &str) -> Result<()> {
-        let url = format!("{}/installation/token", self.base);
-        let what = "the revoke of a token";
-        let response = self
-            .reply(self.http.delete(url).bearer_auth(token), what)
-            .await?;
-        let status = response.status();
-        if status.is_success() || status == reqwest::StatusCode::UNAUTHORIZED {
-            return Ok(());
-        }
-        let body = response.text().await.unwrap_or_default();
-        bail!("the GitHub API refused {what}: {status}: {}", body.trim());
     }
 }
 
@@ -693,10 +352,10 @@ impl Files {
 /// use riff::forge::{Error, Files, ForgeEnv};
 ///
 /// let files = Files::in_temp(Path::new("/t"));
-/// let env = ForgeEnv::of(&Err(Error::NotSet), &files, Path::new("/bin/riff"));
+/// let env = ForgeEnv::of(&Err(Error::NoFolder), &files, Path::new("/bin/riff"));
 /// assert_eq!(env.get("GH_CONFIG_DIR"), Some("/t/forge/gh"));
 /// assert_eq!(env.get("GIT_CONFIG_VALUE_2"), Some("!'/bin/riff' forge credential"));
-/// assert_eq!(env.no_token(), Some("the settings name no GitHub App"));
+/// assert_eq!(env.no_token(), Some("the session has no temp folder"));
 /// let parent = [("PATH".into(), "/bin".into()), ("GH_TOKEN".into(), "ghp_person".into())];
 /// let cmd = env.command("claude".as_ref(), &[], parent);
 /// let set: Vec<String> =
@@ -803,28 +462,27 @@ pub fn credential(
     Ok(format!("username={TOKEN_USER}\npassword={}\n", token()?))
 }
 
+/// The call that asks riff-server for the token of the session: `POST
+/// /v1/forge/token` ([`crate::api::Api::forge_token`]). A test gives a
+/// fake.
+pub type Ask = Box<dyn Fn() -> BoxFuture<'static, Result<ForgeTokenReply>> + Send + Sync>;
+
 /// What the wrapper needs to keep the token of its session.
 pub struct Keeper {
-    /// The App.
-    pub app: App,
-    /// The GitHub API.
-    pub github: GitHub,
-    /// The repository of the session, `OWNER/NAME`.
-    pub repo: String,
     /// The token files of the session.
     pub files: Files,
+    ask: Ask,
     held: Option<Token>,
-    fixed: Option<Role>,
+    fixed: Option<TokenRole>,
 }
 
 impl Keeper {
-    /// A keeper with no token yet. The role follows the claims.
-    pub fn new(app: App, github: GitHub, repo: String, files: Files) -> Keeper {
+    /// A keeper with no token yet. The role follows the claims. `ask`
+    /// asks riff-server for a token.
+    pub fn new(files: Files, ask: Ask) -> Keeper {
         Keeper {
-            app,
-            github,
-            repo,
             files,
+            ask,
             held: None,
             fixed: None,
         }
@@ -832,21 +490,20 @@ impl Keeper {
 
     /// The same keeper, with the one role `role` whatever the claims:
     /// the lead (01M4C4WQVZR49FDGPJMFW22GTM).
-    pub fn with_role(self, role: Role) -> Keeper {
+    pub fn with_role(self, role: TokenRole) -> Keeper {
         Keeper {
             fixed: Some(role),
             ..self
         }
     }
 
-    /// Makes a new token when it is [`due`] for the role of `claims`
+    /// Asks for a new token when it is [`due`] for the role of `claims`
     /// (`None` when riff-server did not answer: then the role stays).
     /// Returns the new token, if any.
     ///
-    /// At a change of role, it removes the token files and revokes the
-    /// old token first, so the session never holds the rights of two
-    /// roles. When the revoke fails, the session has no token, and the
-    /// next step tries again.
+    /// At a change of role, it removes the old token files first, so
+    /// the session never holds the rights of two roles. riff-server
+    /// revokes the old token.
     pub async fn step(&mut self, claims: Option<&[String]>) -> Result<Option<Token>, Error> {
         let role = self.role(claims);
         let held = self.held.as_ref().map(|t| (t.role, t.ends));
@@ -862,28 +519,23 @@ impl Keeper {
         self.make(role).await
     }
 
-    fn role(&self, claims: Option<&[String]>) -> Role {
+    fn role(&self, claims: Option<&[String]>) -> TokenRole {
         if let Some(role) = self.fixed {
             return role;
         }
         match (claims, &self.held) {
             (Some(claims), _) => role_of(claims),
             (None, Some(held)) => held.role,
-            (None, None) => Role::Worker,
+            (None, None) => TokenRole::Worker,
         }
     }
 
-    async fn make(&mut self, role: Role) -> Result<Token, Error> {
-        if let Some(old) = self.held.as_ref().filter(|old| old.role != role) {
+    async fn make(&mut self, role: TokenRole) -> Result<Token, Error> {
+        if self.held.as_ref().is_some_and(|old| old.role != role) {
             self.files.clear().map_err(Error::Files)?;
-            self.github.revoke(&old.token).await.map_err(Error::Api)?;
             self.held = None;
         }
-        let token = self
-            .github
-            .token(&self.app, &self.repo, role)
-            .await
-            .map_err(Error::Api)?;
+        let token = Token::from((self.ask)().await.map_err(Error::Server)?);
         self.files.write(&token).map_err(Error::Files)?;
         self.held = Some(token.clone());
         Ok(token)
@@ -921,32 +573,43 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profile::Right;
 
-    #[test]
-    fn no_role_gets_the_rights_of_an_admin() {
-        for role in Role::ALL {
-            let p = permissions(role);
-            for name in [
-                "administration",
-                "deployments",
-                "environments",
-                "workflows",
-                "secrets",
-            ] {
-                assert!(!p.contains_key(name), "{role} has {name}");
-            }
+    /// The GitHub permissions of one right of a role.
+    fn grants(right: Right) -> &'static [(&'static str, Access)] {
+        use Access::{Read, Write};
+        match right {
+            Right::Read => &[
+                ("metadata", Read),
+                ("contents", Read),
+                ("issues", Read),
+                ("pull_requests", Read),
+                ("checks", Read),
+                ("statuses", Read),
+                ("actions", Read),
+            ],
+            // GitHub keeps milestones and labels in `issues`.
+            Right::Plan | Right::Comment => &[("issues", Write), ("pull_requests", Write)],
+            Right::Push => &[("contents", Write)],
+            Right::PullRequest => &[("pull_requests", Write)],
+            Right::Verify => &[("statuses", Write)],
         }
     }
 
+    /// The table of riff-core gives each role the highest level that
+    /// one of its rights of the profile gives.
     #[test]
-    fn only_the_verifier_sets_a_status_and_it_writes_no_code() {
-        for role in [Role::Lead, Role::Worker] {
-            assert_eq!(permissions(role)["statuses"], Access::Read, "{role}");
-            assert_eq!(permissions(role)["contents"], Access::Write, "{role}");
+    fn the_table_of_the_server_matches_the_rights_of_each_role() {
+        for role in Role::ALL {
+            let mut all = BTreeMap::new();
+            for right in role.rights() {
+                for &(name, access) in grants(*right) {
+                    let level = all.entry(name).or_insert(access);
+                    *level = (*level).max(access);
+                }
+            }
+            assert_eq!(permissions(role), all, "{role}");
         }
-        let verifier = permissions(Role::Verifier);
-        assert_eq!(verifier["statuses"], Access::Write);
-        assert_eq!(verifier["contents"], Access::Read);
     }
 
     #[test]
@@ -955,7 +618,7 @@ mod tests {
         let files = Files::in_temp(dir.path());
         assert!(files.token().is_err());
         let token = Token {
-            role: Role::Worker,
+            role: TokenRole::Worker,
             token: "ghs_one".into(),
             ends: SystemTime::now(),
             permissions: BTreeMap::new(),
@@ -974,63 +637,6 @@ mod tests {
             !format!("{token:?}").contains("ghs_one"),
             "Debug hides the token"
         );
-    }
-
-    #[test]
-    fn the_saved_key_is_for_the_person_only_also_over_an_old_file() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let settings = dir.path().join("settings.toml");
-        let pem = dir.path().join("app.pem");
-        std::fs::write(
-            &pem,
-            include_str!("../../riff-server/testdata/test-only-rsa-key.pem"),
-        )
-        .unwrap();
-        let key = App::key_path(&settings);
-        std::fs::create_dir_all(key.parent().unwrap()).unwrap();
-        std::fs::write(&key, "old").unwrap();
-        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert_eq!(App::save(&settings, 7, &pem).unwrap(), key);
-        let mode = std::fs::metadata(&key).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
-        assert_eq!(App::here(&settings).unwrap().unwrap().id(), 7);
-    }
-
-    #[test]
-    fn each_cause_of_no_app_has_its_own_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let settings = dir.path().join("config.toml");
-        let of = |text: Option<&str>| {
-            if let Some(text) = text {
-                std::fs::write(&settings, text).unwrap();
-            }
-            App::of(Ok(settings.clone()))
-        };
-        assert!(matches!(of(None), Err(Error::NotSet)));
-        assert!(matches!(of(Some("[forge]\n")), Err(Error::NotSet)));
-        assert!(matches!(
-            of(Some("[forge]\napp = \"1\"\n")),
-            Err(Error::BadSetting(_))
-        ));
-        assert!(matches!(
-            of(Some("[forge]\napp = -1\n")),
-            Err(Error::BadSetting(_))
-        ));
-        assert!(matches!(of(Some("not toml [")), Err(Error::BadSetting(_))));
-        assert!(matches!(of(Some("[forge]\napp = 1\n")), Err(Error::Key(_))));
-        let no_home = App::of(Err(anyhow::anyhow!("no HOME")));
-        assert!(matches!(no_home, Err(Error::BadSetting(_))));
-        let key = App::key_path(&settings);
-        std::fs::create_dir_all(key.parent().unwrap()).unwrap();
-        std::fs::write(&key, "not a key").unwrap();
-        assert!(matches!(of(None), Err(Error::Key(_))));
-        std::fs::write(
-            &key,
-            include_str!("../../riff-server/testdata/test-only-rsa-key.pem"),
-        )
-        .unwrap();
-        assert_eq!(of(None).unwrap().id(), 1);
     }
 
     #[test]

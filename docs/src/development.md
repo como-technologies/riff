@@ -867,6 +867,24 @@ riff-server --issuer https://login.example.com --client-id ID --client-secret SE
 
 Without `--client-id`, the server has no sign-in.
 
+### Give your own server the GitHub App
+
+A riff-server with sign-in gives each session a forge token with the
+GitHub App of riff (see
+[The forge token of each role](how-it-works.md#the-forge-token-of-each-role)).
+On Cloud Run, `riff cloud forge` does this. For a server that you run
+yourself, give it the App ID in `--forge-app` and the private key in
+the variable `RIFF_FORGE_KEY`. Never put the key on a command line:
+
+```sh
+RIFF_FORGE_KEY="$(cat riff.private-key.pem)" riff-server --client-id ID --forge-app APP_ID
+```
+
+Without the App, the server gives no forge token. With the App, it
+gives tokens only for the accounts that you allow with `riff forge
+allow OWNER` (see
+[Allow an account](how-it-works.md#allow-an-account)).
+
 ## Owner and members
 
 ```mermaid

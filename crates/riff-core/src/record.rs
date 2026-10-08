@@ -307,6 +307,9 @@ changes! {
     /// The server forgets the plan of a repository thread. The holds
     /// stay. New in 1.3.0.
     PlanEnded(PlanEnded) = "plan_ended",
+    /// The server makes forge tokens for the repositories of a GitHub
+    /// account, or no more. New in 1.4.0.
+    ForgeAllowed(ForgeAllowed) = "forge_allowed",
 }
 // ANCHOR_END: record
 
@@ -471,7 +474,8 @@ impl Change {
             | Change::ItemHeld(_)
             | Change::ItemFreed(_)
             | Change::PlanSet(_)
-            | Change::PlanEnded(_) => None,
+            | Change::PlanEnded(_)
+            | Change::ForgeAllowed(_) => None,
         }
     }
 }
@@ -599,7 +603,8 @@ impl Record {
             | Change::OwnerSet(_)
             | Change::OwnerAsked(_)
             | Change::OwnerDenied(_)
-            | Change::SigninsEnded(_) => false,
+            | Change::SigninsEnded(_)
+            | Change::ForgeAllowed(_) => false,
         }
     }
 
@@ -814,6 +819,26 @@ pub struct PlanItem {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlanEnded {
     pub thread: ThreadName,
+}
+
+/// The owner or an admin allows the GitHub account `owner`, or allows it
+/// no more: the server makes forge tokens only for the repositories of
+/// an allowed account (01M4CHQR1E5HFV6KSTSM72H0QV). `owner` is in lower
+/// case.
+///
+/// ```
+/// use riff_core::record::{Change, ForgeAllowed};
+///
+/// let allowed = Change::ForgeAllowed(ForgeAllowed { owner: "acme".into(), allowed: true });
+/// assert_eq!(
+///     serde_json::to_string(&allowed).unwrap(),
+///     r#"{"forge_allowed":{"owner":"acme","allowed":true}}"#
+/// );
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ForgeAllowed {
+    pub owner: String,
+    pub allowed: bool,
 }
 
 /// A claim that is free now.
@@ -1259,6 +1284,10 @@ pub fn one_of_each() -> Vec<Change> {
             },
         }),
         Change::PlanEnded(PlanEnded { thread: thread() }),
+        Change::ForgeAllowed(ForgeAllowed {
+            owner: "acme".into(),
+            allowed: true,
+        }),
     ]
 }
 

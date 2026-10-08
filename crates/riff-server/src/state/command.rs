@@ -337,6 +337,7 @@ command_kinds! {
     Pause = "pause",
     Resume = "resume",
     SetIdle = "set_idle",
+    ForgeAllow = "forge_allow",
     Forget = "forget",
     Import = "import",
     Admit = "admit",
@@ -574,6 +575,7 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         CommandKind::Plan | CommandKind::PlanOff => &[Person, Session],
         // Only a person changes the settings and the people.
         CommandKind::SetIdle
+        | CommandKind::ForgeAllow
         | CommandKind::Invite
         | CommandKind::Remove
         | CommandKind::SetAdmin
@@ -621,6 +623,7 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         let owner = |what: &str| format!("{user} is not the owner; only the owner {what}");
         let reason = match (kind, needs) {
             (CommandKind::SetIdle, _) => admin("can change the settings of idle workers"),
+            (CommandKind::ForgeAllow, _) => admin("can allow a GitHub account"),
             (CommandKind::Pause | CommandKind::Resume, _) => format!(
                 "{user} is not an admin; only the owner or an admin can {kind} the whole riff \
                  or a repository by its name"
@@ -749,6 +752,7 @@ mod tests {
             CommandKind::Hold | CommandKind::Free => (&[Person, Session], false),
             CommandKind::Plan | CommandKind::PlanOff => (&[Person, Session], false),
             CommandKind::SetIdle
+            | CommandKind::ForgeAllow
             | CommandKind::Invite
             | CommandKind::Remove
             | CommandKind::SetAdmin
@@ -794,6 +798,7 @@ mod tests {
     /// by the own name, and the sign-ins of another person.
     fn needs(kind: CommandKind, caller: &Caller) -> Vec<Role> {
         use riff_core::record::{Plan, PlanSet};
+        use riff_core::wire::ForgeAllow;
         use riff_core::wire::{
             Claim, DenyOwner, End, Free, Hold, Invite, Join, Kind, Lead, Leave, PassOwner, Pause,
             PlanOff, Post, Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin,
@@ -852,6 +857,14 @@ mod tests {
             }
             CommandKind::Pause => of.of(Pause::here(me), kind),
             CommandKind::Resume => of.of(Resume::here(me), kind),
+            CommandKind::ForgeAllow => {
+                let allow = ForgeAllow {
+                    me,
+                    owner: Some("acme".into()),
+                    allowed: true,
+                };
+                of.of(allow, kind)
+            }
             CommandKind::SetIdle => {
                 let set = SetIdle {
                     me,
@@ -957,7 +970,7 @@ mod tests {
             }
         }
         // Each kind has one case, and `revoke` has 3.
-        assert_eq!(tried, (32 + 2) * 4 * 2 * 3);
+        assert_eq!(tried, (33 + 2) * 4 * 2 * 3);
     }
 
     #[test]

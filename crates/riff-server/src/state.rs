@@ -253,11 +253,11 @@ use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::record::{Change, Envelope, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    Activity, AliveReply, BlockedInfo, Claim, End, Facts, Freed, Idle, ItemFact, Join, Keys, Kind,
-    Lead, LeadReply, Leave, Message, Pause, PlanReply, Post, Register, Release, ReleaseFor,
-    ReleaseReply, Resume, RiffReply, RiffState, SessionInfo, SessionState, SetBlocked, SetIdle,
-    SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
-    Waits, Wake,
+    Activity, AliveReply, BlockedInfo, Claim, End, Facts, ForgeAccounts, ForgeAllow, Freed, Idle,
+    ItemFact, Join, Keys, Kind, Lead, LeadReply, Leave, Message, Pause, PlanReply, Post, Register,
+    Release, ReleaseFor, ReleaseReply, Resume, RiffReply, RiffState, SessionInfo, SessionState,
+    SetBlocked, SetIdle, SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo,
+    Tailed, ThreadInfo, Waits, Wake,
 };
 
 /// A blocked session that the look of the lead found, with its reason
@@ -1906,6 +1906,49 @@ impl State {
         self.written.the_riff().idle
     }
 
+    /// True when the owner or an admin allowed the GitHub account
+    /// `owner`: the server makes forge tokens for its repositories
+    /// (01M4CHQR1E5HFV6KSTSM72H0QV).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin".parse()?;
+    /// let mut state = State::default();
+    /// assert!(!state.forge_allows("acme"));
+    /// let accounts = state.forge_allow(&mike, Some("Acme"), true, Instant::now()).unwrap();
+    /// assert_eq!(accounts.accounts, ["acme"]);
+    /// assert!(state.forge_allows("ACME"));
+    /// assert!(!state.forge_allows("stranger"));
+    /// state.forge_allow(&mike, Some("acme"), false, Instant::now()).unwrap();
+    /// assert!(!state.forge_allows("acme"));
+    /// assert!(state.forge_allow(&mike, Some("acme/app"), true, Instant::now()).is_err());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn forge_allows(&self, owner: &str) -> bool {
+        self.written.the_riff().forge_allows(owner)
+    }
+
+    /// Allows the GitHub account `owner`, or allows it no more, as the
+    /// admin `me`, and gives the list. With no `owner`, it only gives
+    /// the list.
+    pub fn forge_allow(
+        &mut self,
+        me: &SessionUri,
+        owner: Option<&str>,
+        allowed: bool,
+        now: Instant,
+    ) -> Result<ForgeAccounts, String> {
+        let command = ForgeAllow {
+            me: me.clone(),
+            owner: owner.map(str::to_owned),
+            allowed,
+        };
+        self.ask(me, &command, now).map_err(|r| r.reason)
+    }
+
     /// Sets the settings of idle workers as `me`: each value that is
     /// `Some` (01M3Q5A0TF9K49V8Z1ZY9NDF74). It gives the settings with
     /// the change.
@@ -2540,6 +2583,65 @@ impl State {
     /// ```
     pub fn live_leads(&self, user: &str, now: Instant) -> Vec<Who> {
         self.written_view().live_leads(user, now)
+    }
+
+    /// The role and the repository of the forge token of `me`, from the
+    /// facts of the state (#628, 01M4CNN37FYYB99BS6QV2FFWZ8). `None`
+    /// when `me` gets no token:
+    ///
+    /// - A session gets the role of its lead mark and its claims, at the
+    ///   repository of its place in the state, while its claims hold. A
+    ///   session that the state does not know, that ended, or that had
+    ///   no sign of life for [`CLAIM_GRACE`] gets none.
+    /// - A person (a `me` with no session) gets the lead role at the
+    ///   repository of `me` only while the person has a lead there.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::forge::TokenRole;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::{CLAIM_GRACE, State};
+    ///
+    /// let lead: SessionUri = "riff://mike@pangolin/acme/app?session=a1".parse()?;
+    /// let worker: SessionUri = "riff://mike@pangolin/acme/app?session=w1".parse()?;
+    /// let person: SessionUri = "riff://mike@pangolin/acme/app".parse()?;
+    /// let stranger: SessionUri = "riff://mike@pangolin/stranger/app".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// assert_eq!(state.forge_fact(&person, now), None);
+    /// state.register(&lead, now);
+    /// state.register(&worker, now);
+    /// let app = || "acme/app".parse().unwrap();
+    /// assert_eq!(state.forge_fact(&lead, now), Some((TokenRole::Lead, app())));
+    /// assert_eq!(state.forge_fact(&worker, now), Some((TokenRole::Worker, app())));
+    /// assert_eq!(state.forge_fact(&person, now), Some((TokenRole::Lead, app())));
+    /// // The person is the lead of no other repository.
+    /// assert_eq!(state.forge_fact(&stranger, now), None);
+    /// // A session that the state does not know gets no token.
+    /// let other: SessionUri = "riff://mike@pangolin/stranger/app?session=x1".parse()?;
+    /// assert_eq!(state.forge_fact(&other, now), None);
+    /// // A session with no sign of life for CLAIM_GRACE gets none.
+    /// assert_eq!(state.forge_fact(&worker, now + CLAIM_GRACE), None);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn forge_fact(
+        &self,
+        me: &SessionUri,
+        now: Instant,
+    ) -> Option<(riff_core::forge::TokenRole, ThreadName)> {
+        let view = self.written_view();
+        let who = me.who();
+        if who.session().is_none() {
+            let thread = me.default_thread()?;
+            view.lead_of(&(who.user().to_owned(), thread.clone()), now)?;
+            return Some((riff_core::forge::TokenRole::Lead, thread));
+        }
+        if !view.holds(who, now) {
+            return None;
+        }
+        let uri = view.uri(who, now);
+        let thread = uri.default_thread()?;
+        Some((riff_core::forge::role_of(uri.lead(), uri.claims()), thread))
     }
 
     /// True when `user` shows a sign of life at `now`: a session of the
@@ -3961,6 +4063,7 @@ mod tests {
                 "idle": {"per_host": 2, "after_secs": 300},
                 "riff_pause": {"by": {"session": "mike/a1"}, "at_ms": T0},
                 "pauses": {"design": {"by": {"session": "mike/a1"}, "at_ms": T0}},
+                "forge_accounts": ["como-technologies"],
                 "threads": [{"thread": "como-technologies/riff", "members": [ann],
                              "messages": [{"message": message, "woken": [ann]}]}],
                 "claims": [{"thread": "como-technologies/riff", "item": "issue-7", "holder": ann}],

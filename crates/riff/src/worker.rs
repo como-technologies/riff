@@ -303,7 +303,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     // The forge token of the role of this session. `claude` gets an empty
     // environment with only the kept variables and the forge variables,
     // so no credential of the person reaches it, also with no token
-    // (01M4BV707FYHJDNC1499YAWR8D, 01M4BYVSNQ5SY2GRGT73FV0Z3E).
+    // (01M4CNN37FYYB99BS6QV2FFWZ8, 01M4BYVSNQ5SY2GRGT73FV0Z3E).
     let (given, files, keep) = forge_token(folder.as_ref(), session.as_deref(), server, None).await;
     let _keep = keep.map(AbortOnDrop);
     let forge = forge::ForgeEnv::of(&given, &files, &riff);
@@ -356,6 +356,12 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
     eprintln!("{body}");
     if let Err(e) = note_lead(server, &body).await {
         eprintln!("riff: cannot post the note to the lead: {e:#}");
+    }
+    // The wrapper registered the session, so it ends it: the session
+    // leaves `who`, its claims are free, and its forge token goes
+    // (01M4CNN39TTK36GX34RCWKES80).
+    if let Some(session) = &session {
+        end_worker(session, server).await;
     }
     // An exit with a fault is a death (01M493YZZEW1FTDBNA090WT2AG).
     if !status.success()
@@ -410,7 +416,7 @@ pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) 
     let mut hup = signal(SignalKind::hangup())?;
     let folder = temp::Folder::make(name);
     let riff = crate::binary::this_on_disk()?;
-    let lead = Some(crate::profile::Role::Lead);
+    let lead = Some(forge::TokenRole::Lead);
     let (given, files, keep) = forge_token(folder.as_ref(), None, server, lead).await;
     let _keep = keep.map(AbortOnDrop);
     let forge = forge::ForgeEnv::of(&given, &files, &riff);
@@ -436,14 +442,15 @@ pub async fn run_lead(claude: &Path, args: &[String], server: &str, name: &str) 
 }
 
 /// The first forge token of a session ([`forge`]), its token files, and
-/// the task that keeps the token. The role is `fixed`, else it follows
-/// the claims of the worker `session`. With no token, the result names
-/// the cause, and the files hold no token.
+/// the task that keeps the token. riff-server gives the token. The role
+/// is `fixed` (the lead: the wrapper asks as the person), else it
+/// follows the claims of the worker `session`. With no token, the
+/// result names the cause, and the files hold no token.
 async fn forge_token(
     folder: Option<&temp::Folder>,
     session: Option<&str>,
     server: &str,
-    fixed: Option<crate::profile::Role>,
+    fixed: Option<forge::TokenRole>,
 ) -> (
     std::result::Result<forge::Token, forge::Error>,
     forge::Files,
@@ -455,39 +462,52 @@ async fn forge_token(
         return (Err(forge::Error::NoFolder), none, None);
     };
     let files = forge::Files::in_temp(folder.path());
-    let made = forge::App::of(settings::path()).and_then(|app| {
+    let made = (|| {
         let place = identity::here(None).map_err(forge::Error::Place)?;
-        let repo = place.repo_text();
-        if repo == "-" {
+        if place.repo_text() == "-" {
             let why = anyhow::anyhow!("this folder is in no repository");
             return Err(forge::Error::Place(why));
         }
-        let session = match (session, fixed) {
-            (Some(session), _) => Some(session.to_owned()),
-            (None, Some(_)) => None,
+        let me = match (session, fixed) {
+            (Some(session), _) => identity::agent(&place, session, server),
+            (None, Some(_)) => identity::person(&place, server),
             (None, None) => {
                 let why = anyhow::anyhow!("the worker has no session ID");
                 return Err(forge::Error::Place(why));
             }
         };
-        Ok((app, repo, place, session))
-    });
-    let (app, repo, place, id) = match made {
-        Ok(made) => made,
+        me.map_err(forge::Error::Place)
+    })();
+    let me = match made {
+        Ok(me) => me,
         Err(e) => return (Err(e), files, None),
     };
+    // The server gives a token only to a session that it knows: the
+    // worker registers before `claude` starts (#628).
+    if fixed.is_none() {
+        register_worker(&me, server).await;
+    }
     let server = server.to_owned();
+    let ask: forge::Ask = {
+        let (me, server) = (me.clone(), server.clone());
+        Box::new(move || {
+            let (me, server) = (me.clone(), server.clone());
+            Box::pin(async move {
+                let api = Api::new(&server).signed_in(me.who().session())?;
+                api.forge_token(&me).await
+            })
+        })
+    };
     let claims = move || {
-        let (place, id, server) = (place.clone(), id.clone(), server.clone());
+        let (me, server) = (me.clone(), server.clone());
         async move {
-            let id = id?;
+            me.who().session()?;
             let api = Api::new(&server).one_try(forge::LOOK_EVERY / 2);
-            let me = identity::agent(&place, &id, api.base()).ok()?;
             let info = api.signed_in(me.who().session()).ok()?.me(&me).await.ok()?;
             Some(info.session?.uri.claims().to_vec())
         }
     };
-    let mut keeper = forge::Keeper::new(app, forge::GitHub::here(), repo, files.clone());
+    let mut keeper = forge::Keeper::new(files.clone(), ask);
     if let Some(role) = fixed {
         keeper = keeper.with_role(role);
     }
@@ -498,6 +518,32 @@ async fn forge_token(
         files,
         Some(tokio::spawn(forge::keep(keeper, claims))),
     )
+}
+
+/// Registers the worker session `me` at `server`, so that the server
+/// knows it before its first forge token. A failure only gives a line:
+/// the ask of the token then names the cause.
+async fn register_worker(me: &riff_core::name::SessionUri, server: &str) {
+    let registered = async {
+        let api = Api::new(server).signed_in(me.who().session())?;
+        api.register_as(me, true).await
+    };
+    if let Err(e) = registered.await {
+        eprintln!("riff: {e:#}");
+    }
+}
+
+/// Sends the end call of the worker session `session` of this
+/// directory. A failure only gives a line.
+async fn end_worker(session: &str, server: &str) {
+    let ended = async {
+        let me = identity::agent(&identity::here(None)?, session, server)?;
+        let api = Api::new(server).with_budget(crate::mcp::END_WAIT);
+        api.signed_in(Some(session))?.end(&me).await
+    };
+    if let Err(e) = ended.await {
+        eprintln!("riff: the end call of the session {session} failed: {e:#}");
+    }
 }
 
 /// Stops `claude` with SIGTERM, then kills it after [`STOP_WAIT`].

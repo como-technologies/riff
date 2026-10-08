@@ -88,6 +88,20 @@ struct Cli {
     )]
     client_secret: Option<String>,
 
+    /// The ID of the GitHub App of riff. With the key, the server gives
+    /// each signed-in session a forge token of its role.
+    #[arg(long, env = "RIFF_FORGE_APP", hide_env_values = true)]
+    forge_app: Option<String>,
+
+    /// The private key of the GitHub App, in PEM form. The deploy gives
+    /// it from Secret Manager. Never put it on a command line.
+    #[arg(long, env = "RIFF_FORGE_KEY", hide_env_values = true, hide = true)]
+    forge_key: Option<String>,
+
+    /// The base URL of the GitHub API, for a test with a fake API.
+    #[arg(long, env = "RIFF_GITHUB_API", hide_env_values = true, hide = true)]
+    github_api: Option<String>,
+
     /// A Workspace domain whose accounts may sign in. Repeat it for more
     /// domains.
     #[arg(
@@ -333,6 +347,18 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
         config.provider = Some(provider);
     } else {
         tracing::warn!("no RIFF_OIDC_CLIENT_ID: nobody can sign in");
+    }
+    match riff_server::forge::Settings::of(
+        cli.forge_app.as_deref(),
+        cli.forge_key.as_deref(),
+        cli.github_api.as_deref(),
+    ) {
+        Ok(Some(forge)) => {
+            tracing::info!("forge tokens with the GitHub App {}", forge.app.id());
+            config.forge = Some(forge);
+        }
+        Ok(None) => tracing::info!("no GitHub App: the server gives no forge token"),
+        Err(why) => tracing::error!("no forge tokens: {why}"),
     }
     let store: Option<Arc<dyn Store>> = match (&cli.bucket, &cli.dir) {
         (Some(bucket), _) => {

@@ -30,6 +30,7 @@
 //! | `/v1/plan/free` | [`Free`] | [`FreeReply`] | command |
 //! | `/v1/plan` | [`SetPlan`] | [`PlanReply`] | command |
 //! | `/v1/plan/off` | [`PlanOff`] | [`PlanOffReply`] | command |
+//! | `/v1/forge/allow` | [`ForgeAllow`] | [`ForgeAccounts`] | command |
 //! | `/v1/status` | [`SetStatus`] | `null` | signal |
 //! | `/v1/blocked` | [`SetBlocked`] | `null` | signal |
 //! | `/v1/step` | [`SetStep`] | `null` | signal |
@@ -238,6 +239,9 @@ calls! {
     PassOwner => "/v1/owner", OwnerPassed;
     TakeOwner => "/v1/owner/take", OwnerAsked;
     DenyOwner => "/v1/owner/deny", OwnerDenied;
+    ForgeToken => "/v1/forge/token", ForgeTokenReply;
+    ForgeCheck => "/v1/forge/check", ForgeCheckReply;
+    ForgeAllow => "/v1/forge/allow", ForgeAccounts;
 }
 
 /// `POST /v1/register`: a session says that it exists and where it
@@ -387,6 +391,122 @@ pub struct MeReply {
     pub session: Option<SessionInfo>,
     /// The build of the server, as the `riff-build` header gives it.
     pub build: String,
+}
+
+/// `POST /v1/forge/token`: the forge token of the session `me`
+/// (#628). The server picks the role and the repository from its own
+/// facts of `me` ([`crate::forge::role_of`]). A `me` with no session
+/// is the lead of the person at its place: the wrapper of the lead asks
+/// before its session starts. A riff with no sign-in gives no token.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeToken {
+    pub me: SessionUri,
+}
+
+/// The reply to [`ForgeToken`]: a token for one repository, with the
+/// rights of one role. Its `Debug` hides the token.
+///
+/// ```
+/// use riff_core::forge::TokenRole;
+/// use riff_core::wire::ForgeTokenReply;
+///
+/// let reply = ForgeTokenReply {
+///     role: TokenRole::Worker,
+///     repo: "o/r".into(),
+///     token: "ghs_secret".into(),
+///     ends_ms: 1,
+///     permissions: Default::default(),
+/// };
+/// assert!(!format!("{reply:?}").contains("ghs_secret"));
+/// ```
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeTokenReply {
+    /// The role that the server picked.
+    pub role: crate::forge::TokenRole,
+    /// The repository of the token, `OWNER/NAME`.
+    pub repo: String,
+    /// The token. Never print it.
+    pub token: String,
+    /// When the token ends, in milliseconds since the Unix epoch.
+    pub ends_ms: u64,
+    /// The permissions that GitHub gave.
+    pub permissions: BTreeMap<String, crate::forge::Access>,
+}
+
+impl std::fmt::Debug for ForgeTokenReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ForgeTokenReply")
+            .field("role", &self.role)
+            .field("repo", &self.repo)
+            .field("ends_ms", &self.ends_ms)
+            .field("permissions", &self.permissions)
+            .finish_non_exhaustive()
+    }
+}
+
+/// `POST /v1/forge/check`: `riff forge check`. The server makes a token
+/// of each role for the repository of `me`, checks its rights, and
+/// revokes it at once. The reply holds no token.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeCheck {
+    pub me: SessionUri,
+}
+
+/// The reply to [`ForgeCheck`]: one line for each role.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeCheckReply {
+    /// The repository of the check, `OWNER/NAME`.
+    pub repo: String,
+    /// The ID of the GitHub App.
+    pub app: u64,
+    pub roles: Vec<RoleCheck>,
+}
+
+/// `POST /v1/forge/allow`: `riff forge allow`. The server makes forge
+/// tokens only for the repositories of the GitHub accounts that the
+/// owner or an admin allowed (01M4CHQR1E5HFV6KSTSM72H0QV). `owner` is an
+/// organization or a personal account. With `allowed` true, the server
+/// allows it; with false, it allows it no more. With no `owner`, the
+/// command changes nothing and gives the list. Only the owner or an admin
+/// can send it, as a person.
+///
+/// ```
+/// use riff_core::wire::ForgeAllow;
+///
+/// let allow: ForgeAllow = serde_json::from_str(
+///     r#"{"me":"riff://mike@pangolin/acme/app","owner":"acme","allowed":true}"#,
+/// ).unwrap();
+/// assert_eq!(allow.owner.as_deref(), Some("acme"));
+/// let list: ForgeAllow = serde_json::from_str(r#"{"me":"riff://mike@pangolin"}"#).unwrap();
+/// assert!(list.owner.is_none() && !list.allowed);
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeAllow {
+    pub me: SessionUri,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub allowed: bool,
+}
+
+/// The reply to [`ForgeAllow`]: the GitHub accounts that the server
+/// makes forge tokens for, in lower case and in order.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeAccounts {
+    #[serde(default)]
+    pub accounts: Vec<String>,
+}
+
+/// The check of the token of one role.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RoleCheck {
+    pub role: crate::forge::TokenRole,
+    /// The permissions that GitHub gave, when it gave a token.
+    #[serde(default)]
+    pub permissions: BTreeMap<String, crate::forge::Access>,
+    /// Why the role has no good token, if it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// The reply to `GET /v1/server`: the facts of one `riff-server`, for

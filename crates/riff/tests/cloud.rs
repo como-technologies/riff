@@ -1041,6 +1041,64 @@ fn signin_stores_the_secret_and_writes_the_client_id() {
     assert!(ran.calls.is_empty(), "{}", ran.calls);
 }
 
+/// `riff cloud forge` stores the private key of the GitHub App in Secret
+/// Manager through stdin, lets only the server account read it, and
+/// writes the App ID to the settings file. The key goes to no file
+/// (01M4CHQR1E5HFV6KSTSM72H0QV). The next deploy gives both to the
+/// server.
+#[test]
+fn forge_stores_the_app_key_and_the_deploy_gives_it_to_the_server() {
+    let cloud = Cloud::new();
+    // A deploy before the App gives the server no App.
+    let ran = cloud
+        .run(&["deploy", "shared", "v1.0.0", "--confirm", "shared"])
+        .ok();
+    let deploy = ran.line("run deploy riff-server --image ");
+    assert!(!deploy.contains("RIFF_FORGE"), "{deploy}");
+
+    let key = cloud.top.path().join("app.pem");
+    let pem = "-----BEGIN RSA PRIVATE KEY-----\nthe-key\n-----END RSA PRIVATE KEY-----\n";
+    fs::write(&key, pem).unwrap();
+    let ran = cloud
+        .run(&["forge", "shared", "123", key.to_str().unwrap()])
+        .ok();
+    ran.line("secrets describe riff-forge-app-key ");
+    let add = ran.line("secrets versions add riff-forge-app-key --data-file=- ");
+    assert!(!add.contains("the-key"), "{add}");
+    let binding = ran.line("secrets add-iam-policy-binding riff-forge-app-key ");
+    assert!(
+        binding.contains(
+            "--member serviceAccount:riff-server@como-riff.iam.gserviceaccount.com \
+             --role roles/secretmanager.secretAccessor"
+        ),
+        "{binding}"
+    );
+    let text = cloud.text("shared.env");
+    assert!(text.contains("\nRIFF_FORGE_APP=123\n"), "{text}");
+    assert!(!text.contains("the-key"));
+    assert!(ran.stdout().contains("riff cloud deploy shared"));
+
+    let ran = cloud
+        .run(&["deploy", "shared", "v1.0.0", "--confirm", "shared"])
+        .ok();
+    let deploy = ran.line("run deploy riff-server --image ");
+    assert!(deploy.contains(",RIFF_FORGE_APP=123"), "{deploy}");
+    assert!(
+        deploy.contains(
+            "--set-secrets RIFF_OIDC_CLIENT_SECRET=riff-oidc-client-secret:latest,\
+             RIFF_FORGE_KEY=riff-forge-app-key:latest"
+        ),
+        "{deploy}"
+    );
+
+    // A file that is no key is refused, and nothing runs.
+    fs::write(&key, "not a key").unwrap();
+    let ran = cloud.run(&["forge", "shared", "9", key.to_str().unwrap()]);
+    assert!(!ran.out.status.success());
+    assert!(ran.stderr().contains("no private key"), "{}", ran.stderr());
+    assert!(ran.calls.is_empty(), "{}", ran.calls);
+}
+
 #[test]
 fn log_reads_the_lines_of_the_service() {
     let cloud = Cloud::new();

@@ -707,6 +707,44 @@ mod tests {
             });
         }
         c.trip(&IdleQuery { me: me() });
+        {
+            use crate::forge::{Access, TokenRole};
+            use crate::wire::{
+                ForgeAccounts, ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeToken,
+                ForgeTokenReply, RoleCheck,
+            };
+            let permissions = BTreeMap::from([
+                ("contents".to_owned(), Access::Write),
+                ("metadata".to_owned(), Access::Read),
+            ]);
+            c.trip(&ForgeToken { me: me() });
+            c.trip(&ForgeTokenReply {
+                role: TokenRole::Worker,
+                repo: "acme/app".into(),
+                token: "ghs_x".into(),
+                ends_ms: 1,
+                permissions: permissions.clone(),
+            });
+            c.trip(&TokenRole::Lead);
+            c.trip(&ForgeCheck { me: me() });
+            c.trip(&ForgeCheckReply {
+                repo: "acme/app".into(),
+                app: 7,
+                roles: vec![RoleCheck {
+                    role: TokenRole::Verifier,
+                    permissions,
+                    error: Some("no".into()),
+                }],
+            });
+            c.trip(&ForgeAllow {
+                me: me(),
+                owner: Some("acme".into()),
+                allowed: true,
+            });
+            c.trip(&ForgeAccounts {
+                accounts: vec!["acme".into()],
+            });
+        }
         c.trip(&SetIdle {
             me: me(),
             per_host: Some(1),

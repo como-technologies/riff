@@ -4192,22 +4192,12 @@
   but the loopback. Outside a test run, it prints a skip line.
 - **01M4BTG7E55337GBS5WANAD6MG** The Gate installs bubblewrap and lets
   it make namespaces before it runs the checks.
-- **01M4BV7057YSHEMEHKXK20X0GJ** The person makes one GitHub App of
-  riff. `riff forge app` saves its ID in the settings and its private
-  key in a file that only the person reads. No profile reads that
-  file.
-- **01M4BV707FYHJDNC1499YAWR8D** The wrapper of a worker makes an
-  installation token of the App for the role of the session: for the
-  repository of the session only, with only the permissions of the
-  role. riff refuses a token with more or fewer permissions than the
-  role.
+- **01M4BV7057YSHEMEHKXK20X0GJ** Replaced by 01M4CHQR1E5HFV6KSTSM72H0QV.
+- **01M4BV707FYHJDNC1499YAWR8D** Replaced by 01M4CHQRCP5DFNRDHKMBNHTD5T.
 - **01M4BV709WGHZ57AM3STC15B69** `gh` and git in a worker session use
   the token of the session. No token of the person reaches the
   session. When riff cannot make the token, the session has no token.
-- **01M4BV70C3P5CZFBSFYFWEWRRA** The role of the token of a worker
-  session follows its claims on riff-server: a `verify-` claim gives
-  the verifier token, each other case the worker token. A worker
-  session never gets the token of the lead.
+- **01M4BV70C3P5CZFBSFYFWEWRRA** Replaced by 01M4CHQR3Q566ZFFGQEQMJ3HAS.
 - **01M4BV70ED4R56M31119BYJ93S** No token gets the permissions
   `administration`, `deployments`, `environments`, `secrets` or
   `workflows`.
@@ -4218,14 +4208,12 @@
   worker tokens have the same permissions. The ruleset `main` stops
   each push to `main`, and the ruleset `releases` stops each `v*`
   tag of a token.
-- **01M4BV70JZNMT3X99E77GC58K9** The wrapper makes a new token 10
-  minutes before the old one ends, and when the role changes. It reads
-  the claims each minute, and at once after a claim or a release.
+- **01M4BV70JZNMT3X99E77GC58K9** The wrapper asks riff-server for a new
+  token 10 minutes before the old one ends, and when the role
+  changes. It reads the claims each minute, and at once after a claim
+  or a release.
 - **01M4BV70N7HRW7KQ9ER9D9CDT9** The test run gets no forge token.
-- **01M4BYGV74T1R2H9D1RX6RTC6Z** At a change of role, the wrapper
-  removes the token files and revokes the old token before it asks for
-  the token of the new role. While the revoke fails, the session has no
-  token.
+- **01M4BYGV74T1R2H9D1RX6RTC6Z** Replaced by 01M4CHQR87K30DXD1W2ZZFMDBX.
 - **01M4BYVSNQ5SY2GRGT73FV0Z3E** No worker or AI session ever gets a
   credential of the person. riff starts `claude` with an empty
   environment and sets only the kept variables and the variables of
@@ -4247,6 +4235,52 @@
   `riff workers lead`, like a worker through `riff workers run`: a temp
   folder of its own, the forge token of the lead, and `claude` through
   `forge::ForgeEnv`. The token of the lead does not follow the claims.
+- **01M4CHQR1E5HFV6KSTSM72H0QV** riff-server makes each forge token with
+  the one GitHub App of riff. The private key of the App is in Secret
+  Manager, and only the service account of riff-server reads it.
+  `riff cloud forge NAME APP_ID KEY` stores the key there and the App
+  ID in the cloud settings. `riff cloud deploy` gives both to the
+  server. The key is never on the machine of a person.
+- **01M4CHQR3Q566ZFFGQEQMJ3HAS** Replaced by 01M4CNN37FYYB99BS6QV2FFWZ8.
+- **01M4CNN37FYYB99BS6QV2FFWZ8** The wrapper of a session asks
+  riff-server for its token with the URI of the session. The server
+  picks the role and the repository from its own facts: the lead, else
+  a session with a `verify-` claim is the verifier, else the worker. A
+  session that the server does not know, that ended, or whose claims
+  ended gets no token. The wrapper of a worker registers its session
+  before its first ask. A URI with no session gets the lead token only
+  while its person has a lead in the repository of the URI. A session
+  cannot ask for more rights.
+- **01M4CHQR5ZFQCQ7CC1CGHYFY8S** A riff with no sign-in gives no forge
+  token. A call with no sign-in gets no forge token.
+- **01M4CHQR87K30DXD1W2ZZFMDBX** Replaced by 01M4CNN39TTK36GX34RCWKES80.
+- **01M4CNN39TTK36GX34RCWKES80** At a claim, a release, the end of a
+  session, the end of the allow of an account, and each minute,
+  riff-server revokes each token of a session whose role or repository
+  changed, or whose claims ended. The wrapper removes the old token
+  files before it asks for the token of the new role. At a renew of a
+  session, riff-server revokes the old token after it makes the new
+  one. A lead token of a person stays good until it ends.
+- **01M4CHQRAFPQDVB67XGDD4N9GB** riff-server writes one log line for
+  each token that it gives: the session, the repository, the role and
+  the end time. It writes one line for each revoke. A line never holds
+  a token.
+- **01M4CHQRCP5DFNRDHKMBNHTD5T** Organizations and personal accounts can
+  install the App. riff-server finds the installation of the App on the
+  repository of the session in its own facts, and makes the token
+  there: for that one repository, with only the permissions of the
+  role. It refuses a token with more or fewer permissions. A repository
+  with no installation gives an error that names
+  `riff forge install OWNER`.
+- **01M4CHQREYBFR465528EYTVDYE** `riff forge check` asks riff-server for
+  a token of each role on the repository of the clone. The server
+  checks the rights of each token, revokes it at once, and replies with
+  no token.
+- **01M4CNN3C41DBHVYX87Q17GW2C** riff-server makes forge tokens and
+  checks only for the repositories of the GitHub accounts that the
+  owner or an admin allowed with `riff forge allow OWNER`. Each allow
+  and each end of an allow (`--remove`) is a `forge_allowed` record in
+  the log. `riff forge allow` with no OWNER lists the accounts.
 - **01M4C4WW15HGA1VEDFRBEMZAW7** riff starts its tmux server with an
   empty environment and only the kept variables, with no `TMUX` and no
   `TMUX_PANE`. Its config sets no variable to copy from a client at an
