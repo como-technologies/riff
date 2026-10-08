@@ -3148,7 +3148,8 @@
   find the input line, it types nothing. The check of the input line is
   in the adapter of the agent tool.
 - **01M3MNP34M5PAZW9VWAYVGNSV2** `riff workers start`, and the clear of
-  a worker before the fresh context, fast-forward the default branch
+  a worker outside a sandbox (01M4DVW2B8W108N696GAYN3V1B) before the
+  fresh context, fast-forward the default branch
   of the main clone to `origin` first (`git fetch` and
   `git merge --ff-only`). `riff workers start` says what it did.
 - **01M3MNP36TZYN3PE00AZJTJSER** When the main clone is not on the
@@ -4569,10 +4570,10 @@
   lead starts.
 - **01M4DDWPC693RNWHY7P7XBZ9TB** Each tmux step and each signal of the
   lead is an operation of the broker of the lead: `worker-panes`,
-  `tail-pane`, `workers-start`, `workers-stop`, `workers-reap`,
-  `oom-journal`, `pane-screen` and `pane-type`. The broker of a worker
-  or a verifier refuses each of them. `pane-screen` and `pane-type`
-  act only on the pane of the lead.
+  `tail-pane`, `workers-start`, `workers-stop`, `workers-reap` and
+  `oom-journal`, and the operations of the own pane
+  (01M4DVW24ESG6XCBNMFV7T9Z4E). The broker of a worker or a verifier
+  refuses each operation of the lead.
 - **01M4DDWPEGBAXKTS0X3THFB8VZ** The broker of a lead stops and reaps
   only the workers with the clone mark of its own clone, also when the
   lead names the pane or the session of another worker. A start takes
@@ -4590,6 +4591,26 @@
   `FETCH_HEAD` of its git dir. It reads the rest of the clone. It
   writes no `config`, `hooks`, `info` or `packed-refs` of the git dir,
   and no other file of the clone.
+- **01M4DVW24ESG6XCBNMFV7T9Z4E** The broker of each role runs the
+  operations of the own pane: `pane-id`, `pane-screen`, `pane-type`
+  and `end-over-limit`. Each acts only on the pane of the session that
+  asks: the `TMUX_PANE` of the broker. None of them takes a pane.
+- **01M4DVW26Q5MX025XBW7JCK44S** A worker in its sandbox clears its
+  context through its broker: the Stop hook starts the check of the
+  clear with no pane, and the check types `/clear` and the start
+  prompt with `pane-type`.
+- **01M4DVW290H2AQF6EQFHTY1EE1** When the check of the clear of a
+  worker in its sandbox finds more workers than the limit, the broker
+  of the worker ends it (`end-over-limit`): the count, the note to the
+  lead and the end are one step under the lock of the limit, as
+  outside the sandbox (01M402VFGAJQM1QW8B42NKMJM4).
+- **01M4DVW2B8W108N696GAYN3V1B** The clear of a worker in its sandbox
+  does not fast-forward the main clone: the worker writes no file of
+  it. `riff workers start` still does.
+- **01M4DVW2DGX8N9NJZHSAGK5EH4** A hangup does not stop the broker, and
+  the broker ends only after each operation of the own pane or of the
+  lead that runs. So an `end-over-limit` that closes the pane of its
+  worker still ends the session.
 
 - **01M4DVXP20SHYTFE1D4NVF0FSF** riff outside each sandbox takes the
   default branch from `origin` itself (`git ls-remote --symref origin

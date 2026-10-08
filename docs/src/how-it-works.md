@@ -3443,7 +3443,11 @@ a worker refuses each of them.
 | `workers-stop` | stops a worker of this clone, or each worker of this clone |
 | `workers-reap` | stops the old processes of a worker of this clone |
 | `oom-journal` | reads the lines of `systemd-oomd`, to find why a worker died |
-| `pane-screen`, `pane-type` | reads and types into the pane of the lead, for the compact at the end of a wave |
+
+The broker of the lead also runs the operations of the own pane, as
+the broker of each worker does. The compact at the end of a wave uses
+them. See
+[A worker in its sandbox clears its context](#a-worker-in-its-sandbox-clears-its-context).
 
 tmux marks each worker pane with its main clone (`@riff-clone`). The
 broker of a lead stops and reaps only the workers of its own clone,
@@ -4006,6 +4010,7 @@ Each row is a surface with a control, and the test of that control.
 | The lead | the worktrees of the clone and the git parts of a worker; an operation of its broker | each git command of riff, tmux, the processes of its workers | the lead writes no config, hooks, info, packed-refs or other file of the clone; its tmux steps and signals are operations of its broker, only on the workers with the clone mark of its clone | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker`, `the_lead_writes_no_config_hooks_info_or_packed_refs_of_the_clone`, `a_stop_of_a_worker_of_another_clone_stops_nothing`, `only_the_broker_of_a_lead_runs_the_operations_of_the_lead` |
 | The MCP config of a session | a write of `workers-mcp.json` | the `claude` of the lead and of each worker | the file is in the given folder of riff, outside each write path | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker` |
 | The refs of the clone | a worker: its refs, also `refs/remotes/origin/HEAD`, and the `HEAD` of its worktree | the fast-forward of the main clone, `riff worktrees clean`, the rules of riff | riff asks `origin` for the default branch and names each ref in full; the branch of a worktree comes from its name; riff refuses a branch name that starts with `-`, and puts `--` before each name | `the_fast_forward_takes_the_default_branch_from_origin_not_from_a_planted_ref`, `the_default_branch_comes_from_origin_not_from_a_planted_ref`, `worktrees_clean_takes_the_branch_from_the_name_not_from_the_head`, `worktrees_clean_puts_two_dashes_before_each_name` |
+| The pane of a session | an operation of the own pane: read, type, the end over the limit | tmux, the end of its worker | each acts only on the pane of the session that asks, and takes no pane | `the_operations_of_the_own_pane_act_only_on_the_pane_of_the_session`, `a_worker_in_its_sandbox_gets_clear_in_its_own_pane_through_the_broker`, `a_worker_in_its_sandbox_over_the_limit_ends_through_the_broker` |
 <!-- /surfaces -->
 
 ### The shared surfaces with no control yet
@@ -4027,7 +4032,6 @@ proposed accept. Mike signs off this table before the release 2.0.0.
 | The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
 | The variables of a broker request | a bus address | `riff test-run` | a test run gets a variable that is not of cargo or the tests | #654 |
 | The worktrees of other sessions | the worktrees folder of the clone | the other sessions | a worker changes the work of another session | #645 |
-| The clear of a worker | a clear of its context | tmux | a worker in its sandbox cannot clear its context | #653 |
 | Forge tokens in an allowed account | a session in a repository of the account | riff-server | each member of the riff gets a token for each repository of an allowed account where it has a session | Accept (proposed): the owner admits each member, and the token has the rights of the role only |
 | The lead token of a person | a token with no session | riff-server | the token lives up to one hour after the allow or the lead ends | Accept (proposed): one hour at most |
 | A session grant with no process | none | riff-server | the grant stays 7 days when `claude` does not start | Accept (proposed): only the session key uses it, and the key was only in the wrapper |
@@ -5722,6 +5726,56 @@ To see the subagents of a worker, go to the tmux window
 tmux select-window -t riff-workers
 ```
 
+#### A worker in its sandbox clears its context
+
+A worker runs in its sandbox. It reaches no tmux server, so it cannot
+type into its own pane. Its broker runs outside the sandbox, in the
+pane of the worker. So the check of the clear asks the broker, and the
+broker types `/clear` and "Join the riff." into that pane. You do
+nothing.
+
+```mermaid
+sequenceDiagram
+    participant H as riff hook clear (worker, sandbox)
+    participant B as broker of the worker (outside)
+    participant T as tmux
+    H->>B: end-over-limit
+    B->>T: count the workers of the machine
+    B-->>H: false: not over the limit
+    H->>B: pane-type /clear
+    B->>T: send-keys -t %5 /clear
+    H->>B: pane-type Join the riff.
+    B->>T: send-keys -t %5 Join the riff.
+```
+
+The broker of each role runs the operations of the own pane:
+
+| Operation | What the broker does |
+|---|---|
+| `pane-id` | gives the name of the pane of the session, for example `%5` |
+| `pane-screen` | reads the pane of the session |
+| `pane-type` | types a line into the pane of the session |
+| `end-over-limit` | ends the worker of the session when more workers run than the limit |
+
+Each operation acts only on the pane of the session that asks: the
+pane where its broker started. No operation takes a pane, so a worker
+cannot type into the pane of another worker.
+
+When more workers run than the limit, the broker ends its own worker
+in place of the clear. It closes the pane, posts the note to the lead
+and ends the session (see
+[Lower the limit while workers run](#lower-the-limit-while-workers-run)).
+
+The clear of a worker in its sandbox does not fast-forward the main
+clone: the worker writes no file of it. `riff workers start` still
+does.
+
+To find the pane of each worker, and see which workers must clear:
+
+```sh
+riff workers
+```
+
 riff never clears the lead: you work in it. It compacts the lead at the
 end of a wave (see
 [riff compacts the lead at the end of a wave](#riff-compacts-the-lead-at-the-end-of-a-wave)).
@@ -5838,8 +5892,10 @@ riff lead compact --quiet 120
 
 Workers start in the main clone, and each new worktree branches from
 it. So `riff workers start`, and riff before it clears the context of
-a worker, fast-forward the main clone to `origin` first. You do not
-pull by hand.
+a worker outside a sandbox, fast-forward the main clone to `origin`
+first. You do not pull by hand. A worker in its sandbox writes no file
+of the main clone, so its clear does not fast-forward it. Its next
+worktree still starts from a fresh `origin/main`.
 
 ```mermaid
 flowchart TD

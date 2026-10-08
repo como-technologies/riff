@@ -1377,9 +1377,10 @@ enum HookEvent {
         /// The riff session ID of the worker.
         #[arg(long)]
         session: String,
-        /// The tmux pane of the worker.
+        /// The tmux pane of the worker. With no pane, the check uses
+        /// the pane of the broker of the worker in its sandbox.
         #[arg(long)]
-        pane: String,
+        pane: Option<String>,
         /// The transcript of the session.
         #[arg(long)]
         transcript: Option<std::path::PathBuf>,
@@ -1555,6 +1556,7 @@ async fn main() -> Result<()> {
             },
     } = &command
     {
+        let pane = pane.as_deref();
         if let Err(e) = clear_check(session, pane, transcript.as_deref(), *turns, &server).await {
             eprintln!("riff: cannot clear the context of the worker: {e:#}");
         }
@@ -2387,12 +2389,11 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             let take = riff::outside::take(server);
             // Only the broker of a lead runs the steps of the lead in tmux
             // and on the processes of its workers (01M4DDWPC693RNWHY7P7XBZ9TB).
-            let lead = match role {
-                SandboxRole::Lead => Some(riff::door::Lead::here(clone, server)?),
-                SandboxRole::Worker | SandboxRole::Verifier => None,
-            };
+            let lead = matches!(role, SandboxRole::Lead);
+            let here = riff::door::Here::of(lead, clone, server)?;
+            riff::broker::ignore_hangup()?;
             let riff = riff::binary::this_on_disk()?;
-            riff::broker::serve(socket, root, clone, &riff, take, lead)
+            riff::broker::serve(socket, root, clone, &riff, take, here)
         }
         Some(Workers::Git { worktree, args }) => riff::confine::run_git(server, worktree, args),
         Some(Workers::TestRun { program, args }) => {
@@ -2885,20 +2886,26 @@ fn stop_hook() {
 /// Starts `riff hook clear` for the worker `id`, detached, so that the
 /// Stop hook returns at once (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It counts the
 /// prompts of the `transcript` first and gives the number to the check
-/// (01M3ZS67FTAC1784GEVEDXJ837). It starts nothing outside tmux, or when
-/// the session left the riff.
+/// (01M3ZS67FTAC1784GEVEDXJ837). In its sandbox, the worker has no tmux:
+/// the check uses the pane of its broker (01M4DVW26Q5MX025XBW7JCK44S).
+/// It starts nothing outside tmux with no broker, or when the session
+/// left the riff.
 fn start_clear_check(id: &str, transcript: Option<&std::path::Path>) -> Result<()> {
     use std::os::unix::process::CommandExt;
     let in_tmux = std::env::var_os("TMUX").is_some_and(|t| !t.is_empty());
     let pane = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty());
-    let Some(pane) = pane.filter(|_| in_tmux) else {
+    let pane = pane.filter(|_| in_tmux);
+    if pane.is_none() && riff::broker::here().is_none() {
         return Ok(());
-    };
+    }
     if local::left_here(id) {
         return Ok(());
     }
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
-    cmd.args(["hook", "clear", "--session", id, "--pane", &pane]);
+    cmd.args(["hook", "clear", "--session", id]);
+    if let Some(pane) = &pane {
+        cmd.args(["--pane", pane]);
+    }
     if let Some(transcript) = transcript {
         let turns = next::prompts(Some(transcript));
         cmd.arg("--transcript").arg(transcript);
@@ -2912,21 +2919,23 @@ fn start_clear_check(id: &str, transcript: Option<&std::path::Path>) -> Result<(
     Ok(())
 }
 
-/// The check of the clear of the worker `id` in the pane `pane`
-/// ([`next::check`], 01M3XV0562D3H3P22CJDBPAZBH).
+/// The check of the clear of the worker `id` in the pane `pane`, else in
+/// the pane of its broker ([`next::check`], 01M3XV0562D3H3P22CJDBPAZBH,
+/// 01M4DVW26Q5MX025XBW7JCK44S).
 async fn clear_check(
     id: &str,
-    pane: &str,
+    pane: Option<&str>,
     transcript: Option<&std::path::Path>,
     turns: Option<usize>,
     server: &str,
 ) -> Result<()> {
+    let own = riff::door::OwnPane::of(pane).context(riff::text::CLEAR_NO_PANE)?;
     let dir = identity::working_dir()?;
     let here = identity::place(&dir)?;
     let api = Api::new(server);
     let me = identity::agent(&here, id, api.base())?;
     let api = api.signed_in(Some(id))?;
-    next::check(&api, &me, pane, &dir, transcript, turns).await?;
+    next::check(&api, &me, &own, &dir, transcript, turns).await?;
     Ok(())
 }
 

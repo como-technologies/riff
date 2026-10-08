@@ -19,10 +19,13 @@
 //! | `test-run` | `riff test-run -- PROGRAM ARGS` of the riff outside, in a folder of the worktree of the session |
 //! | `outside` | the one command of a request that an admin approved (`riff outside ask`) |
 //!
-//! The broker of a lead (`--role lead`) also runs the operations of the
-//! lead in tmux and on the processes of its workers
-//! ([`crate::door::OPS`], 01M4DDWPC693RNWHY7P7XBZ9TB). The broker of
-//! each other role refuses them.
+//! The broker of each role also runs the operations of the own pane
+//! ([`crate::door::OWN_OPS`], 01M4DVW24ESG6XCBNMFV7T9Z4E). The broker of
+//! a lead (`--role lead`) also runs the operations of the lead in tmux
+//! and on the processes of its workers ([`crate::door::LEAD_OPS`],
+//! 01M4DDWPC693RNWHY7P7XBZ9TB). The broker of each other role refuses
+//! them. The broker waits for each of these operations before it ends,
+//! and a hangup does not stop it (01M4DVW2DGX8N9NJZHSAGK5EH4).
 //!
 //! - **One request, one reply socket.** The session sends each request
 //!   as one message with four file descriptors: the reply end of a
@@ -312,18 +315,22 @@ pub fn start(
 /// `clone` until each process of the session closed its end. Each
 /// request runs in a thread of its own. `riff` is the riff that runs a
 /// test run. `take` takes a request of `outside` from riff-server.
-/// `lead` is the broker of a lead: only it runs the operations of
-/// [`crate::door`] (01M4DDWPC693RNWHY7P7XBZ9TB).
+/// `here` has the facts of the operations of [`crate::door`]: only the
+/// broker of a lead runs the operations of the lead
+/// (01M4DDWPC693RNWHY7P7XBZ9TB). At the end of the session, it waits for
+/// each operation of [`crate::door`] that runs
+/// (01M4DVW2DGX8N9NJZHSAGK5EH4).
 pub fn serve(
     socket: OwnedFd,
     root: &Path,
     clone: &Path,
     riff: &Path,
     take: Take,
-    lead: Option<crate::door::Lead>,
+    here: crate::door::Here,
 ) -> Result<()> {
     let root = crate::confine::resolve(root);
     let clone = crate::confine::resolve(clone);
+    let mut doors: Vec<std::thread::JoinHandle<()>> = Vec::new();
     loop {
         let mut buf = vec![0u8; MAX];
         let mut space = nix::cmsg_space!([RawFd; 4]);
@@ -351,22 +358,26 @@ pub fn serve(
             .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })
             .collect();
         if len == 0 && fds.is_empty() {
+            for door in doors {
+                let _ = door.join();
+            }
             return Ok(());
         }
         let (root, clone, riff) = (root.clone(), clone.clone(), riff.to_path_buf());
         let take = take.clone();
-        let lead = lead.clone();
+        let here = here.clone();
         let request = serde_json::from_slice::<Request>(&buf[..len]);
-        std::thread::spawn(move || {
+        let door = request.as_ref().is_ok_and(|r| crate::door::is_op(&r.op));
+        let thread = std::thread::spawn(move || {
             let mut fds = fds.into_iter();
             let Some(reply) = fds.next() else { return };
             let answer = match request {
                 Err(e) => Reply::Refused(format!("a request that riff cannot read: {e}")),
-                Ok(request) if crate::door::OPS.contains(&request.op.as_str()) => {
+                Ok(request) if crate::door::is_op(&request.op) => {
                     // stdin, stdout, stderr: the door writes its reply
                     // to stdout.
                     let stdout = fds.nth(1);
-                    crate::door::answer(lead.as_ref(), &request, stdout)
+                    crate::door::answer(&here, &request, stdout)
                 }
                 Ok(request) if request.op == "outside" => outside(
                     &request,
@@ -380,7 +391,28 @@ pub fn serve(
             };
             let _ = send(&reply, &answer, &[]);
         });
+        if door {
+            doors.retain(|d| !d.is_finished());
+            doors.push(thread);
+        }
     }
+}
+
+/// Makes a hangup do nothing to this process (01M4DVW2DGX8N9NJZHSAGK5EH4):
+/// an `end-over-limit` closes the pane of the session, and the broker
+/// still ends the session after that. A handler, not `SIG_IGN`, so a
+/// program that the broker starts gets the default again at its exec.
+pub fn ignore_hangup() -> Result<()> {
+    use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
+    extern "C" fn nothing(_: nix::libc::c_int) {}
+    let action = SigAction::new(
+        SigHandler::Handler(nothing),
+        SaFlags::SA_RESTART,
+        SigSet::empty(),
+    );
+    // SAFETY: the handler does nothing, so it is safe in a signal.
+    unsafe { sigaction(Signal::SIGHUP, &action) }.context("cannot set the hangup handler")?;
+    Ok(())
 }
 
 /// Runs `request`, or says why not. The test run gets the worktree and
@@ -586,7 +618,12 @@ mod tests {
         .unwrap();
         let (root, riff) = (root.to_path_buf(), riff.to_path_buf());
         let take: Take = std::sync::Arc::new(|_| anyhow::bail!("no riff-server in this test"));
-        std::thread::spawn(move || serve(broker, &root, &root, &riff, take, None));
+        let here = crate::door::Here {
+            server: "http://127.0.0.1:9".into(),
+            tmux: None,
+            lead: None,
+        };
+        std::thread::spawn(move || serve(broker, &root, &root, &riff, take, here));
         session
     }
 

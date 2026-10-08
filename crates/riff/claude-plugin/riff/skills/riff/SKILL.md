@@ -507,9 +507,9 @@ Your user decides.
 Each worker starts in the main clone, and each new worktree branches
 from a base. An old base gives old files and merge conflicts. riff
 fast-forwards the main clone to `origin` in `riff workers start`, and
-before it clears the context of a worker. When the main clone has
-local changes or is not on the default branch, riff changes nothing,
-and the clear tells the lead why. The steps below keep each worktree
+before it clears the context of a worker with no sandbox. When the
+main clone has local changes or is not on the default branch, riff
+changes nothing, and says why. The steps below keep each worktree
 fresh. The
 examples use `main` for the default branch and `issue-12` for the
 item.

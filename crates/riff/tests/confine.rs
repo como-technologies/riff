@@ -732,7 +732,12 @@ case "$1" in
     esac ;;
   kill-pane)
     grep -v "^$3 " "$dir/workers" > "$dir/workers.new"
-    mv "$dir/workers.new" "$dir/workers" ;;
+    mv "$dir/workers.new" "$dir/workers"
+    [ -n "$FAKE_TMUX_DONE" ] && : > "$FAKE_TMUX_DONE" ;;
+  send-keys)
+    case "$*" in
+      *"-l Join the riff.") [ -n "$FAKE_TMUX_DONE" ] && : > "$FAKE_TMUX_DONE" ;;
+    esac ;;
 esac
 exit 0
 "#;
@@ -905,4 +910,234 @@ fn a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker() {
         std::fs::read_to_string(fake.join("workers")).unwrap(),
         "%50 s-other-0000\n"
     );
+}
+
+/// A riff-server on loopback, in a runtime of its own, with the lead
+/// `l1` and a running riff.
+struct Server {
+    base: String,
+    rt: tokio::runtime::Runtime,
+    _service: riff_server::Service,
+}
+
+impl Server {
+    fn start(m: &Machine) -> Self {
+        use riff_server::auth::Config;
+        use riff_server::store::Memory;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let (service, base) = rt.block_on(async {
+            let mut config = Config::default();
+            config.lease.wait = std::time::Duration::from_millis(10);
+            let store = std::sync::Arc::new(Memory::default());
+            let service = riff_server::Service::load(config, store).await.unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let router = service.router();
+            tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            (service, format!("http://{addr}"))
+        });
+        let server = Server {
+            base,
+            rt,
+            _service: service,
+        };
+        let lead = server.uri(m, "l1");
+        let api = server.api();
+        server.rt.block_on(async {
+            api.register(&lead).await.unwrap();
+            api.set_riff(&lead, riff_core::wire::RiffState::Running)
+                .await
+                .unwrap();
+        });
+        server
+    }
+
+    fn api(&self) -> riff::api::Api {
+        riff::api::Api::new(&self.base)
+    }
+
+    /// The URI of the session `id` of mike on pangolin in the main clone.
+    fn uri(&self, m: &Machine, id: &str) -> riff_core::name::SessionUri {
+        let place = riff::identity::place_in(&m.clone(), "pangolin").unwrap();
+        riff_core::name::SessionUri::new(
+            riff_core::name::Who::new("mike", Some(id)).unwrap(),
+            place,
+        )
+    }
+
+    /// The worker `id` starts and claims `issue-1`.
+    fn worker_claims(&self, m: &Machine, id: &str) {
+        let w = self.uri(m, id);
+        let api = self.api();
+        self.rt.block_on(async {
+            api.start(&w, riff_core::wire::StartReason::Process, true)
+                .await
+                .unwrap();
+            let thread = w.default_thread().unwrap();
+            api.claim(&w, &thread, "issue-1").await.unwrap();
+        });
+    }
+
+    /// The live sessions, as the lead sees them.
+    fn who(&self, m: &Machine) -> String {
+        let lead = self.uri(m, "l1");
+        let api = self.api();
+        let sessions = self.rt.block_on(api.who(&lead, false)).unwrap();
+        format!("{sessions:?}")
+    }
+
+    /// The history of the repository thread, as the lead reads it.
+    fn history(&self, m: &Machine) -> String {
+        let out = m
+            .env
+            .riff()
+            .args(["read", "--all"])
+            .current_dir(m.clone())
+            .env("RIFF_SERVER", &self.base)
+            .env("RIFF_SESSION", "l1")
+            .env("RIFF_USER", "mike")
+            .env("RIFF_HOST", "pangolin")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+}
+
+/// The worker `id` in the pane `%5` runs a fake `claude` in its sandbox
+/// with `riff workers sandbox`, with the limit of workers `limit` and
+/// the worker panes `workers` in a fake tmux. The fake releases
+/// `issue-1`, runs the Stop hook, and waits until the fake tmux got the
+/// start prompt or closed a pane. Gives the log of the fake tmux, and
+/// the output of the fake.
+fn worker_ends_its_item(
+    m: &Machine,
+    server: &Server,
+    id: &str,
+    limit: u16,
+    workers: &str,
+) -> (String, String) {
+    let home = m.home();
+    std::fs::write(
+        home.join(format!(".local/share/riff/rules/{id}.json")),
+        "{}\n",
+    )
+    .unwrap();
+    let out = m
+        .env
+        .riff()
+        .args(["workers", "limit", &limit.to_string()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let fake = m.env.path().join("tmux-bin");
+    std::fs::create_dir_all(&fake).unwrap();
+    std::fs::write(fake.join("tmux"), FAKE_TMUX).unwrap();
+    std::fs::set_permissions(fake.join("tmux"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(fake.join("workers"), workers).unwrap();
+    server.worker_claims(m, id);
+
+    let trees = m.worktrees();
+    let result = trees.join("result");
+    let done = trees.join("done");
+    let bin = Isolated::shared().riff_path();
+    let claude = m.claude(&format!(
+        "echo \"tmux [$TMUX$TMUX_PANE] broker [${{RIFF_BROKER:+yes}}]\" > '{r}'\n\
+         '{bin}' release issue-1 >> '{r}' 2>&1\n\
+         printf '{{\"session_id\":\"{id}\",\"hook_event_name\":\"Stop\"}}' | '{bin}' hook stop >> '{r}' 2>&1\n\
+         echo \"hook $?\" >> '{r}'\n\
+         for i in $(seq 300); do [ -e '{done}' ] && break; sleep 0.1; done\n\
+         [ -e '{done}' ] && echo done >> '{r}'\n\
+         exit 0",
+        bin = bin.display(),
+        r = result.display(),
+        done = done.display(),
+    ));
+    let path = format!("{}:{}", fake.display(), std::env::var("PATH").unwrap());
+    let out = m
+        .env
+        .riff()
+        .args(["workers", "sandbox", "--role", "worker"])
+        .arg(&claude)
+        .current_dir(m.clone())
+        .env("RIFF_SERVER", &server.base)
+        .env("RIFF_SESSION", id)
+        .env("RIFF_WORKER", "1")
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("PATH", path)
+        .env("TMUX", "/nowhere/tmux-1000/default,1,0")
+        .env("TMUX_PANE", "%5")
+        .env("FAKE_TMUX_DONE", &done)
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let got = std::fs::read_to_string(&result).unwrap_or_default();
+    let log = std::fs::read_to_string(fake.join("log")).unwrap_or_default();
+    assert!(got.ends_with("done\n"), "{got}\nlog: {log}\n{err}");
+    // The fake reaches no tmux: it has only its broker.
+    assert!(got.starts_with("tmux [] broker [yes]\n"), "{got}");
+    (log, got)
+}
+
+/// Each `-t` target in the log of the fake tmux.
+fn targets(log: &str) -> Vec<String> {
+    log.lines()
+        .filter_map(|l| l.split(" -t ").nth(1))
+        .map(|rest| rest.split(' ').next().unwrap().to_owned())
+        .collect()
+}
+
+/// 01M4DVW26Q5MX025XBW7JCK44S, 01M4DVW24ESG6XCBNMFV7T9Z4E,
+/// 01M4DVW2B8W108N696GAYN3V1B: a worker in its sandbox releases its last
+/// claim and its turn ends. It reaches no tmux, but riff types `/clear`
+/// and the start prompt into its own pane through its broker, and into
+/// no other pane.
+#[test]
+fn a_worker_in_its_sandbox_gets_clear_in_its_own_pane_through_the_broker() {
+    let m = Machine::new();
+    let server = Server::start(&m);
+    let id = "clear-653";
+    let (log, got) = worker_ends_its_item(&m, &server, id, 2, &format!("%5 {id}\n%6 other\n"));
+    assert!(got.contains("hook 0"), "{got}");
+    assert!(log.contains("send-keys -t %5 -l /clear\n"), "{log}");
+    assert!(log.contains("send-keys -t %5 -l Join the riff.\n"), "{log}");
+    assert!(!log.contains("kill-pane"), "{log}");
+    let targets = targets(&log);
+    assert!(targets.iter().all(|t| t == "%5"), "{log}");
+}
+
+/// 01M4DVW290H2AQF6EQFHTY1EE1, 01M4DVW2DGX8N9NJZHSAGK5EH4: with limit 1
+/// and two workers, a worker in its sandbox that ends its item ends in
+/// place of the clear. Its broker closes only its pane, posts the note
+/// to the lead, and ends its session after the pane closed.
+#[test]
+fn a_worker_in_its_sandbox_over_the_limit_ends_through_the_broker() {
+    let m = Machine::new();
+    let server = Server::start(&m);
+    let id = "limit-653";
+    let (log, _) = worker_ends_its_item(&m, &server, id, 1, &format!("%5 {id}\n%6 other\n"));
+    assert!(log.contains("kill-pane -t %5\n"), "{log}");
+    assert!(!log.contains("kill-pane -t %6"), "{log}");
+    assert!(!log.contains("send-keys"), "{log}");
+    let history = server.history(&m);
+    assert!(
+        history.contains("limit 1, runs 2 on pangolin: the worker in the pane %5 ends"),
+        "{history}"
+    );
+    let span = isolated::Span::start();
+    while server.who(&m).contains(id) {
+        assert!(
+            span.within(std::time::Duration::from_secs(20)),
+            "the session did not end: {}",
+            server.who(&m)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
