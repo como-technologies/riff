@@ -10,7 +10,7 @@
 //! |---|---|
 //! | `riff cloud create NAME --project P --region R` | Writes the settings of a new instance, then makes each resource that is missing ([`create`]) |
 //! | `riff cloud signin NAME` | Shows the console steps of the sign-in client, then stores the secret in Secret Manager and the client ID in the settings ([`signin`]) |
-//! | `riff cloud forge NAME APP_ID KEY` | Stores the private key of the GitHub App of riff in Secret Manager and its ID in the settings ([`forge`]) |
+//! | `riff cloud forge NAME APP_ID KEY` | Stores the GitHub App of riff, made by hand, in its secret in Secret Manager ([`forge`]). `riff forge create` makes the App with no key file. |
 //! | `riff cloud deploy NAME [TAG]` | Deploys the image of a release tag, or builds this tree with Cloud Build ([`deploy`]) |
 //! | `riff cloud list` | Each instance: URL, release, ready, paused |
 //! | `riff cloud status NAME` | The same for one instance, with its revision and memory |
@@ -38,8 +38,8 @@
 //! flowchart LR
 //!     C["riff cloud create"] --> F["NAME.env"]
 //!     F --> S["riff cloud signin"]
-//!     S --> G["riff cloud forge"]
-//!     G --> D["riff cloud deploy"]
+//!     S --> D["riff cloud deploy"]
+//!     D --> G["riff forge create"]
 //!     D --> R["Cloud Run service<br/>bucket, secret, accounts"]
 //!     L["list, status, log"] --> R
 //!     X["riff cloud delete"] --> R
@@ -334,12 +334,9 @@ pub struct Settings {
     pub repository: String,
     /// The client ID of the sign-in client, or empty before `signin`.
     pub client_id: String,
-    /// The name of the secret of the private key of the GitHub App of
-    /// riff in Secret Manager (#628).
+    /// The name of the secret of the GitHub App of riff in Secret
+    /// Manager: its ID and its private key (#627).
     pub forge_secret_name: String,
-    /// The ID of the GitHub App of riff, or empty before `riff cloud
-    /// forge`. With no App, the server gives no forge token.
-    pub forge_app: String,
     /// True when `deploy` asks for the name ([`confirm`]).
     pub confirm: bool,
 }
@@ -399,7 +396,6 @@ impl Settings {
                 secret if secret.is_empty() => format!("{name}-forge-app-key"),
                 secret => secret,
             },
-            forge_app: get("RIFF_FORGE_APP"),
             confirm: get("CLOUD_CONFIRM") == "true",
         })
     }
@@ -440,7 +436,6 @@ impl Settings {
             repository: "riff".into(),
             client_id: String::new(),
             forge_secret_name: format!("{name}-forge-app-key"),
-            forge_app: String::new(),
             confirm: false,
         }
     }
@@ -482,7 +477,6 @@ impl Settings {
             ("CLOUD_CONFIRM", self.confirm.to_string()),
             ("RIFF_OIDC_CLIENT_ID", self.client_id.clone()),
             ("CLOUD_FORGE_SECRET", self.forge_secret_name.clone()),
-            ("RIFF_FORGE_APP", self.forge_app.clone()),
         ]
     }
 
@@ -781,6 +775,30 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
         )?;
     }
 
+    // The secret of the GitHub App: riff forge create adds its first
+    // version (01M4CTAYRSC27Q6AAGTH9CBD7Q).
+    if gcloud.exists(&with(
+        &["secrets", "describe", &s.forge_secret_name],
+        &project,
+    ))? {
+        println!("Secret {}: exists.", s.forge_secret_name);
+    } else {
+        println!("Secret {}: making it.", s.forge_secret_name);
+        gcloud.run(
+            &with(
+                &[
+                    "secrets",
+                    "create",
+                    &s.forge_secret_name,
+                    "--replication-policy",
+                    "automatic",
+                ],
+                &project,
+            ),
+            None,
+        )?;
+    }
+
     let bucket = format!("gs://{}", s.bucket);
     if gcloud.exists(&with(
         &["storage", "buckets", "describe", &bucket],
@@ -887,6 +905,25 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
         ],
         &project,
     ))?;
+    // It reads the secret of the GitHub App, and adds a version at riff
+    // forge create.
+    for role in [
+        "roles/secretmanager.secretAccessor",
+        "roles/secretmanager.secretVersionAdder",
+    ] {
+        gcloud.bind(&with(
+            &[
+                "secrets",
+                "add-iam-policy-binding",
+                &s.forge_secret_name,
+                "--member",
+                &run,
+                "--role",
+                role,
+            ],
+            &project,
+        ))?;
+    }
     gcloud.bind(&with(
         &[
             "projects",
@@ -1328,12 +1365,12 @@ pub fn signin(gcloud: &Gcloud, s: &Settings, path: &Path, id: &str, secret: &str
     Ok(())
 }
 
-/// Stores the GitHub App of riff for the instance in `path` (#628): the
-/// private key `pem` in Secret Manager, which only the service account
-/// of riff-server reads, and the ID `app` in the settings file. The key
-/// goes to no other file (01M4CTAYRSC27Q6AAGTH9CBD7Q). The next
-/// `deploy` gives both to riff-server.
-pub fn forge(gcloud: &Gcloud, s: &Settings, path: &Path, app: u64, pem: &str) -> Result<()> {
+/// Stores the GitHub App of riff for the instance by hand: the ID `app`
+/// and the private key `pem`, as one new version of its secret in Secret
+/// Manager ([`forge_version`]). Only the service account of riff-server
+/// reads it (01M4CTAYRSC27Q6AAGTH9CBD7Q). `riff forge create` does the
+/// same with no key file. riff-server reads the App at its next start.
+pub fn forge(gcloud: &Gcloud, s: &Settings, app: u64, pem: &str) -> Result<()> {
     if !pem.contains("-----BEGIN") || !pem.contains("PRIVATE KEY-----") {
         bail!(text::CLOUD_BAD_FORGE_KEY);
     }
@@ -1366,22 +1403,36 @@ pub fn forge(gcloud: &Gcloud, s: &Settings, path: &Path, app: u64, pem: &str) ->
             &s.forge_secret_name,
             "--data-file=-",
         ]),
-        Some(pem),
+        Some(&forge_version(app, pem)),
     )?;
     println!("Secret {}: stored.", s.forge_secret_name);
-    gcloud.bind(&with(&[
-        "secrets",
-        "add-iam-policy-binding",
-        &s.forge_secret_name,
-        "--member",
-        &format!("serviceAccount:{}", s.account(&s.run_account)),
-        "--role",
+    for role in [
         "roles/secretmanager.secretAccessor",
-    ]))?;
-    let text = std::fs::read_to_string(path)?;
-    std::fs::write(path, set_line(&text, "RIFF_FORGE_APP", &app.to_string()))?;
-    println!("{}", text::cloud_forge_written(app, path, &s.name));
+        "roles/secretmanager.secretVersionAdder",
+    ] {
+        gcloud.bind(&with(&[
+            "secrets",
+            "add-iam-policy-binding",
+            &s.forge_secret_name,
+            "--member",
+            &format!("serviceAccount:{}", s.account(&s.run_account)),
+            "--role",
+            role,
+        ]))?;
+    }
+    println!("{}", text::cloud_forge_written(app, &s.name));
     Ok(())
+}
+
+/// One version of the secret of the GitHub App: the JSON that
+/// riff-server reads (`riff_server::forge::store::Stored`).
+///
+/// ```
+/// let v: serde_json::Value = serde_json::from_str(&riff::cloud::forge_version(7, "PEM")).unwrap();
+/// assert_eq!(v, serde_json::json!({ "app": 7, "key": "PEM" }));
+/// ```
+pub fn forge_version(app: u64, pem: &str) -> String {
+    serde_json::json!({ "app": app, "key": pem }).to_string()
 }
 
 /// Reads a line from stdin with no echo on a terminal: for a secret.
@@ -1535,17 +1586,17 @@ pub fn deploy(gcloud: &Gcloud, s: &Settings, source: &Source, owner: &str) -> Re
         "3600",
         "--no-invoker-iam-check",
     ]));
-    // The GitHub App, when the instance has one: its ID, and its key
-    // from Secret Manager (01M4CTAYRSC27Q6AAGTH9CBD7Q).
+    // The secret of the GitHub App: the server reads the App from it,
+    // and riff forge create writes it (01M4CTAYRSC27Q6AAGTH9CBD7Q).
     let mut env = format!(
         "RIFF_PUBLIC_URL={},RIFF_REQUIRE_SIGN_IN=true,RIFF_OIDC_CLIENT_ID={},RIFF_BUCKET={},RIFF_OWNER={owner}",
         s.url, s.client_id, s.bucket
     );
-    let mut secrets = format!("RIFF_OIDC_CLIENT_SECRET={}:latest", s.secret_name);
-    if !s.forge_app.is_empty() {
-        env.push_str(&format!(",RIFF_FORGE_APP={}", s.forge_app));
-        secrets.push_str(&format!(",RIFF_FORGE_KEY={}:latest", s.forge_secret_name));
-    }
+    let secrets = format!("RIFF_OIDC_CLIENT_SECRET={}:latest", s.secret_name);
+    env.push_str(&format!(
+        ",RIFF_FORGE_SECRET=projects/{}/secrets/{}",
+        s.project, s.forge_secret_name
+    ));
     deploy.extend(args(&["--set-env-vars", &env, "--set-secrets", &secrets]));
     gcloud.show(&deploy)?;
 

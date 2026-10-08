@@ -113,7 +113,8 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
-    DenyOwner, End, ForgeAccounts, ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeToken,
+    DenyOwner, End, ForgeAccounts, ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeCreate, ForgeCreateReply,
+    ForgeCreated, ForgeCreatedReply, ForgeInstall, ForgeInstallReply, ForgeToken,
     ForgeTokenReply, Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
     ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
     Members, MembersReply, Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post,
@@ -1208,6 +1209,35 @@ impl Api {
             allowed,
         };
         self.call(&allow).await
+    }
+
+    /// `riff forge create`: a new start of the manifest flow for the
+    /// organization `org` (#627).
+    pub async fn forge_create(&self, me: &SessionUri, org: &str) -> Result<ForgeCreateReply> {
+        let create = ForgeCreate {
+            me: me.clone(),
+            org: org.to_owned(),
+        };
+        self.call(&create).await
+    }
+
+    /// `riff forge create`: how far the start `state` is.
+    pub async fn forge_created(&self, me: &SessionUri, state: &str) -> Result<ForgeCreatedReply> {
+        let created = ForgeCreated {
+            me: me.clone(),
+            state: state.to_owned(),
+        };
+        self.call(&created).await
+    }
+
+    /// `riff forge install`: the install page of the App for the GitHub
+    /// account `owner`, and whether the App is installed there.
+    pub async fn forge_install(&self, me: &SessionUri, owner: &str) -> Result<ForgeInstallReply> {
+        let install = ForgeInstall {
+            me: me.clone(),
+            owner: owner.to_owned(),
+        };
+        self.call(&install).await
     }
 
     pub async fn item_facts(&self, me: &SessionUri, items: Vec<ItemFact>, all: bool) -> Result<()> {

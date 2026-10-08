@@ -570,6 +570,89 @@ where
     }
 }
 
+/// The variable that names a program that opens a page in place of the
+/// browser, for a test.
+pub const BROWSER_VAR: &str = "RIFF_BROWSER";
+
+/// `riff forge create` and `riff forge install` ask riff-server this
+/// often.
+pub const POLL_EVERY: Duration = Duration::from_secs(2);
+
+/// `riff forge create` and `riff forge install` wait at most this long:
+/// the life of a start of `riff forge create`.
+pub const WAIT_MOST: Duration = Duration::from_secs(10 * 60);
+
+/// Refuses `command` in a worker and in an agent session: a person runs
+/// it in a terminal (01M4CTAYZW24PDP2PDK72PT6J1).
+///
+/// ```
+/// let refused = riff::forge::refused_in_session("riff forge create", true, false);
+/// assert!(refused.unwrap_err().to_string().contains("not in a worker"));
+/// assert!(riff::forge::refused_in_session("riff forge create", false, true).is_err());
+/// assert!(riff::forge::refused_in_session("riff forge create", false, false).is_ok());
+/// ```
+pub fn refused_in_session(command: &str, worker: bool, session: bool) -> Result<()> {
+    if worker || session {
+        anyhow::bail!(
+            "riff: {command} is for a person in a terminal, not in a worker or an agent session"
+        );
+    }
+    Ok(())
+}
+
+/// [`refused_in_session`] for this process: `RIFF_WORKER` is set, or the
+/// process has a session ID.
+pub fn refuse_in_session(command: &str) -> Result<()> {
+    let worker = std::env::var_os("RIFF_WORKER").is_some_and(|v| !v.is_empty());
+    refused_in_session(command, worker, crate::identity::session_id().is_some())
+}
+
+/// Shows `url` and opens it in the browser, or with the program of
+/// [`BROWSER_VAR`].
+pub fn open_page(url: &str) {
+    eprintln!("riff: go on in your browser. If it does not open, go to:\n{url}");
+    match std::env::var_os(BROWSER_VAR).filter(|b| !b.is_empty()) {
+        Some(browser) => {
+            let _ = std::process::Command::new(browser).arg(url).status();
+        }
+        None => {
+            let _ = open::that_detached(url);
+        }
+    }
+}
+
+/// The asks of `riff forge create` and `riff forge install`: the first
+/// at once, then one each [`POLL_EVERY`], for at most [`WAIT_MOST`].
+pub struct Poll {
+    start: Option<std::time::Instant>,
+}
+
+impl Poll {
+    pub fn new() -> Poll {
+        Poll { start: None }
+    }
+
+    /// Waits for the next ask. False when the time is over.
+    pub async fn next(&mut self) -> bool {
+        match self.start {
+            None => {
+                self.start = Some(std::time::Instant::now());
+                true
+            }
+            Some(start) => {
+                tokio::time::sleep(POLL_EVERY).await;
+                start.elapsed() < WAIT_MOST
+            }
+        }
+    }
+}
+
+impl Default for Poll {
+    fn default() -> Self {
+        Poll::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

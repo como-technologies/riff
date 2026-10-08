@@ -1779,6 +1779,53 @@ pub fn forge_check_line(check: &riff_core::wire::RoleCheck) -> String {
     format!("{}: {}", check.role, rights.join(", "))
 }
 
+/// The line of `riff forge create` when riff-server has the new App.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::forge_app_made(7, "riff-acme", "acme"),
+///     "riff-server has the new GitHub App 7 (riff-acme). In the browser, install it on the \
+///      repositories of acme."
+/// );
+/// ```
+pub fn forge_app_made(app: u64, slug: &str, org: &str) -> String {
+    format!(
+        "riff-server has the new GitHub App {app} ({slug}). In the browser, install it on the \
+         repositories of {org}."
+    )
+}
+
+/// The line of `riff forge create` and `riff forge install` when the App
+/// is installed on `owner`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::forge_installed("acme"),
+///     "The GitHub App of riff is installed on acme."
+/// );
+/// ```
+pub fn forge_installed(owner: &str) -> String {
+    format!("The GitHub App of riff is installed on {owner}.")
+}
+
+/// The line at the end of `riff forge create` and `riff forge install`
+/// outside a clone of a repository of `owner`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::forge_check_elsewhere("acme"),
+///     "To check the tokens, run riff forge check in a clone of a repository of acme."
+/// );
+/// ```
+pub fn forge_check_elsewhere(owner: &str) -> String {
+    format!("To check the tokens, run riff forge check in a clone of a repository of {owner}.")
+}
+
+/// The error of `riff forge create` and `riff forge install` when the
+/// browser did not finish in time.
+pub const FORGE_WAIT_END: &str =
+    "riff: the browser did not finish in 10 minutes. Run the command again.";
+
 /// The line of the wrapper of a worker when it cannot make the forge
 /// token of its session (#610).
 ///
@@ -4223,20 +4270,16 @@ pub const CLOUD_BAD_FORGE_KEY: &str = "The file is no private key in PEM form. G
 /// What `riff cloud forge` says at its end.
 ///
 /// ```
-/// use std::path::Path;
 /// assert_eq!(
-///     riff::text::cloud_forge_written(7, Path::new("deploy/cloud/shared.env"), "shared"),
-///     "App ID 7: written to deploy/cloud/shared.env. Commit that file when it is in a \
-///      repository. Delete the downloaded key file now. riff-server gets the App at the next \
-///      deploy: riff cloud deploy shared"
+///     riff::text::cloud_forge_written(7, "shared"),
+///     "App 7: stored. Delete the downloaded key file now. riff-server reads the App at its \
+///      next start: riff cloud deploy shared"
 /// );
 /// ```
-pub fn cloud_forge_written(app: u64, path: &Path, name: &str) -> String {
+pub fn cloud_forge_written(app: u64, name: &str) -> String {
     format!(
-        "App ID {app}: written to {}. Commit that file when it is in a repository. Delete the \
-         downloaded key file now. riff-server gets the App at the next deploy: riff cloud deploy \
-         {name}",
-        path.display()
+        "App {app}: stored. Delete the downloaded key file now. riff-server reads the App at its \
+         next start: riff cloud deploy {name}"
     )
 }
 
