@@ -60,7 +60,7 @@ pub const GROUPS: &[Group] = &[
     },
     Group {
         heading: "Pull requests",
-        commands: &["test-run", "pr", "verify", "usage"],
+        commands: &["test-run", "outside", "pr", "verify", "usage"],
     },
     Group {
         heading: "Lead",

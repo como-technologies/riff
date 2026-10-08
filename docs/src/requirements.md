@@ -4223,8 +4223,9 @@
   sandbox, with the stdin, stdout and stderr of the session, and gives
   its exit code.
 - **01M4C5AQM63F58YQ9VA391513D** The broker runs only the operations of
-  its one list, today `test-run`, and refuses each other operation.
-  The folder of a request must be in the worktree of the session. From
+  its one list, `test-run` and `outside`, and refuses each other
+  operation. The folder of a request must be in the worktree of the
+  session. From
   the variables of a request, it keeps only those of cargo and of the
   Rust tests, and the riff server of the tests.
 - **01M4CN0W1F0Y7955C6Q1XB601G** The folders that a test run of the
@@ -4523,6 +4524,32 @@
   `profile::TEST_RUN_VARS` of the parent, `TMPDIR`, `RIFF_TEST_RUN`
   and a session bus where no bus listens. No credential of the person
   and no secret of a session reaches a test.
+
+- **01M4DA9PFR6V3K3FE1568277H3** `riff outside ask --reason REASON --
+  PROGRAM ARGS` in a session asks riff-server to run one named command
+  outside the profile of the session, one time, in the folder of the
+  session. riff-server keeps the request in its memory: a restart of
+  the server drops each open request.
+- **01M4DA9PJ0MJPBQRTA79CVXEA2** Only the owner or an admin approves or
+  denies a request, with `riff outside approve ID` or `riff outside
+  deny ID`, and only with a token of a person. riff-server refuses an
+  approval with the token of a session, and an approval by the session
+  that asked.
+- **01M4DA9PM89KP332T6BR7V0CDT** The broker of the session runs an
+  approved request one time: it takes the command and the folder from
+  riff-server, not from the session. riff-server gives a request to
+  the broker of its session only once.
+- **01M4DA9PPFBVPHP57JZQDF4R7R** riff-server posts each step of a
+  request to the thread of its repository: the ask wakes the lead of
+  the person, and the approval, the denial and the run are notes. Each
+  post names the request, the session that asked, the command, the
+  folder, the reason and who approved or denied it.
+- **01M4DA9PRPZ2JDKC2PK79AT5AA** The broker refuses a request folder
+  with a `..` part. It runs each operation in the resolved folder that
+  it checked, not in the folder of the request, and sets `PWD` to it.
+- **01M4DEF6N91TDDK6201BBNNDTC** The broker does no work when it
+  starts. It finds its session and signs in to riff-server at the
+  first `outside` request, so it ends at once when its session ends.
 
 ## Open
 

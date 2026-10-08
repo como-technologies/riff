@@ -54,6 +54,7 @@ mod new_machine;
 mod next;
 mod no_sign_in;
 mod one_user;
+mod outside;
 mod over_limit;
 mod owner;
 mod pause;

@@ -1035,6 +1035,7 @@ pub fn run(
     // The session keeps its end of the socket across the exec.
     let broker = crate::broker::start(
         &crate::binary::this_on_disk()?,
+        server,
         &session.worktree,
         &session.clone,
     )?;

@@ -118,7 +118,8 @@ use riff_core::wire::{
     ForgeCreateReply, ForgeCreated, ForgeCreatedReply, ForgeInstall, ForgeInstallReply, ForgeToken,
     ForgeTokenReply, Free, FreeReply, Freed, GRANT_END_PATH, GrantEnd, Hold, HoldReply, Idle,
     IdleQuery, Invite, Invited, ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave,
-    LogQuery, LogReply, MeReply, Members, MembersReply, Message, OwnerAsked, OwnerDenied,
+    LogQuery, LogReply, MeReply, Members, MembersReply, Message, OutsideAsk, OutsideDecide,
+    OutsideList, OutsideRequest, OutsideRequests, OutsideTake, OwnerAsked, OwnerDenied,
     OwnerPassed, PassOwner, Pause, Post, Posted, REFUSED_HEADER, Read, Register, Release,
     ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffQuery, RiffReply,
     RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetIdle, SetStatus, SetStep,
@@ -1293,6 +1294,53 @@ impl Api {
             owner: owner.to_owned(),
         };
         self.call(&install).await
+    }
+
+    /// `riff outside ask`: the session `me` asks to run `command` in
+    /// `cwd` outside its profile, for `reason` (#614).
+    pub async fn outside_ask(
+        &self,
+        me: &SessionUri,
+        command: Vec<String>,
+        cwd: &str,
+        reason: &str,
+    ) -> Result<OutsideRequest> {
+        let ask = OutsideAsk {
+            me: me.clone(),
+            command,
+            cwd: cwd.to_owned(),
+            reason: reason.to_owned(),
+        };
+        self.call(&ask).await
+    }
+
+    /// The broker of the session `me` takes its request `id` (#614).
+    pub async fn outside_take(&self, me: &SessionUri, id: &str) -> Result<OutsideRequest> {
+        let take = OutsideTake {
+            me: me.clone(),
+            id: id.to_owned(),
+        };
+        self.call(&take).await
+    }
+
+    /// `riff outside list`: the requests that riff-server keeps (#614).
+    pub async fn outside_list(&self, me: &SessionUri) -> Result<OutsideRequests> {
+        self.call(&OutsideList { me: me.clone() }).await
+    }
+
+    /// `riff outside approve` or `riff outside deny` (#614).
+    pub async fn outside_decide(
+        &self,
+        me: &SessionUri,
+        id: &str,
+        approve: bool,
+    ) -> Result<OutsideRequest> {
+        let decide = OutsideDecide {
+            me: me.clone(),
+            id: id.to_owned(),
+            approve,
+        };
+        self.call(&decide).await
     }
 
     pub async fn item_facts(&self, me: &SessionUri, items: Vec<ItemFact>, all: bool) -> Result<()> {
