@@ -207,13 +207,22 @@ async fn only_the_session_key_ends_a_grant_and_its_tokens() {
 
     assert_eq!(end(&url, &device, &grant.access_token).await, 400);
     assert_eq!(end(&url, &session_key, &grant.access_token).await, 200);
-    let refused = reply(common::refresh(&url, &session_key, &swap(&grant.access_token)).await).await;
+    let refused =
+        reply(common::refresh(&url, &session_key, &swap(&grant.access_token)).await).await;
     assert_eq!(refused.unwrap_err(), "invalid_grant");
     let now = Instant::now();
     {
         let tokens = service.tokens();
-        assert!(tokens.caller(&access.access_token, &session_key.thumbprint(), now).is_err());
-        assert!(tokens.caller(&person.access_token, &device.thumbprint(), now).is_ok());
+        assert!(
+            tokens
+                .caller(&access.access_token, &session_key.thumbprint(), now)
+                .is_err()
+        );
+        assert!(
+            tokens
+                .caller(&person.access_token, &device.thumbprint(), now)
+                .is_ok()
+        );
     }
     assert_eq!(end(&url, &session_key, &grant.access_token).await, 200);
 
@@ -221,6 +230,7 @@ async fn only_the_session_key_ends_a_grant_and_its_tokens() {
     service.shutdown().await.unwrap();
     drop(service);
     let (_restarted, url) = common::start_on(Arc::new(store)).await;
-    let refused = reply(common::refresh(&url, &session_key, &swap(&grant.access_token)).await).await;
+    let refused =
+        reply(common::refresh(&url, &session_key, &swap(&grant.access_token)).await).await;
     assert_eq!(refused.unwrap_err(), "invalid_grant");
 }

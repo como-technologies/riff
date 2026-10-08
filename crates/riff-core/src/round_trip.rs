@@ -803,6 +803,7 @@ mod tests {
             session_proof: Some(text("p")),
             resource: Some(text("https://riff.example")),
         });
+        c.trip(&GrantEnd { token: text("g") });
         c.trip(&TokenReply {
             access_token: text("a"),
             token_type: text("DPoP"),
