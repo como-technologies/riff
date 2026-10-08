@@ -246,10 +246,19 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
         assert!(!env.contains(MARKER), "{env}");
         assert!(!env.lines().any(|l| l.starts_with("TMUX=")), "{env}");
     }
-    // The fake claude ran with the flags of the lead, the server and
+    // The fake claude ran with a session ID of its own
+    // (01M4CVXJEQK32SRQ957X6NAEMH), the flags of the lead, the server and
     // RIFF_ON=1 (01M4BYH80CFW1TBGKVA2VN9ZBQ).
+    let log = m.read("claude.log");
+    let session = claude_env
+        .lines()
+        .find_map(|l| l.strip_prefix("RIFF_SESSION="))
+        .unwrap_or_else(|| panic!("the lead has no RIFF_SESSION: {claude_env}"));
+    let log = log
+        .strip_prefix(&format!("--session-id {session} "))
+        .unwrap_or_else(|| panic!("no --session-id {session}: {log}"));
     assert_eq!(
-        m.read("claude.log"),
+        log,
         format!(
             "--remote-control --plugin-dir {} --strict-mcp-config --mcp-config {} \
              --settings {}\n{} 1\n",
