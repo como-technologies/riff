@@ -17,7 +17,7 @@ use riff_core::wire::{ForgeAccounts, ForgeCheckReply, ForgeTokenReply, RoleCheck
 use serde_json::{Value, json};
 
 /// A reply of the server: a token of `role` that ends in one hour.
-fn reply(role: TokenRole, n: usize) -> ForgeTokenReply {
+pub(crate) fn reply(role: TokenRole, n: usize) -> ForgeTokenReply {
     let ends = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
     ForgeTokenReply {
         role,
@@ -191,7 +191,7 @@ fn git_and_gh_in_a_session_use_the_token_of_the_files() {
 }
 
 /// A clone of `como-technologies/riff` in a temp dir.
-fn clone() -> tempfile::TempDir {
+pub(crate) fn clone() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     for args in [
         &["init", "-q"][..],
