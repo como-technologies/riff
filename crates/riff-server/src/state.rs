@@ -2587,7 +2587,7 @@ impl State {
     }
 
     /// The role and the repository of the forge token of `me`, from the
-    /// facts of the state (#628, 01M4CHQR3Q566ZFFGQEQMJ3HAS). `None`
+    /// facts of the state (#628, 01M4CNN37FYYB99BS6QV2FFWZ8). `None`
     /// when `me` gets no token:
     ///
     /// - A session gets the role of its lead mark and its claims, at the

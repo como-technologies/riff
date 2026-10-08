@@ -575,6 +575,20 @@ enum ForgeCommand {
     /// repository, checks its rights, and revokes it at once. It shows
     /// no token.
     Check,
+    /// Allow a GitHub account to get forge tokens
+    ///
+    /// riff-server makes forge tokens only for the repositories of the
+    /// GitHub accounts (organizations and personal accounts) that the
+    /// owner or an admin of the riff allowed. An installation of the App
+    /// on another account gives no token. With no OWNER, it lists the
+    /// allowed accounts. Only the owner or an admin can run it.
+    Allow {
+        /// The GitHub account, for example acme.
+        owner: Option<String>,
+        /// Allow OWNER no more. Its sessions lose their tokens.
+        #[arg(long, requires = "owner")]
+        remove: bool,
+    },
     /// The git credential helper of a worker
     ///
     /// git runs it. It gives the forge token of the session for
@@ -2368,6 +2382,13 @@ async fn forge(command: &ForgeCommand, server: &str) -> Result<()> {
                 println!("{}", text::forge_check_line(role));
             }
             anyhow::ensure!(!failed, "the App cannot make a token of each role");
+            Ok(())
+        }
+        ForgeCommand::Allow { owner, remove } => {
+            let me = identity::person(&identity::here(None)?, server)?;
+            let api = Api::new(server).signed_in(None)?;
+            let accounts = api.forge_allow(&me, owner.as_deref(), !remove).await?;
+            println!("{}", text::forge_accounts(&accounts.accounts));
             Ok(())
         }
         ForgeCommand::Credential { operation } => {

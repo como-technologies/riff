@@ -12,12 +12,15 @@
 //!
 //! The wrapper of a session (`riff workers run`, outside the sandbox)
 //! asks `POST /v1/forge/token` with the URI of its session. The server
-//! picks the role from its own facts ([`riff_core::forge::role_of`]):
-//! the lead, a `verify-` claim, else the worker. A URI with no session
-//! is the wrapper of the lead, before its session starts: it gets the
-//! lead token. So a session cannot ask for more rights
-//! (01M4CHQR3Q566ZFFGQEQMJ3HAS). The repository is the repository of
-//! the session in the facts of the server. The server finds the
+//! picks the role and the repository from its own facts
+//! (`State::forge_fact`, [`riff_core::forge::role_of`]): the lead, a
+//! `verify-` claim, else the worker. A session that the server does not
+//! know, or whose claims ended, gets no token ([`Refusal::NoSession`]):
+//! so the wrapper of a worker registers its session first. A URI with
+//! no session is the wrapper of the lead, before its session starts: it
+//! gets the lead token only while its person has a lead in the
+//! repository of the URI ([`Refusal::NotLead`]). So a session cannot
+//! ask for more rights (01M4CNN37FYYB99BS6QV2FFWZ8). The server finds the
 //! installation of the App on that repository, and makes a token there
 //! for that one repository and the
 //! [`permissions`] of the role. It
@@ -42,6 +45,11 @@
 //! - A riff with no sign-in gives no token: the server cannot know the
 //!   person (01M4CHQR5ZFQCQ7CC1CGHYFY8S). A call with no token is
 //!   refused.
+//! - The App is public: each account can install it. The server makes
+//!   tokens and checks only for the repositories of the accounts that
+//!   the owner or an admin allowed (`riff forge allow OWNER`, the record
+//!   `forge_allowed`, [`Refusal::NotAllowed`],
+//!   01M4CNN3C41DBHVYX87Q17GW2C).
 //! - The installation comes from the repository of each session, so one
 //!   server gives tokens for each repository where the App is
 //!   installed. A repository with no installation gives an error that
@@ -51,10 +59,16 @@
 //!   the server revokes each one at once ([`Forge::check`],
 //!   01M4CHQREYBFR465528EYTVDYE).
 //! - The server keeps the last token of each session in memory
-//!   ([`Forge::held_role`]). At a claim, a release or the end of a session,
-//!   it compares the role of each held token with the facts, and
-//!   revokes each token whose role changed ([`Forge::settle`],
-//!   01M4CHQR87K30DXD1W2ZZFMDBX). The wrapper then asks for a new one.
+//!   ([`Forge::held_role`]). At a claim, a release, the end of a
+//!   session, the end of the allow of an account, and each
+//!   [`SETTLE_EVERY`], it compares the role of each held token with the
+//!   facts, and revokes each token whose role changed or whose claims
+//!   ended ([`Forge::settle`], 01M4CNN39TTK36GX34RCWKES80). So a session
+//!   that died with no `end` call loses its token soon after its claims
+//!   end. The wrapper then asks for a new one.
+//! - At a renew of a session, the server revokes the old token after it
+//!   made the new one ([`Forge::give`]): a session never holds two good
+//!   tokens.
 //! - Each token gives one log line ([`TARGET`], `result` `token`): the
 //!   session, the repository, the role and the end time. Each revoke
 //!   gives one line with `result` `revoked`. A line never holds the

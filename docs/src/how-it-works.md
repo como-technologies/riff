@@ -3230,26 +3230,49 @@ flowchart LR
 The wrapper of each session (`riff workers run` for a worker, `riff
 workers lead` for the lead) runs outside the sandbox. It asks
 riff-server for the token of its session. riff-server picks the role
-from its own facts, never from the ask:
+and the repository from its own facts, never from the ask:
 
+- A session gets a token only while riff-server knows it: it
+  registered, it did not end, and it showed a sign of life in the
+  last 5 minutes. The wrapper of a worker registers its session
+  before `claude` starts.
 - The lead of a person gets the lead token. Its wrapper asks before
-  the session of the lead starts, so it asks as the person.
+  the session of the lead starts, so it asks as the person. It gets
+  the token only while the person has a lead in that repository. The
+  wrapper asks again each minute, and at once when the session
+  starts.
 - A session with a `verify-` claim gets the verifier token.
 - Each other session gets the worker token.
 
-The token is for the repository of the session only. One App serves
-each repository where it is installed: in an organization or in a
-personal account. riff-server finds the installation of the App on
-that repository.
+The token is for the repository of the session only, in the facts of
+riff-server. One App serves each repository where it is installed: in
+an organization or in a personal account. riff-server finds the
+installation of the App on that repository.
+
+### Which accounts get tokens
+
+The App is public, so a person of each GitHub account can install it.
+riff-server makes tokens only for the repositories of the accounts
+that the owner or an admin of the riff allowed. An installation on
+each other account gives no token.
 
 ### The life of a token
 
 A token lasts one hour. The wrapper asks for a new one 10 minutes
-before the end. At a claim, a release or the end of a session,
-riff-server compares the role of each token with its facts. It revokes
-each token whose role changed. The wrapper removes the old token files
-and asks for a token of the new role. So a session never holds the
-rights of two roles.
+before the end. riff-server makes the new token, then revokes the old
+one. So a session never holds two good tokens. A lead token of the
+person stays good until it ends: two wrappers of one person can share
+it.
+
+At a claim, a release, the end of a session, or the end of the allow
+of an account, riff-server compares the role of each token with its
+facts. It revokes each token whose role changed. The wrapper removes
+the old token files and asks for a token of the new role. So a session
+never holds the rights of two roles.
+
+A session can die with no end call. riff-server compares the tokens
+with its facts each minute. 5 minutes after the last sign of life of
+a session, its claims end, and riff-server revokes its token.
 
 ```mermaid
 sequenceDiagram
@@ -3287,6 +3310,11 @@ The session starts with no forge token, and its pane shows a line
   gives no token.
 - The riff has no GitHub App: an admin gives it one (see "Give the riff
   its GitHub App").
+- No admin allowed the account of the repository: the line names
+  `riff forge allow OWNER` (see "Allow an account").
+- riff-server does not know the session, or it ended.
+- The person has no lead in the repository: the lead token waits
+  until the session of the lead starts.
 - The App is not installed on the repository: the line names
   `riff forge install OWNER`. Until riff has that command, install the
   App from its page on GitHub (step 7 below).
@@ -3324,6 +3352,36 @@ riff cloud deploy shared
 service account of riff-server read it, and writes the App ID to
 `deploy/cloud/shared.env`. Commit that file. Delete the downloaded
 key file. The deploy gives the App to riff-server.
+
+Then allow the accounts of the riff. See "Allow an account".
+
+### Allow an account
+
+The owner or an admin of the riff allows each GitHub account
+(organization or personal account) whose repositories get forge
+tokens. For example, for the organization `acme` and the personal
+account `mike`:
+
+```sh
+riff forge allow acme
+riff forge allow mike
+```
+
+Each allow is a record in the log of the riff, with who did it. To see
+the allowed accounts:
+
+```sh
+riff forge allow
+```
+
+To allow an account no more:
+
+```sh
+riff forge allow acme --remove
+```
+
+riff-server revokes the tokens of the sessions of that account at
+once.
 
 ### Check the GitHub App
 

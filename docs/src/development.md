@@ -880,7 +880,10 @@ the variable `RIFF_FORGE_KEY`. Never put the key on a command line:
 RIFF_FORGE_KEY="$(cat riff.private-key.pem)" riff-server --client-id ID --forge-app APP_ID
 ```
 
-Without the App, the server gives no forge token.
+Without the App, the server gives no forge token. With the App, it
+gives tokens only for the accounts that you allow with `riff forge
+allow OWNER` (see
+[Allow an account](how-it-works.md#allow-an-account)).
 
 ## Owner and members
 

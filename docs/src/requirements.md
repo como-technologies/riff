@@ -4241,19 +4241,26 @@
   `riff cloud forge NAME APP_ID KEY` stores the key there and the App
   ID in the cloud settings. `riff cloud deploy` gives both to the
   server. The key is never on the machine of a person.
-- **01M4CHQR3Q566ZFFGQEQMJ3HAS** The wrapper of a session asks
+- **01M4CHQR3Q566ZFFGQEQMJ3HAS** Replaced by 01M4CNN37FYYB99BS6QV2FFWZ8.
+- **01M4CNN37FYYB99BS6QV2FFWZ8** The wrapper of a session asks
   riff-server for its token with the URI of the session. The server
-  picks the role from its own facts: the lead, else a session with a
-  `verify-` claim is the verifier, else the worker. A URI with no
-  session is the lead of its person. A session cannot ask for more
-  rights.
+  picks the role and the repository from its own facts: the lead, else
+  a session with a `verify-` claim is the verifier, else the worker. A
+  session that the server does not know, that ended, or whose claims
+  ended gets no token. The wrapper of a worker registers its session
+  before its first ask. A URI with no session gets the lead token only
+  while its person has a lead in the repository of the URI. A session
+  cannot ask for more rights.
 - **01M4CHQR5ZFQCQ7CC1CGHYFY8S** A riff with no sign-in gives no forge
   token. A call with no sign-in gets no forge token.
-- **01M4CHQR87K30DXD1W2ZZFMDBX** At a claim, a release or the end of a
-  session, riff-server revokes each token of the session whose role or
-  repository changed. The wrapper removes the old token files before it
-  asks for the token of the new role. A token of the same role stays
-  good until it ends.
+- **01M4CHQR87K30DXD1W2ZZFMDBX** Replaced by 01M4CNN39TTK36GX34RCWKES80.
+- **01M4CNN39TTK36GX34RCWKES80** At a claim, a release, the end of a
+  session, the end of the allow of an account, and each minute,
+  riff-server revokes each token of a session whose role or repository
+  changed, or whose claims ended. The wrapper removes the old token
+  files before it asks for the token of the new role. At a renew of a
+  session, riff-server revokes the old token after it makes the new
+  one. A lead token of a person stays good until it ends.
 - **01M4CHQRAFPQDVB67XGDD4N9GB** riff-server writes one log line for
   each token that it gives: the session, the repository, the role and
   the end time. It writes one line for each revoke. A line never holds
@@ -4269,6 +4276,11 @@
   a token of each role on the repository of the clone. The server
   checks the rights of each token, revokes it at once, and replies with
   no token.
+- **01M4CNN3C41DBHVYX87Q17GW2C** riff-server makes forge tokens and
+  checks only for the repositories of the GitHub accounts that the
+  owner or an admin allowed with `riff forge allow OWNER`. Each allow
+  and each end of an allow (`--remove`) is a `forge_allowed` record in
+  the log. `riff forge allow` with no OWNER lists the accounts.
 - **01M4C4WW15HGA1VEDFRBEMZAW7** riff starts its tmux server with an
   empty environment and only the kept variables, with no `TMUX` and no
   `TMUX_PANE`. Its config sets no variable to copy from a client at an

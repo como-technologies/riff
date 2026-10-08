@@ -113,7 +113,7 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
-    DenyOwner, End, ForgeCheck, ForgeCheckReply, ForgeToken, ForgeTokenReply, Free, FreeReply,
+    DenyOwner, End, ForgeAccounts, ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeToken, ForgeTokenReply, Free, FreeReply,
     Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited, ItemFact, ItemFacts, Join, Keys,
     Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members, MembersReply, Message,
     OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post, Posted, REFUSED_HEADER, Read,
@@ -1191,6 +1191,23 @@ impl Api {
     /// repository of `me`, and revokes it at once (#628).
     pub async fn forge_check(&self, me: &SessionUri) -> Result<ForgeCheckReply> {
         self.call(&ForgeCheck { me: me.clone() }).await
+    }
+
+    /// `riff forge allow`: allows the GitHub account `owner`, or allows
+    /// it no more, and gives the allowed accounts. With no `owner`, it
+    /// changes nothing (#628).
+    pub async fn forge_allow(
+        &self,
+        me: &SessionUri,
+        owner: Option<&str>,
+        allowed: bool,
+    ) -> Result<ForgeAccounts> {
+        let allow = ForgeAllow {
+            me: me.clone(),
+            owner: owner.map(str::to_owned),
+            allowed,
+        };
+        self.call(&allow).await
     }
 
     pub async fn item_facts(&self, me: &SessionUri, items: Vec<ItemFact>, all: bool) -> Result<()> {

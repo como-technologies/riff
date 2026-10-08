@@ -1,6 +1,6 @@
 //! The forge token of a session on the side of `riff` (#610, #628): the
 //! wrapper asks riff-server for the token of its session
-//! (01M4CHQR3Q566ZFFGQEQMJ3HAS), keeps it fresh, and gives it to git
+//! (01M4CNN37FYYB99BS6QV2FFWZ8), keeps it fresh, and gives it to git
 //! and `gh` (01M4BV709WGHZ57AM3STC15B69). No outcome gives `claude` a
 //! credential of the person (01M4BYVSNQ5SY2GRGT73FV0Z3E). The tests of
 //! the server side are in `riff-server/tests/forge.rs`.

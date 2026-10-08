@@ -1646,6 +1646,33 @@ pub fn no_role_rules(role: crate::profile::Role, why: &str) -> String {
 ///     "riff-server checked the GitHub App 7 on acme/app:"
 /// );
 /// ```
+/// The answer of `riff forge allow`: the GitHub accounts that get forge
+/// tokens.
+///
+/// ```
+/// use riff::text::forge_accounts;
+///
+/// assert_eq!(
+///     forge_accounts(&["acme".into(), "mike".into()]),
+///     "riff-server makes forge tokens for the repositories of: acme, mike"
+/// );
+/// assert_eq!(
+///     forge_accounts(&[]),
+///     "riff-server makes no forge token: no GitHub account is allowed. Run: riff forge allow OWNER"
+/// );
+/// ```
+pub fn forge_accounts(accounts: &[String]) -> String {
+    if accounts.is_empty() {
+        return "riff-server makes no forge token: no GitHub account is allowed. Run: riff forge \
+                allow OWNER"
+            .to_owned();
+    }
+    format!(
+        "riff-server makes forge tokens for the repositories of: {}",
+        accounts.join(", ")
+    )
+}
+
 pub fn forge_check_head(app: u64, repo: &str) -> String {
     format!("riff-server checked the GitHub App {app} on {repo}:")
 }

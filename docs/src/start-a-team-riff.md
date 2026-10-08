@@ -137,6 +137,15 @@ riff cloud forge NAME APP_ID ~/Downloads/riff.private-key.pem
 
 The key goes to Secret Manager. The App ID goes to the settings file.
 
+After the deploy, sign in as the owner, and allow the GitHub account
+of your repositories. riff-server makes tokens only for an allowed
+account (see
+[Allow an account](how-it-works.md#allow-an-account)):
+
+```sh
+riff forge allow OWNER
+```
+
 ### Deploy the riff
 
 The riff needs an owner: your email. With no tag, Cloud Build builds

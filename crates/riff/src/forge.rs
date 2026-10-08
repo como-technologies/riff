@@ -12,9 +12,14 @@
 //! /v1/forge/token` with the URI of the session, signed in as the
 //! person. The server picks the role and the repository from its own
 //! facts, so a session cannot ask for more rights
-//! (01M4CHQR3Q566ZFFGQEQMJ3HAS). The wrapper of the lead asks with the
+//! (01M4CNN37FYYB99BS6QV2FFWZ8). The server gives a token only to a
+//! session that it knows, so the wrapper of a worker registers its
+//! session before its first ask. The wrapper of the lead asks with the
 //! URI of the person, before the session of the lead starts: the server
-//! gives it the lead token.
+//! gives it the lead token while the person has a lead in the
+//! repository. Until then, the wrapper asks each [`LOOK_EVERY`], and
+//! `riff mcp` asks it at once when its session registers
+//! ([`Files::ask`]).
 //!
 //! A token ends after one hour. A process cannot change the
 //! environment of `claude` after its start. So the token is in files of
@@ -37,7 +42,8 @@
 //! the claims changes, or [`RENEW_BEFORE`] before the token ends
 //! ([`due`], 01M4BV70JZNMT3X99E77GC58K9). At a change of role, it
 //! removes the old token files first, and riff-server revokes the old
-//! token (01M4CHQR87K30DXD1W2ZZFMDBX).
+//! token (01M4CNN39TTK36GX34RCWKES80). At a renew, riff-server revokes
+//! the old token after it makes the new one.
 //!
 //! ```mermaid
 //! sequenceDiagram
