@@ -568,7 +568,7 @@ impl From<ByArg> for riff::top::By {
 /// The subcommands of `riff forge`.
 #[derive(Subcommand)]
 enum ForgeCommand {
-    /// Ask riff-server for a token of each role, and show its permissions
+    /// Show the rights of the token of each role
     ///
     /// Run it in the clone of a repository where the GitHub App of riff
     /// is installed. riff-server makes a token of each role for this

@@ -2291,6 +2291,8 @@ async fn settling<C: Routed>(
 where
     <C as Call>::Reply: serde::Serialize,
 {
+    // The session that ends loses its token.
+    let ended = (C::PATH == End::PATH).then(|| call.me().who().clone());
     let reply = command::<C>(AxumState(s.engine.clone()), call).await;
     if reply.is_ok() && !s.forge.holders().is_empty() {
         let s = s.clone();
@@ -2301,6 +2303,9 @@ where
                     .holders()
                     .into_iter()
                     .map(|who| {
+                        if ended.as_ref() == Some(&who) {
+                            return (who, None);
+                        }
                         let fact = state.me(&who, now, now_ms).and_then(|info| {
                             let repo = info.uri.default_thread()?.to_string();
                             Some((role_of(info.uri.lead(), info.uri.claims()), repo))

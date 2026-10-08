@@ -490,6 +490,11 @@ impl<C> Authenticated<C> {
     pub fn with_call(self, call: Option<String>) -> Authenticated<C> {
         Authenticated { call, ..self }
     }
+
+    /// The session that makes the call.
+    pub fn me(&self) -> &SessionUri {
+        self.admitted.caller.me()
+    }
 }
 
 /// A reply, and whether it is the reply of a kept call: a second try

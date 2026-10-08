@@ -282,6 +282,22 @@ async fn a_change_of_claim_revokes_the_old_token() {
 }
 
 #[tokio::test]
+async fn the_end_of_a_session_revokes_its_token() {
+    let github = FakeGitHub::start(INSTALLS).await;
+    let (service, base) = start(&github).await;
+    let mike = Mike::sign_in(&service).await;
+    mike.register(&base, LIB, true).await;
+    let token = mike.forge_token(&base, LIB).await;
+    let (status, text) = mike.call(&base, LIB, "end", json!({ "me": LIB })).await;
+    assert_eq!(status, 200, "{text}");
+    let span = isolated::Span::start();
+    while !github.revoked().contains(&token.token) {
+        assert!(span.within(Duration::from_secs(20)), "no revoke");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
 async fn riff_forge_check_makes_a_token_of_each_role_and_revokes_it() {
     let github = FakeGitHub::start(INSTALLS).await;
     let (service, base) = start(&github).await;
