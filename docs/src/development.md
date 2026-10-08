@@ -136,7 +136,12 @@ they run the tests in a sandbox of their own:
 - an empty `/tmp` and `/var/tmp`;
 - their own processes: a process of your machine is not visible;
 - the loopback network only;
-- no write, except the `target` folder.
+- no write, except the `target` folder;
+- an environment from nothing: only the variables of the account, the
+  language, the terminal, cargo, rustup and `RIFF_SERVER`
+  (`TEST_RUN_VARS` of `riff::profile`), and a D-Bus where nothing
+  listens. `GH_TOKEN`, your agent sockets and the secrets of a session
+  never reach a test.
 
 A test that leaks a file, a process or a call out of the run cannot
 harm your machine. To run another command in the same sandbox, build

@@ -50,6 +50,21 @@ flowchart TD
 You do not sign in: riff uses the name that you log in with on this
 machine.
 
+## Give the sessions your Claude plan
+
+Each session that riff starts uses your Claude plan. Make a token of
+your plan one time on each machine, and give it to riff. riff keeps it
+in your keyring:
+
+```sh
+claude setup-token
+riff claude-token
+```
+
+Paste the output of `claude setup-token`, then press Enter and
+`Ctrl-D`. See
+[The secrets of a session](how-it-works.md#the-secrets-of-a-session).
+
 ## Start the riff
 
 In a second terminal, go to your project, and run:

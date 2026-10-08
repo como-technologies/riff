@@ -689,9 +689,11 @@ sequenceDiagram
     Note over C: tokens and key go to the OS keyring
 ```
 
-Each agent session then gets its own short-lived token from `riff`.
-The token acts only as that session. `riff` keeps it in memory, not
-in the keyring.
+Each agent session then gets its own short-lived token. The token
+acts only as that session. `riff` keeps it in memory, not in the
+keyring. A session that riff starts gets its tokens from a session
+grant, never from your keyring: see
+[The secrets of a session](#the-secrets-of-a-session).
 
 A session token has no refresh token. Each `riff` process of a session
 swaps the person token for a session token of its own: `riff mcp`,
@@ -3198,9 +3200,11 @@ systemctl --user status riff-workers.slice
 The lead and the workers never get your sign-in. riff starts
 `claude` with an empty environment, and adds only a short list of
 variables (the `KEPT_VARS` of `riff::profile`). So `GH_TOKEN`, your
-`gh` sign-in, your git helpers and your ssh agent never reach a
-session. The tmux server of riff also starts with only these
-variables, so its panes do not hold them either.
+`gh` sign-in, your git helpers, your ssh agent and your D-Bus never
+reach a session. The tmux server of riff also starts with only these
+variables and your D-Bus, so its panes do not hold the others either.
+The wrapper of a session needs your D-Bus for your keyring: see
+[The secrets of a session](#the-secrets-of-a-session).
 
 No `ANTHROPIC_` variable reaches `claude`, also not
 `ANTHROPIC_API_KEY`. A session uses only the plan sign-in of your
@@ -3486,6 +3490,88 @@ then accept the new permissions on the installation.
 
 Workers that start after the deploy get their tokens. Stop the old
 workers with `riff workers stop`; the rollout starts new ones.
+
+## The secrets of a session
+
+No process of a session reads your keyring. The wrapper of each
+session (`riff workers run` for a worker, `riff workers lead` for the
+lead) runs outside the sandbox. Before it starts `claude`, it reads
+your sign-in from your keyring and gives `claude` these variables:
+
+| Variable | What it holds |
+|---|---|
+| `RIFF_SESSION_KEY` | A new key of this session only |
+| `RIFF_SESSION_GRANT` | A session grant of riff-server: it acts only as this session, and only with the session key |
+| `RIFF_USER` | Your user, so no process of the session asks your keyring |
+| `CLAUDE_CODE_OAUTH_TOKEN` | The token of your Claude plan, when you gave it to riff |
+
+The forge token of the role comes in files of the temp folder of the
+session (see [The forge token of each role](#the-forge-token-of-each-role)).
+
+```mermaid
+sequenceDiagram
+    participant W as riff workers run (outside the sandbox)
+    participant K as your keyring
+    participant S as riff-server
+    participant C as claude, riff mcp, hooks
+    W->>K: your sign-in and your device key
+    W->>W: a new session key
+    W->>S: your token, the session, a proof of each key
+    S-->>W: the session grant
+    W->>C: start with the grant, the key and your user
+    C->>S: the grant and a proof of the session key
+    S-->>C: a session token
+    C->>S: calls, and posts signed with the session key
+```
+
+- Each `riff` process of the session swaps the grant for a session
+  token of its own. The grant does not change, so all processes of
+  the session use it.
+- The session key signs the posts of the session. riff-server lists it
+  with the keys of your devices, so the readers verify the posts.
+- A grant ends when your sign-in ends (`riff logout --all`, or a
+  removal from the riff), and 7 days after its last use. riff-server
+  keeps only a hash of it, and keeps it through a restart.
+- In a session, a riff command that needs your keyring stops with
+  `a riff session has no keyring`.
+- No grant, key or plan token goes into a message, a log line or a
+  file of the worktree.
+- When the machine has no sign-in at the server, for example a riff of
+  this machine only, the session gets no grant. It needs none.
+
+The lead gets a session ID of its own from its wrapper, in
+`RIFF_SESSION` and `claude --session-id`, so its grant acts only as
+the lead.
+
+### Give the sessions your Claude plan
+
+A session uses only your Claude plan, never an API key. Make a token
+of your plan one time on each machine, and give it to riff:
+
+```sh
+claude setup-token
+riff claude-token
+```
+
+Paste the whole output of `claude setup-token`, then press Enter and
+`Ctrl-D`. riff finds the token (it starts with `sk-ant-`) and keeps it
+in your keyring. You can also pipe it in:
+
+```sh
+riff claude-token < token.txt
+```
+
+Each session that riff starts on this machine after that gets the
+token as `CLAUDE_CODE_OAUTH_TOKEN`. The token never goes to
+riff-server or to another person. Sessions that run keep the old
+environment: stop the workers with `riff workers stop`, and the
+rollout starts new ones.
+
+To remove the token from this machine:
+
+```sh
+riff claude-token --remove
+```
 
 ## A restart
 

@@ -11,6 +11,7 @@
 //! |---|---|---|
 //! | A person | The person access token, see [`login::access_token`] | The OS keyring |
 //! | A session | A session token, see [`login::session_token`] | The memory of the process |
+//! | A session that riff started | A session token from its grant, see [`crate::grant`] | The memory of the process; the grant and the session key in its environment |
 //!
 //! A session token comes from a token exchange the first time that the
 //! client needs it. It has no refresh token
