@@ -52,18 +52,16 @@ machine.
 
 ## Give the sessions your Claude plan
 
-Each session that riff starts uses your Claude plan. Make a token of
-your plan one time on each machine, and give it to riff. riff keeps it
-in your keyring:
+Each session that riff starts uses your Claude plan. Run these two
+commands one time on each machine:
 
 ```sh
 claude setup-token
 riff claude-token
 ```
 
-Paste the output of `claude setup-token`, then press Enter and
-`Ctrl-D`. See
-[The secrets of a session](how-it-works.md#the-secrets-of-a-session).
+For what to paste, and how to remove the token, see
+[Give the sessions your Claude plan](how-it-works.md#give-the-sessions-your-claude-plan).
 
 ## Start the riff
 

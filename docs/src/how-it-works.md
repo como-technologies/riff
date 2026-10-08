@@ -3523,6 +3523,8 @@ sequenceDiagram
     C->>S: the grant and a proof of the session key
     S-->>C: a session token
     C->>S: calls, and posts signed with the session key
+    C-->>W: claude ends
+    W->>S: end the grant, with a proof of the session key
 ```
 
 - Each `riff` process of the session swaps the grant for a session
@@ -3530,7 +3532,10 @@ sequenceDiagram
   the session use it.
 - The session key signs the posts of the session. riff-server lists it
   with the keys of your devices, so the readers verify the posts.
-- A grant ends when your sign-in ends (`riff logout --all`, or a
+- When `claude` of the session ends, by each way, the wrapper ends the
+  grant, with a proof of the session key. A leave of the riff
+  (`/riff:leave`) keeps it, so the session can join again.
+- A grant also ends when your sign-in ends (`riff logout --all`, or a
   removal from the riff), and 7 days after its last use. riff-server
   keeps only a hash of it, and keeps it through a restart.
 - In a session, a riff command that needs your keyring stops with

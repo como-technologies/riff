@@ -40,7 +40,13 @@
 //!     C->>S: POST /v1/token: the grant, session-key proof
 //!     S-->>C: a session access token
 //!     C->>S: calls and signed posts with the session key
+//!     C-->>W: claude ends
+//!     W->>S: POST /v1/token/end: the grant, session-key proof
 //! ```
+//!
+//! When `claude` ends, by each way, the wrapper ends the grant
+//! ([`SessionEnv::end`], 01M4D0FTC5CCRBVNDBEXK2B4RJ). A leave of the
+//! riff keeps it, so the session can join again.
 //!
 //! With a grant in the environment, riff never opens the keyring
 //! ([`in_session`], [`crate::secrets`]). The [`Debug`] of [`Secrets`]
