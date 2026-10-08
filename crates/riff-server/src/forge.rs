@@ -217,6 +217,8 @@ pub enum Refusal {
     NoSession,
     /// The person is not the lead of the repository.
     NotLead { repo: String },
+    /// No owner or admin allowed the GitHub account of the repository.
+    NotAllowed { owner: String },
     /// The App is not installed on the repository.
     NoInstallation { repo: String },
     /// GitHub gave no token of the role.
@@ -227,9 +229,10 @@ impl Refusal {
     /// The HTTP status of the refusal.
     pub fn status(&self) -> StatusCode {
         match self {
-            Refusal::NoSignIn | Refusal::NoSession | Refusal::NotLead { .. } => {
-                StatusCode::FORBIDDEN
-            }
+            Refusal::NoSignIn
+            | Refusal::NoSession
+            | Refusal::NotLead { .. }
+            | Refusal::NotAllowed { .. } => StatusCode::FORBIDDEN,
             Refusal::NoRepository => StatusCode::BAD_REQUEST,
             Refusal::NoApp | Refusal::NoInstallation { .. } => StatusCode::CONFLICT,
             Refusal::GitHub(_) => StatusCode::BAD_GATEWAY,
@@ -261,6 +264,11 @@ impl fmt::Display for Refusal {
             Refusal::NoSession => f.write_str(
                 "the server does not know this session, or it ended: a session gets a forge \
                  token only while it is in the riff",
+            ),
+            Refusal::NotAllowed { owner } => write!(
+                f,
+                "this riff makes no forge token for the repositories of {owner}. The owner or \
+                 an admin of the riff runs: riff forge allow {owner}"
             ),
             Refusal::NotLead { repo } => write!(
                 f,

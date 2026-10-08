@@ -240,6 +240,7 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         Change::ItemFreed(freed) => riff.plans.freed(freed),
         Change::PlanSet(set) => riff.plans.set(set, record),
         Change::PlanEnded(ended) => riff.plans.ended(ended),
+        Change::ForgeAllowed(allowed) => riff.the_riff.forge_allowed(allowed),
     };
     if let Err(what) = taken {
         tracing::warn!(

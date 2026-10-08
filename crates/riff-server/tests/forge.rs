@@ -117,6 +117,15 @@ impl Mike {
         }
     }
 
+    /// mike, the owner, allows the GitHub accounts `owners`.
+    async fn allow(&self, base: &str, owners: &[&str]) {
+        for owner in owners {
+            let body = json!({ "me": "riff://mike@pangolin", "owner": owner, "allowed": true });
+            let (status, text) = self.call(base, PERSON, "forge/allow", body).await;
+            assert_eq!(status, 200, "{text}");
+        }
+    }
+
     async fn forge(&self, base: &str, uri: &str) -> (u16, String) {
         let me = uri.split('#').next().unwrap();
         self.call(base, uri, "forge/token", json!({ "me": me }))
@@ -139,6 +148,7 @@ async fn each_role_gets_its_rights_on_the_repository_of_its_session_only() {
     let github = FakeGitHub::start(INSTALLS).await;
     let (service, base) = start(&github).await;
     let mike = Mike::sign_in(&service).await;
+    mike.allow(&base, &["acme"]).await;
     mike.resume(&base).await;
     mike.register(&base, LEAD, false).await;
     mike.register(&base, WORKER, true).await;
@@ -167,6 +177,7 @@ async fn a_session_of_each_account_gets_a_token_of_its_own_installation_and_repo
     let github = FakeGitHub::start(INSTALLS).await;
     let (service, base) = start(&github).await;
     let mike = Mike::sign_in(&service).await;
+    mike.allow(&base, &["acme", "mike"]).await;
     for (uri, repo, installation, name) in [
         (LIB, "acme/lib", 11, "lib"),
         (TOOLS, "mike/tools", 22, "tools"),
@@ -185,6 +196,7 @@ async fn the_server_takes_the_repository_from_its_facts_not_from_the_call() {
     let github = FakeGitHub::start(INSTALLS).await;
     let (service, base) = start(&github).await;
     let mike = Mike::sign_in(&service).await;
+    mike.allow(&base, &["acme", "mike"]).await;
     mike.register(&base, TOOLS, true).await;
     // The same session names another repository in the call.
     let body = json!({ "me": "riff://mike@pangolin/acme/app?session=t" });
@@ -200,6 +212,7 @@ async fn a_repository_with_no_installation_names_riff_forge_install() {
     let github = FakeGitHub::start(INSTALLS).await;
     let (service, base) = start(&github).await;
     let mike = Mike::sign_in(&service).await;
+    mike.allow(&base, &["stranger"]).await;
     mike.register(&base, OTHER, true).await;
     let (status, text) = mike.forge(&base, OTHER).await;
     assert_eq!(status, 409);
@@ -246,6 +259,7 @@ async fn a_change_of_claim_revokes_the_old_token() {
     let github = FakeGitHub::start(INSTALLS).await;
     let (service, base) = start(&github).await;
     let mike = Mike::sign_in(&service).await;
+    mike.allow(&base, &["acme"]).await;
     mike.resume(&base).await;
     mike.register(&base, LEAD, false).await;
     mike.register(&base, WORKER, true).await;
@@ -286,6 +300,7 @@ async fn the_end_of_a_session_revokes_its_token() {
     let github = FakeGitHub::start(INSTALLS).await;
     let (service, base) = start(&github).await;
     let mike = Mike::sign_in(&service).await;
+    mike.allow(&base, &["acme"]).await;
     mike.register(&base, LIB, true).await;
     let token = mike.forge_token(&base, LIB).await;
     let (status, text) = mike.call(&base, LIB, "end", json!({ "me": LIB })).await;
@@ -302,6 +317,8 @@ async fn riff_forge_check_makes_a_token_of_each_role_and_revokes_it() {
     let github = FakeGitHub::start(INSTALLS).await;
     let (service, base) = start(&github).await;
     let mike = Mike::sign_in(&service).await;
+    mike.allow(&base, &["acme"]).await;
+    mike.register(&base, LEAD, false).await;
     let (status, text) = mike
         .call(&base, PERSON, "forge/check", json!({ "me": PERSON }))
         .await;
@@ -332,4 +349,89 @@ async fn riff_forge_check_makes_a_token_of_each_role_and_revokes_it() {
         6,
         "a token with too many rights ends at once"
     );
+}
+
+#[tokio::test]
+async fn a_session_that_the_server_does_not_know_gets_no_token() {
+    let github = FakeGitHub::start(INSTALLS).await;
+    let (service, base) = start(&github).await;
+    let mike = Mike::sign_in(&service).await;
+    mike.allow(&base, &["acme", "mike"]).await;
+    // The session never registered, or it ended.
+    let (status, text) = mike.forge(&base, LIB).await;
+    assert_eq!(status, 403, "{text}");
+    assert!(text.contains("does not know this session"), "{text}");
+    mike.register(&base, TOOLS, true).await;
+    let (status, text) = mike.call(&base, TOOLS, "end", json!({ "me": TOOLS })).await;
+    assert_eq!(status, 200, "{text}");
+    let (status, text) = mike.forge(&base, TOOLS).await;
+    assert_eq!(status, 403, "{text}");
+    assert!(github.asked().is_empty());
+}
+
+#[tokio::test]
+async fn a_person_gets_a_lead_token_only_for_a_repository_where_it_has_a_lead() {
+    let github = FakeGitHub::start(&[("acme/app", 11), ("stranger/app", 33)]).await;
+    let (service, base) = start(&github).await;
+    let mike = Mike::sign_in(&service).await;
+    mike.allow(&base, &["acme", "stranger"]).await;
+    // No lead yet: the wrapper of the lead gets no token.
+    let (status, text) = mike.forge(&base, PERSON).await;
+    assert_eq!(status, 403, "{text}");
+    assert!(text.contains("not the lead of acme/app"), "{text}");
+    mike.register(&base, LEAD, false).await;
+    assert_eq!(mike.forge_token(&base, PERSON).await.role, TokenRole::Lead);
+    // mike leads acme/app, not stranger/app.
+    let stranger = "riff://mike@pangolin/stranger/app";
+    let (status, text) = mike.forge(&base, stranger).await;
+    assert_eq!(status, 403, "{text}");
+    assert!(text.contains("not the lead of stranger/app"), "{text}");
+    let (status, _) = mike
+        .call(&base, stranger, "forge/check", json!({ "me": stranger }))
+        .await;
+    assert_eq!(status, 403);
+    assert_eq!(github.asked().len(), 1, "no call to GitHub for stranger/app");
+}
+
+#[tokio::test]
+async fn only_an_allowed_account_gets_tokens() {
+    let github = FakeGitHub::start(&[("acme/app", 11), ("stranger/app", 33)]).await;
+    let (service, base) = start(&github).await;
+    let mike = Mike::sign_in(&service).await;
+    // A stranger installed the public App on stranger/app.
+    mike.register(&base, OTHER, true).await;
+    let (status, text) = mike.forge(&base, OTHER).await;
+    assert_eq!(status, 403, "{text}");
+    assert!(text.contains("riff forge allow stranger"), "{text}");
+    let (status, text) = mike
+        .call(&base, OTHER, "forge/check", json!({ "me": OTHER }))
+        .await;
+    assert_eq!(status, 403, "{text}");
+    assert!(github.asked().is_empty());
+
+    // The owner allows the account: the session gets its token.
+    mike.allow(&base, &["Stranger"]).await;
+    let token = mike.forge_token(&base, OTHER).await;
+    assert_eq!(token.repo, "stranger/app");
+
+    // The list, and the end of the allow.
+    let list = json!({ "me": "riff://mike@pangolin" });
+    let (status, text) = mike.call(&base, PERSON, "forge/allow", list).await;
+    assert_eq!((status, text.as_str()), (200, r#"{"accounts":["stranger"]}"#));
+    let off = json!({ "me": "riff://mike@pangolin", "owner": "stranger", "allowed": false });
+    let (status, text) = mike.call(&base, PERSON, "forge/allow", off).await;
+    assert_eq!((status, text.as_str()), (200, r#"{"accounts":[]}"#));
+    let span = isolated::Span::start();
+    while !github.revoked().contains(&token.token) {
+        assert!(span.within(Duration::from_secs(20)), "no revoke");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (status, _) = mike.forge(&base, OTHER).await;
+    assert_eq!(status, 403);
+
+    // A session cannot allow an account: only a person, the owner or
+    // an admin.
+    let body = json!({ "me": OTHER, "owner": "stranger", "allowed": true });
+    let (status, text) = mike.call(&base, OTHER, "forge/allow", body).await;
+    assert_eq!(status, 403, "{text}");
 }

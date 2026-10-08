@@ -177,7 +177,8 @@ use axum::response::{IntoResponse, Response};
 use riff_core::name::{SessionUri, Who};
 use riff_core::record::{Change, Record};
 use riff_core::wire::{
-    AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, Free, Hold, Invite, Join, Keys, Lead,
+    AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, ForgeAllow, Free, Hold, Invite, Join,
+    Keys, Lead,
     Leave, PassOwner, Pause, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER, Register, Release,
     ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, SetPlan, Start, Tailed, TakeOwner, Wake,
 };
@@ -274,7 +275,7 @@ macro_rules! routed {
 
 routed!(
     Register, Start, End, Join, Leave, Claim, Release, ReleaseFor, Lead, Pause, Resume, SetIdle,
-    Hold, Free, SetPlan, PlanOff
+    Hold, Free, SetPlan, PlanOff, ForgeAllow
 );
 
 /// Gives each command of the people its [`Routed`]. Its body names no

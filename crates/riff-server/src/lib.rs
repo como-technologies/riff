@@ -243,7 +243,7 @@ use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::Tokens;
 use crate::trace::DeniedCode;
 use riff_core::forge::TokenRole;
-use riff_core::wire::{ForgeCheck, ForgeCheckReply, ForgeToken, ForgeTokenReply};
+use riff_core::wire::{ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeToken, ForgeTokenReply};
 
 /// The least time between two writes of the token store (R127): the
 /// default of [`auth::Config::save_every`].
@@ -1099,7 +1099,8 @@ impl Server {
 
     /// Revokes each forge token whose role or repository is not the
     /// role and the repository of the facts now ([`forge::Forge::settle`],
-    /// [`State::forge_fact`]). The session `ended` lost its token: it
+    /// [`State::forge_fact`]), or whose GitHub account is not allowed
+    /// any more. The session `ended` lost its token: it
     /// sent its `end` call.
     async fn settle_forge(&self, ended: Option<&Who>) {
         let now = Instant::now();
@@ -1114,7 +1115,10 @@ impl Server {
                     let fact = state
                         .me(&who, now, now_ms())
                         .and_then(|info| state.forge_fact(&info.uri, now))
-                        .map(|(role, thread)| (role, thread.to_string()));
+                        .map(|(role, thread)| (role, thread.to_string()))
+                        .filter(|(_, repo)| {
+                            state.forge_allows(repo.split('/').next().unwrap_or_default())
+                        });
                     (who, fact)
                 })
                 .collect()
@@ -1910,9 +1914,11 @@ impl Service {
             .route(Free::PATH, post(command::<Free>))
             .route(SetPlan::PATH, post(command::<SetPlan>))
             .route(PlanOff::PATH, post(command::<PlanOff>));
-        // `set_idle` has a router of its own: in a riff with sign-in,
-        // its route always has the token check.
-        let set_idle = Router::new().route(SetIdle::PATH, post(command::<SetIdle>));
+        // `set_idle` and `forge_allow` have a router of their own: in a
+        // riff with sign-in, their routes always have the token check.
+        let set_idle = Router::new()
+            .route(SetIdle::PATH, post(command::<SetIdle>))
+            .route(ForgeAllow::PATH, post(settling::<ForgeAllow>));
         // ANCHOR_END: routes
         // The signals and the queries.
         let mut routes = commands
@@ -2341,7 +2347,8 @@ async fn me(
 }
 
 /// A command that can change the role of the forge token of a session:
-/// a claim, a release, the end of a session. After the command, the
+/// a claim, a release, the end of a session, the end of the allow of a
+/// GitHub account. After the command, the
 /// server revokes each token whose role changed ([`forge::Forge::settle`]).
 /// The revoke runs after the reply, so a slow GitHub does not hold up
 /// the command.
@@ -2365,10 +2372,21 @@ where
 /// The role and the repository of the forge token of `me`, from the
 /// facts of the server (#628): [`State::forge_fact`]. A session that the
 /// server does not know gets no token. A `me` with no session gets the
-/// lead token only when its person is the lead of its repository.
+/// lead token only when its person is the lead of its repository. Only
+/// a repository of an allowed GitHub account gets a token
+/// (`riff forge allow`).
 fn forge_facts(state: &State, me: &SessionUri) -> Result<(TokenRole, String), forge::Refusal> {
     match state.forge_fact(me, Instant::now()) {
-        Some((role, thread)) => Ok((role, thread.to_string())),
+        Some((role, thread)) => {
+            let repo = thread.to_string();
+            let owner = repo.split('/').next().unwrap_or_default();
+            if !state.forge_allows(owner) {
+                return Err(forge::Refusal::NotAllowed {
+                    owner: owner.to_owned(),
+                });
+            }
+            Ok((role, repo))
+        }
         None if me.who().session().is_some() => Err(forge::Refusal::NoSession),
         None => Err(match me.default_thread() {
             Some(thread) => forge::Refusal::NotLead {
@@ -2389,6 +2407,9 @@ async fn forge_token(
     if proof.signed_in.is_none() {
         return Err(forge::Refusal::NoSignIn.into());
     }
+    if s.forge.app().is_none() {
+        return Err(forge::Refusal::NoApp.into());
+    }
     let caller = admit(&s, &proof, &r.me)?;
     let (role, repo) = s
         .engine
@@ -2404,6 +2425,9 @@ async fn forge_check(
 ) -> Reply<ForgeCheckReply> {
     if proof.signed_in.is_none() {
         return Err(forge::Refusal::NoSignIn.into());
+    }
+    if s.forge.app().is_none() {
+        return Err(forge::Refusal::NoApp.into());
     }
     let caller = admit(&s, &proof, &r.me)?;
     let (_, repo) = s

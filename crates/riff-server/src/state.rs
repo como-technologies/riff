@@ -255,7 +255,8 @@ use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AliveReply, BlockedInfo, Claim, End, Facts, Freed, Idle, ItemFact, Join, Keys, Kind,
     Lead, LeadReply, Leave, Message, Pause, PlanReply, Post, Register, Release, ReleaseFor,
-    ReleaseReply, Resume, RiffReply, RiffState, SessionInfo, SessionState, SetBlocked, SetIdle,
+    ForgeAccounts, ForgeAllow, ReleaseReply, Resume, RiffReply, RiffState, SessionInfo,
+    SessionState, SetBlocked, SetIdle,
     SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
     Waits, Wake,
 };
@@ -1904,6 +1905,49 @@ impl State {
     /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
     pub fn idle(&self) -> Idle {
         self.written.the_riff().idle
+    }
+
+    /// True when the owner or an admin allowed the GitHub account
+    /// `owner`: the server makes forge tokens for its repositories
+    /// (01M4CHQR1E5HFV6KSTSM72H0QV).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_server::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin".parse()?;
+    /// let mut state = State::default();
+    /// assert!(!state.forge_allows("acme"));
+    /// let accounts = state.forge_allow(&mike, Some("Acme"), true, Instant::now()).unwrap();
+    /// assert_eq!(accounts.accounts, ["acme"]);
+    /// assert!(state.forge_allows("ACME"));
+    /// assert!(!state.forge_allows("stranger"));
+    /// state.forge_allow(&mike, Some("acme"), false, Instant::now()).unwrap();
+    /// assert!(!state.forge_allows("acme"));
+    /// assert!(state.forge_allow(&mike, Some("acme/app"), true, Instant::now()).is_err());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn forge_allows(&self, owner: &str) -> bool {
+        self.written.the_riff().forge_allows(owner)
+    }
+
+    /// Allows the GitHub account `owner`, or allows it no more, as the
+    /// admin `me`, and gives the list. With no `owner`, it only gives
+    /// the list.
+    pub fn forge_allow(
+        &mut self,
+        me: &SessionUri,
+        owner: Option<&str>,
+        allowed: bool,
+        now: Instant,
+    ) -> Result<ForgeAccounts, String> {
+        let command = ForgeAllow {
+            me: me.clone(),
+            owner: owner.map(str::to_owned),
+            allowed,
+        };
+        self.ask(me, &command, now).map_err(|r| r.reason)
     }
 
     /// Sets the settings of idle workers as `me`: each value that is
@@ -4020,6 +4064,7 @@ mod tests {
                 "idle": {"per_host": 2, "after_secs": 300},
                 "riff_pause": {"by": {"session": "mike/a1"}, "at_ms": T0},
                 "pauses": {"design": {"by": {"session": "mike/a1"}, "at_ms": T0}},
+                "forge_accounts": ["como-technologies"],
                 "threads": [{"thread": "como-technologies/riff", "members": [ann],
                              "messages": [{"message": message, "woken": [ann]}]}],
                 "claims": [{"thread": "como-technologies/riff", "item": "issue-7", "holder": ann}],

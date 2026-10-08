@@ -1,0 +1,8 @@
+{
+  "records": [
+    "forge_allowed"
+  ],
+  "commands": [
+    "forge_allow"
+  ]
+}

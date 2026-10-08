@@ -268,6 +268,8 @@ pub fn show(record: &Record) -> String {
             s.plan.done.len()
         ),
         Change::PlanEnded(e) => format!("plan_ended  {}", e.thread),
+        Change::ForgeAllowed(a) if a.allowed => format!("forge_allowed  {}", a.owner),
+        Change::ForgeAllowed(a) => format!("forge_allowed  {} no more", a.owner),
     };
     format!(
         "{}  {}  {facts}  ({})",
@@ -306,6 +308,7 @@ fn thread_of(record: &Record) -> Option<String> {
             Scope::Riff | Scope::Other => None,
         },
         Change::SettingChanged(_)
+        | Change::ForgeAllowed(_)
         | Change::SessionForgotten(_)
         | Change::SessionStarted(_)
         | Change::RiffMade(_)

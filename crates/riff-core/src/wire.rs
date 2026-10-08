@@ -30,6 +30,7 @@
 //! | `/v1/plan/free` | [`Free`] | [`FreeReply`] | command |
 //! | `/v1/plan` | [`SetPlan`] | [`PlanReply`] | command |
 //! | `/v1/plan/off` | [`PlanOff`] | [`PlanOffReply`] | command |
+//! | `/v1/forge/allow` | [`ForgeAllow`] | [`ForgeAccounts`] | command |
 //! | `/v1/status` | [`SetStatus`] | `null` | signal |
 //! | `/v1/blocked` | [`SetBlocked`] | `null` | signal |
 //! | `/v1/step` | [`SetStep`] | `null` | signal |
@@ -240,6 +241,7 @@ calls! {
     DenyOwner => "/v1/owner/deny", OwnerDenied;
     ForgeToken => "/v1/forge/token", ForgeTokenReply;
     ForgeCheck => "/v1/forge/check", ForgeCheckReply;
+    ForgeAllow => "/v1/forge/allow", ForgeAccounts;
 }
 
 /// `POST /v1/register`: a session says that it exists and where it
@@ -458,6 +460,41 @@ pub struct ForgeCheckReply {
     /// The ID of the GitHub App.
     pub app: u64,
     pub roles: Vec<RoleCheck>,
+}
+
+/// `POST /v1/forge/allow`: `riff forge allow`. The server makes forge
+/// tokens only for the repositories of the GitHub accounts that the
+/// owner or an admin allowed (01M4CHQR1E5HFV6KSTSM72H0QV). `owner` is an
+/// organization or a personal account. With `allowed` true, the server
+/// allows it; with false, it allows it no more. With no `owner`, the
+/// command changes nothing and gives the list. Only the owner or an admin
+/// can send it, as a person.
+///
+/// ```
+/// use riff_core::wire::ForgeAllow;
+///
+/// let allow: ForgeAllow = serde_json::from_str(
+///     r#"{"me":"riff://mike@pangolin/acme/app","owner":"acme","allowed":true}"#,
+/// ).unwrap();
+/// assert_eq!(allow.owner.as_deref(), Some("acme"));
+/// let list: ForgeAllow = serde_json::from_str(r#"{"me":"riff://mike@pangolin"}"#).unwrap();
+/// assert!(list.owner.is_none() && !list.allowed);
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeAllow {
+    pub me: SessionUri,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub allowed: bool,
+}
+
+/// The reply to [`ForgeAllow`]: the GitHub accounts that the server
+/// makes forge tokens for, in lower case and in order.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ForgeAccounts {
+    #[serde(default)]
+    pub accounts: Vec<String>,
 }
 
 /// The check of the token of one role.

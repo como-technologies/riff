@@ -1,0 +1,7 @@
+{"format":1,"first":1}
+{"position":1,"written_at_ms":1795000000000,"by":"server","command":"make_riff","change":{"riff_made":{"riff_id":"0b6a7c58-2d3e-4f1a-9c8b-7e6d5c4b3a29"}}}
+{"position":2,"written_at_ms":1795000001000,"by":{"person":"ann"},"command":"resume","change":{"pause_set":{"scope":"riff","state":"running"}}}
+{"position":3,"written_at_ms":1795000002000,"by":{"person":"ann"},"command":"forge_allow","change":{"forge_allowed":{"owner":"acme","allowed":true}}}
+{"position":4,"written_at_ms":1795000003000,"by":{"person":"ann"},"command":"forge_allow","change":{"forge_allowed":{"owner":"stranger","allowed":true}}}
+{"position":5,"written_at_ms":1795000004000,"by":{"person":"ann"},"command":"forge_allow","change":{"forge_allowed":{"owner":"stranger","allowed":false}}}
+{"position":6,"written_at_ms":1795000005000,"command":"forge_allow","change":{"forge_allowed":{"owner":"ann","allowed":true}}}
