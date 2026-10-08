@@ -1,5 +1,5 @@
-//! `riff statusline` shows the short session ID and the claims of the
-//! Claude Code session on stdin (01M3JDWA0WZWKF3JT3NYA2FV5Z). It never
+//! `riff statusline` shows the label, the state and the claims of the
+//! Claude Code session on stdin (01M4CPVJ9ANPEBTWY9GETE2DGW). It never
 //! fails. It adds a tag when the riff runs a newer release
 //! (01M3NT6X22A4GNFTNKRYV8Z4N1, 01M3NJCWDN5APKZ3Z53XQR8P0B). It asks
 //! riff-server with `GET /v1/me`, not `who` (01M3T5GFVS8NMA992KHZN4VE17).
@@ -123,7 +123,7 @@ async fn the_status_line_shows_the_session_and_its_claims() {
     let stdin = format!(r#"{{"session_id":"{ID}","cwd":"/x"}}"#);
     let (out, code) = riff(&server, dir.path(), None, &stdin, &["statusline"]).await;
     // The session is the lead of mike in the repository.
-    assert_eq!(out, "riff a6cf2205 lead issue-82\n");
+    assert_eq!(out, "mike@pangolin:riff (a6cf2205) lead busy issue-82\n");
     assert_eq!(code, 0);
 }
 
@@ -198,7 +198,7 @@ async fn the_status_line_calls_me_and_not_who() {
 
     assert_eq!(
         line(&server, dir.path()).await,
-        "riff a6cf2205 lead issue-82\n"
+        "mike@pangolin:riff (a6cf2205) lead busy issue-82\n"
     );
     let calls = calls.lock().unwrap().clone();
     assert!(calls.iter().any(|c| c == "/v1/me"), "{calls:?}");
@@ -213,7 +213,7 @@ async fn a_newer_release_gives_the_tag_and_the_same_release_none() {
     assert_eq!(
         line(&server, dir.path()).await,
         format!(
-            "riff a6cf2205 lead update v{}: riff update\n",
+            "mike@pangolin:riff (a6cf2205) lead idle update v{}: riff update\n",
             newer().version
         )
     );
@@ -226,7 +226,10 @@ async fn a_newer_release_gives_the_tag_and_the_same_release_none() {
     let dir = repo();
     let server = server_of(dev).await;
     join(&server, dir.path()).await;
-    assert_eq!(line(&server, dir.path()).await, "riff a6cf2205 lead\n");
+    assert_eq!(
+        line(&server, dir.path()).await,
+        "mike@pangolin:riff (a6cf2205) lead idle\n"
+    );
 }
 
 #[tokio::test]
@@ -257,7 +260,10 @@ async fn with_update_auto_on_the_tag_says_updating_then_installed() {
     std::fs::write(dir.path().join("config.toml"), "[update]\nauto = true\n").unwrap();
     assert_eq!(
         line(&server, dir.path()).await,
-        format!("riff a6cf2205 lead updating to v{}\n", newer().version)
+        format!(
+            "mike@pangolin:riff (a6cf2205) lead idle updating to v{}\n",
+            newer().version
+        )
     );
     drop(lock);
 
@@ -279,12 +285,18 @@ async fn with_update_auto_on_the_tag_says_updating_then_installed() {
     join(&server, dir.path()).await;
     assert_eq!(
         line(&server, dir.path()).await,
-        format!("riff a6cf2205 lead v{} installed\n", Build::this().version)
+        format!(
+            "mike@pangolin:riff (a6cf2205) lead idle v{} installed\n",
+            Build::this().version
+        )
     );
 
     // riff mcp runs the new release: no tag.
     std::fs::write(&build_file, Build::this().to_string()).unwrap();
-    assert_eq!(line(&server, dir.path()).await, "riff a6cf2205 lead\n");
+    assert_eq!(
+        line(&server, dir.path()).await,
+        "mike@pangolin:riff (a6cf2205) lead idle\n"
+    );
     drop(mcp);
 }
 

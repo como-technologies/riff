@@ -2108,12 +2108,13 @@
 - **01M3WNHCD659FH3Z5VYYH69WWR** The first line of a session in
   `riff top` names its worktree after the short session ID:
   `#WORKTREE`, or nothing in the main worktree. The session is under
-  the line of its repository. A repository line has the short name of
-  the repository when the repositories of the sessions have one owner,
-  else `OWNER/REPO`. The wave line names the repository of its board:
-  `Wave N (OWNER/REPO)`. Only a claim in that repository is on its
-  board, and a session shows the title of an issue of its own
-  repository.
+  the line of its repository. A repository line has the name of the
+  repository in the label of its sessions
+  (01M4CPVJ9ANPEBTWY9GETE2DGW): the short name, also when the
+  repositories of the sessions have more than one owner. The wave
+  line names the repository of its board: `Wave N (OWNER/REPO)`.
+  Only a claim in that repository is on its board, and a session
+  shows the title of an issue of its own repository.
 - **01M42KHN33M4K13GKTX2WM6CMM** The tree of `riff top` has four
   levels: person, host, repository, session. A person, host or
   repository line ends with its counts: the sessions, then the busy,
@@ -2155,12 +2156,17 @@
 - **01M3ZC09FA9DZPTHK31XECZ566** When a later read of `gh` fails,
   `riff top` keeps the titles and the board of its last good read of
   `gh`.
-- **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
-  line of a Claude Code session: `riff`, the short session ID of `riff
-  who`, `lead`, each claim, and `blocked`. It is the `statusLine`
-  command in the flag settings of each session that riff starts
-  (01M4BYH7Y3P1JMQR51TWFGVZ39). It never fails, and it waits at most 2
-  seconds for riff-server.
+- **01M3JDWA0WZWKF3JT3NYA2FV5Z** Replaced by 01M4CPVJ9ANPEBTWY9GETE2DGW.
+- **01M4CPVJ9ANPEBTWY9GETE2DGW** `riff statusline` prints the status
+  line of a Claude Code session: the label of the session
+  (`USER@HOST:REPO#WORKTREE (ID)`), its role (`lead`, `worker`), its
+  state as `riff top` shows it, and each claim. One function makes the
+  label for `riff statusline`, `riff who`, `riff whoami` and the tree of
+  `riff top`. A line longer than 80 characters drops the user and the
+  host of the label; the repository and the worktree stay. It is the
+  `statusLine` command in the flag settings of each session that riff
+  starts (01M4BYH7Y3P1JMQR51TWFGVZ39). It never fails, and it waits at
+  most 2 seconds for riff-server.
 - **01M3T5GFVS8NMA992KHZN4VE17** `riff statusline` calls
   `GET /v1/me`, not `who`. The reply holds only the session of the
   caller: its state, claims and status, and the build of the server.

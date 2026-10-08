@@ -956,9 +956,9 @@ mike  owner  online  6 sessions: 1 busy, 3 idle, 1 blocked, 2 claims
   the example, brett has one host and one repository, so the person,
   the host and the repository are on one line. So a small riff stays
   short.
-- A repository line has the short name of the repository. When the
-  repositories have more than one owner, it has the owner too:
-  `como-technologies/riff`.
+- A repository line has the short name of the repository, for example
+  `riff`. The status line and `riff who` use the same name. Two
+  repositories of two owners can have the same short name.
 - A session: the first line has the short session ID, the worktree of
   the session (`#issue-7` in the worktree `issue-7`, nothing in the
   main worktree), the tag `lead` or `worker`, and the state of the
@@ -2959,15 +2959,26 @@ and the verify result. You decide. No session pushes to `main` (see
 
 ### Find the pane of a session
 
-Show each session in the status line of Claude Code: its short session
-ID, `lead`, its claims, and `blocked`. For example:
+The status line of Claude Code names the session as `riff top` and
+`riff who` do: `USER@HOST:REPO#WORKTREE (ID)`. Then it shows the role
+(`lead` or `worker`), the state (for example `idle`, `busy`, `paused`
+or `blocked`) and the claims. For a lead in the main clone and a worker
+in a worktree:
 
 ```text
-riff 2a880834 lead
-riff dceb0b68 issue-82 blocked
+mike@pangolin:riff (2a880834) lead idle
+mike@pangolin:riff#issue-82 (dceb0b68) worker blocked issue-82
 ```
 
-The short ID is the same as in `riff who`. riff gives this status
+When the line is longer than 80 characters, it drops the user and the
+host. The repository and the worktree stay:
+
+```text
+riff#issue-82 (dceb0b68) worker busy issue-82 issue-83 verify-issue-123
+```
+
+One function makes the label for the status line, `riff who` and
+`riff top`, so the three always agree. riff gives this status
 line to each session that it starts, in the flag settings of `claude`
 (see [What riff gives Claude](#what-riff-gives-claude)). Your settings
 file does not change.
@@ -2985,13 +2996,13 @@ sequenceDiagram
     C->>S: the session ID on stdin
     S->>R: GET /v1/me
     R-->>S: this session, the build
-    S-->>C: riff 2a880834 lead issue-82
+    S-->>C: mike@pangolin:riff (2a880834) lead idle
 ```
 
-Then find the session of `riff who` by its short ID:
+Then find the session in `riff top` or `riff who` by its label:
 
 ```sh
-riff who
+riff top
 ```
 
 ### See a new release in the status line
@@ -3000,7 +3011,7 @@ When the riff runs a newer release than your session, the status line
 adds a tag. For example:
 
 ```text
-riff 2a880834 lead update v0.6.0: riff update
+mike@pangolin:riff (2a880834) lead idle update v0.6.0: riff update
 ```
 
 | Tag | What it means | What to do |

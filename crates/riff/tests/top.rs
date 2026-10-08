@@ -804,9 +804,11 @@ esac"#,
 }
 
 /// When the repositories of the sessions have more than one owner, each
-/// repository line has `OWNER/REPO` (01M3WNHCD659FH3Z5VYYH69WWR).
+/// repository line still has the name of the label of its sessions, as
+/// the status line shows it (01M3WNHCD659FH3Z5VYYH69WWR,
+/// 01M4CPVJ9ANPEBTWY9GETE2DGW).
 #[tokio::test(flavor = "multi_thread")]
-async fn two_owners_show_the_owner_of_each_repository() {
+async fn two_owners_show_the_name_of_the_label_of_each_repository() {
     let (server, _) = start_server().await;
     let dir = repo();
     let dir = dir.path();
@@ -818,10 +820,10 @@ async fn two_owners_show_the_owner_of_each_repository() {
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     let rows = rows(&top);
     for row in [
-        "│  ├─ acme/strata  1 session: 1 busy, 1 claim",
+        "│  ├─ strata  1 session: 1 busy, 1 claim",
         "│  │  └─ d4  #issue-88  lead  busy",
-        "│  └─ como-technologies/riff  2 sessions: 1 idle, 1 blocked",
-        "└─ thelio  › como-technologies/riff  1 session: 1 busy, 1 claim",
+        "│  └─ riff  2 sessions: 1 idle, 1 blocked",
+        "└─ thelio  › riff  1 session: 1 busy, 1 claim",
     ] {
         assert!(rows.iter().any(|r| r == row), "{row}: {top}");
     }
