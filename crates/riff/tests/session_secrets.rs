@@ -72,7 +72,12 @@ async fn signed_server() -> (Service, String) {
 async fn sign_in(service: &Service, url: &str, riff_home: &Path) {
     let secrets = riff_home.join("secrets");
     let device = Key::generate();
-    file_set(&secrets, &riff::device::secret_name(url), &device.to_secret()).unwrap();
+    file_set(
+        &secrets,
+        &riff::device::secret_name(url),
+        &device.to_secret(),
+    )
+    .unwrap();
     let pair = service
         .admit("mike@comotechnologies.io", false, &device.thumbprint())
         .await
@@ -137,8 +142,7 @@ fn files_with(dir: &Path, secret: &str, skip: &[&Path]) -> Vec<String> {
             if kind.is_dir() {
                 stack.push(path);
             } else if kind.is_file()
-                && std::fs::read(&path)
-                .is_ok_and(|b| String::from_utf8_lossy(&b).contains(secret))
+                && std::fs::read(&path).is_ok_and(|b| String::from_utf8_lossy(&b).contains(secret))
             {
                 found.push(path.display().to_string());
             }
@@ -195,7 +199,10 @@ async fn a_session_works_with_only_its_environment_and_leaks_no_secret() {
     let grant = var(GRANT_VAR).unwrap_or_else(|| panic!("no grant: {env}\n{stderr}"));
     let session_key = var(KEY_VAR).expect("a session key");
     assert_eq!(var("RIFF_USER").as_deref(), Some("mike"), "{env}");
-    assert_eq!(var("CLAUDE_CODE_OAUTH_TOKEN").as_deref(), Some(CLAUDE_TOKEN));
+    assert_eq!(
+        var("CLAUDE_CODE_OAUTH_TOKEN").as_deref(),
+        Some(CLAUDE_TOKEN)
+    );
     assert!(!env.contains(MARKER), "{env}");
     assert!(!env.contains("ANTHROPIC_"), "{env}");
     assert!(!env.contains("DBUS_SESSION_BUS_ADDRESS"), "{env}");
@@ -210,12 +217,20 @@ async fn a_session_works_with_only_its_environment_and_leaks_no_secret() {
     assert!(read.contains("hello from the session"), "{read}");
     assert!(read.contains("(verified)"), "{read}");
     // A keyring call of the session is an error.
-    assert!(seen("logout").contains(riff::grant::NO_KEYRING), "{}", seen("logout"));
+    assert!(
+        seen("logout").contains(riff::grant::NO_KEYRING),
+        "{}",
+        seen("logout")
+    );
 
     // The forge works with the token files of the session.
     let git = seen("git");
     assert!(git.contains("password=ghs_test_"), "{git}");
-    assert!(seen("gh").contains("oauth_token: ghs_test_"), "{}", seen("gh"));
+    assert!(
+        seen("gh").contains("oauth_token: ghs_test_"),
+        "{}",
+        seen("gh")
+    );
 
     // No secret of the session in an output, a file or a commit.
     let outputs = [

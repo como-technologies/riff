@@ -1217,11 +1217,8 @@ impl Tokens {
     fn sweep(&mut self, now: Instant) {
         self.sign_ins.retain(|_, s| now < s.idle_until);
         let parents: BTreeSet<u64> = self.sign_ins.keys().copied().collect();
-        self.sign_ins.retain(|_, s| {
-            s.grant
-                .as_ref()
-                .is_none_or(|g| parents.contains(&g.parent))
-        });
+        self.sign_ins
+            .retain(|_, s| s.grant.as_ref().is_none_or(|g| parents.contains(&g.parent)));
         let live = &self.sign_ins;
         self.access
             .retain(|_, a| now < a.expires && live.contains_key(&a.sign_in));
@@ -1480,7 +1477,10 @@ mod tests {
         let (id, _) = grant.access_token.split_once('.').unwrap();
         let wrong = format!("{id}.wrong");
         assert_eq!(tokens.from_grant(&wrong, "s", now), Err(Refused::Unknown));
-        assert_eq!(tokens.from_grant("nonsense", "s", now), Err(Refused::Unknown));
+        assert_eq!(
+            tokens.from_grant("nonsense", "s", now),
+            Err(Refused::Unknown)
+        );
     }
 
     #[test]

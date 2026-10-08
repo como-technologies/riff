@@ -217,14 +217,14 @@ use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::record::Record;
 use riff_core::selector::Selector;
 use riff_core::wire::{
-    ACCESS_TOKEN_TYPE, Alive, GRANT_TOKEN_TYPE, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
-    Claim, DenyOwner, End, FactError, Free, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
-    ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
-    PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Read, ReadReply,
-    Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery,
-    RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetPlan, SetStatus,
-    SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
-    TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+    ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
+    Claim, DenyOwner, End, FactError, Free, GRANT_TOKEN_TYPE, Hold, ID_TOKEN_TYPE, Idle, IdleQuery,
+    Invite, ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members,
+    MembersReply, PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Read,
+    ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner,
+    RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetPlan,
+    SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply,
+    TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
@@ -3044,7 +3044,10 @@ async fn from_grant(
     let Some(grant) = &r.subject_token else {
         return Err(no("invalid_request"));
     };
-    if s.tokens().granted(grant, &proof.jkt, Instant::now()).is_err() {
+    if s.tokens()
+        .granted(grant, &proof.jkt, Instant::now())
+        .is_err()
+    {
         return Err(no("invalid_grant"));
     }
     s.tokens_written().await?;

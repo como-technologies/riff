@@ -374,7 +374,11 @@ pub fn args(
     args.push("--clearenv".into());
     args.extend(["--setenv".into(), "TMPDIR".into(), "/tmp".into()]);
     args.extend(["--setenv".into(), TEST_RUN_VAR.into(), "1".into()]);
-    args.extend(["--setenv".into(), "DBUS_SESSION_BUS_ADDRESS".into(), NO_BUS.into()]);
+    args.extend([
+        "--setenv".into(),
+        "DBUS_SESSION_BUS_ADDRESS".into(),
+        NO_BUS.into(),
+    ]);
     args.extend(["--chdir".into(), text(cwd)]);
     args
 }

@@ -129,7 +129,6 @@ fn the_run_has_the_loopback_network_only() {
     assert!(TcpStream::connect(listener.local_addr().unwrap()).is_ok());
 }
 
-
 /// No variable of the parent reaches a test, but the allow list
 /// (01M4CVXJGYCT2HKHJP3BWBV0HC): `just test` gives `riff test-run` a
 /// marker `GH_TOKEN` and an unknown marker variable, and neither is

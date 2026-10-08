@@ -116,7 +116,10 @@ impl fmt::Debug for Secrets {
             .field("key", &self.key.thumbprint())
             .field("grant", &"<hidden>")
             .field("user", &self.user)
-            .field("claude_token", &self.claude_token.as_ref().map(|_| "<hidden>"))
+            .field(
+                "claude_token",
+                &self.claude_token.as_ref().map(|_| "<hidden>"),
+            )
             .finish()
     }
 }

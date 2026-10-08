@@ -92,7 +92,11 @@ async fn a_grant_acts_only_as_its_session_and_lives_through_a_restart() {
         .unwrap();
     let who = service
         .tokens()
-        .caller(&access.access_token, &session_key.thumbprint(), Instant::now())
+        .caller(
+            &access.access_token,
+            &session_key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     assert_eq!(who.to_string(), "mike/a6cf");
 
@@ -110,7 +114,11 @@ async fn a_grant_acts_only_as_its_session_and_lives_through_a_restart() {
         .unwrap();
     let who = restarted
         .tokens()
-        .caller(&again.access_token, &session_key.thumbprint(), Instant::now())
+        .caller(
+            &again.access_token,
+            &session_key.thumbprint(),
+            Instant::now(),
+        )
         .unwrap();
     assert_eq!(who.to_string(), "mike/a6cf");
 }
