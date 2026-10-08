@@ -10,6 +10,11 @@
 //! person confirms. It keeps each other entry
 //! (01M4BYH82P03FTXZBYC72BJ6F3).
 //!
+//! riff never changes a file that git tracks
+//! (`git ls-files --error-unmatch`). It lists the riff entries of a
+//! tracked `.claude/settings.json`, and the person removes them in a
+//! pull request (01M4CMJPGS613K2FHQ6DKSY2WJ).
+//!
 //! | Place | The riff entries |
 //! |---|---|
 //! | the user settings (`~/.claude/settings.json`) | `enabledPlugins."riff@riff"`, `extraKnownMarketplaces.riff`, the `statusLine` of `riff statusline`, each rule of a riff tool or a `riff` command |
@@ -22,7 +27,7 @@
 //!     F --> L{"entries?"}
 //!     L -- none --> S[start]
 //!     L -- some --> A["list them, ask"]
-//!     A -- "yes" --> X["claude plugin uninstall,<br/>marketplace remove,<br/>edit each settings file"]
+//!     A -- "yes" --> X["claude plugin uninstall,<br/>marketplace remove,<br/>edit each untracked settings file"]
 //!     A -- "no" --> S
 //!     X --> S
 //! ```
@@ -58,6 +63,8 @@ pub enum Entry {
         file: PathBuf,
         /// What riff wrote there, one item for each key or rule.
         what: Vec<String>,
+        /// True when git tracks the file: riff does not change it.
+        tracked: bool,
     },
     /// An install of the plugin `riff@riff` in one scope.
     Install {
@@ -65,6 +72,10 @@ pub enum Entry {
         scope: String,
         /// The project of a `project` or a `local` install.
         project: Option<PathBuf>,
+        /// True for a `project` install whose `.claude/settings.json`
+        /// git tracks: riff does not uninstall it, because the
+        /// uninstall changes that file.
+        tracked: bool,
     },
     /// The marketplace `riff`.
     Marketplace,
@@ -227,6 +238,24 @@ fn take(
     done
 }
 
+/// True when git tracks `file`: `git ls-files --error-unmatch` in its
+/// directory passes. False when git cannot tell, for example outside
+/// a clone (01M4CMJPGS613K2FHQ6DKSY2WJ).
+pub fn tracked(file: &Path) -> bool {
+    let (Some(dir), Some(name)) = (file.parent(), file.file_name()) else {
+        return false;
+    };
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["ls-files", "--error-unmatch", "--"])
+        .arg(name)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 /// A JSON file, or `None` when it is missing or not JSON.
 fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
@@ -243,7 +272,15 @@ pub fn find(places: &Places) -> Vec<Entry> {
             for install in installs {
                 let scope = install["scope"].as_str().unwrap_or("user").to_owned();
                 let project = install["projectPath"].as_str().map(PathBuf::from);
-                found.push(Entry::Install { scope, project });
+                let tracked = scope == "project"
+                    && project
+                        .as_ref()
+                        .is_some_and(|p| tracked(&p.join(".claude/settings.json")));
+                found.push(Entry::Install {
+                    scope,
+                    project,
+                    tracked,
+                });
             }
         }
         if read_json(&plugins.join("known_marketplaces.json"))
@@ -258,10 +295,32 @@ pub fn find(places: &Places) -> Vec<Entry> {
         };
         let (_, what) = without_riff(&text, setup.as_ref());
         if !what.is_empty() {
-            found.push(Entry::Settings { file, what });
+            let tracked = tracked(&file);
+            found.push(Entry::Settings {
+                file,
+                what,
+                tracked,
+            });
         }
     }
     found
+}
+
+/// True when riff does not remove `entry`, because git tracks the file
+/// that the removal changes (01M4CMJPGS613K2FHQ6DKSY2WJ).
+///
+/// ```
+/// use riff::old_config::{Entry, is_tracked};
+///
+/// let file = "/h/app/.claude/settings.json".into();
+/// assert!(is_tracked(&Entry::Settings { file, what: vec![], tracked: true }));
+/// assert!(!is_tracked(&Entry::Marketplace));
+/// ```
+pub fn is_tracked(entry: &Entry) -> bool {
+    matches!(
+        entry,
+        Entry::Settings { tracked: true, .. } | Entry::Install { tracked: true, .. }
+    )
 }
 
 /// The lines that show `entry` to the person.
@@ -269,21 +328,24 @@ pub fn find(places: &Places) -> Vec<Entry> {
 /// ```
 /// use riff::old_config::{Entry, lines};
 ///
-/// let entry = Entry::Settings { file: "/h/.claude/settings.json".into(), what: vec!["statusLine".into()] };
+/// let file = "/h/.claude/settings.json".into();
+/// let entry = Entry::Settings { file, what: vec!["statusLine".into()], tracked: false };
 /// assert_eq!(lines(&entry), ["/h/.claude/settings.json: statusLine"]);
-/// let install = Entry::Install { scope: "local".into(), project: Some("/h/app".into()) };
+/// let project = Some("/h/app".into());
+/// let install = Entry::Install { scope: "local".into(), project, tracked: false };
 /// assert_eq!(lines(&install), ["the plugin riff@riff, installed in the scope local of /h/app"]);
 /// assert_eq!(lines(&Entry::Marketplace), ["the plugin marketplace riff"]);
 /// ```
 pub fn lines(entry: &Entry) -> Vec<String> {
     match entry {
-        Entry::Settings { file, what } => what
+        Entry::Settings { file, what, .. } => what
             .iter()
             .map(|w| format!("{}: {w}", file.display()))
             .collect(),
         Entry::Install {
             scope,
             project: Some(project),
+            ..
         } => vec![format!(
             "the plugin {PLUGIN}, installed in the scope {scope} of {}",
             project.display()
@@ -291,6 +353,7 @@ pub fn lines(entry: &Entry) -> Vec<String> {
         Entry::Install {
             scope,
             project: None,
+            ..
         } => vec![format!(
             "the plugin {PLUGIN}, installed in the scope {scope}"
         )],
@@ -300,13 +363,14 @@ pub fn lines(entry: &Entry) -> Vec<String> {
 
 /// Removes each entry of `found` with the `claude` command at `claude`
 /// and by an edit of each settings file in `places`. It does the steps
-/// of `claude` first: they can change the settings files. Gives one line
-/// for each step that failed.
+/// of `claude` first: they can change the settings files. It skips each
+/// entry and each file that git tracks ([`is_tracked`], [`tracked`]).
+/// Gives one line for each step that failed.
 pub fn remove(found: &[Entry], claude: &Path, places: &Places) -> Vec<String> {
     let mut failed = Vec::new();
-    for entry in found {
+    for entry in found.iter().filter(|e| !is_tracked(e)) {
         let (args, dir): (Vec<&str>, Option<&Path>) = match entry {
-            Entry::Install { scope, project } => (
+            Entry::Install { scope, project, .. } => (
                 vec!["plugin", "uninstall", PLUGIN, "--scope", scope],
                 project.as_deref(),
             ),
@@ -333,6 +397,9 @@ pub fn remove(found: &[Entry], claude: &Path, places: &Places) -> Vec<String> {
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
         };
+        if tracked(&file) {
+            continue;
+        }
         if let (Some(new), _) = without_riff(&text, setup.as_ref())
             && let Err(e) = std::fs::write(&file, new)
         {
@@ -392,11 +459,13 @@ mod tests {
             [
                 Entry::Install {
                     scope: "user".into(),
-                    project: None
+                    project: None,
+                    tracked: false,
                 },
                 Entry::Install {
                     scope: "local".into(),
-                    project: Some("/h".into())
+                    project: Some("/h".into()),
+                    tracked: false,
                 },
                 Entry::Marketplace,
             ]

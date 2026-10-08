@@ -123,6 +123,9 @@ riff
 ```
 
 ```text
+An older riff wrote these entries to files that git tracks:
+  /home/ada/app/.claude/settings.json: enabledPlugins."riff@riff"
+riff does not change a file that git tracks. Remove these entries in a pull request.
 An older riff wrote these entries to the Claude config:
   /home/ada/.claude/settings.json: enabledPlugins."riff@riff"
   /home/ada/.claude/settings.json: statusLine
@@ -131,8 +134,15 @@ riff gives Claude its plugin and settings at each start now, so it needs none of
 ```
 
 Type `y` and press Enter to remove them. riff keeps each other entry.
-When it changes `.claude/settings.json` of a clone, commit that file.
 Press Enter to keep them: riff asks again at the next start.
+
+riff never changes a file that git tracks. When git tracks
+`.claude/settings.json` of a clone, remove the listed entries from it
+in a pull request. When all the entries are in tracked files, riff
+lists them and does not ask.
+
+While an old entry stays, the sessions that riff starts are safe:
+riff turns off the old plugin `riff@riff` in their settings.
 
 ### Move from riff 1.3 to 2.0
 

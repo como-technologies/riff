@@ -293,6 +293,8 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
     // The status line and the rules of riff work
     // (01M4BYH874WQ16Q0337WQA8AMV).
     assert_eq!(settings["statusLine"]["command"], "riff statusline");
+    // The plugin of an older riff is off (01M4CMN13D97R2JKHYGFSAM313).
+    assert_eq!(settings["enabledPlugins"]["riff@riff"], false);
     assert!(
         rules("allow").contains(&"Bash(riff *)".to_owned()),
         "{settings}"
@@ -332,7 +334,9 @@ async fn riff_starts_one_lead_in_its_own_tmux_server() {
 
 /// `riff` lists the entries of an older riff in the Claude config, and
 /// removes them only after a yes. Each other entry stays
-/// (01M4BYH82P03FTXZBYC72BJ6F3).
+/// (01M4BYH82P03FTXZBYC72BJ6F3). A `.claude/settings.json` that git
+/// tracks stays byte for byte: riff lists its entries for a pull
+/// request (01M4CMJPGS613K2FHQ6DKSY2WJ).
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
     let api = start_server().await;
@@ -361,6 +365,8 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
         r#"{"permissions": {"allow": ["Bash(gh pr view *)", "Bash(make)"],
             "deny": ["Bash(git push * main)"]}}"#,
     );
+    git(&riff, &["add", ".claude/settings.json"]);
+    git(&riff, &["commit", "-q", "-m", "settings"]);
     write(
         &claude.join("plugins/installed_plugins.json"),
         r#"{"version": 2, "plugins": {"riff@riff": [{"scope": "user"}]}}"#,
@@ -372,7 +378,7 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
     // The edit keeps the mode of each file of the person.
     use std::os::unix::fs::PermissionsExt;
     let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
-    for path in [&user, &shared] {
+    for path in [&user, &local] {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
     let before = |path: &Path| std::fs::read_to_string(path).unwrap();
@@ -384,6 +390,7 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let shown = stdout(&out);
     for line in [
+        "An older riff wrote these entries to files that git tracks:".to_owned(),
         "An older riff wrote these entries to the Claude config:".to_owned(),
         format!("  {}: enabledPlugins.\"riff@riff\"", user.display()),
         format!("  {}: extraKnownMarketplaces.\"riff\"", user.display()),
@@ -427,12 +434,9 @@ async fn riff_removes_the_entries_of_an_older_riff_after_a_yes() {
             "permissions": {"allow": ["Bash(ls)"]}})
     );
     assert_eq!(json(&local), serde_json::json!({}));
-    assert_eq!(
-        json(&shared),
-        serde_json::json!({"permissions": {"allow": ["Bash(make)"]}})
-    );
+    assert_eq!(before(&shared), shared_text);
     assert_eq!(mode(&user), 0o600);
-    assert_eq!(mode(&shared), 0o600);
+    assert_eq!(mode(&local), 0o600);
     let calls = m.read("claude.log");
     let plugin: Vec<&str> = calls.lines().filter(|l| l.starts_with("plugin ")).collect();
     assert_eq!(

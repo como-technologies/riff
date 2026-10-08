@@ -264,6 +264,8 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     // No suggested prompt: no person types into a worker (01M4CGFMX16JY8W2P9JJDDTSFC).
     assert_eq!(settings["promptSuggestionEnabled"], false);
     assert_eq!(settings["enabledPlugins"]["rust-lsp@m"], false);
+    // The plugin of an older riff is off (01M4CMN13D97R2JKHYGFSAM313).
+    assert_eq!(settings["enabledPlugins"]["riff@riff"], false);
     assert_eq!(settings["env"]["TMPDIR"], tmp.as_str());
     assert_eq!(settings["env"]["CLAUDE_CODE_TMPDIR"], tmp.as_str());
     let deny = settings["permissions"]["deny"].as_array().unwrap();

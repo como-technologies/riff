@@ -101,7 +101,8 @@ pub const JOIN: &str = "Join the riff.";
 /// user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), no recap
 /// (01M3MN0D429T4Q80DYBE9S9XR7), no suggested prompt
 /// (01M4CGFMX16JY8W2P9JJDDTSFC), the riff status line
-/// (01M4BYH7Y3P1JMQR51TWFGVZ39), and each plugin of `lsp` off: the
+/// (01M4BYH7Y3P1JMQR51TWFGVZ39), the plugin of an older riff off
+/// (01M4CMN13D97R2JKHYGFSAM313), and each plugin of `lsp` off: the
 /// plugins with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3). A rule
 /// denies `riff cloud` (01M4262DY8NN30SC4REYX2G9DV).
 ///
@@ -109,27 +110,27 @@ pub const JOIN: &str = "Join the riff.";
 /// use riff::terminal::worker_settings;
 /// assert_eq!(
 ///     worker_settings(&[]),
-///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}"#,
+///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"riff@riff":false}}"#,
 /// );
 /// assert_eq!(
 ///     worker_settings(&["rust-analyzer-lsp@claude-plugins-official".into()]),
-///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@claude-plugins-official":false}}"#,
+///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"riff@riff":false,"rust-analyzer-lsp@claude-plugins-official":false}}"#,
 /// );
 /// ```
 pub fn worker_settings(lsp: &[String]) -> String {
-    let mut settings = serde_json::json!({
+    let off: serde_json::Map<String, serde_json::Value> = std::iter::once(crate::old_config::PLUGIN)
+        .chain(lsp.iter().map(String::as_str))
+        .map(|p| (p.to_owned(), false.into()))
+        .collect();
+    serde_json::json!({
         "remoteControlAtStartup": false,
         "awaySummaryEnabled": false,
         "promptSuggestionEnabled": false,
         "statusLine": crate::launch::statusline(),
         "permissions": {"deny": ["Bash(riff cloud)", "Bash(riff cloud *)"]},
-    });
-    if !lsp.is_empty() {
-        let off: serde_json::Map<String, serde_json::Value> =
-            lsp.iter().map(|p| (p.clone(), false.into())).collect();
-        settings["enabledPlugins"] = off.into();
-    }
-    settings.to_string()
+        "enabledPlugins": off,
+    })
+    .to_string()
 }
 
 /// `args` of `claude` with its flag settings changed by `edit`. It

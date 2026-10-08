@@ -1954,23 +1954,44 @@ pub fn start_no_sign_in(server: &str, error: &anyhow::Error) -> String {
 
 /// The question of `riff` about the riff entries of older releases in
 /// the Claude config (01M4BYH82P03FTXZBYC72BJ6F3): one line for each
+/// entry. `tracked` holds the entries in files that git tracks: riff
+/// lists them for a pull request and does not change them
+/// (01M4CMJPGS613K2FHQ6DKSY2WJ). It asks only when `remove` has an
 /// entry.
 ///
 /// ```
+/// let tracked = ["/h/app/.claude/settings.json: statusLine".to_owned()];
 /// assert_eq!(
-///     riff::text::old_config(&["/h/.claude/settings.json: statusLine".into()]),
-///     "An older riff wrote these entries to the Claude config:\n  \
+///     riff::text::old_config(&["/h/.claude/settings.json: statusLine".into()], &tracked),
+///     "An older riff wrote these entries to files that git tracks:\n  \
+///      /h/app/.claude/settings.json: statusLine\n\
+///      riff does not change a file that git tracks. Remove these entries in a pull request.\n\
+///      An older riff wrote these entries to the Claude config:\n  \
 ///      /h/.claude/settings.json: statusLine\n\
 ///      riff gives Claude its plugin and settings at each start now, so it needs none \
 ///      of them. Remove them? [y/N] "
 /// );
+/// assert!(riff::text::old_config(&[], &tracked).ends_with("in a pull request.\n"));
 /// ```
-pub fn old_config(lines: &[String]) -> String {
-    let lines: String = lines.iter().map(|l| format!("\n  {l}")).collect();
-    format!(
-        "An older riff wrote these entries to the Claude config:{lines}\nriff gives Claude its \
-         plugin and settings at each start now, so it needs none of them. Remove them? [y/N] "
-    )
+pub fn old_config(remove: &[String], tracked: &[String]) -> String {
+    let list = |lines: &[String]| -> String { lines.iter().map(|l| format!("\n  {l}")).collect() };
+    let mut out = String::new();
+    if !tracked.is_empty() {
+        out.push_str(&format!(
+            "An older riff wrote these entries to files that git tracks:{}\nriff does not \
+             change a file that git tracks. Remove these entries in a pull request.\n",
+            list(tracked)
+        ));
+    }
+    if !remove.is_empty() {
+        out.push_str(&format!(
+            "An older riff wrote these entries to the Claude config:{}\nriff gives Claude its \
+             plugin and settings at each start now, so it needs none of them. Remove them? \
+             [y/N] ",
+            list(remove)
+        ));
+    }
+    out
 }
 
 /// True for an answer that says yes: `y` or `yes`. Enter is no

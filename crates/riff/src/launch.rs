@@ -13,7 +13,7 @@
 //! |---|---|
 //! | `--plugin-dir DIR` | The plugin: the skill, the hooks, the commands ([`crate::plugin::root`]). |
 //! | `--strict-mcp-config --mcp-config FILE` | The riff MCP server and the servers of `workers.mcp`, and no other ([`crate::worker_mcp`]). |
-//! | `--settings` | The status line ([`statusline`]), the rules of riff work ([`riff_rules`], 01M4BYH874WQ16Q0337WQA8AMV) and the rules of the profile of the role ([`crate::role_rules`]). |
+//! | `--settings` | The status line ([`statusline`]), the plugin `riff@riff` of an older release off (01M4CMN13D97R2JKHYGFSAM313), the rules of riff work ([`riff_rules`], 01M4BYH874WQ16Q0337WQA8AMV) and the rules of the profile of the role ([`crate::role_rules`]). |
 //! | the variable `RIFF_ON=1` ([`ON`]) | The hooks, the status line and `riff mcp` act (01M4BYH80CFW1TBGKVA2VN9ZBQ). |
 //!
 //! ```mermaid
@@ -97,7 +97,10 @@ pub fn statusline() -> Value {
     json!({"type": "command", "command": STATUSLINE})
 }
 
-/// The flag settings with the status line and `rules`.
+/// The flag settings with the status line, `rules`, and the plugin of
+/// an older riff off: the user settings can still turn it on, and its
+/// hooks then run next to the hooks of `--plugin-dir`
+/// (01M4CMN13D97R2JKHYGFSAM313).
 ///
 /// ```
 /// use riff::permissions::Rules;
@@ -107,10 +110,15 @@ pub fn statusline() -> Value {
 /// assert_eq!(settings["statusLine"]["command"], "riff statusline");
 /// assert_eq!(settings["permissions"]["allow"][0], "Bash(riff *)");
 /// assert_eq!(settings["permissions"]["deny"][0], "D");
+/// assert_eq!(settings["enabledPlugins"]["riff@riff"], false);
 /// ```
 pub fn settings(rules: &Rules) -> Map<String, Value> {
     let mut settings = Map::new();
     settings.insert("statusLine".into(), statusline());
+    settings.insert(
+        "enabledPlugins".into(),
+        json!({crate::old_config::PLUGIN: false}),
+    );
     let args = crate::role_rules::flag(
         &["--settings".to_owned(), Value::Object(settings).to_string()],
         rules,

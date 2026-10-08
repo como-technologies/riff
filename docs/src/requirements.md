@@ -53,6 +53,18 @@
   `claude plugin uninstall`, `claude plugin marketplace remove` and an
   edit of each settings file. It keeps each other entry. On no, it
   asks again at the next start.
+- **01M4CMJPGS613K2FHQ6DKSY2WJ** riff never changes a file that git
+  tracks (`git ls-files --error-unmatch`). It lists the riff entries of
+  a tracked `.claude/settings.json` apart, and says to remove them in a
+  pull request. It does not uninstall a `project` install of
+  `riff@riff` whose `.claude/settings.json` git tracks. It changes only
+  the user config and untracked files, for example
+  `.claude/settings.local.json`. With only tracked entries, it does not
+  ask.
+- **01M4CMN13D97R2JKHYGFSAM313** The flag settings of the lead and of
+  each worker set `enabledPlugins."riff@riff"` to `false`. So the
+  plugin of an older release that the Claude config still turns on
+  does not run next to `--plugin-dir`.
 - **01M4BYH84X7B2D9EFYGP11GP8Y** `riff connect`, `riff enable`, `riff
   disable` and `riff setup` are gone. `riff connect` stays as a hidden
   command that does nothing, so that `riff update` of riff 1.3, which

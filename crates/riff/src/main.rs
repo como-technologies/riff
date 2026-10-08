@@ -2286,16 +2286,25 @@ fn lead_settings(
 
 /// Finds the riff entries that older releases wrote to the Claude
 /// config of the person, lists them, and removes them when the person
-/// says yes (01M4BYH82P03FTXZBYC72BJ6F3). `clones` are the clones that
-/// riff knows.
+/// says yes (01M4BYH82P03FTXZBYC72BJ6F3). It only lists the entries in
+/// files that git tracks, and does not ask for them
+/// (01M4CMJPGS613K2FHQ6DKSY2WJ). `clones` are the clones that riff
+/// knows.
 fn old_config(clones: Vec<std::path::PathBuf>) {
     let places = riff::old_config::Places::here(clones);
     let found = riff::old_config::find(&places);
     if found.is_empty() {
         return;
     }
-    let lines: Vec<String> = found.iter().flat_map(riff::old_config::lines).collect();
-    print!("{}", text::old_config(&lines));
+    let (tracked, found): (Vec<_>, Vec<_>) =
+        found.into_iter().partition(riff::old_config::is_tracked);
+    let lines = |entries: &[riff::old_config::Entry]| -> Vec<String> {
+        entries.iter().flat_map(riff::old_config::lines).collect()
+    };
+    print!("{}", text::old_config(&lines(&found), &lines(&tracked)));
+    if found.is_empty() {
+        return;
+    }
     let _ = std::io::Write::flush(&mut std::io::stdout());
     let mut answer = String::new();
     let read = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut answer);
