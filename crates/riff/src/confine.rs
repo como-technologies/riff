@@ -143,7 +143,14 @@
 //! | Surface | A session writes or asks | Read or run outside by | Risk | Decision |
 //! |---|---|---|---|---|
 //! | The lead | the clone, also its git config and hooks | each git command of riff, the person | the lead runs with no sandbox | #630 |
-//! | The riff state folder | each file there | `riff`, the wrapper, `claude`, `riff workers reap` | a program runs outside a sandbox, a file of the person changes, a worker stops | #630, #655: merge before 2.0.0, or Mike accepts at the sign-off |
+//! | The MCP config of a session | `workers-mcp.json` in the riff state folder | the `claude` of the lead and of each worker | a program runs outside a sandbox | #630 |
+//! | The tmux config of riff | `tmux.conf` in the riff state folder | the tmux server of riff, at its start | a program runs outside a sandbox, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
+//! | The list of clones | `clones` in the riff state folder | `riff`, at its start | riff starts the lead in a folder that a session picked | #655: merge before 2.0.0, or Mike accepts at the sign-off |
+//! | The deaths of workers | `worker-deaths` in the riff state folder | the rollout, each workers host | riff starts or stops workers on a false count, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
+//! | The context files of a worker | the start time of a context in the riff state folder | `riff workers reap` | the reap stops the wrong processes of a worker | #655: merge before 2.0.0, or Mike accepts at the sign-off |
+//! | The pool of build jobs | `jobs` in the riff state folder | the wrapper of each worker | a session takes the build jobs of other workers, a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
+//! | The said-once files and the update files | `no-jobserver`, `no-systemd` and the like, `update.lock`, `update-tried`, `update.log` | riff, the update of riff | riff says a thing one time too few, an update waits, a file of the person changes | Accept (proposed): they hold no command; #655 makes each write of riff there follow no link |
+//! | The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (proposed): a lock or a record holds no command |
 //! | The forge token files | its temp folder | the wrapper | a file of the person changes | #655: merge before 2.0.0, or Mike accepts at the sign-off |
 //! | The refs of the clone | a worker: `refs` | the fast-forward of the main clone, `riff worktrees clean`, the rules of riff | riff moves a branch to a commit or a name that a session picked | #656: merge before 2.0.0, or Mike accepts at the sign-off |
 //! | The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
