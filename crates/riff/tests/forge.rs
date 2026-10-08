@@ -13,7 +13,7 @@ use axum::Json;
 use axum::routing::post;
 use isolated::Isolated;
 use riff::forge::{self, Access, Files, ForgeEnv, Keeper, TokenRole};
-use riff_core::wire::{ForgeCheckReply, ForgeTokenReply, RoleCheck};
+use riff_core::wire::{ForgeAccounts, ForgeCheckReply, ForgeTokenReply, RoleCheck};
 use serde_json::{Value, json};
 
 /// A reply of the server: a token of `role` that ends in one hour.
@@ -215,14 +215,20 @@ fn clone() -> tempfile::TempDir {
 /// A riff-server on a free port whose forge routes the test gives: a
 /// riff with no sign-in gives no token, so the test answers in its
 /// place. Each other call goes to a real server. The bodies that the
-/// routes got are in the list.
+/// routes got are in the list, with each body of a register.
 async fn server_with(
     token: Option<ForgeTokenReply>,
     check: Option<ForgeCheckReply>,
 ) -> (String, Arc<Mutex<Vec<Value>>>) {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let (s1, s2) = (seen.clone(), seen.clone());
-    let mut router = axum::Router::new();
+    let (s1, s2, s3) = (seen.clone(), seen.clone(), seen.clone());
+    let mut router = axum::Router::new().route(
+        "/v1/register",
+        post(move |Json(body): Json<Value>| async move {
+            s3.lock().unwrap().push(body);
+            Json(Value::Null)
+        }),
+    );
     if let Some(token) = token {
         router = router.route(
             "/v1/forge/token",
@@ -513,10 +519,62 @@ async fn no_outcome_of_the_token_step_gives_claude_a_credential_of_the_person() 
             }
         }
     }
-    // The wrapper asked with the URI of its session.
-    let asked = seen.lock().unwrap().first().cloned().unwrap();
-    assert_eq!(
-        asked,
-        json!({ "me": "riff://mike@pangolin/como-technologies/riff?session=w-token" })
-    );
+    // The wrapper registered its session as a worker, so that the
+    // server knows it, then asked with the URI of its session
+    // (01M4CNN37FYYB99BS6QV2FFWZ8).
+    let me = "riff://mike@pangolin/como-technologies/riff?session=w-token";
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen[0], json!({ "me": me, "worker": true }));
+    assert_eq!(seen[1], json!({ "me": me }));
+}
+
+#[tokio::test]
+async fn riff_forge_allow_sends_the_account_and_shows_the_list() {
+    let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let s = seen.clone();
+    let router = axum::Router::new()
+        .route(
+            "/v1/forge/allow",
+            post(move |Json(body): Json<Value>| async move {
+                s.lock().unwrap().push(body);
+                Json(ForgeAccounts {
+                    accounts: vec!["acme".into(), "mike".into()],
+                })
+            }),
+        )
+        .layer(axum::middleware::map_response(
+            |mut r: axum::response::Response| async move {
+                let build = riff_core::build::VERSION.parse().unwrap();
+                r.headers_mut().insert(riff_core::build::HEADER, build);
+                r
+            },
+        ))
+        .fallback_service(riff_server::router());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let env = Isolated::new();
+    for args in [&["acme"][..], &["acme", "--remove"], &[]] {
+        let mut cmd = env.riff();
+        cmd.args(["forge", "allow"])
+            .args(args)
+            .env("RIFF_SERVER", &url)
+            .env("RIFF_USER", "mike")
+            .env("RIFF_HOST", "pangolin");
+        let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(out.status.success(), "{args:?}: {text}");
+        assert!(
+            text.contains("riff-server makes forge tokens for the repositories of: acme, mike"),
+            "{text}"
+        );
+    }
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen[0]["owner"], "acme");
+    assert_eq!(seen[0]["allowed"], true);
+    assert_eq!(seen[1]["allowed"], false);
+    assert!(seen[2].get("owner").is_none());
+    assert!(seen[0]["me"].as_str().unwrap().starts_with("riff://mike@pangolin"));
 }
