@@ -3663,6 +3663,10 @@ profile, in its `--settings`. They add to your own rules:
 
 - They allow the read of each path that the worker reads, and the read
   and the edit of each path that it writes.
+- They allow the `Bash` commands that the role needs, for example
+  `cargo test`, `just check` and `git commit` for a worker. A rule
+  names the program and the subcommand, so `cargo run` and
+  `cargo install` still go to the auto mode check.
 - They deny the read and the edit of each file and folder of your home
   that holds no path of the profile. riff looks at your home when the
   worker starts. They also deny your keyring, your D-Bus, your SSH and

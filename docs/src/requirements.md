@@ -4157,6 +4157,14 @@
   start. They also deny each place of a secret of the person.
 - **01M4BT33X0WVVJH7Y6AXSWZEYC** The rules of each role deny the edit
   of each `settings.json` and `settings.local.json` of Claude Code.
+- **01M4FD5TRS3T9KCG2960RQKSDQ** The rules of the lead, a worker and
+  a verifier allow a list of narrow `Bash` commands for their work, so
+  that the auto mode check of Claude Code does not ask for a routine
+  step. A rule names a program and a subcommand, for example
+  `cargo test` or `just check`. No rule names an interpreter or a
+  shell, no rule is `Bash(*)`, and no rule allows a command that
+  changes the sandbox or the rules. The lists are in the code
+  (`role_rules::bash`), and a test checks them.
 - **01M4BT33Z914GBHCGCAXFVQ2X7** When riff cannot make the profile of
   a role, the role starts with no rules of a profile, and says why in
   one line.

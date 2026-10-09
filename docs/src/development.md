@@ -254,6 +254,23 @@ with its output:
 cargo test -p riff --test all hosts:: -- --nocapture 2>&1 | grep 'slow under load'
 ```
 
+## Allow a command for a role
+
+A worker, a verifier and the lead run some commands with no question
+from the auto mode check of Claude Code, for example `cargo test`,
+`just check` and `git commit` for a worker. The lists are in
+`crates/riff/src/role_rules.rs`. See the rules of a worker:
+
+```sh
+riff workers rules
+```
+
+To allow one more command, add its program and subcommand to the list
+of the role in `role_rules::bash`, and push the change. A rule that you
+add with `/permissions` in a pane does not last: each new session has a
+new Claude folder. Never add a shell, an interpreter or `Bash(*)`: a
+test fails for them.
+
 ## Run the tests of one file
 
 The integration tests of a crate are one test binary, `all`. Each file
