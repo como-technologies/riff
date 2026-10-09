@@ -481,6 +481,11 @@ pub fn cargo_reads(cargo: &Path) -> Vec<PathBuf> {
         .into()
 }
 
+/// The project settings files of Claude Code in the `.claude` folder of
+/// a clone. A worker and a verifier read them and write neither
+/// (01M4FCYPWRWM8HXKN5ME3E3V86).
+pub const PROJECT_SETTINGS: [&str; 2] = ["settings.json", "settings.local.json"];
+
 /// The folders of the system that each role reads.
 pub const SYSTEM: [&str; 10] = [
     "/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/opt", "/dev", "/proc", "/sys",
@@ -611,7 +616,17 @@ impl Profile {
         reads.extend(s.tools.iter().cloned());
         match role {
             Role::TestRun => reads.extend([s.worktree.clone(), git]),
-            Role::Worker | Role::Verifier => reads.extend([git, s.rules.clone(), s.state.clone()]),
+            Role::Worker | Role::Verifier => {
+                // `claude` reads the project settings of the clone. A file
+                // that it cannot read gives a "Settings Error" dialog
+                // (EACCES), and Landlock cannot give ENOENT instead.
+                reads.extend([git, s.rules.clone(), s.state.clone()]);
+                reads.extend(
+                    PROJECT_SETTINGS
+                        .iter()
+                        .map(|f| s.clone.join(".claude").join(f)),
+                );
+            }
             Role::Lead => reads.extend([s.clone.clone(), s.rules.clone(), s.state.clone()]),
         }
         let network = match role {
@@ -1053,6 +1068,23 @@ mod tests {
         assert!(t.reads(git) && !t.writes(git));
         assert!(t.reads(Path::new("/usr/bin/git")));
         assert!(t.reads(Path::new("/home/ada/.cargo/bin/cargo")));
+    }
+
+    /// 01M4FCYPWRWM8HXKN5ME3E3V86: a worker, a verifier and a lead read
+    /// the project settings of the clone, and no AI role writes them.
+    #[test]
+    fn each_ai_role_reads_the_project_settings_and_writes_none() {
+        for role in [Role::Lead, Role::Worker, Role::Verifier] {
+            let p = Profile::of(role, &session()).unwrap();
+            for name in PROJECT_SETTINGS {
+                let file = Path::new("/home/ada/src/app/.claude").join(name);
+                assert!(p.reads(&file) && !p.writes(&file), "{role}: {name}");
+            }
+            let other = Path::new("/home/ada/src/app/.claude/commands/x.md");
+            assert_eq!(p.reads(other), role == Role::Lead, "{role}");
+        }
+        let t = Profile::of(Role::TestRun, &session()).unwrap();
+        assert!(!t.reads(Path::new("/home/ada/src/app/.claude/settings.json")));
     }
 
     #[test]

@@ -4678,6 +4678,11 @@
   worktrees folder. riff reads the `theme` of the person and no other
   key, and writes nothing to the files of the person. A key that is
   there stays.
+- **01M4FCYPWRWM8HXKN5ME3E3V86** A worker and a verifier read
+  `.claude/settings.json` and `.claude/settings.local.json` of the
+  clone, and no AI role writes them. The sandbox cannot hide a file
+  with ENOENT, so it grants the read: a file that `claude` cannot read
+  gives a "Settings Error" dialog.
 
 ## Open
 

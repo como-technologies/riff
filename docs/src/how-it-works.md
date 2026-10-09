@@ -3186,6 +3186,16 @@ flowchart LR
 | Network | riff server, forge, registries, model | the same | the same | loopback only |
 | Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
 
+A worker and a verifier read `.claude/settings.json` and
+`.claude/settings.local.json` of the clone, and write neither. The
+sandbox cannot hide a file with ENOENT. A file that `claude` cannot
+read gives a "Settings Error" dialog, so riff grants the read. To see
+the grant:
+
+```sh
+riff workers sandbox --role worker --show | grep settings
+```
+
 No role reads your home as a whole, your keyring, your D-Bus, your
 SSH or GnuPG keys, or the sign-in of `gh`. The key of the GitHub App
 of riff is never on your machine. riff refuses a path of a session

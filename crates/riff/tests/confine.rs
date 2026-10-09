@@ -386,6 +386,43 @@ fn a_worker_finds_the_first_run_answers_in_its_own_claude_folder() {
     assert_eq!(std::fs::read_to_string(&person).unwrap(), before);
 }
 
+/// 01M4FCYPWRWM8HXKN5ME3E3V86: a worker in its sandbox reads the two
+/// project settings files of the clone, so `claude` shows no "Settings
+/// Error", and it writes neither.
+#[test]
+fn a_worker_reads_the_project_settings_of_the_clone_and_writes_none() {
+    let m = Machine::new();
+    let dot = m.clone().join(".claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    for name in ["settings.json", "settings.local.json"] {
+        std::fs::write(dot.join(name), "{}\n").unwrap();
+    }
+    let result = m.worktrees().join("settings");
+    let mut body = format!(": > '{}'\n", result.display());
+    for name in ["settings.json", "settings.local.json"] {
+        let file = dot.join(name);
+        body.push_str(&format!(
+            "if cat '{f}' >/dev/null 2>&1; then echo '{name} read'; else echo '{name} no-read'; fi >> '{r}'\n\
+             if ( echo x >> '{f}' ) 2>/dev/null; then echo '{name} write'; else echo '{name} no-write'; fi >> '{r}'\n",
+            f = file.display(),
+            r = result.display(),
+        ));
+    }
+    let claude = m.claude(&body);
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&result).unwrap(),
+        "settings.json read\nsettings.json no-write\n\
+         settings.local.json read\nsettings.local.json no-write\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dot.join("settings.json")).unwrap(),
+        "{}\n"
+    );
+}
+
 /// 01M4CN0W3V733V6R2SG1YYZRCN: a worker commits in its worktree, and
 /// fetches and pushes it, with no write of the config and the hooks of
 /// the clone. The config and the hooks stay as they were.
