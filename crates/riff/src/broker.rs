@@ -100,7 +100,7 @@ pub const VAR: &str = "RIFF_BROKER";
 
 /// The variable with the path of the socket of the broker in a session.
 /// The Bash tool of Claude Code gives a command no file descriptor above
-/// 2, so a command connects by this path (01M4ECS7M6G3GSXAQ4TZK94P0S).
+/// 2, so a command connects by this path (01M4FCCSXDFSS0EAASN99NT04D).
 pub const SOCKET_VAR: &str = "RIFF_BROKER_SOCKET";
 
 /// The operations of the broker (01M4C5AQM63F58YQ9VA391513D).
@@ -276,7 +276,7 @@ pub fn check(request: &Request, root: &Path) -> Result<PathBuf, String> {
 
 /// The path of a new socket of a broker in the own folder `own` of a
 /// session: a name that no other process guesses
-/// (01M4ECS7M6G3GSXAQ4TZK94P0S). The path is short, so it fits in a
+/// (01M4FCCSXDFSS0EAASN99NT04D). The path is short, so it fits in a
 /// `sockaddr_un`.
 ///
 /// ```
@@ -393,7 +393,7 @@ struct Facts {
 }
 
 /// [`serve`], and also the requests of each process that connects to
-/// `listener` (01M4ECS7M6G3GSXAQ4TZK94P0S): the sockets of the Bash tool
+/// `listener` (01M4FCCSXDFSS0EAASN99NT04D): the sockets of the Bash tool
 /// of Claude Code have no file descriptor of the session, so such a
 /// command connects by the path of the socket ([`SOCKET_VAR`]). The end
 /// stays the end of `socket`.
@@ -711,7 +711,7 @@ pub fn ask_with(broker: RawFd, request: &Request, stdio: [RawFd; 3]) -> Result<R
 }
 
 /// The broker of this session, or `None`: a connection to the socket of
-/// [`SOCKET_VAR`] (01M4ECS7M6G3GSXAQ4TZK94P0S), else the file descriptor
+/// [`SOCKET_VAR`] (01M4FCCSXDFSS0EAASN99NT04D), else the file descriptor
 /// of [`VAR`]. The connection stays open as long as this process.
 pub fn here() -> Option<RawFd> {
     static HERE: std::sync::OnceLock<Option<RawFd>> = std::sync::OnceLock::new();
@@ -828,6 +828,70 @@ mod tests {
         let reply = ask(session.as_raw_fd(), &request("test-run", root.path())).unwrap();
         assert_eq!(reply, Reply::Code(0));
         assert!(ran.exists(), "the broker did not run test-run");
+    }
+
+    /// 01M4FCCSXDFSS0EAASN99NT04D: a process that connects to the path
+    /// socket of the broker asks it as it does with the file descriptor.
+    /// The socket is closed to other users, and a connection with no
+    /// request ends with no effect on the broker.
+    #[test]
+    fn a_process_asks_the_broker_by_the_path_of_its_socket() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::confine::resolve(tmp.path());
+        let ran = root.join("ran");
+        let riff = root.join("riff");
+        std::fs::write(&riff, format!("#!/bin/sh\ntouch '{}'\n", ran.display())).unwrap();
+        std::fs::set_permissions(&riff, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = socket_path(&root).unwrap();
+        let listener = match listen(&path) {
+            Ok(listener) => listener,
+            // A test inside a session of an older riff: its seccomp
+            // filter stops each unix socket with a name. The Gate runs
+            // this test outside a sandbox.
+            Err(e) if format!("{e:#}").contains("EACCES") => {
+                println!("skip: this process can make no unix socket: {e:#}");
+                return;
+            }
+            Err(e) => panic!("{e:#}"),
+        };
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let (session, pair) = socketpair(
+            AddressFamily::Unix,
+            SockType::SeqPacket,
+            None,
+            SockFlag::SOCK_CLOEXEC,
+        )
+        .unwrap();
+        let take: Take = std::sync::Arc::new(|_| anyhow::bail!("no riff-server in this test"));
+        let here = crate::door::Here {
+            server: "http://127.0.0.1:9".into(),
+            tmux: None,
+            lead: None,
+        };
+        let (r, c) = (root.clone(), riff.clone());
+        std::thread::spawn(move || serve_with(pair, Some(listener), &r, &r, &c, take, here));
+
+        // A connection that sends nothing, and then closes.
+        drop(unsafe_free(connect(&path).unwrap()));
+        let fd = connect(&path).unwrap();
+        let reply = ask(fd, &request("test-run", &root)).unwrap();
+        assert_eq!(reply, Reply::Code(0));
+        assert!(ran.exists(), "the broker did not run test-run");
+        // The same connection asks again; a refusal comes back too.
+        let reply = ask(fd, &request("shell", &root)).unwrap();
+        assert!(matches!(&reply, Reply::Refused(why) if why.contains("no operation")));
+        drop(session);
+    }
+
+    /// Takes the ownership of a connected socket, for a drop.
+    fn unsafe_free(fd: RawFd) -> OwnedFd {
+        // SAFETY: `connect` gave this file descriptor to the caller, and
+        // no other value holds it.
+        unsafe { OwnedFd::from_raw_fd(fd) }
     }
 
     /// A fake `riff` in `dir` that writes its `PWD` to the file `seen`.

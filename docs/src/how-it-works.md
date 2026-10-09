@@ -3218,11 +3218,19 @@ that is not absolute or that has a `..` part.
 - **No crash report.** A crash in a session or in its test run makes
   no core file, and starts no crash dialog on your desktop: the core
   size limit is 1 byte.
-- **No tmux and no unix socket with a name.** A session cannot reach
-  your tmux servers, also not the tmux server of riff. riff removes
-  `TMUX` and `TMUX_PANE`, and a session cannot make a unix socket with
-  a name: not for tmux, D-Bus, your keyring or an SSH agent. A pair of
-  sockets still works.
+- **No tmux and no stream unix socket with a name.** A session cannot
+  reach your tmux servers, also not the tmux server of riff. riff
+  removes `TMUX` and `TMUX_PANE`, and a session cannot make a stream
+  unix socket with a name: not for tmux, D-Bus, your keyring or an SSH
+  agent. A pair of sockets still works.
+- **One exception: the socket of the broker.** A session can make a
+  unix socket of the kind `SOCK_SEQPACKET`. It connects with it to its
+  broker, so `riff test-run`, `riff pr` and `riff workers` work in a
+  command of the Bash tool of Claude Code. That tool gives a command
+  no file descriptor of the session. This is an exception until #682,
+  when a mount namespace hides the sockets of your services (#645).
+  The broker listens on a socket in the own folder of the session. The
+  name has random bytes, and only your user connects to it.
 
 #### Keep your cargo registry token out of the sessions
 
@@ -3266,8 +3274,16 @@ cat /sys/kernel/security/lsm
 The list names `landlock`. riff uses each right of the kernel. Linux
 7.0 has Landlock ABI 8. ABI 8 cannot stop a connect to a unix socket
 with a path, for example your D-Bus socket. Linux 7.1 (ABI 9) can. So
-riff also applies a seccomp filter: no session makes a unix socket
-with a name, on each kernel.
+riff also applies a seccomp filter: no session makes a stream unix
+socket with a name, on each kernel. Only the kind `SOCK_SEQPACKET`
+stays, for the broker (#673, #682). Your tmux server and your D-Bus
+listen on stream sockets, so a seqpacket connect to them fails. A
+service of yours that listens on a seqpacket socket is reachable. To
+see these on your machine:
+
+```sh
+ss -xl | grep seq
+```
 
 #### Run the tests of a worker
 
@@ -3289,6 +3305,11 @@ sequenceDiagram
     T-->>W: the output
     B-->>W: the exit code
 ```
+
+A command that the Bash tool of Claude Code starts has no file
+descriptor of the session. It asks the broker through the socket that
+`RIFF_BROKER_SOCKET` names. A command with the file descriptor
+`RIFF_BROKER` asks through that.
 
 Run the tests in a worker as everywhere:
 
@@ -4096,7 +4117,7 @@ Each row is a surface with a control, and the test of that control.
 | The git dir of the clone | a worker: its objects, refs, logs and worktrees | each git command of riff in the clone | a worker writes no config and no hooks; riff runs git with no hooks, no fsmonitor and no submodule | `a_worker_does_only_what_its_profile_allows`, `a_worker_commits_and_pushes_with_no_write_of_the_git_config` |
 | The git dirs of a worktree | the `.git` file of its worktree, `gitdir` and `commondir` in `.git/worktrees/NAME` | `riff worktrees clean` | riff sets the git dirs itself, and runs no git in a worktree that names another git dir | `worktrees_clean_runs_no_program_of_a_git_dir_that_a_session_names`, `a_link_or_a_way_out_of_the_worktree_gives_no_git`, `a_clone_with_a_config_of_each_worktree_gives_no_git` |
 | The files of a worktree | each file, for example `.gitattributes` | `git status`, `add` and `commit` of riff | these git steps run in the sandbox of a worker | `worktrees_clean_reads_a_worktree_with_the_rights_of_a_worker` |
-| A broker request | an operation, a folder and variables | `riff workers broker` | only the operations of its list, a folder in the worktree, only the variables of cargo and the tests | `an_unknown_operation_is_refused`, `the_broker_keeps_only_the_variables_of_the_tests`, `a_test_run_in_a_worker_runs_through_the_broker` |
+| A broker request | an operation, a folder and variables | `riff workers broker` | only the operations of its list, a folder in the worktree, only the variables of cargo and the tests | `an_unknown_operation_is_refused`, `the_broker_keeps_only_the_variables_of_the_tests`, `a_test_run_in_a_worker_runs_through_the_broker`, `a_command_with_no_broker_fd_asks_the_broker_by_its_socket` |
 | The folders of a test run | a target, a planted `.git` file | `riff test-run` | the target, the clone and the worktree come from the broker | `a_test_run_writes_no_folder_that_the_request_names`, `a_planted_git_file_gives_a_test_run_no_other_git_dir` |
 | The environment of a test run | the variables of the request | each test | an empty environment, then only `TEST_RUN_VARS` | `no_credential_and_no_unknown_variable_of_the_parent_reaches_a_test` |
 | The cargo home | a read of the registry token | `cargo` of the person | no role reads `credentials.toml` or `credentials` | `no_session_and_no_test_run_reads_the_cargo_registry_tokens` |
@@ -4105,7 +4126,7 @@ Each row is a surface with a control, and the test of that control.
 | The permission rules of a session | a write of its rules file | `claude` | the rules file is outside each write path | `no_role_writes_the_permission_rules_of_its_session`, `a_worker_does_only_what_its_profile_allows` |
 | The plugin of riff and the git config of the person | a write | `claude`, git | a session reads them only | `a_worker_does_only_what_its_profile_allows` |
 | The Claude folder of the person | a write of its settings | the `claude` of the person | no session writes it; each session has its own Claude folder | `a_worker_does_only_what_its_profile_allows`, `no_role_edits_a_settings_file_of_claude_code` |
-| The tmux servers and the D-Bus | a connect | tmux, D-Bus services | no unix socket with a name; no `TMUX`; the bus is a secret path | `a_worker_reaches_no_tmux_server`, `no_role_reaches_the_home_the_keyring_or_the_bus_of_the_person` |
+| The tmux servers and the D-Bus | a connect | tmux, D-Bus services | no stream unix socket with a name (a seqpacket one stays for the broker: an exception until #682); no `TMUX`; the bus is a secret path | `a_worker_reaches_no_tmux_server`, `no_role_reaches_the_home_the_keyring_or_the_bus_of_the_person` |
 | The other processes of the person | a signal, a read of `/proc/PID/environ` | each process | the scope of signals of Landlock; no trace | `a_worker_does_only_what_its_profile_allows` |
 | The user manager of systemd | a call | systemd | no profile reaches a bus of systemd | `the_worker_profile_has_no_access_to_the_systemd_user_bus` |
 | A host request | a request in the name of the lead | `riff workers host` | only a signed request of the lead | `a_host_refuses_a_request_that_is_not_from_the_lead` |
@@ -4132,6 +4153,7 @@ accept. Mike signed off this table on 2026-10-08 (#644).
 | The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (Mike, 2026-10-08): a lock or a record holds no command |
 | The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
 | The variables of a broker request | a bus address | `riff test-run` | a test run gets a variable that is not of cargo or the tests | #654 |
+| The seqpacket unix sockets | a connect to a service that listens on a seqpacket socket | that service of the person | a session reaches such a service; the broker needs this kind of socket (#673). On the check host (`ss -xl`) only `/run/udev/control` listens, and only root connects to it; another host can differ, and a seqpacket service that starts later is reachable | #682 (restore after #645) |
 | The worktrees of other sessions | the worktrees folder of the clone | the other sessions | a worker changes the work of another session | #645 |
 | Forge tokens in an allowed account | a session in a repository of the account | riff-server | each member of the riff gets a token for each repository of an allowed account where it has a session | Accept (Mike, 2026-10-08): the owner admits each member, and the token has the rights of the role only |
 | The lead token of a person | a token with no session | riff-server | the token lives up to one hour after the allow or the lead ends | Accept (Mike, 2026-10-08): one hour at most |
