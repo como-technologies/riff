@@ -467,6 +467,32 @@ fn a_worker_reads_no_git_config_of_the_person() {
     assert!(!status.contains("exclude"), "{status}");
 }
 
+/// #693: `claude` runs its own `git` for `EnterWorktree` with none of the
+/// `GIT_CONFIG_*` variables of the session. With a `~/.gitconfig` that
+/// the sandbox cannot read, that git ends with "unable to access
+/// ~/.gitconfig: Permission denied" and a fatal error, so `EnterWorktree`
+/// makes no worktree. This test runs the call as `claude` runs it.
+#[test]
+fn the_git_of_claude_with_no_git_config_variables_reads_the_worktrees() {
+    let m = Machine::new();
+    std::fs::write(
+        m.home().join(".gitconfig"),
+        "[user]\n\tname = Ada\n\temail = ada@example.com\n",
+    )
+    .unwrap();
+    let result = m.worktrees().join("result");
+    let claude = m.claude(&format!(
+        "cd \"$(dirname \"$0\")/issue-1\"\n\
+         env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_NOSYSTEM git worktree list > '{0}.list' 2>&1; echo \"list $?\" > '{0}'",
+        result.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let list = std::fs::read_to_string(m.worktrees().join("result.list")).unwrap();
+    assert_eq!(std::fs::read_to_string(&result).unwrap(), "list 0\n", "{list}");
+}
+
 /// 01M4GK19EM7YYT1SEZBP9BFS71: a commit of a worker names the session
 /// as its author and committer, not the person: not the name and the
 /// email in the git config of the person, and not those in the git
