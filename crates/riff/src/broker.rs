@@ -98,6 +98,11 @@ use serde::{Deserialize, Serialize};
 /// The variable with the file descriptor of the broker in a session.
 pub const VAR: &str = "RIFF_BROKER";
 
+/// The variable with the path of the socket of the broker in a session.
+/// The Bash tool of Claude Code gives a command no file descriptor above
+/// 2, so a command connects by this path (01M4ECS7M6G3GSXAQ4TZK94P0S).
+pub const SOCKET_VAR: &str = "RIFF_BROKER_SOCKET";
+
 /// The operations of the broker (01M4C5AQM63F58YQ9VA391513D).
 pub const OPS: [&str; 2] = ["test-run", "outside"];
 
@@ -269,16 +274,57 @@ pub fn check(request: &Request, root: &Path) -> Result<PathBuf, String> {
     }
 }
 
+/// The path of a new socket of a broker in the own folder `own` of a
+/// session: a name that no other process guesses
+/// (01M4ECS7M6G3GSXAQ4TZK94P0S). The path is short, so it fits in a
+/// `sockaddr_un`.
+///
+/// ```
+/// let own = std::path::Path::new("/run/user/1000/riff/sessions/s1");
+/// let path = riff::broker::socket_path(own)?;
+/// assert!(path.starts_with(own));
+/// assert!(path.to_str().unwrap().len() < 108);
+/// assert_ne!(path, riff::broker::socket_path(own)?);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn socket_path(own: &Path) -> Result<PathBuf> {
+    let mut token = [0u8; 8];
+    getrandom::fill(&mut token).map_err(|e| anyhow::anyhow!("no random bytes: {e}"))?;
+    let name: String = token.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(own.join(format!("b-{name}.sock")))
+}
+
+/// Makes the socket of the broker at `path`, for the user of this
+/// process only (mode 0600), and listens on it.
+pub fn listen(path: &Path) -> Result<OwnedFd> {
+    use nix::sys::socket::{Backlog, UnixAddr, bind, listen, socket};
+    use std::os::unix::fs::PermissionsExt;
+    let fd = socket(
+        AddressFamily::Unix,
+        SockType::SeqPacket,
+        SockFlag::SOCK_CLOEXEC,
+        None,
+    )
+    .context("cannot make the socket of the broker")?;
+    let addr = UnixAddr::new(path).context("the socket of the broker has a path too long")?;
+    bind(fd.as_raw_fd(), &addr).context("cannot bind the socket of the broker")?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .context("cannot close the socket of the broker to other users")?;
+    listen(&fd, Backlog::new(64)?).context("cannot listen on the socket of the broker")?;
+    Ok(fd)
+}
+
 /// Starts the broker outside the sandbox: `riff --server SERVER workers
-/// broker --root ROOT --clone CLONE`, with the program `riff`. Returns
-/// the end of the session, for [`VAR`]. The broker gets the other end as
-/// its stdin.
+/// broker --root ROOT --clone CLONE --socket SOCKET`, with the program
+/// `riff`. Returns the end of the session, for [`VAR`]. The broker gets
+/// the other end as its stdin, and listens on `socket` ([`SOCKET_VAR`]).
 pub fn start(
     riff: &Path,
     server: &str,
     role: crate::profile::Role,
     root: &Path,
     clone: &Path,
+    socket: &Path,
 ) -> Result<OwnedFd> {
     let (session, broker) = socketpair(
         AddressFamily::Unix,
@@ -300,7 +346,10 @@ pub fn start(
         .arg(root)
         .arg("--clone")
         .arg(clone)
+        .arg("--socket")
+        .arg(socket)
         .env_remove(VAR)
+        .env_remove(SOCKET_VAR)
         .stdin(Stdio::from(broker))
         // No pipe of the session stays open in the broker: it lives as
         // long as the last process of the session.
@@ -328,73 +377,152 @@ pub fn serve(
     take: Take,
     here: crate::door::Here,
 ) -> Result<()> {
-    let root = crate::confine::resolve(root);
-    let clone = crate::confine::resolve(clone);
-    let mut doors: Vec<std::thread::JoinHandle<()>> = Vec::new();
+    serve_with(socket, None, root, clone, riff, take, here)
+}
+
+/// What a request needs from the broker, for each thread of it.
+struct Facts {
+    root: PathBuf,
+    clone: PathBuf,
+    riff: PathBuf,
+    take: Take,
+    here: crate::door::Here,
+    /// The threads of the operations of [`crate::door`]: the end of the
+    /// broker waits for them.
+    doors: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>,
+}
+
+/// [`serve`], and also the requests of each process that connects to
+/// `listener` (01M4ECS7M6G3GSXAQ4TZK94P0S): the sockets of the Bash tool
+/// of Claude Code have no file descriptor of the session, so such a
+/// command connects by the path of the socket ([`SOCKET_VAR`]). The end
+/// stays the end of `socket`.
+pub fn serve_with(
+    socket: OwnedFd,
+    listener: Option<OwnedFd>,
+    root: &Path,
+    clone: &Path,
+    riff: &Path,
+    take: Take,
+    here: crate::door::Here,
+) -> Result<()> {
+    let facts = std::sync::Arc::new(Facts {
+        root: crate::confine::resolve(root),
+        clone: crate::confine::resolve(clone),
+        riff: riff.to_path_buf(),
+        take,
+        here,
+        doors: std::sync::Mutex::new(Vec::new()),
+    });
+    if let Some(listener) = listener {
+        let facts = facts.clone();
+        std::thread::spawn(move || accept_all(&listener, &facts));
+    }
     loop {
-        let mut buf = vec![0u8; MAX];
-        let mut space = nix::cmsg_space!([RawFd; 4]);
-        let (len, fds) = {
-            let mut iov = [IoSliceMut::new(&mut buf)];
-            let msg = recvmsg::<()>(
-                socket.as_raw_fd(),
-                &mut iov,
-                Some(&mut space),
-                MsgFlags::MSG_CMSG_CLOEXEC,
-            )
-            .context("the broker cannot read a request")?;
-            let mut fds = vec![];
-            for cmsg in msg.cmsgs().context("a request with too many files")? {
-                if let ControlMessageOwned::ScmRights(raw) = cmsg {
-                    fds.extend(raw);
-                }
-            }
-            (msg.bytes, fds)
-        };
-        // SAFETY: SCM_RIGHTS of this recvmsg gave each of these file
-        // descriptors to this process, and no other value holds one.
-        let fds: Vec<OwnedFd> = fds
-            .into_iter()
-            .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })
-            .collect();
-        if len == 0 && fds.is_empty() {
+        let (body, fds) = receive(&socket).context("the broker cannot read a request")?;
+        if body.is_empty() && fds.is_empty() {
+            let doors = std::mem::take(&mut *facts.doors.lock().unwrap_or_else(|e| e.into_inner()));
             for door in doors {
                 let _ = door.join();
             }
             return Ok(());
         }
-        let (root, clone, riff) = (root.clone(), clone.clone(), riff.to_path_buf());
-        let take = take.clone();
-        let here = here.clone();
-        let request = serde_json::from_slice::<Request>(&buf[..len]);
-        let door = request.as_ref().is_ok_and(|r| crate::door::is_op(&r.op));
-        let thread = std::thread::spawn(move || {
-            let mut fds = fds.into_iter();
-            let Some(reply) = fds.next() else { return };
-            let answer = match request {
-                Err(e) => Reply::Refused(format!("a request that riff cannot read: {e}")),
-                Ok(request) if crate::door::is_op(&request.op) => {
-                    // stdin, stdout, stderr: the door writes its reply
-                    // to stdout.
-                    let stdout = fds.nth(1);
-                    crate::door::answer(&here, &request, stdout)
-                }
-                Ok(request) if request.op == "outside" => outside(
-                    &request,
-                    &root,
-                    fds.collect(),
-                    &take,
-                    OUTSIDE_EVERY,
-                    OUTSIDE_WAIT,
-                ),
-                Ok(request) => answer(&request, &root, &clone, &riff, fds.collect()),
-            };
-            let _ = send(&reply, &answer, &[]);
-        });
-        if door {
-            doors.retain(|d| !d.is_finished());
-            doors.push(thread);
+        dispatch(&facts, &body, fds);
+    }
+}
+
+/// Reads one message of `socket`: its body and its file descriptors.
+fn receive(socket: &OwnedFd) -> Result<(Vec<u8>, Vec<OwnedFd>)> {
+    let mut buf = vec![0u8; MAX];
+    let mut space = nix::cmsg_space!([RawFd; 4]);
+    let (len, fds) = {
+        let mut iov = [IoSliceMut::new(&mut buf)];
+        let msg = recvmsg::<()>(
+            socket.as_raw_fd(),
+            &mut iov,
+            Some(&mut space),
+            MsgFlags::MSG_CMSG_CLOEXEC,
+        )?;
+        let mut fds = vec![];
+        for cmsg in msg.cmsgs().context("a request with too many files")? {
+            if let ControlMessageOwned::ScmRights(raw) = cmsg {
+                fds.extend(raw);
+            }
         }
+        (msg.bytes, fds)
+    };
+    // SAFETY: SCM_RIGHTS of this recvmsg gave each of these file
+    // descriptors to this process, and no other value holds one.
+    let fds = fds
+        .into_iter()
+        .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })
+        .collect();
+    buf.truncate(len);
+    Ok((buf, fds))
+}
+
+/// Runs one request in a thread of its own, and sends the reply to the
+/// first file descriptor of the request.
+fn dispatch(facts: &std::sync::Arc<Facts>, body: &[u8], fds: Vec<OwnedFd>) {
+    let request = serde_json::from_slice::<Request>(body);
+    let door = request.as_ref().is_ok_and(|r| crate::door::is_op(&r.op));
+    let own = facts.clone();
+    let thread = std::thread::spawn(move || {
+        let mut fds = fds.into_iter();
+        let Some(reply) = fds.next() else { return };
+        let answer = match request {
+            Err(e) => Reply::Refused(format!("a request that riff cannot read: {e}")),
+            Ok(request) if crate::door::is_op(&request.op) => {
+                // stdin, stdout, stderr: the door writes its reply
+                // to stdout.
+                let stdout = fds.nth(1);
+                crate::door::answer(&own.here, &request, stdout)
+            }
+            Ok(request) if request.op == "outside" => outside(
+                &request,
+                &own.root,
+                fds.collect(),
+                &own.take,
+                OUTSIDE_EVERY,
+                OUTSIDE_WAIT,
+            ),
+            Ok(request) => answer(&request, &own.root, &own.clone, &own.riff, fds.collect()),
+        };
+        let _ = send(&reply, &answer, &[]);
+    });
+    if door {
+        let mut doors = facts.doors.lock().unwrap_or_else(|e| e.into_inner());
+        doors.retain(|d| !d.is_finished());
+        doors.push(thread);
+    }
+}
+
+/// Takes each connection to `listener` for a thread of its own. It
+/// serves the requests of a connection until the process closes it. A
+/// connection of another user gets nothing.
+fn accept_all(listener: &OwnedFd, facts: &std::sync::Arc<Facts>) {
+    use nix::sys::socket::{accept4, getsockopt, sockopt::PeerCredentials};
+    loop {
+        let conn = match accept4(listener.as_raw_fd(), SockFlag::SOCK_CLOEXEC) {
+            // SAFETY: accept4 gave this file descriptor to this process.
+            Ok(fd) => unsafe { OwnedFd::from_raw_fd(fd) },
+            Err(nix::errno::Errno::EINTR | nix::errno::Errno::ECONNABORTED) => continue,
+            Err(_) => return,
+        };
+        let own = getsockopt(&conn, PeerCredentials)
+            .is_ok_and(|c| c.uid() == nix::unistd::geteuid().as_raw());
+        if !own {
+            continue;
+        }
+        let facts = facts.clone();
+        std::thread::spawn(move || {
+            while let Ok((body, fds)) = receive(&conn) {
+                if body.is_empty() && fds.is_empty() {
+                    return;
+                }
+                dispatch(&facts, &body, fds);
+            }
+        });
     }
 }
 
@@ -433,6 +561,7 @@ fn answer(request: &Request, root: &Path, clone: &Path, riff: &Path, stdio: Vec<
         .current_dir(&cwd)
         .env("PWD", &cwd)
         .env_remove(VAR)
+        .env_remove(SOCKET_VAR)
         .env(
             crate::sandbox::WITHIN_VAR,
             within(root, std::env::var_os("CARGO_TARGET_DIR")),
@@ -514,6 +643,7 @@ fn outside(
         .current_dir(&cwd)
         .env("PWD", &cwd)
         .env_remove(VAR)
+        .env_remove(SOCKET_VAR)
         .stdin(Stdio::from(stdin))
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -580,9 +710,43 @@ pub fn ask_with(broker: RawFd, request: &Request, stdio: [RawFd; 3]) -> Result<R
     Ok(serde_json::from_slice(&buf[..len])?)
 }
 
-/// The broker of this session, from [`VAR`], or `None`.
+/// The broker of this session, or `None`: a connection to the socket of
+/// [`SOCKET_VAR`] (01M4ECS7M6G3GSXAQ4TZK94P0S), else the file descriptor
+/// of [`VAR`]. The connection stays open as long as this process.
 pub fn here() -> Option<RawFd> {
-    std::env::var(VAR).ok()?.parse().ok()
+    static HERE: std::sync::OnceLock<Option<RawFd>> = std::sync::OnceLock::new();
+    *HERE.get_or_init(|| {
+        let path = std::env::var_os(SOCKET_VAR).filter(|p| !p.is_empty());
+        path.and_then(|p| connect(Path::new(&p)).ok())
+            .or_else(|| std::env::var(VAR).ok()?.parse().ok())
+    })
+}
+
+/// Connects to the socket of a broker at `path`. The broker makes the
+/// socket at its start, so a connect that finds no socket yet tries
+/// again for a short time.
+pub fn connect(path: &Path) -> Result<RawFd> {
+    use nix::sys::socket::{UnixAddr, connect, socket};
+    use std::os::fd::IntoRawFd;
+    let addr = UnixAddr::new(path)?;
+    let mut tries = 0;
+    loop {
+        let fd = socket(
+            AddressFamily::Unix,
+            SockType::SeqPacket,
+            SockFlag::SOCK_CLOEXEC,
+            None,
+        )
+        .context("cannot make the socket to the broker")?;
+        match connect(fd.as_raw_fd(), &addr) {
+            Ok(()) => return Ok(fd.into_raw_fd()),
+            Err(nix::errno::Errno::ENOENT | nix::errno::Errno::ECONNREFUSED) if tries < 20 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(e).context("cannot connect to the broker"),
+        }
+    }
 }
 
 /// `riff test-run PROGRAM ARGS` in a session with a broker: asks the

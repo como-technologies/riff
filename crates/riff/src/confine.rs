@@ -1300,12 +1300,14 @@ pub fn run(
     no_core_dumps()?;
     // The broker stays outside the sandbox (01M4C5AQGCA3TFZDW23HYKS83S).
     // The session keeps its end of the socket across the exec.
+    let socket = crate::broker::socket_path(&session.own)?;
     let broker = crate::broker::start(
         &crate::binary::this_on_disk()?,
         server,
         role,
         &session.worktree,
         &session.clone,
+        &socket,
     )?;
     nix::fcntl::fcntl(
         &broker,
@@ -1320,6 +1322,7 @@ pub fn run(
         .env(CLAUDE_CONFIG_DIR, &session.claude)
         .env(crate::local::OWN_VAR, &session.own)
         .env(crate::broker::VAR, broker.as_raw_fd().to_string())
+        .env(crate::broker::SOCKET_VAR, &socket)
         .env_remove("TMUX")
         .env_remove("TMUX_PANE");
     let count = std::env::var("GIT_CONFIG_COUNT").ok();

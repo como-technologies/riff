@@ -1168,6 +1168,11 @@ enum Workers {
         /// The clone of the session.
         #[arg(long)]
         clone: std::path::PathBuf,
+        /// The path of the socket where the broker also listens: a
+        /// command of the session that has no file descriptor of the
+        /// session connects there.
+        #[arg(long)]
+        socket: Option<std::path::PathBuf>,
     },
     /// Run git in a worktree with the sandbox of a worker
     ///
@@ -2381,9 +2386,14 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
                 }
             }
         }
-        Some(Workers::Broker { role, root, clone }) => {
+        Some(Workers::Broker {
+            role,
+            root,
+            clone,
+            socket,
+        }) => {
             use std::os::fd::AsFd;
-            let socket = std::io::stdin().as_fd().try_clone_to_owned()?;
+            let socket_pair = std::io::stdin().as_fd().try_clone_to_owned()?;
             // The session of the sandbox: the broker takes its requests
             // of `riff outside` (#614), at the first request.
             let take = riff::outside::take(server);
@@ -2393,7 +2403,14 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             let here = riff::door::Here::of(lead, clone, server)?;
             riff::broker::ignore_hangup()?;
             let riff = riff::binary::this_on_disk()?;
-            riff::broker::serve(socket, root, clone, &riff, take, here)
+            let path = socket;
+            let listener = path.as_deref().map(riff::broker::listen).transpose()?;
+            let served =
+                riff::broker::serve_with(socket_pair, listener, root, clone, &riff, take, here);
+            if let Some(path) = path {
+                let _ = std::fs::remove_file(path);
+            }
+            served
         }
         Some(Workers::Git { worktree, args }) => riff::confine::run_git(server, worktree, args),
         Some(Workers::TestRun { program, args }) => {
