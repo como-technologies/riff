@@ -4672,6 +4672,12 @@
   deletes only that branch, and only when the `HEAD` of the worktree
   names it. It never pushes to the default branch. It puts `--` before
   each name in each git and `gh` call.
+- **01M4FC9PEXHA3TENYRQW3GQ20H** Before `claude` starts, riff writes
+  the first-run answers into the Claude folder of the session: the
+  onboarding, the theme, and the trust of the clone and of its
+  worktrees folder. riff reads the `theme` of the person and no other
+  key, and writes nothing to the files of the person. A key that is
+  there stays.
 
 ## Open
 

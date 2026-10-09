@@ -1304,6 +1304,69 @@ fn no_unix_sockets() -> Result<()> {
     Ok(())
 }
 
+/// Writes the first-run answers of Claude Code into the Claude folder of
+/// `session`, so that `claude` starts with no dialog
+/// (01M4FC9PEXHA3TENYRQW3GQ20H): the
+/// onboarding, the theme, and the trust of the clone and of its
+/// worktrees. The theme is the `theme` in `person`, the `.claude.json`
+/// of the person, else `auto`. It reads `person` and writes only the
+/// Claude folder of the session. A key that is there stays.
+///
+/// ```
+/// let dir = tempfile::tempdir().unwrap();
+/// let claude = dir.path().join("claude/s1");
+/// let session = riff::profile::Session {
+///     home: "/h".into(), runtime: "/r".into(), clone: "/h/app".into(),
+///     worktree: "/h/app/.claude/worktrees".into(), target: "/h/app/.claude/worktrees".into(),
+///     temp: "/t".into(), claude: claude.clone(), rules: "/r.json".into(),
+///     state: "/s".into(), own: "/s/o".into(), pool: vec![], tools: vec![],
+///     server: riff::profile::Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
+/// };
+/// riff::confine::seed_claude(&session, None).unwrap();
+/// let json: serde_json::Value =
+///     serde_json::from_slice(&std::fs::read(claude.join(".claude.json")).unwrap()).unwrap();
+/// assert_eq!(json["hasCompletedOnboarding"], true);
+/// assert_eq!(json["theme"], "auto");
+/// assert_eq!(json["projects"]["/h/app"]["hasTrustDialogAccepted"], true);
+/// ```
+pub fn seed_claude(session: &crate::profile::Session, person: Option<&Path>) -> Result<()> {
+    use serde_json::{Map, Value, json};
+    let read =
+        |path: &Path| -> Option<Value> { serde_json::from_slice(&std::fs::read(path).ok()?).ok() };
+    std::fs::create_dir_all(&session.claude)
+        .with_context(|| format!("cannot make {}", session.claude.display()))?;
+    let file = session.claude.join(".claude.json");
+    let mut root = match read(&file) {
+        Some(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+    root.entry("hasCompletedOnboarding").or_insert(json!(true));
+    let theme = person
+        .and_then(read)
+        .and_then(|p| p.get("theme").cloned())
+        .unwrap_or_else(|| json!("auto"));
+    root.entry("theme").or_insert(theme);
+    let projects = root
+        .entry("projects")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .context("`projects` in the Claude config is not an object")?;
+    for path in [&session.clone, &session.worktree] {
+        let project = projects
+            .entry(path.to_string_lossy().into_owned())
+            .or_insert_with(|| json!({}));
+        if let Some(project) = project.as_object_mut() {
+            project
+                .entry("hasTrustDialogAccepted")
+                .or_insert(json!(true));
+        }
+    }
+    let tmp = session.claude.join(".claude.json.riff");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&Value::Object(root))?)
+        .with_context(|| format!("cannot write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &file).with_context(|| format!("cannot write {}", file.display()))
+}
+
 /// Applies the profile of `role` for this process, with the riff server
 /// `server`, and then runs `program` with `args` in the place of this
 /// process, with its own Claude folder in [`CLAUDE_CONFIG_DIR`]. It
@@ -1319,6 +1382,9 @@ pub fn run(
     let here = Here::of_dir(&start_dir()?, server, name)?.with_program(program);
     let profile = profile(role, &here)?;
     let session = here.session()?;
+    // The first-run answers of `claude`: no dialog in a new session (#674).
+    let person = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".claude.json"));
+    seed_claude(&session, person.as_deref())?;
     // No crash in the session or its test runs starts the crash helper
     // of the system (01M4C6HE4D4ADJVBCC6EW8FP0X).
     no_core_dumps()?;
@@ -1394,6 +1460,53 @@ mod tests {
         std::fs::create_dir_all(main.join(".git/worktrees/w")).unwrap();
         std::fs::create_dir_all(main.join(".claude/worktrees/w")).unwrap();
         (dir, main)
+    }
+
+    /// #674: a new session gets the onboarding, the theme of the person
+    /// and the trust of the clone, and writes nothing to the person.
+    #[test]
+    fn a_new_session_gets_the_first_run_answers_and_the_person_keeps_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let person = dir.path().join("person.json");
+        std::fs::write(&person, r#"{"theme":"dark","userID":"x"}"#).unwrap();
+        let session = crate::profile::Session {
+            home: "/h".into(),
+            runtime: "/r".into(),
+            clone: "/h/app".into(),
+            worktree: "/h/app/.claude/worktrees".into(),
+            target: "/h/app/.claude/worktrees".into(),
+            temp: "/t".into(),
+            claude: dir.path().join("claude/s1"),
+            rules: "/r.json".into(),
+            state: "/s".into(),
+            own: "/s/o".into(),
+            pool: vec![],
+            tools: vec![],
+            server: crate::profile::Endpoint::of_url("http://127.0.0.1:7878").unwrap(),
+        };
+        seed_claude(&session, Some(&person)).unwrap();
+        let file = session.claude.join(".claude.json");
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(json["theme"], "dark");
+        assert_eq!(json["hasCompletedOnboarding"], true);
+        assert_eq!(json["projects"]["/h/app"]["hasTrustDialogAccepted"], true);
+        assert_eq!(
+            json["projects"]["/h/app/.claude/worktrees"]["hasTrustDialogAccepted"],
+            true
+        );
+        assert!(json.get("userID").is_none(), "{json}");
+        assert_eq!(
+            std::fs::read_to_string(&person).unwrap(),
+            r#"{"theme":"dark","userID":"x"}"#
+        );
+        // A second start keeps a key that claude changed.
+        std::fs::write(&file, r#"{"theme":"light","hasCompletedOnboarding":true}"#).unwrap();
+        seed_claude(&session, Some(&person)).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(json["theme"], "light");
+        assert_eq!(json["projects"]["/h/app"]["hasTrustDialogAccepted"], true);
     }
 
     fn refused(dir: &Path) -> String {

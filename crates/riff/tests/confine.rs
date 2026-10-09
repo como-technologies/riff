@@ -355,6 +355,37 @@ fn a_worker_does_only_what_its_profile_allows() {
     );
 }
 
+/// 01M4FC9PEXHA3TENYRQW3GQ20H: a worker in its sandbox finds the
+/// first-run answers in its own Claude folder: the onboarding, the
+/// theme of the person and the trust of the clone. riff reads the theme
+/// of the person only, and the file of the person stays as it was.
+#[test]
+fn a_worker_finds_the_first_run_answers_in_its_own_claude_folder() {
+    let m = Machine::new();
+    let home = m.home();
+    let person = home.join(".claude.json");
+    let before = r#"{"theme":"dark","userID":"secret"}"#;
+    std::fs::write(&person, before).unwrap();
+    let result = m.worktrees().join("first-run");
+    let claude = m.claude(&format!(
+        "cat \"$CLAUDE_CONFIG_DIR/.claude.json\" > '{}'\n",
+        result.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&result).unwrap()).unwrap();
+    assert_eq!(json["hasCompletedOnboarding"], true, "{json}");
+    assert_eq!(json["theme"], "dark", "{json}");
+    assert!(json.get("userID").is_none(), "{json}");
+    let clone = m.clone();
+    let trusted =
+        |dir: &Path| json["projects"][dir.to_str().unwrap()]["hasTrustDialogAccepted"].clone();
+    assert_eq!(trusted(&clone), true, "{json}");
+    assert_eq!(trusted(&m.worktrees()), true, "{json}");
+    assert_eq!(std::fs::read_to_string(&person).unwrap(), before);
+}
+
 /// 01M4CN0W3V733V6R2SG1YYZRCN: a worker commits in its worktree, and
 /// fetches and pushes it, with no write of the config and the hooks of
 /// the clone. The config and the hooks stay as they were.

@@ -3195,6 +3195,16 @@ that is not absolute or that has a `..` part.
   `~/.local/share/riff/claude/SESSION` (or `$XDG_DATA_HOME/riff/...`).
   No session writes your `~/.claude`, so no session changes your
   settings, your sign-in or your memory.
+  Before `claude` starts, riff writes the first-run answers into that
+  folder: the onboarding, your theme (else `auto`) and the trust of the
+  clone and of its worktrees. So a new worker joins the riff with no
+  dialog. The trust is for the session only, and only for the clone and
+  its worktrees folder. riff reads your `~/.claude.json` for the theme
+  only. To see the keys of a session:
+
+  ```sh
+  jq '{hasCompletedOnboarding, theme, projects}' ~/.local/share/riff/claude/SESSION/.claude.json
+  ```
 - **Its permission rules.** The file of the permission rules of a
   session is `~/.local/share/riff/rules/SESSION.json`. The session
   reads it and cannot write it.
