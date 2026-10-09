@@ -3229,8 +3229,10 @@ that is not absolute or that has a `..` part.
   command of the Bash tool of Claude Code. That tool gives a command
   no file descriptor of the session. This is an exception until #682,
   when a mount namespace hides the sockets of your services (#645).
-  The broker listens on a socket in the own folder of the session. The
-  name has random bytes, and only your user connects to it.
+  The broker listens on a socket in the own folder of the session,
+  with the mode 0600, so no other user connects to it. The broker does
+  not separate the sessions of your user: until #687, a session can
+  also connect to the broker of another session, the lead too.
 
 #### Keep your cargo registry token out of the sessions
 
@@ -4107,6 +4109,12 @@ keeps one rule on each of them:
 - A trusted service (the broker, riff-server) takes no path, role or
   repository from a request. It takes them from its own facts.
 
+One gap is open until #687: a session can connect to the broker of
+another session of the same person, the broker of the lead too. The
+broker checks only the user of a connection, and each session runs as
+the same user. So the uid check does not separate the sessions. See
+"The seqpacket unix sockets" below.
+
 ### The shared surfaces
 
 Each row is a surface with a control, and the test of that control.
@@ -4153,7 +4161,7 @@ accept. Mike signed off this table on 2026-10-08 (#644).
 | The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (Mike, 2026-10-08): a lock or a record holds no command |
 | The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
 | The variables of a broker request | a bus address | `riff test-run` | a test run gets a variable that is not of cargo or the tests | #654 |
-| The seqpacket unix sockets | a connect to a service that listens on a seqpacket socket | that service of the person | a session reaches such a service; the broker needs this kind of socket (#673). On the check host (`ss -xl`) only `/run/udev/control` listens, and only root connects to it; another host can differ, and a seqpacket service that starts later is reachable | #682 (restore after #645) |
+| The seqpacket unix sockets | a connect to a service that listens on a seqpacket socket | that service of the person | a session reaches such a service; the broker needs this kind of socket (#673). On the check host (`ss -xl`) only `/run/udev/control` listens, and only root connects to it; another host can differ, and a seqpacket service that starts later is reachable. Until #687, a session also reaches the broker of each other session of the same person, the broker of the lead too, and asks it as that session: the broker checks only the uid of the peer, and each session has the same uid | #682 (restore after #645), #687 |
 | The worktrees of other sessions | the worktrees folder of the clone | the other sessions | a worker changes the work of another session | #645 |
 | Forge tokens in an allowed account | a session in a repository of the account | riff-server | each member of the riff gets a token for each repository of an allowed account where it has a session | Accept (Mike, 2026-10-08): the owner admits each member, and the token has the rights of the role only |
 | The lead token of a person | a token with no session | riff-server | the token lives up to one hour after the allow or the lead ends | Accept (Mike, 2026-10-08): one hour at most |
