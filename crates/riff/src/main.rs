@@ -2404,7 +2404,9 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             riff::broker::ignore_hangup()?;
             let riff = riff::binary::this_on_disk()?;
             let path = socket;
-            let listener = path.as_deref().map(riff::broker::listen).transpose()?;
+            // With no socket, the broker still serves the file descriptor
+            // of the session: a failed listen must not end it.
+            let listener = path.as_deref().and_then(|p| riff::broker::listen(p).ok());
             let served =
                 riff::broker::serve_with(socket_pair, listener, root, clone, &riff, take, here);
             if let Some(path) = path {

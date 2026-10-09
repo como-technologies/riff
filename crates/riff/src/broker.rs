@@ -294,10 +294,57 @@ pub fn socket_path(own: &Path) -> Result<PathBuf> {
     Ok(own.join(format!("b-{name}.sock")))
 }
 
+/// The longest path that a `sockaddr_un` holds, with its end byte.
+const SUN_PATH_MAX: usize = 107;
+
+/// The address of the unix socket at `path`, and the folder that it
+/// needs open. A `sockaddr_un` holds at most 107 bytes, and the own
+/// folder of a session can be longer than that. Then the address is the
+/// name in `/proc/self/fd/N`, where N is the folder of `path` (opened
+/// with `O_PATH`): the same socket, with a short path. The folder must
+/// stay open as long as the address is in use.
+///
+/// ```
+/// let short = std::path::Path::new("/run/user/1000/riff/sessions/s1/b-0.sock");
+/// let (_addr, dir) = riff::broker::address(short)?;
+/// assert!(dir.is_none());
+///
+/// let dir = tempfile::tempdir()?;
+/// let long = dir.path().join("x".repeat(120)).join("b-0123456789abcdef.sock");
+/// std::fs::create_dir_all(long.parent().unwrap())?;
+/// let (addr, held) = riff::broker::address(&long)?;
+/// assert!(held.is_some());
+/// let path = addr.path().unwrap().to_str().unwrap().to_owned();
+/// assert!(path.starts_with("/proc/self/fd/") && path.ends_with("/b-0123456789abcdef.sock"));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn address(path: &Path) -> Result<(nix::sys::socket::UnixAddr, Option<std::fs::File>)> {
+    use nix::sys::socket::UnixAddr;
+    use std::os::unix::fs::OpenOptionsExt;
+    if path.as_os_str().len() <= SUN_PATH_MAX {
+        return Ok((UnixAddr::new(path)?, None));
+    }
+    let dir = path
+        .parent()
+        .context("the socket of the broker has no folder")?;
+    let name = path
+        .file_name()
+        .context("the socket of the broker has no name")?;
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_PATH | nix::libc::O_DIRECTORY | nix::libc::O_CLOEXEC)
+        .open(dir)
+        .with_context(|| format!("cannot open {}", dir.display()))?;
+    let short = Path::new("/proc/self/fd")
+        .join(held.as_raw_fd().to_string())
+        .join(name);
+    Ok((UnixAddr::new(&short)?, Some(held)))
+}
+
 /// Makes the socket of the broker at `path`, for the user of this
 /// process only (mode 0600), and listens on it.
 pub fn listen(path: &Path) -> Result<OwnedFd> {
-    use nix::sys::socket::{Backlog, UnixAddr, bind, listen, socket};
+    use nix::sys::socket::{Backlog, bind, listen, socket};
     use std::os::unix::fs::PermissionsExt;
     let fd = socket(
         AddressFamily::Unix,
@@ -306,7 +353,7 @@ pub fn listen(path: &Path) -> Result<OwnedFd> {
         None,
     )
     .context("cannot make the socket of the broker")?;
-    let addr = UnixAddr::new(path).context("the socket of the broker has a path too long")?;
+    let (addr, _dir) = address(path).context("the socket of the broker has a path too long")?;
     bind(fd.as_raw_fd(), &addr).context("cannot bind the socket of the broker")?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
         .context("cannot close the socket of the broker to other users")?;
@@ -726,9 +773,9 @@ pub fn here() -> Option<RawFd> {
 /// socket at its start, so a connect that finds no socket yet tries
 /// again for a short time.
 pub fn connect(path: &Path) -> Result<RawFd> {
-    use nix::sys::socket::{UnixAddr, connect, socket};
+    use nix::sys::socket::{connect, socket};
     use std::os::fd::IntoRawFd;
-    let addr = UnixAddr::new(path)?;
+    let (addr, _dir) = address(path)?;
     let mut tries = 0;
     loop {
         let fd = socket(
@@ -740,9 +787,9 @@ pub fn connect(path: &Path) -> Result<RawFd> {
         .context("cannot make the socket to the broker")?;
         match connect(fd.as_raw_fd(), &addr) {
             Ok(()) => return Ok(fd.into_raw_fd()),
-            Err(nix::errno::Errno::ENOENT | nix::errno::Errno::ECONNREFUSED) if tries < 20 => {
+            Err(nix::errno::Errno::ENOENT | nix::errno::Errno::ECONNREFUSED) if tries < 10 => {
                 tries += 1;
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
             Err(e) => return Err(e).context("cannot connect to the broker"),
         }
@@ -885,6 +932,49 @@ mod tests {
         let reply = ask(fd, &request("shell", &root)).unwrap();
         assert!(matches!(&reply, Reply::Refused(why) if why.contains("no operation")));
         drop(session);
+    }
+
+    /// The own folder of a session can be longer than a `sockaddr_un`
+    /// holds: the socket still works, and a failed listen does not end
+    /// the broker (the tests of the Gate had such a folder).
+    #[test]
+    fn a_socket_in_a_long_folder_still_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::confine::resolve(tmp.path());
+        let own = root.join("x".repeat(60)).join("y".repeat(60));
+        std::fs::create_dir_all(&own).unwrap();
+        let path = socket_path(&own).unwrap();
+        assert!(path.as_os_str().len() > 108, "{}", path.display());
+        let listener = match listen(&path) {
+            Ok(listener) => listener,
+            Err(e) if format!("{e:#}").contains("EACCES") => {
+                println!("skip: this process can make no unix socket: {e:#}");
+                return;
+            }
+            Err(e) => panic!("{e:#}"),
+        };
+        let (_session, pair) = socketpair(
+            AddressFamily::Unix,
+            SockType::SeqPacket,
+            None,
+            SockFlag::SOCK_CLOEXEC,
+        )
+        .unwrap();
+        let riff = root.join("riff");
+        std::fs::write(&riff, "#!/bin/sh\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&riff, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let take: Take = std::sync::Arc::new(|_| anyhow::bail!("no riff-server in this test"));
+        let here = crate::door::Here {
+            server: "http://127.0.0.1:9".into(),
+            tmux: None,
+            lead: None,
+        };
+        let (r, c) = (root.clone(), riff.clone());
+        std::thread::spawn(move || serve_with(pair, Some(listener), &r, &r, &c, take, here));
+        let fd = connect(&path).unwrap();
+        let reply = ask(fd, &request("test-run", &root)).unwrap();
+        assert_eq!(reply, Reply::Code(0));
     }
 
     /// Takes the ownership of a connected socket, for a drop.
