@@ -445,6 +445,16 @@ fn a_worker_reaches_no_tmux_server() {
                 socket.display()
             )),
         ),
+        // #682: a seqpacket unix socket is allowed for the broker
+        // (#673), but the tmux server listens on a stream socket, so
+        // the connect fails. Restore after #645 (no seqpacket socket).
+        (
+            "tmux-socket-seqpacket",
+            python(&format!(
+                "socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET).connect('{}')",
+                socket.display()
+            )),
+        ),
         ("socketpair", python("socket.socketpair()")),
     ];
     let mut body = format!(": > '{}'\n", result.display());
@@ -471,8 +481,49 @@ fn a_worker_reaches_no_tmux_server() {
     assert_eq!(
         std::fs::read_to_string(&result).unwrap(),
         // No core dump and no crash helper (01M4C6HE4D4ADJVBCC6EW8FP0X).
-        "tmux-socket no\nsocketpair yes\ntmux-vars [] []\nMax core file size 1 1 bytes \n"
+        "tmux-socket no\ntmux-socket-seqpacket no\nsocketpair yes\ntmux-vars [] []\nMax core file size 1 1 bytes \n"
     );
+}
+
+/// 01M4FCCSXDFSS0EAASN99NT04D (#673): the Bash tool of Claude Code gives
+/// a command no file descriptor of the session. A command with no
+/// `RIFF_BROKER` and no open file descriptor of the broker still asks
+/// the broker, by the path in `RIFF_BROKER_SOCKET`. The socket is closed
+/// to other users, and a stream socket (tmux, D-Bus) is still refused.
+#[test]
+fn a_command_with_no_broker_fd_asks_the_broker_by_its_socket() {
+    let m = Machine::outside_tmp();
+    let result = m.worktrees().join("result");
+    let bin = Isolated::shared().riff_path();
+    // As with Claude Code, `claude` keeps its file descriptor of the
+    // broker, and only the command closes it: the broker ends with the
+    // last one.
+    let claude = m.claude(&format!(
+        "cd \"$(dirname \"$0\")/issue-1\"\n\
+         sock=\"$RIFF_BROKER_SOCKET\"\n\
+         (\n\
+         eval \"exec ${{RIFF_BROKER}}>&-\"\n\
+         unset RIFF_BROKER\n\
+         echo \"mode $(stat -c %a \"$sock\")\" > '{0}'\n\
+         ls /proc/self/fd | tr '\\n' ' ' | grep -qw 9 && echo 'fd9 open' >> '{0}'\n\
+         '{1}' test-run -- sh -c 'exit 3' >> '{0}' 2>&1\n\
+         echo \"code $?\" >> '{0}'\n\
+         ( python3 -c \"import socket; socket.socket(socket.AF_UNIX).connect('$sock')\" ) >/dev/null 2>&1; echo \"stream $?\" >> '{0}'\n\
+         )",
+        result.display(),
+        bin.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let got = std::fs::read_to_string(&result).unwrap();
+    if got.contains("bubblewrap") || got.contains("apparmor") {
+        println!("skip: this machine has no bubblewrap for a test run: {got}");
+        assert!(got.starts_with("mode 600\n"), "{got}");
+        assert!(got.contains("code 1\n"), "{got}");
+        return;
+    }
+    assert_eq!(got, "mode 600\ncode 3\nstream 1\n");
 }
 
 /// 01M4C5AQGCA3TFZDW23HYKS83S: `riff test-run` in a worker cannot make

@@ -121,7 +121,7 @@
 //! | The git dir of the clone | a worker: its objects, refs, logs and worktrees | each git command of riff in the clone | a worker writes no config and no hooks; riff runs git with no hooks, no fsmonitor and no submodule | `a_worker_does_only_what_its_profile_allows`, `a_worker_commits_and_pushes_with_no_write_of_the_git_config` |
 //! | The git dirs of a worktree | the `.git` file of its worktree, `gitdir` and `commondir` in `.git/worktrees/NAME` | `riff worktrees clean` | riff sets the git dirs itself, and runs no git in a worktree that names another git dir | `worktrees_clean_runs_no_program_of_a_git_dir_that_a_session_names`, `a_link_or_a_way_out_of_the_worktree_gives_no_git`, `a_clone_with_a_config_of_each_worktree_gives_no_git` |
 //! | The files of a worktree | each file, for example `.gitattributes` | `git status`, `add` and `commit` of riff | these git steps run in the sandbox of a worker | `worktrees_clean_reads_a_worktree_with_the_rights_of_a_worker` |
-//! | A broker request | an operation, a folder and variables | `riff workers broker` | only the operations of its list, a folder in the worktree, only the variables of cargo and the tests | `an_unknown_operation_is_refused`, `the_broker_keeps_only_the_variables_of_the_tests`, `a_test_run_in_a_worker_runs_through_the_broker` |
+//! | A broker request | an operation, a folder and variables | `riff workers broker` | only the operations of its list, a folder in the worktree, only the variables of cargo and the tests | `an_unknown_operation_is_refused`, `the_broker_keeps_only_the_variables_of_the_tests`, `a_test_run_in_a_worker_runs_through_the_broker`, `a_command_with_no_broker_fd_asks_the_broker_by_its_socket` |
 //! | The folders of a test run | a target, a planted `.git` file | `riff test-run` | the target, the clone and the worktree come from the broker | `a_test_run_writes_no_folder_that_the_request_names`, `a_planted_git_file_gives_a_test_run_no_other_git_dir` |
 //! | The environment of a test run | the variables of the request | each test | an empty environment, then only `TEST_RUN_VARS` | `no_credential_and_no_unknown_variable_of_the_parent_reaches_a_test` |
 //! | The cargo home | a read of the registry token | `cargo` of the person | no role reads `credentials.toml` or `credentials` | `no_session_and_no_test_run_reads_the_cargo_registry_tokens` |
@@ -130,7 +130,7 @@
 //! | The permission rules of a session | a write of its rules file | `claude` | the rules file is outside each write path | `no_role_writes_the_permission_rules_of_its_session`, `a_worker_does_only_what_its_profile_allows` |
 //! | The plugin of riff and the git config of the person | a write | `claude`, git | a session reads them only | `a_worker_does_only_what_its_profile_allows` |
 //! | The Claude folder of the person | a write of its settings | the `claude` of the person | no session writes it; each session has its own Claude folder | `a_worker_does_only_what_its_profile_allows`, `no_role_edits_a_settings_file_of_claude_code` |
-//! | The tmux servers and the D-Bus | a connect | tmux, D-Bus services | no unix socket with a name; no `TMUX`; the bus is a secret path | `a_worker_reaches_no_tmux_server`, `no_role_reaches_the_home_the_keyring_or_the_bus_of_the_person` |
+//! | The tmux servers and the D-Bus | a connect | tmux, D-Bus services | no stream unix socket with a name (a seqpacket one stays for the broker: an exception until #682); no `TMUX`; the bus is a secret path | `a_worker_reaches_no_tmux_server`, `no_role_reaches_the_home_the_keyring_or_the_bus_of_the_person` |
 //! | The other processes of the person | a signal, a read of `/proc/PID/environ` | each process | the scope of signals of Landlock; no trace | `a_worker_does_only_what_its_profile_allows` |
 //! | The user manager of systemd | a call | systemd | no profile reaches a bus of systemd | `the_worker_profile_has_no_access_to_the_systemd_user_bus` |
 //! | A host request | a request in the name of the lead | `riff workers host` | only a signed request of the lead | `a_host_refuses_a_request_that_is_not_from_the_lead` |
@@ -157,6 +157,7 @@
 //! | The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (Mike, 2026-10-08): a lock or a record holds no command |
 //! | The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
 //! | The variables of a broker request | a bus address | `riff test-run` | a test run gets a variable that is not of cargo or the tests | #654 |
+//! | The seqpacket unix sockets | a connect to a service that listens on a seqpacket socket | that service of the person | a session reaches such a service; the broker needs this kind of socket (#673). On the check host (`ss -xl`) only `/run/udev/control` listens, and only root connects to it; another host can differ, and a seqpacket service that starts later is reachable. Until #687, a session also reaches the broker of each other session of the same person, the broker of the lead too, and asks it as that session: the broker checks only the uid of the peer, and each session has the same uid | #682 (restore after #645), #687 |
 //! | The worktrees of other sessions | the worktrees folder of the clone | the other sessions | a worker changes the work of another session | #645 |
 //! | Forge tokens in an allowed account | a session in a repository of the account | riff-server | each member of the riff gets a token for each repository of an allowed account where it has a session | Accept (Mike, 2026-10-08): the owner admits each member, and the token has the rights of the role only |
 //! | The lead token of a person | a token with no session | riff-server | the token lives up to one hour after the allow or the lead ends | Accept (Mike, 2026-10-08): one hour at most |
@@ -1246,7 +1247,14 @@ pub fn agent_worktree(path: &Path) -> Option<(PathBuf, std::ffi::OsString)> {
 /// Stops this thread and each later child from making a unix socket
 /// with a name: `socket(AF_UNIX, ...)` and `io_uring_setup` fail with
 /// `EACCES` (01M4C5AQV8AT8F5WKNF1C9CE5F). A pair of sockets
-/// (`socketpair`) still works. Landlock ABI 8 cannot stop a connect to
+/// (`socketpair`) still works. So does a `SOCK_SEQPACKET` unix socket:
+/// the session connects with it to its broker, because the Bash tool of
+/// Claude Code gives a command no file descriptor of the session
+/// (#673, 01M4FCCSXDFSS0EAASN99NT04D). This is an exception until #682
+/// (restore after #645). On the machine of the check (`ss -xl`), the
+/// only seqpacket service that listens is `/run/udev/control`, which
+/// only root connects to; another machine can differ, and a seqpacket
+/// service of the person that starts later is reachable. Landlock ABI 8 cannot stop a connect to
 /// a unix socket with a path, for example the tmux server or the D-Bus
 /// of the person, so a seccomp filter does it. `io_uring` can make a
 /// socket with no `socket` call, so it goes too.
@@ -1259,14 +1267,30 @@ fn no_unix_sockets() -> Result<()> {
     let arch: TargetArch = std::env::consts::ARCH
         .try_into()
         .map_err(|e| anyhow::anyhow!("no seccomp for {}: {e:?}", std::env::consts::ARCH))?;
-    let unix = SeccompCondition::new(
-        0,
-        SeccompCmpArgLen::Dword,
-        SeccompCmpOp::Eq,
-        libc::AF_UNIX as u64,
-    )?;
+    // One kind of unix socket stays: SOCK_SEQPACKET, the kind of the
+    // socket of the broker (01M4FCCSXDFSS0EAASN99NT04D, #682). The tmux
+    // server and the D-Bus of the person listen on SOCK_STREAM, so a
+    // connect of a seqpacket socket to them fails. The low 4 bits of the
+    // type are the kind: the flags are the other bits.
+    let mut socket_rules = Vec::new();
+    for kind in (0..16u64).filter(|k| *k != libc::SOCK_SEQPACKET as u64) {
+        socket_rules.push(SeccompRule::new(vec![
+            SeccompCondition::new(
+                0,
+                SeccompCmpArgLen::Dword,
+                SeccompCmpOp::Eq,
+                libc::AF_UNIX as u64,
+            )?,
+            SeccompCondition::new(
+                1,
+                SeccompCmpArgLen::Dword,
+                SeccompCmpOp::MaskedEq(0xf),
+                kind,
+            )?,
+        ])?);
+    }
     let rules = std::collections::BTreeMap::from([
-        (libc::SYS_socket, vec![SeccompRule::new(vec![unix])?]),
+        (libc::SYS_socket, socket_rules),
         (libc::SYS_io_uring_setup, vec![]),
     ]);
     let filter = SeccompFilter::new(
@@ -1300,12 +1324,14 @@ pub fn run(
     no_core_dumps()?;
     // The broker stays outside the sandbox (01M4C5AQGCA3TFZDW23HYKS83S).
     // The session keeps its end of the socket across the exec.
+    let socket = crate::broker::socket_path(&session.own)?;
     let broker = crate::broker::start(
         &crate::binary::this_on_disk()?,
         server,
         role,
         &session.worktree,
         &session.clone,
+        &socket,
     )?;
     nix::fcntl::fcntl(
         &broker,
@@ -1320,6 +1346,7 @@ pub fn run(
         .env(CLAUDE_CONFIG_DIR, &session.claude)
         .env(crate::local::OWN_VAR, &session.own)
         .env(crate::broker::VAR, broker.as_raw_fd().to_string())
+        .env(crate::broker::SOCKET_VAR, &socket)
         .env_remove("TMUX")
         .env_remove("TMUX_PANE");
     let count = std::env::var("GIT_CONFIG_COUNT").ok();

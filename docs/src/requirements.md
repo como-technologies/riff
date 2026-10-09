@@ -4225,6 +4225,13 @@
   `RIFF_BROKER` asks the broker to run the test run outside the
   sandbox, with the stdin, stdout and stderr of the session, and gives
   its exit code.
+- **01M4FCCSXDFSS0EAASN99NT04D** The broker also listens on a socket
+  of the kind `SOCK_SEQPACKET` in the own folder of the session, with
+  a random name and the mode 0600. It serves only a connection of the
+  user of the broker. The sandbox sets `RIFF_BROKER_SOCKET` to the
+  path. A command of the session that has no file descriptor
+  `RIFF_BROKER` connects there. The seccomp filter of a session allows
+  a unix socket of the kind `SOCK_SEQPACKET` and no other kind.
 - **01M4C5AQM63F58YQ9VA391513D** The broker runs only the operations of
   its one list, `test-run` and `outside`, and refuses each other
   operation. The folder of a request must be in the worktree of the
