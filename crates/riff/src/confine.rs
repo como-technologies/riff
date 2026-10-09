@@ -336,6 +336,132 @@ pub fn given_here() -> Result<PathBuf> {
         .context("cannot find the data folder of riff: set HOME")
 }
 
+/// The text of the git config of a session (#678): riff makes it, and the
+/// session reads it. It holds the two files that git reads by default in
+/// the home of the person, as `/dev/null`: a session reads no exclude
+/// file and no attributes file of the person. With no value, git reads
+/// the default `~/.config/git/ignore`, and Landlock can only say EACCES
+/// for that path (not ENOENT), so git would print a warning at each
+/// step.
+///
+/// A worker also deletes and renames no branch, by design: such a step
+/// takes `packed-refs.lock` in the clone, and a session writes no
+/// `packed-refs` (01M4CN0W3V733V6R2SG1YYZRCN). A `git commit` prints the
+/// same line about the lock and works. No git setting stops that line.
+///
+/// It also holds the author and the committer of each commit of the
+/// session, `name` and `email` ([`git_identity`]): git reads no name and
+/// no email of the person (01M4GK19EM7YYT1SEZBP9BFS71).
+///
+/// ```
+/// let text = riff::confine::git_config_text("riff worker 6a56bcf5", "worker-6a56bcf5@riff.invalid");
+/// assert!(text.starts_with("[core]\n\texcludesFile = /dev/null\n"));
+/// assert!(text.ends_with("[user]\n\tname = \"riff worker 6a56bcf5\"\n\temail = \"worker-6a56bcf5@riff.invalid\"\n"));
+/// ```
+pub fn git_config_text(name: &str, email: &str) -> String {
+    let quote = |v: &str| format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""));
+    format!(
+        "[core]\n\texcludesFile = /dev/null\n\tattributesFile = /dev/null\n\
+         [user]\n\tname = {}\n\temail = {}\n",
+        quote(name),
+        quote(email)
+    )
+}
+
+/// The author and the committer of the commits of a session of `role`
+/// with the ID `session` (01M4GK19EM7YYT1SEZBP9BFS71): `riff ROLE ID`,
+/// with the first 8 characters of the ID, as `riff who` shows them, and
+/// an email in the domain `riff.invalid`, that reaches no one. It holds
+/// no name and no email of the person. #679 gives the email of the App
+/// in its place.
+///
+/// ```
+/// use riff::profile::Role;
+/// assert_eq!(
+///     riff::confine::git_identity(Role::Worker, "6a56bcf5-1234-5678-9abc-def012345678"),
+///     ("riff worker 6a56bcf5".to_owned(), "worker-6a56bcf5@riff.invalid".to_owned())
+/// );
+/// assert_eq!(
+///     riff::confine::git_identity(Role::Lead, "d2f9;66fd\"x"),
+///     ("riff lead d2f966fd".to_owned(), "lead-d2f966fd@riff.invalid".to_owned())
+/// );
+/// ```
+pub fn git_identity(role: Role, session: &str) -> (String, String) {
+    let short: String = session
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(8)
+        .collect();
+    let role = role.name().replace(' ', "-");
+    (
+        format!("riff {role} {short}"),
+        format!("{role}-{short}@riff.invalid"),
+    )
+}
+
+/// The author and the committer of a commit that riff itself makes in
+/// a worktree, with the sandbox of a worker: the WIP commit of `riff
+/// worktrees clean` (01M4GK19EM7YYT1SEZBP9BFS71).
+pub const RIFF_GIT_IDENTITY: (&str, &str) = ("riff", "riff@riff.invalid");
+
+/// The variables of git that name a person: an author or a committer
+/// in them wins over the git config of the session, so a session and
+/// the git of [`run_git`] get none of them (01M4GK19EM7YYT1SEZBP9BFS71).
+pub const GIT_PERSON_VARS: [&str; 5] = [
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+    "EMAIL",
+];
+
+/// The file of the git config of `session` in the data root `data`: in
+/// [`given_dir`], so each AI role reads it and no role writes it.
+///
+/// ```
+/// assert_eq!(
+///     riff::confine::git_config_file("/d".as_ref(), "s1"),
+///     std::path::Path::new("/d/given/git-s1.config")
+/// );
+/// ```
+pub fn git_config_file(data: &Path, session: &str) -> PathBuf {
+    given_dir(data).join(format!("git-{session}.config"))
+}
+
+/// Makes the git config of `session` ([`git_config_text`], with the
+/// author and committer `identity`) in the data root `data`, and gives
+/// the variables that point git to it: `GIT_CONFIG_GLOBAL`, and
+/// `GIT_CONFIG_NOSYSTEM=1`. So git in a session reads neither
+/// `~/.gitconfig`, nor `~/.config/git`, nor `/etc/gitconfig` (#678).
+///
+/// ```
+/// let data = tempfile::tempdir()?;
+/// let vars = riff::confine::write_git_config(data.path(), "s1", ("riff worker s1", "worker-s1@riff.invalid"))?;
+/// let file = data.path().join("given/git-s1.config");
+/// assert_eq!(vars[0], ("GIT_CONFIG_GLOBAL", file.clone().into_os_string()));
+/// assert_eq!(vars[1], ("GIT_CONFIG_NOSYSTEM", "1".into()));
+/// assert_eq!(
+///     std::fs::read_to_string(file)?,
+///     riff::confine::git_config_text("riff worker s1", "worker-s1@riff.invalid")
+/// );
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn write_git_config(
+    data: &Path,
+    session: &str,
+    identity: (&str, &str),
+) -> Result<[(&'static str, OsString); 2]> {
+    let file = git_config_file(data, session);
+    let dir = file.parent().context("the git config has no folder")?;
+    std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    std::fs::write(&file, git_config_text(identity.0, identity.1))
+        .with_context(|| format!("cannot write {}", file.display()))?;
+    Ok([
+        ("GIT_CONFIG_GLOBAL", file.into_os_string()),
+        ("GIT_CONFIG_NOSYSTEM", "1".into()),
+    ])
+}
+
 /// The file of the permission rules of `session` in the data root
 /// `data`: outside each write path of a profile
 /// (01M4BTB7DY1Y74PP3JWKVX58JQ).
@@ -434,7 +560,9 @@ impl Here {
         // Not the cargo home itself: it holds the registry tokens
         // (01M4D4BZ41AH29KSA9B0VZB8DQ).
         tools.extend(crate::profile::cargo_reads(&cargo));
-        tools.extend([rustup, home.join(".gitconfig"), home.join(".config/git")]);
+        // No git config of the person (#678): a session has its own
+        // ([`git_config_file`]).
+        tools.push(rustup);
         tools.extend(crate::plugin::dir().ok());
         tools.push(given_dir(&data));
         // `claude` on the PATH is a link to the folder of its version.
@@ -1148,6 +1276,7 @@ pub fn run_git(server: &str, tree: &Path, args: &[OsString]) -> Result<()> {
     };
     let mut git = git_in_tree(&main, &tree)?;
     let here = Here::of_dir(&tree, server, Some(GIT_NAME))?;
+    let global = write_git_config(&here.data, GIT_NAME, RIFF_GIT_IDENTITY)?;
     // The temp dir of this process can be `/tmp`, which holds the tmux
     // sockets of the person: git gets its own state folder as its temp.
     let temp = here.own.clone();
@@ -1159,7 +1288,10 @@ pub fn run_git(server: &str, tree: &Path, args: &[OsString]) -> Result<()> {
     // The git settings of a session: the sandbox cannot read an exclude
     // file in the home or reach the key agent of the person.
     let count = std::env::var("GIT_CONFIG_COUNT").ok();
-    git.envs(git_env(count.as_deref())).args(args);
+    for var in GIT_PERSON_VARS {
+        git.env_remove(var);
+    }
+    git.envs(git_env(count.as_deref())).envs(global).args(args);
     Err(git.exec()).context("cannot start git")
 }
 
@@ -1385,6 +1517,13 @@ pub fn run(
     // The first-run answers of `claude`: no dialog in a new session (#674).
     let person = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".claude.json"));
     seed_claude(&session, person.as_deref())?;
+    // The commits of the session name the session, not the person
+    // (01M4GK19EM7YYT1SEZBP9BFS71). A lead has a name for its folders;
+    // its ID is in `RIFF_SESSION`.
+    let id =
+        std::env::var(crate::identity::SESSION_VARS[0]).unwrap_or_else(|_| here.session.clone());
+    let (author, email) = git_identity(role, &id);
+    let global = write_git_config(&here.data, &here.session, (&author, &email))?;
     // No crash in the session or its test runs starts the crash helper
     // of the system (01M4C6HE4D4ADJVBCC6EW8FP0X).
     no_core_dumps()?;
@@ -1416,7 +1555,10 @@ pub fn run(
         .env_remove("TMUX")
         .env_remove("TMUX_PANE");
     let count = std::env::var("GIT_CONFIG_COUNT").ok();
-    cmd.envs(git_env(count.as_deref()));
+    for var in GIT_PERSON_VARS {
+        cmd.env_remove(var);
+    }
+    cmd.envs(git_env(count.as_deref())).envs(global);
     // A compile wrapper such as sccache talks to its server outside the
     // sandbox. An empty value also wins over the cargo settings of the
     // person (01M4C5RV4J4G0H46GTRVNP5YED).

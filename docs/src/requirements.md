@@ -4339,6 +4339,23 @@
   reads no exclude file of the person and signs no commit or tag
   (`GIT_CONFIG_*`), `RUSTC_WRAPPER` and `CARGO_BUILD_RUSTC_WRAPPER`
   are empty, and a `BASH_ENV` that the session cannot read goes.
+- **01M4FD5PH7VKTFB9MJ9GDJJZCD** A session has its own git config.
+  `riff workers sandbox` makes the file `given/git-SESSION.config` in
+  the data folder of riff and sets `GIT_CONFIG_GLOBAL` to it and
+  `GIT_CONFIG_NOSYSTEM` to 1. The file sets `core.excludesFile` and
+  `core.attributesFile` to `/dev/null`. No profile reads `~/.gitconfig`
+  or `~/.config/git`. A worker does not delete or rename a branch: the
+  step fails by design, because it needs `packed-refs.lock`.
+- **01M4GK19EM7YYT1SEZBP9BFS71** The git config of a session names
+  the author and the committer of its commits: `riff ROLE ID`, with the
+  first 8 characters of the session ID, and the email
+  `ROLE-ID@riff.invalid`. A commit that riff makes with the sandbox of
+  a worker (`riff workers git`) has the author `riff` and the email
+  `riff@riff.invalid`. A session and `riff workers git` get no
+  `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`,
+  `GIT_COMMITTER_EMAIL` or `EMAIL`. No commit of a session has the name
+  or the email of the person. #679 gives the email of the App in place
+  of `riff.invalid`.
 - **01M4BTB7Q1ZT1WD2NMF6BAVWPB** `riff workers sandbox --show` prints
   the sandbox of the role for the session here: the write paths, the
   read paths, the devices, the ports, and what the kernel applies of

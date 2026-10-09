@@ -423,6 +423,92 @@ fn a_worker_reads_the_project_settings_of_the_clone_and_writes_none() {
     );
 }
 
+/// #678: a session has its own git config. It reads nothing of the git
+/// config of the person: a `core.excludesFile` in the home, that the
+/// sandbox cannot read, gives no error, and `git config --list
+/// --show-origin` names no git config of the home: not `~/.gitconfig`,
+/// not `~/.config/git`. The git config of the session is in the data
+/// folder of riff, which can be in the home.
+#[test]
+fn a_worker_reads_no_git_config_of_the_person() {
+    let m = Machine::new();
+    let home = m.home();
+    // An exclude file in the home that the sandbox cannot read.
+    std::fs::write(home.join(".cvsignore"), "*.o\n").unwrap();
+    std::fs::write(
+        home.join(".gitconfig"),
+        "[core]\n\texcludesfile = ~/.cvsignore\n[user]\n\tname = Ada\n",
+    )
+    .unwrap();
+    let result = m.worktrees().join("result");
+    let claude = m.claude(&format!(
+        "cd \"$(dirname \"$0\")/issue-1\"\n\
+         : > '{0}'\n\
+         echo x > f\n\
+         git status --short > '{0}.status' 2>&1; echo \"status $?\" >> '{0}'\n\
+         git config --list --show-origin > '{0}.list' 2>&1\n\
+         if grep -qE '{1}/(\\.gitconfig|\\.config/git)' '{0}.list'; then echo 'list names the home'; else echo 'list names no home file'; fi >> '{0}'\n\
+         if cat '{1}/.gitconfig' >/dev/null 2>&1; then echo 'gitconfig yes'; else echo 'gitconfig no'; fi >> '{0}'\n\
+         echo \"nosystem [$GIT_CONFIG_NOSYSTEM]\" >> '{0}'",
+        result.display(),
+        home.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let list = std::fs::read_to_string(m.worktrees().join("result.list")).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&result).unwrap(),
+        "status 0\nlist names no home file\ngitconfig no\nnosystem [1]\n",
+        "{list}"
+    );
+    let status = std::fs::read_to_string(m.worktrees().join("result.status")).unwrap();
+    assert!(!status.contains("Permission denied"), "{status}");
+    assert!(!status.contains("exclude"), "{status}");
+}
+
+/// 01M4GK19EM7YYT1SEZBP9BFS71: a commit of a worker names the session
+/// as its author and committer, not the person: not the name and the
+/// email in the git config of the person, and not those in the git
+/// variables of the person.
+#[test]
+fn a_worker_commits_as_its_session_and_not_as_the_person() {
+    let m = Machine::new();
+    std::fs::write(
+        m.home().join(".gitconfig"),
+        "[user]\n\tname = Ada\n\temail = ada@example.com\n",
+    )
+    .unwrap();
+    let result = m.worktrees().join("result");
+    let claude = m.claude(&format!(
+        "cd \"$(dirname \"$0\")/issue-1\"\n\
+         echo x > f\n\
+         git add f\n\
+         git commit -q -m one > '{0}.commit' 2>&1; echo \"commit $?\" > '{0}'\n\
+         git log -1 --format='%an <%ae>|%cn <%ce>' >> '{0}'",
+        result.display()
+    ));
+    let out = m.run(
+        &m.clone(),
+        &claude,
+        &[
+            ("GIT_AUTHOR_NAME", "Ada".as_ref()),
+            ("GIT_AUTHOR_EMAIL", "ada@example.com".as_ref()),
+            ("GIT_COMMITTER_NAME", "Ada".as_ref()),
+            ("GIT_COMMITTER_EMAIL", "ada@example.com".as_ref()),
+            ("EMAIL", "ada@example.com".as_ref()),
+        ],
+    );
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let commit = std::fs::read_to_string(m.worktrees().join("result.commit")).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&result).unwrap(),
+        "commit 0\nriff worker w1 <worker-w1@riff.invalid>|riff worker w1 <worker-w1@riff.invalid>\n",
+        "{commit}"
+    );
+}
+
 /// 01M4CN0W3V733V6R2SG1YYZRCN: a worker commits in its worktree, and
 /// fetches and pushes it, with no write of the config and the hooks of
 /// the clone. The config and the hooks stay as they were.

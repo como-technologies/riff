@@ -1142,6 +1142,29 @@ riff without the helper. Your home can be a git repository. So
 `.cargo/config.toml` sets `TMPDIR` to `/var/tmp` for a cargo run with
 no `TMPDIR`. A worker keeps its own temp folder: its sandbox lets it
 write only there, and `just test` gives each test run its own `/tmp`.
+A worker has its own git config: it reads nothing of your
+`~/.gitconfig`. To see it, run this in a worker:
+
+```sh
+git config --list --show-origin
+```
+
+### Find the commits of a session
+
+A commit of a session names the session, not you. Its author and its
+committer are `riff ROLE ID`, with the first 8 characters of the
+session ID that `riff who` shows, for example `riff worker 6a56bcf5`.
+The email is `ROLE-ID@riff.invalid`: it reaches no one. A WIP commit
+of `riff worktrees clean` has the author `riff`. To find the commits of
+a session on a branch:
+
+```sh
+git log --author='riff worker 6a56bcf5'
+```
+
+A pull request merges by squash. So the commit on `main` has the
+author of the pull request, not the session.
+
 Run the tests of a worker with `just test` or `just check`, not with a
 plain `cargo test`. A unit test or a
 doc test that needs a dir outside each git repository uses

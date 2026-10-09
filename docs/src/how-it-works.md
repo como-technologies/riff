@@ -3238,6 +3238,16 @@ that is not absolute or that has a `..` part.
 - **No crash report.** A crash in a session or in its test run makes
   no core file, and starts no crash dialog on your desktop: the core
   size limit is 1 byte.
+- **Its own git config.** A session reads nothing of the git config
+  of the person: not `~/.gitconfig`, not `~/.config/git`, not
+  `/etc/gitconfig`. riff makes a git config for the session, and git
+  reads that one. So a `core.excludesFile` in your home gives no error
+  in a session. A commit of a session has the session as its author,
+  not you: see "Find the commits of a session" in Development. A
+  worker deletes and renames no branch: riff (`riff worktrees clean`)
+  and GitHub (delete on merge) do. A `git commit` in a worker prints
+  `Unable to create packed-refs.lock`: it is harmless, and the commit
+  works.
 - **No tmux and no stream unix socket with a name.** A session cannot
   reach your tmux servers, also not the tmux server of riff. riff
   removes `TMUX` and `TMUX_PANE`, and a session cannot make a stream
