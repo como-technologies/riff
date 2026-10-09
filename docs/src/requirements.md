@@ -4157,6 +4157,14 @@
   start. They also deny each place of a secret of the person.
 - **01M4BT33X0WVVJH7Y6AXSWZEYC** The rules of each role deny the edit
   of each `settings.json` and `settings.local.json` of Claude Code.
+- **01M4FD5TRS3T9KCG2960RQKSDQ** The rules of the lead, a worker and
+  a verifier allow a list of narrow `Bash` commands for their work, so
+  that the auto mode check of Claude Code does not ask for a routine
+  step. A rule names a program and a subcommand, for example
+  `cargo test` or `just check`. No rule names an interpreter or a
+  shell, no rule is `Bash(*)`, and no rule allows a command that
+  changes the sandbox or the rules. The lists are in the code
+  (`role_rules::bash`), and a test checks them.
 - **01M4BT33Z914GBHCGCAXFVQ2X7** When riff cannot make the profile of
   a role, the role starts with no rules of a profile, and says why in
   one line.
@@ -4339,6 +4347,23 @@
   reads no exclude file of the person and signs no commit or tag
   (`GIT_CONFIG_*`), `RUSTC_WRAPPER` and `CARGO_BUILD_RUSTC_WRAPPER`
   are empty, and a `BASH_ENV` that the session cannot read goes.
+- **01M4FD5PH7VKTFB9MJ9GDJJZCD** A session has its own git config.
+  `riff workers sandbox` makes the file `given/git-SESSION.config` in
+  the data folder of riff and sets `GIT_CONFIG_GLOBAL` to it and
+  `GIT_CONFIG_NOSYSTEM` to 1. The file sets `core.excludesFile` and
+  `core.attributesFile` to `/dev/null`. No profile reads `~/.gitconfig`
+  or `~/.config/git`. A worker does not delete or rename a branch: the
+  step fails by design, because it needs `packed-refs.lock`.
+- **01M4GK19EM7YYT1SEZBP9BFS71** The git config of a session names
+  the author and the committer of its commits: `riff ROLE ID`, with the
+  first 8 characters of the session ID, and the email
+  `ROLE-ID@riff.invalid`. A commit that riff makes with the sandbox of
+  a worker (`riff workers git`) has the author `riff` and the email
+  `riff@riff.invalid`. A session and `riff workers git` get no
+  `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`,
+  `GIT_COMMITTER_EMAIL` or `EMAIL`. No commit of a session has the name
+  or the email of the person. #679 gives the email of the App in place
+  of `riff.invalid`.
 - **01M4BTB7Q1ZT1WD2NMF6BAVWPB** `riff workers sandbox --show` prints
   the sandbox of the role for the session here: the write paths, the
   read paths, the devices, the ports, and what the kernel applies of
@@ -4672,6 +4697,17 @@
   deletes only that branch, and only when the `HEAD` of the worktree
   names it. It never pushes to the default branch. It puts `--` before
   each name in each git and `gh` call.
+- **01M4FC9PEXHA3TENYRQW3GQ20H** Before `claude` starts, riff writes
+  the first-run answers into the Claude folder of the session: the
+  onboarding, the theme, and the trust of the clone and of its
+  worktrees folder. riff reads the `theme` of the person and no other
+  key, and writes nothing to the files of the person. A key that is
+  there stays.
+- **01M4FCYPWRWM8HXKN5ME3E3V86** A worker and a verifier read
+  `.claude/settings.json` and `.claude/settings.local.json` of the
+  clone, and no AI role writes them. The sandbox cannot hide a file
+  with ENOENT, so it grants the read: a file that `claude` cannot read
+  gives a "Settings Error" dialog.
 
 ## Open
 

@@ -313,6 +313,17 @@ fn rule(tool: &str, path: &Path, tail: &str) -> String {
     format!("{tool}(/{}{tail})", path.display())
 }
 
+/// True when `deny` denies `tool` on `path`: a rule for `path` itself
+/// (with `tail`), or a rule for a folder above it with `/**`. A home
+/// that holds no path of the profile is denied as a whole.
+fn denies(deny: &[String], tool: &str, path: &Path, tail: &str) -> bool {
+    deny.contains(&rule(tool, path, tail))
+        || path
+            .ancestors()
+            .skip(1)
+            .any(|dir| deny.contains(&rule(tool, dir, "/**")))
+}
+
 /// The wrapper gives `claude` the permission rules of the profile of a
 /// worker (01M4BT33R71HXAVQGHFD4ZFGR5, 01M4BT33TPSXJVB6JZDZ3F1GGX,
 /// 01M4BT33X0WVVJH7Y6AXSWZEYC, 01M4BT341H1M1N1MT947HXNXDR).
@@ -355,14 +366,8 @@ async fn the_wrapper_gives_claude_the_rules_of_the_profile() {
         "{allow:?}"
     );
     let h = home.path();
-    assert!(
-        deny.contains(&rule("Read", &h.join(".bashrc"), "")),
-        "{deny:?}"
-    );
-    assert!(
-        deny.contains(&rule("Edit", &h.join("notes"), "/**")),
-        "{deny:?}"
-    );
+    assert!(denies(&deny, "Read", &h.join(".bashrc"), ""), "{deny:?}");
+    assert!(denies(&deny, "Edit", &h.join("notes"), "/**"), "{deny:?}");
     // The session has its own Claude folder (01M4BTB7BPA38ARM789WBV507D),
     // and no rule lets it edit the settings there.
     assert!(
@@ -402,7 +407,7 @@ async fn riff_workers_rules_prints_the_rules_of_a_worker() {
     );
     assert!(!allow.contains(&rule("Edit", &git, "/**")), "{allow:?}");
     let bashrc = home.path().join(".bashrc");
-    assert!(deny.contains(&rule("Read", &bashrc, "")), "{deny:?}");
+    assert!(denies(&deny, "Read", &bashrc, ""), "{deny:?}");
 }
 
 /// The worker gets a temp folder of its own on disk, in `TMPDIR` and

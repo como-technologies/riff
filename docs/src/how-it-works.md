@@ -3186,6 +3186,16 @@ flowchart LR
 | Network | riff server, forge, registries, model | the same | the same | loopback only |
 | Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
 
+A worker and a verifier read `.claude/settings.json` and
+`.claude/settings.local.json` of the clone, and write neither. The
+sandbox cannot hide a file with ENOENT. A file that `claude` cannot
+read gives a "Settings Error" dialog, so riff grants the read. To see
+the grant:
+
+```sh
+riff workers sandbox --role worker --show | grep settings
+```
+
 No role reads your home as a whole, your keyring, your D-Bus, your
 SSH or GnuPG keys, or the sign-in of `gh`. The key of the GitHub App
 of riff is never on your machine. riff refuses a path of a session
@@ -3195,6 +3205,16 @@ that is not absolute or that has a `..` part.
   `~/.local/share/riff/claude/SESSION` (or `$XDG_DATA_HOME/riff/...`).
   No session writes your `~/.claude`, so no session changes your
   settings, your sign-in or your memory.
+  Before `claude` starts, riff writes the first-run answers into that
+  folder: the onboarding, your theme (else `auto`) and the trust of the
+  clone and of its worktrees. So a new worker joins the riff with no
+  dialog. The trust is for the session only, and only for the clone and
+  its worktrees folder. riff reads your `~/.claude.json` for the theme
+  only. To see the keys of a session:
+
+  ```sh
+  jq '{hasCompletedOnboarding, theme, projects}' ~/.local/share/riff/claude/SESSION/.claude.json
+  ```
 - **Its permission rules.** The file of the permission rules of a
   session is `~/.local/share/riff/rules/SESSION.json`. The session
   reads it and cannot write it.
@@ -3218,6 +3238,16 @@ that is not absolute or that has a `..` part.
 - **No crash report.** A crash in a session or in its test run makes
   no core file, and starts no crash dialog on your desktop: the core
   size limit is 1 byte.
+- **Its own git config.** A session reads nothing of the git config
+  of the person: not `~/.gitconfig`, not `~/.config/git`, not
+  `/etc/gitconfig`. riff makes a git config for the session, and git
+  reads that one. So a `core.excludesFile` in your home gives no error
+  in a session. A commit of a session has the session as its author,
+  not you: see "Find the commits of a session" in Development. A
+  worker deletes and renames no branch: riff (`riff worktrees clean`)
+  and GitHub (delete on merge) do. A `git commit` in a worker prints
+  `Unable to create packed-refs.lock`: it is harmless, and the commit
+  works.
 - **No tmux and no stream unix socket with a name.** A session cannot
   reach your tmux servers, also not the tmux server of riff. riff
   removes `TMUX` and `TMUX_PANE`, and a session cannot make a stream
@@ -3633,6 +3663,10 @@ profile, in its `--settings`. They add to your own rules:
 
 - They allow the read of each path that the worker reads, and the read
   and the edit of each path that it writes.
+- They allow the `Bash` commands that the role needs, for example
+  `cargo test`, `just check` and `git commit` for a worker. A rule
+  names the program and the subcommand, so `cargo run` and
+  `cargo install` still go to the auto mode check.
 - They deny the read and the edit of each file and folder of your home
   that holds no path of the profile. riff looks at your home when the
   worker starts. They also deny your keyring, your D-Bus, your SSH and

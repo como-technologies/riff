@@ -254,6 +254,23 @@ with its output:
 cargo test -p riff --test all hosts:: -- --nocapture 2>&1 | grep 'slow under load'
 ```
 
+## Allow a command for a role
+
+A worker, a verifier and the lead run some commands with no question
+from the auto mode check of Claude Code, for example `cargo test`,
+`just check` and `git commit` for a worker. The lists are in
+`crates/riff/src/role_rules.rs`. See the rules of a worker:
+
+```sh
+riff workers rules
+```
+
+To allow one more command, add its program and subcommand to the list
+of the role in `role_rules::bash`, and push the change. A rule that you
+add with `/permissions` in a pane does not last: each new session has a
+new Claude folder. Never add a shell, an interpreter or `Bash(*)`: a
+test fails for them.
+
 ## Run the tests of one file
 
 The integration tests of a crate are one test binary, `all`. Each file
@@ -1155,6 +1172,31 @@ riff or `just install` in a worktree.
 A criterion that only the shared riff can test is a check after the
 release. Its item stays open until the release of the wave. See
 [Waves](waves.md).
+
+### See the git config of a worker
+
+A worker has its own git config: it reads nothing of your
+`~/.gitconfig`. To see it, run this in a worker:
+
+```sh
+git config --list --show-origin
+```
+
+### Find the commits of a session
+
+A commit of a session names the session, not you. Its author and its
+committer are `riff ROLE ID`, with the first 8 characters of the
+session ID that `riff who` shows, for example `riff worker 6a56bcf5`.
+The email is `ROLE-ID@riff.invalid`: it reaches no one. A WIP commit
+of `riff worktrees clean` has the author `riff`. To find the commits of
+a session on a branch:
+
+```sh
+git log --author='riff worker 6a56bcf5'
+```
+
+A pull request merges by squash. So the commit on `main` has the
+author of the pull request, not the session.
 
 ### Test a debug build with sign-in
 

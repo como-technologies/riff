@@ -355,6 +355,160 @@ fn a_worker_does_only_what_its_profile_allows() {
     );
 }
 
+/// 01M4FC9PEXHA3TENYRQW3GQ20H: a worker in its sandbox finds the
+/// first-run answers in its own Claude folder: the onboarding, the
+/// theme of the person and the trust of the clone. riff reads the theme
+/// of the person only, and the file of the person stays as it was.
+#[test]
+fn a_worker_finds_the_first_run_answers_in_its_own_claude_folder() {
+    let m = Machine::new();
+    let home = m.home();
+    let person = home.join(".claude.json");
+    let before = r#"{"theme":"dark","userID":"secret"}"#;
+    std::fs::write(&person, before).unwrap();
+    let result = m.worktrees().join("first-run");
+    let claude = m.claude(&format!(
+        "cat \"$CLAUDE_CONFIG_DIR/.claude.json\" > '{}'\n",
+        result.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&result).unwrap()).unwrap();
+    assert_eq!(json["hasCompletedOnboarding"], true, "{json}");
+    assert_eq!(json["theme"], "dark", "{json}");
+    assert!(json.get("userID").is_none(), "{json}");
+    let clone = m.clone();
+    let trusted =
+        |dir: &Path| json["projects"][dir.to_str().unwrap()]["hasTrustDialogAccepted"].clone();
+    assert_eq!(trusted(&clone), true, "{json}");
+    assert_eq!(trusted(&m.worktrees()), true, "{json}");
+    assert_eq!(std::fs::read_to_string(&person).unwrap(), before);
+}
+
+/// 01M4FCYPWRWM8HXKN5ME3E3V86: a worker in its sandbox reads the two
+/// project settings files of the clone, so `claude` shows no "Settings
+/// Error", and it writes neither.
+#[test]
+fn a_worker_reads_the_project_settings_of_the_clone_and_writes_none() {
+    let m = Machine::new();
+    let dot = m.clone().join(".claude");
+    std::fs::create_dir_all(&dot).unwrap();
+    for name in ["settings.json", "settings.local.json"] {
+        std::fs::write(dot.join(name), "{}\n").unwrap();
+    }
+    let result = m.worktrees().join("settings");
+    let mut body = format!(": > '{}'\n", result.display());
+    for name in ["settings.json", "settings.local.json"] {
+        let file = dot.join(name);
+        body.push_str(&format!(
+            "if cat '{f}' >/dev/null 2>&1; then echo '{name} read'; else echo '{name} no-read'; fi >> '{r}'\n\
+             if ( echo x >> '{f}' ) 2>/dev/null; then echo '{name} write'; else echo '{name} no-write'; fi >> '{r}'\n",
+            f = file.display(),
+            r = result.display(),
+        ));
+    }
+    let claude = m.claude(&body);
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&result).unwrap(),
+        "settings.json read\nsettings.json no-write\n\
+         settings.local.json read\nsettings.local.json no-write\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dot.join("settings.json")).unwrap(),
+        "{}\n"
+    );
+}
+
+/// #678: a session has its own git config. It reads nothing of the git
+/// config of the person: a `core.excludesFile` in the home, that the
+/// sandbox cannot read, gives no error, and `git config --list
+/// --show-origin` names no git config of the home: not `~/.gitconfig`,
+/// not `~/.config/git`. The git config of the session is in the data
+/// folder of riff, which can be in the home.
+#[test]
+fn a_worker_reads_no_git_config_of_the_person() {
+    let m = Machine::new();
+    let home = m.home();
+    // An exclude file in the home that the sandbox cannot read.
+    std::fs::write(home.join(".cvsignore"), "*.o\n").unwrap();
+    std::fs::write(
+        home.join(".gitconfig"),
+        "[core]\n\texcludesfile = ~/.cvsignore\n[user]\n\tname = Ada\n",
+    )
+    .unwrap();
+    let result = m.worktrees().join("result");
+    let claude = m.claude(&format!(
+        "cd \"$(dirname \"$0\")/issue-1\"\n\
+         : > '{0}'\n\
+         echo x > f\n\
+         git status --short > '{0}.status' 2>&1; echo \"status $?\" >> '{0}'\n\
+         git config --list --show-origin > '{0}.list' 2>&1\n\
+         if grep -qE '{1}/(\\.gitconfig|\\.config/git)' '{0}.list'; then echo 'list names the home'; else echo 'list names no home file'; fi >> '{0}'\n\
+         if cat '{1}/.gitconfig' >/dev/null 2>&1; then echo 'gitconfig yes'; else echo 'gitconfig no'; fi >> '{0}'\n\
+         echo \"nosystem [$GIT_CONFIG_NOSYSTEM]\" >> '{0}'",
+        result.display(),
+        home.display()
+    ));
+    let out = m.run(&m.clone(), &claude, &[]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let list = std::fs::read_to_string(m.worktrees().join("result.list")).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&result).unwrap(),
+        "status 0\nlist names no home file\ngitconfig no\nnosystem [1]\n",
+        "{list}"
+    );
+    let status = std::fs::read_to_string(m.worktrees().join("result.status")).unwrap();
+    assert!(!status.contains("Permission denied"), "{status}");
+    assert!(!status.contains("exclude"), "{status}");
+}
+
+/// 01M4GK19EM7YYT1SEZBP9BFS71: a commit of a worker names the session
+/// as its author and committer, not the person: not the name and the
+/// email in the git config of the person, and not those in the git
+/// variables of the person.
+#[test]
+fn a_worker_commits_as_its_session_and_not_as_the_person() {
+    let m = Machine::new();
+    std::fs::write(
+        m.home().join(".gitconfig"),
+        "[user]\n\tname = Ada\n\temail = ada@example.com\n",
+    )
+    .unwrap();
+    let result = m.worktrees().join("result");
+    let claude = m.claude(&format!(
+        "cd \"$(dirname \"$0\")/issue-1\"\n\
+         echo x > f\n\
+         git add f\n\
+         git commit -q -m one > '{0}.commit' 2>&1; echo \"commit $?\" > '{0}'\n\
+         git log -1 --format='%an <%ae>|%cn <%ce>' >> '{0}'",
+        result.display()
+    ));
+    let out = m.run(
+        &m.clone(),
+        &claude,
+        &[
+            ("GIT_AUTHOR_NAME", "Ada".as_ref()),
+            ("GIT_AUTHOR_EMAIL", "ada@example.com".as_ref()),
+            ("GIT_COMMITTER_NAME", "Ada".as_ref()),
+            ("GIT_COMMITTER_EMAIL", "ada@example.com".as_ref()),
+            ("EMAIL", "ada@example.com".as_ref()),
+        ],
+    );
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let commit = std::fs::read_to_string(m.worktrees().join("result.commit")).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&result).unwrap(),
+        "commit 0\nriff worker w1 <worker-w1@riff.invalid>|riff worker w1 <worker-w1@riff.invalid>\n",
+        "{commit}"
+    );
+}
+
 /// 01M4CN0W3V733V6R2SG1YYZRCN: a worker commits in its worktree, and
 /// fetches and pushes it, with no write of the config and the hooks of
 /// the clone. The config and the hooks stay as they were.

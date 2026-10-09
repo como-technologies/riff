@@ -11,6 +11,10 @@
 //!
 //! - **Allow**: `Read` for each path that the role reads, and `Read` and
 //!   `Edit` for each path that it writes.
+//! - **Allow Bash**: narrow `Bash` rules for the commands of the role,
+//!   from one list ([`bash`]). Each rule names a program and a
+//!   subcommand. No rule names a shell or an interpreter
+//!   (01M4FD5TRS3T9KCG2960RQKSDQ).
 //! - **Deny the home**: Claude Code tries the deny rules first, and an
 //!   allow rule cannot open a path in a denied folder. So no rule can
 //!   deny the home as a whole: the paths of the profile are in it.
@@ -130,10 +134,127 @@ pub fn list(dir: &Path) -> Vec<Entry> {
 /// The names of the settings files of Claude Code that hold rules.
 pub const SETTINGS: [&str; 2] = ["settings.json", "settings.local.json"];
 
+/// The build and test commands of a worker and of a verifier: a program
+/// and its subcommands. Each subcommand is named, so `cargo run`,
+/// `cargo install` and `cargo publish` stay with the check.
+const BUILD: [(&str, &[&str]); 2] = [
+    ("cargo", &["build", "test", "check", "fmt", "clippy", "doc"]),
+    ("just", &["check", "rid"]),
+];
+
+/// The `git` commands that change the worktree or the git dir.
+const GIT_WRITE: [&str; 5] = ["add", "commit", "fetch", "worktree", "rebase"];
+
+/// The `git` commands that only read.
+const GIT_READ: [&str; 5] = ["status", "diff", "log", "show", "branch"];
+
+/// The `riff` commands of a worker.
+const RIFF_WORKER: [&str; 8] = [
+    "pr",
+    "step",
+    "usage",
+    "who",
+    "watch",
+    "chat",
+    "plan",
+    "worktrees",
+];
+
+/// The `riff` commands of a verifier.
+const RIFF_VERIFIER: [&str; 6] = ["verify", "pr", "step", "who", "watch", "usage"];
+
+/// The `riff` commands of the lead.
+const RIFF_LEAD: [&str; 9] = [
+    "who",
+    "workers",
+    "plan",
+    "usage",
+    "chat",
+    "watch",
+    "pr",
+    "step",
+    "worktrees",
+];
+
+/// The `gh` commands that only read.
+const GH_READ: [&str; 4] = ["issue view", "issue list", "pr view", "pr list"];
+
+/// The `gh` commands of the lead for the waves and the issues.
+const GH_LEAD: [&str; 6] = [
+    "issue view",
+    "issue list",
+    "issue edit",
+    "issue comment",
+    "pr view",
+    "pr list",
+];
+
+/// The programs that no Bash rule may name: a shell or an interpreter
+/// runs any command, so a rule for it would open every other rule.
+pub const INTERPRETERS: [&str; 12] = [
+    "bash", "sh", "zsh", "dash", "fish", "env", "python", "python3", "node", "perl", "ruby",
+    "xargs",
+];
+
+/// The `Bash` allow rules of `role`: narrow rules for the commands of
+/// its work, from this one list. A worker also gets the `gh` comment
+/// commands and the write part of `git`. A verifier gets the read part
+/// of that list. The lead gets `gh` for the waves, `git` that reads and
+/// the `riff` commands of the lead. A test run runs no AI and gets none.
+///
+/// ```
+/// use riff::profile::Role;
+/// use riff::role_rules::bash;
+///
+/// assert!(bash(Role::Worker).contains(&"Bash(cargo fmt:*)".to_owned()));
+/// assert!(!bash(Role::Worker).iter().any(|r| r == "Bash(cargo:*)"));
+/// assert!(!bash(Role::Verifier).iter().any(|r| r.contains("git commit")));
+/// assert!(bash(Role::TestRun).is_empty());
+/// ```
+pub fn bash(role: Role) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    let mut add = |program: &str, subs: &[&str]| {
+        for sub in subs {
+            out.push(format!("Bash({program} {sub}:*)"));
+        }
+    };
+    match role {
+        Role::Worker => {
+            for (program, subs) in BUILD {
+                add(program, subs);
+            }
+            add("git", &GIT_READ);
+            add("git", &GIT_WRITE);
+            add("gh", &GH_READ);
+            add("gh", &["issue comment", "pr comment"]);
+            add("riff", &RIFF_WORKER);
+        }
+        Role::Verifier => {
+            for (program, subs) in BUILD {
+                add(program, subs);
+            }
+            add("git", &GIT_READ);
+            add("git", &["fetch", "worktree"]);
+            add("gh", &GH_READ);
+            add("riff", &RIFF_VERIFIER);
+        }
+        Role::Lead => {
+            add("git", &GIT_READ);
+            add("gh", &GH_LEAD);
+            add("riff", &RIFF_LEAD);
+        }
+        Role::TestRun => {}
+    }
+    out
+}
+
 /// The permission rules of `profile`, for its `session`. `list` gives
 /// the entries of a folder of the home (see [`list`]).
 pub fn of(profile: &Profile, session: &Session, list: &dyn Fn(&Path) -> Vec<Entry>) -> Rules {
     let mut rules = Set::default();
+    for rule in bash(profile.role()) {
+        rules.allow(rule);
+    }
     let writes: Vec<&Path> = profile.write_paths().collect();
     for path in &writes {
         rules.allow(format!("Read({}/**)", pattern(path)));
@@ -493,5 +614,80 @@ mod tests {
         let all: Vec<&String> = r.allow.iter().chain(&r.deny).collect();
         let set: HashSet<&String> = all.iter().copied().collect();
         assert_eq!(all.len(), set.len());
+    }
+
+    #[test]
+    fn each_role_has_narrow_bash_rules() {
+        for role in Role::ALL {
+            let allow = rules(role).allow;
+            let bash: Vec<&String> = allow.iter().filter(|r| r.starts_with("Bash(")).collect();
+            assert_eq!(bash.len(), self::bash(role).len(), "{role}");
+            assert_eq!(bash.is_empty(), role == Role::TestRun, "{role}");
+            for rule in bash {
+                let inner = rule
+                    .strip_prefix("Bash(")
+                    .unwrap()
+                    .strip_suffix(":*)")
+                    .unwrap();
+                let (program, sub) = inner.split_once(' ').expect(rule);
+                assert!(
+                    ["cargo", "just", "git", "gh", "riff"].contains(&program),
+                    "{rule}"
+                );
+                assert!(
+                    !sub.is_empty() && !sub.contains(['*', ';', '&', '|']),
+                    "{rule}"
+                );
+                assert!(!INTERPRETERS.contains(&program), "{rule}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_bash_rules_name_the_commands_that_the_role_runs() {
+        let has = |role, rule: &str| bash(role).contains(&rule.to_owned());
+        for rule in [
+            "cargo test",
+            "cargo fmt",
+            "just check",
+            "git commit",
+            "gh pr view",
+            "riff pr",
+        ] {
+            assert!(has(Role::Worker, &format!("Bash({rule}:*)")), "{rule}");
+        }
+        for rule in [
+            "cargo run",
+            "cargo install",
+            "cargo publish",
+            "git push",
+            "git reset",
+        ] {
+            assert!(!has(Role::Worker, &format!("Bash({rule}:*)")), "{rule}");
+        }
+        assert!(!has(Role::Verifier, "Bash(git commit:*)"));
+        assert!(!has(Role::Verifier, "Bash(git add:*)"));
+        assert!(has(Role::Lead, "Bash(gh issue edit:*)"));
+        assert!(!has(Role::Lead, "Bash(cargo build:*)"));
+    }
+
+    #[test]
+    fn no_bash_rule_opens_a_shell_or_everything() {
+        for role in Role::ALL {
+            for rule in bash(role) {
+                assert_ne!(rule, "Bash(*)", "{role}");
+                assert_ne!(rule, "Bash", "{role}");
+                for program in INTERPRETERS {
+                    assert!(
+                        !rule.starts_with(&format!("Bash({program}")),
+                        "{role}: {rule}"
+                    );
+                }
+                assert!(
+                    !rule.contains("cargo:*") && !rule.contains("just:*"),
+                    "{rule}"
+                );
+            }
+        }
     }
 }
