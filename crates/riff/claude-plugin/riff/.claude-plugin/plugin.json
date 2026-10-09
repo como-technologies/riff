@@ -1,6 +1,6 @@
 {
   "name": "riff",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Connect this session with the agent sessions of other people",
   "author": { "name": "Como Technologies" },
   "homepage": "https://como-technologies.github.io/riff/",
