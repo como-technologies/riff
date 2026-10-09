@@ -146,26 +146,74 @@ riff turns off the old plugin `riff@riff` in their settings.
 
 ### Move from riff 1.3 to 2.0
 
-riff 2.0 starts each session itself. Do these steps once on each
-machine:
+riff 2.0 starts each session itself, in its sandbox. A GitHub App
+gives the forge tokens. No build of 1.3 works with 2.0: update
+riff-server and each machine together. Do the steps in this order.
 
-1. Update riff:
+The owner or an admin of the riff does steps 1, 2, 4 and 5 one time.
+Each person does steps 3, 6 and 7 on each machine.
+
+1. Before the deploy, make the secret store of the GitHub App. In a
+   clone of riff, run `riff cloud create` again with the name of the
+   riff (see [Make the riff](start-a-team-riff.md#make-the-riff)). It
+   keeps each part that exists:
 
    ```sh
+   riff cloud create NAME
+   ```
+
+2. Deploy riff-server 2.0 (see
+   [Deploy the riff](start-a-team-riff.md#deploy-the-riff)):
+
+   ```sh
+   riff cloud deploy NAME
+   ```
+
+3. End each Claude Code session of riff: your lead, and each worker.
+   Then update riff:
+
+   ```sh
+   riff workers stop
    riff update
    ```
 
-2. End each Claude Code session of riff: your lead, and each worker
-   (`riff workers stop`). A session that riff 1.3 started has no
-   `RIFF_ON=1`, so its hooks do nothing now.
-3. Start the riff. Type `y` when riff asks to remove the old
+   A session that riff 1.3 started has no `RIFF_ON=1`, so its hooks
+   do nothing now.
+4. Make the GitHub App, and install it on your organization (see
+   [Make the GitHub App of riff](#make-the-github-app-of-riff)). It
+   also allows that organization:
+
+   ```sh
+   riff forge create --org OWNER
+   ```
+
+5. Allow each other account of the riff, and install the App there
+   (see
+   [Add an org or a personal account to the riff](#add-an-org-or-a-personal-account-to-the-riff)):
+
+   ```sh
+   riff forge allow ACCOUNT
+   riff forge install ACCOUNT
+   ```
+
+6. Give the sessions your Claude plan (see
+   [Give the sessions your Claude plan](#give-the-sessions-your-claude-plan)):
+
+   ```sh
+   claude setup-token
+   riff claude-token
+   ```
+
+7. Start the riff. Type `y` when riff asks to remove the old
    entries:
 
    ```sh
    riff
    ```
 
-4. Commit each `.claude/settings.json` of a clone that riff changed.
+   riff never changes a file that git tracks. Remove the riff entries
+   of each tracked `.claude/settings.json` in a pull request (see
+   [Remove the entries of an older riff](#remove-the-entries-of-an-older-riff)).
 
 ## The riff that riff uses
 
@@ -4075,19 +4123,19 @@ Each row is a surface with a control, and the test of that control.
 
 ### The shared surfaces with no control yet
 
-Each row is a surface with no control yet. It names its issue, or a
-proposed accept. Mike signs off this table before the release 2.0.0.
+Each row is a surface with no control yet. It names its issue, or an
+accept. Mike signed off this table on 2026-10-08 (#644).
 
 <!-- open-surfaces -->
 | Surface | A session writes or asks | Read or run outside by | Risk | Decision |
 |---|---|---|---|---|
-| The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (proposed): a lock or a record holds no command |
+| The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (Mike, 2026-10-08): a lock or a record holds no command |
 | The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
 | The variables of a broker request | a bus address | `riff test-run` | a test run gets a variable that is not of cargo or the tests | #654 |
 | The worktrees of other sessions | the worktrees folder of the clone | the other sessions | a worker changes the work of another session | #645 |
-| Forge tokens in an allowed account | a session in a repository of the account | riff-server | each member of the riff gets a token for each repository of an allowed account where it has a session | Accept (proposed): the owner admits each member, and the token has the rights of the role only |
-| The lead token of a person | a token with no session | riff-server | the token lives up to one hour after the allow or the lead ends | Accept (proposed): one hour at most |
-| A session grant with no process | none | riff-server | the grant stays 7 days when `claude` does not start | Accept (proposed): only the session key uses it, and the key was only in the wrapper |
+| Forge tokens in an allowed account | a session in a repository of the account | riff-server | each member of the riff gets a token for each repository of an allowed account where it has a session | Accept (Mike, 2026-10-08): the owner admits each member, and the token has the rights of the role only |
+| The lead token of a person | a token with no session | riff-server | the token lives up to one hour after the allow or the lead ends | Accept (Mike, 2026-10-08): one hour at most |
+| A session grant with no process | none | riff-server | the grant stays 7 days when `claude` does not start | Accept (Mike, 2026-10-08): only the session key uses it, and the key was only in the wrapper |
 <!-- /open-surfaces -->
 
 To check the two tables, and that each test is there:
