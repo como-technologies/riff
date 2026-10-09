@@ -342,10 +342,15 @@ pub fn address(path: &Path) -> Result<(nix::sys::socket::UnixAddr, Option<std::f
 }
 
 /// Makes the socket of the broker at `path`, for the user of this
-/// process only (mode 0600), and listens on it.
+/// process only (mode 0600), and listens on it. It makes the folder of
+/// `path` when it is not there: the broker starts before the sandbox
+/// makes the own folder of the session.
 pub fn listen(path: &Path) -> Result<OwnedFd> {
     use nix::sys::socket::{Backlog, bind, listen, socket};
     use std::os::unix::fs::PermissionsExt;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    }
     let fd = socket(
         AddressFamily::Unix,
         SockType::SeqPacket,
@@ -787,9 +792,9 @@ pub fn connect(path: &Path) -> Result<RawFd> {
         .context("cannot make the socket to the broker")?;
         match connect(fd.as_raw_fd(), &addr) {
             Ok(()) => return Ok(fd.into_raw_fd()),
-            Err(nix::errno::Errno::ENOENT | nix::errno::Errno::ECONNREFUSED) if tries < 10 => {
+            Err(nix::errno::Errno::ENOENT | nix::errno::Errno::ECONNREFUSED) if tries < 20 => {
                 tries += 1;
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
             Err(e) => return Err(e).context("cannot connect to the broker"),
         }
@@ -934,9 +939,24 @@ mod tests {
         drop(session);
     }
 
+    /// The broker starts before the sandbox makes the own folder of the
+    /// session: the listen makes it.
+    #[test]
+    fn a_listen_makes_the_folder_of_its_socket() {
+        let tmp = tempfile::tempdir().unwrap();
+        let own = crate::confine::resolve(tmp.path()).join("sessions/w1");
+        let path = socket_path(&own).unwrap();
+        match listen(&path) {
+            Ok(_listener) => assert!(path.exists(), "{}", path.display()),
+            Err(e) if format!("{e:#}").contains("EACCES") => {
+                println!("skip: this process can make no unix socket: {e:#}");
+            }
+            Err(e) => panic!("{e:#}"),
+        }
+    }
+
     /// The own folder of a session can be longer than a `sockaddr_un`
-    /// holds: the socket still works, and a failed listen does not end
-    /// the broker (the tests of the Gate had such a folder).
+    /// holds: the socket still works.
     #[test]
     fn a_socket_in_a_long_folder_still_works() {
         let tmp = tempfile::tempdir().unwrap();

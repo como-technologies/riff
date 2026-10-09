@@ -495,16 +495,21 @@ fn a_command_with_no_broker_fd_asks_the_broker_by_its_socket() {
     let m = Machine::outside_tmp();
     let result = m.worktrees().join("result");
     let bin = Isolated::shared().riff_path();
+    // As with Claude Code, `claude` keeps its file descriptor of the
+    // broker, and only the command closes it: the broker ends with the
+    // last one.
     let claude = m.claude(&format!(
         "cd \"$(dirname \"$0\")/issue-1\"\n\
          sock=\"$RIFF_BROKER_SOCKET\"\n\
+         (\n\
          eval \"exec ${{RIFF_BROKER}}>&-\"\n\
          unset RIFF_BROKER\n\
          echo \"mode $(stat -c %a \"$sock\")\" > '{0}'\n\
          ls /proc/self/fd | tr '\\n' ' ' | grep -qw 9 && echo 'fd9 open' >> '{0}'\n\
          '{1}' test-run -- sh -c 'exit 3' >> '{0}' 2>&1\n\
          echo \"code $?\" >> '{0}'\n\
-         ( python3 -c \"import socket; socket.socket(socket.AF_UNIX).connect('$sock')\" ) >/dev/null 2>&1; echo \"stream $?\" >> '{0}'",
+         ( python3 -c \"import socket; socket.socket(socket.AF_UNIX).connect('$sock')\" ) >/dev/null 2>&1; echo \"stream $?\" >> '{0}'\n\
+         )",
         result.display(),
         bin.display()
     ));
