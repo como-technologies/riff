@@ -5135,6 +5135,57 @@ pub fn daemon_installed(path: &Path) -> String {
     )
 }
 
+/// `riff daemon uninstall` with `RIFF_HOME` set.
+pub const DAEMON_UNINSTALL_RIFF_HOME: &str = "riff removes no daemon of this machine while \
+     RIFF_HOME is set. Stop the daemon of this RIFF_HOME in its terminal: Ctrl-C";
+
+/// `riff daemon uninstall` stopped the daemon and deleted the unit `path`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_uninstalled(std::path::Path::new("/h/.config/systemd/user/riff.service")),
+///     "riff stopped the daemon, and deleted the unit /h/.config/systemd/user/riff.service. \
+///      Each container runs on. The folder of the daemon stays."
+/// );
+/// ```
+pub fn daemon_uninstalled(path: &Path) -> String {
+    format!(
+        "riff stopped the daemon, and deleted the unit {}. Each container runs on. The folder \
+         of the daemon stays.",
+        path.display()
+    )
+}
+
+/// `riff daemon uninstall` found no unit at `path`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_not_installed(std::path::Path::new("/h/riff.service")),
+///     "No riff daemon is installed: there is no unit /h/riff.service."
+/// );
+/// ```
+pub fn daemon_not_installed(path: &Path) -> String {
+    format!(
+        "No riff daemon is installed: there is no unit {}.",
+        path.display()
+    )
+}
+
+/// A unit file at `path` that riff did not write.
+///
+/// ```
+/// let line = riff::text::unit_not_of_riff(std::path::Path::new("/h/riff.service"));
+/// assert!(line.starts_with("riff did not write the unit /h/riff.service"), "{line}");
+/// ```
+pub fn unit_not_of_riff(path: &Path) -> String {
+    format!(
+        "riff did not write the unit {}, so riff keeps it. Remove it yourself: systemctl --user \
+         disable --now {}",
+        path.display(),
+        crate::service::UNIT
+    )
+}
+
 /// The unit runs, but no daemon answers.
 pub fn daemon_no_answer(state: &str, socket: &Path) -> String {
     format!(

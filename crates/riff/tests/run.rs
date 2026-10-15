@@ -152,7 +152,8 @@ fi
 
 /// A fake `systemctl --user` that logs each call to `bin/systemctl.log`.
 /// `restart riff.service` starts `$FAKE_RIFF daemon` in the background,
-/// as systemd does, and writes its pid to `bin/daemon.pid`.
+/// as systemd does, and writes its pid to `bin/daemon.pid`. `disable
+/// --now riff.service` stops it with a SIGTERM.
 /// `is-active riff.service` says `active` while that daemon runs.
 pub fn fake_systemctl(bin: &Path) {
     let body = r#"#!/bin/sh
@@ -164,6 +165,8 @@ case "$*" in
       echo active; exit 0
     fi
     echo inactive; exit 3 ;;
+  '--user disable --now riff.service')
+    [ -f "$dir/daemon.pid" ] && kill "$(cat "$dir/daemon.pid")" 2>/dev/null ;;
   '--user restart riff.service')
     "$FAKE_RIFF" daemon >> "$dir/daemon.out" 2>&1 &
     echo $! > "$dir/daemon.pid" ;;

@@ -2121,6 +2121,22 @@ pub async fn install(
     }
 }
 
+/// `riff daemon uninstall`: stops the daemon, and removes its unit with
+/// `manager` (01M501M0T0JBWGMMHCT7HT95T9). It keeps the folder of the
+/// daemon and each container. It gives the line for the person.
+pub fn uninstall(
+    manager: &impl crate::service::ServiceManager,
+    unit_path: &Path,
+) -> Result<String> {
+    if crate::home::dir().is_some() {
+        bail!("{}", text::DAEMON_UNINSTALL_RIFF_HOME);
+    }
+    Ok(match manager.uninstall()? {
+        Some(path) => text::daemon_uninstalled(&path),
+        None => text::daemon_not_installed(unit_path),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

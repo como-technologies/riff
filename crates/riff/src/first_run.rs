@@ -575,6 +575,11 @@ mod tests {
             anyhow::bail!("this test installs nothing")
         }
 
+        fn uninstall(&self) -> Result<Option<PathBuf>> {
+            self.0.lock().unwrap().push("uninstall".into());
+            Ok(None)
+        }
+
         fn state(&self) -> Result<String> {
             self.0.lock().unwrap().push("state".into());
             Ok("inactive".into())

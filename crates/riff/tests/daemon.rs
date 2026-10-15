@@ -1,5 +1,6 @@
-//! `riff daemon`, `riff daemon install` and `riff daemon status` (#716,
-//! 01M4ZDTVK74596M0ZA46N51NKV, 01M4ZDTVNBKDM64043GGWQEV4S).
+//! `riff daemon`, `riff daemon install`, `riff daemon uninstall` and
+//! `riff daemon status` (#716, #736, 01M4ZDTVK74596M0ZA46N51NKV,
+//! 01M501M0T0JBWGMMHCT7HT95T9, 01M4ZDTVNBKDM64043GGWQEV4S).
 //!
 //! A fake `systemctl` logs each call. Its `restart riff.service` starts
 //! the `riff daemon` of this build in the background, as systemd does.
@@ -135,6 +136,60 @@ async fn riff_daemon_install_with_riff_home_installs_nothing() {
     let stderr = text(&out.stderr);
     assert!(stderr.contains("RIFF_HOME is set"), "{stderr}");
     assert!(!here.env.home().join(".config/systemd").exists());
+    assert_eq!(here.read("systemctl.log"), "");
+}
+
+#[tokio::test]
+async fn riff_daemon_uninstall_stops_the_daemon_and_deletes_its_unit() {
+    let here = Here::new();
+    let out = here.run(true, &["daemon", "install"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let unit_path = here.env.home().join(".config/systemd/user/riff.service");
+    assert!(unit_path.exists());
+    std::fs::remove_file(here.bin.path().join("systemctl.log")).unwrap();
+
+    let out = here.run(true, &["daemon", "uninstall"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains(&format!(
+            "riff stopped the daemon, and deleted the unit {}.",
+            unit_path.display()
+        )),
+        "{stdout}"
+    );
+    assert!(!unit_path.exists());
+    assert_eq!(
+        here.read("systemctl.log"),
+        "systemctl --user disable --now riff.service\n\
+         systemctl --user daemon-reload\n"
+    );
+    wait_for(&here.bin.path().join("daemon.out"), "The riff daemon stops").await;
+    // The folder of the daemon stays.
+    assert!(here.data().join("daemon").is_dir());
+
+    // A second run finds nothing, and runs no systemctl.
+    let out = here.run(true, &["daemon", "uninstall"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("No riff daemon is installed: there is no unit "),
+        "{stdout}"
+    );
+    assert_eq!(
+        here.read("systemctl.log"),
+        "systemctl --user disable --now riff.service\n\
+         systemctl --user daemon-reload\n"
+    );
+}
+
+#[tokio::test]
+async fn riff_daemon_uninstall_with_riff_home_removes_nothing() {
+    let here = Here::new();
+    let out = here.run(false, &["daemon", "uninstall"]).await;
+    assert!(!out.status.success());
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("RIFF_HOME is set"), "{stderr}");
     assert_eq!(here.read("systemctl.log"), "");
 }
 

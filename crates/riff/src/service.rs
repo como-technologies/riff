@@ -1,6 +1,6 @@
 //! The service manager of riff 3.0 (01M4Z60B7GTV4HHF9R3TMZRS7J): it
-//! installs the user unit of the daemon, and shows its state. On Linux,
-//! it is systemd ([`Systemd`]).
+//! installs and removes the user unit of the daemon, and shows its
+//! state. On Linux, it is systemd ([`Systemd`]).
 //!
 //! # Design
 //!
@@ -14,6 +14,15 @@
 //! | Read the unit again | `systemctl --user daemon-reload` |
 //! | Start it at each login | `systemctl --user enable riff.service` |
 //! | Start it, or start it again with this riff | `systemctl --user restart riff.service` |
+//!
+//! `riff daemon uninstall` undoes it (01M501M0T0JBWGMMHCT7HT95T9). It
+//! deletes only a unit file that starts with the line [`MARK`]:
+//!
+//! | Step | Command |
+//! |---|---|
+//! | Stop it, and start it at no login | `systemctl --user disable --now riff.service` |
+//! | Delete the unit file | |
+//! | Forget the unit | `systemctl --user daemon-reload` |
 //!
 //! The unit runs `riff daemon` with the absolute path of this riff. It
 //! gets the `PATH` of the shell that installs it, so the daemon finds
@@ -43,6 +52,9 @@ use crate::text;
 
 /// The user unit of the daemon.
 pub const UNIT: &str = "riff.service";
+
+/// The first line of each unit file that riff writes.
+pub const MARK: &str = "# The unit of the riff daemon. riff daemon install writes this file.";
 
 /// The user unit of the daemon as data.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,8 +122,8 @@ impl Unit {
             .exe
             .to_str()
             .with_context(|| format!("the path of riff {} is not UTF-8", self.exe.display()))?;
-        let mut out = String::from(
-            "# The unit of the riff daemon. riff daemon install writes this file.\n\
+        let mut out = format!(
+            "{MARK}\n\
              [Unit]\n\
              Description=riff daemon: the sessions of riff on this machine\n\n\
              [Service]\n\
@@ -139,6 +151,11 @@ pub trait ServiceManager {
     /// Writes `unit`, and starts it again, so that a new riff takes
     /// effect. Gives the path of the unit file.
     fn install(&self, unit: &Unit) -> Result<PathBuf>;
+
+    /// Stops and disables the unit, deletes its file, and reloads the
+    /// manager. Gives the path of the deleted file, or `None` when no
+    /// unit is installed. It refuses a unit file that riff did not write.
+    fn uninstall(&self) -> Result<Option<PathBuf>>;
 
     /// The state of the unit, for example `active` or `inactive`.
     fn state(&self) -> Result<String>;
@@ -229,6 +246,22 @@ impl ServiceManager for Systemd {
         Ok(path)
     }
 
+    fn uninstall(&self) -> Result<Option<PathBuf>> {
+        let path = self.unit_path();
+        let old = match std::fs::read_to_string(&path) {
+            Ok(old) => old,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+        };
+        if old.lines().next() != Some(MARK) {
+            bail!("{}", text::unit_not_of_riff(&path));
+        }
+        systemctl(&["disable", "--now", UNIT], true)?;
+        std::fs::remove_file(&path).with_context(|| format!("cannot delete {}", path.display()))?;
+        systemctl(&["daemon-reload"], true)?;
+        Ok(Some(path))
+    }
+
     fn state(&self) -> Result<String> {
         let state = systemctl(&["is-active", UNIT], false)?;
         Ok(if state.is_empty() {
@@ -284,5 +317,20 @@ mod tests {
             env: vec![("PATH".into(), "/a\n[Service]".into())],
         };
         assert!(bad.text().is_err());
+    }
+
+    #[test]
+    fn uninstall_with_no_unit_says_none_and_keeps_a_unit_of_another() {
+        let root = tempfile::tempdir().unwrap();
+        let systemd = Systemd {
+            dir: root.path().join("systemd/user"),
+        };
+        assert_eq!(systemd.uninstall().unwrap(), None);
+
+        // A unit that riff did not write stays, and riff runs no systemctl.
+        write_file(&systemd.unit_path(), "[Unit]\nDescription=mine\n").unwrap();
+        let e = systemd.uninstall().unwrap_err().to_string();
+        assert!(e.starts_with("riff did not write the unit "), "{e}");
+        assert!(systemd.unit_path().exists());
     }
 }
