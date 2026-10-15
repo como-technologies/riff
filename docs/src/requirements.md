@@ -579,6 +579,15 @@
   check, from each session and from each person. For an urgent fix,
   our user turns the ruleset off, pushes, and turns it on again with
   `just github`.
+- **01M4YJ6KGBPTCSVMFQCDKACZPV** A patch of an older release line goes
+  on the branch `release/MAJOR.x` of that line, by pull request. The
+  branch starts at the last release tag of the line. CI runs the `Gate`
+  and `Hygiene` on each pull request and each push of a branch
+  `release/**`, as on `main`. A push to it does not deploy. The
+  command `just github` makes the ruleset `release-branches` on
+  `release/**`: a change needs a pull request with 0 approvals and the
+  checks `Gate` and `Hygiene`. No force push, no deletion, no bypass
+  actor.
 - **01M3JFEXJG2D651PWA30DNRGWF** No session pushes to `main` or runs
   `gh pr merge --admin`. The project settings of Claude Code deny both,
   and the skill says it.

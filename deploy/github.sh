@@ -14,6 +14,10 @@
 # - The ruleset `releases` on the tags `v*`: only the repository admin
 #   role creates, moves or deletes a release tag
 #   (01M3MRMB0AJVPD952AQYD7X1RN).
+# - The ruleset `release-branches` on the branches `release/**` of the
+#   older release lines: a change needs a pull request with 0 approvals
+#   and the checks Gate and Hygiene. No force push, no deletion, no
+#   bypass (01M4YJ6KGBPTCSVMFQCDKACZPV).
 set -euo pipefail
 
 REPO="${1:-como-technologies/riff}"
@@ -95,4 +99,38 @@ ruleset releases <<'JSON'
   ]
 }
 JSON
-echo "Set up $REPO: auto-merge, squash only, the checks Gate, Hygiene and riff/verify, release tags only by an admin."
+ruleset release-branches <<'JSON'
+{
+  "name": "release-branches",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/heads/release/**"], "exclude": [] } },
+  "bypass_actors": [],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false,
+        "allowed_merge_methods": ["squash"]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "required_status_checks": [
+          { "context": "Gate" },
+          { "context": "Hygiene" }
+        ]
+      }
+    }
+  ]
+}
+JSON
+echo "Set up $REPO: auto-merge, squash only, the checks Gate, Hygiene and riff/verify on main, Gate and Hygiene on release/**, release tags only by an admin."

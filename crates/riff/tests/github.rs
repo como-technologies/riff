@@ -1,9 +1,10 @@
 //! Pull requests on GitHub: the project settings of Claude Code deny a
 //! push to `main` (01M3JFEXJG2D651PWA30DNRGWF), and `just github` sets up
 //! the repository (01M3JFEXG85AJK8ZE8N807EQVB) with a ruleset that has
-//! no bypass (01M3JN4QQCM0GXK9BCGXVS2YC7), and a ruleset on the release
-//! tags (01M3MRMB0AJVPD952AQYD7X1RN). A fake `gh` on `PATH`
-//! writes each call and its input to a log.
+//! no bypass (01M3JN4QQCM0GXK9BCGXVS2YC7), a ruleset on the release
+//! tags (01M3MRMB0AJVPD952AQYD7X1RN), and a ruleset on the branches of
+//! the older release lines (01M4YJ6KGBPTCSVMFQCDKACZPV). A fake `gh` on
+//! `PATH` writes each call and its input to a log.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -122,13 +123,15 @@ case "$*" in
   *"--input -"*) cat >> "$dir/log"; echo ;;
   *'/rulesets --jq'*'"main"'*) cat "$dir/ruleset-main" 2>/dev/null ;;
   *'/rulesets --jq'*'"releases"'*) cat "$dir/ruleset-releases" 2>/dev/null ;;
+  *'/rulesets --jq'*'"release-branches"'*) cat "$dir/ruleset-release-branches" 2>/dev/null ;;
 esac
 exit 0
 "#;
 
 /// Runs `deploy/github.sh` with a fake `gh`. `ruleset` is the ID of the
-/// ruleset `main` that exists, if any; the ruleset `releases` then
-/// exists with the ID 8. Returns stdout and the log.
+/// ruleset `main` that exists, if any; the rulesets `releases` and
+/// `release-branches` then exist with the IDs 8 and 9. Returns stdout
+/// and the log.
 fn setup(ruleset: Option<&str>) -> (String, String) {
     let dir = tempfile::tempdir().unwrap();
     let gh = dir.path().join("gh");
@@ -137,6 +140,7 @@ fn setup(ruleset: Option<&str>) -> (String, String) {
     if let Some(id) = ruleset {
         std::fs::write(dir.path().join("ruleset-main"), format!("{id}\n")).unwrap();
         std::fs::write(dir.path().join("ruleset-releases"), "8\n").unwrap();
+        std::fs::write(dir.path().join("ruleset-release-branches"), "9\n").unwrap();
     }
     let out = Command::new(repo().join("deploy/github.sh"))
         .arg("owner/repo")
@@ -180,6 +184,8 @@ fn just_github_sets_the_repository_and_makes_the_ruleset() {
             "gh api repos/owner/repo/rulesets --jq .[] | select(.name == \"main\") | .id",
             "gh api -X POST repos/owner/repo/rulesets --input -",
             "gh api repos/owner/repo/rulesets --jq .[] | select(.name == \"releases\") | .id",
+            "gh api -X POST repos/owner/repo/rulesets --input -",
+            "gh api repos/owner/repo/rulesets --jq .[] | select(.name == \"release-branches\") | .id",
             "gh api -X POST repos/owner/repo/rulesets --input -",
         ]
     );
@@ -229,6 +235,10 @@ fn just_github_again_updates_the_same_ruleset() {
         log.contains("gh api -X PUT repos/owner/repo/rulesets/8 --input -"),
         "{log}"
     );
+    assert!(
+        log.contains("gh api -X PUT repos/owner/repo/rulesets/9 --input -"),
+        "{log}"
+    );
     assert!(!log.contains("-X POST"), "{log}");
     assert_eq!(ruleset(&log, "main")["name"], "main");
 }
@@ -260,6 +270,44 @@ fn just_github_lets_only_an_admin_make_a_release_tag() {
         .map(|r| r["type"].as_str().unwrap())
         .collect();
     assert_eq!(kinds, ["creation", "update", "deletion"]);
+}
+
+/// 01M4YJ6KGBPTCSVMFQCDKACZPV: a change to a branch `release/**` needs a
+/// pull request and the checks Gate and Hygiene. No actor can bypass it.
+#[test]
+fn just_github_protects_the_release_branches() {
+    let (out, log) = setup(None);
+    assert!(
+        out.contains("Made the ruleset release-branches of owner/repo."),
+        "{out}"
+    );
+    let rules = ruleset(&log, "release-branches");
+    assert_eq!(rules["target"], "branch");
+    assert_eq!(rules["enforcement"], "active");
+    assert_eq!(
+        rules["conditions"]["ref_name"]["include"],
+        serde_json::json!(["refs/heads/release/**"])
+    );
+    assert_eq!(rules["bypass_actors"], serde_json::json!([]));
+    let rule = |kind: &str| {
+        rules["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["type"] == kind)
+            .unwrap_or_else(|| panic!("no rule {kind}"))
+            .clone()
+    };
+    rule("deletion");
+    rule("non_fast_forward");
+    let pr = rule("pull_request")["parameters"].clone();
+    assert_eq!(pr["required_approving_review_count"], 0);
+    assert_eq!(pr["allowed_merge_methods"], serde_json::json!(["squash"]));
+    let checks = rule("required_status_checks")["parameters"].clone();
+    assert_eq!(
+        checks["required_status_checks"],
+        serde_json::json!([{ "context": "Gate" }, { "context": "Hygiene" }])
+    );
 }
 
 #[test]

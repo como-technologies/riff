@@ -421,10 +421,18 @@ safe to run again:
 just github
 ```
 
-It turns on auto-merge and squash merge only, and makes or updates two
-rulesets: `main`, and `releases` on the tags `v*`. With `releases`,
-only the repository admin role can create, move or delete a release
-tag. To see the result:
+It turns on auto-merge and squash merge only, and makes or updates
+three rulesets:
+
+- `main`: a change needs a pull request and the checks `Gate`,
+  `Hygiene` and `riff/verify`.
+- `release-branches` on the branches `release/**`: a change needs a
+  pull request and the checks `Gate` and `Hygiene`. See
+  [Make a patch of an older release](#make-a-patch-of-an-older-release).
+- `releases` on the tags `v*`: only the repository admin role can
+  create, move or delete a release tag.
+
+To see the result:
 
 ```sh
 gh api repos/como-technologies/riff --jq '{allow_auto_merge, allow_squash_merge, allow_merge_commit, allow_rebase_merge, squash_merge_commit_title, squash_merge_commit_message, delete_branch_on_merge}'
@@ -1774,6 +1782,49 @@ Watch both jobs:
 gh run list --workflow CI --event push --limit 1
 gh run watch
 ```
+
+### Make a patch of an older release
+
+`main` holds the newest release line. A patch of an older line goes on
+the branch `release/MAJOR.x` of that line, for example `release/1.x`
+when `main` holds 2.x. The branch starts at the last release tag of
+the line. CI runs the `Gate` and `Hygiene` on it as on `main`. A push
+to the branch does not deploy.
+
+Make the branch one time, from the last release tag of the line:
+
+```sh
+git push origin 'v1.3.0^{commit}:refs/heads/release/1.x'
+```
+
+Each change goes in by a pull request to the branch, as on `main`:
+
+```sh
+git fetch origin
+git switch --no-track -c my-fix origin/release/1.x
+git push -u origin HEAD
+gh pr create --base release/1.x --body-file pr.md
+gh pr merge --auto --squash
+```
+
+`just check` compares your branch with `origin/main`. On a release
+branch, most files differ from `origin/main`, so it runs each test.
+
+Make the release as in [Make a release](#make-a-release), with
+`release/1.x` in place of `main`. Tag the merge commit of the release
+pull request on the branch, and name the last tag of the line for the
+notes:
+
+```sh
+git switch --no-track -c release-v1.3.1 origin/release/1.x
+gh pr create --base release/1.x --title "Release v1.3.1" --label release --body-file pr.md
+git fetch origin
+git tag v1.3.1 origin/release/1.x
+git push origin v1.3.1
+gh release create v1.3.1 --verify-tag --title v1.3.1 --notes-file notes.md --generate-notes --notes-start-tag v1.3.0
+```
+
+The tag deploys the patch as each release tag does.
 
 ### Deploy the shared server at the end of a wave
 

@@ -213,6 +213,28 @@ fn off(mut ctx: Ctx) -> Ctx {
     ctx
 }
 
+/// 01M4YJ6KGBPTCSVMFQCDKACZPV: CI and Hygiene run on each push and
+/// each pull request of `main` and of each branch `release/**`.
+#[test]
+fn ci_runs_on_main_and_on_the_release_branches() {
+    let (on, _) = ci_parts();
+    let push = on.split_once("\n  push:\n").unwrap().1;
+    let pull = on.split_once("\n  pull_request:\n").unwrap().1;
+    for part in [push, pull] {
+        assert!(
+            part.trim_start()
+                .starts_with("branches: [main, \"release/**\"]"),
+            "{on}"
+        );
+    }
+    let hygiene = fs::read_to_string(deploy().join("../.github/workflows/hygiene.yml")).unwrap();
+    assert_eq!(
+        hygiene.matches("branches: [main, \"release/**\"]").count(),
+        2,
+        "{hygiene}"
+    );
+}
+
 /// 01M3NJAZ6BYH7TWKDYTVEK78PG, 01M3NJAZ8HSE87H0GZ8SNGWN31: a release
 /// tag deploys after its Release check, and a run by hand with the
 /// input `tag` deploys after the gate. A push to main never deploys.
@@ -232,6 +254,11 @@ fn a_release_tag_or_a_run_by_hand_deploys() {
         for release in ["success", "skipped", "failure"] {
             let ctx = push("refs/heads/main", gate, release);
             assert!(!deploys(&ctx), "a push to main deploys: {ctx:?}");
+            let ctx = push("refs/heads/release/1.x", gate, release);
+            assert!(
+                !deploys(&ctx),
+                "a push to a release branch deploys: {ctx:?}"
+            );
         }
     }
     // A tag that is not vX.Y.Z fails its Release check.
@@ -332,6 +359,10 @@ fn each_push_to_main_deploys_the_stage_and_runs_the_smoke_test() {
         assert!(!runs("stage", &stage_push("refs/heads/main", gate)));
     }
     assert!(!runs("stage", &stage_push("refs/heads/other", "success")));
+    assert!(!runs(
+        "stage",
+        &stage_push("refs/heads/release/1.x", "success")
+    ));
     assert!(!runs("stage", &stage_push("refs/tags/v1.2.0", "success")));
     let mut off = stage_push("refs/heads/main", "success");
     off.retain(|(key, _)| *key != "vars.STAGE_DEPLOY");
