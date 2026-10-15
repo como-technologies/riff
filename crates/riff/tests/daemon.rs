@@ -196,6 +196,40 @@ async fn a_second_daemon_does_not_start_while_one_answers() {
     assert!(said.contains("It stopped no session"), "{said}");
 }
 
+/// `riff daemon limit` shows the limit of the host, and sets it in the
+/// folder of the daemon. `riff daemon status` shows it
+/// (01M4ZV3B6HAFTSC2K63FMC5FYA).
+#[tokio::test]
+async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
+    let here = Here::new();
+    let out = here.run(false, &["daemon", "limit"]).await;
+    assert_eq!(
+        text(&out.stdout),
+        "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start.\n"
+    );
+    assert!(!here.env.riff_home().join("daemon/limit.json").exists());
+    let out = here
+        .run(
+            false,
+            &["daemon", "limit", "--sessions", "5", "--floor", "4"],
+        )
+        .await;
+    let set =
+        "The limit of this host: 5 live sessions, and 4 GB of free memory or more for a start.";
+    assert_eq!(text(&out.stdout), format!("{set}\n"));
+    let out = here.run(false, &["daemon", "limit", "--floor", "6"]).await;
+    assert!(text(&out.stdout).contains("5 live sessions, and 6 GB"));
+
+    let mut daemon = here.daemon("daemon.out").await;
+    let out = here.run(false, &["daemon", "status"]).await;
+    let status = text(&out.stdout);
+    assert!(status.contains("5 live sessions, and 6 GB"), "{status}");
+    term(daemon.id());
+    tokio::task::spawn_blocking(move || daemon.wait().unwrap())
+        .await
+        .unwrap();
+}
+
 impl Here {
     /// Starts `riff daemon` of the `RIFF_HOME`, writes its output to
     /// `name`, and waits until it listens.

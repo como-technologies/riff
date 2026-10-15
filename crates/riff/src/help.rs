@@ -83,7 +83,7 @@ pub const GROUPS: &[Group] = &[
     },
     Group {
         heading: "Containers",
-        commands: &["init", "run", "daemon", "image"],
+        commands: &["init", "run", "wave", "daemon", "image"],
     },
     Group {
         heading: "Members",

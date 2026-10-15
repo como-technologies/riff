@@ -88,12 +88,16 @@ pub const VERIFY_CONTEXT: &str = "riff/verify";
 /// The `gh` of the machine.
 pub struct Gh {
     program: PathBuf,
+    /// The repository of each call, as `OWNER/REPO`: `GH_REPO`. With
+    /// none, `gh` takes the repository of the current folder.
+    repo: Option<String>,
 }
 
 impl Default for Gh {
     fn default() -> Self {
         Self {
             program: "gh".into(),
+            repo: None,
         }
     }
 }
@@ -103,6 +107,17 @@ impl Gh {
     pub fn at(program: impl Into<PathBuf>) -> Self {
         Self {
             program: program.into(),
+            repo: None,
+        }
+    }
+
+    /// The `gh` of the machine for the repository `repo` (`OWNER/REPO`)
+    /// from each folder: it sets `GH_REPO`. The riff daemon uses it: it
+    /// runs in no clone (#719).
+    pub fn for_repo(repo: &str) -> Self {
+        Self {
+            repo: Some(repo.to_owned()),
+            ..Self::default()
         }
     }
 
@@ -161,7 +176,11 @@ impl Gh {
     /// Runs `gh ARGS`: whether it exits with status 0, its stdout and its
     /// stderr.
     fn output(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
-        let mut child = Command::new(&self.program)
+        let mut command = Command::new(&self.program);
+        if let Some(repo) = &self.repo {
+            command.env("GH_REPO", repo);
+        }
+        let mut child = command
             .args(args)
             .stdin(if input.is_some() {
                 Stdio::piped()

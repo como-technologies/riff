@@ -393,7 +393,7 @@ async fn errors_come_back_as_tool_errors() {
 
 /// A session in a container gets only the tools that talk. Each other
 /// tool refuses and changes nothing: the claim and the place stay
-/// (01M4ZKX0H9N82ZBC9PKSPTQV4N).
+/// (01M4ZV3B6T2KB09WJ59F07HXET).
 #[tokio::test]
 async fn a_session_in_a_container_gets_only_the_tools_that_talk() {
     let api = start_server().await;

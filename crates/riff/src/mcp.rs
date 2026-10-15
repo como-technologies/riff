@@ -99,7 +99,7 @@
 //! ([`crate::daemon`]). The daemon runs on the host, outside the
 //! container. So that session gets only the tools of
 //! [`CONTAINER_TOOLS`]: they act on riff-server, and on no folder of the
-//! host and no claim (01M4ZKX0H9N82ZBC9PKSPTQV4N). `riff run` does the
+//! host and no claim (01M4ZV3B6T2KB09WJ59F07HXET). `riff run` does the
 //! claim, the release and the verify request. The tools do not list each
 //! other tool, and refuse a call of it with [`text::not_in_a_container`].
 //! The instructions of the server are [`text::MCP_CONTAINER`].
@@ -145,11 +145,11 @@ pub struct Tools {
     /// ([`crate::usage`]). `None` counts nothing.
     meter: Option<Arc<Meter>>,
     /// True for a session in a container: it gets only the tools of
-    /// [`CONTAINER_TOOLS`] (01M4ZKX0H9N82ZBC9PKSPTQV4N).
+    /// [`CONTAINER_TOOLS`] (01M4ZV3B6T2KB09WJ59F07HXET).
     container: bool,
 }
 
-/// The tools of a session in a container (01M4ZKX0H9N82ZBC9PKSPTQV4N).
+/// The tools of a session in a container (01M4ZV3B6T2KB09WJ59F07HXET).
 /// Each acts on riff-server, and on no folder of the host and no claim.
 pub const CONTAINER_TOOLS: [&str; 8] = [
     "blocked", "post", "read", "status", "tell", "threads", "who", "whoami",
@@ -293,7 +293,7 @@ impl Tools {
 
     /// Gives the session only the tools of [`CONTAINER_TOOLS`]: it runs
     /// in a container, and the tools run on the host
-    /// (01M4ZKX0H9N82ZBC9PKSPTQV4N).
+    /// (01M4ZV3B6T2KB09WJ59F07HXET).
     pub fn in_container(mut self) -> Self {
         self.container = true;
         self

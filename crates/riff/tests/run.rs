@@ -196,7 +196,7 @@ fn who_is(dir: &Path) -> Value {
     let folder = std::fs::File::open(dir).unwrap();
     let path = format!("/proc/self/fd/{}/riff.sock", folder.as_raw_fd());
     let mut conn = std::os::unix::net::UnixStream::connect(path).unwrap();
-    conn.write_all(b"{\"ask\":\"hello\",\"protocol\":1}\n")
+    conn.write_all(b"{\"ask\":\"hello\",\"protocol\":2}\n")
         .unwrap();
     let mut line = String::new();
     std::io::BufReader::new(conn).read_line(&mut line).unwrap();
@@ -356,6 +356,8 @@ impl Machine {
     /// Starts `riff daemon` of this machine as systemd does: with an
     /// `INVOCATION_ID`. Waits until it listens.
     async fn start_daemon(&mut self) {
+        // The free memory of a test host is no matter: no floor.
+        self.ok(None, &["daemon", "limit", "--floor", "0"]).await;
         let log = self.bin.path().join("daemon.out");
         let out = std::fs::File::create(&log).unwrap();
         let mut daemon = self.command(None, &["daemon"]);
@@ -1107,7 +1109,7 @@ async fn a_session_uses_the_riff_tools_through_the_relay() {
     machine.lead().await;
     // claude calls whoami and post through the MCP server of its relay.
     // claim, release, leave and move act on the host: they refuse
-    // (01M4ZKX0H9N82ZBC9PKSPTQV4N).
+    // (01M4ZV3B6T2KB09WJ59F07HXET).
     let host = machine.bin.path().display().to_string();
     let calls = [
         r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"2"}}}"#.to_owned(),
@@ -1311,4 +1313,48 @@ async fn riff_run_with_no_daemon_takes_no_claim_and_says_how_to_start_it() {
     assert!(machine.read("run.args").is_empty());
     assert!(!machine.env.riff_home().join("sessions").exists());
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// `riff wave run` asks the daemon to run the wave of the repository of
+/// the clone, and `riff wave stop` ends it (01M4ZV3B6J89KJQ0F14YWTZMJQ).
+/// `riff daemon status` shows the limit and the wave
+/// (01M4ZV3B6HAFTSC2K63FMC5FYA). The riff is paused, so the wave starts
+/// nothing.
+#[tokio::test]
+async fn riff_wave_run_and_stop_ask_the_daemon() {
+    let machine = Machine::new().await;
+    let out = machine.ok(None, &["wave", "run"]).await;
+    assert!(
+        out.contains("The riff daemon runs the wave of como-technologies/riff."),
+        "{out}"
+    );
+    let waves = machine.env.riff_home().join("daemon/waves.json");
+    let kept = std::fs::read_to_string(&waves).unwrap();
+    assert!(
+        kept.contains(&format!("{:?}", machine.main.display().to_string())),
+        "{kept}"
+    );
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(
+        status.contains("The limit of this host: 3 live sessions, and 0 GB"),
+        "{status}"
+    );
+    assert!(
+        status.contains("Waves:\n  como-technologies/riff  "),
+        "{status}"
+    );
+    let out = machine.ok(None, &["wave", "stop"]).await;
+    assert!(
+        out.contains("starts no new session for the wave of como-technologies/riff"),
+        "{out}"
+    );
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains("Waves:"), "{status}");
+    let out = machine.run(None, &["wave", "stop"]).await;
+    assert!(!out.status.success());
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("The riff daemon does not run the wave of como-technologies/riff."),
+        "{stderr}"
+    );
 }
