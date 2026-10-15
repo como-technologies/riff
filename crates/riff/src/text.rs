@@ -4680,7 +4680,8 @@ pub fn run_started(item: &str, session: &str, clone: &Path, image: &str, name: &
 
 /// The start text of a session of `riff run`: the work item, the
 /// branch, and the frame of the body of the pull request
-/// (01M4Z81APKC14AVNJWCGRQKNVW).
+/// (01M4Z81APKC14AVNJWCGRQKNVW). It tells the session to leave no
+/// background task at the end of its work (01M4ZSZXBXM6T6MGQ00ACQA66X).
 ///
 /// ```
 /// let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
@@ -4690,6 +4691,7 @@ pub fn run_started(item: &str, session: &str, clone: &Path, image: &str, name: &
 /// assert!(text.contains("--trailer \"Riff-Session: 1a2b\""));
 /// assert!(text.contains("gh pr create --title \"TITLE\" --milestone \"Wave 3\" --body-file FILE"));
 /// assert!(text.contains(frame));
+/// assert!(text.contains("Leave no background task at the end of your work"));
 /// assert!(!text.contains("earlier session"));
 /// let again = riff::text::run_start("o/r", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", true);
 /// assert!(again.contains("earlier session"));
@@ -4728,7 +4730,10 @@ pub fn run_start(
          gh pr create --title \"TITLE\" --milestone \"{milestone}\" --body-file FILE\n   \
          gh pr merge NUMBER --auto --squash\n   \
          Do not end the title with (#{issue}).\n\
-         8. Reply with the URL of the pull request in one line.\n\n\
+         8. Stop each background task that you started, for example a Monitor or a command \
+         in the background. Leave no background task at the end of your work: while one runs, \
+         your session does not end.\n\
+         9. Reply with the URL of the pull request in one line.\n\n\
          Do not print the environment or a token."
     )
 }
@@ -4860,6 +4865,27 @@ pub fn daemon_session_failed(name: &str) -> String {
 /// The daemon stops a container on the ask of `riff run`.
 pub fn daemon_stops(name: &str) -> String {
     format!("The riff daemon stops the container {name}: riff run asked.")
+}
+
+/// The daemon stops a container that gave no event for the quiet limit
+/// `quiet` after the input of `claude` closed (01M4ZSZX77AJDGWNQMGBPV2QXG).
+///
+/// ```
+/// use std::time::Duration;
+///
+/// let text = riff::text::daemon_quiet("riff-issue-12-1a2b3c4d", Duration::from_secs(1800));
+/// assert_eq!(
+///     text,
+///     "The container riff-issue-12-1a2b3c4d gave no event for 30m after the result of \
+///      claude. A background task can keep claude up. The riff daemon stops the container."
+/// );
+/// ```
+pub fn daemon_quiet(name: &str, quiet: std::time::Duration) -> String {
+    format!(
+        "The container {name} gave no event for {} after the result of claude. A background \
+         task can keep claude up. The riff daemon stops the container.",
+        ago(quiet.as_secs())
+    )
 }
 
 /// A second session with the name of a session that runs.
