@@ -389,6 +389,8 @@ riff daemon
 
 Press Ctrl-C to stop it. Its containers run on.
 
+<!-- live check A of #716 -->
+
 ## Run one item in a container
 
 `riff run ITEM` does one work item in a rootless podman container. It
