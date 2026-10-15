@@ -241,6 +241,15 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
     fixes.sort_unstable();
     fixes.dedup();
     assert_eq!(fixes.len(), starts.len(), "each part has its own fix");
+    // The range of someone else ends at 165535: the fix starts after it.
+    assert!(
+        stdout.contains("sudo usermod --add-subuids 165536-231071 "),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("sudo usermod --add-subgids 100000-165535 "),
+        "{stdout}"
+    );
     assert!(
         stdout.contains(
             "5 checks failed. riff installed nothing and pulled nothing. Do each fix, then run \

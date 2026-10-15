@@ -37,6 +37,9 @@
 //! | cgroup v2 | `/sys/fs/cgroup/cgroup.controllers`, and `cgroup.controllers` of `user@UID.service` | the file is there, and the controllers of the user have `cpu` and `memory` |
 //! | the session image | `riff.toml` of the repository of the current folder ([`crate::session_image::of_folder`]) | it pins an image by its digest |
 //!
+//! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
+//! [`MIN_IDS`] IDs from [`free_sub_id`].
+//!
 //! riff reads the controllers of `user@UID.service`, not `podman info`:
 //! a process in a scope that gives no `cpu` to its children still gets
 //! containers with `cpu.max` (01M4Z60B7MW963MBQAPN2CJEQZ).
@@ -83,6 +86,10 @@ use crate::{daemon, text};
 /// The IDs that `/etc/subuid` and `/etc/subgid` must each give the
 /// person: the size of the range that `useradd` gives.
 pub const MIN_IDS: u64 = 65536;
+
+/// The lowest first ID of the range that the fix of `/etc/subuid` or
+/// `/etc/subgid` adds: the first ID that `useradd` gives.
+pub const FIRST_SUB_ID: u64 = 100000;
 
 /// The variable that names a folder to read in place of `/etc`, for
 /// tests: its files `subuid` and `subgid`.
@@ -216,6 +223,30 @@ pub fn sub_ids(text: &str, user: &str, uid: u32) -> u64 {
         .sum()
 }
 
+/// The first ID of a free range in the text `text` of `/etc/subuid` or
+/// `/etc/subgid`: the first ID after the end of each range in the text,
+/// and [`FIRST_SUB_ID`] or more (01M501K21EK8F8N9NPR4565FVP).
+///
+/// ```
+/// use riff::first_run::free_sub_id;
+///
+/// assert_eq!(free_sub_id(""), 100000);
+/// assert_eq!(free_sub_id("brett:100000:65536\n"), 165536);
+/// assert_eq!(free_sub_id("# a comment\nbrett:300000:65536\nnate:100000:65536\n"), 365536);
+/// assert_eq!(free_sub_id("root:1000:10\nbad:many:10\n"), 100000);
+/// ```
+pub fn free_sub_id(text: &str) -> u64 {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.trim().split(':');
+            let (_name, start, count) = (parts.next()?, parts.next()?, parts.next()?);
+            let start = start.trim().parse::<u64>().ok()?;
+            let count = count.trim().parse::<u64>().ok()?;
+            start.checked_add(count)
+        })
+        .fold(FIRST_SUB_ID, u64::max)
+}
+
 /// One check of the first run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
@@ -263,7 +294,10 @@ impl Check {
 /// (`kind` is `gid`) with its text `text`.
 fn sub_check(kind: &str, text: Option<&str>, facts: &Facts) -> Check {
     let name = format!("/etc/sub{kind}");
-    let fix = || text::init_fix_sub_ids(kind, &facts.user);
+    let fix = || {
+        let start = text.map_or(FIRST_SUB_ID, free_sub_id);
+        text::init_fix_sub_ids(kind, &facts.user, start, MIN_IDS)
+    };
     let Some(text) = text else {
         return Check::fail(&name, text::init_cannot_read(&name), fix());
     };
@@ -468,7 +502,7 @@ mod tests {
                     ..ready()
                 },
                 "fail  /etc/subuid: 0 IDs for mike, and podman needs 65536.",
-                "sudo usermod --add-subuids 100000-165535 mike",
+                "sudo usermod --add-subuids 165536-231071 mike",
             ),
             (
                 "subgid",
@@ -550,6 +584,23 @@ mod tests {
             ..ready()
         };
         assert!(failed(&two).is_empty());
+    }
+
+    #[test]
+    fn the_fix_names_a_range_after_each_range_of_another_person() {
+        let facts = Facts {
+            subuid: Some("brett:100000:65536\n".into()),
+            subgid: Some("brett:100000:65536\nnate:165536:65536\n".into()),
+            ..ready()
+        };
+        let fixes: Vec<String> = failed(&facts).into_iter().map(|c| c.fix.unwrap()).collect();
+        assert_eq!(
+            fixes,
+            [
+                "sudo usermod --add-subuids 165536-231071 mike, then podman system migrate",
+                "sudo usermod --add-subgids 231072-296607 mike, then podman system migrate",
+            ]
+        );
     }
 
     #[test]
