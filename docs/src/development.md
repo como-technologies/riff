@@ -336,7 +336,8 @@ flowchart LR
 
 ### Get ready to run an item
 
-1. Install podman. It must run rootless. This command prints `true`:
+1. Use Linux: `riff run` starts nothing on another OS. Install podman.
+   It must run rootless. This command prints `true`:
 
    ```sh
    podman info --format '{{.Host.Security.Rootless}}'

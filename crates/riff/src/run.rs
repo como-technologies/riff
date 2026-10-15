@@ -7,22 +7,28 @@
 //! does the work. No riff runs in the container in this slice
 //! (01M4Z81APKC14AVNJWCGRQKNVW).
 //!
+//! `riff run` drives the container through the trait [`Runtime`]
+//! ([`run_with`]). On Linux, the runtime is [`crate::podman::Podman`].
+//! The tests take [`crate::runtime::Fake`] (01M4ZBGK5G3EFXWT61DR2NHMDD).
+//! On a host that is not Linux, `riff run` starts nothing
+//! (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant H as riff run (host)
 //!     participant S as riff-server
-//!     participant P as podman
+//!     participant P as Runtime (podman)
 //!     participant C as claude -p (container)
 //!     participant G as GitHub
 //!     H->>S: start a worker session, claim ITEM
 //!     H->>H: git clone --reference MAIN, the branch worktree-ITEM
-//!     H->>P: podman run SPEC, GH_TOKEN by its name
+//!     H->>P: start SPEC, with the value of GH_TOKEN beside it
 //!     P->>C: start
-//!     H->>C: the start text, one stream-json line on stdin
-//!     C-->>H: the events, one line each, on stdout
+//!     H->>C: the start text, one stream-json line on the input
+//!     C-->>H: the events, one line each
 //!     C->>G: push the branch, open the pull request
 //!     C-->>H: the result of the turn
-//!     H->>C: close stdin: claude ends, the container goes
+//!     H->>C: close the input: claude ends, the container goes
 //!     H->>G: find the pull request of the branch
 //!     H->>S: a verify request to the lead, release ITEM, end the session
 //! ```
@@ -56,7 +62,7 @@
 //! # The spec of the container
 //!
 //! [`spec`] makes the [`SessionSpec`] of decision 10 of #699 from the
-//! [`Facts`] of the host. [`SessionSpec::podman_args`] makes the
+//! [`Facts`] of the host. [`crate::podman::run_args`] makes the
 //! arguments of `podman`. riff builds no shell string: each value is one
 //! argument (01M4Z60B8KDXD190RWC7D184Q3).
 //!
@@ -76,8 +82,9 @@
 
 use std::borrow::Cow;
 use std::ffi::OsString;
+use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Stdio};
+use std::process::Stdio;
 
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri};
@@ -89,6 +96,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::api::{self, Api};
+use crate::runtime::{Bind, Env, Exit, Running, Runtime, SessionSpec, Source};
 use crate::session_image::Image;
 use crate::{dropped, home, identity, pr, rollout, terminal, text};
 
@@ -108,161 +116,8 @@ pub const SCCACHE_VOLUME: &str = "riff-sccache";
 /// than this many minutes left (01M4Z60B869HWDTZMSYPVYACD8).
 pub const MIN_MINUTES: i64 = 60;
 
-/// The program of the container runtime.
-pub const PODMAN: &str = "podman";
-
 /// The text that takes the place of a secret.
 pub const HIDDEN: &str = "[secret]";
-
-/// Where a bind comes from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Source {
-    /// A path on the host.
-    Path(PathBuf),
-    /// A named volume of podman.
-    Volume(String),
-}
-
-/// One bind of a container.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Bind {
-    /// The path on the host, or the volume.
-    pub source: Source,
-    /// The path in the container.
-    pub target: PathBuf,
-    /// True when the session can write it.
-    pub write: bool,
-}
-
-/// One variable of a container.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Env {
-    /// The name and its value: the value is in the command line.
-    Value(String, String),
-    /// Only the name. podman takes the value from its own environment,
-    /// so the value is in no command line (01M4Z60B89BHXQVJ2MGRRQ2CKJ).
-    Host(String),
-}
-
-/// A session as plain data: the image, the binds, the environment and
-/// the limits (01M4Z60B7GTV4HHF9R3TMZRS7J).
-///
-/// ```
-/// use riff::run::{Bind, Env, SessionSpec, Source};
-///
-/// let spec = SessionSpec {
-///     name: "riff-issue-12-1a2b3c4d".into(),
-///     image: "localhost/riff-session:latest".into(),
-///     home: "/home/mike".into(),
-///     workdir: "/data/clone".into(),
-///     binds: vec![
-///         Bind { source: Source::Path("/data/clone".into()), target: "/data/clone".into(), write: true },
-///         Bind { source: Source::Volume("riff-cargo".into()), target: "/home/mike/.cargo".into(), write: true },
-///         Bind { source: Source::Path("/home/mike/.gitconfig".into()), target: "/home/mike/.gitconfig".into(), write: false },
-///     ],
-///     env: vec![Env::Value("USER".into(), "mike".into()), Env::Host("GH_TOKEN".into())],
-///     memory: "8g".into(),
-///     cpus: 4,
-///     command: vec!["claude".into(), "-p".into()],
-/// };
-/// let args: Vec<String> = spec
-///     .podman_args()?
-///     .into_iter()
-///     .map(|a| a.into_string().unwrap())
-///     .collect();
-/// assert_eq!(
-///     args.join(" "),
-///     "run --rm -i --name riff-issue-12-1a2b3c4d --userns=keep-id --memory 8g --cpus 4 \
-///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
-///      -v /data/clone:/data/clone -v riff-cargo:/home/mike/.cargo \
-///      -v /home/mike/.gitconfig:/home/mike/.gitconfig:ro \
-///      -e USER=mike -e GH_TOKEN -w /data/clone localhost/riff-session:latest claude -p"
-/// );
-///
-/// // A path with a comma or a colon breaks the options of podman.
-/// let bad = SessionSpec { workdir: "/data/a:b".into(), ..spec };
-/// assert!(bad.podman_args().is_err());
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionSpec {
-    /// The name of the container.
-    pub name: String,
-    /// The image.
-    pub image: String,
-    /// The home of the person: a tmpfs in the container.
-    pub home: PathBuf,
-    /// The working folder in the container.
-    pub workdir: PathBuf,
-    /// The binds, in order.
-    pub binds: Vec<Bind>,
-    /// The variables, in order.
-    pub env: Vec<Env>,
-    /// The memory limit, for example `8g`.
-    pub memory: String,
-    /// The CPU limit.
-    pub cpus: u32,
-    /// The command and its arguments.
-    pub command: Vec<String>,
-}
-
-impl SessionSpec {
-    /// The arguments of `podman` for this spec: `run`, with stdin open.
-    /// It refuses a path that podman cannot take in an option: a path
-    /// with a comma or a colon.
-    pub fn podman_args(&self) -> Result<Vec<OsString>> {
-        let mut args: Vec<OsString> = ["run", "--rm", "-i", "--name"]
-            .into_iter()
-            .map(OsString::from)
-            .collect();
-        args.push(self.name.clone().into());
-        args.push("--userns=keep-id".into());
-        args.push("--memory".into());
-        args.push(self.memory.clone().into());
-        args.push("--cpus".into());
-        args.push(self.cpus.to_string().into());
-        args.push("--mount".into());
-        args.push(
-            format!(
-                "type=tmpfs,destination={},tmpfs-mode=0700,U=true",
-                plain(&self.home)?
-            )
-            .into(),
-        );
-        for bind in &self.binds {
-            let source = match &bind.source {
-                Source::Path(path) => plain(path)?.to_owned(),
-                Source::Volume(name) => name.clone(),
-            };
-            let mode = if bind.write { "" } else { ":ro" };
-            args.push("-v".into());
-            args.push(format!("{source}:{}{mode}", plain(&bind.target)?).into());
-        }
-        for env in &self.env {
-            args.push("-e".into());
-            args.push(match env {
-                Env::Value(name, value) => format!("{name}={value}").into(),
-                Env::Host(name) => name.into(),
-            });
-        }
-        args.push("-w".into());
-        args.push(plain(&self.workdir)?.into());
-        args.push(self.image.clone().into());
-        args.extend(self.command.iter().map(OsString::from));
-        Ok(args)
-    }
-}
-
-/// `path` as text that podman can take in an option.
-fn plain(path: &Path) -> Result<&str> {
-    let text = path
-        .to_str()
-        .ok_or_else(|| anyhow!("the path {} is not UTF-8", path.display()))?;
-    if text.contains([',', ':']) {
-        bail!("{}", text::run_bad_path(text));
-    }
-    Ok(text)
-}
 
 /// The facts of the host and of the session that make a [`SessionSpec`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,7 +150,8 @@ pub struct Facts {
 /// facts of #707.
 ///
 /// ```
-/// use riff::run::{Env, Facts, Source, spec};
+/// use riff::run::{Facts, spec};
+/// use riff::runtime::{Env, Source};
 ///
 /// let facts = Facts {
 ///     session: "1a2b3c4d-0000-4000-8000-000000000000".into(),
@@ -725,7 +581,7 @@ fn output(program: &str, dir: &Path, args: &[&str]) -> Result<String> {
         .current_dir(dir)
         .stdin(Stdio::null())
         .output()
-        .with_context(|| text::run_no_program(program))?;
+        .with_context(|| text::no_program(program))?;
     if !out.status.success() {
         bail!(
             "{program} {}: {}",
@@ -746,30 +602,22 @@ struct Checked {
     credentials: PathBuf,
 }
 
-/// Pulls `image` when podman does not have it. podman shows its
-/// progress on stderr.
-fn have_image(image: &str) -> Result<()> {
-    let podman = |args: &[&str]| {
-        std::process::Command::new(PODMAN)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .status()
-            .with_context(|| text::run_no_program(PODMAN))
-    };
-    if podman(&["image", "exists", image])?.success() {
+/// Pulls `image` when the runtime does not have it
+/// (01M4Z81B5A456HDKW7G0WFGCY6).
+async fn have_image(runtime: &impl Runtime, image: &str) -> Result<()> {
+    if runtime.has_image(image).await? {
         return Ok(());
     }
     println!("{}", text::run_pulling(image));
-    if !podman(&["pull", image])?.success() {
-        bail!("{}", text::run_no_image(image));
-    }
-    Ok(())
+    runtime
+        .pull(image)
+        .await
+        .with_context(|| text::run_no_image(image))
 }
 
 /// Checks each fact that a session needs, before the claim.
-fn check(main: &Path, issue: u64, image: &str) -> Result<Checked> {
-    have_image(image)?;
+async fn check(runtime: &impl Runtime, main: &Path, issue: u64, image: &str) -> Result<Checked> {
+    have_image(runtime, image).await?;
     let gh_token = output("gh", main, &["auth", "token"])
         .map_err(|e| anyhow!("{}: {e:#}", text::RUN_NO_GH))?;
     let home = std::env::var_os("HOME")
@@ -870,50 +718,67 @@ fn make_clone(main: &Path, clone: &Path, branch: &str) -> Result<bool> {
 }
 
 /// How a session ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Ended {
-    /// The exit of `podman run`.
-    status: ExitStatus,
+    /// The exit of the command of the session.
+    exit: Exit,
     /// True when the turn of `claude` ended with an error, or a signal
     /// stopped the container.
     failed: bool,
 }
 
-/// Runs the container of `spec`, gives `claude` the start text, shows
-/// its events, and waits for its end. Only the `podman` child gets the
-/// token of `gh`, in its environment. A SIGINT or a SIGTERM stops the
-/// container with `podman stop`.
+/// [`drive`], where a SIGINT or a SIGTERM stops the container.
 async fn run_session(
+    runtime: &impl Runtime,
     spec: &SessionSpec,
     start: &str,
     events: &Path,
     scrub: &Scrub,
-    gh_token: &str,
+    values: &[(String, String)],
 ) -> Result<Ended> {
     // The handlers come first: a signal before them ends riff with no
     // release.
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
-    let mut child = tokio::process::Command::new(PODMAN)
-        .args(spec.podman_args()?)
-        .env("GH_TOKEN", gh_token)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| text::run_no_program(PODMAN))?;
-    let mut stdin = child.stdin.take();
-    if let Some(input) = stdin.as_mut() {
+    let signalled = async move {
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
+        }
+    };
+    drive(runtime, spec, start, events, scrub, values, signalled).await
+}
+
+/// Starts the session of `spec` with the `values` of the host, gives
+/// `claude` the start text, shows its events, and waits for its end. When
+/// `stop` ends first, it stops the container.
+async fn drive(
+    runtime: &impl Runtime,
+    spec: &SessionSpec,
+    start: &str,
+    events: &Path,
+    scrub: &Scrub,
+    values: &[(String, String)],
+    stop: impl Future<Output = ()>,
+) -> Result<Ended> {
+    let Running {
+        name,
+        input,
+        events: output,
+        errors,
+        end,
+    } = runtime.start(spec, values).await?;
+    let mut input = Some(input);
+    if let Some(input) = input.as_mut() {
         input
             .write_all(format!("{}\n", user_line(start)).as_bytes())
             .await?;
         input.flush().await?;
     }
-    let stdout = child.stdout.take().expect("stdout is piped");
-    let stderr = child.stderr.take().expect("stderr is piped");
     let errors = {
         let scrub = scrub.clone();
         tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
+            let mut lines = BufReader::new(errors).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 eprintln!("{}", scrub.clean(&line));
             }
@@ -922,14 +787,19 @@ async fn run_session(
     let mut log = tokio::fs::File::create(events)
         .await
         .with_context(|| format!("cannot write {}", events.display()))?;
-    let mut lines = BufReader::new(stdout).lines();
+    let mut lines = BufReader::new(output).lines();
     let mut stopped = false;
     let mut failed = false;
+    tokio::pin!(stop);
     loop {
         let line = tokio::select! {
             line = lines.next_line() => line?,
-            _ = term.recv(), if !stopped => { stopped = true; stop(&spec.name).await; continue; }
-            _ = int.recv(), if !stopped => { stopped = true; stop(&spec.name).await; continue; }
+            () = &mut stop, if !stopped => {
+                stopped = true;
+                println!("{}", text::run_stopping(&name));
+                let _ = runtime.stop(&name).await;
+                continue;
+            }
         };
         let Some(line) = line else { break };
         let line = scrub.clean(&line);
@@ -941,33 +811,22 @@ async fn run_session(
                 }
                 if event["type"] == "result" {
                     failed |= event["is_error"] == true;
-                    // The end of the one turn: claude ends when stdin
-                    // closes.
-                    stdin = None;
+                    // The end of the one turn: claude ends when its
+                    // input closes.
+                    input = None;
                 }
             }
             Err(_) => println!("{line}"),
         }
     }
-    drop(stdin);
+    drop(input);
     log.flush().await?;
-    let status = child.wait().await?;
+    let exit = end.wait().await?;
     let _ = errors.await;
     Ok(Ended {
-        status,
+        exit,
         failed: failed || stopped,
     })
-}
-
-/// Stops the container `name`, and each of its processes.
-async fn stop(name: &str) {
-    println!("{}", text::run_stopping(name));
-    let _ = tokio::process::Command::new(PODMAN)
-        .args(["stop", name])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .status()
-        .await;
 }
 
 /// A pull request as `gh pr view --json number,url,headRefOid,state`
@@ -983,8 +842,30 @@ struct Pull {
 
 /// `riff run ITEM`: one work item in one container, from the claim to
 /// the pull request. With no `image`, it takes the image that the main
-/// clone pins. It gives the exit code of the command.
+/// clone pins. It gives the exit code of the command. On Linux, it runs
+/// [`run_with`] with podman. On a host that is not Linux, it starts
+/// nothing (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub async fn run(
+    api: Api,
+    here: &Place,
+    server: &str,
+    item: &str,
+    image: Option<&str>,
+) -> Result<i32> {
+    #[cfg(target_os = "linux")]
+    {
+        run_with(&crate::podman::Podman, api, here, server, item, image).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (api, here, server, item, image);
+        bail!("{}", text::RUN_LINUX_ONLY)
+    }
+}
+
+/// [`run`] with the runtime `runtime` (01M4ZBGK5G3EFXWT61DR2NHMDD).
+pub async fn run_with(
+    runtime: &impl Runtime,
     api: Api,
     here: &Place,
     server: &str,
@@ -999,7 +880,7 @@ pub async fn run(
         None => Image::of_repository(&main)?.to_string(),
     };
     let image = image.as_str();
-    let checked = check(&main, issue, image)?;
+    let checked = check(runtime, &main, issue, image).await?;
     let Some(thread) = here.default_thread() else {
         bail!("{}", text::RUN_NO_REPO);
     };
@@ -1027,7 +908,7 @@ pub async fn run(
     }
 
     let worked = work(
-        &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
+        runtime, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
     )
     .await;
     if let Err(e) = api.release(&me, &thread, item).await {
@@ -1041,6 +922,7 @@ pub async fn run(
 /// The part of [`run`] between the claim and the release.
 #[allow(clippy::too_many_arguments)]
 async fn work(
+    runtime: &impl Runtime,
     api: &Api,
     me: &SessionUri,
     thread: &riff_core::name::ThreadName,
@@ -1098,7 +980,8 @@ async fn work(
         std::iter::once(checked.gh_token.clone()).chain(checked.sign_in.secrets.iter().cloned()),
     );
     let events = folder.join("events.jsonl");
-    let ended = run_session(&spec, &start, &events, &scrub, &checked.gh_token).await?;
+    let values = [("GH_TOKEN".to_owned(), checked.gh_token.clone())];
+    let ended = run_session(runtime, &spec, &start, &events, &scrub, &values).await?;
 
     let pull = pr::Gh::default()
         .json::<Pull>(&[
@@ -1129,13 +1012,14 @@ async fn work(
     }
     println!("{}", text::run_kept(&clone));
     Ok(i32::from(
-        !(ended.status.success() && !ended.failed && pull.is_some()),
+        !(ended.exit.success() && !ended.failed && pull.is_some()),
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::Fake;
 
     fn facts() -> Facts {
         Facts {
@@ -1153,33 +1037,45 @@ mod tests {
         }
     }
 
-    fn args(spec: &SessionSpec) -> Vec<String> {
-        spec.podman_args()
-            .unwrap()
-            .into_iter()
-            .map(|a| a.into_string().unwrap())
+    /// A bind as `SOURCE -> TARGET`, with ` (no write)` when the session
+    /// cannot write it.
+    fn shown(bind: &Bind) -> String {
+        let source = match &bind.source {
+            Source::Path(path) => path.display().to_string(),
+            Source::Volume(name) => format!("volume {name}"),
+        };
+        let mode = if bind.write { "" } else { " (no write)" };
+        format!("{source} -> {}{mode}", bind.target.display())
+    }
+
+    /// The variables of a spec as `NAME=VALUE`, or `NAME` for a value of
+    /// the host.
+    fn variables(spec: &SessionSpec) -> Vec<String> {
+        spec.env
+            .iter()
+            .map(|env| match env {
+                Env::Value(name, value) => format!("{name}={value}"),
+                Env::Host(name) => name.clone(),
+            })
             .collect()
     }
 
     #[test]
     fn the_spec_has_each_bind_of_a_session_and_writes_only_its_own_folders() {
         let spec = spec(&facts());
-        let binds: Vec<String> = args(&spec)
-            .windows(2)
-            .filter(|w| w[0] == "-v")
-            .map(|w| w[1].clone())
-            .collect();
+        let binds: Vec<String> = spec.binds.iter().map(shown).collect();
         assert_eq!(
             binds,
             [
-                "/r/sessions/issue-12-1a2b3c4d/clone:/r/sessions/issue-12-1a2b3c4d/clone",
-                "/src/riff/.git/objects:/src/riff/.git/objects:ro",
-                "/home/mike/.gitconfig:/home/mike/.gitconfig:ro",
-                "/home/mike/.config/gh:/home/mike/.config/gh:ro",
-                "/r/sessions/issue-12-1a2b3c4d/claude:/home/mike/.claude",
-                "/home/mike/.claude/.credentials.json:/home/mike/.claude/.credentials.json:ro",
-                "riff-cargo:/home/mike/.cargo",
-                "riff-sccache:/home/mike/.cache/sccache",
+                "/r/sessions/issue-12-1a2b3c4d/clone -> /r/sessions/issue-12-1a2b3c4d/clone",
+                "/src/riff/.git/objects -> /src/riff/.git/objects (no write)",
+                "/home/mike/.gitconfig -> /home/mike/.gitconfig (no write)",
+                "/home/mike/.config/gh -> /home/mike/.config/gh (no write)",
+                "/r/sessions/issue-12-1a2b3c4d/claude -> /home/mike/.claude",
+                "/home/mike/.claude/.credentials.json -> /home/mike/.claude/.credentials.json \
+                 (no write)",
+                "volume riff-cargo -> /home/mike/.cargo",
+                "volume riff-sccache -> /home/mike/.cache/sccache",
             ]
         );
         // Each path of the person on the host has no write.
@@ -1194,22 +1090,41 @@ mod tests {
 
     #[test]
     fn the_spec_has_the_home_the_limits_and_the_values_of_a_session() {
-        let all = args(&spec(&facts())).join(" ");
-        for part in [
-            "run --rm -i --name riff-issue-12-1a2b3c4d --userns=keep-id --memory 8g --cpus 4",
-            "--mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true",
-            "-e HOME=/home/mike -e USER=mike -e LOGNAME=mike -e GH_TOKEN",
-            "-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=commit.gpgsign -e GIT_CONFIG_VALUE_0=false",
-            "-e CLAUDE_CONFIG_DIR=/home/mike/.claude",
-            "-e CARGO_HOME=/home/mike/.cargo -e SCCACHE_DIR=/home/mike/.cache/sccache",
-            "-e RUSTC_WRAPPER=sccache -e SCCACHE_IDLE_TIMEOUT=0 -e CARGO_BUILD_JOBS=4",
-            "-w /r/sessions/issue-12-1a2b3c4d/clone localhost/riff-session:latest",
+        let spec = spec(&facts());
+        assert_eq!(spec.name, "riff-issue-12-1a2b3c4d");
+        assert_eq!(spec.image, "localhost/riff-session:latest");
+        assert_eq!(spec.home, Path::new("/home/mike"));
+        assert_eq!(
+            spec.workdir,
+            Path::new("/r/sessions/issue-12-1a2b3c4d/clone")
+        );
+        assert_eq!((spec.memory.as_str(), spec.cpus), ("8g", 4));
+        assert_eq!(
+            variables(&spec),
+            [
+                "HOME=/home/mike",
+                "USER=mike",
+                "LOGNAME=mike",
+                "GH_TOKEN",
+                "GIT_CONFIG_COUNT=1",
+                "GIT_CONFIG_KEY_0=commit.gpgsign",
+                "GIT_CONFIG_VALUE_0=false",
+                "CLAUDE_CONFIG_DIR=/home/mike/.claude",
+                "CARGO_HOME=/home/mike/.cargo",
+                "SCCACHE_DIR=/home/mike/.cache/sccache",
+                "RUSTC_WRAPPER=sccache",
+                "SCCACHE_IDLE_TIMEOUT=0",
+                "CARGO_BUILD_JOBS=4",
+            ]
+        );
+        assert_eq!(
+            spec.command.join(" "),
             "claude -p --input-format stream-json --output-format stream-json --verbose \
-             --session-id 1a2b3c4d-0000-4000-8000-000000000000 --permission-mode auto",
-        ] {
-            assert!(all.contains(part), "{part}\nnot in\n{all}");
-        }
-        assert!(all.ends_with("--permission-mode auto"), "{all}");
+             --session-id 1a2b3c4d-0000-4000-8000-000000000000 --permission-mode auto"
+        );
+        // The token of gh is the one value of the host.
+        let token = [("GH_TOKEN".to_owned(), "gho_x".to_owned())];
+        assert!(spec.check_values(&token).is_ok());
     }
 
     #[test]
@@ -1219,21 +1134,129 @@ mod tests {
             gh_config: None,
             ..facts()
         });
-        let all = args(&spec).join(" ");
+        let all: Vec<String> = spec.binds.iter().map(shown).collect();
+        let all = all.join("\n");
         assert!(!all.contains(".gitconfig"), "{all}");
         assert!(!all.contains(".config/gh"), "{all}");
     }
 
-    #[test]
-    fn a_path_with_a_comma_or_a_colon_gives_no_arguments() {
-        for clone in ["/r/a,b", "/r/a:b"] {
-            let spec = spec(&Facts {
-                clone: clone.into(),
-                ..facts()
-            });
-            let error = spec.podman_args().unwrap_err().to_string();
-            assert!(error.contains("comma or a colon"), "{error}");
-        }
+    /// The events of one turn of a fake `claude`, with a token in a
+    /// tool result.
+    const TURN: [&str; 3] = [
+        r#"{"type":"system","subtype":"init","model":"m","permissionMode":"auto"}"#,
+        r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"gho_secret1"}]}}"#,
+        r#"{"type":"result","subtype":"success","is_error":false,"num_turns":1}"#,
+    ];
+
+    /// Drives the session of `facts()` in `fake`, with `stop`. Gives how
+    /// it ended and its log of events.
+    async fn driven(fake: &Fake, stop: impl Future<Output = ()>) -> (Result<Ended>, String) {
+        let folder = tempfile::tempdir().unwrap();
+        let events = folder.path().join("events.jsonl");
+        let scrub = Scrub::new(["gho_secret1".to_owned()]);
+        let values = [("GH_TOKEN".to_owned(), "gho_secret1".to_owned())];
+        let ended = drive(
+            fake,
+            &spec(&facts()),
+            "Do it.",
+            &events,
+            &scrub,
+            &values,
+            stop,
+        )
+        .await;
+        let log = std::fs::read_to_string(&events).unwrap_or_default();
+        (ended, log)
+    }
+
+    #[tokio::test]
+    async fn a_session_gets_the_start_text_and_ends_after_the_result_of_its_turn() {
+        let fake = Fake::default()
+            .with_image("localhost/riff-session:latest")
+            .with_events(TURN);
+        let (ended, log) = driven(&fake, std::future::pending()).await;
+        assert_eq!(
+            ended.unwrap(),
+            Ended {
+                exit: Exit::SUCCESS,
+                failed: false
+            }
+        );
+        let name = "riff-issue-12-1a2b3c4d";
+        assert_eq!(fake.calls(), [format!("start {name}")]);
+        // One stream-json line, then the input closed after the result.
+        assert_eq!(fake.input(name), format!("{}\n", user_line("Do it.")));
+        assert_eq!(fake.exit(name), Some(Exit::SUCCESS));
+        // The token goes to the runtime beside the spec, and into no log.
+        assert_eq!(
+            fake.values(name),
+            [("GH_TOKEN".to_owned(), "gho_secret1".to_owned())]
+        );
+        assert_eq!(log.lines().count(), 3, "{log}");
+        assert!(!log.contains("gho_secret1"), "{log}");
+        assert!(log.contains(HIDDEN), "{log}");
+    }
+
+    #[tokio::test]
+    async fn a_turn_that_ends_with_an_error_fails() {
+        let error = r#"{"type":"result","subtype":"error_during_execution","is_error":true}"#;
+        let fake = Fake::default()
+            .with_image("localhost/riff-session:latest")
+            .with_events([error]);
+        let (ended, _) = driven(&fake, std::future::pending()).await;
+        assert_eq!(
+            ended.unwrap(),
+            Ended {
+                exit: Exit::SUCCESS,
+                failed: true
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stop_stops_the_container_of_a_turn_that_never_ends() {
+        // claude starts, and never ends its turn.
+        let fake = Fake::default()
+            .with_image("localhost/riff-session:latest")
+            .with_events([TURN[0]]);
+        let (ended, log) = driven(&fake, async {}).await;
+        assert_eq!(
+            ended.unwrap(),
+            Ended {
+                exit: Exit { code: None },
+                failed: true
+            }
+        );
+        let name = "riff-issue-12-1a2b3c4d";
+        assert_eq!(
+            fake.calls(),
+            [format!("start {name}"), format!("stop {name}")]
+        );
+        assert!(log.lines().count() <= 1, "{log}");
+    }
+
+    #[tokio::test]
+    async fn a_session_with_no_image_on_the_machine_does_not_start() {
+        let fake = Fake::default().with_events(TURN);
+        let (ended, _) = driven(&fake, std::future::pending()).await;
+        let error = ended.unwrap_err().to_string();
+        assert!(error.contains("no image"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn riff_run_pulls_only_an_image_that_the_machine_does_not_have() {
+        let (local, remote, missing) = ("img-local", "img-remote", "img-missing");
+        let fake = Fake::default().with_image(local).with_registry(remote);
+        have_image(&fake, local).await.unwrap();
+        assert!(fake.calls().is_empty());
+        have_image(&fake, remote).await.unwrap();
+        assert!(fake.has_image(remote).await.unwrap());
+        let error = format!("{:#}", have_image(&fake, missing).await.unwrap_err());
+        assert!(error.contains(&text::run_no_image(missing)), "{error}");
+        assert_eq!(
+            fake.calls(),
+            [format!("pull {remote}"), format!("pull {missing}")]
+        );
     }
 
     #[test]
