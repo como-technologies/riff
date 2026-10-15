@@ -1172,6 +1172,128 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
     )
 }
 
+/// The lines of `riff wave list`: each open milestone with its open and
+/// closed items (01M509TJRBE2J7HYKKHRJ1ZFR0).
+///
+/// ```
+/// use riff::waves::Milestone;
+///
+/// let m = |title: &str, open, closed| Milestone {
+///     number: 3,
+///     title: title.into(),
+///     open_issues: open,
+///     closed_issues: closed,
+/// };
+/// assert_eq!(
+///     riff::text::waves_list(&[m("Wave 27: Cloud", 3, 20), m("Backlog", 61, 4)]),
+///     "Wave 27: Cloud  3 open, 20 closed\nBacklog  61 open, 4 closed"
+/// );
+/// assert_eq!(riff::text::waves_list(&[]), "The repository has no open wave.");
+/// ```
+pub fn waves_list(milestones: &[crate::waves::Milestone]) -> String {
+    if milestones.is_empty() {
+        return "The repository has no open wave.".into();
+    }
+    milestones
+        .iter()
+        .map(|m| {
+            format!(
+                "{}  {} open, {} closed",
+                m.title, m.open_issues, m.closed_issues
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The answer to `riff wave make` (01M509TJTV7TC32EKXW0TEQ5NZ).
+///
+/// ```
+/// assert_eq!(riff::text::waves_made("Wave 6: Cloud"), "Made the wave Wave 6: Cloud.");
+/// ```
+pub fn waves_made(title: &str) -> String {
+    format!("Made the wave {title}.")
+}
+
+/// The answer to `riff wave end` (01M509TJXE04CTG5D1K751WXJY).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_ended("Wave 6", 9),
+///     "Ended the wave Wave 6. Its 9 items are closed."
+/// );
+/// assert_eq!(riff::text::waves_ended("Wave 6", 0), "Ended the wave Wave 6. It had no item.");
+/// ```
+pub fn waves_ended(title: &str, closed: u64) -> String {
+    match closed {
+        0 => format!("Ended the wave {title}. It had no item."),
+        1 => format!("Ended the wave {title}. Its 1 item is closed."),
+        n => format!("Ended the wave {title}. Its {n} items are closed."),
+    }
+}
+
+/// The refusal of `riff wave make` for a title that is not a wave title.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_bad_title("Sprint 3"),
+///     "riff wave make makes only a wave. Give the title `Wave N` or `Wave N: NAME`, not \
+///      \"Sprint 3\"."
+/// );
+/// ```
+pub fn waves_bad_title(title: &str) -> String {
+    format!(
+        "riff wave make makes only a wave. Give the title `Wave N` or `Wave N: NAME`, not \
+         {title:?}."
+    )
+}
+
+/// The refusal of `riff wave make` for the number of an open wave.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_is_there("Wave 6: Cloud"),
+///     "The open wave Wave 6: Cloud has that number. riff made no wave. Give the last number \
+///      plus one."
+/// );
+/// ```
+pub fn waves_is_there(title: &str) -> String {
+    format!(
+        "The open wave {title} has that number. riff made no wave. Give the last number plus one."
+    )
+}
+
+/// The refusal of `riff wave end` for a number that no open wave has.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_not_open(6),
+///     "No open wave has the number 6. riff wave list shows the open waves."
+/// );
+/// ```
+pub fn waves_not_open(number: u64) -> String {
+    format!("No open wave has the number {number}. riff wave list shows the open waves.")
+}
+
+/// The refusal of `riff wave end` for a wave with open items (R216,
+/// R224).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_open_items("Wave 6", 1),
+///     "The wave Wave 6 has 1 open item. riff ended nothing. End the wave when each of its \
+///      items is closed."
+/// );
+/// assert!(riff::text::waves_open_items("Wave 6", 2).contains("has 2 open items."));
+/// ```
+pub fn waves_open_items(title: &str, open: u64) -> String {
+    let items = if open == 1 { "item" } else { "items" };
+    format!(
+        "The wave {title} has {open} open {items}. riff ended nothing. End the wave when each of \
+         its items is closed."
+    )
+}
+
 /// The error of `riff workers start` outside tmux
 /// (01M3JD3973J7A9BG8G9EP9TVDP).
 pub const NO_TMUX: &str = "riff: riff workers start needs tmux. It started nothing. Run it in \
@@ -4728,7 +4850,7 @@ pub fn run_start(
          SUMMARY. Keep each other line:\n\n{frame}\n\
          7. Open the pull request, and turn on auto-merge at once:\n   \
          gh pr create --title \"TITLE\" --milestone \"{milestone}\" --body-file FILE\n   \
-         gh pr merge NUMBER --auto --squash\n   \
+         gh pr merge --auto --squash NUMBER\n   \
          Do not end the title with (#{issue}).\n\
          8. Stop each background task that you started, for example a Monitor or a command \
          in the background. Leave no background task at the end of your work: while one runs, \

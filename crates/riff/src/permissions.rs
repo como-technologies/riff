@@ -53,8 +53,17 @@
 //! a rule of the session place for its role. A step that the skill
 //! forbids matches a deny rule. A step of a person has no rule: the auto
 //! mode check judges it. The tests check each step with [`matches()`].
-//! `{HOME}`, `{OWNER}`, `{REPO}` and `{BRANCH}` take the [`Facts`] of the
-//! person and of the project.
+//! `{HOME}` and `{BRANCH}` take the [`Facts`] of the person and of the
+//! project.
+//!
+//! An allow rule names its program and its words. Its only `*` is at its
+//! end, after a space (01M509TJNREVNYR9MNN4P9P4RA). A `*` matches each
+//! text, also `/` and spaces. So a `*` in the middle of a rule matches
+//! each command that has the fixed text after it, in each argument. The
+//! steps of the waves of the lead are `riff wave` commands
+//! ([`crate::waves`]), so `Bash(riff *)` covers them, and no rule names a
+//! path of the API of the forge. The tests check each allow rule, and a
+//! list of commands that no allow rule may match.
 //!
 //! | Rule | Kind | Roles | Places | The step |
 //! |---|---|---|---|---|
@@ -62,11 +71,11 @@
 //! | `mcp__riff` | allow | lead, worker, verifier | project, user, session | each riff tool of a worker, and of a session of the daemon |
 //! | `Bash(riff)` | allow | lead, worker, verifier | project, user | `riff` |
 //! | `Bash(riff *)` | allow | lead, worker, verifier | project, user | each `riff` command of the skill |
-//! | `Bash(~/.cache/riff/checks/*/riff *)` | allow | worker | user | the riff of a new build in a check (01M5084K79M5XJT3MP8FFVQKDX) |
-//! | `Bash({HOME}/.cache/riff/checks/*/riff *)` | allow | worker | user | the same riff, by its full path |
+//! | `Bash(~/.cache/riff/check/target/static/release/riff *)` | allow | worker | user | the riff of a new build in a check (01M5084K79M5XJT3MP8FFVQKDX) |
+//! | `Bash({HOME}/.cache/riff/check/target/static/release/riff *)` | allow | worker | user | the same riff, by its full path |
 //! | `Bash(/opt/riff/riff relay watch)` | allow | lead | session | the wakes of the lead in a container |
 //! | `Bash(gh pr create *)` | allow | worker | project, user, session | open the pull request |
-//! | `Bash(gh pr merge * --auto --squash)` | allow | worker | project, user, session | turn on auto-merge |
+//! | `Bash(gh pr merge --auto --squash *)` | allow | worker | project, user, session | turn on auto-merge |
 //! | `Bash(gh pr comment *)` | allow | worker, verifier | project, user | write a comment on a pull request |
 //! | `Bash(gh pr view *)` | allow | lead, worker, verifier | project, user, session | read a pull request |
 //! | `Bash(gh pr checks *)` | allow | verifier | user, session | see the checks of a pull request |
@@ -75,9 +84,6 @@
 //! | `Bash(gh issue create *)` | allow | lead, worker, verifier | user | file an issue |
 //! | `Bash(gh issue comment *)` | allow | worker, verifier | user | write the state on an issue |
 //! | `Bash(gh issue edit *)` | allow | lead, worker, verifier | user, session | put an item in a wave, write its `Done when:` line |
-//! | `Bash(gh api repos/*/milestones *)` | allow | lead | user, session | see the waves, make a wave |
-//! | `Bash(gh api -X PATCH repos/*/milestones/*)` | allow | lead | user, session | end a wave |
-//! | `Bash(gh api repos/{OWNER}/{REPO}/statuses/*)` | allow | verifier | project | set the status of a verify |
 //! | `Bash(git push * {BRANCH})` | deny | lead, worker, verifier | project | never push to the default branch |
 //! | `Bash(git push * {BRANCH} *)` | deny | lead, worker, verifier | project | the same |
 //! | `Bash(git push *:{BRANCH})` | deny | lead, worker, verifier | project | the same |
@@ -93,14 +99,12 @@
 //! not). It is never a step that a person types by hand
 //! (01M5084K9J566981EXZ7YJRGRR).
 
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
-
-use crate::identity::parse_remote;
 
 /// A set of permission rules of Claude Code.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -195,8 +199,7 @@ impl Kind {
 /// One row of [`TABLE`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Row {
-    /// The rule, with `{HOME}`, `{OWNER}`, `{REPO}` or `{BRANCH}` for a
-    /// fact ([`Facts`]).
+    /// The rule, with `{HOME}` or `{BRANCH}` for a fact ([`Facts`]).
     pub rule: &'static str,
     /// Allow, deny, or the step of a person.
     pub kind: Kind,
@@ -237,16 +240,20 @@ pub const TABLE: &[Row] = {
         allow("mcp__riff", ALL, &[Project, User, Session]),
         allow("Bash(riff)", ALL, &[Project, User]),
         allow("Bash(riff *)", ALL, &[Project, User]),
-        allow("Bash(~/.cache/riff/checks/*/riff *)", &[Worker], &[User]),
         allow(
-            "Bash({HOME}/.cache/riff/checks/*/riff *)",
+            "Bash(~/.cache/riff/check/target/static/release/riff *)",
+            &[Worker],
+            &[User],
+        ),
+        allow(
+            "Bash({HOME}/.cache/riff/check/target/static/release/riff *)",
             &[Worker],
             &[User],
         ),
         allow("Bash(/opt/riff/riff relay watch)", &[Lead], &[Session]),
         allow("Bash(gh pr create *)", &[Worker], &[Project, User, Session]),
         allow(
-            "Bash(gh pr merge * --auto --squash)",
+            "Bash(gh pr merge --auto --squash *)",
             &[Worker],
             &[Project, User, Session],
         ),
@@ -262,21 +269,6 @@ pub const TABLE: &[Row] = {
         allow("Bash(gh issue create *)", ALL, &[User]),
         allow("Bash(gh issue comment *)", &[Worker, Verifier], &[User]),
         allow("Bash(gh issue edit *)", ALL, &[User, Session]),
-        allow(
-            "Bash(gh api repos/*/milestones *)",
-            &[Lead],
-            &[User, Session],
-        ),
-        allow(
-            "Bash(gh api -X PATCH repos/*/milestones/*)",
-            &[Lead],
-            &[User, Session],
-        ),
-        allow(
-            "Bash(gh api repos/{OWNER}/{REPO}/statuses/*)",
-            &[Verifier],
-            &[Project],
-        ),
         deny("Bash(git push * {BRANCH})"),
         deny("Bash(git push * {BRANCH} *)"),
         deny("Bash(git push *:{BRANCH})"),
@@ -298,8 +290,6 @@ pub const TABLE: &[Row] = {
 pub struct Facts<'a> {
     /// The home of the person: `{HOME}`.
     pub home: Option<&'a Path>,
-    /// OWNER and REPO of a GitHub `origin`: `{OWNER}` and `{REPO}`.
-    pub repo: Option<(&'a str, &'a str)>,
     /// The default branch: `{BRANCH}`.
     pub branch: Option<&'a str>,
 }
@@ -316,17 +306,12 @@ impl Row {
     /// let facts = Facts { home: Some("/home/mike".as_ref()), ..Facts::default() };
     /// assert_eq!(
     ///     row.rule_of(&facts).unwrap(),
-    ///     "Bash(/home/mike/.cache/riff/checks/*/riff *)"
+    ///     "Bash(/home/mike/.cache/riff/check/target/static/release/riff *)"
     /// );
     /// ```
     pub fn rule_of(&self, facts: &Facts) -> Option<String> {
         let home = facts.home.map(|h| h.display().to_string());
-        let values = [
-            ("{HOME}", home.as_deref()),
-            ("{OWNER}", facts.repo.map(|r| r.0)),
-            ("{REPO}", facts.repo.map(|r| r.1)),
-            ("{BRANCH}", facts.branch),
-        ];
+        let values = [("{HOME}", home.as_deref()), ("{BRANCH}", facts.branch)];
         let mut rule = self.rule.to_owned();
         for (key, value) in values {
             if rule.contains(key) {
@@ -363,9 +348,8 @@ pub fn rules_of(place: Place, facts: &Facts) -> Rules {
     rules
 }
 
-/// The rules of riff work for the repository `repo` (OWNER and REPO,
-/// when it has a GitHub `origin`) with the default branch `branch`: the
-/// project place of [`TABLE`] (01M3Q53RNDJBDHVDFHJ9HCX9S1).
+/// The rules of riff work for a repository with the default branch
+/// `branch`: the project place of [`TABLE`] (01M3Q53RNDJBDHVDFHJ9HCX9S1).
 ///
 /// - Allow: each riff tool (`mcp__plugin_riff_riff` from the plugin,
 ///   `mcp__riff` in a worker), each `riff` command, and the steps of the
@@ -373,19 +357,17 @@ pub fn rules_of(place: Place, facts: &Facts) -> Rules {
 /// - Deny: a push to `branch`, and `gh pr merge --admin`.
 ///
 /// ```
-/// let rules = riff::permissions::rules(Some(("acme", "app")), "trunk");
+/// let rules = riff::permissions::rules("trunk");
 /// assert!(rules.allow.contains(&"mcp__plugin_riff_riff".to_owned()));
 /// assert!(rules.allow.contains(&"mcp__riff".to_owned()));
 /// assert!(rules.allow.contains(&"Bash(riff)".to_owned()));
-/// assert!(rules.allow.contains(&"Bash(gh api repos/acme/app/statuses/*)".to_owned()));
+/// assert!(rules.allow.contains(&"Bash(gh pr merge --auto --squash *)".to_owned()));
 /// assert!(rules.deny.contains(&"Bash(git push * trunk)".to_owned()));
 /// assert!(rules.deny.contains(&"Bash(gh pr merge *--admin*)".to_owned()));
-/// let no_repo = riff::permissions::rules(None, "main");
-/// assert!(!no_repo.allow.iter().any(|r| r.contains("statuses")));
+/// assert!(!rules.allow.iter().any(|r| r.contains("gh api")));
 /// ```
-pub fn rules(repo: Option<(&str, &str)>, branch: &str) -> Rules {
+pub fn rules(branch: &str) -> Rules {
     let facts = Facts {
-        repo,
         branch: Some(branch),
         ..Facts::default()
     };
@@ -400,8 +382,10 @@ pub fn rules(repo: Option<(&str, &str)>, branch: &str) -> Rules {
 /// ```
 /// let rules = riff::permissions::user_rules(Some("/home/mike".as_ref()));
 /// assert!(rules.allow.contains(&"Bash(gh issue list *)".to_owned()));
-/// assert!(rules.allow.contains(&"Bash(~/.cache/riff/checks/*/riff *)".to_owned()));
-/// assert!(rules.allow.contains(&"Bash(/home/mike/.cache/riff/checks/*/riff *)".to_owned()));
+/// let check = "Bash(~/.cache/riff/check/target/static/release/riff *)";
+/// assert!(rules.allow.contains(&check.to_owned()));
+/// let full = "Bash(/home/mike/.cache/riff/check/target/static/release/riff *)";
+/// assert!(rules.allow.contains(&full.to_owned()));
 /// assert!(rules.deny.is_empty());
 /// assert!(!riff::permissions::user_rules(None).allow.iter().any(|r| r.contains("/home/")));
 /// ```
@@ -437,7 +421,8 @@ pub fn session_rules() -> Rules {
 /// assert!(matches("Bash(riff *)", "riff workers start 2"));
 /// assert!(!matches("Bash(riff *)", "riff"));
 /// assert!(matches("Bash(riff)", "riff"));
-/// assert!(matches("Bash(gh api repos/*/milestones *)", "gh api repos/o/r/milestones --jq ."));
+/// assert!(matches("Bash(gh pr view *)", "gh pr view 40 --json state"));
+/// assert!(matches("Bash(git push * main)", "git push origin main"));
 /// assert!(matches("Bash(gh pr merge *--admin*)", "gh pr merge --admin"));
 /// assert!(!matches("Bash(gh issue view *)", "gh issue list"));
 /// assert!(!matches("mcp__riff", "mcp__riff"));
@@ -563,8 +548,6 @@ pub fn with_rules(text: &str, rules: &Rules) -> Result<Option<String>> {
 pub struct Project {
     /// The top of the repository, or the directory outside git.
     pub top: PathBuf,
-    /// OWNER and REPO of a GitHub `origin`.
-    pub repo: Option<(String, String)>,
     /// The default branch: the branch of `origin/HEAD`, else `main`.
     pub branch: String,
 }
@@ -574,22 +557,18 @@ impl Project {
     pub fn of(dir: &Path) -> Project {
         let top =
             git(dir, &["rev-parse", "--show-toplevel"]).map_or_else(|| dir.into(), Into::into);
-        let repo = git(dir, &["remote", "get-url", "origin"])
-            .filter(|url| url.contains("github.com"))
-            .and_then(|url| parse_remote(&url));
         let branch = git(
             dir,
             &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
         )
         .and_then(|b| b.strip_prefix("origin/").map(str::to_owned))
         .unwrap_or_else(|| "main".into());
-        Project { top, repo, branch }
+        Project { top, branch }
     }
 
     /// The rules of this project ([`rules()`]).
     pub fn rules(&self) -> Rules {
-        let repo = self.repo.as_ref().map(|(o, n)| (o.as_str(), n.as_str()));
-        rules(repo, &self.branch)
+        rules(&self.branch)
     }
 
     /// The project settings: `.claude/settings.json` at the top.
@@ -651,11 +630,29 @@ pub fn add(path: &Path, rules: &Rules) -> Result<Rules> {
     let Some(new) = with_rules(&text, &added).with_context(|| path.display().to_string())? else {
         return Ok(Rules::default());
     };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("make {}", parent.display()))?;
-    }
-    std::fs::write(path, new).with_context(|| format!("write {}", path.display()))?;
+    write(path, &new)?;
     Ok(added)
+}
+
+/// Writes `text` into the settings file at `path`. It writes a new file
+/// in the same folder and renames it, so a process that reads the file
+/// at the same time sees the old text or the new text, never a part. The
+/// file keeps its mode. A settings file that is a symbolic link stays a
+/// link: riff writes the file that it names (01M509TK01PW3RN2YPRJD38RSX).
+fn write(path: &Path, text: &str) -> Result<()> {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;
+    let fail = || format!("write {}", path.display());
+    let mut new = tempfile::NamedTempFile::new_in(dir).with_context(fail)?;
+    new.write_all(text.as_bytes()).with_context(fail)?;
+    if let Ok(old) = std::fs::metadata(&path) {
+        new.as_file()
+            .set_permissions(old.permissions())
+            .with_context(fail)?;
+    }
+    new.persist(&path).map_err(|e| e.error).with_context(fail)?;
+    Ok(())
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
@@ -688,7 +685,7 @@ mod tests {
     }
 
     #[test]
-    fn a_github_clone_gets_its_repo_and_its_default_branch() {
+    fn a_clone_gets_its_default_branch() {
         let dir = tempfile::tempdir().unwrap();
         git_in(dir.path(), &["init", "-q", "-b", "trunk"]);
         git_in(
@@ -707,7 +704,6 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         let project = Project::of(&sub);
         assert_eq!(project.top, dir.path().canonicalize().unwrap());
-        assert_eq!(project.repo, Some(("acme".into(), "app".into())));
         assert_eq!(project.branch, "trunk");
         assert!(
             project
@@ -718,11 +714,10 @@ mod tests {
     }
 
     #[test]
-    fn a_directory_outside_git_uses_main_and_no_repo() {
+    fn a_directory_outside_git_uses_main() {
         let dir = isolated::outside_git();
         let project = Project::of(dir.path());
         assert_eq!(project.top, dir.path());
-        assert_eq!(project.repo, None);
         assert_eq!(project.branch, "main");
     }
 
@@ -736,7 +731,7 @@ mod tests {
                 "permissions": {"deny": ["Z"], "allow": ["Bash(riff *)", "X"]}}"#,
         )
         .unwrap();
-        let rules = rules(None, "main");
+        let rules = rules("main");
         let added = add(&path, &rules).unwrap();
         assert!(!added.allow.contains(&"Bash(riff *)".into()));
         assert_eq!(added.len(), rules.len() - 1);
@@ -756,8 +751,105 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         std::fs::write(&path, "[1]").unwrap();
-        assert!(add(&path, &rules(None, "main")).is_err());
+        assert!(add(&path, &rules("main")).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "[1]");
+    }
+
+    /// 01M509TK01PW3RN2YPRJD38RSX.
+    #[test]
+    fn add_keeps_a_link_and_the_mode_of_the_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("dotfiles/settings.json");
+        std::fs::create_dir(dir.path().join("dotfiles")).unwrap();
+        std::fs::write(&target, r#"{"model": "opus"}"#).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let link = dir.path().join("settings.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let rules = rules("main");
+        assert_eq!(add(&link, &rules).unwrap(), rules);
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(value["model"], "opus");
+        assert_eq!(missing(&rules, &[&value.to_string()]), Rules::default());
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640);
+        // No temp file stays in the folder.
+        assert_eq!(std::fs::read_dir(dir.path().join("dotfiles")).unwrap().count(), 1);
+    }
+
+    /// True when the allow rule `rule` names its program and its words,
+    /// with its only `*` at its end, after a space. A rule that is not a
+    /// `Bash` rule names a tool: it has no `*`.
+    fn star_only_at_the_end(rule: &str) -> bool {
+        let pattern = rule
+            .strip_prefix("Bash(")
+            .and_then(|r| r.strip_suffix(')'))
+            .unwrap_or(rule);
+        match pattern.matches('*').count() {
+            0 => true,
+            1 => pattern.ends_with(" *") && pattern.len() > 2,
+            _ => false,
+        }
+    }
+
+    /// 01M509TJNREVNYR9MNN4P9P4RA.
+    #[test]
+    fn each_allow_rule_has_its_only_star_at_its_end_after_a_space() {
+        for row in TABLE.iter().filter(|r| r.kind == Kind::Allow) {
+            assert!(star_only_at_the_end(row.rule), "{row:?}");
+        }
+        // The four rules of the failed verify of #776 are too wide.
+        for rule in [
+            "Bash(~/.cache/riff/checks/*/riff *)",
+            "Bash(gh api repos/*/milestones *)",
+            "Bash(gh api -X PATCH repos/*/milestones/*)",
+            "Bash(gh pr merge * --auto --squash)",
+            "Bash(gh api repos/o/r/statuses/*)",
+            "Bash(gh pr view*)",
+            "Bash(*)",
+        ] {
+            assert!(!star_only_at_the_end(rule), "{rule}");
+        }
+    }
+
+    /// 01M509TJNREVNYR9MNN4P9P4RA: no allow rule of a place matches a
+    /// command that no step of a role needs.
+    #[test]
+    fn no_allow_rule_matches_a_command_out_of_bounds() {
+        let facts = Facts {
+            home: Some(Path::new("/home/mike")),
+            branch: Some("main"),
+        };
+        let out_of_bounds = [
+            "~/.cache/riff/check/other x/riff y",
+            "~/.cache/riff/checks/x/target/static/release/riff daemon install",
+            "/home/mike/.cache/riff/check/target/static/release/riffx daemon install",
+            "/home/mike/.cache/riff/check/../../../../bin/sh -c x riff y",
+            "gh api repos/o/r/milestones --jq .",
+            "gh api repos/o/r/issues -f title=x/milestones y",
+            "gh api -X PATCH repos/o/r -f description=x/milestones/y",
+            "gh api -X PATCH repos/o/r/milestones/3 -f state=closed",
+            "gh api -X POST repos/o/r/statuses/abc -f state=success",
+            "gh api -X PUT repos/o/r/rulesets/1 -f enforcement=disabled",
+            "gh pr merge 40 --squash",
+            "gh pr merge 40 --admin --auto --squash",
+            "gh pr merge --admin 40",
+            "gh workflow run CI --ref main -f tag=v1.2.3",
+            "gh repo delete o/r --yes",
+            "gh issue delete 12 --yes",
+            "git push origin main",
+            "riffx who",
+            "/opt/riff/riff relay mcp",
+            "sh -c 'riff who'",
+        ];
+        for place in [Place::Project, Place::User, Place::Session] {
+            let allow = rules_of(place, &facts).allow;
+            for command in out_of_bounds {
+                let rule = allow.iter().find(|r| matches(r, command));
+                assert_eq!(rule, None, "{} allows `{command}`", place.as_str());
+            }
+        }
     }
 
     #[test]
@@ -915,7 +1007,7 @@ mod tests {
             .unwrap();
         let home = Path::new("/home/mike");
         let user = user_rules(Some(home));
-        let deny = rules(Some(("o", "r")), "main").deny;
+        let deny = rules("main").deny;
         let person: Vec<&str> = TABLE
             .iter()
             .filter(|r| r.kind == Kind::Person)
@@ -925,9 +1017,12 @@ mod tests {
         assert!(steps.len() > 40, "{steps:#?}");
         // The check of a new build is in the skill (01M5084K79M5XJT3MP8FFVQKDX).
         assert!(
-            steps.iter().any(|s| s.starts_with("~/.cache/riff/checks/")),
+            steps
+                .iter()
+                .any(|s| s.starts_with("~/.cache/riff/check/target/static/release/riff ")),
             "{steps:#?}"
         );
+
         for step in &steps {
             let found = user.allow.iter().any(|r| matches(r, step))
                 || deny.iter().any(|r| matches(r, step))
