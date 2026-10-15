@@ -342,11 +342,11 @@ flowchart LR
    podman info --format '{{.Host.Security.Rootless}}'
    ```
 
-2. Build the session image. Until the repository pins its image, build
-   it from the Dockerfile of the spike of #707:
+2. Get the session image that `riff.toml` pins. `riff run` pulls it
+   when your machine does not have it. To pull it before the run:
 
    ```sh
-   podman build -t localhost/riff-session:latest spikes/o2
+   podman pull "$(riff image)"
    ```
 
 3. Sign in to `gh`, and run `claude` once on this machine, so that its
@@ -364,15 +364,21 @@ In your clone of the repository:
 riff run issue-12
 ```
 
-To use another image:
+### Run an item with a local image
+
+To try a change of the image, build it (see
+[Edit and build the image](#edit-and-build-the-image)), and give it
+with `--image`:
 
 ```sh
 riff run issue-12 --image localhost/riff-session:test
 ```
 
-First, riff checks podman, the image, the sign-in of `gh` and of
-`claude`, and the wave of the issue. A failed check takes no
-claim. Then riff does these steps:
+### What riff run does
+
+First, riff checks the image, and pulls it when it must. It checks
+the sign-in of `gh` and of `claude`, and the wave of the issue. A
+failed check takes no claim. Then riff does these steps:
 
 1. It starts a worker session, and claims the item.
 2. It makes the clone of the session on the branch `worktree-ITEM`.

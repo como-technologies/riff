@@ -20,6 +20,9 @@ const GH_TOKEN: &str = "gho_FAKEtoken0123456789";
 const ACCESS: &str = "sk-ant-oat01-FAKEaccess";
 const REFRESH: &str = "sk-ant-ort01-FAKErefresh";
 const IMAGE: &str = "localhost/riff-session:test";
+/// The image that `riff.toml` of the repository pins.
+const PINNED: &str = "ghcr.io/como-technologies/riff-session@sha256:\
+                      0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// Writes the program `path` with `body`.
 fn script(path: &Path, body: &str) {
@@ -45,13 +48,16 @@ esac
 }
 
 /// A fake `podman`. `image exists` fails when `bin/no-image` is there.
-/// `run` logs, prints `bin/events`, and waits for the end of stdin.
-/// `stop` logs, and ends the `run`.
+/// `pull` logs, and fails when `bin/no-pull` is there. `run` logs,
+/// prints `bin/events`, and waits for the end of stdin. `stop` logs,
+/// and ends the `run`.
 fn fake_podman(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
 case "$1" in
   image) [ -f "$dir/no-image" ] && exit 1; exit 0 ;;
+  pull) echo "podman $*" >> "$dir/podman.log"; [ -f "$dir/no-pull" ] && exit 125
+    rm -f "$dir/no-image"; exit 0 ;;
   stop) echo "podman $*" >> "$dir/podman.log"; kill "$(cat "$dir/run.pid")"; exit 0 ;;
   run) ;;
   *) exit 2 ;;
@@ -158,7 +164,12 @@ impl Machine {
         std::fs::create_dir_all(&seed).unwrap();
         git(&seed, &["init", "-q", "-b", "main"]);
         std::fs::write(seed.join("README.md"), "riff\n").unwrap();
-        git(&seed, &["add", "README.md"]);
+        std::fs::write(
+            seed.join("riff.toml"),
+            format!("[session]\nimage = \"{PINNED}\"\n"),
+        )
+        .unwrap();
+        git(&seed, &["add", "README.md", "riff.toml"]);
         git(&seed, &["commit", "-q", "-m", "one"]);
         git(&seed, &["push", "-q", bare.to_str().unwrap(), "main"]);
         let main = env.path().join("src/riff");
@@ -275,11 +286,17 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     let home = machine.env.home();
     let before = listing(&home);
 
-    let out = machine
-        .run(None, &["run", "issue-12", "--image", IMAGE])
-        .await;
+    // With no --image: the image that riff.toml pins. podman does not
+    // have it, so riff pulls it.
+    std::fs::write(machine.bin.path().join("no-image"), "").unwrap();
+    let out = machine.run(None, &["run", "issue-12"]).await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert_eq!(
+        machine.read("podman.log"),
+        format!("podman pull {PINNED}\n")
+    );
+    assert!(stdout.contains(&format!("riff run pulls the image {PINNED}.")));
 
     // The home of the person has no new file, and no file changed size.
     assert_eq!(listing(&home), before);
@@ -360,7 +377,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "CARGO_BUILD_JOBS=4",
         "-w",
         &c,
-        IMAGE,
+        PINNED,
         "claude",
         "-p",
         "--input-format",
@@ -481,17 +498,40 @@ async fn a_failed_check_takes_no_claim_and_starts_no_container() {
     let machine = Machine::new().await;
     machine.lead().await;
 
-    std::fs::write(machine.bin.path().join("no-image"), "").unwrap();
+    // podman does not have the image, and cannot pull it.
+    let (no_image, no_pull) = (
+        machine.bin.path().join("no-image"),
+        machine.bin.path().join("no-pull"),
+    );
+    std::fs::write(&no_image, "").unwrap();
+    std::fs::write(&no_pull, "").unwrap();
     let out = machine
         .run(None, &["run", "issue-12", "--image", IMAGE])
         .await;
     assert!(!out.status.success());
     assert!(
-        text(&out.stderr).contains(&format!("The image {IMAGE} is not on this machine")),
+        text(&out.stderr).contains(&format!(
+            "The image {IMAGE} is not on this machine, and podman cannot pull it."
+        )),
         "{}",
         text(&out.stderr)
     );
-    std::fs::remove_file(machine.bin.path().join("no-image")).unwrap();
+    assert_eq!(machine.read("podman.log"), format!("podman pull {IMAGE}\n"));
+    std::fs::remove_file(&no_image).unwrap();
+    std::fs::remove_file(&no_pull).unwrap();
+
+    // riff.toml names a tag: riff takes no image from it.
+    let config = machine.main.join("riff.toml");
+    let pinned = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("[session]\nimage = \"{IMAGE}\"\n")).unwrap();
+    let out = machine.run(None, &["run", "issue-12"]).await;
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stderr).contains("names a tag"),
+        "{}",
+        text(&out.stderr)
+    );
+    std::fs::write(&config, pinned).unwrap();
 
     Machine::sign_in(&machine.env.home(), 30);
     let out = machine

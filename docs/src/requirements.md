@@ -4531,9 +4531,11 @@ share.
   podman and the image, the sign-in of `gh`, the sign-in of `claude`
   (01M4Z60B869HWDTZMSYPVYACD8), `HOME`, `USER`, and the wave of the
   issue. A failed check takes no claim.
-- **01M4Z81B5A456HDKW7G0WFGCY6** Until the repository pins its session
-  image (#713), `riff run` takes the image from `--image`, with the
-  default `localhost/riff-session:latest`.
+- **01M4Z81B5A456HDKW7G0WFGCY6** `riff run` takes the session image
+  that `riff.toml` of the main clone pins (01M4Z7SP3KSKJYKNRP1MQ70C4Q).
+  `--image` gives another image, for example a local build. When podman
+  does not have the image, `riff run` pulls it before the claim. When
+  podman cannot pull it, riff takes no claim.
 
 ### How the relay drives claude
 

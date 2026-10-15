@@ -529,15 +529,17 @@ enum Command {
     ///
     /// It claims ITEM as a new worker session, makes a clone of its own
     /// in the folder of riff, and runs claude -p in a container of the
-    /// image. It shows the events of the session. At the end, it sends a
+    /// session image. It pulls the image when this machine does not have
+    /// it. It shows the events of the session. At the end, it sends a
     /// verify request for the pull request of the branch, releases ITEM,
     /// and keeps the clone until the merge. Ctrl-C stops the container.
     Run {
         /// The work item: an issue, for example issue-12.
         item: String,
-        /// The session image.
-        #[arg(long, default_value = riff::run::IMAGE)]
-        image: String,
+        /// The session image, for example a local build. The default is
+        /// the image that riff.toml of the main clone pins.
+        #[arg(long)]
+        image: Option<String>,
     },
     /// Check that a wave followed the rules
     ///
@@ -1643,7 +1645,7 @@ async fn main() -> Result<()> {
     // (01M4Z81APKC14AVNJWCGRQKNVW).
     if let Command::Run { item, image } = &cli.command {
         let server = api.base().to_owned();
-        let code = riff::run::run(api, &here, &server, item, image).await?;
+        let code = riff::run::run(api, &here, &server, item, image.as_deref()).await?;
         std::process::exit(code);
     }
     let me = identity::me(&here, api.base())?;

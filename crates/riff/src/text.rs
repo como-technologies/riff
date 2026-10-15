@@ -4538,11 +4538,16 @@ pub fn run_no_program(program: &str) -> String {
     format!("riff run cannot start {program}. Install it, or put it on PATH.")
 }
 
-/// The image is not on this machine.
+/// `riff run` pulls the image of the session.
+pub fn run_pulling(image: &str) -> String {
+    format!("riff run pulls the image {image}.")
+}
+
+/// The image is not on this machine, and podman cannot pull it.
 pub fn run_no_image(image: &str) -> String {
     format!(
-        "The image {image} is not on this machine. Build it, or give another one with \
-         --image. See \"Run one item in a container\" in the book."
+        "The image {image} is not on this machine, and podman cannot pull it. Build it, or \
+         give another one with --image. See \"Run one item in a container\" in the book."
     )
 }
 

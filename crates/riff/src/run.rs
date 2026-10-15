@@ -27,10 +27,15 @@
 //!     H->>S: a verify request to the lead, release ITEM, end the session
 //! ```
 //!
-//! Before the claim, riff checks each fact that it needs: podman and the
-//! image, the sign-in of `gh`, the sign-in of `claude`, `HOME` and
+//! Before the claim, riff checks each fact that it needs: the image of
+//! the session (podman pulls it when it must), the sign-in of `gh`, the sign-in of `claude`, `HOME` and
 //! `USER`, and the milestone of the issue. A failed check takes no
 //! claim (01M4Z81B3A324KKE8M8Z71TM4M).
+//!
+//! The image is the one that `riff.toml` of the main clone pins by its
+//! digest ([`Image::of_repository`]), or the one of `--image`, for
+//! example a local build. When podman does not have the image, riff
+//! pulls it before the claim (01M4Z81B5A456HDKW7G0WFGCY6).
 //!
 //! When `claude` ends, riff finds the open pull request of the branch,
 //! sends a verify request to the lead, releases the item and ends the
@@ -84,11 +89,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::api::{self, Api};
+use crate::session_image::Image;
 use crate::{dropped, home, identity, pr, rollout, terminal, text};
-
-/// The image of a session until the repository pins one (#713,
-/// 01M4Z81B5A456HDKW7G0WFGCY6).
-pub const IMAGE: &str = "localhost/riff-session:latest";
 
 /// The memory limit of each container (01M4Z60B7XT7462XMV49GJTVSJ).
 pub const MEMORY: &str = "8g";
@@ -744,16 +746,30 @@ struct Checked {
     credentials: PathBuf,
 }
 
-/// Checks each fact that a session needs, before the claim.
-fn check(main: &Path, issue: u64, image: &str) -> Result<Checked> {
-    let exists = std::process::Command::new(PODMAN)
-        .args(["image", "exists", image])
-        .stdin(Stdio::null())
-        .status()
-        .with_context(|| text::run_no_program(PODMAN))?;
-    if !exists.success() {
+/// Pulls `image` when podman does not have it. podman shows its
+/// progress on stderr.
+fn have_image(image: &str) -> Result<()> {
+    let podman = |args: &[&str]| {
+        std::process::Command::new(PODMAN)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .status()
+            .with_context(|| text::run_no_program(PODMAN))
+    };
+    if podman(&["image", "exists", image])?.success() {
+        return Ok(());
+    }
+    println!("{}", text::run_pulling(image));
+    if !podman(&["pull", image])?.success() {
         bail!("{}", text::run_no_image(image));
     }
+    Ok(())
+}
+
+/// Checks each fact that a session needs, before the claim.
+fn check(main: &Path, issue: u64, image: &str) -> Result<Checked> {
+    have_image(image)?;
     let gh_token = output("gh", main, &["auth", "token"])
         .map_err(|e| anyhow!("{}: {e:#}", text::RUN_NO_GH))?;
     let home = std::env::var_os("HOME")
@@ -966,11 +982,23 @@ struct Pull {
 }
 
 /// `riff run ITEM`: one work item in one container, from the claim to
-/// the pull request. It gives the exit code of the command.
-pub async fn run(api: Api, here: &Place, server: &str, item: &str, image: &str) -> Result<i32> {
+/// the pull request. With no `image`, it takes the image that the main
+/// clone pins. It gives the exit code of the command.
+pub async fn run(
+    api: Api,
+    here: &Place,
+    server: &str,
+    item: &str,
+    image: Option<&str>,
+) -> Result<i32> {
     let issue = issue_of(item)?;
     let dir = identity::working_dir()?;
     let (main, common) = main_clone(&dir)?;
+    let image = match image {
+        Some(image) => image.to_owned(),
+        None => Image::of_repository(&main)?.to_string(),
+    };
+    let image = image.as_str();
     let checked = check(&main, issue, image)?;
     let Some(thread) = here.default_thread() else {
         bail!("{}", text::RUN_NO_REPO);
