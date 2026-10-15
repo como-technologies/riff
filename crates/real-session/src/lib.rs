@@ -51,7 +51,9 @@
 //! | 10. wait for the Gate | the head commit has a check run [`GATE`] in [`GATE_WAIT`] |
 //!
 //! Then the test cleans up, also after a failed step, and also after
-//! Ctrl-C or SIGTERM ([`watch_signals`]). It stops its daemon, closes the
+//! Ctrl-C or SIGTERM ([`watch_signals`]). A child of a step that ends
+//! by SIGINT or SIGTERM counts as a signal too ([`child_signal`]): Ctrl-C
+//! reaches the child as well, and the child can end first. It stops its daemon, closes the
 //! pull request and deletes its branch, cancels each CI run of the
 //! branch that did not end, closes the issue as not planned, frees the
 //! hold, and removes the folder of the session. A pass gives the exit code 0, a failed step 1,
@@ -709,18 +711,58 @@ pub fn watch_signals(stop: Arc<AtomicBool>) -> std::io::Result<()> {
     })?;
     std::thread::spawn(move || {
         runtime.block_on(async move {
+            // A child that ends by the same signal can set `stop` first
+            // ([`child_signal`]): so the count is of the signals of this
+            // process, not of `stop`.
+            let mut first = true;
             loop {
                 tokio::select! {
                     _ = int.recv() => {}
                     _ = term.recv() => {}
                 }
-                if stop.swap(true, Ordering::SeqCst) {
+                if !first {
                     std::process::exit(130);
                 }
+                first = false;
+                stop.store(true, Ordering::SeqCst);
             }
         });
     });
     Ok(())
+}
+
+/// True when SIGINT or SIGTERM ended the child with `status`
+/// (01M504HBQ3Y0123HWGFP99Z6NV). Then it
+/// sets `stop`, as [`watch_signals`] does: Ctrl-C sends SIGINT to each
+/// process of the group, and the child can end before the test sees the
+/// signal. So the step fails with `a signal stopped the test`, and the
+/// exit code is 130.
+///
+/// ```
+/// use std::os::unix::process::ExitStatusExt;
+/// use std::process::ExitStatus;
+/// use std::sync::atomic::{AtomicBool, Ordering};
+/// use real_session::child_signal;
+///
+/// let stop = AtomicBool::new(false);
+/// // SIGKILL, and the exit code 1, are no stop.
+/// assert!(!child_signal(ExitStatus::from_raw(9), &stop));
+/// assert!(!child_signal(ExitStatus::from_raw(1 << 8), &stop));
+/// assert!(!stop.load(Ordering::SeqCst));
+/// // SIGINT is.
+/// assert!(child_signal(ExitStatus::from_raw(2), &stop));
+/// assert!(stop.load(Ordering::SeqCst));
+/// ```
+pub fn child_signal(status: ExitStatus, stop: &AtomicBool) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+
+    const SIGINT: i32 = 2;
+    const SIGTERM: i32 = 15;
+    let signaled = matches!(status.signal(), Some(SIGINT | SIGTERM));
+    if signaled {
+        stop.store(true, Ordering::SeqCst);
+    }
+    signaled
 }
 
 /// A pull request, as `gh pr view --json number,url,headRefOid,state`
@@ -774,7 +816,7 @@ pub fn run(options: &Options, stop: &AtomicBool) -> u8 {
     let mut made = Made::default();
     let result = steps(options, stop, &mut made);
     if let Some(issue) = made.issue {
-        clean_up(options, issue, made);
+        clean_up(options, issue, made, stop);
     }
     match result {
         Ok(summary) => {
@@ -790,7 +832,7 @@ pub fn run(options: &Options, stop: &AtomicBool) -> u8 {
 
 /// Each step, in order. The first one that fails stops the test.
 fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String, Failure> {
-    let (env, image, clones) = step(Step::Host, stop, || host(options))?;
+    let (env, image, clones) = step(Step::Host, stop, || host(options, stop))?;
     made.sessions = Some(env.sessions());
     let skips: Vec<PathBuf> = options
         .skips
@@ -811,17 +853,19 @@ fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let line = scratch_line(stamp);
-    let issue = step(Step::Item, stop, || make_item(stamp, &line))?;
+    let issue = step(Step::Item, stop, || make_item(stamp, &line, stop))?;
     made.issue = Some(issue);
-    made.held = step(Step::Hold, stop, || Ok(hold(&options.riff, issue)))?;
+    made.held = step(Step::Hold, stop, || Ok(hold(&options.riff, issue, stop)))?;
     step(Step::Daemon, stop, || {
         start_daemon(&options.riff, stop, &mut made.daemon)
     })?;
     let item = format!("issue-{issue}");
-    step(Step::Run, stop, || run_item(&options.riff, &item, &image))?;
+    step(Step::Run, stop, || {
+        run_item(&options.riff, &item, &image, stop)
+    })?;
     step(Step::Home, stop, || check_home(&home, &before, &env, issue))?;
-    let pull = step(Step::Pull, stop, || find_pull(issue))?;
-    step(Step::Change, stop, || check_change(&pull, &line))?;
+    let pull = step(Step::Pull, stop, || find_pull(issue, stop))?;
+    step(Step::Change, stop, || check_change(&pull, &line, stop))?;
     let gate = step(Step::Gate, stop, || {
         wait_for_gate(&pull, options.gate_wait, stop)
     })?;
@@ -859,8 +903,9 @@ fn step<T>(
 }
 
 /// Runs `program ARGS`, and gives its stdout with no space at the ends.
-/// An error names the command and its stderr.
-fn output(program: impl AsRef<OsStr>, args: &[&str]) -> Result<String, String> {
+/// An error names the command and its stderr. A child that ends by
+/// SIGINT or SIGTERM sets `stop` ([`child_signal`]).
+fn output(program: impl AsRef<OsStr>, args: &[&str], stop: &AtomicBool) -> Result<String, String> {
     let program = program.as_ref();
     let shown = || format!("{} {}", program.to_string_lossy(), args.join(" "));
     let out = Command::new(program)
@@ -869,6 +914,7 @@ fn output(program: impl AsRef<OsStr>, args: &[&str]) -> Result<String, String> {
         .output()
         .map_err(|e| format!("cannot run {}: {e}", program.to_string_lossy()))?;
     if !out.status.success() {
+        child_signal(out.status, stop);
         return Err(format!(
             "{} ended with {}: {}",
             shown(),
@@ -882,37 +928,39 @@ fn output(program: impl AsRef<OsStr>, args: &[&str]) -> Result<String, String> {
 /// Step 1: podman runs rootless, `gh` has a sign-in, and `riff image`
 /// names the image of the tree. It gives the folders, the image, and the
 /// main clone and the worktree of the test.
-fn host(options: &Options) -> Result<(Env, String, Vec<PathBuf>), String> {
+fn host(options: &Options, stop: &AtomicBool) -> Result<(Env, String, Vec<PathBuf>), String> {
     let env = Env::of_process()?;
     let rootless = output(
         "podman",
         &["info", "--format", "{{.Host.Security.Rootless}}"],
+        stop,
     )?;
     if rootless != "true" {
         return Err(format!(
             "podman does not run rootless: podman info says {rootless:?}"
         ));
     }
-    output("gh", &["auth", "status"])?;
-    let image = output(&options.riff, &["image"])?;
+    output("gh", &["auth", "status"], stop)?;
+    let image = output(&options.riff, &["image"], stop)?;
     if image.is_empty() {
         return Err("riff image printed no image".into());
     }
     let common = PathBuf::from(output(
         "git",
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        stop,
     )?);
     let main = common
         .parent()
         .ok_or_else(|| format!("the git dir {} has no parent", common.display()))?
         .to_owned();
-    let top = PathBuf::from(output("git", &["rev-parse", "--show-toplevel"])?);
+    let top = PathBuf::from(output("git", &["rev-parse", "--show-toplevel"], stop)?);
     println!("  image {image}");
     Ok((env, image, vec![main, top]))
 }
 
 /// Step 3: the scratch issue. It gives its number.
-fn make_item(stamp: u64, line: &str) -> Result<u64, String> {
+fn make_item(stamp: u64, line: &str, stop: &AtomicBool) -> Result<u64, String> {
     let title = format!("Real-session test {stamp}");
     let url = output(
         "gh",
@@ -926,6 +974,7 @@ fn make_item(stamp: u64, line: &str) -> Result<u64, String> {
             "--body",
             &issue_body(line),
         ],
+        stop,
     )?;
     let issue =
         issue_number(&url).ok_or_else(|| format!("gh issue create printed no issue: {url}"))?;
@@ -934,9 +983,9 @@ fn make_item(stamp: u64, line: &str) -> Result<u64, String> {
 }
 
 /// Step 4: holds `verify-issue-N`. True when it did.
-fn hold(riff: &Path, issue: u64) -> bool {
+fn hold(riff: &Path, issue: u64, stop: &AtomicBool) -> bool {
     let item = format!("verify-issue-{issue}");
-    match output(riff, &["plan", "hold", &item, HOLD_REASON]) {
+    match output(riff, &["plan", "hold", &item, HOLD_REASON], stop) {
         Ok(_) => {
             println!("  held {item}");
             true
@@ -954,7 +1003,7 @@ fn hold(riff: &Path, issue: u64) -> bool {
 fn start_daemon(riff: &Path, stop: &AtomicBool, daemon: &mut Option<Child>) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
 
-    if let Ok(status) = output(riff, &["daemon", "status"]) {
+    if let Ok(status) = output(riff, &["daemon", "status"], stop) {
         return Err(daemon_runs_text(&status));
     }
     let child = Command::new(riff)
@@ -968,9 +1017,10 @@ fn start_daemon(riff: &Path, stop: &AtomicBool, daemon: &mut Option<Child>) -> R
     let start = Instant::now();
     loop {
         if let Ok(Some(status)) = child.try_wait() {
+            child_signal(status, stop);
             return Err(daemon_ended_text(status));
         }
-        if output(riff, &["daemon", "status"]).is_ok() {
+        if output(riff, &["daemon", "status"], stop).is_ok() {
             println!("  it answers");
             return Ok(());
         }
@@ -1011,11 +1061,11 @@ fn daemon_ended_text(status: ExitStatus) -> String {
 
 /// Stops the daemon of the test with SIGTERM. When it does not end in
 /// [`DAEMON_WAIT`], it kills it.
-fn stop_daemon(daemon: &mut Child) -> Result<String, String> {
+fn stop_daemon(daemon: &mut Child, stop: &AtomicBool) -> Result<String, String> {
     if let Ok(Some(status)) = daemon.try_wait() {
         return Ok(status.to_string());
     }
-    let term = output("kill", &["-TERM", &daemon.id().to_string()]);
+    let term = output("kill", &["-TERM", &daemon.id().to_string()], stop);
     let start = Instant::now();
     while term.is_ok() && start.elapsed() < DAEMON_WAIT {
         if let Ok(Some(status)) = daemon.try_wait() {
@@ -1035,7 +1085,8 @@ fn stop_daemon(daemon: &mut Child) -> Result<String, String> {
 }
 
 /// Step 6: `riff run ITEM --image IMAGE`. The person sees its output.
-fn run_item(riff: &Path, item: &str, image: &str) -> Result<(), String> {
+/// When it ends by SIGINT or SIGTERM, it sets `stop` ([`child_signal`]).
+fn run_item(riff: &Path, item: &str, image: &str, stop: &AtomicBool) -> Result<(), String> {
     let status = Command::new(riff)
         .args(["run", item, "--image", image])
         .stdin(Stdio::null())
@@ -1044,6 +1095,7 @@ fn run_item(riff: &Path, item: &str, image: &str) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
+        child_signal(status, stop);
         Err(format!("riff run {item} ended with {status}"))
     }
 }
@@ -1064,7 +1116,7 @@ fn check_home(home: &Home, before: &Listing, env: &Env, issue: u64) -> Result<()
 }
 
 /// The open pull request of `branch`, when it has one.
-fn pull_of(branch: &str) -> Option<Pull> {
+fn pull_of(branch: &str, stop: &AtomicBool) -> Option<Pull> {
     let text = output(
         "gh",
         &[
@@ -1074,6 +1126,7 @@ fn pull_of(branch: &str) -> Option<Pull> {
             "--json",
             "number,url,headRefOid,state",
         ],
+        stop,
     )
     .ok()?;
     serde_json::from_str::<Pull>(&text)
@@ -1082,10 +1135,10 @@ fn pull_of(branch: &str) -> Option<Pull> {
 }
 
 /// Step 8: the open pull request of the branch of the item.
-fn find_pull(issue: u64) -> Result<Pull, String> {
+fn find_pull(issue: u64, stop: &AtomicBool) -> Result<Pull, String> {
     let branch = branch(issue);
-    let pull =
-        pull_of(&branch).ok_or_else(|| format!("the branch {branch} has no open pull request"))?;
+    let pull = pull_of(&branch, stop)
+        .ok_or_else(|| format!("the branch {branch} has no open pull request"))?;
     if !pull.head_ref_oid.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(format!(
             "pull request #{} has a head that is not a commit: {}",
@@ -1097,9 +1150,9 @@ fn find_pull(issue: u64) -> Result<Pull, String> {
 }
 
 /// Step 9: the diff of the pull request adds the line to [`BOOK_FILE`].
-fn check_change(pull: &Pull, line: &str) -> Result<(), String> {
+fn check_change(pull: &Pull, line: &str, stop: &AtomicBool) -> Result<(), String> {
     let number = pull.number.to_string();
-    let diff = output("gh", &["pr", "diff", &number, "--color", "never"])?;
+    let diff = output("gh", &["pr", "diff", &number, "--color", "never"], stop)?;
     let file = format!("+++ b/{BOOK_FILE}");
     let added = format!("+{line}");
     if diff.lines().any(|l| l == file) && diff.lines().any(|l| l == added) {
@@ -1120,7 +1173,7 @@ fn wait_for_gate(pull: &Pull, wait: Duration, stop: &AtomicBool) -> Result<Strin
     let start = Instant::now();
     let mut last = String::new();
     loop {
-        match output("gh", &["api", &path]) {
+        match output("gh", &["api", &path], stop) {
             Ok(text) => match serde_json::from_str::<CheckRuns>(&text) {
                 Ok(runs) => {
                     if let Some(run) = runs.check_runs.first() {
@@ -1172,13 +1225,13 @@ fn report(what: &str, result: Result<String, String>) {
 /// pull request and deletes its branch, cancels each CI run of the branch
 /// that did not end, closes the issue, frees the hold, and removes the
 /// folder of the session (01M4ZCFGCY301G2ARFMRXV7XDR).
-fn clean_up(options: &Options, issue: u64, made: Made) {
+fn clean_up(options: &Options, issue: u64, made: Made, stop: &AtomicBool) {
     println!("real-session: clean up issue #{issue}");
     if let Some(mut daemon) = made.daemon {
-        report("stop the riff daemon", stop_daemon(&mut daemon));
+        report("stop the riff daemon", stop_daemon(&mut daemon, stop));
     }
     let branch = branch(issue);
-    match pull_of(&branch) {
+    match pull_of(&branch, stop) {
         Some(pull) => report(
             &format!("close pull request #{} and delete {branch}", pull.number),
             output(
@@ -1191,6 +1244,7 @@ fn clean_up(options: &Options, issue: u64, made: Made) {
                     "--comment",
                     CLOSE_TEXT,
                 ],
+                stop,
             ),
         ),
         // The session can push the branch and open no pull request. When
@@ -1204,6 +1258,7 @@ fn clean_up(options: &Options, issue: u64, made: Made) {
                     "DELETE",
                     &format!("repos/{{owner}}/{{repo}}/git/refs/heads/{branch}"),
                 ],
+                stop,
             );
         }
     }
@@ -1217,6 +1272,7 @@ fn clean_up(options: &Options, issue: u64, made: Made) {
             "--json",
             "databaseId,status",
         ],
+        stop,
     ) {
         Ok(text) => {
             let runs: Vec<Run> = serde_json::from_str(&text).unwrap_or_default();
@@ -1224,7 +1280,7 @@ fn clean_up(options: &Options, issue: u64, made: Made) {
                 let id = run.database_id.to_string();
                 report(
                     &format!("cancel the CI run {id}"),
-                    output("gh", &["run", "cancel", &id]),
+                    output("gh", &["run", "cancel", &id], stop),
                 );
             }
         }
@@ -1243,13 +1299,14 @@ fn clean_up(options: &Options, issue: u64, made: Made) {
                 "--comment",
                 CLOSE_TEXT,
             ],
+            stop,
         ),
     );
     if made.held {
         let item = format!("verify-issue-{issue}");
         report(
             &format!("free {item}"),
-            output(&options.riff, &["plan", "free", &item]),
+            output(&options.riff, &["plan", "free", &item], stop),
         );
     }
     for (_, folder) in made
@@ -1270,6 +1327,10 @@ fn clean_up(options: &Options, issue: u64, made: Made) {
 mod tests {
     use super::*;
 
+    /// Holds each write of a script and each spawn of a child: a fork
+    /// while a script is open to write makes its exec fail with ETXTBSY.
+    static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn a_signal_fails_the_step_that_runs_and_each_step_after_it() {
         let stop = AtomicBool::new(false);
@@ -1288,6 +1349,50 @@ mod tests {
         .unwrap_err();
         assert_eq!(failure.step, Step::Home);
         assert!(!ran);
+    }
+
+    #[test]
+    fn a_child_that_ends_by_a_signal_stops_the_test() {
+        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
+        let stop = AtomicBool::new(false);
+        let failure = step(Step::Item, &stop, || {
+            output("sh", &["-c", "kill -TERM $$"], &stop)
+        })
+        .unwrap_err();
+        assert_eq!(failure.reason, "a signal stopped the test");
+        assert!(stop.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_child_that_fails_does_not_stop_the_test() {
+        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
+        let stop = AtomicBool::new(false);
+        let failure =
+            step(Step::Item, &stop, || output("sh", &["-c", "exit 3"], &stop)).unwrap_err();
+        assert!(
+            failure.reason.contains("exit status: 3"),
+            "{}",
+            failure.reason
+        );
+        assert!(!stop.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_riff_run_that_ends_by_a_signal_stops_the_test() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let riff = dir.path().join("riff");
+        std::fs::write(&riff, "#!/bin/sh\nkill -TERM $$\n").unwrap();
+        std::fs::set_permissions(&riff, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let stop = AtomicBool::new(false);
+        let failure = step(Step::Run, &stop, || {
+            run_item(&riff, "issue-12", "image", &stop)
+        })
+        .unwrap_err();
+        assert_eq!(failure.step, Step::Run);
+        assert_eq!(failure.reason, "a signal stopped the test");
     }
 
     #[test]

@@ -15,6 +15,7 @@
 //! | `daemon-fails` | `riff daemon` ends with 1 at once |
 //! | `run-fails` | `riff run` ends with 1 |
 //! | `run-waits` | `riff run` waits for a signal |
+//! | `run-signaled` | `riff run` ends by SIGTERM, and the test gets no signal |
 //! | `stray` | `riff run` writes paths in the home |
 //! | `no-pull` | `gh pr view` finds no pull request |
 //! | `no-gate` | the head commit has no check run |
@@ -101,6 +102,7 @@ run)
     touch "$HOME/.claude/projects/other.jsonl" "$HOME/.cache/tool/x" "$XDG_STATE_HOME/riff/x"
   fi
   if [ -f "$c/run-waits" ]; then touch "$c/running"; sleep 30; fi
+  if [ -f "$c/run-signaled" ]; then kill -TERM $$; fi
   if [ -f "$c/run-fails" ]; then exit 1; fi ;;
 *) echo "unknown: $*" >&2; exit 1 ;;
 esac
@@ -491,6 +493,24 @@ fn a_signal_stops_the_test_and_it_cleans_up() {
         "{}",
         text(&out.stdout)
     );
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("FAIL at step 6 of 10, run the item: a signal stopped the test"),
+        "{stderr}"
+    );
+    let log = fake.log();
+    assert!(find(&log, "gh pr diff").is_none(), "{log:#?}");
+    assert_clean(&fake);
+}
+
+#[test]
+fn a_child_that_ends_by_a_signal_counts_as_a_signal() {
+    let fake = Fake::new();
+    // The race of Ctrl-C, made certain: riff run ends by the signal, and
+    // the test never sees one.
+    fake.set("run-signaled");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(130), "{}", text(&out.stdout));
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains("FAIL at step 6 of 10, run the item: a signal stopped the test"),

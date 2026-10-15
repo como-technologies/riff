@@ -5137,6 +5137,11 @@ share.
   test that fails stops it. Its message names the step by its number
   and its name, and gives the reason. The exit code is 1, or 130 after
   a signal.
+- **01M504HBQ3Y0123HWGFP99Z6NV** A child of a step of the real-session
+  test that ends by SIGINT or SIGTERM counts as a signal to the test:
+  the step fails with `a signal stopped the test`, the test cleans up,
+  and the exit code is 130. Only a second signal to the test itself
+  ends it with no clean-up.
 - **01M4ZCFGHCS7WJ6CFYBZSX0AT5** The home check of the real-session
   test lists each path of the home before and after `riff run`, on the
   file system of the home, with no link followed. A new path fails the
