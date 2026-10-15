@@ -570,6 +570,20 @@ enum Command {
         #[command(subcommand)]
         command: Option<DaemonCommand>,
     },
+    /// The riff in a session of the riff daemon
+    ///
+    /// The riff daemon runs it in each container: riff relay -- claude -p
+    /// .... It starts the command with the riff tools, gives it its
+    /// input, and sends its events to the daemon on the socket of the
+    /// session. While the daemon is away, it keeps the events.
+    #[command(hide = true, args_conflicts_with_subcommands = true)]
+    Relay {
+        /// The command of the session and its arguments.
+        #[arg(last = true)]
+        session: Vec<String>,
+        #[command(subcommand)]
+        command: Option<RelayCommand>,
+    },
     /// Check that a wave followed the rules
     ///
     /// It reads the log of the repository of this directory from the
@@ -1057,6 +1071,24 @@ enum DaemonCommand {
     /// It exits with 1 when no daemon answers, and shows the state of
     /// the unit riff.service.
     Status,
+    /// Show the events of a session of the riff daemon
+    ///
+    /// It shows each event of the session in the container NAME from its
+    /// start, as riff run does, and each new event until the session
+    /// ends. riff daemon status shows the names. Ctrl-C ends the view:
+    /// the session goes on.
+    Events {
+        /// The name of the container, for example riff-issue-12-1a2b3c4d.
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RelayCommand {
+    /// Serve the riff tools of the session to claude over stdio
+    ///
+    /// claude runs it through the MCP config that riff relay gives it.
+    Mcp,
 }
 
 #[derive(Subcommand)]
@@ -1368,6 +1400,9 @@ async fn main() -> Result<()> {
             std::process::exit(code);
         }
         return Ok(());
+    }
+    if let Command::Relay { session, command } = cli.command {
+        return relay_command(session, command).await;
     }
     let (server, source) = server_of(cli.server.as_deref())?;
     if let Command::Server = cli.command {
@@ -1986,6 +2021,7 @@ async fn main() -> Result<()> {
         | Command::Image
         | Command::Daemon { .. }
         | Command::Init { .. }
+        | Command::Relay { .. }
         | Command::Worktrees(_)
         | Command::Lead {
             command: Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. }),
@@ -2350,6 +2386,29 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
                 std::process::exit(code);
             }
             Ok(())
+        }
+        Some(DaemonCommand::Events { name }) => {
+            let code = riff::daemon::show_events(&riff::daemon::dir()?, name).await?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// `riff relay`: the riff in a session of the riff daemon
+/// ([`riff::session_relay`]). It ends with the exit code of the command
+/// of the session.
+async fn relay_command(session: Vec<String>, command: Option<RelayCommand>) -> Result<()> {
+    match command {
+        Some(RelayCommand::Mcp) => {
+            let socket = riff::session_relay::socket_here()?;
+            riff::session_relay::mcp(&socket, tokio::io::stdin(), tokio::io::stdout()).await
+        }
+        None => {
+            let code = riff::session_relay::main(session).await?;
+            std::process::exit(code)
         }
     }
 }

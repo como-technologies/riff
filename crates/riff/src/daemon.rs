@@ -1573,6 +1573,34 @@ pub async fn image(dir: &Path, image: &str, mut show: impl FnMut(&str)) -> Resul
     }
 }
 
+/// `riff daemon events NAME`: shows each event of the live session in
+/// the container `name` from its start, as `riff run` does, and each new
+/// one until the end of the session (01M4ZKX0KMS58NR2E9AF8229A8). A
+/// Ctrl-C ends the view: the session goes on. It gives the exit code: 1
+/// when the session failed.
+pub async fn show_events(dir: &Path, name: &str) -> Result<i32> {
+    let mut client = Client::connect(dir).await?;
+    client
+        .ask(Ask::Follow {
+            name: name.into(),
+            after: 0,
+        })
+        .await?;
+    loop {
+        match client.next().await? {
+            Some(Say::Event { line, .. }) => crate::run::show(&line),
+            Some(Say::Stderr { line }) => eprintln!("{line}"),
+            Some(Say::Ended(ended)) => {
+                println!("{}", text::daemon_session_ends(name, ended.code));
+                return Ok(i32::from(ended.failed));
+            }
+            Some(Say::Failed { error }) => bail!("{error}"),
+            Some(_) => {}
+            None => bail!("{}", text::DAEMON_GONE),
+        }
+    }
+}
+
 /// `riff daemon`: runs the daemon of this machine until a SIGTERM or a
 /// SIGINT. It takes up each session that runs ([`Daemon::recover`]).
 /// The stop stops no session (01M4ZDTVH57VE77YT20G65A4BQ).

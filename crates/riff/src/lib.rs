@@ -117,6 +117,7 @@ pub mod sccache;
 pub mod secrets;
 pub mod service;
 pub mod session_image;
+pub mod session_relay;
 pub mod settings;
 pub mod smoke;
 pub mod state;

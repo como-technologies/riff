@@ -4697,11 +4697,29 @@ pub fn run_kept(clone: &Path) -> String {
     format!("The clone stays until the merge: {}", clone.display())
 }
 
-/// `riff run` lost the daemon before the end of its session
-/// (01M4ZDTW25YV0GMMVGWN6JTJC5).
+/// `riff run` lost the daemon before the end of its session: it waits
+/// for a new daemon (01M4ZKX0F25S284R0N7KZVTHNA).
+pub fn run_daemon_away(name: &str) -> String {
+    format!(
+        "The riff daemon went away. The container {name} runs on. riff run waits for the \
+         daemon."
+    )
+}
+
+/// `riff run` follows its session again on a new daemon.
+///
+/// ```
+/// let text = riff::text::run_daemon_back("riff-issue-12-1a2b3c4d", 7);
+/// assert!(text.contains("after the event 7"), "{text}");
+/// ```
+pub fn run_daemon_back(name: &str, seen: u64) -> String {
+    format!("The riff daemon is back. riff run follows {name} again, after the event {seen}.")
+}
+
+/// No daemon came back in time: `riff run` stops to follow its session.
 pub fn run_daemon_gone(name: &str) -> String {
     format!(
-        "The riff daemon stopped. The container {name} runs on to the end of its turn, but \
+        "No riff daemon came back. The container {name} runs on to the end of its turn, but \
          riff run cannot see its events now."
     )
 }
@@ -4787,6 +4805,48 @@ pub fn daemon_bind_shows(source: &Path) -> String {
         source.display()
     )
 }
+
+/// An ask to follow a session that the daemon does not own.
+pub fn daemon_no_session(name: &str) -> String {
+    format!("The riff daemon owns no session in the container {name}.")
+}
+
+/// At its start, the daemon takes up a session whose container runs
+/// (01M4ZHT01HH88KPA8628M7VBEY).
+pub fn daemon_takes_up(name: &str) -> String {
+    format!("The riff daemon takes up the session in the container {name}: it runs.")
+}
+
+/// At its start, the daemon drops the record of a session whose
+/// container does not run.
+pub fn daemon_session_gone(name: &str) -> String {
+    format!("The container {name} does not run. The riff daemon drops its record.")
+}
+
+/// `riff relay` lost the socket of its session: it keeps the events.
+pub const RELAY_AWAY: &str =
+    "riff relay: the riff daemon is away. claude runs on, and the relay keeps its events.";
+
+/// `riff relay` reached the daemon again.
+pub const RELAY_BACK: &str = "riff relay: the riff daemon is back. The relay sends the kept events.";
+
+/// After the end of `claude`, the daemon did not take the last events
+/// in time.
+pub const RELAY_GAVE_UP: &str = "riff relay: claude ended, and the riff daemon did not take its \
+     last events in time. The relay ends.";
+
+/// `riff relay` with no socket of its session.
+pub const RELAY_NO_SOCKET: &str =
+    "riff relay runs only in a session of the riff daemon: RIFF_SOCKET is not set.";
+
+/// `riff relay` with no command to start.
+pub const RELAY_NO_COMMAND: &str =
+    "riff relay needs the command of the session: riff relay -- claude -p ...";
+
+/// A call of a riff tool that the daemon did not answer before it went
+/// away (01M4ZHSZXAY7F7E17B3CMHG562).
+pub const RELAY_CALL_LOST: &str =
+    "The riff daemon went away before its answer. Call the riff tool again.";
 
 /// An ask of another version of the protocol
 /// (01M4ZDTVVV56X964S28GS6K2Z2).

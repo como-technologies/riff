@@ -90,6 +90,7 @@ use std::borrow::Cow;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri};
@@ -777,7 +778,7 @@ fn make_clone(main: &Path, clone: &Path, branch: &str) -> Result<bool> {
 
 /// Shows one line of the output of the session: the lines of its event,
 /// or the line itself when it is not JSON.
-fn show(line: &str) {
+pub(crate) fn show(line: &str) {
     match serde_json::from_str::<Value>(line) {
         Ok(event) => {
             for shown in event_lines(&event) {
@@ -788,22 +789,47 @@ fn show(line: &str) {
     }
 }
 
+/// After the daemon went away, the longest wait of `riff run` for a new
+/// daemon (01M4ZKX0F25S284R0N7KZVTHNA).
+pub const DAEMON_WAIT: Duration = Duration::from_secs(600);
+
+/// The time between two tries of `riff run` to reach a new daemon.
+const DAEMON_RETRY: Duration = Duration::from_millis(250);
+
 /// Asks the daemon in the folder `daemon` to run the session of
-/// `start`, shows its events, and waits for its end. A SIGINT or a
-/// SIGTERM asks the daemon to stop the container. When the daemon stops
-/// first, the session failed for `riff run` (01M4ZDTW25YV0GMMVGWN6JTJC5).
+/// `start`, shows its events, and waits for its end ([`follow`]).
 async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
+    let name = start.spec.name.clone();
+    follow(daemon, Ask::Start(Box::new(start)), &name, DAEMON_WAIT, show).await
+}
+
+/// Sends `ask` to the daemon in the folder `daemon`, gives `show` each
+/// event of the session `name`, and waits for its end. A SIGINT or a
+/// SIGTERM asks the daemon to stop the container. When the daemon goes
+/// away, the session runs on ([`crate::session_relay`]): riff tries the
+/// daemon again for up to `wait`, and follows the session again after
+/// the last event that it showed. So it shows each event one time, and
+/// loses none (01M4ZKX0F25S284R0N7KZVTHNA). When no daemon comes back,
+/// the session failed for `riff run`.
+async fn follow(
+    daemon: &Path,
+    ask: Ask,
+    name: &str,
+    wait: Duration,
+    mut show: impl FnMut(&str),
+) -> Result<Ended> {
     // The handlers come first: a signal before them ends riff with no
     // release.
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
-    let mut name = start.spec.name.clone();
+    let mut name = name.to_owned();
     let mut client = daemon::Client::connect(daemon).await?;
-    client.ask(Ask::Start(Box::new(start))).await?;
+    client.ask(ask).await?;
     let mut stopped = false;
+    let mut seen = 0;
     loop {
         let say = tokio::select! {
-            say = client.next() => say?,
+            say = client.next() => say,
             _ = term.recv(), if !stopped => {
                 stopped = true;
                 println!("{}", text::run_stopping(&name));
@@ -818,20 +844,61 @@ async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
             }
         };
         match say {
-            Some(Say::Started { name: started, .. }) => name = started,
-            Some(Say::Event { line }) => show(&line),
-            Some(Say::Stderr { line }) => eprintln!("{line}"),
-            Some(Say::Line { text }) => println!("{text}"),
-            Some(Say::Ended(ended)) => return Ok(ended),
-            Some(Say::Failed { error }) => bail!("{error}"),
-            Some(_) => bail!("{}", text::DAEMON_GONE),
-            None => {
-                println!("{}", text::run_daemon_gone(&name));
-                return Ok(Ended {
-                    code: None,
-                    failed: true,
-                });
+            Ok(Some(Say::Started { name: started, .. })) => name = started,
+            Ok(Some(Say::Event { seq, line })) if seq > seen => {
+                seen = seq;
+                show(&line);
             }
+            Ok(Some(Say::Event { .. })) => {}
+            Ok(Some(Say::Stderr { line })) => eprintln!("{line}"),
+            Ok(Some(Say::Line { text })) => println!("{text}"),
+            Ok(Some(Say::Ended(ended))) => return Ok(ended),
+            Ok(Some(Say::Failed { error })) => bail!("{error}"),
+            Ok(Some(_)) => bail!("{}", text::DAEMON_GONE),
+            Ok(None) | Err(_) => {
+                println!("{}", text::run_daemon_away(&name));
+                let Some(again) = connect_again(daemon, wait, &mut term, &mut int).await else {
+                    println!("{}", text::run_daemon_gone(&name));
+                    return Ok(Ended {
+                        code: None,
+                        failed: true,
+                    });
+                };
+                client = again;
+                client
+                    .ask(Ask::Follow {
+                        name: name.clone(),
+                        after: seen,
+                    })
+                    .await?;
+                println!("{}", text::run_daemon_back(&name, seen));
+                if stopped {
+                    client.stop().await?;
+                }
+            }
+        }
+    }
+}
+
+/// Tries the daemon in the folder `daemon` again each
+/// [`DAEMON_RETRY`], for up to `wait`. A SIGINT or a SIGTERM ends the
+/// wait. It gives `None` when no daemon answered.
+async fn connect_again(
+    daemon: &Path,
+    wait: Duration,
+    term: &mut tokio::signal::unix::Signal,
+    int: &mut tokio::signal::unix::Signal,
+) -> Option<daemon::Client> {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        if let Ok(client) = daemon::Client::connect(daemon).await {
+            return Some(client);
+        }
+        tokio::select! {
+            () = tokio::time::sleep(DAEMON_RETRY) => {}
+            () = tokio::time::sleep_until(deadline) => return None,
+            _ = term.recv() => return None,
+            _ = int.recv() => return None,
         }
     }
 }
@@ -915,7 +982,8 @@ pub async fn run_with(
     }
 
     let worked = work(
-        daemon, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
+        daemon, server, &api, &me, &thread, &main, &common, &checked, &session, item, issue,
+        image,
     )
     .await;
     if let Err(e) = api.release(&me, &thread, item).await {
@@ -930,6 +998,7 @@ pub async fn run_with(
 #[allow(clippy::too_many_arguments)]
 async fn work(
     daemon: &Path,
+    server: &str,
     api: &Api,
     me: &SessionUri,
     thread: &riff_core::name::ThreadName,
@@ -992,6 +1061,8 @@ async fn work(
             start,
             values,
             secrets,
+            server: server.to_owned(),
+            me: me.clone(),
         },
     )
     .await?;

@@ -433,7 +433,9 @@ pub async fn relay(
         loop {
             tokio::select! {
                 () = &mut sleep => break,
-                up = from_claude.recv(), if !link.done => take(&mut link, up, wait),
+                up = from_claude.recv(), if !link.done => {
+                    take(&mut link, up, wait);
+                }
                 () = until(link.deadline) => {
                     let _ = notes.send(text::RELAY_GAVE_UP.into());
                     return link.exit.and_then(|(_, code)| code);
@@ -525,16 +527,21 @@ async fn connected(
     }
 }
 
+/// The socket of the session of this process: [`daemon::SOCKET_VAR`].
+pub fn socket_here() -> Result<PathBuf> {
+    std::env::var_os(daemon::SOCKET_VAR)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("{}", text::RELAY_NO_SOCKET))
+}
+
 /// `riff relay -- COMMAND`: starts `COMMAND` with the riff tools, and
 /// relays it on the socket of `RIFF_SOCKET` ([`relay`]). A SIGTERM or a
 /// SIGINT goes to `claude`. It gives the exit code of `claude`, or 1
 /// after a signal.
 pub async fn main(command: Vec<String>) -> Result<i32> {
     use tokio::signal::unix::{SignalKind, signal};
-    let socket = std::env::var_os(daemon::SOCKET_VAR)
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("{}", text::RELAY_NO_SOCKET))?;
+    let socket = socket_here()?;
     let bin = std::env::current_exe().context("cannot find the path of riff")?;
     let command = with_tools(&command, &bin);
     let (program, args) = command

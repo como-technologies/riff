@@ -33,6 +33,7 @@
 //! | Start | [`Runtime::start`] | `podman run --rm -i ...` ([`crate::podman::run_args`]) |
 //! | The events | [`Running::events`] | the stdout of `podman run` |
 //! | Stop | [`Runtime::stop`] | `podman stop NAME` |
+//! | Find a live session | [`Runtime::running`] | `podman container inspect --format {{.State.Running}} NAME` |
 //! | Attach a terminal | [`Runtime::attach`] | `podman attach NAME` |
 //!
 //! A spec holds no secret. Each [`Env::Host`] of a spec names a variable
@@ -309,6 +310,10 @@ pub trait Runtime: Send + Sync {
     /// comes with no exit code.
     fn stop(&self, name: &str) -> impl Future<Output = Result<()>> + Send;
 
+    /// True when the session `name` runs. A new daemon takes up each
+    /// session that runs (01M4ZHT01HH88KPA8628M7VBEY).
+    fn running(&self, name: &str) -> impl Future<Output = Result<bool>> + Send;
+
     /// Attaches the terminal of this process to the session `name`,
     /// until a detach or the end of the session.
     fn attach(&self, name: &str) -> impl Future<Output = Result<Exit>> + Send;
@@ -530,6 +535,14 @@ impl Runtime for Fake {
             bail!("no session {name} runs");
         }
         Ok(())
+    }
+
+    async fn running(&self, name: &str) -> Result<bool> {
+        Ok(self
+            .lock()
+            .sessions
+            .get(name)
+            .is_some_and(|p| p.exit.is_none()))
     }
 
     async fn attach(&self, name: &str) -> Result<Exit> {
