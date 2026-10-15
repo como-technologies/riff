@@ -927,8 +927,9 @@ async fn a_restart_of_the_daemon_loses_no_event_and_riff_run_goes_on() {
     }
     // Each event one time, on the terminal and in the log, with no
     // secret.
+    // The first event is the one of hanging_run.
     let parts = [
-        "start: model claude-opus-5-5, permission mode auto",
+        "start: model m, permission mode auto",
         "I read the issue.",
         "> Bash: gh issue view 12 --comments",
         "! the tool failed: token [secret] and [secret] leaked",
