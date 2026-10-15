@@ -178,7 +178,7 @@
 //! # The lead
 //!
 //! The lead is a session with a terminal (01M4Z60B81RTZT71PN5HV0GZHX,
-//! [`crate::lead`]). [`Ask::Start`] with [`Start::terminal`] starts it
+//! 01M501PA2C087SEN4M4QTK5J1E, [`crate::lead`]). [`Ask::Start`] with [`Start::terminal`] starts it
 //! with [`Runtime::start_terminal`]: conmon holds its terminal, and
 //! `riff` attaches to it. Its command is `riff relay --terminal --
 //! claude ...`: the relay adds the riff tools. The lead does not wait
@@ -190,7 +190,7 @@
 //! # A takeover
 //!
 //! A person takes over a worker with [`Ask::Takeover`]
-//! (01M4Z60B83ZH10HYKW7X1C0SSS). The daemon keeps the takeover in the
+//! (01M4Z60B83ZH10HYKW7X1C0SSS, 01M501PABB010P4S8YF7R29XXS). The daemon keeps the takeover in the
 //! [`Record`], and tells the relay [`Say::Hold`]: `claude` ends after
 //! its turn, and the relay waits ([`crate::session_relay`]). At the
 //! [`Up::Held`] of the relay, the daemon says [`Say::Held`] to `riff
@@ -595,7 +595,8 @@ pub enum SessionAsk {
     },
 }
 
-/// What a session does now, as `riff view` shows it.
+/// What a session does now, as `riff view` shows it
+/// (01M501PADKZNRHBZD9XPMJGW06).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {

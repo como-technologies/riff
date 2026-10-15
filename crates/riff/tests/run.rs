@@ -61,8 +61,10 @@ esac
 /// `pull` logs, and fails when `bin/no-pull` is there. `run` logs, and
 /// plays the container on the host: it runs the riff of the bind at
 /// `/opt/riff/riff` as the entrypoint, `riff relay`, with the socket of
-/// the bind at `/run/riff`. `stop` logs, and ends the `run`. `container
-/// inspect` says `true` while the `run` runs.
+/// the bind at `/run/riff`. With `-d` (a terminal), it runs it in the
+/// background, and `wait` waits for its end. `stop` logs, and ends the
+/// `run`. `container inspect` says `true` while the `run` runs. `attach`
+/// and `exec` log, and end at once.
 fn fake_podman(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -71,6 +73,11 @@ case "$1" in
   pull) echo "podman $*" >> "$dir/podman.log"; [ -f "$dir/no-pull" ] && exit 125
     rm -f "$dir/no-image"; exit 0 ;;
   stop) echo "podman $*" >> "$dir/podman.log"; kill "$(cat "$dir/run.pid")"; exit 0 ;;
+  attach|exec) echo "podman $*" >> "$dir/podman.log"; exit 0 ;;
+  wait)
+    pid=$(cat "$dir/run.pid")
+    while kill -0 "$pid" 2>/dev/null; do sleep 0.05; done
+    echo 0; exit 0 ;;
   container)
     if [ -f "$dir/run.pid" ] && kill -0 "$(cat "$dir/run.pid")" 2>/dev/null; then
       echo true
@@ -94,12 +101,18 @@ while [ $# -gt 0 ]; do
         *:/run/riff) socket="${2%:/run/riff}/riff.sock" ;;
       esac
       shift 2 ;;
+    -d) detach=1; shift ;;
     -w) shift 2; break ;;
     *) shift ;;
   esac
 done
 # The image, then the entrypoint /opt/riff/riff.
 shift 2
+if [ -n "$detach" ]; then
+  env RIFF_SOCKET="$socket" "$relay" "$@" < /dev/null > "$dir/terminal.out" 2>&1 &
+  echo $! > "$dir/run.pid"
+  exit 0
+fi
 exec env RIFF_SOCKET="$socket" "$relay" "$@"
 "#;
     script(&bin.join("podman"), body);
@@ -201,8 +214,12 @@ fn who_is(dir: &Path) -> Value {
     let folder = std::fs::File::open(dir).unwrap();
     let path = format!("/proc/self/fd/{}/riff.sock", folder.as_raw_fd());
     let mut conn = std::os::unix::net::UnixStream::connect(path).unwrap();
-    conn.write_all(b"{\"ask\":\"hello\",\"protocol\":2}\n")
-        .unwrap();
+    // A relay of the protocol before this one: the daemon takes it.
+    let hello = format!(
+        "{{\"ask\":\"hello\",\"protocol\":{}}}\n",
+        riff::daemon::PROTOCOL - 1
+    );
+    conn.write_all(hello.as_bytes()).unwrap();
     let mut line = String::new();
     std::io::BufReader::new(conn).read_line(&mut line).unwrap();
     serde_json::from_str(&line).unwrap()
@@ -1458,5 +1475,148 @@ async fn riff_wave_run_and_stop_ask_the_daemon() {
     assert!(
         stderr.contains("The riff daemon does not run the wave of como-technologies/riff."),
         "{stderr}"
+    );
+}
+
+#[tokio::test]
+async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    // The fake claude of the lead waits until the test ends it.
+    std::fs::write(machine.bin.path().join("hold"), "").unwrap();
+    let name = "riff-lead-como-technologies-riff";
+    let out = machine.ok(None, &["lead", "start"]).await;
+    assert!(
+        out.contains(&format!(
+            "The lead of como-technologies/riff starts in the container {name}"
+        )),
+        "{out}"
+    );
+    assert!(out.contains(riff::text::LEAD_DETACH), "{out}");
+    assert_eq!(
+        machine.read("podman.log").trim(),
+        format!("podman attach {name}")
+    );
+
+    // The daemon runs it with a terminal: the relay runs claude in its
+    // own place, with the riff tools.
+    let args = machine.read("run.args");
+    let args: Vec<&str> = args.lines().collect();
+    assert_eq!(args[..5], ["run", "--rm", "-d", "-i", "-t"]);
+    let at = args.iter().position(|a| *a == "/opt/riff/riff").unwrap();
+    assert_eq!(
+        args[at..at + 5],
+        ["/opt/riff/riff", "relay", "--terminal", "--", "claude"]
+    );
+    wait_for(&machine.bin.path().join("claude.args"), "--mcp-config").await;
+    let claude = machine.read("claude.args");
+    assert!(claude.contains("--permission-mode\nauto\n"), "{claude}");
+    assert!(
+        claude.contains("You are the lead of como-technologies/riff"),
+        "{claude}"
+    );
+    assert!(!claude.contains("\n-p\n"), "{claude}");
+
+    // Its folder: a clone and a Claude folder with the first-run answers.
+    let folder = machine.env.riff_home().join("leads/como-technologies-riff");
+    assert!(folder.join("clone/.git").exists());
+    let json: Value = serde_json::from_slice(
+        &std::fs::read(folder.join("claude/.claude.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(json["hasCompletedOnboarding"], true);
+    let clone = folder.join("clone").display().to_string();
+    assert_eq!(json["projects"][&clone]["hasTrustDialogAccepted"], true);
+
+    // The daemon shows it, and a second start attaches again.
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(status.contains(name), "{status}");
+    let again = machine.ok(None, &["lead", "start"]).await;
+    assert!(
+        again.contains(&riff::text::lead_runs("como-technologies/riff", name)),
+        "{again}"
+    );
+    assert_eq!(
+        machine.read("podman.log").matches("podman attach").count(),
+        2
+    );
+
+    // The person ends the lead: the daemon ends its session.
+    std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
+    let started = Instant::now();
+    while machine.ok(None, &["daemon", "status"]).await.contains(name) {
+        assert!(started.elapsed() < isolated::HANG, "the lead did not end");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test]
+async fn riff_takeover_gives_the_person_the_session_and_the_session_goes_on() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    // claude takes the start text, and waits in its turn.
+    std::fs::write(machine.bin.path().join("hold"), "").unwrap();
+    let run = machine
+        .command(None, &["run", "issue-12", "--image", IMAGE])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(&machine.bin.path().join("run.stdin"), "user").await;
+    let name = container(&machine);
+    let args = machine.read("run.args");
+    let args: Vec<&str> = args.lines().collect();
+    let session = args[args.iter().position(|a| *a == "--session-id").unwrap() + 1].to_owned();
+
+    let takeover = machine
+        .command(None, &["takeover", &name])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(
+        &machine.bin.path().join("daemon.out"),
+        &format!("A person takes over the session in the container {name}."),
+    )
+    .await;
+    // The turn ends: the hold closed the stdin of claude.
+    std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
+
+    let taken = output_of(takeover).await;
+    let shown = text(&taken.stdout);
+    assert!(taken.status.success(), "{shown}{}", text(&taken.stderr));
+    assert!(shown.contains(&riff::text::takeover_held(&name)), "{shown}");
+    assert!(shown.contains(&riff::text::takeover_back(&name)), "{shown}");
+    assert!(
+        machine.read("podman.log").contains(&format!(
+            "podman exec -it {name} /opt/riff/riff relay --terminal -- claude --resume \
+             {session} --permission-mode auto"
+        )),
+        "{}",
+        machine.read("podman.log")
+    );
+
+    // The worker goes on: claude -p again, with --resume and one input.
+    let out = output_of(run).await;
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let claude = machine.read("claude.args");
+    assert!(claude.contains(&format!("--resume\n{session}\n")), "{claude}");
+    assert!(!claude.contains("--session-id"), "{claude}");
+    assert!(
+        machine.read("run.stdin").contains("gives it back now"),
+        "{}",
+        machine.read("run.stdin")
+    );
+}
+
+#[tokio::test]
+async fn riff_takeover_of_a_session_that_the_daemon_does_not_own_fails() {
+    let machine = Machine::new().await;
+    let out = machine.run(None, &["takeover", "riff-issue-9-00000000"]).await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("owns no session in the container riff-issue-9-00000000"),
+        "{}",
+        text(&out.stderr)
     );
 }

@@ -79,7 +79,8 @@
 //!
 //! # A takeover
 //!
-//! A person can take over a worker (01M4Z60B83ZH10HYKW7X1C0SSS). The
+//! A person can take over a worker (01M4Z60B83ZH10HYKW7X1C0SSS,
+//! 01M501PA94CDZDH214GGFMTH5V). The
 //! daemon says [`Say::Hold`]: the relay closes the stdin of `claude`, so
 //! `claude` ends after its turn. Its end is then no exit: the relay says
 //! [`Up::Held`], and the container stays. The person runs `claude
@@ -111,9 +112,10 @@
 //!
 //! The lead runs `riff relay --terminal -- claude ...`: the relay adds
 //! the riff tools, and runs `claude` in its own place with the terminal
-//! ([`terminal`]). It relays no event. `riff relay watch` waits for the
-//! next wake of the session, through the daemon ([`watch`]), as `riff
-//! watch --once` does on the host.
+//! ([`terminal`], 01M501P9VN47QAKZ6B8P39ZSW4). It relays no event.
+//! `riff relay watch` waits for the next wake of the session, through
+//! the daemon ([`watch`], 01M501PA04NP79RJQEDP4D7YTM), as `riff watch
+//! --once` does on the host.
 //!
 //! # Versions
 //!
