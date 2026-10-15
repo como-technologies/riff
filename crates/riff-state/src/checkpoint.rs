@@ -1,4 +1,5 @@
-//! The checkpoints of the log of `riff-server`.
+//! The checkpoints of the log of riff, in riff-server and in the riff
+//! daemon.
 //!
 //! # Design
 //!

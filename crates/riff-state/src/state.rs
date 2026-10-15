@@ -1,4 +1,4 @@
-//! The in-memory state of `riff-server`.
+//! The in-memory state of riff, in riff-server and in the riff daemon.
 //!
 //! # Model
 //!

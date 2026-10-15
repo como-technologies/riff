@@ -181,7 +181,7 @@ flowchart TD
   claim has no `granted`. The client and the server are one release.
 - A kind is never renamed, and the name of a removed command is never
   used again. A file in the fixtures lists each kind of each release.
-- Each group has one file in `crates/riff-server/src/state/`, with its
+- Each group has one file in `crates/riff-state/src/state/`, with its
   part of the riff, its `apply` arms, its part of the checkpoint and
   its commands. The record `session_forgotten` of `forget` changes
   each part, so its arm calls each part. The rustdoc of the module
@@ -231,7 +231,7 @@ owner role with: riff owner --take". `permits` reads only the caller,
 so `State::check` puts that text in its refusal.
 
 ```rust,ignore
-{{#include ../../crates/riff-server/src/state/command.rs:permits}}
+{{#include ../../crates/riff-state/src/state/command.rs:permits}}
 ```
 
 A `pause` or a `resume` of a repository that the call names needs an
@@ -720,7 +720,7 @@ This is the real code. A command, with its kind, its reply and its
 rule:
 
 ```rust,ignore
-{{#include ../../crates/riff-server/src/state/command.rs:command}}
+{{#include ../../crates/riff-state/src/state/command.rs:command}}
 ```
 
 A call, in `riff-core`, and a command that a client can send:
@@ -734,7 +734,7 @@ A call, in `riff-core`, and a command that a client can send:
 A signal:
 
 ```rust,ignore
-{{#include ../../crates/riff-server/src/state/presence.rs:signal}}
+{{#include ../../crates/riff-state/src/state/presence.rs:signal}}
 ```
 
 One entry of the queue, and why a call gets no reply:
@@ -1112,7 +1112,7 @@ them. Each one runs the same steps as the engine: `State::check`,
 state is a private field of the engine.
 
 E5 is built: the type `Pauses` in
-`crates/riff-server/src/state/the_riff.rs`, and the record `pause_set`
+`crates/riff-state/src/state/the_riff.rs`, and the record `pause_set`
 (`riff_core::record::PauseSet`).
 
 E2 is built: the cause in each record (`riff_core::record::By`), the
@@ -1120,13 +1120,13 @@ lines of the module `crates/riff-server/src/trace.rs`, and the proof
 of a write (`log::Written`).
 
 E3 is built: the people of the module
-`crates/riff-server/src/state/people.rs`, with their 9 kinds and their
+`crates/riff-state/src/state/people.rs`, with their 9 kinds and their
 11 commands. `crates/riff-server/src/token.rs` holds only the sign-ins.
 A `signins.json` from before E3 reads, and its people are lost: `main`
 was never deployed.
 
 E4 is built: the life cycle is in the part `Sessions` of the riff
-(`crates/riff-server/src/state/sessions.rs`), with its checkpoint
+(`crates/riff-state/src/state/sessions.rs`), with its checkpoint
 fields.
 
 E6 is built: the macros that make `Change` and `CommandKind` with

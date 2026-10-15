@@ -216,7 +216,7 @@ and its replay. The test of the kinds takes the union of the lists.
   matters, and the lead frees it.
 - `apply` only stores what a record says
   (01M3WNQQWA7XGK4Y9ET8HJZ8NN). The checks are in `handle`.
-- The code is the group file `crates/riff-server/src/state/plan.rs`,
+- The code is the group file `crates/riff-state/src/state/plan.rs`,
   with the part `Plans` of the riff and its `Saved` for the checkpoint.
   The arms go into `Record::of_repository`, and the lines into the
   tables of `record.rs` and `riff.rs`.

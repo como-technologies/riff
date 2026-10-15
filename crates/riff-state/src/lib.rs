@@ -1,4 +1,5 @@
-//! `riff-state`: the state machine of riff (01M4Z60B8AFV68ZSAFA540G73C).
+//! `riff-state`: the state machine of riff (01M4Z60B8AFV68ZSAFA540G73C,
+//! 01M4ZHW1Y1X21ZPV053D0CXWMC).
 //!
 //! # Design
 //!

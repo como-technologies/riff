@@ -1,4 +1,5 @@
-//! The log of `riff-server`: chunks in a [`Store`].
+//! The log of riff: chunks in a [`Store`]. riff-server and the riff
+//! daemon ([`crate::local`]) write it.
 //!
 //! # Chunks (01M3T4118SDERYGJ25TAT1RGR2)
 //!

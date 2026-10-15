@@ -336,6 +336,14 @@ The daemon gives each container a socket of its own, at
 No container sees the socket of another session, or the control
 socket. The sockets are in `~/.local/share/riff/daemon`.
 
+The daemon also keeps the state of riff on your machine: the riff of
+your machine, and later the claims, the messages and the plan of its
+sessions. It uses the state machine of riff-server, the crate
+`riff-state`. The log and the checkpoints of the state are in
+`~/.local/share/riff/daemon/state`. The first start of the daemon
+makes the riff. Each next start loads the newest checkpoint and the
+log after it, so the state stays.
+
 ### Install the daemon
 
 Use Linux, and install podman (see
@@ -357,8 +365,10 @@ again: it starts the daemon again with the new riff.
 riff daemon status
 ```
 
-It shows the process ID, the build and the sessions of the daemon.
-When no daemon answers, it shows the state of the unit, and exits with
+It shows the process ID, the build and the sessions of the daemon. The
+line `Its riff:` shows the ID of the riff of your machine, and the
+position of the last record of its log. When no daemon answers, it
+shows the state of the unit, and exits with
 1. To see the log of the daemon:
 
 ```sh
@@ -372,10 +382,11 @@ systemctl --user restart riff
 systemctl --user stop riff
 ```
 
-A stop or a restart of the daemon stops no container. conmon, the
-monitor of podman, holds each container. But until `riff relay`
-comes (#717), the daemon loses the input and the events of each
-container at its stop. Each session then ends after its turn, and
+At a stop, the daemon writes a checkpoint of its state. A stop or a
+restart of the daemon stops no container. conmon, the monitor of
+podman, holds each container. But until `riff relay` comes (#717),
+the daemon loses the input and the events of each container at its
+stop. Each session then ends after its turn, and
 `riff run` says that the daemon stopped.
 
 ### Run the daemon in a terminal

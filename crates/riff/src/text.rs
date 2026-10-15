@@ -4806,7 +4806,21 @@ pub fn daemon_protocol(theirs: u32, ours: u32) -> String {
 pub const DAEMON_NO_HELLO: &str =
     "The riff daemon cannot read the first line: it is not a hello of riff.";
 
-/// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S).
+/// The daemon cannot load its state, or make the riff of this machine.
+///
+/// ```
+/// let text = riff::text::daemon_no_state(std::path::Path::new("/h/d/state"));
+/// assert_eq!(text, "The riff daemon cannot load its state in /h/d/state.");
+/// ```
+pub fn daemon_no_state(dir: &Path) -> String {
+    format!(
+        "The riff daemon cannot load its state in {}.",
+        dir.display()
+    )
+}
+
+/// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S,
+/// 01M4ZHW24JZZXM3JJXG3PRJS7N).
 ///
 /// ```
 /// use riff::daemon::{Live, Status};
@@ -4816,10 +4830,13 @@ pub const DAEMON_NO_HELLO: &str =
 ///     build: "1.3.1 06a0ae03be98".into(),
 ///     since_ms: 0,
 ///     dir: "/h/.local/share/riff/daemon".into(),
+///     riff: Some("0a1b".into()),
+///     position: 3,
 ///     sessions: vec![],
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
+/// assert!(text.contains("Its riff: 0a1b, at position 3 of its log.\n"));
 /// assert!(text.contains("Sessions: none.\n"));
 /// status.sessions.push(Live {
 ///     name: "riff-issue-12-1a2b3c4d".into(),
@@ -4840,6 +4857,16 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
         age(status.since_ms),
         status.dir.display()
     );
+    match &status.riff {
+        Some(riff) => {
+            let _ = writeln!(
+                out,
+                "Its riff: {riff}, at position {} of its log.",
+                status.position
+            );
+        }
+        None => out.push_str("Its riff: none yet.\n"),
+    }
     if status.sessions.is_empty() {
         out.push_str("Sessions: none.\n");
     } else {

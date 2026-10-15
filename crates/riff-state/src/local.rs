@@ -1,7 +1,7 @@
 //! The state of one process: a [`State`] with its log and its
 //! checkpoints in one [`Store`]. The riff daemon keeps the state of
 //! the sessions of its machine in it, with no server
-//! (01M4Z60B8AFV68ZSAFA540G73C).
+//! (01M4Z60B8AFV68ZSAFA540G73C, 01M4ZHW2083VFTQJ772ZJ27XAC).
 //!
 //! # Design
 //!
@@ -26,7 +26,8 @@
 //!   ([`checkpoint::load`]), and replays the log after it
 //!   ([`log::replay_after`]). An empty store gives an empty state: the
 //!   caller then makes the riff with [`MakeRiff`].
-//! - [`Local::run`] runs one command at a time. It holds the lock of the
+//! - [`Local::run`] runs one command at a time (01M4ZHW22F8HE2E1WDSTNDJW4H).
+//!   It holds the lock of the
 //!   state while it writes, so each command sees the records of the
 //!   command before it. A refused command can still make records: the
 //!   register of a caller that the state does not know
@@ -220,8 +221,11 @@ impl Local {
             .written_position()
             .saturating_sub(inner.checkpoint);
         let due = came >= self.settings.every_records || inner.at.elapsed() >= self.settings.every;
-        if came > 0 && due {
-            self.write_checkpoint(&mut inner, true).await;
+        if came > 0
+            && due
+            && let Err(error) = self.write_checkpoint(&mut inner, true).await
+        {
+            tracing::warn!("{error}");
         }
         Ok(reply)
     }
@@ -239,7 +243,7 @@ impl Local {
         if let Some(why) = &inner.broken {
             return Err(Error::Broken(why.clone()));
         }
-        Ok(self.write_checkpoint(&mut inner, false).await)
+        Ok(self.write_checkpoint(&mut inner, false).await?)
     }
 
     /// Why this build writes no checkpoint, when it writes none.
@@ -249,28 +253,33 @@ impl Local {
 
     /// Writes the checkpoint of the written copy, then prunes when
     /// `prune`. A failed write or prune does not stop the state: the log
-    /// has each record. Gives the name of the checkpoint.
-    async fn write_checkpoint(&self, inner: &mut Inner, prune: bool) -> Option<String> {
+    /// has each record. Gives the name of the checkpoint, or `None` when
+    /// this build writes no checkpoint.
+    async fn write_checkpoint(
+        &self,
+        inner: &mut Inner,
+        prune: bool,
+    ) -> Result<Option<String>, StoreError> {
         if inner.blocked.is_some() {
-            return None;
+            return Ok(None);
         }
         let at_ms = now_ms();
         let snapshot = inner.state.snapshot(Instant::now(), at_ms);
         let position = snapshot.position;
         let checkpoint = Checkpoint::new(&self.settings.build, at_ms, snapshot);
-        let name = match checkpoint::write(&*self.store, &checkpoint).await {
-            Ok(name) => name,
-            Err(error) => {
-                tracing::warn!("the checkpoint at position {position} was not written: {error}");
-                return None;
-            }
-        };
+        let name = checkpoint::write(&*self.store, &checkpoint)
+            .await
+            .map_err(|error| {
+                StoreError::Failed(format!(
+                    "the checkpoint at position {position} was not written: {error}"
+                ))
+            })?;
         inner.checkpoint = position;
         inner.at = Instant::now();
         if prune && let Err(error) = checkpoint::prune(&*self.store, &self.settings, at_ms).await {
             tracing::warn!("the delete of old checkpoints failed: {error}");
         }
-        Some(name)
+        Ok(Some(name))
     }
 }
 
@@ -475,6 +484,27 @@ mod tests {
         fn delete<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<(), StoreError>> {
             self.memory.delete(name)
         }
+    }
+
+    #[tokio::test]
+    async fn a_failed_checkpoint_gives_its_error_and_the_state_goes_on() {
+        let store = Failing::default();
+        let local = Local::open(Arc::new(store.clone()), settings())
+            .await
+            .unwrap();
+        running(&local).await;
+        store.fail.store(true, Ordering::SeqCst);
+        let Err(Error::Store(error)) = local.checkpoint().await else {
+            panic!("the write of the checkpoint fails");
+        };
+        let text = error.to_string();
+        assert!(
+            text.contains("the checkpoint at position 3 was not written"),
+            "{text}"
+        );
+        store.fail.store(false, Ordering::SeqCst);
+        claim(&local, "issue-12").await.unwrap();
+        assert!(local.checkpoint().await.unwrap().is_some());
     }
 
     #[tokio::test]

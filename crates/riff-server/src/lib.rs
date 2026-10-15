@@ -21,6 +21,11 @@
 //!   other call is a query: it reads the written copy.
 //! - [`state::State`] does not know about HTTP or clocks. The engine
 //!   passes the time in, so tests control it.
+//! - The state machine is the crate `riff-state`: the [`state`], the
+//!   [`log`] and its replay, the [`checkpoint`], the [`store`], and the
+//!   rules of the [`owner`] role and of [`idle`] workers. The riff
+//!   daemon uses it too (01M4ZHW1Y1X21ZPV053D0CXWMC). This crate adds
+//!   HTTP, the sign-in, the lease and the engine.
 //! - The writer sends the wakes and the `tail` event of a message to
 //!   two broadcast channels, after the write of its record. Each open
 //!   stream filters the channel for its own session or thread.
