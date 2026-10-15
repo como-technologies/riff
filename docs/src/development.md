@@ -325,9 +325,9 @@ flowchart LR
         R["riff run issue-12"] -- "control socket" --> D["riff daemon<br/>riff.service"]
         D -- "podman run" --> C
         subgraph C["container riff-issue-12-ID8"]
-            S["/run/riff/riff.sock"]
+            L["riff relay"] --> K["claude -p"]
         end
-        S -- "its own socket" --> D
+        L -- "/run/riff/riff.sock:<br/>its own socket" --> D
     end
 ```
 
@@ -335,6 +335,11 @@ The daemon gives each container a socket of its own, at
 `/run/riff/riff.sock`. The socket tells the daemon which session asks.
 No container sees the socket of another session, or the control
 socket. The sockets are in `~/.local/share/riff/daemon`.
+
+The daemon also gives each container your riff binary, with no write.
+`riff relay` is the entrypoint of the container. It starts `claude`
+with the riff tools, gives `claude` its input, and sends each event of
+`claude` to the daemon on the socket.
 
 The daemon also keeps the state of riff on your machine: the riff of
 your machine, and later the claims, the messages and the plan of its
@@ -385,10 +390,15 @@ systemctl --user stop riff
 
 At a stop, the daemon writes a checkpoint of its state. A stop or a
 restart of the daemon stops no container. conmon, the monitor of
-podman, holds each container. But until `riff relay` comes (#717),
-the daemon loses the input and the events of each container at its
-stop. Each session then ends after its turn, and
-`riff run` says that the daemon stopped.
+podman, holds each container. While the daemon is away, `riff relay`
+keeps `claude` running and keeps its events. A new daemon takes up
+each session that runs, and the relay sends it the kept events. No
+event is lost.
+
+`riff run` says that the daemon went away, and waits up to 10 minutes
+for a new daemon. Then it shows the session again from the next event.
+When no daemon comes back in that time, `riff run` says so, and
+releases the item. The session runs on.
 
 ### Run the daemon in a terminal
 
@@ -416,8 +426,9 @@ flowchart LR
         R -- "run the session" --> D["riff daemon"]
         D -- "podman run" --> C
         subgraph C["container riff-issue-12-ID8"]
-            K["claude -p"]
+            Y["riff relay"] --> K["claude -p"]
         end
+        Y -- "the events, the riff tools" --> D
         L --- C
     end
     R -- "claim, verify request, release" --> S["riff-server"]
@@ -481,7 +492,8 @@ steps:
 1. It starts a worker session, and claims the item.
 2. It makes the clone of the session on the branch `worktree-ITEM`.
    When `origin` has that branch, the clone goes on from it.
-3. It asks the daemon to run `claude -p` in the container, and shows
+3. It asks the daemon to run the session. In the container,
+   `riff relay` starts `claude -p` with the riff tools. riff shows
    each event: the text, each tool call, each tool that failed, each
    call that the rules refused, the push, and the end of the turn. The
    session pushes the branch and opens the pull request.
@@ -499,6 +511,22 @@ writes it.
 Press Ctrl-C. riff asks the daemon to stop the container with
 `podman stop`, and releases the item. The branch keeps the work that
 the session pushed.
+
+### See the events of a session
+
+`riff run` shows each event of its session. To see a session from
+another terminal, find the name of its container, and show its
+events:
+
+```sh
+riff daemon status
+riff daemon events riff-issue-12-1a2b3c4d
+```
+
+`riff daemon events` shows each event from the start of the session,
+and each new event until the session ends. Press Ctrl-C to stop the
+view: the session goes on. The file `events.jsonl` in the folder of
+the session also has each event, with no secret.
 
 ### What the container gets
 
@@ -519,6 +547,12 @@ the session pushed.
 - `--memory 8g` and `--cpus 4`.
 - The folder of its own socket of the daemon at `/run/riff`, with
   write, and `RIFF_SOCKET=/run/riff/riff.sock`.
+- Your riff binary at `/opt/riff/riff`, with no write. Its
+  `riff relay` is the entrypoint of the container. So the riff in a
+  session is the riff of your machine.
+- The riff tools, through the relay. Until riff 3.0 has its own
+  claims, the tools act on your riff-server as the worker session of
+  `riff run`, which holds the item.
 
 A commit of the session has your git identity, no signature, and a
 `Riff-Session:` trailer. The table of what sessions share is on the

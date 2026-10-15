@@ -229,7 +229,13 @@ impl Runtime for Podman {
     /// A container that podman does not know does not run.
     async fn running(&self, name: &str) -> Result<bool> {
         let out = podman()
-            .args(["container", "inspect", "--format", "{{.State.Running}}", name])
+            .args([
+                "container",
+                "inspect",
+                "--format",
+                "{{.State.Running}}",
+                name,
+            ])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()

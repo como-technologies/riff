@@ -1,4 +1,4 @@
-//! `riff run ITEM` (#712, #716, #717, 01M4ZDTVXY84ETYJWMWDMQ34CN): one
+//! `riff run ITEM` (#712, #716, #717, 01M4ZKX0NXN7E33VC3PSFGSPDT): one
 //! work item in one rootless podman container, through the riff daemon.
 //!
 //! A real `riff daemon` of this build runs the containers. A fake
@@ -861,7 +861,11 @@ async fn a_restart_of_the_daemon_loses_no_event_and_riff_run_goes_on() {
         lines[1..3].join("\n") + "\n",
     )
     .unwrap();
-    std::fs::write(machine.bin.path().join("last"), lines[3..].join("\n") + "\n").unwrap();
+    std::fs::write(
+        machine.bin.path().join("last"),
+        lines[3..].join("\n") + "\n",
+    )
+    .unwrap();
     let (child, name, _) = hanging_run(&machine).await;
     let log = machine.folder("issue-12").join("events.jsonl");
     wait_for(&log, "\"init\"").await;

@@ -1,12 +1,13 @@
 //! `riff run ITEM`: one work item in one rootless podman container,
-//! through the riff daemon (#712, #716).
+//! through the riff daemon (#712, #716, #717).
 //!
 //! # Design
 //!
 //! The host does each riff step with the riff of today: the checks, the
 //! claim, the clone, the verify request and the release. The daemon
-//! runs the container of the session ([`crate::daemon`]). The container
-//! does the work (01M4ZDTVXY84ETYJWMWDMQ34CN).
+//! runs the container of the session ([`crate::daemon`]). In the
+//! container, `riff relay` starts `claude` ([`crate::session_relay`]),
+//! and `claude` does the work (01M4ZKX0NXN7E33VC3PSFGSPDT).
 //!
 //! `riff run` asks the daemon on its control socket: first for the
 //! image, then for the session. It shows each event that the daemon
@@ -19,16 +20,17 @@
 //!     participant H as riff run (host)
 //!     participant S as riff-server
 //!     participant D as riff daemon
-//!     participant C as claude -p (container)
+//!     participant C as riff relay and claude -p (container)
 //!     participant G as GitHub
 //!     H->>D: the image: pull it when it is not here
 //!     H->>S: start a worker session, claim ITEM
 //!     H->>H: git clone --reference MAIN, the branch worktree-ITEM
 //!     H->>D: start SPEC, with the value of GH_TOKEN beside it
-//!     D->>C: start, with the socket of the session
-//!     D->>C: the start text, one stream-json line on the input
-//!     C-->>D: the events, one line each
+//!     D->>C: start riff relay, with the socket of the session
+//!     D->>C: the start text, one stream-json line on the socket
+//!     C-->>D: the events, one line each, with their numbers
 //!     D-->>H: each event, with no secret
+//!     C->>S: the riff tools, through the socket and the daemon
 //!     C->>G: push the branch, open the pull request
 //!     D->>C: close the input after the result: claude ends
 //!     D-->>H: the end of the session
@@ -49,9 +51,14 @@
 //! When `claude` ends, riff finds the open pull request of the branch,
 //! sends a verify request to the lead, releases the item and ends the
 //! session. A SIGINT or a SIGTERM asks the daemon to stop the container
-//! first (01M4Z81B1913NF6HBZ5G38B3Q9). When the daemon stops before the
-//! end of the session, `riff run` says so, and does these steps too
-//! (01M4ZDTW25YV0GMMVGWN6JTJC5).
+//! first (01M4Z81B1913NF6HBZ5G38B3Q9).
+//!
+//! When the daemon stops before the end of the session, the session
+//! runs on: its relay keeps the events. `riff run` waits up to
+//! [`DAEMON_WAIT`] for a new daemon, and follows the session again after
+//! the last event that it showed ([`Ask::Follow`]). When no daemon comes
+//! back, `riff run` says so, and does these steps too
+//! (01M4ZKX0F25S284R0N7KZVTHNA).
 //!
 //! # The folder of a session
 //!
@@ -800,7 +807,14 @@ const DAEMON_RETRY: Duration = Duration::from_millis(250);
 /// `start`, shows its events, and waits for its end ([`follow`]).
 async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
     let name = start.spec.name.clone();
-    follow(daemon, Ask::Start(Box::new(start)), &name, DAEMON_WAIT, show).await
+    follow(
+        daemon,
+        Ask::Start(Box::new(start)),
+        &name,
+        DAEMON_WAIT,
+        show,
+    )
+    .await
 }
 
 /// Sends `ask` to the daemon in the folder `daemon`, gives `show` each
@@ -982,8 +996,7 @@ pub async fn run_with(
     }
 
     let worked = work(
-        daemon, server, &api, &me, &thread, &main, &common, &checked, &session, item, issue,
-        image,
+        daemon, server, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
     )
     .await;
     if let Err(e) = api.release(&me, &thread, item).await {

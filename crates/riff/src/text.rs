@@ -4828,7 +4828,8 @@ pub const RELAY_AWAY: &str =
     "riff relay: the riff daemon is away. claude runs on, and the relay keeps its events.";
 
 /// `riff relay` reached the daemon again.
-pub const RELAY_BACK: &str = "riff relay: the riff daemon is back. The relay sends the kept events.";
+pub const RELAY_BACK: &str =
+    "riff relay: the riff daemon is back. The relay sends the kept events.";
 
 /// After the end of `claude`, the daemon did not take the last events
 /// in time.

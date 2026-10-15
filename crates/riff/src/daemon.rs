@@ -67,7 +67,7 @@
 //!     L -->|no riff| M["MakeRiff with a random ID"]
 //!     L --> S["serve"]
 //!     M --> S
-//!     S -->|"a command (#717, #719)"| R["Local::run: the records<br/>in the log, then the reply"]
+//!     S -->|"a command (#719)"| R["Local::run: the records<br/>in the log, then the reply"]
 //!     S -->|"the stop"| C["Local::checkpoint"]
 //! ```
 //!
@@ -76,7 +76,8 @@
 //! - Each change goes through [`Daemon::state`]: one command at a time,
 //!   with its records in the log before its reply
 //!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session act on it
-//!   (#717, #719).
+//!   from #719. Until then, they act on the riff-server of `riff run`
+//!   ([`Daemon::tools_of`]).
 //! - At the stop, [`Daemon::serve`] writes a checkpoint. A start after a
 //!   crash replays the log after the last checkpoint.
 //! - `riff daemon status` shows the ID of the riff and the position of
@@ -109,6 +110,11 @@
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
 //! [`Then::Stop`]: the daemon stops the container. When `riff` closes the
 //! connection, the session goes on: the daemon owns it.
+//!
+//! `riff run` asks [`Ask::Follow`] after a new start of the daemon, with
+//! the number of the last event that it showed
+//! (01M4ZKX0F25S284R0N7KZVTHNA). `riff daemon events NAME` asks it with
+//! the number 0 ([`show_events`]).
 //!
 //! On the socket of a session, the first line is a [`SessionAsk`]. The
 //! daemon takes a version of the protocol from [`PROTOCOL`] - 1 to
@@ -892,7 +898,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The state of riff on this machine. The riff tools of a session
-    /// act on it (#717, #719).
+    /// act on it from #719.
     pub fn state(&self) -> &Local {
         &self.state
     }
@@ -1360,7 +1366,10 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// The riff tools of the session of `record`: they act on its
     /// riff-server as that session, with the sign-in of the person on
-    /// this machine (01M4ZHSZV46RF3XDXDTQXWGXRG).
+    /// this machine (01M4ZHSZV46RF3XDXDTQXWGXRG). That session is the
+    /// worker session of `riff run`, which holds the claim of the item.
+    /// From #719, the tools act on the state of the daemon
+    /// (01M4ZKX0H9N82ZBC9PKSPTQV4N).
     pub fn tools_of(record: &Record) -> Result<crate::mcp::Tools> {
         let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
         Ok(crate::mcp::Tools::new(api, record.me.clone())

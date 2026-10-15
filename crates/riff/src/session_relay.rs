@@ -113,8 +113,8 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::unix::OwnedWriteHalf;
 use tokio::net::UnixStream;
+use tokio::net::unix::OwnedWriteHalf;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
@@ -126,7 +126,7 @@ use crate::text;
 pub const RETRY: Duration = Duration::from_millis(250);
 
 /// After `claude` ends, the longest wait for the daemon to take the last
-/// lines.
+/// lines (01M4ZKX0R850RPSS63B001NNJZ).
 pub const WAIT: Duration = Duration::from_secs(600);
 
 /// The variables of a session whose values are secrets.
@@ -691,7 +691,10 @@ pub async fn mcp(
         let mut open = send(&mut write, &hello).await.is_ok();
         while open && let Some(line) = waiting.pop_front() {
             client = calls.from_claude(&line).or(client);
-            open = write.write_all(format!("{line}\n").as_bytes()).await.is_ok();
+            open = write
+                .write_all(format!("{line}\n").as_bytes())
+                .await
+                .is_ok();
         }
         while open {
             tokio::select! {
@@ -837,9 +840,8 @@ mod tests {
         let (mut claude, child) = claude();
         let (notes, mut noted) = mpsc::unbounded_channel();
         let socket = daemon.socket.clone();
-        let relay = tokio::spawn(async move {
-            relay(child, &socket, Scrub::default(), WAIT, notes).await
-        });
+        let relay =
+            tokio::spawn(async move { relay(child, &socket, Scrub::default(), WAIT, notes).await });
 
         // The first daemon: the start text, two events.
         let (hello, mut lines, mut write) = daemon.accept().await;
@@ -852,12 +854,30 @@ mod tests {
             }
         );
         say(&mut write, &Say::Resume { events: 0 }).await;
-        say(&mut write, &Say::Input { line: "start".into() }).await;
+        say(
+            &mut write,
+            &Say::Input {
+                line: "start".into(),
+            },
+        )
+        .await;
         assert_eq!(claude.read().await.as_deref(), Some("start"));
         claude.print("e1").await;
         claude.print("e2").await;
-        assert_eq!(up(&mut lines).await, Up::Event { seq: 1, line: "e1".into() });
-        assert_eq!(up(&mut lines).await, Up::Event { seq: 2, line: "e2".into() });
+        assert_eq!(
+            up(&mut lines).await,
+            Up::Event {
+                seq: 1,
+                line: "e1".into()
+            }
+        );
+        assert_eq!(
+            up(&mut lines).await,
+            Up::Event {
+                seq: 2,
+                line: "e2".into()
+            }
+        );
         // The daemon took only the first, and stops.
         say(&mut write, &Say::Ack { seq: 1 }).await;
         daemon.stop();
@@ -880,12 +900,30 @@ mod tests {
             }
         );
         say(&mut write, &Say::Resume { events: 1 }).await;
-        assert_eq!(up(&mut lines).await, Up::Event { seq: 2, line: "e2".into() });
-        assert_eq!(up(&mut lines).await, Up::Event { seq: 3, line: "e3".into() });
+        assert_eq!(
+            up(&mut lines).await,
+            Up::Event {
+                seq: 2,
+                line: "e2".into()
+            }
+        );
+        assert_eq!(
+            up(&mut lines).await,
+            Up::Event {
+                seq: 3,
+                line: "e3".into()
+            }
+        );
         say(&mut write, &Say::Close).await;
         assert_eq!(claude.read().await, None);
         claude.end(0).await;
-        assert_eq!(up(&mut lines).await, Up::Exit { seq: 4, code: Some(0) });
+        assert_eq!(
+            up(&mut lines).await,
+            Up::Exit {
+                seq: 4,
+                code: Some(0)
+            }
+        );
         say(&mut write, &Say::Ack { seq: 4 }).await;
         assert_eq!(relay.await.unwrap(), Some(0));
         assert_eq!(noted.recv().await.unwrap(), text::RELAY_BACK);
@@ -912,10 +950,19 @@ mod tests {
         let Up::Event { line, .. } = up(&mut lines).await else {
             panic!()
         };
-        assert!(line.contains("[secret]") && !line.contains("gho_secret1"), "{line}");
+        assert!(
+            line.contains("[secret]") && !line.contains("gho_secret1"),
+            "{line}"
+        );
         assert_eq!(noted.recv().await.unwrap(), "a token [secret] on stderr");
         claude.end(3).await;
-        assert_eq!(up(&mut lines).await, Up::Exit { seq: 2, code: Some(3) });
+        assert_eq!(
+            up(&mut lines).await,
+            Up::Exit {
+                seq: 2,
+                code: Some(3)
+            }
+        );
         say(&mut write, &Say::Ack { seq: 2 }).await;
         assert_eq!(relay.await.unwrap(), Some(3));
     }
@@ -928,9 +975,8 @@ mod tests {
         let socket = daemon.socket.clone();
         drop(daemon);
         let wait = Duration::from_secs(60);
-        let relay = tokio::spawn(async move {
-            relay(child, &socket, Scrub::default(), wait, notes).await
-        });
+        let relay =
+            tokio::spawn(async move { relay(child, &socket, Scrub::default(), wait, notes).await });
         claude.end(0).await;
         assert_eq!(relay.await.unwrap(), Some(0));
         assert_eq!(noted.recv().await.unwrap(), text::RELAY_AWAY);
@@ -943,9 +989,8 @@ mod tests {
         let (claude, child) = claude();
         let (notes, _noted) = mpsc::unbounded_channel();
         let socket = daemon.socket.clone();
-        let relay = tokio::spawn(async move {
-            relay(child, &socket, Scrub::default(), WAIT, notes).await
-        });
+        let relay =
+            tokio::spawn(async move { relay(child, &socket, Scrub::default(), WAIT, notes).await });
         let (_, mut lines, mut write) = daemon.accept().await;
         say(&mut write, &Say::Resume { events: 0 }).await;
         write
@@ -953,7 +998,13 @@ mod tests {
             .await
             .unwrap();
         claude.end(0).await;
-        assert_eq!(up(&mut lines).await, Up::Exit { seq: 1, code: Some(0) });
+        assert_eq!(
+            up(&mut lines).await,
+            Up::Exit {
+                seq: 1,
+                code: Some(0)
+            }
+        );
         say(&mut write, &Say::Ack { seq: 1 }).await;
         assert_eq!(relay.await.unwrap(), Some(0));
     }

@@ -4553,7 +4553,20 @@ share.
   secret, to `riff run`. No riff runs in the container. With no daemon,
   `riff run` stops before the claim, and says how to start the daemon.
   Ctrl-C asks the daemon to stop the container. When `riff run` ends
-  with no stop, the session goes on in the daemon.
+  with no stop, the session goes on in the daemon. Superseded by
+  01M4ZKX0NXN7E33VC3PSFGSPDT.
+- **01M4ZKX0NXN7E33VC3PSFGSPDT** `riff run ITEM` does one work item in
+  one rootless podman container, through the daemon. It asks the daemon
+  for the image (the daemon pulls it when it must), then for the
+  session. The host does each riff step with riff 1.x: it checks the
+  facts, starts a worker session, claims the item, makes the clone,
+  sends the verify request and releases the item. In the container,
+  `riff relay` starts `claude` (01M4ZHSZZDH0C01A5EVD0KFY14). The daemon
+  writes `events.jsonl`, and sends each event, with no secret, to
+  `riff run`. With no daemon, `riff run` stops before the claim, and
+  says how to start the daemon. Ctrl-C asks the daemon to stop the
+  container. When `riff run` ends with no stop, the session goes on in
+  the daemon.
 - **01M4ZDTW00B7N6T9P3MK066KA7** A stop or a restart of the daemon stops
   no container. The daemon starts each `podman` with no
   `INVOCATION_ID`, so podman puts conmon in a scope of its own, not in
@@ -4576,7 +4589,67 @@ share.
   and the events of a session go through the `podman run` of the
   daemon. At a stop of the daemon they end: `claude` ends after its
   turn, and its container goes. `riff run` then says that the daemon
-  stopped, finds the pull request, and releases the item.
+  stopped, finds the pull request, and releases the item. Superseded by
+  01M4ZKX0F25S284R0N7KZVTHNA.
+- **01M4ZHT01HH88KPA8628M7VBEY** The daemon keeps a record of each live
+  session in `live/NAME.json` in its folder, with no secret. At its
+  start, the daemon takes up each session whose container runs: it
+  binds the socket of the session again in the same folder. It removes
+  the record of each other session.
+- **01M4ZHT03MAH0B5Q4S6GZC5JRP** A session ends when the daemon has the
+  exit of its relay, or when its container ends.
+- **01M4ZHT05QHQRQ2KGVJFB9F7HD** On the control socket, `riff` can
+  follow a live session: the daemon sends each event after a number,
+  then each new event, then the end.
+- **01M4ZKX0KMS58NR2E9AF8229A8** `riff daemon events NAME` shows each
+  event of the live session in the container `NAME` from its start, as
+  `riff run` shows them, and each new event until the end. Ctrl-C ends
+  the view. The session goes on.
+
+### riff relay
+
+- **01M4ZHSZZDH0C01A5EVD0KFY14** The daemon binds its own binary at
+  `/opt/riff/riff` in each container, with no write. The command of a
+  session is `/opt/riff/riff relay -- COMMAND`. The daemon starts no
+  session whose spec binds a path at `/opt/riff/riff`.
+- **01M4ZHSZMH4Y8CB41FYGE3C3R2** The relay and the daemon count the
+  events and the inputs. Each event has a sequence number: the event N
+  is line N of `events.jsonl`. At each connection, the relay says how
+  many inputs it gave `claude`, and the daemon says how many events it
+  has. The relay sends each event that the daemon does not have. The
+  daemon sends each input that the relay did not give. So no event and
+  no input goes two times, and none is lost.
+- **01M4ZHSZPRYK42C20ETXM3HJZ2** On the socket of a session, the daemon
+  takes a hello of its own version of the protocol, of the version
+  before it, and of the version after it. A change of the protocol adds
+  a line or a field. Each side skips a line that it does not know.
+- **01M4ZHSZRY0P9HHNVSFET8HEEN** The relay takes each secret of the
+  session out of each event and out of each line of the stderr of
+  `claude`, before it sends or shows the line: the values of
+  `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`, and the
+  tokens of the sign-in file of `claude`. The relay writes no file.
+- **01M4ZHSZV46RF3XDXDTQXWGXRG** The relay gives `claude` the riff
+  tools: an MCP server `riff` that runs `riff relay mcp`. It passes each
+  line between `claude` and the socket of the session. The daemon
+  serves the tools as that session.
+- **01M4ZKX0H9N82ZBC9PKSPTQV4N** Until #719, the daemon serves the riff
+  tools of a session on the riff-server of `riff run`, as the worker
+  session that `riff run` started. That session holds the claim of the
+  item. The daemon uses the sign-in of the person on its machine.
+- **01M4ZHSZXAY7F7E17B3CMHG562** When the daemon goes away,
+  `riff relay mcp` answers each call in flight with an error, and keeps
+  each new line until the daemon comes back. At the new connection, it
+  gives the daemon the initialize request of `claude`, so the daemon
+  skips the handshake.
+- **01M4ZKX0R850RPSS63B001NNJZ** After the end of `claude`, the relay
+  waits up to 10 minutes for the daemon to take the last events. Then
+  it ends with the exit code of `claude`, and the container goes.
+- **01M4ZKX0F25S284R0N7KZVTHNA** When the daemon goes away during a
+  session, `riff run` says so, and waits up to 10 minutes for a new
+  daemon. Then it follows the session again after the last event that
+  it showed. So it shows each event one time. When no daemon comes
+  back, `riff run` says so, finds the pull request, and releases the
+  item.
 
 ### The first run
 
