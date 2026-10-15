@@ -106,9 +106,10 @@ impl Unit {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn text(&self) -> Result<String> {
-        let exe = self.exe.to_str().with_context(|| {
-            format!("the path of riff {} is not UTF-8", self.exe.display())
-        })?;
+        let exe = self
+            .exe
+            .to_str()
+            .with_context(|| format!("the path of riff {} is not UTF-8", self.exe.display()))?;
         let mut out = String::from(
             "# The unit of the riff daemon. riff daemon install writes this file.\n\
              [Unit]\n\
@@ -272,7 +273,12 @@ mod tests {
             exe: "/opt/$riff".into(),
             env: vec![],
         };
-        assert!(dollar.text().unwrap().contains("ExecStart=\"/opt/$$riff\" daemon"));
+        assert!(
+            dollar
+                .text()
+                .unwrap()
+                .contains("ExecStart=\"/opt/$$riff\" daemon")
+        );
         let bad = Unit {
             exe: "/opt/riff".into(),
             env: vec![("PATH".into(), "/a\n[Service]".into())],

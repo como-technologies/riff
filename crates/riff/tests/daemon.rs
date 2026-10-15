@@ -114,7 +114,10 @@ async fn riff_daemon_install_writes_the_unit_and_starts_the_daemon() {
     assert!(out.status.success(), "{status}");
     assert!(status.contains("Sessions: none."), "{status}");
     assert!(
-        status.contains(&format!("Its folder: {}", here.data().join("daemon").display())),
+        status.contains(&format!(
+            "Its folder: {}",
+            here.data().join("daemon").display()
+        )),
         "{status}"
     );
 

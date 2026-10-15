@@ -851,7 +851,8 @@ impl Client {
     pub async fn next(&mut self) -> Result<Option<Say>> {
         match self.lines.next_line().await? {
             Some(line) => Ok(Some(
-                serde_json::from_str(&line).context("the riff daemon said a line that riff cannot read")?,
+                serde_json::from_str(&line)
+                    .context("the riff daemon said a line that riff cannot read")?,
             )),
             None => Ok(None),
         }
@@ -1173,8 +1174,12 @@ mod tests {
     async fn each_session_gets_its_own_socket_and_no_other() {
         // claude starts, and never ends its turn.
         let here = Here::new(Fake::default().with_image(IMAGE).with_events([TURN[0]])).await;
-        let (mut one, a) = here.started(here.start("riff-issue-1-aaaaaaaa", "issue-1")).await;
-        let (mut two, b) = here.started(here.start("riff-issue-2-bbbbbbbb", "issue-2")).await;
+        let (mut one, a) = here
+            .started(here.start("riff-issue-1-aaaaaaaa", "issue-1"))
+            .await;
+        let (mut two, b) = here
+            .started(here.start("riff-issue-2-bbbbbbbb", "issue-2"))
+            .await;
 
         for (name, other, item) in [(&a, &b, "issue-1"), (&b, &a, "issue-2")] {
             let spec = here.fake.spec(name).unwrap();
@@ -1185,10 +1190,10 @@ mod tests {
                 target: IN_SESSION.into(),
                 write: true,
             }));
-            assert!(spec.env.contains(&Env::Value(
-                SOCKET_VAR.into(),
-                "/run/riff/riff.sock".into()
-            )));
+            assert!(
+                spec.env
+                    .contains(&Env::Value(SOCKET_VAR.into(), "/run/riff/riff.sock".into()))
+            );
             // No bind shows the folder of the daemon, other than its own
             // socket folder.
             for bind in &spec.binds {
@@ -1290,7 +1295,9 @@ mod tests {
     #[tokio::test]
     async fn a_stop_of_the_daemon_stops_no_session() {
         let mut here = Here::new(Fake::default().with_image(IMAGE).with_events([TURN[0]])).await;
-        let (mut client, name) = here.started(here.start("riff-issue-1-aaaaaaaa", "issue-1")).await;
+        let (mut client, name) = here
+            .started(here.start("riff-issue-1-aaaaaaaa", "issue-1"))
+            .await;
         assert_eq!(
             client.next().await.unwrap(),
             Some(Say::Event {
@@ -1307,7 +1314,9 @@ mod tests {
     #[tokio::test]
     async fn a_client_that_leaves_with_no_stop_leaves_the_session_running() {
         let here = Here::new(Fake::default().with_image(IMAGE).with_events([TURN[0]])).await;
-        let (client, name) = here.started(here.start("riff-issue-1-aaaaaaaa", "issue-1")).await;
+        let (client, name) = here
+            .started(here.start("riff-issue-1-aaaaaaaa", "issue-1"))
+            .await;
         drop(client);
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(here.fake.calls(), [format!("start {name}")]);
@@ -1364,7 +1373,10 @@ mod tests {
         );
         // A line that is not a hello: the error shows no part of it.
         let mut client = Client::connect(&here.dir).await.unwrap();
-        client.line(&serde_json::json!({"gho_secret1": 1})).await.unwrap();
+        client
+            .line(&serde_json::json!({"gho_secret1": 1}))
+            .await
+            .unwrap();
         match client.next().await.unwrap() {
             Some(Say::Failed { error }) => assert!(!error.contains("gho_secret1"), "{error}"),
             other => panic!("{other:?}"),

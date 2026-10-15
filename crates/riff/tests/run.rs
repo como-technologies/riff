@@ -303,10 +303,7 @@ impl Machine {
 
     /// The folder of the socket of the session in the container `name`.
     fn socket_dir(&self, name: &str) -> PathBuf {
-        self.env
-            .riff_home()
-            .join("daemon/sessions")
-            .join(name)
+        self.env.riff_home().join("daemon/sessions").join(name)
     }
 
     /// The sign-in of claude, for `minutes` from now.
@@ -754,7 +751,10 @@ async fn a_stop_of_riff_run_stops_the_container_and_releases_the_item() {
     nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap();
     let out = output_of(child).await;
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
-    assert_eq!(machine.read("podman.log").trim(), format!("podman stop {name}"));
+    assert_eq!(
+        machine.read("podman.log").trim(),
+        format!("podman stop {name}")
+    );
     assert!(
         text(&out.stdout).contains(&format!("riff run stops the container {name}")),
         "{}",
@@ -784,7 +784,12 @@ async fn a_stop_of_the_daemon_stops_no_container() {
     // the container, and has no INVOCATION_ID: conmon is not in the
     // cgroup of the unit.
     assert_eq!(machine.read("podman.log"), "");
-    assert!(machine.read("run.args").lines().any(|a| a == "--sig-proxy=false"));
+    assert!(
+        machine
+            .read("run.args")
+            .lines()
+            .any(|a| a == "--sig-proxy=false")
+    );
     assert_eq!(machine.read("run.invocation"), "");
 
     // riff run says so, and releases the item.
