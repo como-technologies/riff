@@ -20,8 +20,6 @@ use riff_core::wire::RiffState;
 
 /// A tmux with no worker pane.
 const FAKE_TMUX: &str = r#"#!/bin/sh
-# Outside tmux, riff names its own server: -L riff (see start.rs).
-[ "$1" = -L ] && shift 2
 case "$1" in
   display-message) echo "@0" ;;
 esac
@@ -91,6 +89,8 @@ impl Riff {
         let fake = tempfile::tempdir().unwrap();
         script(fake.path(), "tmux", FAKE_TMUX);
         script(fake.path(), "journalctl", FAKE_JOURNALCTL);
+        // A host installs no real sccache (01M4923963S666V9YWTZ46ZZ50).
+        script(fake.path(), "sccache", "#!/bin/sh\necho sccache 0.18.0\n");
         let root = tempfile::tempdir().unwrap();
         let main = root.path().join("main");
         std::fs::create_dir(&main).unwrap();

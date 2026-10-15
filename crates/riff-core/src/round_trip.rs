@@ -707,110 +707,6 @@ mod tests {
             });
         }
         c.trip(&IdleQuery { me: me() });
-        {
-            use crate::forge::{Access, TokenRole};
-            use crate::wire::{
-                ForgeAccounts, ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeCreate,
-                ForgeCreateReply, ForgeCreated, ForgeCreatedReply, ForgeInstall, ForgeInstallReply,
-                ForgeToken, ForgeTokenReply, RoleCheck,
-            };
-            let permissions = BTreeMap::from([
-                ("contents".to_owned(), Access::Write),
-                ("metadata".to_owned(), Access::Read),
-            ]);
-            c.trip(&ForgeToken { me: me() });
-            c.trip(&ForgeTokenReply {
-                role: TokenRole::Worker,
-                repo: "acme/app".into(),
-                token: "ghs_x".into(),
-                ends_ms: 1,
-                permissions: permissions.clone(),
-            });
-            c.trip(&TokenRole::Lead);
-            c.trip(&ForgeCheck { me: me() });
-            c.trip(&ForgeCheckReply {
-                repo: "acme/app".into(),
-                app: 7,
-                roles: vec![RoleCheck {
-                    role: TokenRole::Verifier,
-                    permissions,
-                    error: Some("no".into()),
-                }],
-            });
-            c.trip(&ForgeAllow {
-                me: me(),
-                owner: Some("acme".into()),
-                allowed: true,
-            });
-            c.trip(&ForgeAccounts {
-                accounts: vec!["acme".into()],
-            });
-            c.trip(&ForgeCreate {
-                me: me(),
-                org: "acme".into(),
-            });
-            c.trip(&ForgeCreateReply {
-                url: "https://riff.example/forge/new?state=s".into(),
-                state: "s".into(),
-            });
-            c.trip(&ForgeCreated {
-                me: me(),
-                state: "s".into(),
-            });
-            c.trip(&ForgeCreatedReply {
-                app: Some(7),
-                slug: Some("riff-acme".into()),
-                installed: true,
-                error: Some("no".into()),
-            });
-            c.trip(&ForgeInstall {
-                me: me(),
-                owner: "acme".into(),
-            });
-            c.trip(&ForgeInstallReply {
-                url: "https://github.com/apps/riff-acme/installations/new".into(),
-                installed: false,
-            });
-        }
-        {
-            use crate::wire::{
-                OutsideAsk, OutsideDecide, OutsideList, OutsideRequest, OutsideRequests,
-                OutsideState, OutsideTake,
-            };
-            c.trip(&OutsideAsk {
-                me: me(),
-                command: vec!["sudo".into(), "true".into()],
-                cwd: "/w".into(),
-                reason: "a test".into(),
-            });
-            c.trip(&OutsideTake {
-                me: me(),
-                id: "7f3a9c21".into(),
-            });
-            c.trip(&OutsideList { me: me() });
-            c.trip(&OutsideDecide {
-                me: me(),
-                id: "7f3a9c21".into(),
-                approve: true,
-            });
-            let request = OutsideRequest {
-                id: "7f3a9c21".into(),
-                by: me(),
-                command: vec!["true".into()],
-                cwd: "/w".into(),
-                reason: "a test".into(),
-                state: OutsideState::Approved,
-                decided_by: Some("mike".into()),
-                taken: true,
-            };
-            c.trip(&request);
-            for state in [OutsideState::Asked, OutsideState::Denied, OutsideState::Ran] {
-                c.trip(&state);
-            }
-            c.trip(&OutsideRequests {
-                requests: vec![request],
-            });
-        }
         c.trip(&SetIdle {
             me: me(),
             per_host: Some(1),
@@ -838,11 +734,8 @@ mod tests {
             subject_token: Some(text("s")),
             subject_token_type: Some(text("t")),
             session: Some(text("s1")),
-            requested_token_type: Some(text("g")),
-            session_proof: Some(text("p")),
             resource: Some(text("https://riff.example")),
         });
-        c.trip(&GrantEnd { token: text("g") });
         c.trip(&TokenReply {
             access_token: text("a"),
             token_type: text("DPoP"),

@@ -1,18 +1,16 @@
 //! The group "the riff": the commands [`MakeRiff`], [`Pause`],
-//! [`Resume`], [`SetIdle`], [`ForgeAllow`], [`Forget`] and [`Import`],
-//! and what is one for the whole riff. [`MakeRiff`], [`Forget`] and [`Import`] are
+//! [`Resume`], [`SetIdle`], [`Forget`] and [`Import`], and what is one
+//! for the whole riff. [`MakeRiff`], [`Forget`] and [`Import`] are
 //! commands of the server: no client can send them.
 //!
-//! - Part of the riff: [`TheRiff`]. The pauses ([`Pauses`]), the
-//!   settings of idle workers, and the GitHub accounts that get forge
-//!   tokens.
-//! - `apply`: `TheRiff::pause_set` for a `pause_set` record,
-//!   `TheRiff::setting_changed` for a `setting_changed` record, and
-//!   `TheRiff::forge_allowed` for a `forge_allowed` record. The
+//! - Part of the riff: [`TheRiff`]. The pauses ([`Pauses`]), and the
+//!   settings of idle workers.
+//! - `apply`: `TheRiff::pause_set` for a `pause_set` record, and
+//!   `TheRiff::setting_changed` for a `setting_changed` record. The
 //!   `session_forgotten` record of [`Forget`] changes each part: see
 //!   [`super::riff`].
-//! - Checkpoint: `Saved`, the fields `riff`, `idle`, `riff_pause`,
-//!   `pauses` and `forge_accounts`.
+//! - Checkpoint: `Saved`, the fields `riff`, `idle`, `riff_pause` and
+//!   `pauses`.
 //!
 //! # The two pauses (01M3XAHZBGSSJB3YX23K88W01K)
 //!
@@ -30,15 +28,14 @@
 //! an admin for the whole riff and for a named repository. `handle`
 //! checks the lead, because it reads the state.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use riff_core::name::ThreadName;
 use riff_core::record::{
-    Change, Envelope, ForgeAllowed, Forgotten, PauseSet, Record, RiffMade, Scope, SettingChanged,
+    Change, Envelope, Forgotten, PauseSet, Record, RiffMade, Scope, SettingChanged,
 };
 use riff_core::wire::{
-    ForgeAccounts, ForgeAllow, Idle, Pause, PauseInfo, RepositoryPause, Resume, RiffReply,
-    RiffState, SetIdle,
+    Idle, Pause, PauseInfo, RepositoryPause, Resume, RiffReply, RiffState, SetIdle,
 };
 use serde::{Deserialize, Serialize};
 
@@ -165,9 +162,6 @@ pub struct TheRiff {
     pub(super) pauses: Pauses,
     /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74).
     pub(super) idle: Idle,
-    /// The GitHub accounts that get forge tokens, in lower case
-    /// (01M4CTAYRSC27Q6AAGTH9CBD7Q).
-    pub(super) forge_accounts: BTreeSet<String>,
 }
 
 impl TheRiff {
@@ -213,35 +207,11 @@ impl TheRiff {
         Ok(())
     }
 
-    pub(super) fn forge_allowed(&mut self, allowed: &ForgeAllowed) -> Result<(), &'static str> {
-        let owner = allowed.owner.to_lowercase();
-        if allowed.allowed {
-            self.forge_accounts.insert(owner);
-        } else {
-            self.forge_accounts.remove(&owner);
-        }
-        Ok(())
-    }
-
-    /// True when the server makes forge tokens for the repositories of
-    /// the GitHub account `owner`. GitHub names are not case sensitive.
-    pub fn forge_allows(&self, owner: &str) -> bool {
-        self.forge_accounts.contains(&owner.to_lowercase())
-    }
-
-    /// The GitHub accounts that get forge tokens, in order.
-    pub fn forge_accounts(&self) -> ForgeAccounts {
-        ForgeAccounts {
-            accounts: self.forge_accounts.iter().cloned().collect(),
-        }
-    }
-
     /// The pauses and the settings, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
         let TheRiff {
             pauses: Pauses { riff, repositories },
             idle,
-            forge_accounts,
         } = self.clone();
         Saved {
             riff: match riff {
@@ -251,7 +221,6 @@ impl TheRiff {
             idle,
             riff_pause: riff.filter(|pause| *pause != PauseInfo::default()),
             pauses: repositories,
-            forge_accounts,
         }
     }
 }
@@ -273,10 +242,6 @@ pub(super) struct Saved {
     /// Each repository that is paused.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pauses: BTreeMap<ThreadName, PauseInfo>,
-    /// The GitHub accounts that get forge tokens. Absent when there is
-    /// none: a checkpoint from before 1.4.0 has none.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    forge_accounts: BTreeSet<String>,
 }
 
 impl Saved {
@@ -286,7 +251,6 @@ impl Saved {
             idle,
             riff_pause,
             pauses,
-            forge_accounts,
         } = self;
         let riff = match riff {
             RiffState::Paused => Some(riff_pause.unwrap_or_default()),
@@ -298,7 +262,6 @@ impl Saved {
                 repositories: pauses,
             },
             idle,
-            forge_accounts,
         }
     }
 }
@@ -571,52 +534,6 @@ impl Command for SetIdle {
 
     fn reply(&self, _: &Caller, view: &View<'_>, _: &Done, (): (), _: Now) -> Idle {
         view.riff.the_riff().idle
-    }
-}
-
-/// Allows the GitHub account `owner`, or allows it no more
-/// (01M4CTAYRSC27Q6AAGTH9CBD7Q). It needs the owner or an admin, as a
-/// person. A command that changes nothing writes no record. The reply is
-/// the list of the written copy.
-impl Command for ForgeAllow {
-    const KIND: CommandKind = CommandKind::ForgeAllow;
-    type Reply = ForgeAccounts;
-    type Note = ();
-
-    fn needs(&self, _: &Caller) -> Role {
-        Role::Admin
-    }
-
-    fn handle(
-        &self,
-        _caller: &Caller,
-        view: &View<'_>,
-        _now: Now,
-    ) -> Result<(Vec<Change>, ()), Refused> {
-        let Some(owner) = &self.owner else {
-            return Ok((Vec::new(), ()));
-        };
-        let owner = owner.trim().to_lowercase();
-        let name = |c: char| c.is_ascii_alphanumeric() || c == '-';
-        if owner.is_empty() || owner.contains('/') || !owner.chars().all(name) {
-            return Err(format!(
-                "{owner:?} is no GitHub account: give the name of an organization or a person, \
-                 for example acme"
-            )
-            .into());
-        }
-        let mut changes = Vec::new();
-        if view.riff.the_riff().forge_allows(&owner) != self.allowed {
-            changes.push(Change::ForgeAllowed(ForgeAllowed {
-                owner,
-                allowed: self.allowed,
-            }));
-        }
-        Ok((changes, ()))
-    }
-
-    fn reply(&self, _: &Caller, view: &View<'_>, _: &Done, (): (), _: Now) -> ForgeAccounts {
-        view.riff.the_riff().forge_accounts()
     }
 }
 

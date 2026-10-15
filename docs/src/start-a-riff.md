@@ -26,7 +26,6 @@ flowchart TD
 - Linux with a desktop. riff keeps a key in the keyring of
   your desktop.
 - [Claude Code](https://code.claude.com).
-- tmux. On Ubuntu, install it with `sudo apt install tmux`.
 - Rust. If you do not have it, install it with
   [rustup](https://rustup.rs).
 - A C compiler. On Ubuntu, install it with
@@ -47,44 +46,41 @@ flowchart TD
    riff-server
    ```
 
-You do not sign in: riff uses the name that you log in with on this
-machine.
+3. In a second terminal, go to your project. Add riff to Claude Code.
+   You do not sign in: riff uses the name that you log in with on
+   this machine. The command also shows each session and its claims
+   in the status line of Claude Code:
 
-## Give the sessions your Claude plan
+   ```sh
+   riff connect claude
+   ```
 
-Each session that riff starts uses your Claude plan. Run these two
-commands one time on each machine:
+   It asks where you want riff on. Press Enter: riff is on only in
+   this project. On a new machine, it also asks once whether riff
+   updates itself. Press Enter for yes.
 
-```sh
-claude setup-token
-riff claude-token
-```
+## Turn riff on in a project
 
-For what to paste, and how to remove the token, see
-[Give the sessions your Claude plan](how-it-works.md#give-the-sessions-your-claude-plan).
-
-## Start the riff
-
-In a second terminal, go to your project, and run:
+riff is off in a project until you turn it on there. To use riff in
+another project, run this in that project:
 
 ```sh
-riff
+riff enable
 ```
 
-It lists the repositories that riff knows on this machine. Type the
-number of your project, or the path of its clone. riff starts your
-lead there, in a tmux session of its own. riff gives the lead its
-plugin, its tools, its permission rules and its status line. It
-writes nothing to your Claude config (see
-[What riff gives Claude](how-it-works.md#what-riff-gives-claude)). On
-a new machine, riff first asks once whether it updates itself. Press
-Enter for yes. Work with the lead. The
-other sessions ask their questions there. See
-[Start the riff](how-it-works.md#start-the-riff) and
+To turn it off again, run `riff disable` there. See
+[Turn riff on or off for a repository](how-it-works.md#turn-riff-on-or-off-for-a-repository).
+
+## Use it
+
+Start Claude Code in your project. Then start a second Claude Code
+session in the same project. Ask one of them: *"Who else is in the
+riff?"* Then ask it: *"Say hello to the other session."* The other
+session wakes and reads the message.
+
+The first session that you start in a project is your lead. Work
+there. The other sessions ask their questions there. See
 [The lead](how-it-works.md#the-lead).
-
-Ask the lead: *"Who else is in the riff?"* To leave the riff running,
-press `Ctrl-b d`. Run `riff` again to come back.
 
 ## Resume the new riff
 
@@ -97,11 +93,38 @@ riff resume --riff
 
 See [Pause the riff](how-it-works.md#pause-the-riff).
 
+## Let riff work in auto mode
+
+In auto mode, Claude Code can block riff work: a riff tool, `riff
+workers start`, or a step of a pull request. A session cannot allow
+this itself. Run this once in each project, then commit the file that
+it names:
+
+```sh
+riff setup
+```
+
+It adds the missing permission rules of riff to
+`.claude/settings.json` at the top of the repository. It keeps each
+rule that is there. It also denies a push to the default branch and
+`gh pr merge --admin`. Start your sessions again to use the rules.
+
+### Check the rules
+
+This command changes nothing. It names each missing rule, and exits
+with status 1 when a rule is missing:
+
+```sh
+riff setup --check
+```
+
+When rules are missing, the start hook tells your lead. The lead
+tells you to run `riff setup`.
+
 ## Update riff
 
 Update riff on your machine. It installs `riff` and `riff-server` of
-a release with `cargo`. Each session that riff starts after it gets
-the new plugin:
+a release with `cargo`, and updates the plugin in Claude Code:
 
 ```sh
 riff update
@@ -122,13 +145,11 @@ start of the riff forgets its messages and its claims, and the riff is
 paused again. Run `riff resume --riff` when you want the sessions to
 work.
 
-Then end your lead and your workers, and start the riff again with
-`riff`. To move from riff 1.3, see [Move from riff 1.3 to
-2.0](how-it-works.md#move-from-riff-13-to-20). Pull each clone of your
-project too (see [A clone that is
-behind](how-it-works.md#a-clone-that-is-behind)). A riff of another
-version can refuse `riff` (see [Builds](how-it-works.md#builds)). When
-you joined a riff, see [Update riff](join-a-riff.md#update-riff) of Join
-a Riff.
+Then start your Claude Code sessions again. Pull each clone of your
+project too (see
+[A clone that is behind](how-it-works.md#a-clone-that-is-behind)).
+A riff of another version can refuse `riff` (see
+[Builds](how-it-works.md#builds)). When you joined a riff, see
+[Update riff](join-a-riff.md#update-riff) of Join a Riff.
 
 To learn more, read [How It Works](how-it-works.md).

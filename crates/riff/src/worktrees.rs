@@ -44,15 +44,6 @@
 //!   pull request goes, also after the merge deleted the branch.
 //! - riff deletes the branch only while it points at HEAD
 //!   (`git update-ref -d`). It never forces.
-//! - riff takes the branch of a worktree from its name, not from its
-//!   `HEAD`: a session writes the `HEAD` and the refs
-//!   (01M4DVXP49BXNJD1Y289PCEH31). `.claude/worktrees/NAME` has the
-//!   branch `worktree-NAME` ([`branch_of`]). When the `HEAD` names
-//!   another branch, riff takes the worktree as one with no branch: it
-//!   saves, pushes and deletes no branch. It never pushes to the
-//!   default branch of `origin`, and it takes that branch from `origin`
-//!   ([`crate::hygiene::default_branch`]). Each git and `gh` call has
-//!   `--` before the names.
 //! - `riff workers start` and the start of `riff workers host` run it
 //!   too (01M3ZV0TM7ANJ1QQ7XTBDJQE1V). A workers host and the `riff mcp`
 //!   of the lead run it each 10 minutes ([`crate::tidy`],
@@ -68,7 +59,7 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -157,7 +148,7 @@ pub struct Facts {
     pub owned: bool,
     /// It has files that are not committed.
     pub changed: bool,
-    /// Its `HEAD` names its own branch ([`branch_of`]).
+    /// It is on a branch, not detached.
     pub branch: bool,
     /// The pull request of its branch. `None` when riff did not look.
     pub pr: Option<Pr>,
@@ -189,7 +180,7 @@ pub enum Step {
 /// let changed = Facts { changed: true, ..free.clone() };
 /// assert_eq!(decide(&changed), [Step::Save]);
 /// let detached = Facts { branch: false, ..changed.clone() };
-/// assert_eq!(decide(&detached), [Step::Keep("it has work on no branch of its own".into())]);
+/// assert_eq!(decide(&detached), [Step::Keep("it has work on no branch".into())]);
 /// let verify = Facts { branch: false, on_origin: true, ..free.clone() };
 /// assert_eq!(decide(&verify), [Step::Remove("it holds no work, and its commit is on origin".into())]);
 /// let gone = Facts { branch: false, pr: Some(Pr::MergedAtHead(40)), ..free.clone() };
@@ -221,7 +212,7 @@ pub fn decide(facts: &Facts) -> Vec<Step> {
     } else if facts.changed && facts.branch {
         Step::Save
     } else if facts.changed {
-        Step::Keep("it has work on no branch of its own".into())
+        Step::Keep("it has work on no branch".into())
     } else if facts.on_main {
         Step::Remove(
             "its HEAD is on the default branch of origin: it has no commit of its own".into(),
@@ -258,8 +249,7 @@ pub fn decide(facts: &Facts) -> Vec<Step> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tree {
     pub path: PathBuf,
-    /// The short name of the branch that its `HEAD` names, or `None`
-    /// when it is detached. A session writes it: see [`branch_of`].
+    /// The short name of its branch, or `None` when it is detached.
     pub branch: Option<String>,
     /// The commit of its `HEAD`.
     pub head: String,
@@ -332,14 +322,7 @@ struct PrView {
 
 /// The pull request of `branch` with `gh`, compared with `head`.
 fn pr_of(gh: &Gh, branch: &str, head: &str) -> Pr {
-    let args = [
-        "pr",
-        "view",
-        "--json",
-        "number,state,headRefOid",
-        "--",
-        branch,
-    ];
+    let args = ["pr", "view", branch, "--json", "number,state,headRefOid"];
     match gh.json::<PrView>(&args) {
         Ok(pr) if pr.state == "MERGED" && pr.head_ref_oid == head => Pr::MergedAtHead(pr.number),
         Ok(pr) if pr.state == "MERGED" => Pr::MergedElsewhere(pr.number),
@@ -367,9 +350,6 @@ fn merged_at(gh: &Gh, head: &str) -> Option<u64> {
         "--json",
         "number,headRefOid",
     ];
-    if !is_oid(head) {
-        return None;
-    }
     let found = gh.json::<Vec<Found>>(&args).ok()?;
     found
         .into_iter()
@@ -391,22 +371,16 @@ pub fn clean(main: &Path, here: &Path, gh: &Gh, owned: impl Fn(&Tree) -> bool) -
         return Vec::new();
     };
     let start = |pid| workload::read(pid, "").map(|p| p.start);
-    let cell = std::cell::OnceCell::new();
-    let default = || {
-        cell.get_or_init(|| crate::hygiene::default_branch(main, crate::hygiene::REMOTE_WAIT))
-            .clone()
-    };
     parse(&list)
         .into_iter()
         .map(|tree| {
-            let tree = own_branch(tree);
             let lock = Lock::of(tree.lock.as_deref(), start);
             let here = here.starts_with(&tree.path);
-            let changed = sandboxed_git(main, &tree, &["status", "--porcelain"])
+            let changed = git(&tree.path, &["status", "--porcelain"])
                 .map(|out| !out.trim().is_empty())
                 .unwrap_or(true);
             let mut facts = Facts {
-                agent: crate::confine::git_in_tree(main, &tree.path).is_ok(),
+                agent: tree.path.starts_with(main.join(AGENT_DIR)),
                 lock,
                 owned: here || owned(&tree),
                 changed,
@@ -417,7 +391,7 @@ pub fn clean(main: &Path, here: &Path, gh: &Gh, owned: impl Fn(&Tree) -> bool) -
             };
             let free = matches!(facts.lock, Lock::None | Lock::Dead) && !facts.owned;
             if free && !facts.changed {
-                facts.on_main = default().is_ok_and(|b| on_main(main, &tree.head, &b));
+                facts.on_main = on_main(main, &tree.head);
                 if !facts.on_main {
                     facts.pr = match tree.branch.as_ref().map(|b| pr_of(gh, b, &tree.head)) {
                         Some(Pr::Unknown(why)) => Some(
@@ -426,57 +400,23 @@ pub fn clean(main: &Path, here: &Path, gh: &Gh, owned: impl Fn(&Tree) -> bool) -
                         Some(pr) => Some(pr),
                         None => merged_at(gh, &tree.head).map(Pr::MergedAtHead),
                     };
-                    if tree.branch.is_none() && is_oid(&tree.head) {
-                        let contains = format!("--contains={}", tree.head);
-                        let on = git(main, &["branch", "-r", &contains]);
+                    if tree.branch.is_none() {
+                        let on = git(main, &["branch", "-r", "--contains", &tree.head]);
                         facts.on_origin = on.is_ok_and(|out| !out.trim().is_empty());
                     }
                 }
             }
-            act(main, &tree, &facts, default)
+            act(main, &tree, &facts)
         })
         .collect()
 }
 
-/// The branch of the worktree `tree`, from its name and not from its
-/// `HEAD` (01M4DVXP49BXNJD1Y289PCEH31): `worktree-NAME` for
-/// `.claude/worktrees/NAME`, as the agent tool names it.
-///
-/// ```
-/// use riff::worktrees::{Tree, branch_of};
-///
-/// let tree = |path: &str| Tree { path: path.into(), branch: Some("main".into()), head: "1".into(), lock: None };
-/// assert_eq!(branch_of(&tree("/r/.claude/worktrees/issue-12")).unwrap(), "worktree-issue-12");
-/// assert!(branch_of(&tree("/r/.claude/worktrees/a b")).is_err());
-/// assert!(branch_of(&tree("/")).is_err());
-/// ```
-pub fn branch_of(tree: &Tree) -> std::result::Result<String, String> {
-    let name = tree
-        .path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| format!("{} has no name", tree.path.display()))?;
-    crate::hygiene::branch_name(&format!("worktree-{name}")).map(str::to_owned)
-}
-
-/// `tree` with the branch of its `HEAD` only when it is its own branch
-/// ([`branch_of`]). Each other `HEAD` counts as one with no branch.
-fn own_branch(tree: Tree) -> Tree {
-    let own = branch_of(&tree).ok();
-    let branch = tree.branch.clone().filter(|b| Some(b) == own.as_ref());
-    Tree { branch, ..tree }
-}
-
-/// True for the hex name of a git object.
-fn is_oid(text: &str) -> bool {
-    matches!(text.len(), 40 | 64) && text.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// True when `head` is on the default branch `branch` of `origin` in
-/// the clone of `main` (01M4DVXP20SHYTFE1D4NVF0FSF).
-fn on_main(main: &Path, head: &str, branch: &str) -> bool {
+/// True when `head` is on the default branch of `origin` in the clone
+/// of `main`: the branch of `origin/HEAD`, else `main`.
+fn on_main(main: &Path, head: &str) -> bool {
+    let branch = crate::permissions::Project::of(main).branch;
     let base = format!("refs/remotes/origin/{branch}");
-    is_oid(head) && git(main, &["merge-base", "--is-ancestor", "--", head, &base]).is_ok()
+    git(main, &["merge-base", "--is-ancestor", head, &base]).is_ok()
 }
 
 /// The worktrees of the agent tool in the clone of `main` that no live
@@ -491,7 +431,7 @@ pub fn ownerless(main: &Path, here: &Path, owned: impl Fn(&Tree) -> bool) -> Vec
     parse(&list)
         .into_iter()
         .filter(|tree| {
-            crate::confine::git_in_tree(main, &tree.path).is_ok()
+            tree.path.starts_with(main.join(AGENT_DIR))
                 && matches!(
                     Lock::of(tree.lock.as_deref(), start),
                     Lock::None | Lock::Dead
@@ -503,22 +443,17 @@ pub fn ownerless(main: &Path, here: &Path, owned: impl Fn(&Tree) -> bool) -> Vec
 }
 
 /// Does the steps of `facts` for `tree`.
-fn act(
-    main: &Path,
-    tree: &Tree,
-    facts: &Facts,
-    default: impl Fn() -> std::result::Result<String, String>,
-) -> Done {
+fn act(main: &Path, tree: &Tree, facts: &Facts) -> Done {
     let path = tree.path.display().to_string();
     let mut words = Vec::new();
     let mut saved = false;
     for step in decide(facts) {
         let path_arg = path.as_str();
         let did = match &step {
-            Step::Unlock => git(main, &["worktree", "unlock", "--", path_arg])
+            Step::Unlock => git(main, &["worktree", "unlock", path_arg])
                 .map(|_| "unlocked: the process of its lock is gone".to_owned()),
             Step::Remove(why) => remove(main, tree, why),
-            Step::Save => save(main, tree, &default).inspect(|_| saved = true),
+            Step::Save => save(tree).inspect(|_| saved = true),
             Step::Keep(why) => Ok(format!("kept: {why}")),
         };
         match did {
@@ -540,36 +475,21 @@ fn act(
 /// `why` is the reason in the line.
 fn remove(main: &Path, tree: &Tree, why: &str) -> std::result::Result<String, String> {
     let path = tree.path.display().to_string();
-    git(main, &["worktree", "remove", "--", &path])?;
+    git(main, &["worktree", "remove", &path])?;
     let Some(branch) = &tree.branch else {
         return Ok(format!("removed: {why}"));
     };
     let reference = format!("refs/heads/{branch}");
-    git(main, &["update-ref", "-d", "--", &reference, &tree.head])?;
+    git(main, &["update-ref", "-d", &reference, &tree.head])?;
     Ok(format!("removed with its branch {branch}: {why}"))
 }
 
 /// Commits the work of the worktree as WIP, and pushes its branch.
-/// The branch is its own ([`branch_of`]), and never the default branch
-/// of `origin` (01M4DVXP49BXNJD1Y289PCEH31).
-fn save(
-    main: &Path,
-    tree: &Tree,
-    default: impl Fn() -> std::result::Result<String, String>,
-) -> std::result::Result<String, String> {
-    let branch = branch_of(tree)?;
-    if tree.branch.as_ref() != Some(&branch) {
-        return Err(format!("its HEAD is not on its branch {branch}"));
-    }
-    if default()? == branch {
-        return Err(format!(
-            "{branch} is the default branch of origin, and riff never pushes it"
-        ));
-    }
-    sandboxed_git(main, tree, &["add", "-A"])?;
-    sandboxed_git(
-        main,
-        tree,
+fn save(tree: &Tree) -> std::result::Result<String, String> {
+    let branch = tree.branch.as_deref().unwrap_or_default();
+    git(&tree.path, &["add", "-A"])?;
+    git(
+        &tree.path,
         &[
             "commit",
             "-q",
@@ -578,35 +498,16 @@ fn save(
             "WIP: riff worktrees clean saved the work of a session that ended",
         ],
     )?;
-    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
-    tree_git(main, tree, &["push", "-q", "-u", "--", "origin", &refspec])?;
+    git(&tree.path, &["push", "-q", "-u", "origin", "HEAD"])?;
     Ok(format!(
         "saved: a WIP commit on {branch}, pushed to origin. No live session owns it"
     ))
 }
 
 fn git(dir: &Path, args: &[&str]) -> std::result::Result<String, String> {
-    run(crate::confine::git_in(dir), args)
-}
-
-/// [`git`] in the worktree `tree` of the clone `main`
-/// (01M4CW0CH4F861MWQSQACEX54X).
-fn tree_git(main: &Path, tree: &Tree, args: &[&str]) -> std::result::Result<String, String> {
-    run(crate::confine::git_in_tree(main, &tree.path), args)
-}
-
-/// [`tree_git`] with the sandbox of a worker, for a step that reads the
-/// files of the worktree (01M4D06XN4D19G1B2NBRFH34B3).
-fn sandboxed_git(main: &Path, tree: &Tree, args: &[&str]) -> std::result::Result<String, String> {
-    run(crate::confine::worker_git(main, &tree.path), args)
-}
-
-fn run(
-    git: anyhow::Result<std::process::Command>,
-    args: &[&str],
-) -> std::result::Result<String, String> {
-    let out = git
-        .map_err(|e| crate::text::safe(&format!("{e:#}")))?
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())

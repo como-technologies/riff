@@ -46,6 +46,11 @@
 //!   ([`prune`]). No rule deletes chunks by age.
 //! - When the newest checkpoint does not read, the start uses the one
 //!   before it ([`load`]).
+//! - A checkpoint of a later major version comes from a later release
+//!   line, which has its own instance (01M4YNCEMNRCAXD37V03T4JQYR). A
+//!   start does not use it, and it does not block: the build reads only
+//!   its text `build` ([`of_later_line`]). A checkpoint of a later minor or
+//!   patch of the same line still blocks.
 //!
 //! # Example
 //!
@@ -171,6 +176,11 @@ pub fn encode(checkpoint: &Checkpoint) -> Vec<u8> {
 /// Reads a checkpoint. A checkpoint of a later format does not read.
 pub fn decode(bytes: &[u8]) -> Result<Checkpoint, String> {
     let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    decode_value(value)
+}
+
+/// Reads a checkpoint from its JSON, as [`decode`] does.
+fn decode_value(value: serde_json::Value) -> Result<Checkpoint, String> {
     let format = value
         .get("format")
         .and_then(serde_json::Value::as_u64)
@@ -201,6 +211,46 @@ pub fn later(theirs: &str, ours: &str) -> bool {
     }
 }
 
+/// True when the version `theirs` has a later major version than
+/// `ours`: it comes from a later release line (01M4YNCEMNRCAXD37V03T4JQYR).
+/// The line 0.x has one major version, so its minor versions are not a
+/// later line here. A version that is not a semantic version is not
+/// later.
+///
+/// ```
+/// use riff_server::checkpoint::later_line;
+///
+/// assert!(later_line("2.0.1", "1.3.1"));
+/// assert!(!later_line("1.4.0", "1.3.1"));
+/// assert!(!later_line("1.3.1", "2.0.1"));
+/// assert!(!later_line("0.9.0", "0.8.1"));
+/// assert!(!later_line("next", "1.3.1"));
+/// ```
+pub fn later_line(theirs: &str, ours: &str) -> bool {
+    use riff_core::build::Semver;
+    match (theirs.parse::<Semver>(), ours.parse::<Semver>()) {
+        (Ok(theirs), Ok(ours)) => theirs.major > ours.major,
+        _ => false,
+    }
+}
+
+/// The text `build` of the checkpoint JSON `value` when it comes from a
+/// later release line than `build` ([`later_line`]). It reads only that
+/// field, so the rest of the checkpoint need not read.
+///
+/// ```
+/// use riff_server::checkpoint::of_later_line;
+///
+/// let theirs = serde_json::json!({"format": 1, "build": "2.0.1", "state": "x"});
+/// assert_eq!(of_later_line(&theirs, "1.3.1").as_deref(), Some("2.0.1"));
+/// assert_eq!(of_later_line(&theirs, "2.0.0"), None);
+/// assert_eq!(of_later_line(&serde_json::json!({"format": 1}), "1.3.1"), None);
+/// ```
+pub fn of_later_line(value: &serde_json::Value, build: &str) -> Option<String> {
+    let theirs = value.get("build")?.as_str()?;
+    later_line(theirs, build).then(|| theirs.to_owned())
+}
+
 /// What a start finds in `checkpoint/`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
@@ -216,22 +266,30 @@ pub struct Found {
 }
 
 /// Loads the newest checkpoint that reads. It logs a warning for each
-/// newer one that does not read. `build` is the crate version of this
-/// build.
+/// newer one that does not read. It passes over each checkpoint of a
+/// later release line ([`later_line`]). `build` is the crate version of
+/// this build.
 pub async fn load(store: &dyn Store, build: &str) -> Result<Found, StoreError> {
     let names = names(store).await?;
     let newest = names.last().map(|(_, _, name)| name.clone());
     let mut blocked = None;
     for (_, _, name) in names.iter().rev() {
-        let read = match store.load(name).await? {
-            Some(loaded) => decode(&loaded.bytes),
+        let value = match store.load(name).await? {
+            Some(loaded) => serde_json::from_slice(&loaded.bytes).map_err(|e| e.to_string()),
             None => Err("the checkpoint is gone".into()),
         };
-        match read {
+        if let Some(theirs) = value.as_ref().ok().and_then(|v| of_later_line(v, build)) {
+            tracing::info!(
+                "the checkpoint {} comes from the later release line of {theirs}: this build does not use it",
+                store.locate(name)
+            );
+            continue;
+        }
+        match value.and_then(decode_value) {
             Ok(checkpoint) => {
                 if blocked.is_none() && later(&checkpoint.build, build) {
                     blocked = Some(format!(
-                        "the newest checkpoint {name} comes from the later version {}",
+                        "the checkpoint {name} comes from the later version {}",
                         checkpoint.build
                     ));
                 }
@@ -243,8 +301,7 @@ pub async fn load(store: &dyn Store, build: &str) -> Result<Found, StoreError> {
             }
             Err(why) => {
                 tracing::warn!("the checkpoint {} does not read: {why}", store.locate(name));
-                blocked
-                    .get_or_insert_with(|| format!("the newest checkpoint {name} does not read"));
+                blocked.get_or_insert_with(|| format!("the checkpoint {name} does not read"));
             }
         }
     }
@@ -473,6 +530,46 @@ mod tests {
         assert!(found.checkpoint.is_some());
         assert!(found.blocked.unwrap().contains("later version 0.9.0"));
         assert_eq!(load(&store, "0.9.0").await.unwrap().blocked, None);
+    }
+
+    /// 01M4YNCEMNRCAXD37V03T4JQYR: the checkpoints of the line 2.x are
+    /// the state of another instance. A start of 1.x uses the newest
+    /// checkpoint of its own line, and writes checkpoints again.
+    #[tokio::test]
+    async fn a_checkpoint_of_a_later_release_line_is_not_used_and_does_not_block() {
+        let store = Memory::default();
+        write(&store, &Checkpoint::new("1.3.0", 1, snapshot(1)))
+            .await
+            .unwrap();
+        // One of 2.0.1 that this build reads, and one that it does not.
+        write(&store, &Checkpoint::new("2.0.1", 2, snapshot(2)))
+            .await
+            .unwrap();
+        let unread = br#"{"format":1,"build":"2.0.1","state":{"position":"x"}}"#;
+        store
+            .save(&name(3, 3), unread.to_vec(), None)
+            .await
+            .unwrap();
+
+        let found = load(&store, "1.3.1").await.unwrap();
+        assert_eq!(found.checkpoint.unwrap().state.position, 1);
+        assert_eq!(found.blocked, None);
+        assert_eq!(found.newest, Some(name(3, 3)));
+        // A later minor of the same line still blocks.
+        write(&store, &Checkpoint::new("1.4.0", 4, snapshot(4)))
+            .await
+            .unwrap();
+        let found = load(&store, "1.3.1").await.unwrap();
+        assert_eq!(found.checkpoint.unwrap().state.position, 4);
+        assert!(found.blocked.unwrap().contains("later version 1.4.0"));
+        // A checkpoint with no text build still does not read, and blocks.
+        store
+            .save(&name(5, 5), b"{\"format\":1}".to_vec(), None)
+            .await
+            .unwrap();
+        let found = load(&store, "1.4.0").await.unwrap();
+        assert_eq!(found.checkpoint.unwrap().state.position, 4);
+        assert!(found.blocked.unwrap().contains("does not read"));
     }
 
     #[test]

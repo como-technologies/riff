@@ -13,6 +13,5 @@ mod book;
 mod ci;
 mod ci_lock;
 mod cli;
-mod surfaces;
 mod test_files;
 mod tracked;

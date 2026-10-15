@@ -92,23 +92,15 @@ build:
     cargo build --workspace
 
 # 01M3MY2KWKBJCQ0BCNC6533RBW: no test reaches the shared riff, the local riff or the OS keyring.
-# Run all tests, with a RIFF_SERVER where nothing listens; riff test-run gives a D-Bus that fails each call
+# Run all tests, with a RIFF_SERVER where nothing listens and a D-Bus that fails each call
 test *ARGS:
     {{just_executable()}} cargo-test --workspace {{ARGS}}
 
 # cargo test ARGS for test and check, in the environment of the tests.
-# 01M4C5WFP1CGG4PYPEP2NVRGKQ: .cargo/config.toml sets the TMPDIR.
-# 01M4CVXJGYCT2HKHJP3BWBV0HC: the markers GH_TOKEN, CARGO_REGISTRY_TOKEN,
-# CARGO_REGISTRIES_X_TOKEN and RIFF_TEST_PARENT_MARKER must not reach a
-# test (tests/sandbox.rs).
-# 01M4BTG77E656440W5JSGTK4E5: the build runs outside, with the cache and
-# the network; the tests run in the sandbox of riff test-run, built from
-# this tree.
+# 01M49NP2907J4SH4S6MAY09VXE: .cargo/config.toml sets the TMPDIR.
 [private]
 cargo-test *ARGS:
-    cargo test --no-run {{ARGS}}
-    cargo build -q -p riff --bin riff
-    RIFF_SERVER=http://127.0.0.1:9 GH_TOKEN=riff-test-marker CARGO_REGISTRY_TOKEN=riff-test-marker CARGO_REGISTRIES_X_TOKEN=riff-test-marker RIFF_TEST_PARENT_MARKER=riff-test-marker "${CARGO_TARGET_DIR:-target}/debug/riff" test-run -- cargo test {{ARGS}}
+    RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus cargo test {{ARGS}}
 
 # Build the API docs; a broken doc link fails
 doc:
@@ -149,9 +141,8 @@ serve:
 # The installed riff and plugin stay the same. The trap stops the server also on Ctrl-C.
 # RIFF_HOME keeps the settings, local files and secrets of the tree in target/dev-home
 # (01M3MY2KWKBJCQ0BCNC6533RBW), never in the riff of the machine.
-# RIFF_ON=1 turns riff on for the dev session (01M3XY2SWEK0N8MC3MY4TMYTD3). The session gets the
-# plugin, the riff MCP server and the status line of the tree as flags, as riff gives them
-# (01M4BYH7Y3P1JMQR51TWFGVZ39).
+# RIFF_ON=1 turns riff on for the dev session: the settings of the installed plugin do not
+# count for the plugin of the tree (01M3XY2SWEK0N8MC3MY4TMYTD3).
 # Test this tree without the shared riff: its riff-server on a free port, Claude Code with its plugin. It loads .env
 dev *ARGS:
     #!/usr/bin/env bash
@@ -174,10 +165,9 @@ dev *ARGS:
     done
     echo "The riff of this tree: $RIFF_SERVER. The log of its server: $log"
     PATH="$tree/target/debug:$PATH" claude --plugin-dir "$tree/crates/riff/claude-plugin/riff" \
-        --strict-mcp-config --mcp-config '{"mcpServers":{"riff":{"command":"riff","args":["mcp"]}}}' \
-        --settings '{"statusLine":{"type":"command","command":"riff statusline"}}'
+        --settings '{"enabledPlugins":{"riff@riff":false}}'
 
-# Set up the GitHub repository for pull requests: auto-merge, squash only, the ruleset on main
+# Set up the GitHub repository for pull requests: auto-merge, squash only, the rulesets on main, release/** and the tags
 github REPO="como-technologies/riff":
     deploy/github.sh {{REPO}}
 

@@ -19,8 +19,6 @@ use riff_core::wire::{RiffState, Status};
 /// `list-panes -a` lists the worker panes with their session marks, from
 /// the file `workers`. `kill-pane` removes a pane from it.
 const FAKE_TMUX: &str = r#"#!/bin/sh
-# Outside tmux, riff names its own server: -L riff (see start.rs).
-[ "$1" = -L ] && shift 2
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
 n=$(grep -c -e '^split-window' -e '^new-window' "$dir/log")
@@ -118,7 +116,6 @@ impl Machine {
             .current_dir(dir)
             .env("PATH", path)
             .env("RIFF_HOME", self.run.path())
-            .env("XDG_DATA_HOME", self.run.path().join("data"))
             .env("RIFF_SERVER", &self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "pangolin")
@@ -144,10 +141,7 @@ impl Machine {
 
     /// The MCP config file of the workers.
     fn mcp_file(&self) -> PathBuf {
-        self.run
-            .path()
-            .join("data/riff/given")
-            .join(riff::worker_mcp::FILE)
+        self.run.path().join("state").join(riff::worker_mcp::FILE)
     }
 
     /// The MCP config of the workers, as JSON.
@@ -197,32 +191,20 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     );
 
     // Each worker has its own riff session ID, in RIFF_SESSION and in
-    // the mark of its pane (01M3JPQT9BA7JVMZPV68FY4MQ6). Each pane has
-    // the mark of its main clone (01M4DDWPJZFHQ4N7CHPQ5VC1QF).
+    // the mark of its pane (01M3JPQT9BA7JVMZPV68FY4MQ6).
     let log = m.log();
     let ids = marked_sessions(&log);
     assert_eq!(ids.len(), 3, "{log}");
     assert!(ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2]);
     let dir = main.display();
-    // Each pane runs claude through the wrapper (01M493YZVZGA7TSRJH6F67VN0H),
-    // with the plugin, the MCP config, the status line and `RIFF_ON=1`
-    // (01M4BYH7Y3P1JMQR51TWFGVZ39, 01M4BYH80CFW1TBGKVA2VN9ZBQ). Each worker
-    // names the slice: its wrapper sets the slice
-    // (01M4C2PXZ5WNE4C2CJW2HABPY0).
-    let plugin = log
-        .split("'--plugin-dir' '")
-        .nth(1)
-        .and_then(|rest| rest.split('\'').next())
-        .unwrap_or_else(|| panic!("no plugin dir: {log}"));
-    assert!(plugin.ends_with("/riff/claude-plugin/riff"), "{plugin}");
-    assert!(Path::new(plugin).join("skills/riff/SKILL.md").is_file());
+    // Each pane runs claude through the wrapper (01M493YZVZGA7TSRJH6F67VN0H).
+    // `RIFF_ON=1` of the test environment turned riff on for the
+    // command, so each worker gets it (01M3XY2SWEK0N8MC3MY4TMYTD3).
     let env = |id: &str| {
         format!(
-            "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_ON=1 \
-             -e RIFF_SESSION={id} -e RIFF_WORKER_SLICE=riff-workers.slice '{}' workers run \
-             'claude' '--plugin-dir' '{plugin}' \
-             '--strict-mcp-config' '--mcp-config' '{}' '--settings' \
-             '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"promptSuggestionEnabled\":false,\"statusLine\":{{\"type\":\"command\",\"command\":\"riff statusline\"}},\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}},\"enabledPlugins\":{{\"riff@riff\":false}}}}' 'Join the riff.'",
+            "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
+             -e RIFF_ON=1 '{}' workers run 'claude' '--strict-mcp-config' '--mcp-config' '{}' '--settings' \
+             '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}}}}' 'Join the riff.'",
             Isolated::shared().riff_path().display(),
             m.mcp_file().display(),
         )
@@ -240,14 +222,11 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
             ),
             "set-option -w -t @7 @riff workers".to_owned(),
             format!("set-option -p -t %1 @riff-session {}", ids[0]),
-            format!("set-option -p -t %1 @riff-clone {dir}"),
             format!("split-window -t @7 {}", pane(&ids[1])),
             format!("set-option -p -t %2 @riff-session {}", ids[1]),
-            format!("set-option -p -t %2 @riff-clone {dir}"),
             "select-layout -t @7 tiled".to_owned(),
             format!("split-window -t @7 {}", pane(&ids[2])),
             format!("set-option -p -t %3 @riff-session {}", ids[2]),
-            format!("set-option -p -t %3 @riff-clone {dir}"),
             "select-layout -t @7 tiled".to_owned(),
         ]
     );
@@ -257,7 +236,7 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     assert!(!log.contains("remote-control"), "{log}");
     assert_eq!(
         log.matches(
-            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"riff@riff":false}}'"#
+            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}'"#
         )
         .count(),
         3,
@@ -332,7 +311,7 @@ fn a_worker_starts_with_each_plugin_with_a_language_server_off() {
     assert!(out.status.success(), "{out:?}");
     assert!(
         m.log().contains(
-            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"riff@riff":false,"rust-analyzer-lsp@official":false}}'"#
+            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@official":false}}'"#
         ),
         "{}",
         m.log()
@@ -467,7 +446,10 @@ fn a_second_start_adds_panes_to_the_same_window() {
     let log = m.log();
     assert_eq!(log.matches("new-window").count(), 1, "{log}");
     assert_eq!(log.matches("split-window -t @7").count(), 2, "{log}");
-    assert!(log.contains("run '/opt/claude' '--plugin-dir'"), "{log}");
+    assert!(
+        log.contains("run '/opt/claude' '--strict-mcp-config'"),
+        "{log}"
+    );
 }
 
 #[test]
@@ -654,7 +636,8 @@ async fn workers_lists_each_worker() {
     let out = stdout(&out);
     // The heading of this machine has its numbers and its score
     // (01M3Q5QE4SQ8VYN2PSF42KB3QJ), the line of its disk follows
-    // (01M41A11GHP78E2VYN14JSE27P), then the line of its monitor
+    // (01M41A11GHP78E2VYN14JSE27P), then the line of its compile cache
+    // (01M492398HA0AXX0J8BZCKNGTG), then the line of its monitor
     // (01M421QPX01BB15GJXHFYRETTX), and no table.
     assert!(out.contains("  runs 0  cpu "), "{out}");
     let mut lines = out.lines();
@@ -669,6 +652,10 @@ async fn workers_lists_each_worker() {
         "{out}"
     );
     assert!(
+        lines.next().is_some_and(|l| l.starts_with("cache ")),
+        "{out}"
+    );
+    assert!(
         lines
             .next()
             .is_some_and(|l| l.starts_with("monitor off  load5 ")),
@@ -676,7 +663,7 @@ async fn workers_lists_each_worker() {
     );
     assert!(!out.contains("PANE"), "{out}");
     assert!(out.contains("  score "), "{out}");
-    assert_eq!(out.lines().count(), 3, "{out}");
+    assert_eq!(out.lines().count(), 4, "{out}");
 }
 
 /// `riff workers stop` ends each worker: within 10 seconds, no worker is
@@ -927,8 +914,7 @@ fn the_book_has_a_how_to_for_each_step() {
         .find("## Run the lead and its workers in tmux")
         .unwrap()..];
     for (heading, command) in [
-        ("### Start the riff", "```sh\nriff\n```"),
-        ("### Start the riff", "tmux -L riff ls"),
+        ("### Start the lead in tmux", "claude --remote-control"),
         ("### Start workers", "riff workers start 3"),
         ("### Start workers", "riff workers start 1 --claude "),
         (

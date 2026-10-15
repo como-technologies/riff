@@ -160,11 +160,8 @@ plan the waves.
 
 1. Look for open items with no wave when your session starts, and
    each time a riff line wakes you.
-2. Place each new item. Write its `Needs:` line, and a `- Docs:`
-   criterion in its `Done when:` line. Put it in the first open wave
-   that comes after the waves of its needs. `riff plan check` lists
-   each item of an open wave with no `- Docs:` criterion. Keep the
-   order:
+2. Place each new item. Write its `Needs:` line. Put it in the first
+   open wave that comes after the waves of its needs. Keep the order:
    - Each item is in a later wave than each of its needs. When an item
      of an open wave needs the new item, move that item to a later
      wave.
@@ -222,12 +219,6 @@ Each issue needs a `Done when:` line. The line tells a session how to
 check that the work is done. Each criterion names what to run or look
 at, and what the result must be. Write it in ASD-STE100 (rule 1).
 
-One criterion starts with `- Docs:`. It names the docs that the change
-needs: a how-to in the book for each new or changed command, flag or
-setting that a person uses, with a `sh` block, and the design in the
-rustdoc. `riff verify pass` refuses an issue with no `- Docs:`
-criterion.
-
 When the line is missing, or a session cannot test it:
 
 1. Review the issue. Write the acceptance criteria.
@@ -272,7 +263,7 @@ commit. A second full run of the same commit finds nothing new.
    run the full check: the forge runs it (see "One full run for each
    commit").
 2. Push your branch, so that a session on another machine can fetch
-   it: `git push --force-with-lease --force-if-includes origin HEAD`.
+   it: `git push --force-with-lease --force-if-includes -u origin HEAD`.
 3. Open a pull request for the branch with one command:
    `riff pr open --title "TITLE" --file summary.md`. It links the
    issue of your claim, gives the pull request the wave of the issue,
@@ -329,7 +320,8 @@ private advisory.
 A live check of new code, for example a new plugin command, hook or
 skill text, runs in a dev session: `just dev` in the worktree. It needs
 no release and no update of the machine. Never run `riff update`,
-`cargo install` of riff or `just install` in a worktree.
+`cargo install` of riff, `just install` or `riff connect` in a
+worktree.
 
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The verifier names it in the result.
@@ -364,13 +356,8 @@ claim, or starts a worker for it.
    read the test of each criterion, and run that test by its name when
    you must. Read the book, the rustdoc and the requirements. Do not
    change the code.
-   Check the docs: the how-to of each new or changed command, flag or
-   setting, with a `sh` block. Run `--help` and compare it with the
-   book. No old text in the book or the skill says the opposite.
 6. Write the result to a file:
-   - Pass: each criterion, with what you did to check it, and a line
-     that starts with `Docs:`: what you checked in the docs.
-     `riff verify pass` refuses a result with no `Docs:` line.
+   - Pass: each criterion, with what you did to check it.
    - Fail: each criterion that failed, with the steps to see the
      failure.
    The result holds only the check against the `Done when:` line. It
@@ -507,9 +494,9 @@ Your user decides.
 Each worker starts in the main clone, and each new worktree branches
 from a base. An old base gives old files and merge conflicts. riff
 fast-forwards the main clone to `origin` in `riff workers start`, and
-before it clears the context of a worker with no sandbox. When the
-main clone has local changes or is not on the default branch, riff
-changes nothing, and says why. The steps below keep each worktree
+before it clears the context of a worker. When the main clone has
+local changes or is not on the default branch, riff changes nothing,
+and the clear tells the lead why. The steps below keep each worktree
 fresh. The
 examples use `main` for the default branch and `issue-12` for the
 item.
@@ -519,12 +506,8 @@ item.
 Before `EnterWorktree`, fetch:
 
 ```sh
-git fetch -q origin
+git fetch -q --prune origin
 ```
-
-Do not prune. A session in its sandbox cannot write the config, the
-hooks or the packed refs of the clone. riff prunes the main clone
-outside the sandbox.
 
 In the new worktree, before any change, put the branch on the fresh
 default branch. The worktree holds no work yet, so no work is lost:
@@ -551,14 +534,12 @@ Run this in your worktree, never on the default branch:
 ```sh
 git add -A
 git diff --cached --quiet || git commit -q -m "WIP: STEP"
-git push -q --force-with-lease --force-if-includes origin HEAD
+git push -q --force-with-lease --force-if-includes -u origin HEAD
 ```
 
 - A WIP commit says `WIP` in its subject. STEP is your step in a few
   words, for example `WIP: the tests of the claim`.
 - A WIP commit needs no rebase and no pass of the checks.
-- The push sets no upstream: the git config of the clone has no
-  write in the sandbox. Name the remote and the branch in each pull.
 - This is the only WIP block of the skill. The push also works after
   a rebase. It replaces the pushed branch only when your branch holds
   each commit of it that you fetched. So it never drops the newer work
@@ -589,7 +570,7 @@ After you remove the worktree (see "Remove a stale worktree"), prune
 from the main worktree. Then check that nothing of the item is left:
 
 ```sh
-git -C MAIN fetch -q origin
+git -C MAIN fetch -q --prune origin
 git -C MAIN worktree prune
 git -C MAIN worktree list | grep issue-12
 git -C MAIN branch --list '*issue-12*'
@@ -1055,7 +1036,7 @@ work that no live session owns. To look yourself, use your item in
 place of `issue-12`:
 
 ```sh
-git fetch -q origin
+git fetch -q --prune origin
 git branch -r --list '*issue-12*'
 git worktree list | grep issue-12
 ```

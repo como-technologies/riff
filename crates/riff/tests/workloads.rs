@@ -28,8 +28,6 @@ const CONTEXT: &str = "CLAUDE_PID";
 /// `list-panes -a` lists the pane `%5` of the worker in the file
 /// `session`. Each other call goes to the log.
 const FAKE_TMUX: &str = r#"#!/bin/sh
-# Outside tmux, riff names its own server: -L riff (see start.rs).
-[ "$1" = -L ] && shift 2
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
 case "$1" in
@@ -39,21 +37,17 @@ esac
 exit 0
 "#;
 
-/// `gh pr view --json number,state,headRefOid -- BRANCH` prints the file
-/// `pr-BRANCH.json`, else fails.
+/// `gh pr view BRANCH` prints the file `pr-BRANCH.json`, else fails.
 /// `gh pr list --state merged --search SHA` prints the file
 /// `merged-SHA.json`, else `[]`.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
-# riff puts -- before the branch (01M4DVXP49BXNJD1Y289PCEH31).
-if [ "$1 $2 $3 $4 $5" = "pr view --json number,state,headRefOid --" ] && [ -f "$dir/pr-$6.json" ]; then
-  cat "$dir/pr-$6.json"; exit 0
-fi
+if [ "$1 $2" = "pr view" ] && [ -f "$dir/pr-$3.json" ]; then cat "$dir/pr-$3.json"; exit 0; fi
 if [ "$1 $2 $3 $4 $5" = "pr list --state merged --search" ]; then
   if [ -f "$dir/merged-$6.json" ]; then cat "$dir/merged-$6.json"; else echo '[]'; fi
   exit 0
 fi
-echo "no pull requests found for branch \"$6\"" >&2
+echo "no pull requests found for branch \"$3\"" >&2
 exit 1
 "#;
 
@@ -171,6 +165,30 @@ impl Riff {
         hook.wait_with_output().unwrap()
     }
 
+    /// A stand-in for the `sccache` server that a build of a context of
+    /// the worker `id` started: the binary `sccache` of the machine with
+    /// each variable of that build, and the mark of `sccache`
+    /// (01M49AB2TBMHGNXM3GE4NDFYYG). The binary is a copy of `sh` with
+    /// the name `sccache` on the `PATH` of riff ([`riff::sccache::find`]).
+    /// It waits for a line on its stdin with no child. A child `cp`
+    /// writes the copy, so this process never holds a write fd of it
+    /// (`ETXTBSY`).
+    fn cache_server(&self, id: &str) -> Child {
+        let bin = self.fake.path().join("sccache");
+        if !bin.exists() {
+            let out = Command::new("cp")
+                .arg("-L")
+                .arg("/bin/sh")
+                .arg(&bin)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+        }
+        let mut cmd = Command::new(&bin);
+        cmd.args(["-c", "read line"]);
+        marked(cmd, self.run.path(), id, Stdio::piped())
+    }
+
     /// The worker `id` in the pane `%5`.
     fn pane(&self, id: &str) {
         std::fs::write(self.fake.path().join("session"), id).unwrap();
@@ -200,6 +218,39 @@ fn sleeper_in(home: &Path, id: &str, context: bool) -> Child {
     if context {
         cmd.env(CONTEXT, "1");
     }
+    cmd.spawn().unwrap()
+}
+
+/// A process of a context of the worker `id` that says it is the
+/// `sccache` server: `exec -a sccache sh` with the mark of `sccache`.
+/// Its binary is `sh`, not the `sccache` of the machine, so it stays of
+/// the worker (01M49AB2TBMHGNXM3GE4NDFYYG).
+fn disguised(home: &Path, id: &str) -> Child {
+    use std::os::unix::process::CommandExt;
+    let mut cmd = Command::new("sh");
+    cmd.arg0("sccache").args(["-c", "read line"]);
+    marked(cmd, home, id, Stdio::piped())
+}
+
+/// A `sleep` of a context of the worker `id` with the mark of
+/// `sccache`: it is not the server, so it stays of the worker.
+fn marked_sleeper(home: &Path, id: &str) -> Child {
+    let mut cmd = Command::new("sleep");
+    cmd.arg("300");
+    marked(cmd, home, id, Stdio::null())
+}
+
+fn marked(mut cmd: Command, home: &Path, id: &str, stdin: Stdio) -> Child {
+    cmd.env_clear()
+        .env("PATH", std::env::var("PATH").unwrap())
+        .env("RIFF_WORKER", "1")
+        .env("RIFF_SESSION", id)
+        .env("RIFF_HOME", home)
+        .env(CONTEXT, "1")
+        .env(riff::sccache::SERVER_MARK, "1")
+        .stdin(stdin)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     cmd.spawn().unwrap()
 }
 
@@ -297,7 +348,10 @@ fn stdout(out: &Output) -> String {
 
 /// The clear of a worker stops its old context: a long child of a
 /// command of the context is gone after `riff hook clear`, and
-/// `claude` and its MCP server stay (01M3ZV0TJDQ6JCM7XG0036MSV1).
+/// `claude`, its MCP server and the `sccache` server that a build of
+/// the context started stay. A command of the context with the mark of
+/// `sccache` stops, also one with the name `sccache` and another binary
+/// (01M3ZV0TJDQ6JCM7XG0036MSV1, 01M49AB2TBMHGNXM3GE4NDFYYG).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     let r = Riff::new().await;
@@ -314,6 +368,9 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     // runs at the same time (01M438620PJHSVSPAENBKKJ6C2).
     let home = tempfile::tempdir().unwrap();
     let mut twin = sleeper_in(home.path(), id, true);
+    let mut cache = r.cache_server(id);
+    let mut hidden = marked_sleeper(r.run.path(), id);
+    let mut named = disguised(r.run.path(), id);
 
     let out = r.in_worker(id, &["release", "issue-12"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
@@ -322,11 +379,14 @@ async fn the_clear_stops_the_old_context_and_keeps_claude_and_its_mcp_server() {
     assert!(out.status.success(), "{out:?}");
 
     assert!(ends(&mut ci), "the old context still runs");
+    assert!(ends(&mut hidden), "a command with the mark still runs");
+    assert!(ends(&mut named), "a command named sccache still runs");
     assert!(lives(&mut claude), "claude stopped");
     assert!(lives(&mut mcp), "the MCP server stopped");
     assert!(lives(&mut other), "a process of another worker stopped");
     assert!(lives(&mut twin), "a process of another riff home stopped");
-    for mut child in [claude, mcp, other, twin] {
+    assert!(lives(&mut cache), "the sccache server stopped");
+    for mut child in [claude, mcp, other, twin, cache] {
         child.kill().unwrap();
         child.wait().unwrap();
     }
@@ -408,8 +468,9 @@ async fn reap_with_no_start_of_the_context_stops_nothing() {
 }
 
 /// `riff workers stop PANE` leaves no process of the worker: `claude`,
-/// its MCP server and each process of a context
-/// (01M3ZV0TMNQDK9WC3BR1NPGAC2).
+/// its MCP server and each process of a context, also one with the mark
+/// of `sccache` that is not `sccache`, and one that names itself
+/// `sccache` (01M3ZV0TMNQDK9WC3BR1NPGAC2, 01M49AB2TBMHGNXM3GE4NDFYYG).
 #[tokio::test(flavor = "multi_thread")]
 async fn workers_stop_leaves_no_process_of_the_worker() {
     let r = Riff::new().await;
@@ -421,18 +482,21 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
         r.sleeper(id, false),
         r.sleeper(id, false),
         r.sleeper(id, true),
+        marked_sleeper(r.run.path(), id),
+        disguised(r.run.path(), id),
     ];
     let mut other = r.sleeper(&unique("wother2"), true);
     // The same session ID in another riff home (01M438620PJHSVSPAENBKKJ6C2).
     let home = tempfile::tempdir().unwrap();
     let mut twin = sleeper_in(home.path(), id, true);
+    let mut cache = r.cache_server(id);
 
     let out = r
         .riff(&r.main(), &["workers", "stop", "%5"])
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
-    assert!(stdout(&out).contains("also stopped 3 processes"), "{out:?}");
+    assert!(stdout(&out).contains("also stopped 5 processes"), "{out:?}");
     // No scope: riff finds the processes by their environment, and says
     // so (01M49SVFW0FZ3DK57PACS7W5EY).
     let by_environment = riff::text::workers_by_environment(id);
@@ -445,7 +509,8 @@ async fn workers_stop_leaves_no_process_of_the_worker() {
     }
     assert!(lives(&mut other), "a process of another worker stopped");
     assert!(lives(&mut twin), "a process of another riff home stopped");
-    for mut child in [other, twin] {
+    assert!(lives(&mut cache), "the sccache server stopped");
+    for mut child in [other, twin, cache] {
         child.kill().unwrap();
         child.wait().unwrap();
     }
@@ -643,7 +708,7 @@ async fn worktrees_clean_acts_on_each_case_by_its_facts() {
     assert_eq!(
         line(&dead),
         "unlocked: the process of its lock is gone; kept: riff found no pull request: gh pr \
-         view --json number,state,headRefOid -- worktree-issue-1: no pull requests found for \
+         view worktree-issue-1 --json number,state,headRefOid: no pull requests found for \
          branch \"worktree-issue-1\""
     );
     assert_eq!(line(&live), "kept: a live process holds its lock");
@@ -757,145 +822,6 @@ async fn worktrees_clean_removes_a_worktree_with_no_work_of_its_own() {
     );
 }
 
-/// The `HEAD` of the worktree `name` of the clone of `r` names the
-/// branch `branch`, as a session can write it.
-fn head_names(r: &Riff, name: &str, branch: &str) {
-    let head = r.main().join(".git/worktrees").join(name).join("HEAD");
-    std::fs::write(head, format!("ref: refs/heads/{branch}\n")).unwrap();
-}
-
-/// The commit of `branch` in the `origin` of `r`, or `None`.
-fn on_origin(r: &Riff, branch: &str) -> Option<String> {
-    let refs = git(&r.root.path().join("origin.git"), &["show-ref"]);
-    let name = format!(" refs/heads/{branch}");
-    refs.lines()
-        .find_map(|l| l.strip_suffix(name.as_str()).map(str::to_owned))
-}
-
-/// 01M4DVXP49BXNJD1Y289PCEH31: `riff worktrees clean` takes the branch
-/// of a worktree from its name, not from its `HEAD`. It saves and pushes
-/// no work of a worktree whose `HEAD` names the default branch or a
-/// branch that starts with `-`, and it deletes no branch that the `HEAD`
-/// of a worktree names but that is not its own.
-#[tokio::test(flavor = "multi_thread")]
-async fn worktrees_clean_takes_the_branch_from_the_name_not_from_the_head() {
-    let r = Riff::new().await;
-    let main = r.main();
-    let before = on_origin(&r, "main").unwrap();
-
-    let on_main = worktree(&r, "issue-20");
-    head_names(&r, "issue-20", "main");
-    std::fs::write(on_main.join("work.txt"), "work").unwrap();
-    let dash = worktree(&r, "issue-21");
-    head_names(&r, "issue-21", "-f");
-    std::fs::write(dash.join("work.txt"), "work").unwrap();
-    git(&main, &["branch", "keep-me"]);
-    let other = worktree(&r, "issue-22");
-    head_names(&r, "issue-22", "keep-me");
-
-    let out = r.riff(&main, &["worktrees", "clean"]).output().unwrap();
-    assert!(out.status.success(), "{out:?}");
-    let printed = stdout(&out);
-    let line = |path: &Path| {
-        let start = format!("{}: ", path.display());
-        printed
-            .lines()
-            .find_map(|l| l.strip_prefix(&start).map(str::to_owned))
-            .unwrap_or_else(|| panic!("no line for {}: {printed}", path.display()))
-    };
-    assert_eq!(line(&on_main), "kept: it has work on no branch of its own");
-    assert_eq!(line(&dash), "kept: it has work on no branch of its own");
-    assert_eq!(
-        line(&other),
-        "removed: its HEAD is on the default branch of origin: it has no commit of its own"
-    );
-
-    assert_eq!(on_origin(&r, "main").unwrap(), before, "origin main moved");
-    assert_eq!(on_origin(&r, "-f"), None);
-    assert_eq!(on_origin(&r, "worktree-issue-20"), None);
-    let branches = git(&main, &["branch", "--list", "--format=%(refname)"]);
-    for branch in ["refs/heads/main", "refs/heads/keep-me"] {
-        assert!(
-            branches.lines().any(|b| b == branch),
-            "{branch}: {branches}"
-        );
-    }
-    assert!(on_main.join("work.txt").exists());
-    assert!(dash.join("work.txt").exists());
-}
-
-/// 01M4DVXP49BXNJD1Y289PCEH31: each git call of `riff worktrees clean`
-/// that names a worktree, a branch, a commit or a remote has `--`
-/// before the names. `GIT_TRACE` shows each call. The fake `gh` answers
-/// only with `--` before the branch.
-#[tokio::test(flavor = "multi_thread")]
-async fn worktrees_clean_puts_two_dashes_before_each_name() {
-    let r = Riff::new().await;
-    let main = r.main();
-    let merged = worktree(&r, "issue-30");
-    git(
-        &merged,
-        &["commit", "-q", "--allow-empty", "-m", "the work"],
-    );
-    git(&merged, &["push", "-q", "origin", "HEAD"]);
-    lock(
-        &r,
-        &merged,
-        "claude session issue-30 (pid 999999999 start 5)",
-    );
-    let head = git(&merged, &["rev-parse", "HEAD"]).trim().to_owned();
-    std::fs::write(
-        r.fake.path().join("pr-worktree-issue-30.json"),
-        format!(r#"{{"number":41,"state":"MERGED","headRefOid":"{head}"}}"#),
-    )
-    .unwrap();
-    let dirty = worktree(&r, "issue-31");
-    std::fs::write(dirty.join("work.txt"), "not committed").unwrap();
-    git(&dirty, &["config", "user.name", "t"]);
-    git(&dirty, &["config", "user.email", "t@t"]);
-    git(&dirty, &["config", "commit.gpgsign", "false"]);
-    let trace = r.run.path().join("git-trace.log");
-
-    let out = r
-        .riff(&main, &["worktrees", "clean"])
-        .env("GIT_TRACE", &trace)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{out:?}");
-    let printed = stdout(&out);
-    assert!(
-        printed.contains(
-            "unlocked: the process of its lock is gone; removed with its branch \
-             worktree-issue-30: its pull request #41 is merged"
-        ),
-        "{printed}"
-    );
-    assert!(
-        printed.contains("saved: a WIP commit on worktree-issue-31"),
-        "{printed}"
-    );
-
-    let trace = std::fs::read_to_string(&trace).unwrap();
-    let calls: Vec<&str> = trace
-        .lines()
-        .filter_map(|l| l.split_once("trace: built-in: git ").map(|(_, call)| call))
-        .collect();
-    for command in [
-        "worktree unlock",
-        "worktree remove",
-        "update-ref",
-        "push",
-        "ls-remote",
-        "merge-base",
-    ] {
-        let found: Vec<&&str> = calls.iter().filter(|c| c.starts_with(command)).collect();
-        assert!(!found.is_empty(), "no git {command}: {trace}");
-        for call in found {
-            assert!(call.contains(" -- "), "no -- in git {call}");
-        }
-    }
-}
-
 /// The book has a how-to with an `sh` block for each new command, and
 /// each command in it runs with `--help`.
 #[test]
@@ -946,161 +872,4 @@ fn the_skill_names_the_riff_commands_and_no_raw_command() {
         let lines: Vec<&str> = skill.lines().filter(|l| l.contains(raw)).collect();
         assert!(lines.is_empty(), "the skill has {raw:?}: {lines:?}");
     }
-}
-
-/// A git dir that a session made: its config names a clean filter that
-/// makes the file `marker`, its `.gitattributes` gives the filter to
-/// each file, and a file of its index is changed on the disk. So each
-/// `git status` and `git add` with this git dir runs the program.
-fn planted_git_dir(r: &Riff, marker: &Path) -> PathBuf {
-    let evil = plant(r.root.path(), "evil");
-    arm(&evil, marker);
-    evil.canonicalize().unwrap()
-}
-
-/// A repository `dir/name` with one commit: a `.gitattributes` that
-/// gives the filter `x` to each file, and a file `a.txt`.
-fn plant(dir: &Path, name: &str) -> PathBuf {
-    let evil = dir.join(name);
-    git(dir, &["init", "-q", name]);
-    std::fs::write(evil.join(".gitattributes"), "* filter=x\n").unwrap();
-    std::fs::write(evil.join("a.txt"), "a\n").unwrap();
-    git(&evil, &["add", "-A"]);
-    git(&evil, &["commit", "-q", "-m", "planted"]);
-    evil
-}
-
-/// Gives the repository `evil` a filter `x` that makes `marker`, and
-/// changes its `a.txt` on the disk.
-fn arm(evil: &Path, marker: &Path) {
-    let config = evil.join(".git/config");
-    let mut text = std::fs::read_to_string(&config).unwrap();
-    text.push_str(&format!(
-        "[filter \"x\"]\n\tclean = \"touch '{}'; cat\"\n\tsmudge = cat\n",
-        marker.display()
-    ));
-    std::fs::write(&config, text).unwrap();
-    std::fs::write(evil.join("a.txt"), "b\n").unwrap();
-}
-
-/// 01M4CW0CEV2ZT3FRET36EB0GMM, 01M4CW0CH4F861MWQSQACEX54X: `riff
-/// worktrees clean` takes the git dirs of a worktree from riff, not from
-/// the files that a session can write. A changed `.git` file, a changed
-/// `commondir` and a changed `gitdir` each name a git dir with a
-/// program, and riff runs no such program.
-#[tokio::test(flavor = "multi_thread")]
-async fn worktrees_clean_runs_no_program_of_a_git_dir_that_a_session_names() {
-    let r = Riff::new().await;
-    let main = r.main();
-    git(&main, &["config", "user.name", "t"]);
-    git(&main, &["config", "user.email", "t@t"]);
-    git(&main, &["config", "commit.gpgsign", "false"]);
-    let marker = r.root.path().join("ran");
-    let evil = planted_git_dir(&r, &marker);
-    let evil_git = evil.join(".git");
-    let work = |tree: &Path| {
-        std::fs::write(tree.join(".gitattributes"), "* filter=x\n").unwrap();
-        std::fs::write(tree.join("work.txt"), "not committed").unwrap();
-    };
-    let admin = |name: &str| main.join(".git/worktrees").join(name);
-    let point = |file: PathBuf, text: String| std::fs::write(file, text).unwrap();
-
-    let dot_git = worktree(&r, "issue-9");
-    work(&dot_git);
-    point(
-        dot_git.join(".git"),
-        format!("gitdir: {}\n", evil_git.display()),
-    );
-    let common = worktree(&r, "issue-10");
-    work(&common);
-    point(
-        admin("issue-10").join("commondir"),
-        format!("{}\n", evil_git.display()),
-    );
-    worktree(&r, "issue-11");
-    point(
-        admin("issue-11").join("gitdir"),
-        format!("{}\n", evil_git.display()),
-    );
-    // A submodule that the session made in its worktree, with a config
-    // of its own (01M4CXPPVEPFYD86PN9V2Q6EKB).
-    let nested = worktree(&r, "issue-12");
-    let sub = plant(&nested, "sub");
-    git(&nested, &["add", "sub"]);
-    git(&nested, &["commit", "-q", "-m", "a submodule"]);
-    arm(&sub, &marker);
-    assert!(!marker.exists());
-
-    let out = r.riff(&main, &["worktrees", "clean"]).output().unwrap();
-    assert!(out.status.success(), "{out:?}");
-    let printed = stdout(&out);
-    assert!(
-        !marker.exists(),
-        "riff ran the program of a planted git dir: {printed}"
-    );
-    let line = |path: &Path| {
-        let start = format!("{}: ", path.display());
-        printed
-            .lines()
-            .find_map(|l| l.strip_prefix(&start).map(str::to_owned))
-            .unwrap_or_else(|| panic!("no line for {}: {printed}", path.display()))
-    };
-    let saved = "saved: a WIP commit on worktree-issue-9";
-    assert!(line(&dot_git).starts_with(saved), "{printed}");
-    for tree in [&common, &evil] {
-        assert_eq!(line(tree), "kept: it is not a worktree of an agent session");
-    }
-    assert!(line(&nested).starts_with("kept: "), "{printed}");
-    // The check of the test itself: the planted git dir and the
-    // submodule run their program.
-    git(&evil, &["status", "--porcelain"]);
-    assert!(marker.exists(), "the planted git dir runs no program");
-    std::fs::remove_file(&marker).unwrap();
-    git(&nested, &["status", "--porcelain"]);
-    assert!(marker.exists(), "the submodule runs no program");
-}
-
-/// 01M4D06XN4D19G1B2NBRFH34B3: `riff worktrees clean` runs the git steps
-/// that read the files of a worktree with the sandbox of a worker. A
-/// filter of the clone runs in the save of the work, and it writes in
-/// the worktree, but not in the home of the person.
-#[tokio::test(flavor = "multi_thread")]
-async fn worktrees_clean_reads_a_worktree_with_the_rights_of_a_worker() {
-    let r = Riff::new().await;
-    let main = r.main();
-    let home = r.root.path().join("home");
-    std::fs::create_dir_all(&home).unwrap();
-    let tree = worktree(&r, "issue-13");
-    let in_tree = tree.join("in-tree");
-    let in_home = home.join("in-home");
-    git(&main, &["config", "user.name", "t"]);
-    git(&main, &["config", "user.email", "t@t"]);
-    git(&main, &["config", "commit.gpgsign", "false"]);
-    let filter = format!(
-        "touch '{}'; touch '{}'; cat",
-        in_tree.display(),
-        in_home.display()
-    );
-    git(&main, &["config", "filter.x.clean", &filter]);
-    std::fs::write(tree.join(".gitattributes"), "* filter=x\n").unwrap();
-    std::fs::write(tree.join("work.txt"), "not committed").unwrap();
-
-    let out = r
-        .riff(&main, &["worktrees", "clean"])
-        .env("HOME", &home)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{out:?}");
-    let printed = stdout(&out);
-    let start = format!("{}: ", tree.display());
-    let line = printed
-        .lines()
-        .find_map(|l| l.strip_prefix(&start))
-        .unwrap_or_else(|| panic!("no line: {printed}"));
-    assert!(
-        line.starts_with("saved: a WIP commit on worktree-issue-13"),
-        "{printed}"
-    );
-    assert!(in_tree.exists(), "the filter did not run: {printed}");
-    assert!(!in_home.exists(), "the filter wrote in the home: {printed}");
 }

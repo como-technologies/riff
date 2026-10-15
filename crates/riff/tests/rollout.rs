@@ -27,8 +27,6 @@ use riff_core::wire::{RiffState, Status};
 /// the looks one at a time ([`Lead::step`]). `kill-pane -t P` takes the
 /// pane `P` out of `workers`.
 const FAKE_TMUX: &str = r#"#!/bin/sh
-# Outside tmux, riff names its own server: -L riff (see start.rs).
-[ "$1" = -L ] && shift 2
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/log"
 n=$(grep -c -e '^split-window' -e '^new-window' "$dir/log")
@@ -303,9 +301,39 @@ fn repository(root: &Path) -> PathBuf {
     std::fs::canonicalize(&main).unwrap()
 }
 
+/// What turns riff on for the lead of a test.
+enum On {
+    /// `RIFF_ON=1` of the test environment. The lead works in the main
+    /// clone.
+    Env,
+    /// The project settings of a linked worktree, where the lead works.
+    /// riff is off in the main clone.
+    Worktree,
+}
+
 /// The lead `l1` of mike on host `a`, with a limit of `limit` workers,
 /// in a paused riff.
 async fn lead(limit: u16) -> Lead {
+    lead_with(limit, On::Env).await
+}
+
+/// A linked worktree of `main` whose project settings turn riff on.
+fn worktree_with_riff_on(main: &Path) -> PathBuf {
+    let tree = main.join(".claude/worktrees/lead");
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(main)
+        .args(["worktree", "add", "-q", "-b", "lead"])
+        .arg(&tree)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git worktree add: {out:?}");
+    riff::enable::set(&tree.join(".claude/settings.json"), Some(true)).unwrap();
+    tree
+}
+
+/// [`lead`], with riff on by `on`.
+async fn lead_with(limit: u16, on: On) -> Lead {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -328,9 +356,15 @@ async fn lead(limit: u16) -> Lead {
         fake.path().display(),
         std::env::var("PATH").unwrap()
     );
-    let dir = main.clone();
-    let mcp = Isolated::shared()
-        .riff()
+    let dir = match on {
+        On::Env => main.clone(),
+        On::Worktree => worktree_with_riff_on(&main),
+    };
+    let mut mcp = Isolated::shared().riff();
+    if let On::Worktree = on {
+        mcp.env_remove("RIFF_ON");
+    }
+    let mcp = mcp
         .arg("mcp")
         .current_dir(&dir)
         .env("PATH", path)
@@ -399,7 +433,8 @@ async fn a_resume_starts_one_worker_for_each_free_item() {
     // The unit tests of riff::rollout check the rate with a fake clock.
     lead.riff(RiffState::Running).await;
     lead.until_workers(1).await;
-    // riff gives each worker `RIFF_ON=1` (01M4BYH80CFW1TBGKVA2VN9ZBQ).
+    // `RIFF_ON=1` turned riff on for the lead, so its worker gets it
+    // (01M3XY2SWEK0N8MC3MY4TMYTD3).
     let log = lead.tmux_log();
     assert!(log.contains("-e RIFF_ON=1"), "{log}");
     assert_eq!(
@@ -557,6 +592,41 @@ async fn a_worker_that_does_not_claim_does_not_block_a_new_worker() {
     // The second worker refuses too.
     tokio::time::sleep(Duration::from_secs(8)).await;
     assert_eq!(lead.settled().await, 2, "{}", lead.tmux_log());
+}
+
+/// The rollout starts no worker where riff is off in the main clone
+/// (01M3XY2T542DCHBN95H9PX4AGQ). A worker there is a plain session: it
+/// never joins the riff, so each look would start one more. The lead
+/// works in a linked worktree whose project settings turn riff on. The
+/// lead gets one note with the reason (01M3YCGKKRDNFC338K1JSK30JK).
+/// `riff enable` in the main clone lets the rollout start a worker.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_rollout_starts_no_worker_where_riff_is_off_in_the_main_clone() {
+    let lead = lead_with(5, On::Worktree).await;
+    lead.issues(TWO_FREE);
+    lead.riff(RiffState::Running).await;
+    let note = "a: riff starts no worker here: riff off. To turn it on: riff enable. The rollout \
+                starts no worker on a until riff is on in the main clone.";
+    let read = lead.reads(note).await;
+    assert_eq!(read.matches(note).count(), 1, "{read}");
+    assert_eq!(
+        lead.settled().await,
+        0,
+        "riff is off in the main clone: {}",
+        lead.tmux_log()
+    );
+    // More looks ran in that time: the note came one time.
+    let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
+    let later = riff::text::inbox(&inbox, &lead.me);
+    assert!(!later.contains("riff starts no worker"), "{later}");
+
+    riff::enable::enable(&lead.main, riff::enable::Place::Local, None).unwrap();
+    lead.until_workers(1).await;
+    let log = lead.tmux_log();
+    assert!(
+        !log.contains("RIFF_ON"),
+        "no RIFF_ON made the lead on: {log}"
+    );
 }
 
 /// An idle worker of another user in another repository cannot take the

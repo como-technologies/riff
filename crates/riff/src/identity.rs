@@ -36,6 +36,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use riff_core::name::{Place, Repo, SessionUri, Who, sanitize};
@@ -120,30 +121,18 @@ pub fn person(place: &Place, server: &str) -> Result<SessionUri> {
 }
 
 /// The user for `server`: from `RIFF_USER`, the sign-in, or `USER`.
+/// Only a missing `RIFF_USER` makes it read the keyring. A keyring error
+/// stops it, also when riff cannot open the keyring: `USER` stands in
+/// only when there is no sign-in (R157, R158).
 fn user(server: &str) -> Result<String> {
-    user_with(std::env::var("RIFF_USER").ok().as_deref(), server)
-}
-
-/// The user for `server`, with `riff_user` in place of `RIFF_USER`.
-/// Only a missing `riff_user` makes it read the keyring. A keyring
-/// error stops it, also when riff cannot open the keyring: `USER`
-/// stands in only when there is no sign-in (R157, R158). A test gives
-/// `riff_user` here and does not change the environment of its
-/// process (01M4BPJBJXB9KH3TTYAXK36R4M).
-///
-/// ```
-/// use riff::identity::user_with;
-///
-/// assert_eq!(user_with(Some("Brett"), "http://127.0.0.1:9").unwrap(), "brett");
-/// ```
-pub fn user_with(riff_user: Option<&str>, server: &str) -> Result<String> {
+    let riff_user = std::env::var("RIFF_USER").ok();
     let signed_in = match riff_user {
         Some(_) => None,
         None => login::user(server)
             .context("riff cannot find your user. Unlock the keyring, or set RIFF_USER")?,
     };
     pick_user(
-        riff_user,
+        riff_user.as_deref(),
         signed_in.as_deref(),
         std::env::var("USER").ok().as_deref(),
     )
@@ -448,7 +437,12 @@ fn base_name(path: &str) -> String {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = crate::confine::git_in(dir).ok()?.args(args).output().ok()?;
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())

@@ -1,0 +1,6 @@
+{
+  "riff": {
+    "command": "riff",
+    "args": ["mcp"]
+  }
+}

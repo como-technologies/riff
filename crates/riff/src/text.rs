@@ -10,11 +10,12 @@ use std::process::ExitStatus;
 
 use chrono::{DateTime, NaiveDate, TimeZone};
 
+use crate::permissions::Rules;
+use crate::plugin::{Connected, Statusline};
 use crate::pr::{Reported, Verdict};
 use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{OutsideRequest, OutsideState};
 
 use crate::api::{Checked, Claimed, Inbox, Told};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
@@ -99,86 +100,6 @@ pub fn pr_look_failed(number: u64, error: &str, every_secs: u64) -> String {
         "riff: cannot look at pull request #{number}: {error}. Trying again every {every_secs} \
          seconds."
     )
-}
-
-/// The line of a `riff verify pass` whose issue has no docs criterion
-/// (01M4C4WQHF7PRFHZJ9CNS847KX).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::no_docs_criterion(12),
-///     "riff verify pass: issue #12 has no criterion `- Docs:` in its `Done when:` line. Add \
-///      one to the issue: the docs that the change needs. Nothing is reported."
-/// );
-/// ```
-pub fn no_docs_criterion(issue: u64) -> String {
-    format!(
-        "riff verify pass: issue #{issue} has no criterion `{}` in its `Done when:` line. Add \
-         one to the issue: the docs that the change needs. Nothing is reported.",
-        crate::docs::CRITERION
-    )
-}
-
-/// The line of a `riff verify pass` whose result has no docs line
-/// (01M4C4WQHF7PRFHZJ9CNS847KX).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::no_docs_checked(),
-///     "riff verify pass: the result has no line `Docs:`. Add one: what you checked in the \
-///      book, the rustdoc and the skill. Nothing is reported."
-/// );
-/// ```
-pub fn no_docs_checked() -> String {
-    format!(
-        "riff verify pass: the result has no line `{}`. Add one: what you checked in the book, \
-         the rustdoc and the skill. Nothing is reported.",
-        crate::docs::CHECKED
-    )
-}
-
-/// The report of `riff plan check` (01M4C4WQW5X7ZRES1KXH7KXJSY): one
-/// line for each item of an open wave with no docs criterion, or one
-/// line that says that each item has one.
-///
-/// ```
-/// use riff::docs::{Item, Milestone};
-///
-/// let item = Item {
-///     number: 12,
-///     title: "Show the wave".into(),
-///     body: String::new(),
-///     milestone: Some(Milestone { title: "Wave 3".into() }),
-/// };
-/// assert_eq!(
-///     riff::text::docs_missing(&[&item]),
-///     "#12 Wave 3: Show the wave\n\
-///      1 item of an open wave has no criterion `- Docs:` in the `Done when:` line. \
-///      Add one to each.\n"
-/// );
-/// assert_eq!(
-///     riff::text::docs_missing(&[]),
-///     "Each item of an open wave has a criterion `- Docs:`.\n"
-/// );
-/// ```
-pub fn docs_missing(items: &[&crate::docs::Item]) -> String {
-    let criterion = crate::docs::CRITERION;
-    if items.is_empty() {
-        return format!("Each item of an open wave has a criterion `{criterion}`.\n");
-    }
-    let mut out = String::new();
-    for item in items {
-        let wave = item.milestone.as_ref().map_or("", |m| m.title.as_str());
-        out.push_str(&format!("#{} {wave}: {}\n", item.number, item.title));
-    }
-    let count = match items.len() {
-        1 => "1 item of an open wave has no criterion".to_owned(),
-        n => format!("{n} items of an open wave have no criterion"),
-    };
-    out.push_str(&format!(
-        "{count} `{criterion}` in the `Done when:` line. Add one to each.\n"
-    ));
-    out
 }
 
 /// The line of a `riff verify pass` that the [`Gate`](crate::pr::GATE)
@@ -330,8 +251,7 @@ pub fn joined(me: &SessionUri) -> String {
 const ID_CHARS: usize = 8;
 
 /// A session for display: the short form, and the start of the session
-/// ID when there is one. The short form alone is not unique. It is the
-/// text of [`Label`].
+/// ID when there is one. The short form alone is not unique.
 ///
 /// ```
 /// let uri = "riff://mike@pangolin/como-technologies/riff?session=a6cf2205-d54a#api".parse()?;
@@ -341,82 +261,9 @@ const ID_CHARS: usize = 8;
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn name(uri: &SessionUri) -> String {
-    Label::of(uri).to_string()
-}
-
-/// The label of a session: `USER@HOST:REPO#WORKTREE (ID)`. One label
-/// names a session in `riff who`, `riff whoami`, the tree of
-/// `riff top` and `riff statusline`, so they cannot differ
-/// (01M4CPVJ9ANPEBTWY9GETE2DGW). `riff top` shows its parts along the tree: the user and the
-/// host on their rows, the repository on its row, then [`Label::id`]
-/// and [`Label::worktree`] on the row of the session.
-///
-/// ```
-/// use riff::text::Label;
-///
-/// let uri = "riff://mike@pangolin/como-technologies/riff?session=a6cf2205-d54a#api".parse()?;
-/// let label = Label::of(&uri);
-/// assert_eq!(label.person, "mike@pangolin");
-/// assert_eq!(label.repo.as_deref(), Some("riff"));
-/// assert_eq!(label.worktree.as_deref(), Some("api"));
-/// assert_eq!(label.id.as_deref(), Some("a6cf2205"));
-/// assert_eq!(label.to_string(), "mike@pangolin:riff#api (a6cf2205)");
-/// // The short form drops the user and the host.
-/// assert_eq!(label.place(), "riff#api (a6cf2205)");
-/// # Ok::<(), riff_core::name::NameError>(())
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Label {
-    /// `USER@HOST`.
-    pub person: String,
-    /// The short name of the repository, `-` outside git, or None for
-    /// a person with no place.
-    pub repo: Option<String>,
-    /// The worktree, or None in the main clone.
-    pub worktree: Option<String>,
-    /// The first 8 characters of the session ID, as in `riff who`.
-    pub id: Option<String>,
-}
-
-impl Label {
-    /// The label of `uri`.
-    pub fn of(uri: &SessionUri) -> Self {
-        let place = uri.place();
-        let repo = match place.repo() {
-            riff_core::name::Repo::Git { name, .. } => Some(name.clone()),
-            riff_core::name::Repo::None => place.worktree().map(|_| "-".to_owned()),
-        };
-        Label {
-            person: format!("{}@{}", uri.who().user(), place.host()),
-            repo,
-            worktree: place.worktree().map(str::to_owned),
-            id: uri
-                .who()
-                .session()
-                .map(|id| id.chars().take(ID_CHARS).collect()),
-        }
-    }
-
-    /// The label with no user and no host: `REPO#WORKTREE (ID)`.
-    pub fn place(&self) -> String {
-        let mut out = self.repo.clone().unwrap_or_default();
-        if let Some(worktree) = &self.worktree {
-            let _ = write!(out, "#{worktree}");
-        }
-        if let Some(id) = &self.id {
-            let _ = write!(out, " ({id})");
-        }
-        out
-    }
-}
-
-impl std::fmt::Display for Label {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match (&self.repo, &self.id) {
-            (Some(_), _) => write!(f, "{}:{}", self.person, self.place()),
-            (None, Some(id)) => write!(f, "{} ({id})", self.person),
-            (None, None) => f.write_str(&self.person),
-        }
+    match uri.who().session() {
+        Some(id) => format!("{} ({})", uri.short(), &id[..id.len().min(ID_CHARS)]),
+        None => uri.short(),
     }
 }
 
@@ -823,6 +670,269 @@ pub fn riff_set(
     out
 }
 
+/// The result of `riff connect claude`: what it did, and the next step
+/// last (01M3XY2SYKG91SAB2FS1QNCZ2H).
+///
+/// ```
+/// use riff::enable::{Place, Scope, Scoped, State};
+/// use riff::plugin::{Connected, Statusline};
+///
+/// let mut done = Connected {
+///     dir: "/d".into(),
+///     removed_old: true,
+///     statusline: Statusline::Added("/h/.claude/settings.json".into()),
+/// };
+/// let off = State { on: false, by: None, forced: false, repo: None };
+/// let mut scoped = Scoped { answer: None, moved: None, state: off.clone(), global: false, kept: false };
+/// assert_eq!(
+///     riff::text::connected(&done, &scoped),
+///     "Removed the old riff MCP server entry.\n\
+///      Added the riff plugin from /d to Claude Code.\n\
+///      Added the riff status line to /h/.claude/settings.json.\n\
+///      riff is installed but off. To turn it on in a repository: cd REPO && riff enable"
+/// );
+/// done.statusline = Statusline::Set;
+/// done.removed_old = false;
+/// let by = Some((Place::Local, "/r/.claude/settings.local.json".into()));
+/// scoped.state = State { on: true, by, ..off.clone() };
+/// assert_eq!(
+///     riff::text::connected(&done, &scoped),
+///     "Added the riff plugin from /d to Claude Code.\n\
+///      riff is on in this repository (/r/.claude/settings.local.json). Start a new Claude \
+///      Code session there to use it. To turn it off: riff disable"
+/// );
+/// done.statusline = Statusline::Other("/s.json".into());
+/// let text = riff::text::connected(&done, &scoped);
+/// assert!(text.contains("\"Find the pane of a session\""));
+/// assert!(text.contains("`riff statusline`"));
+///
+/// // A person took the entry of the user settings out: riff was on in
+/// // each repository.
+/// scoped = Scoped { answer: None, moved: Some(vec!["/r".into()]), state: off.clone(), global: false, kept: false };
+/// let text = riff::text::connected(&done, &scoped);
+/// assert!(text.contains("Now it is on only where you turn it on."), "{text}");
+/// assert!(text.contains("\n  cd /r && riff enable\n"), "{text}");
+/// assert!(text.ends_with("cd REPO && riff enable"), "{text}");
+///
+/// scoped = Scoped { answer: Some(Scope::Global), moved: None, state: off.clone(), global: true, kept: false };
+/// assert!(riff::text::connected(&done, &scoped).ends_with("To turn it off: riff disable --global"));
+/// // An old install: riff kept its choice, and asked nothing.
+/// scoped.kept = true;
+/// assert!(riff::text::connected(&done, &scoped).ends_with(
+///     "\nriff stays on in each repository on this machine, as before this release. To \
+///      change it: riff disable --global"
+/// ));
+/// scoped = Scoped { answer: Some(Scope::Repo), moved: None, state: off, global: false, kept: false };
+/// assert!(riff::text::connected(&done, &scoped).contains("This directory is not in a git repository."));
+/// ```
+pub fn connected(done: &Connected, scoped: &crate::enable::Scoped) -> String {
+    use crate::enable::Scope;
+
+    let old = if done.removed_old {
+        "Removed the old riff MCP server entry.\n"
+    } else {
+        ""
+    };
+    let how = "To use the riff status line, see \"Find the pane of a session\" in How It Works: \
+               your status line command calls `riff statusline`.";
+    let statusline = match &done.statusline {
+        Statusline::Added(path) => {
+            format!("\nAdded the riff status line to {}.", path.display())
+        }
+        Statusline::Set => String::new(),
+        Statusline::Other(path) => format!(
+            "\n{} has another status line, so riff left it. {how}",
+            path.display()
+        ),
+        Statusline::Failed(why) => format!("\nriff did not set the status line: {why}. {how}"),
+    };
+    let mut out = format!(
+        "{old}Added the riff plugin from {} to Claude Code.{statusline}",
+        done.dir.display()
+    );
+    if let Some(repos) = &scoped.moved {
+        out.push_str(
+            "\nriff was on in each repository on this machine. Now it is on only where you \
+             turn it on.",
+        );
+        if !repos.is_empty() {
+            out.push_str(" To turn it on again where you used it:");
+            for repo in repos {
+                let _ = write!(out, "\n  cd {} && riff enable", repo.display());
+            }
+        }
+    }
+    out.push('\n');
+    let by_global = matches!(scoped.state.by, Some((crate::enable::Place::Global, _)));
+    if scoped.state.on && !by_global {
+        let file = match &scoped.state.by {
+            Some((_, file)) => format!(" ({})", file.display()),
+            None => String::new(),
+        };
+        let _ = write!(
+            out,
+            "riff is on in this repository{file}. Start a new Claude Code session there to use \
+             it. To turn it off: riff disable"
+        );
+    } else if scoped.kept {
+        out.push_str(
+            "riff stays on in each repository on this machine, as before this release. To \
+             change it: riff disable --global",
+        );
+    } else if scoped.global {
+        out.push_str(
+            "riff is on in each repository on this machine. Start a new Claude Code session \
+             in a repository to use it. To turn it off: riff disable --global",
+        );
+    } else {
+        if scoped.answer == Some(Scope::Repo) && scoped.state.repo.is_none() {
+            out.push_str("This directory is not in a git repository. ");
+        }
+        out.push_str(
+            "riff is installed but off. To turn it on in a repository: cd REPO && riff enable",
+        );
+    }
+    out
+}
+
+/// Whether riff is on in the working directory, and the command to
+/// change it (01M3XY2SYKG91SAB2FS1QNCZ2H). `riff server` shows it.
+///
+/// ```
+/// use riff::enable::{Place, Repo, State};
+///
+/// let repo = Some(Repo { top: "/r".into(), main: None });
+/// let mut state = State { on: false, by: None, forced: false, repo: None };
+/// assert_eq!(
+///     riff::text::riff_here(&state),
+///     "riff off: this directory is not in a git repository. To turn riff on in a \
+///      repository: cd REPO && riff enable"
+/// );
+/// state.repo = repo;
+/// assert_eq!(riff::text::riff_here(&state), "riff off. To turn it on: riff enable");
+/// state.by = Some((Place::Local, "/r/.claude/settings.local.json".into()));
+/// assert_eq!(
+///     riff::text::riff_here(&state),
+///     "riff off (/r/.claude/settings.local.json says no). To turn it on: riff enable"
+/// );
+/// state.on = true;
+/// assert_eq!(
+///     riff::text::riff_here(&state),
+///     "riff on (/r/.claude/settings.local.json). To turn it off: riff disable"
+/// );
+/// state.forced = true;
+/// assert_eq!(riff::text::riff_here(&state), "riff on (RIFF_ON=1)");
+/// ```
+pub fn riff_here(state: &crate::enable::State) -> String {
+    match (&state.by, state.on) {
+        _ if state.forced => "riff on (RIFF_ON=1)".into(),
+        (Some((_, file)), true) => {
+            format!("riff on ({}). To turn it off: riff disable", file.display())
+        }
+        (None, true) => "riff on. To turn it off: riff disable".into(),
+        _ if state.repo.is_none() => "riff off: this directory is not in a git repository. To \
+                                      turn riff on in a repository: cd REPO && riff enable"
+            .into(),
+        (Some((_, file)), false) => format!(
+            "riff off ({} says no). To turn it on: riff enable",
+            file.display()
+        ),
+        (None, false) => "riff off. To turn it on: riff enable".into(),
+    }
+}
+
+/// The result of `riff enable` (`on` true) or `riff disable`
+/// (01M3XY2SKQ27K3TE4NV28FHTVV).
+///
+/// ```
+/// use riff::enable::{Changed, Place, Repo, State};
+///
+/// let file: std::path::PathBuf = "/r/.claude/settings.local.json".into();
+/// let repo = Some(Repo { top: "/r".into(), main: None });
+/// let by = Some((Place::Local, file.clone()));
+/// let on = State { on: true, by, forced: false, repo: repo.clone() };
+/// let mut done = Changed { file: file.clone(), changed: true, denied: None, state: on.clone() };
+/// assert_eq!(
+///     riff::text::enabled(&done, true),
+///     "Turned riff on in /r/.claude/settings.local.json.\n\
+///      Start a new Claude Code session to use it. For the permission rules of riff work, \
+///      run: riff setup"
+/// );
+/// done.changed = false;
+/// assert!(riff::text::enabled(&done, true).starts_with("riff was on in /r/"));
+///
+/// let off = State { on: false, by: None, repo, ..on.clone() };
+/// done = Changed { changed: true, state: off.clone(), ..done };
+/// assert_eq!(
+///     riff::text::enabled(&done, false),
+///     "Turned riff off in /r/.claude/settings.local.json.\n\
+///      A session that runs keeps the riff tools until it ends. To take it out now, run \
+///      /riff:leave in it."
+/// );
+/// done.denied = Some(file);
+/// assert!(riff::text::enabled(&done, false).starts_with("Wrote a no for this repository to /r/"));
+/// done = Changed { denied: None, state: on, ..done };
+/// assert!(riff::text::enabled(&done, false).contains("riff is still on here"));
+/// ```
+pub fn enabled(done: &crate::enable::Changed, on: bool) -> String {
+    let file = done.file.display();
+    let first = match (on, done.changed, &done.denied) {
+        (true, true, _) => format!("Turned riff on in {file}."),
+        (true, false, _) => format!("riff was on in {file} already."),
+        (false, _, Some(denied)) => format!(
+            "Wrote a no for this repository to {}: another file turns riff on.",
+            denied.display()
+        ),
+        (false, true, None) => format!("Turned riff off in {file}."),
+        (false, false, None) => format!("{file} did not turn riff on."),
+    };
+    let then = match (on, done.state.on) {
+        (true, true) => "Start a new Claude Code session to use it. For the permission rules of \
+                         riff work, run: riff setup"
+            .to_owned(),
+        (true, false) => format!("riff is still off here: {}", riff_here(&done.state)),
+        (false, true) => format!("riff is still on here: {}", riff_here(&done.state)),
+        (false, false) => "A session that runs keeps the riff tools until it ends. To take it \
+                           out now, run /riff:leave in it."
+            .to_owned(),
+    };
+    format!("{first}\n{then}")
+}
+
+/// The refusal of `riff workers start` in a directory where riff is
+/// off: a worker there has no riff (01M3XY2T542DCHBN95H9PX4AGQ).
+///
+/// ```
+/// use riff::enable::{Repo, State};
+///
+/// let repo = Some(Repo { top: "/r".into(), main: None });
+/// let state = State { on: false, by: None, forced: false, repo };
+/// assert_eq!(
+///     riff::text::workers_off(&state),
+///     "riff starts no worker here: riff off. To turn it on: riff enable"
+/// );
+/// ```
+pub fn workers_off(state: &crate::enable::State) -> String {
+    format!("riff starts no worker here: {}", riff_here(state))
+}
+
+/// The note to the lead when the rollout starts no worker on its
+/// machine `host`, because riff is off in the main clone
+/// (01M3YCGKKRDNFC338K1JSK30JK). `why` is [`workers_off`].
+///
+/// ```
+/// assert_eq!(
+///     riff::text::rollout_off("pangolin", "riff starts no worker here: riff off. To turn it on: riff enable"),
+///     "pangolin: riff starts no worker here: riff off. To turn it on: riff enable. The rollout \
+///      starts no worker on pangolin until riff is on in the main clone."
+/// );
+/// ```
+pub fn rollout_off(host: &str, why: &str) -> String {
+    format!(
+        "{host}: {why}. The rollout starts no worker on {host} until riff is on in the main clone."
+    )
+}
+
 /// The message for a pull request with auto-merge on and a conflict with
 /// the default branch (01M49Q30XMVRFX42YTM1PHX0RZ). `held` is true when
 /// it goes to the session that holds `item`; else it goes to the lead.
@@ -879,11 +989,24 @@ pub fn pull_no_verify(number: u64, item: &str, head: &str, wait: std::time::Dura
     )
 }
 
-/// The instructions of `riff mcp` in a session that riff did not start
-/// (01M3XY2ST8R67SKTXJECAYJZRX, 01M4BYH80CFW1TBGKVA2VN9ZBQ). It serves
-/// no tool.
-pub const MCP_OFF: &str = "riff did not start this session, so riff gives no tools here. Your \
-user starts the riff in a terminal with `riff`. Each session that riff starts has the riff tools.";
+/// The instructions of `riff mcp` in a directory where riff is off
+/// (01M3XY2ST8R67SKTXJECAYJZRX). It serves no tool.
+pub const MCP_OFF: &str = "riff is off in this directory, so riff gives no tools here. Your user \
+turns it on in a terminal: `riff enable` in the repository. Then a new session has the riff tools.";
+
+/// The status line of a session in a project where a person turned the
+/// riff server off in `/mcp` (01M3XY2T0R2Q39XYX8AYV7T0RK).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::statusline_mcp_off("2a880834-aaaa"),
+///     "riff 2a880834 (no tools: the riff server is off, turn it on in /mcp)"
+/// );
+/// ```
+pub fn statusline_mcp_off(id: &str) -> String {
+    let short: String = id.chars().take(ID_CHARS).collect();
+    format!("riff {short} (no tools: the riff server is off, turn it on in /mcp)")
+}
 
 /// The status line of a session whose `riff mcp` ended while the
 /// session goes on (01M43F5KE7G2A2A9PSVRJPPNET).
@@ -932,6 +1055,74 @@ pub fn new_riff_refused(error: &str) -> String {
 /// ```
 pub fn check_too_long(limit: std::time::Duration) -> String {
     format!("the check took more than {} s", limit.as_secs())
+}
+
+/// One line for each rule of `rules`: `allow RULE` or `deny RULE`.
+fn rule_lines(rules: &Rules) -> String {
+    let allow = rules.allow.iter().map(|r| format!("\n  allow {r}"));
+    let deny = rules.deny.iter().map(|r| format!("\n  deny  {r}"));
+    allow.chain(deny).collect()
+}
+
+/// The answer to `riff setup` (01M3Q53RNDJBDHVDFHJ9HCX9S1).
+///
+/// ```
+/// use riff::permissions::Rules;
+/// use riff::text::setup_added;
+///
+/// let rules = Rules { allow: vec!["Bash(riff *)".into()], deny: vec!["D".into()] };
+/// assert_eq!(
+///     setup_added("/r/.claude/settings.json".as_ref(), &rules),
+///     "Added 2 riff permission rules to /r/.claude/settings.json:\n  allow Bash(riff *)\n  \
+///      deny  D\nCommit the file, so that each clone and each worktree has the rules. Start \
+///      Claude Code again to use them."
+/// );
+/// assert_eq!(
+///     setup_added("/s.json".as_ref(), &Rules::default()),
+///     "Each riff permission rule is there. riff changed nothing."
+/// );
+/// ```
+pub fn setup_added(path: &std::path::Path, added: &Rules) -> String {
+    if added.is_empty() {
+        return "Each riff permission rule is there. riff changed nothing.".into();
+    }
+    let n = added.len();
+    let s = if n == 1 { "" } else { "s" };
+    format!(
+        "Added {n} riff permission rule{s} to {}:{}\nCommit the file, so that each clone and \
+         each worktree has the rules. Start Claude Code again to use them.",
+        path.display(),
+        rule_lines(added)
+    )
+}
+
+/// The answer to `riff setup --check` (01M3Q53RNDJBDHVDFHJ9HCX9S1).
+///
+/// ```
+/// use riff::permissions::Rules;
+/// use riff::text::setup_check;
+///
+/// let left = Rules { allow: vec!["mcp__riff".into()], deny: vec![] };
+/// assert_eq!(
+///     setup_check("/r/.claude/settings.json".as_ref(), &left),
+///     "1 riff permission rule is missing:\n  allow mcp__riff\nTo add it to \
+///      /r/.claude/settings.json, run: riff setup"
+/// );
+/// assert_eq!(setup_check("/s".as_ref(), &Rules::default()), "Each riff permission rule is there.");
+/// ```
+pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
+    if left.is_empty() {
+        return "Each riff permission rule is there.".into();
+    }
+    let (count, it) = match left.len() {
+        1 => ("1 riff permission rule is".to_owned(), "it"),
+        n => (format!("{n} riff permission rules are"), "them"),
+    };
+    format!(
+        "{count} missing:{}\nTo add {it} to {}, run: riff setup",
+        rule_lines(left),
+        path.display()
+    )
 }
 
 /// The error of `riff workers start` outside tmux
@@ -994,7 +1185,7 @@ pub fn new_riff(server: &str) -> String {
 ///      \n\
 ///      cargo install --locked --git https://github.com/como-technologies/riff riff\n\
 ///      echo 'export RIFF_SERVER=https://riff.example.com' >> ~/.bashrc\n\
-///      riff login"
+///      riff connect claude"
 /// );
 /// ```
 pub fn invited(done: &Invited) -> String {
@@ -1005,7 +1196,7 @@ pub fn invited(done: &Invited) -> String {
          \n\
          cargo install --locked --git {} riff\n\
          echo 'export RIFF_SERVER={address}' >> ~/.bashrc\n\
-         riff login",
+         riff connect claude",
         env!("CARGO_PKG_REPOSITORY")
     )
 }
@@ -1278,34 +1469,6 @@ workers start started nothing. Your user sets the limit, for example: riff worke
 pub const WORKER_STARTS_NO_WORKER: &str =
     "riff: a worker never starts workers. riff workers start started nothing.";
 
-/// The refusal of `riff` with no command in a worker.
-pub const WORKER_STARTS_NO_RIFF: &str = "a worker never starts the riff. riff started nothing.";
-
-/// The line of `riff` when the lead of `repo` runs already
-/// (01M4BSSX3RSK79ZSJZZB1S0NYF).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::lead_runs("como/riff"),
-///     "The lead of como/riff runs. riff shows it.",
-/// );
-/// ```
-pub fn lead_runs(repo: &str) -> String {
-    format!("The lead of {repo} runs. riff shows it.")
-}
-
-/// The line of `riff` when it started the lead of `repo` in `clone`.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::lead_started("como/riff", "/src/riff".as_ref()),
-///     "riff started the lead of como/riff in /src/riff.",
-/// );
-/// ```
-pub fn lead_started(repo: &str, clone: &std::path::Path) -> String {
-    format!("riff started the lead of {repo} in {}.", clone.display())
-}
-
 /// The refusal of `riff workers start` in an agent session that is not
 /// the lead (01M3JPQT79FE47518Z8DFFQYYG).
 pub const NOT_THE_LEAD_STARTS_NO_WORKER: &str = "riff: only the lead of your user starts \
@@ -1352,7 +1515,7 @@ pub fn workers_limited(left: u16, limit: u16, run: usize) -> String {
 }
 
 /// The line of `riff mcp` when the server asks its idle worker to stop
-/// (01M4BTB7G5Q0HPP057KMBXBTE1).
+/// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
 pub const IDLE_STOP: &str =
     "the server stops this idle worker. riff stops its riff workers run, and claude ends.";
 
@@ -1628,21 +1791,20 @@ pub fn low_memory(avail_gb: u32, floor_gb: u32) -> String {
     format!("{avail_gb} GB of memory is available, and the floor of this machine is {floor_gb} GB.")
 }
 
-/// What `riff workers run` says one time on a machine with no systemd,
-/// in its pane (01M3WFYZZENNHVH8Z2BAFSR6TS). `why` is the error of
-/// `systemctl`.
+/// What `riff workers start` says one time on a machine with no systemd
+/// (01M3WFYZZENNHVH8Z2BAFSR6TS). `why` is the error of `systemctl`.
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::no_systemd("cannot run systemctl: not found"),
-///     "riff: this machine has no systemd user manager (cannot run systemctl: not found), so \
-///      the workers run with no memory limit."
+///     "This machine has no systemd user manager (cannot run systemctl: not found), so the \
+///      workers run with no memory limit."
 /// );
 /// ```
 pub fn no_systemd(why: &str) -> String {
     format!(
-        "riff: this machine has no systemd user manager ({why}), so the workers run with no \
-         memory limit."
+        "This machine has no systemd user manager ({why}), so the workers run with no memory \
+         limit."
     )
 }
 
@@ -1696,151 +1858,6 @@ pub fn nice_above(here: u8, nice: u8) -> String {
     format!(
         "riff: this wrapper runs at nice {here}, more than workers.nice {nice}. claude runs at \
          nice {here}."
-    )
-}
-
-/// The line of a role that starts with no rules of its profile
-/// (01M4BT33Z914GBHCGCAXFVQ2X7).
-///
-/// ```
-/// use riff::profile::Role;
-/// assert_eq!(
-///     riff::text::no_role_rules(Role::Worker, "the path / gives the home"),
-///     "riff: the worker starts with no permission rules of its profile: the path / gives the home."
-/// );
-/// ```
-pub fn no_role_rules(role: crate::profile::Role, why: &str) -> String {
-    format!("riff: the {role} starts with no permission rules of its profile: {why}.")
-}
-
-/// The first line of `riff forge check`: the App and the repository.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::forge_check_head(7, "acme/app"),
-///     "riff-server checked the GitHub App 7 on acme/app:"
-/// );
-/// ```
-/// The answer of `riff forge allow`: the GitHub accounts that get forge
-/// tokens.
-///
-/// ```
-/// use riff::text::forge_accounts;
-///
-/// assert_eq!(
-///     forge_accounts(&["acme".into(), "mike".into()]),
-///     "riff-server makes forge tokens for the repositories of: acme, mike"
-/// );
-/// assert_eq!(
-///     forge_accounts(&[]),
-///     "riff-server makes no forge token: no GitHub account is allowed. Run: riff forge allow OWNER"
-/// );
-/// ```
-pub fn forge_accounts(accounts: &[String]) -> String {
-    if accounts.is_empty() {
-        return "riff-server makes no forge token: no GitHub account is allowed. Run: riff forge \
-                allow OWNER"
-            .to_owned();
-    }
-    format!(
-        "riff-server makes forge tokens for the repositories of: {}",
-        accounts.join(", ")
-    )
-}
-
-pub fn forge_check_head(app: u64, repo: &str) -> String {
-    format!("riff-server checked the GitHub App {app} on {repo}:")
-}
-
-/// One line of `riff forge check`: the role and the permissions of its
-/// token, or why it has no good token. It never holds the token.
-///
-/// ```
-/// use riff::forge::{Access, TokenRole};
-/// use riff_core::wire::RoleCheck;
-///
-/// let good = RoleCheck {
-///     role: TokenRole::Verifier,
-///     permissions: [("statuses".into(), Access::Write), ("contents".into(), Access::Read)].into(),
-///     error: None,
-/// };
-/// assert_eq!(riff::text::forge_check_line(&good), "verifier: contents read, statuses write");
-/// let bad = RoleCheck { role: TokenRole::Lead, permissions: Default::default(), error: Some("no".into()) };
-/// assert_eq!(riff::text::forge_check_line(&bad), "lead: no");
-/// ```
-pub fn forge_check_line(check: &riff_core::wire::RoleCheck) -> String {
-    if let Some(error) = &check.error {
-        return format!("{}: {error}", check.role);
-    }
-    let rights: Vec<String> = check
-        .permissions
-        .iter()
-        .map(|(name, access)| format!("{name} {access}"))
-        .collect();
-    format!("{}: {}", check.role, rights.join(", "))
-}
-
-/// The line of `riff forge create` when riff-server has the new App.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::forge_app_made(7, "riff-acme", "acme"),
-///     "riff-server has the new GitHub App 7 (riff-acme). In the browser, install it on the \
-///      repositories of acme."
-/// );
-/// ```
-pub fn forge_app_made(app: u64, slug: &str, org: &str) -> String {
-    format!(
-        "riff-server has the new GitHub App {app} ({slug}). In the browser, install it on the \
-         repositories of {org}."
-    )
-}
-
-/// The line of `riff forge create` and `riff forge install` when the App
-/// is installed on `owner`.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::forge_installed("acme"),
-///     "The GitHub App of riff is installed on acme."
-/// );
-/// ```
-pub fn forge_installed(owner: &str) -> String {
-    format!("The GitHub App of riff is installed on {owner}.")
-}
-
-/// The line at the end of `riff forge create` and `riff forge install`
-/// outside a clone of a repository of `owner`.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::forge_check_elsewhere("acme"),
-///     "To check the tokens, run riff forge check in a clone of a repository of acme."
-/// );
-/// ```
-pub fn forge_check_elsewhere(owner: &str) -> String {
-    format!("To check the tokens, run riff forge check in a clone of a repository of {owner}.")
-}
-
-/// The error of `riff forge create` and `riff forge install` when the
-/// browser did not finish in time.
-pub const FORGE_WAIT_END: &str =
-    "riff: the browser did not finish in 10 minutes. Run the command again.";
-
-/// The line of the wrapper of a worker when it cannot make the forge
-/// token of its session (#610).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::forge_no_token("no App"),
-///     "riff: no forge token for this session: no App. gh and git push fail until riff makes \
-///      one. Run riff forge check.",
-/// );
-/// ```
-pub fn forge_no_token(why: &str) -> String {
-    format!(
-        "riff: no forge token for this session: {why}. gh and git push fail until riff makes \
-         one. Run riff forge check."
     )
 }
 
@@ -1992,16 +2009,16 @@ pub fn signed_in(user: &str, server: &str) -> String {
     format!("You signed in to {server} as {user}.")
 }
 
-/// The line of `riff` after it signed in. It names no user: `riff
-/// whoami` shows it.
+/// The line of `riff connect claude` after it signed in. It names no
+/// user: `riff whoami` shows it.
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::start_signed_in("http://127.0.0.1:7878"),
+///     riff::text::connect_signed_in("http://127.0.0.1:7878"),
 ///     "You signed in to http://127.0.0.1:7878. riff whoami shows your user."
 /// );
 /// ```
-pub fn start_signed_in(server: &str) -> String {
+pub fn connect_signed_in(server: &str) -> String {
     format!("You signed in to {server}. riff whoami shows your user.")
 }
 
@@ -2067,90 +2084,24 @@ pub fn nobody_signs_in(server: &str) -> String {
     format!("riff-server at {server} has no sign-in. Nobody is signed in to it.")
 }
 
-/// The warning of `riff` when it cannot check the sign-in or the
-/// sign-in fails.
+/// The warning of `riff connect claude` when it cannot check the sign-in
+/// or the sign-in fails. The plugin is installed.
 ///
 /// ```
 /// let error = anyhow::anyhow!("cannot reach riff-server");
 /// assert_eq!(
-///     riff::text::start_no_sign_in("http://127.0.0.1:7878", &error),
-///     "riff cannot check the sign-in at http://127.0.0.1:7878: cannot reach \
-///      riff-server. When the riff runs, run riff login."
+///     riff::text::connect_no_sign_in("http://127.0.0.1:7878", &error),
+///     "the plugin is installed, but riff cannot check the sign-in at \
+///      http://127.0.0.1:7878: cannot reach riff-server. When the riff runs, \
+///      run riff connect claude again."
 /// );
 /// ```
-pub fn start_no_sign_in(server: &str, error: &anyhow::Error) -> String {
+pub fn connect_no_sign_in(server: &str, error: &anyhow::Error) -> String {
     format!(
-        "riff cannot check the sign-in at {server}: {error:#}. When the riff runs, run riff login."
+        "the plugin is installed, but riff cannot check the sign-in at {server}: {error:#}. \
+         When the riff runs, run riff connect claude again."
     )
 }
-
-/// The question of `riff` about the riff entries of older releases in
-/// the Claude config (01M4BYH82P03FTXZBYC72BJ6F3): one line for each
-/// entry. `tracked` holds the entries in files that git tracks: riff
-/// lists them for a pull request and does not change them
-/// (01M4CMJPGS613K2FHQ6DKSY2WJ). It asks only when `remove` has an
-/// entry.
-///
-/// ```
-/// let tracked = ["/h/app/.claude/settings.json: statusLine".to_owned()];
-/// assert_eq!(
-///     riff::text::old_config(&["/h/.claude/settings.json: statusLine".into()], &tracked),
-///     "An older riff wrote these entries to files that git tracks:\n  \
-///      /h/app/.claude/settings.json: statusLine\n\
-///      riff does not change a file that git tracks. Remove these entries in a pull request.\n\
-///      An older riff wrote these entries to the Claude config:\n  \
-///      /h/.claude/settings.json: statusLine\n\
-///      riff gives Claude its plugin and settings at each start now, so it needs none \
-///      of them. Remove them? [y/N] "
-/// );
-/// assert!(riff::text::old_config(&[], &tracked).ends_with("in a pull request.\n"));
-/// ```
-pub fn old_config(remove: &[String], tracked: &[String]) -> String {
-    let list = |lines: &[String]| -> String { lines.iter().map(|l| format!("\n  {l}")).collect() };
-    let mut out = String::new();
-    if !tracked.is_empty() {
-        out.push_str(&format!(
-            "An older riff wrote these entries to files that git tracks:{}\nriff does not \
-             change a file that git tracks. Remove these entries in a pull request.\n",
-            list(tracked)
-        ));
-    }
-    if !remove.is_empty() {
-        out.push_str(&format!(
-            "An older riff wrote these entries to the Claude config:{}\nriff gives Claude its \
-             plugin and settings at each start now, so it needs none of them. Remove them? \
-             [y/N] ",
-            list(remove)
-        ));
-    }
-    out
-}
-
-/// True for an answer that says yes: `y` or `yes`. Enter is no
-/// (01M4BYH82P03FTXZBYC72BJ6F3).
-///
-/// ```
-/// assert!(!riff::text::yes("\n"));
-/// assert!(!riff::text::yes(""));
-/// assert!(riff::text::yes("Y\n"));
-/// assert!(riff::text::yes("yes"));
-/// assert!(!riff::text::yes("n\n"));
-/// assert!(!riff::text::yes("no"));
-/// ```
-pub fn yes(answer: &str) -> bool {
-    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
-}
-
-/// The answer of `riff` when the person keeps the old entries.
-pub const OLD_CONFIG_KEPT: &str =
-    "riff kept the entries. A plain claude can still load the old riff plugin.";
-
-/// The answer of the hidden `riff connect` (01M4BYH84X7B2D9EFYGP11GP8Y).
-pub const CONNECT_GONE: &str = "riff connect is gone: riff gives Claude its plugin at each \
-start. Start the riff with riff.";
-
-/// The answer of `riff` after it removed the old entries.
-pub const OLD_CONFIG_REMOVED: &str = "riff removed the entries.";
 
 /// The answer to `riff plan hold` and the `hold` tool
 /// (01M43GSGB9ZFHSG0Q83Y50FEGW). A hold does not end a claim: the answer
@@ -2613,25 +2564,18 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
     out
 }
 
-/// The most characters of the line of [`statusline`] with its full
-/// label. A longer line drops the user and the host of the label: the
-/// repository and the worktree stay.
-pub const STATUSLINE_COLS: usize = 80;
-
-/// The line that `riff statusline` prints for the agent session `id`
-/// (01M4CPVJ9ANPEBTWY9GETE2DGW): the [`Label`] of the session, its role (`lead`, `worker`),
-/// its state as `riff top` shows it (for example `busy`, `paused`,
-/// `blocked`), and each claim. So a person finds the pane of each
-/// session of `riff top`. A line longer than [`STATUSLINE_COLS`] has
-/// the label with no user and no host. `info` is the session in
+/// The line that `riff statusline` prints for the agent session `id`:
+/// `riff`, the short session ID of [`name`], `lead` for the lead, each
+/// claim, and `blocked` when the session is blocked. So a person finds
+/// the pane of each session of `riff who`. `info` is the session in
 /// `riff who`, or None when riff cannot find it.
 ///
 /// ```
-/// use riff_core::wire::{SessionInfo, SessionState};
+/// use riff_core::wire::{BlockedInfo, SessionInfo};
 ///
 /// let id = "2a880834-3707-4672";
 /// let mut info = SessionInfo {
-///     uri: "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&lead=true"
+///     uri: "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&claim=issue-78#issue-78"
 ///         .parse()?,
 ///     live: true,
 ///     idle_secs: 0,
@@ -2641,64 +2585,47 @@ pub const STATUSLINE_COLS: usize = 80;
 ///     claims_secs: 0,
 ///     must_clear: false,
 ///     fresh_secs: None,
-///     state: Some(SessionState::Idle),
+///     state: Some(riff_core::wire::SessionState::Idle),
 ///     work: None,
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
 /// };
-/// // A lead in the main clone.
+/// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
+/// info.uri = info.uri.with_lead(true);
+/// info.blocked = Some(BlockedInfo {
+///     reason: "which design?".into(),
+///     secs: 5,
+///     answered: false,
+///     woken_again: false,
+///     unanswered: false,
+/// });
 /// assert_eq!(
 ///     riff::text::statusline(id, Some(&info)),
-///     "mike@pangolin:riff (2a880834) lead idle"
+///     "riff 2a880834 lead issue-78 blocked"
 /// );
-/// // A worker in a worktree.
-/// info.uri = "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&claim=issue-78#issue-78"
-///     .parse()?;
-/// info.worker = true;
-/// info.state = Some(SessionState::Busy);
-/// assert_eq!(
-///     riff::text::statusline(id, Some(&info)),
-///     "mike@pangolin:riff#issue-78 (2a880834) worker busy issue-78"
-/// );
-/// info.state = Some(SessionState::Blocked);
-/// assert_eq!(
-///     riff::text::statusline(id, Some(&info)),
-///     "mike@pangolin:riff#issue-78 (2a880834) worker blocked issue-78"
-/// );
-/// // A long line keeps the repository and the worktree.
-/// info.uri = "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&claim=issue-78&claim=issue-79&claim=verify-issue-123#issue-78"
-///     .parse()?;
-/// assert_eq!(
-///     riff::text::statusline(id, Some(&info)),
-///     "riff#issue-78 (2a880834) worker blocked issue-78 issue-79 verify-issue-123"
-/// );
+/// info.blocked = None;
+/// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 lead issue-78");
 /// assert_eq!(riff::text::statusline(id, None), "riff 2a880834 (not in the riff)");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn statusline(id: &str, info: Option<&SessionInfo>) -> String {
+    let short: String = id.chars().take(ID_CHARS).collect();
+    let mut out = format!("riff {short}");
     let Some(info) = info else {
-        let short: String = id.chars().take(ID_CHARS).collect();
-        return format!("riff {short} (not in the riff)");
+        out.push_str(" (not in the riff)");
+        return out;
     };
-    let mut rest = String::new();
     if info.uri.lead() {
-        rest.push_str(" lead");
+        out.push_str(" lead");
     }
-    if info.worker {
-        rest.push_str(" worker");
-    }
-    let _ = write!(rest, " {}", crate::state::of(info).word());
     for claim in info.uri.claims() {
-        let _ = write!(rest, " {claim}");
+        let _ = write!(out, " {claim}");
     }
-    let label = Label::of(&info.uri);
-    let full = format!("{label}{rest}");
-    if full.chars().count() <= STATUSLINE_COLS {
-        full
-    } else {
-        format!("{}{rest}", label.place())
+    if info.blocked.is_some() {
+        out.push_str(" blocked");
     }
+    out
 }
 
 /// The tag of the status line for a newer release
@@ -3157,7 +3084,7 @@ where
 ///     answer: Ok(Probe { build: Some(this.clone()), sign_in: Some(false) }),
 ///     user: None,
 /// };
-/// let view = View { source: Source::Default, used: local.clone(), local: None, facts: None };
+/// let view = View { source: Source::Default, used: local.clone(), local: None, facts: None, here: None };
 /// assert_eq!(
 ///     plain(&view),
 ///     format!(
@@ -3176,7 +3103,7 @@ where
 ///     user: None,
 /// };
 /// let down = Seen { answer: Err("refused".into()), ..local };
-/// let view = View { source: Source::Env, used: shared, local: Some(down), facts: None };
+/// let view = View { source: Source::Env, used: shared, local: Some(down), facts: None, here: None };
 /// let text = plain(&view);
 /// assert!(text.contains("\nserver      https://riff.example.com  (from RIFF_SERVER)\n"), "{text}");
 /// assert!(text.contains("\n  sign-in   yes, you are not signed in\n"), "{text}");
@@ -3219,7 +3146,7 @@ where
 ///     now_ms,
 ///     ..ServerFacts::default()
 /// };
-/// let mut view = View { source: Source::Default, used, local: None, facts: Some(facts.clone()) };
+/// let mut view = View { source: Source::Default, used, local: None, facts: Some(facts.clone()), here: None };
 /// let text = anstream::adapter::strip_str(&riff::text::server_view(&view)).to_string();
 /// let rows: Vec<&str> = text.lines().skip(4).collect();
 /// assert_eq!(
@@ -3275,6 +3202,10 @@ pub fn server_view(view: &crate::lifecycle::View) -> String {
         out.push('\n');
         out.push_str(&row("local", &safe(&local.url)));
         seen_rows(&mut out, local, &mut Need::default());
+    }
+    if let Some(here) = &view.here {
+        out.push('\n');
+        out.push_str(&row("repository", &riff_here(here)));
     }
     if let Some(style) = need.style {
         let run = format!("Run {}", need.run.join(", then "));
@@ -3631,6 +3562,7 @@ pub fn host_runs(me: &SessionUri, first: &str) -> String {
 ///     main: "/src/riff".into(),
 ///     fresh: None,
 ///     limited: Some("The limit of this machine is 1.".into()),
+///     no_scope: None,
 ///     no_pool: None,
 ///     no_cores: None,
 /// };
@@ -3651,9 +3583,14 @@ pub fn host_started(host: &str, started: &crate::worker::Started) -> String {
         started.main.display(),
         panes.join(", ")
     );
-    for more in [&started.limited, &started.no_pool, &started.no_cores]
-        .into_iter()
-        .flatten()
+    for more in [
+        &started.limited,
+        &started.no_scope,
+        &started.no_pool,
+        &started.no_cores,
+    ]
+    .into_iter()
+    .flatten()
     {
         line.push(' ');
         line.push_str(more);
@@ -3784,6 +3721,43 @@ pub fn auto_update_failed(host: &str, old: &str, new: &str, error: &str, tried: 
          riff tries again at {again}. To try again now, run riff update --tag {new} on {host}."
     )
 }
+
+/// The line before riff installs `sccache` (01M4923963S666V9YWTZ46ZZ50).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::sccache_installs("0.18.0"),
+///     "riff: installs sccache 0.18.0 for the compile cache of the workers."
+/// );
+/// ```
+pub fn sccache_installs(version: &str) -> String {
+    format!("riff: installs sccache {version} for the compile cache of the workers.")
+}
+
+/// The note to the lead, and the line of `riff update`, when the
+/// install of `sccache` fails (01M4923963S666V9YWTZ46ZZ50).
+///
+/// ```
+/// let failed = riff::text::sccache_failed("pangolin", "0.18.0", "cargo install exit status: 101");
+/// assert_eq!(
+///     failed,
+///     "riff on pangolin cannot install sccache 0.18.0: cargo install exit status: 101. \
+///      The workers there build with no compile cache. \
+///      To try again, run riff update on pangolin."
+/// );
+/// ```
+pub fn sccache_failed(host: &str, version: &str, error: &str) -> String {
+    format!(
+        "riff on {host} cannot install sccache {version}: {error}. \
+         The workers there build with no compile cache. \
+         To try again, run riff update on {host}."
+    )
+}
+
+/// The line of a worker that starts with no `sccache`
+/// (01M492379BGA3AERT1AM12C650).
+pub const NO_SCCACHE: &str = "riff: this machine has no sccache, so the worker builds with \
+     no compile cache. riff update installs it.";
 
 /// The note of `riff pr wait` on stderr when it starts
 /// (01M3NB6FWMGBQ9VTY6RCBPKBHK).
@@ -4264,26 +4238,6 @@ pub const CLOUD_BAD_CLIENT_ID: &str = "A Google client ID ends in .apps.googleus
 /// The refusal of an empty client secret.
 pub const CLOUD_EMPTY_SECRET: &str = "The client secret is empty.";
 
-/// The refusal of `riff cloud forge` with a file that is no private key.
-pub const CLOUD_BAD_FORGE_KEY: &str = "The file is no private key in PEM form. Give the .pem file \
-     that GitHub gave you for the App.";
-
-/// What `riff cloud forge` says at its end.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::cloud_forge_written(7, "shared"),
-///     "App 7: stored. Delete the downloaded key file now. riff-server reads the App at its \
-///      next start: riff cloud deploy shared"
-/// );
-/// ```
-pub fn cloud_forge_written(app: u64, name: &str) -> String {
-    format!(
-        "App {app}: stored. Delete the downloaded key file now. riff-server reads the App at its \
-         next start: riff cloud deploy {name}"
-    )
-}
-
 /// The refusal of a name that cannot name an instance.
 pub fn cloud_bad_name(name: &str) -> String {
     format!(
@@ -4565,368 +4519,6 @@ pub fn cloud_status(s: &crate::cloud::Settings, facts: &crate::cloud::Facts) -> 
             "each merge to main, when the GitHub variable STAGE_DEPLOY is true"
         }
     ));
-    out
-}
-
-/// The line of `riff claude-token` before it reads a terminal
-/// (01M4CVXJCGRC59VVZEHBFA9MPG).
-pub const CLAUDE_TOKEN_PASTE: &str = "Paste the output of claude setup-token, then press \
-     Enter and Ctrl-D.";
-
-/// The error of `riff claude-token` when the input has no token.
-pub const CLAUDE_TOKEN_NONE: &str = "riff found no Claude token (a word that starts with \
-     sk-ant-) in the input. Run claude setup-token, and paste its output";
-
-/// The line of `riff claude-token` after it kept the token.
-pub const CLAUDE_TOKEN_KEPT: &str = "riff keeps your Claude plan token in your keyring. Each \
-     session that riff starts on this machine gets it.";
-
-/// The line of `riff claude-token --remove`.
-///
-/// ```
-/// assert!(riff::text::claude_token_removed(true).starts_with("riff removed"));
-/// assert!(riff::text::claude_token_removed(false).starts_with("riff keeps no"));
-/// ```
-pub fn claude_token_removed(had: bool) -> String {
-    if had {
-        "riff removed your Claude plan token from this machine.".into()
-    } else {
-        "riff keeps no Claude plan token on this machine.".into()
-    }
-}
-
-/// The refusal of the broker for an operation that is not in its list
-/// (01M4C5AQM63F58YQ9VA391513D).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::broker_no_op("shell"),
-///     "the broker has no operation shell. It has: test-run, outside."
-/// );
-/// ```
-pub fn broker_no_op(op: &str) -> String {
-    format!(
-        "the broker has no operation {op}. It has: {}.",
-        crate::broker::OPS.join(", ")
-    )
-}
-
-/// The refusal of the broker for a folder outside its root.
-pub fn broker_not_in(cwd: &Path, root: &Path) -> String {
-    format!(
-        "the folder {} is not in {}, the worktree of the session",
-        cwd.display(),
-        root.display()
-    )
-}
-
-/// The error of `riff test-run` for a target outside the folder that
-/// the broker names (01M4CN0RRJF5EWGE0VDSX3442B).
-pub fn target_not_in(target: &Path, within: &Path) -> String {
-    format!(
-        "the target {} of the test run is not in {}, the folder that the broker allows",
-        target.display(),
-        within.display()
-    )
-}
-
-/// The refusal of the broker for a request with no program.
-pub const BROKER_NO_PROGRAM: &str = "the request names no program";
-
-/// The refusal of a broker that is not the broker of a lead, for an
-/// operation of the lead (01M4DDWPC693RNWHY7P7XBZ9TB).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::door_not_lead("workers-stop"),
-///     "the operation workers-stop is only for the lead",
-/// );
-/// ```
-pub fn door_not_lead(op: &str) -> String {
-    format!("the operation {op} is only for the lead")
-}
-
-/// The refusal of the broker for the wrong number of arguments of an
-/// operation of [`crate::door`].
-///
-/// ```
-/// assert_eq!(
-///     riff::text::door_args("tail-pane"),
-///     "the operation tail-pane takes other arguments: see riff::door",
-/// );
-/// ```
-pub fn door_args(op: &str) -> String {
-    format!("the operation {op} takes other arguments: see riff::door")
-}
-
-/// The refusal of the broker of a lead for a count of workers out of
-/// its range.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::door_count("0"),
-///     "the count 0 is not a number from 1 to 64",
-/// );
-/// ```
-pub fn door_count(count: &str) -> String {
-    format!(
-        "the count {count} is not a number from 1 to {}",
-        crate::door::MAX_START
-    )
-}
-
-/// The refusal of a broker whose session runs outside tmux.
-pub const DOOR_NO_TMUX: &str = "the session does not run in tmux, so its broker has no tmux";
-
-/// The error of `riff hook clear` with no pane and no broker.
-pub const CLEAR_NO_PANE: &str = "the worker has no tmux pane and no broker";
-
-/// The refusal of an `end-over-limit` of a broker with no
-/// `RIFF_SESSION` (01M4DVW290H2AQF6EQFHTY1EE1).
-pub const DOOR_NO_SESSION: &str = "the broker has no RIFF_SESSION, so it ends no worker";
-
-/// The refusal of a step on the panes that the broker of a lead does
-/// not run: it adds only the `riff tail` pane, and it starts, stops and
-/// reaps workers with its own operations.
-pub const DOOR_NO_LAYOUT: &str = "the broker of a lead does not run this step on the panes";
-
-/// The refusal of the broker of a lead for a pane that is not a worker
-/// of its clone (01M4DDWPEGBAXKTS0X3THFB8VZ).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::door_other_clone("%7", "/src/app".as_ref()),
-///     "the pane %7 is not a worker of /src/app",
-/// );
-/// ```
-pub fn door_other_clone(pane: &str, clone: &std::path::Path) -> String {
-    format!("the pane {pane} is not a worker of {}", clone.display())
-}
-
-/// The refusal of the broker for a folder with a `..` part
-/// (01M4DA9PRPZ2JDKC2PK79AT5AA).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::broker_parent("/w/../etc".as_ref()),
-///     "the folder /w/../etc has a .. part: give the folder with no .."
-/// );
-/// ```
-pub fn broker_parent(cwd: &Path) -> String {
-    format!(
-        "the folder {} has a .. part: give the folder with no ..",
-        cwd.display()
-    )
-}
-
-/// The refusal of the broker for an `outside` with no single ID.
-pub const BROKER_OUTSIDE_ID: &str = "the operation outside needs one ID of a request";
-
-/// The refusal of the broker for a request that an admin denied.
-///
-/// ```
-/// use riff_core::wire::{OutsideRequest, OutsideState};
-///
-/// let request = OutsideRequest {
-///     id: "7f3a9c21".into(),
-///     by: "riff://mike@pangolin/acme/app?session=a6cf".parse().unwrap(),
-///     command: vec!["true".into()],
-///     cwd: "/w".into(),
-///     reason: "r".into(),
-///     state: OutsideState::Denied,
-///     decided_by: Some("dan".into()),
-///     taken: false,
-/// };
-/// assert_eq!(riff::text::outside_denied(&request), "dan denied the request 7f3a9c21");
-/// ```
-pub fn outside_denied(request: &OutsideRequest) -> String {
-    format!(
-        "{} denied the request {}",
-        request.decided_by.as_deref().unwrap_or("an admin"),
-        request.id
-    )
-}
-
-/// The refusal of the broker for a request that ran before.
-pub fn outside_closed(id: &str) -> String {
-    format!("the request {id} ran before: a request runs one time. Ask again.")
-}
-
-/// The refusal of the broker when no admin decides in time.
-pub fn outside_no_decision(id: &str) -> String {
-    format!("no admin decided the request {id} in time. Ask again.")
-}
-
-/// What `riff outside ask` prints after the ask (#614).
-///
-/// ```
-/// let text = riff::text::outside_asked("7f3a9c21");
-/// assert!(text.contains("riff outside approve 7f3a9c21"), "{text}");
-/// ```
-pub fn outside_asked(id: &str) -> String {
-    format!(
-        "riff: the request {id} waits for the owner or an admin. They run, in a terminal: \
-         riff outside approve {id}"
-    )
-}
-
-/// The error of `riff outside ask` in a process with no broker.
-pub const OUTSIDE_NO_BROKER: &str = "riff outside ask runs in a session in its sandbox. \
-This process has no sandbox: run the command yourself.";
-
-/// The lines of `riff outside list`, or a line that says that no
-/// request waits.
-///
-/// ```
-/// use riff_core::wire::{OutsideRequest, OutsideState};
-///
-/// assert_eq!(riff::text::outside_list(&[]), "riff: no request to run outside the sandbox.\n");
-/// let request = OutsideRequest {
-///     id: "7f3a9c21".into(),
-///     by: "riff://mike@pangolin/acme/app?session=a6cf".parse().unwrap(),
-///     command: vec!["sudo".into(), "true".into()],
-///     cwd: "/w".into(),
-///     reason: "the test needs root".into(),
-///     state: OutsideState::Asked,
-///     decided_by: None,
-///     taken: false,
-/// };
-/// assert_eq!(
-///     riff::text::outside_list(&[request]),
-///     "7f3a9c21  asked  mike/a6cf  `sudo true` in /w\n    reason: the test needs root\n"
-/// );
-/// ```
-pub fn outside_list(requests: &[OutsideRequest]) -> String {
-    if requests.is_empty() {
-        return "riff: no request to run outside the sandbox.\n".into();
-    }
-    let mut out = String::new();
-    for r in requests {
-        let state = match r.state {
-            OutsideState::Asked => "asked".to_owned(),
-            OutsideState::Approved => {
-                format!("approved by {}", r.decided_by.as_deref().unwrap_or("?"))
-            }
-            OutsideState::Denied => format!("denied by {}", r.decided_by.as_deref().unwrap_or("?")),
-            OutsideState::Ran => format!(
-                "ran, approved by {}",
-                r.decided_by.as_deref().unwrap_or("?")
-            ),
-        };
-        let _ = writeln!(
-            out,
-            "{}  {state}  {}  `{}` in {}\n    reason: {}",
-            r.id,
-            r.by.who(),
-            r.command.join(" "),
-            r.cwd,
-            r.reason
-        );
-    }
-    out
-}
-
-/// What `riff outside approve` and `riff outside deny` print.
-pub fn outside_decided(request: &OutsideRequest) -> String {
-    let done = match request.state {
-        OutsideState::Approved => "approved: the broker of the session runs it one time",
-        _ => "denied: it does not run",
-    };
-    format!(
-        "riff: the request {} of {} (`{}`) is {done}.",
-        request.id,
-        request.by.who(),
-        request.command.join(" ")
-    )
-}
-
-/// The error of `riff test-run` when the broker refuses it.
-pub fn broker_refused(why: &str) -> String {
-    format!("the broker of the sandbox runs nothing: {why}")
-}
-
-/// The error of `riff workers sandbox` on a kernel with no Landlock
-/// (01M4BTB74RD24WH59FA65KZ8J0).
-pub const NO_LANDLOCK: &str = "the kernel has no Landlock, so riff starts no session. \
-Use a kernel with Landlock on: `cat /sys/kernel/security/lsm` names landlock.";
-
-/// The ports of a sandbox, with each run of ports as one range.
-///
-/// ```
-/// assert_eq!(riff::text::port_list(&[443, 7000, 7001, 7002, 7878]), "443, 7000-7002, 7878");
-/// assert_eq!(riff::text::port_list(&[]), "none");
-/// ```
-pub fn port_list(ports: &[u16]) -> String {
-    let mut runs: Vec<(u16, u16)> = vec![];
-    for &port in ports {
-        match runs.last_mut() {
-            Some((_, high)) if u32::from(*high) + 1 == u32::from(port) => *high = port,
-            _ => runs.push((port, port)),
-        }
-    }
-    if runs.is_empty() {
-        return "none".into();
-    }
-    runs.iter()
-        .map(|&(low, high)| match low == high {
-            true => low.to_string(),
-            false => format!("{low}-{high}"),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// The line of `riff workers sandbox` when it applied the sandbox.
-///
-/// ```
-/// use riff::confine::Applied;
-///
-/// let a = Applied { abi: 8, full: false, paths: 21, ports: 28234 };
-/// assert_eq!(
-///     a.to_string(),
-///     "the sandbox is on: Landlock ABI 8 (a part of the rights of ABI 9), 21 path rules, 28234 port rules."
-/// );
-/// ```
-pub fn sandbox_applied(
-    f: &mut std::fmt::Formatter<'_>,
-    a: &crate::confine::Applied,
-) -> std::fmt::Result {
-    let part = match a.full {
-        true => "each right".to_owned(),
-        false => format!(
-            "a part of the rights of ABI {}",
-            crate::confine::ABI_WANTED as i32
-        ),
-    };
-    write!(
-        f,
-        "the sandbox is on: Landlock ABI {} ({part}), {} path rules, {} port rules.",
-        a.abi, a.paths, a.ports
-    )
-}
-
-/// The text of `riff workers sandbox --show` (01M4BTB7Q1ZT1WD2NMF6BAVWPB):
-/// the role, each write path, each read path, the ports, and what the
-/// kernel applies.
-pub fn sandbox_show(
-    profile: &crate::profile::Profile,
-    ports: &[u16],
-    applied: Result<&crate::confine::Applied, String>,
-) -> String {
-    let mut out = format!("The sandbox of the {} here:\nWrite:\n", profile.role());
-    for p in profile.write_paths() {
-        let _ = writeln!(out, "  {}", p.display());
-    }
-    out.push_str("Read:\n");
-    for p in profile.read_paths() {
-        let _ = writeln!(out, "  {}", p.display());
-    }
-    let _ = writeln!(out, "Devices: {}", crate::confine::DEVICES.join(", "));
-    let _ = writeln!(out, "Connect to the TCP ports: {}", port_list(ports));
-    let _ = match applied {
-        Ok(a) => writeln!(out, "{a}"),
-        Err(e) => writeln!(out, "riff cannot apply it: {e}"),
-    };
     out
 }
 

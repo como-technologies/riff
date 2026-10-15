@@ -11,14 +11,13 @@
 //! | `riff watch` | Keeps a watch stream open and prints one line for each wake. With `--once`, it exits after the first wake. |
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff lead`, `riff who`, `riff whoami` | Commands for people. |
-//! | `riff` | Starts the riff: the picker, then the lead in the tmux server of riff. See [`start`], and [`launch`] for what riff gives each `claude` that it starts. |
+//! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
 //! | `riff workers` | Starts, lists and stops the worker sessions of this machine in tmux, with [`terminal`]. Its limit is in [`settings`]. The `riff mcp` of the lead starts workers by itself, with [`rollout`]. [`monitor`] tells the lead about the health of a machine. |
 //! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //! | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request on GitHub, with `gh`. See [`pr`]. |
 //! | `riff usage` | Shows the tokens and the models of an issue, of a wave, or of the sessions of this machine. See [`usage`]. |
 //! | `riff audit` | Checks from the log and from `gh` that a wave followed the rules. See [`audit`]. |
-//! | `riff plan check` | Lists each item of an open wave with no docs criterion, with `gh`. See [`docs`]. |
 //! | `riff cloud` | Makes and runs riff-server instances on Cloud Run, with `gcloud`. See [`cloud`]. |
 //!
 //! `riff --help` lists the commands under headings (see [`help`]).
@@ -30,10 +29,9 @@
 //! its pushed branch and its worktree (see [`dropped`]).
 //!
 //! The Claude Code plugin is in [`plugin`]. Its start hook runs
-//! `riff hook session-start` (see [`hook`]). riff is on only in a
-//! session that riff started (see [`enable`]). `riff` removes the riff
-//! entries that older releases wrote to the Claude config (see
-//! [`old_config`]).
+//! `riff hook session-start` (see [`hook`]). riff is off in a session
+//! until a person turns it on for the repository, with `riff enable`
+//! (see [`enable`]).
 //!
 //! `riff mcp` and `riff watch` run as two processes for one session. They
 //! agree on the session because both read its session ID from the
@@ -62,12 +60,6 @@
 //! only as their session (see [`api`]). The tests and `just dev` give
 //! riff a home of its own, with its secrets in files (see [`home`]).
 //!
-//! ## Sandbox
-//!
-//! Each role has one profile: what its processes may read, write and
-//! reach (see [`profile`]). The permission rules of Claude Code of
-//! each role come from its profile (see [`role_rules`]).
-//!
 //! ## Messages are advice
 //!
 //! Each `read` result starts with [`text::DATA_NOTE`] (see [`text::inbox`]). It tells the agent
@@ -79,21 +71,15 @@ pub mod api;
 pub mod audit;
 pub mod auto_update;
 pub mod binary;
-pub mod broker;
 pub mod catch_up;
 pub mod chat;
 pub mod cloud;
 pub mod compact;
-pub mod confine;
 pub mod deaths;
 pub mod device;
 pub mod disk;
-pub mod docs;
-pub mod door;
 pub mod dropped;
 pub mod enable;
-pub mod forge;
-pub mod grant;
 pub mod help;
 pub mod home;
 pub mod hook;
@@ -101,7 +87,6 @@ pub mod host;
 pub mod hygiene;
 pub mod identity;
 pub mod jobserver;
-pub mod launch;
 pub mod leave;
 pub mod lifecycle;
 pub mod limits;
@@ -113,22 +98,16 @@ pub mod machine;
 pub mod mcp;
 pub mod monitor;
 pub mod next;
-pub mod nofollow;
-pub mod old_config;
-pub mod outside;
 pub mod permissions;
 pub mod plugin;
 pub mod pr;
-pub mod profile;
 pub mod reap;
 pub mod relay;
-pub mod role_rules;
 pub mod rollout;
-pub mod sandbox;
+pub mod sccache;
 pub mod secrets;
 pub mod settings;
 pub mod smoke;
-pub mod start;
 pub mod state;
 pub mod style;
 pub mod temp;

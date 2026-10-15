@@ -127,9 +127,9 @@ pub struct Tools {
     /// True in a worker session: each register says so
     /// (01M3NT4M159EHN5W8JRTQ417N4).
     worker: bool,
-    /// The stop file of the `riff workers run` wrapper of a worker. The
-    /// tools write it when the server asks (01M4BTB7G5Q0HPP057KMBXBTE1).
-    wrapper: Option<std::path::PathBuf>,
+    /// The process ID of the `riff workers run` wrapper of a worker. The
+    /// tools stop it when the server asks (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+    wrapper: Option<u32>,
     /// What counts the tokens of each claim of the session
     /// ([`crate::usage`]). `None` counts nothing.
     meter: Option<Arc<Meter>>,
@@ -279,10 +279,10 @@ impl Tools {
         self
     }
 
-    /// Writes the stop file `wrapper` of the `riff workers run` of this
-    /// worker when the server asks this idle worker to stop
-    /// (01M4BTB7G5Q0HPP057KMBXBTE1).
-    pub fn in_wrapper(mut self, wrapper: Option<std::path::PathBuf>) -> Self {
+    /// Stops the process `wrapper`, the `riff workers run` of this
+    /// worker, when the server asks this idle worker to stop
+    /// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
+    pub fn in_wrapper(mut self, wrapper: Option<u32>) -> Self {
         self.wrapper = wrapper;
         self
     }
@@ -528,11 +528,6 @@ and the pull request of the item with the state of its verify."
         let reply = self.api.claim(&me, &thread, &a.item).await.map_err(err)?;
         let mut out = text::claimed(&reply, &thread, &a.item);
         if reply.granted {
-            // The role of the forge token follows the claims
-            // (01M4CNN37FYYB99BS6QV2FFWZ8).
-            if let Some(files) = crate::forge::Files::here() {
-                files.ask();
-            }
             let (thread, item) = (thread.to_string(), a.item.clone());
             self.count(&me, move |meter, id| meter.started(id, &thread, &item))
                 .await;
@@ -569,9 +564,6 @@ the claim of another session of your user, for example one that is gone or that 
             }
             None => {
                 let reply = self.api.release(&me, &thread, &a.item).await.map_err(err)?;
-                if let Some(files) = crate::forge::Files::here() {
-                    files.ask();
-                }
                 let mut out = text::released(&thread, &a.item, reply);
                 let (thread, item) = (thread.to_string(), a.item);
                 let counted = self
@@ -688,9 +680,9 @@ the same files."
 )]
 impl ServerHandler for Tools {}
 
-/// The server of `riff mcp` in a session that riff did not start: it
-/// has no tool, and its instructions say how to start the riff
-/// (01M3XY2ST8R67SKTXJECAYJZRX, 01M4BYH80CFW1TBGKVA2VN9ZBQ).
+/// The server of `riff mcp` in a directory where riff is off: it has
+/// no tool, and its instructions name `riff enable`
+/// (01M3XY2ST8R67SKTXJECAYJZRX).
 struct Off;
 
 impl ServerHandler for Off {
@@ -701,7 +693,7 @@ impl ServerHandler for Off {
     }
 }
 
-/// `riff mcp` in a session that riff did not start. It serves a server with
+/// `riff mcp` in a directory where riff is off. It serves a server with
 /// no tool, whose instructions are [`text::MCP_OFF`], over stdio until
 /// the agent tool closes the stream. It makes no call to
 /// `riff-server`, and keeps no file of the session.
@@ -795,8 +787,8 @@ impl Tools {
     /// Sends a keep-alive each [`ALIVE_EVERY`] for as long as the tools
     /// run (R204), in a worker each [`WORKER_ALIVE_EVERY`]. A failed
     /// keep-alive is not reported: the next one tries again. When the
-    /// reply asks this idle worker to stop, it writes the stop file of
-    /// its wrapper (01M4BTB7G5Q0HPP057KMBXBTE1).
+    /// reply asks this idle worker to stop, it stops its wrapper
+    /// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
     pub fn keep_alive(&self) -> tokio::task::JoinHandle<()> {
         self.keep_alive_every(if self.worker {
             WORKER_ALIVE_EVERY
@@ -842,16 +834,16 @@ impl Tools {
         })
     }
 
-    /// Writes the stop file of this worker. The wrapper stops `claude`;
-    /// then the input of the tools closes, and they end the session
-    /// (01M4BTB7G5Q0HPP057KMBXBTE1).
+    /// Sends SIGTERM to the wrapper of this worker. The wrapper stops
+    /// `claude`; then the input of the tools closes, and they end the
+    /// session (01M3Q5A0QZTSTXHHNYCE8HFJSB).
     fn stop_wrapper(&self) {
-        let Some(file) = self.wrapper.as_deref().filter(|_| self.worker) else {
+        let Some(pid) = self.wrapper.filter(|_| self.worker) else {
             eprintln!("riff: {}", crate::text::IDLE_STOP_NO_WRAPPER);
             return;
         };
         eprintln!("riff: {}", crate::text::IDLE_STOP);
-        crate::worker::ask_stop(file);
+        crate::worker::stop_wrapper(pid);
     }
 
     /// Runs the rollout of workers for as long as the tools run
@@ -862,9 +854,10 @@ impl Tools {
         let env = crate::rollout::Live {
             api: self.api.clone(),
             me: move || tools.me(),
-            door: crate::door::Door::of_session(),
+            tmux: crate::terminal::Tmux::from_env(),
             claude: "claude".into(),
             gh: Arc::new(crate::pr::Gh::default()),
+            off_told: false.into(),
         };
         tokio::spawn(crate::rollout::run(env))
     }
@@ -887,11 +880,9 @@ impl Tools {
     pub fn reap(&self) -> tokio::task::JoinHandle<()> {
         use crate::reap::{self, Reaper};
         let tools = self.clone();
-        // In the sandbox of the lead, the broker looks at the panes
-        // (01M4DDWPC693RNWHY7P7XBZ9TB).
-        let door = crate::door::Door::of_session();
+        let tmux = crate::terminal::Tmux::from_env();
         tokio::spawn(async move {
-            let Some(door) = door else { return };
+            let Some(tmux) = tmux else { return };
             let mut reaper = Reaper::default();
             let mut tick = tokio::time::interval(reap::EVERY);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -899,9 +890,9 @@ impl Tools {
                 tick.tick().await;
                 // tmux and /proc: keep them off the runtime.
                 let looked = {
-                    let door = door.clone();
+                    let tmux = tmux.clone();
                     tokio::task::spawn_blocking(move || {
-                        let lost = reap::lost(&mut reaper, &door);
+                        let lost = reap::lost(&mut reaper, &tmux);
                         (reaper, lost)
                     })
                     .await
@@ -930,7 +921,7 @@ impl Tools {
                     &me,
                     &sessions,
                     &lost,
-                    || door.journal(),
+                    reap::journal,
                     crate::deaths::record_here,
                 )
                 .await;
@@ -1118,19 +1109,13 @@ pub async fn serve(
         .with_earlier_work()
         .with_meter(Meter::here())
         .as_worker(worker)
-        .in_wrapper(crate::worker::stop_file());
+        .in_wrapper(crate::worker::wrapper());
     // Start even if the server is down: each tool call reports the error.
     if tools.left() {
         drop(registered);
     } else {
         if let Err(e) = api.register_as(&me, worker).await {
             eprintln!("riff: {e:#}");
-        }
-        // The server knows the session now: the wrapper asks for its
-        // forge token at once. The wrapper of the lead gets the lead
-        // token when this session is the lead (#628).
-        if let Some(files) = crate::forge::Files::here() {
-            files.ask();
         }
         // The receiver can be gone: nothing waits for the register.
         let _ = registered.send(());

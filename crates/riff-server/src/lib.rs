@@ -181,7 +181,6 @@
 pub mod auth;
 pub mod checkpoint;
 pub mod engine;
-pub mod forge;
 pub mod gcs;
 pub mod idle;
 pub mod import;
@@ -190,7 +189,6 @@ pub mod listen;
 pub mod log;
 pub mod logline;
 pub mod oidc;
-pub mod outside;
 pub mod owner;
 pub mod state;
 pub mod store;
@@ -219,21 +217,20 @@ use riff_core::record::Record;
 use riff_core::selector::Selector;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
-    Claim, DenyOwner, End, FactError, Free, GRANT_END_PATH, GRANT_TOKEN_TYPE, GrantEnd, Hold,
-    ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery,
-    LogReply, MeReply, Members, MembersReply, PassOwner, Pause, Person, PlanOff, PlanReply,
-    PlanSeen, PlanShow, Post, Read, ReadReply, Register, Release, ReleaseFor, Remove,
-    ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata,
-    SetAdmin, SetBlocked, SetIdle, SetPlan, SetStatus, SetStep, SignInConfig, Start,
-    TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError, TokenReply, TokenRequest,
-    Unanswered, WhoReply, WhoRequest,
+    Claim, DenyOwner, End, FactError, Free, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
+    ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
+    PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Read, ReadReply,
+    Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery,
+    RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetPlan, SetStatus,
+    SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
+    TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
-use crate::engine::{Admitted, Authenticated, Engine, Failed, Routed, SignIns, command};
+use crate::engine::{Admitted, Engine, Failed, SignIns, command};
 use crate::import::Old;
 use crate::lease::Lease;
 use crate::oidc::Identity;
@@ -244,12 +241,6 @@ use crate::state::{
 use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::Tokens;
 use crate::trace::DeniedCode;
-use riff_core::forge::TokenRole;
-use riff_core::wire::{
-    ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeCreate, ForgeCreateReply, ForgeCreated,
-    ForgeCreatedReply, ForgeInstall, ForgeInstallReply, ForgeToken, ForgeTokenReply, OutsideAsk,
-    OutsideDecide, OutsideList, OutsideRequest, OutsideRequests, OutsideState, OutsideTake,
-};
 
 /// The least time between two writes of the token store (R127): the
 /// default of [`auth::Config::save_every`].
@@ -357,10 +348,6 @@ struct Server {
     checkpoints: Mutex<Checkpoints>,
     /// What `GET /v1/server` tells about this instance.
     facts: Mutex<Facts>,
-    /// The forge tokens of the sessions (#628).
-    forge: forge::Forge,
-    /// The requests to run a command outside the profile (#614).
-    outside: Mutex<outside::Outside>,
 }
 
 /// The last checkpoint, and why the server writes none.
@@ -1105,42 +1092,6 @@ impl Server {
         self.announce_each(posts).await;
     }
 
-    /// Revokes each forge token whose role or repository is not the
-    /// role and the repository of the facts now ([`forge::Forge::settle`],
-    /// [`State::forge_fact`]), or whose GitHub account is not allowed
-    /// any more. The session `ended` lost its token: it
-    /// sent its `end` call.
-    async fn settle_forge(&self, ended: Option<&Who>) {
-        let now = Instant::now();
-        let facts: Vec<(Who, Option<(TokenRole, String)>)> = self.engine.read(|state| {
-            self.forge
-                .holders()
-                .into_iter()
-                .map(|who| {
-                    if ended == Some(&who) {
-                        return (who, None);
-                    }
-                    let fact = state
-                        .me(&who, now, now_ms())
-                        .and_then(|info| state.forge_fact(&info.uri, now))
-                        .map(|(role, thread)| (role, thread.to_string()))
-                        .filter(|(_, repo)| {
-                            state.forge_allows(repo.split('/').next().unwrap_or_default())
-                        });
-                    (who, fact)
-                })
-                .collect()
-        });
-        self.forge
-            .settle(|who| {
-                facts
-                    .iter()
-                    .find(|(w, _)| w == who)
-                    .and_then(|(_, f)| f.clone())
-            })
-            .await;
-    }
-
     /// Asks each idle worker past the limit to stop, and posts a note to
     /// the lead of its user for the first ask of each. Posts one more
     /// note for each worker that still runs after the ask (see [`idle`]).
@@ -1471,14 +1422,7 @@ impl Service {
             engine.name_owner(&owner);
         }
         let save_every = config.save_every;
-        let forge = forge::Forge::with_store(
-            config.forge.clone(),
-            config.forge_store.clone(),
-            &config.github_api,
-        );
         let service = Service(Arc::new(Server {
-            forge,
-            outside: Mutex::new(outside::Outside::default()),
             config,
             engine,
             tokens,
@@ -1503,7 +1447,6 @@ impl Service {
         service.forget_sessions();
         service.watch_owner();
         service.watch_idle_workers();
-        service.watch_forge_tokens();
         service
     }
 
@@ -1721,34 +1664,6 @@ impl Service {
         });
     }
 
-    /// Starts the task that compares the forge tokens with the facts
-    /// each [`forge::SETTLE_EVERY`]: a session that died with no `end`
-    /// call loses its claims after the claim grace, and then its token
-    /// ([`Server::settle_forge`]). A server with no async runtime starts
-    /// no task. The task ends when the service ends.
-    fn watch_forge_tokens(&self) {
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        let server = Arc::downgrade(&self.0);
-        runtime.spawn(async move {
-            let mut tick = tokio::time::interval(forge::SETTLE_EVERY);
-            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-            loop {
-                tick.tick().await;
-                let Some(server) = server.upgrade() else {
-                    break;
-                };
-                if server.is_stopped() {
-                    break;
-                }
-                if server.serving() && !server.forge.holders().is_empty() {
-                    server.settle_forge(None).await;
-                }
-            }
-        });
-    }
-
     /// Waits until each record in the queue is written, then saves the
     /// token store when it changed. A server with no store saves no
     /// token store. A server that does not hold the lease now, or that
@@ -1913,13 +1828,13 @@ impl Service {
         let commands = Router::new()
             .route(Register::PATH, post(command::<Register>))
             .route(Start::PATH, post(command::<Start>))
-            .route(End::PATH, post(settling::<End>))
+            .route(End::PATH, post(command::<End>))
             .route(Join::PATH, post(command::<Join>))
             .route(Leave::PATH, post(command::<Leave>))
             .route(Post::PATH, post(command::<Post>))
-            .route(Claim::PATH, post(settling::<Claim>))
-            .route(Release::PATH, post(settling::<Release>))
-            .route(ReleaseFor::PATH, post(settling::<ReleaseFor>))
+            .route(Claim::PATH, post(command::<Claim>))
+            .route(Release::PATH, post(command::<Release>))
+            .route(ReleaseFor::PATH, post(command::<ReleaseFor>))
             .route(Lead::PATH, post(command::<Lead>))
             .route(Pause::PATH, post(command::<Pause>))
             .route(Resume::PATH, post(command::<Resume>))
@@ -1927,11 +1842,9 @@ impl Service {
             .route(Free::PATH, post(command::<Free>))
             .route(SetPlan::PATH, post(command::<SetPlan>))
             .route(PlanOff::PATH, post(command::<PlanOff>));
-        // `set_idle` and `forge_allow` have a router of their own: in a
-        // riff with sign-in, their routes always have the token check.
-        let set_idle = Router::new()
-            .route(SetIdle::PATH, post(command::<SetIdle>))
-            .route(ForgeAllow::PATH, post(settling::<ForgeAllow>));
+        // `set_idle` has a router of its own: in a riff with sign-in,
+        // its route always has the token check.
+        let set_idle = Router::new().route(SetIdle::PATH, post(command::<SetIdle>));
         // ANCHOR_END: routes
         // The signals and the queries.
         let mut routes = commands
@@ -1947,10 +1860,6 @@ impl Service {
             .route(RiffQuery::PATH, post(riff))
             .route(PlanSeen::PATH, post(plan_seen))
             .route(PlanShow::PATH, post(plan_show))
-            .route(ForgeToken::PATH, post(forge_token))
-            .route(ForgeCheck::PATH, post(forge_check))
-            .route(OutsideAsk::PATH, post(outside_ask))
-            .route(OutsideTake::PATH, post(outside_take))
             .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
@@ -1984,11 +1893,6 @@ impl Service {
             .route(DenyOwner::PATH, post(command::<DenyOwner>))
             .route(Members::PATH, post(members))
             .route(LogQuery::PATH, post(log_records))
-            .route(ForgeCreate::PATH, post(forge_create))
-            .route(ForgeCreated::PATH, post(forge_created))
-            .route(ForgeInstall::PATH, post(forge_install))
-            .route(OutsideList::PATH, post(outside_list))
-            .route(OutsideDecide::PATH, post(outside_decide))
             .route_layer(guard());
         let mut facts = Router::new().route("/v1/server", get(server_facts));
         if self.0.config.require_sign_in {
@@ -2000,14 +1904,9 @@ impl Service {
             // `riff login` and a refresh work with each version
             // (01M3MX4V43SF2XFCZWANHD19WV).
             .route(auth::TOKEN_PATH, post(token))
-            .route(GRANT_END_PATH, post(end_grant))
             .route("/v1/sign-in", get(sign_in_config))
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
-            // The pages of `riff forge create` in the browser: the
-            // `state` is their check (#627).
-            .route(forge::manifest::NEW_PATH, get(forge_new_page))
-            .route(forge::manifest::CREATED_PATH, get(forge_created_page))
             .layer(middleware::from_fn_with_state(self.0.clone(), gate))
             // The facts answer also while the gate replies 503, and to a
             // `riff` of each version (01M3TJWJ12WEDCXW3W0529KRP2).
@@ -2371,329 +2270,6 @@ async fn me(
     }))
 }
 
-/// A command that can change the role of the forge token of a session:
-/// a claim, a release, the end of a session, the end of the allow of a
-/// GitHub account. After the command, the
-/// server revokes each token whose role changed ([`forge::Forge::settle`]).
-/// The revoke runs after the reply, so a slow GitHub does not hold up
-/// the command.
-async fn settling<C: Routed>(
-    AxumState(s): AxumState<Shared>,
-    call: Authenticated<C>,
-) -> Result<Response, Failed>
-where
-    <C as Call>::Reply: serde::Serialize,
-{
-    // The session that ends loses its token.
-    let ended = (C::PATH == End::PATH).then(|| call.me().who().clone());
-    let reply = command::<C>(AxumState(s.engine.clone()), call).await;
-    if reply.is_ok() && !s.forge.holders().is_empty() {
-        let s = s.clone();
-        tokio::spawn(async move { s.settle_forge(ended.as_ref()).await });
-    }
-    reply
-}
-
-/// The role and the repository of the forge token of `me`, from the
-/// facts of the server (#628): [`State::forge_fact`]. A session that the
-/// server does not know gets no token. A `me` with no session gets the
-/// lead token only when its person is the lead of its repository. Only
-/// a repository of an allowed GitHub account gets a token
-/// (`riff forge allow`).
-fn forge_facts(state: &State, me: &SessionUri) -> Result<(TokenRole, String), forge::Refusal> {
-    match state.forge_fact(me, Instant::now()) {
-        Some((role, thread)) => {
-            let repo = thread.to_string();
-            let owner = repo.split('/').next().unwrap_or_default();
-            if !state.forge_allows(owner) {
-                return Err(forge::Refusal::NotAllowed {
-                    owner: owner.to_owned(),
-                });
-            }
-            Ok((role, repo))
-        }
-        None if me.who().session().is_some() => Err(forge::Refusal::NoSession),
-        None => Err(match me.default_thread() {
-            Some(thread) => forge::Refusal::NotLead {
-                repo: thread.to_string(),
-            },
-            None => forge::Refusal::NoRepository,
-        }),
-    }
-}
-
-/// `POST /v1/forge/token`: the forge token of the caller (#628). Only a
-/// call with a sign-in gets one.
-async fn forge_token(
-    AxumState(s): AxumState<Shared>,
-    proof: Proof,
-    Json(r): Json<ForgeToken>,
-) -> Reply<ForgeTokenReply> {
-    if proof.signed_in.is_none() {
-        return Err(forge::Refusal::NoSignIn.into());
-    }
-    if s.forge.app().is_none() {
-        return Err(forge::Refusal::NoApp.into());
-    }
-    let caller = admit(&s, &proof, &r.me)?;
-    let (role, repo) = s
-        .engine
-        .peek(&caller, |state| forge_facts(state, &r.me))??;
-    Ok(Json(s.forge.give(r.me.who(), &repo, role).await?))
-}
-
-/// `POST /v1/forge/check`: `riff forge check` (#628). It holds no token.
-async fn forge_check(
-    AxumState(s): AxumState<Shared>,
-    proof: Proof,
-    Json(r): Json<ForgeCheck>,
-) -> Reply<ForgeCheckReply> {
-    if proof.signed_in.is_none() {
-        return Err(forge::Refusal::NoSignIn.into());
-    }
-    if s.forge.app().is_none() {
-        return Err(forge::Refusal::NoApp.into());
-    }
-    let caller = admit(&s, &proof, &r.me)?;
-    let (_, repo) = s
-        .engine
-        .peek(&caller, |state| forge_facts(state, &r.me))??;
-    Ok(Json(s.forge.check(&repo).await?))
-}
-
-/// The post of the server about the last step of `request`, to the
-/// thread of the repository of the session that asked
-/// (01M4DA9PPFBVPHP57JZQDF4R7R). The ask wakes the lead of the person;
-/// each other step is a note.
-async fn outside_news(s: &Server, request: &OutsideRequest) {
-    let Some(thread) = request.by.default_thread() else {
-        return;
-    };
-    let text = outside::news(request);
-    tracing::info!(id = %request.id, state = ?request.state, "{text}");
-    let (to, kind) = if request.state == OutsideState::Asked {
-        let lead = Selector {
-            user: Some(request.by.who().user().to_owned()),
-            repo: Some(thread.to_string()),
-            lead: Some(true),
-            ..Selector::default()
-        };
-        (vec![lead], Kind::Message)
-    } else {
-        let me = Selector {
-            session: request.by.who().session().map(str::to_owned),
-            ..Selector::default()
-        };
-        (vec![me], Kind::Note)
-    };
-    s.announce_each(vec![Server::news(Some(thread), to, &text, kind)])
-        .await;
-}
-
-/// The refusal of a request to run a command outside the profile.
-fn outside_refused(reason: String) -> (StatusCode, String) {
-    Failed::Refused(Refused::new(Code::BadRequest, &reason)).into()
-}
-
-/// `POST /v1/outside/ask`: `riff outside ask` in a session (#614,
-/// 01M4DA9PFR6V3K3FE1568277H3).
-async fn outside_ask(
-    AxumState(s): AxumState<Shared>,
-    proof: Proof,
-    Json(r): Json<OutsideAsk>,
-) -> Reply<OutsideRequest> {
-    admit(&s, &proof, &r.me)?;
-    let asked = s
-        .outside
-        .lock()
-        .expect("the outside requests")
-        .ask(&r.me, r.command, &r.cwd, &r.reason, Instant::now())
-        .map_err(outside_refused)?;
-    outside_news(&s, &asked).await;
-    Ok(Json(asked))
-}
-
-/// `POST /v1/outside/take`: the broker of the session takes its request
-/// (01M4DA9PM89KP332T6BR7V0CDT).
-async fn outside_take(
-    AxumState(s): AxumState<Shared>,
-    proof: Proof,
-    Json(r): Json<OutsideTake>,
-) -> Reply<OutsideRequest> {
-    admit(&s, &proof, &r.me)?;
-    let took = s
-        .outside
-        .lock()
-        .expect("the outside requests")
-        .take(&r.id, r.me.who(), Instant::now())
-        .map_err(outside_refused)?;
-    if took.taken {
-        outside_news(&s, &took).await;
-    }
-    Ok(Json(took))
-}
-
-/// `POST /v1/outside/list`: `riff outside list`. Only the owner or an
-/// admin.
-async fn outside_list(
-    AxumState(s): AxumState<Shared>,
-    Extension(signed_in): Extension<SignedIn>,
-    Json(_): Json<OutsideList>,
-) -> Reply<OutsideRequests> {
-    need_admin(
-        &s,
-        signed_in.who.user(),
-        "list the requests to run outside the sandbox",
-    )?;
-    let requests = s
-        .outside
-        .lock()
-        .expect("the outside requests")
-        .list(Instant::now());
-    Ok(Json(OutsideRequests { requests }))
-}
-
-/// `POST /v1/outside/decide`: `riff outside approve ID` or `riff outside
-/// deny ID` (01M4DA9PJ0MJPBQRTA79CVXEA2). Only the owner or an admin,
-/// with a token of a person: the token of a session never decides.
-async fn outside_decide(
-    AxumState(s): AxumState<Shared>,
-    Extension(signed_in): Extension<SignedIn>,
-    Json(r): Json<OutsideDecide>,
-) -> Reply<OutsideRequest> {
-    need_admin(
-        &s,
-        signed_in.who.user(),
-        "approve a request to run outside the sandbox",
-    )?;
-    let decided = s
-        .outside
-        .lock()
-        .expect("the outside requests")
-        .decide(&r.id, &signed_in.who, r.approve, Instant::now())
-        .map_err(|reason| -> (StatusCode, String) {
-            Failed::Refused(Refused::new(Code::NotAllowed, &reason)).into()
-        })?;
-    outside_news(&s, &decided).await;
-    Ok(Json(decided))
-}
-
-/// Refuses `user` when it is not the owner or an admin.
-fn need_admin(s: &Server, user: &str, what: &str) -> Result<(), (StatusCode, String)> {
-    if s.engine.read(|state| state.role(user)) < Role::Admin {
-        let reason = format!("only the owner and the admins can {what}");
-        return Err(Failed::Refused(Refused::new(Code::NotAllowed, &reason)).into());
-    }
-    Ok(())
-}
-
-/// `POST /v1/forge/create`: `riff forge create` (#627). Only the owner
-/// or an admin. The reply is the start page of a new `state`.
-async fn forge_create(
-    AxumState(s): AxumState<Shared>,
-    Extension(signed_in): Extension<SignedIn>,
-    Json(r): Json<ForgeCreate>,
-) -> Reply<ForgeCreateReply> {
-    let user = signed_in.who.user();
-    need_admin(&s, user, "make the GitHub App of riff")?;
-    if !forge::manifest::account_name(&r.org) {
-        let text = format!(
-            "{:?} is no GitHub organization: give its name, for example acme",
-            r.org
-        );
-        return Err((StatusCode::BAD_REQUEST, text));
-    }
-    if !s.forge.has_store() {
-        let text = "this riff-server has no store for the App: give it RIFF_FORGE_SECRET";
-        return Err((StatusCode::CONFLICT, text.to_owned()));
-    }
-    let state = s.forge.starts().begin(&r.org, user, Instant::now());
-    let url = format!(
-        "{}{}?state={state}",
-        s.config.public_url,
-        forge::manifest::NEW_PATH
-    );
-    Ok(Json(ForgeCreateReply { url, state }))
-}
-
-/// `POST /v1/forge/created`: how far a start of `riff forge create` is.
-/// Only the admin that made the `state` sees it.
-async fn forge_created(
-    AxumState(s): AxumState<Shared>,
-    Extension(signed_in): Extension<SignedIn>,
-    Json(r): Json<ForgeCreated>,
-) -> Reply<ForgeCreatedReply> {
-    let user = signed_in.who.user();
-    need_admin(&s, user, "make the GitHub App of riff")?;
-    s.forge
-        .progress(&r.state, user)
-        .await
-        .map(Json)
-        .map_err(|text| (StatusCode::BAD_REQUEST, text))
-}
-
-/// `POST /v1/forge/install`: `riff forge install OWNER` (#627).
-async fn forge_install(
-    AxumState(s): AxumState<Shared>,
-    Json(r): Json<ForgeInstall>,
-) -> Reply<ForgeInstallReply> {
-    if !forge::manifest::account_name(&r.owner) {
-        let text = format!(
-            "{:?} is no GitHub account: give the name of an organization or a person, for \
-             example acme",
-            r.owner
-        );
-        return Err((StatusCode::BAD_REQUEST, text));
-    }
-    Ok(Json(s.forge.install(&r.owner).await?))
-}
-
-/// The query of the pages of `riff forge create`.
-#[derive(Deserialize)]
-struct ForgePage {
-    #[serde(default)]
-    state: String,
-    #[serde(default)]
-    code: String,
-}
-
-/// A page for the browser.
-fn page(status: StatusCode, body: String) -> Response {
-    (
-        status,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        body,
-    )
-        .into_response()
-}
-
-/// `GET /forge/new?state=`: the start page of `riff forge create`. It
-/// posts the manifest to GitHub.
-async fn forge_new_page(AxumState(s): AxumState<Shared>, Query(q): Query<ForgePage>) -> Response {
-    let Some(org) = s.forge.starts().org(&q.state, Instant::now()) else {
-        let text = forge::manifest::text_page(forge::manifest::BAD_STATE);
-        return page(StatusCode::BAD_REQUEST, text);
-    };
-    let manifest = forge::manifest::manifest(&s.config.public_url, &org);
-    page(
-        StatusCode::OK,
-        forge::manifest::start_page(&org, &q.state, &manifest),
-    )
-}
-
-/// `GET /forge/created?code=&state=`: GitHub sends the browser here
-/// after the admin made the App. The server swaps the code for the App,
-/// and sends the browser to the install page of the App.
-async fn forge_created_page(
-    AxumState(s): AxumState<Shared>,
-    Query(q): Query<ForgePage>,
-) -> Response {
-    match s.forge.created(&q.code, &q.state).await {
-        Ok(install) => (StatusCode::SEE_OTHER, [(header::LOCATION, install)]).into_response(),
-        Err(why) => page(StatusCode::BAD_REQUEST, forge::manifest::text_page(&why)),
-    }
-}
-
 /// The facts of this instance, for `riff server`
 /// (01M3TJWJ12WEDCXW3W0529KRP2). It changes nothing, and it is not a
 /// call of a session.
@@ -2871,21 +2447,7 @@ async fn token(
                     }
                 }
             }
-            Some(ACCESS_TOKEN_TYPE)
-                if r.requested_token_type.as_deref() == Some(GRANT_TOKEN_TYPE) =>
-            {
-                let mark = s.tokens_changes.load(Ordering::SeqCst);
-                let reply = grant(&s, &r, &proof).await;
-                match s.save_tokens_since(mark).await {
-                    Ok(()) => reply,
-                    Err(error) => {
-                        tracing::error!("the token store was not saved: {error}");
-                        Err(no(UNAVAILABLE))
-                    }
-                }
-            }
             Some(ACCESS_TOKEN_TYPE) => for_session(&s, &r, &proof).await,
-            Some(GRANT_TOKEN_TYPE) => from_grant(&s, &r, &proof).await,
             _ => Err(no("invalid_request")),
         },
         _ => Err(no("unsupported_grant_type")),
@@ -3122,104 +2684,6 @@ async fn for_session(
     s.tokens()
         .for_session(token, &proof.jkt, session, now)
         .map_err(|_| no("invalid_grant"))
-}
-
-/// Swaps a person access token for a session grant on a new session
-/// key (01M4CVXJ3GCEB7B4632J7DD84A). The request carries two proofs: the `DPoP` header
-/// from the device key of the person token, and `session_proof` from
-/// the session key. The reply comes after the write of the token store,
-/// so the grant lives through a restart of the server.
-async fn grant(
-    s: &Server,
-    r: &TokenRequest,
-    proof: &dpop::Proof,
-) -> Result<TokenReply, TokenError> {
-    let (Some(token), Some(session), Some(session_proof)) =
-        (&r.subject_token, &r.session, &r.session_proof)
-    else {
-        return Err(no("invalid_request"));
-    };
-    let url = s.config.url(auth::TOKEN_PATH);
-    let session_key = dpop::verify(session_proof, "POST", &url, None, now_ms() / 1000)
-        .map_err(|_| no("invalid_dpop_proof"))?;
-    if session_key.jkt == proof.jkt {
-        return Err(no("invalid_dpop_proof"));
-    }
-    let now = Instant::now();
-    if s.tokens().caller(token, &proof.jkt, now).is_err() {
-        return Err(no("invalid_grant"));
-    }
-    s.tokens_written().await?;
-    s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
-    s.first_use(&session_key)
-        .map_err(|_| no("invalid_dpop_proof"))?;
-    let reply = s
-        .tokens_change()
-        .grant(token, &proof.jkt, session, &session_key.jkt, now)
-        .map_err(|_| no("invalid_grant"))?;
-    // The line names the session, never the grant.
-    tracing::info!("{} made a session grant for {session}", reply.user);
-    Ok(reply)
-}
-
-/// Swaps a session grant for a session access token (01M4CVXJ3GCEB7B4632J7DD84A). The
-/// `DPoP` header is the proof of the session key of the grant.
-async fn from_grant(
-    s: &Server,
-    r: &TokenRequest,
-    proof: &dpop::Proof,
-) -> Result<TokenReply, TokenError> {
-    let Some(grant) = &r.subject_token else {
-        return Err(no("invalid_request"));
-    };
-    if s.tokens()
-        .granted(grant, &proof.jkt, Instant::now())
-        .is_err()
-    {
-        return Err(no("invalid_grant"));
-    }
-    s.tokens_written().await?;
-    s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
-    s.tokens_change()
-        .from_grant(grant, &proof.jkt, Instant::now())
-        .map_err(|_| no("invalid_grant"))
-}
-
-/// Ends a session grant and each token of it
-/// (01M4D0FTC5CCRBVNDBEXK2B4RJ). The `DPoP` header is the proof of the
-/// session key of the grant. The end is saved before the reply.
-async fn end_grant(
-    AxumState(s): AxumState<Shared>,
-    headers: HeaderMap,
-    Form(r): Form<GrantEnd>,
-) -> Response {
-    let refuse = |error: TokenError| {
-        let status = match error.error.as_str() {
-            UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
-            _ => StatusCode::BAD_REQUEST,
-        };
-        (status, Json(error)).into_response()
-    };
-    let Ok(proof) = s.proof(&headers, "POST", GRANT_END_PATH, None) else {
-        return refuse(no("invalid_dpop_proof"));
-    };
-    if s.first_use(&proof).is_err() {
-        return refuse(no("invalid_dpop_proof"));
-    }
-    let mark = s.tokens_changes.load(Ordering::SeqCst);
-    let ended = s.tokens().end_grant(&r.token, &proof.jkt, Instant::now());
-    match ended {
-        Err(_) => return refuse(no("invalid_grant")),
-        Ok(true) => {
-            s.tokens_changes.fetch_add(1, Ordering::SeqCst);
-        }
-        Ok(false) => {}
-    }
-    if let Err(error) = s.save_tokens_since(mark).await {
-        tracing::error!("the token store was not saved: {error}");
-        return refuse(no(UNAVAILABLE));
-    }
-    StatusCode::OK.into_response()
 }
 
 /// Names the sign-in provider and the riff ID, for `riff login`. The
@@ -4114,6 +3578,86 @@ mod tests {
                 last + 1
             ))
         );
+    }
+
+    /// The rollback of 2.0.1 to the line 1.x (01M4YNCECQDQR3Z8QTGQ1PW3WV,
+    /// 01M4YNCEMNRCAXD37V03T4JQYR): the log has a record `forge_allowed`,
+    /// and the newest checkpoint comes from 2.0.1, with the field
+    /// `forge_accounts`. A build of 1.x drops the record, does not use the
+    /// checkpoint, and writes checkpoints again.
+    #[tokio::test(start_paused = true)]
+    async fn a_build_of_1_x_writes_checkpoints_past_the_records_and_the_checkpoint_of_2_0() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        post_n(&service, 2, "before").await;
+        let last = position(&service);
+        let snapshot = service
+            .0
+            .engine
+            .read(|state| state.snapshot(Instant::now(), 0));
+        drop(service);
+        let forge = format!(
+            "{{\"format\":1,\"first\":{n}}}\n{{\"position\":{n},\"written_at_ms\":0,\"by\":{{\"person\":\"ann\"}},\"command\":\"forge_allow\",\"change\":{{\"forge_allowed\":{{\"owner\":\"acme\",\"allowed\":true}}}}}}\n",
+            n = last + 1
+        );
+        store
+            .store
+            .save(&log::chunk_name(last + 1), forge.into_bytes(), None)
+            .await
+            .unwrap();
+        let mut later =
+            serde_json::to_value(checkpoint::Checkpoint::new("2.0.1", 5, snapshot)).unwrap();
+        later["state"]["position"] = (last + 1).into();
+        later["state"]["forge_accounts"] = serde_json::json!(["acme"]);
+        let name = checkpoint::name(last + 1, 5);
+        store
+            .store
+            .save(&name, serde_json::to_vec(&later).unwrap(), None)
+            .await
+            .unwrap();
+
+        let next = Service::load(with_checkpoints(1, "1.3.1"), store.clone())
+            .await
+            .unwrap();
+        assert_eq!(position(&next), last + 1);
+        let facts = next.0.server_facts();
+        assert_eq!((facts.skipped_records, facts.no_checkpoint), (0, None));
+        let read = Read {
+            after: None,
+            me: brett(),
+            thread: mike().default_thread().unwrap(),
+            all: true,
+        };
+        assert_eq!(read_messages(&next, read).await, ["before0", "before1"]);
+        post_n(&next, 3, "after").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let newest = next.0.server_facts().checkpoint.unwrap();
+        assert_eq!(newest.build, "1.3.1");
+        assert!(newest.position > last + 1, "{newest:?}");
+        assert!(checkpoints(&store).await.len() >= 2);
+
+        // A read moves the cursor of brett, and the next checkpoint keeps
+        // it. A start from that checkpoint does not set it back (#700).
+        let unread = || Read {
+            after: None,
+            me: brett(),
+            thread: mike().default_thread().unwrap(),
+            all: false,
+        };
+        assert_eq!(
+            read_messages(&next, unread()).await,
+            ["after0", "after1", "after2"]
+        );
+        post_n(&next, 1, "last").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        drop(next);
+        let again = Service::load(with_checkpoints(1, "1.3.1"), store.clone())
+            .await
+            .unwrap();
+        let facts = again.0.server_facts();
+        assert_eq!(facts.checkpoint.unwrap().build, "1.3.1");
+        assert_eq!((facts.skipped_records, facts.no_checkpoint), (0, None));
+        assert_eq!(read_messages(&again, unread()).await, ["last0"]);
     }
 
     /// A rollback: the later build writes a checkpoint after the load of

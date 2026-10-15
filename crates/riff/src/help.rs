@@ -26,6 +26,7 @@
 
 use std::ffi::OsString;
 use std::fmt::Write;
+use std::io::IsTerminal;
 
 use clap::builder::StyledStr;
 use clap::error::ErrorKind;
@@ -49,7 +50,9 @@ pub struct Group {
 pub const GROUPS: &[Group] = &[
     Group {
         heading: "Get started",
-        commands: &["login", "logout", "claude-token", "update", "server"],
+        commands: &[
+            "connect", "enable", "disable", "setup", "login", "logout", "update", "server",
+        ],
     },
     Group {
         heading: "Work in the riff",
@@ -60,7 +63,7 @@ pub const GROUPS: &[Group] = &[
     },
     Group {
         heading: "Pull requests",
-        commands: &["test-run", "outside", "pr", "verify", "usage"],
+        commands: &["pr", "verify", "usage"],
     },
     Group {
         heading: "Lead",
@@ -76,7 +79,7 @@ pub const GROUPS: &[Group] = &[
     },
     Group {
         heading: "Host a riff",
-        commands: &["cloud", "forge"],
+        commands: &["cloud"],
     },
     Group {
         heading: "Members",
@@ -121,9 +124,17 @@ pub fn grouped(cmd: Command, groups: &[Group]) -> Command {
 }
 
 /// Parse the arguments of this process with `cmd`. See [`try_matches`].
-/// With no argument at all, `riff` starts the riff (see
-/// [`crate::start`]).
-pub fn matches(cmd: Command) -> ArgMatches {
+/// With no argument at all, show the help on stderr and exit with 2.
+pub fn matches(mut cmd: Command) -> ArgMatches {
+    if std::env::args_os().len() == 1 {
+        let help = cmd.render_help();
+        if std::io::stderr().is_terminal() {
+            eprint!("{}", help.ansi());
+        } else {
+            eprint!("{help}");
+        }
+        std::process::exit(2);
+    }
     try_matches(cmd, std::env::args_os()).unwrap_or_else(|e| e.exit())
 }
 
