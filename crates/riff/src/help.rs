@@ -82,6 +82,10 @@ pub const GROUPS: &[Group] = &[
         commands: &["cloud"],
     },
     Group {
+        heading: "Containers",
+        commands: &["image"],
+    },
+    Group {
         heading: "Members",
         commands: &["members", "invite", "remove", "admin", "owner"],
     },

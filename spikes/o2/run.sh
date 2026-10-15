@@ -83,10 +83,11 @@ done
 
 note ""
 note "## 2. The image"
-channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' "$top/rust-toolchain.toml")
+# The session image of the repository. Its Dockerfile has the Rust
+# toolchain of rust-toolchain.toml.
 t=$(date +%s)
-if podman build -t "$image" --build-arg RUST_CHANNEL="$channel" "$here" > "$dir/build.log" 2>&1; then
-    pass "podman build of $image in $(since "$t") s (Rust $channel)"
+if podman build -t "$image" "$top/deploy/session" > "$dir/build.log" 2>&1; then
+    pass "podman build of $image in $(since "$t") s"
 else
     fail "podman build: see $dir/build.log"
     exit 1

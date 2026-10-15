@@ -1,12 +1,16 @@
-# The session image of the spike of O2 (#707, #699). It is a test
-# image, not the session image of riff 3.0. It has what decision 5 of
-# #699 names: claude, git, gh, CA certificates, a POSIX shell and the
-# Rust toolchain of rust-toolchain.toml. It also has the tools of
+# The session image of this repository (01M4Z60B7JF80TMP6FHQ04MHCZ).
+# It has claude, git, gh, CA certificates, a POSIX shell and the Rust
+# toolchain of rust-toolchain.toml. It also has the tools of
 # `just check`. It holds no riff and no secret.
+#
+# The workflow "Session image" builds it on each change of this folder,
+# and riff.toml pins its digest (01M4Z7SP7Y19BQ8QTV1T6AE8SR). See
+# "Change the session image" in docs/src/development.md.
 FROM docker.io/library/debian:bookworm-slim
 
-# run.sh gives the channel of rust-toolchain.toml. The other versions
-# are the versions on pangolin on 2026-10-15.
+# The channel and the components of rust-toolchain.toml. A test checks
+# that they agree (01M4Z7SP5TGJ3DMWFGE5SN68N1). The other versions are
+# the versions on pangolin on 2026-10-15.
 ARG RUST_CHANNEL=1.95
 ARG CLAUDE_VERSION=2.1.300
 ARG GH_VERSION=2.102.0

@@ -49,7 +49,9 @@ flowchart LR
 - `riff relay` is the entrypoint of the container. It starts `claude`
   and talks to the daemon through a socket that only that session
   sees.
-- Each repository names its session image, pinned by digest.
+- Each repository names its session image, pinned by digest, in the
+  file `riff.toml` at its root. See
+  [Change the session image](development.md#change-the-session-image).
 - The daemon makes the claims on GitHub. The session pushes its work
   with your sign-in.
 

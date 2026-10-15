@@ -13,9 +13,10 @@ The spike is a script, not riff code. It does not change riff.
 
 1. It checks rootless podman: `--userns=keep-id`, `/etc/subuid`,
    `/etc/subgid`, and the cgroup v2 controllers of the user.
-2. It builds the session image from `Dockerfile`: `claude`, `git`,
-   `gh`, CA certificates, a shell, the Rust toolchain of
-   `rust-toolchain.toml`, and the tools of `just check`.
+2. It builds the session image of the repository from
+   `deploy/session/Dockerfile`: `claude`, `git`, `gh`, CA
+   certificates, a shell, the Rust toolchain of `rust-toolchain.toml`,
+   and the tools of `just check`.
 3. It makes a clone for the session with `git clone --reference` of
    the main clone, in a new folder below
    `~/.local/share/riff/spike/`.
