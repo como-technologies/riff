@@ -242,6 +242,61 @@ just install
 
 `riff tail` shows the messages of the thread of your repository.
 
+## How riff is built and installed
+
+riff ships as one static binary. The binary has musl in it, so it
+needs no shared library. So it runs on each Linux of its CPU, also in
+a session image with an older libc, where the daemon runs it as
+`riff relay`. A `cargo build` on your machine links the libc of your
+machine, and that binary does not start in a session image with an
+older libc.
+
+| Where riff comes from | What it is |
+|---|---|
+| `riff update` on Linux x86-64 | The static `riff` and `riff-server` of the GitHub release. riff checks the SHA-256 of each file against `SHA256SUMS` of the release, and that each one is static. Then it puts them in the bin folder of cargo (`~/.cargo/bin`). |
+| `riff update` on another machine, or for a release with no static binaries | A build with `cargo install --git` of the release tag, as before. |
+| `cargo install`, `just install` | A build that links the libc of your machine. It is not static. Run `riff update` to get the static riff. |
+| `just static` | The static `riff` and `riff-server` of your clone, in `target/static`. |
+
+```mermaid
+flowchart LR
+    T["tag vX.Y.Z"] --> J["CI job Static riff<br/>in rust:CHANNEL-alpine"]
+    J -- "riff-x86_64-unknown-linux-musl<br/>riff-server-…, SHA256SUMS" --> R["GitHub release vX.Y.Z"]
+    R -- "riff update:<br/>check SHA-256 and ELF" --> B["~/.cargo/bin/riff"]
+    B -- "bound at /opt/riff/riff" --> C["session container:<br/>riff relay"]
+```
+
+The CI job `Static riff` builds and checks the static binaries of each
+pull request. For a release tag, it adds them to the release (see
+[Make a release](#make-a-release)).
+
+### Build the static riff
+
+`just static` builds the static `riff` and `riff-server` of your clone
+in a container of the image `rust:CHANNEL-alpine`, where CHANNEL is the
+channel of `rust-toolchain.toml`. It uses podman, else docker. Then it
+checks them: each ELF has no interpreter, and `riff --version` runs in
+the session image that `riff.toml` pins:
+
+```sh
+just static
+```
+
+The binaries are in `target/static/release`. The profile `dev` builds
+with no optimization, so the build is faster. Its binaries are in
+`target/static/debug`:
+
+```sh
+just static dev
+```
+
+To see that a binary is static, look for the interpreter. A static
+binary has none, so this command prints nothing:
+
+```sh
+readelf -lW target/static/release/riff | grep interpreter
+```
+
 ## Change the session image
 
 riff 3.0 runs each session in a container from the session image of
@@ -527,10 +582,13 @@ page [riff 3.0](riff-3.md).
 ## Run the real-session test
 
 The real-session test checks a release on a real machine, with your
-real home. The riff of your clone does one scratch item with
+real home. The static riff of your clone does one scratch item with
 `riff run`, the session image that `riff.toml` pins, and a real
 `claude`. The tests of `just ci` cannot do this: they give riff a fake
 home. Run it before each tag (see [Make a release](#make-a-release)).
+First it builds the static riff of your clone with the profile `dev`
+(see [Build the static riff](#build-the-static-riff)), because the
+daemon runs that binary in the container as `riff relay`.
 
 The test needs podman and the sign-ins of `riff run`: see
 [Get ready to run an item](#get-ready-to-run-an-item). In your clone:
@@ -2154,8 +2212,14 @@ When the last tag is not the release before this one, name the tag of
 that release, for example `--notes-start-tag v0.1.0`.
 
 CI runs the job `Release check` for the tag. It fails when the tag is
-not the version of the crates. When it passes, the job `Deploy`
-deploys the tag to the shared server. See
+not the version of the crates. The job `Static riff` builds the static
+`riff` and `riff-server` of the tag. Then the job
+`Static riff release` adds them to the release, with `SHA256SUMS` (see
+[How riff is built and installed](#how-riff-is-built-and-installed)).
+It waits up to 60 minutes for the release, so publish the release soon
+after the push of the tag. When both jobs pass, the job `Deploy`
+deploys the tag to the shared server. So a machine that sees the new
+server can download the new riff. See
 [Deploy the shared server at the end of a wave](#deploy-the-shared-server-at-the-end-of-a-wave).
 Watch both jobs:
 

@@ -464,10 +464,14 @@ enum Command {
     Server,
     /// Update riff on this machine
     ///
-    /// It installs riff and riff-server of a release with cargo, then
-    /// updates the plugin with `riff connect claude`. It installs the
-    /// release that the riff runs, or the newest release when riff uses
-    /// the riff of this machine or cannot read the build of the riff.
+    /// It installs riff and riff-server of a release, then updates the
+    /// plugin with `riff connect claude`. On Linux x86-64 it downloads
+    /// the static binaries of the GitHub release, checks them, and puts
+    /// them in the bin folder of cargo. On another machine, or for a
+    /// release with no static binaries, cargo builds them. It installs
+    /// the release that the riff runs, or the newest release when riff
+    /// uses the riff of this machine or cannot read the build of the
+    /// riff.
     /// When the riff of this machine runs the old build, it tells you to
     /// start riff-server again.
     Update {

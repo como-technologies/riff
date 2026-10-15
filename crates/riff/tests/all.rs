@@ -60,6 +60,7 @@ mod pause;
 mod plugin;
 mod pr;
 mod read_length;
+mod release;
 mod restart;
 mod rollout;
 mod run;
