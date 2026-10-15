@@ -371,7 +371,7 @@ riff run issue-12 --image localhost/riff-session:test
 ```
 
 First, riff checks podman, the image, the sign-in of `gh` and of
-`claude`, and the milestone of the issue. A failed check takes no
+`claude`, and the wave of the issue. A failed check takes no
 claim. Then riff does these steps:
 
 1. It starts a worker session, and claims the item.

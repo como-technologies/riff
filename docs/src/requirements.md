@@ -4518,8 +4518,8 @@ share.
   `origin` has the branch, the clone goes on from it.
 - **01M4Z81AZ88ZS0HPHV5KGQF3HV** `riff run` takes only an issue,
   `issue-N`. The session opens the pull request with `gh`, with the
-  frame of `riff pr open` (`Closes #N`, the summary, `Issue: #N` and
-  `Milestone: M`), and turns on auto-merge at once.
+  frame of `riff pr open` (`Closes #N`, the summary, and the trailers
+  of the issue and its wave), and turns on auto-merge at once.
 - **01M4Z81B1913NF6HBZ5G38B3Q9** When `claude` ends, `riff run` finds
   the open pull request of the branch with `gh`, and sends a verify
   request to the lead of its user. Then it releases the item, and ends
@@ -4529,8 +4529,8 @@ share.
   pull request.
 - **01M4Z81B3A324KKE8M8Z71TM4M** Before the claim, `riff run` checks
   podman and the image, the sign-in of `gh`, the sign-in of `claude`
-  (01M4Z60B869HWDTZMSYPVYACD8), `HOME`, `USER`, and the milestone of
-  the issue. A failed check takes no claim.
+  (01M4Z60B869HWDTZMSYPVYACD8), `HOME`, `USER`, and the wave of the
+  issue. A failed check takes no claim.
 - **01M4Z81B5A456HDKW7G0WFGCY6** Until the repository pins its session
   image (#713), `riff run` takes the image from `--image`, with the
   default `localhost/riff-session:latest`.
