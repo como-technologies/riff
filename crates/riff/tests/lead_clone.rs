@@ -16,6 +16,8 @@ fn git(dir: &Path, args: &[&str]) -> String {
             "user.email=t@t",
             "-c",
             "init.defaultBranch=main",
+            "-c",
+            "commit.gpgsign=false",
         ])
         .args(args)
         .current_dir(dir)
