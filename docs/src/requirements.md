@@ -4560,11 +4560,11 @@ share.
   the cgroup of the unit of the daemon. `podman run` has
   `--sig-proxy=false`, so a signal to it does not go to the container.
   The daemon stops a container only when `riff run` asks.
-- **01M4ZDTW25YV0GMMVGWN6JTJC5** Until `riff relay` (#717), the input and
-  the events of a session go through the `podman run` of the daemon. At
-  a stop of the daemon they end: `claude` ends after its turn, and its
-  container goes. `riff run` then says that the daemon stopped, finds
-  the pull request, and releases the item.
+- **01M4ZDTW25YV0GMMVGWN6JTJC5** Until `riff relay` (#717), the input
+  and the events of a session go through the `podman run` of the
+  daemon. At a stop of the daemon they end: `claude` ends after its
+  turn, and its container goes. `riff run` then says that the daemon
+  stopped, finds the pull request, and releases the item.
 
 ### riff run
 

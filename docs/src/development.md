@@ -421,9 +421,9 @@ flowchart LR
    podman info --format '{{.Host.Security.Rootless}}'
    ```
 
-2. Start the riff daemon (see [Install the daemon](#install-the-daemon)).
-   With no daemon, `riff run` stops before the claim. This command
-   shows the daemon:
+2. Start the riff daemon (see
+   [Install the daemon](#install-the-daemon)). With no daemon,
+   `riff run` stops before the claim. This command shows the daemon:
 
    ```sh
    riff daemon status

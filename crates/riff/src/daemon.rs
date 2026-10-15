@@ -486,7 +486,12 @@ impl<R: Runtime + 'static> Daemon<R> {
                             }
                         });
                     }
-                    Err(e) => eprintln!("riff daemon: cannot accept a connection: {e}"),
+                    Err(e) => {
+                        eprintln!("riff daemon: cannot accept a connection: {e}");
+                        // For example no file descriptor is free: wait
+                        // a moment, and do not spin.
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
                 },
             }
         }
@@ -678,6 +683,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         Ok(tokio::spawn(async move {
             let mut connections = JoinSet::new();
             while let Ok((conn, _)) = listener.accept().await {
+                while connections.try_join_next().is_some() {}
                 connections.spawn(answer_session(conn, who.clone()));
             }
         }))
@@ -740,6 +746,11 @@ pub async fn drive(
     stop: impl Future<Output = ()>,
     out: &Out,
 ) -> Result<Ended> {
+    // The log comes first: a session that cannot log starts no
+    // container.
+    let mut log = tokio::fs::File::create(events)
+        .await
+        .with_context(|| format!("cannot write {}", events.display()))?;
     let Running {
         name,
         input,
@@ -765,9 +776,6 @@ pub async fn drive(
             }
         })
     };
-    let mut log = tokio::fs::File::create(events)
-        .await
-        .with_context(|| format!("cannot write {}", events.display()))?;
     let mut lines = BufReader::new(output).lines();
     let mut stopped = false;
     let mut failed = false;
@@ -1306,7 +1314,7 @@ mod tests {
         );
         here.stop().await;
         // The daemon takes no new connection, and stopped no container.
-        assert!(Client::connect(&here.dir).await.is_err() || status(&here.dir).await.is_err());
+        assert!(Client::connect(&here.dir).await.is_err());
         assert_eq!(here.fake.calls(), [format!("start {name}")]);
         assert_eq!(here.fake.exit(&name), None);
     }
