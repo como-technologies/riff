@@ -220,7 +220,11 @@ other key. Then start Claude Code again. The rules of riff:
 |---|---|
 | `mcp__plugin_riff_riff`, `mcp__riff` | the riff tools |
 | `Bash(riff)`, `Bash(riff *)` | each `riff` command |
-| `Bash(~/.cache/riff/checks/*/riff *)`, and the same rule with the full path of your home | the riff of a new build in a check |
+| `Bash(~/.cache/riff/check/target/static/release/riff *)`, and the same rule with the full path of your home | the riff of a new build in a check |
+
+Each rule names its program and its words. Its only `*` is at its
+end, after a space. So a rule allows only the steps that it names. The
+lead plans the waves with `riff wave`: see [Waves](waves.md).
 
 These rules deny nothing. The deny rules of a project come from
 `riff setup`. The riff daemon gives each of its sessions the rules of
@@ -232,9 +236,9 @@ new rule in the code of riff, not a step that you type.
 
 | Rules | Allow |
 |---|---|
-| `Bash(gh pr create *)`, `Bash(gh pr merge * --auto --squash)`, `Bash(gh pr comment *)`, `Bash(gh pr view *)`, `Bash(gh pr checks *)` | the steps of a pull request |
+| `Bash(gh pr create *)`, `Bash(gh pr merge --auto --squash *)`, `Bash(gh pr comment *)`, `Bash(gh pr view *)`, `Bash(gh pr checks *)` | the steps of a pull request |
 | `Bash(gh issue view *)`, `Bash(gh issue list *)`, `Bash(gh issue create *)`, `Bash(gh issue comment *)`, `Bash(gh issue edit *)` | the steps of an issue |
-| `Bash(gh api repos/*/milestones *)`, `Bash(gh api -X PATCH repos/*/milestones/*)` | the waves of the lead |
+
 
 ### Check this machine only
 

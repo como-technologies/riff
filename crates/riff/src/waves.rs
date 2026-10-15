@@ -156,6 +156,111 @@ pub fn end(gh: &Gh, number: u64) -> Result<Milestone> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    /// The open milestones of the fake `gh`: a done wave, a wave with
+    /// open items, and the backlog.
+    const OPEN: &str = r#"[{"number":10,"title":"Backlog","open_issues":61,"closed_issues":4},
+        {"number":33,"title":"Wave 28","open_issues":2,"closed_issues":0},
+        {"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}]"#;
+
+    /// A fake `gh` in `dir`. It writes each call to `dir/calls`, one line
+    /// each. It answers the list with [`OPEN`], and a POST or a PATCH
+    /// with a milestone.
+    fn fake_gh(dir: &Path) -> Gh {
+        let path = dir.join("gh");
+        let script = format!(
+            "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/calls\"\ncase \"$*\" in\n\
+             'api repos/{{owner}}/{{repo}}/milestones?state=open&per_page=100') printf '%s' '{}' ;;\n\
+             'api -X POST '*) printf '%s' '{{\"number\":34,\"title\":\"Wave 29\",\"open_issues\":0,\"closed_issues\":0}}' ;;\n\
+             'api -X PATCH '*) printf '%s' '{{\"number\":32,\"title\":\"Wave 27: Cloud\",\"open_issues\":0,\"closed_issues\":9}}' ;;\n\
+             *) exit 1 ;;\nesac\n",
+            OPEN.replace('\n', "")
+        );
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Gh::at(path)
+    }
+
+    fn calls(dir: &Path) -> Vec<String> {
+        std::fs::read_to_string(dir.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(Into::into)
+            .collect()
+    }
+
+    const LIST: &str = "api repos/{owner}/{repo}/milestones?state=open&per_page=100";
+
+    #[test]
+    fn open_gives_the_waves_in_number_order_then_the_backlog() {
+        let dir = tempfile::tempdir().unwrap();
+        let open = open(&fake_gh(dir.path())).unwrap();
+        let titles: Vec<&str> = open.iter().map(|m| m.title.as_str()).collect();
+        assert_eq!(titles, ["Wave 27: Cloud", "Wave 28", "Backlog"]);
+        assert_eq!(calls(dir.path()), [LIST]);
+    }
+
+    #[test]
+    fn make_posts_the_title_after_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let made = make(&fake_gh(dir.path()), "Wave 29: The view").unwrap();
+        assert_eq!(made.number, 34);
+        assert_eq!(
+            calls(dir.path()),
+            [
+                LIST,
+                "api -X POST repos/{owner}/{repo}/milestones -f title=Wave 29: The view"
+            ]
+        );
+    }
+
+    #[test]
+    fn make_refuses_a_title_that_is_not_a_wave_and_calls_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = make(&fake_gh(dir.path()), "Sprint 3").unwrap_err();
+        assert_eq!(error.to_string(), text::waves_bad_title("Sprint 3"));
+        assert!(calls(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn make_refuses_the_number_of_an_open_wave() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = make(&fake_gh(dir.path()), "Wave 28: Again").unwrap_err();
+        assert_eq!(error.to_string(), text::waves_is_there("Wave 28"));
+        assert_eq!(calls(dir.path()), [LIST]);
+    }
+
+    #[test]
+    fn end_closes_the_milestone_by_its_own_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let ended = end(&fake_gh(dir.path()), 27).unwrap();
+        assert_eq!(ended.title, "Wave 27: Cloud");
+        assert_eq!(
+            calls(dir.path()),
+            [
+                LIST,
+                "api -X PATCH repos/{owner}/{repo}/milestones/32 -f state=closed"
+            ]
+        );
+    }
+
+    #[test]
+    fn end_refuses_a_wave_with_an_open_item_and_closes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = end(&fake_gh(dir.path()), 28).unwrap_err();
+        assert_eq!(error.to_string(), text::waves_open_items("Wave 28", 2));
+        assert_eq!(calls(dir.path()), [LIST]);
+    }
+
+    #[test]
+    fn end_refuses_a_number_that_no_open_wave_has() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = end(&fake_gh(dir.path()), 26).unwrap_err();
+        assert_eq!(error.to_string(), text::waves_not_open(26));
+        assert_eq!(calls(dir.path()), [LIST]);
+    }
 
     #[test]
     fn a_wave_title_has_a_number_and_an_optional_name() {

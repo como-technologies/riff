@@ -202,14 +202,14 @@ This is the only part of the skill that is special to one forge.
 
 | To | Run |
 |---|---|
-| See the open waves, with their numbers | `gh api repos/OWNER/REPO/milestones --jq 'map("\(.number) \(.title)")[]'` |
+| See the open waves, with their items | `riff wave list` |
 | See the open items of a wave | `gh issue list --milestone "Wave 2"` |
 | See the open items with no wave | `gh issue list --search no:milestone` |
-| Make a wave | `gh api repos/OWNER/REPO/milestones -f title="Wave 6"` |
+| Make a wave | `riff wave make "Wave 6"` |
 | Put an item in a wave | `gh issue edit 12 --milestone "Wave 3"` |
 | Move an item to the backlog | `gh issue edit 12 --milestone Backlog` |
 | See the items in the backlog | `gh issue list --milestone Backlog` |
-| End a wave | `gh api -X PATCH repos/OWNER/REPO/milestones/NUMBER -f state=closed` |
+| End a wave | `riff wave end 6` |
 | Make a release (riff repository, an admin) | "Make a release" in `development.md` of the book |
 | Deploy a release again, or roll back (riff repository, an admin) | `gh workflow run CI --ref main -f tag=vX.Y.Z` |
 
@@ -324,17 +324,35 @@ no release and no update of the machine. Never run `riff update`,
 worktree.
 
 A check after a merge can need a new build of riff, for example of
-the daemon. Clone the default branch into `~/.cache/riff/checks/NAME`,
-outside `.claude/worktrees`, and build it there with `just static`.
+the daemon. Build it in the clone `~/.cache/riff/check`, outside
+`.claude/worktrees`. One check at a time on a machine uses it. When
+the folder is not there, clone the repository into it:
+
+```sh
+git clone -q https://github.com/OWNER/REPO.git ~/.cache/riff/check
+```
+
+Then put the clone on the default branch, and build it:
+
+```sh
+git -C ~/.cache/riff/check fetch -q origin
+
+git -C ~/.cache/riff/check checkout -q --detach origin/main
+just --justfile ~/.cache/riff/check/justfile static
+```
+
 Call the riff of the build by its path, with no variable and no
 prefix, for example:
 
 ```sh
-~/.cache/riff/checks/NAME/target/static/release/riff daemon install
+~/.cache/riff/check/target/static/release/riff daemon install
 ```
 
 A permission rule of `riff init` matches this form. A variable, for
-example `$R daemon install`, matches no rule.
+example `$R daemon install`, matches no rule. When the check runs
+`riff init` of the build, add `--yes`. With no terminal, `riff init`
+asks no question, and fails when a rule of Claude Code is missing.
+
 
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The verifier names it in the result.

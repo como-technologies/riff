@@ -1118,7 +1118,7 @@ enum WaveCommand {
     List,
     /// Make a wave
     ///
-    /// The title is Wave N, or Wave N: NAME. N is the last number plus
+    /// The title is Wave N, or Wave N: NAME. Give N the last number plus
     /// one. riff refuses a number that an open wave has.
     Make {
         /// The title, for example "Wave 6" or "Wave 6: Cloud".

@@ -852,6 +852,20 @@ mod tests {
         }
     }
 
+    /// The project settings of this repository have each project rule,
+    /// and each of their allow rules has its only `*` at its end
+    /// (01M3Q53RNDJBDHVDFHJ9HCX9S1, 01M509TJNREVNYR9MNN4P9P4RA).
+    #[test]
+    fn the_project_settings_of_riff_have_the_rules_and_no_wide_rule() {
+        let text = include_str!("../../../.claude/settings.json");
+        assert_eq!(missing(&rules("main"), &[text]), Rules::default());
+        let value: Value = serde_json::from_str(text).unwrap();
+        for rule in value["permissions"]["allow"].as_array().unwrap() {
+            let rule = rule.as_str().unwrap();
+            assert!(star_only_at_the_end(rule), "{rule}");
+        }
+    }
+
     #[test]
     fn a_rule_in_the_local_settings_is_not_missing() {
         let dir = isolated::outside_git();

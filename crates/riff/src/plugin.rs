@@ -532,21 +532,28 @@ mod tests {
     }
 
     /// 01M5084K79M5XJT3MP8FFVQKDX: a check calls the riff of a new build
-    /// by its path in the folder of the checks.
+    /// by its path in the one folder of the check, and runs its
+    /// `riff init` with `--yes`.
     #[test]
     fn the_skill_says_how_a_check_calls_a_new_build() {
         let skill = text("riff/skills/riff/SKILL.md");
         let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(flat.contains(
-            "Clone the default branch into `~/.cache/riff/checks/NAME`, outside \
-             `.claude/worktrees`, and build it there with `just static`. Call the riff of the \
-             build by its path, with no variable and no prefix"
-        ));
-        assert!(
-            skill.contains(
-                "\n~/.cache/riff/checks/NAME/target/static/release/riff daemon install\n"
-            )
-        );
+        for words in [
+            "Build it in the clone `~/.cache/riff/check`, outside `.claude/worktrees`. One check \
+             at a time on a machine uses it.",
+            "Call the riff of the build by its path, with no variable and no prefix",
+            "When the check runs `riff init` of the build, add `--yes`.",
+        ] {
+            assert!(flat.contains(words), "{words}");
+        }
+        for line in [
+            "\ngit clone -q https://github.com/OWNER/REPO.git ~/.cache/riff/check\n",
+            "\njust --justfile ~/.cache/riff/check/justfile static\n",
+            "\n~/.cache/riff/check/target/static/release/riff daemon install\n",
+        ] {
+            assert!(skill.contains(line), "{line}");
+        }
+        assert!(!skill.contains(".cache/riff/checks"));
     }
 
     /// 01M3MEEFSD4TEQESRDJENCFW7N.
@@ -969,16 +976,20 @@ mod tests {
         let forge = &skill[skill.find("### Waves on GitHub").unwrap()..];
         let forge = &forge[..forge.find("\n## ").unwrap()];
         for command in [
-            "`gh api repos/OWNER/REPO/milestones --jq",
+            "`riff wave list`",
             "`gh issue list --milestone \"Wave 2\"`",
             "`gh issue list --search no:milestone`",
-            "`gh api repos/OWNER/REPO/milestones -f title=\"Wave 6\"`",
+            "`riff wave make \"Wave 6\"`",
             "`gh issue edit 12 --milestone \"Wave 3\"`",
-            "`gh api -X PATCH repos/OWNER/REPO/milestones/NUMBER -f state=closed`",
+            "`riff wave end 6`",
         ] {
             assert!(forge.contains(command), "no {command:?} in {forge}");
         }
+        // 01M509TJNREVNYR9MNN4P9P4RA: no step of the waves calls the API
+        // of the forge itself.
+        assert!(!forge.contains("gh api"), "{forge}");
         assert!(!forge.contains("\\|"), "a table cell escapes a pipe");
+
     }
 
     /// 01M3JDW9WN7KFGVY6HMCP2XN8B, 01M3JDW9YQQHSZC296ZCNV2V8A.

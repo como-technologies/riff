@@ -518,9 +518,21 @@
 - **R224** On GitHub, an open wave is an open milestone. The lead ends
   a wave: it closes the milestone. It closes a milestone only when the
   milestone has no open issue.
-- **R225** The skill gives the `gh` command for each step of the
-  waves: see the open waves, see the items of a wave, see the items
-  with no wave, make a wave, put an item in a wave and end a wave.
+- **R225** The skill gives a command for each step of the waves: see
+  the open waves, see the items of a wave, see the items with no wave,
+  make a wave, put an item in a wave and end a wave.
+- **01M509TJRBE2J7HYKKHRJ1ZFR0** `riff wave list` shows the open
+  milestones of the repository of the current folder: the waves in
+  number order, then each other milestone by its title. Each line has
+  the number of the open and the closed issues of the milestone. riff
+  reads them with the `gh` of the machine.
+- **01M509TJTV7TC32EKXW0TEQ5NZ** `riff wave make TITLE` makes a
+  milestone. The title is `Wave N`, or `Wave N: NAME`. riff refuses
+  each other title, and a number that an open wave has.
+- **01M509TJXE04CTG5D1K751WXJY** `riff wave end N` closes the open
+  milestone of the wave with the number N. riff refuses when no open
+  wave has the number, and when the milestone has an open issue or an
+  open pull request. Then it closes nothing.
 - **01M3Q5QE2EWGKVD57Y6YCWA4BR** The rollout of workers
   (01M3Q5QE01DB0FJQJWFKR450KQ) reads its free work with `gh`. The
   current wave is the open milestone `Wave N` with the lowest N. A free
@@ -2273,14 +2285,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `.claude/settings.json` at the top of the repository. Allow: each
   riff tool (`mcp__plugin_riff_riff`, `mcp__riff`), `Bash(riff)`,
   `Bash(riff *)`, and the pull request steps (`gh pr create`, `gh pr
-  merge --auto --squash`, `gh pr comment`, `gh pr view`, and the
-  statuses API of a GitHub `origin`). Deny: a push to the default
-  branch (`origin/HEAD`, else `main`) and `gh pr merge --admin`. It
-  adds only the missing rules. A rule in the user, project or local
-  settings counts as there. It keeps each other rule and key in its
-  order, and writes the file only when it changes. `riff setup
-  --check` changes nothing, names each missing rule, and exits with
-  status 1 when a rule is missing.
+  merge --auto --squash`, `gh pr comment` and `gh pr view`). Deny: a
+  push to the default branch (`origin/HEAD`, else `main`) and `gh pr
+  merge --admin`. It adds only the missing rules. A rule in the user,
+  project or local settings counts as there. It keeps each other rule
+  and key in its order, and writes the file only when it changes.
+  `riff setup --check` changes nothing, names each missing rule, and
+  exits with status 1 when a rule is missing.
 - **01M3Q53RQGXMYVYGCQQMWA9380** When the project lacks a riff
   permission rule, the start hook of the lead tells the lead to ask
   its user to run `riff setup`.
@@ -4928,10 +4939,23 @@ share.
   of each session. The Claude folder of the lead stays between its
   starts: at each start, riff adds each rule that it lacks.
 - **01M5084K79M5XJT3MP8FFVQKDX** A check that needs a new build of riff
-  clones the default branch into `~/.cache/riff/checks/NAME`, builds it
-  there, and calls its riff by the path, with no variable and no
-  prefix. A rule of the user place allows that path, with `~` and with
-  the full path of the home.
+  builds it in the one clone `~/.cache/riff/check` of the machine. One
+  check at a time uses the clone. The check calls the riff of the build
+  by its path, `~/.cache/riff/check/target/static/release/riff`, with
+  no variable and no prefix. A rule of the user place allows that path,
+  with `~` and with the full path of the home. The check runs `riff
+  init` of the build with `--yes`.
+- **01M509TJNREVNYR9MNN4P9P4RA** Each allow rule of the table names its
+  program and its words. Its only `*` is at its end, after a space. No
+  allow rule names a path of the API of the forge: the steps of the
+  waves are `riff wave` commands. A test checks each allow rule, and a
+  list of commands that no allow rule of a place may match.
+- **01M509TK01PW3RN2YPRJD38RSX** riff writes a settings file of Claude
+  Code to a new file in the same folder, then renames it. A process
+  that reads the file at the same time sees the old text or the new
+  text, never a part. The file keeps its mode. A settings file that is
+  a symbolic link stays a link: riff writes the file that it names.
+
 - **01M5084K9J566981EXZ7YJRGRR** When the auto mode check refuses a
   step, the session stops that step, writes the command and the reason
   on the issue of its item, and tells the lead. It does not try the
