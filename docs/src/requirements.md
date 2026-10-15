@@ -4764,6 +4764,12 @@ share.
   (01M4A8041F8EK1VYDE4C9QG8N8). So a new instance of riff-server at the
   end of a run drops neither. The keep-alive of the session runs until
   the release.
+- **01M4ZYFJFTX9ZEX7QT4QH7E9T6** A SIGINT or a SIGTERM during the end
+  steps of `riff run` (the verify request, the release and the end of
+  the session) stops the wait for riff-server at once. Then `riff run`
+  sends no more end step, names each step that it did not send, and
+  ends with the exit code 1. riff-server frees the claim when the
+  session stops, as for each other session.
 - **01M4ZBGK7SFEXE1AGH6Z0YQHJP** On a host that is not Linux,
   `riff run` starts nothing, and says that it needs Linux.
 - **01M4Z81B3A324KKE8M8Z71TM4M** Before the claim, `riff run` checks

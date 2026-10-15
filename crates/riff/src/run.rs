@@ -95,6 +95,30 @@
 //!     S-->>H: released
 //! ```
 //!
+//! # A signal in the end steps
+//!
+//! A SIGINT or a SIGTERM stops the wait of the verify request, of the
+//! release and of the end of the session (01M4ZYFJFTX9ZEX7QT4QH7E9T6).
+//! Tokio keeps its handler of a signal to the end of the process, so a
+//! signal after the session does not end riff by itself: riff runs each
+//! end step against the signals. After a signal, riff sends no more
+//! step, names each step that it did not send, and ends with the code 1.
+//! riff-server frees the claim when the session stops, as for each other
+//! session.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant P as the person
+//!     participant H as riff run (host)
+//!     participant S as riff-server
+//!     H->>S: the verify request
+//!     Note over S: no reply
+//!     P->>H: Ctrl-C (SIGINT) or SIGTERM
+//!     H->>H: stop the wait, send no more step
+//!     H-->>P: the steps that riff did not send, the exit code 1
+//!     Note over S: the session stops: the claim is free
+//! ```
+//!
 //! # The folder of a session
 //!
 //! Each session has a folder of its own in [`sessions_dir`]: `ITEM-ID8`,
@@ -923,6 +947,73 @@ pub const DAEMON_WAIT: Duration = Duration::from_secs(600);
 /// The time between two tries of `riff run` to reach a new daemon.
 const DAEMON_RETRY: Duration = Duration::from_millis(250);
 
+/// SIGINT and SIGTERM: the signals that stop `riff run`.
+struct Signals {
+    term: tokio::signal::unix::Signal,
+    int: tokio::signal::unix::Signal,
+}
+
+impl Signals {
+    /// Listens for the signals. From here on, a signal does not end
+    /// riff: tokio keeps its handler to the end of the process, so riff
+    /// must act on each signal itself.
+    fn new() -> std::io::Result<Signals> {
+        Ok(Signals {
+            term: signal(SignalKind::terminate())?,
+            int: signal(SignalKind::interrupt())?,
+        })
+    }
+
+    /// Waits for the next SIGINT or SIGTERM.
+    async fn recv(&mut self) {
+        tokio::select! {
+            _ = self.term.recv() => {}
+            _ = self.int.recv() => {}
+        }
+    }
+}
+
+/// The end steps of `riff run`: the verify request, the release and the
+/// end of the session (01M4ZYFJFTX9ZEX7QT4QH7E9T6). A SIGINT or a SIGTERM
+/// stops the wait of the step that runs, and riff sends no step after
+/// it. riff listens for the signals from the first step on; before it,
+/// [`follow`] acts on them.
+#[derive(Default)]
+struct EndSteps {
+    signals: Option<Signals>,
+    /// The steps that riff did not send, after a signal.
+    not_sent: Vec<&'static str>,
+}
+
+impl EndSteps {
+    /// Runs `call`, the end step `step`, until it ends or a signal comes.
+    /// It gives the result of the call, or `None` when a signal stopped
+    /// it or an earlier step.
+    async fn send<T>(
+        &mut self,
+        step: &'static str,
+        call: impl Future<Output = Result<T>>,
+    ) -> Option<Result<T>> {
+        if self.not_sent.is_empty() {
+            if self.signals.is_none() {
+                self.signals = Signals::new().ok();
+            }
+            let stop = async {
+                match &mut self.signals {
+                    Some(signals) => signals.recv().await,
+                    None => std::future::pending().await,
+                }
+            };
+            tokio::select! {
+                done = call => return Some(done),
+                () = stop => {}
+            }
+        }
+        self.not_sent.push(step);
+        None
+    }
+}
+
 /// Asks the daemon in the folder `daemon` to run the session of
 /// `start`, shows its events, and waits for its end ([`follow`]).
 async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
@@ -955,8 +1046,7 @@ async fn follow(
 ) -> Result<Ended> {
     // The handlers come first: a signal before them ends riff with no
     // release.
-    let mut term = signal(SignalKind::terminate())?;
-    let mut int = signal(SignalKind::interrupt())?;
+    let mut signals = Signals::new()?;
     let mut name = name.to_owned();
     let mut client = daemon::Client::connect(daemon).await?;
     client.ask(ask).await?;
@@ -965,13 +1055,7 @@ async fn follow(
     loop {
         let say = tokio::select! {
             say = client.next() => say,
-            _ = term.recv(), if !stopped => {
-                stopped = true;
-                println!("{}", text::run_stopping(&name));
-                client.stop().await?;
-                continue;
-            }
-            _ = int.recv(), if !stopped => {
+            () = signals.recv(), if !stopped => {
                 stopped = true;
                 println!("{}", text::run_stopping(&name));
                 client.stop().await?;
@@ -992,7 +1076,7 @@ async fn follow(
             Ok(Some(_)) => bail!("{}", text::DAEMON_GONE),
             Ok(None) | Err(_) => {
                 println!("{}", text::run_daemon_away(&name));
-                let Some(again) = connect_again(daemon, wait, &mut term, &mut int).await else {
+                let Some(again) = connect_again(daemon, wait, &mut signals).await else {
                     println!("{}", text::run_daemon_gone(&name));
                     return Ok(Ended {
                         code: None,
@@ -1021,8 +1105,7 @@ async fn follow(
 async fn connect_again(
     daemon: &Path,
     wait: Duration,
-    term: &mut tokio::signal::unix::Signal,
-    int: &mut tokio::signal::unix::Signal,
+    signals: &mut Signals,
 ) -> Option<daemon::Client> {
     let deadline = tokio::time::Instant::now() + wait;
     loop {
@@ -1032,8 +1115,7 @@ async fn connect_again(
         tokio::select! {
             () = tokio::time::sleep(DAEMON_RETRY) => {}
             () = tokio::time::sleep_until(deadline) => return None,
-            _ = term.recv() => return None,
-            _ = int.recv() => return None,
+            () = signals.recv() => return None,
         }
     }
 }
@@ -1116,17 +1198,24 @@ pub async fn run_with(
         println!("{line}");
     }
 
+    let mut steps = EndSteps::default();
     let worked = work(
         daemon, server, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
+        &mut steps,
     )
     .await;
     let ending = api.with_budget(END_BUDGET);
-    if let Err(e) = ending.release(&me, &thread, item).await {
+    let release = ending.release(&me, &thread, item);
+    if let Some(Err(e)) = steps.send(text::RUN_RELEASE, release).await {
         eprintln!("riff: {e:#}");
     }
     alive.abort();
-    let _ = api.end(&me).await;
-    worked
+    let _ = steps.send(text::RUN_END, api.end(&me)).await;
+    if steps.not_sent.is_empty() {
+        return worked;
+    }
+    println!("{}", text::run_not_sent(item, &steps.not_sent));
+    worked.map(|_| 1)
 }
 
 /// The part of [`run`] between the claim and the release.
@@ -1144,6 +1233,7 @@ async fn work(
     item: &str,
     issue: u64,
     image: &str,
+    steps: &mut EndSteps,
 ) -> Result<i32> {
     let folder = sessions_dir()?.join(format!("{item}-{}", short(session)));
     let clone = folder.join("clone");
@@ -1224,10 +1314,8 @@ async fn work(
             );
             let to = [Selector::lead(me.who().user(), &repo)];
             let ending = api.with_budget(END_BUDGET);
-            if let Err(e) = ending
-                .post(me, Some(thread), &to, &body, Kind::Message)
-                .await
-            {
+            let post = ending.post(me, Some(thread), &to, &body, Kind::Message);
+            if let Some(Err(e)) = steps.send(text::RUN_VERIFY_REQUEST, post).await {
                 eprintln!("riff: {e:#}");
             }
         }
@@ -1280,6 +1368,25 @@ mod tests {
                 Env::Host(name) => name.clone(),
             })
             .collect()
+    }
+
+    /// After a signal, riff runs no more end step, and names each step
+    /// that it did not send (01M4ZYFJFTX9ZEX7QT4QH7E9T6).
+    #[tokio::test]
+    async fn after_a_signal_no_end_step_runs() {
+        let mut steps = EndSteps {
+            signals: None,
+            not_sent: vec![text::RUN_VERIFY_REQUEST],
+        };
+        let release = async { Err::<(), _>(anyhow!("the release ran")) };
+        assert!(steps.send(text::RUN_RELEASE, release).await.is_none());
+        let end = async { Err::<(), _>(anyhow!("the end ran")) };
+        assert!(steps.send(text::RUN_END, end).await.is_none());
+        assert!(steps.signals.is_none(), "riff listens after the stop");
+        assert_eq!(
+            steps.not_sent,
+            [text::RUN_VERIFY_REQUEST, text::RUN_RELEASE, text::RUN_END]
+        );
     }
 
     #[test]

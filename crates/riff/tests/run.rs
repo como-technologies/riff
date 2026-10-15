@@ -15,8 +15,8 @@ use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use isolated::Isolated;
@@ -38,7 +38,8 @@ fn script(path: &Path, body: &str) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// A fake `gh` that logs each call to `bin/gh.log`.
+/// A fake `gh` that logs each call to `bin/gh.log`. The branch has no
+/// pull request when `bin/no-pr` is there.
 fn fake_gh(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -48,6 +49,7 @@ case "$*" in
   'issue view 12 --json number,state,milestone')
     echo '{"number":12,"state":"OPEN","milestone":{"title":"Wave 27"}}' ;;
   'pr view worktree-issue-12 --json number,url,headRefOid,state')
+    [ -f "$dir/no-pr" ] && exit 1
     echo '{"number":40,"url":"https://github.com/como-technologies/riff/pull/40","headRefOid":"1a2b3c4d5e6f","state":"OPEN"}' ;;
   *) exit 1 ;;
 esac
@@ -1174,9 +1176,13 @@ async fn a_session_uses_the_riff_tools_through_the_relay() {
 struct Proxy {
     url: String,
     away: Arc<AtomicBool>,
-    /// The requests that got no reply.
-    held: Arc<AtomicUsize>,
+    /// The request line of each request that got no reply, for example
+    /// `POST /v1/post HTTP/1.1`.
+    held: Held,
 }
+
+/// See [`Proxy::held`].
+type Held = Arc<Mutex<Vec<String>>>;
 
 impl Proxy {
     async fn new(server: &str) -> Proxy {
@@ -1184,7 +1190,7 @@ impl Proxy {
         let url = format!("http://{}", listener.local_addr().unwrap());
         let target = server.trim_start_matches("http://").to_owned();
         let away = Arc::new(AtomicBool::new(false));
-        let held = Arc::new(AtomicUsize::new(0));
+        let held = Held::default();
         let (a, h) = (away.clone(), held.clone());
         tokio::spawn(async move {
             while let Ok((client, _)) = listener.accept().await {
@@ -1199,14 +1205,20 @@ impl Proxy {
     }
 
     fn held(&self) -> usize {
-        self.held.load(Ordering::SeqCst)
+        self.held.lock().unwrap().len()
+    }
+
+    /// True when a request to `path` got no reply.
+    fn holds(&self, path: &str) -> bool {
+        let line = format!(" {path} ");
+        self.held.lock().unwrap().iter().any(|l| l.contains(&line))
     }
 }
 
 /// Passes the bytes of one connection between `client` and the server
 /// at `target`, until a request comes while the proxy is away. Then it
 /// drops each byte of the client until the client closes.
-async fn pass(client: TcpStream, target: String, away: Arc<AtomicBool>, held: Arc<AtomicUsize>) {
+async fn pass(client: TcpStream, target: String, away: Arc<AtomicBool>, held: Held) {
     let Ok(server) = TcpStream::connect(&target).await else {
         return;
     };
@@ -1220,7 +1232,9 @@ async fn pass(client: TcpStream, target: String, away: Arc<AtomicBool>, held: Ar
         && n > 0
     {
         if away.load(Ordering::SeqCst) {
-            held.fetch_add(1, Ordering::SeqCst);
+            let request = String::from_utf8_lossy(&chunk[..n]);
+            let line = request.lines().next().unwrap_or_default().to_owned();
+            held.lock().unwrap().push(line);
             while matches!(from_client.read(&mut chunk).await, Ok(n) if n > 0) {}
             break;
         }
@@ -1268,12 +1282,7 @@ async fn riff_run_sends_the_verify_request_and_the_release_when_the_server_answe
     // still held.
     let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
     assert!(!thread.contains("verify request: issue-12"), "{thread}");
-    let taken = machine.run(Some("lead1"), &["claim", "issue-12"]).await;
-    assert!(
-        !text(&taken.stdout).contains("You hold"),
-        "{}",
-        text(&taken.stdout)
-    );
+    still_held(&machine).await;
     proxy.away(false);
 
     let out = output_of(child).await;
@@ -1289,6 +1298,91 @@ async fn riff_run_sends_the_verify_request_and_the_release_when_the_server_answe
         "{thread}"
     );
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// riff-server stops answering at the end of a run. `riff run` gets
+/// `signal` while its first end step, a call to `path`, waits (#756,
+/// 01M4ZYFJFTX9ZEX7QT4QH7E9T6). Gives the output of `riff run` and the
+/// time from the signal to its end.
+async fn a_signal_in_the_end_steps(
+    machine: &Machine,
+    path: &str,
+    signal: nix::sys::signal::Signal,
+) -> (Output, Duration) {
+    machine.lead().await;
+    let proxy = Proxy::new(&machine.server).await;
+    let hold = machine.bin.path().join("hold");
+    std::fs::write(&hold, "").unwrap();
+    let child = machine
+        .command(None, &["run", "issue-12", "--image", IMAGE])
+        .env("RIFF_SERVER", &proxy.url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(&machine.bin.path().join("run.stdin"), "user").await;
+
+    // The server goes away. Then claude ends its turn, and the first end
+    // step waits for the server.
+    proxy.away(true);
+    let away = Instant::now();
+    std::fs::remove_file(&hold).unwrap();
+    while !proxy.holds(path) {
+        assert!(away.elapsed() < isolated::HANG, "{} held", proxy.held());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let pid = nix::unistd::Pid::from_raw(child.id() as i32);
+    nix::sys::signal::kill(pid, signal).unwrap();
+    let sent = Instant::now();
+    let out = output_of(child).await;
+    (out, sent.elapsed())
+}
+
+/// The session still holds `issue-12`: the lead cannot claim it.
+async fn still_held(machine: &Machine) {
+    let taken = machine.run(Some("lead1"), &["claim", "issue-12"]).await;
+    assert!(
+        !text(&taken.stdout).contains("You hold"),
+        "{}",
+        text(&taken.stdout)
+    );
+}
+
+#[tokio::test]
+async fn a_sigint_stops_the_wait_of_the_verify_request() {
+    use riff::text::{RUN_END, RUN_RELEASE, RUN_VERIFY_REQUEST, run_not_sent};
+
+    let machine = Machine::new().await;
+    let (out, took) =
+        a_signal_in_the_end_steps(&machine, "/v1/post", nix::sys::signal::Signal::SIGINT).await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(took < Duration::from_secs(5), "{took:?}\n{stdout}\n{stderr}");
+    assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
+    assert!(stdout.contains("The pull request #40"), "{stdout}");
+    let not_sent = run_not_sent("issue-12", &[RUN_VERIFY_REQUEST, RUN_RELEASE, RUN_END]);
+    assert!(stdout.contains(&not_sent), "{stdout}");
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert!(!thread.contains("verify request: issue-12"), "{thread}");
+    still_held(&machine).await;
+}
+
+#[tokio::test]
+async fn a_sigterm_stops_the_wait_of_the_release() {
+    use riff::text::{RUN_END, RUN_RELEASE, run_not_sent};
+
+    let machine = Machine::new().await;
+    // With no pull request, the release is the first end step.
+    std::fs::write(machine.bin.path().join("no-pr"), "").unwrap();
+    let (out, took) =
+        a_signal_in_the_end_steps(&machine, "/v1/release", nix::sys::signal::Signal::SIGTERM)
+            .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(took < Duration::from_secs(5), "{took:?}\n{stdout}\n{stderr}");
+    assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
+    assert!(stdout.contains("No open pull request"), "{stdout}");
+    let not_sent = run_not_sent("issue-12", &[RUN_RELEASE, RUN_END]);
+    assert!(stdout.contains(&not_sent), "{stdout}");
+    still_held(&machine).await;
 }
 
 #[tokio::test]
