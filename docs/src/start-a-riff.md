@@ -124,7 +124,11 @@ tells you to run `riff setup`.
 ## Update riff
 
 Update riff on your machine. It installs `riff` and `riff-server` of
-a release with `cargo`, and updates the plugin in Claude Code:
+a release, and updates the plugin in Claude Code. On Linux x86-64, it
+downloads the static binaries of the release from GitHub. On another
+machine, or for a release with no static binaries, `cargo` builds them
+(see
+[How riff is built and installed](development.md#how-riff-is-built-and-installed)):
 
 ```sh
 riff update

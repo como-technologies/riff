@@ -13,7 +13,7 @@
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff lead`, `riff who`, `riff whoami` | Commands for people. |
 //! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
 //! | `riff workers` | Starts, lists and stops the worker sessions of this machine in tmux, with [`terminal`]. Its limit is in [`settings`]. The `riff mcp` of the lead starts workers by itself, with [`rollout`]. [`monitor`] tells the lead about the health of a machine. |
-//! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], and [`auto_update`] for a machine that updates riff by itself. |
+//! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], [`release`] for the static binaries of a release, and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //! | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request on GitHub, with `gh`. See [`pr`]. |
 //! | `riff usage` | Shows the tokens and the models of an issue, of a wave, or of the sessions of this machine. See [`usage`]. |
@@ -110,6 +110,7 @@ pub mod podman;
 pub mod pr;
 pub mod reap;
 pub mod relay;
+pub mod release;
 pub mod rollout;
 pub mod run;
 pub mod runtime;

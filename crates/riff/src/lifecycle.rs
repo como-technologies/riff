@@ -435,12 +435,15 @@ pub async fn update(
         },
     };
     let dir = run_dir();
-    run(
-        Command::new(cargo)
-            .args(install_args(&tag))
-            .current_dir(&dir),
-        "cargo install",
-    )?;
+    if crate::release::install(&tag).await? == crate::release::Installed::None {
+        println!("{}", crate::text::cargo_builds(&tag));
+        run(
+            Command::new(cargo)
+                .args(install_args(&tag))
+                .current_dir(&dir),
+            "cargo install",
+        )?;
+    }
     // An update asks nothing: a machine updates itself with no person.
     // So the connect of the update has no terminal, and it keeps the
     // choice of the person (01M3XY2SR3VJZAKEPC6CBCS292).

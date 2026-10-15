@@ -4394,6 +4394,34 @@ share.
 
 - **01M4Z60B7H67YSP22NMGT3DM7X** riff ships as one static binary, from a
   GitHub release or with `cargo install`. riff has no image of its own.
+- **01M4ZPJ04D9MJHNPAV0WN1KCES** The static `riff` and `riff-server`
+  are built for `x86_64-unknown-linux-musl` in the image
+  `rust:CHANNEL-alpine`, where CHANNEL is the channel of
+  `rust-toolchain.toml`. `just static` builds them with podman, else
+  docker, into `target/static`. The ELF of each has no interpreter.
+- **01M4ZPJ06QYVA23N9SQ45T8WQC** The CI job "Static riff" builds the
+  static binaries of each pull request and each push. It fails when an
+  ELF has an interpreter, or when `riff --version` does not run in the
+  session image that `riff.toml` pins, with `riff` bound at
+  `/opt/riff/riff` with no write.
+- **01M4ZPJ091W3NYV1V0FJS9K6MS** For a release tag, the CI job "Static
+  riff release" adds `riff-x86_64-unknown-linux-musl`,
+  `riff-server-x86_64-unknown-linux-musl` and `SHA256SUMS` to the
+  GitHub release of the tag. It waits up to 60 minutes for the release.
+  The job "Deploy" of the tag runs only after it passes.
+- **01M4ZPJ0BAQZ6AN06FGXS5D4FP** On Linux x86-64, `riff update`
+  downloads `riff` and `riff-server` from the GitHub release of the tag.
+  It checks the SHA-256 of each file against `SHA256SUMS` of the
+  release, and that each ELF is for this CPU and has no interpreter.
+  When a check fails, it installs nothing. Else it renames each file
+  over the old one in the bin folder of cargo, so a process that runs
+  keeps its old file.
+- **01M4ZPJ0DJ9FTYNPTBBVJCTB37** When the release has no `SHA256SUMS`,
+  or no line for the binaries of this machine, `riff update` builds the
+  release with `cargo install`, and says so.
+- **01M4ZPJ0FXTC78Z8GG2QA65167** `just real-session` runs the static
+  riff of the tree, so its daemon can run `riff relay` in the session
+  image.
 - **01M4Z60B7JF80TMP6FHQ04MHCZ** The session image has a release train
   of its own. Each repository names its session image, pinned by digest,
   in its riff config. The first base is the Dockerfile of #707. An image

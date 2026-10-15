@@ -53,6 +53,82 @@ jobs:
         # Each check, for each diff (01M3WNN7VQJKN5MJH7JN50VF4D).
         run: just ci-full
 
+  static:
+    # The static riff and riff-server of each pull request and each push
+    # (01M4ZPJ04D9MJHNPAV0WN1KCES): a build in rust:CHANNEL-alpine, then
+    # the check: no interpreter in each ELF, and riff --version runs in the
+    # session image of riff.toml (01M4ZPJ06QYVA23N9SQ45T8WQC). For a tag,
+    # it keeps the binaries for the job Static riff release.
+    name: Static riff
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      RIFF_ENGINE: docker
+    steps:
+      # build-id.sh reads the last commit that changed the code.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        run: deploy/static/build.sh release
+
+      - name: Check
+        run: deploy/static/check.sh release
+
+      - name: Name the files of the release
+        if: github.ref_type == 'tag'
+        run: |
+          mkdir dist
+          for name in riff riff-server; do
+            cp "target/static/release/$name" "dist/$name-x86_64-unknown-linux-musl"
+          done
+          cd dist
+          sha256sum -- riff-x86_64-unknown-linux-musl riff-server-x86_64-unknown-linux-musl > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type == 'tag'
+        with:
+          name: static-riff
+          path: dist/
+          if-no-files-found: error
+
+  static_release:
+    # For a release tag, the static binaries and SHA256SUMS go to the
+    # GitHub release of the tag (01M4ZPJ091W3NYV1V0FJS9K6MS). The admin
+    # publishes the release after the push of the tag, so the job waits up
+    # to 60 minutes for it. Only this job writes the repository.
+    name: Static riff release
+    needs: [static]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: static-riff
+          path: dist
+
+      - name: Wait for the release
+        run: |
+          for _ in $(seq 120); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null; then
+              exit 0
+            fi
+            echo "The release $TAG is not there yet. Publish it: gh release create $TAG"
+            sleep 30
+          done
+          echo "::error::The release $TAG is not there after 60 minutes. Publish it, then run this job again."
+          exit 1
+
+      - name: Add the files to the release
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+
   release:
     # A pushed tag v* fails when its version is not the version of the
     # crates (01M3N73AW2J3TVSZWFJ88A91PG).
@@ -78,12 +154,14 @@ jobs:
     # OIDC token of GitHub; no key exists (01M3NJAZAQ3AKMAM0EGM7R3S89).
     # One deploy runs at a time; a newer run waits for it. The job runs
     # in the GitHub environment production, so it waits for the approval
-    # of its reviewer (01M496K1KN392S11YEH33JGK9N).
+    # of its reviewer (01M496K1KN392S11YEH33JGK9N). A tag deploys only
+    # after its static binaries are on its release, so a machine that sees
+    # the new server can download them (01M4ZPJ091W3NYV1V0FJS9K6MS).
     name: Deploy
-    needs: [gate, release]
+    needs: [gate, release, static_release]
     if: >-
       !cancelled() && vars.CLOUD_DEPLOY == 'true' && (
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.release.result == 'success') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.release.result == 'success' && needs.static_release.result == 'success') ||
       (github.event_name == 'workflow_dispatch' && inputs.tag != '' && github.ref == 'refs/heads/main' && needs.gate.result == 'success'))
     runs-on: ubuntu-latest
     environment: production

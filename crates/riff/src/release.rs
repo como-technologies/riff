@@ -1,0 +1,529 @@
+//! The static binaries of a release, and how `riff update` installs
+//! them.
+//!
+//! # Design
+//!
+//! riff ships as one static binary (01M4Z60B7H67YSP22NMGT3DM7X). The
+//! binary has musl in it, so it needs no shared library: its ELF has no
+//! interpreter. So it runs on each Linux of its CPU, also in a session
+//! image with an older libc, where the daemon runs it as `riff relay`
+//! (01M4Z60B7KEV0H161RBZ1SDRY2).
+//!
+//! `just static` builds the static `riff` and `riff-server` of a tree in
+//! the image `rust:CHANNEL-alpine` (01M4ZPJ04D9MJHNPAV0WN1KCES). The CI
+//! job "Static riff" builds them for each pull request and each push,
+//! and checks that each ELF has no interpreter and that `riff --version`
+//! runs in the session image that `riff.toml` pins
+//! (01M4ZPJ06QYVA23N9SQ45T8WQC). For a release tag, it adds them to the
+//! GitHub release of the tag, with [`SUMS`] (01M4ZPJ091W3NYV1V0FJS9K6MS).
+//! The names of the files are [`asset`].
+//!
+//! `riff update` installs these files on a machine with a [`TARGET`]
+//! ([`install`], 01M4ZPJ0BAQZ6AN06FGXS5D4FP). It checks the SHA-256 of
+//! each file against [`SUMS`], and that each ELF is for this CPU and has
+//! no interpreter ([`check`]). Only when each check passes does it
+//! rename the new files over the old ones in the bin folder of cargo
+//! ([`bin_dir`]). A process that runs keeps its old file. When the
+//! release has no [`SUMS`], or no line for this machine, `riff update`
+//! builds the release with cargo, as before (01M4ZPJ0DJ9FTYNPTBBVJCTB37):
+//! an older release, or a machine of another OS or CPU.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant U as riff update
+//!     participant G as the GitHub release vX.Y.Z
+//!     participant B as the bin folder of cargo
+//!     participant C as cargo
+//!     U->>G: SHA256SUMS
+//!     alt no file, or no line for this machine
+//!         U->>C: install --locked --git REPOSITORY --tag vX.Y.Z riff riff-server
+//!     else
+//!         U->>G: riff-TARGET, riff-server-TARGET
+//!         U->>U: check the SHA-256, the CPU and the interpreter
+//!         U->>B: a new file for each, then a rename over the old one
+//!     end
+//! ```
+//!
+//! The variable [`RELEASES`] names another place of the release files,
+//! for the tests.
+//!
+//! ```
+//! use riff::release::{asset, check, sum_of};
+//!
+//! assert_eq!(asset("riff", "x86_64-unknown-linux-musl"), "riff-x86_64-unknown-linux-musl");
+//! let sums = format!("{}  riff-x86_64-unknown-linux-musl\n", "ab".repeat(32));
+//! assert_eq!(sum_of(&sums, "riff-x86_64-unknown-linux-musl"), Some("ab".repeat(32)));
+//! assert!(check(b"#!/bin/sh\n", 62).is_err());
+//! ```
+
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use anyhow::{Context, Result, bail};
+use sha2::{Digest, Sha256};
+
+/// The file of the SHA-256 sums of the static binaries of a release, in
+/// the form of `sha256sum`.
+pub const SUMS: &str = "SHA256SUMS";
+
+/// The binaries that a release ships, in the order of their install:
+/// `riff` last, so that a failed rename of `riff-server` keeps the old
+/// `riff`.
+pub const BINARIES: [&str; 2] = ["riff-server", "riff"];
+
+/// The variable with the URL of the release files, for the tests. A
+/// file is at `RELEASES/TAG/NAME`.
+pub const RELEASES: &str = "RIFF_RELEASES";
+
+/// The target of the static binaries for this machine. `None` when the
+/// releases have none for it.
+pub const TARGET: Option<&str> = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+    Some("x86_64-unknown-linux-musl")
+} else {
+    None
+};
+
+/// The ELF machine of x86-64.
+pub const EM_X86_64: u16 = 62;
+
+/// The ELF machine of this CPU, for [`check`].
+pub const MACHINE: u16 = if cfg!(target_arch = "aarch64") {
+    183
+} else {
+    EM_X86_64
+};
+
+/// The longest wait for the first byte of a server, and between two
+/// reads of a file.
+const WAIT: Duration = Duration::from_secs(30);
+
+/// The name of the release file of `binary` for `target`.
+///
+/// ```
+/// assert_eq!(
+///     riff::release::asset("riff-server", "x86_64-unknown-linux-musl"),
+///     "riff-server-x86_64-unknown-linux-musl"
+/// );
+/// ```
+pub fn asset(binary: &str, target: &str) -> String {
+    format!("{binary}-{target}")
+}
+
+/// The SHA-256 of `name` in `sums`, the text of [`SUMS`], in lowercase
+/// hex. `None` when no line names it. A line is `HEX  NAME`, or
+/// `HEX *NAME` in the binary mode of `sha256sum`.
+///
+/// ```
+/// use riff::release::sum_of;
+///
+/// let a = "0a".repeat(32);
+/// let b = "B1".repeat(32);
+/// let sums = format!("{a}  riff-x\n{b} *riff-server-x\nnot a line\n");
+/// assert_eq!(sum_of(&sums, "riff-x"), Some(a));
+/// assert_eq!(sum_of(&sums, "riff-server-x"), Some("b1".repeat(32)));
+/// assert_eq!(sum_of(&sums, "riff"), None);
+/// assert_eq!(sum_of("abc  riff-x\n", "riff-x"), None);
+/// ```
+pub fn sum_of(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|line| {
+        let (hex, rest) = line.split_once(' ')?;
+        let file = rest.strip_prefix(' ').or_else(|| rest.strip_prefix('*'))?;
+        let hex_ok = hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit());
+        (file == name && hex_ok).then(|| hex.to_ascii_lowercase())
+    })
+}
+
+/// The SHA-256 of `bytes`, in lowercase hex.
+///
+/// ```
+/// assert_eq!(
+///     riff::release::sha256(b"abc"),
+///     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+/// );
+/// ```
+pub fn sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// What riff reads in the ELF of a binary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Elf {
+    /// The machine of its code, for example [`EM_X86_64`].
+    pub machine: u16,
+    /// The program that loads its shared libraries, from its program
+    /// header `PT_INTERP`. `None` for a static binary.
+    pub interpreter: Option<String>,
+}
+
+/// Reads the ELF header and the program headers of `bytes`: a 64-bit
+/// little-endian executable. An error when `bytes` is not one.
+///
+/// ```
+/// let me = std::fs::read(std::env::current_exe()?)?;
+/// let elf = riff::release::elf(&me).unwrap();
+/// assert_eq!(elf.machine, riff::release::MACHINE);
+/// if cfg!(target_env = "gnu") {
+///     assert!(elf.interpreter.unwrap().contains("ld-linux"));
+/// }
+/// assert!(riff::release::elf(b"\x7fELF").is_err());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn elf(bytes: &[u8]) -> Result<Elf, String> {
+    const PT_INTERP: u32 = 3;
+    const PHDR: usize = 56;
+    let u16_at = |at: usize| -> Option<u16> {
+        Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
+    };
+    let u32_at = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+    };
+    let u64_at = |at: usize| -> Option<usize> {
+        let n = u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?);
+        usize::try_from(n).ok()
+    };
+    if bytes.get(..4) != Some(b"\x7fELF".as_slice()) {
+        return Err("it is not an ELF file".into());
+    }
+    if bytes.get(4..6) != Some([2, 1].as_slice()) {
+        return Err("it is not a 64-bit little-endian ELF file".into());
+    }
+    let short = || "its ELF header is too short".to_owned();
+    let kind = u16_at(16).ok_or_else(short)?;
+    if kind != 2 && kind != 3 {
+        return Err(format!("its ELF type {kind} is not an executable"));
+    }
+    let machine = u16_at(18).ok_or_else(short)?;
+    let table = u64_at(32).ok_or_else(short)?;
+    let size = usize::from(u16_at(54).ok_or_else(short)?);
+    let count = usize::from(u16_at(56).ok_or_else(short)?);
+    if count > 0 && size < PHDR {
+        return Err(format!("its program headers have the size {size}"));
+    }
+    let mut interpreter = None;
+    for i in 0..count {
+        let at = i
+            .checked_mul(size)
+            .and_then(|o| o.checked_add(table))
+            .filter(|at| at.checked_add(PHDR).is_some_and(|end| end <= bytes.len()))
+            .ok_or_else(|| "its program headers are past its end".to_owned())?;
+        if u32_at(at) != Some(PT_INTERP) {
+            continue;
+        }
+        let (start, len) = u64_at(at + 8).zip(u64_at(at + 32)).ok_or_else(short)?;
+        let text = start
+            .checked_add(len)
+            .and_then(|end| bytes.get(start..end))
+            .ok_or_else(|| "its interpreter is past its end".to_owned())?;
+        let text = String::from_utf8_lossy(text);
+        interpreter = Some(text.trim_end_matches('\0').to_owned());
+    }
+    Ok(Elf {
+        machine,
+        interpreter,
+    })
+}
+
+/// Checks that `bytes` is a static binary for the ELF machine
+/// `machine`: an ELF with no interpreter. The error says why not.
+///
+/// ```
+/// use riff::release::{check, EM_X86_64};
+///
+/// let me = std::fs::read(std::env::current_exe()?)?;
+/// if cfg!(target_env = "gnu") {
+///     let error = check(&me, riff::release::MACHINE).unwrap_err();
+///     assert!(error.starts_with("it needs the shared libraries of /"), "{error}");
+/// }
+/// assert_eq!(check(b"MZ", EM_X86_64).unwrap_err(), "it is not an ELF file");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn check(bytes: &[u8], machine: u16) -> Result<(), String> {
+    let elf = elf(bytes)?;
+    if elf.machine != machine {
+        return Err(format!(
+            "its code is for the ELF machine {}, not {machine}",
+            elf.machine
+        ));
+    }
+    match elf.interpreter {
+        Some(path) => Err(format!(
+            "it needs the shared libraries of {path}: it is not static"
+        )),
+        None => Ok(()),
+    }
+}
+
+/// The bin folder of `cargo install`: `CARGO_INSTALL_ROOT/bin`, else
+/// `CARGO_HOME/bin`, else `~/.cargo/bin`. So `riff update` puts riff
+/// where the person installed it with cargo.
+///
+/// ```
+/// use std::path::Path;
+/// use riff::release::bin_dir;
+///
+/// let env = |root: Option<&str>, home: Option<&str>| {
+///     move |name: &str| match name {
+///         "CARGO_INSTALL_ROOT" => root.map(Into::into),
+///         "CARGO_HOME" => home.map(Into::into),
+///         "HOME" => Some("/home/ana".into()),
+///         _ => None,
+///     }
+/// };
+/// assert_eq!(bin_dir(env(Some("/opt/c"), Some("/c"))).unwrap(), Path::new("/opt/c/bin"));
+/// assert_eq!(bin_dir(env(None, Some("/c"))).unwrap(), Path::new("/c/bin"));
+/// assert_eq!(bin_dir(env(None, None)).unwrap(), Path::new("/home/ana/.cargo/bin"));
+/// ```
+pub fn bin_dir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let set = |name: &str| var(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let root = set("CARGO_INSTALL_ROOT")
+        .or_else(|| set("CARGO_HOME"))
+        .or_else(|| set("HOME").map(|home| home.join(".cargo")))?;
+    Some(root.join("bin"))
+}
+
+/// The URL of the release file `name` of `tag`: under the variable
+/// [`RELEASES`] when it is set, else on GitHub.
+///
+/// ```
+/// let url = riff::release::url(None, "v1.4.0", "SHA256SUMS");
+/// assert_eq!(url, "https://github.com/como-technologies/riff/releases/download/v1.4.0/SHA256SUMS");
+/// let url = riff::release::url(Some("http://127.0.0.1:9/"), "v1.4.0", "riff-x");
+/// assert_eq!(url, "http://127.0.0.1:9/v1.4.0/riff-x");
+/// ```
+pub fn url(releases: Option<&str>, tag: &str, name: &str) -> String {
+    let base = match releases {
+        Some(base) => base.trim_end_matches('/').to_owned(),
+        None => format!("{}/releases/download", env!("CARGO_PKG_REPOSITORY")),
+    };
+    format!("{base}/{tag}/{name}")
+}
+
+/// What [`install`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Installed {
+    /// It put the static binaries of the release in this folder.
+    Static(PathBuf),
+    /// The release has no static binaries for this machine. It changed
+    /// nothing.
+    None,
+}
+
+/// Installs the static `riff` and `riff-server` of the release `tag` in
+/// the bin folder of cargo (01M4ZPJ0BAQZ6AN06FGXS5D4FP). It gives
+/// [`Installed::None`] when the machine has no [`TARGET`], or the release
+/// has no [`SUMS`] or no line for this machine
+/// (01M4ZPJ0DJ9FTYNPTBBVJCTB37). An error when a file does not come, or
+/// fails a check: then it changes nothing.
+pub async fn install(tag: &str) -> Result<Installed> {
+    let Some(target) = TARGET else {
+        return Ok(Installed::None);
+    };
+    let releases = std::env::var(RELEASES).ok();
+    let client = reqwest::Client::builder()
+        .connect_timeout(WAIT)
+        .read_timeout(WAIT)
+        .build()
+        .context("cannot make the HTTP client of the download")?;
+    let get = |name: String| {
+        let url = url(releases.as_deref(), tag, &name);
+        let client = client.clone();
+        async move { fetch(&client, &url).await }
+    };
+    let Some(sums) = get(SUMS.to_owned()).await? else {
+        return Ok(Installed::None);
+    };
+    let sums = String::from_utf8_lossy(&sums).into_owned();
+    let mut wanted = Vec::new();
+    for binary in BINARIES {
+        let name = asset(binary, target);
+        let Some(sum) = sum_of(&sums, &name) else {
+            return Ok(Installed::None);
+        };
+        wanted.push((binary, name, sum));
+    }
+    let dir = bin_dir(std::env::var_os)
+        .context("cannot find the bin folder of cargo: set HOME or CARGO_HOME")?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    println!("{}", crate::text::downloads(tag, target, &dir));
+    let mut news = Vec::new();
+    for (binary, name, sum) in wanted {
+        let bytes = get(name.clone())
+            .await?
+            .with_context(|| format!("the release {tag} has no {name}"))?;
+        let got = sha256(&bytes);
+        if got != sum {
+            bail!("the SHA-256 of {name} of {tag} is {got}, not {sum} of {SUMS}");
+        }
+        check(&bytes, MACHINE).map_err(|why| anyhow::anyhow!("{name} of {tag}: {why}"))?;
+        news.push((write_new(&dir, binary, &bytes)?, dir.join(binary)));
+    }
+    for (new, old) in &news {
+        if let Err(e) = std::fs::rename(new, old) {
+            // A new file that moved is not there any more.
+            for (new, _) in &news {
+                let _ = std::fs::remove_file(new);
+            }
+            return Err(e).with_context(|| format!("cannot replace {}", old.display()));
+        }
+    }
+    Ok(Installed::Static(dir))
+}
+
+/// The body of `url`. `None` for a 404: the release has no such file.
+async fn fetch(client: &reqwest::Client, url: &str) -> Result<Option<Vec<u8>>> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("cannot get {url}"))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let response = response
+        .error_for_status()
+        .with_context(|| format!("cannot get {url}"))?;
+    let bytes = response
+        .bytes()
+        .await
+        .with_context(|| format!("cannot read {url}"))?;
+    Ok(Some(bytes.to_vec()))
+}
+
+/// Writes `bytes` to a new file beside `dir/binary`, with the mode
+/// 0755, and gives its path. The file has the ID of this process in its
+/// name, so two updates do not share it.
+fn write_new(dir: &Path, binary: &str, bytes: &[u8]) -> Result<PathBuf> {
+    let path = dir.join(format!(".{binary}.new-{}", std::process::id()));
+    let write = || -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o755)
+            .open(&path)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+    };
+    write().map_err(|e| {
+        let _ = std::fs::remove_file(&path);
+        anyhow::Error::new(e).context(format!("cannot write {}", path.display()))
+    })?;
+    Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 64-bit little-endian ELF of `machine` with one program header
+    /// of each type in `types`. A `PT_INTERP` names `interp`.
+    fn fake_elf(machine: u16, types: &[u32], interp: &str) -> Vec<u8> {
+        let table = 64usize;
+        let strings = table + 56 * types.len();
+        let mut bytes = vec![0u8; strings];
+        bytes[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        bytes[16..18].copy_from_slice(&3u16.to_le_bytes());
+        bytes[18..20].copy_from_slice(&machine.to_le_bytes());
+        bytes[32..40].copy_from_slice(&(table as u64).to_le_bytes());
+        bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
+        bytes[56..58].copy_from_slice(&(types.len() as u16).to_le_bytes());
+        for (i, kind) in types.iter().enumerate() {
+            let at = table + 56 * i;
+            bytes[at..at + 4].copy_from_slice(&kind.to_le_bytes());
+            bytes[at + 8..at + 16].copy_from_slice(&(strings as u64).to_le_bytes());
+            bytes[at + 32..at + 40].copy_from_slice(&(interp.len() as u64 + 1).to_le_bytes());
+        }
+        bytes.extend_from_slice(interp.as_bytes());
+        bytes.push(0);
+        bytes
+    }
+
+    #[test]
+    fn a_static_binary_passes_and_one_with_an_interpreter_fails() {
+        let load = 1;
+        let interp = 3;
+        let ok = fake_elf(EM_X86_64, &[load, load], "");
+        assert_eq!(check(&ok, EM_X86_64), Ok(()));
+        let dynamic = fake_elf(EM_X86_64, &[interp, load], "/lib64/ld-linux-x86-64.so.2");
+        assert_eq!(
+            elf(&dynamic).unwrap().interpreter.as_deref(),
+            Some("/lib64/ld-linux-x86-64.so.2")
+        );
+        assert_eq!(
+            check(&dynamic, EM_X86_64).unwrap_err(),
+            "it needs the shared libraries of /lib64/ld-linux-x86-64.so.2: it is not static"
+        );
+    }
+
+    #[test]
+    fn a_binary_of_another_cpu_fails() {
+        let arm = fake_elf(183, &[1], "");
+        assert_eq!(
+            check(&arm, EM_X86_64).unwrap_err(),
+            "its code is for the ELF machine 183, not 62"
+        );
+    }
+
+    #[test]
+    fn a_broken_elf_is_an_error_and_no_panic() {
+        let good = fake_elf(EM_X86_64, &[3], "/lib/ld.so");
+        for cut in 0..good.len() {
+            let _ = elf(&good[..cut]);
+        }
+        let mut far = good.clone();
+        far[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert_eq!(elf(&far).unwrap_err(), "its program headers are past its end");
+        let mut far = good.clone();
+        far[64 + 8..64 + 16].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert_eq!(elf(&far).unwrap_err(), "its interpreter is past its end");
+        let mut small = good;
+        small[54..56].copy_from_slice(&8u16.to_le_bytes());
+        assert_eq!(
+            elf(&small).unwrap_err(),
+            "its program headers have the size 8"
+        );
+        let mut object = fake_elf(EM_X86_64, &[], "");
+        object[16..18].copy_from_slice(&1u16.to_le_bytes());
+        assert_eq!(
+            elf(&object).unwrap_err(),
+            "its ELF type 1 is not an executable"
+        );
+        assert_eq!(
+            elf(b"\x7fELF\x01\x01").unwrap_err(),
+            "it is not a 64-bit little-endian ELF file"
+        );
+    }
+
+    #[test]
+    fn this_test_binary_is_read_as_the_loader_sees_it() {
+        let me = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+        let elf = elf(&me).unwrap();
+        assert_eq!(elf.machine, MACHINE);
+        assert_eq!(
+            elf.interpreter.is_some(),
+            cfg!(target_env = "gnu"),
+            "{elf:?}"
+        );
+    }
+
+    #[test]
+    fn the_new_file_has_the_mode_of_a_program_and_the_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_new(dir.path(), "riff", b"bytes").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"bytes");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".riff.new-")
+        );
+    }
+}

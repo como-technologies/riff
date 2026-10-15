@@ -3419,6 +3419,38 @@ pub fn newest_instead(server: &str, tag: &str) -> String {
     )
 }
 
+/// The line of `riff update` before it downloads the static binaries of
+/// the release `tag` for `target` into `dir` (01M4ZPJ0BAQZ6AN06FGXS5D4FP).
+///
+/// ```
+/// let line = riff::text::downloads("v1.4.0", "x86_64-unknown-linux-musl", "/h/.cargo/bin".as_ref());
+/// assert_eq!(
+///     line,
+///     "riff downloads the static riff and riff-server of v1.4.0 \
+///      (x86_64-unknown-linux-musl) into /h/.cargo/bin."
+/// );
+/// ```
+pub fn downloads(tag: &str, target: &str, dir: &std::path::Path) -> String {
+    format!(
+        "riff downloads the static riff and riff-server of {tag} ({target}) into {}.",
+        dir.display()
+    )
+}
+
+/// The line of `riff update` when the release `tag` has no static
+/// binaries for this machine, so cargo builds them
+/// (01M4ZPJ0DJ9FTYNPTBBVJCTB37).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::cargo_builds("v1.3.1"),
+///     "The release v1.3.1 has no static riff for this machine, so cargo builds it."
+/// );
+/// ```
+pub fn cargo_builds(tag: &str) -> String {
+    format!("The release {tag} has no static riff for this machine, so cargo builds it.")
+}
+
 /// The refusal of `riff workers host` outside tmux
 /// (01M3N7AK8TVYV8S0WR3RP0TN8X).
 pub const HOST_NEEDS_TMUX: &str = "riff workers host needs tmux: it starts the workers in its \
