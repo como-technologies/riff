@@ -1953,13 +1953,18 @@ pub async fn status(dir: &Path) -> Result<Status> {
 
 /// Asks the daemon in the folder `dir` to have the image `image`. It
 /// shows each line of the daemon with `show`.
-pub async fn image(dir: &Path, image: &str, mut show: impl FnMut(&str)) -> Result<()> {
+pub async fn image(dir: &Path, image: &str, show: impl FnMut(&str)) -> Result<()> {
+    let ask = Ask::Image {
+        image: image.into(),
+    };
+    ask_done(dir, ask, show).await
+}
+
+/// Sends `ask` to the daemon in the folder `dir`, shows each line of
+/// the daemon with `show`, and waits for [`Say::Done`].
+pub async fn ask_done(dir: &Path, ask: Ask, mut show: impl FnMut(&str)) -> Result<()> {
     let mut client = Client::connect(dir).await?;
-    client
-        .ask(Ask::Image {
-            image: image.into(),
-        })
-        .await?;
+    client.ask(ask).await?;
     loop {
         match client.next().await? {
             Some(Say::Line { text }) => show(&text),
@@ -2838,6 +2843,7 @@ mod tests {
             inputs: vec![user_line("Do it.")],
             closed: false,
             failed: false,
+            job: None,
         };
         std::fs::write(
             record_path(&dir, name),
@@ -2908,6 +2914,7 @@ mod tests {
                 inputs: vec![user_line("Do it.")],
                 closed: false,
                 failed: false,
+                job: None,
             };
             std::fs::write(
                 record_path(&dir, name),
@@ -3020,6 +3027,7 @@ mod tests {
             inputs: vec![],
             closed: false,
             failed: false,
+            job: None,
         };
         private_dir(&dir.join(LIVE)).unwrap();
         std::fs::write(

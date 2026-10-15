@@ -154,6 +154,35 @@ impl Limit {
     }
 }
 
+/// `riff daemon limit`: sets the number of `sessions` and the `floor`
+/// in GB that are given, in the folder `dir` of the daemon, and gives the
+/// limit (01M4ZV3B6HAFTSC2K63FMC5FYA). With neither, it changes nothing.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let limit = riff::room::set(dir.path(), None, None)?;
+/// assert_eq!(limit, riff::room::Limit::default());
+/// assert!(!dir.path().join(riff::room::LIMIT_FILE).exists());
+/// let limit = riff::room::set(dir.path(), Some(5), None)?;
+/// assert_eq!((limit.sessions, limit.floor_gb), (5, 8));
+/// assert_eq!(riff::room::set(dir.path(), None, Some(4))?.sessions, 5);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn set(dir: &Path, sessions: Option<u32>, floor_gb: Option<u64>) -> Result<Limit> {
+    let mut limit = Limit::read(dir)?;
+    if sessions.is_none() && floor_gb.is_none() {
+        return Ok(limit);
+    }
+    if let Some(sessions) = sessions {
+        limit.sessions = sessions;
+    }
+    if let Some(floor_gb) = floor_gb {
+        limit.floor_gb = floor_gb;
+    }
+    limit.write(dir)?;
+    Ok(limit)
+}
+
 /// The free memory of the text of `/proc/meminfo`, in bytes:
 /// `MemAvailable`.
 ///

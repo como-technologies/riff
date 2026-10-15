@@ -86,7 +86,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::wire::{Kind, PullState, RiffState, StartReason, WORKER_ALIVE_EVERY};
 use serde::{Deserialize, Serialize};
@@ -174,6 +174,44 @@ pub fn write_waves(dir: &Path, waves: &BTreeMap<String, Wave>) -> Result<()> {
     std::fs::write(&tmp, serde_json::to_vec_pretty(waves)?)
         .with_context(|| format!("cannot write {}", tmp.display()))?;
     std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
+}
+
+/// `riff wave run`: asks the daemon in the folder `dir` to run the
+/// current wave of the repository of the place `here`, on the
+/// riff-server `server` (01M4ZV3B6J89KJQ0F14YWTZMJQ).
+pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
+    if here.default_thread().is_none() {
+        bail!("{}", text::RUN_NO_REPO);
+    }
+    let (main, _) = run::main_clone(&identity::working_dir()?)?;
+    // The repository pins its session image: each session needs it.
+    Image::of_repository(&main)?;
+    let repo = here.repo_text();
+    let wave = Wave {
+        repo: repo.clone(),
+        main,
+        server: server.to_owned(),
+        host: here.host().to_owned(),
+    };
+    crate::daemon::ask_done(dir, crate::daemon::Ask::Wave { wave }, |line| {
+        println!("{line}");
+    })
+    .await?;
+    println!("{}", text::wave_asked(&repo));
+    Ok(())
+}
+
+/// `riff wave stop`: asks the daemon in the folder `dir` to start no new
+/// session for the wave of the repository of the place `here`.
+pub async fn ask_stop(dir: &Path, here: &Place) -> Result<()> {
+    if here.default_thread().is_none() {
+        bail!("{}", text::RUN_NO_REPO);
+    }
+    let repo = here.repo_text();
+    let ask = crate::daemon::Ask::WaveStop { repo: repo.clone() };
+    crate::daemon::ask_done(dir, ask, |line| println!("{line}")).await?;
+    println!("{}", text::wave_stops(&repo));
+    Ok(())
 }
 
 /// What a session of a wave does.
@@ -1137,3 +1175,452 @@ impl World for Live {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Instant;
+
+    use super::*;
+    use crate::daemon::dir_in;
+    use crate::room::Limit;
+    use crate::runtime::{Bind, Env, Fake, SessionSpec, Source};
+
+    const IMAGE: &str = "localhost/riff-session:test";
+    const GB: u64 = 1 << 30;
+
+    /// A pull request of the fake forge.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Pr {
+        /// It waits for a verify.
+        Asked,
+        /// The verify passed.
+        Passed,
+    }
+
+    /// The forge and the riff of a test.
+    #[derive(Debug, Default)]
+    struct Forge {
+        /// The open items of the wave, in order.
+        items: Vec<u64>,
+        holds: BTreeSet<String>,
+        /// The claims: the item, and the session that holds it.
+        claims: BTreeMap<String, String>,
+        /// The pull requests, by issue.
+        pulls: BTreeMap<u64, Pr>,
+        /// Each claim of a session: the item, and the session.
+        starts: Vec<(String, String)>,
+        /// Each item after its end.
+        finished: Vec<String>,
+        /// Each message to the lead.
+        told: Vec<String>,
+        sessions: u64,
+        /// A build ends with no pull request.
+        no_pull: bool,
+    }
+
+    /// A fake [`World`]: a forge in memory, a claim that fails for a
+    /// held item as on riff-server, and a session folder in `root`.
+    struct Fakes {
+        root: PathBuf,
+        forge: Mutex<Forge>,
+    }
+
+    impl World for Fakes {
+        fn look<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<Look>> {
+            Box::pin(async move {
+                let forge = lock(&self.forge);
+                let claimed = |item: &str| forge.claims.contains_key(item);
+                let verifies = forge
+                    .pulls
+                    .iter()
+                    .filter(|(n, pr)| **pr == Pr::Asked && !claimed(&format!("verify-issue-{n}")))
+                    .map(|(n, _)| format!("verify-issue-{n}"));
+                let builds = forge
+                    .items
+                    .iter()
+                    .filter(|n| !forge.pulls.contains_key(n) && !claimed(&format!("issue-{n}")))
+                    .map(|n| format!("issue-{n}"));
+                Ok(Look {
+                    paused: false,
+                    free: verifies.chain(builds).collect(),
+                    claims: forge.claims.keys().cloned().collect(),
+                    holds: forge.holds.clone(),
+                    pulls: forge
+                        .pulls
+                        .keys()
+                        .map(|n| {
+                            let waiting = Waiting {
+                                pull: 40 + n,
+                                commit: format!("c{n}"),
+                                gate_done: true,
+                            };
+                            (*n, waiting)
+                        })
+                        .collect(),
+                })
+            })
+        }
+
+        fn image(&self, _: &Wave) -> Result<String> {
+            Ok(IMAGE.into())
+        }
+
+        fn begin<'a>(
+            &'a self,
+            _: &'a Wave,
+            work: &'a Work,
+            image: &'a str,
+        ) -> BoxFuture<'a, Result<Option<Start>>> {
+            Box::pin(async move {
+                let item = work.item();
+                let mut forge = lock(&self.forge);
+                if forge.holds.contains(&item) || forge.claims.contains_key(&item) {
+                    return Ok(None);
+                }
+                forge.sessions += 1;
+                let session = format!("{:08x}", forge.sessions);
+                forge.claims.insert(item.clone(), session.clone());
+                forge.starts.push((item.clone(), session.clone()));
+                let name = format!("riff-{item}-{session}");
+                let folder = self.root.join("sessions").join(&name);
+                let clone = folder.join("clone");
+                std::fs::create_dir_all(&clone)?;
+                let spec = SessionSpec {
+                    name,
+                    image: image.into(),
+                    home: "/home/mike".into(),
+                    workdir: clone.clone(),
+                    binds: vec![Bind {
+                        source: Source::Path(clone.clone()),
+                        target: clone,
+                        write: true,
+                    }],
+                    env: vec![Env::Host("GH_TOKEN".into())],
+                    memory: "8g".into(),
+                    cpus: 4,
+                    command: vec!["claude".into()],
+                };
+                let me = format!("riff://mike@thelio/o/r?session={session}#{item}").parse()?;
+                Ok(Some(Start {
+                    session,
+                    item,
+                    folder,
+                    spec,
+                    start: "Do it.".into(),
+                    values: vec![("GH_TOKEN".into(), "gho_secret1".into())],
+                    secrets: vec!["gho_secret1".into()],
+                    server: "http://127.0.0.1:1".into(),
+                    me,
+                }))
+            })
+        }
+
+        fn resume(&self, _: &Record) {}
+
+        fn finish<'a>(&'a self, record: &'a Record, _: Ended) -> BoxFuture<'a, Result<()>> {
+            Box::pin(async move {
+                let mut forge = lock(&self.forge);
+                let job = record.job.as_ref().expect("a job");
+                match job.work {
+                    Work::Build { .. } if forge.no_pull => None,
+                    Work::Build { issue } => forge.pulls.insert(issue, Pr::Asked),
+                    Work::Verify { issue, .. } => forge.pulls.insert(issue, Pr::Passed),
+                };
+                forge.claims.remove(&record.live.item);
+                forge.finished.push(record.live.item.clone());
+                Ok(())
+            })
+        }
+
+        fn sweep<'a>(&'a self, _: &'a Wave, _: &'a [PathBuf]) -> BoxFuture<'a, Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn tell<'a>(&'a self, _: &'a Wave, body: &'a str) -> BoxFuture<'a, ()> {
+            Box::pin(async move { lock(&self.forge).told.push(body.to_owned()) })
+        }
+    }
+
+    /// A daemon on the fake runtime with the fake world, in a temp
+    /// folder.
+    struct Here {
+        _root: tempfile::TempDir,
+        fake: Fake,
+        world: Arc<Fakes>,
+        daemon: Arc<Daemon<Fake>>,
+    }
+
+    impl Here {
+        /// The wave of the open `items`, with the limit `sessions` and
+        /// a floor of 8 GB, and the free memory of `free` in GB.
+        async fn new(items: &[u64], sessions: u32, free: Arc<AtomicU64>) -> Here {
+            let root = tempfile::tempdir().unwrap();
+            let dir = dir_in(root.path());
+            let fake = Fake::default().with_image(IMAGE);
+            let world = Arc::new(Fakes {
+                root: root.path().to_owned(),
+                forge: Mutex::new(Forge {
+                    items: items.to_vec(),
+                    ..Forge::default()
+                }),
+            });
+            let memory: crate::room::Memory =
+                Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
+            let daemon = Daemon::open(fake.clone(), dir.clone())
+                .await
+                .unwrap()
+                .with_memory(memory)
+                .with_world(world.clone());
+            Limit {
+                sessions,
+                floor_gb: 8,
+            }
+            .write(&dir)
+            .unwrap();
+            Here {
+                _root: root,
+                fake,
+                world,
+                daemon: Arc::new(daemon),
+            }
+        }
+
+        fn run(&self) {
+            self.daemon
+                .run_wave(Wave {
+                    repo: "o/r".into(),
+                    main: "/src/r".into(),
+                    server: "http://127.0.0.1:1".into(),
+                    host: "thelio".into(),
+                })
+                .unwrap();
+        }
+
+        fn forge(&self) -> MutexGuard<'_, Forge> {
+            lock(&self.world.forge)
+        }
+
+        /// Waits until `done` holds. It tells the wave to look again
+        /// while it waits. At most `limit` sessions live the whole time.
+        async fn until(&self, limit: usize, done: impl Fn(&Here) -> bool) {
+            let started = Instant::now();
+            while !done(self) {
+                assert!(self.daemon.live_count() <= limit, "more than {limit} live");
+                assert!(started.elapsed() < isolated::HANG, "it did not happen");
+                self.daemon.tell_changed();
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            assert!(self.daemon.live_count() <= limit, "more than {limit} live");
+        }
+
+        /// The name of the container of `item`, while it runs.
+        fn running(&self, item: &str) -> Option<String> {
+            self.daemon
+                .records()
+                .into_iter()
+                .find(|r| r.live.item == item)
+                .map(|r| r.live.name)
+        }
+
+        /// Ends the live session of `item`.
+        async fn end(&self, item: &str) {
+            let name = self.running(item).expect("it runs");
+            self.fake.stop(&name).await.unwrap();
+        }
+
+        /// Lets the wave look for a time. At most `limit` sessions live.
+        async fn idle(&self, limit: usize) {
+            for _ in 0..20 {
+                self.daemon.tell_changed();
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                assert!(self.daemon.live_count() <= limit, "more than {limit} live");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_limit_of_the_host_holds_while_the_wave_runs() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2, 3], 2, free).await;
+        here.run();
+        here.until(2, |h| h.daemon.live_count() == 2).await;
+        here.idle(2).await;
+        assert_eq!(here.forge().starts.len(), 2);
+        // Each end makes room for the next work: the verify of an item,
+        // or the next item. Two sessions live at most.
+        for n in 1..=6 {
+            here.until(2, |h| !h.daemon.records().is_empty()).await;
+            let item = here.daemon.records()[0].live.item.clone();
+            here.end(&item).await;
+            here.until(2, |h| h.forge().finished.len() == n).await;
+        }
+        here.idle(2).await;
+        let forge = here.forge();
+        assert!(forge.pulls.values().all(|pr| *pr == Pr::Passed), "{forge:?}");
+        assert_eq!(forge.starts.len(), 6, "one session for each item and each verify");
+    }
+
+    #[tokio::test]
+    async fn the_wave_starts_nothing_while_the_free_memory_is_below_the_floor() {
+        let free = Arc::new(AtomicU64::new(2));
+        let here = Here::new(&[1], 3, free.clone()).await;
+        here.run();
+        here.idle(0).await;
+        assert!(here.forge().starts.is_empty());
+        free.store(9, Ordering::SeqCst);
+        here.until(1, |h| h.daemon.live_count() == 1).await;
+    }
+
+    #[tokio::test]
+    async fn a_held_item_never_starts() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        here.forge().holds.insert("issue-1".into());
+        here.forge().holds.insert("verify-issue-2".into());
+        here.run();
+        here.until(3, |h| h.running("issue-2").is_some()).await;
+        here.end("issue-2").await;
+        here.until(3, |h| h.forge().finished == ["issue-2"]).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(started, ["issue-2"], "no held item and no held verify");
+        assert_eq!(forge.pulls.get(&2), Some(&Pr::Asked), "the verify waits");
+    }
+
+    #[tokio::test]
+    async fn an_author_never_verifies_its_own_item() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        // The author opens its pull request, and works on: no verify
+        // starts while it holds the item.
+        here.forge().pulls.insert(1, Pr::Asked);
+        here.idle(3).await;
+        assert_eq!(here.forge().starts.len(), 1);
+        here.end("issue-1").await;
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        let forge = here.forge();
+        let [(build, author), (verify, verifier)] = &forge.starts[..] else {
+            panic!("{forge:?}");
+        };
+        assert_eq!(
+            (build.as_str(), verify.as_str()),
+            ("issue-1", "verify-issue-1")
+        );
+        assert_ne!(author, verifier, "the verify is a new session");
+    }
+
+    #[tokio::test]
+    async fn an_item_starts_at_most_three_times_and_the_lead_hears_of_it() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        // Each session of the item ends with no pull request.
+        here.forge().no_pull = true;
+        here.run();
+        for n in 1..=STARTS {
+            here.until(3, |h| h.running("issue-1").is_some()).await;
+            here.end("issue-1").await;
+            here.until(3, |h| h.forge().finished.len() == n as usize)
+                .await;
+        }
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.starts.len(), 3);
+        assert_eq!(forge.told, [text::wave_spent("issue-1", STARTS)]);
+    }
+
+    #[tokio::test]
+    async fn a_stop_of_the_wave_starts_no_new_session_and_the_sessions_go_on() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 1, free).await;
+        here.run();
+        here.until(1, |h| h.running("issue-1").is_some()).await;
+        assert!(here.daemon.stop_wave("o/r").unwrap());
+        assert!(here.running("issue-1").is_some(), "the session goes on");
+        here.end("issue-1").await;
+        here.until(1, |h| h.forge().finished == ["issue-1"]).await;
+        here.idle(1).await;
+        assert_eq!(here.forge().starts.len(), 1);
+        assert!(!here.daemon.stop_wave("o/r").unwrap());
+    }
+
+    #[test]
+    fn a_wave_goes_to_its_file_and_comes_back() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_waves(dir.path()).unwrap().is_empty());
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        let waves: BTreeMap<String, Wave> = [("o/r".to_owned(), wave)].into();
+        write_waves(dir.path(), &waves).unwrap();
+        assert_eq!(read_waves(dir.path()).unwrap(), waves);
+    }
+
+    #[test]
+    fn the_pick_skips_a_verify_until_its_gate_is_done_and_counts_the_starts() {
+        let waiting = |gate_done| Waiting {
+            pull: 40,
+            commit: "c".into(),
+            gate_done,
+        };
+        let look = Look {
+            free: vec!["verify-issue-9".into(), "issue-12".into()],
+            pulls: [(9, waiting(false))].into(),
+            ..Look::default()
+        };
+        let none = BTreeSet::new();
+        assert_eq!(
+            pick(&look, &none, &BTreeMap::new()),
+            Some(Work::Build { issue: 12 })
+        );
+        let spent: BTreeMap<String, u32> = [("issue-12".to_owned(), STARTS)].into();
+        assert_eq!(pick(&look, &none, &spent), None);
+        let running: BTreeSet<String> = ["issue-12".to_owned()].into();
+        assert_eq!(pick(&look, &running, &BTreeMap::new()), None);
+        let look = Look {
+            pulls: [(9, waiting(true))].into(),
+            ..look
+        };
+        assert_eq!(
+            pick(&look, &none, &BTreeMap::new()),
+            Some(Work::Verify {
+                issue: 9,
+                pull: 40,
+                commit: "c".into()
+            })
+        );
+        // The author of 9 runs in this daemon.
+        let running: BTreeSet<String> = ["issue-9".to_owned()].into();
+        assert_eq!(
+            pick(&look, &running, &BTreeMap::new()),
+            Some(Work::Build { issue: 12 })
+        );
+    }
+
+    #[test]
+    fn a_job_goes_into_the_record_and_comes_back() {
+        let job = Job {
+            wave: Wave {
+                repo: "o/r".into(),
+                main: "/src/r".into(),
+                server: "http://127.0.0.1:1".into(),
+                host: "thelio".into(),
+            },
+            work: Work::Verify {
+                issue: 12,
+                pull: 40,
+                commit: "1a2b".into(),
+            },
+        };
+        let text = serde_json::to_string(&job).unwrap();
+        assert!(text.contains(r#""kind":"verify""#), "{text}");
+        assert_eq!(serde_json::from_str::<Job>(&text).unwrap(), job);
+    }
+}

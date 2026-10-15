@@ -564,6 +564,18 @@ enum Command {
         #[arg(long)]
         image: Option<String>,
     },
+    /// Let the riff daemon run the wave of this repository
+    ///
+    /// The daemon starts one session for each free item of the current
+    /// wave, and one for each pull request that waits for a verify, when
+    /// the host has room: see riff daemon limit. Each session does one
+    /// item in its own container, and ends. The daemon claims each item,
+    /// sends the verify request, reports the result of each verify, and
+    /// removes the clone of each item after its merge.
+    Wave {
+        #[command(subcommand)]
+        command: WaveCommand,
+    },
     /// Run the riff daemon, or install it, or show it
     ///
     /// The riff daemon owns the containers of riff run on this machine.
@@ -1062,6 +1074,20 @@ enum Workers {
 }
 
 #[derive(Subcommand)]
+enum WaveCommand {
+    /// Run the current wave of the repository of this folder
+    ///
+    /// The daemon keeps the wave, also over its own restart, until riff
+    /// wave stop. It needs the sign-in of riff, of gh and of claude on
+    /// this machine.
+    Run,
+    /// Start no new session for the wave of this repository
+    ///
+    /// The sessions that run go on to their end.
+    Stop,
+}
+
+#[derive(Subcommand)]
 enum DaemonCommand {
     /// Install and start the systemd user unit of the riff daemon
     ///
@@ -1084,6 +1110,20 @@ enum DaemonCommand {
     Events {
         /// The name of the container, for example riff-issue-12-1a2b3c4d.
         name: String,
+    },
+    /// Show or set the limit of this host
+    ///
+    /// The daemon starts a session only when fewer sessions than the
+    /// limit live, and the free memory is at or above the floor. Each
+    /// other start waits for room, in order. With no flag, it shows the
+    /// limit. The default is 3 sessions and a floor of 8 GB.
+    Limit {
+        /// The most live sessions.
+        #[arg(long)]
+        sessions: Option<u32>,
+        /// The floor of free memory for a start, in GB.
+        #[arg(long, value_name = "GB")]
+        floor: Option<u64>,
     },
 }
 
@@ -1742,6 +1782,14 @@ async fn main() -> Result<()> {
         let code = riff::run::run(api, &here, &server, item, image.as_deref()).await?;
         std::process::exit(code);
     }
+    if let Command::Wave { command } = &cli.command {
+        let dir = riff::daemon::dir()?;
+        match command {
+            WaveCommand::Run => riff::wave::ask_run(&dir, &here, api.base()).await?,
+            WaveCommand::Stop => riff::wave::ask_stop(&dir, &here).await?,
+        }
+        return Ok(());
+    }
     let me = identity::me(&here, api.base())?;
     // A session that left makes no call (01M3MEEFETT9A0DRWBKQTG77Z2).
     // `riff mcp` still runs: its `join` tool brings the session back.
@@ -2042,7 +2090,8 @@ async fn main() -> Result<()> {
         | Command::Chat { .. }
         | Command::Admin { .. }
         | Command::Owner { .. }
-        | Command::Run { .. } => unreachable!("handled before the identity"),
+        | Command::Run { .. }
+        | Command::Wave { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
 }
@@ -2396,6 +2445,11 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
             if code != 0 {
                 std::process::exit(code);
             }
+            Ok(())
+        }
+        Some(DaemonCommand::Limit { sessions, floor }) => {
+            let limit = riff::room::set(&riff::daemon::dir()?, *sessions, *floor)?;
+            println!("{}", riff::text::daemon_limit(&limit));
             Ok(())
         }
     }
