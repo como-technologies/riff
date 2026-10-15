@@ -4975,6 +4975,12 @@ pub fn init_podman_failed(stderr: &str) -> String {
 pub const INIT_FIX_PODMAN: &str =
     "install podman and run riff as your own user, for example: sudo apt install podman";
 
+/// `riff init` runs as root.
+pub const INIT_ROOT: &str = "riff runs as root, so podman runs with no user namespace";
+
+/// The fix when `riff init` runs as root.
+pub const INIT_FIX_ROOT: &str = "run riff init as your own user, not as root and not with sudo";
+
 /// riff cannot read `what`.
 pub fn init_cannot_read(what: &str) -> String {
     format!("riff cannot read {what}")

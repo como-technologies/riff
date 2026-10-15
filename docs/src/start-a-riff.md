@@ -152,4 +152,51 @@ A riff of another version can refuse `riff` (see
 [Builds](how-it-works.md#builds)). When you joined a riff, see
 [Update riff](join-a-riff.md#update-riff) of Join a Riff.
 
+## Get ready for riff 3.0
+
+riff 3.0 runs each work item in a container of its own on your
+machine. It is new: see [riff 3.0](riff-3.md). riff 1.3 still runs the
+riff. To try riff 3.0, install podman. On Ubuntu:
+
+```sh
+sudo apt install podman
+```
+
+Then run this in your clone of the project:
+
+```sh
+riff init
+```
+
+```mermaid
+flowchart LR
+    C["check this machine"] -- "each check passes" --> D["install and start<br/>the riff daemon"]
+    C -- "a check fails" --> F["print the fix,<br/>change nothing"]
+    D --> I["get the session image<br/>of the project"]
+```
+
+`riff init` prints one line for each check, with `pass` or `fail`:
+
+| Check | It must be true |
+|---|---|
+| podman | `podman --version` runs. |
+| `/etc/subuid`, `/etc/subgid` | Each gives you 65536 IDs or more. |
+| cgroup v2 | Your user gets `cpu` and `memory`. |
+| The session image | `riff.toml` of the project pins it. |
+
+A line with `fail` also gives the fix. Do each fix, then run
+`riff init` again. When each check passes, `riff init` installs and
+starts the riff daemon, and the daemon gets the session image. A riff
+daemon that runs already stays. Then do one item: see
+[Run one item in a container](development.md#run-one-item-in-a-container).
+
+### Check this machine only
+
+This command changes nothing. It prints the fix of each check that
+fails, and exits with status 1 when a check fails:
+
+```sh
+riff init --check
+```
+
 To learn more, read [How It Works](how-it-works.md).

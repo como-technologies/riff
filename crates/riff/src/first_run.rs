@@ -31,7 +31,7 @@
 //!
 //! | Check | riff reads | Pass |
 //! |---|---|---|
-//! | podman | `podman --version` | it runs |
+//! | podman | `podman --version`, and the user ID | it runs, and riff does not run as root: so podman runs rootless |
 //! | `/etc/subuid` | the lines of the person, by name or by user ID | [`MIN_IDS`] IDs or more, added over the lines |
 //! | `/etc/subgid` | the same | the same |
 //! | cgroup v2 | `/sys/fs/cgroup/cgroup.controllers`, and `cgroup.controllers` of `user@UID.service` | the file is there, and the controllers of the user have `cpu` and `memory` |
@@ -313,6 +313,9 @@ fn cgroup_check(facts: &Facts) -> Check {
 /// (01M4ZJN6TEWCYCB39XTH6BBD9H).
 pub fn checks(facts: &Facts) -> Vec<Check> {
     let podman = match &facts.podman {
+        Ok(_) if facts.uid == 0 => {
+            Check::fail("podman", text::INIT_ROOT.into(), text::INIT_FIX_ROOT.into())
+        }
         Ok(version) => Check::pass("podman", version.clone()),
         Err(why) => Check::fail("podman", why.clone(), text::INIT_FIX_PODMAN.into()),
     };
@@ -447,6 +450,15 @@ mod tests {
                 },
                 "fail  podman: riff cannot start podman.",
                 "sudo apt install podman",
+            ),
+            (
+                "root",
+                Facts {
+                    uid: 0,
+                    ..ready()
+                },
+                "fail  podman: riff runs as root, so podman runs with no user namespace.",
+                "as your own user",
             ),
             (
                 "subuid",

@@ -528,8 +528,9 @@ enum Command {
     /// Get this machine ready for riff run: check, install, pull
     ///
     /// The first run of riff 3.0 on a machine. It checks rootless podman:
-    /// podman runs, /etc/subuid and /etc/subgid give you 65536 IDs or
-    /// more, and cgroup v2 gives cpu and memory to your user. It checks
+    /// podman runs and riff does not run as root, /etc/subuid and
+    /// /etc/subgid give you 65536 IDs or more, and cgroup v2 gives cpu and
+    /// memory to your user. It checks
     /// that riff.toml of the repository of this folder pins the session
     /// image. It prints the fix of each check that fails, and stops. When
     /// each check passes, it installs and starts the riff daemon, as riff

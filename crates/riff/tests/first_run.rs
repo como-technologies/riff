@@ -13,6 +13,7 @@ use std::process::Output;
 
 use isolated::Isolated;
 
+use crate::book::{commands_of, each_is_real};
 use crate::run::{fake_systemctl, wait_for};
 
 /// The image that `riff.toml` of the repository pins.
@@ -261,4 +262,15 @@ async fn riff_init_check_changes_nothing() {
     assert_eq!(machine.read("systemctl.log"), "");
     assert_eq!(machine.read("podman.log"), "podman --version\n");
     assert!(!machine.unit().exists());
+}
+
+#[test]
+fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
+    let commands = commands_of("start-a-riff.md");
+    let init: Vec<String> = commands
+        .into_iter()
+        .filter(|c| c.starts_with("riff init"))
+        .collect();
+    assert_eq!(init, ["riff init", "riff init --check"]);
+    each_is_real(&init);
 }
