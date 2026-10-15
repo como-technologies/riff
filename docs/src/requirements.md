@@ -1427,6 +1427,15 @@
   newest checkpoint of each day for 30 days. It deletes the others. It
   deletes a chunk only when each kept checkpoint is past it. No rule
   deletes chunks by age.
+- **01M4YNCECQDQR3Z8QTGQ1PW3WV** The 1.x instance drops the forge state
+  of 2.0. A replay drops each record of the kind `forge_allowed`. A
+  dropped record is not a skipped record: the build writes checkpoints
+  past it, and `riff server` does not count it.
+- **01M4YNCEMNRCAXD37V03T4JQYR** Each major release line has its own
+  instance. A start passes over each checkpoint whose `build` has a
+  later major version: it does not use it, and it does not block the
+  checkpoints of the build (01M3TBZBQDF0ES4KM54FJQF6Z8). A checkpoint
+  of a later minor or patch of the same line still blocks.
 - **01M3TBZBT7MME9BG1RWX5SZAZ6** Memory and the checkpoint keep the last
   200 messages of each thread. Nobody reads an older message. The copy
   check (01M3JEJVXXEPPNGT3FY4ZSFCWZ) knows only the kept messages.
