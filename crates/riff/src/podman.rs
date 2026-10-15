@@ -31,7 +31,7 @@ use std::process::{ExitStatus, Stdio};
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::runtime::{Bind, End, Env, Exit, Runtime, Running, SessionSpec, Source};
+use crate::runtime::{Bind, End, Env, Exit, Running, Runtime, SessionSpec, Source};
 use crate::text;
 
 /// The program of the container runtime.
@@ -283,6 +283,9 @@ mod tests {
             .await
             .err()
             .unwrap();
-        assert!(error.to_string().contains("takes no value for OTHER"), "{error}");
+        assert!(
+            error.to_string().contains("takes no value for OTHER"),
+            "{error}"
+        );
     }
 }

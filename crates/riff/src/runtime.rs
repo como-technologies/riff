@@ -549,7 +549,11 @@ struct FakeInput {
 }
 
 impl AsyncWrite for FakeInput {
-    fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         let mut book = lock(&self.book);
         Poll::Ready(
             match book
@@ -688,7 +692,10 @@ mod tests {
         assert!(fake.has_image("img").await.unwrap());
         assert!(fake.pull("other").await.is_err());
         let error = fake.start(&spec("s1"), &[]).await.err().unwrap();
-        assert!(error.to_string().contains("needs a value for GH_TOKEN"), "{error}");
+        assert!(
+            error.to_string().contains("needs a value for GH_TOKEN"),
+            "{error}"
+        );
         assert_eq!(fake.calls(), ["start s1", "pull img", "pull other"]);
     }
 
@@ -714,6 +721,9 @@ mod tests {
         let error = spec
             .check_values(&[value("GH_TOKEN"), value("USER")])
             .unwrap_err();
-        assert!(error.to_string().contains("takes no value for USER"), "{error}");
+        assert!(
+            error.to_string().contains("takes no value for USER"),
+            "{error}"
+        );
     }
 }

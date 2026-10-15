@@ -96,7 +96,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::api::{self, Api};
-use crate::runtime::{Bind, Env, Exit, Runtime, Running, SessionSpec, Source};
+use crate::runtime::{Bind, Env, Exit, Running, Runtime, SessionSpec, Source};
 use crate::session_image::Image;
 use crate::{dropped, home, identity, pr, rollout, terminal, text};
 
@@ -1094,7 +1094,10 @@ mod tests {
         assert_eq!(spec.name, "riff-issue-12-1a2b3c4d");
         assert_eq!(spec.image, "localhost/riff-session:latest");
         assert_eq!(spec.home, Path::new("/home/mike"));
-        assert_eq!(spec.workdir, Path::new("/r/sessions/issue-12-1a2b3c4d/clone"));
+        assert_eq!(
+            spec.workdir,
+            Path::new("/r/sessions/issue-12-1a2b3c4d/clone")
+        );
         assert_eq!((spec.memory.as_str(), spec.cpus), ("8g", 4));
         assert_eq!(
             variables(&spec),
@@ -1152,7 +1155,16 @@ mod tests {
         let events = folder.path().join("events.jsonl");
         let scrub = Scrub::new(["gho_secret1".to_owned()]);
         let values = [("GH_TOKEN".to_owned(), "gho_secret1".to_owned())];
-        let ended = drive(fake, &spec(&facts()), "Do it.", &events, &scrub, &values, stop).await;
+        let ended = drive(
+            fake,
+            &spec(&facts()),
+            "Do it.",
+            &events,
+            &scrub,
+            &values,
+            stop,
+        )
+        .await;
         let log = std::fs::read_to_string(&events).unwrap_or_default();
         (ended, log)
     }
@@ -1216,7 +1228,10 @@ mod tests {
             }
         );
         let name = "riff-issue-12-1a2b3c4d";
-        assert_eq!(fake.calls(), [format!("start {name}"), format!("stop {name}")]);
+        assert_eq!(
+            fake.calls(),
+            [format!("start {name}"), format!("stop {name}")]
+        );
         assert!(log.lines().count() <= 1, "{log}");
     }
 
