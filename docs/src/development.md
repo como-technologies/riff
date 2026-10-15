@@ -458,8 +458,8 @@ The test does these steps. The messages name them:
 1. Check the host: podman runs rootless, `gh` has a sign-in, and
    `riff image` names the image.
 2. List the home: the test lists the files of your home.
-3. Make the scratch item: an issue in the milestone `Backlog` that adds
-   one line to the book.
+3. Make the scratch item: an issue in the backlog that adds one line
+   to the book. No worker takes an item of the backlog.
 4. Hold its verify: no worker verifies the scratch item. When riff
    cannot hold it, the test goes on.
 5. Run the item: `riff run` does the issue. You see each event of the

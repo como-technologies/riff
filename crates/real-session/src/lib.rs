@@ -178,7 +178,10 @@ impl Step {
     /// assert_eq!(Step::Gate.number(), Step::ALL.len());
     /// ```
     pub fn number(self) -> usize {
-        Step::ALL.iter().position(|s| *s == self).map_or(0, |i| i + 1)
+        Step::ALL
+            .iter()
+            .position(|s| *s == self)
+            .map_or(0, |i| i + 1)
     }
 }
 
@@ -944,7 +947,13 @@ fn check_home(home: &Home, before: &Listing, env: &Env, issue: u64) -> Result<()
 fn pull_of(branch: &str) -> Option<Pull> {
     let text = output(
         "gh",
-        &["pr", "view", branch, "--json", "number,url,headRefOid,state"],
+        &[
+            "pr",
+            "view",
+            branch,
+            "--json",
+            "number,url,headRefOid,state",
+        ],
     )
     .ok()?;
     serde_json::from_str::<Pull>(&text)
@@ -1076,7 +1085,14 @@ fn clean_up(options: &Options, issue: u64, held: bool, sessions: Option<&Path>) 
     }
     match output(
         "gh",
-        &["run", "list", "--branch", &branch, "--json", "databaseId,status"],
+        &[
+            "run",
+            "list",
+            "--branch",
+            &branch,
+            "--json",
+            "databaseId,status",
+        ],
     ) {
         Ok(text) => {
             let runs: Vec<Run> = serde_json::from_str(&text).unwrap_or_default();

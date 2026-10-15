@@ -304,7 +304,10 @@ fn a_new_path_in_the_home_fails_the_check_of_the_home() {
     assert!(!stderr.contains(".cache"), "{stderr}");
     assert!(!stderr.contains(".local/state"), "{stderr}");
     let log = fake.log();
-    assert!(find(&log, "gh pr close 900 --delete-branch").is_some(), "{log:#?}");
+    assert!(
+        find(&log, "gh pr close 900 --delete-branch").is_some(),
+        "{log:#?}"
+    );
     assert_clean(&log, &fake.session());
 }
 
@@ -349,7 +352,9 @@ fn a_gate_that_does_not_start_fails_the_test() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     assert!(
-        stderr.contains("FAIL at step 9 of 9, wait for the Gate: the Gate did not start on 0123abc in 0 s"),
+        stderr.contains(
+            "FAIL at step 9 of 9, wait for the Gate: the Gate did not start on 0123abc in 0 s"
+        ),
         "{stderr}"
     );
     assert_clean(&fake.log(), &fake.session());
@@ -384,7 +389,11 @@ fn a_signal_stops_the_test_and_it_cleans_up() {
     });
     let start = Instant::now();
     while !fake.ctl.join("running").exists() {
-        assert!(start.elapsed() < Duration::from_secs(20), "{:#?}", fake.log());
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "{:#?}",
+            fake.log()
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
     // Ctrl-C: the signal goes to each process of the group.
