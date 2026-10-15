@@ -91,6 +91,7 @@ The budget belongs to each call. A process gives its calls a default.
 | The start hook | `STATE_WAIT`, 3 s (R69: each start has its context). |
 | The status line | `STATUSLINE_WAIT`, 2 s, one try. |
 | The end of a session (`mcp`, `workers host`) | `END_WAIT`. |
+| The verify request and the release of `riff run` | `run::END_BUDGET`, 10 min. A new instance of `riff-server` at the end of a run must not drop them. |
 | The heartbeat | Its period. Each tick is one try. The next tick is the new try. |
 | A stream | None. A stream tries until it is stopped. |
 
