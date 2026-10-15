@@ -136,21 +136,55 @@ impl Machine {
     fn unit(&self) -> PathBuf {
         self.env.home().join(".config/systemd/user/riff.service")
     }
+
+    /// The user settings of Claude Code in the home of the machine.
+    fn settings(&self) -> PathBuf {
+        self.env.home().join(".claude/settings.json")
+    }
+
+    /// Writes `text` to the user settings.
+    fn write_settings(&self, text: &str) {
+        let path = self.settings();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    /// The rules that `riff init` writes into the user settings.
+    fn user_rules(&self) -> riff::permissions::Rules {
+        riff::permissions::user_rules(Some(&self.env.home()))
+    }
 }
 
 #[tokio::test]
 async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
     let machine = Machine::new();
     std::fs::write(machine.bin.join("no-image"), "").unwrap();
-    let out = machine.init(&machine.repo, &[]).await;
+    machine.write_settings(r#"{"model": "opus"}"#);
+    // --yes adds the permission rules with no question
+    // (01M5084K09Z2S7N57315CX2R0F).
+    let out = machine.init(&machine.repo, &["--yes"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     let uid = machine.uid;
+    let settings = machine.settings();
+    let rules = machine.user_rules();
     for line in [
         "riff checks this machine for riff 3.0:".to_owned(),
         "  pass  podman: podman version 5.7.0".to_owned(),
         format!("  pass  cgroup v2: user@{uid}.service has cpu and memory"),
         format!("  pass  the session image: {IMAGE}"),
+        format!(
+            "  fail  the rules of Claude Code: {} lacks {} permission rules of riff. Fix: \
+             answer y to the question of riff init, or run riff init --yes",
+            settings.display(),
+            rules.len()
+        ),
+        "  allow Bash(gh issue list *)".to_owned(),
+        format!(
+            "riff added {} permission rules to {}. Start Claude Code again to use them.",
+            rules.len(),
+            settings.display()
+        ),
         format!(
             "riff wrote the unit {}, and started it again.",
             machine.unit().display()
@@ -181,11 +215,30 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
     let log = machine.read("podman.log");
     assert!(log.contains(&format!("podman pull {IMAGE}\n")), "{log}");
     assert_eq!(pulls(&log), 1, "{log}");
+    // The user settings have each rule, and keep their other key.
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(value["model"], "opus");
+    assert_eq!(
+        value["permissions"]["allow"],
+        serde_json::json!(rules.allow),
+        "{value}"
+    );
 
-    // A second run keeps the daemon, and pulls nothing.
+    // A second run keeps the daemon and the settings, and pulls nothing.
+    // It asks nothing: the rules are there.
+    let before = std::fs::read_to_string(&settings).unwrap();
     let out = machine.init(&machine.repo, &[]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains(&format!(
+            "  pass  the rules of Claude Code: {} has each permission rule of riff\n",
+            settings.display()
+        )),
+        "{stdout}"
+    );
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), before);
     assert!(
         stdout.contains("The riff daemon of this riff runs already: pid "),
         "{stdout}"
@@ -226,6 +279,7 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
         "  fail  /etc/subgid: riff cannot read /etc/subgid. Fix: ",
         "  fail  cgroup v2: this machine has no cgroup v2. Fix: ",
         "  fail  the session image: ",
+        "  fail  the rules of Claude Code: ",
     ];
     assert_eq!(failed.len(), starts.len(), "{stdout}");
     for (line, start) in failed.iter().zip(starts) {
@@ -250,9 +304,26 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
         stdout.contains("sudo usermod --add-subgids 100000-165535 "),
         "{stdout}"
     );
+    // No terminal: riff asks nothing about the rules, and writes nothing
+    // (01M5084K09Z2S7N57315CX2R0F).
     assert!(
         stdout.contains(
-            "5 checks failed. riff installed nothing and pulled nothing. Do each fix, then run \
+            "riff init asks its question only in a terminal. To add the rules, run: riff init \
+             --yes\n"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "riff changed nothing in {}.\n",
+            machine.settings().display()
+        )),
+        "{stdout}"
+    );
+    assert!(!machine.settings().exists());
+    assert!(
+        stdout.contains(
+            "6 checks failed. riff installed nothing and pulled nothing. Do each fix, then run \
              riff init again."
         ),
         "{stdout}"
@@ -265,16 +336,49 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
 #[tokio::test]
 async fn riff_init_check_changes_nothing() {
     let machine = Machine::new();
+    let rules = machine.user_rules();
+    machine.write_settings(
+        &serde_json::json!({ "permissions": { "allow": rules.allow } }).to_string(),
+    );
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
-    assert_eq!(stdout.matches("  pass  ").count(), 5, "{stdout}");
+    assert_eq!(stdout.matches("  pass  ").count(), 6, "{stdout}");
     assert!(
         stdout.ends_with("Each check passed. riff changed nothing: --check.\n"),
         "{stdout}"
     );
     assert_eq!(machine.read("systemctl.log"), "");
     assert_eq!(machine.read("podman.log"), "podman --version\n");
+    assert!(!machine.unit().exists());
+}
+
+/// 01M5084K09Z2S7N57315CX2R0F: `riff init --check` names each missing
+/// rule, asks nothing and writes nothing.
+#[tokio::test]
+async fn riff_init_check_names_each_missing_rule() {
+    let machine = Machine::new();
+    let text_before = r#"{"permissions": {"allow": ["Bash(riff *)"]}}"#;
+    machine.write_settings(text_before);
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    let rules = machine.user_rules();
+    for rule in &rules.allow {
+        let line = format!("\n  allow {rule}\n");
+        assert_eq!(
+            stdout.contains(&line),
+            rule != "Bash(riff *)",
+            "{rule}\n{stdout}"
+        );
+    }
+    assert!(!stdout.contains("[y/N]"), "{stdout}");
+    assert!(!stdout.contains("riff changed nothing in"), "{stdout}");
+    assert!(stdout.contains("1 check failed."), "{stdout}");
+    assert_eq!(
+        std::fs::read_to_string(machine.settings()).unwrap(),
+        text_before
+    );
     assert!(!machine.unit().exists());
 }
 
@@ -285,6 +389,30 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
         .into_iter()
         .filter(|c| c.starts_with("riff init"))
         .collect();
-    assert_eq!(init, ["riff init", "riff init --check"]);
+    assert_eq!(init, ["riff init", "riff init --yes", "riff init --check"]);
     each_is_real(&init);
+}
+
+/// "Get ready for riff 3.0" names each rule that `riff init` writes
+/// (01M5084K09Z2S7N57315CX2R0F).
+#[test]
+fn start_a_riff_names_each_rule_that_riff_init_writes() {
+    let book = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/start-a-riff.md"),
+    )
+    .unwrap();
+    let start = book
+        .find("### Let riff set the permissions of Claude Code")
+        .unwrap();
+    let part = &book[start..];
+    let part = &part[..part[4..].find("\n#").map_or(part.len(), |end| end + 4)];
+    let rules = riff::permissions::user_rules(None);
+    assert!(!rules.allow.is_empty());
+    for rule in &rules.allow {
+        assert!(
+            part.contains(&format!("`{rule}`")),
+            "{rule} is not in\n{part}"
+        );
+    }
+    assert!(part.contains("the same rule with the full path of your home"));
 }

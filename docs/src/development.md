@@ -653,6 +653,10 @@ the session also has each event, with no secret.
   that Claude folder. `claude` adds no attribution line, so the
   trailers end each commit and each pull request body. riff does not
   read your own Claude settings.
+- The permission rules of the steps of a session in the same
+  `settings.json`, for example `Bash(gh issue view *)` and
+  `Bash(gh pr create *)`. So the auto mode check does not refuse a step
+  of the start text. The lead in a container gets them at each start.
 - A home of its own in memory. Each other write goes when the
   container ends.
 - The volumes `riff-cargo` and `riff-sccache` for the caches.

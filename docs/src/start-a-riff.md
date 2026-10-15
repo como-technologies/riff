@@ -121,6 +121,11 @@ riff setup --check
 When rules are missing, the start hook tells your lead. The lead
 tells you to run `riff setup`.
 
+`riff setup` writes the rules of one project. `riff init` adds the
+rules of your sessions to your own Claude Code settings, for each
+project: see
+[Let riff set the permissions of Claude Code](#let-riff-set-the-permissions-of-claude-code).
+
 ## Update riff
 
 Update riff on your machine. It installs `riff` and `riff-server` of
@@ -174,8 +179,9 @@ riff init
 
 ```mermaid
 flowchart LR
-    C["check this machine"] -- "each check passes" --> D["install and start<br/>the riff daemon"]
-    C -- "a check fails" --> F["print the fix,<br/>change nothing"]
+    C["check this machine"] --> R["ask to add the<br/>missing permission rules"]
+    R -- "each check passes" --> D["install and start<br/>the riff daemon"]
+    R -- "a check fails" --> F["print the fix"]
     D --> I["get the session image<br/>of the project"]
 ```
 
@@ -187,6 +193,7 @@ flowchart LR
 | `/etc/subuid`, `/etc/subgid` | Each gives you 65536 IDs or more. The fix adds a free range: it starts after the end of each range in the file, and at 100000 or more. |
 | cgroup v2 | Your user gets `cpu` and `memory`. |
 | The session image | `riff.toml` of the project pins it. |
+| The rules of Claude Code | Your user settings of Claude Code have each permission rule of riff. |
 
 A line with `fail` also gives the fix. Do each fix, then run
 `riff init` again. When each check passes, `riff init` installs and
@@ -194,10 +201,41 @@ starts the riff daemon, and the daemon gets the session image. A riff
 daemon that runs already stays. Then do one item: see
 [Run one item in a container](development.md#run-one-item-in-a-container).
 
+### Let riff set the permissions of Claude Code
+
+In auto mode, Claude Code can refuse a step of riff. So `riff init`
+checks your user settings of Claude Code: `~/.claude/settings.json`,
+or `settings.json` in `$CLAUDE_CONFIG_DIR`. When a permission rule of
+riff is not there, `riff init` shows each missing rule and asks one
+question. Answer `y`. To add the rules with no question:
+
+```sh
+riff init --yes
+```
+
+riff adds only the missing rules. It keeps each other rule and each
+other key. Then start Claude Code again. The rules:
+
+| Rules | Allow |
+|---|---|
+| `mcp__plugin_riff_riff`, `mcp__riff` | the riff tools |
+| `Bash(riff)`, `Bash(riff *)` | each `riff` command |
+| `Bash(~/.cache/riff/checks/*/riff *)`, and the same rule with the full path of your home | the riff of a new build in a check |
+| `Bash(gh pr create *)`, `Bash(gh pr merge * --auto --squash)`, `Bash(gh pr comment *)`, `Bash(gh pr view *)`, `Bash(gh pr checks *)` | the steps of a pull request |
+| `Bash(gh issue view *)`, `Bash(gh issue list *)`, `Bash(gh issue create *)`, `Bash(gh issue comment *)`, `Bash(gh issue edit *)` | the steps of an issue |
+| `Bash(gh api repos/*/milestones *)`, `Bash(gh api -X PATCH repos/*/milestones/*)` | the waves of the lead |
+
+These rules deny nothing. The deny rules of a project come from
+`riff setup`. The riff daemon gives each of its sessions the rules of
+its steps. When the auto mode check still refuses a step of riff, the
+session writes the step on its issue and tells your lead. The fix is a
+new rule in the code of riff, not a step that you type.
+
 ### Check this machine only
 
-This command changes nothing. It prints the fix of each check that
-fails, and exits with status 1 when a check fails:
+This command changes nothing and asks nothing. It prints the fix of
+each check that fails and each missing permission rule. It exits with
+status 1 when a check fails:
 
 ```sh
 riff init --check

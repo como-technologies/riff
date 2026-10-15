@@ -4896,6 +4896,50 @@ share.
   the session image. The daemon pulls it when podman does not have it.
   The last line says that the machine is ready for `riff run`.
 
+### The permission rules
+
+- **01M5084JXTWZQEG7DJHS2E96NQ** riff owns the Claude Code permission
+  rules of each role in one table in its code
+  (`riff::permissions::TABLE`). Each row has the rule, its kind (allow,
+  deny, or the step of a person), the roles that need it (lead, worker,
+  verifier), and its places: the project settings (`riff setup`), the
+  user settings (`riff init`) and the settings of each session of the
+  daemon. A test checks that each `riff` and `gh` step of the skill
+  matches an allow rule of the user place, a deny rule, or the row of a
+  person. It also checks that each such step of the start text of a
+  session of the daemon matches an allow rule of the session place for
+  the role of the session.
+- **01M5084K09Z2S7N57315CX2R0F** `riff init` checks that the user
+  settings of Claude Code (`$CLAUDE_CONFIG_DIR/settings.json`, else
+  `~/.claude/settings.json`) have each rule of the user place. When
+  rules are missing, it names each rule, and asks one yes or no
+  question before it adds them. `--yes` answers yes with no question. A
+  no, or no terminal with no `--yes`, changes nothing, and the check
+  fails. `riff init --check` names each missing rule and asks nothing.
+  riff adds only the missing rules, and keeps each other rule and key in
+  its order. The rules of the user place name no repository and deny
+  nothing.
+- **01M5084K2Q3HH4BK7DJMYQD7C1** `riff init` asks its question also
+  when another check fails. After a yes, the check of the rules passes.
+  When another check still fails, riff installs nothing and pulls
+  nothing.
+- **01M5084K4YQCZF20XA0P2485SG** The daemon writes the allow rules of
+  the session place into the `settings.json` of the own Claude folder
+  of each session. The Claude folder of the lead stays between its
+  starts: at each start, riff adds each rule that it lacks.
+- **01M5084K79M5XJT3MP8FFVQKDX** A check that needs a new build of riff
+  clones the default branch into `~/.cache/riff/checks/NAME`, builds it
+  there, and calls its riff by the path, with no variable and no
+  prefix. A rule of the user place allows that path, with `~` and with
+  the full path of the home.
+- **01M5084K9J566981EXZ7YJRGRR** When the auto mode check refuses a
+  step, the session stops that step, writes the command and the reason
+  on the issue of its item, and tells the lead. It does not try the
+  step again in another form. The fix is a new rule in the table (the
+  step is in bounds) or a change of the skill (the step is out of
+  bounds). The fix is never that a person does the refused step by
+  hand.
+
 ### riff run
 
 - **01M4Z81APKC14AVNJWCGRQKNVW** `riff run ITEM` does one work item in

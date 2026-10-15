@@ -542,7 +542,11 @@ mod tests {
              `.claude/worktrees`, and build it there with `just static`. Call the riff of the \
              build by its path, with no variable and no prefix"
         ));
-        assert!(skill.contains("\n~/.cache/riff/checks/NAME/target/static/release/riff daemon install\n"));
+        assert!(
+            skill.contains(
+                "\n~/.cache/riff/checks/NAME/target/static/release/riff daemon install\n"
+            )
+        );
     }
 
     /// 01M3MEEFSD4TEQESRDJENCFW7N.

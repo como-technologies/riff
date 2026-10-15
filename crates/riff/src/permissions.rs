@@ -238,7 +238,11 @@ pub const TABLE: &[Row] = {
         allow("Bash(riff)", ALL, &[Project, User]),
         allow("Bash(riff *)", ALL, &[Project, User]),
         allow("Bash(~/.cache/riff/checks/*/riff *)", &[Worker], &[User]),
-        allow("Bash({HOME}/.cache/riff/checks/*/riff *)", &[Worker], &[User]),
+        allow(
+            "Bash({HOME}/.cache/riff/checks/*/riff *)",
+            &[Worker],
+            &[User],
+        ),
         allow("Bash(/opt/riff/riff relay watch)", &[Lead], &[Session]),
         allow("Bash(gh pr create *)", &[Worker], &[Project, User, Session]),
         allow(
@@ -246,7 +250,11 @@ pub const TABLE: &[Row] = {
             &[Worker],
             &[Project, User, Session],
         ),
-        allow("Bash(gh pr comment *)", &[Worker, Verifier], &[Project, User]),
+        allow(
+            "Bash(gh pr comment *)",
+            &[Worker, Verifier],
+            &[Project, User],
+        ),
         allow("Bash(gh pr view *)", ALL, &[Project, User, Session]),
         allow("Bash(gh pr checks *)", &[Verifier], &[User, Session]),
         allow("Bash(gh issue view *)", ALL, &[User, Session]),
@@ -254,7 +262,11 @@ pub const TABLE: &[Row] = {
         allow("Bash(gh issue create *)", ALL, &[User]),
         allow("Bash(gh issue comment *)", &[Worker, Verifier], &[User]),
         allow("Bash(gh issue edit *)", ALL, &[User, Session]),
-        allow("Bash(gh api repos/*/milestones *)", &[Lead], &[User, Session]),
+        allow(
+            "Bash(gh api repos/*/milestones *)",
+            &[Lead],
+            &[User, Session],
+        ),
         allow(
             "Bash(gh api -X PATCH repos/*/milestones/*)",
             &[Lead],
@@ -768,7 +780,11 @@ mod tests {
         if names.is_empty() {
             return "-".into();
         }
-        names.iter().map(|n| name(*n)).collect::<Vec<_>>().join(", ")
+        names
+            .iter()
+            .map(|n| name(*n))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     #[test]
@@ -799,11 +815,21 @@ mod tests {
         }
     }
 
-    /// True when the first word of `text` is `riff`, `gh`, or the path of
-    /// a riff.
+    /// True when `text` is a command with one word or more after its
+    /// first word: `riff`, `gh`, or the path of a riff. A code span with
+    /// only `gh` or `riff` names the tool: it is no step.
     fn is_step(text: &str) -> bool {
-        let first = text.split_whitespace().next().unwrap_or_default();
-        first == "riff" || first == "gh" || first.ends_with("/riff")
+        let mut words = text.split_whitespace();
+        let first = words.next().unwrap_or_default();
+        let command = first == "riff" || first == "gh" || first.ends_with("/riff");
+        command && words.next().is_some()
+    }
+
+    /// [`is_step`] for plain text. There `riff` at the start of a
+    /// sentence is a word of the prose: a session in a container calls
+    /// its riff by the path.
+    fn is_plain_step(text: &str) -> bool {
+        is_step(text) && !text.starts_with("riff ")
     }
 
     /// Each `riff` and `gh` step of the markdown `text`: each code span,
@@ -834,14 +860,22 @@ mod tests {
     /// each line that starts with a step, and each step after `: ` up to
     /// the next comma.
     fn text_steps(text: &str) -> Vec<String> {
-        let mut steps: Vec<String> = text.split('`').skip(1).step_by(2).map(Into::into).collect();
+        let mut steps: Vec<String> = text
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .filter(|s| is_step(s))
+            .map(Into::into)
+            .collect();
         for line in text.lines().map(str::trim) {
             let after = line.split_once(": ").map(|(_, rest)| rest);
             for part in [Some(line), after].into_iter().flatten() {
-                steps.push(part.split(',').next().unwrap_or_default().trim().to_owned());
+                let part = part.split(',').next().unwrap_or_default().trim();
+                if is_plain_step(part) {
+                    steps.push(part.to_owned());
+                }
             }
         }
-        steps.retain(|s| is_step(s));
         steps.sort();
         steps.dedup();
         steps
@@ -850,16 +884,22 @@ mod tests {
     #[test]
     fn the_steps_of_a_text_are_its_commands() {
         assert_eq!(
-            skill_steps("Run `riff who`, or\n`riff\n  workers`.\n```sh\ngh issue list\n```\n`git log`"),
+            skill_steps(
+                "Run `riff who`, or\n`riff\n  workers`, a wrapper of `gh`.\n```sh\ngh issue \
+                 list\n```\n`git log`"
+            ),
             ["gh issue list", "riff who", "riff workers"]
         );
         assert_eq!(
-            text_steps("1. Read it: gh pr view 4 --comments, and git diff\n   gh pr checks 4\nriff does it, `/opt/riff/riff relay watch`"),
+            text_steps(
+                "1. Read it: gh pr view 4 --comments, and git diff\n   gh pr checks 4\nriff does \
+                 it, `/opt/riff/riff relay watch` or `riff who`"
+            ),
             [
                 "/opt/riff/riff relay watch",
                 "gh pr checks 4",
                 "gh pr view 4 --comments",
-                "riff does it"
+                "riff who"
             ]
         );
     }
@@ -906,7 +946,15 @@ mod tests {
         let texts = [
             (
                 Role::Worker,
-                text::run_start("o/r", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", true),
+                text::run_start(
+                    "o/r",
+                    12,
+                    "worktree-issue-12",
+                    "1a2b",
+                    frame,
+                    "Wave 3",
+                    true,
+                ),
             ),
             (
                 Role::Worker,

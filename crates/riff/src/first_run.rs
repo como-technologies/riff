@@ -191,7 +191,10 @@ impl Settings {
         let home = std::env::var_os("HOME")
             .filter(|h| !h.is_empty())
             .map(PathBuf::from);
-        Ok(Settings::of(&path, &permissions::user_rules(home.as_deref())))
+        Ok(Settings::of(
+            &path,
+            &permissions::user_rules(home.as_deref()),
+        ))
     }
 }
 
@@ -510,10 +513,7 @@ pub fn ask(
     out.flush()?;
     let mut answer = String::new();
     input.read_line(&mut answer)?;
-    Ok(matches!(
-        answer.trim().to_lowercase().as_str(),
-        "y" | "yes"
-    ))
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 /// The first run on `facts`, with the daemon in the folder `dir`. It
@@ -1006,9 +1006,17 @@ mod tests {
         assert_eq!(failed(&facts).len(), 1);
         let manager = Manager::default();
         let dir = dir_in(root.path());
-        let code = run(&facts, Mode::Ask, |_| Ok(false), &dir, &manager, &unit(), WAIT)
-            .await
-            .unwrap();
+        let code = run(
+            &facts,
+            Mode::Ask,
+            |_| Ok(false),
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
         assert_eq!(code, 1);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         assert!(manager.0.lock().unwrap().is_empty());
@@ -1052,18 +1060,34 @@ mod tests {
         }));
 
         let manager = Manager::default();
-        let code = run(&ready(), Mode::Ask, no_question, &dir, &manager, &unit(), WAIT)
-            .await
-            .unwrap();
+        let code = run(
+            &ready(),
+            Mode::Ask,
+            no_question,
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
         assert_eq!(code, 0);
         // riff kept the daemon: no install, no restart.
         assert!(manager.0.lock().unwrap().is_empty());
         assert_eq!(fake.calls(), [format!("pull {IMAGE}")]);
 
         // A second run finds the image, and pulls nothing.
-        let code = run(&ready(), Mode::Ask, no_question, &dir, &manager, &unit(), WAIT)
-            .await
-            .unwrap();
+        let code = run(
+            &ready(),
+            Mode::Ask,
+            no_question,
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
         assert_eq!(code, 0);
         assert_eq!(fake.calls(), [format!("pull {IMAGE}")]);
 
@@ -1083,9 +1107,17 @@ mod tests {
             let _ = stopped.await;
         }));
 
-        let error = run(&ready(), Mode::Ask, no_question, &dir, &Manager::default(), &unit(), WAIT)
-            .await
-            .unwrap_err();
+        let error = run(
+            &ready(),
+            Mode::Ask,
+            no_question,
+            &dir,
+            &Manager::default(),
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap_err();
         assert!(format!("{error:#}").contains(IMAGE), "{error:#}");
 
         let _ = stop.send(());
