@@ -43,7 +43,7 @@
 //!     Warned --> Seen: a sign of the owner
 //! ```
 //! - The server posts each note as [`server_uri`]: the USER
-//!   [`crate::token::SERVER_USER`], which no person can sign in as
+//!   [`SERVER_USER`], which no person can sign in as
 //!   (01M3N7K4BC1RPZKQ1XNDTBRPGF). A note has no signature.
 //! - Each change posts one note to the thread of each repository of the
 //!   riff. It wakes no session. A change that needs a person also sends
@@ -58,13 +58,16 @@ use std::time::{Duration, Instant};
 use riff_core::name::SessionUri;
 
 use crate::state::OwnerChange;
-use crate::token::SERVER_USER;
+
+/// The USER of the riff server itself. The server posts its own notes as
+/// this USER, so no person signs in with it (01M3N7K4BC1RPZKQ1XNDTBRPGF).
+pub const SERVER_USER: &str = "riff";
 
 /// The times of the owner role (01M3Q5460YESBSQHTV3M15PE53).
 ///
 /// ```
 /// use std::time::Duration;
-/// use riff_server::owner::Timing;
+/// use riff_state::owner::Timing;
 ///
 /// let timing = Timing::default();
 /// assert_eq!(timing.answer, Duration::from_secs(10 * 60));
@@ -133,7 +136,7 @@ pub enum Check {
 ///
 /// ```
 /// use std::time::{Duration, Instant};
-/// use riff_server::owner::{Check, Checks, Timing};
+/// use riff_state::owner::{Check, Checks, Timing};
 ///
 /// let timing = Timing { check_every: Duration::from_secs(60), misses: 2, ..Timing::default() };
 /// let start = Instant::now();
@@ -215,7 +218,7 @@ impl Checks {
 /// (01M3N7K4BC1RPZKQ1XNDTBRPGF).
 ///
 /// ```
-/// assert_eq!(riff_server::owner::server_uri().to_string(), "riff://riff@server");
+/// assert_eq!(riff_state::owner::server_uri().to_string(), "riff://riff@server");
 /// ```
 pub fn server_uri() -> SessionUri {
     format!("riff://{SERVER_USER}@server")
@@ -228,7 +231,7 @@ pub fn server_uri() -> SessionUri {
 ///
 /// ```
 /// use std::time::Duration;
-/// use riff_server::owner::minutes;
+/// use riff_state::owner::minutes;
 ///
 /// assert_eq!(minutes(Duration::from_secs(600)), "10 minutes");
 /// assert_eq!(minutes(Duration::from_secs(60)), "1 minute");
@@ -248,7 +251,7 @@ pub fn minutes(time: Duration) -> String {
 /// use std::time::Duration;
 ///
 /// assert_eq!(
-///     riff_server::owner::asked_news("bob", "bob@gmail.com", "ada@gmail.com", Duration::from_secs(600)),
+///     riff_state::owner::asked_news("bob", "bob@gmail.com", "ada@gmail.com", Duration::from_secs(600)),
 ///     "members: bob asks for the owner role. The owner ada@gmail.com has 10 minutes \
 ///      to answer. To pass the role, the owner runs: riff owner bob@gmail.com. To keep \
 ///      it: riff owner --deny. With no answer, bob@gmail.com is the owner."
@@ -268,7 +271,7 @@ pub fn asked_news(user: &str, admin: &str, owner: &str, answer: Duration) -> Str
 ///
 /// ```
 /// assert_eq!(
-///     riff_server::owner::took_news("bob", "bob@gmail.com"),
+///     riff_state::owner::took_news("bob", "bob@gmail.com"),
 ///     "members: bob took the owner role. The riff had no owner. bob@gmail.com is the owner now."
 /// );
 /// ```
@@ -280,7 +283,7 @@ pub fn took_news(user: &str, admin: &str) -> String {
 ///
 /// ```
 /// assert_eq!(
-///     riff_server::owner::denied_news("ada", "ada@gmail.com", "bob@gmail.com"),
+///     riff_state::owner::denied_news("ada", "ada@gmail.com", "bob@gmail.com"),
 ///     "members: ada kept the owner role. bob@gmail.com asked for it. ada@gmail.com stays the owner."
 /// );
 /// ```
@@ -292,7 +295,7 @@ pub fn denied_news(user: &str, owner: &str, admin: &str) -> String {
 /// (01M3Q546335NBTKG5BHQ27QC93).
 ///
 /// ```
-/// use riff_server::owner::{Timing, warn_news};
+/// use riff_state::owner::{Timing, warn_news};
 ///
 /// assert_eq!(
 ///     warn_news("ada@gmail.com", &Timing::default()),
@@ -315,8 +318,8 @@ pub fn warn_news(owner: &str, timing: &Timing) -> String {
 ///
 /// ```
 /// use std::time::Duration;
-/// use riff_server::owner::{Timing, change_news};
-/// use riff_server::state::OwnerChange;
+/// use riff_state::owner::{Timing, change_news};
+/// use riff_state::state::OwnerChange;
 ///
 /// let timing = Timing::default();
 /// let granted = OwnerChange::Granted { owner: "bob@gmail.com".into(), old: "ada@gmail.com".into() };
@@ -365,7 +368,7 @@ pub fn change_news(change: &OwnerChange, timing: &Timing) -> String {
 ///
 /// ```
 /// assert_eq!(
-///     riff_server::owner::to_lead("members: x."),
+///     riff_state::owner::to_lead("members: x."),
 ///     "members: x. Show this to your user."
 /// );
 /// ```

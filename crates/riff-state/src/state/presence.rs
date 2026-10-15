@@ -37,7 +37,7 @@ use super::{CLAIM_GRACE, GONE};
 /// use std::time::Instant;
 /// use riff_core::name::SessionUri;
 /// use riff_core::wire::Status;
-/// use riff_server::state::State;
+/// use riff_state::state::State;
 ///
 /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let now = Instant::now();
@@ -84,7 +84,7 @@ pub struct Presence {
 /// ```
 /// use std::time::Instant;
 /// use riff_core::name::SessionUri;
-/// use riff_server::state::{Presence, Riff, Signal};
+/// use riff_state::state::{Presence, Riff, Signal};
 ///
 /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
@@ -101,7 +101,7 @@ pub struct Presence {
 /// ```compile_fail,E0308
 /// use std::time::Instant;
 /// use riff_core::name::SessionUri;
-/// use riff_server::state::{Presence, Riff, Signal};
+/// use riff_state::state::{Presence, Riff, Signal};
 ///
 /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());

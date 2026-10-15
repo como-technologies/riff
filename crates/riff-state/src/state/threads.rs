@@ -211,7 +211,7 @@ impl Saved {
 ///
 /// ```
 /// use riff_core::name::{ThreadName, Who};
-/// use riff_server::state::may_read;
+/// use riff_state::state::may_read;
 ///
 /// let (a, b, c) = (Who::new("ann", Some("a"))?, Who::new("bob", Some("b"))?, Who::new("cy", Some("c"))?);
 /// let direct = ThreadName::direct(&a, &b);

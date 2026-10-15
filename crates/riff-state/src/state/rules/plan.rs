@@ -200,7 +200,7 @@ fn a_held_item_refuses_a_worker_and_warns_each_other_session() {
     let claim_12 = claim("issue-12").of(&ann2());
     let refused = state.check(&worker, &claim_12, now).result.unwrap_err();
     assert_eq!(refused.code, Code::OnHold);
-    let since = crate::tools::utc(made[0].envelope.written_at_ms);
+    let since = crate::utc(made[0].envelope.written_at_ms);
     let expected = format!(
         "issue-12 is held by the lead (the session ann/a1) since {since}: {REASON}. Pick another \
          item."

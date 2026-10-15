@@ -121,7 +121,7 @@ impl Part {
 /// use std::time::Instant;
 /// use riff_core::name::{SessionUri, ThreadName};
 /// use riff_core::wire::{Free, Hold, RiffState};
-/// use riff_server::state::{Caller, State};
+/// use riff_state::state::{Caller, State};
 ///
 /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
 /// let thread: ThreadName = "como-technologies/riff".parse()?;
@@ -351,7 +351,7 @@ impl View<'_> {
 /// ```
 /// use riff_core::name::Who;
 /// use riff_core::record::By;
-/// use riff_server::state::plan::{HoldInfo, held_text};
+/// use riff_state::state::plan::{HoldInfo, held_text};
 ///
 /// let hold = HoldInfo {
 ///     reason: "waits for the word of Mike".into(),
@@ -371,7 +371,7 @@ pub fn held_text(item: &str, hold: &HoldInfo) -> String {
         .map_or_else(String::new, |by| format!(" ({by})"));
     format!(
         "{item} is held by the lead{by} since {}: {}",
-        crate::tools::utc(hold.at_ms),
+        crate::utc(hold.at_ms),
         hold.reason
     )
 }
@@ -527,7 +527,7 @@ fn may_plan(
 /// True when `name` is `issue-N`: `issue-` and a whole number.
 ///
 /// ```
-/// use riff_server::state::plan::is_issue;
+/// use riff_state::state::plan::is_issue;
 ///
 /// assert!(is_issue("issue-12"));
 /// assert!(!is_issue("issue-"));
@@ -568,7 +568,7 @@ fn check_form(plan: &Plan) -> Result<(), Refused> {
 /// position of the plan of the server, and the `base` of the call.
 ///
 /// ```
-/// use riff_server::state::plan::stale_base;
+/// use riff_state::state::plan::stale_base;
 ///
 /// let thread = "acme/app".parse()?;
 /// assert_eq!(

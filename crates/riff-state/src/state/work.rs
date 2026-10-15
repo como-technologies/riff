@@ -565,7 +565,7 @@ fn label(uri: &SessionUri) -> String {
 ///
 /// ```
 /// use riff_core::name::SessionUri;
-/// use riff_server::state::released_for;
+/// use riff_state::state::released_for;
 ///
 /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=518bd482-fcc4&lead=true".parse()?;
 /// let holder: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=068a2cc2-11aa#issue-347".parse()?;

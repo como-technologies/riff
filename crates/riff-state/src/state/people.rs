@@ -68,7 +68,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use riff_core::name::{ThreadName, Who};
+use riff_core::name::{ThreadName, Who, check, sanitize};
 use riff_core::record::{self, Change, Email, OwnerSet, PersonJoined, RiffMade, SigninsEnded};
 use riff_core::selector::Selector;
 use riff_core::wire::{
@@ -80,9 +80,8 @@ use serde::{Deserialize, Serialize};
 
 use super::command::{Caller, Code, Command, CommandKind, Done, Now, Refused, Role};
 use super::view::View;
-use crate::oidc::user_of;
 use crate::owner;
-use crate::token::SERVER_USER;
+use crate::owner::SERVER_USER;
 
 /// The refusal of an action of the owner on a riff with no owner
 /// (01M3Q63NNC6SC03BFCG80M7B4D).
@@ -93,10 +92,34 @@ pub const NO_OWNER: &str =
 /// case.
 ///
 /// ```
-/// assert_eq!(riff_server::state::people::email(" Ada@X.io"), "ada@x.io");
+/// assert_eq!(riff_state::state::people::email(" Ada@X.io"), "ada@x.io");
 /// ```
 pub fn email(text: &str) -> String {
     text.trim().to_lowercase()
+}
+
+/// The USER of `email`: the part before the `@`, in lower case, with
+/// each character that a URI part cannot hold replaced by `-` (R208).
+/// Two emails can give the same USER, for example `o'brien@x.io` and
+/// `o-brien@x.io`. Only [`Admit`] tells which email holds it (R209).
+/// The error says why `email` gives no USER.
+///
+/// ```
+/// use riff_state::state::people::user_of;
+///
+/// assert_eq!(user_of("Ada.Lovelace@comotechnologies.io").unwrap(), "ada.lovelace");
+/// assert_eq!(user_of("a+b@x.io").unwrap(), "a-b");
+/// assert!(user_of("no-at-sign").unwrap_err().contains("not an email"));
+/// assert!(user_of("@x.io").is_err());
+/// ```
+pub fn user_of(email: &str) -> Result<String, String> {
+    let local = email
+        .rsplit_once('@')
+        .map(|(local, _)| local)
+        .ok_or_else(|| format!("not an email: {email}"))?;
+    let user = sanitize(&local.to_lowercase());
+    check("user", &user).map_err(|e| e.to_string())?;
+    Ok(user)
 }
 
 /// The people of the riff. Only `apply` changes them.
@@ -565,7 +588,7 @@ fn owner_set(email: Option<&str>) -> Change {
 /// gives no USER (R208).
 fn valid(text: &str) -> Result<String, Refused> {
     let email = email(text);
-    user_of(&email).map_err(|e| Refused::new(Code::BadRequest, e.to_string()))?;
+    user_of(&email).map_err(|why| Refused::new(Code::BadRequest, why))?;
     Ok(email)
 }
 
@@ -624,7 +647,7 @@ impl Command for Admit {
                 ),
             ));
         }
-        let user = user_of(&email).map_err(|e| Refused::new(Code::BadRequest, e.to_string()))?;
+        let user = user_of(&email).map_err(|why| Refused::new(Code::BadRequest, why))?;
         if user == SERVER_USER {
             return Err(Refused::new(
                 Code::BadRequest,

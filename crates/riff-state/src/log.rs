@@ -74,11 +74,11 @@
 //! # Example
 //!
 //! ```
-//! # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+//! # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
 //! use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
 //! use riff_core::wire::RiffState;
-//! use riff_server::log::{Timing, replay, write};
-//! use riff_server::store::Memory;
+//! use riff_state::log::{Timing, replay, write};
+//! use riff_state::store::Memory;
 //!
 //! let store = Memory::default();
 //! let record = |position| Record {
@@ -148,7 +148,7 @@ impl Default for Timing {
 /// The name of the chunk whose first record is at `first`.
 ///
 /// ```
-/// assert_eq!(riff_server::log::chunk_name(1234), "log/00000000000000001234.jsonl");
+/// assert_eq!(riff_state::log::chunk_name(1234), "log/00000000000000001234.jsonl");
 /// ```
 pub fn chunk_name(first: u64) -> String {
     format!("{LOG}{first:020}.jsonl")
@@ -176,7 +176,7 @@ pub fn encode(records: &[Record]) -> Vec<u8> {
 /// ```
 /// use riff_core::record::{Change, Envelope, Line, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
-/// use riff_server::log::{decode, encode};
+/// use riff_state::log::{decode, encode};
 ///
 /// let record = Record {
 ///     envelope: Envelope {
@@ -214,15 +214,15 @@ pub fn decode(bytes: &[u8]) -> Result<(Header, Vec<Line>), String> {
 
 /// The proof that the records of a chunk are in the log (01M3X4Z6DSWKMJ2R549R4TSYP0).
 /// Only [`write()`] and [`write_counted`] make it, so only a written
-/// chunk reaches the written copy of the state:
-/// [`Engine::finish`](crate::engine::Engine::finish) takes it. A chunk
+/// chunk reaches the written copy of the state: the engine of
+/// riff-server and [`crate::local::Local`] take it. A chunk
 /// with no record needs no object: a write of no record gives the proof
 /// with no I/O.
 ///
 /// ```
-/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
-/// use riff_server::log::{Timing, write};
-/// use riff_server::store::{Memory, Store};
+/// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
+/// use riff_state::log::{Timing, write};
+/// use riff_state::store::{Memory, Store};
 ///
 /// let store = Memory::default();
 /// let written = write(&store, &[], &Timing::default(), || true).await?;
@@ -271,12 +271,12 @@ pub async fn write(
 /// facts of `riff server` (01M3TJWJ12WEDCXW3W0529KRP2).
 ///
 /// ```
-/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+/// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
 /// use std::sync::atomic::{AtomicU64, Ordering};
 /// use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
-/// use riff_server::log::{Timing, write_counted};
-/// use riff_server::store::Memory;
+/// use riff_state::log::{Timing, write_counted};
+/// use riff_state::store::Memory;
 ///
 /// let record = Record {
 ///     envelope: Envelope {
@@ -362,7 +362,7 @@ pub async fn replay(store: &dyn Store) -> Result<Replayed, StoreError> {
 /// The first position of a chunk, from its name.
 ///
 /// ```
-/// use riff_server::log::{chunk_name, first_of};
+/// use riff_state::log::{chunk_name, first_of};
 ///
 /// assert_eq!(first_of(&chunk_name(1234)), Some(1234));
 /// assert_eq!(first_of("log/x.jsonl"), None);
@@ -388,11 +388,11 @@ pub async fn chunks(store: &dyn Store) -> Result<Vec<(u64, String)>, StoreError>
 /// module docs.
 ///
 /// ```
-/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+/// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
 /// use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
-/// use riff_server::log::{Timing, replay_after, write};
-/// use riff_server::store::Memory;
+/// use riff_state::log::{Timing, replay_after, write};
+/// use riff_state::store::Memory;
 ///
 /// let store = Memory::default();
 /// let record = |position| Record {
@@ -521,9 +521,9 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
 /// with no warning, and it does not count as a skipped record.
 ///
 /// ```
-/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
-/// use riff_server::log::{DROPPED, chunk_name, replay};
-/// use riff_server::store::{Memory, Store};
+/// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
+/// use riff_state::log::{DROPPED, chunk_name, replay};
+/// use riff_state::store::{Memory, Store};
 ///
 /// assert_eq!(DROPPED, ["forge_allowed"]);
 /// let store = Memory::default();

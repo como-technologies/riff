@@ -55,11 +55,11 @@
 //! # Example
 //!
 //! ```
-//! # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+//! # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
 //! use std::time::Instant;
-//! use riff_server::checkpoint::{Checkpoint, load, write};
-//! use riff_server::state::State;
-//! use riff_server::store::Memory;
+//! use riff_state::checkpoint::{Checkpoint, load, write};
+//! use riff_state::state::State;
+//! use riff_state::store::Memory;
 //!
 //! let store = Memory::default();
 //! let now = Instant::now();
@@ -147,7 +147,7 @@ impl Checkpoint {
 /// The name of the checkpoint at `position`, written at `written_at_ms`.
 ///
 /// ```
-/// use riff_server::checkpoint::{name, parse};
+/// use riff_state::checkpoint::{name, parse};
 ///
 /// let name = name(1234, 1_790_000_000_000);
 /// assert_eq!(name, "checkpoint/00000000000000001234-1790000000000.json");
@@ -197,7 +197,7 @@ fn decode_value(value: serde_json::Value) -> Result<Checkpoint, String> {
 /// not a semantic version is not later.
 ///
 /// ```
-/// use riff_server::checkpoint::later;
+/// use riff_state::checkpoint::later;
 ///
 /// assert!(later("0.9.0", "0.8.1"));
 /// assert!(!later("0.8.1", "0.8.1"));
@@ -218,7 +218,7 @@ pub fn later(theirs: &str, ours: &str) -> bool {
 /// later.
 ///
 /// ```
-/// use riff_server::checkpoint::later_line;
+/// use riff_state::checkpoint::later_line;
 ///
 /// assert!(later_line("2.0.1", "1.3.1"));
 /// assert!(!later_line("1.4.0", "1.3.1"));
@@ -239,7 +239,7 @@ pub fn later_line(theirs: &str, ours: &str) -> bool {
 /// field, so the rest of the checkpoint need not read.
 ///
 /// ```
-/// use riff_server::checkpoint::of_later_line;
+/// use riff_state::checkpoint::of_later_line;
 ///
 /// let theirs = serde_json::json!({"format": 1, "build": "2.0.1", "state": "x"});
 /// assert_eq!(of_later_line(&theirs, "1.3.1").as_deref(), Some("2.0.1"));
@@ -316,9 +316,9 @@ pub async fn load(store: &dyn Store, build: &str) -> Result<Found, StoreError> {
 /// from the names, in the order of the positions.
 ///
 /// ```
-/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
-/// use riff_server::checkpoint::{name, names};
-/// use riff_server::store::{Memory, Store};
+/// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
+/// use riff_state::checkpoint::{name, names};
+/// use riff_state::store::{Memory, Store};
 ///
 /// let store = Memory::default();
 /// for position in [20, 3] {
@@ -352,7 +352,7 @@ pub async fn write(store: &dyn Store, checkpoint: &Checkpoint) -> Result<String,
 ///
 /// ```
 /// use std::collections::BTreeSet;
-/// use riff_server::checkpoint::kept;
+/// use riff_state::checkpoint::kept;
 ///
 /// const DAY: u64 = 24 * 60 * 60 * 1000;
 /// let now = 40 * DAY;

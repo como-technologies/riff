@@ -1,4 +1,4 @@
-//! Where `riff-server` saves its state (R30, R34).
+//! Where `riff-server` and the riff daemon save their state (R30, R34).
 //!
 //! # Objects
 //!
@@ -7,7 +7,7 @@
 //! | Name | Holds |
 //! |---|---|
 //! | [`crate::log::LOG`] and the first position | One chunk of the log. See [`crate::log`]. |
-//! | [`SIGN_INS`] | The token store: the sign-ins and their chains. See [`crate::token`]. The people are in the log. |
+//! | [`SIGN_INS`] | The token store: the sign-ins and their chains. See the module `token` of riff-server. The people are in the log. |
 //! | [`LEASE`] | The ID of the instance that may serve (R137). |
 //!
 //! # Stores
@@ -15,8 +15,8 @@
 //! | Store | For |
 //! |---|---|
 //! | [`Memory`] | Tests, and a `riff-server` with no bucket and no directory. |
-//! | [`Dir`] | Files in a directory (`--dir`, `RIFF_DIR`), for local development. |
-//! | [`crate::gcs::Gcs`] | A Cloud Storage bucket (`--bucket`). |
+//! | [`Dir`] | Files in a directory: `riff-server --dir` (`RIFF_DIR`) for local development, and the riff daemon. |
+//! | `Gcs` of riff-server | A Cloud Storage bucket (`--bucket`). |
 //!
 //! # Versions
 //!
@@ -36,7 +36,7 @@
 //! (01M3MMXYS1V8CA89D2XHKPR6C4).
 //!
 //! ```
-//! use riff_server::store::{Memory, SIGN_INS, StoreError};
+//! use riff_state::store::{Memory, SIGN_INS, StoreError};
 //!
 //! let error = StoreError::not_valid(&Memory::default(), SIGN_INS, "missing field `sign_ins`");
 //! assert_eq!(
@@ -51,7 +51,7 @@
 //!
 //! ```
 //! use futures::executor::block_on;
-//! use riff_server::store::{Memory, Store, StoreError};
+//! use riff_state::store::{Memory, Store, StoreError};
 //!
 //! let store = Memory::default();
 //! block_on(async {
@@ -263,7 +263,7 @@ impl Store for Memory {
 ///
 /// ```
 /// use futures::executor::block_on;
-/// use riff_server::store::{Dir, Store, StoreError};
+/// use riff_state::store::{Dir, Store, StoreError};
 ///
 /// let dir = tempfile::tempdir().unwrap();
 /// let store = Dir::new(dir.path());
