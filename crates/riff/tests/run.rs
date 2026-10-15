@@ -1139,7 +1139,11 @@ async fn riff_run_sends_the_verify_request_and_the_release_when_the_server_answe
     let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
     assert!(!thread.contains("verify request: issue-12"), "{thread}");
     let taken = machine.run(Some("lead1"), &["claim", "issue-12"]).await;
-    assert!(!text(&taken.stdout).contains("You hold"), "{}", text(&taken.stdout));
+    assert!(
+        !text(&taken.stdout).contains("You hold"),
+        "{}",
+        text(&taken.stdout)
+    );
     proxy.away(false);
 
     let out = output_of(child).await;
