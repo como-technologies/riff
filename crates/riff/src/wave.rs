@@ -1152,7 +1152,11 @@ impl World for Live {
                 .as_ref()
                 .ok_or_else(|| anyhow!("the session {} has no job", record.live.name))?;
             let wave = &job.wave;
-            let api = Api::new(&record.server).signed_in(Some(&record.live.session))?;
+            // The steps after the end outlast a restart of riff-server,
+            // as in `riff run` (01M4ZQVVGQYXTAVRB69C7YPC3Y).
+            let api = Api::new(&record.server)
+                .signed_in(Some(&record.live.session))?
+                .with_budget(run::END_BUDGET);
             let thread = wave.thread()?;
             println!(
                 "{}",
