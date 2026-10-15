@@ -1791,10 +1791,15 @@ when `main` holds 2.x. The branch starts at the last release tag of
 the line. CI runs the `Gate` and `Hygiene` on it as on `main`. A push
 to the branch does not deploy.
 
-Make the branch one time, from the last release tag of the line:
+Make the branch one time, from the last release tag of the line. Then
+run `just github` in a checkout of the branch: the ruleset
+`release-branches` is in its `deploy/github.sh`:
 
 ```sh
 git push origin 'v1.3.0^{commit}:refs/heads/release/1.x'
+git fetch origin
+git switch --no-track -c release-1.x origin/release/1.x
+just github
 ```
 
 Each change goes in by a pull request to the branch, as on `main`:
@@ -1803,25 +1808,37 @@ Each change goes in by a pull request to the branch, as on `main`:
 git fetch origin
 git switch --no-track -c my-fix origin/release/1.x
 git push -u origin HEAD
-gh pr create --base release/1.x --body-file pr.md
+gh pr create --base release/1.x --title "My fix" --body-file pr.md
 gh pr merge --auto --squash
 ```
 
-`just check` compares your branch with `origin/main`. On a release
-branch, most files differ from `origin/main`, so it runs each test.
+`just check` compares your branch with the last release tag of the
+line: the fork point of your branch and `origin/main`. So it runs the
+tests of each crate that changed on the line.
 
 Make the release as in [Make a release](#make-a-release), with
-`release/1.x` in place of `main`. Tag the merge commit of the release
-pull request on the branch, and name the last tag of the line for the
-notes:
+`release/1.x` in place of `origin/main`. Set the version on a branch
+of the line:
 
 ```sh
 git switch --no-track -c release-v1.3.1 origin/release/1.x
+sed -i 's/^version = ".*"/version = "1.3.1"/' Cargo.toml
+sed -i 's/"version": ".*"/"version": "1.3.1"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json
+cargo update --workspace
+git commit -am "Release v1.3.1"
+git push -u origin HEAD
 gh pr create --base release/1.x --title "Release v1.3.1" --label release --body-file pr.md
+```
+
+After the merge, tag the merge commit on the branch. Name the last
+tag of the line for the notes. While `main` holds a newer line, the
+patch is not the latest release on GitHub:
+
+```sh
 git fetch origin
 git tag v1.3.1 origin/release/1.x
 git push origin v1.3.1
-gh release create v1.3.1 --verify-tag --title v1.3.1 --notes-file notes.md --generate-notes --notes-start-tag v1.3.0
+gh release create v1.3.1 --verify-tag --title v1.3.1 --notes-file notes.md --generate-notes --notes-start-tag v1.3.0 --latest=false
 ```
 
 The tag deploys the patch as each release tag does.

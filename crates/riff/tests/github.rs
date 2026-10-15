@@ -241,6 +241,14 @@ fn just_github_again_updates_the_same_ruleset() {
     );
     assert!(!log.contains("-X POST"), "{log}");
     assert_eq!(ruleset(&log, "main")["name"], "main");
+    let branches = log
+        .split_once("gh api -X PUT repos/owner/repo/rulesets/9 --input -\n")
+        .unwrap()
+        .1;
+    assert!(
+        branches.starts_with("{\n  \"name\": \"release-branches\","),
+        "{log}"
+    );
 }
 
 /// 01M3MRMB0AJVPD952AQYD7X1RN: only the repository admin role creates,
@@ -308,6 +316,8 @@ fn just_github_protects_the_release_branches() {
         checks["required_status_checks"],
         serde_json::json!([{ "context": "Gate" }, { "context": "Hygiene" }])
     );
+    // The checks do not stop the push that makes a new branch of a line.
+    assert_eq!(checks["do_not_enforce_on_create"], true);
 }
 
 #[test]

@@ -587,7 +587,8 @@
   command `just github` makes the ruleset `release-branches` on
   `release/**`: a change needs a pull request with 0 approvals and the
   checks `Gate` and `Hygiene`. No force push, no deletion, no bypass
-  actor.
+  actor. The checks do not stop the push that makes a new branch of a
+  line.
 - **01M3JFEXJG2D651PWA30DNRGWF** No session pushes to `main` or runs
   `gh pr merge --admin`. The project settings of Claude Code deny both,
   and the skill says it.

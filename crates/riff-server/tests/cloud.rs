@@ -228,11 +228,16 @@ fn ci_runs_on_main_and_on_the_release_branches() {
         );
     }
     let hygiene = fs::read_to_string(deploy().join("../.github/workflows/hygiene.yml")).unwrap();
-    assert_eq!(
-        hygiene.matches("branches: [main, \"release/**\"]").count(),
-        2,
-        "{hygiene}"
-    );
+    let on = hygiene.split_once("\npermissions:").unwrap().0;
+    let pull = on.split_once("\n  pull_request:\n").unwrap().1;
+    let push = on.split_once("\n  push:\n").unwrap().1;
+    for part in [pull, push] {
+        assert!(
+            part.trim_start()
+                .starts_with("branches: [main, \"release/**\"]"),
+            "{on}"
+        );
+    }
 }
 
 /// 01M3NJAZ6BYH7TWKDYTVEK78PG, 01M3NJAZ8HSE87H0GZ8SNGWN31: a release

@@ -17,7 +17,8 @@
 # - The ruleset `release-branches` on the branches `release/**` of the
 #   older release lines: a change needs a pull request with 0 approvals
 #   and the checks Gate and Hygiene. No force push, no deletion, no
-#   bypass (01M4YJ6KGBPTCSVMFQCDKACZPV).
+#   bypass. The checks do not stop the push that makes a new branch of
+#   a line (01M4YJ6KGBPTCSVMFQCDKACZPV).
 set -euo pipefail
 
 REPO="${1:-como-technologies/riff}"
@@ -124,6 +125,7 @@ ruleset release-branches <<'JSON'
       "type": "required_status_checks",
       "parameters": {
         "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": true,
         "required_status_checks": [
           { "context": "Gate" },
           { "context": "Hygiene" }
