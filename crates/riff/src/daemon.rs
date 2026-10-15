@@ -124,7 +124,7 @@
 //! |---|---|
 //! | [`SessionAsk::Hello`] | says [`Say::Session`]: the session ID, the item and the name of the container |
 //! | [`SessionAsk::Relay`] | relays the session ([`crate::session_relay`]) |
-//! | [`SessionAsk::Mcp`] | serves the riff tools of the session ([`Daemon::tools_of`]) |
+//! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk ([`Daemon::tools_of`]) |
 //!
 //! # A session
 //!
@@ -132,7 +132,11 @@
 //! out of it ([`Scrub`]), writes it to `events.jsonl` in the folder of
 //! the session, and sends it to each `riff` that follows the session.
 //! The event with the sequence number N is line N of `events.jsonl`. At
-//! the `result` of the turn, it closes the input: `claude` ends.
+//! the `result` of the turn, it closes the input: `claude` ends. When
+//! the daemon cannot keep an event, it closes the connection of the
+//! relay with no ack. The relay connects again and sends the event
+//! again. The daemon acks the exit of `claude` only when it has each
+//! event before it (01M4ZHSZMH4Y8CB41FYGE3C3R2).
 //!
 //! A session ends when the daemon has the exit of the relay, or when its
 //! container ends (01M4ZHT03MAH0B5Q4S6GZC5JRP). A [`Then::Stop`] stops
@@ -147,9 +151,10 @@
 //!
 //! The daemon keeps a [`Record`] of each session in `live/NAME.json`.
 //! At its start, a new daemon reads each record ([`Daemon::recover`]).
-//! It takes up each session whose container runs: it binds the socket of
-//! the session again in the same folder, and the relay connects again.
-//! It removes the record of each other one (01M4ZHT01HH88KPA8628M7VBEY).
+//! It takes up each session whose container runs, or when podman cannot
+//! say: it binds the socket of the session again in the same folder, and
+//! the relay connects again. It removes the record of each other one
+//! (01M4ZHT01HH88KPA8628M7VBEY).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -651,8 +656,6 @@ pub struct Record {
     pub server: String,
     /// The URI of the session.
     pub me: SessionUri,
-    /// The working folder of the session: its clone.
-    pub dir: PathBuf,
     /// Each input for `claude`, in order: one stream-json line each.
     pub inputs: Vec<String>,
     /// True when the input of `claude` closes after the last input.
@@ -805,9 +808,18 @@ impl Owned {
             match serde_json::from_str::<Up>(&line) {
                 Ok(Up::Event { seq, line }) => {
                     let has = self.event(seq, &line);
+                    if has < seq {
+                        // The daemon could not keep the event: the relay
+                        // connects again and sends it again.
+                        break;
+                    }
                     out.say(Say::Ack { seq: has });
                 }
                 Ok(Up::Exit { seq, code }) => {
+                    // The exit counts only after each event before it.
+                    if self.lock().seq + 1 < seq {
+                        break;
+                    }
                     out.say(Say::Ack { seq });
                     let _ = self.notes.send(Note::Exit(code));
                 }
@@ -1136,7 +1148,6 @@ impl<R: Runtime + 'static> Daemon<R> {
             folder,
             server,
             me,
-            dir: spec.workdir.clone(),
             inputs: vec![user_line(&start)],
             closed: false,
             failed: false,
@@ -1381,13 +1392,15 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// riff-server as that session, with the sign-in of the person on
     /// this machine (01M4ZHSZV46RF3XDXDTQXWGXRG). That session is the
     /// worker session of `riff run`, which holds the claim of the item.
+    /// The session gets only the tools that act on riff-server, and on
+    /// no folder of the host and no claim ([`crate::mcp::CONTAINER_TOOLS`]).
     /// From #719, the tools act on the state of the daemon
     /// (01M4ZKX0H9N82ZBC9PKSPTQV4N).
     pub fn tools_of(record: &Record) -> Result<crate::mcp::Tools> {
         let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
         Ok(crate::mcp::Tools::new(api, record.me.clone())
             .as_worker(true)
-            .in_dir(record.dir.clone()))
+            .in_container())
     }
 
     /// Serves the riff tools of the session `owned` on one connection.
@@ -1422,7 +1435,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Takes up each session of a record in the folder of the daemon
-    /// whose container runs, and removes each other record
+    /// whose container runs, or when podman cannot say, and removes each
+    /// other record
     /// (01M4ZHT01HH88KPA8628M7VBEY). Call it after [`listen`], before
     /// [`Daemon::serve`].
     pub async fn recover(self: &Arc<Self>) {
@@ -1444,7 +1458,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                 continue;
             };
             let name = record.live.name.clone();
-            if !self.runtime.running(&name).await.unwrap_or(false) {
+            // When podman cannot say, the daemon takes up the session,
+            // as its watch does.
+            if !self.runtime.running(&name).await.unwrap_or(true) {
                 let _ = std::fs::remove_file(&path);
                 let _ = std::fs::remove_dir_all(session_dir(&self.dir, &name));
                 println!("{}", text::daemon_session_gone(&name));
@@ -2337,7 +2353,6 @@ mod tests {
                 folder: folder.clone(),
                 server: start.server.clone(),
                 me: start.me.clone(),
-                dir: folder.clone(),
                 inputs: vec![user_line("Do it.")],
                 closed: false,
                 failed: false,
@@ -2450,7 +2465,6 @@ mod tests {
             folder: folder.clone(),
             server: "http://127.0.0.1:1".into(),
             me: me(name),
-            dir: folder.clone(),
             inputs: vec![],
             closed: false,
             failed: false,
