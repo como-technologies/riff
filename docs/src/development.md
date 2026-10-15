@@ -421,10 +421,18 @@ safe to run again:
 just github
 ```
 
-It turns on auto-merge and squash merge only, and makes or updates two
-rulesets: `main`, and `releases` on the tags `v*`. With `releases`,
-only the repository admin role can create, move or delete a release
-tag. To see the result:
+It turns on auto-merge and squash merge only, and makes or updates
+three rulesets:
+
+- `main`: a change needs a pull request and the checks `Gate`,
+  `Hygiene` and `riff/verify`.
+- `release-branches` on the branches `release/**`: a change needs a
+  pull request and the checks `Gate` and `Hygiene`. See
+  [Make a patch of an older release](#make-a-patch-of-an-older-release).
+- `releases` on the tags `v*`: only the repository admin role can
+  create, move or delete a release tag.
+
+To see the result:
 
 ```sh
 gh api repos/como-technologies/riff --jq '{allow_auto_merge, allow_squash_merge, allow_merge_commit, allow_rebase_merge, squash_merge_commit_title, squash_merge_commit_message, delete_branch_on_merge}'
@@ -1774,6 +1782,66 @@ Watch both jobs:
 gh run list --workflow CI --event push --limit 1
 gh run watch
 ```
+
+### Make a patch of an older release
+
+`main` holds the newest release line. A patch of an older line goes on
+the branch `release/MAJOR.x` of that line, for example `release/1.x`
+when `main` holds 2.x. The branch starts at the last release tag of
+the line. CI runs the `Gate` and `Hygiene` on it as on `main`. A push
+to the branch does not deploy.
+
+Make the branch one time, from the last release tag of the line. Then
+run `just github` in a checkout of the branch: the ruleset
+`release-branches` is in its `deploy/github.sh`:
+
+```sh
+git push origin 'v1.3.0^{commit}:refs/heads/release/1.x'
+git fetch origin
+git switch --no-track -c release-1.x origin/release/1.x
+just github
+```
+
+Each change goes in by a pull request to the branch, as on `main`:
+
+```sh
+git fetch origin
+git switch --no-track -c my-fix origin/release/1.x
+git push -u origin HEAD
+gh pr create --base release/1.x --title "My fix" --body-file pr.md
+gh pr merge --auto --squash
+```
+
+`just check` compares your branch with the last release tag of the
+line: the fork point of your branch and `origin/main`. So it runs the
+tests of each crate that changed on the line.
+
+Make the release as in [Make a release](#make-a-release), with
+`release/1.x` in place of `origin/main`. Set the version on a branch
+of the line:
+
+```sh
+git switch --no-track -c release-v1.3.1 origin/release/1.x
+sed -i 's/^version = ".*"/version = "1.3.1"/' Cargo.toml
+sed -i 's/"version": ".*"/"version": "1.3.1"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json
+cargo update --workspace
+git commit -am "Release v1.3.1"
+git push -u origin HEAD
+gh pr create --base release/1.x --title "Release v1.3.1" --label release --body-file pr.md
+```
+
+After the merge, tag the merge commit on the branch. Name the last
+tag of the line for the notes. While `main` holds a newer line, the
+patch is not the latest release on GitHub:
+
+```sh
+git fetch origin
+git tag v1.3.1 origin/release/1.x
+git push origin v1.3.1
+gh release create v1.3.1 --verify-tag --title v1.3.1 --notes-file notes.md --generate-notes --notes-start-tag v1.3.0 --latest=false
+```
+
+The tag deploys the patch as each release tag does.
 
 ### Deploy the shared server at the end of a wave
 

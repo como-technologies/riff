@@ -167,7 +167,7 @@ dev *ARGS:
     PATH="$tree/target/debug:$PATH" claude --plugin-dir "$tree/crates/riff/claude-plugin/riff" \
         --settings '{"enabledPlugins":{"riff@riff":false}}'
 
-# Set up the GitHub repository for pull requests: auto-merge, squash only, the ruleset on main
+# Set up the GitHub repository for pull requests: auto-merge, squash only, the rulesets on main, release/** and the tags
 github REPO="como-technologies/riff":
     deploy/github.sh {{REPO}}
 
