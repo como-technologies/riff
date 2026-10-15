@@ -12,6 +12,7 @@ autotests = false
 
 [dependencies]
 riff-core.workspace = true
+riff-state.workspace = true
 hygiene.workspace = true
 anyhow.workspace = true
 anstream.workspace = true

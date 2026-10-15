@@ -27,7 +27,7 @@ use riff_core::record::{
 use riff_core::wire::{Message, RiffState, StartReason};
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::store::Memory;
+use riff_state::store::Memory;
 use serde_json::json;
 
 /// The time of second 0 of the test log: 2026-10-01 00:00 UTC.
@@ -213,7 +213,7 @@ async fn serve(
             r
         })
         .collect();
-    riff_server::log::write(&store, &records, &Default::default(), || true)
+    riff_state::log::write(&store, &records, &Default::default(), || true)
         .await
         .unwrap();
     let config = Config {

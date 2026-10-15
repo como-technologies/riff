@@ -5,8 +5,8 @@ use crate::common;
 
 use std::sync::Arc;
 
-use riff_server::log::chunk_name;
-use riff_server::store::{Dir, Memory, Store, StoreError};
+use riff_state::log::chunk_name;
+use riff_state::store::{Dir, Memory, Store, StoreError};
 use serde_json::{Value, json};
 
 const MIKE: &str = "riff://mike@pangolin/como-technologies/riff?session=a#api";
@@ -111,7 +111,7 @@ async fn a_chunk_of_another_instance_stops_the_server() {
     let mut records = 0;
     for name in store.list("log/").await.unwrap() {
         let bytes = store.load(&name).await.unwrap().unwrap().bytes;
-        records += riff_server::log::decode(&bytes).unwrap().1.len();
+        records += riff_state::log::decode(&bytes).unwrap().1.len();
     }
     let next = chunk_name(u64::try_from(records).unwrap() + 1);
     store.save(&next, b"other".to_vec(), None).await.unwrap();

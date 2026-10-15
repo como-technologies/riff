@@ -29,7 +29,7 @@ use riff_core::name::SessionUri;
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
-use riff_server::store::{Loaded, Memory, SIGN_INS, Store, StoreError, Version};
+use riff_state::store::{Loaded, Memory, SIGN_INS, Store, StoreError, Version};
 
 /// The environment of each `riff` of this test. The secrets of this
 /// test process go to its secret files too.

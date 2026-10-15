@@ -17,7 +17,7 @@ use riff_core::wire::{
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
-use riff_server::store::{Memory, Store};
+use riff_state::store::{Memory, Store};
 
 /// A riff with sign-in. `admins` are the admin emails of the settings.
 fn config(url: &str, issuer: &str, admins: &[&str]) -> Config {

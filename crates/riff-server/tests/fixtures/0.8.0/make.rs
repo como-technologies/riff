@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Keys, Kind, Post, RiffState, Status};
-use riff_server::state::{Object, State};
+use riff_state::state::{Object, State};
 use riff_server::token::Tokens;
 use serde_json::json;
 

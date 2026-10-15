@@ -15,10 +15,10 @@ use isolated::Isolated;
 use riff_core::name::Who;
 use riff_core::record::{By, Change, Claimed, Envelope, PauseSet, Record, Scope};
 use riff_core::wire::RiffState;
-use riff_server::checkpoint::{self, Checkpoint};
-use riff_server::log::{self, chunk_name};
-use riff_server::state::State;
-use riff_server::store::{Dir, LEASE};
+use riff_state::checkpoint::{self, Checkpoint};
+use riff_state::log::{self, chunk_name};
+use riff_state::state::State;
+use riff_state::store::{Dir, LEASE};
 
 /// A record from before the cause.
 fn running(position: u64) -> Record {

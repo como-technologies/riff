@@ -23,7 +23,7 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Kind, RiffState, Status};
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::store::{Loaded, Memory, Store, StoreError, Version};
+use riff_state::store::{Loaded, Memory, Store, StoreError, Version};
 
 /// The time of one write of a chunk of the log.
 const WRITE: Duration = Duration::from_millis(30);

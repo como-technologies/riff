@@ -42,7 +42,7 @@
 //!   message as before (01M3ZCDNR0DT9J5XXXS89APTQ2). A message whose signature does
 //!   not sign that payload stays not verified.
 //! - [`Old::changes`] gives the changes of the command `import`
-//!   ([`crate::state::Import`]), in this order:
+//!   ([`riff_state::state::Import`]), in this order:
 //!   1. `riff_made`, with the riff ID of today.
 //!   2. `person_joined` for each USER, with its email.
 //!   3. `member_invited`, `admin_set` and `owner_set`; `owner_asked`
@@ -103,10 +103,10 @@ use riff_core::record::{
 };
 use riff_core::signed::Content;
 use riff_core::wire::{Idle, Message, RiffState, StartReason, Status};
+use riff_state::state::{CLAIM_GRACE, Imported, ImportedSession, KEEP_MESSAGES, SESSION_EXPIRY};
+use riff_state::store::{Store, StoreError};
 use serde::Deserialize;
 
-use crate::state::{CLAIM_GRACE, Imported, ImportedSession, KEEP_MESSAGES, SESSION_EXPIRY};
-use crate::store::{Store, StoreError};
 use crate::{checkpoint, log};
 
 /// The old object with the sessions, their read cursors, the claims, the
@@ -422,7 +422,7 @@ impl Old {
 
         let sessions: BTreeMap<&Who, &SavedSession> =
             self.sessions(now_ms).map(|s| (s.uri.who(), s)).collect();
-        let server = crate::owner::server_uri();
+        let server = riff_state::owner::server_uri();
         let mut senders = BTreeMap::new();
         for thread in self.threads(now_ms) {
             let skip = thread.messages.len().saturating_sub(KEEP_MESSAGES);
@@ -478,7 +478,7 @@ impl Old {
     }
 
     /// What the log does not hold, for
-    /// [`State::imported`](crate::state::State::imported): the last
+    /// [`State::imported`](riff_state::state::State::imported): the last
     /// call, the end and the status of each session of the import, and
     /// the read cursors.
     pub fn memory(&self, now_ms: u64) -> Imported {
@@ -707,7 +707,7 @@ mod tests {
     fn a_replay_of_the_import_gives_the_same_state_with_each_session_in_its_place() {
         use std::time::Instant;
 
-        use crate::state::{Caller, Import, State};
+        use riff_state::state::{Caller, Import, State};
 
         let now = Instant::now();
         let mut state = State::default();

@@ -179,19 +179,13 @@
 //! ```
 
 pub mod auth;
-pub mod checkpoint;
 pub mod engine;
 pub mod gcs;
-pub mod idle;
 pub mod import;
 pub mod lease;
 pub mod listen;
-pub mod log;
 pub mod logline;
 pub mod oidc;
-pub mod owner;
-pub mod state;
-pub mod store;
 pub mod token;
 pub mod tools;
 pub mod trace;
@@ -225,6 +219,12 @@ use riff_core::wire::{
     SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
     TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
+use riff_state::owner::{Check, Checks};
+use riff_state::state::{
+    Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,
+};
+use riff_state::store::{Memory, SIGN_INS, Store, StoreError, Version};
+use riff_state::{checkpoint, idle, log, owner, state, store};
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
@@ -234,11 +234,6 @@ use crate::engine::{Admitted, Engine, Failed, SignIns, command};
 use crate::import::Old;
 use crate::lease::Lease;
 use crate::oidc::Identity;
-use crate::owner::{Check, Checks};
-use crate::state::{
-    Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,
-};
-use crate::store::{Memory, SIGN_INS, Store, StoreError, Version};
 use crate::token::Tokens;
 use crate::trace::DeniedCode;
 
@@ -1201,12 +1196,12 @@ impl Service {
     /// - The claim timer of each session starts at the load (R125).
     ///
     /// ```
-    /// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+    /// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
     /// use std::sync::Arc;
     /// use std::time::Duration;
     /// use riff_server::Service;
     /// use riff_server::auth::Config;
-    /// use riff_server::store::{LEASE, Memory, Store};
+    /// use riff_state::store::{LEASE, Memory, Store};
     ///
     /// let mut config = Config::default();
     /// config.lease.wait = Duration::from_millis(10);
@@ -1970,7 +1965,7 @@ impl Service {
     ) -> Result<TokenReply, String> {
         let identity = Identity {
             email: email.to_owned(),
-            user: oidc::user_of(&state::people::email(email)).unwrap_or_default(),
+            user: state::people::user_of(&state::people::email(email)).unwrap_or_default(),
             allowed_domain,
         };
         let mark = self.0.tokens_changes.load(Ordering::SeqCst);
@@ -2900,9 +2895,9 @@ mod tests {
         assert_eq!(events.collect::<Vec<u32>>().await, [1, 2, 3]);
     }
     use crate::logline::testing::Capture;
-    use crate::store::Memory;
     use futures::future::BoxFuture;
     use riff_core::record::{Change, Line};
+    use riff_state::store::Memory;
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -5334,7 +5329,7 @@ mod tests {
     fn identity(email: &str) -> Identity {
         Identity {
             email: email.to_owned(),
-            user: oidc::user_of(email).unwrap(),
+            user: state::people::user_of(email).unwrap(),
             allowed_domain: false,
         }
     }

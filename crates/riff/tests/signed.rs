@@ -13,7 +13,7 @@ use riff::text;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::store::{Memory, Store};
+use riff_state::store::{Memory, Store};
 use serde_json::Value;
 
 const LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=a1";

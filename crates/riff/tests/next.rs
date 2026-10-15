@@ -19,7 +19,7 @@ use riff_core::record::Change;
 use riff_core::wire::{RiffState, StartReason};
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::store::Memory;
+use riff_state::store::Memory;
 
 /// A fake `tmux` that writes each call to a log. When the file `clears`
 /// next to it names a `riff`, the key `/clear` runs the start hook of
@@ -246,7 +246,7 @@ impl Riff {
 
     /// Each change of the log, in order.
     async fn changes(&self) -> Vec<Change> {
-        let replayed = riff_server::log::replay(&*self.store).await.unwrap();
+        let replayed = riff_state::log::replay(&*self.store).await.unwrap();
         replayed.records.into_iter().map(|r| r.change).collect()
     }
 

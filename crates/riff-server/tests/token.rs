@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use riff_core::dpop::Key;
 use riff_core::wire::{TokenError, TokenReply};
-use riff_server::store::{Loaded, Memory, SIGN_INS, Store, StoreError, Version};
+use riff_state::store::{Loaded, Memory, SIGN_INS, Store, StoreError, Version};
 
 async fn error(reply: reqwest::Response) -> (u16, String) {
     assert_eq!(reply.headers()["cache-control"], "no-store");
@@ -92,7 +92,7 @@ async fn pair(reply: reqwest::Response) -> TokenReply {
     serde_json::from_str(&text).unwrap()
 }
 
-impl riff_server::store::Store for Broken {
+impl riff_state::store::Store for Broken {
     fn load<'a>(
         &'a self,
         name: &'a str,
@@ -113,7 +113,7 @@ impl riff_server::store::Store for Broken {
         bytes: Vec<u8>,
         known: Option<Version>,
     ) -> futures::future::BoxFuture<'a, Result<Version, StoreError>> {
-        if name == riff_server::store::LEASE {
+        if name == riff_state::store::LEASE {
             return self.0.save(name, bytes, known);
         }
         Box::pin(async { Err(StoreError::Failed("the disk is gone".into())) })
@@ -203,7 +203,7 @@ impl Failing {
     }
 }
 
-impl riff_server::store::Store for Failing {
+impl riff_state::store::Store for Failing {
     fn load<'a>(
         &'a self,
         name: &'a str,

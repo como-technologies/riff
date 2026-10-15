@@ -47,9 +47,9 @@
 //!
 //! ```no_run
 //! use riff_server::gcs::Gcs;
-//! use riff_server::store::Store;
+//! use riff_state::store::Store;
 //!
-//! # async fn run() -> Result<(), riff_server::store::StoreError> {
+//! # async fn run() -> Result<(), riff_state::store::StoreError> {
 //! let store = Gcs::new("como-riff-state");
 //! let version = store.save("tokens", b"{}".to_vec(), None).await?;
 //! assert_eq!(store.load("tokens").await?.unwrap().version, version);
@@ -66,7 +66,7 @@ use futures::future::{BoxFuture, FutureExt};
 use reqwest::StatusCode;
 use serde::Deserialize;
 
-use crate::store::{Loaded, Store, StoreError, Version};
+use riff_state::store::{Loaded, Store, StoreError, Version};
 
 /// The Cloud Storage API.
 pub const STORAGE: &str = "https://storage.googleapis.com";
@@ -161,7 +161,7 @@ impl Gcs {
     ///
     /// ```
     /// use riff_server::gcs::Gcs;
-    /// use riff_server::store::Store;
+    /// use riff_state::store::Store;
     ///
     /// let store = Gcs::new("como-riff-state").or_gcloud("gcloud");
     /// assert_eq!(store.locate("lease"), "gs://como-riff-state/lease");

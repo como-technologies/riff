@@ -76,7 +76,7 @@
 //! An instance serves for at most [`Timing::renew_every`], plus one
 //! [`Timing::read_every`], plus [`Timing::valid_for`] after the time in
 //! the lease. A try of a chunk takes at most 3 seconds more
-//! ([`crate::log::Timing::attempt`]). That is 40 seconds. The other 50
+//! ([`riff_state::log::Timing::attempt`]). That is 40 seconds. The other 50
 //! seconds of [`Timing::ends_after`] are for the difference between the
 //! clock of the instance and the clock of the tool.
 //!
@@ -128,7 +128,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::store::{LEASE, Store, StoreError, Version};
+use riff_state::store::{LEASE, Store, StoreError, Version};
 
 /// The times of the lease rules. Tests use short times.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,7 +176,7 @@ impl Timing {
     /// assert_eq!(Timing::default().settle(), Duration::from_secs(10));
     /// ```
     pub fn settle(&self) -> Duration {
-        self.read_every + self.valid_for + crate::log::Timing::default().attempt
+        self.read_every + self.valid_for + riff_state::log::Timing::default().attempt
     }
 }
 
@@ -221,10 +221,10 @@ pub struct Held {
 /// live lease" in the module docs.
 ///
 /// ```
-/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+/// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
 /// use std::sync::Arc;
 /// use riff_server::lease::{Lease, Timing, holder, now_ms};
-/// use riff_server::store::Memory;
+/// use riff_state::store::Memory;
 ///
 /// let store = Arc::new(Memory::default());
 /// let timing = Timing::default();
@@ -349,10 +349,10 @@ pub enum Busy {
 /// takes the lease" in the module docs.
 ///
 /// ```
-/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+/// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
 /// use std::sync::Arc;
 /// use riff_server::lease::{Busy, Lease, Timing, ToolLease, holder, now_ms};
-/// use riff_server::store::Memory;
+/// use riff_state::store::Memory;
 ///
 /// let store = Arc::new(Memory::default());
 /// let timing = Timing::default();
@@ -433,7 +433,7 @@ impl<'a> ToolLease<'a> {
 /// use std::sync::Arc;
 /// use futures::executor::block_on;
 /// use riff_server::lease::Lease;
-/// use riff_server::store::Memory;
+/// use riff_state::store::Memory;
 ///
 /// let store = Arc::new(Memory::default());
 /// block_on(async {
@@ -445,9 +445,9 @@ impl<'a> ToolLease<'a> {
 ///     // Only the holder renews the lease.
 ///     assert!(new.renew().await?);
 ///     assert!(!old.renew().await?);
-///     Ok::<(), riff_server::store::StoreError>(())
+///     Ok::<(), riff_state::store::StoreError>(())
 /// })?;
-/// # Ok::<(), riff_server::store::StoreError>(())
+/// # Ok::<(), riff_state::store::StoreError>(())
 /// ```
 pub struct Lease {
     store: Arc<dyn Store>,
@@ -510,9 +510,9 @@ impl Lease {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{Loaded, Memory, Version};
     use futures::executor::block_on;
     use futures::future::{BoxFuture, FutureExt};
+    use riff_state::store::{Loaded, Memory, Version};
 
     fn lease(store: &Memory, id: &str) -> Lease {
         Lease {
@@ -631,7 +631,7 @@ mod tests {
         assert_eq!(t.renew_every, Duration::from_secs(30));
         assert_eq!(t.ends_after, Duration::from_secs(90));
         // The argument in "A live lease" of the module docs.
-        let attempt = crate::log::Timing::default().attempt;
+        let attempt = riff_state::log::Timing::default().attempt;
         let writes = t.renew_every + t.read_every + t.valid_for + attempt;
         assert_eq!(writes, Duration::from_secs(40));
         // The difference of the two clocks that the rule allows.

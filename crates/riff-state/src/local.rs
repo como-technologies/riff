@@ -161,7 +161,10 @@ impl Local {
     /// Loads the state of `store`: the newest checkpoint that reads, and
     /// the log after it. `settings` say when [`Local`] writes a
     /// checkpoint, which it keeps, and the build that writes them.
-    pub async fn open(store: Arc<dyn Store>, settings: checkpoint::Settings) -> Result<Local, Error> {
+    pub async fn open(
+        store: Arc<dyn Store>,
+        settings: checkpoint::Settings,
+    ) -> Result<Local, Error> {
         let found = checkpoint::load(&*store, &settings.build).await?;
         let snapshot = found.checkpoint.map(|c| c.state);
         let from = snapshot.as_ref().map_or(0, |s| s.position);
@@ -212,7 +215,10 @@ impl Local {
         let reply = inner
             .state
             .reply(&caller, command, &Done::of(made), note, now);
-        let came = inner.state.written_position().saturating_sub(inner.checkpoint);
+        let came = inner
+            .state
+            .written_position()
+            .saturating_sub(inner.checkpoint);
         let due = came >= self.settings.every_records || inner.at.elapsed() >= self.settings.every;
         if came > 0 && due {
             self.write_checkpoint(&mut inner, true).await;

@@ -17,9 +17,9 @@ use riff_core::wire::{
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::Provider;
-use riff_server::store::{Memory, Store};
 use riff_server::token::Refused;
 use riff_server::tools::{Mode, cut_with};
+use riff_state::store::{Memory, Store};
 
 fn config(url: &str, issuer: &str) -> Config {
     Config {
@@ -119,7 +119,7 @@ async fn a_removal_after_a_cut_ends_each_sign_in_of_the_person() {
     old.shutdown().await.unwrap();
 
     // The position of the record that made bob a person.
-    let log = riff_server::log::replay_after(&store, 0).await.unwrap();
+    let log = riff_state::log::replay_after(&store, 0).await.unwrap();
     let joined = log
         .records
         .iter()
@@ -189,10 +189,7 @@ async fn a_start_drops_the_sign_in_of_a_person_that_the_log_does_not_know() {
     let (old, url) = serve(&issuer, shared.clone()).await;
     let ada = sign_in(&url, &issuer, "ada@gmail.com").await.unwrap();
     old.save().await.unwrap();
-    let end = riff_server::log::replay_after(&store, 0)
-        .await
-        .unwrap()
-        .last;
+    let end = riff_state::log::replay_after(&store, 0).await.unwrap().last;
     invite(&url, &ada, "bob@gmail.com").await;
     let bob = sign_in(&url, &issuer, "bob@gmail.com").await.unwrap();
     old.save().await.unwrap();

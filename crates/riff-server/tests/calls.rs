@@ -12,11 +12,11 @@ use riff_core::wire::{
     CALL_HEADER, Claim, Post, REPEAT_HEADER, Read, ReadReply, Register, Release, ReleaseReply,
     Resume,
 };
-use riff_server::checkpoint;
 use riff_server::engine::{Authenticated, Engine, Failed, Open, Replied, Routed};
-use riff_server::log::{Timing, replay_after, write};
-use riff_server::state::{CALL_KEEP, Code, Command, State};
-use riff_server::store::Memory;
+use riff_state::checkpoint;
+use riff_state::log::{Timing, replay_after, write};
+use riff_state::state::{CALL_KEEP, Code, Command, State};
+use riff_state::store::Memory;
 
 fn now_ms() -> u64 {
     let since = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();

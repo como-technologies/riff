@@ -13,8 +13,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use riff_server::gcs::{Gcs, TOKEN_PATH};
-use riff_server::log::chunk_name;
-use riff_server::store::{LEASE, SIGN_INS, Store, StoreError};
+use riff_state::log::chunk_name;
+use riff_state::store::{LEASE, SIGN_INS, Store, StoreError};
 use serde_json::{Value, json};
 
 const BUCKET: &str = "riff-test";
