@@ -437,7 +437,10 @@ async fn a_session_in_a_container_gets_only_the_tools_that_talk() {
         ("move", serde_json::json!({ "path": "/" })),
         ("lead", serde_json::json!({})),
         ("pause", serde_json::json!({})),
-        ("hold", serde_json::json!({ "item": "issue-14", "reason": "r" })),
+        (
+            "hold",
+            serde_json::json!({ "item": "issue-14", "reason": "r" }),
+        ),
     ];
     for (tool, args) in refused {
         let (text, is_error) = call(&mike, tool, args).await;
