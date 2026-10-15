@@ -6002,6 +6002,27 @@ pub fn lead_runs(repo: &str, name: &str) -> String {
     format!("The lead of {repo} runs in the container {name}. riff attaches to it.")
 }
 
+/// `riff lead start`: the clone of the lead has a change that is not
+/// committed.
+pub const LEAD_CLONE_CHANGED: &str = "it has a change that is not committed";
+
+/// `riff lead start`: the branch of the clone of the lead has no
+/// upstream.
+pub const LEAD_CLONE_NO_UPSTREAM: &str = "its branch has no upstream";
+
+/// `riff lead start`: the branch of the clone of the lead has a commit
+/// that is not on its upstream.
+pub const LEAD_CLONE_AHEAD: &str = "its branch has a commit that is not on its upstream";
+
+/// `riff lead start`: the clone of the lead at `clone` stays as it is,
+/// for the reason `why`.
+pub fn lead_clone_kept(clone: &Path, why: &str) -> String {
+    format!(
+        "The clone of the lead at {} stays as it is: {why}. It does not get the new commits of origin.",
+        clone.display()
+    )
+}
+
 /// `riff lead start`: the lead starts.
 pub fn lead_starts(repo: &str, name: &str, session: &str) -> String {
     format!("The lead of {repo} starts in the container {name}: session {session}.")

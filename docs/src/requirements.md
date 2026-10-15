@@ -4805,6 +4805,11 @@ share.
   branch of `origin`, and the Claude folder `claude/`. Both stay
   between the starts of the lead. Each start is a new session of
   riff-server and of `claude`.
+- **01M50RRQ9DT0JPSB358EAZRP8Z** Each later start of the lead fetches
+  `origin` into the clone of the lead, and fast-forwards its branch to
+  its upstream. A clone with a local change stays as it is, and riff
+  shows a note. A local change is a change that is not committed, a
+  commit that is not on the upstream, or a branch with no upstream.
 - **01M501P9SDGVWG3MTVCW5BDRQQ** The Claude folder of the lead gets the
   first-run answers of `claude`: `hasCompletedOnboarding`, the `theme`
   of the `.claude.json` of the person (else `auto`), and the trust of
@@ -4843,6 +4848,10 @@ share.
   takes over the selected session. `q`, Esc and Ctrl-C end the view;
   the sessions go on. Its tests draw it on the `TestBackend` of
   ratatui.
+- **01M50RRQBZ8ASPT25DYPX78HP9** After a takeover from `riff view`,
+  the note under the rows says that the session goes on, or that it
+  ended before the takeover. The view reads the keys of the person in
+  a blocking task of tokio, not in its async loop.
 - **01M501PA6W0NCG9JEK017F9304** `riff takeover NAME` takes over the
   worker in the container NAME. It waits for the end of the turn of the
   session. Then it runs `podman exec -it NAME /opt/riff/riff relay

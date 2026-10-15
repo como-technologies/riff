@@ -861,6 +861,12 @@ conversations. When `claude` asks a question at its first start, answer
 it once: the Claude folder keeps the answer. The lead does not count in
 the limit of the host.
 
+Each start brings the clone of the lead up to date: riff fetches
+`origin`, and fast-forwards the branch of the clone to its upstream.
+When the clone has a local change, it stays as it is, and riff shows a
+note that says why. A local change is a change that is not committed,
+a commit that is not on the upstream, or a branch with no upstream.
+
 The lead gets the riff tools that talk, and the tools of a lead that
 act on riff-server: `lead`, `hold`, `free`, `pause` and `resume`. It
 gets its wakes from `/opt/riff/riff relay watch`, a background task
@@ -885,6 +891,9 @@ room, and each wave. It draws them again each second.
 | Enter | Attach to the lead. Ctrl-P Ctrl-Q comes back to the view. |
 | t | Take over the selected session (see [Take over a session](#take-over-a-session)). |
 | q, Esc, Ctrl-C | End the view. The sessions go on. |
+
+After a takeover, the note under the rows says that the session goes
+on with its item, or that it ended before the takeover.
 
 The states of a session:
 
