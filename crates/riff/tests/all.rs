@@ -33,6 +33,7 @@ mod hygiene;
 mod identity;
 mod jobserver;
 mod lead_book;
+mod lead_clone;
 mod lead_step;
 mod leave;
 mod left;

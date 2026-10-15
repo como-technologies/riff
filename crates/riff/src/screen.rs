@@ -26,7 +26,11 @@
 //!   terminal to `podman attach`, and takes it back after Ctrl-P Ctrl-Q.
 //! - `t` takes over the selected worker ([`crate::takeover`]). The view
 //!   gives the terminal to `claude --resume`, and takes it back after
-//!   `/exit`.
+//!   `/exit`. The note under the rows says that the session goes on,
+//!   or that it ended before the takeover ([`Screen::took_over`]).
+//! - The keys come from a blocking task of tokio that ends after
+//!   200 ms, so the async loop never blocks, and no read of the view
+//!   takes a key from a takeover.
 //! - `q`, Esc or Ctrl-C ends the view. The sessions go on.
 
 use std::path::Path;
@@ -95,6 +99,33 @@ impl Screen {
     /// Shows `note` for the person, under the rows.
     pub fn note(&mut self, note: impl Into<String>) {
         self.note = Some(note.into());
+    }
+
+    /// Shows the end of the takeover of `name` with the exit code
+    /// `taken` of [`crate::takeover::takeover`]
+    /// (01M50RRQBZ8ASPT25DYPX78HP9): 0 when the session goes on, 1 when
+    /// it ended before the takeover.
+    ///
+    /// ```
+    /// use riff::screen::Screen;
+    ///
+    /// let mut screen = Screen::default();
+    /// screen.took_over("n", &Ok(1));
+    /// assert_eq!(screen.shown_note(), Some(riff::text::takeover_session_ended("n").as_str()));
+    /// screen.took_over("n", &Ok(0));
+    /// assert_eq!(screen.shown_note(), Some(riff::text::takeover_back("n").as_str()));
+    /// ```
+    pub fn took_over(&mut self, name: &str, taken: &Result<i32>) {
+        self.note(match taken {
+            Ok(0) => text::takeover_back(name),
+            Ok(_) => text::takeover_session_ended(name),
+            Err(e) => format!("{e:#}"),
+        });
+    }
+
+    /// The note under the rows, if any.
+    pub fn shown_note(&self) -> Option<&str> {
+        self.note.as_deref()
     }
 
     /// The sessions of the daemon, in the order of the rows: each lead
@@ -259,10 +290,28 @@ fn key_of(event: &ratatui::crossterm::event::Event) -> Option<Key> {
     }
 }
 
+/// The next key of the person, or `None` when no key comes in
+/// [`KEY_WAIT`]. The blocking reads of crossterm run in a blocking task
+/// of tokio, not in the async loop of the view
+/// (01M50RRQBZ8ASPT25DYPX78HP9). The task ends after [`KEY_WAIT`], so
+/// no read of the view takes a key from a takeover or an attach.
+async fn next_key() -> Result<Option<Key>> {
+    use ratatui::crossterm::event;
+    tokio::task::spawn_blocking(|| {
+        if !event::poll(KEY_WAIT)? {
+            return Ok(None);
+        }
+        Ok(key_of(&event::read()?))
+    })
+    .await?
+}
+
+/// How long [`next_key`] waits for a key.
+const KEY_WAIT: Duration = Duration::from_millis(200);
+
 /// `riff view`: shows the daemon in the folder `dir` until the person
 /// ends the view. It attaches and takes over with `runtime`.
 pub async fn view(dir: &Path, runtime: &impl Runtime) -> Result<()> {
-    use ratatui::crossterm::event;
     let mut screen = Screen::default();
     let mut terminal = ratatui::try_init()?;
     let mut next = tokio::time::Instant::now();
@@ -274,35 +323,27 @@ pub async fn view(dir: &Path, runtime: &impl Runtime) -> Result<()> {
         if let Err(e) = terminal.draw(|frame| screen.draw(frame, crate::run::now_ms())) {
             break Err(e.into());
         }
-        match event::poll(Duration::from_millis(200)) {
-            Ok(true) => {}
-            Ok(false) => continue,
-            Err(e) => break Err(e.into()),
-        }
-        let key = match event::read() {
-            Ok(event) => key_of(&event),
-            Err(e) => break Err(e.into()),
+        let key = match next_key().await {
+            Ok(key) => key,
+            Err(e) => break Err(e),
         };
         let Some(action) = key.and_then(|key| screen.on_key(key)) else {
             continue;
         };
         // The terminal goes to the action, and comes back after it.
         ratatui::restore();
-        let note = match &action {
+        match &action {
             Action::Quit => break Ok(()),
-            Action::Attach(name) => crate::lead::attach(runtime, name)
-                .await
-                .err()
-                .map(|e| format!("{e:#}")),
-            Action::Takeover(name) => {
-                match crate::takeover::takeover(dir, runtime, name, |l| println!("{l}")).await {
-                    Ok(_) => Some(text::takeover_back(name)),
-                    Err(e) => Some(format!("{e:#}")),
+            Action::Attach(name) => {
+                if let Err(e) = crate::lead::attach(runtime, name).await {
+                    screen.note(format!("{e:#}"));
                 }
             }
-        };
-        if let Some(note) = note {
-            screen.note(note);
+            Action::Takeover(name) => {
+                let taken =
+                    crate::takeover::takeover(dir, runtime, name, |l| println!("{l}")).await;
+                screen.took_over(name, &taken);
+            }
         }
         terminal = match ratatui::try_init() {
             Ok(terminal) => terminal,
@@ -478,6 +519,23 @@ mod tests {
         screen.set(Ok(status(vec![])));
         assert_eq!(screen.selected(), 0);
         assert_eq!(screen.on_key(Key::Quit), Some(Action::Quit));
+    }
+
+    #[test]
+    fn a_takeover_of_a_session_that_ended_says_that_it_ended() {
+        let mut screen = two();
+        screen.took_over("riff-issue-12-1a2b3c4d", &Ok(1));
+        assert_eq!(
+            drawn(&screen, 110, 8)[6],
+            text::takeover_session_ended("riff-issue-12-1a2b3c4d")
+        );
+        screen.took_over("riff-issue-12-1a2b3c4d", &Ok(0));
+        assert_eq!(
+            drawn(&screen, 110, 8)[6],
+            text::takeover_back("riff-issue-12-1a2b3c4d")
+        );
+        screen.took_over("riff-issue-12-1a2b3c4d", &Err(anyhow::anyhow!("no daemon")));
+        assert_eq!(drawn(&screen, 110, 8)[6], "no daemon");
     }
 
     #[test]

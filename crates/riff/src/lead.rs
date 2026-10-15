@@ -28,7 +28,7 @@
 //! |---|---|---|
 //! | The container | `riff-lead-OWNER-REPO` ([`name_of`]): one lead for each repository | 01M4Z60B81RTZT71PN5HV0GZHX, 01M501P9MXNAP5QXNVBVF5JJFN |
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
-//! | The clone | `git clone --reference MAIN`, on the default branch, at the first start | 01M501P9Q51AYN9GBPWKVHA229 |
+//! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z |
 //! | The Claude folder | the first-run answers of `claude` ([`claude_folder`]) | 01M501P9SDGVWG3MTVCW5BDRQQ |
 //! | The command | `claude --session-id ID --permission-mode auto START` ([`spec`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4 |
 //! | The riff tools | [`crate::mcp::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
@@ -240,21 +240,52 @@ pub fn runs(status: &Status, name: &str) -> bool {
     status.sessions.iter().any(|s| s.name == name)
 }
 
-/// Makes the clone of the lead at `clone` from the main clone `main`,
-/// on the default branch of `origin`, when it is not there.
-fn make_clone(main: &Path, clone: &Path) -> Result<()> {
-    if clone.join(".git").exists() {
-        return Ok(());
+/// What [`fresh_clone`] did with the clone of the lead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fresh {
+    /// It made the clone, on the default branch of `origin`.
+    Made,
+    /// It fetched `origin`, and fast-forwarded the branch to its
+    /// upstream.
+    Forward,
+    /// The clone has a local change, or the fetch failed: it stays as
+    /// it is. The text says why.
+    Kept(String),
+}
+
+/// Brings the clone of the lead at `clone` up to date at each start of
+/// the lead (01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z).
+/// When it is not there, it makes it from the main clone `main`, on the
+/// default branch of `origin`. Else it fetches `origin`, and
+/// fast-forwards the branch to its upstream, when the clone has no
+/// local change.
+pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
+    if !clone.join(".git").exists() {
+        let remote = run::output("git", main, &["remote", "get-url", "origin"])?;
+        let top = main.to_string_lossy();
+        let path = clone.to_string_lossy();
+        run::output(
+            "git",
+            main,
+            &["clone", "-q", "--reference", &top, "--", &remote, &path],
+        )?;
+        return Ok(Fresh::Made);
     }
-    let remote = run::output("git", main, &["remote", "get-url", "origin"])?;
-    let top = main.to_string_lossy();
-    let path = clone.to_string_lossy();
-    run::output(
-        "git",
-        main,
-        &["clone", "-q", "--reference", &top, "--", &remote, &path],
-    )?;
-    Ok(())
+    let git = |args: &[&str]| run::output("git", clone, args);
+    if !git(&["status", "--porcelain", "--untracked-files=no"])?.is_empty() {
+        return Ok(Fresh::Kept(text::LEAD_CLONE_CHANGED.into()));
+    }
+    if git(&["rev-parse", "-q", "--verify", "@{upstream}"]).is_err() {
+        return Ok(Fresh::Kept(text::LEAD_CLONE_NO_UPSTREAM.into()));
+    }
+    if let Err(e) = git(&["fetch", "-q", "origin"]) {
+        return Ok(Fresh::Kept(format!("{e:#}")));
+    }
+    if git(&["rev-list", "--count", "@{upstream}..HEAD"])? != "0" {
+        return Ok(Fresh::Kept(text::LEAD_CLONE_AHEAD.into()));
+    }
+    git(&["merge", "-q", "--ff-only", "@{upstream}"])?;
+    Ok(Fresh::Forward)
 }
 
 /// Attaches the terminal of this process to the lead `name` with
@@ -304,7 +335,9 @@ pub async fn start_with(
     let folder = folder_of(&run::data_dir()?, &repo);
     let clone = folder.join("clone");
     let claude = folder.join("claude");
-    make_clone(&main, &clone)?;
+    if let Fresh::Kept(why) = fresh_clone(&main, &clone)? {
+        println!("{}", text::lead_clone_kept(&clone, &why));
+    }
     let person = host.home.join(".claude.json");
     claude_folder(&claude, &clone, Some(&person))?;
 
