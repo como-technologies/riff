@@ -5065,7 +5065,15 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 /// ```
 /// use riff::daemon::Status;
 ///
-/// let status = Status { pid: 42, build: "1.3.1 aaa".into(), since_ms: 0, dir: "/d".into(), sessions: vec![] };
+/// let status = Status {
+///     pid: 42,
+///     build: "1.3.1 aaa".into(),
+///     since_ms: 0,
+///     dir: "/d".into(),
+///     riff: None,
+///     position: 0,
+///     sessions: vec![],
+/// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");
 /// let other = riff::text::init_daemon_kept(&status, "1.3.1 bbb");
