@@ -321,7 +321,11 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
     };
     let image = match &facts.image {
         Ok(image) => Check::pass("the session image", image.clone()),
-        Err(why) => Check::fail("the session image", why.clone(), text::INIT_FIX_IMAGE.into()),
+        Err(why) => Check::fail(
+            "the session image",
+            why.clone(),
+            text::INIT_FIX_IMAGE.into(),
+        ),
     };
     vec![
         podman,
@@ -453,10 +457,7 @@ mod tests {
             ),
             (
                 "root",
-                Facts {
-                    uid: 0,
-                    ..ready()
-                },
+                Facts { uid: 0, ..ready() },
                 "fail  podman: riff runs as root, so podman runs with no user namespace.",
                 "as your own user",
             ),
@@ -595,16 +596,9 @@ mod tests {
             podman: Err(text::INIT_NO_PODMAN.into()),
             ..ready()
         };
-        let code = run(
-            &facts,
-            false,
-            &dir_in(root.path()),
-            &manager,
-            &unit(),
-            WAIT,
-        )
-        .await
-        .unwrap();
+        let code = run(&facts, false, &dir_in(root.path()), &manager, &unit(), WAIT)
+            .await
+            .unwrap();
         assert_eq!(code, 1);
         assert!(manager.0.lock().unwrap().is_empty());
         assert!(!dir_in(root.path()).exists());

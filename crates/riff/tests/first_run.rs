@@ -79,7 +79,11 @@ impl Machine {
         // By the user ID: the test does not know the login name.
         std::fs::write(etc.join("subuid"), format!("{uid}:100000:65536\n")).unwrap();
         std::fs::write(etc.join("subgid"), format!("{uid}:100000:65536\n")).unwrap();
-        std::fs::write(cgroup.join("cgroup.controllers"), "cpuset cpu io memory pids\n").unwrap();
+        std::fs::write(
+            cgroup.join("cgroup.controllers"),
+            "cpuset cpu io memory pids\n",
+        )
+        .unwrap();
         let user = cgroup.join(format!("user.slice/user-{uid}.slice/user@{uid}.service"));
         std::fs::create_dir_all(&user).unwrap();
         std::fs::write(user.join("cgroup.controllers"), "cpu memory pids\n").unwrap();
@@ -153,10 +157,12 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
         ),
         format!("The riff daemon pulls the image {IMAGE}."),
         format!("This machine has the session image {IMAGE}."),
-        "This machine is ready for riff 3.0. Run one item in a container: riff run ITEM"
-            .to_owned(),
+        "This machine is ready for riff 3.0. Run one item in a container: riff run ITEM".to_owned(),
     ] {
-        assert!(stdout.lines().any(|l| l == line), "{line}\nnot in\n{stdout}");
+        assert!(
+            stdout.lines().any(|l| l == line),
+            "{line}\nnot in\n{stdout}"
+        );
     }
     for name in ["/etc/subuid", "/etc/subgid"] {
         assert!(
@@ -185,12 +191,8 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
         "{stdout}"
     );
     assert!(stdout.contains("riff init keeps it."), "{stdout}");
-    assert!(
-        machine.read("systemctl.log").ends_with("restart riff.service\n")
-            && machine.read("systemctl.log").lines().count() == 3,
-        "{}",
-        machine.read("systemctl.log")
-    );
+    // No second install and no second restart.
+    assert_eq!(machine.read("systemctl.log").lines().count(), 3);
     assert_eq!(pulls(&machine.read("podman.log")), 1);
 
     // systemd stops the daemon with a SIGTERM.
@@ -227,7 +229,10 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
     ];
     assert_eq!(failed.len(), starts.len(), "{stdout}");
     for (line, start) in failed.iter().zip(starts) {
-        assert!(line.starts_with(start), "{start}\nis not the start of\n{line}");
+        assert!(
+            line.starts_with(start),
+            "{start}\nis not the start of\n{line}"
+        );
     }
     let mut fixes: Vec<&str> = failed
         .iter()

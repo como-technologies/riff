@@ -4587,25 +4587,26 @@ share.
   that riff 3.0 needs Linux.
 - **01M4ZJN6TEWCYCB39XTH6BBD9H** The checks of `riff init`, in this
   order: `podman --version` runs, and riff does not run as root, so
-  podman runs rootless; `/etc/subuid` and `/etc/subgid` each
-  give the person 65536 IDs or more, by the login name or by the user
-  ID, added over the lines; cgroup v2 is on, and the
-  `cgroup.controllers` of `user@UID.service` has `cpu` and `memory`
+  podman runs rootless; `/etc/subuid` and `/etc/subgid` each give the
+  person 65536 IDs or more, by the login name or by the user ID, added
+  over the lines; cgroup v2 is on, and the `cgroup.controllers` of
+  `user@UID.service` has `cpu` and `memory`
   (01M4Z60B7MW963MBQAPN2CJEQZ); `riff.toml` of the repository of the
   current folder pins the session image (01M4Z7SP3KSKJYKNRP1MQ70C4Q).
   riff prints one line for each check: `pass`, or `fail` with what it
   found and the fix. Each failed check has a fix of its own.
-- **01M4ZJN6WR0JJ891R9JMQNPKGD** When a check fails, `riff init` installs
-  nothing and pulls nothing, and exits with 1. `riff init --check` runs
-  the checks and changes nothing.
+- **01M4ZJN6WR0JJ891R9JMQNPKGD** When a check fails, `riff init`
+  installs nothing and pulls nothing, and exits with 1.
+  `riff init --check` runs the checks and changes nothing.
 - **01M4ZJN6Z1DGD43CKZ19QPN2NK** When a riff daemon answers, `riff init`
   keeps it, and does not start it again. When the build of that daemon
   is not the build of this riff, `riff init` says so, and names
-  `riff daemon install`. When no daemon answers, `riff init` installs the
-  daemon as `riff daemon install` does (01M4ZDTVK74596M0ZA46N51NKV).
-- **01M4ZJN718EF1PC9YY9GFD0EJ2** Then `riff init` asks the daemon for the
-  session image. The daemon pulls it when podman does not have it. The
-  last line says that the machine is ready for `riff run`.
+  `riff daemon install`. When no daemon answers, `riff init` installs
+  the daemon as `riff daemon install` does
+  (01M4ZDTVK74596M0ZA46N51NKV).
+- **01M4ZJN718EF1PC9YY9GFD0EJ2** Then `riff init` asks the daemon for
+  the session image. The daemon pulls it when podman does not have it.
+  The last line says that the machine is ready for `riff run`.
 
 ### riff run
 
