@@ -1941,8 +1941,8 @@ mod tests {
         let socket = session_dir(&here.dir, &name);
 
         // The relay gets the start text, and the close after the result.
-        let (mut relay, events) = Relay::connect(&socket, 0, false).await;
-        assert_eq!(events, 0);
+        let (mut relay, had) = Relay::connect(&socket, 0, false).await;
+        assert_eq!(had, 0);
         assert_eq!(
             relay.next().await,
             Say::Input {
@@ -2019,15 +2019,15 @@ mod tests {
 
         // The relay took the input, and connects again: the daemon has
         // one event. An event that it has already gets no second line.
-        let (mut relay, events) = Relay::connect(&socket, 1, false).await;
-        assert_eq!(events, 1);
+        let (mut relay, had) = Relay::connect(&socket, 1, false).await;
+        assert_eq!(had, 1);
         relay.event(1, TURN[0]).await;
         relay.event(2, TURN[1]).await;
         relay.event(3, TURN[2]).await;
         drop(relay);
         // After the result, a relay that did not close gets the close.
-        let (mut relay, events) = Relay::connect(&socket, 1, false).await;
-        assert_eq!(events, 3);
+        let (mut relay, had) = Relay::connect(&socket, 1, false).await;
+        assert_eq!(had, 3);
         assert_eq!(relay.next().await, Say::Close);
         relay.exit(4, 0).await;
 
@@ -2047,7 +2047,7 @@ mod tests {
             .await;
         drop(client);
         let socket = session_dir(&here.dir, &name);
-        let (mut relay, _) = Relay::connect(&socket, 0, false).await;
+        let (mut relay, _) = Relay::connect(&socket, 1, false).await;
         relay.event(1, TURN[0]).await;
         relay.event(2, TURN[1]).await;
 
@@ -2097,7 +2097,7 @@ mod tests {
         let (mut client, name) = here
             .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
             .await;
-        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 0, false).await;
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 1, false).await;
         relay.event(1, error).await;
         relay.exit(2, 0).await;
         let (_, end) = to_the_end(&mut client).await;
@@ -2333,7 +2333,7 @@ mod tests {
         }
 
         let listener = listen(&dir).await.unwrap();
-        let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()));
+        let daemon = Arc::new(Daemon::open(fake.clone(), dir.clone()).await.unwrap());
         daemon.recover().await;
         tokio::spawn(daemon.serve(listener, std::future::pending()));
         let names: Vec<String> = status(&dir)
@@ -2350,8 +2350,8 @@ mod tests {
         // The relay connects again: the daemon has two events, and gives
         // the input that the relay did not take.
         let socket = session_dir(&dir, "riff-issue-1-aaaaaaaa");
-        let (mut relay, events) = Relay::connect(&socket, 0, false).await;
-        assert_eq!(events, 2);
+        let (mut relay, had) = Relay::connect(&socket, 0, false).await;
+        assert_eq!(had, 2);
         assert!(matches!(relay.next().await, Say::Input { .. }));
         let mut follower = Client::connect(&dir).await.unwrap();
         follower
@@ -2415,15 +2415,12 @@ mod tests {
             serde_json::to_string(&record).unwrap(),
         )
         .unwrap();
-        let running = fake.start(&spec(name, &folder), &[]).await;
-        let running = running.err().map(|e| panic!("{e}"));
-        drop(running);
         let mut spec = spec(name, &folder);
         spec.env.clear();
         let running = fake.start(&spec, &[]).await.unwrap();
 
         let listener = listen(&dir).await.unwrap();
-        let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()));
+        let daemon = Arc::new(Daemon::open(fake.clone(), dir.clone()).await.unwrap());
         daemon.recover().await;
         tokio::spawn(daemon.serve(listener, std::future::pending()));
         let mut follower = Client::connect(&dir).await.unwrap();
