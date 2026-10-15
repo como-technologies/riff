@@ -1,10 +1,12 @@
-//! `riff run ITEM` (#712, #716, 01M4ZDTVXY84ETYJWMWDMQ34CN): one work
-//! item in one rootless podman container, through the riff daemon.
+//! `riff run ITEM` (#712, #716, #717, 01M4ZKX0NXN7E33VC3PSFGSPDT): one
+//! work item in one rootless podman container, through the riff daemon.
 //!
 //! A real `riff daemon` of this build runs the containers. A fake
 //! `podman` logs its arguments, the value of its `GH_TOKEN` and of its
-//! `INVOCATION_ID`, and its stdin, and plays `claude`: it prints the
-//! events of one turn, and ends when its stdin closes. A fake `gh` gives
+//! `INVOCATION_ID`, and plays the container on the host: it runs `riff
+//! relay` of this build, with the socket of the session. The relay
+//! starts a fake `claude`: it logs its stdin, prints the events of one
+//! turn, and ends when its stdin closes. A fake `gh` gives
 //! the token, the issue and the pull request. A real `riff-server` holds
 //! the claims and the posts. The clone is real: git clones a bare origin
 //! on disk.
@@ -50,9 +52,11 @@ esac
 }
 
 /// A fake `podman`. `image exists` fails when `bin/no-image` is there.
-/// `pull` logs, and fails when `bin/no-pull` is there. `run` logs,
-/// prints `bin/events`, and waits for the end of stdin. `stop` logs,
-/// and ends the `run`.
+/// `pull` logs, and fails when `bin/no-pull` is there. `run` logs, and
+/// plays the container on the host: it runs the riff of the bind at
+/// `/opt/riff/riff` as the entrypoint, `riff relay`, with the socket of
+/// the bind at `/run/riff`. `stop` logs, and ends the `run`. `container
+/// inspect` says `true` while the `run` runs.
 fn fake_podman(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -61,6 +65,13 @@ case "$1" in
   pull) echo "podman $*" >> "$dir/podman.log"; [ -f "$dir/no-pull" ] && exit 125
     rm -f "$dir/no-image"; exit 0 ;;
   stop) echo "podman $*" >> "$dir/podman.log"; kill "$(cat "$dir/run.pid")"; exit 0 ;;
+  container)
+    if [ -f "$dir/run.pid" ] && kill -0 "$(cat "$dir/run.pid")" 2>/dev/null; then
+      echo true
+    else
+      echo false
+    fi
+    exit 0 ;;
   run) ;;
   *) exit 2 ;;
 esac
@@ -68,14 +79,63 @@ printf '%s\n' "$@" > "$dir/run.args"
 printf '%s' "$GH_TOKEN" > "$dir/run.token"
 printf '%s' "$INVOCATION_ID" > "$dir/run.invocation"
 echo $$ > "$dir/run.pid"
+shift
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -v)
+      case "$2" in
+        *:/opt/riff/riff:ro) relay="${2%:/opt/riff/riff:ro}" ;;
+        *:/run/riff) socket="${2%:/run/riff}/riff.sock" ;;
+      esac
+      shift 2 ;;
+    -w) shift 2; break ;;
+    *) shift ;;
+  esac
+done
+# The image, then the entrypoint /opt/riff/riff.
+shift 2
+exec env RIFF_SOCKET="$socket" "$relay" "$@"
+"#;
+    script(&bin.join("podman"), body);
+}
+
+/// A fake `claude` in the container. It logs its arguments, takes the
+/// start text, and prints `bin/events`. When `bin/tools` is there, it
+/// first sends its lines to the riff tools, through the `riff relay mcp`
+/// of its MCP config, and logs the answers to `bin/mcp.out` until it has
+/// one for each request. Then, for
+/// each of `bin/later` and `bin/last` that is there, it waits for the
+/// file `.go` beside it, and prints it. It ends when its stdin closes.
+fn fake_claude(bin: &Path) {
+    let body = r#"#!/bin/sh
+dir=$(dirname "$0")
+printf '%s\n' "$@" > "$dir/claude.args"
 IFS= read -r line
 printf '%s\n' "$line" > "$dir/run.stdin"
 echo "a line on stderr with GHTOKEN" >&2
+if [ -f "$dir/tools" ]; then
+  for arg; do config=$arg; done
+  riff=$(printf '%s' "$config" | sed -n 's/.*"command":"\([^"]*\)".*/\1/p')
+  mkfifo "$dir/mcp.in"
+  "$riff" relay mcp < "$dir/mcp.in" > "$dir/mcp.out" &
+  exec 3> "$dir/mcp.in"
+  cat "$dir/tools" >&3
+  want=$(grep -c '"id"' "$dir/tools")
+  while [ "$(grep -c '"id"' "$dir/mcp.out")" -lt "$want" ]; do sleep 0.05; done
+  exec 3>&-
+  wait
+fi
 cat "$dir/events"
+for stage in later last; do
+  if [ -f "$dir/$stage" ]; then
+    while [ ! -f "$dir/$stage.go" ]; do sleep 0.05; done
+    cat "$dir/$stage"
+  fi
+done
 cat > /dev/null
 touch "$dir/run.closed"
 "#;
-    script(&bin.join("podman"), &body.replace("GHTOKEN", GH_TOKEN));
+    script(&bin.join("claude"), &body.replace("GHTOKEN", GH_TOKEN));
 }
 
 /// A fake `systemctl --user` that logs each call to `bin/systemctl.log`.
@@ -221,6 +281,7 @@ impl Machine {
         let bin = tempfile::tempdir().unwrap();
         fake_gh(bin.path());
         fake_podman(bin.path());
+        fake_claude(bin.path());
         fake_systemctl(bin.path());
         std::fs::write(bin.path().join("events"), events()).unwrap();
 
@@ -426,6 +487,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     let claude = folder.join("claude").display().to_string();
     let name = format!("riff-issue-12-{short}");
     let socket = machine.socket_dir(&name).display().to_string();
+    let riff = machine.env.riff_path().display().to_string();
     let want: Vec<String> = [
         "run",
         "--rm",
@@ -458,6 +520,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         &format!("riff-sccache:{h}/.cache/sccache"),
         "-v",
         &format!("{socket}:/run/riff"),
+        "-v",
+        &format!("{riff}:/opt/riff/riff:ro"),
         "-e",
         &format!("HOME={h}"),
         "-e",
@@ -489,6 +553,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "-w",
         &c,
         PINNED,
+        "/opt/riff/riff",
+        "relay",
+        "--",
         "claude",
         "-p",
         "--input-format",
@@ -504,6 +571,25 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     .map(String::from)
     .to_vec();
     assert_eq!(args, want);
+
+    // The relay starts claude with the riff tools: the MCP server riff
+    // runs riff relay mcp, with the binary of the relay.
+    let claude_args: Vec<String> = machine
+        .read("claude.args")
+        .lines()
+        .map(String::from)
+        .collect();
+    assert_eq!(claude_args[..10], want[want.len() - 10..]);
+    assert_eq!(claude_args[10], "--mcp-config");
+    let config: Value = serde_json::from_str(&claude_args[11]).unwrap();
+    assert_eq!(
+        config,
+        serde_json::json!({"mcpServers": {"riff": {
+            "type": "stdio",
+            "command": riff,
+            "args": ["relay", "mcp"],
+        }}})
+    );
 
     // The token of gh: in the environment of podman, in no argument.
     assert_eq!(machine.read("run.token"), GH_TOKEN);
@@ -765,10 +851,26 @@ async fn a_stop_of_riff_run_stops_the_container_and_releases_the_item() {
 }
 
 #[tokio::test]
-async fn a_stop_of_the_daemon_stops_no_container() {
+async fn a_restart_of_the_daemon_loses_no_event_and_riff_run_goes_on() {
     let mut machine = Machine::new().await;
     machine.lead().await;
+    // claude prints its first event, then two events while the daemon is
+    // away, then the rest when the test says so.
+    let all = events();
+    let lines: Vec<&str> = all.lines().collect();
+    std::fs::write(
+        machine.bin.path().join("later"),
+        lines[1..3].join("\n") + "\n",
+    )
+    .unwrap();
+    std::fs::write(
+        machine.bin.path().join("last"),
+        lines[3..].join("\n") + "\n",
+    )
+    .unwrap();
     let (child, name, _) = hanging_run(&machine).await;
+    let log = machine.folder("issue-12").join("events.jsonl");
+    wait_for(&log, "\"init\"").await;
 
     // systemd stops the unit of the daemon with a SIGTERM.
     let stopped = machine.stop_daemon().await;
@@ -792,16 +894,140 @@ async fn a_stop_of_the_daemon_stops_no_container() {
     );
     assert_eq!(machine.read("run.invocation"), "");
 
-    // riff run says so, and releases the item.
-    let out = output_of(child).await;
-    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    // claude goes on while the daemon is away: the relay keeps its
+    // events.
+    std::fs::write(machine.bin.path().join("later.go"), "").unwrap();
+
+    // A new daemon takes up the session. The relay sends it the kept
+    // events, and riff run follows the session again.
+    machine.start_daemon().await;
+    let taken = format!("The riff daemon takes up the session in the container {name}");
     assert!(
-        text(&out.stdout).contains(&format!(
-            "The riff daemon stopped. The container {name} runs on to the end of its turn"
-        )),
+        machine.read("daemon.out").contains(&taken),
         "{}",
-        text(&out.stdout)
+        machine.read("daemon.out")
     );
+    wait_for(&log, "I read the issue.").await;
+
+    // riff daemon events shows the session from its start.
+    let shown = machine.bin.path().join("events.out");
+    let view = machine
+        .command(None, &["daemon", "events", &name])
+        .stdout(std::fs::File::create(&shown).unwrap())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(&shown, "> Bash: gh issue view 12 --comments").await;
+    std::fs::write(machine.bin.path().join("last.go"), "").unwrap();
+
+    // riff run ends as with no restart: the verify request, the release.
+    let out = output_of(child).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    for part in [
+        format!("The riff daemon went away. The container {name} runs on."),
+        format!("The riff daemon is back. riff run follows {name} again"),
+        "The pull request #40".to_owned(),
+    ] {
+        assert!(stdout.contains(&part), "{part}\nnot in\n{stdout}");
+    }
+    // Each event one time, on the terminal and in the log, with no
+    // secret.
+    // The first event is the one of hanging_run.
+    let parts = [
+        "start: model m, permission mode auto",
+        "I read the issue.",
+        "> Bash: gh issue view 12 --comments",
+        "! the tool failed: token [secret] and [secret] leaked",
+        "vcs_state_changed: action push, branch worktree-issue-12",
+        "end: success, 3 turns, 5 s, 0.25 USD",
+    ];
+    for part in parts {
+        assert_eq!(stdout.matches(part).count(), 1, "{part}\nin\n{stdout}");
+    }
+    let logged = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(logged.lines().count(), 5, "{logged}");
+    assert!(
+        !logged.contains(GH_TOKEN) && !logged.contains(ACCESS),
+        "{logged}"
+    );
+
+    // The view showed each event from the start, and the end.
+    let view = output_of(view).await;
+    assert!(view.status.success(), "{}", text(&view.stderr));
+    let viewed = std::fs::read_to_string(&shown).unwrap();
+    for part in parts {
+        assert_eq!(viewed.matches(part).count(), 1, "{part}\nin\n{viewed}");
+    }
+    assert!(
+        viewed.contains(&format!("The container {name} ended with the exit code 0.")),
+        "{viewed}"
+    );
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+#[tokio::test]
+async fn a_session_uses_the_riff_tools_through_the_relay() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    // claude calls whoami and post through the MCP server of its relay.
+    // claim, release, leave and move act on the host: they refuse
+    // (01M4ZKX0H9N82ZBC9PKSPTQV4N).
+    let host = machine.bin.path().display().to_string();
+    let calls = [
+        r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"2"}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"post","arguments":{"body":"hello from the container"}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"claim","arguments":{"item":"issue-13"}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"release","arguments":{"item":"issue-12"}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"leave","arguments":{}}}"#.to_owned(),
+        format!(r#"{{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{{"name":"move","arguments":{{"path":"{host}"}}}}}}"#),
+        r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"whoami","arguments":{}}}"#.to_owned(),
+    ];
+    std::fs::write(machine.bin.path().join("tools"), calls.join("\n") + "\n").unwrap();
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let args = machine.read("run.args");
+    let args: Vec<&str> = args.lines().collect();
+    let session = args[args.iter().position(|a| *a == "--session-id").unwrap() + 1];
+
+    // The tools act as the session of riff run, which holds the item.
+    let answers: Vec<Value> = machine
+        .read("mcp.out")
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let answer = |id: u64| {
+        answers
+            .iter()
+            .find(|a| a["id"] == id)
+            .unwrap_or_else(|| panic!("no answer {id} in {answers:?}"))
+            .clone()
+    };
+    let text = |id: u64| {
+        answer(id)["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let whoami = text(1);
+    assert!(whoami.contains(&format!("session={session}")), "{whoami}");
+    assert!(whoami.contains("claim=issue-12"), "{whoami}");
+    assert_ne!(answer(2)["result"]["isError"], true, "{answers:?}");
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert!(thread.contains("hello from the container"), "{thread}");
+
+    for (id, tool) in [(3, "claim"), (4, "release"), (5, "leave"), (6, "move")] {
+        assert_eq!(answer(id)["result"]["isError"], true, "{answers:?}");
+        assert_eq!(text(id), riff::text::not_in_a_container(tool));
+    }
+    // The claim and the place of the session stay. riff run releases
+    // the item at its end.
+    assert_eq!(text(7), whoami);
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 

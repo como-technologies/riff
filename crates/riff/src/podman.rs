@@ -226,6 +226,24 @@ impl Runtime for Podman {
         succeeded(quiet(&args).await?, &args)
     }
 
+    /// A container that podman does not know does not run.
+    async fn running(&self, name: &str) -> Result<bool> {
+        let out = podman()
+            .args([
+                "container",
+                "inspect",
+                "--format",
+                "{{.State.Running}}",
+                name,
+            ])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .await
+            .with_context(|| text::no_program(PODMAN))?;
+        Ok(out.status.success() && out.stdout.trim_ascii() == b"true")
+    }
+
     async fn attach(&self, name: &str) -> Result<Exit> {
         let status = podman()
             .args(["attach", name])

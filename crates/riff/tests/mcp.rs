@@ -391,6 +391,72 @@ async fn errors_come_back_as_tool_errors() {
     assert!(text.contains("nobody holds issue-9"), "{text}");
 }
 
+/// A session in a container gets only the tools that talk. Each other
+/// tool refuses and changes nothing: the claim and the place stay
+/// (01M4ZKX0H9N82ZBC9PKSPTQV4N).
+#[tokio::test]
+async fn a_session_in_a_container_gets_only_the_tools_that_talk() {
+    let api = start_server().await;
+    let host = connect(&api, MIKE).await;
+    call(&host, "resume", serde_json::json!({ "riff": true })).await;
+    let (claimed, _) = call(&host, "claim", serde_json::json!({ "item": "issue-12" })).await;
+    assert_eq!(claimed, "You hold issue-12 in como-technologies/riff.");
+
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let tools = Tools::new(api.clone(), MIKE.parse().unwrap()).in_container();
+    tokio::spawn(async move {
+        tools
+            .serve(server_io)
+            .await
+            .unwrap()
+            .waiting()
+            .await
+            .unwrap();
+    });
+    let mike = ().serve(client_io).await.unwrap();
+
+    let mut listed: Vec<_> = mike
+        .list_all_tools()
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    listed.sort();
+    assert_eq!(listed, riff::mcp::CONTAINER_TOOLS);
+    let info = mike.peer_info().unwrap();
+    assert_eq!(
+        info.instructions.as_deref(),
+        Some(riff::text::MCP_CONTAINER)
+    );
+
+    let refused = [
+        ("claim", serde_json::json!({ "item": "issue-13" })),
+        ("release", serde_json::json!({ "item": "issue-12" })),
+        ("leave", serde_json::json!({})),
+        ("move", serde_json::json!({ "path": "/" })),
+        ("lead", serde_json::json!({})),
+        ("pause", serde_json::json!({})),
+        (
+            "hold",
+            serde_json::json!({ "item": "issue-14", "reason": "r" }),
+        ),
+    ];
+    for (tool, args) in refused {
+        let (text, is_error) = call(&mike, tool, args).await;
+        assert!(is_error, "{tool}: {text}");
+        assert_eq!(text, riff::text::not_in_a_container(tool));
+    }
+
+    let (whoami, is_error) = call(&mike, "whoami", serde_json::json!({})).await;
+    assert!(!is_error, "{whoami}");
+    assert!(whoami.contains("claim=issue-12"), "{whoami}");
+    assert!(!whoami.contains("issue-13"), "{whoami}");
+    assert!(whoami.contains("claim=issue-12#api"), "{whoami}");
+    let (posted, is_error) = call(&mike, "post", serde_json::json!({ "body": "hi" })).await;
+    assert!(!is_error, "{posted}");
+}
+
 /// The MCP instructions state the rule of the read note
 /// (01M3JEJW019FFEVQ0ZX17362EW).
 #[tokio::test]

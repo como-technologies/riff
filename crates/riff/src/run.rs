@@ -1,12 +1,13 @@
 //! `riff run ITEM`: one work item in one rootless podman container,
-//! through the riff daemon (#712, #716).
+//! through the riff daemon (#712, #716, #717).
 //!
 //! # Design
 //!
 //! The host does each riff step with the riff of today: the checks, the
 //! claim, the clone, the verify request and the release. The daemon
-//! runs the container of the session ([`crate::daemon`]). The container
-//! does the work (01M4ZDTVXY84ETYJWMWDMQ34CN).
+//! runs the container of the session ([`crate::daemon`]). In the
+//! container, `riff relay` starts `claude` ([`crate::session_relay`]),
+//! and `claude` does the work (01M4ZKX0NXN7E33VC3PSFGSPDT).
 //!
 //! `riff run` asks the daemon on its control socket: first for the
 //! image, then for the session. It shows each event that the daemon
@@ -19,16 +20,17 @@
 //!     participant H as riff run (host)
 //!     participant S as riff-server
 //!     participant D as riff daemon
-//!     participant C as claude -p (container)
+//!     participant C as riff relay and claude -p (container)
 //!     participant G as GitHub
 //!     H->>D: the image: pull it when it is not here
 //!     H->>S: start a worker session, claim ITEM
 //!     H->>H: git clone --reference MAIN, the branch worktree-ITEM
 //!     H->>D: start SPEC, with the value of GH_TOKEN beside it
-//!     D->>C: start, with the socket of the session
-//!     D->>C: the start text, one stream-json line on the input
-//!     C-->>D: the events, one line each
+//!     D->>C: start riff relay, with the socket of the session
+//!     D->>C: the start text, one stream-json line on the socket
+//!     C-->>D: the events, one line each, with their numbers
 //!     D-->>H: each event, with no secret
+//!     C->>S: the riff tools, through the socket and the daemon
 //!     C->>G: push the branch, open the pull request
 //!     D->>C: close the input after the result: claude ends
 //!     D-->>H: the end of the session
@@ -49,9 +51,14 @@
 //! When `claude` ends, riff finds the open pull request of the branch,
 //! sends a verify request to the lead, releases the item and ends the
 //! session. A SIGINT or a SIGTERM asks the daemon to stop the container
-//! first (01M4Z81B1913NF6HBZ5G38B3Q9). When the daemon stops before the
-//! end of the session, `riff run` says so, and does these steps too
-//! (01M4ZDTW25YV0GMMVGWN6JTJC5).
+//! first (01M4Z81B1913NF6HBZ5G38B3Q9).
+//!
+//! When the daemon stops before the end of the session, the session
+//! runs on: its relay keeps the events. `riff run` waits up to
+//! [`DAEMON_WAIT`] for a new daemon, and follows the session again after
+//! the last event that it showed ([`Ask::Follow`]). When no daemon comes
+//! back, `riff run` says so, and does these steps too
+//! (01M4ZKX0F25S284R0N7KZVTHNA).
 //!
 //! # The folder of a session
 //!
@@ -90,6 +97,7 @@ use std::borrow::Cow;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri};
@@ -777,7 +785,7 @@ fn make_clone(main: &Path, clone: &Path, branch: &str) -> Result<bool> {
 
 /// Shows one line of the output of the session: the lines of its event,
 /// or the line itself when it is not JSON.
-fn show(line: &str) {
+pub(crate) fn show(line: &str) {
     match serde_json::from_str::<Value>(line) {
         Ok(event) => {
             for shown in event_lines(&event) {
@@ -788,22 +796,54 @@ fn show(line: &str) {
     }
 }
 
+/// After the daemon went away, the longest wait of `riff run` for a new
+/// daemon (01M4ZKX0F25S284R0N7KZVTHNA).
+pub const DAEMON_WAIT: Duration = Duration::from_secs(600);
+
+/// The time between two tries of `riff run` to reach a new daemon.
+const DAEMON_RETRY: Duration = Duration::from_millis(250);
+
 /// Asks the daemon in the folder `daemon` to run the session of
-/// `start`, shows its events, and waits for its end. A SIGINT or a
-/// SIGTERM asks the daemon to stop the container. When the daemon stops
-/// first, the session failed for `riff run` (01M4ZDTW25YV0GMMVGWN6JTJC5).
+/// `start`, shows its events, and waits for its end ([`follow`]).
 async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
+    let name = start.spec.name.clone();
+    follow(
+        daemon,
+        Ask::Start(Box::new(start)),
+        &name,
+        DAEMON_WAIT,
+        show,
+    )
+    .await
+}
+
+/// Sends `ask` to the daemon in the folder `daemon`, gives `show` each
+/// event of the session `name`, and waits for its end. A SIGINT or a
+/// SIGTERM asks the daemon to stop the container. When the daemon goes
+/// away, the session runs on ([`crate::session_relay`]): riff tries the
+/// daemon again for up to `wait`, and follows the session again after
+/// the last event that it showed. So it shows each event one time, and
+/// loses none (01M4ZKX0F25S284R0N7KZVTHNA). When no daemon comes back,
+/// the session failed for `riff run`.
+async fn follow(
+    daemon: &Path,
+    ask: Ask,
+    name: &str,
+    wait: Duration,
+    mut show: impl FnMut(&str),
+) -> Result<Ended> {
     // The handlers come first: a signal before them ends riff with no
     // release.
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
-    let mut name = start.spec.name.clone();
+    let mut name = name.to_owned();
     let mut client = daemon::Client::connect(daemon).await?;
-    client.ask(Ask::Start(Box::new(start))).await?;
+    client.ask(ask).await?;
     let mut stopped = false;
+    let mut seen = 0;
     loop {
         let say = tokio::select! {
-            say = client.next() => say?,
+            say = client.next() => say,
             _ = term.recv(), if !stopped => {
                 stopped = true;
                 println!("{}", text::run_stopping(&name));
@@ -818,20 +858,61 @@ async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
             }
         };
         match say {
-            Some(Say::Started { name: started, .. }) => name = started,
-            Some(Say::Event { line }) => show(&line),
-            Some(Say::Stderr { line }) => eprintln!("{line}"),
-            Some(Say::Line { text }) => println!("{text}"),
-            Some(Say::Ended(ended)) => return Ok(ended),
-            Some(Say::Failed { error }) => bail!("{error}"),
-            Some(_) => bail!("{}", text::DAEMON_GONE),
-            None => {
-                println!("{}", text::run_daemon_gone(&name));
-                return Ok(Ended {
-                    code: None,
-                    failed: true,
-                });
+            Ok(Some(Say::Started { name: started, .. })) => name = started,
+            Ok(Some(Say::Event { seq, line })) if seq > seen => {
+                seen = seq;
+                show(&line);
             }
+            Ok(Some(Say::Event { .. })) => {}
+            Ok(Some(Say::Stderr { line })) => eprintln!("{line}"),
+            Ok(Some(Say::Line { text })) => println!("{text}"),
+            Ok(Some(Say::Ended(ended))) => return Ok(ended),
+            Ok(Some(Say::Failed { error })) => bail!("{error}"),
+            Ok(Some(_)) => bail!("{}", text::DAEMON_GONE),
+            Ok(None) | Err(_) => {
+                println!("{}", text::run_daemon_away(&name));
+                let Some(again) = connect_again(daemon, wait, &mut term, &mut int).await else {
+                    println!("{}", text::run_daemon_gone(&name));
+                    return Ok(Ended {
+                        code: None,
+                        failed: true,
+                    });
+                };
+                client = again;
+                client
+                    .ask(Ask::Follow {
+                        name: name.clone(),
+                        after: seen,
+                    })
+                    .await?;
+                println!("{}", text::run_daemon_back(&name, seen));
+                if stopped {
+                    client.stop().await?;
+                }
+            }
+        }
+    }
+}
+
+/// Tries the daemon in the folder `daemon` again each
+/// [`DAEMON_RETRY`], for up to `wait`. A SIGINT or a SIGTERM ends the
+/// wait. It gives `None` when no daemon answered.
+async fn connect_again(
+    daemon: &Path,
+    wait: Duration,
+    term: &mut tokio::signal::unix::Signal,
+    int: &mut tokio::signal::unix::Signal,
+) -> Option<daemon::Client> {
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        if let Ok(client) = daemon::Client::connect(daemon).await {
+            return Some(client);
+        }
+        tokio::select! {
+            () = tokio::time::sleep(DAEMON_RETRY) => {}
+            () = tokio::time::sleep_until(deadline) => return None,
+            _ = term.recv() => return None,
+            _ = int.recv() => return None,
         }
     }
 }
@@ -915,7 +996,7 @@ pub async fn run_with(
     }
 
     let worked = work(
-        daemon, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
+        daemon, server, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
     )
     .await;
     if let Err(e) = api.release(&me, &thread, item).await {
@@ -930,6 +1011,7 @@ pub async fn run_with(
 #[allow(clippy::too_many_arguments)]
 async fn work(
     daemon: &Path,
+    server: &str,
     api: &Api,
     me: &SessionUri,
     thread: &riff_core::name::ThreadName,
@@ -992,6 +1074,8 @@ async fn work(
             start,
             values,
             secrets,
+            server: server.to_owned(),
+            me: me.clone(),
         },
     )
     .await?;
