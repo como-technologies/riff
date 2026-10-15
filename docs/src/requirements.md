@@ -3549,6 +3549,9 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M4A804D7JAPRAT1YKD09ATK3** A test sets the budget of the short
   calls of a `riff` process in milliseconds with the environment
   variable `RIFF_LINK_BUDGET_MS`.
+- **01M4ZQVVK4P72XMM37RXG0C8ZH** A test sets the limit of each try of a
+  `riff` process in milliseconds with the environment variable
+  `RIFF_LINK_TRY_MS`.
 - **01M48RW9MA30A12E7XWX047CJ0** The server ends a `watch` or `tail`
   stream when the stream lags behind its buffer of events. It does not
   drop the events with no sign. The client connects again, and a
@@ -4748,6 +4751,12 @@ share.
   `podman stop`, and riff then releases the item. The exit code is 0
   only when the turn ended with no error and the branch has an open
   pull request.
+- **01M4ZQVVGQYXTAVRB69C7YPC3Y** The verify request and the release of
+  `riff run` have the budget `END_BUDGET`, 10 minutes, not
+  `SHORT_BUDGET`. A fault gets a new try while the budget lasts
+  (01M4A8041F8EK1VYDE4C9QG8N8). So a new instance of riff-server at the
+  end of a run drops neither. The keep-alive of the session runs until
+  the release.
 - **01M4ZBGK7SFEXE1AGH6Z0YQHJP** On a host that is not Linux,
   `riff run` starts nothing, and says that it needs Linux.
 - **01M4Z81B3A324KKE8M8Z71TM4M** Before the claim, `riff run` checks

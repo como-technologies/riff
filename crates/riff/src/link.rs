@@ -36,6 +36,7 @@
 //! | The start hook | [`crate::hook::STATE_WAIT`] |
 //! | The status line | `STATUSLINE_WAIT`, with one try ([`Budget::OneTry`]) |
 //! | The end of a session | [`crate::mcp::END_WAIT`] |
+//! | The verify request and the release of `riff run` | [`crate::run::END_BUDGET`] |
 //! | The open of a stream | [`SHORT_BUDGET`]; then the stream has no limit, and [`crate::api::follow`] connects again |
 //!
 //! # One rule for a new try
@@ -157,8 +158,8 @@ pub const LINE_AFTER: Duration = Duration::from_secs(1);
 pub const WAITING: &str = "(waits for riff-server…)";
 
 /// The time limits of a link. [`Limits::default`] has the constants. A
-/// test gives limits in milliseconds, or the budget of a `riff` process
-/// with [`BUDGET_VAR`].
+/// test gives limits in milliseconds, or the budget and the limit of a
+/// try of a `riff` process with [`BUDGET_VAR`] and [`TRY_VAR`].
 ///
 /// ```
 /// use std::time::Duration;
@@ -196,21 +197,30 @@ pub struct Limits {
 /// ```
 pub const BUDGET_VAR: &str = "RIFF_LINK_BUDGET_MS";
 
-/// [`SHORT_BUDGET`], or the budget that [`BUDGET_VAR`] sets.
-fn short_budget() -> Duration {
-    std::env::var(BUDGET_VAR)
+/// The environment variable that sets [`Limits::try_wait`] of a `riff`
+/// process in milliseconds (01M4ZQVVK4P72XMM37RXG0C8ZH). Only a test
+/// sets it.
+///
+/// ```
+/// assert_eq!(riff::link::TRY_VAR, "RIFF_LINK_TRY_MS");
+/// ```
+pub const TRY_VAR: &str = "RIFF_LINK_TRY_MS";
+
+/// The time in milliseconds that the variable `var` sets, or `or`.
+fn ms_of(var: &str, or: Duration) -> Duration {
+    std::env::var(var)
         .ok()
         .and_then(|ms| ms.parse().ok())
-        .map_or(SHORT_BUDGET, Duration::from_millis)
+        .map_or(or, Duration::from_millis)
 }
 
 impl Default for Limits {
     fn default() -> Self {
         Limits {
             connect: CONNECT_WAIT,
-            try_wait: TRY_WAIT,
+            try_wait: ms_of(TRY_VAR, TRY_WAIT),
             stream_idle: STREAM_IDLE,
-            budget: short_budget(),
+            budget: ms_of(BUDGET_VAR, SHORT_BUDGET),
             first_wait: FIRST_WAIT,
             most_wait: MOST_WAIT,
         }

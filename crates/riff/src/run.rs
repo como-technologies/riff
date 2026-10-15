@@ -60,6 +60,33 @@
 //! back, `riff run` says so, and does these steps too
 //! (01M4ZKX0F25S284R0N7KZVTHNA).
 //!
+//! # A restart of riff-server
+//!
+//! The verify request and the release have the budget [`END_BUDGET`],
+//! not the short budget of a command (01M4ZQVVGQYXTAVRB69C7YPC3Y). A
+//! call with no reply, or with a fault, tries again with the waits of
+//! the link ([`crate::link`]) while the budget lasts. So a new instance
+//! of riff-server at the end of a run drops neither. A new instance
+//! starts, loads the state, and waits 15 s for the lease before it
+//! serves; the old one replies 503 in that time. A cold start or a long
+//! load can take this past the short budget. The keep-alive of the
+//! session runs until the release, so the claim stays while the calls
+//! wait. The steps before the work keep the short budget: when they
+//! fail, `riff run` started nothing.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant H as riff run (host)
+//!     participant S as riff-server
+//!     H->>S: the verify request
+//!     Note over S: a new instance starts: no reply
+//!     H->>H: no reply in the limit of the try: a new connection, a wait
+//!     H->>S: the verify request again, with the same call ID
+//!     S-->>H: posted
+//!     H->>S: release ITEM
+//!     S-->>H: released
+//! ```
+//!
 //! # The folder of a session
 //!
 //! Each session has a folder of its own in [`sessions_dir`]: `ITEM-ID8`,
@@ -131,6 +158,18 @@ pub const MIN_MINUTES: i64 = 60;
 
 /// The text that takes the place of a secret.
 pub const HIDDEN: &str = "[secret]";
+
+/// The budget of the verify request and of the release of `riff run`
+/// (01M4ZQVVGQYXTAVRB69C7YPC3Y): longer than a restart of riff-server.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::link::SHORT_BUDGET;
+///
+/// assert_eq!(riff::run::END_BUDGET, Duration::from_secs(600));
+/// assert!(riff::run::END_BUDGET > SHORT_BUDGET);
+/// ```
+pub const END_BUDGET: Duration = Duration::from_secs(600);
 
 /// The facts of the host and of the session that make a [`SessionSpec`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -999,7 +1038,8 @@ pub async fn run_with(
         daemon, server, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
     )
     .await;
-    if let Err(e) = api.release(&me, &thread, item).await {
+    let ending = api.with_budget(END_BUDGET);
+    if let Err(e) = ending.release(&me, &thread, item).await {
         eprintln!("riff: {e:#}");
     }
     alive.abort();
@@ -1101,7 +1141,11 @@ async fn work(
                 short(session),
             );
             let to = [Selector::lead(me.who().user(), &repo)];
-            if let Err(e) = api.post(me, Some(thread), &to, &body, Kind::Message).await {
+            let ending = api.with_budget(END_BUDGET);
+            if let Err(e) = ending
+                .post(me, Some(thread), &to, &body, Kind::Message)
+                .await
+            {
                 eprintln!("riff: {e:#}");
             }
         }
