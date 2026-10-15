@@ -4410,7 +4410,7 @@ share.
   that the riff config of the repository of the current folder pins.
 - **01M4Z7SPE5Q02RQWW5VZBEK2G3** The package `riff-session` on ghcr.io
   is public, as the repository is. So podman pulls the image with no
-  sign-in. An admin sets this one time, in the settings of the package.
+  sign-in.
 - **01M4Z60B7KEV0H161RBZ1SDRY2** riff binds its own binary into each
   session with no write, and runs it as the entrypoint: `riff relay`. So
   the riff code in a session is always the riff code of the host.

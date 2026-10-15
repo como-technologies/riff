@@ -300,8 +300,9 @@ git push
 ```
 
 The workflow runs again. The registry has the image of the folder now,
-so the workflow builds nothing and passes. Check that podman pulls the
-image by its digest:
+so the workflow builds nothing and passes. The package is public, as
+the repository is. Check that podman pulls the image by its digest,
+with no sign-in:
 
 ```sh
 podman pull "$(riff image)"
@@ -310,18 +311,6 @@ podman pull "$(riff image)"
 The workflow builds the image of a folder one time only. To build it
 again, for example for new Debian packages, change a line of the
 Dockerfile, for example a version.
-
-### Let podman pull the image with no sign-in
-
-The first push of the workflow makes the package `riff-session` of
-`como-technologies` on GitHub. A new package is private. An admin
-makes it public one time: open the package on GitHub, then "Package
-settings", then "Change visibility", and select "Public". Then each
-person pulls the image with no sign-in:
-
-```sh
-podman pull "$(riff image)"
-```
 
 ## Add a requirement
 
