@@ -11,7 +11,7 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Post, ReadReply, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::store::{Memory, Store};
+use riff_state::store::{Memory, Store};
 use serde::Serialize;
 use serde_json::Value;
 

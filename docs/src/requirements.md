@@ -4560,6 +4560,18 @@ share.
   the cgroup of the unit of the daemon. `podman run` has
   `--sig-proxy=false`, so a signal to it does not go to the container.
   The daemon stops a container only when `riff run` asks.
+- **01M4ZHW2083VFTQJ772ZJ27XAC** The daemon keeps its state in the
+  folder `state` in its folder: the log and the checkpoints of
+  `riff-state`. At each start, it loads the newest checkpoint that it
+  reads, and replays the log after it. At its first start, it makes the
+  riff of its machine with a random ID. At a stop, it writes a
+  checkpoint.
+- **01M4ZHW22F8HE2E1WDSTNDJW4H** The daemon runs one command at a time.
+  The records of a command are in its log before the command gets its
+  reply. When a write of the log fails for good, each next command
+  fails until the daemon starts again.
+- **01M4ZHW24JZZXM3JJXG3PRJS7N** `riff daemon status` also shows the ID
+  of the riff of the daemon and the position of its log.
 - **01M4ZDTW25YV0GMMVGWN6JTJC5** Until `riff relay` (#717), the input
   and the events of a session go through the `podman run` of the
   daemon. At a stop of the daemon they end: `claude` ends after its
@@ -4679,6 +4691,12 @@ share.
 
 - **01M4Z60B8AFV68ZSAFA540G73C** The state machine of riff-server
   becomes a library in the daemon.
+- **01M4ZHW1Y1X21ZPV053D0CXWMC** The crate `riff-state` is the state
+  machine: the state and its commands, the log and its replay, the
+  checkpoints and the stores. It does no HTTP and knows no sign-in.
+  riff-server 1.x and the riff daemon use it. Its log and its
+  checkpoints have the format of riff-server: the format tests of
+  riff-server check the fixtures of each release against it.
 - **01M4Z60B8BHAR9GHCC0M7V7CV5** The log has the shape of peer to peer:
   each author has an append-only signed log, and each type of record has
   one writer. A message or a status: its author. The plan and the waves:

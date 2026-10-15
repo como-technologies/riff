@@ -52,7 +52,7 @@ use super::{GONE, SESSION_EXPIRY};
 /// use riff_core::name::{SessionUri, ThreadName};
 /// use riff_core::record::Scope;
 /// use riff_core::wire::RiffState;
-/// use riff_server::state::State;
+/// use riff_state::state::State;
 ///
 /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
 /// let riff: ThreadName = "como-technologies/riff".parse()?;
@@ -311,7 +311,7 @@ impl Command for MakeRiff {
 /// The import of go-live (01M3Z8MRDZEKTXSKZTDTDSCZ3W): the state of a
 /// riff-server from before the log, as changes. The server reads the
 /// old objects, and gives their changes to this command
-/// ([`crate::import::Old::changes`]). It can make each kind of record.
+/// (`Old::changes` of riff-server). It can make each kind of record.
 /// It runs only in a log with no record, so it runs one time
 /// (01M3Z8MRKTAN8CBAQB721JNZAK). The reply is the number of its
 /// records.
@@ -319,7 +319,7 @@ impl Command for MakeRiff {
 /// ```
 /// use std::time::Instant;
 /// use riff_core::record::{Change, RiffMade};
-/// use riff_server::state::{Caller, Code, Import, State};
+/// use riff_state::state::{Caller, Code, Import, State};
 ///
 /// let made = Change::RiffMade(RiffMade { riff_id: "r1".into() });
 /// let import = Import { changes: vec![made] };

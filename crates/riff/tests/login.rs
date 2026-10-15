@@ -349,7 +349,7 @@ async fn ensure_signs_in_again_at_a_new_riff() {
 #[tokio::test]
 async fn a_restart_on_the_same_store_keeps_the_sign_in() {
     let (front, api) = Front::start().await;
-    let store = riff_server::store::Memory::default();
+    let store = riff_state::store::Memory::default();
     let old = Service::load(front.config(), Arc::new(store.clone()))
         .await
         .unwrap();

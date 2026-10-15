@@ -48,10 +48,10 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use riff_core::record::{By, Change, Envelope, Line, Record};
-use riff_server::checkpoint::{self, Checkpoint};
-use riff_server::log;
-use riff_server::state::{CommandKind, Riff, State, apply};
-use riff_server::store::Memory;
+use riff_state::checkpoint::{self, Checkpoint};
+use riff_state::log;
+use riff_state::state::{CommandKind, Riff, State, apply};
+use riff_state::store::Memory;
 use serde::Deserialize;
 
 /// The release of the fixtures of the holds.

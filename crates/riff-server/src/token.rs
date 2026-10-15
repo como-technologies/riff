@@ -14,7 +14,7 @@
 //! (01M3XA87A9GGFA89RQXWSKY0V6). A person signs in with a verified
 //! email. The USER comes from the email (R208). The people are not in
 //! this store: who may sign in, the email of each USER (R209) and the
-//! roles are state of the log (see [`crate::state::people`]). The
+//! roles are state of the log (see [`riff_state::state::people`]). The
 //! command `admit` decides, and then [`Tokens::start`] makes the
 //! sign-in.
 //!
@@ -210,20 +210,16 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use riff_core::name::Who;
 use riff_core::wire::TokenReply;
+use riff_state::owner::SERVER_USER;
+use riff_state::state::people::user_of;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-
-use crate::oidc::user_of;
 
 /// An access token works this long (R17).
 pub const ACCESS_TTL: Duration = Duration::from_secs(10 * 60);
 
 /// A sign-in ends when no refresh token of it is used this long (R80).
 pub const REFRESH_IDLE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
-
-/// The USER of the riff server itself. The server posts its own notes as
-/// this USER, so no person signs in with it (01M3N7K4BC1RPZKQ1XNDTBRPGF).
-pub const SERVER_USER: &str = "riff";
 
 /// Why the server refuses a token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -393,7 +389,7 @@ impl Tokens {
         now: Instant,
     ) -> Result<TokenReply, NoSignIn> {
         let email = email.trim().to_lowercase();
-        let user = user_of(&email).map_err(|e| NoSignIn::Email(e.to_string()))?;
+        let user = user_of(&email).map_err(NoSignIn::Email)?;
         if user == SERVER_USER {
             return Err(NoSignIn::Email(format!(
                 "the user {SERVER_USER} is the riff server; sign in with another email"
@@ -1063,7 +1059,7 @@ impl Tokens {
 }
 
 /// Why [`Tokens::from_bytes`] failed. The text does not name the
-/// object: [`crate::store::StoreError::NotValid`] does.
+/// object: [`riff_state::store::StoreError::NotValid`] does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadError(String);
 

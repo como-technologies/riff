@@ -348,7 +348,7 @@ async fn read_all_reads_each_page() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
-    let count = riff_server::state::PAGE + 10;
+    let count = riff_state::state::PAGE + 10;
     for n in 1..=count {
         riff(&server, dir, "mike", &["post", &format!("message {n}")]).await;
     }

@@ -7,7 +7,7 @@ use crate::common;
 use std::sync::Arc;
 
 use riff_core::wire::ServerFacts;
-use riff_server::store::Memory;
+use riff_state::store::Memory;
 use serde_json::{Value, json};
 
 const A: &str = "riff://mike@pangolin/como-technologies/riff?session=a";

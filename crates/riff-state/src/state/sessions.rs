@@ -385,7 +385,7 @@ impl Command for Register {
 /// use std::time::Instant;
 /// use riff_core::name::SessionUri;
 /// use riff_core::record::Change;
-/// use riff_server::state::{Arrive, Caller, State};
+/// use riff_state::state::{Arrive, Caller, State};
 ///
 /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let now = Instant::now();

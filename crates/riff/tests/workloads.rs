@@ -20,7 +20,7 @@ use riff_core::name::{SessionUri, Who};
 use riff_core::wire::{RiffState, StartReason};
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::store::Memory;
+use riff_state::store::Memory;
 
 /// The variable that Claude Code gives to each process of a context.
 const CONTEXT: &str = "CLAUDE_PID";

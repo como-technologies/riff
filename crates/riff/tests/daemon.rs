@@ -195,3 +195,59 @@ async fn a_second_daemon_does_not_start_while_one_answers() {
     let said = std::fs::read_to_string(&log).unwrap();
     assert!(said.contains("It stopped no session"), "{said}");
 }
+
+impl Here {
+    /// Starts `riff daemon` of the `RIFF_HOME`, writes its output to
+    /// `name`, and waits until it listens.
+    async fn daemon(&self, name: &str) -> std::process::Child {
+        let log = self.bin.path().join(name);
+        let out = std::fs::File::create(&log).unwrap();
+        let child = self
+            .command(false, &["daemon"])
+            .stdout(out.try_clone().unwrap())
+            .stderr(out)
+            .spawn()
+            .unwrap();
+        wait_for(&log, "The riff daemon listens on").await;
+        child
+    }
+
+    /// The line `Its riff: ...` of `riff daemon status`.
+    async fn riff_line(&self) -> String {
+        let out = self.run(false, &["daemon", "status"]).await;
+        let status = text(&out.stdout);
+        assert!(out.status.success(), "{status}");
+        status
+            .lines()
+            .find(|line| line.starts_with("Its riff: "))
+            .unwrap_or_else(|| panic!("no riff line in\n{status}"))
+            .to_owned()
+    }
+}
+
+/// Stops `child` with a SIGTERM, and waits for its end.
+async fn stop(mut child: std::process::Child) {
+    term(child.id());
+    let status = tokio::task::spawn_blocking(move || child.wait().unwrap())
+        .await
+        .unwrap();
+    assert!(status.success(), "{status}");
+}
+
+/// 01M4ZHW2083VFTQJ772ZJ27XAC, 01M4ZHW24JZZXM3JJXG3PRJS7N: the first
+/// start of the daemon makes the riff of the machine. A stop writes a
+/// checkpoint, and the next start loads the same riff.
+#[tokio::test]
+async fn a_restart_of_the_daemon_keeps_its_riff() {
+    let here = Here::new();
+    let first = here.daemon("first.out").await;
+    let line = here.riff_line().await;
+    assert!(line.ends_with(" of its log."), "{line}");
+    stop(first).await;
+    let checkpoints = here.env.riff_home().join("daemon/state/checkpoint");
+    assert_eq!(std::fs::read_dir(&checkpoints).unwrap().count(), 1);
+
+    let second = here.daemon("second.out").await;
+    assert_eq!(here.riff_line().await, line);
+    stop(second).await;
+}

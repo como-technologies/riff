@@ -26,8 +26,8 @@ use riff_core::wire::{Kind, RiffOwner, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::Provider;
-use riff_server::owner::{Timing, server_uri};
-use riff_server::store::{Memory, Store};
+use riff_state::owner::{Timing, server_uri};
+use riff_state::store::{Memory, Store};
 
 /// A long time: no request ends, and no check runs, in a test.
 const LONG: Duration = Duration::from_secs(3600);

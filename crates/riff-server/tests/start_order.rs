@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use futures::future::{BoxFuture, FutureExt};
 use isolated::Isolated;
-use riff_server::log::chunk_name;
-use riff_server::store::{LEASE, Loaded, Memory, Store, StoreError, Version};
+use riff_state::log::chunk_name;
+use riff_state::store::{LEASE, Loaded, Memory, Store, StoreError, Version};
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 use tokio::time::{sleep, timeout};

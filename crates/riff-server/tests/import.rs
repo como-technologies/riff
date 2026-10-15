@@ -28,7 +28,7 @@ use riff_core::wire::{Keys, Message, Post, ReadReply, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::lease::Timing;
-use riff_server::store::{Loaded, Memory, SIGN_INS, Store, StoreError, Version};
+use riff_state::store::{Loaded, Memory, SIGN_INS, Store, StoreError, Version};
 use serde_json::{Value, json};
 
 const RIFF: &str = "como-technologies/riff";

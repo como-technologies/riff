@@ -155,7 +155,7 @@ impl Given {
 
     /// The provider verified `email`: the sign-in sends `admit`.
     fn when_signs_in(self, email: &str, allowed_domain: bool) -> When {
-        let user = crate::oidc::user_of(&crate::state::people::email(email)).unwrap();
+        let user = crate::state::people::user_of(&crate::state::people::email(email)).unwrap();
         let caller = Caller::sign_in(&Who::new(&user, None).unwrap(), email);
         self.when_as(&caller, admit(email, allowed_domain))
     }

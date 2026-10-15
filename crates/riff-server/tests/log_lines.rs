@@ -8,8 +8,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use isolated::{Isolated, Span};
-use riff_server::log::chunk_name;
 use riff_server::trace::{BODY_TIME, DENIED_INTERVAL, DENIED_KEPT, DENIED_MAX};
+use riff_state::log::chunk_name;
 use serde_json::Value;
 use tempfile::NamedTempFile;
 

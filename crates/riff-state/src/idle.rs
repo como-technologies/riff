@@ -87,8 +87,8 @@ pub const STOP_WAIT: Duration = Duration::from_secs(60);
 /// ```
 /// use std::time::Duration;
 /// use riff_core::wire::Idle;
-/// use riff_server::idle::news;
-/// use riff_server::state::Stopping;
+/// use riff_state::idle::news;
+/// use riff_state::state::Stopping;
 ///
 /// let stopping = Stopping {
 ///     worker: "riff://mike@pangolin/como-technologies/riff?session=1a2b3c4d5e".parse()?,
@@ -123,8 +123,8 @@ pub fn news(stopping: &Stopping, idle: &Idle) -> String {
 ///
 /// ```
 /// use std::time::Duration;
-/// use riff_server::idle::stuck;
-/// use riff_server::state::Stuck;
+/// use riff_state::idle::stuck;
+/// use riff_state::state::Stuck;
 ///
 /// let stuck_worker = Stuck {
 ///     worker: "riff://mike@pangolin/como-technologies/riff?session=1a2b3c4d5e".parse()?,

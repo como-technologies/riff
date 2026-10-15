@@ -1,4 +1,4 @@
-//! The in-memory state of `riff-server`.
+//! The in-memory state of riff, in riff-server and in the riff daemon.
 //!
 //! # Model
 //!
@@ -49,8 +49,9 @@
 //! new kind of record is one arm in [`apply`] and one method of the
 //! part that it changes.
 //!
-//! The server runs each command through [`crate::engine`]: the engine
-//! owns the state and its lock, and the writer finishes each command.
+//! riff-server runs each command through its engine: the engine owns
+//! the state and its lock, and the writer finishes each command. The
+//! riff daemon runs each command through [`crate::local::Local`].
 //!
 //! # Event sourcing
 //!
@@ -207,7 +208,7 @@
 //! use std::time::Instant;
 //! use riff_core::name::SessionUri;
 //! use riff_core::wire::{Post, RiffState};
-//! use riff_server::state::State;
+//! use riff_state::state::State;
 //!
 //! let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf#api".parse()?;
 //! let brett: SessionUri = "riff://brett@heron/como-technologies/riff?session=77e0#tests".parse()?;
@@ -501,8 +502,8 @@ impl State {
     /// them.
     ///
     /// ```
-    /// use riff_server::owner::Timing;
-    /// use riff_server::state::{Role, Settings, State};
+    /// use riff_state::owner::Timing;
+    /// use riff_state::state::{Role, Settings, State};
     ///
     /// let settings = Settings::new(&["boss@x.io".into()], "https://riff.x.io", Timing::default());
     /// let state = State::default().with_settings(settings);
@@ -520,7 +521,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::RiffState;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -549,7 +550,7 @@ impl State {
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -611,7 +612,7 @@ impl State {
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::RiffState;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -697,7 +698,7 @@ impl State {
     /// use riff_core::name::SessionUri;
     /// use riff_core::record::{Change, SessionStarted};
     /// use riff_core::wire::StartReason;
-    /// use riff_server::state::{Caller, Import, Imported, ImportedSession, State};
+    /// use riff_state::state::{Caller, Import, Imported, ImportedSession, State};
     ///
     /// let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse()?;
     /// let started = Change::SessionStarted(SessionStarted {
@@ -745,7 +746,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::StepChange;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -835,7 +836,7 @@ impl State {
     ///
     /// ```
     /// use std::time::Instant;
-    /// use riff_server::state::{Riff, State};
+    /// use riff_state::state::{Riff, State};
     ///
     /// let state = State::replay([], Instant::now(), 0);
     /// assert_eq!(*state.written_riff(), Riff::default());
@@ -857,7 +858,7 @@ impl State {
     ///
     /// ```
     /// use std::time::Instant;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mut state = State::replay([], Instant::now(), 0);
     /// state.continue_after(7);
@@ -884,7 +885,7 @@ impl State {
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let a: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a".parse()?;
     /// let mut state = State::default();
@@ -957,7 +958,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::Claim;
-    /// use riff_server::state::{Caller, Code, State};
+    /// use riff_state::state::{Caller, Code, State};
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -1097,7 +1098,7 @@ impl State {
     /// ```
     /// use std::time::Instant;
     /// use riff_core::record::{Change, Email, PersonJoined};
-    /// use riff_server::state::{Caller, Cause, Code, CommandKind, State};
+    /// use riff_state::state::{Caller, Cause, Code, CommandKind, State};
     ///
     /// let bob = "bob@gmail.com".to_owned();
     /// let now = Instant::now();
@@ -1148,7 +1149,7 @@ impl State {
     /// use riff_core::name::SessionUri;
     /// use riff_core::record::By;
     /// use riff_core::wire::Join;
-    /// use riff_server::state::{Caller, State};
+    /// use riff_state::state::{Caller, State};
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let mut state = State::default();
@@ -1204,15 +1205,15 @@ impl State {
     /// [`State::queue`]. The records go to the queue of the state
     /// ([`State::take_queue`]). A state with no writer counts them as
     /// written at once. The tests, the examples and the tools use it.
-    /// The server does not: its engine runs the same steps, and its
-    /// writer applies the records after the write (see [`crate::engine`]).
+    /// riff-server does not: its engine runs the same steps, and its
+    /// writer applies the records after the write.
     /// Gives the records of the command and its note.
     ///
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::Join;
-    /// use riff_server::state::{Caller, State};
+    /// use riff_state::state::{Caller, State};
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let mut state = State::default();
@@ -1234,8 +1235,8 @@ impl State {
     }
 
     /// [`State::run`], which also gives the caller with its worker
-    /// mark.
-    fn run_as<C: Command>(
+    /// mark: [`State::reply`] needs it. [`crate::local::Local`] runs it.
+    pub fn run_as<C: Command>(
         &mut self,
         caller: &Caller,
         command: &C,
@@ -1290,7 +1291,7 @@ impl State {
     ///
     /// ```
     /// use std::time::Instant;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mut state = State::default();
     /// let mike = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse().unwrap();
@@ -1350,7 +1351,7 @@ impl State {
     /// ```
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=lead".parse()?;
     /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
@@ -1386,7 +1387,7 @@ impl State {
     /// ```
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::{GONE, State};
+    /// use riff_state::state::{GONE, State};
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -1439,7 +1440,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::RiffState;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let brett: SessionUri = "riff://brett@heron/como-technologies/riff?session=77e0".parse()?;
@@ -1471,7 +1472,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::{RiffState, StartReason};
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -1507,7 +1508,7 @@ impl State {
     /// ```
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -1537,7 +1538,7 @@ impl State {
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let ada: SessionUri = "riff://ada@thelio/como-technologies/riff?session=b7d0".parse()?;
@@ -1682,7 +1683,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::SessionState;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -1724,7 +1725,7 @@ impl State {
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::StepChange;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -1782,7 +1783,7 @@ impl State {
     /// ```
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let lead: SessionUri = "riff://mike@pangolin/o/r?session=l1".parse()?;
     /// let w1: SessionUri = "riff://mike@pangolin/o/r?session=w1".parse()?;
@@ -1836,7 +1837,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::{ItemFact, PullFact, PullState, SessionState, Waits};
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/o/r?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -1875,7 +1876,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::record::Change;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
     /// let now = Instant::now();
@@ -1990,7 +1991,7 @@ impl State {
     /// use riff_core::name::SessionUri;
     /// use riff_core::selector::Selector;
     /// use riff_core::wire::Post;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=lead".parse()?;
     /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
@@ -2041,7 +2042,7 @@ impl State {
     /// ```
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let worker = |id: &str| -> SessionUri {
     ///     format!("riff://mike@pangolin/como-technologies/riff?session={id}").parse().unwrap()
@@ -2075,7 +2076,7 @@ impl State {
     /// ```
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let worker = |id: &str| -> SessionUri {
     ///     format!("riff://mike@pangolin/como-technologies/riff?session={id}").parse().unwrap()
@@ -2136,7 +2137,7 @@ impl State {
     /// ```
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -2174,7 +2175,7 @@ impl State {
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let first: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
     /// let second: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=b2#api".parse()?;
@@ -2239,7 +2240,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::RiffState;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
     /// let brett: SessionUri = "riff://brett@kadomony/como-technologies/strata?session=b1".parse()?;
@@ -2294,7 +2295,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::RiffState;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
     /// let other: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=b2#api".parse()?;
@@ -2337,7 +2338,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::Status;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -2483,8 +2484,8 @@ impl State {
     /// use riff_core::name::SessionUri;
     /// use riff_core::selector::Selector;
     /// use riff_core::wire::Kind;
-    /// use riff_server::owner::server_uri;
-    /// use riff_server::state::State;
+    /// use riff_state::owner::server_uri;
+    /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -2527,7 +2528,7 @@ impl State {
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::{GONE, State};
+    /// use riff_state::state::{GONE, State};
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// let now = Instant::now();
@@ -2550,7 +2551,7 @@ impl State {
     /// ```
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
-    /// use riff_server::state::{GONE, State};
+    /// use riff_state::state::{GONE, State};
     ///
     /// let lead: SessionUri = "riff://ada@thelio/como-technologies/riff?session=a6cf".parse()?;
     /// let other: SessionUri = "riff://ada@pangolin/como-technologies/riff?session=b7d0".parse()?;
@@ -2615,7 +2616,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::Post;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse()?;
     /// let bob: SessionUri = "riff://bob@kite/acme/app?session=b1".parse()?;
@@ -2726,7 +2727,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::{RiffState, StartReason};
-    /// use riff_server::state::{MUST_CLEAR, State};
+    /// use riff_state::state::{MUST_CLEAR, State};
     ///
     /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=1ead".parse()?;
     /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
@@ -2772,7 +2773,7 @@ impl State {
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
     /// use riff_core::wire::RiffState;
-    /// use riff_server::state::State;
+    /// use riff_state::state::State;
     ///
     /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=1ead".parse()?;
     /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=068a2cc2".parse()?;

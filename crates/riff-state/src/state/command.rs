@@ -85,7 +85,7 @@ impl Role {
 ///
 /// ```
 /// use riff_core::name::SessionUri;
-/// use riff_server::state::{Caller, Class, Role};
+/// use riff_state::state::{Caller, Class, Role};
 ///
 /// let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let caller = Caller::of(&me);
@@ -132,7 +132,7 @@ impl Caller {
     /// ```
     /// use riff_core::name::Who;
     /// use riff_core::record::By;
-    /// use riff_server::state::{Caller, Class};
+    /// use riff_state::state::{Caller, Class};
     ///
     /// let caller = Caller::sign_in(&Who::new("mike", None)?, "mike@comotechnologies.io");
     /// assert_eq!(caller.class(), Class::SignIn);
@@ -205,7 +205,7 @@ impl Caller {
     /// ```
     /// use riff_core::name::SessionUri;
     /// use riff_core::record::By;
-    /// use riff_server::state::Caller;
+    /// use riff_state::state::Caller;
     ///
     /// let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
     /// assert_eq!(Caller::of(&me).by().json().to_string(), r#"{"session":"mike/a6cf"}"#);
@@ -233,7 +233,7 @@ impl Caller {
     /// ```
     /// use riff_core::name::Who;
     /// use riff_core::record::By;
-    /// use riff_server::state::Caller;
+    /// use riff_state::state::Caller;
     ///
     /// let caller = Caller::sign_in(&Who::new("mike", None)?, "mike@comotechnologies.io");
     /// assert_eq!(caller.traced(), By::SignIn("mike".into()));
@@ -363,7 +363,7 @@ impl CommandKind {
     /// (01M3XA87CJHCGZX283ZQAFKARZ).
     ///
     /// ```
-    /// use riff_server::state::CommandKind;
+    /// use riff_state::state::CommandKind;
     ///
     /// assert!(CommandKind::Invite.of_people() && CommandKind::Admit.of_people());
     /// assert!(!CommandKind::Claim.of_people() && !CommandKind::MakeRiff.of_people());
@@ -413,7 +413,7 @@ impl fmt::Display for CommandKind {
 /// | `other_user` | The session ID is known under another user. | 409 |
 /// | `bad_request` | The fields of the call do not agree. | 400 |
 ///
-/// [`Failed::status`](crate::engine::Failed::status) gives the status
+/// `Failed::status` of the engine of riff-server gives the status
 /// (01M3X4Z69CFV23V4QZBE8RP1GJ).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
@@ -481,7 +481,7 @@ impl Code {
 /// caller.
 ///
 /// ```
-/// use riff_server::state::{Code, Refused};
+/// use riff_state::state::{Code, Refused};
 ///
 /// let refused: Refused = "a selector needs one or more fields".into();
 /// assert_eq!(refused.code, Code::BadRequest);
@@ -529,7 +529,7 @@ impl From<&str> for Refused {
 ///
 /// ```
 /// use riff_core::name::SessionUri;
-/// use riff_server::state::{Caller, Code, CommandKind, Role, permits};
+/// use riff_state::state::{Caller, Code, CommandKind, Role, permits};
 ///
 /// let session: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let session = Caller::of(&session);
@@ -648,7 +648,7 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
 /// use std::time::Instant;
 /// use riff_core::name::SessionUri;
 /// use riff_core::wire::Claim;
-/// use riff_server::state::{Caller, Code, Command, CommandKind, State};
+/// use riff_state::state::{Caller, Code, Command, CommandKind, State};
 ///
 /// /// The kind of a command, and the code of its refusal now.
 /// fn refusal<C: Command>(state: &mut State, me: &SessionUri, command: &C) -> (&'static str, Option<Code>) {

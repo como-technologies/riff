@@ -18,7 +18,7 @@ use riff_core::name::SessionUri;
 use riff_core::wire::RiffState;
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_server::store::Memory;
+use riff_state::store::Memory;
 
 const ID: &str = "a6cf2205-d54a-4c1e-9b1f-2e3d4c5b6a7f";
 

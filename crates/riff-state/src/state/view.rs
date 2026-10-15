@@ -35,8 +35,8 @@ pub struct View<'a> {
 /// start, and each view holds them.
 ///
 /// ```
-/// use riff_server::owner::Timing;
-/// use riff_server::state::Settings;
+/// use riff_state::owner::Timing;
+/// use riff_state::state::Settings;
 ///
 /// let settings = Settings::new(&[" Boss@X.io".into()], "https://riff.x.io", Timing::default());
 /// assert!(settings.is_admin("boss@x.io"));

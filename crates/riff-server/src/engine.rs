@@ -5,7 +5,7 @@
 //! The [`Engine`] owns the [`State`], its lock and the queue of the
 //! writer. They are private fields of this module, so the engine is the
 //! only code that locks the state (01M3WRD8WJ2JF9077PRDX04T9A). The
-//! files of the commands are next to this module, in [`crate::state`],
+//! files of the commands are next to this module, in [`riff_state::state`],
 //! not below it. So no command can make a stage or lock the state.
 //!
 //! ```mermaid
@@ -99,7 +99,7 @@
 //! - [`Engine::run`] says whether a reply is the reply of a kept call.
 //!   The handler then sets the header `riff-repeat: 1`.
 //!
-//! [`crate::state::calls`] has the table, its limits and its part of a
+//! [`riff_state::state::calls`] has the table, its limits and its part of a
 //! checkpoint.
 //!
 //! # The trace of a command
@@ -124,9 +124,9 @@
 //! use std::time::Instant;
 //! use riff_core::wire::{Join, Register, Resume};
 //! use riff_server::engine::{Engine, Open};
-//! use riff_server::log::{Timing, write};
-//! use riff_server::state::State;
-//! use riff_server::store::Memory;
+//! use riff_state::log::{Timing, write};
+//! use riff_state::state::State;
+//! use riff_state::store::Memory;
 //!
 //! let engine = Engine::new(State::with_writer(Instant::now(), 0), Open);
 //! // The writer: it writes each chunk to the log, here in memory. Only
@@ -181,16 +181,16 @@ use riff_core::wire::{
     Leave, PassOwner, Pause, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER, Register, Release,
     ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, SetPlan, Start, Tailed, TakeOwner, Wake,
 };
-use tokio::sync::{Notify, broadcast, oneshot};
-
-use crate::auth::SignedIn;
-use crate::log::Written;
-use crate::oidc::Identity;
-use crate::state::{
+use riff_state::log::Written;
+use riff_state::state::{
     Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
     CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, Import, Imported, Key, MakeRiff,
     NameOwner, OwnerChange, Refused, Role, Signal, State, Stopping, Stuck,
 };
+use tokio::sync::{Notify, broadcast, oneshot};
+
+use crate::auth::SignedIn;
+use crate::oidc::Identity;
 use crate::trace::{Denied, DeniedCode, Limit, Named, Outcome, Traced};
 
 /// Events that a slow stream may miss before it drops them.
@@ -338,7 +338,7 @@ impl Failed {
     /// ```
     /// use axum::http::StatusCode;
     /// use riff_server::engine::Failed;
-    /// use riff_server::state::{Code, Refused};
+    /// use riff_state::state::{Code, Refused};
     ///
     /// let held = Failed::Refused(Refused::new(Code::Held, "issue-7 is held"));
     /// assert_eq!(held.status(), StatusCode::CONFLICT);
@@ -719,7 +719,7 @@ impl Engine {
         let me = match (command.me(), proof) {
             (Some(me), _) => me.clone(),
             (None, Some(proof)) => {
-                let place = crate::owner::server_uri().place().clone();
+                let place = riff_state::owner::server_uri().place().clone();
                 SessionUri::new(proof.who.clone(), place)
             }
             (None, None) => {
@@ -983,9 +983,9 @@ impl Engine {
     /// (01M3XA87A9GGFA89RQXWSKY0V6). The token layer then makes the
     /// chain.
     pub async fn sign_in(&self, identity: &Identity) -> Result<SignedInAs, Failed> {
-        let email = crate::state::people::email(&identity.email);
-        let user = crate::oidc::user_of(&email)
-            .map_err(|e| Refused::new(Code::BadRequest, e.to_string()))
+        let email = riff_state::state::people::email(&identity.email);
+        let user = riff_state::state::people::user_of(&email)
+            .map_err(|why| Refused::new(Code::BadRequest, why))
             .and_then(|user| {
                 riff_core::name::Who::new(&user, None)
                     .map_err(|e| Refused::new(Code::BadRequest, e.to_string()))
@@ -1013,7 +1013,7 @@ impl Engine {
     }
 
     /// Forgets each session with no sign of life for
-    /// [`crate::state::SESSION_EXPIRY`]: the command `forget` of the
+    /// [`riff_state::state::SESSION_EXPIRY`]: the command `forget` of the
     /// server. Gives the number of sessions that it forgot.
     pub async fn forget(&self) -> Result<usize, Failed> {
         self.dispatch(Engine::as_server(Forget)).await
@@ -1088,7 +1088,13 @@ impl Engine {
         &self,
         caller: &Admitted,
         after: std::time::Duration,
-    ) -> Result<(Vec<crate::state::Blocked>, Vec<crate::state::Blocked>), Failed> {
+    ) -> Result<
+        (
+            Vec<riff_state::state::Blocked>,
+            Vec<riff_state::state::Blocked>,
+        ),
+        Failed,
+    > {
         let place = caller.caller.me().place().clone();
         self.signal(caller, Signal::Called { place }).await?;
         let me = caller.caller.me();
@@ -1171,7 +1177,7 @@ impl Engine {
     // ANCHOR: finish
     /// Finishes each command of a chunk that the writer wrote
     /// (01M3WRD90WBBCWTDGVQCBR6MNT). `written` is the proof of the
-    /// write: only [`crate::log::write`] makes it (01M3X4Z6DSWKMJ2R549R4TSYP0). It
+    /// write: only [`riff_state::log::write`] makes it (01M3X4Z6DSWKMJ2R549R4TSYP0). It
     /// applies the records to the written copy in the order of their
     /// positions, under the lock. Then, for each entry in order, it
     /// writes the log line of a command with no record (01M3X4Z62RJREQ5H8F18Y85T6V),

@@ -7,8 +7,7 @@
 //! its caller ([`By`]) and its call ID ([`Key`]). The writer keeps the
 //! result of each accepted command with a key ([`Kept`]): its records,
 //! its note and its time. A second try of a kept call runs no `handle`:
-//! the engine makes its reply from the kept result (see
-//! [`crate::engine`]).
+//! the engine of riff-server makes its reply from the kept result.
 //!
 //! ```mermaid
 //! stateDiagram-v2
@@ -35,7 +34,7 @@
 //! use riff_core::name::SessionUri;
 //! use riff_core::record::Record;
 //! use riff_core::wire::Join;
-//! use riff_server::state::{Caller, Cause, CommandKind, Key, State};
+//! use riff_state::state::{Caller, Cause, CommandKind, Key, State};
 //!
 //! let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 //! let now = Instant::now();
@@ -78,7 +77,7 @@ pub const CALL_KEEP_MOST: usize = 1024;
 /// ```
 /// use riff_core::name::Who;
 /// use riff_core::record::By;
-/// use riff_server::state::Key;
+/// use riff_state::state::Key;
 ///
 /// let ann = By::Session(Who::new("ann", Some("s1"))?);
 /// let bob = By::Session(Who::new("bob", Some("s1"))?);
@@ -147,7 +146,7 @@ impl Kept {
     /// none.
     ///
     /// ```
-    /// use riff_server::state::{Done, Kept};
+    /// use riff_state::state::{Done, Kept};
     ///
     /// let kept = Kept::new(Done::default(), Some(Box::new(7_u32)), 0);
     /// assert_eq!(kept.note::<u32>(), 7);
@@ -185,7 +184,7 @@ impl Calls {
     ///
     /// ```
     /// use riff_core::record::By;
-    /// use riff_server::state::{CALL_KEEP_MOST, Calls, Done, Key, Kept};
+    /// use riff_state::state::{CALL_KEEP_MOST, Calls, Done, Key, Kept};
     ///
     /// let mut calls = Calls::default();
     /// for n in 0..=CALL_KEEP_MOST as u64 {

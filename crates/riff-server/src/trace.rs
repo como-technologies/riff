@@ -43,7 +43,7 @@
 //! | `caller` | `refused`, `no_change`, `failed` | The caller, as `by` in a record: `{"session":"mike/84cf"}`. |
 //! | `key` | `refused`, `no_change`, `failed` | The thumbprint of the device key of the token. It is not a secret. A call with no token has none. |
 //! | `command` | `refused`, `no_change`, `failed` | The kind of the command. |
-//! | `code`, `reason` | `refused` | The code of the refusal ([`Code`](crate::state::Code)) and its reason as text. The line of a command of the people has no `reason`. |
+//! | `code`, `reason` | `refused` | The code of the refusal ([`Code`](riff_state::state::Code)) and its reason as text. The line of a command of the people has no `reason`. |
 //! | `reason` | `failed` with `WARNING` | Why the server stopped. |
 //! | `named` | `denied` | The caller that the call named: the `me` of the body, or the `uri` of the query. |
 //! | `proved` | `denied` | `false`: no token proved the name. |
@@ -141,7 +141,7 @@ use riff_core::record::By;
 use serde_json::{Value, json};
 use tokio::time::Instant;
 
-use crate::state::{CommandKind, Refused};
+use riff_state::state::{CommandKind, Refused};
 
 /// The `target` of each line of a trace.
 pub const TARGET: &str = "engine";
@@ -249,7 +249,7 @@ impl Traced {
 
 /// Why the token layer refused a call: the code of a `denied` line. It
 /// is not a code of a refused command
-/// ([`Code`](crate::state::Code)).
+/// ([`Code`](riff_state::state::Code)).
 ///
 /// | Code | When | HTTP status |
 /// |---|---|---|
@@ -586,7 +586,7 @@ impl Limit {
 mod tests {
     use super::*;
     use crate::logline::testing::{Capture, capture};
-    use crate::state::{Caller, Code};
+    use riff_state::state::{Caller, Code};
 
     /// The lines of a window that each call can take.
     const OPEN: u64 = DENIED_MAX - DENIED_KEPT;

@@ -67,7 +67,7 @@ use super::work::Work;
 /// The fields are private to this file. So this does not compile:
 ///
 /// ```compile_fail,E0616
-/// use riff_server::state::Riff;
+/// use riff_state::state::Riff;
 ///
 /// let mut riff = Riff::default();
 /// riff.position = 7;
@@ -78,7 +78,7 @@ use super::work::Work;
 /// ```
 /// use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
 /// use riff_core::wire::RiffState;
-/// use riff_server::state::{Riff, apply};
+/// use riff_state::state::{Riff, apply};
 ///
 /// let mut riff = Riff::default();
 /// let change = Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running });
@@ -168,7 +168,7 @@ impl Riff {
 ///
 /// ```
 /// use riff_core::record::{Change, Claimed, Envelope, Record, Released};
-/// use riff_server::state::{Riff, apply};
+/// use riff_state::state::{Riff, apply};
 ///
 /// let claimed = Claimed {
 ///     session: "riff://ann@heron/acme/app?session=s1".parse()?,

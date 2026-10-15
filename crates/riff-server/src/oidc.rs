@@ -30,7 +30,7 @@
 //! Workspace domain of the account, is one of
 //! [`Provider::allowed_domains`] (R15, R94). An account with no `hd` is
 //! not in an allowed domain. The members decide the rest: see
-//! [`crate::state::Admit`].
+//! [`riff_state::state::Admit`].
 //!
 //! At start, the server checks its client with the provider (R146, see
 //! [`Provider::check_client`]).
@@ -40,28 +40,19 @@
 //! the same USER, for example `o'brien@x.io` and `o-brien@x.io`. The
 //! first email that signs in with a USER holds it, and the server
 //! refuses each other email that gives it (R209, see
-//! [`crate::state::Admit`]).
+//! [`riff_state::state::Admit`]).
 //!
 //! The server fetches the discovery document and the JWKS at each
 //! sign-in. A person signs in about once a month, so there is no
 //! cache.
-//!
-//! # Example
-//!
-//! ```
-//! use riff_server::oidc::user_of;
-//!
-//! assert_eq!(user_of("Ada.Lovelace@comotechnologies.io").unwrap(), "ada.lovelace");
-//! assert!(user_of("no-at-sign").is_err());
-//! ```
 
 use std::fmt;
 use std::time::Duration;
 
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{DecodingKey, Validation, decode, decode_header};
-use riff_core::name::{check, sanitize};
 use riff_core::wire::{Discovery, SignInConfig};
+use riff_state::state::people::user_of;
 use serde::Deserialize;
 
 /// The OpenID Connect provider of one `riff-server`.
@@ -130,9 +121,10 @@ impl SignInError {
     /// email, so the line has only the kind of the error.
     ///
     /// ```
-    /// use riff_server::oidc::{SignInError, user_of};
+    /// use riff_server::oidc::SignInError;
+    /// use riff_state::state::people::user_of;
     ///
-    /// let error = user_of("mark.example").unwrap_err();
+    /// let error = SignInError::Invalid(user_of("mark.example").unwrap_err());
     /// assert!(error.to_string().contains("mark.example"));
     /// assert_eq!(error.for_log(), "the ID token is not valid");
     /// let provider = SignInError::Provider("https://x/jwks: timeout".into());
@@ -248,27 +240,13 @@ impl Provider {
         let email = claims
             .email
             .ok_or_else(|| SignInError::Invalid("the token has no email".into()))?;
-        let user = user_of(&email)?;
+        let user = user_of(&email).map_err(SignInError::Invalid)?;
         Ok(Identity {
             email,
             user,
             allowed_domain,
         })
     }
-}
-
-/// The USER of `email`: the part before the `@`, in lower case, with
-/// each character that a URI part cannot hold replaced by `-` (R208).
-/// Two emails can give the same USER. Only
-/// [`crate::state::Admit`] tells which email holds it (R209).
-pub fn user_of(email: &str) -> Result<String, SignInError> {
-    let local = email
-        .rsplit_once('@')
-        .map(|(local, _)| local)
-        .ok_or_else(|| SignInError::Invalid(format!("not an email: {email}")))?;
-    let user = sanitize(&local.to_lowercase());
-    check("user", &user).map_err(|e| SignInError::Invalid(e.to_string()))?;
-    Ok(user)
 }
 
 /// The `iss` values to accept. Google also issues tokens with its
@@ -454,11 +432,5 @@ mod tests {
         let forged = format!("{head}.AAAA");
         assert!(provider().verify(&jwks(), &forged).is_err());
         assert!(provider().verify(&jwks(), "not a token").is_err());
-    }
-
-    #[test]
-    fn users_come_from_the_email() {
-        assert_eq!(user_of("a+b@x.io").unwrap(), "a-b");
-        assert!(user_of("@x.io").is_err());
     }
 }

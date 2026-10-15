@@ -61,8 +61,8 @@
 //! # #[tokio::main] async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
 //! use riff_core::wire::RiffState;
-//! use riff_server::log::{Timing, write};
-//! use riff_server::store::Memory;
+//! use riff_state::log::{Timing, write};
+//! use riff_state::store::Memory;
 //! use riff_server::tools::{Mode, cut, print, verify};
 //!
 //! let store = Memory::default();
@@ -101,11 +101,12 @@ use std::fmt;
 
 use riff_core::record::{Change, Line, Record, Scope};
 use riff_core::wire::Kind;
+use riff_state::checkpoint;
+use riff_state::log::{self, Header};
+use riff_state::store::{Loaded, Store, StoreError};
+use riff_state::utc;
 
-use crate::checkpoint;
 use crate::lease::{self, Busy, Held, ToolLease};
-use crate::log::{self, Header};
-use crate::store::{Loaded, Store, StoreError};
 
 /// The most characters of a message body that [`show`] prints.
 const BODY: usize = 60;
@@ -134,22 +135,6 @@ impl From<StoreError> for ToolError {
     fn from(error: StoreError) -> Self {
         ToolError::Store(error)
     }
-}
-
-/// A time in milliseconds since the Unix epoch as UTC text, to the
-/// second.
-///
-/// ```
-/// assert_eq!(riff_server::tools::utc(1_790_000_000_000), "2026-09-21T14:13:20Z");
-/// ```
-pub fn utc(ms: u64) -> String {
-    i64::try_from(ms)
-        .ok()
-        .and_then(chrono::DateTime::from_timestamp_millis)
-        .map_or_else(
-            || format!("{ms} ms"),
-            |time| time.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        )
 }
 
 /// One record as one line of text: the position, the time, the kind of
@@ -947,7 +932,7 @@ pub async fn cut_with(
                  can still run. Stop that server, delete the object {}, and run the command \
                  again. A server that still runs stops when the object is gone.",
                 held_text(&held),
-                store.locate(crate::store::LEASE)
+                store.locate(riff_state::store::LEASE)
             )));
         }
         Err(Busy::Held(held)) => {
@@ -1060,13 +1045,13 @@ async fn remove(store: &dyn Store, after: u64, mode: Mode) -> Result<Cut, ToolEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checkpoint::Checkpoint;
-    use crate::state::State;
-    use crate::store::Memory;
     use futures::future::{BoxFuture, FutureExt};
     use riff_core::record::Envelope;
     use riff_core::record::{Claimed, PauseSet};
     use riff_core::wire::RiffState;
+    use riff_state::checkpoint::Checkpoint;
+    use riff_state::state::State;
+    use riff_state::store::Memory;
     use std::time::{Duration, Instant};
 
     fn running(position: u64) -> Record {
@@ -1250,7 +1235,7 @@ mod tests {
         let mut objects = Vec::new();
         for name in store.list("").await.unwrap() {
             // A cut takes the lease and ends it: the lease changes.
-            if name == crate::store::LEASE {
+            if name == riff_state::store::LEASE {
                 continue;
             }
             let bytes = store.load(&name).await.unwrap().unwrap().bytes;
@@ -1291,8 +1276,8 @@ mod tests {
     async fn lease_of(store: &Memory, id: &str, age_ms: u64, ended: bool) {
         let at = lease::now_ms() - age_ms;
         let json = format!(r#"{{"id":"{id}","renewed_at_ms":{at},"ended":{ended}}}"#);
-        store.delete(crate::store::LEASE).await.unwrap();
-        let saved = store.save(crate::store::LEASE, json.into_bytes(), None);
+        store.delete(riff_state::store::LEASE).await.unwrap();
+        let saved = store.save(riff_state::store::LEASE, json.into_bytes(), None);
         saved.await.unwrap();
     }
 
@@ -1323,9 +1308,9 @@ mod tests {
 
         // The lease of an older riff-server has no time: it does not
         // end, and the refusal names the object to delete.
-        store.delete(crate::store::LEASE).await.unwrap();
+        store.delete(riff_state::store::LEASE).await.unwrap();
         let old = br#"{"id":"old080"}"#.to_vec();
-        let saved = store.save(crate::store::LEASE, old, None);
+        let saved = store.save(riff_state::store::LEASE, old, None);
         saved.await.unwrap();
         let error = cut(&store, 4, Mode::Remove).await.unwrap_err().to_string();
         assert!(
@@ -1346,7 +1331,7 @@ mod tests {
         assert_eq!(start.elapsed(), Duration::from_secs(10));
         // The cut took the lease and ended it (01M3X5TP9CD4NXGPJEGP2Q4RS0):
         // the instance abc123 finds another ID.
-        let lease = store.load(crate::store::LEASE).await.unwrap().unwrap();
+        let lease = store.load(riff_state::store::LEASE).await.unwrap().unwrap();
         let lease: serde_json::Value = serde_json::from_slice(&lease.bytes).unwrap();
         assert!(lease["id"].as_str().unwrap().starts_with("cut-"), "{lease}");
         assert_eq!(lease["ended"], true);
@@ -1376,10 +1361,10 @@ mod tests {
             &'a self,
             name: &'a str,
             bytes: Vec<u8>,
-            known: Option<crate::store::Version>,
-        ) -> BoxFuture<'a, Result<crate::store::Version, StoreError>> {
+            known: Option<riff_state::store::Version>,
+        ) -> BoxFuture<'a, Result<riff_state::store::Version, StoreError>> {
             async move {
-                if name == crate::store::LEASE {
+                if name == riff_state::store::LEASE {
                     lease_of(&self.0, "first7", 0, false).await;
                 }
                 self.0.save(name, bytes, known).await
@@ -1432,8 +1417,8 @@ mod tests {
             &'a self,
             name: &'a str,
             bytes: Vec<u8>,
-            known: Option<crate::store::Version>,
-        ) -> BoxFuture<'a, Result<crate::store::Version, StoreError>> {
+            known: Option<riff_state::store::Version>,
+        ) -> BoxFuture<'a, Result<riff_state::store::Version, StoreError>> {
             self.0.save(name, bytes, known)
         }
 

@@ -35,6 +35,7 @@
 //! | `riff.sock` | The control socket: `riff run`, `riff daemon status`. |
 //! | `sessions/NAME/` | The folder of the socket of the session `NAME`, with mode 0700. |
 //! | `sessions/NAME/riff.sock` | The socket of that session. |
+//! | `state/` | The log and the checkpoints of the state of the daemon ([`state_dir`]). |
 //!
 //! The daemon binds the folder of a session at [`IN_SESSION`] in its
 //! container, with write, and sets [`SOCKET_VAR`]
@@ -48,6 +49,35 @@
 //! A path of a socket can be longer than the address of a Unix socket
 //! takes (108 bytes). On Linux, riff binds and connects through a
 //! descriptor of the folder: `/proc/self/fd/N/riff.sock`.
+//!
+//! # The state of the daemon
+//!
+//! The daemon keeps the state of riff on its machine with the state
+//! machine of riff-server, the crate `riff-state`
+//! (01M4Z60B8AFV68ZSAFA540G73C, 01M4ZHW1Y1X21ZPV053D0CXWMC): a
+//! [`Local`] in [`state_dir`] (01M4ZHW2083VFTQJ772ZJ27XAC).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     O["Daemon::open"] --> L["Local::open: the newest checkpoint,<br/>then the log after it"]
+//!     L -->|no riff| M["MakeRiff with a random ID"]
+//!     L --> S["serve"]
+//!     M --> S
+//!     S -->|"a command (#717, #719)"| R["Local::run: the records<br/>in the log, then the reply"]
+//!     S -->|"the stop"| C["Local::checkpoint"]
+//! ```
+//!
+//! - [`Daemon::open`] loads the state. At the first start, it makes the
+//!   riff of the machine with a random ID.
+//! - Each change goes through [`Daemon::state`]: one command at a time,
+//!   with its records in the log before its reply
+//!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session act on it
+//!   (#717, #719).
+//! - At the stop, [`Daemon::serve`] writes a checkpoint. A start after a
+//!   crash replays the log after the last checkpoint.
+//! - `riff daemon status` shows the ID of the riff and the position of
+//!   the log ([`Status::riff`], [`Status::position`],
+//!   01M4ZHW24JZZXM3JJXG3PRJS7N).
 //!
 //! # The protocol
 //!
@@ -97,6 +127,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::build::Build;
+use riff_state::checkpoint;
+use riff_state::local::Local;
+use riff_state::state::{Caller, MakeRiff, State};
+use riff_state::store::Dir;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -152,6 +186,19 @@ pub fn socket(dir: &Path) -> PathBuf {
 /// The folder of the socket of the session `name`.
 pub fn session_dir(dir: &Path, name: &str) -> PathBuf {
     dir.join("sessions").join(name)
+}
+
+/// The folder of the state of the daemon in its folder `dir`: the log
+/// and the checkpoints.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let dir = Path::new("/h/.local/share/riff/daemon");
+/// assert_eq!(riff::daemon::state_dir(dir), Path::new("/h/.local/share/riff/daemon/state"));
+/// ```
+pub fn state_dir(dir: &Path) -> PathBuf {
+    dir.join("state")
 }
 
 /// The path of the socket in a session: `/run/riff/riff.sock`.
@@ -303,6 +350,12 @@ pub struct Status {
     pub since_ms: i64,
     /// The folder of the daemon.
     pub dir: PathBuf,
+    /// The ID of the riff of this machine, from the state of the daemon.
+    #[serde(default)]
+    pub riff: Option<String>,
+    /// The position of the last record of the log of the daemon.
+    #[serde(default)]
+    pub position: u64,
     /// Its sessions, by name.
     pub sessions: Vec<Live>,
 }
@@ -417,12 +470,22 @@ fn resolved(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
 
-/// The daemon: the sessions of this machine, on the runtime `R`.
+/// The daemon: the sessions of this machine, on the runtime `R`, and
+/// the state of riff on this machine.
 pub struct Daemon<R> {
     runtime: R,
     dir: PathBuf,
     since_ms: i64,
     live: Mutex<BTreeMap<String, Live>>,
+    state: Local,
+}
+
+/// A random ID of 16 bytes as hex: the ID of a new riff.
+fn random_id() -> String {
+    let mut bytes = [0u8; 16];
+    // The OS random source fails only when the OS is broken.
+    getrandom::fill(&mut bytes).expect("the OS gives random bytes");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Binds the control socket in the folder `dir` of the daemon. It
@@ -441,23 +504,55 @@ pub async fn listen(dir: &Path) -> Result<UnixListener> {
 }
 
 impl<R: Runtime + 'static> Daemon<R> {
-    /// A daemon with no session, on `runtime`, with its folder `dir`.
-    pub fn new(runtime: R, dir: PathBuf) -> Self {
-        Daemon {
+    /// A daemon with no session, on `runtime`, with its folder `dir`. It
+    /// loads its state from [`state_dir`]: the newest checkpoint, and
+    /// the log after it. At its first start, it makes the riff of this
+    /// machine with a random ID. Only one daemon may open a folder: call
+    /// [`listen`] first.
+    pub async fn open(runtime: R, dir: PathBuf) -> Result<Self> {
+        private_dir(&dir)?;
+        let state_dir = state_dir(&dir);
+        let store = Arc::new(Dir::new(&state_dir));
+        let state = Local::open(store, checkpoint::Settings::default())
+            .await
+            .with_context(|| text::daemon_no_state(&state_dir))?;
+        if state.read(State::riff_id).await.is_none() {
+            let make = MakeRiff {
+                riff_id: random_id(),
+            };
+            state
+                .run(&Caller::server(), &make)
+                .await
+                .with_context(|| text::daemon_no_state(&state_dir))?;
+        }
+        Ok(Daemon {
             runtime,
             dir,
             since_ms: now_ms(),
             live: Mutex::new(BTreeMap::new()),
-        }
+            state,
+        })
+    }
+
+    /// The state of riff on this machine. The riff tools of a session
+    /// act on it (#717, #719).
+    pub fn state(&self) -> &Local {
+        &self.state
     }
 
     /// The state of the daemon.
-    pub fn status(&self) -> Status {
+    pub async fn status(&self) -> Status {
+        let (riff, position) = self
+            .state
+            .read(|state| (state.riff_id(), state.written_position()))
+            .await;
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
             since_ms: self.since_ms,
             dir: self.dir.clone(),
+            riff,
+            position,
             sessions: self.lock().values().cloned().collect(),
         }
     }
@@ -467,7 +562,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Answers each connection of `listener` until `stop` ends. The stop
-    /// stops no session (01M4ZDTW00B7N6T9P3MK066KA7).
+    /// stops no session (01M4ZDTW00B7N6T9P3MK066KA7). At the stop, it
+    /// writes a checkpoint of the state.
     pub async fn serve(
         self: Arc<Self>,
         listener: UnixListener,
@@ -476,7 +572,12 @@ impl<R: Runtime + 'static> Daemon<R> {
         tokio::pin!(stop);
         loop {
             tokio::select! {
-                () = &mut stop => return Ok(()),
+                () = &mut stop => {
+                    if let Err(e) = self.state.checkpoint().await {
+                        eprintln!("riff daemon: {e}");
+                    }
+                    return Ok(());
+                }
                 accepted = listener.accept() => match accepted {
                     Ok((conn, _)) => {
                         let daemon = self.clone();
@@ -504,7 +605,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let (out, written) = writer(write);
         if let Some(first) = lines.next_line().await? {
             match hello(&first) {
-                Ok(Ask::Status) => out.say(Say::Status(self.status())),
+                Ok(Ask::Status) => out.say(Say::Status(self.status().await)),
                 Ok(Ask::Image { image }) => self.image(&image, &out).await,
                 Ok(Ask::Start(start)) => self.start(*start, lines, &out).await,
                 Err(error) => out.say(Say::Failed { error }),
@@ -907,8 +1008,8 @@ pub async fn serve_here() -> Result<()> {
         let listener = listen(&dir).await?;
         let mut term = signal(SignalKind::terminate())?;
         let mut int = signal(SignalKind::interrupt())?;
-        let daemon = Arc::new(Daemon::new(crate::podman::Podman, dir.clone()));
-        let status = daemon.status();
+        let daemon = Arc::new(Daemon::open(crate::podman::Podman, dir.clone()).await?);
+        let status = daemon.status().await;
         println!(
             "{}",
             text::daemon_listens(&socket(&dir), status.pid, &status.build)
@@ -1018,27 +1119,51 @@ mod tests {
         root: tempfile::TempDir,
         dir: PathBuf,
         fake: Fake,
+        daemon: Arc<Daemon<Fake>>,
         stop: Option<oneshot::Sender<()>>,
         served: JoinHandle<Result<()>>,
+    }
+
+    /// A daemon on `fake` in the folder `dir`, which serves until its
+    /// stop.
+    type Served = (
+        Arc<Daemon<Fake>>,
+        oneshot::Sender<()>,
+        JoinHandle<Result<()>>,
+    );
+
+    async fn serve(fake: &Fake, dir: &Path) -> Served {
+        let listener = listen(dir).await.unwrap();
+        let daemon = Arc::new(Daemon::open(fake.clone(), dir.to_owned()).await.unwrap());
+        let (stop, stopped) = oneshot::channel::<()>();
+        let served = tokio::spawn(daemon.clone().serve(listener, async {
+            let _ = stopped.await;
+        }));
+        (daemon, stop, served)
     }
 
     impl Here {
         async fn new(fake: Fake) -> Here {
             let root = tempfile::tempdir().unwrap();
             let dir = dir_in(root.path());
-            let listener = listen(&dir).await.unwrap();
-            let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()));
-            let (stop, stopped) = oneshot::channel::<()>();
-            let served = tokio::spawn(daemon.serve(listener, async {
-                let _ = stopped.await;
-            }));
+            let (daemon, stop, served) = serve(&fake, &dir).await;
             Here {
                 root,
                 dir,
                 fake,
+                daemon,
                 stop: Some(stop),
                 served,
             }
+        }
+
+        /// Stops the daemon, and starts a new one in the same folder.
+        async fn restart(&mut self) {
+            self.stop().await;
+            let (daemon, stop, served) = serve(&self.fake, &self.dir).await;
+            self.daemon = daemon;
+            self.stop = Some(stop);
+            self.served = served;
         }
 
         /// The [`Start`] of the session `name` of `item`.
@@ -1458,5 +1583,106 @@ mod tests {
             serde_json::to_string(&Then::Stop).unwrap(),
             r#"{"then":"stop"}"#
         );
+    }
+
+    /// A session `mike` of this repository, and a person `mike`.
+    fn mike() -> (riff_core::name::SessionUri, riff_core::name::SessionUri) {
+        let session = "riff://mike@thelio/como-technologies/riff?session=a6cf"
+            .parse()
+            .unwrap();
+        (session, "riff://mike@thelio".parse().unwrap())
+    }
+
+    /// Resumes the riff of `daemon` as the person `mike`, and claims
+    /// `item` as the session `mike`.
+    async fn claim(daemon: &Daemon<Fake>, item: &str) {
+        use riff_core::wire::{Claim, Resume};
+        use riff_state::state::Role;
+        let (session, person) = mike();
+        let admin = Caller::of(&person).with_role(Role::Admin);
+        let state = daemon.state();
+        state.run(&admin, &Resume::whole(person)).await.unwrap();
+        let claim = Claim {
+            thread: session.default_thread().unwrap(),
+            me: session.clone(),
+            item: item.into(),
+        };
+        state.run(&Caller::of(&session), &claim).await.unwrap();
+    }
+
+    /// The claims of the session `mike` in the state of `daemon`.
+    async fn claims(daemon: &Daemon<Fake>) -> Vec<String> {
+        let (session, _) = mike();
+        daemon
+            .state()
+            .read(|state| {
+                state
+                    .uri(session.who(), std::time::Instant::now())
+                    .claims()
+                    .to_vec()
+            })
+            .await
+    }
+
+    /// 01M4ZHW2083VFTQJ772ZJ27XAC: the first start makes the riff; a
+    /// stop writes a checkpoint; the next start loads it, with the riff
+    /// and the claims.
+    #[tokio::test]
+    async fn the_daemon_keeps_its_state_across_a_restart() {
+        let mut here = Here::new(Fake::default()).await;
+        let first = status(&here.dir).await.unwrap();
+        let riff = first.riff.clone().unwrap();
+        assert_eq!(riff.len(), 32);
+        assert!(riff.chars().all(|c| c.is_ascii_hexdigit()), "{riff}");
+        claim(&here.daemon, "issue-12").await;
+        let position = here.daemon.status().await.position;
+        assert!(position > first.position);
+        let store = Dir::new(state_dir(&here.dir));
+        assert!(checkpoint::names(&store).await.unwrap().is_empty());
+
+        here.restart().await;
+        let names = checkpoint::names(&store).await.unwrap();
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0].0, position);
+        let again = status(&here.dir).await.unwrap();
+        assert_eq!(again.riff.as_deref(), Some(riff.as_str()));
+        assert_eq!(again.position, position);
+        assert_eq!(claims(&here.daemon).await, ["issue-12"]);
+        here.stop().await;
+    }
+
+    /// 01M4ZHW2083VFTQJ772ZJ27XAC: a daemon that ends with no stop
+    /// writes no checkpoint. The next start replays its log.
+    #[tokio::test]
+    async fn a_start_after_a_crash_replays_the_log() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let daemon = Daemon::open(Fake::default(), dir.clone()).await.unwrap();
+        claim(&daemon, "issue-12").await;
+        let before = daemon.status().await;
+        drop(daemon);
+
+        let store = Dir::new(state_dir(&dir));
+        assert!(checkpoint::names(&store).await.unwrap().is_empty());
+        let daemon = Daemon::open(Fake::default(), dir.clone()).await.unwrap();
+        let after = daemon.status().await;
+        assert_eq!(after.riff, before.riff);
+        assert_eq!(after.position, before.position);
+        assert_eq!(claims(&daemon).await, ["issue-12"]);
+    }
+
+    /// The state is in the folder of the daemon, which only the user
+    /// reads (01M4ZDTVQEHD87WD5TSN93XFSS). The first start writes one
+    /// chunk: the riff.
+    #[tokio::test]
+    async fn the_state_is_in_the_folder_of_the_daemon() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        Daemon::open(Fake::default(), dir.clone()).await.unwrap();
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        let chunks = std::fs::read_dir(state_dir(&dir).join("log")).unwrap();
+        assert_eq!(chunks.count(), 1);
     }
 }

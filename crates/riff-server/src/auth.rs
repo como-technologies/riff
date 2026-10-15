@@ -98,11 +98,11 @@ pub struct Config {
     /// The times of the lease, for a server with a store.
     pub lease: crate::lease::Timing,
     /// The times of the owner role (01M3Q5460YESBSQHTV3M15PE53).
-    pub owner_role: crate::owner::Timing,
+    pub owner_role: riff_state::owner::Timing,
     /// How long the writer tries a chunk of the log.
-    pub log: crate::log::Timing,
+    pub log: riff_state::log::Timing,
     /// When the server writes checkpoints, and which it keeps.
-    pub checkpoint: crate::checkpoint::Settings,
+    pub checkpoint: riff_state::checkpoint::Settings,
     /// The least time between two writes of the token store (R127).
     pub save_every: std::time::Duration,
 }
@@ -124,9 +124,9 @@ impl Config {
             owner: None,
             provider: None,
             lease: crate::lease::Timing::default(),
-            owner_role: crate::owner::Timing::default(),
-            log: crate::log::Timing::default(),
-            checkpoint: crate::checkpoint::Settings::default(),
+            owner_role: riff_state::owner::Timing::default(),
+            log: riff_state::log::Timing::default(),
+            checkpoint: riff_state::checkpoint::Settings::default(),
             save_every: crate::SAVE_EVERY,
         }
     }

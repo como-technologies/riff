@@ -15,7 +15,7 @@ use riff_core::dpop::Key;
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::lease::Timing;
-use riff_server::store::{Store, StoreError};
+use riff_state::store::{Store, StoreError};
 
 /// Sends a claim that the server refuses with the code `held`
 /// (01M3WRD9JBQMNN96TXJH8EAJ3W). Gives the text of the refusal: it

@@ -9,8 +9,8 @@ use riff_server::auth::Config;
 use riff_server::gcs::Gcs;
 use riff_server::listen::{self, Port};
 use riff_server::oidc::{self, DEFAULT_DOMAIN, Provider, SignInError};
-use riff_server::store::{Dir, Store};
 use riff_server::{Service, logline, tools};
+use riff_state::store::{Dir, Store};
 use tokio::signal::unix::{SignalKind, signal};
 
 /// The central service that sessions connect to. With no command, it
@@ -311,7 +311,7 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
     config.require_sign_in = cli.require_sign_in || cli.client_id.is_some();
     config.admins = cli.admins;
     config.owner = cli.owner;
-    config.owner_role = riff_server::owner::Timing::from_minutes(
+    config.owner_role = riff_state::owner::Timing::from_minutes(
         cli.owner_take_minutes,
         cli.owner_ping_minutes,
         cli.owner_pings,
@@ -436,12 +436,12 @@ mod tests {
     fn the_owner_settings_set_the_window_of_the_owner_check() {
         use clap::Parser;
         let cli = Cli::try_parse_from(["riff-server"]).unwrap();
-        let timing = riff_server::owner::Timing::from_minutes(
+        let timing = riff_state::owner::Timing::from_minutes(
             cli.owner_take_minutes,
             cli.owner_ping_minutes,
             cli.owner_pings,
         );
-        assert_eq!(timing, riff_server::owner::Timing::default());
+        assert_eq!(timing, riff_state::owner::Timing::default());
         let cli = Cli::try_parse_from([
             "riff-server",
             "--owner-ping-minutes",
