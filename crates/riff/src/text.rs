@@ -5035,6 +5035,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
         }
         None => out.push_str("Its riff: none yet.\n"),
     }
+    if let Some(limit) = &status.limit {
+        let _ = writeln!(out, "{}", daemon_limit(limit));
+    }
     if status.sessions.is_empty() {
         out.push_str("Sessions: none.\n");
     } else {
@@ -5048,6 +5051,18 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
                 live.session,
                 age(live.since_ms)
             );
+        }
+    }
+    if !status.waiting.is_empty() {
+        out.push_str("Wait for room:\n");
+        for name in &status.waiting {
+            let _ = writeln!(out, "  {name}");
+        }
+    }
+    if !status.waves.is_empty() {
+        out.push_str("Waves:\n");
+        for wave in &status.waves {
+            let _ = writeln!(out, "  {}  {}", wave.repo, wave.word);
         }
     }
     out
@@ -5279,6 +5294,293 @@ pub const INIT_LINUX_ONLY: &str = "riff init needs Linux: riff 3.0 runs on Linux
 /// A text that no line of a unit file can hold.
 pub fn unit_bad_text(text: &str) -> String {
     format!("riff cannot write {text:?} in a unit file: it has a control character.")
+}
+
+/// Why a start waits for room (01M4ZV3B6G5VB89SRSWCSBZ630).
+///
+/// ```
+/// use riff::room::Full;
+/// assert_eq!(
+///     riff::text::daemon_waits("riff-issue-12-1a2b3c4d", Full::Sessions { live: 3, limit: 3 }),
+///     "riff-issue-12-1a2b3c4d waits for room: 3 sessions live, and the limit is 3."
+/// );
+/// assert_eq!(
+///     riff::text::daemon_waits("riff-issue-12-1a2b3c4d", Full::Memory { free_gb: 5, floor_gb: 8 }),
+///     "riff-issue-12-1a2b3c4d waits for room: 5 GB of memory is free, and the floor is 8 GB."
+/// );
+/// ```
+pub fn daemon_waits(name: &str, full: crate::room::Full) -> String {
+    format!("{name} waits for room: {}.", full_text(full))
+}
+
+/// The reason of [`daemon_waits`].
+fn full_text(full: crate::room::Full) -> String {
+    match full {
+        crate::room::Full::Sessions { live, limit } => {
+            format!("{live} sessions live, and the limit is {limit}")
+        }
+        crate::room::Full::Memory { free_gb, floor_gb } => {
+            format!("{free_gb} GB of memory is free, and the floor is {floor_gb} GB")
+        }
+    }
+}
+
+/// A start that waited for room ended: `riff run` stopped it, or left.
+pub fn daemon_no_start(name: &str) -> String {
+    format!("The riff daemon starts no session {name}: riff run stopped it before the start.")
+}
+
+/// The limit of the host, as `riff daemon limit` and `riff daemon
+/// status` show it.
+///
+/// ```
+/// use riff::room::Limit;
+/// assert_eq!(
+///     riff::text::daemon_limit(&Limit { sessions: 3, floor_gb: 8 }),
+///     "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start."
+/// );
+/// ```
+pub fn daemon_limit(limit: &crate::room::Limit) -> String {
+    format!(
+        "The limit of this host: {} live sessions, and {} GB of free memory or more for a start.",
+        limit.sessions, limit.floor_gb
+    )
+}
+
+/// The first word of a wave.
+pub fn wave_starts() -> String {
+    "starts".into()
+}
+
+/// The daemon runs the wave of `repo`.
+pub fn wave_runs(repo: &str) -> String {
+    format!("The riff daemon runs the wave of {repo}.")
+}
+
+/// The daemon stopped the wave of `repo`.
+pub fn wave_stops(repo: &str) -> String {
+    format!(
+        "The riff daemon starts no new session for the wave of {repo}. The sessions that run go \
+         on."
+    )
+}
+
+/// `riff wave stop` for a wave that the daemon does not run.
+pub fn wave_not_run(repo: &str) -> String {
+    format!("The riff daemon does not run the wave of {repo}.")
+}
+
+/// The name of the room that the loop of a wave waits for.
+pub fn wave_slot(repo: &str) -> String {
+    format!("the wave of {repo}")
+}
+
+/// The word of a wave that waits for room.
+pub fn wave_full(full: crate::room::Full) -> String {
+    format!("waits for room: {}", full_text(full))
+}
+
+/// The word of a wave while the riff or the repository is paused.
+pub const WAVE_PAUSED: &str = "paused: starts nothing";
+
+/// The word of a wave with no free work.
+pub const WAVE_NO_WORK: &str = "no free work now";
+
+/// The word of a wave that started `item`.
+pub fn wave_started(item: &str) -> String {
+    format!("starts {item}")
+}
+
+/// The word of a wave that could not look at the forge or the riff.
+pub fn wave_no_look(error: &str) -> String {
+    format!("cannot look: {error}")
+}
+
+/// A wave claimed `item` for the session `session`.
+pub fn wave_claimed(repo: &str, item: &str, session: &str) -> String {
+    format!("The wave of {repo}: the session {session} claims {item}.")
+}
+
+/// The claim of a wave failed: another session holds the item, or it is
+/// held.
+pub fn wave_not_claimed(repo: &str, item: &str) -> String {
+    format!("The wave of {repo}: the claim of {item} failed. Another session holds it, or it is held.")
+}
+
+/// A session of a wave ended.
+pub fn wave_ended(repo: &str, item: &str, code: Option<i32>, failed: bool) -> String {
+    let how = match (code, failed) {
+        (Some(0), false) => "with no error".to_owned(),
+        (Some(code), _) => format!("with the exit code {code}"),
+        (None, _) => "with no exit code".to_owned(),
+    };
+    format!("The wave of {repo}: the session of {item} ended {how}.")
+}
+
+/// A job of a wave failed before its session started.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_job_failed("issue-12", "set HOME"),
+///     "The riff daemon could not start issue-12 for the wave: set HOME. It tries again at its \
+///      next look."
+/// );
+/// ```
+pub fn wave_job_failed(item: &str, error: &str) -> String {
+    format!(
+        "The riff daemon could not start {item} for the wave: {error}. It tries again at its \
+         next look."
+    )
+}
+
+/// An item of a wave started `starts` times.
+pub fn wave_spent(item: &str, starts: u32) -> String {
+    format!(
+        "The riff daemon started {item} {starts} times for the wave, and it is still free work. \
+         It starts no more session for it until riff wave run again. Look at its sessions: riff \
+         daemon status"
+    )
+}
+
+/// The verify request of a build of a wave (01M4ZV3B6Q0Y6AX0KSKC55S31R).
+///
+/// ```
+/// let body = riff::text::wave_verify_request("issue-12", 40, "worktree-issue-12", "1a2b3c4d5e", "9f8e7d6c");
+/// assert_eq!(
+///     body,
+///     "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4, from the \
+///      riff daemon (session 9f8e7d6c). The session ended, and the item is free. The wave starts \
+///      the verify when the Gate is done."
+/// );
+/// ```
+pub fn wave_verify_request(
+    item: &str,
+    number: u64,
+    branch: &str,
+    commit: &str,
+    session: &str,
+) -> String {
+    let commit = commit.get(..7).unwrap_or(commit);
+    format!(
+        "verify request: {item}, PR #{number}, branch {branch}, commit {commit}, from the riff \
+         daemon (session {session}). The session ended, and the item is free. The wave starts \
+         the verify when the Gate is done."
+    )
+}
+
+/// A build of a wave ended with no open pull request.
+pub fn wave_no_pull(item: &str, branch: &str, clone: &Path) -> String {
+    format!(
+        "{item}: the session of the wave ended, and no open pull request has the branch \
+         {branch}. The work is in the clone {}. The item is free.",
+        clone.display()
+    )
+}
+
+/// A verify of a wave ended with no verdict.
+pub fn wave_no_result(item: &str, pull: u64) -> String {
+    format!(
+        "{item}: the verify session of pull request #{pull} ended with no PASS or FAIL. riff \
+         reported nothing. The pull request waits for a new verify."
+    )
+}
+
+/// The report of a verify of a wave failed.
+pub fn wave_no_report(item: &str, pull: u64, error: &str) -> String {
+    format!(
+        "{item}: riff could not report the verify of pull request #{pull}: {error}. The pull \
+         request waits for a new verify."
+    )
+}
+
+/// The line for the start text of a build after a failed verify.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_failed_verify(40, "1a2b3c4d5e", "https://c"),
+///     "The verify of pull request #40 failed for commit 1a2b3c4: https://c\nRead the result: gh \
+///      pr view 40 --comments\nFix the work on the branch, and push it. Do not open a second pull \
+///      request: the push goes to pull request #40."
+/// );
+/// ```
+pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
+    let commit = commit.get(..7).unwrap_or(commit);
+    format!(
+        "The verify of pull request #{number} failed for commit {commit}: {url}\nRead the \
+         result: gh pr view {number} --comments\nFix the work on the branch, and push it. Do not \
+         open a second pull request: the push goes to pull request #{number}."
+    )
+}
+
+/// The start text of a verify session of a wave
+/// (01M4ZV3B6R4WSEJXYT7QPRWT6X).
+///
+/// ```
+/// let text = riff::text::wave_verify_start("o/r", 12, 40, "1a2b3c4d5e6f");
+/// assert!(text.contains("pull request #40"));
+/// assert!(text.contains("gh issue view 12 --comments"));
+/// assert!(text.contains("commit 1a2b3c4d5e6f"));
+/// assert!(text.contains("The first line is PASS or FAIL"));
+/// ```
+pub fn wave_verify_start(repo: &str, issue: u64, pull: u64, commit: &str) -> String {
+    format!(
+        "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
+         commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
+         against its \"Done when:\" line, then stop. Another session did the work: do not \
+         change it. riff does the claim, the release and the report of your result. Your riff \
+         tools only talk: whoami, who, threads, read, post, tell, status and blocked.\n\n\
+         1. Read the issue and its comments: gh issue view {issue} --comments\n   \
+         Find its \"Done when:\" line.\n\
+         2. Read CLAUDE.md, and obey its rules for a verify.\n\
+         3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
+         origin/main...HEAD\n\
+         4. See the checks of the commit: gh pr checks {pull}\n   \
+         The Gate is the full check: do not run it again. When the Gate failed, the verify \
+         fails: name the step that failed.\n\
+         5. Check each criterion: review the code and its fit with the design, read the test \
+         of each criterion, and run that test by its name when you must. Read the book, the \
+         rustdoc and the requirements.\n\
+         6. Do not commit, do not push, and do not change the pull request.\n\
+         7. Your last reply is the result, in markdown, and nothing else. The first line is \
+         PASS or FAIL. Then each criterion: for a pass, what you did to check it; for a fail, \
+         the steps to see the failure. The result is public: it holds no secret and no security \
+         fault. Tell the lead a security fault with the riff tool tell.\n\n\
+         Do not print the environment or a token."
+    )
+}
+
+/// The comment on an issue after the merge of its pull request with
+/// `Refs #N` (01M4ZV3B6S1A64TYK8MTDNRCQ3).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_merged(40, "1a2b3c4d5e"),
+///     "Merged in #40 (1a2b3c4). The checks after the merge are in the pull request. The riff \
+///      daemon added this comment."
+/// );
+/// ```
+pub fn wave_merged(number: u64, commit: &str) -> String {
+    let commit = commit.get(..7).unwrap_or(commit);
+    format!(
+        "Merged in #{number} ({commit}). The checks after the merge are in the pull request. The \
+         riff daemon added this comment."
+    )
+}
+
+/// The sweep removed the folder of a session.
+pub fn wave_swept(item: &str, folder: &Path) -> String {
+    format!(
+        "The pull request of {item} merged: riff removed the folder {}.",
+        folder.display()
+    )
+}
+
+/// `riff wave run`: the daemon runs the wave.
+pub fn wave_asked(repo: &str) -> String {
+    format!(
+        "The riff daemon runs the wave of {repo}. It starts a session for each free item and \
+         each verify, when the host has room. See it: riff daemon status"
+    )
 }
 
 #[cfg(test)]

@@ -115,8 +115,8 @@ use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
     DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
     ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
-    Members, MembersReply, Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post,
-    Posted, REFUSED_HEADER, Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed,
+    Members, MembersReply, Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause,
+    PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed,
     Resume, Revoke, Revoked, RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin,
     SetBlocked, SetIdle, SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange,
     Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake,
@@ -1655,6 +1655,17 @@ impl Api {
     /// (01M3XAHZJAF6YVDJ7WX74X8RBX).
     pub async fn pauses(&self, me: &SessionUri) -> Result<RiffReply> {
         self.call(&RiffQuery { me: me.clone() }).await
+    }
+
+    /// The plan of the repository thread `thread` and its holds, as `me`
+    /// sees them: a query (01M4A4Z1NKPDBXV2PRZCG86G6A). A wave of the
+    /// riff daemon starts no held item ([`crate::wave`]).
+    pub async fn plan_show(&self, me: &SessionUri, thread: &ThreadName) -> Result<PlanReply> {
+        self.call(&PlanShow {
+            me: me.clone(),
+            thread: thread.clone(),
+        })
+        .await
     }
 
     /// Pauses or resumes the whole riff: [`Api::set_pause`] with

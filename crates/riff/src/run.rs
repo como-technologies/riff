@@ -699,7 +699,7 @@ pub fn issue_of(item: &str) -> Result<u64> {
 
 /// Runs `program ARGS` in `dir`, and gives its stdout. An error names
 /// the program and its stderr.
-fn output(program: &str, dir: &Path, args: &[&str]) -> Result<String> {
+pub(crate) fn output(program: &str, dir: &Path, args: &[&str]) -> Result<String> {
     let out = std::process::Command::new(program)
         .args(args)
         .current_dir(dir)
@@ -726,11 +726,20 @@ struct Checked {
     credentials: PathBuf,
 }
 
-/// Checks each fact that a session needs, before the claim. The daemon
-/// in the folder `daemon` pulls the image when this machine does not
-/// have it (01M4Z81B5A456HDKW7G0WFGCY6).
-async fn check(daemon: &Path, main: &Path, issue: u64, image: &str) -> Result<Checked> {
-    daemon::image(daemon, image, |line| println!("{line}")).await?;
+/// The facts of the host that each session needs: the sign-in of `gh`,
+/// the home and the user of the person, and the sign-in of `claude` with
+/// [`MIN_MINUTES`] or more left (01M4Z81B3A324KKE8M8Z71TM4M).
+pub(crate) struct Host {
+    pub(crate) gh_token: String,
+    pub(crate) sign_in: SignIn,
+    pub(crate) home: PathBuf,
+    pub(crate) user: String,
+    pub(crate) credentials: PathBuf,
+}
+
+/// Reads the [`Host`] facts, with `gh` in the folder `main`. A fact
+/// that is missing is an error that says the fix.
+pub(crate) fn host_facts(main: &Path) -> Result<Host> {
     let gh_token = output("gh", main, &["auth", "token"])
         .map_err(|e| anyhow!("{}: {e:#}", text::RUN_NO_GH))?;
     let home = std::env::var_os("HOME")
@@ -751,7 +760,21 @@ async fn check(daemon: &Path, main: &Path, issue: u64, image: &str) -> Result<Ch
     if sign_in.minutes < MIN_MINUTES {
         bail!("{}", text::run_sign_in_ends(sign_in.minutes));
     }
-    let found: hygiene::Issue = pr::Gh::default().json(&[
+    Ok(Host {
+        gh_token,
+        sign_in,
+        home,
+        user,
+        credentials,
+    })
+}
+
+/// The milestone of the issue `issue`, with `gh`. An issue with no
+/// milestone, or with one that `text::forge` changes, is refused: the
+/// milestone goes into the start text and into a command of the
+/// session, as in `riff pr open`.
+pub(crate) fn milestone(gh: &pr::Gh, issue: u64) -> Result<String> {
+    let found: hygiene::Issue = gh.json(&[
         "issue",
         "view",
         &issue.to_string(),
@@ -762,14 +785,26 @@ async fn check(daemon: &Path, main: &Path, issue: u64, image: &str) -> Result<Ch
         .milestone
         .map(|m| m.title)
         .ok_or_else(|| anyhow!("{}", text::run_no_milestone(issue)))?;
-    // The milestone goes into the start text and into a command of the
-    // session: a text of the forge that `text::forge` changes is
-    // refused whole, as `riff pr open` does.
     if text::forge(&milestone) != milestone {
         bail!("{}", text::run_no_milestone(issue));
     }
+    Ok(milestone)
+}
+
+/// Checks each fact that a session needs, before the claim. The daemon
+/// in the folder `daemon` pulls the image when this machine does not
+/// have it (01M4Z81B5A456HDKW7G0WFGCY6).
+async fn check(daemon: &Path, main: &Path, issue: u64, image: &str) -> Result<Checked> {
+    daemon::image(daemon, image, |line| println!("{line}")).await?;
+    let Host {
+        gh_token,
+        sign_in,
+        home,
+        user,
+        credentials,
+    } = host_facts(main)?;
     Ok(Checked {
-        milestone,
+        milestone: milestone(&pr::Gh::default(), issue)?,
         gh_token,
         sign_in,
         home,
@@ -779,14 +814,14 @@ async fn check(daemon: &Path, main: &Path, issue: u64, image: &str) -> Result<Ch
 }
 
 /// The time now in milliseconds since the epoch.
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 /// The main clone of the working folder `dir`: its top, and its git dir.
-fn main_clone(dir: &Path) -> Result<(PathBuf, PathBuf)> {
+pub(crate) fn main_clone(dir: &Path) -> Result<(PathBuf, PathBuf)> {
     let common = PathBuf::from(output(
         "git",
         dir,
@@ -801,7 +836,7 @@ fn main_clone(dir: &Path) -> Result<(PathBuf, PathBuf)> {
 
 /// Makes the clone of the session on the branch of the item. It goes
 /// on from the branch on `origin` when there is one. True when it did.
-fn make_clone(main: &Path, clone: &Path, branch: &str) -> Result<bool> {
+pub(crate) fn make_clone(main: &Path, clone: &Path, branch: &str) -> Result<bool> {
     let remote = output("git", main, &["remote", "get-url", "origin"])?;
     let top = main.to_string_lossy();
     let path = clone.to_string_lossy();
@@ -1042,11 +1077,11 @@ async fn connect_again(
 /// gives it.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Pull {
-    number: u64,
-    url: String,
-    head_ref_oid: String,
-    state: String,
+pub(crate) struct Pull {
+    pub(crate) number: u64,
+    pub(crate) url: String,
+    pub(crate) head_ref_oid: String,
+    pub(crate) state: String,
 }
 
 /// `riff run ITEM`: one work item in one container, from the claim to
