@@ -4549,6 +4549,11 @@ share.
   `--image` gives another image, for example a local build. When podman
   does not have the image, `riff run` pulls it before the claim. When
   podman cannot pull it, riff takes no claim.
+- **01M4ZD48DHAKJ1EHX6QHYAQ7ZM** The own Claude folder of a session of
+  `riff run` has a `settings.json` with `includeCoAuthoredBy: false`.
+  So `claude` adds no attribution line, and the trailers end each
+  commit and each pull request body. It is a setting of riff for its
+  sessions: riff does not read or copy the settings of the person.
 
 ### How the relay drives claude
 

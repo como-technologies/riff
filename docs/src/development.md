@@ -420,6 +420,10 @@ releases the item. The branch keeps the work that the session pushed.
   the variable, so the token is in no command line.
 - A Claude folder of its own, and your sign-in of `claude` with no
   write. `claude` runs in the auto permission mode.
+- The setting `includeCoAuthoredBy: false` in the `settings.json` of
+  that Claude folder. `claude` adds no attribution line, so the
+  trailers end each commit and each pull request body. riff does not
+  read your own Claude settings.
 - A home of its own in memory. Each other write goes when the
   container ends.
 - The volumes `riff-cargo` and `riff-sccache` for the caches.
