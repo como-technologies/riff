@@ -19,11 +19,11 @@ flowchart LR
     B1 <--> S
 ```
 
-> **Status:** experiment. For now, riff runs on the machine of each
-> person. The shared server in Google Cloud is off.
-> The work is in [waves](waves.md). Waves 1, 2 and 3 are done. Wave 4
-> is in progress. Wave 5 turns the shared server on again. The rest of
-> the book describes the target.
+> **Status:** experiment. The riff of today is riff 1.3, with the
+> shared riff-server in Google Cloud. The other pages of the book
+> describe riff 1.3. riff 3.0 is a design: one binary on the machine
+> of each person, and a container for each work item. See
+> [riff 3.0](riff-3.md).
 
 Jazz players riff off each other. Each adds a part, and the group takes
 the music where no one player would. Riff lets engineers and their
