@@ -4680,7 +4680,17 @@ share.
   session gets only the tools that act on riff-server, and on no folder
   of the host and no claim: `whoami`, `who`, `threads`, `read`, `post`,
   `tell`, `status` and `blocked`. The daemon refuses each other riff
-  tool with a text that says why.
+  tool with a text that says why. Superseded by
+  01M4ZV3B6T2KB09WJ59F07HXET.
+- **01M4ZV3B6T2KB09WJ59F07HXET** The daemon serves the riff tools of
+  each session that it owns, of `riff run` or of a wave, on the
+  riff-server of the session, as the worker session that holds the
+  claim of the item. The daemon uses the sign-in of the person on its
+  machine. A session gets only the tools that act on riff-server, and
+  on no folder of the host and no claim: `whoami`, `who`, `threads`,
+  `read`, `post`, `tell`, `status` and `blocked`. The daemon refuses
+  each other riff tool with a text that says why. The state of the
+  daemon gets the tools with peer to peer.
 - **01M4ZHSZXAY7F7E17B3CMHG562** When the daemon goes away,
   `riff relay mcp` answers each call in flight with an error, and keeps
   each new line until the daemon comes back. At the new connection, it
@@ -4695,6 +4705,72 @@ share.
   it showed. So it shows each event one time. When no daemon comes
   back, `riff run` says so, finds the pull request, and releases the
   item.
+
+### The waves of the daemon
+
+- **01M4ZV3B6G5VB89SRSWCSBZ630** Each start of a session waits for room
+  in the limit of the host (01M4Z60B7Y4XD6TJCYEYJT2R4S), in the order of
+  the asks: a start of `riff run` and a start of a wave wait in the same
+  line. A start that has room counts as a live session until the daemon
+  owns its session. The free memory is `MemAvailable` of
+  `/proc/meminfo`. When the host does not say, only the sessions count.
+- **01M4ZV3B6VS0RAR0P7MRHKE8CQ** While a start of `riff run` waits for
+  room, the daemon says why to `riff run`. When `riff run` stops it, or
+  leaves, the daemon starts nothing.
+- **01M4ZV3B6HAFTSC2K63FMC5FYA** `riff daemon limit` shows the limit of
+  the host. `--sessions N` and `--floor GB` set it in `limit.json` in the
+  folder of the daemon. The daemon reads the file at each look for room,
+  so a change counts at once. `riff daemon status` shows the limit, each
+  start that waits for room, and each wave with what it did last.
+- **01M4ZV3B6J89KJQ0F14YWTZMJQ** `riff wave run` in a clone asks the
+  daemon to run the current wave of the repository of the clone. The
+  daemon keeps each wave in `waves.json` in its folder, with the main
+  clone, the riff-server and the host, and starts it again after its
+  own restart. `riff wave stop` ends the wave: the daemon starts no new
+  session for it, and the sessions that run go on.
+- **01M4ZV3B6KP33YV750DJ89SMFF** The loop of a wave first waits for
+  room. Then it looks at the pause, the claims and the holds on
+  riff-server, and at the free work of `gh`: the pull requests that wait
+  for a verify, then the free items of the current wave, as the rollout
+  of the lead takes them. It starts one session for the first work that
+  it may start. With no such work, it waits for the end of a session,
+  or 60 seconds.
+- **01M4ZV3B6M7PZRJ39XTXBZP3ZH** A wave starts nothing while the riff or
+  the repository is paused. It never starts a held item, an item that a
+  session claims, or an item that a session of the wave runs.
+- **01M4ZV3B6NKPEZ5FNE27X95GF0** A wave starts the verify of an item
+  only when no session holds the item, and the Gate of the head commit
+  of its pull request is done. The verify is a new session, so an
+  author never verifies its own item.
+- **01M4ZV3B6PSRH40EYQEVYH2MBA** A wave starts one item at most 3 times
+  in a run of the wave. Then the lead of the person gets one message,
+  and the wave leaves the item.
+- **01M4ZV3B6Q0Y6AX0KSKC55S31R** For each item, the daemon does the
+  host steps of `riff run` itself: the checks, a new worker session,
+  the claim, the keep-alive, the clone and the start. After the end of
+  a build, it sends a verify request for the open pull request of the
+  branch to the lead, then releases the item and ends the session. The
+  record of the session holds the job of the wave, with no secret. So a
+  new daemon goes on with the keep-alive, and does the steps after the
+  end. When the session ended while no daemon ran, the new daemon does
+  them at its start. The daemon runs `gh` with `GH_REPO`: it runs in no
+  clone.
+- **01M4ZV3B6R4WSEJXYT7QPRWT6X** A verify session has a clone at the
+  head commit of the pull request, detached. Its start text says to
+  check the work against the `Done when:` line and to change nothing.
+  Its last reply is the result: the first line is `PASS` or `FAIL`. The
+  daemon reads it from `events.jsonl`, and reports it as `riff verify`
+  does: the comment on the pull request, the status `riff/verify` of the
+  commit, and the result to the holder of the item and to the lead. With
+  no verdict, or when the report fails, the lead gets a message, and the
+  pull request waits for a new verify.
+- **01M4ZV3B6S1A64TYK8MTDNRCQ3** At each look, a wave removes the folder
+  of each session of its repository that does not run, when the pull
+  request of its branch merged. For a pull request with `Refs #N`, it
+  first adds the comment `Merged in #PR (COMMIT)` to the issue, when the
+  issue does not have it. The folder of a verify that did not pass goes
+  at its end, and the folder of a verify of a closed pull request goes
+  at a look.
 
 ### The first run
 

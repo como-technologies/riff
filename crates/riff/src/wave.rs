@@ -95,11 +95,11 @@ use tokio::task::JoinHandle;
 
 use crate::api::{self, Api};
 use crate::daemon::{Daemon, Ended, Out, Record, Say, Start};
+use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
 use crate::session_image::Image;
-use crate::pr::Verdict;
 use crate::{identity, pr, rollout, terminal, text};
 
 /// The file of the waves that the daemon runs, in its folder.
@@ -326,7 +326,11 @@ fn verify_issue(item: &str) -> Option<u64> {
 /// );
 /// assert_eq!(pick(&Look { paused: true, ..look }, &none, &BTreeMap::new()), None);
 /// ```
-pub fn pick(look: &Look, running: &BTreeSet<String>, starts: &BTreeMap<String, u32>) -> Option<Work> {
+pub fn pick(
+    look: &Look,
+    running: &BTreeSet<String>,
+    starts: &BTreeMap<String, u32>,
+) -> Option<Work> {
     if look.paused {
         return None;
     }
@@ -356,7 +360,10 @@ pub fn pick(look: &Look, running: &BTreeSet<String>, starts: &BTreeMap<String, u
 }
 
 /// The items of the free work of `look` that reached [`STARTS`].
-fn spent<'a>(look: &'a Look, starts: &'a BTreeMap<String, u32>) -> impl Iterator<Item = &'a String> {
+fn spent<'a>(
+    look: &'a Look,
+    starts: &'a BTreeMap<String, u32>,
+) -> impl Iterator<Item = &'a String> {
     look.free
         .iter()
         .filter(|item| starts.get(*item).copied().unwrap_or(0) >= STARTS)
@@ -520,9 +527,7 @@ async fn start_job<R: Runtime + 'static>(
 ) -> Result<Option<(Record, Ended)>> {
     let world = daemon.world().clone();
     let image = world.image(wave)?;
-    daemon
-        .have_image(&image, |line| println!("{line}"))
-        .await?;
+    daemon.have_image(&image, |line| println!("{line}")).await?;
     let Some(start) = world.begin(wave, work, &image).await? else {
         return Ok(None);
     };
@@ -635,7 +640,6 @@ pub fn verdict(result: &str) -> Option<(Verdict, String)> {
     Some((verdict, rest.join("\n").trim().to_owned()))
 }
 
-
 /// The forge and the riff of the waves on this machine: `gh` with the
 /// sign-in of the person, riff-server 1.x with the sign-in of riff, and
 /// git.
@@ -649,7 +653,9 @@ pub struct Live {
 }
 
 /// Runs `work` on a thread that may block: `gh` and git.
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
     tokio::task::spawn_blocking(work)
         .await
         .map_err(|e| anyhow!("{e}"))?
@@ -663,7 +669,8 @@ fn branch_of(issue: u64) -> String {
 impl Live {
     /// Starts the keep-alive of the claim of the session `me`.
     fn keep_alive(&self, api: Api, me: SessionUri, session: &str) {
-        let task = tokio::spawn(async move { api::keep_alive(&api, &me, WORKER_ALIVE_EVERY).await });
+        let task =
+            tokio::spawn(async move { api::keep_alive(&api, &me, WORKER_ALIVE_EVERY).await });
         if let Some(old) = lock(&self.alive).insert(session.to_owned(), task) {
             old.abort();
         }
@@ -718,8 +725,9 @@ impl Live {
                 .unwrap_or_default();
                 let milestone = milestone.context("a build has a milestone")?;
                 let frame = pr::body(hygiene::Link::Closes(issue), "SUMMARY", &milestone)?;
-                let mut text =
-                    text::run_start(&wave.repo, issue, &branch, session, &frame, &milestone, earlier);
+                let mut text = text::run_start(
+                    &wave.repo, issue, &branch, session, &frame, &milestone, earlier,
+                );
                 if let Some(failed) = failed {
                     text.push_str("\n\n");
                     text.push_str(&failed);
@@ -775,24 +783,27 @@ impl Live {
         let at = branch.clone();
         let pull = blocking(move || {
             Ok(pr::Gh::for_repo(&repo)
-                .json::<run::Pull>(&[
-                    "pr",
-                    "view",
-                    &at,
-                    "--json",
-                    "number,url,headRefOid,state",
-                ])
+                .json::<run::Pull>(&["pr", "view", &at, "--json", "number,url,headRefOid,state"])
                 .ok()
                 .filter(|p| p.state == "OPEN"))
         })
         .await?;
         let me = &record.me;
-        let to = [riff_core::selector::Selector::lead(me.who().user(), &wave.repo)];
+        let to = [riff_core::selector::Selector::lead(
+            me.who().user(),
+            &wave.repo,
+        )];
         let thread = wave.thread()?;
         let session = run::short(&record.live.session);
         let (body, kind) = match &pull {
             Some(pull) => (
-                text::wave_verify_request(&record.live.item, pull.number, &branch, &pull.head_ref_oid, session),
+                text::wave_verify_request(
+                    &record.live.item,
+                    pull.number,
+                    &branch,
+                    &pull.head_ref_oid,
+                    session,
+                ),
                 Kind::Message,
             ),
             None => (
@@ -817,18 +828,34 @@ impl Live {
     ) -> Result<()> {
         let me = &record.me;
         let thread = wave.thread()?;
-        let lead = [riff_core::selector::Selector::lead(me.who().user(), &wave.repo)];
+        let lead = [riff_core::selector::Selector::lead(
+            me.who().user(),
+            &wave.repo,
+        )];
         let item = &record.live.item;
         let found = last_result(&record.folder.join(crate::daemon::EVENTS));
         let Some((verdict, result)) = found.as_deref().and_then(verdict) else {
             let _ = std::fs::remove_dir_all(&record.folder);
-            api.post(me, Some(&thread), &lead, &text::wave_no_result(item, pull), Kind::Message)
-                .await?;
+            api.post(
+                me,
+                Some(&thread),
+                &lead,
+                &text::wave_no_result(item, pull),
+                Kind::Message,
+            )
+            .await?;
             return Ok(());
         };
         let (repo, tested, shown) = (wave.repo.clone(), commit.to_owned(), result.clone());
         let reported = blocking(move || {
-            pr::report(&pr::Gh::for_repo(&repo), &repo, pull, &tested, verdict, &shown)
+            pr::report(
+                &pr::Gh::for_repo(&repo),
+                &repo,
+                pull,
+                &tested,
+                verdict,
+                &shown,
+            )
         })
         .await;
         let reported = match reported {
@@ -836,7 +863,8 @@ impl Live {
             Err(e) => {
                 let _ = std::fs::remove_dir_all(&record.folder);
                 let body = text::wave_no_report(item, pull, &format!("{e:#}"));
-                api.post(me, Some(&thread), &lead, &body, Kind::Message).await?;
+                api.post(me, Some(&thread), &lead, &body, Kind::Message)
+                    .await?;
                 return Ok(());
             }
         };
@@ -851,7 +879,8 @@ impl Live {
         crate::look::tell_fact(api, me, reported.issue, pull, state).await;
         let to = pr::result_to(reported.issue, me, &api.who(me, false).await?);
         let body = text::verify_post(verdict, pull, &reported, &result);
-        api.post(me, Some(&thread), &to, &body, Kind::Message).await?;
+        api.post(me, Some(&thread), &to, &body, Kind::Message)
+            .await?;
         Ok(())
     }
 }
@@ -886,7 +915,14 @@ fn clone_at(main: &Path, clone: &Path, commit: &str) -> Result<()> {
     run::output(
         "git",
         clone,
-        &["-c", "advice.detachedHead=false", "checkout", "-q", "--detach", commit],
+        &[
+            "-c",
+            "advice.detachedHead=false",
+            "checkout",
+            "-q",
+            "--detach",
+            commit,
+        ],
     )?;
     Ok(())
 }
@@ -1015,7 +1051,12 @@ impl World for Live {
                 .filter(|s| s.uri.place().repo_text() == wave.repo)
                 .flat_map(|s| s.uri.claims().iter().cloned())
                 .collect();
-            let holds = api.plan_show(&person, &thread).await?.holds.into_keys().collect();
+            let holds = api
+                .plan_show(&person, &thread)
+                .await?
+                .holds
+                .into_keys()
+                .collect();
             let repo = wave.repo.clone();
             let claimed: HashSet<String> = claims.iter().cloned().collect();
             let (free, pulls) = blocking(move || {
@@ -1160,7 +1201,10 @@ impl World for Live {
             let posted = async {
                 let person = identity::person(&wave.place(None)?, &wave.server)?;
                 let api = Api::new(&wave.server).signed_in(None)?;
-                let to = [riff_core::selector::Selector::lead(person.who().user(), &wave.repo)];
+                let to = [riff_core::selector::Selector::lead(
+                    person.who().user(),
+                    &wave.repo,
+                )];
                 api.post(&person, Some(&wave.thread()?), &to, body, Kind::Message)
                     .await?;
                 Ok::<(), anyhow::Error>(())
@@ -1174,7 +1218,6 @@ impl World for Live {
         })
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1457,8 +1500,15 @@ mod tests {
         }
         here.idle(2).await;
         let forge = here.forge();
-        assert!(forge.pulls.values().all(|pr| *pr == Pr::Passed), "{forge:?}");
-        assert_eq!(forge.starts.len(), 6, "one session for each item and each verify");
+        assert!(
+            forge.pulls.values().all(|pr| *pr == Pr::Passed),
+            "{forge:?}"
+        );
+        assert_eq!(
+            forge.starts.len(),
+            6,
+            "one session for each item and each verify"
+        );
     }
 
     #[tokio::test]

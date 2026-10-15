@@ -547,7 +547,10 @@ steps:
 1. It starts a worker session, and claims the item.
 2. It makes the clone of the session on the branch `worktree-ITEM`.
    When `origin` has that branch, the clone goes on from it.
-3. It asks the daemon to run the session. In the container,
+3. It asks the daemon to run the session. When the host has no room,
+   the start waits: see
+   [Set the limit of the host](#set-the-limit-of-the-host). In the
+   container,
    `riff relay` starts `claude -p` with the riff tools. riff shows
    each event: the text, each tool call, each tool that failed, each
    call that the rules refused, the push, the end of the turn, and the
@@ -641,14 +644,140 @@ the session also has each event, with no secret.
 - The riff tools that talk, through the relay: `whoami`, `who`,
   `threads`, `read`, `post`, `tell`, `status` and `blocked`. Until
   riff 3.0 has its own claims, they act on your riff-server as the
-  worker session of `riff run`, which holds the item. The session gets
-  no tool that acts on your machine or on a claim: riff refuses
-  `claim`, `release`, `leave`, `move` and the tools of the lead.
-  `riff run` does the claim, the release and the verify request.
+  worker session of `riff run` or of the wave, which holds the item.
+  The session gets no tool that acts on your machine or on a claim:
+  riff refuses `claim`, `release`, `leave`, `move` and the tools of the
+  lead. `riff run` or the daemon does the claim, the release and the
+  verify request.
 
 A commit of the session has your git identity, no signature, and a
 `Riff-Session:` trailer. The table of what sessions share is on the
 page [riff 3.0](riff-3.md).
+
+## Let riff run the wave
+
+The riff daemon can run the current wave of a repository with no
+person. It starts one session for each free item of the wave, and one
+for each pull request that waits for a verify. Each session does one
+item in a container of its own, as `riff run` does, and ends. A verify
+is a session too. No session waits idle.
+
+```mermaid
+flowchart LR
+    subgraph M["your machine"]
+        D["riff daemon"] -- "room? a look at the wave" --> D
+        D -- "podman run" --> B["container: issue-12"]
+        D -- "podman run" --> V["container: verify of issue-9"]
+    end
+    D -- "claim, verify request, result, release" --> S["riff-server"]
+    D -- "free work, Gate, report" --> G["GitHub"]
+    B -- "push, pull request" --> G
+```
+
+### Run the wave
+
+Get ready as for `riff run` (see
+[Get ready to run an item](#get-ready-to-run-an-item)). Then, in your
+clone of the repository:
+
+```sh
+riff wave run
+```
+
+The daemon keeps the wave, also over its own restart, until you stop
+it.
+
+### See the wave
+
+```sh
+riff daemon status
+```
+
+It shows the limit of the host, each session, each start that waits
+for room, and each wave with what it did last. To see the events of a
+session, use `riff daemon events NAME` (see
+[See the events of a session](#see-the-events-of-a-session)).
+
+### Stop the wave
+
+In your clone of the repository:
+
+```sh
+riff wave stop
+```
+
+The daemon starts no new session for the wave. The sessions that run
+go on to their end.
+
+### Set the limit of the host
+
+Each container has `--memory 8g` and `--cpus 4`. These do not limit
+the sum. So the daemon keeps one limit for the whole host: the number
+of live sessions, and a floor of free memory. The daemon starts a
+session only when fewer sessions than the limit live, and the free
+memory is at or above the floor. Each other start waits for room, in
+order, also a start of `riff run`. The default is 3 sessions and a
+floor of 8 GB.
+
+To see the limit:
+
+```sh
+riff daemon limit
+```
+
+To set it, for example 2 sessions and a floor of 12 GB:
+
+```sh
+riff daemon limit --sessions 2 --floor 12
+```
+
+The daemon reads the limit at each start: a change counts at once.
+
+### What the wave does
+
+The daemon waits for room. Then it looks at the wave, and starts the
+first free work:
+
+1. The pull requests that wait for a verify, then the free items of
+   the current wave. It takes the free work as the rollout of the lead
+   does.
+2. It starts nothing while the riff or the repository is paused. It
+   never starts a held item, or an item that a session claims.
+3. It starts the verify of an item only when no session holds the
+   item, and the Gate of the head commit is done. The verify is a new
+   session: an author never verifies its own item.
+4. It starts one item at most 3 times in a run of the wave. Then your
+   lead gets a message, and the item waits for you.
+
+For each item, the daemon does the steps of `riff run` itself: a
+worker session, the claim, the clone and the start. After the end of
+a build, it sends the verify request for the pull request of the
+branch to your lead, and releases the item.
+
+A verify session gets a clone at the head commit of the pull request.
+It checks the work against the `Done when:` line of the issue, and
+changes nothing. Its last reply is the result: the first line is
+`PASS` or `FAIL`. The daemon reports it as `riff verify` does: a
+comment on the pull request, the status `riff/verify` of the commit,
+and a message to the holder of the item and to your lead. On a pass,
+GitHub merges the pull request.
+
+At each look, the daemon removes the folder of each session of the
+repository that does not run, when the pull request of its branch
+merged. For a pull request with `Refs #N`, it first adds the comment
+`Merged in #PR (COMMIT)` to the issue, so the item is not free work
+again.
+
+When the daemon stops during a session, the session runs on. A new
+daemon takes it up, and does the steps after its end.
+
+The rollout of your lead also starts workers for the free work. To let
+only the daemon start sessions, turn the rollout off on the machine of
+your lead:
+
+```sh
+riff workers interval 0
+```
 
 ## Run the real-session test
 

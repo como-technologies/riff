@@ -40,6 +40,8 @@
 //! | `sessions/NAME/riff.sock` | The socket of that session. |
 //! | `live/NAME.json` | The [`Record`] of the session `NAME`, with no secret. |
 //! | `state/` | The log and the checkpoints of the state of the daemon ([`state_dir`]). |
+//! | `limit.json` | The limit of the host ([`crate::room`]), when `riff daemon limit` set it. |
+//! | `waves.json` | The waves that the daemon runs ([`crate::wave`]). |
 //!
 //! The daemon binds the folder of a session at [`IN_SESSION`] in its
 //! container, with write, and sets [`SOCKET_VAR`]
@@ -67,7 +69,7 @@
 //!     L -->|no riff| M["MakeRiff with a random ID"]
 //!     L --> S["serve"]
 //!     M --> S
-//!     S -->|"a command (#719)"| R["Local::run: the records<br/>in the log, then the reply"]
+//!     S -->|"a command (peer to peer)"| R["Local::run: the records<br/>in the log, then the reply"]
 //!     S -->|"the stop"| C["Local::checkpoint"]
 //! ```
 //!
@@ -76,8 +78,8 @@
 //! - Each change goes through [`Daemon::state`]: one command at a time,
 //!   with its records in the log before its reply
 //!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session act on it
-//!   from #719. Until then, they act on the riff-server of `riff run`
-//!   ([`Daemon::tools_of`]).
+//!   with peer to peer. Until then, they act on the riff-server of the
+//!   session ([`Daemon::tools_of`]).
 //! - At the stop, [`Daemon::serve`] writes a checkpoint. A start after a
 //!   crash replays the log after the last checkpoint.
 //! - `riff daemon status` shows the ID of the riff and the position of
@@ -106,6 +108,8 @@
 //! | [`Ask::Image`] | [`Say::Line`] for a pull, then [`Say::Done`] or [`Say::Failed`] |
 //! | [`Ask::Start`] | [`Say::Started`], each [`Say::Event`] and [`Say::Stderr`], then [`Say::Ended`] or [`Say::Failed`] |
 //! | [`Ask::Follow`] | each [`Say::Event`] after a number, then as [`Ask::Start`] |
+//! | [`Ask::Wave`] | [`Say::Done`] when the daemon runs the wave, or [`Say::Failed`] |
+//! | [`Ask::WaveStop`] | [`Say::Done`] when the daemon ran the wave, or [`Say::Failed`] |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
 //! [`Then::Stop`]: the daemon stops the container. When `riff` closes the
@@ -127,6 +131,12 @@
 //! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk ([`Daemon::tools_of`]) |
 //!
 //! # A session
+//!
+//! Each start waits for room in the limit of the host ([`crate::room`]).
+//! While a start of `riff run` waits, the daemon says why with
+//! [`Say::Line`]. A [`Then::Stop`], or the end of the connection, before
+//! the start starts nothing (01M4ZV3B6VS0RAR0P7MRHKE8CQ). The waves of
+//! the daemon start their sessions in the same line ([`crate::wave`]).
 //!
 //! The daemon takes each event of the relay in order, takes each secret
 //! out of it ([`Scrub`]), writes it to `events.jsonl` in the folder of
@@ -218,12 +228,12 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::{JoinHandle, JoinSet};
 
-use crate::run::{Scrub, user_line};
 use crate::room::{Limit, Room, Slot};
+use crate::run::{Scrub, user_line};
 use crate::runtime::{Bind, End, Env, Runtime, SessionSpec, Source};
 use crate::session_relay::Up;
-use crate::wave::{Job, Wave, World};
 use crate::text;
+use crate::wave::{Job, Wave, World};
 
 /// The version of the protocol between `riff` and the daemon, and
 /// between the relay and the daemon. Version 3 adds the waves
@@ -1143,7 +1153,10 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// Starts the loop of `wave`, when it does not run.
     fn spawn_wave(self: &Arc<Self>, wave: Wave) {
         let mut running = self.waves_lock();
-        if running.get(&wave.repo).is_some_and(|r| !r.task.is_finished()) {
+        if running
+            .get(&wave.repo)
+            .is_some_and(|r| !r.task.is_finished())
+        {
             return;
         }
         let taken = Arc::new(Mutex::new(std::collections::BTreeSet::new()));
@@ -1733,11 +1746,10 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// The riff tools of the session of `record`: they act on its
     /// riff-server as that session, with the sign-in of the person on
     /// this machine (01M4ZHSZV46RF3XDXDTQXWGXRG). That session is the
-    /// worker session of `riff run`, which holds the claim of the item.
-    /// The session gets only the tools that act on riff-server, and on
-    /// no folder of the host and no claim ([`crate::mcp::CONTAINER_TOOLS`]).
-    /// From #719, the tools act on the state of the daemon
-    /// (01M4ZKX0H9N82ZBC9PKSPTQV4N).
+    /// worker session of `riff run` or of a wave, which holds the claim
+    /// of the item. The session gets only the tools that act on
+    /// riff-server, and on no folder of the host and no claim
+    /// ([`crate::mcp::CONTAINER_TOOLS`], 01M4ZV3B6T2KB09WJ59F07HXET).
     pub fn tools_of(record: &Record) -> Result<crate::mcp::Tools> {
         let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
         Ok(crate::mcp::Tools::new(api, record.me.clone())
