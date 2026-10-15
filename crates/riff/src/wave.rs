@@ -550,7 +550,9 @@ async fn start_job<R: Runtime + 'static>(
     };
     let (out, said) = Out::keep();
     let ended = tokio::spawn(ended_of(said));
-    let record = daemon.launch(start, Some(job), Some(slot), None, &out).await;
+    let record = daemon
+        .launch(start, Some(job), Some(slot), None, &out)
+        .await;
     drop(out);
     let ended = ended.await.unwrap_or(Ended {
         code: None,

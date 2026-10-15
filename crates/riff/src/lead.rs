@@ -120,7 +120,8 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn claude_folder(dir: &Path, clone: &Path, person: Option<&Path>) -> Result<()> {
-    let read = |path: &Path| -> Option<Value> { serde_json::from_slice(&std::fs::read(path).ok()?).ok() };
+    let read =
+        |path: &Path| -> Option<Value> { serde_json::from_slice(&std::fs::read(path).ok()?).ok() };
     std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     let file = dir.join(".claude.json");
     let mut root = match read(&file) {

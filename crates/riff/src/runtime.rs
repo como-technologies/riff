@@ -562,7 +562,8 @@ impl Runtime for Fake {
 
     async fn exec(&self, name: &str, command: &[String]) -> Result<Exit> {
         let mut book = self.lock();
-        book.calls.push(format!("exec {name} {}", command.join(" ")));
+        book.calls
+            .push(format!("exec {name} {}", command.join(" ")));
         match book.sessions.get(name) {
             Some(played) if played.exit.is_none() => Ok(Exit::SUCCESS),
             _ => bail!("no session {name} runs"),

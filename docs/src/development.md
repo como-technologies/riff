@@ -891,6 +891,9 @@ The states of a session:
 | `taken over` | A person has the session in a terminal. |
 | `lead` | The lead, with its terminal. |
 
+`riff daemon status` shows the same state and last step of each
+session.
+
 ### Take over a session
 
 You can take over a session that works on an item, for example to

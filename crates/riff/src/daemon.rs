@@ -906,6 +906,8 @@ struct SessionState {
     taker: Option<Out>,
     /// The last step of the session ([`Live::last`]).
     last_step: String,
+    /// True after the end of the ownership: its record is gone.
+    ended: bool,
 }
 
 impl SessionState {
@@ -956,10 +958,15 @@ impl Owned {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Writes the record `record` in place of the one on disk.
-    fn save(&self, record: &Record) -> Result<()> {
+    /// Writes the record of `state` in place of the one on disk. After
+    /// the end of the ownership, it writes nothing: a record of a
+    /// session that ended would make a new daemon do its end again.
+    fn save(&self, state: &SessionState) -> Result<()> {
+        if state.ended {
+            return Ok(());
+        }
         let tmp = self.record_path.with_extension("json.new");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(record)?)
+        std::fs::write(&tmp, serde_json::to_vec_pretty(&state.record)?)
             .with_context(|| format!("cannot write {}", tmp.display()))?;
         std::fs::rename(&tmp, &self.record_path)
             .with_context(|| format!("cannot write {}", self.record_path.display()))
@@ -1007,7 +1014,7 @@ impl Owned {
                 }
                 self.closing.notify_one();
             }
-            if let Err(e) = self.save(&state.record) {
+            if let Err(e) = self.save(&state) {
                 eprintln!("riff daemon: {e:#}");
             }
         }
@@ -1062,8 +1069,7 @@ impl Owned {
             for line in state.record.inputs.iter().skip(given) {
                 out.say(Say::Input { line: line.clone() });
             }
-            if gone_on && usize::try_from(inputs).is_ok_and(|n| n >= state.record.inputs.len())
-            {
+            if gone_on && usize::try_from(inputs).is_ok_and(|n| n >= state.record.inputs.len()) {
                 let line = user_line(text::TAKEOVER_GO_ON);
                 state.record.inputs.push(line.clone());
                 out.say(Say::Input { line });
@@ -1084,7 +1090,7 @@ impl Owned {
                 });
             }
             state.relay = Some(out.clone());
-            if let Err(e) = self.save(&state.record) {
+            if let Err(e) = self.save(&state) {
                 eprintln!("riff daemon: {e:#}");
             }
         }
@@ -1121,7 +1127,7 @@ impl Owned {
                     } else {
                         // The person left before the end of the turn.
                         state.go_on();
-                        if let Err(e) = self.save(&state.record) {
+                        if let Err(e) = self.save(&state) {
                             eprintln!("riff daemon: {e:#}");
                         }
                     }
@@ -1602,6 +1608,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 held: false,
                 taker: None,
                 last_step: String::new(),
+                ended: false,
             }),
             notes,
             stop: Notify::new(),
@@ -1616,7 +1623,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             live.insert(name.clone(), owned.clone());
         }
         let opened = owned
-            .save(&owned.lock().record.clone())
+            .save(&owned.lock())
             .and_then(|()| self.door(&owned, again));
         match opened {
             Ok(door) => {
@@ -1955,6 +1962,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// Ends the ownership of the session `owned`: its socket, its folder
     /// and its record go. It gives the connections that followed it.
     fn close(&self, owned: &Owned) -> Vec<Out> {
+        // From now on, no step writes its record again.
+        owned.lock().ended = true;
         if let Some(door) = owned
             .door
             .lock()
@@ -2113,7 +2122,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             } else {
                 if !state.record.takeover {
                     state.record.takeover = true;
-                    if let Err(e) = owned.save(&state.record) {
+                    if let Err(e) = owned.save(&state) {
                         eprintln!("riff daemon: {e:#}");
                     }
                     if let Some(relay) = &state.relay {
@@ -2139,9 +2148,13 @@ impl<R: Runtime + 'static> Daemon<R> {
         if state.taker.as_ref().is_some_and(|t| t.same(out)) {
             state.taker = None;
         }
+        // A session that ended has no record to give back.
+        if state.ended {
+            return;
+        }
         state.record.takeover = false;
         state.go_on();
-        if let Err(e) = owned.save(&state.record) {
+        if let Err(e) = owned.save(&state) {
             eprintln!("riff daemon: {e:#}");
         }
         println!("{}", text::takeover_ended(name));
@@ -3812,7 +3825,10 @@ mod tests {
     }
 
     impl World for Server {
-        fn look<'a>(&'a self, _: &'a Wave) -> crate::wave::BoxFuture<'a, Result<crate::wave::Look>> {
+        fn look<'a>(
+            &'a self,
+            _: &'a Wave,
+        ) -> crate::wave::BoxFuture<'a, Result<crate::wave::Look>> {
             Box::pin(async { bail!("no wave in this test") })
         }
 
@@ -3837,7 +3853,11 @@ mod tests {
             Box::pin(async { Ok(()) })
         }
 
-        fn sweep<'a>(&'a self, _: &'a Wave, _: &'a [PathBuf]) -> crate::wave::BoxFuture<'a, Result<()>> {
+        fn sweep<'a>(
+            &'a self,
+            _: &'a Wave,
+            _: &'a [PathBuf],
+        ) -> crate::wave::BoxFuture<'a, Result<()>> {
             Box::pin(async { Ok(()) })
         }
 
@@ -3914,7 +3934,8 @@ mod tests {
     async fn the_lead_runs_with_a_terminal_counts_in_no_limit_and_leaves_riff_server_at_its_end() {
         let server = Arc::new(Server::default());
         let world: Arc<dyn World> = server.clone();
-        let here = Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
         let mut start = here.start("riff-lead-o-r", "lead");
         start.terminal = true;
         let (mut client, name) = here.started(start).await;
@@ -3947,7 +3968,12 @@ mod tests {
             .write_all(format!("{ask}\n").as_bytes())
             .await
             .unwrap();
-        let line = BufReader::new(read).lines().next_line().await.unwrap().unwrap();
+        let line = BufReader::new(read)
+            .lines()
+            .next_line()
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             serde_json::from_str::<Say>(&line).unwrap(),
             Say::Line {
@@ -4003,7 +4029,12 @@ mod tests {
         assert_eq!(next_of(&mut taker).await, Some(Say::Done));
         assert_eq!(relay.next().await, Say::GoOn);
         let go_on = user_line(text::TAKEOVER_GO_ON);
-        assert_eq!(relay.next().await, Say::Input { line: go_on.clone() });
+        assert_eq!(
+            relay.next().await,
+            Say::Input {
+                line: go_on.clone()
+            }
+        );
         assert_eq!(phase_of(&here.dir, &name).await, Phase::Works);
         let record: Record =
             serde_json::from_str(&std::fs::read_to_string(record_path(&here.dir, &name)).unwrap())
@@ -4075,7 +4106,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_person_who_leaves_before_the_end_of_the_turn_gets_no_terminal_and_the_session_goes_on() {
+    async fn a_person_who_leaves_before_the_end_of_the_turn_gets_no_terminal_and_the_session_goes_on()
+     {
         let here = Here::new(Fake::default().with_image(IMAGE)).await;
         let (_client, name, mut relay) = a_worker(&here).await;
         let (taker, _) = take_over(&here.dir, &name).await;
@@ -4173,5 +4205,24 @@ mod tests {
                 text::takeover_back(&name)
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_session_that_ends_while_a_takeover_waits_leaves_no_record() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (mut client, name, mut relay) = a_worker(&here).await;
+        let (mut taker, _) = take_over(&here.dir, &name).await;
+        assert_eq!(relay.next().await, Say::Hold);
+        // claude ended its turn before the hold: an exit, and no held.
+        relay.event(2, TURN[2]).await;
+        relay.exit(3, 0).await;
+        assert!(matches!(next_of(&mut taker).await, Some(Say::Ended(_))));
+        let (_, end) = to_the_end(&mut client).await;
+        assert!(matches!(end, Some(Say::Ended(_))));
+        // The end of riff takeover writes no record of the session.
+        drop(taker);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!record_path(&here.dir, &name).exists());
+        assert!(status(&here.dir).await.unwrap().sessions.is_empty());
     }
 }

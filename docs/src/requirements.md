@@ -4856,11 +4856,12 @@ share.
   terminal at once. The daemon refuses a takeover of a session with a
   terminal, of a session with no relay, and of a relay of a protocol
   before 4.
-- **01M501PADKZNRHBZD9XPMJGW06** `riff daemon status` gives the state
-  of each session and its last step. The state is `works`, `ends`
-  after the result of its turn, `holds` while a takeover waits, `taken`
-  while a person has it, or `terminal` for the lead. The last step is
-  the last line that `riff run` shows of its events.
+- **01M501PADKZNRHBZD9XPMJGW06** `riff daemon status` and `riff view`
+  show the state of each session and its last step. The state is
+  `works`, `ends` after the result of its turn, `holds for a takeover`
+  while a takeover waits, `taken over` while a person has it, or `lead`
+  for the lead. The last step is the last line that `riff run` shows of
+  its events.
 
 ### The first run
 

@@ -128,7 +128,12 @@ impl Screen {
         let selected = sessions.get(self.selected).copied();
         let lead = selected
             .filter(|s| s.phase == Phase::Terminal)
-            .or_else(|| sessions.iter().copied().find(|s| s.phase == Phase::Terminal))
+            .or_else(|| {
+                sessions
+                    .iter()
+                    .copied()
+                    .find(|s| s.phase == Phase::Terminal)
+            })
             .map(|s| s.name.clone());
         let rows = sessions.len();
         let selected = selected.map(|s| (s.name.clone(), s.phase));
@@ -209,9 +214,8 @@ impl Screen {
         )
         .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED))
         .highlight_symbol("> ");
-        let mut state = TableState::default().with_selected(
-            (!sessions.is_empty()).then_some(self.selected),
-        );
+        let mut state =
+            TableState::default().with_selected((!sessions.is_empty()).then_some(self.selected));
         frame.render_stateful_widget(table, rows, &mut state);
 
         if let Some(Ok(status)) = &self.status {
@@ -383,10 +387,16 @@ mod tests {
             lines[0],
             "riff daemon 1.3.1 06a0ae03be98, pid 4242, limit 3 sessions and a floor of 8 GB, 0 waiting"
         );
-        assert!(lines[1].contains("SESSION") && lines[1].contains("LAST"), "{lines:#?}");
+        assert!(
+            lines[1].contains("SESSION") && lines[1].contains("LAST"),
+            "{lines:#?}"
+        );
         // The lead is first, and selected.
         assert!(lines[2].starts_with("> riff-lead-o-r"), "{lines:#?}");
-        assert!(lines[2].contains("lead") && lines[2].contains("5m"), "{lines:#?}");
+        assert!(
+            lines[2].contains("lead") && lines[2].contains("5m"),
+            "{lines:#?}"
+        );
         assert!(lines[3].contains("riff-issue-12-1a2b3c4d"), "{lines:#?}");
         assert!(lines[3].contains("issue-12"), "{lines:#?}");
         assert!(lines[3].contains("works"), "{lines:#?}");
@@ -413,7 +423,10 @@ mod tests {
         let lines = drawn(&screen, 110, 9);
         assert!(lines[2].contains("holds for a takeover"), "{lines:#?}");
         assert_eq!(lines[5], "wave o/r: started issue-12");
-        assert_eq!(lines[6], text::view_waiting(&["riff-issue-13-2b3c4d5e".into()]));
+        assert_eq!(
+            lines[6],
+            text::view_waiting(&["riff-issue-13-2b3c4d5e".into()])
+        );
         assert_eq!(lines[7], "a note");
     }
 
@@ -439,7 +452,10 @@ mod tests {
             Some(Action::Attach("riff-lead-o-r".into()))
         );
         assert_eq!(screen.on_key(Key::Takeover), None);
-        assert_eq!(drawn(&screen, 110, 8)[6], text::view_no_takeover("riff-lead-o-r"));
+        assert_eq!(
+            drawn(&screen, 110, 8)[6],
+            text::view_no_takeover("riff-lead-o-r")
+        );
         // Down selects the worker, and stops at the last row.
         assert_eq!(screen.on_key(Key::Down), None);
         assert_eq!(screen.on_key(Key::Down), None);
@@ -472,7 +488,10 @@ mod tests {
         assert_eq!(key_of(&press(KeyCode::Up, none)), Some(Key::Up));
         assert_eq!(key_of(&press(KeyCode::Char('j'), none)), Some(Key::Down));
         assert_eq!(key_of(&press(KeyCode::Enter, none)), Some(Key::Enter));
-        assert_eq!(key_of(&press(KeyCode::Char('t'), none)), Some(Key::Takeover));
+        assert_eq!(
+            key_of(&press(KeyCode::Char('t'), none)),
+            Some(Key::Takeover)
+        );
         assert_eq!(key_of(&press(KeyCode::Esc, none)), Some(Key::Quit));
         assert_eq!(
             key_of(&press(KeyCode::Char('c'), KeyModifiers::CONTROL)),

@@ -1172,8 +1172,9 @@ mod tests {
         let (mut claude, child) = claude();
         let (notes, mut noted) = mpsc::unbounded_channel();
         let socket = daemon.socket.clone();
-        let relay =
-            tokio::spawn(async move { relay(child, no_again(), &socket, Scrub::default(), WAIT, notes).await });
+        let relay = tokio::spawn(async move {
+            relay(child, no_again(), &socket, Scrub::default(), WAIT, notes).await
+        });
 
         // The first daemon: the start text, two events.
         let (hello, mut lines, mut write) = daemon.accept().await;
@@ -1270,7 +1271,10 @@ mod tests {
         let (notes, mut noted) = mpsc::unbounded_channel();
         let socket = daemon.socket.clone();
         let scrub = Scrub::new(["gho_secret1".to_owned()]);
-        let relay = tokio::spawn(async move { relay(child, no_again(), &socket, scrub, WAIT, notes).await });
+        let relay =
+            tokio::spawn(
+                async move { relay(child, no_again(), &socket, scrub, WAIT, notes).await },
+            );
         let (_, mut lines, mut write) = daemon.accept().await;
         say(&mut write, &Say::Resume { events: 0 }).await;
         claude
@@ -1309,8 +1313,9 @@ mod tests {
         let socket = daemon.socket.clone();
         drop(daemon);
         let wait = Duration::from_secs(60);
-        let relay =
-            tokio::spawn(async move { relay(child, no_again(), &socket, Scrub::default(), wait, notes).await });
+        let relay = tokio::spawn(async move {
+            relay(child, no_again(), &socket, Scrub::default(), wait, notes).await
+        });
         claude.end(0).await;
         assert_eq!(relay.await.unwrap(), Some(0));
         assert_eq!(noted.recv().await.unwrap(), text::RELAY_AWAY);
@@ -1323,8 +1328,9 @@ mod tests {
         let (claude, child) = claude();
         let (notes, _noted) = mpsc::unbounded_channel();
         let socket = daemon.socket.clone();
-        let relay =
-            tokio::spawn(async move { relay(child, no_again(), &socket, Scrub::default(), WAIT, notes).await });
+        let relay = tokio::spawn(async move {
+            relay(child, no_again(), &socket, Scrub::default(), WAIT, notes).await
+        });
         let (_, mut lines, mut write) = daemon.accept().await;
         say(&mut write, &Say::Resume { events: 0 }).await;
         write

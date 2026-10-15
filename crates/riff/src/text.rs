@@ -5015,10 +5015,10 @@ pub fn daemon_no_state(dir: &Path) -> String {
 }
 
 /// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S,
-/// 01M4ZHW24JZZXM3JJXG3PRJS7N).
+/// 01M4ZHW24JZZXM3JJXG3PRJS7N, 01M501PADKZNRHBZD9XPMJGW06).
 ///
 /// ```
-/// use riff::daemon::{Live, Status, WaveShown};
+/// use riff::daemon::{Live, Phase, Status, WaveShown};
 /// use riff::room::Limit;
 ///
 /// let mut status = Status {
@@ -5043,11 +5043,15 @@ pub fn daemon_no_state(dir: &Path) -> String {
 ///     item: "issue-12".into(),
 ///     image: "img".into(),
 ///     since_ms: 240_000,
+///     phase: Phase::Works,
+///     last: "> Bash: just check".into(),
 /// });
 /// status.waiting.push("the wave of o/r".into());
 /// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into() });
 /// let text = riff::text::daemon_status(&status, 300_000);
-/// assert!(text.contains("  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m\n"));
+/// assert!(text.contains(
+///     "  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m  works: > Bash: just check\n"
+/// ));
 /// assert!(text.contains("The limit of this host: 3 live sessions, and 8 GB"));
 /// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
@@ -5079,13 +5083,19 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     } else {
         out.push_str("Sessions:\n");
         for live in &status.sessions {
+            let last = if live.last.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", safe(&live.last))
+            };
             let _ = writeln!(
                 out,
-                "  {}  {}  session {}  for {}",
+                "  {}  {}  session {}  for {}  {}{last}",
                 live.name,
                 live.item,
                 live.session,
-                age(live.since_ms)
+                age(live.since_ms),
+                phase_word(live.phase)
             );
         }
     }
@@ -5752,9 +5762,7 @@ pub fn takeover_no_relay(name: &str) -> String {
 
 /// `riff takeover` waits for the end of the turn.
 pub fn takeover_waits(name: &str) -> String {
-    format!(
-        "The session in the container {name} stops at the end of its turn. riff waits for it."
-    )
+    format!("The session in the container {name} stops at the end of its turn. riff waits for it.")
 }
 
 /// The daemon writes that a person asked a takeover.

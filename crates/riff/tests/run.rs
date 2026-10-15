@@ -1520,10 +1520,9 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
     // Its folder: a clone and a Claude folder with the first-run answers.
     let folder = machine.env.riff_home().join("leads/como-technologies-riff");
     assert!(folder.join("clone/.git").exists());
-    let json: Value = serde_json::from_slice(
-        &std::fs::read(folder.join("claude/.claude.json")).unwrap(),
-    )
-    .unwrap();
+    let json: Value =
+        serde_json::from_slice(&std::fs::read(folder.join("claude/.claude.json")).unwrap())
+            .unwrap();
     assert_eq!(json["hasCompletedOnboarding"], true);
     let clone = folder.join("clone").display().to_string();
     assert_eq!(json["projects"][&clone]["hasTrustDialogAccepted"], true);
@@ -1600,7 +1599,10 @@ async fn riff_takeover_gives_the_person_the_session_and_the_session_goes_on() {
     let out = output_of(run).await;
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let claude = machine.read("claude.args");
-    assert!(claude.contains(&format!("--resume\n{session}\n")), "{claude}");
+    assert!(
+        claude.contains(&format!("--resume\n{session}\n")),
+        "{claude}"
+    );
     assert!(!claude.contains("--session-id"), "{claude}");
     assert!(
         machine.read("run.stdin").contains("gives it back now"),
@@ -1612,7 +1614,9 @@ async fn riff_takeover_gives_the_person_the_session_and_the_session_goes_on() {
 #[tokio::test]
 async fn riff_takeover_of_a_session_that_the_daemon_does_not_own_fails() {
     let machine = Machine::new().await;
-    let out = machine.run(None, &["takeover", "riff-issue-9-00000000"]).await;
+    let out = machine
+        .run(None, &["takeover", "riff-issue-9-00000000"])
+        .await;
     assert_eq!(out.status.code(), Some(1));
     assert!(
         text(&out.stderr).contains("owns no session in the container riff-issue-9-00000000"),
