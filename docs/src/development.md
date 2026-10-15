@@ -312,19 +312,97 @@ The workflow builds the image of a folder one time only. To build it
 again, for example for new Debian packages, change a line of the
 Dockerfile, for example a version.
 
+## Start the riff daemon
+
+The riff daemon owns the containers of `riff run` on your machine. It
+is the server of [riff 3.0](riff-3.md) on one machine. The systemd
+user unit `riff.service` runs it. `riff run` asks the daemon to run
+each session.
+
+```mermaid
+flowchart LR
+    subgraph M["your machine"]
+        R["riff run issue-12"] -- "control socket" --> D["riff daemon<br/>riff.service"]
+        D -- "podman run" --> C
+        subgraph C["container riff-issue-12-ID8"]
+            S["/run/riff/riff.sock"]
+        end
+        S -- "its own socket" --> D
+    end
+```
+
+The daemon gives each container a socket of its own, at
+`/run/riff/riff.sock`. The socket tells the daemon which session asks.
+No container sees the socket of another session, or the control
+socket. The sockets are in `~/.local/share/riff/daemon`.
+
+### Install the daemon
+
+Use Linux, and install podman (see
+[Get ready to run an item](#get-ready-to-run-an-item)). Then run this
+command in a shell that finds `podman`:
+
+```sh
+riff daemon install
+```
+
+It writes the unit `~/.config/systemd/user/riff.service`, enables it,
+and starts it. The unit gets the `PATH` of your shell, so the daemon
+finds the same `podman`. After each update of riff, run the command
+again: it starts the daemon again with the new riff.
+
+### See the daemon
+
+```sh
+riff daemon status
+```
+
+It shows the process ID, the build and the sessions of the daemon.
+When no daemon answers, it shows the state of the unit, and exits with
+1. To see the log of the daemon:
+
+```sh
+journalctl --user -u riff -f
+```
+
+### Restart or stop the daemon
+
+```sh
+systemctl --user restart riff
+systemctl --user stop riff
+```
+
+A stop or a restart of the daemon stops no container. conmon, the
+monitor of podman, holds each container. But until `riff relay`
+comes (#717), the daemon loses the input and the events of each
+container at its stop. Each session then ends after its turn, and
+`riff run` says that the daemon stopped.
+
+### Run the daemon in a terminal
+
+With `RIFF_HOME` set, for example in `just dev`, `riff daemon install`
+installs nothing. Run the daemon of that `RIFF_HOME` in a terminal:
+
+```sh
+riff daemon
+```
+
+Press Ctrl-C to stop it. Its containers run on.
+
 ## Run one item in a container
 
 `riff run ITEM` does one work item in a rootless podman container. It
 is the first part of [riff 3.0](riff-3.md). The riff of today still
-claims the item, wakes the lead and releases the item. The container
-does the work: `claude -p` in a clone of its own, with your sign-in of
-git, `gh` and `claude`.
+claims the item, wakes the lead and releases the item. The riff daemon
+runs the container. The container does the work: `claude -p` in a
+clone of its own, with your sign-in of git, `gh` and `claude`.
 
 ```mermaid
 flowchart LR
     subgraph M["your machine"]
         R["riff run issue-12"] -- "git clone --reference" --> L[("the clone<br/>in the folder of riff")]
-        R -- "podman run" --> C
+        R -- "run the session" --> D["riff daemon"]
+        D -- "podman run" --> C
         subgraph C["container riff-issue-12-ID8"]
             K["claude -p"]
         end
@@ -343,21 +421,29 @@ flowchart LR
    podman info --format '{{.Host.Security.Rootless}}'
    ```
 
-2. Get the session image that `riff.toml` pins. `riff run` pulls it
+2. Start the riff daemon (see
+   [Install the daemon](#install-the-daemon)). With no daemon,
+   `riff run` stops before the claim. This command shows the daemon:
+
+   ```sh
+   riff daemon status
+   ```
+
+3. Get the session image that `riff.toml` pins. The daemon pulls it
    when your machine does not have it. To pull it before the run:
 
    ```sh
    podman pull "$(riff image)"
    ```
 
-3. Sign in to `gh`, and run `claude` once on this machine, so that its
+4. Sign in to `gh`, and run `claude` once on this machine, so that its
    sign-in has 60 minutes or more left:
 
    ```sh
    gh auth status
    ```
 
-4. Give your clone an HTTPS `origin`. The clone of the session takes
+5. Give your clone an HTTPS `origin`. The clone of the session takes
    the URL of `origin` from your clone. The container has no SSH
    agent, so it cannot push to an SSH URL. To see the URL, and to
    change it to HTTPS:
@@ -387,29 +473,32 @@ riff run issue-12 --image localhost/riff-session:test
 
 ### What riff run does
 
-First, riff checks the image, and pulls it when it must. It checks
-the sign-in of `gh` and of `claude`, and the wave of the issue. A
-failed check takes no claim. Then riff does these steps:
+First, riff asks the daemon for the image: the daemon pulls it when
+it must. riff checks the sign-in of `gh` and of `claude`, and the wave
+of the issue. A failed check takes no claim. Then riff does these
+steps:
 
 1. It starts a worker session, and claims the item.
 2. It makes the clone of the session on the branch `worktree-ITEM`.
    When `origin` has that branch, the clone goes on from it.
-3. It runs `claude -p` in the container, and shows each event: the
-   text, each tool call, each tool that failed, each call that the
-   rules refused, the push, and the end of the turn. The session
-   pushes the branch and opens the pull request.
+3. It asks the daemon to run `claude -p` in the container, and shows
+   each event: the text, each tool call, each tool that failed, each
+   call that the rules refused, the push, and the end of the turn. The
+   session pushes the branch and opens the pull request.
 4. It finds the pull request of the branch, and sends a verify request
    to your lead.
 5. It releases the item, and ends the session.
 
 The folder of the session is
 `~/.local/share/riff/sessions/ITEM-ID8`. Its `clone` stays until the
-merge. Its `events.jsonl` has each event, with no secret.
+merge. Its `events.jsonl` has each event, with no secret: the daemon
+writes it.
 
 ### Stop a session
 
-Press Ctrl-C. riff stops the container with `podman stop`, and
-releases the item. The branch keeps the work that the session pushed.
+Press Ctrl-C. riff asks the daemon to stop the container with
+`podman stop`, and releases the item. The branch keeps the work that
+the session pushed.
 
 ### What the container gets
 
@@ -428,6 +517,8 @@ releases the item. The branch keeps the work that the session pushed.
   container ends.
 - The volumes `riff-cargo` and `riff-sccache` for the caches.
 - `--memory 8g` and `--cpus 4`.
+- The folder of its own socket of the daemon at `/run/riff`, with
+  write, and `RIFF_SOCKET=/run/riff/riff.sock`.
 
 A commit of the session has your git identity, no signature, and a
 `Riff-Session:` trailer. The table of what sessions share is on the
@@ -451,7 +542,9 @@ just real-session
 ```mermaid
 flowchart LR
     T["just real-session"] -- "a scratch issue" --> G["GitHub"]
-    T -- "riff run" --> C["container: claude -p"]
+    T -- "riff daemon" --> D["riff daemon"]
+    T -- "riff run" --> D
+    D -- "podman run" --> C["container: claude -p"]
     C -- "push, pull request" --> G
     T -- "check the pull request<br/>and the Gate" --> G
     T -- "check" --> H[("your home")]
@@ -466,21 +559,37 @@ The test does these steps. The messages name them:
    to the book. No worker takes an item of the backlog.
 4. Hold its verify: no worker verifies the scratch item. When riff
    cannot hold it, the test goes on.
-5. Run the item: `riff run` does the issue. You see each event of the
+5. Start the daemon: the test starts `riff daemon` of your clone, and
+   waits until it answers. When a riff daemon runs already, this step
+   fails.
+6. Run the item: `riff run` does the issue. You see each event of the
    session.
-6. Check the home: the test lists your home again. A new file outside
+7. Check the home: the test lists your home again. A new file outside
    the folders of riff, the folders of podman, your clone and
    `~/.cache` fails the test.
-7. Find the pull request: the branch of the session has an open pull
+8. Find the pull request: the branch of the session has an open pull
    request.
-8. Check the change: the pull request adds the line to the book.
-9. Wait for the Gate: the Gate of the pull request starts.
+9. Check the change: the pull request adds the line to the book.
+10. Wait for the Gate: the Gate of the pull request starts.
 
 The first step that fails stops the test. Its message names the step
-and the reason. Then the test cleans up: it closes the pull request
-and the issue, deletes the branch, cancels its CI runs, frees the hold,
-and removes the folder of the session. It also cleans up when you
-press Ctrl-C. A second Ctrl-C stops it at once.
+and the reason. Then the test cleans up: it stops its daemon, closes
+the pull request and the issue, deletes the branch, cancels its CI
+runs, frees the hold, and removes the folder of the session. It also
+cleans up when you press Ctrl-C. A second Ctrl-C stops it at once: then
+stop the daemon of the test yourself, with the process ID that step 5
+shows.
+
+### When a riff daemon runs already
+
+The test runs the riff daemon of your clone, not the daemon that you
+installed. Stop your daemon first, and start it again after the test:
+
+```sh
+systemctl --user stop riff
+just real-session
+systemctl --user start riff
+```
 
 ### When another program writes in your home
 

@@ -4696,6 +4696,214 @@ pub fn run_kept(clone: &Path) -> String {
     format!("The clone stays until the merge: {}", clone.display())
 }
 
+/// `riff run` lost the daemon before the end of its session
+/// (01M4ZDTW25YV0GMMVGWN6JTJC5).
+pub fn run_daemon_gone(name: &str) -> String {
+    format!(
+        "The riff daemon stopped. The container {name} runs on to the end of its turn, but \
+         riff run cannot see its events now."
+    )
+}
+
+/// No daemon answers on the control socket `socket`.
+pub fn daemon_none(socket: &Path) -> String {
+    format!(
+        "No riff daemon answers on {}. Start it: riff daemon install. See \"Start the riff \
+         daemon\" in the book.",
+        socket.display()
+    )
+}
+
+/// The daemon closed the connection before its answer.
+pub const DAEMON_GONE: &str = "The riff daemon closed the connection before its answer.";
+
+/// `riff daemon` on a host that is not Linux.
+pub const DAEMON_LINUX_ONLY: &str = "riff daemon needs Linux: riff 3.0 runs on Linux only.";
+
+/// A second daemon on the control socket of a daemon that runs.
+pub fn daemon_runs_already(pid: u32, socket: &Path) -> String {
+    format!(
+        "A riff daemon runs already: pid {pid}, on {}. See it: riff daemon status",
+        socket.display()
+    )
+}
+
+/// The first line of a daemon.
+pub fn daemon_listens(socket: &Path, pid: u32, build: &str) -> String {
+    format!(
+        "The riff daemon listens on {}: pid {pid}, build {build}.",
+        socket.display()
+    )
+}
+
+/// The last line of a daemon (01M4ZDTVH57VE77YT20G65A4BQ).
+pub const DAEMON_STOPS: &str =
+    "The riff daemon stops. It stopped no session: each container runs on.";
+
+/// The daemon starts a session.
+pub fn daemon_session_starts(name: &str, item: &str, session: &str) -> String {
+    format!("The session {session} starts: {item} in the container {name}.")
+}
+
+/// A session of the daemon ended with the exit code `code`.
+pub fn daemon_session_ends(name: &str, code: Option<i32>) -> String {
+    match code {
+        Some(code) => format!("The container {name} ended with the exit code {code}."),
+        None => format!("The container {name} ended with no exit code: a stop ended it."),
+    }
+}
+
+/// A session of the daemon did not start, or failed.
+pub fn daemon_session_failed(name: &str) -> String {
+    format!("The session of the container {name} failed. riff run shows why.")
+}
+
+/// The daemon stops a container on the ask of `riff run`.
+pub fn daemon_stops(name: &str) -> String {
+    format!("The riff daemon stops the container {name}: riff run asked.")
+}
+
+/// A second session with the name of a session that runs.
+pub fn daemon_runs_session(name: &str) -> String {
+    format!("The riff daemon runs a session in the container {name} already.")
+}
+
+/// A spec with a bind at the place of the socket in the session.
+pub fn daemon_bind_in_session(target: &Path) -> String {
+    format!(
+        "The riff daemon starts no session with a bind at {}: the socket of the session goes \
+         there.",
+        target.display()
+    )
+}
+
+/// A spec whose bind shows the folder of the daemon
+/// (01M4ZDTVQEHD87WD5TSN93XFSS).
+pub fn daemon_bind_shows(source: &Path) -> String {
+    format!(
+        "The riff daemon starts no session with a bind of {}: it shows the folder of the riff \
+         daemon, with the socket of each session.",
+        source.display()
+    )
+}
+
+/// An ask of another version of the protocol
+/// (01M4ZDTVVV56X964S28GS6K2Z2).
+///
+/// ```
+/// let text = riff::text::daemon_protocol(2, 1);
+/// assert!(text.contains("protocol 1"), "{text}");
+/// assert!(text.contains("riff daemon install"), "{text}");
+/// ```
+pub fn daemon_protocol(theirs: u32, ours: u32) -> String {
+    format!(
+        "The riff daemon talks protocol {ours}, and this riff talks protocol {theirs}. Start \
+         the daemon again with this riff: riff daemon install"
+    )
+}
+
+/// A first line that is not a hello of the protocol.
+pub const DAEMON_NO_HELLO: &str =
+    "The riff daemon cannot read the first line: it is not a hello of riff.";
+
+/// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S).
+///
+/// ```
+/// use riff::daemon::{Live, Status};
+///
+/// let mut status = Status {
+///     pid: 42,
+///     build: "1.3.1 06a0ae03be98".into(),
+///     since_ms: 0,
+///     dir: "/h/.local/share/riff/daemon".into(),
+///     sessions: vec![],
+/// };
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
+/// assert!(text.contains("Sessions: none.\n"));
+/// status.sessions.push(Live {
+///     name: "riff-issue-12-1a2b3c4d".into(),
+///     session: "1a2b3c4d-0000".into(),
+///     item: "issue-12".into(),
+///     image: "img".into(),
+///     since_ms: 240_000,
+/// });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// assert!(text.contains("  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m\n"));
+/// ```
+pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
+    let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
+    let mut out = format!(
+        "The riff daemon runs: pid {}, build {}, for {}.\nIts folder: {}\n",
+        status.pid,
+        status.build,
+        age(status.since_ms),
+        status.dir.display()
+    );
+    if status.sessions.is_empty() {
+        out.push_str("Sessions: none.\n");
+    } else {
+        out.push_str("Sessions:\n");
+        for live in &status.sessions {
+            let _ = writeln!(
+                out,
+                "  {}  {}  session {}  for {}",
+                live.name,
+                live.item,
+                live.session,
+                age(live.since_ms)
+            );
+        }
+    }
+    out
+}
+
+/// One line: the daemon answers.
+pub fn daemon_runs(status: &crate::daemon::Status) -> String {
+    format!(
+        "The riff daemon runs: pid {}, build {}, {} sessions.",
+        status.pid,
+        status.build,
+        status.sessions.len()
+    )
+}
+
+/// The state of the unit of the daemon, when no daemon answers.
+pub fn daemon_unit_state(state: &str) -> String {
+    format!(
+        "The unit {} is {state}. Start it: riff daemon install. See its log: journalctl --user \
+         -u riff",
+        crate::service::UNIT
+    )
+}
+
+/// `riff daemon install` with `RIFF_HOME` set.
+pub const DAEMON_INSTALL_RIFF_HOME: &str = "riff daemon install installs the daemon of this \
+     machine, but RIFF_HOME is set. Run the daemon of this RIFF_HOME in a terminal: riff daemon";
+
+/// `riff daemon install` wrote the unit `path`.
+pub fn daemon_installed(path: &Path) -> String {
+    format!(
+        "riff wrote the unit {}, and started it again.",
+        path.display()
+    )
+}
+
+/// The unit runs, but no daemon answers.
+pub fn daemon_no_answer(state: &str, socket: &Path) -> String {
+    format!(
+        "The unit {} is {state}, but no riff daemon answers on {}. See its log: journalctl \
+         --user -u riff",
+        crate::service::UNIT,
+        socket.display()
+    )
+}
+
+/// A text that no line of a unit file can hold.
+pub fn unit_bad_text(text: &str) -> String {
+    format!("riff cannot write {text:?} in a unit file: it has a control character.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

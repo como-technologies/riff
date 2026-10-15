@@ -10,6 +10,7 @@
 //!
 //! | Part of the spec | The argument of `podman run` |
 //! |---|---|
+//! | (each spec) | `--sig-proxy=false` |
 //! | `name` | `--name NAME` |
 //! | The user | `--userns=keep-id` |
 //! | `memory`, `cpus` | `--memory 8g`, `--cpus 4` |
@@ -21,9 +22,22 @@
 //! | `image`, `command` | the last arguments |
 //!
 //! `podman run --rm -i` keeps stdin open: it is [`Running::input`]. The
-//! stdout of the command is [`Running::events`]. conmon, the monitor of
-//! podman, holds the container. `podman stop` ends the container and
-//! each of its processes (01M4Z60B7XT7462XMV49GJTVSJ).
+//! stdout of the command is [`Running::events`]. `podman stop` ends the
+//! container and each of its processes (01M4Z60B7XT7462XMV49GJTVSJ).
+//!
+//! conmon, the monitor of podman, holds the container. A stop of the
+//! daemon stops no container (01M4Z60B7Z24WBD6HV6ER0WN9K,
+//! 01M4ZDTW00B7N6T9P3MK066KA7):
+//!
+//! - riff starts each `podman` with no `INVOCATION_ID`. systemd sets it
+//!   in each process of a unit, and with it podman keeps conmon in the
+//!   cgroup of the unit of the daemon. With no `INVOCATION_ID`, podman
+//!   puts conmon in a scope of its own, so a stop of the unit does not
+//!   end it.
+//! - `--sig-proxy=false`: the `podman run` of riff passes no signal to
+//!   the container. So the SIGTERM of a stop of the unit ends that
+//!   `podman run`, not the container. riff stops a container only with
+//!   [`Runtime::stop`].
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -70,7 +84,8 @@ pub struct Podman;
 ///     .collect();
 /// assert_eq!(
 ///     args.join(" "),
-///     "run --rm -i --name riff-issue-12-1a2b3c4d --userns=keep-id --memory 8g --cpus 4 \
+///     "run --rm -i --sig-proxy=false --name riff-issue-12-1a2b3c4d --userns=keep-id \
+///      --memory 8g --cpus 4 \
 ///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
 ///      -v /data/clone:/data/clone -v riff-cargo:/home/mike/.cargo \
 ///      -v /home/mike/.gitconfig:/home/mike/.gitconfig:ro \
@@ -83,7 +98,7 @@ pub struct Podman;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn run_args(spec: &SessionSpec) -> Result<Vec<OsString>> {
-    let mut args: Vec<OsString> = ["run", "--rm", "-i", "--name"]
+    let mut args: Vec<OsString> = ["run", "--rm", "-i", "--sig-proxy=false", "--name"]
         .into_iter()
         .map(OsString::from)
         .collect();
@@ -140,10 +155,22 @@ fn plain(path: &Path) -> Result<&str> {
     Ok(text)
 }
 
+/// The variable that systemd sets in each process of a unit. podman
+/// keeps conmon in the cgroup of the unit when it is set, so riff starts
+/// each `podman` with no such variable (01M4ZDTW00B7N6T9P3MK066KA7).
+pub const INVOCATION_ID: &str = "INVOCATION_ID";
+
+/// A `podman` command with no [`INVOCATION_ID`].
+fn podman() -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(PODMAN);
+    command.env_remove(INVOCATION_ID);
+    command
+}
+
 /// Runs `podman ARGS` with no stdin and no stdout, and gives its exit.
 /// podman shows its progress and its errors on stderr.
 async fn quiet(args: &[&str]) -> Result<ExitStatus> {
-    tokio::process::Command::new(PODMAN)
+    podman()
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -174,7 +201,7 @@ impl Runtime for Podman {
     /// environment (01M4Z60B89BHXQVJ2MGRRQ2CKJ).
     async fn start(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<Running> {
         spec.check_values(values)?;
-        let mut child = tokio::process::Command::new(PODMAN)
+        let mut child = podman()
             .args(run_args(spec)?)
             .envs(values.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::piped())
@@ -200,7 +227,7 @@ impl Runtime for Podman {
     }
 
     async fn attach(&self, name: &str) -> Result<Exit> {
-        let status = tokio::process::Command::new(PODMAN)
+        let status = podman()
             .args(["attach", name])
             .status()
             .await

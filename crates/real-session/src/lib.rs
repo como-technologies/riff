@@ -6,9 +6,10 @@
 //! The hermetic tests give riff a fake home. The faults of riff 2.0 came
 //! from a real home (#693, #678), and those tests did not see them. So
 //! before each tag, a person runs this test on a host with podman: the
-//! `riff` of the tree does one scratch item with `riff run`, the session
-//! image that the tree pins, and a real `claude`, from the start to a
-//! pull request (01M4ZCFGCY301G2ARFMRXV7XDR). An admin runs it on the
+//! `riff` of the tree does one scratch item with `riff run`, the riff
+//! daemon of the tree, the session image that the tree pins, and a real
+//! `claude`, from the start to a pull request
+//! (01M4ZCFGCY301G2ARFMRXV7XDR). An admin runs it on the
 //! merge commit of the release pull request, before the tag
 //! (01M4ZCFGKDKH16KGKR5NBEK3Y4).
 //!
@@ -17,14 +18,18 @@
 //!     participant T as real-session
 //!     participant G as GitHub
 //!     participant S as riff-server
+//!     participant D as riff daemon (the tree)
 //!     participant R as riff run (the tree)
 //!     T->>T: check the host, list the home
 //!     T->>G: a scratch issue in the milestone Backlog
 //!     T->>S: hold verify-issue-N
+//!     T->>D: riff daemon, in a process group of its own
 //!     T->>R: riff run issue-N --image IMAGE
+//!     R->>D: run the session in a container
 //!     R->>G: the session pushes, and opens the pull request
 //!     T->>T: list the home again: no new path
 //!     T->>G: the pull request adds the line, and its Gate starts
+//!     T->>D: SIGTERM
 //!     T->>G: close the pull request and the issue, delete the branch, cancel its runs
 //!     T->>S: free verify-issue-N
 //! ```
@@ -38,17 +43,18 @@
 //! | 2. list the home | always |
 //! | 3. make the scratch item | `gh issue create` prints the URL of an issue |
 //! | 4. hold its verify | always: a failed hold is a warning |
-//! | 5. run the item | `riff run issue-N --image IMAGE` ends with 0 |
-//! | 6. check the home | the home has no new path (see below) |
-//! | 7. find the pull request | the branch `worktree-issue-N` has an open pull request |
-//! | 8. check the change | its diff adds the line of the item to [`BOOK_FILE`] |
-//! | 9. wait for the Gate | the head commit has a check run [`GATE`] in [`GATE_WAIT`] |
+//! | 5. start the daemon | no riff daemon answers before, and `riff daemon` of the tree answers in [`DAEMON_WAIT`] (see below) |
+//! | 6. run the item | `riff run issue-N --image IMAGE` ends with 0 |
+//! | 7. check the home | the home has no new path (see below) |
+//! | 8. find the pull request | the branch `worktree-issue-N` has an open pull request |
+//! | 9. check the change | its diff adds the line of the item to [`BOOK_FILE`] |
+//! | 10. wait for the Gate | the head commit has a check run [`GATE`] in [`GATE_WAIT`] |
 //!
 //! Then the test cleans up, also after a failed step, and also after
-//! Ctrl-C or SIGTERM ([`watch_signals`]). It closes the pull request and
-//! deletes its branch, cancels each CI run of the branch that did not
-//! end, closes the issue as not planned, frees the hold, and removes the
-//! folder of the session. A pass gives the exit code 0, a failed step 1,
+//! Ctrl-C or SIGTERM ([`watch_signals`]). It stops its daemon, closes the
+//! pull request and deletes its branch, cancels each CI run of the
+//! branch that did not end, closes the issue as not planned, frees the
+//! hold, and removes the folder of the session. A pass gives the exit code 0, a failed step 1,
 //! and a signal 130. A second signal ends the test at once, with no more
 //! clean-up.
 //!
@@ -62,6 +68,22 @@
 //! the hold, not the work. Only a lead, the owner or an admin can hold
 //! an item. When the hold fails, the test goes on with a warning: only
 //! the work of a worker is at risk.
+//!
+//! # The daemon
+//!
+//! `riff run` asks the riff daemon to run the session (#716). So the
+//! test starts `riff daemon` of the tree, with the variables of the
+//! test, and waits until `riff daemon status` of the tree answers
+//! (01M4ZFPYNGFF49WWHR8EBWSTNG). When a riff daemon answers before the
+//! start, for example the unit `riff.service` of an installed riff, the
+//! step fails: the test does not stop a daemon of the person.
+//!
+//! The daemon runs in a process group of its own. So Ctrl-C reaches the
+//! test and `riff run`, not the daemon: `riff run` then asks the daemon
+//! to stop the container. The clean-up stops the daemon with SIGTERM,
+//! and kills it when it does not end in [`DAEMON_WAIT`]. After a second
+//! signal, the daemon runs on: stop it with its PID, from the output of
+//! step 5.
 //!
 //! # The home check
 //!
@@ -91,7 +113,7 @@ use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -114,6 +136,10 @@ pub const GATE_WAIT: Duration = Duration::from_secs(600);
 /// The time between two looks at the Gate.
 pub const POLL: Duration = Duration::from_secs(10);
 
+/// The longest wait for the daemon of the test to answer, and to end
+/// after SIGTERM.
+pub const DAEMON_WAIT: Duration = Duration::from_secs(10);
+
 /// The most new paths that a failed home check shows.
 pub const SHOWN: usize = 20;
 
@@ -133,6 +159,7 @@ pub enum Step {
     List,
     Item,
     Hold,
+    Daemon,
     Run,
     Home,
     Pull,
@@ -142,11 +169,12 @@ pub enum Step {
 
 impl Step {
     /// Each step, in order.
-    pub const ALL: [Step; 9] = [
+    pub const ALL: [Step; 10] = [
         Step::Host,
         Step::List,
         Step::Item,
         Step::Hold,
+        Step::Daemon,
         Step::Run,
         Step::Home,
         Step::Pull,
@@ -161,6 +189,7 @@ impl Step {
             Step::List => "list the home",
             Step::Item => "make the scratch item",
             Step::Hold => "hold its verify",
+            Step::Daemon => "start the daemon",
             Step::Run => "run the item",
             Step::Home => "check the home",
             Step::Pull => "find the pull request",
@@ -196,7 +225,7 @@ impl Step {
 /// };
 /// assert_eq!(
 ///     failure.to_string(),
-///     "step 5 of 9, run the item: riff run issue-12 ended with exit status: 1"
+///     "step 6 of 10, run the item: riff run issue-12 ended with exit status: 1"
 /// );
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -734,6 +763,8 @@ struct Made {
     held: bool,
     /// The folder of the session folders.
     sessions: Option<PathBuf>,
+    /// The riff daemon of the test.
+    daemon: Option<Child>,
 }
 
 /// Runs the test, and cleans up. It gives the exit code: 0 on a pass, 1
@@ -743,7 +774,7 @@ pub fn run(options: &Options, stop: &AtomicBool) -> u8 {
     let mut made = Made::default();
     let result = steps(options, stop, &mut made);
     if let Some(issue) = made.issue {
-        clean_up(options, issue, made.held, made.sessions.as_deref());
+        clean_up(options, issue, made);
     }
     match result {
         Ok(summary) => {
@@ -783,6 +814,9 @@ fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String
     let issue = step(Step::Item, stop, || make_item(stamp, &line))?;
     made.issue = Some(issue);
     made.held = step(Step::Hold, stop, || Ok(hold(&options.riff, issue)))?;
+    step(Step::Daemon, stop, || {
+        start_daemon(&options.riff, stop, &mut made.daemon)
+    })?;
     let item = format!("issue-{issue}");
     step(Step::Run, stop, || run_item(&options.riff, &item, &image))?;
     step(Step::Home, stop, || check_home(&home, &before, &env, issue))?;
@@ -914,7 +948,93 @@ fn hold(riff: &Path, issue: u64) -> bool {
     }
 }
 
-/// Step 5: `riff run ITEM --image IMAGE`. The person sees its output.
+/// Step 5: starts `riff daemon` of the tree in a process group of its
+/// own, and puts it in `daemon`, also when the step fails. It waits until
+/// `riff daemon status` answers (01M4ZFPYNGFF49WWHR8EBWSTNG).
+fn start_daemon(riff: &Path, stop: &AtomicBool, daemon: &mut Option<Child>) -> Result<(), String> {
+    use std::os::unix::process::CommandExt;
+
+    if let Ok(status) = output(riff, &["daemon", "status"]) {
+        return Err(daemon_runs_text(&status));
+    }
+    let child = Command::new(riff)
+        .arg("daemon")
+        .stdin(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map_err(|e| format!("cannot run {} daemon: {e}", riff.display()))?;
+    println!("  riff daemon, pid {}", child.id());
+    let child = daemon.insert(child);
+    let start = Instant::now();
+    loop {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(daemon_ended_text(status));
+        }
+        if output(riff, &["daemon", "status"]).is_ok() {
+            println!("  it answers");
+            return Ok(());
+        }
+        if start.elapsed() >= DAEMON_WAIT {
+            return Err(format!(
+                "riff daemon did not answer in {} s",
+                DAEMON_WAIT.as_secs()
+            ));
+        }
+        sleep(Duration::from_millis(100), stop);
+        if stop.load(Ordering::SeqCst) {
+            return Err("a signal stopped the wait".into());
+        }
+    }
+}
+
+/// The reason of a failed step 5 when a riff daemon answers before the
+/// start. `status` is the output of `riff daemon status`.
+///
+/// ```
+/// let text = real_session::daemon_runs_text("pid 7");
+/// assert!(text.starts_with("a riff daemon runs already:\npid 7\n"));
+/// assert!(text.contains("systemctl --user stop riff"));
+/// ```
+pub fn daemon_runs_text(status: &str) -> String {
+    format!(
+        "a riff daemon runs already:\n{status}\n\
+         The test runs the riff daemon of the tree. Stop the other daemon, for example with \
+         systemctl --user stop riff, and run the test again."
+    )
+}
+
+/// The reason of a failed step 5 when the daemon ends before it answers.
+/// Its own message is above, in the output of the test.
+fn daemon_ended_text(status: ExitStatus) -> String {
+    format!("riff daemon ended with {status} before it answered: see its message above")
+}
+
+/// Stops the daemon of the test with SIGTERM. When it does not end in
+/// [`DAEMON_WAIT`], it kills it.
+fn stop_daemon(daemon: &mut Child) -> Result<String, String> {
+    if let Ok(Some(status)) = daemon.try_wait() {
+        return Ok(status.to_string());
+    }
+    let term = output("kill", &["-TERM", &daemon.id().to_string()]);
+    let start = Instant::now();
+    while term.is_ok() && start.elapsed() < DAEMON_WAIT {
+        if let Ok(Some(status)) = daemon.try_wait() {
+            return Ok(status.to_string());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+    Err(match term {
+        Ok(_) => format!(
+            "it did not end in {} s after SIGTERM, so the test killed it",
+            DAEMON_WAIT.as_secs()
+        ),
+        Err(e) => format!("{e}, so the test killed it"),
+    })
+}
+
+/// Step 6: `riff run ITEM --image IMAGE`. The person sees its output.
 fn run_item(riff: &Path, item: &str, image: &str) -> Result<(), String> {
     let status = Command::new(riff)
         .args(["run", item, "--image", image])
@@ -928,7 +1048,7 @@ fn run_item(riff: &Path, item: &str, image: &str) -> Result<(), String> {
     }
 }
 
-/// Step 6: the home has no new path.
+/// Step 7: the home has no new path.
 fn check_home(home: &Home, before: &Listing, env: &Env, issue: u64) -> Result<(), String> {
     let marks: Vec<String> = session_folders(&env.sessions(), issue)
         .into_iter()
@@ -961,7 +1081,7 @@ fn pull_of(branch: &str) -> Option<Pull> {
         .filter(|pull| pull.state == "OPEN")
 }
 
-/// Step 7: the open pull request of the branch of the item.
+/// Step 8: the open pull request of the branch of the item.
 fn find_pull(issue: u64) -> Result<Pull, String> {
     let branch = branch(issue);
     let pull =
@@ -976,7 +1096,7 @@ fn find_pull(issue: u64) -> Result<Pull, String> {
     Ok(pull)
 }
 
-/// Step 8: the diff of the pull request adds the line to [`BOOK_FILE`].
+/// Step 9: the diff of the pull request adds the line to [`BOOK_FILE`].
 fn check_change(pull: &Pull, line: &str) -> Result<(), String> {
     let number = pull.number.to_string();
     let diff = output("gh", &["pr", "diff", &number, "--color", "never"])?;
@@ -992,7 +1112,7 @@ fn check_change(pull: &Pull, line: &str) -> Result<(), String> {
     }
 }
 
-/// Step 9: waits until the head commit has a check run [`GATE`]. It
+/// Step 10: waits until the head commit has a check run [`GATE`]. It
 /// gives the status of the run.
 fn wait_for_gate(pull: &Pull, wait: Duration, stop: &AtomicBool) -> Result<String, String> {
     let commit = &pull.head_ref_oid;
@@ -1048,11 +1168,15 @@ fn report(what: &str, result: Result<String, String>) {
     }
 }
 
-/// Closes the pull request and deletes its branch, cancels each CI run
-/// of the branch that did not end, closes the issue, frees the hold, and
-/// removes the folder of the session (01M4ZCFGCY301G2ARFMRXV7XDR).
-fn clean_up(options: &Options, issue: u64, held: bool, sessions: Option<&Path>) {
+/// Stops the daemon of the test (01M4ZFPYNGFF49WWHR8EBWSTNG), closes the
+/// pull request and deletes its branch, cancels each CI run of the branch
+/// that did not end, closes the issue, frees the hold, and removes the
+/// folder of the session (01M4ZCFGCY301G2ARFMRXV7XDR).
+fn clean_up(options: &Options, issue: u64, made: Made) {
     println!("real-session: clean up issue #{issue}");
+    if let Some(mut daemon) = made.daemon {
+        report("stop the riff daemon", stop_daemon(&mut daemon));
+    }
     let branch = branch(issue);
     match pull_of(&branch) {
         Some(pull) => report(
@@ -1121,15 +1245,16 @@ fn clean_up(options: &Options, issue: u64, held: bool, sessions: Option<&Path>) 
             ],
         ),
     );
-    if held {
+    if made.held {
         let item = format!("verify-issue-{issue}");
         report(
             &format!("free {item}"),
             output(&options.riff, &["plan", "free", &item]),
         );
     }
-    for (_, folder) in sessions
-        .map(|sessions| session_folders(sessions, issue))
+    for (_, folder) in made
+        .sessions
+        .map(|sessions| session_folders(&sessions, issue))
         .unwrap_or_default()
     {
         report(

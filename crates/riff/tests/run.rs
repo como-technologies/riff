@@ -1,11 +1,13 @@
-//! `riff run ITEM` (#712, 01M4Z81APKC14AVNJWCGRQKNVW): one work item in
-//! one rootless podman container, with no daemon.
+//! `riff run ITEM` (#712, #716, 01M4ZDTVXY84ETYJWMWDMQ34CN): one work
+//! item in one rootless podman container, through the riff daemon.
 //!
-//! A fake `podman` logs its arguments, the value of its `GH_TOKEN` and
-//! its stdin, and plays `claude`: it prints the events of one turn, and
-//! ends when its stdin closes. A fake `gh` gives the token, the issue
-//! and the pull request. A real `riff-server` holds the claims and the
-//! posts. The clone is real: git clones a bare origin on disk.
+//! A real `riff daemon` of this build runs the containers. A fake
+//! `podman` logs its arguments, the value of its `GH_TOKEN` and of its
+//! `INVOCATION_ID`, and its stdin, and plays `claude`: it prints the
+//! events of one turn, and ends when its stdin closes. A fake `gh` gives
+//! the token, the issue and the pull request. A real `riff-server` holds
+//! the claims and the posts. The clone is real: git clones a bare origin
+//! on disk.
 
 use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
@@ -64,6 +66,7 @@ case "$1" in
 esac
 printf '%s\n' "$@" > "$dir/run.args"
 printf '%s' "$GH_TOKEN" > "$dir/run.token"
+printf '%s' "$INVOCATION_ID" > "$dir/run.invocation"
 echo $$ > "$dir/run.pid"
 IFS= read -r line
 printf '%s\n' "$line" > "$dir/run.stdin"
@@ -73,6 +76,61 @@ cat > /dev/null
 touch "$dir/run.closed"
 "#;
     script(&bin.join("podman"), &body.replace("GHTOKEN", GH_TOKEN));
+}
+
+/// A fake `systemctl --user` that logs each call to `bin/systemctl.log`.
+/// `restart riff.service` starts `$FAKE_RIFF daemon` in the background,
+/// as systemd does, and writes its pid to `bin/daemon.pid`.
+/// `is-active riff.service` says `active` while that daemon runs.
+pub fn fake_systemctl(bin: &Path) {
+    let body = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "systemctl $*" >> "$dir/systemctl.log"
+case "$*" in
+  '--user is-active riff.service')
+    if [ -f "$dir/daemon.pid" ] && kill -0 "$(cat "$dir/daemon.pid")" 2>/dev/null; then
+      echo active; exit 0
+    fi
+    echo inactive; exit 3 ;;
+  '--user restart riff.service')
+    "$FAKE_RIFF" daemon >> "$dir/daemon.out" 2>&1 &
+    echo $! > "$dir/daemon.pid" ;;
+esac
+exit 0
+"#;
+    script(&bin.join("systemctl"), body);
+}
+
+/// Waits until the text of `file` holds `part`.
+pub async fn wait_for(file: &Path, part: &str) {
+    let started = Instant::now();
+    while !std::fs::read_to_string(file)
+        .unwrap_or_default()
+        .contains(part)
+    {
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "{} has no {part:?}",
+            file.display()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Asks the socket `riff.sock` in the folder `dir` of a session who it
+/// is: one line of JSON. It connects through a descriptor of the folder,
+/// as riff does, so a long path works.
+fn who_is(dir: &Path) -> Value {
+    use std::io::{BufRead, Write};
+    use std::os::fd::AsRawFd;
+    let folder = std::fs::File::open(dir).unwrap();
+    let path = format!("/proc/self/fd/{}/riff.sock", folder.as_raw_fd());
+    let mut conn = std::os::unix::net::UnixStream::connect(path).unwrap();
+    conn.write_all(b"{\"ask\":\"hello\",\"protocol\":1}\n")
+        .unwrap();
+    let mut line = String::new();
+    std::io::BufReader::new(conn).read_line(&mut line).unwrap();
+    serde_json::from_str(&line).unwrap()
 }
 
 /// The events of one turn of a fake `claude`. A tool result holds the
@@ -137,14 +195,24 @@ fn listing(dir: &Path) -> BTreeSet<String> {
     out
 }
 
-/// One machine: its environment, the fakes, the origin and the main
-/// clone of the person.
+/// One machine: its environment, the fakes, the origin, the main clone
+/// of the person, and its riff daemon.
 struct Machine {
     env: Isolated,
     bin: tempfile::TempDir,
     _origin: tempfile::TempDir,
     main: PathBuf,
     server: String,
+    daemon: Option<std::process::Child>,
+}
+
+impl Drop for Machine {
+    fn drop(&mut self) {
+        if let Some(mut daemon) = self.daemon.take() {
+            let _ = daemon.kill();
+            let _ = daemon.wait();
+        }
+    }
 }
 
 impl Machine {
@@ -153,6 +221,7 @@ impl Machine {
         let bin = tempfile::tempdir().unwrap();
         fake_gh(bin.path());
         fake_podman(bin.path());
+        fake_systemctl(bin.path());
         std::fs::write(bin.path().join("events"), events()).unwrap();
 
         // The origin: OWNER/REPO from its path, as on GitHub.
@@ -193,13 +262,48 @@ impl Machine {
         std::fs::create_dir_all(home.join(".config/gh")).unwrap();
         std::fs::write(home.join(".config/gh/hosts.yml"), "github.com:\n").unwrap();
 
-        Machine {
+        let mut machine = Machine {
             env,
             bin,
             _origin: origin,
             main,
             server: server().await,
-        }
+            daemon: None,
+        };
+        machine.start_daemon().await;
+        machine
+    }
+
+    /// Starts `riff daemon` of this machine as systemd does: with an
+    /// `INVOCATION_ID`. Waits until it listens.
+    async fn start_daemon(&mut self) {
+        let log = self.bin.path().join("daemon.out");
+        let out = std::fs::File::create(&log).unwrap();
+        let daemon = self
+            .command(None, &["daemon"])
+            .env("INVOCATION_ID", "riff-test-unit")
+            .stdout(out.try_clone().unwrap())
+            .stderr(out)
+            .spawn()
+            .unwrap();
+        self.daemon = Some(daemon);
+        wait_for(&log, "The riff daemon listens on").await;
+    }
+
+    /// Stops the daemon with a SIGTERM, as systemd does, and gives its
+    /// exit.
+    async fn stop_daemon(&mut self) -> std::process::ExitStatus {
+        let mut daemon = self.daemon.take().unwrap();
+        let pid = nix::unistd::Pid::from_raw(daemon.id() as i32);
+        nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap();
+        tokio::task::spawn_blocking(move || daemon.wait().unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// The folder of the socket of the session in the container `name`.
+    fn socket_dir(&self, name: &str) -> PathBuf {
+        self.env.riff_home().join("daemon/sessions").join(name)
     }
 
     /// The sign-in of claude, for `minutes` from now.
@@ -320,10 +424,13 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         objects.display().to_string(),
     );
     let claude = folder.join("claude").display().to_string();
+    let name = format!("riff-issue-12-{short}");
+    let socket = machine.socket_dir(&name).display().to_string();
     let want: Vec<String> = [
         "run",
         "--rm",
         "-i",
+        "--sig-proxy=false",
         "--name",
         &format!("riff-issue-12-{short}"),
         "--userns=keep-id",
@@ -349,6 +456,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         &format!("riff-cargo:{h}/.cargo"),
         "-v",
         &format!("riff-sccache:{h}/.cache/sccache"),
+        "-v",
+        &format!("{socket}:/run/riff"),
         "-e",
         &format!("HOME={h}"),
         "-e",
@@ -375,6 +484,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "SCCACHE_IDLE_TIMEOUT=0",
         "-e",
         "CARGO_BUILD_JOBS=4",
+        "-e",
+        "RIFF_SOCKET=/run/riff/riff.sock",
         "-w",
         &c,
         PINNED,
@@ -397,6 +508,11 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     // The token of gh: in the environment of podman, in no argument.
     assert_eq!(machine.read("run.token"), GH_TOKEN);
     assert!(!args.iter().any(|a| a.contains(GH_TOKEN)));
+    // The daemon runs podman with no INVOCATION_ID of systemd, so
+    // conmon is not in the cgroup of the daemon.
+    assert_eq!(machine.read("run.invocation"), "");
+    // The socket folder of the session goes at its end.
+    assert!(!machine.socket_dir(&name).exists());
 
     // The start text: one stream-json line, then stdin closes after the
     // result.
@@ -434,8 +550,14 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     );
     let log = std::fs::read_to_string(folder.join("events.jsonl")).unwrap();
     assert_eq!(log.lines().count(), 5, "{log}");
+    let daemon = machine.read("daemon.out");
     for secret in [GH_TOKEN, ACCESS] {
-        for (name, shown) in [("stdout", &stdout), ("stderr", &stderr), ("events", &log)] {
+        for (name, shown) in [
+            ("stdout", &stdout),
+            ("stderr", &stderr),
+            ("events", &log),
+            ("the daemon", &daemon),
+        ] {
             assert!(!shown.contains(secret), "{name} has a secret:\n{shown}");
         }
     }
@@ -576,56 +698,131 @@ async fn riff_run_starts_no_container_for_an_item_that_another_session_holds() {
     assert!(machine.read("run.args").is_empty());
 }
 
-#[tokio::test]
-async fn a_stop_of_riff_run_stops_the_container_and_releases_the_item() {
-    let machine = Machine::new().await;
-    machine.lead().await;
-    // claude starts, and never ends its turn.
+/// Starts `riff run issue-12` with a `claude` that starts and never ends
+/// its turn. Gives the `riff run`, the name of the container and the
+/// session ID, when the container has the start text.
+async fn hanging_run(machine: &Machine) -> (std::process::Child, String, String) {
     std::fs::write(
         machine.bin.path().join("events"),
         r#"{"type":"system","subtype":"init","model":"m","permissionMode":"auto"}"#.to_owned()
             + "\n",
     )
     .unwrap();
-
     let mut cmd = machine.command(None, &["run", "issue-12", "--image", IMAGE]);
     let child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let started = Instant::now();
-    while !machine.bin.path().join("run.stdin").exists() {
-        assert!(
-            started.elapsed() < isolated::HANG,
-            "podman run did not start"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_for(&machine.bin.path().join("run.stdin"), "user").await;
+    let args = machine.read("run.args");
+    let args: Vec<&str> = args.lines().collect();
+    let session = args[args.iter().position(|a| *a == "--session-id").unwrap() + 1].to_owned();
+    (child, format!("riff-issue-12-{}", &session[..8]), session)
+}
+
+/// Waits for the end of `child`, and gives its output.
+async fn output_of(child: std::process::Child) -> Output {
+    tokio::task::spawn_blocking(move || child.wait_with_output().unwrap())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_stop_of_riff_run_stops_the_container_and_releases_the_item() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let (child, name, session) = hanging_run(&machine).await;
+
+    // While the session runs: the daemon shows it, and its socket tells
+    // which session asks.
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(
+        status.contains(&format!("  {name}  issue-12  session {session}  for ")),
+        "{status}"
+    );
+    let who = who_is(&machine.socket_dir(&name));
+    assert_eq!(who["say"], "session", "{who}");
+    assert_eq!(who["session"], session.as_str());
+    assert_eq!(who["item"], "issue-12");
+    assert_eq!(who["name"], name.as_str());
+
     let pid = nix::unistd::Pid::from_raw(child.id() as i32);
     nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap();
-    let out = tokio::task::spawn_blocking(move || child.wait_with_output().unwrap())
-        .await
-        .unwrap();
+    let out = output_of(child).await;
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
-
-    let folder = machine.folder("issue-12");
-    let short = folder
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .trim_start_matches("issue-12-")
-        .to_owned();
     assert_eq!(
         machine.read("podman.log").trim(),
-        format!("podman stop riff-issue-12-{short}")
+        format!("podman stop {name}")
     );
     assert!(
+        text(&out.stdout).contains(&format!("riff run stops the container {name}")),
+        "{}",
+        text(&out.stdout)
+    );
+    assert!(!machine.socket_dir(&name).exists());
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+#[tokio::test]
+async fn a_stop_of_the_daemon_stops_no_container() {
+    let mut machine = Machine::new().await;
+    machine.lead().await;
+    let (child, name, _) = hanging_run(&machine).await;
+
+    // systemd stops the unit of the daemon with a SIGTERM.
+    let stopped = machine.stop_daemon().await;
+    assert!(stopped.success(), "{stopped}");
+    assert!(
+        machine
+            .read("daemon.out")
+            .contains("It stopped no session: each container runs on."),
+        "{}",
+        machine.read("daemon.out")
+    );
+    // No podman stop. The podman run of the daemon passes no signal to
+    // the container, and has no INVOCATION_ID: conmon is not in the
+    // cgroup of the unit.
+    assert_eq!(machine.read("podman.log"), "");
+    assert!(
+        machine
+            .read("run.args")
+            .lines()
+            .any(|a| a == "--sig-proxy=false")
+    );
+    assert_eq!(machine.read("run.invocation"), "");
+
+    // riff run says so, and releases the item.
+    let out = output_of(child).await;
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    assert!(
         text(&out.stdout).contains(&format!(
-            "riff run stops the container riff-issue-12-{short}"
+            "The riff daemon stopped. The container {name} runs on to the end of its turn"
         )),
         "{}",
         text(&out.stdout)
     );
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+#[tokio::test]
+async fn riff_run_with_no_daemon_takes_no_claim_and_says_how_to_start_it() {
+    let mut machine = Machine::new().await;
+    machine.lead().await;
+    machine.stop_daemon().await;
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    let socket = machine.env.riff_home().join("daemon/riff.sock");
+    assert!(
+        stderr.contains(&format!("No riff daemon answers on {}", socket.display())),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Start it: riff daemon install"), "{stderr}");
+    assert!(machine.read("run.args").is_empty());
+    assert!(!machine.env.riff_home().join("sessions").exists());
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }

@@ -1,52 +1,57 @@
 //! `riff run ITEM`: one work item in one rootless podman container,
-//! with no daemon (#712, the first slice of riff 3.0).
+//! through the riff daemon (#712, #716).
 //!
 //! # Design
 //!
-//! The host does each riff step with the riff of today. The container
-//! does the work. No riff runs in the container in this slice
-//! (01M4Z81APKC14AVNJWCGRQKNVW).
+//! The host does each riff step with the riff of today: the checks, the
+//! claim, the clone, the verify request and the release. The daemon
+//! runs the container of the session ([`crate::daemon`]). The container
+//! does the work (01M4ZDTVXY84ETYJWMWDMQ34CN).
 //!
-//! `riff run` drives the container through the trait [`Runtime`]
-//! ([`run_with`]). On Linux, the runtime is [`crate::podman::Podman`].
-//! The tests take [`crate::runtime::Fake`] (01M4ZBGK5G3EFXWT61DR2NHMDD).
-//! On a host that is not Linux, `riff run` starts nothing
+//! `riff run` asks the daemon on its control socket: first for the
+//! image, then for the session. It shows each event that the daemon
+//! sends. With no daemon, `riff run` stops before the claim. On a host
+//! that is not Linux, `riff run` starts nothing
 //! (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant H as riff run (host)
 //!     participant S as riff-server
-//!     participant P as Runtime (podman)
+//!     participant D as riff daemon
 //!     participant C as claude -p (container)
 //!     participant G as GitHub
+//!     H->>D: the image: pull it when it is not here
 //!     H->>S: start a worker session, claim ITEM
 //!     H->>H: git clone --reference MAIN, the branch worktree-ITEM
-//!     H->>P: start SPEC, with the value of GH_TOKEN beside it
-//!     P->>C: start
-//!     H->>C: the start text, one stream-json line on the input
-//!     C-->>H: the events, one line each
+//!     H->>D: start SPEC, with the value of GH_TOKEN beside it
+//!     D->>C: start, with the socket of the session
+//!     D->>C: the start text, one stream-json line on the input
+//!     C-->>D: the events, one line each
+//!     D-->>H: each event, with no secret
 //!     C->>G: push the branch, open the pull request
-//!     C-->>H: the result of the turn
-//!     H->>C: close the input: claude ends, the container goes
+//!     D->>C: close the input after the result: claude ends
+//!     D-->>H: the end of the session
 //!     H->>G: find the pull request of the branch
 //!     H->>S: a verify request to the lead, release ITEM, end the session
 //! ```
 //!
 //! Before the claim, riff checks each fact that it needs: the image of
-//! the session (podman pulls it when it must), the sign-in of `gh`, the sign-in of `claude`, `HOME` and
-//! `USER`, and the milestone of the issue. A failed check takes no
-//! claim (01M4Z81B3A324KKE8M8Z71TM4M).
+//! the session (the daemon pulls it when it must), the sign-in of `gh`,
+//! the sign-in of `claude`, `HOME` and `USER`, and the milestone of the
+//! issue. A failed check takes no claim (01M4Z81B3A324KKE8M8Z71TM4M).
 //!
 //! The image is the one that `riff.toml` of the main clone pins by its
 //! digest ([`Image::of_repository`]), or the one of `--image`, for
-//! example a local build. When podman does not have the image, riff
-//! pulls it before the claim (01M4Z81B5A456HDKW7G0WFGCY6).
+//! example a local build. When podman does not have the image, the
+//! daemon pulls it before the claim (01M4Z81B5A456HDKW7G0WFGCY6).
 //!
 //! When `claude` ends, riff finds the open pull request of the branch,
 //! sends a verify request to the lead, releases the item and ends the
-//! session. A SIGINT or a SIGTERM stops the container first
-//! (01M4Z81B1913NF6HBZ5G38B3Q9).
+//! session. A SIGINT or a SIGTERM asks the daemon to stop the container
+//! first (01M4Z81B1913NF6HBZ5G38B3Q9). When the daemon stops before the
+//! end of the session, `riff run` says so, and does these steps too
+//! (01M4ZDTW25YV0GMMVGWN6JTJC5).
 //!
 //! # The folder of a session
 //!
@@ -57,7 +62,7 @@
 //! |---|---|
 //! | `clone/` | The clone of the session: `git clone --reference MAIN`. It stays until the merge. |
 //! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the trust of the clone ([`trust`]), and no attribution line of `claude` ([`settings`]). |
-//! | `events.jsonl` | Each event of `claude`, with no secret ([`Scrub`]). |
+//! | `events.jsonl` | Each event of `claude`, with no secret ([`Scrub`]). The daemon writes it. |
 //!
 //! # The spec of the container
 //!
@@ -79,10 +84,10 @@
 //! | The caches | the volumes `riff-cargo` and `riff-sccache` | 01M4Z60B7RPSQ1ABGVMJSZWS5P |
 //! | The limits | `--memory 8g`, `--cpus 4` | 01M4Z60B7XT7462XMV49GJTVSJ |
 //! | `claude` | `-p` in stream-json, the riff session ID, the auto mode | 01M4Z60B82FHN2YG9YJHW8XZX1, 01M4Z81ATZK3FX9GRFTM236FE6 |
+//! | The socket of the session | the daemon adds it: its folder at `/run/riff` with write, and `RIFF_SOCKET` | 01M4ZDTVSP0T1YENKAWGKA114D |
 
 use std::borrow::Cow;
 use std::ffi::OsString;
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -92,11 +97,11 @@ use riff_core::selector::Selector;
 use riff_core::wire::{Kind, StartReason, WORKER_ALIVE_EVERY};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::api::{self, Api};
-use crate::runtime::{Bind, Env, Exit, Running, Runtime, SessionSpec, Source};
+use crate::daemon::{self, Ask, Ended, Say};
+use crate::runtime::{Bind, Env, SessionSpec, Source};
 use crate::session_image::Image;
 use crate::{dropped, home, identity, pr, rollout, terminal, text};
 
@@ -279,8 +284,50 @@ pub fn branch(item: &str) -> String {
     format!("{}{item}", dropped::BRANCH)
 }
 
-/// The folder of the session folders: `RIFF_HOME/sessions`, else
-/// `XDG_DATA_HOME/riff/sessions`, else `HOME/.local/share/riff/sessions`.
+/// The data folder of riff 3.0: `RIFF_HOME`, else `XDG_DATA_HOME/riff`,
+/// else `HOME/.local/share/riff`. It holds the session folders and the
+/// folder of the daemon ([`crate::daemon::dir`]).
+///
+/// ```
+/// use riff::run::data_dir_from;
+/// use std::path::Path;
+///
+/// let some = |s: &str| Some(s.into());
+/// assert_eq!(data_dir_from(some("/r"), some("/d"), some("/h"))?, Path::new("/r"));
+/// assert_eq!(data_dir_from(None, some("/d"), some("/h"))?, Path::new("/d/riff"));
+/// assert_eq!(
+///     data_dir_from(None, some(""), some("/h"))?,
+///     Path::new("/h/.local/share/riff")
+/// );
+/// assert!(data_dir_from(None, None, None).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn data_dir_from(
+    riff_home: Option<OsString>,
+    data_home: Option<OsString>,
+    home: Option<OsString>,
+) -> Result<PathBuf> {
+    if let Some(dir) = home::dir_from(riff_home) {
+        return Ok(dir);
+    }
+    let set = |v: Option<OsString>| v.filter(|v| !v.is_empty()).map(PathBuf::from);
+    match (set(data_home), set(home)) {
+        (Some(data), _) => Ok(data.join("riff")),
+        (None, Some(home)) => Ok(home.join(".local/share/riff")),
+        (None, None) => bail!("set HOME or XDG_DATA_HOME"),
+    }
+}
+
+/// [`data_dir_from`] with the values of this process.
+pub fn data_dir() -> Result<PathBuf> {
+    data_dir_from(
+        std::env::var_os(home::VAR),
+        std::env::var_os("XDG_DATA_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// The folder of the session folders: `sessions` in [`data_dir`].
 ///
 /// ```
 /// use riff::run::sessions_dir_from;
@@ -289,11 +336,6 @@ pub fn branch(item: &str) -> String {
 /// let some = |s: &str| Some(s.into());
 /// assert_eq!(sessions_dir_from(some("/r"), some("/d"), some("/h"))?, Path::new("/r/sessions"));
 /// assert_eq!(sessions_dir_from(None, some("/d"), some("/h"))?, Path::new("/d/riff/sessions"));
-/// assert_eq!(
-///     sessions_dir_from(None, some(""), some("/h"))?,
-///     Path::new("/h/.local/share/riff/sessions")
-/// );
-/// assert!(sessions_dir_from(None, None, None).is_err());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn sessions_dir_from(
@@ -301,24 +343,12 @@ pub fn sessions_dir_from(
     data_home: Option<OsString>,
     home: Option<OsString>,
 ) -> Result<PathBuf> {
-    if let Some(dir) = home::dir_from(riff_home) {
-        return Ok(dir.join("sessions"));
-    }
-    let set = |v: Option<OsString>| v.filter(|v| !v.is_empty()).map(PathBuf::from);
-    match (set(data_home), set(home)) {
-        (Some(data), _) => Ok(data.join("riff/sessions")),
-        (None, Some(home)) => Ok(home.join(".local/share/riff/sessions")),
-        (None, None) => bail!("set HOME or XDG_DATA_HOME"),
-    }
+    Ok(data_dir_from(riff_home, data_home, home)?.join("sessions"))
 }
 
 /// [`sessions_dir_from`] with the values of this process.
 pub fn sessions_dir() -> Result<PathBuf> {
-    sessions_dir_from(
-        std::env::var_os(home::VAR),
-        std::env::var_os("XDG_DATA_HOME"),
-        std::env::var_os("HOME"),
-    )
+    Ok(data_dir()?.join("sessions"))
 }
 
 /// The `.claude.json` of the own Claude folder: it trusts the clone, as
@@ -641,22 +671,11 @@ struct Checked {
     credentials: PathBuf,
 }
 
-/// Pulls `image` when the runtime does not have it
-/// (01M4Z81B5A456HDKW7G0WFGCY6).
-async fn have_image(runtime: &impl Runtime, image: &str) -> Result<()> {
-    if runtime.has_image(image).await? {
-        return Ok(());
-    }
-    println!("{}", text::run_pulling(image));
-    runtime
-        .pull(image)
-        .await
-        .with_context(|| text::run_no_image(image))
-}
-
-/// Checks each fact that a session needs, before the claim.
-async fn check(runtime: &impl Runtime, main: &Path, issue: u64, image: &str) -> Result<Checked> {
-    have_image(runtime, image).await?;
+/// Checks each fact that a session needs, before the claim. The daemon
+/// in the folder `daemon` pulls the image when this machine does not
+/// have it (01M4Z81B5A456HDKW7G0WFGCY6).
+async fn check(daemon: &Path, main: &Path, issue: u64, image: &str) -> Result<Checked> {
+    daemon::image(daemon, image, |line| println!("{line}")).await?;
     let gh_token = output("gh", main, &["auth", "token"])
         .map_err(|e| anyhow!("{}: {e:#}", text::RUN_NO_GH))?;
     let home = std::env::var_os("HOME")
@@ -756,116 +775,65 @@ fn make_clone(main: &Path, clone: &Path, branch: &str) -> Result<bool> {
     Ok(earlier)
 }
 
-/// How a session ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Ended {
-    /// The exit of the command of the session.
-    exit: Exit,
-    /// True when the turn of `claude` ended with an error, or a signal
-    /// stopped the container.
-    failed: bool,
+/// Shows one line of the output of the session: the lines of its event,
+/// or the line itself when it is not JSON.
+fn show(line: &str) {
+    match serde_json::from_str::<Value>(line) {
+        Ok(event) => {
+            for shown in event_lines(&event) {
+                println!("{shown}");
+            }
+        }
+        Err(_) => println!("{line}"),
+    }
 }
 
-/// [`drive`], where a SIGINT or a SIGTERM stops the container.
-async fn run_session(
-    runtime: &impl Runtime,
-    spec: &SessionSpec,
-    start: &str,
-    events: &Path,
-    scrub: &Scrub,
-    values: &[(String, String)],
-) -> Result<Ended> {
+/// Asks the daemon in the folder `daemon` to run the session of
+/// `start`, shows its events, and waits for its end. A SIGINT or a
+/// SIGTERM asks the daemon to stop the container. When the daemon stops
+/// first, the session failed for `riff run` (01M4ZDTW25YV0GMMVGWN6JTJC5).
+async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
     // The handlers come first: a signal before them ends riff with no
     // release.
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
-    let signalled = async move {
-        tokio::select! {
-            _ = term.recv() => {}
-            _ = int.recv() => {}
-        }
-    };
-    drive(runtime, spec, start, events, scrub, values, signalled).await
-}
-
-/// Starts the session of `spec` with the `values` of the host, gives
-/// `claude` the start text, shows its events, and waits for its end. When
-/// `stop` ends first, it stops the container.
-async fn drive(
-    runtime: &impl Runtime,
-    spec: &SessionSpec,
-    start: &str,
-    events: &Path,
-    scrub: &Scrub,
-    values: &[(String, String)],
-    stop: impl Future<Output = ()>,
-) -> Result<Ended> {
-    let Running {
-        name,
-        input,
-        events: output,
-        errors,
-        end,
-    } = runtime.start(spec, values).await?;
-    let mut input = Some(input);
-    if let Some(input) = input.as_mut() {
-        input
-            .write_all(format!("{}\n", user_line(start)).as_bytes())
-            .await?;
-        input.flush().await?;
-    }
-    let errors = {
-        let scrub = scrub.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(errors).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                eprintln!("{}", scrub.clean(&line));
-            }
-        })
-    };
-    let mut log = tokio::fs::File::create(events)
-        .await
-        .with_context(|| format!("cannot write {}", events.display()))?;
-    let mut lines = BufReader::new(output).lines();
+    let mut name = start.spec.name.clone();
+    let mut client = daemon::Client::connect(daemon).await?;
+    client.ask(Ask::Start(Box::new(start))).await?;
     let mut stopped = false;
-    let mut failed = false;
-    tokio::pin!(stop);
     loop {
-        let line = tokio::select! {
-            line = lines.next_line() => line?,
-            () = &mut stop, if !stopped => {
+        let say = tokio::select! {
+            say = client.next() => say?,
+            _ = term.recv(), if !stopped => {
                 stopped = true;
                 println!("{}", text::run_stopping(&name));
-                let _ = runtime.stop(&name).await;
+                client.stop().await?;
+                continue;
+            }
+            _ = int.recv(), if !stopped => {
+                stopped = true;
+                println!("{}", text::run_stopping(&name));
+                client.stop().await?;
                 continue;
             }
         };
-        let Some(line) = line else { break };
-        let line = scrub.clean(&line);
-        log.write_all(format!("{line}\n").as_bytes()).await?;
-        match serde_json::from_str::<Value>(&line) {
-            Ok(event) => {
-                for shown in event_lines(&event) {
-                    println!("{shown}");
-                }
-                if event["type"] == "result" {
-                    failed |= event["is_error"] == true;
-                    // The end of the one turn: claude ends when its
-                    // input closes.
-                    input = None;
-                }
+        match say {
+            Some(Say::Started { name: started, .. }) => name = started,
+            Some(Say::Event { line }) => show(&line),
+            Some(Say::Stderr { line }) => eprintln!("{line}"),
+            Some(Say::Line { text }) => println!("{text}"),
+            Some(Say::Ended(ended)) => return Ok(ended),
+            Some(Say::Failed { error }) => bail!("{error}"),
+            Some(_) => bail!("{}", text::DAEMON_GONE),
+            None => {
+                println!("{}", text::run_daemon_gone(&name));
+                return Ok(Ended {
+                    code: None,
+                    failed: true,
+                });
             }
-            Err(_) => println!("{line}"),
         }
     }
-    drop(input);
-    log.flush().await?;
-    let exit = end.wait().await?;
-    let _ = errors.await;
-    Ok(Ended {
-        exit,
-        failed: failed || stopped,
-    })
 }
 
 /// A pull request as `gh pr view --json number,url,headRefOid,state`
@@ -882,8 +850,8 @@ struct Pull {
 /// `riff run ITEM`: one work item in one container, from the claim to
 /// the pull request. With no `image`, it takes the image that the main
 /// clone pins. It gives the exit code of the command. On Linux, it runs
-/// [`run_with`] with podman. On a host that is not Linux, it starts
-/// nothing (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
+/// [`run_with`] with the daemon of this machine ([`daemon::dir`]). On a
+/// host that is not Linux, it starts nothing (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub async fn run(
     api: Api,
     here: &Place,
@@ -893,7 +861,7 @@ pub async fn run(
 ) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
-        run_with(&crate::podman::Podman, api, here, server, item, image).await
+        run_with(&daemon::dir()?, api, here, server, item, image).await
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -902,9 +870,9 @@ pub async fn run(
     }
 }
 
-/// [`run`] with the runtime `runtime` (01M4ZBGK5G3EFXWT61DR2NHMDD).
+/// [`run`] with the daemon in the folder `daemon`.
 pub async fn run_with(
-    runtime: &impl Runtime,
+    daemon: &Path,
     api: Api,
     here: &Place,
     server: &str,
@@ -919,7 +887,7 @@ pub async fn run_with(
         None => Image::of_repository(&main)?.to_string(),
     };
     let image = image.as_str();
-    let checked = check(runtime, &main, issue, image).await?;
+    let checked = check(daemon, &main, issue, image).await?;
     let Some(thread) = here.default_thread() else {
         bail!("{}", text::RUN_NO_REPO);
     };
@@ -947,7 +915,7 @@ pub async fn run_with(
     }
 
     let worked = work(
-        runtime, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
+        daemon, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
     )
     .await;
     if let Err(e) = api.release(&me, &thread, item).await {
@@ -961,7 +929,7 @@ pub async fn run_with(
 /// The part of [`run`] between the claim and the release.
 #[allow(clippy::too_many_arguments)]
 async fn work(
-    runtime: &impl Runtime,
+    daemon: &Path,
     api: &Api,
     me: &SessionUri,
     thread: &riff_core::name::ThreadName,
@@ -1010,12 +978,23 @@ async fn work(
         &checked.milestone,
         earlier,
     );
-    let scrub = Scrub::new(
-        std::iter::once(checked.gh_token.clone()).chain(checked.sign_in.secrets.iter().cloned()),
-    );
-    let events = folder.join("events.jsonl");
-    let values = [("GH_TOKEN".to_owned(), checked.gh_token.clone())];
-    let ended = run_session(runtime, &spec, &start, &events, &scrub, &values).await?;
+    let secrets = std::iter::once(checked.gh_token.clone())
+        .chain(checked.sign_in.secrets.iter().cloned())
+        .collect();
+    let values = vec![("GH_TOKEN".to_owned(), checked.gh_token.clone())];
+    let ended = run_session(
+        daemon,
+        daemon::Start {
+            session: session.to_owned(),
+            item: item.to_owned(),
+            folder,
+            spec,
+            start,
+            values,
+            secrets,
+        },
+    )
+    .await?;
 
     let pull = pr::Gh::default()
         .json::<Pull>(&[
@@ -1046,14 +1025,13 @@ async fn work(
     }
     println!("{}", text::run_kept(&clone));
     Ok(i32::from(
-        !(ended.exit.success() && !ended.failed && pull.is_some()),
+        !(ended.code == Some(0) && !ended.failed && pull.is_some()),
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::Fake;
 
     fn facts() -> Facts {
         Facts {
@@ -1207,125 +1185,6 @@ mod tests {
         let all = all.join("\n");
         assert!(!all.contains(".gitconfig"), "{all}");
         assert!(!all.contains(".config/gh"), "{all}");
-    }
-
-    /// The events of one turn of a fake `claude`, with a token in a
-    /// tool result.
-    const TURN: [&str; 3] = [
-        r#"{"type":"system","subtype":"init","model":"m","permissionMode":"auto"}"#,
-        r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"gho_secret1"}]}}"#,
-        r#"{"type":"result","subtype":"success","is_error":false,"num_turns":1}"#,
-    ];
-
-    /// Drives the session of `facts()` in `fake`, with `stop`. Gives how
-    /// it ended and its log of events.
-    async fn driven(fake: &Fake, stop: impl Future<Output = ()>) -> (Result<Ended>, String) {
-        let folder = tempfile::tempdir().unwrap();
-        let events = folder.path().join("events.jsonl");
-        let scrub = Scrub::new(["gho_secret1".to_owned()]);
-        let values = [("GH_TOKEN".to_owned(), "gho_secret1".to_owned())];
-        let ended = drive(
-            fake,
-            &spec(&facts()),
-            "Do it.",
-            &events,
-            &scrub,
-            &values,
-            stop,
-        )
-        .await;
-        let log = std::fs::read_to_string(&events).unwrap_or_default();
-        (ended, log)
-    }
-
-    #[tokio::test]
-    async fn a_session_gets_the_start_text_and_ends_after_the_result_of_its_turn() {
-        let fake = Fake::default()
-            .with_image("localhost/riff-session:latest")
-            .with_events(TURN);
-        let (ended, log) = driven(&fake, std::future::pending()).await;
-        assert_eq!(
-            ended.unwrap(),
-            Ended {
-                exit: Exit::SUCCESS,
-                failed: false
-            }
-        );
-        let name = "riff-issue-12-1a2b3c4d";
-        assert_eq!(fake.calls(), [format!("start {name}")]);
-        // One stream-json line, then the input closed after the result.
-        assert_eq!(fake.input(name), format!("{}\n", user_line("Do it.")));
-        assert_eq!(fake.exit(name), Some(Exit::SUCCESS));
-        // The token goes to the runtime beside the spec, and into no log.
-        assert_eq!(
-            fake.values(name),
-            [("GH_TOKEN".to_owned(), "gho_secret1".to_owned())]
-        );
-        assert_eq!(log.lines().count(), 3, "{log}");
-        assert!(!log.contains("gho_secret1"), "{log}");
-        assert!(log.contains(HIDDEN), "{log}");
-    }
-
-    #[tokio::test]
-    async fn a_turn_that_ends_with_an_error_fails() {
-        let error = r#"{"type":"result","subtype":"error_during_execution","is_error":true}"#;
-        let fake = Fake::default()
-            .with_image("localhost/riff-session:latest")
-            .with_events([error]);
-        let (ended, _) = driven(&fake, std::future::pending()).await;
-        assert_eq!(
-            ended.unwrap(),
-            Ended {
-                exit: Exit::SUCCESS,
-                failed: true
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn a_stop_stops_the_container_of_a_turn_that_never_ends() {
-        // claude starts, and never ends its turn.
-        let fake = Fake::default()
-            .with_image("localhost/riff-session:latest")
-            .with_events([TURN[0]]);
-        let (ended, log) = driven(&fake, async {}).await;
-        assert_eq!(
-            ended.unwrap(),
-            Ended {
-                exit: Exit { code: None },
-                failed: true
-            }
-        );
-        let name = "riff-issue-12-1a2b3c4d";
-        assert_eq!(
-            fake.calls(),
-            [format!("start {name}"), format!("stop {name}")]
-        );
-        assert!(log.lines().count() <= 1, "{log}");
-    }
-
-    #[tokio::test]
-    async fn a_session_with_no_image_on_the_machine_does_not_start() {
-        let fake = Fake::default().with_events(TURN);
-        let (ended, _) = driven(&fake, std::future::pending()).await;
-        let error = ended.unwrap_err().to_string();
-        assert!(error.contains("no image"), "{error}");
-    }
-
-    #[tokio::test]
-    async fn riff_run_pulls_only_an_image_that_the_machine_does_not_have() {
-        let (local, remote, missing) = ("img-local", "img-remote", "img-missing");
-        let fake = Fake::default().with_image(local).with_registry(remote);
-        have_image(&fake, local).await.unwrap();
-        assert!(fake.calls().is_empty());
-        have_image(&fake, remote).await.unwrap();
-        assert!(fake.has_image(remote).await.unwrap());
-        let error = format!("{:#}", have_image(&fake, missing).await.unwrap_err());
-        assert!(error.contains(&text::run_no_image(missing)), "{error}");
-        assert_eq!(
-            fake.calls(),
-            [format!("pull {remote}"), format!("pull {missing}")]
-        );
     }
 
     #[test]

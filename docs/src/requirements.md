@@ -4507,6 +4507,65 @@ share.
   riff shows the sessions, and attaches to the lead or to a takeover.
   riff 3.0 uses no tmux.
 
+### The riff daemon
+
+- **01M4ZDTVH57VE77YT20G65A4BQ** `riff daemon` runs the daemon in the
+  foreground. The systemd user unit runs the same command. At a SIGTERM
+  or a SIGINT, the daemon stops, and stops no session.
+- **01M4ZDTVK74596M0ZA46N51NKV** `riff daemon install` writes the unit
+  `riff.service` in the folder of the user units of systemd
+  (`XDG_CONFIG_HOME/systemd/user`, else `~/.config/systemd/user`). The
+  unit runs `riff daemon` with the absolute path of this riff. It gets
+  the `PATH` of the shell that installs it, and `XDG_DATA_HOME` when it
+  is set. Then riff runs `systemctl --user daemon-reload`, `enable` and
+  `restart`, and waits up to 10 seconds for the daemon to answer. The
+  unit file and the link of its `enable` are the only files of riff in
+  the home outside its own folders. With `RIFF_HOME` set, riff installs
+  nothing.
+- **01M4ZDTVNBKDM64043GGWQEV4S** `riff daemon status` shows the process
+  ID, the build and the age of the daemon, its folder, and each session
+  that it owns. When no daemon answers, it shows the state of the unit
+  `riff.service`, and exits with 1.
+- **01M4ZDTVQEHD87WD5TSN93XFSS** The folder of the daemon is `daemon` in
+  the data folder of riff, with mode 0700. It holds the control socket
+  `riff.sock`, and a folder `sessions/NAME` for the socket of each
+  session, with mode 0700. The daemon starts no session whose spec binds
+  the folder of the daemon, a folder above it or a path in it, or binds
+  a path at `/run/riff`.
+- **01M4ZDTVSP0T1YENKAWGKA114D** The daemon binds the folder of the
+  socket of a session at `/run/riff` in its container, with write, and
+  sets `RIFF_SOCKET=/run/riff/riff.sock`. Each session has its own
+  listener. So the listener tells the daemon which session asks: a
+  hello on the socket gets the session ID, the item and the name of the
+  container. The folder goes at the end of the session.
+- **01M4ZDTVVV56X964S28GS6K2Z2** `riff` and the daemon send JSON, one
+  message on each line. The first line of each connection has the
+  version of the protocol and one ask. The daemon refuses another
+  version, and says to start it again with `riff daemon install`. An
+  error of the daemon shows no part of a line that it cannot read.
+- **01M4ZDTVXY84ETYJWMWDMQ34CN** `riff run ITEM` does one work item in
+  one rootless podman container, through the daemon. It asks the daemon
+  for the image (the daemon pulls it when it must), then for the
+  session. The host does each riff step with riff 1.x: it checks the
+  facts, starts a worker session, claims the item, makes the clone,
+  sends the verify request and releases the item. The daemon starts the
+  container, writes `events.jsonl`, and sends each event, with no
+  secret, to `riff run`. No riff runs in the container. With no daemon,
+  `riff run` stops before the claim, and says how to start the daemon.
+  Ctrl-C asks the daemon to stop the container. When `riff run` ends
+  with no stop, the session goes on in the daemon.
+- **01M4ZDTW00B7N6T9P3MK066KA7** A stop or a restart of the daemon stops
+  no container. The daemon starts each `podman` with no
+  `INVOCATION_ID`, so podman puts conmon in a scope of its own, not in
+  the cgroup of the unit of the daemon. `podman run` has
+  `--sig-proxy=false`, so a signal to it does not go to the container.
+  The daemon stops a container only when `riff run` asks.
+- **01M4ZDTW25YV0GMMVGWN6JTJC5** Until `riff relay` (#717), the input
+  and the events of a session go through the `podman run` of the
+  daemon. At a stop of the daemon they end: `claude` ends after its
+  turn, and its container goes. `riff run` then says that the daemon
+  stopped, finds the pull request, and releases the item.
+
 ### riff run
 
 - **01M4Z81APKC14AVNJWCGRQKNVW** `riff run ITEM` does one work item in
@@ -4515,6 +4574,7 @@ share.
   sends the verify request and releases the item. The container does
   the work. No riff runs in the container. riff shows each event of
   `claude` on the terminal, with no secret (01M4Z60B8KDXD190RWC7D184Q3).
+  Superseded by 01M4ZDTVXY84ETYJWMWDMQ34CN.
 - **01M4Z81ARSTAK8HR96S084SDFD** Each session of `riff run` has a folder
   of its own, `sessions/ITEM-ID8` in the data folder of riff, where
   `ID8` is the start of the session ID. With `RIFF_HOME`, the folder is
@@ -4731,6 +4791,12 @@ share.
   of `--skip`.
   In the Claude folder of the person, only a new path that names the
   `ID8` of the session counts.
+- **01M4ZFPYNGFF49WWHR8EBWSTNG** Before `riff run`, the real-session
+  test starts `riff daemon` of the tree in a process group of its own,
+  and waits up to 10 seconds until `riff daemon status` answers. When a
+  riff daemon answers before the start, the step fails, and the test
+  does not stop that daemon. The clean-up stops the daemon of the test
+  with SIGTERM, and kills it when it does not end in 10 seconds.
 - **01M4ZCFGKDKH16KGKR5NBEK3Y4** Before each tag, an admin runs
   `just real-session` on the merge commit of the release pull request,
   on a host with podman. It passes before the tag.
