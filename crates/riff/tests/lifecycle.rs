@@ -745,3 +745,224 @@ async fn update_with_no_release_tag_names_the_flag() {
     );
     assert_eq!(log(bin.path(), "cargo"), "");
 }
+
+/// A fake binary of a release: a 64-bit ELF of x86-64 with one program
+/// header, then `text`. With `interpreter`, the header is a `PT_INTERP`
+/// that names it, so the binary is not static.
+fn fake_binary(text: &str, interpreter: Option<&str>) -> Vec<u8> {
+    let mut bytes = vec![0u8; 64 + 56];
+    bytes[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    bytes[16..18].copy_from_slice(&3u16.to_le_bytes());
+    bytes[18..20].copy_from_slice(&riff::release::EM_X86_64.to_le_bytes());
+    bytes[32..40].copy_from_slice(&64u64.to_le_bytes());
+    bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
+    bytes[56..58].copy_from_slice(&1u16.to_le_bytes());
+    let (kind, path) = interpreter.map_or((1u32, ""), |path| (3, path));
+    bytes[64..68].copy_from_slice(&kind.to_le_bytes());
+    bytes[72..80].copy_from_slice(&120u64.to_le_bytes());
+    bytes[96..104].copy_from_slice(&(path.len() as u64 + 1).to_le_bytes());
+    bytes.extend_from_slice(path.as_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(text.as_bytes());
+    bytes
+}
+
+/// The name of the release file of `binary` for this machine.
+fn asset(binary: &str) -> String {
+    riff::release::asset(binary, riff::release::TARGET.unwrap())
+}
+
+/// Puts the release `tag` in the folder `dir`: each binary of `files`,
+/// and `SHA256SUMS` with `sums`, else with the sum of each file.
+fn put_release(dir: &Path, tag: &str, files: &[(&str, &[u8])], sums: Option<&str>) {
+    let dir = dir.join(tag);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut lines = String::new();
+    for (binary, bytes) in files {
+        std::fs::write(dir.join(asset(binary)), bytes).unwrap();
+        lines += &format!("{}  {}\n", riff::release::sha256(bytes), asset(binary));
+    }
+    std::fs::write(dir.join("SHA256SUMS"), sums.unwrap_or(&lines)).unwrap();
+}
+
+/// A web server of the release files in the folder `dir`, at
+/// `/TAG/NAME`, with a 404 for each file that is not there.
+async fn release_server(dir: &Path) -> String {
+    let dir = dir.to_owned();
+    let router = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+        let path = dir.join(uri.path().trim_start_matches('/'));
+        async move {
+            match std::fs::read(path) {
+                Ok(bytes) => (axum::http::StatusCode::OK, bytes),
+                Err(_) => (axum::http::StatusCode::NOT_FOUND, Vec::new()),
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{addr}/")
+}
+
+/// `riff update --tag TAG` with the release files at `releases` and
+/// the bin folder of cargo in `root`.
+fn update_from(bin: &Path, tag: &str, releases: &str, root: &Path) -> Command {
+    let mut cmd = update(bin, 0, "http://127.0.0.1:9");
+    cmd.args(["--tag", tag])
+        .env("RIFF_RELEASES", releases)
+        .env("CARGO_INSTALL_ROOT", root);
+    cmd
+}
+
+/// The names of the files in `dir`, in order.
+fn names(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// 01M4ZPJ0BAQZ6AN06FGXS5D4FP: on Linux x86-64, `riff update` puts the
+/// static binaries of the release in the bin folder of cargo, from a web
+/// server or from a folder. cargo does not run.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[tokio::test]
+async fn update_downloads_the_static_binaries_of_the_release() {
+    let files = tempfile::tempdir().unwrap();
+    let new_riff = fake_binary("the new riff", None);
+    let new_server = fake_binary("the new riff-server", None);
+    put_release(
+        files.path(),
+        "v0.9.0",
+        &[("riff", &new_riff), ("riff-server", &new_server)],
+        None,
+    );
+    let web = release_server(files.path()).await;
+    for releases in [web.as_str(), files.path().to_str().unwrap()] {
+        let bin = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("riff"), "the old riff").unwrap();
+
+        let out = run(update_from(bin.path(), "v0.9.0", releases, root.path())).await;
+        assert!(out.status.success(), "{releases}: {}", text(&out.stderr));
+        assert_eq!(std::fs::read(dir.join("riff")).unwrap(), new_riff);
+        assert_eq!(std::fs::read(dir.join("riff-server")).unwrap(), new_server);
+        for binary in ["riff", "riff-server"] {
+            let mode = std::fs::metadata(dir.join(binary)).unwrap().permissions();
+            assert_eq!(mode.mode() & 0o777, 0o755, "{binary}");
+        }
+        assert_eq!(names(&dir), ["riff", "riff-server"], "no new file stays");
+        assert_eq!(log(bin.path(), "cargo"), "");
+        assert_eq!(
+            log(bin.path(), "riff"),
+            "connect claude --claude /opt/claude\n"
+        );
+        let stdout = text(&out.stdout);
+        assert!(
+            stdout.contains(&format!(
+                "riff downloads the static riff and riff-server of v0.9.0 ({}) into {}.\n",
+                riff::release::TARGET.unwrap(),
+                dir.display()
+            )),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("cargo builds it"), "{stdout}");
+    }
+}
+
+/// 01M4ZPJ0BAQZ6AN06FGXS5D4FP: a file with another SHA-256, a binary
+/// that is not static, or a file that is missing: `riff update` installs
+/// nothing, names the reason, and runs neither cargo nor the plugin
+/// update.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[tokio::test]
+async fn update_installs_nothing_when_a_file_fails_a_check() {
+    let good = fake_binary("riff", None);
+    let server = fake_binary("riff-server", None);
+    let dynamic = fake_binary("riff", Some("/lib64/ld-linux-x86-64.so.2"));
+    let zeros = "0".repeat(64);
+    let sum = |bytes: &[u8], binary: &str| {
+        format!("{}  {}\n", riff::release::sha256(bytes), asset(binary))
+    };
+    let wrong_sums = format!("{zeros}  {}\n{}", asset("riff"), sum(&server, "riff-server"));
+    let missing_sums = sum(&good, "riff") + &sum(&server, "riff-server");
+    let cases: [(&[(&str, &[u8])], Option<&str>, String); 3] = [
+        (
+            &[("riff", &good), ("riff-server", &server)],
+            Some(&wrong_sums),
+            format!(
+                "the SHA-256 of {} of v0.9.0 is {}, not {zeros} of SHA256SUMS",
+                asset("riff"),
+                riff::release::sha256(&good)
+            ),
+        ),
+        (
+            &[("riff", &dynamic), ("riff-server", &server)],
+            None,
+            format!(
+                "{} of v0.9.0: it needs the shared libraries of \
+                 /lib64/ld-linux-x86-64.so.2: it is not static",
+                asset("riff")
+            ),
+        ),
+        (
+            &[("riff-server", &server)],
+            Some(&missing_sums),
+            format!("the release v0.9.0 has no {}", asset("riff")),
+        ),
+    ];
+    for (files, sums, reason) in cases {
+        let releases = tempfile::tempdir().unwrap();
+        put_release(releases.path(), "v0.9.0", files, sums);
+        let bin = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("riff"), "the old riff").unwrap();
+
+        let releases = releases.path().to_str().unwrap();
+        let out = run(update_from(bin.path(), "v0.9.0", releases, root.path())).await;
+        assert!(!out.status.success(), "{reason}");
+        let stderr = text(&out.stderr);
+        assert!(stderr.contains(&reason), "{reason}: {stderr}");
+        assert_eq!(std::fs::read(dir.join("riff")).unwrap(), b"the old riff");
+        assert_eq!(names(&dir), ["riff"], "{reason}");
+        assert_eq!(log(bin.path(), "cargo"), "", "{reason}");
+        assert_eq!(log(bin.path(), "riff"), "", "{reason}");
+    }
+}
+
+/// 01M4ZPJ0DJ9FTYNPTBBVJCTB37: a release with no `SHA256SUMS`, or with
+/// no line for a binary of this machine, has no static riff. `riff
+/// update` says so, and cargo builds the release.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[tokio::test]
+async fn update_builds_with_cargo_when_the_release_has_no_static_riff() {
+    let only_riff = format!("{}  {}\n", "ab".repeat(32), asset("riff"));
+    for sums in [None, Some(only_riff.as_str())] {
+        let files = tempfile::tempdir().unwrap();
+        if let Some(sums) = sums {
+            put_release(files.path(), "v0.9.0", &[], Some(sums));
+        }
+        let web = release_server(files.path()).await;
+        for releases in [web.as_str(), files.path().to_str().unwrap()] {
+            let bin = tempfile::tempdir().unwrap();
+            let root = tempfile::tempdir().unwrap();
+            let out = run(update_from(bin.path(), "v0.9.0", releases, root.path())).await;
+            assert!(out.status.success(), "{sums:?}: {}", text(&out.stderr));
+            assert_eq!(log(bin.path(), "cargo"), install("v0.9.0"), "{sums:?}");
+            assert!(
+                text(&out.stdout).contains(
+                    "The release v0.9.0 has no static riff for this machine, so cargo builds it.\n"
+                ),
+                "{sums:?}: {}",
+                text(&out.stdout)
+            );
+            assert!(!root.path().join("bin").exists(), "{sums:?}");
+        }
+    }
+}

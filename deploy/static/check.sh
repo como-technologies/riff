@@ -10,7 +10,9 @@
 #
 #   deploy/static/check.sh [release|dev]
 #
-# It runs podman, else docker, or the engine in RIFF_ENGINE.
+# It runs podman, else docker, or the engine in RIFF_ENGINE. The folder
+# RIFF_STATIC_DIR, when it is set, holds the binaries in place of the
+# folder of the profile.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/../.."
 
@@ -23,6 +25,7 @@ dev) DIR=target/static/debug ;;
     exit 2
     ;;
 esac
+DIR="${RIFF_STATIC_DIR:-$DIR}"
 
 ENGINE="${RIFF_ENGINE:-}"
 if [ -z "$ENGINE" ]; then
@@ -44,6 +47,10 @@ for name in riff riff-server; do
         echo "check.sh: $file is missing. Build it: deploy/static/build.sh $PROFILE" >&2
         exit 1
     fi
+    if ! readelf -h "$file" > /dev/null 2>&1; then
+        echo "check.sh: $file is not an ELF file." >&2
+        exit 1
+    fi
     interpreter=$(readelf -lW "$file" | sed -n 's/.*Requesting program interpreter: \(.*\)]$/\1/p')
     if [ -n "$interpreter" ]; then
         echo "check.sh: $file needs the shared libraries of $interpreter: it is not static." >&2
@@ -52,7 +59,7 @@ for name in riff riff-server; do
     echo "$file has no interpreter: it is static."
 done
 
-RIFF="$PWD/$DIR/riff"
+RIFF="$(readlink -f "$DIR/riff")"
 IMAGE=$("$RIFF" image)
 want=$("$RIFF" --version)
 got=$("$ENGINE" run --rm -v "$RIFF:/opt/riff/riff:ro" "$IMAGE" /opt/riff/riff --version)

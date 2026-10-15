@@ -17,7 +17,7 @@ fn deploy() -> PathBuf {
 fn ci_deploys_after_the_gate_or_the_release_check_with_no_key() {
     let (_, job) = ci_parts();
     for part in [
-        "needs: [gate, release]",
+        "needs: [gate, release, static_release]",
         "github.ref == 'refs/heads/main'",
         "id-token: write",
         "google-github-actions/auth@",
@@ -184,7 +184,7 @@ fn runs(name: &str, ctx: &[(&str, &str)]) -> bool {
 type Ctx = Vec<(&'static str, &'static str)>;
 
 /// The context of a push of `git_ref`, with the results of the gate
-/// and the Release check.
+/// and the Release check. The static binaries are on the release.
 fn push(git_ref: &'static str, gate: &'static str, release: &'static str) -> Ctx {
     vec![
         ("github.event_name", "push"),
@@ -192,6 +192,7 @@ fn push(git_ref: &'static str, gate: &'static str, release: &'static str) -> Ctx
         ("vars.CLOUD_DEPLOY", "true"),
         ("needs.gate.result", gate),
         ("needs.release.result", release),
+        ("needs.static_release.result", "success"),
     ]
 }
 
@@ -204,7 +205,15 @@ fn dispatch(git_ref: &'static str, tag: &'static str, gate: &'static str) -> Ctx
         ("vars.CLOUD_DEPLOY", "true"),
         ("needs.gate.result", gate),
         ("needs.release.result", "skipped"),
+        ("needs.static_release.result", "skipped"),
     ]
+}
+
+/// `ctx` with the result `result` of the job Static riff release.
+fn static_release(mut ctx: Ctx, result: &'static str) -> Ctx {
+    ctx.retain(|(key, _)| *key != "needs.static_release.result");
+    ctx.push(("needs.static_release.result", result));
+    ctx
 }
 
 /// The same context with no `CLOUD_DEPLOY`.
@@ -283,6 +292,20 @@ fn a_release_tag_or_a_run_by_hand_deploys() {
         "v0.5.0",
         "success"
     ))));
+}
+
+/// 01M4ZPJ091W3NYV1V0FJS9K6MS: a release tag deploys only after the job
+/// Static riff release put its static binaries on its release. A run by
+/// hand deploys a tag whose release has them already.
+#[test]
+fn a_release_tag_deploys_only_after_its_static_binaries() {
+    let tag = || push("refs/tags/v0.6.0", "skipped", "success");
+    assert!(deploys(&tag()));
+    for result in ["failure", "skipped", "cancelled"] {
+        let ctx = static_release(tag(), result);
+        assert!(!deploys(&ctx), "{ctx:?}");
+    }
+    assert!(deploys(&dispatch("refs/heads/main", "v0.5.0", "success")));
 }
 
 /// 01M496K1KN392S11YEH33JGK9N: the deploy of a release runs in the

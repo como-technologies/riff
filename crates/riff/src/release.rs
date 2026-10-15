@@ -44,8 +44,10 @@
 //!     end
 //! ```
 //!
-//! The variable [`RELEASES`] names another place of the release files,
-//! for the tests.
+//! The variable [`RELEASES`] names another place of the release files:
+//! a URL, or a folder, for example of a mirror. The test environment
+//! gives each test an empty folder, so no test reaches GitHub
+//! ([`Source`]).
 //!
 //! ```
 //! use riff::release::{asset, check, sum_of};
@@ -73,8 +75,8 @@ pub const SUMS: &str = "SHA256SUMS";
 /// `riff`.
 pub const BINARIES: [&str; 2] = ["riff-server", "riff"];
 
-/// The variable with the URL of the release files, for the tests. A
-/// file is at `RELEASES/TAG/NAME`.
+/// The variable with another place of the release files: a URL, or a
+/// folder. A file is at `RELEASES/TAG/NAME`.
 pub const RELEASES: &str = "RIFF_RELEASES";
 
 /// The target of the static binaries for this machine. `None` when the
@@ -286,21 +288,71 @@ pub fn bin_dir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathB
     Some(root.join("bin"))
 }
 
-/// The URL of the release file `name` of `tag`: under the variable
-/// [`RELEASES`] when it is set, else on GitHub.
-///
-/// ```
-/// let url = riff::release::url(None, "v1.4.0", "SHA256SUMS");
-/// assert_eq!(url, "https://github.com/como-technologies/riff/releases/download/v1.4.0/SHA256SUMS");
-/// let url = riff::release::url(Some("http://127.0.0.1:9/"), "v1.4.0", "riff-x");
-/// assert_eq!(url, "http://127.0.0.1:9/v1.4.0/riff-x");
-/// ```
-pub fn url(releases: Option<&str>, tag: &str, name: &str) -> String {
-    let base = match releases {
-        Some(base) => base.trim_end_matches('/').to_owned(),
-        None => format!("{}/releases/download", env!("CARGO_PKG_REPOSITORY")),
-    };
-    format!("{base}/{tag}/{name}")
+/// Where the release files are: the GitHub releases of the repository,
+/// else the value of [`RELEASES`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Source {
+    /// A web server, with no `/` at the end.
+    Web(String),
+    /// A folder.
+    Folder(PathBuf),
+}
+
+impl Source {
+    /// The source of `releases`, the value of [`RELEASES`]: a URL with
+    /// `http://` or `https://`, else a folder. With no value, the GitHub
+    /// releases of the repository.
+    ///
+    /// ```
+    /// use riff::release::Source;
+    ///
+    /// let github = "https://github.com/como-technologies/riff/releases/download";
+    /// assert_eq!(Source::of(None), Source::Web(github.into()));
+    /// assert_eq!(Source::of(Some("http://127.0.0.1:9/")), Source::Web("http://127.0.0.1:9".into()));
+    /// assert_eq!(Source::of(Some("/srv/riff")), Source::Folder("/srv/riff".into()));
+    /// ```
+    pub fn of(releases: Option<&str>) -> Source {
+        match releases {
+            None => Source::Web(format!(
+                "{}/releases/download",
+                env!("CARGO_PKG_REPOSITORY")
+            )),
+            Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
+                Source::Web(url.trim_end_matches('/').to_owned())
+            }
+            Some(folder) => Source::Folder(folder.into()),
+        }
+    }
+
+    /// Where the release file `name` of `tag` is.
+    ///
+    /// ```
+    /// use riff::release::Source;
+    ///
+    /// let place = Source::of(None).place("v1.4.0", "SHA256SUMS");
+    /// assert_eq!(place, "https://github.com/como-technologies/riff/releases/download/v1.4.0/SHA256SUMS");
+    /// assert_eq!(Source::of(Some("/srv/riff")).place("v1.4.0", "riff-x"), "/srv/riff/v1.4.0/riff-x");
+    /// ```
+    pub fn place(&self, tag: &str, name: &str) -> String {
+        match self {
+            Source::Web(base) => format!("{base}/{tag}/{name}"),
+            Source::Folder(dir) => dir.join(tag).join(name).display().to_string(),
+        }
+    }
+
+    /// The bytes of the release file `name` of `tag`. `None` when the
+    /// release has no such file: a 404, or no file in the folder.
+    async fn get(&self, client: &reqwest::Client, tag: &str, name: &str) -> Result<Option<Vec<u8>>> {
+        let place = self.place(tag, name);
+        match self {
+            Source::Web(_) => fetch(client, &place).await,
+            Source::Folder(_) => match std::fs::read(&place) {
+                Ok(bytes) => Ok(Some(bytes)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e).with_context(|| format!("cannot read {place}")),
+            },
+        }
+    }
 }
 
 /// What [`install`] did.
@@ -323,18 +375,13 @@ pub async fn install(tag: &str) -> Result<Installed> {
     let Some(target) = TARGET else {
         return Ok(Installed::None);
     };
-    let releases = std::env::var(RELEASES).ok();
+    let source = Source::of(std::env::var(RELEASES).ok().as_deref());
     let client = reqwest::Client::builder()
         .connect_timeout(WAIT)
         .read_timeout(WAIT)
         .build()
         .context("cannot make the HTTP client of the download")?;
-    let get = |name: String| {
-        let url = url(releases.as_deref(), tag, &name);
-        let client = client.clone();
-        async move { fetch(&client, &url).await }
-    };
-    let Some(sums) = get(SUMS.to_owned()).await? else {
+    let Some(sums) = source.get(&client, tag, SUMS).await? else {
         return Ok(Installed::None);
     };
     let sums = String::from_utf8_lossy(&sums).into_owned();
@@ -346,13 +393,15 @@ pub async fn install(tag: &str) -> Result<Installed> {
         };
         wanted.push((binary, name, sum));
     }
-    let dir = bin_dir(std::env::var_os)
+    let dir = bin_dir(|name| std::env::var_os(name))
         .context("cannot find the bin folder of cargo: set HOME or CARGO_HOME")?;
     std::fs::create_dir_all(&dir).with_context(|| format!("cannot make {}", dir.display()))?;
     println!("{}", crate::text::downloads(tag, target, &dir));
-    let mut news = Vec::new();
+    // Each file passes each check before riff writes one.
+    let mut good = Vec::new();
     for (binary, name, sum) in wanted {
-        let bytes = get(name.clone())
+        let bytes = source
+            .get(&client, tag, &name)
             .await?
             .with_context(|| format!("the release {tag} has no {name}"))?;
         let got = sha256(&bytes);
@@ -360,7 +409,19 @@ pub async fn install(tag: &str) -> Result<Installed> {
             bail!("the SHA-256 of {name} of {tag} is {got}, not {sum} of {SUMS}");
         }
         check(&bytes, MACHINE).map_err(|why| anyhow::anyhow!("{name} of {tag}: {why}"))?;
-        news.push((write_new(&dir, binary, &bytes)?, dir.join(binary)));
+        good.push((binary, bytes));
+    }
+    let mut news = Vec::new();
+    for (binary, bytes) in good {
+        match write_new(&dir, binary, &bytes) {
+            Ok(new) => news.push((new, dir.join(binary))),
+            Err(e) => {
+                for (new, _) in &news {
+                    let _ = std::fs::remove_file(new);
+                }
+                return Err(e);
+            }
+        }
     }
     for (new, old) in &news {
         if let Err(e) = std::fs::rename(new, old) {
