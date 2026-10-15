@@ -57,11 +57,11 @@ flowchart LR
 
 Each row is a thing that two sessions on one machine share. The last
 column is honest: it says what a session can still do to another
-session. An "open" row waits for a spike:
+session. An "open" row waits for the spike
 [#707](https://github.com/como-technologies/riff/issues/707) (one item
-in a container) or
-[#708](https://github.com/como-technologies/riff/issues/708) (the
-claims on GitHub).
+in a container), or for a decision of Mike. The row of the claims uses
+the result of the spike
+[#708](https://github.com/como-technologies/riff/issues/699#issuecomment-6184805987).
 
 | What sessions share | How riff keeps them apart | What a session can still do to another |
 |---|---|---|
@@ -69,7 +69,8 @@ claims on GitHub).
 | git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff. The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. Open: #707 decides. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config. | Nothing. |
 | git: the commit | A commit has your git identity and a `Riff-Session:` trailer. A session commits with no signature: it sets `commit.gpgsign=false`. The squash merge on GitHub makes the commit on `main`. No gpg agent goes into a container. Open: #707 decides. | Nothing. Only the trailer tells the commits of two sessions apart. |
-| git: the repository on GitHub | Each session pushes its own branch from its own clone. A claim is a compare-and-swap push of a ref, so only one session gets an item. The daemon makes the claim, not the session. Open: #708 decides the ref of a claim. | With your sign-in, a session can push to the branch of another session, delete it, or move a claim ref. |
+| git: the repository on GitHub | Each session pushes its own branch from its own clone. The daemon makes the claims, not the session: see the next row. | With your sign-in, a session can push to the branch of another session, or delete it. |
+| The claims | A claim is the ref `refs/riff/claims/ITEM` on GitHub, for example `refs/riff/claims/issue-12`. It is not a branch. Each claim is a new commit: the empty tree, no parent, no signature, and a message with the item, the user, the session and the time. The daemon creates the ref with a lease (the old value: no ref), and deletes it with the lease of its commit. GitHub compares the old value on the server, so only one session gets an item. A failed lease means that another session holds the item. No ruleset covers `refs/riff/**`, so only the lease that riff uses keeps a claim. In a public repository, each claim ref and each claim commit is public, also after the release. A claim commit holds no secret. A claim ref has no time limit. Open: Mike decides the rule for the claim of a session that is gone. | With your sign-in, a session can delete or replace a claim ref with no lease, for example with `git push --force`. |
 | The processes | Each container has its own processes. A `pkill` in one session does not hit another. `podman stop` ends a session and each of its processes. | Nothing: it does not see the processes of another container. |
 | `/tmp` | Each container has its own `/tmp`. It goes when the session ends. | Nothing. |
 | The ports | Each container has its own loopback. A test port of one session does not hit another. | It can reach a port that listens on the network of your machine, as each program on it can. |
