@@ -105,6 +105,7 @@ pub mod pr;
 pub mod reap;
 pub mod relay;
 pub mod rollout;
+pub mod run;
 pub mod sccache;
 pub mod secrets;
 pub mod session_image;

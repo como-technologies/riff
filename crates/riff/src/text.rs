@@ -4522,6 +4522,175 @@ pub fn cloud_status(s: &crate::cloud::Settings, facts: &crate::cloud::Facts) -> 
     out
 }
 
+/// `riff run` outside a git clone.
+pub const RUN_NO_REPO: &str = "riff run works only in a git clone.";
+
+/// `riff run` with no sign-in of `gh`.
+pub const RUN_NO_GH: &str = "riff run needs the sign-in of gh. Run: gh auth login";
+
+/// `riff run` with an item that is not an issue.
+pub fn run_not_an_issue(item: &str) -> String {
+    format!("riff run takes an issue, for example issue-12, not {item}.")
+}
+
+/// A program that `riff run` cannot start.
+pub fn run_no_program(program: &str) -> String {
+    format!("riff run cannot start {program}. Install it, or put it on PATH.")
+}
+
+/// The image is not on this machine.
+pub fn run_no_image(image: &str) -> String {
+    format!(
+        "The image {image} is not on this machine. Build it, or give another one with \
+         --image. See \"Run one item in a container\" in the book."
+    )
+}
+
+/// No sign-in file of `claude`.
+pub fn run_no_sign_in(path: &Path) -> String {
+    format!(
+        "riff run cannot read the sign-in of claude in {}. Run claude on this machine, and \
+         sign in.",
+        path.display()
+    )
+}
+
+/// The access token of `claude` ends too soon (01M4Z60B869HWDTZMSYPVYACD8).
+///
+/// ```
+/// assert!(riff::text::run_sign_in_ends(12).contains("ends in 12 minutes"));
+/// ```
+pub fn run_sign_in_ends(minutes: i64) -> String {
+    format!(
+        "The sign-in of claude ends in {minutes} minutes. riff run needs {} minutes or more. \
+         Run claude on this machine to refresh it, then run riff run again.",
+        crate::run::MIN_MINUTES
+    )
+}
+
+/// The issue of `riff run` has no milestone.
+pub fn run_no_milestone(issue: u64) -> String {
+    format!("Issue #{issue} has no milestone. Ask the lead to put it in a wave.")
+}
+
+/// A path that podman cannot take in an option.
+pub fn run_bad_path(path: &str) -> String {
+    format!(
+        "riff run cannot give the path {path} to podman: it has a comma or a colon. Use a \
+         path with neither."
+    )
+}
+
+/// The first lines of a session of `riff run`.
+pub fn run_started(item: &str, session: &str, clone: &Path, image: &str, name: &str) -> String {
+    format!(
+        "The session {session} works on {item} in the container {name}.\n  \
+         clone: {}\n  image: {image}",
+        clone.display()
+    )
+}
+
+/// The start text of a session of `riff run`: the work item, the
+/// branch, and the frame of the body of the pull request
+/// (01M4Z81APKC14AVNJWCGRQKNVW).
+///
+/// ```
+/// let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
+/// let text = riff::text::run_start("o/r", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", false);
+/// assert!(text.contains("gh issue view 12 --comments"));
+/// assert!(text.contains("git push -u origin worktree-issue-12"));
+/// assert!(text.contains("--trailer \"Riff-Session: 1a2b\""));
+/// assert!(text.contains("gh pr create --title \"TITLE\" --milestone \"Wave 3\" --body-file FILE"));
+/// assert!(text.contains(frame));
+/// assert!(!text.contains("earlier session"));
+/// let again = riff::text::run_start("o/r", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", true);
+/// assert!(again.contains("earlier session"));
+/// ```
+pub fn run_start(
+    repo: &str,
+    issue: u64,
+    branch: &str,
+    session: &str,
+    frame: &str,
+    milestone: &str,
+    earlier: bool,
+) -> String {
+    let earlier = if earlier {
+        "\nThe branch has the work of an earlier session. Go on from it. Do not start again.\n"
+    } else {
+        ""
+    };
+    format!(
+        "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
+         branch {branch}. Do the work item issue-{issue}, then stop. No riff tool runs here: \
+         riff does the claim, the release and the verify request for you.\n{earlier}\n\
+         1. Read the issue and its comments: gh issue view {issue} --comments\n   \
+         Find its \"Done when:\" line. When the line is missing, or you cannot test it, stop \
+         and say why.\n\
+         2. Read CLAUDE.md, and obey its rules.\n\
+         3. Do the work on the branch {branch}. Give each commit this trailer:\n   \
+         git commit --trailer \"Riff-Session: {session}\"\n\
+         4. Before each push, run the checks that CLAUDE.md names.\n\
+         5. Push the branch: git push -u origin {branch}\n   \
+         Never push to main.\n\
+         6. Write the body of the pull request to a file. Put your summary in place of \
+         SUMMARY. Keep each other line:\n\n{frame}\n\
+         7. Open the pull request, and turn on auto-merge at once:\n   \
+         gh pr create --title \"TITLE\" --milestone \"{milestone}\" --body-file FILE\n   \
+         gh pr merge NUMBER --auto --squash\n   \
+         Do not end the title with (#{issue}).\n\
+         8. Reply with the URL of the pull request in one line.\n\n\
+         Do not print the environment or a token."
+    )
+}
+
+/// `riff run` stops its container.
+pub fn run_stopping(name: &str) -> String {
+    format!("riff run stops the container {name}.")
+}
+
+/// The pull request of a session of `riff run`.
+pub fn run_pull(number: u64, url: &str) -> String {
+    format!("The pull request #{number}: {url}")
+}
+
+/// The verify request of a session of `riff run` (01M4Z81B1913NF6HBZ5G38B3Q9).
+///
+/// ```
+/// let body = riff::text::run_verify_request("issue-12", 40, "worktree-issue-12", "1a2b3c4d5e", "9f8e7d6c");
+/// assert_eq!(
+///     body,
+///     "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4, from \
+///      riff run 9f8e7d6c. The session ended, and the item is free."
+/// );
+/// ```
+pub fn run_verify_request(
+    item: &str,
+    number: u64,
+    branch: &str,
+    commit: &str,
+    session: &str,
+) -> String {
+    let commit = commit.get(..7).unwrap_or(commit);
+    format!(
+        "verify request: {item}, PR #{number}, branch {branch}, commit {commit}, from riff run \
+         {session}. The session ended, and the item is free."
+    )
+}
+
+/// A session of `riff run` with no open pull request.
+pub fn run_no_pull(branch: &str) -> String {
+    format!("No open pull request has the branch {branch}. The work is in the clone.")
+}
+
+/// Where the clone of a session of `riff run` stays.
+pub fn run_kept(clone: &Path) -> String {
+    format!(
+        "The clone stays until the merge: {}",
+        clone.display()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
