@@ -1831,15 +1831,19 @@ gh pr create --base release/1.x --title "Release v1.3.1" --label release --body-
 ```
 
 After the merge, tag the merge commit on the branch. Name the last
-tag of the line for the notes. While `main` holds a newer line, the
-patch is not the latest release on GitHub:
+tag of the line for the notes. The release of the line that the
+shared riff runs is the latest release on GitHub. This example is a
+patch of that line, so it is the latest:
 
 ```sh
 git fetch origin
 git tag v1.3.1 origin/release/1.x
 git push origin v1.3.1
-gh release create v1.3.1 --verify-tag --title v1.3.1 --notes-file notes.md --generate-notes --notes-start-tag v1.3.0 --latest=false
+gh release create v1.3.1 --verify-tag --title v1.3.1 --notes-file notes.md --generate-notes --notes-start-tag v1.3.0 --latest
 ```
+
+A patch of a line that the shared riff does not run is not the latest:
+use `--latest=false`.
 
 The tag deploys the patch as each release tag does.
 
