@@ -525,6 +525,22 @@ enum Command {
     /// riff decides by facts, not by the word of an agent.
     #[command(subcommand)]
     Worktrees(WorktreesCommand),
+    /// Get this machine ready for riff run: check, install, pull
+    ///
+    /// The first run of riff 3.0 on a machine. It checks rootless podman:
+    /// podman runs, /etc/subuid and /etc/subgid give you 65536 IDs or
+    /// more, and cgroup v2 gives cpu and memory to your user. It checks
+    /// that riff.toml of the repository of this folder pins the session
+    /// image. It prints the fix of each check that fails, and stops. When
+    /// each check passes, it installs and starts the riff daemon, as riff
+    /// daemon install does, and the daemon pulls the session image. A
+    /// daemon that answers stays: riff init does not start it again.
+    Init {
+        /// Change nothing. Print the fix of each check that fails, and exit
+        /// with status 1 when a check fails.
+        #[arg(long)]
+        check: bool,
+    },
     /// Run one work item in a rootless podman container
     ///
     /// It needs the riff daemon of this machine: see riff daemon. It
@@ -1345,6 +1361,13 @@ async fn main() -> Result<()> {
     if let Command::Daemon { command } = &cli.command {
         return daemon_command(command.as_ref()).await;
     }
+    if let Command::Init { check } = cli.command {
+        let code = riff::first_run::init(check).await?;
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return Ok(());
+    }
     let (server, source) = server_of(cli.server.as_deref())?;
     if let Command::Server = cli.command {
         let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
@@ -1961,6 +1984,7 @@ async fn main() -> Result<()> {
         | Command::Cloud { .. }
         | Command::Image
         | Command::Daemon { .. }
+        | Command::Init { .. }
         | Command::Worktrees(_)
         | Command::Lead {
             command: Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. }),

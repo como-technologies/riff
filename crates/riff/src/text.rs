@@ -4926,6 +4926,174 @@ pub fn daemon_no_answer(state: &str, socket: &Path) -> String {
     )
 }
 
+/// The first line of `riff init` (01M4ZJN6TEWCYCB39XTH6BBD9H).
+pub const INIT_CHECKS: &str = "riff checks this machine for riff 3.0:";
+
+/// `text` on one line, with no cut: each run of white space is one
+/// space.
+fn flat(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A check of `riff init` that passed.
+///
+/// ```
+/// assert_eq!(riff::text::init_pass("podman", "podman version 5.7.0"), "pass  podman: podman version 5.7.0");
+/// ```
+pub fn init_pass(name: &str, found: &str) -> String {
+    format!("pass  {name}: {}", flat(found))
+}
+
+/// A check of `riff init` that failed, with its fix, on one line.
+///
+/// ```
+/// let line = riff::text::init_fail("podman", "riff cannot\nstart podman.", "install podman");
+/// assert_eq!(line, "fail  podman: riff cannot start podman. Fix: install podman");
+/// ```
+pub fn init_fail(name: &str, found: &str, fix: &str) -> String {
+    format!(
+        "fail  {name}: {}. Fix: {}",
+        flat(found).trim_end_matches('.'),
+        flat(fix)
+    )
+}
+
+/// `podman --version` did not start.
+pub const INIT_NO_PODMAN: &str = "riff cannot start podman";
+
+/// `podman --version` ended with an error.
+pub fn init_podman_failed(stderr: &str) -> String {
+    if stderr.is_empty() {
+        "podman --version failed".into()
+    } else {
+        format!("podman --version failed: {stderr}")
+    }
+}
+
+/// The fix when podman is missing.
+pub const INIT_FIX_PODMAN: &str =
+    "install podman and run riff as your own user, for example: sudo apt install podman";
+
+/// riff cannot read `what`.
+pub fn init_cannot_read(what: &str) -> String {
+    format!("riff cannot read {what}")
+}
+
+/// The IDs of `/etc/subuid` or `/etc/subgid` for `user`.
+pub fn init_ids(ids: u64, user: &str) -> String {
+    format!("{ids} IDs for {user}")
+}
+
+/// Too few IDs in `/etc/subuid` or `/etc/subgid` for `user`.
+pub fn init_too_few_ids(ids: u64, user: &str) -> String {
+    format!(
+        "{ids} IDs for {user}, and podman needs {}",
+        crate::first_run::MIN_IDS
+    )
+}
+
+/// The fix of `/etc/subuid` (`kind` is `uid`) or `/etc/subgid` (`kind`
+/// is `gid`) for `user`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_fix_sub_ids("gid", "mike"),
+///     "sudo usermod --add-subgids 100000-165535 mike, then podman system migrate"
+/// );
+/// ```
+pub fn init_fix_sub_ids(kind: &str, user: &str) -> String {
+    format!("sudo usermod --add-sub{kind}s 100000-165535 {user}, then podman system migrate")
+}
+
+/// This machine has cgroup v1.
+pub const INIT_NO_CGROUP_V2: &str = "this machine has no cgroup v2";
+
+/// The fix of cgroup v1.
+pub const INIT_FIX_CGROUP_V2: &str = "start Linux with cgroup v2: add \
+     systemd.unified_cgroup_hierarchy=1 to the kernel command line, then start the machine again";
+
+/// The fix when riff cannot read the controllers of the user.
+pub const INIT_FIX_USER_MANAGER: &str = "log in to this machine as your user, so that systemd \
+     starts your user manager (for a shell over ssh: sudo loginctl enable-linger $USER)";
+
+/// The controllers of the user `unit` have `cpu` and `memory`.
+pub fn init_controllers(unit: &str) -> String {
+    format!("{unit} has cpu and memory")
+}
+
+/// The controllers of the user `unit` miss `missing`.
+pub fn init_no_controllers(unit: &str, missing: &[&str]) -> String {
+    format!("{unit} has no {}", missing.join(" and no "))
+}
+
+/// The fix that gives `cpu` and `memory` to the user.
+pub const INIT_FIX_DELEGATE: &str = "let systemd give them to your user: sudo mkdir -p \
+     /etc/systemd/system/user@.service.d && printf '[Service]\\nDelegate=cpu cpuset io memory \
+     pids\\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf && sudo systemctl \
+     daemon-reload, then log out and in again";
+
+/// The fix when the repository pins no session image.
+pub const INIT_FIX_IMAGE: &str = "run riff init in a clone of a repository whose riff.toml pins \
+     the session image. See \"Change the session image\" in the book";
+
+/// Some checks of `riff init` failed.
+///
+/// ```
+/// assert!(riff::text::init_failed(1).starts_with("1 check failed."));
+/// assert!(riff::text::init_failed(2).starts_with("2 checks failed."));
+/// ```
+pub fn init_failed(count: usize) -> String {
+    let checks = if count == 1 { "check" } else { "checks" };
+    format!(
+        "{count} {checks} failed. riff installed nothing and pulled nothing. Do each fix, then \
+         run riff init again."
+    )
+}
+
+/// Each check of `riff init --check` passed.
+pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check.";
+
+/// A daemon answers, and `riff init` keeps it (01M4ZJN6Z1DGD43CKZ19QPN2NK).
+///
+/// ```
+/// use riff::daemon::Status;
+///
+/// let status = Status { pid: 42, build: "1.3.1 aaa".into(), since_ms: 0, dir: "/d".into(), sessions: vec![] };
+/// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
+/// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");
+/// let other = riff::text::init_daemon_kept(&status, "1.3.1 bbb");
+/// assert!(other.contains("build 1.3.1 aaa"), "{other}");
+/// assert!(other.ends_with("run: riff daemon install"), "{other}");
+/// ```
+pub fn init_daemon_kept(status: &crate::daemon::Status, this: &str) -> String {
+    if status.build == this {
+        format!(
+            "The riff daemon of this riff runs already: pid {}. riff init keeps it.",
+            status.pid
+        )
+    } else {
+        format!(
+            "A riff daemon runs already: pid {}, build {}, {} sessions. riff init keeps it. To \
+             start it again with this riff (build {this}), run: riff daemon install",
+            status.pid,
+            status.build,
+            status.sessions.len()
+        )
+    }
+}
+
+/// This machine has the session image `image`.
+pub fn init_image_here(image: &str) -> String {
+    format!("This machine has the session image {image}.")
+}
+
+/// The last line of `riff init` (01M4ZJN718EF1PC9YY9GFD0EJ2).
+pub const INIT_READY: &str =
+    "This machine is ready for riff 3.0. Run one item in a container: riff run ITEM";
+
+/// `riff init` on a host that is not Linux.
+pub const INIT_LINUX_ONLY: &str = "riff init needs Linux: riff 3.0 runs on Linux only.";
+
 /// A text that no line of a unit file can hold.
 pub fn unit_bad_text(text: &str) -> String {
     format!("riff cannot write {text:?} in a unit file: it has a control character.")
