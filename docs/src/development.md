@@ -709,6 +709,17 @@ riff wave stop
 The daemon starts no new session for the wave. The sessions that run
 go on to their end.
 
+### Keep an item from the wave
+
+The wave never starts a held item. A lead holds an item by its exact
+name: a hold of `issue-12` stops the build, and a hold of
+`verify-issue-12` stops the verify (see
+[Hold an item by hand](how-it-works.md#hold-an-item-by-hand)):
+
+```sh
+riff plan hold issue-12 waits for the word of Mike
+```
+
 ### Set the limit of the host
 
 Each container has `--memory 8g` and `--cpus 4`. These do not limit

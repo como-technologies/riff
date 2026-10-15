@@ -4991,7 +4991,8 @@ pub fn daemon_no_state(dir: &Path) -> String {
 /// 01M4ZHW24JZZXM3JJXG3PRJS7N).
 ///
 /// ```
-/// use riff::daemon::{Live, Status};
+/// use riff::daemon::{Live, Status, WaveShown};
+/// use riff::room::Limit;
 ///
 /// let mut status = Status {
 ///     pid: 42,
@@ -5001,6 +5002,9 @@ pub fn daemon_no_state(dir: &Path) -> String {
 ///     riff: Some("0a1b".into()),
 ///     position: 3,
 ///     sessions: vec![],
+///     limit: Some(Limit::default()),
+///     waiting: vec![],
+///     waves: vec![],
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -5013,8 +5017,13 @@ pub fn daemon_no_state(dir: &Path) -> String {
 ///     image: "img".into(),
 ///     since_ms: 240_000,
 /// });
+/// status.waiting.push("the wave of o/r".into());
+/// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into() });
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.contains("  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m\n"));
+/// assert!(text.contains("The limit of this host: 3 live sessions, and 8 GB"));
+/// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
+/// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -5255,6 +5264,9 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 ///     riff: None,
 ///     position: 0,
 ///     sessions: vec![],
+///     limit: None,
+///     waiting: vec![],
+///     waves: vec![],
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");
