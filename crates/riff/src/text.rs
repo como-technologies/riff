@@ -4684,7 +4684,7 @@ pub fn run_started(item: &str, session: &str, clone: &Path, image: &str, name: &
 /// background task at the end of its work (01M4ZSZXBXM6T6MGQ00ACQA66X).
 ///
 /// ```
-/// let frame ="Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
+/// let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
 /// let text = riff::text::run_start("o/r", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", false);
 /// assert!(text.contains("gh issue view 12 --comments"));
 /// assert!(text.contains("git push -u origin worktree-issue-12"));

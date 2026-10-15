@@ -1854,6 +1854,7 @@ mod tests {
         root: tempfile::TempDir,
         dir: PathBuf,
         fake: Fake,
+        quiet: Duration,
         daemon: Arc<Daemon<Fake>>,
         stop: Option<oneshot::Sender<()>>,
         served: JoinHandle<Result<()>>,
@@ -1867,9 +1868,10 @@ mod tests {
         JoinHandle<Result<()>>,
     );
 
-    async fn serve(fake: &Fake, dir: &Path) -> Served {
+    async fn serve(fake: &Fake, dir: &Path, quiet: Duration) -> Served {
         let listener = listen(dir).await.unwrap();
-        let daemon = Arc::new(Daemon::open(fake.clone(), dir.to_owned()).await.unwrap());
+        let daemon = Daemon::open(fake.clone(), dir.to_owned()).await.unwrap();
+        let daemon = Arc::new(daemon.with_quiet(quiet));
         let (stop, stopped) = oneshot::channel::<()>();
         let served = tokio::spawn(daemon.clone().serve(listener, async {
             let _ = stopped.await;
@@ -1879,13 +1881,19 @@ mod tests {
 
     impl Here {
         async fn new(fake: Fake) -> Here {
+            Here::with_quiet(fake, QUIET_LIMIT).await
+        }
+
+        /// A daemon on `fake` with the quiet limit `quiet`.
+        async fn with_quiet(fake: Fake, quiet: Duration) -> Here {
             let root = tempfile::tempdir().unwrap();
             let dir = dir_in(root.path());
-            let (daemon, stop, served) = serve(&fake, &dir).await;
+            let (daemon, stop, served) = serve(&fake, &dir, quiet).await;
             Here {
                 root,
                 dir,
                 fake,
+                quiet,
                 daemon,
                 stop: Some(stop),
                 served,
@@ -1895,7 +1903,7 @@ mod tests {
         /// Stops the daemon, and starts a new one in the same folder.
         async fn restart(&mut self) {
             self.stop().await;
-            let (daemon, stop, served) = serve(&self.fake, &self.dir).await;
+            let (daemon, stop, served) = serve(&self.fake, &self.dir, self.quiet).await;
             self.daemon = daemon;
             self.stop = Some(stop);
             self.served = served;
@@ -2283,6 +2291,86 @@ mod tests {
                 failed: true
             }))
         );
+    }
+
+    /// An event of `claude`: one background task runs.
+    const ONE_TASK: &str = r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash","description":"wait for just check"}]}"#;
+
+    /// After the result, no event comes for the quiet limit: the daemon
+    /// stops the container, and says why (01M4ZSZX77AJDGWNQMGBPV2QXG).
+    #[tokio::test]
+    async fn the_daemon_stops_a_session_with_no_event_for_the_quiet_limit_after_the_result() {
+        let quiet = Duration::from_millis(500);
+        let here = Here::with_quiet(Fake::default().with_image(IMAGE), quiet).await;
+        let (mut client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 1, false).await;
+        // No stop while the input is open: a turn can be quiet for long.
+        relay.event(1, TURN[0]).await;
+        tokio::time::sleep(quiet * 2).await;
+        assert_eq!(here.fake.calls(), [format!("start {name}")]);
+
+        relay.event(2, TURN[2]).await;
+        let closed = tokio::time::Instant::now();
+        relay.event(3, ONE_TASK).await;
+        let (said, end) = to_the_end(&mut client).await;
+        assert!(closed.elapsed() >= quiet);
+        assert!(
+            said.contains(&Say::Line {
+                text: text::daemon_quiet(&name, quiet)
+            }),
+            "{said:?}"
+        );
+        assert_eq!(
+            end,
+            Some(Say::Ended(Ended {
+                code: None,
+                failed: true
+            }))
+        );
+        assert_eq!(
+            here.fake.calls(),
+            [format!("start {name}"), format!("stop {name}")]
+        );
+        assert!(!record_path(&here.dir, &name).exists());
+    }
+
+    /// Each event after the result moves the end of the quiet: a new
+    /// turn after the end of a background task is no quiet.
+    #[tokio::test]
+    async fn each_event_after_the_result_moves_the_end_of_the_quiet() {
+        let quiet = Duration::from_millis(1000);
+        let here = Here::with_quiet(Fake::default().with_image(IMAGE), quiet).await;
+        let (mut client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 1, false).await;
+        relay.event(1, TURN[0]).await;
+        relay.event(2, ONE_TASK).await;
+        relay.event(3, TURN[2]).await;
+        // Two times the quiet limit, with an event each fifth of it.
+        let mut seq = 3;
+        for _ in 0..10 {
+            tokio::time::sleep(quiet / 5).await;
+            seq += 1;
+            relay.event(seq, TURN[0]).await;
+        }
+        relay.exit(seq + 1, 0).await;
+        let (said, end) = to_the_end(&mut client).await;
+        assert_eq!(events(&said).len(), 13);
+        assert!(
+            !said.iter().any(|s| matches!(s, Say::Line { .. })),
+            "{said:?}"
+        );
+        assert_eq!(
+            end,
+            Some(Say::Ended(Ended {
+                code: Some(0),
+                failed: false
+            }))
+        );
+        assert_eq!(here.fake.calls(), [format!("start {name}")]);
     }
 
     #[tokio::test]

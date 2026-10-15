@@ -4603,7 +4603,8 @@ share.
   `INVOCATION_ID`, so podman puts conmon in a scope of its own, not in
   the cgroup of the unit of the daemon. `podman run` has
   `--sig-proxy=false`, so a signal to it does not go to the container.
-  The daemon stops a container only when `riff run` asks.
+  The daemon stops a container only when `riff run` asks, or at the
+  quiet limit (01M4ZSZX77AJDGWNQMGBPV2QXG).
 - **01M4ZHW2083VFTQJ772ZJ27XAC** The daemon keeps its state in the
   folder `state` in its folder: the log and the checkpoints of
   `riff-state`. At each start, it loads the newest checkpoint that it
@@ -4629,6 +4630,12 @@ share.
   same folder. It removes the record of each other session.
 - **01M4ZHT03MAH0B5Q4S6GZC5JRP** A session ends when the daemon has the
   exit of its relay, or when its container ends.
+- **01M4ZSZX77AJDGWNQMGBPV2QXG** After the daemon closed the input of
+  `claude`, it stops the container of the session when no event comes
+  for the quiet limit: 30 minutes. Each event starts the quiet limit
+  again. The daemon tells each `riff` that follows the session why it
+  stops the container, and writes it to its own output. The quiet
+  limit is longer than the longest check of a session.
 - **01M4ZHT05QHQRQ2KGVJFB9F7HD** On the control socket, `riff` can
   follow a live session: the daemon sends each event after a number,
   then each new event, then the end.
@@ -4773,6 +4780,14 @@ share.
   So `claude` adds no attribution line, and the trailers end each
   commit and each pull request body. It is a setting of riff for its
   sessions: riff does not read or copy the settings of the person.
+- **01M4ZSZX9H59T04QSJ01V4F9TE** After the `result` of a turn,
+  `riff run` and `riff daemon events` show a line with the description
+  of each background task that `claude` waits for, from the event
+  `system/background_tasks_changed`. They show a new line at each
+  change of the tasks until the next turn starts.
+- **01M4ZSZXBXM6T6MGQ00ACQA66X** The start text of `riff run` tells the
+  session to stop each background task that it started, and to leave
+  none at the end of its work.
 
 ### How the relay drives claude
 

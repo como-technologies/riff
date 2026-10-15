@@ -550,8 +550,9 @@ steps:
 3. It asks the daemon to run the session. In the container,
    `riff relay` starts `claude -p` with the riff tools. riff shows
    each event: the text, each tool call, each tool that failed, each
-   call that the rules refused, the push, and the end of the turn. The
-   session pushes the branch and opens the pull request.
+   call that the rules refused, the push, the end of the turn, and the
+   background tasks that `claude` waits for after it. The session
+   pushes the branch and opens the pull request.
 4. It finds the pull request of the branch, and sends a verify request
    to your lead.
 5. It releases the item, and ends the session.
@@ -571,6 +572,33 @@ writes it.
 Press Ctrl-C. riff asks the daemon to stop the container with
 `podman stop`, and releases the item. The branch keeps the work that
 the session pushed.
+
+### When a session stays up after its result
+
+`claude -p` does not end while one of its background tasks runs, for
+example a Monitor or a command in the background. The end of each task
+starts a new turn. So a session can stay up after the end of its turn.
+`riff run` then shows each task that `claude` waits for:
+
+```text
+end: success, 12 turns, 640 s, 1.20 USD
+wait: claude waits for 1 background task: wait for just check
+```
+
+The start text tells the session to stop each background task before
+its last reply. When the session gives no event for 30 minutes after
+its result, the daemon stops its container, and `riff run` says why.
+Then `riff run` sends the verify request and releases the item, as
+after each other end. The limit is longer than the longest check of a
+session: a `just ci` can take 15 minutes.
+
+To see what a session waits for from another terminal, show its
+events. To end the wait earlier, stop the session (see
+[Stop a session](#stop-a-session)).
+
+```sh
+riff daemon events riff-issue-12-1a2b3c4d
+```
 
 ### See the events of a session
 

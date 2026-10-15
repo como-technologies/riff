@@ -110,7 +110,8 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
 /// logs the answers to `bin/mcp.out` until it has one for each request.
 /// Then, for each of `bin/later` and `bin/last` that is there, it waits
 /// for the file `.go` beside it, and prints it. It ends when its stdin
-/// closes.
+/// closes. With `bin/linger`, it does not end then, as `claude -p` does
+/// not end while a background task runs.
 fn fake_claude(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -140,6 +141,9 @@ for stage in later last; do
 done
 cat > /dev/null
 touch "$dir/run.closed"
+if [ -f "$dir/linger" ]; then
+  while :; do sleep 0.05; done
+fi
 "#;
     script(&bin.join("claude"), &body.replace("GHTOKEN", GH_TOKEN));
 }
@@ -270,6 +274,8 @@ struct Machine {
     main: PathBuf,
     server: String,
     daemon: Option<std::process::Child>,
+    /// The quiet limit of the daemon, when the test sets one.
+    quiet: Option<Duration>,
 }
 
 impl Drop for Machine {
@@ -283,6 +289,11 @@ impl Drop for Machine {
 
 impl Machine {
     async fn new() -> Machine {
+        Machine::with_quiet(None).await
+    }
+
+    /// A machine whose daemon has the quiet limit `quiet`.
+    async fn with_quiet(quiet: Option<Duration>) -> Machine {
         let env = Isolated::new();
         let bin = tempfile::tempdir().unwrap();
         fake_gh(bin.path());
@@ -336,6 +347,7 @@ impl Machine {
             main,
             server: server().await,
             daemon: None,
+            quiet,
         };
         machine.start_daemon().await;
         machine
@@ -346,8 +358,11 @@ impl Machine {
     async fn start_daemon(&mut self) {
         let log = self.bin.path().join("daemon.out");
         let out = std::fs::File::create(&log).unwrap();
-        let daemon = self
-            .command(None, &["daemon"])
+        let mut daemon = self.command(None, &["daemon"]);
+        if let Some(quiet) = self.quiet {
+            daemon.env(riff::daemon::QUIET_VAR, quiet.as_millis().to_string());
+        }
+        let daemon = daemon
             .env("INVOCATION_ID", "riff-test-unit")
             .stdout(out.try_clone().unwrap())
             .stderr(out)
@@ -853,6 +868,120 @@ async fn a_stop_of_riff_run_stops_the_container_and_releases_the_item() {
         text(&out.stdout)
     );
     assert!(!machine.socket_dir(&name).exists());
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// An event of `claude`: the background task `wait for just check`
+/// runs.
+const ONE_TASK: &str = r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash","description":"wait for just check"}]}"#;
+
+/// The result of the first turn of a fake `claude`.
+const RESULT: &str = r#"{"type":"result","subtype":"success","is_error":false,"num_turns":1,"duration_ms":5000,"total_cost_usd":0.25}"#;
+
+/// The name of the container of the session of the last `riff run`.
+fn container(machine: &Machine) -> String {
+    let args = machine.read("run.args");
+    let args: Vec<&str> = args.lines().collect();
+    let session = args[args.iter().position(|a| *a == "--session-id").unwrap() + 1];
+    format!("riff-issue-12-{}", &session[..8])
+}
+
+#[tokio::test]
+async fn a_session_that_waits_for_a_background_task_stops_at_the_quiet_limit() {
+    let quiet = Duration::from_secs(1);
+    let machine = Machine::with_quiet(Some(quiet)).await;
+    machine.lead().await;
+    // claude ends its turn, and a background task runs on. claude does
+    // not end when its input closes, and gives no event.
+    let init = r#"{"type":"system","subtype":"init","model":"m","permissionMode":"auto"}"#;
+    std::fs::write(
+        machine.bin.path().join("events"),
+        [init, RESULT, ONE_TASK].join("\n") + "\n",
+    )
+    .unwrap();
+    std::fs::write(machine.bin.path().join("linger"), "").unwrap();
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    // The daemon stopped the session: riff run exits with 1.
+    assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
+    let name = container(&machine);
+    let quiet_line = riff::text::daemon_quiet(&name, quiet);
+    for part in [
+        "end: success, 1 turns, 5 s, 0.25 USD",
+        "wait: claude waits for 1 background task: wait for just check",
+        &quiet_line,
+        "The pull request #40",
+    ] {
+        assert!(stdout.contains(part), "{part}\nnot in\n{stdout}");
+    }
+    assert!(machine.read("daemon.out").contains(&quiet_line));
+    assert_eq!(
+        machine.read("podman.log").trim(),
+        format!("podman stop {name}")
+    );
+
+    // riff run sent the verify request, and released the item.
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert!(
+        thread.contains("verify request: issue-12, PR #40, branch worktree-issue-12"),
+        "{thread}"
+    );
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+#[tokio::test]
+async fn a_new_turn_after_a_background_task_is_no_quiet_and_riff_run_shows_it() {
+    let quiet = Duration::from_secs(3);
+    let machine = Machine::with_quiet(Some(quiet)).await;
+    machine.lead().await;
+    // The first turn ends while a background task runs. The end of the
+    // task starts a new turn of claude.
+    let init = r#"{"type":"system","subtype":"init","model":"m","permissionMode":"auto"}"#;
+    std::fs::write(
+        machine.bin.path().join("events"),
+        [init, ONE_TASK, RESULT].join("\n") + "\n",
+    )
+    .unwrap();
+    let later = [
+        r#"{"type":"system","subtype":"task_notification","task_id":"b1","status":"completed","summary":"wait for just check"}"#,
+        r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#,
+        init,
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"The check passed."}]}}"#,
+        r#"{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":7000,"total_cost_usd":0.3}"#,
+    ];
+    std::fs::write(machine.bin.path().join("later"), later.join("\n") + "\n").unwrap();
+
+    let child = machine
+        .command(None, &["run", "issue-12", "--image", IMAGE])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(&machine.bin.path().join("run.stdin"), "user").await;
+    let log = machine.folder("issue-12").join("events.jsonl");
+    wait_for(&log, "\"result\"").await;
+    // The task ends within the quiet limit.
+    tokio::time::sleep(quiet / 3).await;
+    std::fs::write(machine.bin.path().join("later.go"), "").unwrap();
+
+    let out = output_of(child).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    for part in [
+        "end: success, 1 turns, 5 s, 0.25 USD\nwait: claude waits for 1 background task: wait for just check\n",
+        "wait: each background task ended",
+        "The check passed.",
+        "end: success, 2 turns, 7 s, 0.30 USD",
+        "The pull request #40",
+    ] {
+        assert!(stdout.contains(part), "{part}\nnot in\n{stdout}");
+    }
+    // No stop.
+    assert_eq!(machine.read("podman.log"), "");
+    assert!(!machine.read("daemon.out").contains("gave no event"));
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 

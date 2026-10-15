@@ -891,7 +891,10 @@ impl View {
     fn waits(&self) -> String {
         match self.tasks.len() {
             0 => "wait: each background task ended".to_owned(),
-            1 => format!("wait: claude waits for 1 background task: {}", self.tasks[0]),
+            1 => format!(
+                "wait: claude waits for 1 background task: {}",
+                self.tasks[0]
+            ),
             n => format!(
                 "wait: claude waits for {n} background tasks: {}",
                 self.tasks.join("; ")
