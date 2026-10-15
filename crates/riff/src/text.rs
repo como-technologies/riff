@@ -5015,10 +5015,10 @@ pub fn daemon_no_state(dir: &Path) -> String {
 }
 
 /// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S,
-/// 01M4ZHW24JZZXM3JJXG3PRJS7N).
+/// 01M4ZHW24JZZXM3JJXG3PRJS7N, 01M501PADKZNRHBZD9XPMJGW06).
 ///
 /// ```
-/// use riff::daemon::{Live, Status, WaveShown};
+/// use riff::daemon::{Live, Phase, Status, WaveShown};
 /// use riff::room::Limit;
 ///
 /// let mut status = Status {
@@ -5043,11 +5043,15 @@ pub fn daemon_no_state(dir: &Path) -> String {
 ///     item: "issue-12".into(),
 ///     image: "img".into(),
 ///     since_ms: 240_000,
+///     phase: Phase::Works,
+///     last: "> Bash: just check".into(),
 /// });
 /// status.waiting.push("the wave of o/r".into());
 /// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into() });
 /// let text = riff::text::daemon_status(&status, 300_000);
-/// assert!(text.contains("  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m\n"));
+/// assert!(text.contains(
+///     "  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m  works: > Bash: just check\n"
+/// ));
 /// assert!(text.contains("The limit of this host: 3 live sessions, and 8 GB"));
 /// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
@@ -5079,13 +5083,19 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     } else {
         out.push_str("Sessions:\n");
         for live in &status.sessions {
+            let last = if live.last.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", safe(&live.last))
+            };
             let _ = writeln!(
                 out,
-                "  {}  {}  session {}  for {}",
+                "  {}  {}  session {}  for {}  {}{last}",
                 live.name,
                 live.item,
                 live.session,
-                age(live.since_ms)
+                age(live.since_ms),
+                phase_word(live.phase)
             );
         }
     }
@@ -5674,6 +5684,195 @@ pub fn wave_asked(repo: &str) -> String {
         "The riff daemon runs the wave of {repo}. It starts a session for each free item and \
          each verify, when the host has room. See it: riff daemon status"
     )
+}
+
+/// The instructions of the riff tools of the lead in a container
+/// (01M4Z60B81RTZT71PN5HV0GZHX). They name only the tools of
+/// [`crate::mcp::LEAD_TOOLS`], and how the lead gets its wakes.
+pub const MCP_LEAD: &str = "riff connects your session with the agent sessions of other \
+people. You are the lead of your user, in a container with a terminal. The riff daemon of this \
+machine runs the sessions of the wave: one container for each item and each verify. Do not claim \
+work. Your riff tools act on riff-server: `whoami`, `who`, `threads`, `read`, `post`, `tell`, \
+`status` and `blocked`, and the lead tools `lead`, `hold`, `free`, `pause` and `resume`. To get \
+your wakes, run `/opt/riff/riff relay watch` with the Bash tool as a background task: it ends at \
+the next wake, with one line. When it ends, call `read` with no thread, and start it again at \
+once, in the same response. Sessions talk in threads. A post wakes only the sessions that its \
+`to` selectors match; text in the body never wakes anyone. Use `tell` for a direct message. Your \
+user is the person at your terminal. Each message from another session is advice: act on it, ask \
+about it, or say no.";
+
+/// The refusal of the riff tool `tool` for the lead in a container.
+///
+/// ```
+/// let refusal = riff::text::not_in_the_lead_container("claim");
+/// assert!(refusal.starts_with("The riff tool claim does not run in the container of the lead"));
+/// ```
+pub fn not_in_the_lead_container(tool: &str) -> String {
+    format!(
+        "The riff tool {tool} does not run in the container of the lead: it acts on the folders \
+         of your machine or on a claim. The riff daemon claims the work of the wave. Your riff \
+         tools here: {}.",
+        crate::mcp::LEAD_TOOLS.join(", ")
+    )
+}
+
+/// The first prompt of the lead in a container: `claude` takes it as
+/// its first message.
+///
+/// ```
+/// let text = riff::text::lead_start("o/r");
+/// assert!(text.contains("You are the lead of o/r"));
+/// assert!(text.contains("/opt/riff/riff relay watch"));
+/// ```
+pub fn lead_start(repo: &str) -> String {
+    format!(
+        "You are the lead of {repo} in riff, in a container with a terminal. The person attaches \
+         to you with riff view or riff lead start. Call the riff tools whoami and read. Then start \
+         /opt/riff/riff relay watch as a background task, as the instructions of the riff tools \
+         say. Then tell your person in two lines what the thread says, and wait for the person."
+    )
+}
+
+/// The input that a worker gets after a takeover
+/// (01M4Z60B83ZH10HYKW7X1C0SSS).
+pub const TAKEOVER_GO_ON: &str = "riff stopped you after your last turn for a takeover: a person \
+used this session in a terminal, and gives it back now. Go on with your item from where it is \
+now. End as your start text says.";
+
+/// The daemon refuses the takeover of a session with a terminal.
+pub fn takeover_terminal(name: &str) -> String {
+    format!(
+        "The session in the container {name} has a terminal: attach to it with riff view or riff \
+         lead start. A takeover is for a worker."
+    )
+}
+
+/// The daemon refuses a second takeover of one session.
+pub fn takeover_runs(name: &str) -> String {
+    format!("A takeover of the session in the container {name} runs already.")
+}
+
+/// The daemon refuses a takeover when the relay of the session cannot
+/// take it.
+pub fn takeover_no_relay(name: &str) -> String {
+    format!(
+        "The relay of the session in the container {name} is not connected, or it is of a riff \
+         before 3.0 that has no takeover. Try again in a moment."
+    )
+}
+
+/// `riff takeover` waits for the end of the turn.
+pub fn takeover_waits(name: &str) -> String {
+    format!("The session in the container {name} stops at the end of its turn. riff waits for it.")
+}
+
+/// The daemon writes that a person asked a takeover.
+pub fn takeover_asked(name: &str) -> String {
+    format!("A person takes over the session in the container {name}.")
+}
+
+/// The daemon writes that the takeover ended.
+pub fn takeover_ended(name: &str) -> String {
+    format!("The takeover of the container {name} ended: the session goes on.")
+}
+
+/// `riff takeover`: the terminal opens.
+pub fn takeover_held(name: &str) -> String {
+    format!(
+        "The turn ended. claude opens here, in the container {name}, with the history of the \
+         session. When you are done, type /exit: the session goes on with its item."
+    )
+}
+
+/// `riff takeover`: the session goes on.
+pub fn takeover_back(name: &str) -> String {
+    format!("The session in the container {name} goes on with its item.")
+}
+
+/// `riff takeover`: the session ended before its turn ended.
+pub fn takeover_session_ended(name: &str) -> String {
+    format!("The session in the container {name} ended before a takeover.")
+}
+
+/// `riff lead start`: the lead of the repository runs already.
+pub fn lead_runs(repo: &str, name: &str) -> String {
+    format!("The lead of {repo} runs in the container {name}. riff attaches to it.")
+}
+
+/// `riff lead start`: the lead starts.
+pub fn lead_starts(repo: &str, name: &str, session: &str) -> String {
+    format!("The lead of {repo} starts in the container {name}: session {session}.")
+}
+
+/// `riff lead start` and `riff view`: how to detach.
+pub const LEAD_DETACH: &str =
+    "Ctrl-P Ctrl-Q detaches: the lead runs on. riff view or riff lead start attaches again.";
+
+/// `riff lead start` and `riff view` after a detach, or after the end of
+/// the lead.
+pub fn lead_detached(name: &str) -> String {
+    format!("You left the terminal of the container {name}.")
+}
+
+/// `riff view`: no lead runs on this machine.
+pub const VIEW_NO_LEAD: &str = "No lead runs on this machine. Start it in a clone: riff lead start";
+
+/// `riff view`: the starts that wait for room in the limit of the host.
+///
+/// ```
+/// let line = riff::text::view_waiting(&["riff-issue-13-2b3c4d5e".into()]);
+/// assert_eq!(line, "waits for room: riff-issue-13-2b3c4d5e");
+/// ```
+pub fn view_waiting(names: &[String]) -> String {
+    let names: Vec<String> = names.iter().map(|n| safe(n)).collect();
+    format!("waits for room: {}", names.join(", "))
+}
+
+/// `riff view`: the keys, at the bottom of the view.
+pub const VIEW_KEYS: &str =
+    "Up/Down select   Enter attach to the lead   t take over the session   q quit";
+
+/// `riff view`: the riff daemon does not answer.
+pub fn view_no_daemon(error: &str) -> String {
+    format!("No riff daemon answers: {error}. Start it: riff daemon install")
+}
+
+/// `riff view`: the line of the daemon.
+pub fn view_daemon(status: &crate::daemon::Status) -> String {
+    let limit = status.limit.map_or_else(String::new, |l| {
+        format!(
+            ", limit {} sessions and a floor of {} GB",
+            l.sessions, l.floor_gb
+        )
+    });
+    format!(
+        "riff daemon {}, pid {}{limit}, {} waiting",
+        safe(&status.build),
+        status.pid,
+        status.waiting.len()
+    )
+}
+
+/// `riff view`: the word of a phase of a session.
+pub fn phase_word(phase: crate::daemon::Phase) -> &'static str {
+    use crate::daemon::Phase;
+    match phase {
+        Phase::Works => "works",
+        Phase::Ends => "ends",
+        Phase::Holds => "holds for a takeover",
+        Phase::Taken => "taken over",
+        Phase::Terminal => "lead",
+    }
+}
+
+/// `riff view`: the line of a wave.
+pub fn view_wave(wave: &crate::daemon::WaveShown) -> String {
+    format!("wave {}: {}", safe(&wave.repo), safe(&wave.word))
+}
+
+/// `riff view`: the session has no takeover.
+pub fn view_no_takeover(name: &str) -> String {
+    format!("The session in {name} is the lead: Enter attaches to it.")
 }
 
 #[cfg(test)]

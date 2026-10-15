@@ -103,6 +103,10 @@
 //! claim, the release and the verify request. The tools do not list each
 //! other tool, and refuse a call of it with [`text::not_in_a_container`].
 //! The instructions of the server are [`text::MCP_CONTAINER`].
+//!
+//! The lead in a container ([`crate::lead`]) also gets the tools of a
+//! lead that act only on riff-server: [`LEAD_TOOLS`]. Its instructions
+//! are [`text::MCP_LEAD`]: they say how the lead gets its wakes.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -144,15 +148,35 @@ pub struct Tools {
     /// What counts the tokens of each claim of the session
     /// ([`crate::usage`]). `None` counts nothing.
     meter: Option<Arc<Meter>>,
-    /// True for a session in a container: it gets only the tools of
-    /// [`CONTAINER_TOOLS`] (01M4ZV3B6T2KB09WJ59F07HXET).
-    container: bool,
+    /// Where the session runs: on the host, it gets each tool. In a
+    /// container, it gets only the tools of [`CONTAINER_TOOLS`]
+    /// (01M4ZV3B6T2KB09WJ59F07HXET), or of [`LEAD_TOOLS`] for the lead.
+    reach: Reach,
+}
+
+/// Where a session runs, for its tools.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// On the host: each tool.
+    Host,
+    /// A worker or a verifier in a container: [`CONTAINER_TOOLS`].
+    Container,
+    /// The lead in a container: [`LEAD_TOOLS`].
+    Lead,
 }
 
 /// The tools of a session in a container (01M4ZV3B6T2KB09WJ59F07HXET).
 /// Each acts on riff-server, and on no folder of the host and no claim.
 pub const CONTAINER_TOOLS: [&str; 8] = [
     "blocked", "post", "read", "status", "tell", "threads", "who", "whoami",
+];
+
+/// The tools of the lead in a container: the tools of
+/// [`CONTAINER_TOOLS`], and the tools of a lead that act only on
+/// riff-server.
+pub const LEAD_TOOLS: [&str; 13] = [
+    "blocked", "free", "hold", "lead", "pause", "post", "read", "resume", "status", "tell",
+    "threads", "who", "whoami",
 ];
 
 #[derive(Deserialize, JsonSchema)]
@@ -287,7 +311,7 @@ impl Tools {
             worker: false,
             wrapper: None,
             meter: None,
-            container: false,
+            reach: Reach::Host,
         }
     }
 
@@ -295,13 +319,24 @@ impl Tools {
     /// in a container, and the tools run on the host
     /// (01M4ZV3B6T2KB09WJ59F07HXET).
     pub fn in_container(mut self) -> Self {
-        self.container = true;
+        self.reach = Reach::Container;
+        self
+    }
+
+    /// Gives the session only the tools of [`LEAD_TOOLS`]: the lead in a
+    /// container (01M4Z60B81RTZT71PN5HV0GZHX).
+    pub fn in_lead_container(mut self) -> Self {
+        self.reach = Reach::Lead;
         self
     }
 
     /// True when the session gets the tool `name`.
     fn serves(&self, name: &str) -> bool {
-        !self.container || CONTAINER_TOOLS.contains(&name)
+        match self.reach {
+            Reach::Host => true,
+            Reach::Container => CONTAINER_TOOLS.contains(&name),
+            Reach::Lead => LEAD_TOOLS.contains(&name),
+        }
     }
 
     /// The tools of the session: each tool, or in a container only the
@@ -710,10 +745,10 @@ Your session ID and your claims stay. Call it each time you change worktree."
 #[tool_handler(router = self.router())]
 impl ServerHandler for Tools {
     fn get_info(&self) -> rmcp::model::ServerConfig {
-        let instructions = if self.container {
-            text::MCP_CONTAINER
-        } else {
-            text::MCP_TOOLS
+        let instructions = match self.reach {
+            Reach::Host => text::MCP_TOOLS,
+            Reach::Container => text::MCP_CONTAINER,
+            Reach::Lead => text::MCP_LEAD,
         };
         rmcp::model::ServerConfig::new(
             rmcp::model::ServerCapabilities::builder()
@@ -730,7 +765,10 @@ impl ServerHandler for Tools {
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
         if !self.serves(&request.name) {
-            let refusal = text::not_in_a_container(&request.name);
+            let refusal = match self.reach {
+                Reach::Lead => text::not_in_the_lead_container(&request.name),
+                _ => text::not_in_a_container(&request.name),
+            };
             return Ok(
                 rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(refusal)])
                     .into(),

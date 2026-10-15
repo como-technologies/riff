@@ -811,6 +811,112 @@ your lead:
 riff workers interval 0
 ```
 
+## Run the lead and watch the riff
+
+In riff 3.0 the lead is a session of the riff daemon too: `claude` in
+a container of the session image, with a terminal. conmon, the monitor
+of podman, holds the terminal. So the lead runs on when you close your
+terminal, and when the daemon stops. `riff view` shows each session of
+the daemon, and attaches your terminal to the lead. riff 3.0 uses no
+tmux.
+
+```mermaid
+flowchart LR
+    subgraph M["your machine"]
+        V["riff view"] -- "status, each second" --> D["riff daemon"]
+        V -- "Enter: podman attach" --> L["container: the lead<br/>claude with a terminal"]
+        V -- "t: podman exec -it" --> W["container: issue-12<br/>claude -p"]
+        D -- "podman run -d -i -t" --> L
+        D -- "podman run" --> W
+    end
+    L -- "riff tools, wakes" --> D
+```
+
+Get ready as for `riff run` (see
+[Get ready to run an item](#get-ready-to-run-an-item)).
+
+### Start the lead
+
+In your clone of the repository:
+
+```sh
+riff lead start
+```
+
+The daemon starts the lead of the repository in the container
+`riff-lead-OWNER-REPO`, and riff attaches your terminal to it. When the
+lead runs already, riff only attaches. To leave the terminal of the
+lead, press Ctrl-P, then Ctrl-Q. The lead runs on. To end the lead,
+type `/exit` in it.
+
+The lead has a folder of its own: `leads/OWNER-REPO` in the data folder
+of riff, with a clone of the repository and a Claude folder. Both stay
+between the starts of the lead, so the lead keeps the history of its
+conversations. When `claude` asks a question at its first start, answer
+it once: the Claude folder keeps the answer. The lead does not count in
+the limit of the host.
+
+The lead gets the riff tools that talk, and the tools of a lead that
+act on riff-server: `lead`, `hold`, `free`, `pause` and `resume`. It
+gets its wakes from `/opt/riff/riff relay watch`, a background task
+that ends at each wake. The instructions of its riff tools tell it to
+run that task. To make it the lead of your user, tell it to call the
+riff tool `lead`.
+
+### Watch the riff
+
+```sh
+riff view
+```
+
+The view shows each session of the daemon of this machine: its
+container, its item, its state, its age and its last step. It also
+shows the daemon, the limit of the host, each start that waits for
+room, and each wave. It draws them again each second.
+
+| Key | Does |
+|---|---|
+| Up, Down (or k, j) | Select a session. |
+| Enter | Attach to the lead. Ctrl-P Ctrl-Q comes back to the view. |
+| t | Take over the selected session (see [Take over a session](#take-over-a-session)). |
+| q, Esc, Ctrl-C | End the view. The sessions go on. |
+
+The states of a session:
+
+| State | Means |
+|---|---|
+| `works` | A turn of `claude` runs. |
+| `ends` | The turn gave its result. `claude` ends, or waits for its background tasks. |
+| `holds for a takeover` | A takeover waits for the end of the turn. |
+| `taken over` | A person has the session in a terminal. |
+| `lead` | The lead, with its terminal. |
+
+`riff daemon status` shows the same state and last step of each
+session.
+
+### Take over a session
+
+You can take over a session that works on an item, for example to
+help it or to look at its work. Find the name of its container with
+`riff view` or `riff daemon status`. Then:
+
+```sh
+riff takeover riff-issue-12-1a2b3c4d
+```
+
+The session stops at the end of its turn. Then `claude` opens in your
+terminal, in the container of the session, with the history of the
+session. When you are done, type `/exit`. The session goes on with its
+item: riff starts `claude -p` again with `--resume`, and tells it that
+a person used the session. While you have the session, the quiet limit
+of the daemon does not stop it.
+
+When you press Ctrl-C before `claude` opens, the session goes on after
+its turn. When `riff takeover` ends while `claude` is open, for example
+when your terminal closes, riff gives the session back at once. When
+the daemon restarts during a takeover, the session waits for you: run
+`riff takeover NAME` again, and type `/exit`.
+
 ## Run the real-session test
 
 The real-session test checks a release on a real machine, with your

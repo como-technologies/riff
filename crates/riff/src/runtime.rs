@@ -35,6 +35,14 @@
 //! | Stop | [`Runtime::stop`] | `podman stop NAME` |
 //! | Find a live session | [`Runtime::running`] | `podman container inspect --format {{.State.Running}} NAME` |
 //! | Attach a terminal | [`Runtime::attach`] | `podman attach NAME` |
+//! | Start with a terminal | [`Runtime::start_terminal`] | `podman run --rm -d -i -t ...` ([`crate::podman::terminal_args`]), then `podman wait NAME` |
+//! | Run a command with a terminal | [`Runtime::exec`] | `podman exec -it NAME COMMAND` |
+//!
+//! A session with a terminal is the lead (01M4Z60B81RTZT71PN5HV0GZHX).
+//! The runtime holds its terminal: conmon on podman. A person attaches to
+//! it, and detaches with Ctrl-P Ctrl-Q: the session runs on. A takeover
+//! runs `claude --resume ID` with the terminal of the person in the
+//! container of a worker ([`Runtime::exec`], 01M4Z60B83ZH10HYKW7X1C0SSS).
 //!
 //! A spec holds no secret. Each [`Env::Host`] of a spec names a variable
 //! only. Its value goes to [`Runtime::start`] beside the spec, and the
@@ -317,6 +325,19 @@ pub trait Runtime: Send + Sync {
     /// Attaches the terminal of this process to the session `name`,
     /// until a detach or the end of the session.
     fn attach(&self, name: &str) -> impl Future<Output = Result<Exit>> + Send;
+
+    /// Starts the session of `spec` with a terminal that the runtime
+    /// holds: [`Runtime::attach`] shows it. It gives the end of the
+    /// session. `values` is as for [`Runtime::start`].
+    fn start_terminal(
+        &self,
+        spec: &SessionSpec,
+        values: &[(String, String)],
+    ) -> impl Future<Output = Result<End>> + Send;
+
+    /// Runs `command` in the live session `name` with the terminal of
+    /// this process, until the command ends.
+    fn exec(&self, name: &str, command: &[String]) -> impl Future<Output = Result<Exit>> + Send;
 }
 
 /// A runtime with no container, for tests (01M4ZBGK5G3EFXWT61DR2NHMDD).
@@ -368,7 +389,7 @@ struct Book {
     registry: BTreeSet<String>,
     /// The lines that each new session prints.
     events: Vec<String>,
-    /// Each pull, start, stop and attach, in order.
+    /// Each pull, start, stop, attach and exec, in order.
     calls: Vec<String>,
     /// The sessions, by name.
     sessions: BTreeMap<String, Played>,
@@ -416,8 +437,9 @@ impl Fake {
         self
     }
 
-    /// Each pull, start, stop and attach, in order: for example
-    /// `start riff-issue-12-1a2b3c4d`.
+    /// Each pull, start, stop, attach and exec, in order: for example
+    /// `start riff-issue-12-1a2b3c4d`, `terminal riff-lead-o-r` or
+    /// `exec riff-issue-12-1a2b3c4d claude --resume ID`.
     pub fn calls(&self) -> Vec<String> {
         self.lock().calls.clone()
     }
@@ -489,51 +511,20 @@ impl Runtime for Fake {
     }
 
     async fn start(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<Running> {
-        spec.check_values(values)?;
-        let mut book = self.lock();
-        book.calls.push(format!("start {}", spec.name));
-        if !book.local.contains(&spec.image) {
-            bail!("this machine has no image {}", spec.image);
-        }
-        if book
-            .sessions
-            .get(&spec.name)
-            .is_some_and(|p| p.exit.is_none())
-        {
-            bail!("the session {} runs already", spec.name);
-        }
-        let (events, read) = mpsc::unbounded_channel();
-        for line in &book.events {
-            let _ = events.send(format!("{line}\n").into_bytes());
-        }
-        let (ended, exit) = oneshot::channel();
-        book.sessions.insert(
-            spec.name.clone(),
-            Played {
-                spec: spec.clone(),
-                values: values.to_vec(),
-                input: Vec::new(),
-                events: Some(events),
-                end: Some(ended),
-                exit: None,
-            },
-        );
+        let (read, end) = self.play(spec, values, "start")?;
         let name = spec.name.clone();
         Ok(Running {
             name: name.clone(),
             input: Box::new(FakeInput {
                 book: self.book.clone(),
-                name: name.clone(),
+                name,
             }),
             events: Box::new(FakeEvents {
                 read,
                 left: Vec::new(),
             }),
             errors: Box::new(tokio::io::empty()),
-            end: End::new(async move {
-                exit.await
-                    .map_err(|_| anyhow!("the fake session {name} has no end"))
-            }),
+            end,
         })
     }
 
@@ -561,6 +552,71 @@ impl Runtime for Fake {
             Some(played) if played.exit.is_none() => Ok(Exit::SUCCESS),
             _ => bail!("no session {name} runs"),
         }
+    }
+
+    /// A session with a terminal prints no event: a stop ends it.
+    async fn start_terminal(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<End> {
+        let (_, end) = self.play(spec, values, "terminal")?;
+        Ok(end)
+    }
+
+    async fn exec(&self, name: &str, command: &[String]) -> Result<Exit> {
+        let mut book = self.lock();
+        book.calls
+            .push(format!("exec {name} {}", command.join(" ")));
+        match book.sessions.get(name) {
+            Some(played) if played.exit.is_none() => Ok(Exit::SUCCESS),
+            _ => bail!("no session {name} runs"),
+        }
+    }
+}
+
+impl Fake {
+    /// Starts the session of `spec` as the call `call`: its events and its
+    /// end.
+    fn play(
+        &self,
+        spec: &SessionSpec,
+        values: &[(String, String)],
+        call: &str,
+    ) -> Result<(mpsc::UnboundedReceiver<Vec<u8>>, End)> {
+        spec.check_values(values)?;
+        let mut book = self.lock();
+        book.calls.push(format!("{call} {}", spec.name));
+        if !book.local.contains(&spec.image) {
+            bail!("this machine has no image {}", spec.image);
+        }
+        if book
+            .sessions
+            .get(&spec.name)
+            .is_some_and(|p| p.exit.is_none())
+        {
+            bail!("the session {} runs already", spec.name);
+        }
+        let (events, read) = mpsc::unbounded_channel();
+        if call == "start" {
+            for line in &book.events {
+                let _ = events.send(format!("{line}\n").into_bytes());
+            }
+        }
+        let (ended, exit) = oneshot::channel();
+        book.sessions.insert(
+            spec.name.clone(),
+            Played {
+                spec: spec.clone(),
+                values: values.to_vec(),
+                input: Vec::new(),
+                events: Some(events),
+                end: Some(ended),
+                exit: None,
+            },
+        );
+        let name = spec.name.clone();
+        let end = End::new(async move {
+            exit.await
+                .map_err(|_| anyhow!("the fake session {name} has no end"))
+        });
+        Ok((read, end))
     }
 }
 
@@ -732,6 +788,32 @@ mod tests {
         let again = fake.start(&spec("s1"), &token()).await.unwrap();
         assert_eq!(again.name, "s1");
         assert_eq!(fake.exit("s1"), None);
+    }
+
+    #[tokio::test]
+    async fn a_fake_session_with_a_terminal_takes_an_attach_and_an_exec_until_a_stop() {
+        let fake = Fake::default()
+            .with_image("img")
+            .with_events(["not for a terminal"]);
+        let end = fake.start_terminal(&spec("lead"), &token()).await.unwrap();
+        assert_eq!(fake.attach("lead").await.unwrap(), Exit::SUCCESS);
+        let command = ["claude".to_owned(), "--resume".to_owned(), "s1".to_owned()];
+        assert_eq!(fake.exec("lead", &command).await.unwrap(), Exit::SUCCESS);
+        assert!(fake.start_terminal(&spec("lead"), &token()).await.is_err());
+        fake.stop("lead").await.unwrap();
+        assert_eq!(end.wait().await.unwrap(), Exit { code: None });
+        assert!(fake.exec("lead", &command).await.is_err());
+        assert_eq!(
+            fake.calls(),
+            [
+                "terminal lead",
+                "attach lead",
+                "exec lead claude --resume s1",
+                "terminal lead",
+                "stop lead",
+                "exec lead claude --resume s1",
+            ]
+        );
     }
 
     #[test]

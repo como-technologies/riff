@@ -4780,6 +4780,89 @@ share.
   at its end, and the folder of a verify of a closed pull request goes
   at a look.
 
+### The lead, the view and the takeover
+
+- **01M501P9MXNAP5QXNVBVF5JJFN** `riff lead start` in a clone starts
+  the lead of the repository of the clone through the daemon, when it
+  does not run, in the container `riff-lead-OWNER-REPO`. Then it
+  attaches the terminal of the person to it. When the lead runs
+  already, it only attaches. Ctrl-P Ctrl-Q detaches, and the lead runs
+  on. `riff lead` with no subcommand stays the command of riff 1.x.
+- **01M501P9Q51AYN9GBPWKVHA229** The folder of the lead is
+  `leads/OWNER-REPO` in the data folder of riff. At the first start,
+  riff makes `clone/` with `git clone --reference MAIN`, on the default
+  branch of `origin`, and the Claude folder `claude/`. Both stay
+  between the starts of the lead. Each start is a new session of
+  riff-server and of `claude`.
+- **01M501P9SDGVWG3MTVCW5BDRQQ** The Claude folder of the lead gets the
+  first-run answers of `claude`: `hasCompletedOnboarding`, the `theme`
+  of the `.claude.json` of the person (else `auto`), and the trust of
+  the clone. A key that is there stays. riff writes the `settings.json`
+  of a session (01M4ZD48DHAKJ1EHX6QHYAQ7ZM) only when it is not there.
+- **01M501P9VN47QAKZ6B8P39ZSW4** The spec of the lead is the spec of a
+  worker with the name of the lead, and the command `claude
+  --session-id ID --permission-mode auto START`, where START is the
+  first prompt of the lead. The daemon runs it as `/opt/riff/riff relay
+  --terminal -- COMMAND`: the relay adds the riff tools, and runs the
+  command in its own place, so the command has the terminal.
+- **01M501P9XWXWDBSXP4QRTHTZ4P** The host starts a session of
+  riff-server for the lead, not a worker. While the container of the
+  lead runs, the daemon keeps that session alive, also after its own
+  restart. At the end of the lead, the daemon ends that session. The
+  lead gets the riff tools that talk, and `lead`, `hold`, `free`,
+  `pause` and `resume`. The daemon refuses each other tool with a text
+  that says why.
+- **01M501PA04NP79RJQEDP4D7YTM** `riff relay watch` in a session asks
+  the daemon, on the socket of the session, to wait for the next wake
+  of the session on riff-server. It prints the line of the wake, as
+  `riff watch --once` does, and ends. While the daemon is away, it
+  tries again. The instructions of the riff tools of the lead tell it
+  to keep `riff relay watch` running as a background task.
+- **01M501PA2C087SEN4M4QTK5J1E** The daemon starts a session with a
+  terminal with `podman run --rm -d -i -t`: conmon holds the terminal.
+  `podman wait` gives its end. Such a session does not wait for room,
+  and does not count in the limit of the host. The daemon says `done`
+  to `riff` when its container runs.
+- **01M501PA4MG5NYNK7FBBRRAT20** `riff view` shows the daemon of this
+  machine with ratatui, and draws it again each second: each session
+  with its container, its item, its state, its age and its last step;
+  the daemon and the limit of the host; each start that waits for room;
+  each wave. Up and Down select a session. Enter attaches to the lead:
+  the selected session when it is a lead, else the first lead. `t`
+  takes over the selected session. `q`, Esc and Ctrl-C end the view;
+  the sessions go on. Its tests draw it on the `TestBackend` of
+  ratatui.
+- **01M501PA6W0NCG9JEK017F9304** `riff takeover NAME` takes over the
+  worker in the container NAME. It waits for the end of the turn of the
+  session. Then it runs `podman exec -it NAME /opt/riff/riff relay
+  --terminal -- claude --resume ID --permission-mode auto` with the
+  terminal of the person. When that ends, it tells the daemon to go on.
+  It exits with 0 when the session goes on, and with 1 when the session
+  ended before the takeover.
+- **01M501PA94CDZDH214GGFMTH5V** On the socket of a session, `hold`
+  tells the relay to close the stdin of `claude`, and to keep the
+  container at the end of `claude`. The relay then says `held`, and
+  waits. `go on` tells it to start `claude` again, with `--resume ID`
+  in place of `--session-id ID`. The sequence numbers of the events go
+  on. The hello of the relay says `held` while it waits, so a new
+  daemon knows.
+- **01M501PABB010P4S8YF7R29XXS** The daemon keeps a takeover in the
+  record of the session, from the ask until it gives the session back.
+  It gives the session back at the `go on` of `riff takeover`, or at
+  the end of its connection: it says `go on` to the relay, and gives
+  `claude` one new input that says that a person used the session. The
+  quiet limit does not count during a takeover. After a restart of the
+  daemon, a takeover stays, and a new `riff takeover NAME` gets the
+  terminal at once. The daemon refuses a takeover of a session with a
+  terminal, of a session with no relay, and of a relay of a protocol
+  before 4.
+- **01M501PADKZNRHBZD9XPMJGW06** `riff daemon status` and `riff view`
+  show the state of each session and its last step. The state is
+  `works`, `ends` after the result of its turn, `holds for a takeover`
+  while a takeover waits, `taken over` while a person has it, or `lead`
+  for the lead. The last step is the last line that `riff run` shows of
+  its events.
+
 ### The first run
 
 - **01M4ZJN6R68YBD3XMM725ZRJ7W** `riff init` does the first run of riff

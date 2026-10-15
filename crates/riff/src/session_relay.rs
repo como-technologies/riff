@@ -58,9 +58,12 @@
 //! |---|---|---|
 //! | relay | [`Up::Event`] | One line of the stdout of `claude`, with its sequence number, with no secret. |
 //! | relay | [`Up::Exit`] | `claude` ended, with its exit code. It has the next sequence number. |
+//! | relay | [`Up::Held`] | `claude` ended for a takeover. The relay waits for [`Say::GoOn`]. |
 //! | daemon | [`Say::Input`] | One line for the stdin of `claude`: a wake. |
 //! | daemon | [`Say::Close`] | Close the stdin of `claude`: it ends after its turn. |
 //! | daemon | [`Say::Ack`] | The daemon has each line up to this sequence number. |
+//! | daemon | [`Say::Hold`] | A takeover: close the stdin of `claude`, and keep the container at its end. |
+//! | daemon | [`Say::GoOn`] | The takeover ended: start `claude` again with `--resume`. |
 //!
 //! The sequence numbers start at 1, and go up by 1 for each line. The
 //! event with the number N is line N of `events.jsonl`. At a new
@@ -73,6 +76,46 @@
 //! After `claude` ends, the relay waits up to [`WAIT`] for the ack of
 //! its exit, and then ends with the exit code of `claude`. So the
 //! container goes.
+//!
+//! # A takeover
+//!
+//! A person can take over a worker (01M4Z60B83ZH10HYKW7X1C0SSS,
+//! 01M501PA94CDZDH214GGFMTH5V). The
+//! daemon says [`Say::Hold`]: the relay closes the stdin of `claude`, so
+//! `claude` ends after its turn. Its end is then no exit: the relay says
+//! [`Up::Held`], and the container stays. The person runs `claude
+//! --resume ID` in the container with a terminal (`podman exec`). After
+//! that, the daemon says [`Say::GoOn`] and gives one new input: the relay
+//! starts `claude -p --resume ID` again ([`resumed`]), and the sequence
+//! numbers of its events go on. While the daemon is away, the hello of
+//! the next connection says that the relay waits (`held`).
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant P as riff takeover (the person)
+//!     participant D as riff daemon
+//!     participant R as riff relay
+//!     participant C as claude -p
+//!     P->>D: takeover NAME
+//!     D->>R: hold
+//!     R->>C: close stdin
+//!     C-->>R: the last events of the turn, then the end
+//!     R->>D: held
+//!     D-->>P: held: run the terminal now
+//!     Note over P: podman exec -it NAME claude --resume ID
+//!     P->>D: go on
+//!     D->>R: go on, then an input
+//!     R->>C: start claude -p --resume ID, the input
+//! ```
+//!
+//! # A session with a terminal
+//!
+//! The lead runs `riff relay --terminal -- claude ...`: the relay adds
+//! the riff tools, and runs `claude` in its own place with the terminal
+//! ([`terminal`], 01M501P9VN47QAKZ6B8P39ZSW4). It relays no event.
+//! `riff relay watch` waits for the next wake of the session, through
+//! the daemon ([`watch`], 01M501PA04NP79RJQEDP4D7YTM), as `riff watch
+//! --once` does on the host.
 //!
 //! # Versions
 //!
@@ -109,6 +152,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -156,6 +201,10 @@ pub enum Up {
         /// The exit code of `claude`, or none after a signal.
         code: Option<i32>,
     },
+    /// `claude` ended for a takeover: the relay waits for [`Say::GoOn`].
+    /// The relay keeps no copy of it: the hello of the next connection
+    /// says `held`.
+    Held,
 }
 
 impl Up {
@@ -166,10 +215,12 @@ impl Up {
     ///
     /// assert_eq!(Up::Event { seq: 3, line: "{}".into() }.seq(), 3);
     /// assert_eq!(Up::Exit { seq: 4, code: Some(0) }.seq(), 4);
+    /// assert_eq!(Up::Held.seq(), 0);
     /// ```
     pub fn seq(&self) -> u64 {
         match self {
             Up::Event { seq, .. } | Up::Exit { seq, .. } => *seq,
+            Up::Held => 0,
         }
     }
 }
@@ -290,6 +341,35 @@ pub fn with_tools(command: &[String], bin: &Path) -> Vec<String> {
     with
 }
 
+/// The command of `claude` that goes on after a takeover:
+/// `--resume ID` in place of `--session-id ID`
+/// (01M4Z60B83ZH10HYKW7X1C0SSS).
+///
+/// ```
+/// let command: Vec<String> = ["claude", "-p", "--session-id", "s1", "--verbose"]
+///     .map(String::from)
+///     .into();
+/// assert_eq!(
+///     riff::session_relay::resumed(&command),
+///     ["claude", "-p", "--resume", "s1", "--verbose"]
+/// );
+/// ```
+pub fn resumed(command: &[String]) -> Vec<String> {
+    command
+        .iter()
+        .map(|arg| {
+            if arg == "--session-id" {
+                "--resume".to_owned()
+            } else {
+                arg.clone()
+            }
+        })
+        .collect()
+}
+
+/// Starts `claude` again after a takeover, for [`relay`].
+pub type Again = Box<dyn FnMut() -> Result<Child> + Send>;
+
 /// The process of `claude`, for [`relay`].
 pub struct Child {
     /// Its stdin: the relay writes each input as one line.
@@ -334,9 +414,108 @@ struct Link {
     deadline: Option<Instant>,
     /// True when the output of `claude` ended.
     done: bool,
+    /// True after [`Say::Hold`]: the end of `claude` is no exit.
+    hold: bool,
+    /// While `claude` waits for [`Say::GoOn`] after a takeover: the
+    /// sequence number of its next event.
+    held: Option<u64>,
+    /// Starts `claude` again after a takeover.
+    again: Again,
+    /// The lines of each `claude` go here.
+    ups: mpsc::UnboundedSender<Up>,
+    scrub: Scrub,
+    notes: mpsc::UnboundedSender<String>,
+}
+
+/// Sends each line of the stdout of one `claude` to `ups` as an event,
+/// with no secret of `scrub`, from the sequence number `first` on. Then
+/// it sends the exit, with the next number.
+fn read_claude(
+    stdout: Box<dyn AsyncRead + Send + Unpin>,
+    end: Pin<Box<dyn Future<Output = Option<i32>> + Send>>,
+    first: u64,
+    scrub: Scrub,
+    ups: mpsc::UnboundedSender<Up>,
+) {
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        let mut seq = first;
+        while let Ok(Some(line)) = lines.next_line().await {
+            let line = scrub.clean(&line).into_owned();
+            if ups.send(Up::Event { seq, line }).is_err() {
+                return;
+            }
+            seq += 1;
+        }
+        let code = end.await;
+        let _ = ups.send(Up::Exit { seq, code });
+    });
+}
+
+/// Sends each line of the stderr of one `claude` to `notes`, with no
+/// secret of `scrub`.
+fn read_notes(
+    stderr: Box<dyn AsyncRead + Send + Unpin>,
+    scrub: Scrub,
+    notes: mpsc::UnboundedSender<String>,
+) {
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let _ = notes.send(scrub.clean(&line).into_owned());
+        }
+    });
 }
 
 impl Link {
+    /// Reads the output of `child`, from the sequence number `first` on.
+    /// It gives the stdin of `child`.
+    fn read(&mut self, child: Child, first: u64) -> Box<dyn AsyncWrite + Send + Unpin> {
+        let Child {
+            stdin,
+            stdout,
+            stderr,
+            end,
+        } = child;
+        read_claude(stdout, end, first, self.scrub.clone(), self.ups.clone());
+        read_notes(stderr, self.scrub.clone(), self.notes.clone());
+        stdin
+    }
+
+    /// A takeover: `claude` ends after its turn, and its end is no exit.
+    async fn hold(&mut self) {
+        if self.held.is_none() && self.exit.is_none() {
+            self.hold = true;
+            self.close().await;
+        }
+    }
+
+    /// The takeover ended: starts `claude` again. When it cannot start,
+    /// that is the exit of `claude`. It gives the line for the daemon.
+    fn go_on(&mut self, wait: Duration) -> Option<Up> {
+        let next = self.held.take()?;
+        match (self.again)() {
+            Ok(child) => {
+                let stdin = self.read(child, next);
+                self.stdin = Some(stdin);
+                self.closed = false;
+                self.done = false;
+                None
+            }
+            Err(e) => {
+                let _ = self.notes.send(format!("{e:#}"));
+                take(
+                    self,
+                    Some(Up::Exit {
+                        seq: next,
+                        code: None,
+                    }),
+                    wait,
+                )
+            }
+        }
+    }
+
     /// Gives `claude` the input `line`.
     async fn input(&mut self, line: &str) {
         if let Some(stdin) = self.stdin.as_mut() {
@@ -362,57 +541,35 @@ impl Link {
 
 /// Runs the relay for `child` on the socket at `socket` until `claude`
 /// ends and the daemon has its exit, or [`relay`]'s `wait` after the
-/// exit. It gives the exit code of `claude`. Each line of the stderr of
-/// `claude` and each note of the relay goes to `notes`, with no secret
-/// of `scrub`.
+/// exit. After a takeover, `again` starts `claude` again. It gives the
+/// exit code of `claude`. Each line of the stderr of `claude` and each
+/// note of the relay goes to `notes`, with no secret of `scrub`.
 pub async fn relay(
     child: Child,
+    again: Again,
     socket: &Path,
     scrub: Scrub,
     wait: Duration,
     notes: mpsc::UnboundedSender<String>,
 ) -> Option<i32> {
-    let Child {
-        stdin,
-        stdout,
-        stderr,
-        end,
-    } = child;
     let (ups, mut from_claude) = mpsc::unbounded_channel::<Up>();
-    {
-        let scrub = scrub.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            let mut seq = 0;
-            while let Ok(Some(line)) = lines.next_line().await {
-                seq += 1;
-                let line = scrub.clean(&line).into_owned();
-                if ups.send(Up::Event { seq, line }).is_err() {
-                    return;
-                }
-            }
-            let code = end.await;
-            let _ = ups.send(Up::Exit { seq: seq + 1, code });
-        });
-    }
-    {
-        let (scrub, notes) = (scrub.clone(), notes.clone());
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let _ = notes.send(scrub.clean(&line).into_owned());
-            }
-        });
-    }
     let mut link = Link {
-        stdin: Some(stdin),
+        stdin: None,
         inputs: 0,
         closed: false,
         kept: Kept::default(),
         exit: None,
         deadline: None,
         done: false,
+        hold: false,
+        held: None,
+        again,
+        ups,
+        scrub,
+        notes: notes.clone(),
     };
+    let stdin = link.read(child, 1);
+    link.stdin = Some(stdin);
     let mut away = false;
     loop {
         if let Ok(conn) = connect(socket).await {
@@ -455,14 +612,22 @@ async fn until(deadline: Option<Instant>) {
     }
 }
 
-/// Keeps the line `up` of `claude` in `link`. The exit starts the wait
-/// for the daemon.
+/// Keeps the line `up` of `claude` in `link`, and gives the line for
+/// the daemon. The exit starts the wait for the daemon. After
+/// [`Say::Hold`], the end of `claude` is [`Up::Held`]: the relay keeps
+/// no copy of it.
 fn take(link: &mut Link, up: Option<Up>, wait: Duration) -> Option<Up> {
     let Some(up) = up else {
         link.done = true;
         return None;
     };
     if let Up::Exit { seq, code } = up {
+        link.done = true;
+        if link.hold {
+            link.hold = false;
+            link.held = Some(seq);
+            return Some(Up::Held);
+        }
         link.exit = Some((seq, code));
         link.deadline = Some(Instant::now() + wait);
     }
@@ -486,6 +651,7 @@ async fn connected(
         protocol: PROTOCOL,
         inputs: link.inputs,
         closed: link.closed,
+        held: link.held.is_some(),
     };
     send(&mut write, &hello).await.ok()?;
     match serde_json::from_str::<Say>(&lines.next_line().await.ok()??) {
@@ -512,6 +678,12 @@ async fn connected(
                 match serde_json::from_str::<Say>(&line.ok()??) {
                     Ok(Say::Input { line }) => link.input(&line).await,
                     Ok(Say::Close) => link.close().await,
+                    Ok(Say::Hold) => link.hold().await,
+                    Ok(Say::GoOn) => {
+                        if let Some(up) = link.go_on(wait) {
+                            send(&mut write, &up).await.ok()?;
+                        }
+                    }
                     Ok(Say::Ack { seq }) => {
                         link.kept.taken(seq);
                         if let Some(code) = link.acked(seq) {
@@ -537,22 +709,12 @@ pub fn socket_here() -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("{}", text::RELAY_NO_SOCKET))
 }
 
-/// `riff relay -- COMMAND`: starts `COMMAND` with the riff tools, and
-/// relays it on the socket of `RIFF_SOCKET` ([`relay`]). A SIGTERM or a
-/// SIGINT goes to `claude`. It gives the exit code of `claude`, or 1
-/// after a signal.
-pub async fn main(command: Vec<String>) -> Result<i32> {
-    use tokio::signal::unix::{SignalKind, signal};
-    let socket = socket_here()?;
-    let bin = std::env::current_exe().context("cannot find the path of riff")?;
-    let command = with_tools(&command, &bin);
+/// Starts `command` with pipes for its stdin, stdout and stderr, and
+/// keeps its process ID in `pid`.
+fn spawn_claude(command: &[String], pid: &Arc<AtomicU32>) -> Result<Child> {
     let (program, args) = command
         .split_first()
         .ok_or_else(|| anyhow!("{}", text::RELAY_NO_COMMAND))?;
-    // The handlers come first: a signal before them ends the relay, and
-    // not claude.
-    let mut term = signal(SignalKind::terminate())?;
-    let mut int = signal(SignalKind::interrupt())?;
     let mut child = tokio::process::Command::new(program)
         .args(args)
         .stdin(std::process::Stdio::piped())
@@ -560,26 +722,57 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .with_context(|| text::no_program(program))?;
-    let pid = child.id();
+    pid.store(child.id().unwrap_or(0), Ordering::SeqCst);
     let (stdin, stdout, stderr) = (
         child.stdin.take().context("the stdin of claude")?,
         child.stdout.take().context("the stdout of claude")?,
         child.stderr.take().context("the stderr of claude")?,
     );
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = term.recv() => {}
-                _ = int.recv() => {}
+    Ok(Child {
+        stdin: Box::new(stdin),
+        stdout: Box::new(stdout),
+        stderr: Box::new(stderr),
+        end: Box::pin(async move { child.wait().await.ok().and_then(|s| s.code()) }),
+    })
+}
+
+/// `riff relay -- COMMAND`: starts `COMMAND` with the riff tools, and
+/// relays it on the socket of `RIFF_SOCKET` ([`relay`]). After a
+/// takeover, it starts the [`resumed`] command. A SIGTERM or a SIGINT
+/// goes to `claude`. It gives the exit code of `claude`, or 1 after a
+/// signal.
+pub async fn main(command: Vec<String>) -> Result<i32> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let socket = socket_here()?;
+    let bin = std::env::current_exe().context("cannot find the path of riff")?;
+    let command = with_tools(&command, &bin);
+    let again_command = resumed(&command);
+    // The handlers come first: a signal before them ends the relay, and
+    // not claude.
+    let mut term = signal(SignalKind::terminate())?;
+    let mut int = signal(SignalKind::interrupt())?;
+    let pid = Arc::new(AtomicU32::new(0));
+    let child = spawn_claude(&command, &pid)?;
+    {
+        let pid = pid.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = term.recv() => {}
+                    _ = int.recv() => {}
+                }
+                let pid = pid.load(Ordering::SeqCst);
+                if let Ok(pid) = i32::try_from(pid)
+                    && pid > 0
+                {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(pid),
+                        nix::sys::signal::Signal::SIGTERM,
+                    );
+                }
             }
-            if let Some(pid) = pid.and_then(|p| i32::try_from(p).ok()) {
-                let _ = nix::sys::signal::kill(
-                    nix::unistd::Pid::from_raw(pid),
-                    nix::sys::signal::Signal::SIGTERM,
-                );
-            }
-        }
-    });
+        });
+    }
     let (notes, mut lines) = mpsc::unbounded_channel::<String>();
     let written = tokio::spawn(async move {
         // The stderr of the relay can be gone, for example when the
@@ -589,14 +782,10 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
             let _ = stderr.write_all(format!("{line}\n").as_bytes()).await;
         }
     });
-    let end = Box::pin(async move { child.wait().await.ok().and_then(|s| s.code()) });
+    let again: Again = Box::new(move || spawn_claude(&again_command, &pid));
     let code = relay(
-        Child {
-            stdin: Box::new(stdin),
-            stdout: Box::new(stdout),
-            stderr: Box::new(stderr),
-            end,
-        },
+        child,
+        again,
         &socket,
         Scrub::new(secrets_here()),
         WAIT,
@@ -605,6 +794,54 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
     .await;
     let _ = written.await;
     Ok(code.unwrap_or(1))
+}
+
+/// `riff relay --terminal -- COMMAND`: runs `COMMAND` with the riff
+/// tools in the place of this process, so it keeps the terminal: the
+/// lead, and the `claude` of a takeover (01M4Z60B81RTZT71PN5HV0GZHX). It
+/// gives an error only when the command does not start.
+pub fn terminal(command: &[String]) -> anyhow::Error {
+    use std::os::unix::process::CommandExt;
+    let bin = match std::env::current_exe() {
+        Ok(bin) => bin,
+        Err(e) => return anyhow!(e).context("cannot find the path of riff"),
+    };
+    let command = with_tools(command, &bin);
+    let Some((program, args)) = command.split_first() else {
+        return anyhow!("{}", text::RELAY_NO_COMMAND);
+    };
+    let error = std::process::Command::new(program).args(args).exec();
+    anyhow!(error).context(text::no_program(program))
+}
+
+/// `riff relay watch`: waits for the next wake of the session through
+/// the daemon, on the socket at `socket` ([`SessionAsk::Watch`]), and
+/// gives its line. While the daemon is away, it tries the socket again
+/// each [`RETRY`].
+pub async fn watch(socket: &Path) -> Result<String> {
+    loop {
+        let Ok(conn) = connect(socket).await else {
+            tokio::time::sleep(RETRY).await;
+            continue;
+        };
+        let (read, mut write) = conn.into_split();
+        let mut lines = BufReader::new(read).lines();
+        if send(&mut write, &SessionAsk::Watch { protocol: PROTOCOL })
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        while let Ok(Some(line)) = lines.next_line().await {
+            match serde_json::from_str::<Say>(&line) {
+                Ok(Say::Line { text }) => return Ok(text),
+                Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
+                _ => {}
+            }
+        }
+        // The daemon went away: wait for the next one.
+        tokio::time::sleep(RETRY).await;
+    }
 }
 
 /// The error answer to the request `id` of `claude`: `message`.
@@ -841,14 +1078,103 @@ mod tests {
         send(write, say).await.unwrap();
     }
 
+    /// No second `claude`: a test with no takeover.
+    fn no_again() -> Again {
+        Box::new(|| Err(anyhow!("no takeover in this test")))
+    }
+
+    #[tokio::test]
+    async fn a_takeover_ends_claude_after_its_turn_and_a_go_on_starts_it_again() {
+        let mut daemon = Daemon::new();
+        let (mut first, child) = claude();
+        let (mut second, again) = claude();
+        let mut again = Some(again);
+        let again: Again = Box::new(move || again.take().ok_or_else(|| anyhow!("twice")));
+        let (notes, _noted) = mpsc::unbounded_channel();
+        let socket = daemon.socket.clone();
+        let relay = tokio::spawn(async move {
+            relay(child, again, &socket, Scrub::default(), WAIT, notes).await
+        });
+
+        let (_, mut lines, mut write) = daemon.accept().await;
+        say(&mut write, &Say::Resume { events: 0 }).await;
+        say(
+            &mut write,
+            &Say::Input {
+                line: "start".into(),
+            },
+        )
+        .await;
+        assert_eq!(first.read().await.as_deref(), Some("start"));
+        first.print("e1").await;
+        assert_eq!(up(&mut lines).await.seq(), 1);
+        // The hold closes the stdin: claude ends after its turn, and its
+        // end is no exit.
+        say(&mut write, &Say::Hold).await;
+        assert_eq!(first.read().await, None);
+        first.print("e2").await;
+        first.end(0).await;
+        assert_eq!(up(&mut lines).await.seq(), 2);
+        assert_eq!(up(&mut lines).await, Up::Held);
+
+        // The daemon goes away during the takeover: the hello of the new
+        // daemon says that the relay waits.
+        say(&mut write, &Say::Ack { seq: 2 }).await;
+        daemon.stop();
+        drop((lines, write));
+        daemon.start();
+        let (hello, mut lines, mut write) = daemon.accept().await;
+        assert_eq!(
+            hello,
+            SessionAsk::Relay {
+                protocol: PROTOCOL,
+                inputs: 1,
+                closed: true,
+                held: true,
+            }
+        );
+        say(&mut write, &Say::Resume { events: 2 }).await;
+        // The go on starts claude again; its events go on from 3.
+        say(&mut write, &Say::GoOn).await;
+        say(
+            &mut write,
+            &Say::Input {
+                line: "go on".into(),
+            },
+        )
+        .await;
+        assert_eq!(second.read().await.as_deref(), Some("go on"));
+        second.print("e3").await;
+        assert_eq!(
+            up(&mut lines).await,
+            Up::Event {
+                seq: 3,
+                line: "e3".into()
+            }
+        );
+        say(&mut write, &Say::Close).await;
+        assert_eq!(second.read().await, None);
+        second.end(0).await;
+        assert_eq!(
+            up(&mut lines).await,
+            Up::Exit {
+                seq: 4,
+                code: Some(0)
+            }
+        );
+        say(&mut write, &Say::Ack { seq: 4 }).await;
+        assert_eq!(relay.await.unwrap(), Some(0));
+    }
+
     #[tokio::test]
     async fn the_relay_keeps_the_events_while_the_daemon_is_away_and_loses_none() {
         let mut daemon = Daemon::new();
         let (mut claude, child) = claude();
         let (notes, mut noted) = mpsc::unbounded_channel();
         let socket = daemon.socket.clone();
-        let relay =
-            tokio::spawn(async move { relay(child, &socket, Scrub::default(), WAIT, notes).await });
+        let relay = tokio::spawn(async move {
+            relay(child, no_again(), &socket, Scrub::default(), WAIT, notes).await
+        });
 
         // The first daemon: the start text, two events.
         let (hello, mut lines, mut write) = daemon.accept().await;
@@ -857,7 +1183,8 @@ mod tests {
             SessionAsk::Relay {
                 protocol: PROTOCOL,
                 inputs: 0,
-                closed: false
+                closed: false,
+                held: false
             }
         );
         say(&mut write, &Say::Resume { events: 0 }).await;
@@ -903,7 +1230,8 @@ mod tests {
             SessionAsk::Relay {
                 protocol: PROTOCOL,
                 inputs: 1,
-                closed: false
+                closed: false,
+                held: false
             }
         );
         say(&mut write, &Say::Resume { events: 1 }).await;
@@ -943,7 +1271,10 @@ mod tests {
         let (notes, mut noted) = mpsc::unbounded_channel();
         let socket = daemon.socket.clone();
         let scrub = Scrub::new(["gho_secret1".to_owned()]);
-        let relay = tokio::spawn(async move { relay(child, &socket, scrub, WAIT, notes).await });
+        let relay =
+            tokio::spawn(
+                async move { relay(child, no_again(), &socket, scrub, WAIT, notes).await },
+            );
         let (_, mut lines, mut write) = daemon.accept().await;
         say(&mut write, &Say::Resume { events: 0 }).await;
         claude
@@ -982,8 +1313,9 @@ mod tests {
         let socket = daemon.socket.clone();
         drop(daemon);
         let wait = Duration::from_secs(60);
-        let relay =
-            tokio::spawn(async move { relay(child, &socket, Scrub::default(), wait, notes).await });
+        let relay = tokio::spawn(async move {
+            relay(child, no_again(), &socket, Scrub::default(), wait, notes).await
+        });
         claude.end(0).await;
         assert_eq!(relay.await.unwrap(), Some(0));
         assert_eq!(noted.recv().await.unwrap(), text::RELAY_AWAY);
@@ -996,8 +1328,9 @@ mod tests {
         let (claude, child) = claude();
         let (notes, _noted) = mpsc::unbounded_channel();
         let socket = daemon.socket.clone();
-        let relay =
-            tokio::spawn(async move { relay(child, &socket, Scrub::default(), WAIT, notes).await });
+        let relay = tokio::spawn(async move {
+            relay(child, no_again(), &socket, Scrub::default(), WAIT, notes).await
+        });
         let (_, mut lines, mut write) = daemon.accept().await;
         say(&mut write, &Say::Resume { events: 0 }).await;
         write

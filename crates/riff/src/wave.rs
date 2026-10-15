@@ -77,7 +77,9 @@
 //!
 //! The loop reaches the forge and riff-server through a [`World`]. The
 //! daemon uses [`Live`]: `gh` and riff-server 1.x. A test gives a fake
-//! world, with the fake runtime ([`crate::runtime::Fake`]).
+//! world, with the fake runtime ([`crate::runtime::Fake`]). The daemon
+//! also keeps the session of the lead alive through it, and follows the
+//! wakes of a session for `riff relay watch` ([`World::wake`]).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
@@ -372,6 +374,9 @@ fn spent<'a>(
 /// A future of a [`World`].
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// The wait before the next connection of the wakes of a session.
+const WAKE_RETRY: Duration = Duration::from_secs(1);
+
 /// The forge and the riff of the waves: [`Live`], or a fake in a test.
 pub trait World: Send + Sync {
     /// The facts of the wave now.
@@ -403,6 +408,14 @@ pub trait World: Send + Sync {
 
     /// Tells the lead of the wave `body`, as a message.
     fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, ()>;
+
+    /// Ends the session of `record` on riff-server, and stops its
+    /// keep-alive: the end of the lead.
+    fn leave<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, ()>;
+
+    /// Waits for the next wake of the session of `record` on riff-server,
+    /// and gives its line, as `riff watch --once` prints it.
+    fn wake<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<String>>;
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -537,7 +550,9 @@ async fn start_job<R: Runtime + 'static>(
     };
     let (out, said) = Out::keep();
     let ended = tokio::spawn(ended_of(said));
-    let record = daemon.launch(start, Some(job), slot, None, &out).await;
+    let record = daemon
+        .launch(start, Some(job), Some(slot), None, &out)
+        .await;
     drop(out);
     let ended = ended.await.unwrap_or(Ended {
         code: None,
@@ -772,6 +787,7 @@ impl Live {
             secrets,
             server: wave.server.clone(),
             me: me.clone(),
+            terminal: false,
         })
     }
 
@@ -1197,6 +1213,37 @@ impl World for Live {
         })
     }
 
+    fn leave<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            if let Some(task) = lock(&self.alive).remove(&record.live.session) {
+                task.abort();
+            }
+            match Api::new(&record.server).signed_in(Some(&record.live.session)) {
+                Ok(api) => {
+                    let _ = api.end(&record.me).await;
+                }
+                Err(e) => eprintln!("riff daemon: {}: {e:#}", record.live.name),
+            }
+        })
+    }
+
+    fn wake<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<String>> {
+        Box::pin(async move {
+            use futures::StreamExt;
+            let api = Api::new(&record.server).signed_in(Some(&record.live.session))?;
+            let me = &record.me;
+            let wakes = api::follow(|| api.watch(me), WAKE_RETRY);
+            tokio::pin!(wakes);
+            loop {
+                match wakes.next().await {
+                    Some(Ok(wake)) => return Ok(text::wake_line(&wake)),
+                    Some(Err(e)) => eprintln!("riff daemon: {}: {e:#}", record.live.name),
+                    None => bail!("{}", text::DAEMON_GONE),
+                }
+            }
+        })
+    }
+
     fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             if lock(&self.told).get(&wave.repo).is_some_and(|t| t == body) {
@@ -1359,6 +1406,7 @@ mod tests {
                     secrets: vec!["gho_secret1".into()],
                     server: "http://127.0.0.1:1".into(),
                     me,
+                    terminal: false,
                 }))
             })
         }
@@ -1386,6 +1434,14 @@ mod tests {
 
         fn tell<'a>(&'a self, _: &'a Wave, body: &'a str) -> BoxFuture<'a, ()> {
             Box::pin(async move { lock(&self.forge).told.push(body.to_owned()) })
+        }
+
+        fn leave<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, ()> {
+            Box::pin(async {})
+        }
+
+        fn wake<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, Result<String>> {
+            Box::pin(std::future::pending())
         }
     }
 
