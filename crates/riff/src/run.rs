@@ -855,6 +855,10 @@ async fn run_session(
     scrub: &Scrub,
     gh_token: &str,
 ) -> Result<Ended> {
+    // The handlers come first: a signal before them ends riff with no
+    // release.
+    let mut term = signal(SignalKind::terminate())?;
+    let mut int = signal(SignalKind::interrupt())?;
     let mut child = tokio::process::Command::new(PODMAN)
         .args(spec.podman_args()?)
         .env("GH_TOKEN", gh_token)
@@ -883,8 +887,6 @@ async fn run_session(
         .await
         .with_context(|| format!("cannot write {}", events.display()))?;
     let mut lines = BufReader::new(stdout).lines();
-    let mut term = signal(SignalKind::terminate())?;
-    let mut int = signal(SignalKind::interrupt())?;
     let mut stopped = false;
     let mut failed = false;
     loop {
@@ -1076,4 +1078,158 @@ async fn work(
     }
     println!("{}", text::run_kept(&clone));
     Ok(i32::from(!(ended.status.success() && !ended.failed && pull.is_some())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn facts() -> Facts {
+        Facts {
+            session: "1a2b3c4d-0000-4000-8000-000000000000".into(),
+            item: "issue-12".into(),
+            image: "localhost/riff-session:latest".into(),
+            home: "/home/mike".into(),
+            user: "mike".into(),
+            clone: "/r/sessions/issue-12-1a2b3c4d/clone".into(),
+            objects: "/src/riff/.git/objects".into(),
+            claude: "/r/sessions/issue-12-1a2b3c4d/claude".into(),
+            credentials: "/home/mike/.claude/.credentials.json".into(),
+            gitconfig: Some("/home/mike/.gitconfig".into()),
+            gh_config: Some("/home/mike/.config/gh".into()),
+        }
+    }
+
+    fn args(spec: &SessionSpec) -> Vec<String> {
+        spec.podman_args()
+            .unwrap()
+            .into_iter()
+            .map(|a| a.into_string().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn the_spec_has_each_bind_of_a_session_and_writes_only_its_own_folders() {
+        let spec = spec(&facts());
+        let binds: Vec<String> = args(&spec)
+            .windows(2)
+            .filter(|w| w[0] == "-v")
+            .map(|w| w[1].clone())
+            .collect();
+        assert_eq!(
+            binds,
+            [
+                "/r/sessions/issue-12-1a2b3c4d/clone:/r/sessions/issue-12-1a2b3c4d/clone",
+                "/src/riff/.git/objects:/src/riff/.git/objects:ro",
+                "/home/mike/.gitconfig:/home/mike/.gitconfig:ro",
+                "/home/mike/.config/gh:/home/mike/.config/gh:ro",
+                "/r/sessions/issue-12-1a2b3c4d/claude:/home/mike/.claude",
+                "/home/mike/.claude/.credentials.json:/home/mike/.claude/.credentials.json:ro",
+                "riff-cargo:/home/mike/.cargo",
+                "riff-sccache:/home/mike/.cache/sccache",
+            ]
+        );
+        // Each path of the person on the host has no write.
+        for bind in &spec.binds {
+            if let Source::Path(path) = &bind.source
+                && path.starts_with("/home/mike")
+            {
+                assert!(!bind.write, "{bind:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_spec_has_the_home_the_limits_and_the_values_of_a_session() {
+        let all = args(&spec(&facts())).join(" ");
+        for part in [
+            "run --rm -i --name riff-issue-12-1a2b3c4d --userns=keep-id --memory 8g --cpus 4",
+            "--mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true",
+            "-e HOME=/home/mike -e USER=mike -e LOGNAME=mike -e GH_TOKEN",
+            "-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=commit.gpgsign -e GIT_CONFIG_VALUE_0=false",
+            "-e CLAUDE_CONFIG_DIR=/home/mike/.claude",
+            "-e CARGO_HOME=/home/mike/.cargo -e SCCACHE_DIR=/home/mike/.cache/sccache",
+            "-e RUSTC_WRAPPER=sccache -e SCCACHE_IDLE_TIMEOUT=0 -e CARGO_BUILD_JOBS=4",
+            "-w /r/sessions/issue-12-1a2b3c4d/clone localhost/riff-session:latest",
+            "claude -p --input-format stream-json --output-format stream-json --verbose \
+             --session-id 1a2b3c4d-0000-4000-8000-000000000000 --permission-mode auto",
+        ] {
+            assert!(all.contains(part), "{part}\nnot in\n{all}");
+        }
+        assert!(all.ends_with("--permission-mode auto"), "{all}");
+    }
+
+    #[test]
+    fn the_spec_binds_no_git_or_gh_config_that_the_host_does_not_have() {
+        let spec = spec(&Facts {
+            gitconfig: None,
+            gh_config: None,
+            ..facts()
+        });
+        let all = args(&spec).join(" ");
+        assert!(!all.contains(".gitconfig"), "{all}");
+        assert!(!all.contains(".config/gh"), "{all}");
+    }
+
+    #[test]
+    fn a_path_with_a_comma_or_a_colon_gives_no_arguments() {
+        for clone in ["/r/a,b", "/r/a:b"] {
+            let spec = spec(&Facts {
+                clone: clone.into(),
+                ..facts()
+            });
+            let error = spec.podman_args().unwrap_err().to_string();
+            assert!(error.contains("comma or a colon"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_denied_call_and_a_push_show_their_text_fields() {
+        let denied = json!({"type":"system","subtype":"permission_denied","session_id":"s",
+            "tool_name":"Bash","reason":"the rules refuse it","tool_use_id":"t1"});
+        assert_eq!(
+            event_lines(&denied),
+            ["permission_denied: reason the rules refuse it, tool_name Bash, tool_use_id t1"]
+        );
+        let push = json!({"type":"system","subtype":"vcs_state_changed","uuid":"u",
+            "action":"push","branch":"worktree-issue-12","count":1});
+        assert_eq!(
+            event_lines(&push),
+            ["vcs_state_changed: action push, branch worktree-issue-12"]
+        );
+    }
+
+    #[test]
+    fn a_long_text_shows_its_first_line_cut_at_the_limit() {
+        let long = "a".repeat(SHOWN + 5);
+        let event = json!({"type":"assistant","message":{"content":[
+            {"type":"text","text": format!("{long}\nsecond")}]}});
+        assert_eq!(event_lines(&event), [format!("{}…", "a".repeat(SHOWN))]);
+    }
+
+    #[test]
+    fn a_tool_result_with_text_parts_shows_them() {
+        let event = json!({"type":"user","message":{"content":[
+            {"type":"tool_result","is_error":true,
+             "content":[{"type":"text","text":"no"},{"type":"text","text":"file"}]},
+            {"type":"tool_result","is_error":false,"content":"fine"}]}});
+        assert_eq!(event_lines(&event), ["! the tool failed: no file"]);
+    }
+
+    #[test]
+    fn the_scrub_takes_out_each_secret_also_twice_in_one_line() {
+        let scrub = Scrub::new(["gho_one".to_owned(), "sk-two".to_owned(), "ab".to_owned()]);
+        assert_eq!(
+            scrub.clean("gho_one sk-two gho_one ab"),
+            "[secret] [secret] [secret] ab"
+        );
+    }
+
+    #[test]
+    fn a_sign_in_that_ended_has_minutes_below_zero() {
+        let file = r#"{"claudeAiOauth":{"accessToken":"sk-a","expiresAt":0}}"#;
+        let sign_in = sign_in(file, 120 * 60_000).unwrap();
+        assert_eq!(sign_in.minutes, -120);
+        assert_eq!(sign_in.secrets, ["sk-a"]);
+    }
 }
