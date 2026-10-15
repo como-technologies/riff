@@ -56,7 +56,7 @@
 //! | Path | Holds |
 //! |---|---|
 //! | `clone/` | The clone of the session: `git clone --reference MAIN`. It stays until the merge. |
-//! | `claude/` | The own Claude folder of the session, with the trust of the clone ([`trust`]). |
+//! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the trust of the clone ([`trust`]), and no attribution line of `claude` ([`settings`]). |
 //! | `events.jsonl` | Each event of `claude`, with no secret ([`Scrub`]). |
 //!
 //! # The spec of the container
@@ -335,6 +335,45 @@ pub fn trust(clone: &Path) -> Value {
         json!({ "hasTrustDialogAccepted": true }),
     );
     json!({ "projects": projects })
+}
+
+/// The `settings.json` of the own Claude folder: `claude` adds no
+/// attribution line to a commit or a pull request, so the trailers end
+/// each one (01M4ZD48DHAKJ1EHX6QHYAQ7ZM). It is a setting of riff for
+/// its sessions, not a copy of a setting of the person.
+///
+/// ```
+/// assert_eq!(riff::run::settings()["includeCoAuthoredBy"], false);
+/// ```
+pub fn settings() -> Value {
+    json!({ "includeCoAuthoredBy": false })
+}
+
+/// Makes the own Claude folder `dir` of a session, with the
+/// `.claude.json` of [`trust`] for `clone` and the `settings.json` of
+/// [`settings`].
+///
+/// ```
+/// let dir = std::env::temp_dir().join(format!("riff-doc-claude-{}", std::process::id()));
+/// riff::run::claude_folder(&dir, "/data/clone".as_ref()).unwrap();
+/// let read = |name| -> serde_json::Value {
+///     serde_json::from_str(&std::fs::read_to_string(dir.join(name)).unwrap()).unwrap()
+/// };
+/// assert_eq!(read(".claude.json"), riff::run::trust("/data/clone".as_ref()));
+/// assert_eq!(read("settings.json"), riff::run::settings());
+/// std::fs::remove_dir_all(&dir).unwrap();
+/// ```
+pub fn claude_folder(dir: &Path, clone: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    for (name, value) in [
+        (".claude.json", trust(clone)),
+        ("settings.json", settings()),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(&path, serde_json::to_string_pretty(&value)?)
+            .with_context(|| format!("cannot write {}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// The sign-in of `claude` in its `.credentials.json`.
@@ -937,14 +976,9 @@ async fn work(
     let folder = sessions_dir()?.join(format!("{item}-{}", short(session)));
     let clone = folder.join("clone");
     let claude = folder.join("claude");
-    std::fs::create_dir_all(&claude)
-        .with_context(|| format!("cannot make {}", claude.display()))?;
+    claude_folder(&claude, &clone)?;
     let branch = branch(item);
     let earlier = make_clone(main, &clone, &branch)?;
-    std::fs::write(
-        claude.join(".claude.json"),
-        serde_json::to_string_pretty(&trust(&clone))?,
-    )?;
     let home = &checked.home;
     let existing = |p: PathBuf| p.exists().then_some(p);
     let facts = Facts {
@@ -1086,6 +1120,41 @@ mod tests {
                 assert!(!bind.write, "{bind:?}");
             }
         }
+    }
+
+    #[test]
+    fn the_claude_folder_of_the_spec_turns_off_the_attribution_line() {
+        let root = tempfile::tempdir().unwrap();
+        let facts = Facts {
+            claude: root.path().join("claude"),
+            clone: root.path().join("clone"),
+            ..facts()
+        };
+        claude_folder(&facts.claude, &facts.clone).unwrap();
+
+        // claude in the container reads this folder as its config folder.
+        let spec = spec(&facts);
+        let bind = spec
+            .binds
+            .iter()
+            .find(|b| b.source == Source::Path(facts.claude.clone()))
+            .unwrap();
+        assert_eq!(bind.target, Path::new("/home/mike/.claude"));
+        assert!(variables(&spec).contains(&"CLAUDE_CONFIG_DIR=/home/mike/.claude".to_owned()));
+
+        let read = |name: &str| -> Value {
+            serde_json::from_str(&std::fs::read_to_string(facts.claude.join(name)).unwrap())
+                .unwrap()
+        };
+        assert_eq!(
+            read("settings.json"),
+            json!({ "includeCoAuthoredBy": false })
+        );
+        let clone = facts.clone.display().to_string();
+        assert_eq!(
+            read(".claude.json")["projects"][&clone]["hasTrustDialogAccepted"],
+            true
+        );
     }
 
     #[test]

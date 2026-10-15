@@ -452,6 +452,16 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         serde_json::from_str(&std::fs::read_to_string(folder.join("claude/.claude.json")).unwrap())
             .unwrap();
     assert_eq!(trust["projects"][&c]["hasTrustDialogAccepted"], true);
+    // claude adds no attribution line, so the trailers end the PR body
+    // (01M4ZD48DHAKJ1EHX6QHYAQ7ZM).
+    let settings: Value = serde_json::from_str(
+        &std::fs::read_to_string(folder.join("claude/settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        serde_json::json!({ "includeCoAuthoredBy": false })
+    );
 
     // The lead got the verify request, and the item is free again.
     let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
