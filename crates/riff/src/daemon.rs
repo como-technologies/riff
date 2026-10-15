@@ -1188,6 +1188,15 @@ mod tests {
         let (mut two, b) = here
             .started(here.start("riff-issue-2-bbbbbbbb", "issue-2"))
             .await;
+        // The first event comes after the start of the container.
+        for client in [&mut one, &mut two] {
+            assert_eq!(
+                client.next().await.unwrap(),
+                Some(Say::Event {
+                    line: TURN[0].into()
+                })
+            );
+        }
 
         for (name, other, item) in [(&a, &b, "issue-1"), (&b, &a, "issue-2")] {
             let spec = here.fake.spec(name).unwrap();
@@ -1313,8 +1322,10 @@ mod tests {
             })
         );
         here.stop().await;
-        // The daemon takes no new connection, and stopped no container.
-        assert!(Client::connect(&here.dir).await.is_err());
+        // No daemon answers, and the daemon stopped no container. A
+        // connect alone can still work: a child that another test forks
+        // holds the listener until its exec.
+        assert!(status(&here.dir).await.is_err());
         assert_eq!(here.fake.calls(), [format!("start {name}")]);
         assert_eq!(here.fake.exit(&name), None);
     }
@@ -1322,9 +1333,16 @@ mod tests {
     #[tokio::test]
     async fn a_client_that_leaves_with_no_stop_leaves_the_session_running() {
         let here = Here::new(Fake::default().with_image(IMAGE).with_events([TURN[0]])).await;
-        let (client, name) = here
+        let (mut client, name) = here
             .started(here.start("riff-issue-1-aaaaaaaa", "issue-1"))
             .await;
+        // The first event comes after the start of the container.
+        assert_eq!(
+            client.next().await.unwrap(),
+            Some(Say::Event {
+                line: TURN[0].into()
+            })
+        );
         drop(client);
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(here.fake.calls(), [format!("start {name}")]);
@@ -1399,10 +1417,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let dir = dir_in(root.path());
         drop(listen(&dir).await.unwrap());
-        // The socket file stays, and no daemon answers on it.
+        // The socket file stays, and no daemon answers on it. A connect
+        // alone can still work: a child that another test forks holds
+        // the listener until its exec.
         assert!(socket(&dir).exists());
-        let error = Client::connect(&dir).await.err().unwrap().to_string();
-        assert!(error.contains("No riff daemon answers"), "{error}");
+        assert!(status(&dir).await.is_err());
         listen(&dir).await.unwrap();
     }
 
