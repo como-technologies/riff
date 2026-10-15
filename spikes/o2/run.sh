@@ -148,7 +148,7 @@ gitcfg=(-v "$HOME/.gitconfig:$HOME/.gitconfig:ro")
 nosign=(-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=commit.gpgsign -e GIT_CONFIG_VALUE_0=false)
 caches=(-v "$vol-cargo:$HOME/.cargo" -e CARGO_HOME="$HOME/.cargo"
     -v "$vol-sccache:$HOME/.cache/sccache" -e SCCACHE_DIR="$HOME/.cache/sccache"
-    -e RUSTC_WRAPPER=sccache -e CARGO_BUILD_JOBS="$cpus")
+    -e RUSTC_WRAPPER=sccache -e SCCACHE_IDLE_TIMEOUT=0 -e CARGO_BUILD_JOBS="$cpus")
 claude=(-v "$dir/claude:$HOME/.claude" -e CLAUDE_CONFIG_DIR="$HOME/.claude"
     -v "$creds:$HOME/.claude/.credentials.json:ro")
 session=("${home[@]}" "${objects[@]}" "${gitcfg[@]}" "${nosign[@]}" -e GH_TOKEN
@@ -286,7 +286,8 @@ note ""
 note "## 6. The time of just check"
 note "- The cache volumes at the start of the run: $fresh."
 # Each line of the log starts with the seconds since the start of just
-# check. The parts: the fast checks up to the cargo test line, the build
+# check. SCCACHE_IDLE_TIMEOUT=0 keeps the server of sccache, and its
+# counts, through the tests. The parts: the fast checks up to the cargo test line, the build
 # of the tests, and the tests.
 parts() { # $1: the log
     awk '

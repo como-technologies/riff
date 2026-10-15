@@ -53,7 +53,7 @@ The container of a session has:
 | The sign-in of `claude` | Its own Claude folder, with `~/.claude/.credentials.json` bound with no write. |
 | The trust of the clone | The `.claude.json` of its own Claude folder trusts the clone. Else `claude` ignores the allow rules of `.claude/settings.json` of the clone. |
 | The permission rules | `settings.json` of its own Claude folder allows `Read`, `Edit` and the git commands of the item. |
-| The caches | The named volumes `riff-spike-o2-cargo` (`CARGO_HOME`) and `riff-spike-o2-sccache`. |
+| The caches | The named volumes `riff-spike-o2-cargo` (all of `CARGO_HOME`, with the lock of cargo) and `riff-spike-o2-sccache`. The toolchain is in the image. |
 | The limits | `--memory 8g --cpus 4`, and `CARGO_BUILD_JOBS=4`. |
 
 ## Before you run it
@@ -80,8 +80,9 @@ Run it from a clone of riff:
 spikes/o2/run.sh
 ```
 
-It takes about 20 minutes. It prints each step with PASS, FAIL or
-NOTE, and the times. The exit code is 0 when each step passed.
+It takes about 40 minutes: each `just check` takes about 12 minutes.
+It prints each step with PASS, FAIL or NOTE, and the times. The exit
+code is 0 when each step passed.
 
 The script writes the results to the folder of the run:
 `~/.local/share/riff/spike/o2-TIME/`.
