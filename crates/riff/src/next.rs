@@ -98,14 +98,6 @@
 //! - The keys that clear the context and start the next item are
 //!   specific to an agent tool. They are in an [`Agent`] adapter, one
 //!   for each tool (01M3JQCD373XZWNSSQYBE561TM).
-//! - A worker in its sandbox reaches no tmux: the shim removes `TMUX`
-//!   and `TMUX_PANE`, and seccomp stops each unix socket. So the Stop
-//!   hook starts the check with no pane, and the check types through
-//!   the broker of the worker, on the pane of the session
-//!   ([`OwnPane`], [`crate::door`], 01M4DVW26Q5MX025XBW7JCK44S). The
-//!   broker runs outside the sandbox in that pane. The check does not
-//!   fast-forward the main clone there: the worker writes no file of it
-//!   (01M4DVW2B8W108N696GAYN3V1B).
 //! - riff never clears the lead: a worker is never the lead
 //!   (01M3X9XA3H6YF0QCYSNB2P0CT2), and only a worker comes into
 //!   MustClear.
@@ -122,10 +114,7 @@
 //! `riff workers stop PANE` does ([`crate::worker::stop`]). The count
 //! and the end are one step under the lock file [`LIMIT_LOCK`], so two
 //! workers that end their items at one time do not both end when only
-//! one is over the limit. In its sandbox, the worker asks its broker
-//! for the step (`end-over-limit`, [`end_over_limit`],
-//! 01M4DVW290H2AQF6EQFHTY1EE1): the broker counts, posts the note and
-//! ends its own worker outside the sandbox.
+//! one is over the limit.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -146,7 +135,6 @@ use riff_core::wire::Kind;
 use serde::Deserialize;
 
 use crate::api::{Api, LEAD};
-use crate::door::OwnPane;
 use crate::hygiene;
 use crate::terminal::{Terminal, Tmux, WorkerPane};
 use crate::{local, settings};
@@ -304,9 +292,7 @@ pub struct StopInput {
 }
 
 /// The check of the Stop hook of the worker `me`, whose agent runs in
-/// the pane `own` and works in `dir` (01M3XV0562D3H3P22CJDBPAZBH). In
-/// its sandbox, `own` is the pane of its broker
-/// (01M4DVW26Q5MX025XBW7JCK44S).
+/// the tmux pane `pane` and works in `dir` (01M3XV0562D3H3P22CJDBPAZBH).
 /// It asks the server with a keep-alive. When the worker must clear its
 /// context, it fast-forwards the main clone of `dir`
 /// (01M3MNP34M5PAZW9VWAYVGNSV2), tells the lead when the main clone
@@ -330,7 +316,7 @@ pub struct StopInput {
 pub async fn check(
     api: &Api,
     me: &SessionUri,
-    own: &OwnPane,
+    pane: &str,
     dir: &Path,
     transcript: Option<&Path>,
     turns: Option<usize>,
@@ -350,7 +336,7 @@ pub async fn check(
     if !reply?.clear {
         return Ok(false);
     }
-    match end_over_limit(api, me, own).await {
+    match end_over_limit(api, me, pane).await {
         Ok(true) => return Ok(false),
         Ok(false) => {}
         Err(e) => eprintln!("riff: cannot count the workers of this machine: {e:#}"),
@@ -358,24 +344,21 @@ pub async fn check(
     // One check of the worker types at a time, so the next check sees
     // the new context of this one (01M43STEE72Q9TD8ZNFS3273M3).
     let _typing = clear_lock(session)?;
-    // A worker in its sandbox writes no file of the main clone
-    // (01M4DVW2B8W108N696GAYN3V1B).
-    if matches!(own, OwnPane::Tmux(..)) {
-        let fresh = hygiene::fast_forward(dir);
-        if let Some(line) = fresh.line()
-            && fresh.tells_the_lead()
-            && let Err(e) = api.tell(me, LEAD, &line).await
-        {
-            eprintln!("riff: cannot tell the lead: {e:#}");
-        }
+    let fresh = hygiene::fast_forward(dir);
+    if let Some(line) = fresh.line()
+        && fresh.tells_the_lead()
+        && let Err(e) = api.tell(me, LEAD, &line).await
+    {
+        eprintln!("riff: cannot tell the lead: {e:#}");
     }
+    let tmux = Tmux::machine();
     let text = transcript.and_then(|path| std::fs::read_to_string(path).ok());
     let running = text.as_deref().map(|t| ClaudeCode.running_subagents(t));
     let running = running.unwrap_or_default();
     if !running.is_empty() && !text.as_deref().is_some_and(|t| ClaudeCode.asked_to_stop(t)) {
         std::thread::sleep(CLEAR_WAIT);
         if same() {
-            own.type_line(&ClaudeCode.stop_subagents(&running))?;
+            tmux.type_line(pane, &ClaudeCode.stop_subagents(&running))?;
         }
         return Ok(false);
     }
@@ -388,12 +371,11 @@ pub async fn check(
             stopped = stop_old_context(&ClaudeCode, me);
             end_old_temp(me);
         },
-        |text| own.type_line(text),
+        |text| tmux.type_line(pane, text),
     )?;
     if !stopped.is_empty() {
         let to = Selector::lead(me.who().user(), &me.place().repo_text());
-        let pane = own.id().unwrap_or_else(|_| "?".into());
-        let note = crate::text::old_context_stopped(&pane, &stopped);
+        let note = crate::text::old_context_stopped(pane, &stopped);
         if let Err(e) = api.post(me, None, &[to], &note, Kind::Note).await {
             eprintln!("riff: cannot post the note to the lead: {e:#}");
         }
@@ -423,32 +405,12 @@ pub fn over_limit(panes: &[WorkerPane], pane: &str, limit: u16) -> Option<usize>
     (runs > usize::from(limit) && panes.iter().any(|w| w.pane == pane)).then_some(runs)
 }
 
-/// Ends the worker `me` in its pane `own` when more workers run on this
-/// machine than its limit (01M402VFGAJQM1QW8B42NKMJM4). In its sandbox,
-/// the broker of the worker does it (`end-over-limit`,
-/// 01M4DVW290H2AQF6EQFHTY1EE1). True when it ended the worker.
-pub async fn end_over_limit(api: &Api, me: &SessionUri, own: &OwnPane) -> Result<bool> {
-    match own {
-        OwnPane::Tmux(tmux, pane) => end_over_limit_in(api, me, tmux, pane).await,
-        OwnPane::Broker(fd) => {
-            let fd = *fd;
-            tokio::task::spawn_blocking(move || crate::door::call(fd, "end-over-limit", &[]))
-                .await?
-        }
-    }
-}
-
-/// Ends the worker `me` in `pane` of the tmux of the machine `tmux`
-/// when more workers run than the limit (01M402VFGAJQM1QW8B42NKMJM4). It
-/// holds [`LIMIT_LOCK`] from the count to the end, posts a note to the
-/// lead (01M402VFKXEJARG7CM60TDCMKW), and ends the worker with
+/// Ends the worker `me` in `pane` when more workers run on this machine
+/// than its limit (01M402VFGAJQM1QW8B42NKMJM4). It holds [`LIMIT_LOCK`]
+/// from the count to the end, posts a note to the lead
+/// (01M402VFKXEJARG7CM60TDCMKW), and ends the worker with
 /// [`crate::worker::stop`]. True when it ended the worker.
-pub async fn end_over_limit_in(
-    api: &Api,
-    me: &SessionUri,
-    tmux: &Tmux,
-    pane: &str,
-) -> Result<bool> {
+async fn end_over_limit(api: &Api, me: &SessionUri, pane: &str) -> Result<bool> {
     let limit = settings::workers_limit(&settings::path()?)?;
     let dir = local::dir().context("no HOME: riff has no local dir")?;
     std::fs::create_dir_all(&dir)?;
@@ -458,6 +420,7 @@ pub async fn end_over_limit_in(
         .write(true)
         .open(dir.join(LIMIT_LOCK))?;
     lock.lock()?;
+    let tmux = Tmux::machine();
     let Some(runs) = over_limit(&tmux.worker_panes()?, pane, limit) else {
         return Ok(false);
     };
@@ -467,7 +430,7 @@ pub async fn end_over_limit_in(
     if let Err(e) = api.post(me, None, &[to], &note, Kind::Note).await {
         eprintln!("riff: cannot post the note to the lead: {e:#}");
     }
-    crate::worker::stop(tmux, Some(pane), api.base()).await?;
+    crate::worker::stop(&tmux, Some(pane), api.base()).await?;
     drop(lock);
     Ok(true)
 }
@@ -507,7 +470,7 @@ pub fn clear_lock(session: &str) -> Result<std::fs::File> {
 /// (01M3ZV0TJX2H77RW6ZA3ERZT9H) is later. So the check is of an old
 /// context (01M43STEE72Q9TD8ZNFS3273M3). False with no start.
 pub fn newer_context(session: &str, since: Option<u64>) -> bool {
-    let started = local::riff_dir().and_then(|dir| crate::workload::context_start(&dir, session));
+    let started = local::dir().and_then(|dir| crate::workload::context_start(&dir, session));
     newer(started, since)
 }
 

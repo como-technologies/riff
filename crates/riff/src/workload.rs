@@ -13,10 +13,11 @@
 //! |---|---|
 //! | of the worker `ID` | its cgroup is a systemd scope of the worker: `riff-worker-ID.PID.scope` ([`scope_unit`], 01M49SV9W4S1HJ4BYANA388VD2, 01M49SV9Z2A7TXWFTMVNYXSQNM). A process cannot leave its cgroup by a change of its own environment. |
 //! | of the worker `ID`, with no scope | no process is in a scope of the worker, for example on a machine with no systemd. Then its environment has `RIFF_WORKER=1`, `RIFF_SESSION=ID` and the `RIFF_HOME` of the caller (none when the caller has none). Each child gets the variables of its parent, also after its parent ends. riff says one time that it uses the environment ([`say`], 01M49SVFW0FZ3DK57PACS7W5EY). |
+//! | the server of the compile cache | [`crate::sccache::SERVER_MARK`]`=1`, and `/proc/PID/exe` is the binary of [`crate::sccache::find`] ([`is_cache_server`]). It is of the machine, never of a worker (01M49AB2TBMHGNXM3GE4NDFYYG). |
 //! | of a context | it has also the variable of the agent tool ([`crate::next::Agent::context_var`]): Claude Code gives it to each command of its Bash tool and to each hook, not to `claude` and not to its MCP servers. |
 //! | the watch | `riff watch`. riff keeps it and its parents: a worker keeps its watch over a clear (01M3JQCD16CNWN5FCQBRKHXYMP). |
 //! | the caller | this process and its parents. riff never stops them. |
-//! | the start of the context | the start hook writes the start of its own process to the file `context-ID` of the own folder of the worker ([`mark`], [`crate::local::own`]). The file names the boot. |
+//! | the start of the context | the start hook writes the start of its own process to the file `context-ID` of the local dir ([`mark`]). The file names the boot. |
 //!
 //! ```mermaid
 //! flowchart TD
@@ -348,8 +349,54 @@ pub fn say_here(by: By, session: &str) {
     }
 }
 
+/// One file, by each path or link to it: its device and its inode.
+pub type FileId = (u64, u64);
+
+/// The [`FileId`] of `path`, after each link. For `/proc/PID/exe` it is
+/// the binary that the process runs, whatever name it gave itself.
+pub fn file_id(path: &Path) -> Option<FileId> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.dev(), meta.ino()))
+}
+
+/// The [`FileId`] of the `sccache` of this machine
+/// ([`crate::sccache::find`]), or `None` when it has none.
+pub fn cache_binary() -> Option<FileId> {
+    file_id(&crate::sccache::find()?)
+}
+
+/// True for the `sccache` server of the machine: a process with
+/// `SCCACHE_START_SERVER=1` whose binary `exe` (`/proc/PID/exe`) is
+/// the binary `cache` of [`cache_binary`] (01M49AB2TBMHGNXM3GE4NDFYYG).
+/// A process picks its own `argv[0]`, so riff never looks at the name.
+/// A compile that the server runs has no mark, and another binary with
+/// the mark is not the server.
+///
+/// ```
+/// use riff::workload::is_cache_server;
+/// let env = b"RIFF_WORKER=1\0RIFF_SESSION=w1\0SCCACHE_START_SERVER=1\0";
+/// let (sccache, sleep) = (Some((1, 10)), Some((1, 11)));
+/// assert!(is_cache_server(env, sccache, sccache));
+/// // `exec -a sccache sleep 30`: the name is sccache, the binary is not.
+/// assert!(!is_cache_server(env, sleep, sccache));
+/// assert!(!is_cache_server(b"SCCACHE_START_SERVER=0\0", sccache, sccache));
+/// assert!(!is_cache_server(b"RIFF_WORKER=1\0", sccache, sccache));
+/// // A machine with no sccache has no server.
+/// assert!(!is_cache_server(env, None, None));
+/// ```
+pub fn is_cache_server(env: &[u8], exe: Option<FileId>, cache: Option<FileId>) -> bool {
+    let mark = format!("{}=1", crate::sccache::SERVER_MARK);
+    exe.is_some() && exe == cache && env.split(|b| *b == 0).any(|var| var == mark.as_bytes())
+}
+
 /// The process `pid`, or `None` when it is gone or is not of this user.
 pub fn read(pid: u32, context_var: &str) -> Option<Proc> {
+    read_with(pid, context_var, cache_binary())
+}
+
+/// [`read`], with the binary `cache` of [`cache_binary`].
+fn read_with(pid: u32, context_var: &str, cache: Option<FileId>) -> Option<Proc> {
     let dir = PathBuf::from(format!("/proc/{pid}"));
     let (ppid, start) = parse_stat(&std::fs::read_to_string(dir.join("stat")).ok()?)?;
     let env = std::fs::read(dir.join("environ")).ok()?;
@@ -361,12 +408,18 @@ pub fn read(pid: u32, context_var: &str) -> Option<Proc> {
         .filter(|a| !a.is_empty())
         .map(|a| String::from_utf8_lossy(a).into_owned())
         .collect();
-    let (worker, context) = parse_environ(&env, context_var, home);
-    let cgroup = std::fs::read_to_string(dir.join("cgroup")).ok();
-    let scope = cgroup
-        .as_deref()
-        .and_then(crate::reap::cgroup_path)
-        .and_then(|path| scope_worker(&path));
+    let exe = cache.and_then(|_| file_id(&dir.join("exe")));
+    let (worker, scope, context) = if is_cache_server(&env, exe, cache) {
+        (None, None, false)
+    } else {
+        let (worker, context) = parse_environ(&env, context_var, home);
+        let cgroup = std::fs::read_to_string(dir.join("cgroup")).ok();
+        let scope = cgroup
+            .as_deref()
+            .and_then(crate::reap::cgroup_path)
+            .and_then(|path| scope_worker(&path));
+        (worker, scope, context)
+    };
     Some(Proc {
         pid,
         ppid,
@@ -383,8 +436,9 @@ pub fn all(context_var: &str) -> Vec<Proc> {
     let Ok(dir) = std::fs::read_dir("/proc") else {
         return Vec::new();
     };
+    let cache = cache_binary();
     dir.filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok())
-        .filter_map(|pid| read(pid, context_var))
+        .filter_map(|pid| read_with(pid, context_var, cache))
         .collect()
 }
 
@@ -465,46 +519,35 @@ fn boot() -> Option<String> {
     Some(id.trim().to_owned())
 }
 
-fn context_name(session: &str) -> String {
-    format!("context-{}", riff_core::name::sanitize(session))
+fn context_file(dir: &Path, session: &str) -> PathBuf {
+    dir.join(format!("context-{}", riff_core::name::sanitize(session)))
 }
 
-/// Writes the start of the context of the worker `session` to its own
-/// folder in the folder of riff `riff` ([`crate::local::own`]): the
-/// boot and the start of this process (01M3ZV0TJX2H77RW6ZA3ERZT9H).
-pub fn mark(riff: &Path, session: &str) -> std::io::Result<()> {
+/// Writes the start of the context of the worker `session` to the
+/// local dir `dir`: the boot and the start of this process
+/// (01M3ZV0TJX2H77RW6ZA3ERZT9H).
+pub fn mark(dir: &Path, session: &str) -> std::io::Result<()> {
     let (Some(boot), Some(start)) = (boot(), own_start()) else {
         return Ok(());
     };
-    let dir = crate::local::own(riff, session);
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join(context_name(session)), format!("{boot} {start}\n"))
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(context_file(dir, session), format!("{boot} {start}\n"))
 }
 
 /// The start of the context of the worker `session` from [`mark`], or
-/// `None` when the file is missing or is of an earlier boot. riff
-/// outside each sandbox reads it, from the own folder of the worker and
-/// with no follow of a link (01M4DWJ0HK490A9KF6FTQ61F2X).
+/// `None` when the file is missing or is of an earlier boot.
 ///
 /// ```
 /// let run = tempfile::tempdir()?;
 /// assert_eq!(riff::workload::context_start(run.path(), "w1"), None);
 /// riff::workload::mark(run.path(), "w1")?;
 /// assert_eq!(riff::workload::context_start(run.path(), "w1"), riff::workload::own_start());
-/// let own = riff::local::own(run.path(), "w1");
-/// std::fs::write(own.join("context-w1"), "an-old-boot 5\n")?;
-/// assert_eq!(riff::workload::context_start(run.path(), "w1"), None);
-/// // A link to a good start in another folder gives none.
-/// riff::workload::mark(run.path(), "w2")?;
-/// let good = riff::local::own(run.path(), "w2").join("context-w2");
-/// std::fs::remove_file(own.join("context-w1"))?;
-/// std::os::unix::fs::symlink(&good, own.join("context-w1"))?;
+/// std::fs::write(run.path().join("context-w1"), "an-old-boot 5\n")?;
 /// assert_eq!(riff::workload::context_start(run.path(), "w1"), None);
 /// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn context_start(riff: &Path, session: &str) -> Option<u64> {
-    let dir = crate::nofollow::Dir::open(&crate::local::own(riff, session)).ok()?;
-    let text = dir.read(&context_name(session)).ok()?;
+pub fn context_start(dir: &Path, session: &str) -> Option<u64> {
+    let text = std::fs::read_to_string(context_file(dir, session)).ok()?;
     let (at, start) = text.trim().split_once(' ')?;
     (Some(at) == boot().as_deref()).then(|| start.parse().ok())?
 }
@@ -512,27 +555,6 @@ pub fn context_start(riff: &Path, session: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 01M4DWJ0HK490A9KF6FTQ61F2X: `riff workers reap` reads the start of
-    /// a context only from the own folder of that worker, and follows no
-    /// link there. A start in the folder of riff or of another session
-    /// counts for nothing.
-    #[test]
-    fn the_reap_reads_the_start_only_from_the_own_folder_of_the_worker() {
-        let riff = tempfile::tempdir().unwrap();
-        mark(riff.path(), "w2").unwrap();
-        let good = crate::local::own(riff.path(), "w2").join("context-w2");
-        let text = std::fs::read_to_string(&good).unwrap();
-        std::fs::write(riff.path().join("context-w1"), &text).unwrap();
-        let other = crate::local::own(riff.path(), "w2").join("context-w1");
-        std::fs::write(other, &text).unwrap();
-        assert_eq!(context_start(riff.path(), "w1"), None);
-        let own = crate::local::own(riff.path(), "w1");
-        std::fs::create_dir_all(&own).unwrap();
-        std::os::unix::fs::symlink(&good, own.join("context-w1")).unwrap();
-        assert_eq!(context_start(riff.path(), "w1"), None);
-        assert_eq!(context_start(riff.path(), "w2"), own_start());
-    }
 
     fn p(pid: u32, ppid: u32, worker: Option<&str>, context: bool) -> Proc {
         Proc {

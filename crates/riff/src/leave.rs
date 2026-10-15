@@ -46,6 +46,7 @@
 //! end (01M3XQVK05FAT3PR43W8RNEYHY).
 
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::{Result, bail};
 
@@ -106,7 +107,9 @@ pub fn wip(dir: &Path) -> Result<String> {
 
 /// Runs git in `dir`, and gives its output with no space at the ends.
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = crate::confine::git_in(dir)?
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()?;

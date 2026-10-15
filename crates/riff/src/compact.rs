@@ -58,6 +58,7 @@ use serde::Deserialize;
 
 use crate::next::{Agent, ClaudeCode};
 use crate::pr::Gh;
+use crate::terminal::{Terminal, Tmux};
 use crate::top::wave_number;
 
 /// The start of the body of a handoff note.
@@ -951,12 +952,10 @@ pub async fn run(check: &Check, server: &str) -> Result<Option<Step>> {
         facts.note = handoff_note(&messages, me.who(), &wave);
     }
 
-    // In the sandbox of the lead, its broker reads and types into its
-    // pane (01M4DDWPC693RNWHY7P7XBZ9TB).
-    let own = crate::door::OwnPane::of(check.pane.as_deref());
-    if let Some(own) = &own {
+    let tmux = check.pane.as_ref().map(|_| Tmux::machine());
+    if let (Some(tmux), Some(pane)) = (&tmux, &check.pane) {
         // A screen that riff cannot read counts as a person at work.
-        let screen = own.screen().unwrap_or_default();
+        let screen = tmux.screen(pane).unwrap_or_default();
         facts.input_empty = Some(ClaudeCode.input_empty(&screen));
     }
 
@@ -975,9 +974,9 @@ pub async fn run(check: &Check, server: &str) -> Result<Option<Step>> {
             save(Record::done(wave))?;
         }
         Step::Compact { wave, note } => {
-            if let Some(own) = &own {
+            if let (Some(tmux), Some(pane)) = (&tmux, &check.pane) {
                 let text = instructions(me.who().user(), &repo, *note);
-                own.type_line(&ClaudeCode.compact(&text))?;
+                tmux.type_line(pane, &ClaudeCode.compact(&text))?;
                 save(Record::done(wave))?;
             }
         }

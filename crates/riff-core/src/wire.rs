@@ -30,7 +30,6 @@
 //! | `/v1/plan/free` | [`Free`] | [`FreeReply`] | command |
 //! | `/v1/plan` | [`SetPlan`] | [`PlanReply`] | command |
 //! | `/v1/plan/off` | [`PlanOff`] | [`PlanOffReply`] | command |
-//! | `/v1/forge/allow` | [`ForgeAllow`] | [`ForgeAccounts`] | command |
 //! | `/v1/status` | [`SetStatus`] | `null` | signal |
 //! | `/v1/blocked` | [`SetBlocked`] | `null` | signal |
 //! | `/v1/step` | [`SetStep`] | `null` | signal |
@@ -72,11 +71,6 @@
 //! | `POST /v1/log` | [`LogQuery`] | [`LogReply`] | an admin |
 //! | `POST /v1/admin` | [`SetAdmin`] | [`AdminSet`] | the owner |
 //! | `POST /v1/owner` | [`PassOwner`] | [`OwnerPassed`] | the owner |
-//! | `POST /v1/forge/create` | [`ForgeCreate`] | [`ForgeCreateReply`] | an admin |
-//! | `POST /v1/forge/created` | [`ForgeCreated`] | [`ForgeCreatedReply`] | the admin of the `state` |
-//! | `POST /v1/forge/install` | [`ForgeInstall`] | [`ForgeInstallReply`] | each person |
-//! | `POST /v1/outside/list` | [`OutsideList`] | [`OutsideRequests`] | an admin |
-//! | `POST /v1/outside/decide` | [`OutsideDecide`] | [`OutsideRequest`] | an admin, with a token of a person |
 //!
 //! A person who is not an admin gets status 403 from `invite`,
 //! `remove` and `log`. A person who is not the owner gets status 403 from
@@ -244,16 +238,6 @@ calls! {
     PassOwner => "/v1/owner", OwnerPassed;
     TakeOwner => "/v1/owner/take", OwnerAsked;
     DenyOwner => "/v1/owner/deny", OwnerDenied;
-    ForgeToken => "/v1/forge/token", ForgeTokenReply;
-    ForgeCheck => "/v1/forge/check", ForgeCheckReply;
-    ForgeAllow => "/v1/forge/allow", ForgeAccounts;
-    ForgeCreate => "/v1/forge/create", ForgeCreateReply;
-    ForgeCreated => "/v1/forge/created", ForgeCreatedReply;
-    ForgeInstall => "/v1/forge/install", ForgeInstallReply;
-    OutsideAsk => "/v1/outside/ask", OutsideRequest;
-    OutsideTake => "/v1/outside/take", OutsideRequest;
-    OutsideList => "/v1/outside/list", OutsideRequests;
-    OutsideDecide => "/v1/outside/decide", OutsideRequest;
 }
 
 /// `POST /v1/register`: a session says that it exists and where it
@@ -403,297 +387,6 @@ pub struct MeReply {
     pub session: Option<SessionInfo>,
     /// The build of the server, as the `riff-build` header gives it.
     pub build: String,
-}
-
-/// `POST /v1/forge/token`: the forge token of the session `me`
-/// (#628). The server picks the role and the repository from its own
-/// facts of `me` ([`crate::forge::role_of`]). A `me` with no session
-/// is the lead of the person at its place: the wrapper of the lead asks
-/// before its session starts. A riff with no sign-in gives no token.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeToken {
-    pub me: SessionUri,
-}
-
-/// The reply to [`ForgeToken`]: a token for one repository, with the
-/// rights of one role. Its `Debug` hides the token.
-///
-/// ```
-/// use riff_core::forge::TokenRole;
-/// use riff_core::wire::ForgeTokenReply;
-///
-/// let reply = ForgeTokenReply {
-///     role: TokenRole::Worker,
-///     repo: "o/r".into(),
-///     token: "ghs_secret".into(),
-///     ends_ms: 1,
-///     permissions: Default::default(),
-/// };
-/// assert!(!format!("{reply:?}").contains("ghs_secret"));
-/// ```
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeTokenReply {
-    /// The role that the server picked.
-    pub role: crate::forge::TokenRole,
-    /// The repository of the token, `OWNER/NAME`.
-    pub repo: String,
-    /// The token. Never print it.
-    pub token: String,
-    /// When the token ends, in milliseconds since the Unix epoch.
-    pub ends_ms: u64,
-    /// The permissions that GitHub gave.
-    pub permissions: BTreeMap<String, crate::forge::Access>,
-}
-
-impl std::fmt::Debug for ForgeTokenReply {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ForgeTokenReply")
-            .field("role", &self.role)
-            .field("repo", &self.repo)
-            .field("ends_ms", &self.ends_ms)
-            .field("permissions", &self.permissions)
-            .finish_non_exhaustive()
-    }
-}
-
-/// `POST /v1/forge/check`: `riff forge check`. The server makes a token
-/// of each role for the repository of `me`, checks its rights, and
-/// revokes it at once. The reply holds no token.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeCheck {
-    pub me: SessionUri,
-}
-
-/// The reply to [`ForgeCheck`]: one line for each role.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeCheckReply {
-    /// The repository of the check, `OWNER/NAME`.
-    pub repo: String,
-    /// The ID of the GitHub App.
-    pub app: u64,
-    pub roles: Vec<RoleCheck>,
-}
-
-/// `POST /v1/forge/allow`: `riff forge allow`. The server makes forge
-/// tokens only for the repositories of the GitHub accounts that the
-/// owner or an admin allowed (01M4CTAYRSC27Q6AAGTH9CBD7Q). `owner` is an
-/// organization or a personal account. With `allowed` true, the server
-/// allows it; with false, it allows it no more. With no `owner`, the
-/// command changes nothing and gives the list. Only the owner or an admin
-/// can send it, as a person.
-///
-/// ```
-/// use riff_core::wire::ForgeAllow;
-///
-/// let allow: ForgeAllow = serde_json::from_str(
-///     r#"{"me":"riff://mike@pangolin/acme/app","owner":"acme","allowed":true}"#,
-/// ).unwrap();
-/// assert_eq!(allow.owner.as_deref(), Some("acme"));
-/// let list: ForgeAllow = serde_json::from_str(r#"{"me":"riff://mike@pangolin"}"#).unwrap();
-/// assert!(list.owner.is_none() && !list.allowed);
-/// ```
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeAllow {
-    pub me: SessionUri,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
-    #[serde(default)]
-    pub allowed: bool,
-}
-
-/// The reply to [`ForgeAllow`]: the GitHub accounts that the server
-/// makes forge tokens for, in lower case and in order.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeAccounts {
-    #[serde(default)]
-    pub accounts: Vec<String>,
-}
-
-/// `POST /v1/forge/create`: `riff forge create --org ORG` (#627). The
-/// server makes a new `state` for the admin, good for 10 minutes, and
-/// replies with the URL of its start page. The page posts the manifest
-/// of the GitHub App of riff to GitHub, on the account `org`. Only the
-/// owner or an admin can send it.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeCreate {
-    pub me: SessionUri,
-    /// The GitHub organization that owns the new App, for example acme.
-    pub org: String,
-}
-
-/// The reply to [`ForgeCreate`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeCreateReply {
-    /// The start page on the server: open it in the browser.
-    pub url: String,
-    /// The `state` of this start. [`ForgeCreated`] names it.
-    pub state: String,
-}
-
-/// `POST /v1/forge/created`: `riff forge create` asks how far the start
-/// `state` is. Only the admin that made the `state` can ask.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeCreated {
-    pub me: SessionUri,
-    pub state: String,
-}
-
-/// The reply to [`ForgeCreated`]. With no `app`, GitHub did not send the
-/// browser back yet.
-///
-/// ```
-/// use riff_core::wire::ForgeCreatedReply;
-///
-/// let waiting: ForgeCreatedReply = serde_json::from_str("{}").unwrap();
-/// assert!(waiting.app.is_none() && !waiting.installed);
-/// ```
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeCreatedReply {
-    /// The ID of the new App, after the server stored it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub app: Option<u64>,
-    /// The name of the App in its URL, for example `riff-acme`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub slug: Option<String>,
-    /// True when the App is installed on the account of the start.
-    #[serde(default)]
-    pub installed: bool,
-    /// Why the start failed, if it failed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-/// `POST /v1/forge/install`: `riff forge install OWNER` (#627). The
-/// server replies with the install page of the App for the GitHub
-/// account `owner`, an organization or a person, and whether the App is
-/// installed there now.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeInstall {
-    pub me: SessionUri,
-    /// The GitHub account, for example acme.
-    pub owner: String,
-}
-
-/// The reply to [`ForgeInstall`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ForgeInstallReply {
-    /// The install page of the App, with `owner` as the target.
-    pub url: String,
-    /// True when the App is installed on `owner`.
-    #[serde(default)]
-    pub installed: bool,
-}
-
-/// `POST /v1/outside/ask`: `riff outside ask` (#614). A session asks
-/// to run one named command outside its profile, one time
-/// (01M4DA9PFR6V3K3FE1568277H3). Only a session asks: `me` names one.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct OutsideAsk {
-    pub me: SessionUri,
-    /// The program and its arguments.
-    pub command: Vec<String>,
-    /// The folder of the command: a folder of the worktree of the
-    /// session.
-    pub cwd: String,
-    /// Why the session needs the command outside its profile.
-    pub reason: String,
-}
-
-/// `POST /v1/outside/take`: the broker of the session that asked takes
-/// the request `id` (01M4DA9PM89KP332T6BR7V0CDT). The reply is the
-/// request. When it is approved, the server marks it as run, and gives
-/// it with `taken` true only this one time.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct OutsideTake {
-    pub me: SessionUri,
-    pub id: String,
-}
-
-/// `POST /v1/outside/list`: `riff outside list`. The open requests and
-/// the requests of the last hour. Only the owner or an admin.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct OutsideList {
-    pub me: SessionUri,
-}
-
-/// `POST /v1/outside/decide`: `riff outside approve ID` or `riff outside
-/// deny ID` (01M4DA9PJ0MJPBQRTA79CVXEA2). Only the owner or an admin,
-/// with a token of a person, never of a session.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct OutsideDecide {
-    pub me: SessionUri,
-    pub id: String,
-    /// True approves, false denies.
-    pub approve: bool,
-}
-
-/// The state of a request to run a command outside the profile.
-///
-/// ```
-/// use riff_core::wire::OutsideState;
-///
-/// assert_eq!(serde_json::to_string(&OutsideState::Asked).unwrap(), r#""asked""#);
-/// assert!(OutsideState::Asked.open());
-/// assert!(OutsideState::Approved.open());
-/// assert!(!OutsideState::Ran.open());
-/// assert!(!OutsideState::Denied.open());
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum OutsideState {
-    /// It waits for an admin.
-    Asked,
-    /// An admin approved it. The broker did not take it yet.
-    Approved,
-    /// An admin denied it.
-    Denied,
-    /// The broker took it, to run it one time.
-    Ran,
-}
-
-impl OutsideState {
-    /// True while the request can still run.
-    pub fn open(self) -> bool {
-        matches!(self, OutsideState::Asked | OutsideState::Approved)
-    }
-}
-
-/// A request to run a command outside the profile (#614).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct OutsideRequest {
-    /// The ID of the request, for example `7f3a9c21`.
-    pub id: String,
-    /// The session that asked.
-    pub by: SessionUri,
-    pub command: Vec<String>,
-    pub cwd: String,
-    pub reason: String,
-    pub state: OutsideState,
-    /// The admin that approved or denied it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decided_by: Option<String>,
-    /// True only in the one reply to [`OutsideTake`] that gives the
-    /// approved request to the broker.
-    #[serde(default)]
-    pub taken: bool,
-}
-
-/// The reply to [`OutsideList`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct OutsideRequests {
-    pub requests: Vec<OutsideRequest>,
-}
-
-/// The check of the token of one role.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct RoleCheck {
-    pub role: crate::forge::TokenRole,
-    /// The permissions that GitHub gave, when it gave a token.
-    #[serde(default)]
-    pub permissions: BTreeMap<String, crate::forge::Access>,
-    /// Why the role has no good token, if it has none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 /// The reply to `GET /v1/server`: the facts of one `riff-server`, for
@@ -2512,26 +2205,6 @@ pub const ID_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:id_token";
 /// person access token for a session access token (R19).
 pub const ACCESS_TOKEN_TYPE: &str = "urn:ietf:params:oauth:token-type:access_token";
 
-/// The token type of a session grant (01M4CVXJ3GCEB7B4632J7DD84A): the
-/// `requested_token_type` of a [`TOKEN_EXCHANGE`] that makes one, and the
-/// `subject_token_type` of a [`TOKEN_EXCHANGE`] that swaps one for a
-/// session access token. The reply that makes a grant has it as
-/// `token_type`.
-pub const GRANT_TOKEN_TYPE: &str = "urn:riff:token-type:session-grant";
-
-/// The path of [`GrantEnd`].
-pub const GRANT_END_PATH: &str = "/v1/token/end";
-
-/// `POST /v1/token/end`, as `application/x-www-form-urlencoded`: ends a
-/// session grant and each token of it (01M4D0FTC5CCRBVNDBEXK2B4RJ). The
-/// `DPoP` header is the proof of the session key of the grant. As in
-/// RFC 7009, a grant that is gone gets a success too.
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-pub struct GrantEnd {
-    /// The session grant.
-    pub token: String,
-}
-
 /// `POST /v1/token`, as `application/x-www-form-urlencoded`.
 ///
 /// | `grant_type` | Fields |
@@ -2539,8 +2212,6 @@ pub struct GrantEnd {
 /// | `refresh_token` | `refresh_token` |
 /// | [`TOKEN_EXCHANGE`] | `subject_token` (an ID token), `subject_token_type` = [`ID_TOKEN_TYPE`] |
 /// | [`TOKEN_EXCHANGE`] | `subject_token` (a person access token), `subject_token_type` = [`ACCESS_TOKEN_TYPE`], `session` |
-/// | [`TOKEN_EXCHANGE`] | the same, and `requested_token_type` = [`GRANT_TOKEN_TYPE`], `session_proof` (a DPoP proof of the session key): a session grant |
-/// | [`TOKEN_EXCHANGE`] | `subject_token` (a session grant), `subject_token_type` = [`GRANT_TOKEN_TYPE`], the DPoP proof of the session key |
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TokenRequest {
     pub grant_type: String,
@@ -2553,13 +2224,6 @@ pub struct TokenRequest {
     /// The session ID of a session token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
-    /// [`GRANT_TOKEN_TYPE`] to ask for a session grant.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requested_token_type: Option<String>,
-    /// A DPoP proof of the session key of a new session grant, for the
-    /// same request as the proof of the device key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_proof: Option<String>,
     /// The server that the token is for (RFC 8707). When it is set, it
     /// must be the public URL of the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]

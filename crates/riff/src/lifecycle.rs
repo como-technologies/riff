@@ -64,6 +64,7 @@
 //!         end
 //!     end
 //!     U->>C: install --locked --git REPOSITORY --tag vX.Y.Z riff riff-server
+//!     U->>R: connect claude
 //!     U->>S: probe
 //!     alt it answers with another build than the new riff-server
 //!         U-->>U: print "Stop riff-server and start it again."
@@ -122,6 +123,9 @@ pub struct View {
     /// The facts of the riff that `riff` uses, when it gives them
     /// (01M3TJWJ12WEDCXW3W0529KRP2).
     pub facts: Option<ServerFacts>,
+    /// Whether riff is on in the working directory
+    /// (01M3XY2SYKG91SAB2FS1QNCZ2H).
+    pub here: Option<crate::enable::State>,
 }
 
 /// Asks the riff of `api` about itself, within [`PROBE_WAIT`].
@@ -174,6 +178,7 @@ pub async fn view(server: &str, local: &str, source: Source) -> View {
         used,
         local,
         facts,
+        here: Some(crate::enable::State::here()),
     }
 }
 
@@ -275,7 +280,7 @@ pub fn newest_tag(ls_remote: &str) -> Option<String> {
 /// The newest release tag of the repository, from `git ls-remote`
 /// (01M3MRMAVVKJ5WS8GWCJHWH0R4).
 pub fn newest_release() -> Result<String> {
-    let out = crate::confine::git()
+    let out = Command::new("git")
         .args([
             "ls-remote",
             "--tags",
@@ -402,12 +407,21 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// this machine, else the release that `server` runs
 /// ([`server_release`]). When that riff names no build that riff can
 /// read, it prints [`text::newest_instead`](crate::text::newest_instead)
-/// and installs the newest release. Each `claude` that riff starts after
-/// it gets the new plugin (01M4BYH7Y3P1JMQR51TWFGVZ39). Then it looks for
-/// an old riff with [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
+/// and installs the newest release. Then it updates the plugin with the new
+/// `riff connect claude --claude CLAUDE`, which gets no terminal and so
+/// asks nothing. On a machine with a limit of workers it installs
+/// the pinned `sccache` ([`crate::sccache::ensure`]). Then it looks for
+/// an old riff with
+/// [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
 /// words for the person. `riff` passes
 /// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
-pub async fn update(cargo: &Path, tag: Option<&str>, server: &str, local: &str) -> Result<String> {
+pub async fn update(
+    cargo: &Path,
+    claude: &Path,
+    tag: Option<&str>,
+    server: &str,
+    local: &str,
+) -> Result<String> {
     let tag = match tag {
         Some(tag) => tag.to_owned(),
         None if same_riff(server, local) => newest_release()?,
@@ -427,6 +441,30 @@ pub async fn update(cargo: &Path, tag: Option<&str>, server: &str, local: &str) 
             .current_dir(&dir),
         "cargo install",
     )?;
+    // An update asks nothing: a machine updates itself with no person.
+    // So the connect of the update has no terminal, and it keeps the
+    // choice of the person (01M3XY2SR3VJZAKEPC6CBCS292).
+    run(
+        Command::new("riff")
+            .args(["connect", "claude", "--claude"])
+            .arg(claude)
+            .stdin(std::process::Stdio::null())
+            .current_dir(&dir),
+        "riff connect claude",
+    )?;
+    // The compile cache of the workers of this machine
+    // (01M4923963S666V9YWTZ46ZZ50). A failed install fails no update.
+    let workers = crate::settings::path().and_then(|path| crate::settings::workers_limit(&path));
+    if workers.is_ok_and(|limit| limit > 0)
+        && let Err(e) = crate::sccache::ensure(cargo)
+    {
+        let host = crate::identity::this_host();
+        let pinned = crate::sccache::PINNED;
+        eprintln!(
+            "{}",
+            crate::text::sccache_failed(&host, pinned, &format!("{e:#}"))
+        );
+    }
     let out = Command::new("riff-server")
         .arg("--version")
         .current_dir(&dir)

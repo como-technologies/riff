@@ -21,70 +21,19 @@
   `RIFF_SERVER`. The riff of the first machine has sign-in with the
   OAuth client of the person, and the person signs in on each machine
   (01M3JZN229S3YA3BR6GN5H3MTY).
-- **01M3MEHCGZ4AG4C2A77J5HA3P7** Replaced by 01M4BYH8BV4YQDD6D73YV3RHPH.
-- **01M4BYH8BV4YQDD6D73YV3RHPH** The book page "Join a Riff" has the
+- **01M3MEHCGZ4AG4C2A77J5HA3P7** The book page "Join a Riff" has the
   steps to join a riff with sign-in: install `riff`, put the address of
-  the riff in `RIFF_SERVER`, run `riff login`, then start the riff with
-  `riff`. The steps are the same for a second machine of the owner and
-  for a person that the owner invites.
-- **R44** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
-- **01M4BYH7Y3P1JMQR51TWFGVZ39** riff is not in the Claude config of the
-  person: no riff MCP server, plugin, hook, permission rule or status
-  line in `~/.claude` or in `.claude/` of a repository. A plain `claude`
-  is plain Claude. Each start of `claude` by riff (the lead, each
-  worker) passes `--plugin-dir` with the plugin, `--strict-mcp-config`
-  and `--mcp-config` with the riff MCP server, and `--settings` with the
-  status line and the permission rules of the role. riff writes the
-  plugin at each start to `$XDG_DATA_HOME/riff/claude-plugin`, else
-  `~/.local/share/riff/claude-plugin`. The plugin has no MCP server.
-- **01M4BYH80CFW1TBGKVA2VN9ZBQ** riff gives each `claude` that it starts
-  `RIFF_ON=1`. The hooks, `riff statusline` and `riff mcp` act only with
-  it. So a plain `claude` with the plugin of an older release does
-  nothing of riff.
-- **01M4BYH82P03FTXZBYC72BJ6F3** `riff` finds the riff entries that
-  older releases wrote to the Claude config:
-  `enabledPlugins."riff@riff"`, `extraKnownMarketplaces.riff`, the
-  `statusLine` of `riff statusline` and each rule of a riff tool or a
-  `riff` command, in the user settings and in `.claude/settings.json`
-  and `.claude/settings.local.json` of each clone that riff knows (there
-  also each rule that `riff setup` wrote), the install of `riff@riff`
-  and the marketplace `riff`. It lists them, and asks `[y/N]`. Only
-  `y` or `yes` is yes: Enter is no. On yes, it removes them with
-  `claude plugin uninstall`, `claude plugin marketplace remove` and an
-  edit of each settings file. It keeps each other entry. On no, it
-  asks again at the next start.
-- **01M4CMJPGS613K2FHQ6DKSY2WJ** riff never changes a file that git
-  tracks (`git ls-files --error-unmatch`). It lists the riff entries of
-  a tracked `.claude/settings.json` apart, and says to remove them in a
-  pull request. It does not uninstall a `project` install of
-  `riff@riff` whose `.claude/settings.json` git tracks. It changes only
-  the user config and untracked files, for example
-  `.claude/settings.local.json`. With only tracked entries, it does not
-  ask.
-- **01M4CMN13D97R2JKHYGFSAM313** The flag settings of the lead and of
-  each worker set `enabledPlugins."riff@riff"` to `false`. So the
-  plugin of an older release that the Claude config still turns on
-  does not run next to `--plugin-dir`.
-- **01M4BYH84X7B2D9EFYGP11GP8Y** `riff connect`, `riff enable`, `riff
-  disable` and `riff setup` are gone. `riff connect` stays as a hidden
-  command that does nothing, so that `riff update` of riff 1.3, which
-  runs it after the install, ends with success. `riff` signs in when the
-  riff has sign-in and this machine has no sign-in for it, as `riff
-  connect claude` did.
-- **01M4BYH874WQ16Q0337WQA8AMV** The flag settings of each session that
-  riff starts hold the rules of riff work: allow each riff tool
-  (`mcp__riff`), `Bash(riff)`, `Bash(riff *)`, the pull request steps
-  (`gh pr create`, `gh pr merge * --auto --squash`, `gh pr comment`, `gh
-  pr view`) and the statuses of the GitHub repository; deny a push to
-  the default branch and `gh pr merge --admin`.
-- **01M4BYH89ESJWCVY7Q6Y2F6E8Y** The lead gets the same MCP config as
-  the workers: the riff MCP server and the servers of `workers.mcp`.
-- **01M4BYH8E39RTG938XPETZHPP6** The release after 1.3 is 2.0.0. It has
-  no code for the old start. The book has "Move from riff 1.3 to 2.0",
-  and the release notes of 2.0.0 link it.
+  the riff in `RIFF_SERVER`, and run `riff connect claude`. The steps
+  are the same for a second machine of the owner and for a person that
+  the owner invites. The page replaces "Add a Machine".
+- **R44** Only Claude Code is supported for now. `riff connect claude`
+  installs a Claude Code plugin: the MCP server, a skill, and a start
+  hook that wakes the session.
 - **R52** The plugin files live in the riff repository. The `riff`
   binary carries a copy of them, so the plugin matches the binary.
-- **R53** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
+- **R53** `riff connect claude` writes the plugin as a local marketplace
+  and installs it with the `claude` command. The same command updates
+  the plugin.
 - **R54** A new session can start in any directory of a repository.
   The start hook and the skill teach this start routine: read the
   repository thread, claim a work item, make a worktree for it, and
@@ -308,34 +257,106 @@
   work". In the main worktree, the context has no worktree line.
 - **01M3JN21YJSP7HM1JPS1TCFM9W** The update of each machine pulls each
   clone of the project with `git pull --ff-only`.
-- **R74** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
-- **R75** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
+- **R74** `riff connect claude` writes the plugin to
+  `$XDG_DATA_HOME/riff/claude-plugin`. Without `XDG_DATA_HOME`, it uses
+  `~/.local/share/riff/claude-plugin`.
+- **R75** `riff connect claude` removes the user-scope MCP server entry
+  `riff`, if it exists. The plugin gives the riff tools instead.
 - **R76** Replaced by 01M3XY2SNXQJRSH5QX82AFVM2S.
-- **R77** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
-- **01M3XY2SHGXQR9NVXF7QJBN09T** Replaced by 01M4BYH80CFW1TBGKVA2VN9ZBQ.
+- **R77** `riff connect claude` does not need a riff session or a git
+  repository. It works in any directory.
+- **01M3XY2SHGXQR9NVXF7QJBN09T** riff is off in a Claude Code session
+  until a person turns it on for the repository of the session. The
+  state is the entry `riff@riff` in the key `enabledPlugins` of the
+  Claude Code settings. The first file that has the entry decides, in
+  this order: the local settings of the repository
+  (`.claude/settings.local.json` at its top), its project settings
+  (`.claude/settings.json`), the user settings. A directory that is
+  not in a git repository is off.
 - **01M3XY2T2YEV7GT7DKJHSMMHYR** In a linked worktree, riff also reads
   the local settings and the project settings of the main clone. The
   local settings come before the project settings.
-- **01M3XY2SKQ27K3TE4NV28FHTVV** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
-- **01M3YCGKGP3VC93S8FA1G4K3QK** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
-- **01M3ZGT8ST7HCK6J7VZJ09XE0M** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
-- **01M3XY2SNXQJRSH5QX82AFVM2S** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
-- **01M3XY2SR3VJZAKEPC6CBCS292** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
-- **01M3XY2ST8R67SKTXJECAYJZRX** In a session that riff did not start
-  (01M4BYH80CFW1TBGKVA2VN9ZBQ), each entry of the plugin does nothing:
-  `riff hook` and `riff statusline` make no call to the server, run no
-  `git`, and print nothing. `riff mcp` serves no tool, makes no call to
-  the server, and says in its instructions how to start the riff. A
-  `riff mcp` that an update starts again serves a session that runs, so
-  it goes on.
+- **01M3XY2SKQ27K3TE4NV28FHTVV** `riff enable` writes the entry `true`
+  to the local settings of the repository of the working directory:
+  in a linked worktree, to those of the main clone. `--shared` writes
+  it to the project settings. `--global` writes it to the user
+  settings. `riff disable` removes the entry from the same file. With
+  no flag, when another file then still turns riff on, `riff disable`
+  writes `false` to the local settings. Each command changes only the
+  entry of riff, as text: each other byte of the file stays. It
+  changes no other file, and says whether riff is on in the working
+  directory. With `--global`, the answer of
+  01M3XY2SNXQJRSH5QX82AFVM2S becomes `global` or `none`.
+- **01M3YCGKGP3VC93S8FA1G4K3QK** `riff enable` and `riff disable`
+  write through a symbolic link, and name the real path of the file
+  that they wrote. Before they write the local settings of the main
+  clone of a linked worktree, git must confirm the worktree: its
+  common directory (`git rev-parse --git-common-dir`) is the `.git` of
+  that main clone, and the file `gitdir` of the entry of the worktree
+  in the main clone names the `.git` file of the tree. If not, the
+  command writes nothing, and says why.
+- **01M3ZGT8ST7HCK6J7VZJ09XE0M** The `.git` of a linked worktree is
+  the file that the entry of the worktree names, not a symbolic link
+  to it. When `TOP/.git` is a symbolic link, `riff enable` and
+  `riff disable` write nothing, and say why. The check of the `gitdir`
+  file follows no link at the last part of a path.
+- **01M3XY2SNXQJRSH5QX82AFVM2S** `riff connect claude` adds the
+  marketplace to Claude Code with the `claude` command on the PATH.
+  `--claude PATH` names another one. It installs the plugin in no
+  scope, and turns riff on nowhere by itself. In a terminal, it asks
+  one time where the person wants riff on: only in this repository
+  (the default), in each repository on this machine, or not now.
+  `--scope repo|global|none` gives the answer with no question. riff
+  keeps the answer in its settings, `connect.scope`. With an answer
+  there, or with no terminal, it asks nothing and turns riff on
+  nowhere.
+- **01M3XY2SR3VJZAKEPC6CBCS292** An update never turns riff on for
+  each repository: only the answer `global` writes the entry `true` to
+  the user settings. `riff update` asks nothing, also in a terminal:
+  it runs `riff connect claude` with no terminal. With no terminal,
+  `riff connect claude` asks nothing, and a new install stays off. An
+  install of a release up to v0.8.0 is an old install: the user
+  settings have the entry `true`, because that release installed the
+  plugin in the user scope, and riff has no answer. Its choice is each
+  repository. On an old install `riff connect claude` asks nothing,
+  with a terminal and with no terminal: it keeps the entry, records
+  the answer `global`, and says in one line that riff stays on in each
+  repository and that `riff disable --global` changes it. So no person
+  does a thing at the update from v0.8.0. With `--scope repo` or
+  `--scope none`, `riff connect claude` removes that entry, and names
+  each repository of the Claude Code state file whose settings have a
+  riff permission rule, with the command `riff enable`.
+- **01M3XY2ST8R67SKTXJECAYJZRX** Where riff is off, each entry of the
+  plugin does nothing: `riff hook` and `riff statusline` make no call
+  to the server, run no `git`, and print nothing. `riff mcp` serves no
+  tool, makes no call to the server, and names `riff enable` in its
+  instructions. A `riff mcp` that an update starts again serves a
+  session that runs, so it goes on.
 - **01M3XY2SWEK0N8MC3MY4TMYTD3** `RIFF_ON=1` turns riff on for the
-  processes that have it, also outside a repository. `just dev` and the
-  helper crate `isolated` set it. Each worker gets it
-  (01M4BYH80CFW1TBGKVA2VN9ZBQ).
-- **01M3XY2SYKG91SAB2FS1QNCZ2H** Replaced by 01M4BYH80CFW1TBGKVA2VN9ZBQ.
-- **01M3XY2T0R2Q39XYX8AYV7T0RK** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
-- **01M3XY2T542DCHBN95H9PX4AGQ** Replaced by 01M4BYH80CFW1TBGKVA2VN9ZBQ.
-- **01M3YCGKKRDNFC338K1JSK30JK** Replaced by 01M4BYH80CFW1TBGKVA2VN9ZBQ.
+  processes that have it, also outside a repository. `just dev` and
+  the helper crate `isolated` set it. A worker that such a process
+  starts gets `RIFF_ON=1`.
+- **01M3XY2SYKG91SAB2FS1QNCZ2H** The state is obvious. The last line
+  of `riff connect claude` says where riff is on, or
+  `riff is installed but off`, with the command to change it.
+  `riff server` shows `riff on` or `riff off` for the working
+  directory, the file that decides, and the command to change it. The
+  start context names the file that turned riff on, and
+  `riff disable`.
+- **01M3XY2T0R2Q39XYX8AYV7T0RK** When the Claude Code state file has
+  `plugin:riff:riff` in `disabledMcpServers` of the project, a person
+  turned the riff server off there in `/mcp`. The start context then
+  says that the session has no riff tools, how to turn the server on,
+  and to tell the lead with `riff tell lead`. The status line says it
+  too.
+- **01M3XY2T542DCHBN95H9PX4AGQ** riff starts no worker where riff is
+  off in the main clone of the repository: `riff workers start`
+  starts nothing and names `riff enable`, and the rollout of the lead
+  and a workers host start none.
+- **01M3YCGKKRDNFC338K1JSK30JK** When riff is off in the main clone of
+  the lead, the rollout posts one note to the lead: the host, the
+  reason and `riff enable`. The next note comes only after riff was on
+  there again.
 - **01M3NJDSQ23FFRMH8ZD4GC57WY** `riff --help` lists the commands that
   people use under the headings Get started, Work in the riff, Pull
   requests, Lead and Members, in that order. Each command has one
@@ -558,6 +579,19 @@
   check, from each session and from each person. For an urgent fix,
   our user turns the ruleset off, pushes, and turns it on again with
   `just github`.
+- **01M4YJ6KGBPTCSVMFQCDKACZPV** A patch of an older release line goes
+  on the branch `release/MAJOR.x` of that line, by pull request. The
+  branch starts at the last release tag of the line. CI runs the `Gate`
+  and `Hygiene` on each pull request and each push of a branch
+  `release/**`, as on `main`. A push to it does not deploy. The
+  command `just github` makes the ruleset `release-branches` on
+  `release/**`: a change needs a pull request with 0 approvals and the
+  checks `Gate` and `Hygiene`. No force push, no deletion, no bypass
+  actor. The checks do not stop the push that makes a new branch of a
+  line.
+- **01M4YTW8788K4XYTEMRSXDH7B9** The GitHub release of the line that
+  the shared riff runs is marked "Latest". A release of another line is
+  not, also when its version is higher.
 - **01M3JFEXJG2D651PWA30DNRGWF** No session pushes to `main` or runs
   `gh pr merge --admin`. The project settings of Claude Code deny both,
   and the skill says it.
@@ -617,21 +651,6 @@
   status and no post. It exits with status 1 and one line that names
   the commit, the state of the Gate and `gh pr checks N`.
   `riff verify fail N` needs no Gate.
-- **01M4C4WQ9K6ZC85K24QFXJAZ2W** The `Done when:` line of each issue
-  has one criterion that starts with `- Docs:`: the docs that the
-  change needs. The verifier checks the docs before a pass, and writes
-  what it checked in a result line that starts with `Docs:`.
-- **01M4C4WQHF7PRFHZJ9CNS847KX** `riff verify pass N` reads the issue
-  of the `Issue:` trailer of pull request N with `gh`. When the issue
-  has no criterion `- Docs:` after its `Done when:` line, or the result
-  has no line that starts with `Docs:`, it makes no comment, no status
-  and no post. It exits with status 1 and one line that says what to
-  add. `riff verify fail N` takes a result with no `Docs:` line.
-- **01M4C4WQW5X7ZRES1KXH7KXJSY** `riff plan check` reads the open
-  issues of the repository with `gh`. It prints each issue of an open
-  wave with no criterion `- Docs:`, with its wave and title, and exits
-  with status 1. When each item has one, it says so and exits with
-  status 0.
 - **01M3NB6G132QG4TAEJ5QPRJNAE** The skill names one `riff` command
   for each step of a pull request: open it, wait for the merge, report
   a verify. It has no `gh` recipe and no shell loop for these steps.
@@ -833,7 +852,7 @@
   the same worktree on a free local port. It never talks to the shared
   riff. `just dev` changes nothing that is installed.
 - **01M3MRDEVR5VPPV6B1BDDVYSBG** A worker never runs `riff update`,
-  `cargo install` of riff or `just install`. The tests
+  `cargo install` of riff, `just install` or `riff connect`. The tests
   run the binaries of the worktree with a home of their own, so the
   installed binaries stay the same.
 - **01M3MY2KWKBJCQ0BCNC6533RBW** A test run and `just dev` never touch
@@ -862,13 +881,10 @@
   and writes nothing, also when `TMPDIR` is in a repository, for
   example the home of the person.
 - **01M43B491Z25KT0XBC7CANFS5G** Replaced by 01M49NP2907J4SH4S6MAY09VXE.
-- **01M49NP2907J4SH4S6MAY09VXE** Replaced by 01M4C5WFP1CGG4PYPEP2NVRGKQ.
-- **01M4C5WFP1CGG4PYPEP2NVRGKQ** A cargo run in the riff repository with
-  no `TMPDIR` gets `/var/tmp`: `.cargo/config.toml` sets it with no
-  `force`. A session in the sandbox keeps its own temp folder, because
-  the sandbox lets it write only there. A test run of a session gets
-  its own `/tmp`. So no test of a worker writes to the repository of
-  the home.
+- **01M49NP2907J4SH4S6MAY09VXE** Each cargo run in the riff repository,
+  also a plain `cargo test`, has `TMPDIR` set to `/var/tmp`:
+  `.cargo/config.toml` sets it with `force`. So no test of a worker
+  finds the repository of the home, or writes to it.
 - **01M49NP2JW8JFWYY56K7AK3H05** The temp dir of the test helper
   `isolated` is outside each git repository, also when cargo runs from
   a dir outside the riff repository. So no command of a test writes
@@ -1414,6 +1430,15 @@
   newest checkpoint of each day for 30 days. It deletes the others. It
   deletes a chunk only when each kept checkpoint is past it. No rule
   deletes chunks by age.
+- **01M4YNCECQDQR3Z8QTGQ1PW3WV** The 1.x instance drops the forge state
+  of 2.0. A replay drops each record of the kind `forge_allowed`. A
+  dropped record is not a skipped record: the build writes checkpoints
+  past it, and `riff server` does not count it.
+- **01M4YNCEMNRCAXD37V03T4JQYR** Each major release line has its own
+  instance. A start passes over each checkpoint whose `build` has a
+  later major version: it does not use it, and it does not block the
+  checkpoints of the build (01M3TBZBQDF0ES4KM54FJQF6Z8). A checkpoint
+  of a later minor or patch of the same line still blocks.
 - **01M3TBZBT7MME9BG1RWX5SZAZ6** Memory and the checkpoint keep the last
   200 messages of each thread. Nobody reads an older message. The copy
   check (01M3JEJVXXEPPNGT3FY4ZSFCWZ) knows only the kept messages.
@@ -1611,8 +1636,8 @@
   riff once.
 - **01M3K0Q892KWM76R9DJC1P37JA** `riff update` updates riff on a
   machine: it installs `riff` and `riff-server` of a release from the
-  repository with `cargo`. Each `claude` that riff starts after it
-  gets the new plugin.
+  repository with `cargo`, then updates the plugin with
+  `riff connect claude`.
   When the server on the same machine runs another build than the new
   `riff-server`, it tells the person to start `riff-server` again. It
   does not restart it. That server is the server of `riff` when it is
@@ -1621,8 +1646,7 @@
 - **R32** The OIDC client secret is in Secret Manager. Cloud Run gives
   it to `riff-server` as `RIFF_OIDC_CLIENT_SECRET`.
 - **R134** `riff-server` runs as its own service account. The account
-  can read and write only its bucket, read only its sign-in secret, and
-  read and add versions only to the secret of its GitHub App. The
+  can read and write only its bucket, and read only its secret. The
   bucket is private.
 - **R135** The image holds only the `riff-server` binary and CA
   certificates. It runs as a user that is not root.
@@ -1894,8 +1918,7 @@
   tool: each branch of `origin` with its last commit, and each worktree
   on the machine with the count of its files that are not committed
   and of its commits that are not pushed. riff runs
-  `git fetch origin` first, with no `--prune`, for at most 5 seconds.
-  A branch or
+  `git fetch --prune origin` first, for at most 5 seconds. A branch or
   a worktree belongs to the item when its name holds the item as a
   whole word. A verify claim gets no such line. riff does not show the
   subject of a commit.
@@ -2113,13 +2136,12 @@
 - **01M3WNHCD659FH3Z5VYYH69WWR** The first line of a session in
   `riff top` names its worktree after the short session ID:
   `#WORKTREE`, or nothing in the main worktree. The session is under
-  the line of its repository. A repository line has the name of the
-  repository in the label of its sessions
-  (01M4CPVJ9ANPEBTWY9GETE2DGW): the short name, also when the
-  repositories of the sessions have more than one owner. The wave
-  line names the repository of its board: `Wave N (OWNER/REPO)`.
-  Only a claim in that repository is on its board, and a session
-  shows the title of an issue of its own repository.
+  the line of its repository. A repository line has the short name of
+  the repository when the repositories of the sessions have one owner,
+  else `OWNER/REPO`. The wave line names the repository of its board:
+  `Wave N (OWNER/REPO)`. Only a claim in that repository is on its
+  board, and a session shows the title of an issue of its own
+  repository.
 - **01M42KHN33M4K13GKTX2WM6CMM** The tree of `riff top` has four
   levels: person, host, repository, session. A person, host or
   repository line ends with its counts: the sessions, then the busy,
@@ -2161,25 +2183,40 @@
 - **01M3ZC09FA9DZPTHK31XECZ566** When a later read of `gh` fails,
   `riff top` keeps the titles and the board of its last good read of
   `gh`.
-- **01M3JDWA0WZWKF3JT3NYA2FV5Z** Replaced by 01M4CPVJ9ANPEBTWY9GETE2DGW.
-- **01M4CPVJ9ANPEBTWY9GETE2DGW** `riff statusline` prints the status
-  line of a Claude Code session: the label of the session
-  (`USER@HOST:REPO#WORKTREE (ID)`), its role (`lead`, `worker`), its
-  state as `riff top` shows it, and each claim. One function makes the
-  label for `riff statusline`, `riff who`, `riff whoami` and the tree of
-  `riff top`. A line longer than 80 characters drops the user and the
-  host of the label; the repository and the worktree stay. It is the
-  `statusLine` command in the flag settings of each session that riff
-  starts (01M4BYH7Y3P1JMQR51TWFGVZ39). It never fails, and it waits at
-  most 2 seconds for riff-server.
+- **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
+  line of a Claude Code session: `riff`, the short session ID of
+  `riff who`, `lead`, each claim, and `blocked`. It is the
+  `statusLine` command in the Claude Code settings. A plugin cannot
+  set it. It never fails, and it waits at most 2 seconds for
+  riff-server.
 - **01M3T5GFVS8NMA992KHZN4VE17** `riff statusline` calls
   `GET /v1/me`, not `who`. The reply holds only the session of the
   caller: its state, claims and status, and the build of the server.
   The call changes nothing: it is not a call of the session, and it
   adds no session.
-- **01M3JFFJEW8BSRBZ9JQPKT0S8Z** Replaced by 01M4BYH7Y3P1JMQR51TWFGVZ39.
-- **01M3Q53RNDJBDHVDFHJ9HCX9S1** Replaced by 01M4BYH874WQ16Q0337WQA8AMV.
-- **01M3Q53RQGXMYVYGCQQMWA9380** Replaced by 01M4BYH874WQ16Q0337WQA8AMV.
+- **01M3JFFJEW8BSRBZ9JQPKT0S8Z** `riff connect claude` adds the riff
+  status line to the user settings of Claude Code
+  (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)
+  when they have no `statusLine`. It keeps each other key, its place
+  and its format, and writes the file only when it changes. When
+  another `statusLine` is set, or the settings are not a JSON object,
+  it changes nothing and names the manual how-to.
+- **01M3Q53RNDJBDHVDFHJ9HCX9S1** `riff setup` adds the Claude Code
+  permission rules of riff work to the project settings,
+  `.claude/settings.json` at the top of the repository. Allow: each
+  riff tool (`mcp__plugin_riff_riff`, `mcp__riff`), `Bash(riff)`,
+  `Bash(riff *)`, and the pull request steps (`gh pr create`, `gh pr
+  merge --auto --squash`, `gh pr comment`, `gh pr view`, and the
+  statuses API of a GitHub `origin`). Deny: a push to the default
+  branch (`origin/HEAD`, else `main`) and `gh pr merge --admin`. It
+  adds only the missing rules. A rule in the user, project or local
+  settings counts as there. It keeps each other rule and key in its
+  order, and writes the file only when it changes. `riff setup
+  --check` changes nothing, names each missing rule, and exits with
+  status 1 when a rule is missing.
+- **01M3Q53RQGXMYVYGCQQMWA9380** When the project lacks a riff
+  permission rule, the start hook of the lead tells the lead to ask
+  its user to run `riff setup`.
 - **R41** A session joins the thread `OWNER/REPO` by default.
 - **R42** A cloud session uses the host `cloud`.
 - **R100** A session is a cloud session when `CLAUDE_CODE_REMOTE` is
@@ -2682,7 +2719,11 @@
 - **01M3JZN1XQVVNVD0MJVM8J91HC** A `riff-server` with an OAuth client
   (`RIFF_OIDC_CLIENT_ID`) requires sign-in, as with
   `--require-sign-in`.
-- **01M3JZN1ZZED3FXQEFNJ4KVCN5** Replaced by 01M4BYH84X7B2D9EFYGP11GP8Y.
+- **01M3JZN1ZZED3FXQEFNJ4KVCN5** `riff connect claude` installs the
+  plugin, then runs `riff login` when the riff has sign-in and this
+  machine has no sign-in for it. An old sign-in
+  (01M3JNVBRS35B3CD67367JF7SJ) does not count. When riff cannot check
+  or the sign-in fails, the command warns and says what to do.
 - **R15** `riff-server` accepts the accounts of its allowed domains, and
   the people of 01M3JN3AFA2SAX0CEC1Y6E4NM5. The allowed domains are a
   setting. The default is `comotechnologies.io`.
@@ -2706,7 +2747,7 @@
 - **01M3MEF4B33Z6WVJMDP29C7SS2** `riff invite EMAIL` prints the public
   address of the riff (the `--public-url` of `riff-server`) and the
   lines that the person runs to join: install `riff`, set
-  `RIFF_SERVER` to the address, and `riff login`. The lines
+  `RIFF_SERVER` to the address, and `riff connect claude`. The lines
   hold no secret.
 - **01M3MEFG6F102T1H8DFJ38EJ4A** The book page "Start a Team Riff"
   starts a riff with sign-in for a team, on a Linux host that the team
@@ -2855,7 +2896,7 @@
   `riff-server` refused one time only. It keeps the sign-in of the
   machine as ended, with its user and with no token. Then each `riff`
   process says that the sign-in ended with no call to `/v1/token`,
-  until `riff login`. `riff` signs in again.
+  until `riff login`. `riff connect claude` signs in again.
 - **01M3MX4V43SF2XFCZWANHD19WV** `riff-server` checks no version on
   `/v1/token` and `/v1/sign-in`, and `riff` checks none on their
   replies. So `riff login` and a refresh work when the versions do not
@@ -2983,7 +3024,7 @@
   `RIFF_WORKER=1`. A second start adds panes to the same window. No
   person types a key.
 - **01M3JD394YFA3TQRE3E72ZER4Z** A worker starts with no Remote
-  Control. `riff` starts the lead with `claude --remote-control`.
+  Control. The book starts the lead with `claude --remote-control`.
 - **01M3JV0ZNGKDFMRR9ACT0480V9** `riff workers start` runs each worker
   with the flag settings `{"remoteControlAtStartup":false}`. So a
   worker has no Remote Control, also when the user settings turn on
@@ -2991,10 +3032,6 @@
 - **01M3MN0D429T4Q80DYBE9S9XR7** `riff workers start` runs each worker
   with the flag settings `{"awaySummaryEnabled":false}` too. So a worker
   shows no recap of Claude Code. The user settings file does not change.
-- **01M4CGFMX16JY8W2P9JJDDTSFC** Each worker and each verifier gets
-  `"promptSuggestionEnabled": false` in its flag settings: no person
-  types into a worker, so it shows no suggested prompt. The lead keeps
-  the setting of the person.
 - **01M3ZJ1FAF7EJXP9CSET8ZY1K3** `riff workers start` turns off each
   installed plugin with a language server in the flag settings of each
   worker: `"enabledPlugins": {"PLUGIN": false}`. A plugin has a
@@ -3148,8 +3185,7 @@
   find the input line, it types nothing. The check of the input line is
   in the adapter of the agent tool.
 - **01M3MNP34M5PAZW9VWAYVGNSV2** `riff workers start`, and the clear of
-  a worker outside a sandbox (01M4DVW2B8W108N696GAYN3V1B) before the
-  fresh context, fast-forward the default branch
+  a worker before the fresh context, fast-forward the default branch
   of the main clone to `origin` first (`git fetch` and
   `git merge --ff-only`). `riff workers start` says what it did.
 - **01M3MNP36TZYN3PE00AZJTJSER** When the main clone is not on the
@@ -3211,16 +3247,13 @@
   user, host and repository. An idle worker in one repository does not
   stop the idle worker of the same user and host in another
   repository.
-- **01M3Q5A0QZTSTXHHNYCE8HFJSB** Replaced by 01M4BTB7G5Q0HPP057KMBXBTE1.
-- **01M4BTB7G5Q0HPP057KMBXBTE1** The reply to a keep-alive tells a
+- **01M3Q5A0QZTSTXHHNYCE8HFJSB** The reply to a keep-alive tells a
   worker that the server asks it to stop. `riff mcp` in a worker sends
-  a keep-alive each 10 seconds. On the ask, it writes the stop file
-  that the variable `RIFF_WORKER_STOP` names, in the temp folder of
-  the worker. The `riff workers run` wrapper of the worker looks for
-  the file each 250 ms. Then it stops `claude` and sends no message,
-  so the pane closes. `riff mcp` sends the end call, so the session
-  leaves `riff who`. A signal cannot do it: the sandbox stops each
-  signal to a process outside it.
+  a keep-alive each 10 seconds. On the ask, it sends SIGTERM to the
+  `riff workers run` wrapper of its worker, which the variable
+  `RIFF_WORKER_WRAPPER` names. The wrapper stops `claude` and sends no
+  message, so the pane closes. `riff mcp` sends the end call, so the
+  session leaves `riff who`.
 - **01M3Q5A0TF9K49V8Z1ZY9NDF74** The riff keeps the settings of idle
   workers: `per_host` (default 1) and `after_secs` (default 60, at
   least 1). The server saves them. `riff workers idle` shows them.
@@ -3250,11 +3283,10 @@
   names the first line of each unread request of the lead to the
   worker (01M49KT28N4B07P4G80Z74GRAH), so that the lead can give it
   to another session.
-- **01M4385Z5BN03E6HTEB5GQVZ8X** Replaced by 01M4BTB7JGK4BASDVR5WMRTGPM.
-- **01M4BTB7JGK4BASDVR5WMRTGPM** `riff watch` in a worker
-  (`RIFF_WORKER=1` and `RIFF_WORKER_STOP` set) sends its keep-alive
+- **01M4385Z5BN03E6HTEB5GQVZ8X** `riff watch` in a worker
+  (`RIFF_WORKER=1` and `RIFF_WORKER_WRAPPER` set) sends its keep-alive
   each 10 seconds. When the reply asks the worker to stop, it prints
-  one line, writes the stop file and ends. So a worker whose
+  one line, sends SIGTERM to the wrapper and ends. So a worker whose
   `riff mcp` ended also stops.
 - **01M3Q5A0Z5DK0YV1MWTM4AQD5Z** `riff workers stop PANE --host HOST`
   asks the workers host on HOST to stop only the worker in PANE. PANE
@@ -3526,16 +3558,15 @@
   is 10. 0 means no nice. `riff workers nice` shows it and sets it.
 - **01M3WFYZX6GVFYW6NTTTKF144R** On a machine with systemd, the workers
   of the machine run in the slice `riff-workers.slice` of the systemd
-  user manager, each in a scope of its own. `riff workers run` gives
+  user manager, each in a scope of its own. `riff workers start` gives
   the slice `MemoryMax`, `MemoryHigh` at nine tenths of it, and
   `CPUWeight=50`, until the next start of the machine. `MemoryMax` is
   the setting `workers.memory` in GB. 0, the default, means three
   quarters of the memory of the machine. `riff workers memory` shows it
   and sets it. `riff workers run` stays outside the slice.
 - **01M3WFYZZENNHVH8Z2BAFSR6TS** On a machine where `systemctl --user`
-  cannot set the slice, `riff workers run` says one time on the
-  machine, in its pane, that the workers run with no memory limit, and
-  starts `claude` with no scope.
+  cannot set the slice, `riff workers start` says one time that the
+  workers run with no memory limit, and starts them with no scope.
 - **01M407J8R79WVYVABVCSHFAMJ9** The nice value of `workers.nice` is
   absolute: `claude` of a worker runs at that value, also when
   `riff workers run` runs at a nice value of its own. When the wrapper
@@ -3733,20 +3764,49 @@
   minute.
 - **01M41VAGY396K07BTPSW9TNBX5** `riff workers` shows the disk use of
   ROOT of this machine under the line of its disk.
-- **01M492379BGA3AERT1AM12C650** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
-- **01M49AB2QYGJ73Y19KGAY1WDW7** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
-- **01M49SVFZS7HTYM3FSCV4ZCS0Q** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
-- **01M49AB2TBMHGNXM3GE4NDFYYG** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
-- **01M49237BM12PVBERD6JXDSX5V** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
-- **01M49237DWTBSEM6CVFH2BYC4V** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
-- **01M4923963S666V9YWTZ46ZZ50** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
-- **01M492398HA0AXX0J8BZCKNGTG** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
-- **01M49239AWKEPKEPMZZRRTVRAT** Replaced by 01M4BQA5K7DQHQ4DSJGQJH8ZQE.
-- **01M4BQA5K7DQHQ4DSJGQJH8ZQE** riff gives the workers no compile
-  cache. `riff workers run` sets no `RUSTC_WRAPPER` and no `SCCACHE_*`
-  variable, and starts no `sccache` server. `riff workers host` and
-  `riff update` install no `sccache`. riff has no `riff workers cache`
-  and no setting `workers.cache`.
+- **01M492379BGA3AERT1AM12C650** The workers of a machine share one
+  compile cache. `riff workers run` gives `claude` the variables
+  `RUSTC_WRAPPER` (the `sccache` of the machine), `SCCACHE_DIR`,
+  `SCCACHE_CACHE_SIZE`, `SCCACHE_SERVER_PORT` and
+  `SCCACHE_IGNORE_SERVER_IO_ERROR=1`. With no `sccache`, it unsets the
+  five variables and says one line. The cache is on the
+  machine only: no cloud store, no network.
+- **01M49AB2QYGJ73Y19KGAY1WDW7** `riff workers run` starts the
+  `sccache` server of the machine before it starts `claude`, with no
+  variable of a worker and in its own process group.
+- **01M49SVFZS7HTYM3FSCV4ZCS0Q** The `sccache` server of the machine
+  runs outside the scope of each worker. When the worker has a scope,
+  `riff workers run` starts the server in the systemd scope
+  `riff-sccache-PORT.scope`. The server has
+  `SCCACHE_IDLE_TIMEOUT=0`, so it never ends for idle time, and a
+  build of a worker does not start it again in the scope of that
+  worker.
+- **01M49AB2TBMHGNXM3GE4NDFYYG** A process with
+  `SCCACHE_START_SERVER=1` whose binary (`/proc/PID/exe`, by device and
+  inode) is the `sccache` of the machine is the `sccache` server of the
+  machine. riff never trusts the name in `argv[0]`. No clear, reap or
+  stop of a worker stops the server. Each other process with the
+  variable stays a process of its worker.
+- **01M49237BM12PVBERD6JXDSX5V** The folder of the cache is
+  `$RIFF_HOME/sccache`, else `~/.cache/riff/sccache`. Its most size is
+  `workers.cache`, default `40G`. `riff workers cache` shows and sets
+  it.
+- **01M49237DWTBSEM6CVFH2BYC4V** The port of the `sccache` server
+  comes from the folder of the cache: 20000 to 29999. So the workers of
+  a machine share one server, and it never mixes with another
+  `sccache` server.
+- **01M4923963S666V9YWTZ46ZZ50** The start of `riff workers host`, and
+  `riff update` on a machine with a limit of workers more than 0, run
+  `cargo install --locked sccache --version` of the version that riff
+  pins, when `sccache` is missing or older. The host installs while it
+  serves. A failed install is one note to the lead from a host, and one
+  line from `riff update`. The workers then build with no cache.
+- **01M492398HA0AXX0J8BZCKNGTG** `riff workers` shows the compile cache
+  of this machine under its temp line: the size, the most size and the
+  hit rate, from `sccache --show-stats`.
+- **01M49239AWKEPKEPMZZRRTVRAT** `riff workers cache --clear` stops the
+  `sccache` server of the cache and deletes the folder of the cache. It
+  refuses while workers run on the machine.
 - **01M421QPKWPX00X24F8V6DT8Z3** The monitor of a machine reads its
   health each `monitor.every` seconds (default 15) while `monitor.on`
   is true (default false): the 1-minute and 5-minute load average, the
@@ -3932,7 +3992,7 @@
   machine, and install nothing. The default is off. `riff update
   --auto` with no value shows the setting.
 - **01M3NT6WV8Q8EFZBK8DHYKW5CC** On a machine with no `update.auto`
-  key, `riff login` and `riff` ask the person once in a
+  key, `riff login` and `riff connect claude` ask the person once in a
   terminal: `Update riff by itself when the riff gets a new release?
   [Y/n]`. The answer sets the key: `n` or `no` is off, each other
   answer is on. With no terminal, they do not ask.
@@ -3954,8 +4014,8 @@
   the local files of riff, not in the working directory of the process
   that started it. It gets the place of that process, so the message
   to the lead finds the repository also when that directory is gone.
-- **01M3NT2Q30P9GCQGENWMP1NKN2** `riff update` runs `cargo`, `git`
-  and `riff-server --version` in the home directory,
+- **01M3NT2Q30P9GCQGENWMP1NKN2** `riff update` runs `cargo`, `git`,
+  `riff connect` and `riff-server --version` in the home directory,
   else in `/`. So it works in a removed directory.
 - **01M3NT2PYFHPB0C19Q2QB2AE6W** When the working directory of an
   update in the background is missing, the update stops before `cargo`
@@ -4067,13 +4127,6 @@
 - **01M4A4T6C5DH311AXMM6AG54DV** A test fails when a file of `tests`
   of a crate is in no test binary: not a module of `tests/all.rs`, and
   not the path of a `[[test]]` in the `Cargo.toml` of the crate.
-- **01M4BPJBJXB9KH3TTYAXK36R4M** A test of a shared test binary does
-  not change the environment of its process. It gives a variable to its
-  child process (`Command::env`, `Command::env_remove`), or it gives the
-  value to the code as a parameter.
-- **01M4BPJBTJ221A960NSVMPW8XM** A test fails when a file of `tests` of
-  a crate calls `set_var` or `remove_var`, except a file that is a test
-  binary of its own.
 - **01M49W17GGV1K5FZEKJRPV0GNA** A type of the log, the wire or the
   checkpoint has one struct. A reader, a saved form or a reply that
   carries the data of a type holds that type, not a second struct
@@ -4100,614 +4153,6 @@
   the wire, the checkpoint or the state cannot hold an invalid state.
   For example, a saved session has a status, a step, or both: an
   enum, not two options.
-
-## Sandbox
-
-- **01M4BPK6V66QNPQJ6RBRE10WH9** riff has one profile for each role:
-  the lead, a worker, a verifier and the test run. A profile says the
-  paths that a process of the role reads, the paths that it writes,
-  its network and its rights on the forge. riff builds it from the
-  paths of the session. Each part of the sandbox reads this one
-  profile.
-- **01M4BPK72ZBZABCTWS9YM1M9QX** The lead writes the worktrees of the
-  clone, a part of the git dir of the clone
-  (01M4DDWPN8FADA663TTZSVD698), its own state folder of riff, its temp
-  folder and its Claude Code folder. It reads the rest of the clone.
-  It connects to the riff server, the forge, the package registries
-  and the model API. On the forge, it reads, plans,
-  comments, pushes a branch and opens a pull request.
-- **01M4BPK7AKTJD9Y9WVJQKTQY6M** A worker writes its worktree, its
-  target folder, a part of the git dir of the clone
-  (01M4CN0W3V733V6R2SG1YYZRCN), its own state folder of riff,
-  its temp folder and its Claude Code folder. It does not write the
-  rest of the clone. Its network is the network of the lead. On the
-  forge, it reads, comments, pushes a branch and opens a pull request.
-- **01M4BPK7JA9V5PXCYZ01G0KBZT** A verifier writes the same kinds of
-  paths as a worker, for its verify worktree. Its network is the
-  network of the lead. On the forge, it reads, comments and sets the
-  verify status of a commit.
-- **01M4BPK7SN7J16KPB3J743CW2B** The test run writes only its temp
-  folder and its target folder. It reads its worktree. It has the
-  loopback network only, and no right on the forge.
-- **01M4BPK80NK50S2V26Z8BDT0XM** No profile gives the home of the
-  person as a whole, a folder above it, the keyring, the D-Bus socket,
-  the keys of SSH and GnuPG, or the sign-in of `gh`. riff makes no
-  profile for a session whose paths give one of them.
-- **01M4C2PY1DRWVWENJBM42D60M9** No profile gives a bus of systemd: the
-  user bus, the folder `systemd` of the runtime folder of the person
-  (the private socket of the user manager), or the system bus
-  `/run/dbus`. riff makes no profile for a session whose paths give one
-  of them.
-- **01M4C2PXZ5WNE4C2CJW2HABPY0** No process of a sandbox calls
-  systemd. Only `riff workers run`, outside each sandbox, calls it: it
-  sets the properties of the slice of the workers and starts the scope
-  of `claude`. `riff workers start` calls no `systemctl`.
-- **01M4BR61PPQV7JJE5Y2G9Q90AF** riff makes no profile for a session
-  with a path that is not absolute or that has a `..` component. The
-  step that applies a profile resolves each symlink before it grants a
-  path.
-- **01M4BT33R71HXAVQGHFD4ZFGR5** The Claude Code permission rules of a
-  role come from its profile. riff passes them in the flag settings of
-  `claude` at each start of the role. A rule allows the read of each
-  path that the role reads, and the read and the edit of each path
-  that it writes.
-- **01M4BT33TPSXJVB6JZDZ3F1GGX** The rules of a role deny the read and
-  the edit of each file and folder of the home of the person that
-  holds no path of the profile. riff finds them on the disk at the
-  start. They also deny each place of a secret of the person.
-- **01M4BT33X0WVVJH7Y6AXSWZEYC** The rules of each role deny the edit
-  of each `settings.json` and `settings.local.json` of Claude Code.
-- **01M4FD5TRS3T9KCG2960RQKSDQ** The rules of the lead, a worker and
-  a verifier allow a list of narrow `Bash` commands for their work, so
-  that the auto mode check of Claude Code does not ask for a routine
-  step. A rule names a program and a subcommand, for example
-  `cargo test` or `just check`. No rule names an interpreter or a
-  shell, no rule is `Bash(*)`, and no rule allows a command that
-  changes the sandbox or the rules. The lists are in the code
-  (`role_rules::bash`), and a test checks them.
-- **01M4BT33Z914GBHCGCAXFVQ2X7** When riff cannot make the profile of
-  a role, the role starts with no rules of a profile, and says why in
-  one line.
-- **01M4BT341H1M1N1MT947HXNXDR** A worker starts with no item. So the
-  worktree and the target folder of its profile are the folder of the
-  worktrees of the clone.
-- **01M4BT3JQCY5G7YZ373MV5C5JM** `riff workers rules` prints the
-  permission rules that a worker in this clone gets, as JSON.
-- **01M4BSSWWEBVHZGXCVYMJ7D7PQ** `riff` with no command starts the
-  riff. It is the one action of a person to start the lead of a
-  repository.
-- **01M4BSSWYVJ1RTEM1PTH94S5DH** riff runs its own tmux server, with
-  the socket `riff` and a config of its own. No tmux config of the
-  person changes a riff pane. Each repository has one tmux session
-  there, and its first window holds the lead.
-- **01M4BSSX1BN322T63HTW0KVSA5** `riff` shows a picker: the clones that
-  riff knows on this host and the clone of the current directory, each
-  with the state of its repository (running or paused) and its live
-  sessions. The person picks one, or names the path of a new clone.
-  riff keeps each picked clone.
-- **01M4BSSX3RSK79ZSJZZB1S0NYF** When the tmux session of the picked
-  repository runs, `riff` attaches to it and starts no second lead.
-- **01M4BSSX66A2NNVQK48KQH8BEZ** Outside tmux, a riff command that
-  lists, stops or types into the panes of the workers uses the tmux
-  server of riff.
-- **01M4BW2SW96JS62ZYQNW6804TV** Replaced by 01M4C1QS79MM15F852SW6W7671.
-- **01M4C1QS79MM15F852SW6W7671** `riff` writes the permission rules of
-  the lead to its rules file (01M4BTB7DY1Y74PP3JWKVX58JQ) at each start
-  of a lead, and passes the file to `claude` with `--settings`. The
-  name of the Claude folder and of the rules file of the lead is
-  `lead-OWNER-REPO`.
-- **01M4BTB72DY0C5Y0EJVR0ZH6FZ** `riff workers run` starts `claude`
-  through `riff workers sandbox`, after `systemd-run` and `nice`.
-  `riff workers sandbox` builds the profile of the worker from the
-  paths of its session. It restricts itself with Landlock to the files
-  and the TCP ports of the profile, and with the scopes of signals and
-  of abstract unix sockets. Then it runs `claude` in its place. Each
-  child of `claude` inherits the sandbox.
-- **01M4BTB74RD24WH59FA65KZ8J0** The sandbox asks for each right of
-  Landlock ABI 9, and the kernel applies the rights of its own ABI. On
-  a kernel with no Landlock, `riff workers sandbox` prints one error
-  line and starts no program.
-- **01M4BTB7757XF8RZ6MRXKTM8SB** The sandbox resolves each path of the
-  session before riff makes the profile. A tool path that gives the
-  home of the person or a secret is left out. Each other path that
-  gives one of them stops the start.
-- **01M4BTB79FZ5RAFXMZRRJZNCH9** A session connects to the TCP ports
-  of its profile and to the local port range of the kernel
-  (`ip_local_port_range`), so that a test server on port 0 works in a
-  worker.
-- **01M4BTB7BPA38ARM789WBV507D** Each AI session has its own Claude
-  Code folder, `CLAUDE_CONFIG_DIR`: `claude/SESSION` in the data folder
-  of riff (`$XDG_DATA_HOME/riff`, else `~/.local/share/riff`). No
-  profile gives the Claude folder of the person.
-- **01M4BTB7DY1Y74PP3JWKVX58JQ** The file of the permission rules of a
-  session is `rules/SESSION.json` in the data folder of riff. Each AI
-  role reads it. riff makes no profile whose write paths hold it.
-- **01M4BTB7MSEWG4XY1CRRNBNRPH** Each session writes the device files
-  `/dev/null`, `/dev/zero`, `/dev/full`, `/dev/random`,
-  `/dev/urandom`, `/dev/tty`, `/dev/ptmx` and the terminals in
-  `/dev/pts`.
-- **01M4C5AQGCA3TFZDW23HYKS83S** `riff workers sandbox` starts the
-  broker `riff workers broker` before it restricts itself, so the
-  broker runs outside the sandbox. The session gets its end of a
-  socket pair in `RIFF_BROKER`. `riff test-run` in a session with
-  `RIFF_BROKER` asks the broker to run the test run outside the
-  sandbox, with the stdin, stdout and stderr of the session, and gives
-  its exit code.
-- **01M4FCCSXDFSS0EAASN99NT04D** The broker also listens on a socket
-  of the kind `SOCK_SEQPACKET` in the own folder of the session, with
-  a random name and the mode 0600. It serves only a connection of the
-  user of the broker. The sandbox sets `RIFF_BROKER_SOCKET` to the
-  path. A command of the session that has no file descriptor
-  `RIFF_BROKER` connects there. The seccomp filter of a session allows
-  a unix socket of the kind `SOCK_SEQPACKET` and no other kind.
-- **01M4C5AQM63F58YQ9VA391513D** The broker runs only the operations of
-  its one list, `test-run` and `outside`, and refuses each other
-  operation. The folder of a request must be in the worktree of the
-  session. From
-  the variables of a request, it keeps only those of cargo and of the
-  Rust tests, and the riff server of the tests.
-- **01M4CN0W1F0Y7955C6Q1XB601G** The folders that a test run of the
-  broker writes come from the broker, never from the request. A
-  request sets no `CARGO_HOME`, `CARGO_TARGET_DIR`,
-  `CARGO_BUILD_TARGET_DIR`, `CARGO_BUILD_BUILD_DIR`, `CARGO_MAKEFLAGS`,
-  `CARGO_BUILD_RUSTC_WRAPPER` or `MAKEFLAGS`: the test run gets the
-  values of the broker. The broker sets `RIFF_TEST_RUN_WITHIN` to the
-  `CARGO_TARGET_DIR` of the session, else to the worktree of the
-  session.
-- **01M4CN0RRJF5EWGE0VDSX3442B** `riff test-run` makes its target,
-  opens it, and finds its real path from the open folder. With
-  `RIFF_TEST_RUN_WITHIN`, it runs nothing when the real path of the
-  target is not in that folder, before it makes a folder and after it
-  opens the target. bubblewrap binds the target from the open folder,
-  so a symlink that a session puts in the path later changes nothing.
-- **01M4CRC7VP5EVEE2F9HVRKYCX1** The profile of a test run checks its
-  run folder as its temp folder, not the temp folder that holds it. So
-  a test run works with the temp folder `/tmp`, which holds the tmux
-  sockets of the person.
-- **01M4CN0W3V733V6R2SG1YYZRCN** A worker and a verifier write only
-  `objects`, `refs`, `logs`, `worktrees` and the file `FETCH_HEAD` of
-  the git dir of the clone. They read the rest of it. So no session
-  writes the `config`, the `hooks` or the `packed-refs` of the clone.
-  The git settings of a session turn off `branch.autoSetupMerge`,
-  `gc.auto` and `maintenance.auto`. A session pushes with no `-u`, and
-  fetches with no `--prune`. riff prunes the main clone outside the
-  sandbox.
-- **01M4CN0W644V72YY74WH3KRMMQ** Each git command that riff runs
-  outside a sandbox runs with `core.hooksPath=/dev/null` and
-  `core.fsmonitor=false`.
-- **01M4CXPPVEPFYD86PN9V2Q6EKB** Each git command that riff runs
-  outside a sandbox goes into no submodule:
-  `diff.ignoreSubmodules=all`, `submodule.recurse=false`,
-  `fetch.recurseSubmodules=false`, `push.recurseSubmodules=no` and
-  `status.submoduleSummary=false`.
-- **01M4CW0CEV2ZT3FRET36EB0GMM** Each git command that riff runs in a
-  worktree `MAIN/.claude/worktrees/NAME`, or below it, gets
-  `GIT_DIR=MAIN/.git/worktrees/NAME`, `GIT_COMMON_DIR=MAIN/.git` and
-  `GIT_WORK_TREE=MAIN/.claude/worktrees/NAME` from riff, not from the
-  `.git`, `commondir` or `gitdir` file. Before the run, riff checks
-  that no part of these paths is a link, that `MAIN/.git` and
-  `MAIN/.git/worktrees/NAME` are folders, that the clone does not set
-  `extensions.worktreeConfig`, and that a `commondir` file there names
-  `MAIN/.git`. riff runs no git in a path with a `..` part. A folder
-  between the worktree and the path with its own `.git` is a
-  repository of its own: riff runs git there with no git dirs of the
-  worktree. When a check fails, riff runs no
-  git there, and the error names the worktree. A git command in each
-  other folder gets `GIT_COMMON_DIR` of the `.git` folder of that
-  folder, when it has one. A `riff claim` fetches with no `--prune`.
-- **01M4D06XN4D19G1B2NBRFH34B3** riff runs each git step that reads
-  the files of a worktree (`status`, `add`, `commit`, `merge-tree`) in
-  a child, `riff workers git`, with the Landlock and seccomp profile of
-  a worker on that worktree, and with the git settings of a session
-  (01M4C5RV4J4G0H46GTRVNP5YED). A program that git starts there gets no
-  more rights than a worker. With no Landlock, the step does not run.
-  The push of a WIP commit stays outside, with the git dirs of riff
-  and no hook.
-- **01M4D7TB7FZAMASMQG9K7M3Q0D** A test run takes its clone and its
-  worktree from riff. In a session, the broker gives the clone and the
-  worktree of the session, from its start. The folder of the request
-  only picks where the command runs in that worktree. No `.git` file or
-  folder in the worktree changes the clone, the worktree or the git dir
-  that the profile of the test run reads. When the worktree of the
-  session is the folder of the worktrees of the clone, the worktree of
-  the run is its folder `NAME` that holds the folder of the request.
-  With no broker, `riff test-run` runs outside each sandbox, and takes
-  them from git in its folder.
-- **01M4D4BZ41AH29KSA9B0VZB8DQ** No role and no test run reads
-  `credentials.toml` or `credentials` of a cargo home: they hold the
-  registry tokens of the person, and `Session::secrets` names them in
-  `~/.cargo`. A profile and a test run read only `bin`, `registry`,
-  `git`, `config.toml` and `config` of the cargo home, not the cargo
-  home itself.
-- **01M4CW0CH4F861MWQSQACEX54X** riff runs git in a worktree from
-  `git worktree list` only when it is in `.claude/worktrees` of the
-  clone. `riff worktrees clean` keeps each other linked worktree and
-  runs no git in it. The earlier work of a start does not list it.
-- **01M4C5AQQX543ZFJ7J005HC5E9** The folder of the tmux sockets of the
-  person (`$TMUX_TMPDIR/tmux-UID`, else `/tmp/tmux-UID`) is a place of
-  a secret: no profile gives it.
-- **01M4C5AQV8AT8F5WKNF1C9CE5F** After Landlock, the sandbox applies a
-  seccomp filter: `socket(AF_UNIX, ...)` and `io_uring_setup` fail
-  with `EACCES`. A pair of sockets still works. So no session connects
-  to a unix socket with a name, for example tmux or D-Bus, also on a
-  Landlock ABI before 9.
-- **01M4C5AQYT6V1MJ37JXJ3PNYQ2** `riff workers sandbox` removes `TMUX`
-  and `TMUX_PANE` from the environment of the program.
-- **01M4C6HE4D4ADJVBCC6EW8FP0X** `riff workers sandbox` and `riff
-  test-run` set the core size limit (`RLIMIT_CORE`) to 1 byte, soft and
-  hard. So a crash in a session or in a test run makes no core file and
-  starts no crash helper of the system, for example apport. A limit of
-  0 is not enough: with a pipe in `core_pattern`, the kernel starts the
-  helper for each limit but 1.
-- **01M4C5RTX728DS9FHF7HE14G6T** A session reads the folder of the
-  `claude` that is on its `PATH`, the file that `/etc/resolv.conf`
-  links to, and the cargo settings of its clone (`.cargo`).
-- **01M4C5RV4J4G0H46GTRVNP5YED** `riff workers sandbox` changes what
-  of the environment of the person cannot work in the sandbox: git
-  reads no exclude file of the person and signs no commit or tag
-  (`GIT_CONFIG_*`), `RUSTC_WRAPPER` and `CARGO_BUILD_RUSTC_WRAPPER`
-  are empty, and a `BASH_ENV` that the session cannot read goes.
-- **01M4FD5PH7VKTFB9MJ9GDJJZCD** A session has its own git config.
-  `riff workers sandbox` makes the file `given/git-SESSION.config` in
-  the data folder of riff and sets `GIT_CONFIG_GLOBAL` to it and
-  `GIT_CONFIG_NOSYSTEM` to 1. The file sets `core.excludesFile` and
-  `core.attributesFile` to `/dev/null`. No profile reads `~/.gitconfig`
-  or `~/.config/git`. A worker does not delete or rename a branch: the
-  step fails by design, because it needs `packed-refs.lock`.
-- **01M4GK19EM7YYT1SEZBP9BFS71** The git config of a session names
-  the author and the committer of its commits: `riff ROLE ID`, with the
-  first 8 characters of the session ID, and the email
-  `ROLE-ID@riff.invalid`. A commit that riff makes with the sandbox of
-  a worker (`riff workers git`) has the author `riff` and the email
-  `riff@riff.invalid`. A session and `riff workers git` get no
-  `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`,
-  `GIT_COMMITTER_EMAIL` or `EMAIL`. No commit of a session has the name
-  or the email of the person. #679 gives the email of the App in place
-  of `riff.invalid`.
-- **01M4BTB7Q1ZT1WD2NMF6BAVWPB** `riff workers sandbox --show` prints
-  the sandbox of the role for the session here: the write paths, the
-  read paths, the devices, the ports, and what the kernel applies of
-  it. It applies the sandbox only in a thread of its own, and runs no
-  program.
-- **01M4BTG70M8MPPCNTJCJ649BW1** The sandbox of a test run is
-  bubblewrap. riff builds its arguments from the profile of the test
-  run.
-- **01M4BTG72XPKSTDF4KYRKS4Z0D** `riff test-run PROGRAM ARGS` runs
-  PROGRAM in new user, PID, network, IPC, UTS and cgroup namespaces. The
-  run has a new empty home at the path of the home, and one new empty
-  folder for `/tmp` and `/var/tmp`, both in the temp folder. It has the
-  loopback network only. It dies when riff ends, and its first process
-  ends each process of the run when it ends. riff removes the run
-  folder at the end. It needs no riff server.
-- **01M4BTG755XSCBZ0F8TMFG7NVF** Before each test run, riff checks that
-  `bwrap` is on the `PATH` and that it can make namespaces. When one
-  fails, riff runs nothing, prints one line with the `sudo` command
-  for the host, and exits with 1.
-- **01M4BTG77E656440W5JSGTK4E5** `just test` and `just check` build the
-  tests outside the sandbox, with the compile cache and the network.
-  Then they run the tests in `riff test-run`, with the riff of the
-  tree.
-- **01M4BTG79MW1DJFGG287X5PH9G** The test run also reads the git dir of
-  the clone, with no write: git in a worktree needs it.
-- **01M4BTG7BXFTWX53R4YAP7YFYD** A test that runs inside the test run
-  checks the sandbox: no file of the home of the person, no file in
-  `/tmp` from before the run, no process of the host, and no network
-  but the loopback. Outside a test run, it prints a skip line.
-- **01M4BTG7E55337GBS5WANAD6MG** The Gate installs bubblewrap and lets
-  it make namespaces before it runs the checks.
-- **01M4BV7057YSHEMEHKXK20X0GJ** Replaced by 01M4CHQR1E5HFV6KSTSM72H0QV.
-- **01M4BV707FYHJDNC1499YAWR8D** Replaced by 01M4CHQRCP5DFNRDHKMBNHTD5T.
-- **01M4BV709WGHZ57AM3STC15B69** `gh` and git in a worker session use
-  the token of the session. No token of the person reaches the
-  session. When riff cannot make the token, the session has no token.
-- **01M4BV70C3P5CZFBSFYFWEWRRA** Replaced by 01M4CHQR3Q566ZFFGQEQMJ3HAS.
-- **01M4BV70ED4R56M31119BYJ93S** No token gets the permissions
-  `administration`, `deployments`, `environments`, `secrets` or
-  `workflows`.
-- **01M4BV70GQ42MY0YHMRS47EK1E** Only the verifier token sets a commit
-  status, and it does not write the code. The lead and worker tokens
-  write the code and set no status. GitHub keeps the waves and the
-  labels in the permission of the comments on issues, so the lead and
-  worker tokens have the same permissions. The ruleset `main` stops
-  each push to `main`, and the ruleset `releases` stops each `v*`
-  tag of a token.
-- **01M4BV70JZNMT3X99E77GC58K9** The wrapper asks riff-server for a new
-  token 10 minutes before the old one ends, and when the role
-  changes. It reads the claims each minute, and at once after a claim
-  or a release.
-- **01M4BV70N7HRW7KQ9ER9D9CDT9** The test run gets no forge token.
-- **01M4BYGV74T1R2H9D1RX6RTC6Z** Replaced by 01M4CHQR87K30DXD1W2ZZFMDBX.
-- **01M4BYVSNQ5SY2GRGT73FV0Z3E** No worker or AI session ever gets a
-  credential of the person. riff starts `claude` with an empty
-  environment and sets only the kept variables and the variables of
-  riff. With no GitHub App, and when riff cannot make a token, the
-  session has no forge token: never the token of the person. The type
-  `forge::ForgeEnv` is the only way to make the command of `claude`.
-- **01M4BYVSR06B9HNX4SP83SY2SX** The kept variables are one list,
-  `profile::KEPT_VARS`: the account, the language and the terminal,
-  tmux, the XDG folders of the person, the runtime folder of the
-  person for the local folder of riff, the proxy and the certificates,
-  `CLAUDE_CONFIG_DIR`, and the riff variables of the server, the
-  session, the person and the machine. The session bus of the person
-  is not on the list.
-- **01M4C4WW8JS7QVC0ZYHWPSMWKN** A session never gets an API key of
-  Anthropic: no `ANTHROPIC_` variable reaches `claude`. A session gets
-  its model access only from the plan sign-in of its person, so its
-  use counts on the plan of the person.
-- **01M4C4WQVZR49FDGPJMFW22GTM** The lead starts through
-  `riff workers lead`, like a worker through `riff workers run`: a temp
-  folder of its own, the forge token of the lead, and `claude` through
-  `forge::ForgeEnv`. The token of the lead does not follow the claims.
-- **01M4CHQR1E5HFV6KSTSM72H0QV** Replaced by 01M4CTAYRSC27Q6AAGTH9CBD7Q.
-- **01M4CHQR3Q566ZFFGQEQMJ3HAS** Replaced by 01M4CNN37FYYB99BS6QV2FFWZ8.
-- **01M4CNN37FYYB99BS6QV2FFWZ8** The wrapper of a session asks
-  riff-server for its token with the URI of the session. The server
-  picks the role and the repository from its own facts: the lead, else
-  a session with a `verify-` claim is the verifier, else the worker. A
-  session that the server does not know, that ended, or whose claims
-  ended gets no token. The wrapper of a worker registers its session
-  before its first ask. A URI with no session gets the lead token only
-  while its person has a lead in the repository of the URI. A session
-  cannot ask for more rights.
-- **01M4CHQR5ZFQCQ7CC1CGHYFY8S** A riff with no sign-in gives no forge
-  token. A call with no sign-in gets no forge token.
-- **01M4CHQR87K30DXD1W2ZZFMDBX** Replaced by 01M4CNN39TTK36GX34RCWKES80.
-- **01M4CNN39TTK36GX34RCWKES80** At a claim, a release, the end of a
-  session, the end of the allow of an account, and each minute,
-  riff-server revokes each token of a session whose role or repository
-  changed, or whose claims ended. The wrapper removes the old token
-  files before it asks for the token of the new role. At a renew of a
-  session, riff-server revokes the old token after it makes the new
-  one. A lead token of a person stays good until it ends.
-- **01M4CHQRAFPQDVB67XGDD4N9GB** riff-server writes one log line for
-  each token that it gives: the session, the repository, the role and
-  the end time. It writes one line for each revoke. A line never holds
-  a token.
-- **01M4CHQRCP5DFNRDHKMBNHTD5T** Organizations and personal accounts can
-  install the App. riff-server finds the installation of the App on the
-  repository of the session in its own facts, and makes the token
-  there: for that one repository, with only the permissions of the
-  role. It refuses a token with more or fewer permissions. A repository
-  with no installation gives an error that names
-  `riff forge install OWNER`.
-- **01M4CHQREYBFR465528EYTVDYE** `riff forge check` asks riff-server for
-  a token of each role on the repository of the clone. The server
-  checks the rights of each token, revokes it at once, and replies with
-  no token.
-- **01M4CNN3C41DBHVYX87Q17GW2C** riff-server makes forge tokens and
-  checks only for the repositories of the GitHub accounts that the
-  owner or an admin allowed with `riff forge allow OWNER`. Each allow
-  and each end of an allow (`--remove`) is a `forge_allowed` record in
-  the log. `riff forge allow` with no OWNER lists the accounts.
-- **01M4CTAYRSC27Q6AAGTH9CBD7Q** riff-server makes each forge token with
-  the one GitHub App of riff. The App ID and its private key are one
-  secret in Secret Manager. `riff cloud create` makes the secret, and
-  only the service account of riff-server reads it and adds a version.
-  The deploy names the secret, and riff-server reads its latest
-  version at its start. `riff forge create` puts the App there, and
-  riff-server uses it at once. `riff cloud forge NAME APP_ID KEY`
-  stores an App made by hand. With `riff forge create`, the key is
-  never on the machine of a person.
-- **01M4CTAYV4P2M8Q85ESWS0B59C** `riff forge create --org ORG` makes the
-  App with the GitHub App manifest flow, on the organization ORG. The
-  manifest asks for the permissions of the roles at the highest level
-  that a role needs, and no more. It has no webhook and no event. The
-  App is public, so each account can install it. GitHub gives the code
-  of the new App to riff-server, and riff-server swaps it for the App
-  ID and the key. The key is in no reply and in no log line.
-- **01M4CTAYXHW701XPW2X10H8HH8** riff-server gives each start of
-  `riff forge create` a new random `state`. It is good for 10 minutes
-  and for one return of GitHub. Only the admin that made it can see
-  how far it is. A wrong, old or used `state` is refused, and
-  riff-server swaps no code for it.
-- **01M4CTAYZW24PDP2PDK72PT6J1** Only the owner or an admin can run
-  `riff forge create`. `riff forge create` and `riff forge install`
-  refuse when `RIFF_WORKER` is set, and in an agent session: a person
-  runs them in a terminal. `riff forge create` opens the browser on the
-  start page of riff-server, waits for the App and its install on ORG
-  for at most 10 minutes, allows ORG, and runs `riff forge check` in a
-  clone of a repository of ORG.
-- **01M4CTAZ24PM55TKMP714K3CC4** `riff forge install OWNER` opens the
-  install page of the App with the GitHub account OWNER, an
-  organization or a person, as the target. A person of OWNER picks the
-  repositories. riff waits for the install for at most 10 minutes, then
-  runs `riff forge check` in a clone of a repository of OWNER.
-- **01M4C4WW15HGA1VEDFRBEMZAW7** riff starts its tmux server with an
-  empty environment and only the kept variables and the session bus of
-  the person for the wrapper of each session, with no `TMUX` and no
-  `TMUX_PANE`. Its config sets no variable to copy from a client at an
-  attach. So the global environment of the server and each of its
-  panes hold no credential of the person.
-
-- **01M4CVXJ3GCEB7B4632J7DD84A** riff-server gives a session grant
-  for a token exchange with a live person access token, the proof of
-  its device key, a session ID and the proof of a new session key. The
-  grant acts only as that session, works only with that session key,
-  and does not rotate. A swap of the grant with a proof of the session
-  key gives a session access token. A token of a grant gives no other
-  token. The session key is one of the keys of the person, so the
-  readers verify the posts of the session.
-- **01M4CVXJ5RHHMPE4AYH7KV6E2R** A session grant ends with the
-  sign-in that made it, and 7 days after its last swap. The server
-  saves each grant before its reply, so a grant lives through a
-  restart of the server.
-- **01M4D0FTC5CCRBVNDBEXK2B4RJ** When `claude` of a session ends, by
-  each way, its wrapper ends the grant of the session at riff-server,
-  with a proof of the session key. Each token of the grant ends with
-  it. A leave of the riff keeps the grant, so the session can join
-  again.
-- **01M4CVXJ7ZDAVRKJ8Y59R3KPDV** No process of a session reads the
-  keyring of the person. The wrapper of the session, outside the
-  sandbox, makes the session key and the grant from the sign-in of
-  the person, and gives them to `claude` in `RIFF_SESSION_KEY` and
-  `RIFF_SESSION_GRANT`, with the user in `RIFF_USER`. With a grant in
-  the environment, each keyring call of riff is an error. The session
-  bus of the person does not reach `claude`.
-- **01M4CVXJA9WAN5M1RKNGETS8AY** No secret of a session goes into a
-  message, a log line, an error text, a commit or a file of the
-  worktree. The debug form of the secrets names no secret.
-- **01M4CVXJCGRC59VVZEHBFA9MPG** `riff claude-token` keeps the Claude
-  plan token of the person (the output of `claude setup-token`) in the
-  keyring of that person on that machine. The wrapper gives it to each
-  session of that person as `CLAUDE_CODE_OAUTH_TOKEN`. The token never
-  goes to riff-server or to another person.
-- **01M4CVXJEQK32SRQ957X6NAEMH** The wrapper of the lead gives the
-  lead a new session ID in `RIFF_SESSION` and `claude --session-id`,
-  so that the grant of the lead acts only as the lead.
-- **01M4CVXJGYCT2HKHJP3BWBV0HC** `riff test-run` starts the run with
-  an empty environment, then sets only the variables of
-  `profile::TEST_RUN_VARS` of the parent, `TMPDIR`, `RIFF_TEST_RUN`
-  and a session bus where no bus listens. No credential of the person
-  and no secret of a session reaches a test.
-- **01M4DDZ8B3QBZATBPNHVFDH7BR** No process outside a sandbox runs a
-  thing that a session wrote, or reads it as config, with no check. A
-  trusted service (the broker, riff-server) takes no path, role or
-  repository from a request: it takes them from its own facts.
-- **01M4DDZ8DFY1SP1AVVRSD0DRV4** Each shared surface is a row of one
-  table: what a session writes or asks, who reads or runs it outside,
-  the control and its test. The table is in the rustdoc of
-  `riff::confine` and in the book, with the same rows. Each row names
-  a test that exists. A surface with no control yet is a row of a
-  second table, with its risk and its decision: an issue before the
-  release, or an accept. `hygiene` checks the two tables.
-
-- **01M4DA9PFR6V3K3FE1568277H3** `riff outside ask --reason REASON --
-  PROGRAM ARGS` in a session asks riff-server to run one named command
-  outside the profile of the session, one time, in the folder of the
-  session. riff-server keeps the request in its memory: a restart of
-  the server drops each open request.
-- **01M4DA9PJ0MJPBQRTA79CVXEA2** Only the owner or an admin approves or
-  denies a request, with `riff outside approve ID` or `riff outside
-  deny ID`, and only with a token of a person. riff-server refuses an
-  approval with the token of a session, and an approval by the session
-  that asked.
-- **01M4DA9PM89KP332T6BR7V0CDT** The broker of the session runs an
-  approved request one time: it takes the command and the folder from
-  riff-server, not from the session. riff-server gives a request to
-  the broker of its session only once.
-- **01M4DA9PPFBVPHP57JZQDF4R7R** riff-server posts each step of a
-  request to the thread of its repository: the ask wakes the lead of
-  the person, and the approval, the denial and the run are notes. Each
-  post names the request, the session that asked, the command, the
-  folder, the reason and who approved or denied it.
-- **01M4DA9PRPZ2JDKC2PK79AT5AA** The broker refuses a request folder
-  with a `..` part. It runs each operation in the resolved folder that
-  it checked, not in the folder of the request, and sets `PWD` to it.
-- **01M4DEF6N91TDDK6201BBNNDTC** The broker does no work when it
-  starts. It finds its session and signs in to riff-server at the
-  first `outside` request, so it ends at once when its session ends.
-- **01M4DDWP9XSA14E0YF211XZYKR** The lead runs in the sandbox of the
-  lead profile. `riff workers lead` starts `claude` through `riff
-  workers sandbox --role lead --name NAME`, after the broker of the
-  lead starts.
-- **01M4DDWPC693RNWHY7P7XBZ9TB** Each tmux step and each signal of the
-  lead is an operation of the broker of the lead: `worker-panes`,
-  `tail-pane`, `workers-start`, `workers-stop`, `workers-reap` and
-  `oom-journal`, and the operations of the own pane
-  (01M4DVW24ESG6XCBNMFV7T9Z4E). The broker of a worker or a verifier
-  refuses each operation of the lead.
-- **01M4DDWPEGBAXKTS0X3THFB8VZ** The broker of a lead stops and reaps
-  only the workers with the clone mark of its own clone, also when the
-  lead names the pane or the session of another worker. A start takes
-  only a count from 1 to 64: the program, the server and the clone
-  come from the broker.
-- **01M4DDWPJZFHQ4N7CHPQ5VC1QF** tmux marks each worker pane with its
-  main clone, in the pane option `@riff-clone`.
-- **01M4DDWPGRM1P4A76GFHPQHMQF** Each file that riff gives `claude` at a
-  start is in a folder that no session writes: the MCP config in
-  `DATA/given`, the plugin in `DATA/claude-plugin`, the rules in
-  `DATA/rules`. `DATA` is `$XDG_DATA_HOME/riff`, else
-  `~/.local/share/riff`. Each AI role reads them.
-- **01M4DDWPN8FADA663TTZSVD698** The lead writes the worktrees of the
-  clone, and the `objects`, `refs`, `logs`, `worktrees` and
-  `FETCH_HEAD` of its git dir. It reads the rest of the clone. It
-  writes no `config`, `hooks`, `info` or `packed-refs` of the git dir,
-  and no other file of the clone.
-- **01M4DVW24ESG6XCBNMFV7T9Z4E** The broker of each role runs the
-  operations of the own pane: `pane-id`, `pane-screen`, `pane-type`
-  and `end-over-limit`. Each acts only on the pane of the session that
-  asks: the `TMUX_PANE` of the broker. None of them takes a pane.
-- **01M4DVW26Q5MX025XBW7JCK44S** A worker in its sandbox clears its
-  context through its broker: the Stop hook starts the check of the
-  clear with no pane, and the check types `/clear` and the start
-  prompt with `pane-type`.
-- **01M4DVW290H2AQF6EQFHTY1EE1** When the check of the clear of a
-  worker in its sandbox finds more workers than the limit, the broker
-  of the worker ends it (`end-over-limit`): the count, the note to the
-  lead and the end are one step under the lock of the limit, as
-  outside the sandbox (01M402VFGAJQM1QW8B42NKMJM4).
-- **01M4DVW2B8W108N696GAYN3V1B** The clear of a worker in its sandbox
-  does not fast-forward the main clone: the worker writes no file of
-  it. `riff workers start` still does.
-- **01M4DVW2DGX8N9NJZHSAGK5EH4** A hangup does not stop the broker, and
-  the broker ends only after each operation of the own pane or of the
-  lead that runs. So an `end-over-limit` that closes the pane of its
-  worker still ends the session.
-- **01M4DWJ08GVFKV4EC6FNDZA1BD** The folder of riff
-  (`local::riff_dir`: `$RIFF_HOME/state`, else
-  `$XDG_RUNTIME_DIR/riff`, else `$XDG_STATE_HOME/riff`) holds each
-  file that riff outside each sandbox writes or trusts: the tmux
-  config, the list of clones, the deaths of workers, the pool of build
-  jobs. Only riff outside each sandbox writes it. Each AI role reads
-  it.
-- **01M4DWJ0AQX8N7J9T02VJ0XHF1** Each AI session writes only its own
-  state folder, `sessions/SESSION` in the folder of riff. The sandbox
-  sets `RIFF_STATE` to it for `claude`, and `local::dir` and
-  `local::marks` give it in the session. The wrapper deletes it when
-  its session ends.
-- **01M4DWJ0CZDM0AX98TY8CCTC9F** Each write of riff outside each
-  sandbox into a folder that a session writes opens that folder, and
-  each part in it relative to the open folder, with no follow of a
-  link (`O_NOFOLLOW`). A link makes the write fail, and its target does
-  not change. A test run binds the `home` and `tmp` of its run folder
-  from their open file descriptors.
-- **01M4DWJ0F7G527GN26KSA934N7** An AI role writes only the pipe,
-  `take.lock` and `hold.lock` of the pool of build jobs. A test run
-  reads the folder of the pool, and writes only these three files.
-- **01M4DWJ0HK490A9KF6FTQ61F2X** `riff workers reap` reads the start of
-  the context of a worker only from the own folder of that worker,
-  with no follow of a link.
-- **01M4DWJ0KT7G2RX05X00YGVN21** riff takes no write path of a profile
-  from a link that a session can plant. A write path in the worktree
-  stays in the worktree after riff resolves each link, or riff refuses
-  to start the session.
-- **01M4EPNXVSA592BFRKG4ZB9AWB** The sandbox takes the dir where it
-  starts as its path text: `PWD` when it names the current dir, else
-  the current dir. riff refuses to start the session when that path
-  has a link below the first worktree folder (`.claude/worktrees`) in
-  it.
-- **01M4EPNY387PPG93H7HYNZ07N5** The clone of a profile, from the git
-  dir that git resolves, is the dir where the sandbox starts or a
-  folder above it. Else riff refuses to start the session.
-- **01M4EPNYARVEJXA5419QGQMHD5** The worktree of a profile, from git,
-  is the clone, the worktree folder of the clone, or one folder in it.
-  Else riff refuses to start the session.
-
-- **01M4DVXP20SHYTFE1D4NVF0FSF** riff outside each sandbox takes the
-  default branch from `origin` itself (`git ls-remote --symref origin
-  HEAD`), never from `refs/remotes/origin/HEAD` or another ref that a
-  session writes. It names each ref by its full name, for example
-  `refs/remotes/origin/main`. It refuses a branch name that starts
-  with `-` or that git refuses. The fast-forward of the main clone,
-  `riff worktrees clean` and the rules of riff use it.
-- **01M4DVXP49BXNJD1Y289PCEH31** `riff worktrees clean` takes the
-  branch of a worktree from the name of the worktree:
-  `.claude/worktrees/NAME` has the branch `worktree-NAME`. It never
-  takes it from the `HEAD` of the worktree. It saves, pushes or
-  deletes only that branch, and only when the `HEAD` of the worktree
-  names it. It never pushes to the default branch. It puts `--` before
-  each name in each git and `gh` call.
-- **01M4FC9PEXHA3TENYRQW3GQ20H** Before `claude` starts, riff writes
-  the first-run answers into the Claude folder of the session: the
-  onboarding, the theme, and the trust of the clone and of its
-  worktrees folder. riff reads the `theme` of the person and no other
-  key, and writes nothing to the files of the person. A key that is
-  there stays.
-- **01M4FCYPWRWM8HXKN5ME3E3V86** A worker and a verifier read
-  `.claude/settings.json` and `.claude/settings.local.json` of the
-  clone, and no AI role writes them. The sandbox cannot hide a file
-  with ENOENT, so it grants the read: a file that `claude` cannot read
-  gives a "Settings Error" dialog.
 
 ## Open
 

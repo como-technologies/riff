@@ -21,8 +21,6 @@ const PANGOLIN: &str = "cpu 16x4500MHz, mem 30GB, 24GB available, load 0.50";
 /// A fake `tmux`: it writes each call to the file `tmux.log`, and has
 /// no worker panes.
 const FAKE_TMUX: &str = r#"#!/bin/sh
-# Outside tmux, riff names its own server: -L riff (see start.rs).
-[ "$1" = -L ] && shift 2
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/tmux.log"
 case "$1" in
@@ -124,14 +122,6 @@ impl Machine {
         std::fs::canonicalize(self.root.path().join("main")).unwrap()
     }
 
-    /// The folder of the worktrees of the clone: the sandbox of a worker
-    /// with no item writes there (01M4BT341H1M1N1MT947HXNXDR).
-    fn worktrees(&self) -> PathBuf {
-        let dir = self.main().join(".claude/worktrees");
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     fn bin(&self) -> PathBuf {
         self.root.path().join("bin")
     }
@@ -147,8 +137,10 @@ impl Machine {
 
     /// `cmd ARGS` in the main clone, as a person in a tmux pane.
     fn in_pane(&self, mut cmd: Command, args: &[&str]) -> Command {
+        // Only a fake `sccache` in the bin counts, not one of the
+        // machine (01M492379BGA3AERT1AM12C650).
         let real = std::env::var_os("PATH").unwrap();
-        let rest = std::env::split_paths(&real);
+        let rest = std::env::split_paths(&real).filter(|d| !d.join("sccache").exists());
         let path = std::env::join_paths(std::iter::once(self.bin()).chain(rest)).unwrap();
         cmd.args(args)
             .current_dir(self.main())
@@ -256,7 +248,7 @@ fn nice_here() -> u8 {
 #[test]
 fn the_wrapper_gives_claude_the_jobs_of_a_worker() {
     let m = Machine::new(isolated::DEAD_SERVER);
-    let seen = m.worktrees().join("seen");
+    let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
         "echo \"[$CARGO_BUILD_JOBS] $RUST_TEST_THREADS [$MAKEFLAGS] [${}]\" > '{}'\n\
          cat '{}/state/jobs/size' >> '{}'",
@@ -364,7 +356,7 @@ fn with_no_pool_the_worker_gets_the_fixed_share() {
     std::fs::create_dir_all(&state).unwrap();
     // A file where the pool must go.
     std::fs::write(state.join("jobs"), "").unwrap();
-    let seen = m.worktrees().join("seen");
+    let seen = m.bin().join("seen");
     let runner = riff::limits::runner_var();
     let claude = m.claude(&format!(
         "echo \"$CARGO_BUILD_JOBS $RUST_TEST_THREADS [$MAKEFLAGS] [$CARGO_MAKEFLAGS] [${runner}]\" > '{}'",
@@ -397,7 +389,7 @@ fn with_no_pool_the_worker_gets_the_fixed_share() {
 #[test]
 fn the_wrapper_starts_claude_with_no_variable_of_a_context() {
     let m = Machine::new(isolated::DEAD_SERVER);
-    let seen = m.worktrees().join("seen");
+    let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
         "echo \"pid=${{CLAUDE_PID-none}}\" > '{}'",
         seen.display()
@@ -428,7 +420,7 @@ fn with_no_physical_cores_riff_counts_half_of_the_logical_cpus() {
     assert!(jobs.contains(said), "{jobs}");
     assert!(jobs.contains("one pool of 12 tokens"), "16 - 2 - 2: {jobs}");
 
-    let seen = m.worktrees().join("seen");
+    let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
         "echo \"$RUST_TEST_THREADS\" > '{}'\ncat '{}/state/jobs/size' >> '{}'",
         seen.display(),
@@ -465,7 +457,7 @@ fn the_numbers_count_the_workers_over_the_limit() {
     let running: Vec<_> = (0..3)
         .map(|_| riff::jobserver::Member::join(&dir).unwrap())
         .collect();
-    let seen = m.worktrees().join("seen");
+    let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
         "echo \"$RUST_TEST_THREADS $(cat '{}/size') $(cat '{}/counted')\" > '{}'",
         dir.display(),
@@ -499,7 +491,7 @@ fn the_numbers_count_the_workers_over_the_limit() {
 #[test]
 fn the_wrapper_starts_claude_with_nice() {
     let m = Machine::new(isolated::DEAD_SERVER);
-    let seen = m.worktrees().join("seen");
+    let seen = m.bin().join("seen");
     let claude = m.claude(&format!("nice > '{}'", seen.display()));
     let base = nice_here();
     let at = |nice: u8, wrapper: u8| nice.max(wrapper).to_string();
@@ -539,9 +531,8 @@ fn the_wrapper_starts_claude_with_nice() {
 #[test]
 fn the_wrapper_runs_claude_in_a_scope_of_the_slice() {
     let m = Machine::new(isolated::DEAD_SERVER);
-    script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
     script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
-    let seen = m.worktrees().join("seen");
+    let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
         "echo \"$RIFF_WORKER $RUST_TEST_THREADS $1\" > '{}'",
         seen.display()
@@ -586,9 +577,8 @@ exit 1
 #[test]
 fn with_no_scope_in_the_pane_the_worker_starts_with_no_scope() {
     let m = Machine::new(isolated::DEAD_SERVER);
-    script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
     script(&m.bin(), "systemd-run", NO_BUS);
-    let seen = m.worktrees().join("seen");
+    let seen = m.bin().join("seen");
     let claude = m.claude(&format!("echo \"$RIFF_WORKER $1\" > '{}'", seen.display()));
     let slice = [("RIFF_WORKER_SLICE", "riff-workers.slice")];
 
@@ -620,7 +610,6 @@ async fn a_killed_worker_tells_the_lead_and_keeps_its_work() {
     let lead: SessionUri = LEAD.parse().unwrap();
     api.register(&lead).await.unwrap();
     let m = Machine::new(api.base());
-    script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
     script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
     let main = m.main();
     git(
@@ -668,22 +657,24 @@ fn read_file(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap()
 }
 
-/// 01M3WFYZX6GVFYW6NTTTKF144R, 01M4C2PXZ5WNE4C2CJW2HABPY0: on a machine
-/// with systemd, `riff workers start` calls no `systemctl`: it can run
-/// in the sandbox of the lead. It names the slice to each worker. The
-/// wrapper, outside each sandbox, gives the slice a memory limit and a
-/// CPU weight. The default limit is three quarters of the memory. The
-/// setting changes it.
+/// 01M3WFYZX6GVFYW6NTTTKF144R: on a machine with systemd,
+/// `riff workers start` gives the slice of the workers a memory limit
+/// and a CPU weight, and names the slice to each worker. The default
+/// limit is three quarters of the memory. The setting changes it.
 #[test]
-fn the_wrapper_gives_the_slice_a_memory_limit() {
+fn workers_start_gives_the_slice_a_memory_limit() {
     let m = Machine::new("http://riff.test:7878");
     script(&m.bin(), "systemctl", FAKE_SYSTEMCTL);
-    script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
     m.workers(&["limit", "4"]);
     let out = m.workers(&["start", "2"]);
     assert!(out.contains("Started 2 workers in"), "{out}");
     assert!(!out.contains("systemd"), "{out}");
-    assert_eq!(m.log("systemctl.log"), "", "the start calls no systemctl");
+    // 30 GB: 23 GB at most, and the OS takes memory back from 9/10 of it.
+    assert_eq!(
+        m.log("systemctl.log").trim(),
+        "--user set-property --runtime riff-workers.slice MemoryHigh=21196M MemoryMax=23552M \
+         CPUWeight=50"
+    );
     let tmux = m.log("tmux.log");
     assert_eq!(
         tmux.matches("-e RIFF_WORKER_SLICE=riff-workers.slice")
@@ -692,25 +683,9 @@ fn the_wrapper_gives_the_slice_a_memory_limit() {
         "{tmux}"
     );
 
-    let claude = m.claude("exit 0");
-    let slice = [("RIFF_WORKER_SLICE", "riff-workers.slice")];
-    let out = m.wrapper(&claude, &slice);
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
-    // 30 GB: 23 GB at most, and the OS takes memory back from 9/10 of it.
-    assert_eq!(
-        m.log("systemctl.log").trim(),
-        "--user set-property --runtime riff-workers.slice MemoryHigh=21196M MemoryMax=23552M \
-         CPUWeight=50"
-    );
-    assert!(
-        m.log("systemd-run.log")
-            .contains("--slice=riff-workers.slice")
-    );
-
     let shown = m.workers(&["memory", "10"]);
     assert!(shown.starts_with("workers.memory  10  "), "{shown}");
-    let out = m.wrapper(&claude, &slice);
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    m.workers(&["start", "1"]);
     let last = m.log("systemctl.log");
     assert_eq!(
         last.lines().last().unwrap(),
@@ -720,35 +695,29 @@ fn the_wrapper_gives_the_slice_a_memory_limit() {
 }
 
 /// 01M3WFYZZENNHVH8Z2BAFSR6TS: on a machine with no systemd user
-/// manager, the wrapper says so one time in its pane, and starts
-/// `claude` with no scope.
+/// manager, `riff workers start` says so one time, and starts the
+/// workers with no scope.
 #[test]
 fn a_machine_with_no_systemd_says_so_one_time() {
-    let m = Machine::new(isolated::DEAD_SERVER);
+    let m = Machine::new("http://riff.test:7878");
     script(&m.bin(), "systemctl", NO_SYSTEMD);
-    script(&m.bin(), "systemd-run", FAKE_SYSTEMD_RUN);
-    let seen = m.worktrees().join("seen");
-    let claude = m.claude(&format!("echo \"$RIFF_WORKER $1\" > '{}'", seen.display()));
-    let slice = [("RIFF_WORKER_SLICE", "riff-workers.slice")];
-
-    let first = m.wrapper(&claude, &slice);
-    assert_eq!(first.status.code(), Some(0), "{first:?}");
-    assert_eq!(read(&seen).trim(), "1 Join the riff.");
+    m.workers(&["limit", "4"]);
+    let first = m.workers(&["start", "1"]);
+    assert!(first.contains("Started 1 worker in"), "{first}");
     assert!(
-        stderr(&first).contains(
-            "riff: this machine has no systemd user manager (Failed to connect to user scope \
-             bus via local transport: No such file or directory), so the workers run with no \
+        first.contains(
+            "This machine has no systemd user manager (Failed to connect to user scope bus \
+             via local transport: No such file or directory), so the workers run with no \
              memory limit."
         ),
-        "{first:?}"
+        "{first}"
     );
-
-    std::fs::remove_file(&seen).unwrap();
-    let second = m.wrapper(&claude, &slice);
-    assert_eq!(second.status.code(), Some(0), "{second:?}");
-    assert_eq!(read(&seen).trim(), "1 Join the riff.");
-    assert!(!stderr(&second).contains("systemd"), "{second:?}");
-    assert_eq!(m.log("systemd-run.log"), "", "no scope");
+    let second = m.workers(&["start", "1"]);
+    assert!(second.contains("Started 1 worker in"), "{second}");
+    assert!(!second.contains("systemd"), "{second}");
+    let tmux = m.log("tmux.log");
+    assert!(tmux.contains("workers run"), "{tmux}");
+    assert!(!tmux.contains("RIFF_WORKER_SLICE"), "{tmux}");
 }
 
 /// 01M3WFZ01PTAYYKG3T5CFA2W4D: `riff workers start` starts no worker
@@ -1000,38 +969,118 @@ fn the_skill_says_the_pool_shares_the_cores() {
     }
 }
 
-/// 01M4BQA5K7DQHQ4DSJGQJH8ZQE: riff gives a worker no compile cache.
-/// With an `sccache` on the `PATH`, the wrapper runs no `sccache` and
-/// sets no variable of a cache. A cache variable of the person is not
-/// on the list of kept variables (01M4BYVSR06B9HNX4SP83SY2SX), and the
-/// sandbox empties `RUSTC_WRAPPER`: its server is outside the sandbox
-/// (01M4C5RV4J4G0H46GTRVNP5YED). So `claude` gets none. `riff workers`
-/// shows no cache, and `riff workers cache` is no command.
+/// A fake `sccache`: it writes each call with its folder and port to
+/// `sccache.log`, and gives a version and numbers.
+const FAKE_SCCACHE: &str = r#"#!/bin/sh
+printf '%s [%s] [%s]\n' "$*" "$SCCACHE_DIR" "$SCCACHE_SERVER_PORT" >> "$(dirname "$0")/sccache.log"
+case "$1" in
+  --version) echo "sccache 0.18.0" ;;
+  --start-server) printf 'server [%s] [%s] [%s] [%s] [%s]\n' "$RIFF_WORKER" "$RIFF_SESSION" \
+    "$RIFF_WORKER_WRAPPER" "$CLAUDE_PID" "$(ps -o pgid= -p $$ | tr -d ' ')" >> "$(dirname "$0")/sccache.log"
+    echo $$ >> "$(dirname "$0")/sccache.log" ;;
+  --show-stats) echo '{"stats": {"cache_hits": {"counts": {"Rust": 90}}, "cache_misses": {"counts": {"Rust": 10}}}, "cache_size": 1073741824}' ;;
+esac
+exit 0
+"#;
+
+/// 01M492379BGA3AERT1AM12C650: the wrapper gives `claude` the compile
+/// cache of the machine. With no `sccache`, it unsets each variable of
+/// the cache, also one of the person, and says one line.
+/// 01M49AB2QYGJ73Y19KGAY1WDW7: before `claude`, it starts the server of
+/// the cache with no variable of a worker, in its own process group.
 #[test]
-fn the_wrapper_gives_claude_no_compile_cache() {
+fn the_wrapper_gives_claude_the_compile_cache_of_the_machine() {
     let m = Machine::new(isolated::DEAD_SERVER);
-    let seen = m.worktrees().join("seen");
+    let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
-        "echo \"[$RUSTC_WRAPPER] [$SCCACHE_DIR] [$SCCACHE_SERVER_PORT]\" > '{}'",
+        "echo \"[$RUSTC_WRAPPER] [$SCCACHE_DIR] [$SCCACHE_CACHE_SIZE] [$SCCACHE_SERVER_PORT] \
+         [$SCCACHE_IGNORE_SERVER_IO_ERROR]\" > '{}'",
         seen.display()
     ));
-    script(
-        &m.bin(),
-        "sccache",
-        "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/sccache.log\"\n",
-    );
     let person = [
         ("RUSTC_WRAPPER", "/person/sccache"),
         ("SCCACHE_DIR", "/person/cache"),
     ];
+
     let out = m.wrapper(&claude, &person);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    assert_eq!(read(&seen), "[] [] []\n");
-    assert!(!stderr(&out).contains("sccache"), "{out:?}");
-    assert!(!m.bin().join("sccache.log").exists(), "riff ran sccache");
+    assert_eq!(read(&seen), "[] [] [] [] []\n");
+    let said: Vec<_> = stderr(&out)
+        .lines()
+        .filter(|l| l.contains("sccache"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(said, [riff::text::NO_SCCACHE], "one line: {out:?}");
 
+    let sccache = script(&m.bin(), "sccache", FAKE_SCCACHE);
+    m.workers(&["cache", "20G"]);
+    let worker = [
+        ("RIFF_WORKER", "1"),
+        ("RIFF_WORKER_WRAPPER", "7"),
+        ("CLAUDE_PID", "8"),
+    ];
+    let out = m.wrapper(&claude, &[person.as_slice(), &worker].concat());
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let dir = m.root.path().join("home/sccache");
+    let port = riff::sccache::port(&dir);
+    assert_eq!(
+        read(&seen),
+        format!(
+            "[{}] [{}] [20G] [{port}] [1]\n",
+            sccache.display(),
+            dir.display()
+        )
+    );
+    assert!(!stderr(&out).contains("sccache"), "{out:?}");
+    let log = read(&m.bin().join("sccache.log"));
+    let mut lines = log.lines().skip_while(|l| !l.starts_with("server "));
+    let server = lines.next().expect("the wrapper starts the server");
+    let pid = lines.next().unwrap();
+    assert_eq!(server, format!("server [] [] [] [] [{pid}]"), "{log}");
+}
+
+/// 01M49237BM12PVBERD6JXDSX5V, 01M492398HA0AXX0J8BZCKNGTG and
+/// 01M49239AWKEPKEPMZZRRTVRAT: `riff workers cache` shows and sets the
+/// size, `riff workers` shows the size and the hit rate, and `--clear`
+/// stops the server of the cache and deletes its folder.
+#[test]
+fn riff_workers_cache_shows_sets_and_clears_the_cache() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    let off = m.workers(&["cache"]);
+    assert!(off.starts_with("workers.cache  40G  ("), "{off}");
+    assert!(
+        off.ends_with("cache off: no sccache. riff update installs it.\n"),
+        "{off}"
+    );
     let listed = m.workers(&[]);
-    assert!(!listed.contains("cache"), "{listed}");
-    let cache = m.run(&["workers", "cache"]);
-    assert!(!cache.status.success(), "{cache:?}");
+    assert!(listed.contains("cache off: no sccache."), "{listed}");
+
+    script(&m.bin(), "sccache", FAKE_SCCACHE);
+    let dir = m.root.path().join("home/sccache");
+    let set = m.workers(&["cache", "30G"]);
+    assert!(set.starts_with("workers.cache  30G  ("), "{set}");
+    let line = format!("cache 1.0GB of 30G in {}, hits 90%\n", dir.display());
+    assert!(set.ends_with(&line), "{set}");
+    let listed = m.workers(&[]);
+    assert!(listed.contains(&line), "{listed}");
+    let port = riff::sccache::port(&dir);
+    assert!(
+        read(&m.bin().join("sccache.log")).contains(&format!(
+            "--show-stats --stats-format json [{}] [{port}]",
+            dir.display()
+        )),
+        "the stats come from the server of the workers"
+    );
+
+    let bad = m.run(&["workers", "cache", "30GB"]);
+    assert!(!bad.status.success(), "{bad:?}");
+
+    std::fs::create_dir_all(dir.join("a")).unwrap();
+    let cleared = m.workers(&["cache", "--clear"]);
+    assert_eq!(
+        cleared,
+        format!("Emptied the compile cache in {}.\n", dir.display())
+    );
+    assert!(!dir.exists());
+    assert!(read(&m.bin().join("sccache.log")).contains("--stop-server ["));
 }

@@ -1,14 +1,16 @@
 name: CI
 
 on:
+  # main, and each branch release/MAJOR.x of an older release line
+  # (01M4YJ6KGBPTCSVMFQCDKACZPV).
   push:
-    branches: [main]
+    branches: [main, "release/**"]
     # A release tag: the job Release check checks its version
     # (01M3N73AW2J3TVSZWFJ88A91PG), then the job Deploy deploys it
     # (01M3NJAZ6BYH7TWKDYTVEK78PG).
     tags: ["v*"]
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"]
   schedule:
     # Weekly advisory sweep (Mondays 06:00 UTC). New RUSTSEC advisories
     # arrive without a code change, so the audit job runs on a schedule.
@@ -46,18 +48,6 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just,mdbook,mdbook-gruvbox,mdbook-mermaid
-
-      - name: Let bubblewrap make namespaces
-        # The tests run in riff test-run (01M4BTG7E55337GBS5WANAD6MG).
-        run: |
-          if ! command -v bwrap >/dev/null; then
-            sudo apt-get update -q
-            sudo apt-get install -y -q bubblewrap
-          fi
-          if ! bwrap --unshare-all --ro-bind / / true; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          bwrap --unshare-all --ro-bind / / true
 
       - name: CI gate
         # Each check, for each diff (01M3WNN7VQJKN5MJH7JN50VF4D).

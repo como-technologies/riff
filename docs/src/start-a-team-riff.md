@@ -88,7 +88,6 @@ flowchart LR
     C["riff cloud create"] --> S["riff cloud signin"]
     S --> D["riff cloud deploy"]
     D --> L["riff cloud list<br/>status, log"]
-    D --> F["riff login<br/>riff forge create"]
 ```
 
 ### Make the riff
@@ -189,25 +188,19 @@ opens:
 riff login
 ```
 
-## Make the GitHub App of the riff
+## Turn riff on in the project
 
-With a GitHub App, the riff gives each session a GitHub token of its
-role. Without it, `gh` and `git push` fail in the sessions. Make the
-App with one command, in a clone of a repository of your GitHub
-organization, for example `acme`. Run it in a terminal, not in an
-agent session:
+riff is off in a project until a person turns it on there. In your
+clone of the project, turn riff on for the team, and commit the file
+`.claude/settings.json`:
 
 ```sh
-riff forge create --org OWNER
+riff enable --shared
 ```
 
-Your browser opens. Click "Create GitHub App" on GitHub, then install
-the App on the repositories of the riff. GitHub gives the private key
-to the riff only. riff then allows `OWNER` and checks the token of each
-role (see
-[Make the GitHub App of riff](how-it-works.md#make-the-github-app-of-riff)).
-To add another organization or a personal account, see
-[Add an org or a personal account to the riff](how-it-works.md#add-an-org-or-a-personal-account-to-the-riff).
+Each person who joins then has riff in each clone of the project. To
+turn riff on only for you, run `riff enable` with no flag. See
+[Turn riff on or off for a repository](how-it-works.md#turn-riff-on-or-off-for-a-repository).
 
 ## Invite a person
 

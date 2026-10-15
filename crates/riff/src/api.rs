@@ -11,7 +11,6 @@
 //! |---|---|---|
 //! | A person | The person access token, see [`login::access_token`] | The OS keyring |
 //! | A session | A session token, see [`login::session_token`] | The memory of the process |
-//! | A session that riff started | A session token from its grant, see [`crate::grant`] | The memory of the process; the grant and the session key in its environment |
 //!
 //! A session token comes from a token exchange the first time that the
 //! client needs it. It has no refresh token
@@ -114,17 +113,14 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
-    DenyOwner, End, ForgeAccounts, ForgeAllow, ForgeCheck, ForgeCheckReply, ForgeCreate,
-    ForgeCreateReply, ForgeCreated, ForgeCreatedReply, ForgeInstall, ForgeInstallReply, ForgeToken,
-    ForgeTokenReply, Free, FreeReply, Freed, GRANT_END_PATH, GrantEnd, Hold, HoldReply, Idle,
-    IdleQuery, Invite, Invited, ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave,
-    LogQuery, LogReply, MeReply, Members, MembersReply, Message, OutsideAsk, OutsideDecide,
-    OutsideList, OutsideRequest, OutsideRequests, OutsideTake, OwnerAsked, OwnerDenied,
-    OwnerPassed, PassOwner, Pause, Post, Posted, REFUSED_HEADER, Read, Register, Release,
-    ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffQuery, RiffReply,
-    RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetIdle, SetStatus, SetStep,
-    SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads,
-    TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
+    DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
+    ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
+    Members, MembersReply, Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause, Post,
+    Posted, REFUSED_HEADER, Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed,
+    Resume, Revoke, Revoked, RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin,
+    SetBlocked, SetIdle, SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange,
+    Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake,
+    WhoReply, WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -430,14 +426,9 @@ struct Mark {
 
 /// Where the tokens of a signed-in [`Api`] come from.
 struct Auth {
-    /// The device key, or the session key of a session grant.
     key: Key,
     /// The session of a session client. `None` for a person.
     session: Option<String>,
-    /// The session grant of a session with its secrets in the
-    /// environment ([`crate::grant`]). Its tokens come from the grant,
-    /// never from the keyring.
-    grant: Option<String>,
     /// The session token, once the client has one.
     held: Mutex<Option<Held>>,
     /// Set once [`Api::check_riff`] passed.
@@ -723,35 +714,6 @@ impl Api {
         Err(refused.into())
     }
 
-    /// Ends the session grant `grant` with a proof of its session key
-    /// `key` (01M4D0FTC5CCRBVNDBEXK2B4RJ). A grant that is gone is no
-    /// error. The error names no secret.
-    pub async fn end_grant(&self, grant: &str, key: &Key) -> Result<()> {
-        let url = format!("{}{GRANT_END_PATH}", self.base());
-        let request = GrantEnd {
-            token: grant.to_owned(),
-        };
-        let response = self
-            .anonymous()
-            .send_with(
-                reqwest::Method::POST,
-                GRANT_END_PATH,
-                |r| {
-                    r.header("dpop", key.proof("POST", &url, None, now()))
-                        .form(&request)
-                },
-                Check::None,
-            )
-            .await?;
-        if response.status.is_success() {
-            return Ok(());
-        }
-        let error = response
-            .json::<TokenError>()
-            .map_or_else(|_| "no reason".to_owned(), |e| e.error);
-        bail!("riff-server did not end the session grant: {error}")
-    }
-
     /// A client that sends a token on each request, when this device
     /// has a sign-in at the server. `session` is the session ID of the
     /// caller, or `None` for a person. The token acts only as that
@@ -766,25 +728,12 @@ impl Api {
         if let (Some(dir), Some(session)) = (local::marks(), session) {
             self = self.for_session(&dir, session);
         }
-        // A session with its secrets in the environment never opens the
-        // keyring (01M4CVXJ7ZDAVRKJ8Y59R3KPDV).
-        if let (Some(session), Some((key, grant))) = (session, crate::grant::from_env()?) {
-            self.auth = Some(Arc::new(Auth {
-                key,
-                session: Some(session.to_owned()),
-                grant: Some(grant),
-                held: Mutex::new(None),
-                riff_checked: tokio::sync::OnceCell::new(),
-            }));
-            return Ok(self);
-        }
         if !secrets::has_keyring() || login::stored(self.base())?.is_none() {
             return Ok(self);
         }
         self.auth = Some(Arc::new(Auth {
             key: device::key(self.base())?,
             session: session.map(str::to_owned),
-            grant: None,
             held: Mutex::new(None),
             riff_checked: tokio::sync::OnceCell::new(),
         }));
@@ -839,13 +788,9 @@ impl Api {
     /// token for a new session token before the old one expires
     /// (01M3WFVADCDZM8XX590KAEMEYG).
     async fn access_token(&self, auth: &Auth) -> Result<String> {
-        // The wrapper checked the riff of the sign-in before it made the
-        // grant.
-        if auth.grant.is_none() {
-            auth.riff_checked
-                .get_or_try_init(|| self.check_riff())
-                .await?;
-        }
+        auth.riff_checked
+            .get_or_try_init(|| self.check_riff())
+            .await?;
         let Some(session) = &auth.session else {
             return login::access_token(&self.anonymous()).await;
         };
@@ -856,10 +801,7 @@ impl Api {
         {
             return Ok(live.access_token.clone());
         }
-        let reply = match &auth.grant {
-            Some(grant) => crate::grant::access_token(&self.anonymous(), &auth.key, grant).await?,
-            None => login::session_token(&self.anonymous(), session).await?,
-        };
+        let reply = login::session_token(&self.anonymous(), session).await?;
         let access_token = reply.access_token.clone();
         *held = Some(Held {
             expires_at: now() + reply.expires_in,
@@ -1238,111 +1180,6 @@ impl Api {
     /// Gives the server what `me` saw of the items of its repository on
     /// the forge (01M41FZP2C4Z4J6WKRXZ5B31EH). With `all`, the facts
     /// replace each fact of the repository.
-    /// The forge token of `me`, from riff-server (#628). The server
-    /// picks the role and the repository from its own facts.
-    pub async fn forge_token(&self, me: &SessionUri) -> Result<ForgeTokenReply> {
-        self.call(&ForgeToken { me: me.clone() }).await
-    }
-
-    /// `riff forge check`: the server makes a token of each role for the
-    /// repository of `me`, and revokes it at once (#628).
-    pub async fn forge_check(&self, me: &SessionUri) -> Result<ForgeCheckReply> {
-        self.call(&ForgeCheck { me: me.clone() }).await
-    }
-
-    /// `riff forge allow`: allows the GitHub account `owner`, or allows
-    /// it no more, and gives the allowed accounts. With no `owner`, it
-    /// changes nothing (#628).
-    pub async fn forge_allow(
-        &self,
-        me: &SessionUri,
-        owner: Option<&str>,
-        allowed: bool,
-    ) -> Result<ForgeAccounts> {
-        let allow = ForgeAllow {
-            me: me.clone(),
-            owner: owner.map(str::to_owned),
-            allowed,
-        };
-        self.call(&allow).await
-    }
-
-    /// `riff forge create`: a new start of the manifest flow for the
-    /// organization `org` (#627).
-    pub async fn forge_create(&self, me: &SessionUri, org: &str) -> Result<ForgeCreateReply> {
-        let create = ForgeCreate {
-            me: me.clone(),
-            org: org.to_owned(),
-        };
-        self.call(&create).await
-    }
-
-    /// `riff forge create`: how far the start `state` is.
-    pub async fn forge_created(&self, me: &SessionUri, state: &str) -> Result<ForgeCreatedReply> {
-        let created = ForgeCreated {
-            me: me.clone(),
-            state: state.to_owned(),
-        };
-        self.call(&created).await
-    }
-
-    /// `riff forge install`: the install page of the App for the GitHub
-    /// account `owner`, and whether the App is installed there.
-    pub async fn forge_install(&self, me: &SessionUri, owner: &str) -> Result<ForgeInstallReply> {
-        let install = ForgeInstall {
-            me: me.clone(),
-            owner: owner.to_owned(),
-        };
-        self.call(&install).await
-    }
-
-    /// `riff outside ask`: the session `me` asks to run `command` in
-    /// `cwd` outside its profile, for `reason` (#614).
-    pub async fn outside_ask(
-        &self,
-        me: &SessionUri,
-        command: Vec<String>,
-        cwd: &str,
-        reason: &str,
-    ) -> Result<OutsideRequest> {
-        let ask = OutsideAsk {
-            me: me.clone(),
-            command,
-            cwd: cwd.to_owned(),
-            reason: reason.to_owned(),
-        };
-        self.call(&ask).await
-    }
-
-    /// The broker of the session `me` takes its request `id` (#614).
-    pub async fn outside_take(&self, me: &SessionUri, id: &str) -> Result<OutsideRequest> {
-        let take = OutsideTake {
-            me: me.clone(),
-            id: id.to_owned(),
-        };
-        self.call(&take).await
-    }
-
-    /// `riff outside list`: the requests that riff-server keeps (#614).
-    pub async fn outside_list(&self, me: &SessionUri) -> Result<OutsideRequests> {
-        self.call(&OutsideList { me: me.clone() }).await
-    }
-
-    /// `riff outside approve` or `riff outside deny` (#614).
-    pub async fn outside_decide(
-        &self,
-        me: &SessionUri,
-        id: &str,
-        approve: bool,
-    ) -> Result<OutsideRequest> {
-        let decide = OutsideDecide {
-            me: me.clone(),
-            id: id.to_owned(),
-            approve,
-        };
-        self.call(&decide).await
-    }
-
     pub async fn item_facts(&self, me: &SessionUri, items: Vec<ItemFact>, all: bool) -> Result<()> {
         let facts = ItemFacts {
             me: me.clone(),
@@ -2462,7 +2299,7 @@ pub async fn keep_alive(api: &Api, me: &SessionUri, every: Duration) {
 }
 
 /// [`keep_alive`] that ends when a reply asks this session to stop: the
-/// server stops an idle worker (01M4BTB7JGK4BASDVR5WMRTGPM).
+/// server stops an idle worker (01M4385Z5BN03E6HTEB5GQVZ8X).
 pub async fn keep_alive_until_stop(api: &Api, me: &SessionUri, every: Duration) {
     let mut tick = tokio::time::interval(every);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

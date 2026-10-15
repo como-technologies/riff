@@ -59,161 +59,190 @@ The plugin runs `riff hook`, `riff mcp`, `riff statusline` and
 shows the text of `riff hook`. `riff-server --help` lists the settings
 of the server.
 
-## What riff gives Claude
+## Connect
 
-riff is not in your Claude config. It writes no riff MCP server,
-plugin, hook, permission rule or status line to `~/.claude` or to
-`.claude/` of a repository. A plain `claude` is plain Claude.
-
-riff gives each of these to each Claude Code session that it starts:
-your lead, and each worker. It passes them as flags of `claude`:
-
-| Flag | Gives the session |
-|---|---|
-| `--plugin-dir` | The riff plugin: the skill, the hooks, `/riff:leave` and `/riff:join`. riff writes it to `~/.local/share/riff/claude-plugin` at each start, so it always matches the `riff` binary. |
-| `--strict-mcp-config --mcp-config` | The riff tools, and the MCP servers of `workers.mcp`. No other MCP server. |
-| `--settings` | The riff status line, the permission rules of riff work, and the rules of the role. |
-
-riff also gives the session `RIFF_ON=1`. The hooks, the status line
-and `riff mcp` act only with it. So the plugin of an older riff does
-nothing in a plain `claude`.
+`riff connect claude` adds the riff plugin to Claude Code. The plugin
+gives a session the riff tools, the riff skill, a start hook and an
+end hook. riff stays off in a session until you turn it on for the
+repository of the session.
 
 ```mermaid
 flowchart LR
-    R["riff<br/>riff workers start"] -- writes --> P[("plugin dir")]
-    R -- writes --> M[("MCP config")]
-    R --> C["claude --plugin-dir ...<br/>--strict-mcp-config --mcp-config ...<br/>--settings ...<br/>RIFF_ON=1"]
-    P --> C
-    M --> C
-    U["~/.claude<br/>.claude/ of a repository"] -. "no riff entry" .-> C
+    B[riff binary] -- writes --> D["~/.local/share/riff/claude-plugin"]
+    D -- "claude plugin marketplace add" --> M[marketplace riff]
+    M -- "riff enable" --> P["plugin riff@riff<br/>on in a repository"]
 ```
 
-To use riff, start the riff with `riff` (see
-[Start the riff](#start-the-riff)). A session that you start with
-`claude` is not in the riff.
+Claude Code loads the plugin from that directory. After you update
+`riff`, run `riff connect claude` again.
 
-### The permission rules of riff work
+In a terminal, `riff connect claude` asks one time where you want riff
+on:
 
-In auto mode, Claude Code can block riff work: a riff tool, `riff
-workers start`, or a step of a pull request. A session cannot allow
-this itself. So riff gives each session that it starts these rules:
+```text
+Where do you want riff on?
+  1) Only in this repository (default)
+  2) In each repository on this machine
+  3) Not now: I run `riff enable` later
+Your choice [1]:
+```
 
-- Allow each riff tool, each `riff` command, and the steps of a pull
-  request with `gh`.
-- Deny a push to the default branch, and `gh pr merge --admin`.
+riff keeps your answer, and asks no more. With no terminal, it asks
+nothing and changes nothing. `riff update` asks nothing too, also in a
+terminal: an update never turns riff on in more repositories, and
+never turns it off. On a machine where a release up to v0.8.0 turned
+riff on in each repository, the command asks nothing and keeps that.
+The last line of the command says where riff is on, and the command
+to change it.
 
-You add no rule to a settings file.
+### Turn riff on or off for a repository
 
-### Remove the entries of an older riff
+riff is off in a Claude Code session until you turn it on for the
+repository. Where riff is off, it does nothing: no call to the riff,
+no `git`, no text in the session, no tools, and an empty status line.
+A directory that is not in a git repository is always off.
 
-riff 1.3 and older wrote entries to your Claude config:
-`riff connect claude`, `riff enable` and `riff setup`. `riff` finds
-them each time that it starts. It looks in:
-
-- your user settings, `~/.claude/settings.json`;
-- `.claude/settings.json` and `.claude/settings.local.json` of each
-  clone that riff knows;
-- the plugins of Claude Code: the install of `riff@riff` and the
-  marketplace `riff`.
-
-It lists each entry and asks:
+Run this in the repository:
 
 ```sh
-riff
+riff enable
+```
+
+Then start a new Claude Code session there. To turn riff off again:
+
+```sh
+riff disable
+```
+
+`riff disable` changes only this repository. A session that runs
+keeps riff until it ends. To take it out now, run `/riff:leave` in it.
+
+`riff enable` writes one entry to a settings file of Claude Code:
+
+```json
+{
+  "enabledPlugins": {
+    "riff@riff": true
+  }
+}
+```
+
+Each other byte of the file stays. When the file is a symbolic link,
+riff writes the file that the link names, and shows its path.
+
+| Flag | File | Who gets riff |
+|---|---|---|
+| none, or `--local` | `.claude/settings.local.json` at the top of the repository | Only you, in this repository. |
+| `--shared` | `.claude/settings.json` at the top of the repository | Each person of the team who has riff, after you commit the file. |
+| `--global` | The user settings, `~/.claude/settings.json` | You, in each repository on this machine. |
+
+The first file that has the entry decides, in the order local,
+shared, global:
+
+```mermaid
+flowchart TD
+    G{in a git repository?} -- no --> OFF[riff is off]
+    G -- yes --> L{"local settings<br/>have the entry?"}
+    L -- yes --> V[its value decides]
+    L -- no --> S{"shared settings<br/>have the entry?"}
+    S -- yes --> V
+    S -- no --> U{"user settings<br/>have the entry?"}
+    U -- yes --> V
+    U -- no --> OFF
+```
+
+git does not track the local settings, so a linked worktree does not
+have them. In a linked worktree, riff reads the settings of the main
+clone too, and `riff enable` writes the local settings of the main
+clone. It asks git for the main clone first, and writes nothing when
+git does not know the worktree. It also writes nothing when the `.git`
+of the worktree is a symbolic link: git makes a file there, not a
+link.
+
+### Turn riff on for the team
+
+`--shared` writes the entry to the project settings. Commit the file.
+Then each person who ran `riff connect claude` has riff in each clone:
+
+```sh
+riff enable --shared
+```
+
+A person who does not want riff in a clone runs `riff disable` there.
+It writes `false` to the local settings of that clone.
+
+### Turn riff on in each repository
+
+`--global` turns riff on in each repository on this machine:
+
+```sh
+riff enable --global
+```
+
+`riff disable --global` takes that away. To keep riff out of one
+repository, run `riff disable` there.
+
+### Choose where riff is on with no question
+
+`--scope` answers the question of `riff connect claude`, for a script:
+
+```sh
+riff connect claude --scope repo
+riff connect claude --scope global
+riff connect claude --scope none
+```
+
+### See whether riff is on here
+
+`riff server` shows it in the line `repository`, with the file that
+decides and the command to change it:
+
+```sh
+riff server
 ```
 
 ```text
-An older riff wrote these entries to files that git tracks:
-  /home/ada/app/.claude/settings.json: enabledPlugins."riff@riff"
-riff does not change a file that git tracks. Remove these entries in a pull request.
-An older riff wrote these entries to the Claude config:
-  /home/ada/.claude/settings.json: enabledPlugins."riff@riff"
-  /home/ada/.claude/settings.json: statusLine
-  the plugin marketplace riff
-riff gives Claude its plugin and settings at each start now, so it needs none of them. Remove them? [y/N]
+repository  riff off. To turn it on: riff enable
 ```
 
-Type `y` and press Enter to remove them. riff keeps each other entry.
-Press Enter to keep them: riff asks again at the next start.
+### After an update from a release before the opt-in
 
-riff never changes a file that git tracks. When git tracks
-`.claude/settings.json` of a clone, remove the listed entries from it
-in a pull request. When all the entries are in tracked files, riff
-lists them and does not ask.
+A release up to v0.8.0 turned riff on in each repository: it wrote the
+entry to the user settings. An update keeps that choice, and asks
+nothing, in a terminal and with no terminal. riff stays on in each
+repository of the machine, and you run no command.
 
-While an old entry stays, the sessions that riff starts are safe:
-riff turns off the old plugin `riff@riff` in their settings.
+To have riff only in some repositories, take the entry out, and turn
+riff on in each one:
 
-### Move from riff 1.3 to 2.0
+```sh
+riff disable --global
+riff enable
+```
 
-riff 2.0 starts each session itself, in its sandbox. A GitHub App
-gives the forge tokens. No build of 1.3 works with 2.0: update
-riff-server and each machine together. Do the steps in this order.
+### When the riff server is turned off in /mcp
 
-The owner or an admin of the riff does steps 1, 2, 4 and 5 one time.
-Each person does steps 3, 6 and 7 on each machine.
+The `/mcp` dialog of Claude Code can turn the riff server off. Claude
+Code keeps that for the project, so each new session there has no
+riff tools. The start hook tells the session, and the status line
+shows it:
 
-1. Before the deploy, make the secret store of the GitHub App. In a
-   clone of riff, run `riff cloud create` again with the name of the
-   riff (see [Make the riff](start-a-team-riff.md#make-the-riff)). It
-   keeps each part that exists:
+```text
+riff 2a880834 (no tools: the riff server is off, turn it on in /mcp)
+```
 
-   ```sh
-   riff cloud create NAME
-   ```
+To turn it on, run `/mcp` in a session of the project, and turn the
+server `riff` on. A worker with no riff tools tells the lead with the
+`riff tell` command.
 
-2. Deploy riff-server 2.0 (see
-   [Deploy the riff](start-a-team-riff.md#deploy-the-riff)):
+### Use another claude command
 
-   ```sh
-   riff cloud deploy NAME
-   ```
+`riff connect claude` runs the `claude` command on your `PATH`.
+`--claude` names another one:
 
-3. End each Claude Code session of riff: your lead, and each worker.
-   Then update riff:
-
-   ```sh
-   riff workers stop
-   riff update
-   ```
-
-   A session that riff 1.3 started has no `RIFF_ON=1`, so its hooks
-   do nothing now.
-4. Make the GitHub App, and install it on your organization (see
-   [Make the GitHub App of riff](#make-the-github-app-of-riff)). It
-   also allows that organization:
-
-   ```sh
-   riff forge create --org OWNER
-   ```
-
-5. Allow each other account of the riff, and install the App there
-   (see
-   [Add an org or a personal account to the riff](#add-an-org-or-a-personal-account-to-the-riff)):
-
-   ```sh
-   riff forge allow ACCOUNT
-   riff forge install ACCOUNT
-   ```
-
-6. Give the sessions your Claude plan (see
-   [Give the sessions your Claude plan](#give-the-sessions-your-claude-plan)):
-
-   ```sh
-   claude setup-token
-   riff claude-token
-   ```
-
-7. Start the riff. Type `y` when riff asks to remove the old
-   entries:
-
-   ```sh
-   riff
-   ```
-
-   riff never changes a file that git tracks. Remove the riff entries
-   of each tracked `.claude/settings.json` in a pull request (see
-   [Remove the entries of an older riff](#remove-the-entries-of-an-older-riff)).
+```sh
+riff connect claude --claude ~/.local/bin/claude
+```
 
 ## The riff that riff uses
 
@@ -308,8 +337,8 @@ server      https://riff.example.com  (from RIFF_SERVER)
 | `serves` | `yes`, or `no, it replies 503` and why. A server that does not serve still gives its facts. |
 | `error` | The last error of the server since its start, with its age. |
 | `log` | The position of the last record, and the time and the duration of the last chunk write. |
-| `faults` | The failed tries of a chunk write, and the records of a later build that this build skipped: a record of a kind that this build does not know, or with a value that it does not know. |
-| `saved` | The newest checkpoint: its position, its age and its release. When this build writes no checkpoint, the line says why. |
+| `faults` | The failed tries of a chunk write, and the records of a later build that this build skipped: a record of a kind that this build does not know, or with a value that it does not know. A record of the forge state of 2.0 is dropped, not skipped, so it does not count. |
+| `saved` | The newest checkpoint: its position, its age and its release. When this build writes no checkpoint, the line says why. A checkpoint of a later major release is the state of another instance: this build does not use it. |
 | `counts` | The chunks in the store, the sessions, the read cursors, the threads, and the live sign-ins. |
 | `memory` | The memory that the server uses. |
 | `started` | The age of the instance, and how long its load and its replay took. |
@@ -619,7 +648,7 @@ riff: `$XDG_RUNTIME_DIR/riff`, else `~/.local/state/riff`.
 ### A new machine asks about the update by itself
 
 On a machine with no `update.auto` key, for example a new or rebuilt
-machine, `riff login` and `riff` ask you once:
+machine, `riff login` and `riff connect claude` ask you once:
 
 ```text
 Update riff by itself when the riff gets a new release? [Y/n]
@@ -630,7 +659,7 @@ again. With no terminal, for example in a script, they do not ask.
 To ask again, remove the key, then run:
 
 ```sh
-riff
+riff connect claude
 ```
 
 ## Versions
@@ -737,11 +766,9 @@ sequenceDiagram
     Note over C: tokens and key go to the OS keyring
 ```
 
-Each agent session then gets its own short-lived token. The token
-acts only as that session. `riff` keeps it in memory, not in the
-keyring. A session that riff starts gets its tokens from a session
-grant, never from your keyring: see
-[The secrets of a session](#the-secrets-of-a-session).
+Each agent session then gets its own short-lived token from `riff`.
+The token acts only as that session. `riff` keeps it in memory, not
+in the keyring.
 
 A session token has no refresh token. Each `riff` process of a session
 swaps the person token for a session token of its own: `riff mcp`,
@@ -1006,9 +1033,9 @@ mike  owner  online  6 sessions: 1 busy, 3 idle, 1 blocked, 2 claims
   the example, brett has one host and one repository, so the person,
   the host and the repository are on one line. So a small riff stays
   short.
-- A repository line has the short name of the repository, for example
-  `riff`. The status line and `riff who` use the same name. Two
-  repositories of two owners can have the same short name.
+- A repository line has the short name of the repository. When the
+  repositories have more than one owner, it has the owner too:
+  `como-technologies/riff`.
 - A session: the first line has the short session ID, the worktree of
   the session (`#issue-7` in the worktree `issue-7`, nothing in the
   main worktree), the tag `lead` or `worker`, and the state of the
@@ -1289,17 +1316,12 @@ The rule for a person who looks at such a branch:
   each pull request, and no WIP commit shows there.
 - The forge deletes the branch when the pull request merges.
 
-To see the commits of the branch of an item, for `issue-12`, in a
-terminal of your own:
+To see the commits of the branch of an item, for `issue-12`:
 
 ```sh
 git fetch --prune origin
 git log --oneline origin/main..origin/worktree-issue-12
 ```
-
-`git fetch --prune` is a step for a person, not for a session. A
-session in its sandbox fetches with no `--prune` (see "Commit and push
-in a worker").
 
 ### See the earlier work on an item
 
@@ -1582,47 +1604,6 @@ flowchart TD
 The session that writes the criteria does not do the work in that
 claim. The next session that claims the issue reviews the criteria.
 
-### Add the docs criterion
-
-One criterion of each `Done when:` line starts with `- Docs:`. It
-names the docs that the change needs: a how-to in the book for each
-new or changed command, flag or setting that a person uses, with a
-`sh` block, and the design in the rustdoc. riff finds the criterion by
-its fixed label. For example:
-
-```text
-Done when:
-
-- A test: riff who shows the wave of each claim.
-- Docs: the book has a how-to for riff who with the wave, with a sh block.
-```
-
-`riff verify pass` refuses an issue with no `- Docs:` criterion. See
-[Report a verify](#report-a-verify).
-
-### Check the docs criterion of each item
-
-The lead runs it when it places an item in a wave:
-
-```sh
-riff plan check
-```
-
-It reads the open issues with the `gh` of your machine. It prints
-each item of an open wave with no `- Docs:` criterion, and exits with
-status 1:
-
-```text
-#12 Wave 3: Show the wave
-1 item of an open wave has no criterion `- Docs:` in the `Done when:` line. Add one to each.
-```
-
-When each item has one, it exits with status 0:
-
-```text
-Each item of an open wave has a criterion `- Docs:`.
-```
-
 ## Verify finished work
 
 A session never verifies its own work. Before the merge, another
@@ -1786,21 +1767,11 @@ gh pr checks 40
 
 Then review what a test run cannot check: the code and its fit with
 the design, each `Done when:` criterion by its test, the book, the
-rustdoc and the requirements. Check the docs: the how-to of each new
-or changed command, flag or setting, with a `sh` block. Compare the
-`--help` output with the book. No old text in the book or the skill
-says the opposite.
+rustdoc and the requirements.
 
 Write the result to a file: each criterion, and what you did to check
-it. A pass has a line that starts with `Docs:`: what you checked in
-the docs. For example:
-
-```text
-1. riff who shows the wave: pass, by the test who::the_wave_shows.
-Docs: pass. The how-to "See the wave" has a sh block, and riff who --help agrees.
-```
-
-For a fail, give the steps to see each failure. Then report a pass:
+it. For a fail, give the steps to see each failure. Then report a
+pass:
 
 ```sh
 riff verify pass 40 --file result.md
@@ -1827,16 +1798,6 @@ riff verify pass: the Gate of commit 1a2b3c4 runs still. A pass needs a Gate suc
 ```
 
 Wait for the Gate, then report again. A fail needs no Gate.
-
-A pass also needs the docs check. When the issue has no `- Docs:`
-criterion, or the result has no `Docs:` line, `riff verify pass`
-reports nothing and prints one line that says what to add:
-
-```text
-riff verify pass: the result has no line `Docs:`. Add one: what you checked in the book, the rustdoc and the skill. Nothing is reported.
-```
-
-A fail needs no `Docs:` line: a fail can stop early.
 
 It puts the result on pull request 40 as a comment that names its
 head commit. It sets the status `riff/verify` of that commit:
@@ -3014,29 +2975,28 @@ and the verify result. You decide. No session pushes to `main` (see
 
 ### Find the pane of a session
 
-The status line of Claude Code names the session as `riff top` and
-`riff who` do: `USER@HOST:REPO#WORKTREE (ID)`. Then it shows the role
-(`lead` or `worker`), the state (for example `idle`, `busy`, `paused`
-or `blocked`) and the claims. For a lead in the main clone and a worker
-in a worktree:
+Show each session in the status line of Claude Code: its short session
+ID, `lead`, its claims, and `blocked`. For example:
 
 ```text
-mike@pangolin:riff (2a880834) lead idle
-mike@pangolin:riff#issue-82 (dceb0b68) worker blocked issue-82
+riff 2a880834 lead
+riff dceb0b68 issue-82 blocked
 ```
 
-When the line is longer than 80 characters, it drops the user and the
-host. The repository and the worktree stay:
+The short ID is the same as in `riff who`. `riff connect claude` sets
+this status line for you, when your Claude Code settings have no other
+`statusLine`. When they have one, riff leaves it, and says so. To use
+the riff status line then, put this in `~/.claude/settings.json` in
+place of your `statusLine`:
 
-```text
-riff#issue-82 (dceb0b68) worker busy issue-82 issue-83 verify-issue-123
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "riff statusline"
+  }
+}
 ```
-
-One function makes the label for the status line, `riff who` and
-`riff top`, so the three always agree. riff gives this status
-line to each session that it starts, in the flag settings of `claude`
-(see [What riff gives Claude](#what-riff-gives-claude)). Your settings
-file does not change.
 
 The status line changes after each answer of the session. Each time,
 it asks riff-server with the call `GET /v1/me`. The reply holds only
@@ -3051,13 +3011,13 @@ sequenceDiagram
     C->>S: the session ID on stdin
     S->>R: GET /v1/me
     R-->>S: this session, the build
-    S-->>C: mike@pangolin:riff (2a880834) lead idle
+    S-->>C: riff 2a880834 lead issue-82
 ```
 
-Then find the session in `riff top` or `riff who` by its label:
+Then find the session of `riff who` by its short ID:
 
 ```sh
-riff top
+riff who
 ```
 
 ### See a new release in the status line
@@ -3066,7 +3026,7 @@ When the riff runs a newer release than your session, the status line
 adds a tag. For example:
 
 ```text
-mike@pangolin:riff (2a880834) lead idle update v0.6.0: riff update
+riff 2a880834 lead update v0.6.0: riff update
 ```
 
 | Tag | What it means | What to do |
@@ -3160,1053 +3120,6 @@ claude --remote-control
 ```
 
 In a session that runs, type `/rc`.
-
-## The sandbox of each role
-
-riff runs four roles: the lead, a worker, a verifier and the test run
-of a session. Each role has one profile. The profile says what the
-processes of the role may read, write and reach. The sandbox of a
-session, its forge token and its permission rules come from that one
-profile.
-
-```mermaid
-flowchart LR
-    S["the paths of a session"] --> P["the profile of its role"]
-    P --> F["files and ports: Landlock"]
-    P --> T["forge token"]
-    P --> R["permission rules"]
-```
-
-### What a session may do
-
-| | lead | worker | verifier | test run |
-|---|---|---|---|---|
-| Write | the worktrees of the clone, the objects, refs, logs and worktrees of the git dir of the clone, its own state folder, its temp, its Claude folder | its worktree, its target, the objects, refs, logs and worktrees of the git dir of the clone, its own state folder, its temp, its Claude folder | the same as a worker, for its verify worktree | its temp, its target |
-| Read | the system, its tools, its permission rules, the clone, the folder of riff, and what it writes | the same, and the git dir of the clone | the same as a worker | the system, its tools, what it writes, and its worktree |
-| Network | riff server, forge, registries, model | the same | the same | loopback only |
-| Forge | read, plan, comment, push, pull request | read, comment, push, pull request | read, comment, verify status | none |
-
-A worker and a verifier read `.claude/settings.json` and
-`.claude/settings.local.json` of the clone, and write neither. The
-sandbox cannot hide a file with ENOENT. A file that `claude` cannot
-read gives a "Settings Error" dialog, so riff grants the read. To see
-the grant:
-
-```sh
-riff workers sandbox --role worker --show | grep settings
-```
-
-No role reads your home as a whole, your keyring, your D-Bus, your
-SSH or GnuPG keys, or the sign-in of `gh`. The key of the GitHub App
-of riff is never on your machine. riff refuses a path of a session
-that is not absolute or that has a `..` part.
-
-- **Its own Claude folder.** Each session gets its own Claude folder:
-  `~/.local/share/riff/claude/SESSION` (or `$XDG_DATA_HOME/riff/...`).
-  No session writes your `~/.claude`, so no session changes your
-  settings, your sign-in or your memory.
-  Before `claude` starts, riff writes the first-run answers into that
-  folder: the onboarding, your theme (else `auto`) and the trust of the
-  clone and of its worktrees. So a new worker joins the riff with no
-  dialog. The trust is for the session only, and only for the clone and
-  its worktrees folder. riff reads your `~/.claude.json` for the theme
-  only. To see the keys of a session:
-
-  ```sh
-  jq '{hasCompletedOnboarding, theme, projects}' ~/.local/share/riff/claude/SESSION/.claude.json
-  ```
-- **Its permission rules.** The file of the permission rules of a
-  session is `~/.local/share/riff/rules/SESSION.json`. The session
-  reads it and cannot write it.
-- **The files of each start.** riff writes the MCP config of the lead
-  and the workers to `~/.local/share/riff/given/workers-mcp.json`, and
-  the plugin to `~/.local/share/riff/claude-plugin`. Each session
-  reads them, and no session writes them. So no session changes the
-  MCP servers or the hooks of the next `claude`.
-- **The state of riff.** See "The folders of riff and of a session"
-  below.
-- **The git dir of the clone.** No session writes the `config`, the
-  `hooks`, the `info` or the `packed-refs` of the git dir of the
-  clone: git runs or reads them later, outside each sandbox. The lead
-  writes no file of the clone: its workers change the code.
-- **Ports.** A session connects to the TCP ports of its profile (443
-  and the port of the riff server), and to the local port range of
-  the kernel, so that a test server on port 0 works.
-- **Other processes.** A session cannot send a signal to a process
-  outside its sandbox, or read its environment in
-  `/proc/PID/environ`.
-- **No crash report.** A crash in a session or in its test run makes
-  no core file, and starts no crash dialog on your desktop: the core
-  size limit is 1 byte.
-- **Its own git config.** A session reads nothing of the git config
-  of the person: not `~/.gitconfig`, not `~/.config/git`, not
-  `/etc/gitconfig`. riff makes a git config for the session, and git
-  reads that one. So a `core.excludesFile` in your home gives no error
-  in a session. A commit of a session has the session as its author,
-  not you: see "Find the commits of a session" in Development. A
-  worker deletes and renames no branch: riff (`riff worktrees clean`)
-  and GitHub (delete on merge) do. A `git commit` in a worker prints
-  `Unable to create packed-refs.lock`: it is harmless, and the commit
-  works.
-- **No tmux and no stream unix socket with a name.** A session cannot
-  reach your tmux servers, also not the tmux server of riff. riff
-  removes `TMUX` and `TMUX_PANE`, and a session cannot make a stream
-  unix socket with a name: not for tmux, D-Bus, your keyring or an SSH
-  agent. A pair of sockets still works.
-- **One exception: the socket of the broker.** A session can make a
-  unix socket of the kind `SOCK_SEQPACKET`. It connects with it to its
-  broker, so `riff test-run`, `riff pr` and `riff workers` work in a
-  command of the Bash tool of Claude Code. That tool gives a command
-  no file descriptor of the session. This is an exception until #682,
-  when a mount namespace hides the sockets of your services (#645).
-  The broker listens on a socket in the own folder of the session,
-  with the mode 0600, so no other user connects to it. The broker does
-  not separate the sessions of your user: until #687, a session can
-  also connect to the broker of another session, the lead too.
-
-#### Keep your cargo registry token out of the sessions
-
-riff gives no cargo registry token to a session or a test run. A
-session and a test run read only the parts of your cargo home that
-cargo needs: `bin`, `registry`, `git`, `config.toml` and `config`. They
-do not read `credentials.toml` or `credentials`, where `cargo login`
-keeps your token. So keep the token in `credentials.toml`, not in
-`config.toml`. `cargo login` does it for you:
-
-```sh
-cargo login
-```
-
-#### How riff applies the sandbox
-
-Each worker pane runs `riff workers run`. It starts `claude` through
-`riff workers sandbox`, the last step before `claude`. The pane of the
-lead runs `riff workers lead`, and it starts `claude` through `riff
-workers sandbox --role lead` too. `riff workers
-sandbox` makes the profile from the paths of the session, follows each
-symlink, and restricts itself with Landlock. Then it runs `claude` in
-its place. Each child of `claude` (Bash, `cargo`, the tests) gets the
-same sandbox, and cannot make it wider.
-
-```mermaid
-flowchart LR
-    W["riff workers run"] --> S["systemd-run, nice"]
-    S --> X["riff workers sandbox"]
-    X -->|"Landlock"| C["claude and each child"]
-```
-
-riff starts no session with no sandbox. On a kernel with no Landlock,
-the pane shows one error line, and `claude` does not start. Check that
-your kernel has Landlock:
-
-```sh
-cat /sys/kernel/security/lsm
-```
-
-The list names `landlock`. riff uses each right of the kernel. Linux
-7.0 has Landlock ABI 8. ABI 8 cannot stop a connect to a unix socket
-with a path, for example your D-Bus socket. Linux 7.1 (ABI 9) can. So
-riff also applies a seccomp filter: no session makes a stream unix
-socket with a name, on each kernel. Only the kind `SOCK_SEQPACKET`
-stays, for the broker (#673, #682). Your tmux server and your D-Bus
-listen on stream sockets, so a seqpacket connect to them fails. A
-service of yours that listens on a seqpacket socket is reachable. To
-see these on your machine:
-
-```sh
-ss -xl | grep seq
-```
-
-#### Run the tests of a worker
-
-A session in the sandbox cannot make the namespaces of a test run.
-So `riff workers sandbox` starts a broker before the sandbox: `riff
-workers broker`, outside the sandbox. In a worker, `riff test-run`
-(and so `just test` and `just check`) asks the broker, and the broker
-runs the test run outside the sandbox, with the output in the pane of
-the worker:
-
-```mermaid
-sequenceDiagram
-    participant W as riff test-run in the worker
-    participant B as riff workers broker
-    participant T as riff test-run outside
-    W->>B: test-run, the folder, the output
-    B->>B: check the list of operations, the folder, the variables
-    B->>T: run it in the sandbox of a test run
-    T-->>W: the output
-    B-->>W: the exit code
-```
-
-A command that the Bash tool of Claude Code starts has no file
-descriptor of the session. It asks the broker through the socket that
-`RIFF_BROKER_SOCKET` names. A command with the file descriptor
-`RIFF_BROKER` asks through that.
-
-Run the tests in a worker as everywhere:
-
-```sh
-just check
-```
-
-The broker runs only the operations of its list (`test-run` and
-`outside`), in the worktree of the session. It refuses each other
-request. It refuses a folder with a `..` part. It runs in the real
-folder that it checked, not in the folder of the request, so a link
-that changes after the check does not move the run. It takes
-only the variables of cargo and of the tests from the request: never
-`PATH` or `LD_PRELOAD`. The folders that a test run writes come from
-the broker, not from the request: the target of the session and the
-pool of build jobs. A target that is a link to a folder outside the
-worktree gives no test run.
-
-A test run takes its clone and its worktree from riff, not from git.
-The broker gets them when the session starts. The folder of the
-request only picks where the command runs. So a `.git` file that a
-session writes in its worktree cannot make a test run read another
-repository.
-
-#### Run one command outside the sandbox
-
-The sandbox is always on. No switch turns it off. When a session needs
-one command outside its sandbox, for example a command with `sudo`,
-it asks. The owner or an admin of the riff approves or denies the
-request. Then the broker runs the command one time.
-
-```mermaid
-sequenceDiagram
-    participant S as riff outside ask (the session)
-    participant R as riff-server
-    participant A as an admin, in a terminal
-    participant B as the broker (outside)
-    S->>R: the command, the folder, the reason
-    R-->>A: a message to the lead: the request and its ID
-    S->>B: run the request ID
-    A->>R: riff outside approve ID
-    B->>R: take the request (one time)
-    B->>B: check the folder, run the command
-    B-->>S: the exit code
-```
-
-The session asks in its worktree. Give the reason, then the command
-after `--`:
-
-```sh
-riff outside ask --reason "the test needs root" -- sudo true
-```
-
-riff prints the ID of the request, and waits for a decision for up to
-one hour. The exit code of `riff outside ask` is the exit code of the
-command.
-
-The owner or an admin sees the requests of the last hour in a
-terminal:
-
-```sh
-riff outside list
-```
-
-Approve a request by its ID:
-
-```sh
-riff outside approve 7f3a9c21
-```
-
-Or deny it:
-
-```sh
-riff outside deny 7f3a9c21
-```
-
-- Only the owner or an admin decides, with the sign-in of a person in
-  a terminal. A worker or an agent session gets a refusal. riff-server
-  refuses the token of a session, so no session approves its own
-  request.
-- The broker runs the command and the folder that riff-server keeps,
-  not what the session sends. The folder must be in the worktree of the
-  session. The command gets the environment of the broker, with no
-  secret of the session.
-- A request runs one time. To run the command again, ask again.
-- riff-server keeps the requests in its memory for one hour. A restart
-  of the server drops them.
-- riff-server posts each step to the thread of the repository: who
-  asked, the command, the folder, the reason, and who approved or
-  denied it. The ask wakes your lead.
-
-#### Commit and push in a worker
-
-A worker writes only the parts of the git dir of the clone that a
-commit, a fetch and a push of its worktree need. It cannot write the
-`config` or the `hooks` of the clone: git runs the programs that they
-name, also outside each sandbox. riff runs its own git commands with
-no hooks. So in a worker, push with no `-u`, and fetch with no
-`--prune`:
-
-```sh
-git fetch -q origin
-git push -q --force-with-lease --force-if-includes origin HEAD
-```
-
-riff prunes the main clone outside the sandbox, when it fast-forwards
-it. `riff claim` fetches with no `--prune` too.
-
-#### riff sets the git dirs of a worktree
-
-A session writes its worktree and `.git/worktrees/NAME` of the clone.
-So it can change the `.git` file of its worktree, or the `commondir`
-or `gitdir` file there, to name a git dir of its own. A config in that
-git dir can name a program, for example a filter. So riff does not
-read the git dirs from these files. Each git command that riff runs in
-a worktree gets them from riff:
-
-| Variable | Value |
-|---|---|
-| `GIT_DIR` | `MAIN/.git/worktrees/NAME` |
-| `GIT_COMMON_DIR` | `MAIN/.git` |
-| `GIT_WORK_TREE` | `MAIN/.claude/worktrees/NAME` |
-
-```mermaid
-flowchart LR
-    R["riff: git in a worktree"] --> C{"in .claude/worktrees of the clone,<br/>no link, git knows NAME"}
-    C -->|yes| G["git with GIT_DIR, GIT_COMMON_DIR,<br/>GIT_WORK_TREE from riff"]
-    C -->|no| K["no git: kept, with the reason"]
-```
-
-riff runs no git in a worktree that is a link, that is not in
-`.claude/worktrees` of the clone, or that has no
-`.git/worktrees/NAME`. It also runs none when the clone sets
-`extensions.worktreeConfig`, or when the `commondir` file of the
-worktree names another git dir. Then `riff worktrees clean` keeps the
-worktree and prints `kept: it is not a worktree of an agent session`.
-
-A git of riff also goes into no submodule: a submodule that a session
-makes has a config of its own. riff sets `diff.ignoreSubmodules=all`
-and `submodule.recurse=false` for each git command.
-
-#### riff reads a worktree with the rights of a worker
-
-git can start a program when it reads the files of a worktree, for
-example a filter of `git lfs` for each file that `.gitattributes`
-names. A session writes `.gitattributes`. So each git step of riff
-that reads the files of a worktree (`status`, `add`, `commit`,
-`merge-tree`) runs in a child, `riff workers git`, with the sandbox of
-a worker on that worktree. A program that git starts there writes only
-what a worker writes, for example not in your home. With no Landlock,
-the step does not run. The push of a WIP commit needs the network and
-your sign-in, so it stays outside, with the git dirs of riff and no
-hook.
-
-```mermaid
-flowchart LR
-    C["riff worktrees clean"] --> W["riff workers git: Landlock and seccomp of a worker"]
-    W --> S["git status, add, commit"]
-    C --> P["git push: outside, git dirs of riff, no hook"]
-```
-
-To run git in a worktree as riff does, for `issue-12`, in the main
-clone:
-
-```sh
-riff workers git --worktree .claude/worktrees/issue-12 -- status
-```
-
-#### The lead in its sandbox
-
-The lead starts workers, stops them, reaps their old processes and
-opens the `riff tail` pane. In its sandbox, it reaches no tmux server
-and sends no signal to a process outside. So the broker of the lead
-does these steps outside the sandbox. You use the same commands in the
-lead as before:
-
-```sh
-riff workers start 2
-riff workers stop %7
-riff workers reap
-```
-
-```mermaid
-sequenceDiagram
-    participant L as riff in the lead (sandbox)
-    participant B as broker of the lead (outside)
-    participant T as tmux, the processes of a worker
-    L->>B: workers-stop %7
-    B->>T: is %7 a worker of this clone?
-    B->>T: kill-pane %7, stop its processes
-    B-->>L: Stopped 1 worker.
-```
-
-The broker of the lead runs only its list of operations. The broker of
-a worker refuses each of them.
-
-| Operation | What the broker does |
-|---|---|
-| `worker-panes` | lists the worker panes of the machine |
-| `tail-pane` | adds the `riff tail` pane beside the lead |
-| `workers-start` | starts 1 to 64 workers, with the `claude`, the riff server and the clone of the broker |
-| `workers-stop` | stops a worker of this clone, or each worker of this clone |
-| `workers-reap` | stops the old processes of a worker of this clone |
-| `oom-journal` | reads the lines of `systemd-oomd`, to find why a worker died |
-
-The broker of the lead also runs the operations of the own pane, as
-the broker of each worker does. The compact at the end of a wave uses
-them. See
-[A worker in its sandbox clears its context](#a-worker-in-its-sandbox-clears-its-context).
-
-tmux marks each worker pane with its main clone (`@riff-clone`). The
-broker of a lead stops and reaps only the workers of its own clone,
-also when you name the pane of a worker of another repository. A
-worker that riff started before this release has no mark: stop it
-with `riff workers stop` in a terminal outside the lead.
-
-The lead has its own Claude folder,
-`~/.local/share/riff/claude/lead-OWNER-REPO`. Its memory starts empty
-there. To keep the memory of the lead of an older riff, copy it one
-time before you start the riff. Put the folder name of your clone in
-`~/.claude/projects` in place of `-home-ada-src-riff`:
-
-```sh
-mkdir -p ~/.local/share/riff/claude/lead-como-technologies-riff/projects
-cp -r ~/.claude/projects/-home-ada-src-riff ~/.local/share/riff/claude/lead-como-technologies-riff/projects/
-```
-
-To see the sandbox of the lead, run this in the main clone:
-
-```sh
-riff workers sandbox --show --role lead --name lead-como-technologies-riff
-```
-
-#### See the sandbox of a worker
-
-Each worker pane shows one line when its sandbox is on:
-
-```text
-riff: the sandbox is on: Landlock ABI 8 (a part of the rights of ABI 9), 41 path rules, 28234 port rules.
-```
-
-To see each path and port of the sandbox, run this in the worktree of
-the worker, as that session (with its `RIFF_SESSION` and `TMPDIR`):
-
-```sh
-riff workers sandbox --show
-```
-
-It prints the write paths, the read paths, the devices, the ports, and
-what your kernel applies. It starts no program. Add `--role lead` or
-`--role verifier` for another role. Add `--name NAME` for the Claude
-folder and the rules file of another session than `RIFF_SESSION`, for
-example `--name lead-como-technologies-riff`.
-
-#### Not yet in the sandbox
-
-The sandbox wave (Wave 22) puts the profiles to work, one part at a
-time. "The shared surfaces with no control yet" in "The threat model
-of the sandbox" lists each part that is left, with its issue. The
-release 2.0.0 comes with each part.
-
-### The folders of riff and of a session
-
-riff keeps its state on your machine in the folder of riff:
-`$RIFF_HOME/state`, else `$XDG_RUNTIME_DIR/riff`, else
-`~/.local/state/riff`. Only riff outside each sandbox writes it. Each
-session in a sandbox reads it, and writes only its own folder in it.
-
-| Folder | Who writes it | What it holds |
-|---|---|---|
-| the folder of riff | only riff outside each sandbox | the tmux config, the list of clones, the deaths of workers, the pool of build jobs |
-| `sessions/SESSION` in it | only the session SESSION | the files of that session, for example the start of its context |
-| `jobs/fifo`, `jobs/take.lock`, `jobs/hold.lock` in it | riff, each session and each test run | the tokens of the pool of build jobs |
-| the temp folder of a session | the session; riff writes its forge token there with no follow of a link | the temp files and the forge token of the session |
-
-```mermaid
-flowchart LR
-    O["riff outside"] -->|"writes"| R["the folder of riff"]
-    S["a session in its sandbox"] -->|"reads"| R
-    S -->|"writes"| W["sessions/SESSION"]
-    O -->|"reads, no follow of a link"| W
-```
-
-When riff outside writes or reads a file in a folder that a session
-writes, it follows no link. A link there makes the step fail, and
-your file at the end of the link does not change. riff deletes the
-folder of a session when the session ends.
-
-A session also writes the worktree folder of the clone
-(`.claude/worktrees`), so it can put a link or a `.git` file there.
-When a sandbox starts, riff refuses to make the profile, and the
-session does not start, when:
-
-- the start dir has a link below the worktree folder. riff takes the
-  start dir from `PWD`, so it sees the link that your shell went
-  through;
-- git gives a clone that is not the start dir or a folder above it,
-  for example from a `.git` file that names the git dir of another
-  repository;
-- git gives a worktree that is not the clone, the worktree folder, or
-  one folder in it.
-
-To see whether riff makes a profile in a folder, run this there:
-
-```sh
-riff workers sandbox --show
-```
-
-To see the folder of each session that runs on this machine:
-
-```sh
-ls "${XDG_RUNTIME_DIR:-$HOME/.local/state}/riff/sessions"
-```
-
-### See the permission rules of a worker
-
-riff gives each worker the Claude Code permission rules of its
-profile, in its `--settings`. They add to your own rules:
-
-- They allow the read of each path that the worker reads, and the read
-  and the edit of each path that it writes.
-- They allow the `Bash` commands that the role needs, for example
-  `cargo test`, `just check` and `git commit` for a worker. A rule
-  names the program and the subcommand, so `cargo run` and
-  `cargo install` still go to the auto mode check.
-- They deny the read and the edit of each file and folder of your home
-  that holds no path of the profile. riff looks at your home when the
-  worker starts. They also deny your keyring, your D-Bus, your SSH and
-  GnuPG keys and the sign-in of `gh`.
-- They deny the edit of each `settings.json` and `settings.local.json`
-  of Claude Code, so a worker cannot widen its own rules.
-
-A worker starts with no item, so its profile has the folder of all
-worktrees of the clone (`.claude/worktrees`). Run this in the clone to
-see the rules that a worker gets:
-
-```sh
-riff workers rules
-```
-
-When riff cannot make the profile, for example when a tool path is your
-home, the worker starts with no rules of a profile and prints why in
-its pane.
-
-### What riff needs of systemd
-
-riff uses systemd only on the host side, outside each sandbox. No
-profile reaches a bus of systemd: not your user bus, not the private
-socket of your user manager, not the system bus. So no process in a
-sandbox calls systemd. The wrapper of each worker, `riff workers run`,
-runs in its tmux pane, outside the sandbox. It is the one process of a
-worker that calls systemd.
-
-```mermaid
-flowchart LR
-    W["riff workers run<br/>(outside the sandbox)"] -->|"systemctl --user set-property"| S["riff-workers.slice"]
-    W -->|"systemd-run --user --scope"| C["scope of the worker"]
-    C --> X["sandbox: claude and each child"]
-    X -. "no bus" .-> S
-```
-
-| riff needs | For | With no systemd |
-|---|---|---|
-| The user manager: the slice `riff-workers.slice` | the memory limit and the CPU share of all workers | the workers run with no memory limit |
-| The user manager: one scope for each worker | riff finds and stops each process of a worker | riff finds the processes by their environment |
-| `systemd-oomd` and its lines in the journal | the cause of a kill in the note to the lead, and the kills in the monitor | the note and the monitor show no cause |
-
-riff needs no systemd to run. Each part has a way to work with no
-systemd, and riff says so one time. To see what the user manager
-gives the workers on your machine:
-
-```sh
-systemctl --user status riff-workers.slice
-```
-
-## The forge token of each role
-
-The lead and the workers never get your sign-in. riff starts
-`claude` with an empty environment, and adds only a short list of
-variables (the `KEPT_VARS` of `riff::profile`). So `GH_TOKEN`, your
-`gh` sign-in, your git helpers, your ssh agent and your D-Bus never
-reach a session. The tmux server of riff also starts with only these
-variables and your D-Bus, so its panes do not hold the others either.
-The wrapper of a session needs your D-Bus for your keyring: see
-[The secrets of a session](#the-secrets-of-a-session).
-
-No `ANTHROPIC_` variable reaches `claude`, also not
-`ANTHROPIC_API_KEY`. A session uses only the plan sign-in of your
-Claude Code, so its use counts on your plan, and API billing never
-starts by accident.
-
-riff-server gives each session a forge token of its role, with the
-GitHub App of riff. GitHub refuses each other step of the session. The
-private key of the App lives in Secret Manager. Only the service
-account of riff-server reads it. It is never on your machine, and no
-session ever sees it.
-
-```mermaid
-flowchart LR
-    P[your environment] -->|only the kept variables| T[tmux server of riff]
-    T --> C[claude of the lead or a worker]
-    F[riff forge token files] -->|GH_CONFIG_DIR, git helper of riff| C
-    P -. GH_TOKEN, gh sign-in, git helpers, ssh agent .-> N[stays out]
-```
-
-| Role | GitHub permissions of its token |
-|---|---|
-| lead, worker | contents, issues, pull requests: write; actions, checks, statuses, metadata: read |
-| verifier | issues, pull requests, statuses: write; actions, checks, contents, metadata: read |
-| test run | no token |
-
-- A worker token pushes a branch and opens a pull request. It cannot
-  set the `riff/verify` status.
-- A verifier token sets the status. It cannot push or merge.
-- No token can approve a deploy, change a ruleset or a workflow, or
-  push a `v*` tag.
-- GitHub keeps the waves and the labels with the comments on issues, so
-  the lead and worker tokens are the same. riff-server keeps the plan
-  to the lead.
-
-### How riff-server picks the role
-
-The wrapper of each session (`riff workers run` for a worker, `riff
-workers lead` for the lead) runs outside the sandbox. It asks
-riff-server for the token of its session. riff-server picks the role
-and the repository from its own facts, never from the ask:
-
-- A session gets a token only while riff-server knows it: it
-  registered, it did not end, and it showed a sign of life in the
-  last 5 minutes. The wrapper of a worker registers its session
-  before `claude` starts.
-- The lead of a person gets the lead token. Its wrapper asks before
-  the session of the lead starts, so it asks as the person. It gets
-  the token only while the person has a lead in that repository. The
-  wrapper asks again each minute, and at once when the session
-  starts.
-- A session with a `verify-` claim gets the verifier token.
-- Each other session gets the worker token.
-
-The token is for the repository of the session only, in the facts of
-riff-server. One App serves each repository where it is installed: in
-an organization or in a personal account. riff-server finds the
-installation of the App on that repository.
-
-### Which accounts get tokens
-
-The App is public, so a person of each GitHub account can install it.
-riff-server makes tokens only for the repositories of the accounts
-that the owner or an admin of the riff allowed. An installation on
-each other account gives no token.
-
-### The life of a token
-
-A token lasts one hour. The wrapper asks for a new one 10 minutes
-before the end. riff-server makes the new token, then revokes the old
-one. So a session never holds two good tokens. A lead token of the
-person stays good until it ends: two wrappers of one person can share
-it.
-
-At a claim, a release, the end of a session, or the end of the allow
-of an account, riff-server compares the role of each token with its
-facts. It revokes each token whose role changed. The wrapper removes
-the old token files and asks for a token of the new role. So a session
-never holds the rights of two roles.
-
-A session can die with no end call. riff-server compares the tokens
-with its facts each minute. 5 minutes after the last sign of life of
-a session, its claims end, and riff-server revokes its token.
-
-```mermaid
-sequenceDiagram
-    participant W as riff workers run (outside the sandbox)
-    participant S as riff-server
-    participant K as Secret Manager
-    participant G as GitHub
-    W->>S: POST /v1/forge/token (signed-in session)
-    S->>S: role from the facts of the server: lead, a verify- claim, else worker
-    K-->>S: the App, at the start of the server
-    S->>G: JWT, then access_tokens for the one repository and the rights of the role
-    G-->>S: a token for one hour
-    S->>G: revoke the old token of this session, when the role changed
-    S-->>W: the token and its end time
-    W->>W: token files for gh and git
-```
-
-### What you see in the log
-
-riff-server writes one line for each token in its log: the session,
-the repository, the role and the end time. It writes one line for each
-revoke. A line never holds a token. To see them:
-
-```sh
-riff cloud log shared
-```
-
-### With no App or no sign-in
-
-The session starts with no forge token, and its pane shows a line
-`riff: no forge token for this session` with the reason. `gh` and
-`git push` fail in the session. The reasons:
-
-- The riff has no sign-in: riff-server cannot know the person, so it
-  gives no token.
-- The riff has no GitHub App: an admin makes it (see "Make the GitHub
-  App of riff").
-- No admin allowed the account of the repository: the line names
-  `riff forge allow OWNER` (see "Allow an account").
-- riff-server does not know the session, or it ended.
-- The person has no lead in the repository: the lead token waits
-  until the session of the lead starts.
-- The App is not installed on the repository: the line names
-  `riff forge install OWNER` (see "Add an org or a personal account to
-  the riff").
-
-### Make the GitHub App of riff
-
-An owner or an admin of the riff makes the App one time, with one
-command. Run it in a terminal, not in a worker or an agent session.
-Put the GitHub organization that owns the App in place of `OWNER`, for
-example `como-technologies`:
-
-```sh
-riff forge create --org OWNER
-```
-
-Your browser opens on a page of riff-server. The page sends the
-manifest of the App to GitHub: its name `riff-OWNER`, the permissions of
-the roles and no more, no webhook, and "Any account" can install it.
-
-1. On GitHub, click "Create GitHub App". You can change the name
-   first.
-2. GitHub sends the browser back to riff-server. riff-server gets the
-   App ID and the private key from GitHub, and puts them in the secret
-   of the App in Secret Manager. The key never goes to your machine.
-3. The browser opens the install page of the App on `OWNER`. Pick the
-   repositories of the riff, and click "Install".
-
-The command waits for the install, at most 10 minutes. Then it allows
-`OWNER` (see "Allow an account"), and runs `riff forge check` when you
-run it in a clone of a repository of `OWNER`.
-
-```mermaid
-sequenceDiagram
-    participant R as riff forge create
-    participant B as browser
-    participant S as riff-server
-    participant G as GitHub
-    R->>S: a new start (an owner or an admin)
-    S-->>R: the start page, good for 10 minutes
-    R->>B: open the start page
-    B->>G: the manifest of the App
-    Note over B,G: click "Create GitHub App"
-    G-->>B: back to riff-server, with a code
-    B->>S: the code
-    S->>G: the code for the App ID and the key
-    S->>S: the key goes to Secret Manager
-    S-->>B: the install page of the App
-    R->>S: the App is installed?
-    R->>S: allow OWNER, then riff forge check
-```
-
-The riff of a cloud instance needs the secret of the App first.
-`riff cloud create NAME` makes it, and lets only riff-server read it
-and add a version. For an instance that you made before, run it again,
-and deploy:
-
-```sh
-riff cloud create shared
-riff cloud deploy shared
-```
-
-### Make the App by hand
-
-With no browser on the machine of the admin, make the App on GitHub,
-and give it to the riff with its key file:
-
-1. On GitHub, open Settings, Developer settings, GitHub Apps, and
-   click "New GitHub App".
-2. Give it a name, for example `riff`, and a homepage URL, for
-   example the URL of the riff repository.
-3. Clear "Active" under Webhook.
-4. Under Repository permissions, set: Actions: read, Checks: read,
-   Commit statuses: read and write, Contents: read and write, Issues:
-   read and write, Metadata: read, Pull requests: read and write. Set
-   no other permission.
-5. Under "Where can this GitHub App be installed?", select "Any
-   account". Click "Create GitHub App".
-6. Write down the App ID. Click "Generate a private key". GitHub
-   downloads a `.pem` file.
-7. Click "Install App", and install it on the repositories of the
-   riff.
-
-Then store the App in its secret, and start the server again with a
-deploy. Run this in the clone of the repository that holds the cloud
-settings:
-
-```sh
-riff cloud forge shared APP_ID ~/Downloads/riff.private-key.pem
-riff cloud deploy shared
-```
-
-`riff cloud forge` stores the App ID and the key as one version of the
-secret of the App, and lets only the service account of riff-server
-read it. Delete the downloaded key file.
-
-Then allow the accounts of the riff. See "Allow an account".
-
-### Add an org or a personal account to the riff
-
-The App of riff is public: each GitHub account can install it. To add
-an account, for example the personal account `n8behavior`, the owner
-or an admin of the riff allows it. Then a person of that account
-installs the App:
-
-```sh
-riff forge allow n8behavior
-riff forge install n8behavior
-```
-
-`riff forge install` opens the install page of the App, with
-`n8behavior` as the account. The person of that account picks the
-repositories and clicks "Install". The command waits for the install,
-at most 10 minutes. Then it runs `riff forge check` when you run it in
-a clone of a repository of that account. Run it in a terminal, not in
-a worker or an agent session.
-
-### Allow an account
-
-The owner or an admin of the riff allows each GitHub account
-(organization or personal account) whose repositories get forge
-tokens. For example, for the organization `acme` and the personal
-account `mike`:
-
-```sh
-riff forge allow acme
-riff forge allow mike
-```
-
-Each allow is a record in the log of the riff, with who did it. To see
-the allowed accounts:
-
-```sh
-riff forge allow
-```
-
-To allow an account no more:
-
-```sh
-riff forge allow acme --remove
-```
-
-riff-server revokes the tokens of the sessions of that account at
-once.
-
-### Check the GitHub App
-
-Run this in the clone of a repository of the riff. riff-server makes a
-token of each role, shows its permissions, and revokes it at once. It
-never shows the token:
-
-```sh
-riff forge check
-```
-
-Each line shows a role and its permissions. A line with an error names
-the permission that the App lacks: add it in the settings of the App,
-then accept the new permissions on the installation.
-
-Workers that start after the deploy get their tokens. Stop the old
-workers with `riff workers stop`; the rollout starts new ones.
-
-## The secrets of a session
-
-No process of a session reads your keyring. The wrapper of each
-session (`riff workers run` for a worker, `riff workers lead` for the
-lead) runs outside the sandbox. Before it starts `claude`, it reads
-your sign-in from your keyring and gives `claude` these variables:
-
-| Variable | What it holds |
-|---|---|
-| `RIFF_SESSION_KEY` | A new key of this session only |
-| `RIFF_SESSION_GRANT` | A session grant of riff-server: it acts only as this session, and only with the session key |
-| `RIFF_USER` | Your user, so no process of the session asks your keyring |
-| `CLAUDE_CODE_OAUTH_TOKEN` | The token of your Claude plan, when you gave it to riff |
-
-The forge token of the role comes in files of the temp folder of the
-session. See
-[The forge token of each role](#the-forge-token-of-each-role).
-
-```mermaid
-sequenceDiagram
-    participant W as riff workers run (outside the sandbox)
-    participant K as your keyring
-    participant S as riff-server
-    participant C as claude, riff mcp, hooks
-    W->>K: your sign-in and your device key
-    W->>W: a new session key
-    W->>S: your token, the session, a proof of each key
-    S-->>W: the session grant
-    W->>C: start with the grant, the key and your user
-    C->>S: the grant and a proof of the session key
-    S-->>C: a session token
-    C->>S: calls, and posts signed with the session key
-    C-->>W: claude ends
-    W->>S: end the grant, with a proof of the session key
-```
-
-- Each `riff` process of the session swaps the grant for a session
-  token of its own. The grant does not change, so all processes of
-  the session use it.
-- The session key signs the posts of the session. riff-server lists it
-  with the keys of your devices, so the readers verify the posts.
-- When `claude` of the session ends, by each way, the wrapper ends the
-  grant, with a proof of the session key. A leave of the riff
-  (`/riff:leave`) keeps it, so the session can join again.
-- A grant also ends when your sign-in ends (`riff logout --all`, or a
-  removal from the riff), and 7 days after its last use. riff-server
-  keeps only a hash of it, and keeps it through a restart.
-- In a session, a riff command that needs your keyring stops with
-  `a riff session has no keyring`.
-- No grant, key or plan token goes into a message, a log line or a
-  file of the worktree.
-- When the machine has no sign-in at the server, for example a riff of
-  this machine only, the session gets no grant. It needs none.
-
-The lead gets a session ID of its own from its wrapper, in
-`RIFF_SESSION` and `claude --session-id`, so its grant acts only as
-the lead.
-
-### Give the sessions your Claude plan
-
-A session uses only your Claude plan, never an API key. Make a token
-of your plan one time on each machine, and give it to riff:
-
-```sh
-claude setup-token
-riff claude-token
-```
-
-Paste the whole output of `claude setup-token`, then press Enter and
-`Ctrl-D`. riff finds the token (it starts with `sk-ant-`) and keeps it
-in your keyring. You can also pipe it in:
-
-```sh
-riff claude-token < token.txt
-```
-
-Each session that riff starts on this machine after that gets the
-token as `CLAUDE_CODE_OAUTH_TOKEN`. The token never goes to
-riff-server or to another person. Sessions that run keep the old
-environment: stop the workers with `riff workers stop`, and the
-rollout starts new ones.
-
-To remove the token from this machine:
-
-```sh
-riff claude-token --remove
-```
-
-## The threat model of the sandbox
-
-riff trusts you and the code of riff. It does not trust an AI
-session, or a test that a session writes. A session can try each
-thing that its sandbox allows.
-
-| Actor | Holds | Runs |
-|---|---|---|
-| You | your home, your keyring, your SSH keys, the sign-in of `gh`, your Claude plan token | outside each sandbox |
-| The lead | its grant, the forge token of the lead | in its sandbox; its broker runs its tmux steps |
-| A worker or a verifier | its grant, the forge token of its role, its worktree | in its sandbox |
-| A test run | its temp folder and its target | in its own namespaces, with loopback only |
-| riff outside: the wrapper, the broker, `riff worktrees clean`, `riff workers host`, the start of `riff` | your rights | outside each sandbox, as you |
-| riff-server | the facts of each session, the key of the GitHub App | on the shared server |
-| GitHub | the repository, the ruleset of `main` | on GitHub |
-
-```mermaid
-flowchart LR
-    subgraph M["your machine"]
-        O["you and riff outside"]
-        subgraph S["sandbox of a session"]
-            A["claude and each child"]
-            subgraph T["test run"]
-                X["each test"]
-            end
-        end
-    end
-    A -->|"broker request"| O
-    A -->|"files it writes"| O
-    A -->|"grant, token request"| R["riff-server"]
-    R -->|"forge token"| A
-    A -->|"push, pull request"| G["GitHub"]
-```
-
-The arrows that go out of a sandbox are the shared surfaces. riff
-keeps one rule on each of them:
-
-- Nothing that a session writes is run, or read as config, by a
-  process outside a sandbox, with no check.
-- A trusted service (the broker, riff-server) takes no path, role or
-  repository from a request. It takes them from its own facts.
-
-One gap is open until #687: a session can connect to the broker of
-another session of the same person, the broker of the lead too. The
-broker checks only the user of a connection, and each session runs as
-the same user. So the uid check does not separate the sessions. See
-"The seqpacket unix sockets" below.
-
-### The shared surfaces
-
-Each row is a surface with a control, and the test of that control.
-
-<!-- surfaces -->
-| Surface | A session writes or asks | Read or run outside by | Control | Test |
-|---|---|---|---|---|
-| The git dir of the clone | a worker: its objects, refs, logs and worktrees | each git command of riff in the clone | a worker writes no config and no hooks; riff runs git with no hooks, no fsmonitor and no submodule | `a_worker_does_only_what_its_profile_allows`, `a_worker_commits_and_pushes_with_no_write_of_the_git_config` |
-| The git dirs of a worktree | the `.git` file of its worktree, `gitdir` and `commondir` in `.git/worktrees/NAME` | `riff worktrees clean` | riff sets the git dirs itself, and runs no git in a worktree that names another git dir | `worktrees_clean_runs_no_program_of_a_git_dir_that_a_session_names`, `a_link_or_a_way_out_of_the_worktree_gives_no_git`, `a_clone_with_a_config_of_each_worktree_gives_no_git` |
-| The files of a worktree | each file, for example `.gitattributes` | `git status`, `add` and `commit` of riff | these git steps run in the sandbox of a worker | `worktrees_clean_reads_a_worktree_with_the_rights_of_a_worker` |
-| A broker request | an operation, a folder and variables | `riff workers broker` | only the operations of its list, a folder in the worktree, only the variables of cargo and the tests | `an_unknown_operation_is_refused`, `the_broker_keeps_only_the_variables_of_the_tests`, `a_test_run_in_a_worker_runs_through_the_broker`, `a_command_with_no_broker_fd_asks_the_broker_by_its_socket` |
-| The folders of a test run | a target, a planted `.git` file | `riff test-run` | the target, the clone and the worktree come from the broker | `a_test_run_writes_no_folder_that_the_request_names`, `a_planted_git_file_gives_a_test_run_no_other_git_dir` |
-| The environment of a test run | the variables of the request | each test | an empty environment, then only `TEST_RUN_VARS` | `no_credential_and_no_unknown_variable_of_the_parent_reaches_a_test` |
-| The cargo home | a read of the registry token | `cargo` of the person | no role reads `credentials.toml` or `credentials` | `no_session_and_no_test_run_reads_the_cargo_registry_tokens` |
-| A forge token request | a call as its session | riff-server | the role and the repository come from the facts of the server; a new claim revokes the old token | `the_server_takes_the_repository_from_its_facts_not_from_the_call`, `each_role_gets_its_rights_on_the_repository_of_its_session_only`, `a_change_of_claim_revokes_the_old_token` |
-| The session grant | a call with its grant | riff-server | the grant acts only as its session; only the session key ends it | `a_grant_acts_only_as_its_session_and_lives_through_a_restart`, `only_the_session_key_ends_a_grant_and_its_tokens`, `a_session_works_with_only_its_environment_and_leaks_no_secret` |
-| The permission rules of a session | a write of its rules file | `claude` | the rules file is outside each write path | `no_role_writes_the_permission_rules_of_its_session`, `a_worker_does_only_what_its_profile_allows` |
-| The plugin of riff and the git config of the person | a write | `claude`, git | a session reads them only | `a_worker_does_only_what_its_profile_allows` |
-| The Claude folder of the person | a write of its settings | the `claude` of the person | no session writes it; each session has its own Claude folder | `a_worker_does_only_what_its_profile_allows`, `no_role_edits_a_settings_file_of_claude_code` |
-| The tmux servers and the D-Bus | a connect | tmux, D-Bus services | no stream unix socket with a name (a seqpacket one stays for the broker: an exception until #682); no `TMUX`; the bus is a secret path | `a_worker_reaches_no_tmux_server`, `no_role_reaches_the_home_the_keyring_or_the_bus_of_the_person` |
-| The other processes of the person | a signal, a read of `/proc/PID/environ` | each process | the scope of signals of Landlock; no trace | `a_worker_does_only_what_its_profile_allows` |
-| The user manager of systemd | a call | systemd | no profile reaches a bus of systemd | `the_worker_profile_has_no_access_to_the_systemd_user_bus` |
-| A host request | a request in the name of the lead | `riff workers host` | only a signed request of the lead | `a_host_refuses_a_request_that_is_not_from_the_lead` |
-| The stop file | `.riff-stop` in its temp folder | the wrapper | the wrapper reads only that the file is there | `the_server_stops_an_idle_worker_through_its_wrapper` |
-| The lead | the worktrees of the clone and the git parts of a worker; an operation of its broker | each git command of riff, tmux, the processes of its workers | the lead writes no config, hooks, info, packed-refs or other file of the clone; its tmux steps and signals are operations of its broker, only on the workers with the clone mark of its clone | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker`, `the_lead_writes_no_config_hooks_info_or_packed_refs_of_the_clone`, `a_stop_of_a_worker_of_another_clone_stops_nothing`, `only_the_broker_of_a_lead_runs_the_operations_of_the_lead` |
-| The MCP config of a session | a write of `workers-mcp.json` | the `claude` of the lead and of each worker | the file is in the given folder of riff, outside each write path | `a_lead_in_its_sandbox_starts_and_stops_a_worker_through_the_broker` |
-| The refs of the clone | a worker: its refs, also `refs/remotes/origin/HEAD`, and the `HEAD` of its worktree | the fast-forward of the main clone, `riff worktrees clean`, the rules of riff | riff asks `origin` for the default branch and names each ref in full; the branch of a worktree comes from its name; riff refuses a branch name that starts with `-`, and puts `--` before each name | `the_fast_forward_takes_the_default_branch_from_origin_not_from_a_planted_ref`, `the_default_branch_comes_from_origin_not_from_a_planted_ref`, `worktrees_clean_takes_the_branch_from_the_name_not_from_the_head`, `worktrees_clean_puts_two_dashes_before_each_name` |
-| The pane of a session | an operation of the own pane: read, type, the end over the limit | tmux, the end of its worker | each acts only on the pane of the session that asks, and takes no pane | `the_operations_of_the_own_pane_act_only_on_the_pane_of_the_session`, `a_worker_in_its_sandbox_gets_clear_in_its_own_pane_through_the_broker`, `a_worker_in_its_sandbox_over_the_limit_ends_through_the_broker` |
-| The folder of riff | a read of `tmux.conf`, `clones`, `worker-deaths` and the pool | `riff` at its start, the tmux server, the rollout, the wrapper, each workers host | no session writes the folder of riff; each AI role writes only its own folder in it | `no_ai_role_writes_the_folder_of_riff`, `a_worker_does_only_what_its_profile_allows` |
-| The own folder of a session | its files, for example the start of its context | `riff workers reap` | the reap reads only the own folder of that worker, with no follow of a link | `the_reap_reads_the_start_only_from_the_own_folder_of_the_worker` |
-| The pool of build jobs | a token of the pipe | the wrapper of each worker, `riff test-run` | a session and a test run write only the pipe and the locks of a taker | `no_ai_role_writes_the_folder_of_riff`, `the_run_writes_only_the_files_of_the_pool_that_a_taker_writes` |
-| The temp folder of a session | a link in the place of a file or a folder | the wrapper (the forge token), `riff test-run` (the run folder), the broker (the sign-in lock) | each write opens the folder and the file with no follow of a link | `a_planted_link_in_the_temp_folder_gets_no_token`, `a_run_folder_binds_the_folders_that_riff_made`, `a_planted_link_gets_no_sign_in_lock` |
-| The write paths of a profile | a link or a `.git` file in its worktree | the sandbox, at its start | the start dir has no link below the worktree folder; the clone of git is the start dir or above it; the worktree is the clone, its worktree folder or one folder in it; the target stays in the worktree; else the session does not start | `a_link_out_of_the_worktree_gives_no_sandbox_and_no_write`, `a_link_in_the_worktree_folder_to_another_repository_gives_no_sandbox`, `a_git_file_that_names_another_clone_gives_no_sandbox`, `a_worktree_below_a_worktree_gives_no_sandbox` |
-<!-- /surfaces -->
-
-### The shared surfaces with no control yet
-
-Each row is a surface with no control yet. It names its issue, or an
-accept. Mike signed off this table on 2026-10-08 (#644).
-
-<!-- open-surfaces -->
-| Surface | A session writes or asks | Read or run outside by | Risk | Decision |
-|---|---|---|---|---|
-| The locks and the compact record | `workers-limit.lock`, `clear-ID.lock`, the compact lock and record | the hooks and checks of riff | a step of riff waits | Accept (Mike, 2026-10-08): a lock or a record holds no command |
-| The folder of a broker request | a folder | `riff workers broker` | the broker runs in another folder than the one it checked | #614, #654 |
-| The variables of a broker request | a bus address | `riff test-run` | a test run gets a variable that is not of cargo or the tests | #654 |
-| The seqpacket unix sockets | a connect to a service that listens on a seqpacket socket | that service of the person | a session reaches such a service; the broker needs this kind of socket (#673). On the check host (`ss -xl`) only `/run/udev/control` listens, and only root connects to it; another host can differ, and a seqpacket service that starts later is reachable. Until #687, a session also reaches the broker of each other session of the same person, the broker of the lead too, and asks it as that session: the broker checks only the uid of the peer, and each session has the same uid | #682 (restore after #645), #687 |
-| The worktrees of other sessions | the worktrees folder of the clone | the other sessions | a worker changes the work of another session | #645 |
-| Forge tokens in an allowed account | a session in a repository of the account | riff-server | each member of the riff gets a token for each repository of an allowed account where it has a session | Accept (Mike, 2026-10-08): the owner admits each member, and the token has the rights of the role only |
-| The lead token of a person | a token with no session | riff-server | the token lives up to one hour after the allow or the lead ends | Accept (Mike, 2026-10-08): one hour at most |
-| A session grant with no process | none | riff-server | the grant stays 7 days when `claude` does not start | Accept (Mike, 2026-10-08): only the session key uses it, and the key was only in the wrapper |
-<!-- /open-surfaces -->
-
-To check the two tables, and that each test is there:
-
-```sh
-cargo test -p hygiene --test all surfaces::
-```
 
 ## A restart
 
@@ -4503,10 +3416,10 @@ riff tail
 
 ## Run the lead and its workers in tmux
 
-`riff` starts the lead in tmux (see [Start the riff](#start-the-riff)).
 In tmux, riff lays out your sessions. The lead gets a `riff tail`
 pane beside it. Your workers get a window of their own, with one pane
-each.
+each. Outside tmux, start each session by hand, as in
+[Start a Riff](start-a-riff.md).
 
 ```mermaid
 flowchart LR
@@ -4564,56 +3477,16 @@ riff who
 Error: cannot reach riff-server at http://127.0.0.1:7878
 ```
 
-### Start the riff
+### Start the lead in tmux
 
-Run `riff` with no command in a terminal. It is the one step that
-starts the lead of a repository:
-
-```sh
-riff
-```
-
-riff shows the repositories that it knows on this machine, with the
-state of each. The clone of the current directory is in the list too:
-
-```text
-The riff repositories on this machine:
-  1  como-technologies/riff    running, 4 live sessions  /home/ada/src/riff
-  2  como-technologies/strata  paused, 0 live sessions  /home/ada/src/strata
-Type a number, or the path of a new clone:
-```
-
-Type a number, or the path of a clone that is not in the list. riff
-keeps each clone that you pick, so the list shows it the next time.
-
-riff then shows the tmux session of that repository. When it does not
-run yet, riff starts it with the lead in the main clone, with Remote
+Start tmux in your repository, then start the lead with Remote
 Control (see
 [Answer your lead from the Claude app](#answer-your-lead-from-the-claude-app)):
-`claude --remote-control`. The lead gets a temp folder of its own and
-the forge token of the lead, and none of your credentials (see
-[The forge token of each role](#the-forge-token-of-each-role)). The
-lead runs in the sandbox of its role, and gets the permission rules of
-its profile (see
-[The lead in its sandbox](#the-lead-in-its-sandbox)). riff writes the
-rules at each start of a lead, to its rules file, for example
-`~/.local/share/riff/rules/lead-como-technologies-riff.json`. When riff
-cannot make the rules, it says why in one line and starts the lead
-with no rules of a profile. When the session runs, riff shows it and
-starts no second lead. To leave the session and keep it running, press
-`Ctrl-b d`. Run `riff` again to come back.
-
-riff runs its own tmux server, with the socket `riff` and a config of
-its own. Your `~/.tmux.conf` does not change a riff pane. The server
-gets only the kept variables of your environment. To list the
-sessions of that server by hand:
 
 ```sh
-tmux -L riff ls
+tmux new -s riff
+claude --remote-control
 ```
-
-Outside tmux, `riff workers` and `riff workers stop` use the tmux
-server of riff.
 
 When `riff mcp` of the lead starts, it adds a pane with `riff tail` of
 the repository thread beside the lead. It adds the pane once: a restart,
@@ -4785,6 +3658,7 @@ flowchart TD
 | The memory of all workers | three quarters of the memory | `riff workers memory` |
 | The available memory that a new worker needs | 4 GB | `riff workers floor` |
 | The folder of the temp files of the workers | `~/.cache/riff/tmp` | `riff workers tmp` |
+| The most size of the compile cache of the workers | `40G` | `riff workers cache` |
 
 riff sets the limits when a worker starts. It does not change them
 while the workers run. Only the pool watches the memory pressure.
@@ -4977,7 +3851,7 @@ With 0, riff makes the limit from the machine again:
 riff workers memory 0
 ```
 
-The next worker that starts gives the slice the new limit. To see
+The next `riff workers start` gives the slice the new limit. To see
 the slice, its memory and its workers:
 
 ```sh
@@ -4992,7 +3866,7 @@ workers there:
 systemd-cgls --user-unit riff.slice
 ```
 
-On a machine with no systemd, the pane of the first worker says that
+On a machine with no systemd, the first `riff workers start` says that
 the workers run with no memory limit. The other limits still apply.
 
 When `systemd-run --user --scope` fails in the pane of a worker, for
@@ -5053,15 +3927,16 @@ worker. Each pane runs `claude "Join the riff."` in the main worktree,
 with no Remote Control and no recap. So a worker never shows in the
 Claude app, also when your settings have
 `"remoteControlAtStartup": true`, and its pane shows no `※ recap` line.
-A worker also shows no suggested prompt: no person types into it.
 riff gives these settings on the command line of each worker. Your
 settings file does not change. Each worker joins the riff and finds its
 own work. A second `riff workers start` adds panes to the same window.
 Outside tmux, the command says that it needs tmux and starts nothing.
 
-A worker starts in the main clone. riff gives it the plugin, the
-riff tools and `RIFF_ON=1`, as it does for the lead. See
-[What riff gives Claude](#what-riff-gives-claude).
+A worker starts in the main clone. Where riff is off in the main
+clone, riff starts no worker: not with this command, not by itself,
+and not on a workers host. The command then names `riff enable`, and
+the lead gets one note when riff starts no worker by itself. See
+[Turn riff on or off for a repository](#turn-riff-on-or-off-for-a-repository).
 
 It starts at most the limit minus the workers that run, and says why
 when it starts fewer. A worker never starts workers. In Claude Code,
@@ -5384,6 +4259,10 @@ To see the scopes of the workers of this machine, run this. It lists
 systemctl --user list-units 'riff-worker-*.scope'
 ```
 
+The `sccache` server of the machine runs in its own scope,
+`riff-sccache-PORT.scope`, outside the scope of each worker. It never
+ends for idle time, so no build of a worker starts it again.
+
 ### Clean the worktrees of sessions that ended
 
 A session that ends leaves its worktree in `.claude/worktrees`, often
@@ -5399,8 +4278,7 @@ riff worktrees clean
 | a lock whose process is gone | unlocks it, then goes on |
 | a lock of a live process, or a lock with no process ID | keeps it |
 | a live session of `riff who` works in it | keeps it |
-| work that is not committed, no live owner, and its `HEAD` on its own branch | commits it as WIP, pushes its branch, and posts a note to the lead |
-| work that is not committed, and its `HEAD` on another branch or detached | keeps it |
+| work that is not committed, and no live owner | commits it as WIP, pushes its branch, and posts a note to the lead |
 | clean, and its `HEAD` is on the default branch of `origin`: no commit of its own | removes it and its branch |
 | clean, and a merged pull request has its `HEAD` as head, also when the branch is gone | removes it and its branch |
 | clean, detached, and its commit is on `origin` | removes it |
@@ -5413,14 +4291,6 @@ It prints one line for each worktree, with what it did and why:
 /home/mike/src/riff/.claude/worktrees/verify-issue-14-a6cf: removed: its commit is the head of the merged pull request #41
 /home/mike/src/riff/.claude/worktrees/issue-13: kept: a live session works in it
 ```
-
-riff takes the branch of a worktree from its name, not from its
-`HEAD`: the worktree `.claude/worktrees/issue-12` has the branch
-`worktree-issue-12`. A session writes its `HEAD` and the refs of the
-clone, so riff trusts neither. It saves, pushes and deletes only that
-branch, and never the default branch. It asks `origin` for the default
-branch (`git ls-remote --symref origin HEAD`), and does not read
-`origin/HEAD` of the clone.
 
 `riff workers start` and the start of `riff workers host` run it too.
 A workers host and the `riff mcp` of the lead also run it each 10
@@ -5529,24 +4399,68 @@ disk on Ubuntu, stop its tmpfs, then restart the machine:
 sudo systemctl mask tmp.mount
 ```
 
-### Remove the old compile cache
+### Share the compile cache of a host
 
-riff gives the workers no compile cache. A build of a worker takes
-about the same time with `sccache` and with no cache: most
-of the time goes to work that `sccache` cannot keep, for example proc
-macros, build scripts, the crates of the workspace and the links.
+Each item gets a new worktree. With no cache, each worker builds each
+dependency again in its own `target` folder. So the workers of a
+machine share one compile cache: `sccache`. A new worktree reads the
+dependencies from the cache. The cache is on the machine only.
 
-riff 1.3.0 and older started an `sccache` server on each machine with
-workers, and kept the cache in `~/.cache/riff/sccache` (or
-`$RIFF_HOME/sccache`). That server still runs after the update. Stop
-it and delete the cache on each such machine:
-
-```sh
-systemctl --user stop 'riff-sccache-*.scope'
-rm -rf ~/.cache/riff/sccache
+```mermaid
+flowchart TD
+    I["riff workers host, riff update"] --> F{"sccache of the pinned version?"}
+    F -- no --> C["cargo install --locked sccache"]
+    F -- yes --> W
+    C --> W["riff workers run: RUSTC_WRAPPER=sccache"]
+    W --> S["start the sccache server of the machine,<br/>with no variable of a worker"]
+    S --> B["each build of each worker<br/>reads and writes ~/.cache/riff/sccache"]
 ```
 
-riff ignores the key `workers.cache` in `config.toml`.
+The `sccache` server is of the machine, not of a worker. So the clear,
+`riff workers reap` and `riff workers stop` of a worker never stop it.
+When the server ends, a build goes on with no cache.
+
+riff installs `sccache` itself. The start of `riff workers host`
+installs it, and `riff update` installs it on a machine with a limit of
+workers. When the install fails, the lead gets one note, and the
+workers build with no cache. To try the install again, run:
+
+```sh
+riff update
+```
+
+`riff workers` shows the cache under the temp line: its size, its most
+size and its hit rate:
+
+```text
+temp 3.1GB in /home/mike/.cache/riff/tmp
+cache 12.0GB of 40G in /home/mike/.cache/riff/sccache, hits 85%
+```
+
+#### Show or change the size of the cache
+
+Show the most size and the cache now:
+
+```sh
+riff workers cache
+```
+
+Set the most size. The next worker that starts uses it. The default
+is `40G`:
+
+```sh
+riff workers cache 60G
+```
+
+#### Empty the cache
+
+Stop the workers of the machine first. Then stop the `sccache` server
+and delete the cache:
+
+```sh
+riff workers stop
+riff workers cache --clear
+```
 
 ### Watch the health of a machine
 
@@ -5891,56 +4805,6 @@ To see the subagents of a worker, go to the tmux window
 tmux select-window -t riff-workers
 ```
 
-#### A worker in its sandbox clears its context
-
-A worker runs in its sandbox. It reaches no tmux server, so it cannot
-type into its own pane. Its broker runs outside the sandbox, in the
-pane of the worker. So the check of the clear asks the broker, and the
-broker types `/clear` and "Join the riff." into that pane. You do
-nothing.
-
-```mermaid
-sequenceDiagram
-    participant H as riff hook clear (worker, sandbox)
-    participant B as broker of the worker (outside)
-    participant T as tmux
-    H->>B: end-over-limit
-    B->>T: count the workers of the machine
-    B-->>H: false: not over the limit
-    H->>B: pane-type /clear
-    B->>T: send-keys -t %5 /clear
-    H->>B: pane-type Join the riff.
-    B->>T: send-keys -t %5 Join the riff.
-```
-
-The broker of each role runs the operations of the own pane:
-
-| Operation | What the broker does |
-|---|---|
-| `pane-id` | gives the name of the pane of the session, for example `%5` |
-| `pane-screen` | reads the pane of the session |
-| `pane-type` | types a line into the pane of the session |
-| `end-over-limit` | ends the worker of the session when more workers run than the limit |
-
-Each operation acts only on the pane of the session that asks: the
-pane where its broker started. No operation takes a pane, so a worker
-cannot type into the pane of another worker.
-
-When more workers run than the limit, the broker ends its own worker
-in place of the clear. It closes the pane, posts the note to the lead
-and ends the session (see
-[Lower the limit while workers run](#lower-the-limit-while-workers-run)).
-
-The clear of a worker in its sandbox does not fast-forward the main
-clone: the worker writes no file of it. `riff workers start` still
-does.
-
-To find the pane of each worker, and see which workers must clear:
-
-```sh
-riff workers
-```
-
 riff never clears the lead: you work in it. It compacts the lead at the
 end of a wave (see
 [riff compacts the lead at the end of a wave](#riff-compacts-the-lead-at-the-end-of-a-wave)).
@@ -6057,10 +4921,8 @@ riff lead compact --quiet 120
 
 Workers start in the main clone, and each new worktree branches from
 it. So `riff workers start`, and riff before it clears the context of
-a worker outside a sandbox, fast-forward the main clone to `origin`
-first. You do not pull by hand. A worker in its sandbox writes no file
-of the main clone, so its clear does not fast-forward it. Its next
-worktree still starts from a fresh `origin/main`.
+a worker, fast-forward the main clone to `origin` first. You do not
+pull by hand.
 
 ```mermaid
 flowchart TD
@@ -6262,7 +5124,7 @@ sequenceDiagram
     S->>L: note: the server stops the idle worker
     M->>S: keep-alive, each 10 s
     S-->>M: stop
-    M->>W: write the stop file
+    M->>W: stop
     W-->>W: claude ends, the pane closes
     M->>S: end: the session leaves riff who
     opt the worker still runs 60 s after the ask
@@ -6271,9 +5133,7 @@ sequenceDiagram
 ```
 
 The watch of a worker also sends a keep-alive each 10 seconds, and
-writes the stop file in the same way. `riff workers run` looks for
-the file each 250 ms. A signal cannot stop it: the sandbox stops each
-signal to a process outside it. So a worker whose `riff mcp` ended,
+stops the wrapper in the same way. So a worker whose `riff mcp` ended,
 for example at a self-update, also stops.
 
 A worker that the lead wakes, or that claims work, before its next

@@ -153,8 +153,14 @@ async fn server_shows_the_riff_that_riff_uses_from_riff_server_as_a_table() {
         );
         assert!(lines[after + 1].starts_with("  release   "), "{stdout}");
     } else {
-        assert_eq!(lines.len(), after, "{stdout}");
+        assert_eq!(lines.len(), after + 1, "{stdout}");
     }
+    // The last line: whether riff is on here (01M3XY2SYKG91SAB2FS1QNCZ2H).
+    assert_eq!(
+        lines.last(),
+        Some(&"repository  riff on (RIFF_ON=1)"),
+        "{stdout}"
+    );
 }
 
 /// The label of each line of facts in `riff server`, in order.
@@ -435,46 +441,94 @@ fn update(bin: &Path, cargo_status: u8, server: &str) -> Command {
         0,
     );
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let mut cmd = riff(&["update", "--server", server]);
+    let mut cmd = riff(&["update", "--claude", "/opt/claude", "--server", server]);
     cmd.arg("--cargo").arg(cargo).env("PATH", path);
     cmd
 }
 
 #[tokio::test]
-async fn update_installs_both_binaries_and_runs_no_riff() {
+async fn update_installs_both_binaries_then_updates_the_plugin() {
     let bin = tempfile::tempdir().unwrap();
     let addr = real().await;
     let out = run(update(bin.path(), 0, &addr)).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(log(bin.path(), "cargo"), install(&release()));
-    assert_eq!(log(bin.path(), "riff"), "");
+    assert_eq!(
+        log(bin.path(), "riff"),
+        "connect claude --claude /opt/claude\n"
+    );
     let stdout = text(&out.stdout);
+    assert!(stdout.contains("Installed the riff plugin."), "{stdout}");
     assert!(
         stdout.ends_with("riff is up to date. Start your Claude Code sessions again.\n"),
         "{stdout}"
     );
 }
 
-/// 01M4BQA5K7DQHQ4DSJGQJH8ZQE: `riff update` on a machine with a limit
-/// of workers and no `sccache` installs only riff. It installs no
-/// compile cache.
+/// 01M4923963S666V9YWTZ46ZZ50: `riff update` on a machine with a limit
+/// of workers installs the pinned `sccache` after riff. A failed install
+/// is one line, and the update goes on.
 #[tokio::test]
-async fn update_installs_no_compile_cache_on_a_machine_with_workers() {
+async fn update_installs_sccache_on_a_machine_with_workers() {
     let addr = real().await;
     let home = tempfile::tempdir().unwrap();
     std::fs::write(home.path().join("config.toml"), "[workers]\nlimit = 2\n").unwrap();
+    let with = |bin: &Path| {
+        let mut cmd = update(bin, 0, &addr);
+        // Only a fake sccache of bin counts.
+        let real = std::env::var_os("PATH").unwrap();
+        let rest = std::env::split_paths(&real).filter(|d| !d.join("sccache").exists());
+        let path = std::env::join_paths(std::iter::once(bin.to_owned()).chain(rest)).unwrap();
+        cmd.env("PATH", path).env("RIFF_HOME", home.path());
+        cmd
+    };
+    let pinned = "install --locked sccache --version 0.18.0\n";
+
+    // The install puts sccache in place.
     let bin = tempfile::tempdir().unwrap();
-    let mut cmd = update(bin.path(), 0, &addr);
-    // No sccache on the PATH.
-    let real = std::env::var_os("PATH").unwrap();
-    let rest = std::env::split_paths(&real).filter(|d| !d.join("sccache").exists());
-    let path = std::env::join_paths(std::iter::once(bin.path().to_owned()).chain(rest)).unwrap();
-    cmd.env("PATH", path).env("RIFF_HOME", home.path());
+    let cmd = with(bin.path());
+    let cargo = bin.path().join("cargo");
+    std::fs::write(
+        &cargo,
+        format!(
+            "#!/bin/sh\necho \"$*\" >> {}/cargo.log\n\
+             case \"$*\" in *sccache*) printf '#!/bin/sh\\necho sccache 0.18.0\\n' > {0}/sccache; \
+             chmod +x {0}/sccache ;; esac\n",
+            bin.path().display()
+        ),
+    )
+    .unwrap();
     let out = run(cmd).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(log(bin.path(), "cargo"), install(&release()));
-    let all = text(&out.stdout) + &text(&out.stderr);
-    assert!(!all.contains("sccache"), "{all}");
+    assert_eq!(log(bin.path(), "cargo"), install(&release()) + pinned);
+    assert!(
+        text(&out.stdout).contains("riff: installs sccache 0.18.0 for the compile cache"),
+        "{}",
+        text(&out.stdout)
+    );
+
+    // With the pinned sccache: no second install.
+    let out = run(with(bin.path())).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        log(bin.path(), "cargo"),
+        install(&release()) + pinned + &install(&release())
+    );
+
+    // A cargo that installs nothing: one line, and the update passes.
+    let bin = tempfile::tempdir().unwrap();
+    let out = run(with(bin.path())).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let err = text(&out.stderr);
+    assert_eq!(
+        err.matches("cannot install sccache 0.18.0").count(),
+        1,
+        "{err}"
+    );
+    assert!(
+        err.contains("The workers there build with no compile cache."),
+        "{err}"
+    );
 }
 
 #[tokio::test]
@@ -669,12 +723,7 @@ async fn update_with_the_riff_of_this_machine_installs_the_newest_release() {
     assert_eq!(
         log(bin.path(), "git"),
         format!(
-            // 01M4CN0W644V72YY74WH3KRMMQ: no hook and no fsmonitor.
-            // 01M4CXPPVEPFYD86PN9V2Q6EKB: no submodule.
-            "-c core.hooksPath=/dev/null -c core.fsmonitor=false \
-             -c diff.ignoreSubmodules=all -c submodule.recurse=false \
-             -c fetch.recurseSubmodules=false -c push.recurseSubmodules=no \
-             -c status.submoduleSummary=false ls-remote --tags --refs {} v*\n",
+            "ls-remote --tags --refs {} v*\n",
             env!("CARGO_PKG_REPOSITORY")
         )
     );

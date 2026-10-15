@@ -2,8 +2,8 @@
 //!
 //! # Design
 //!
-//! `riff` starts the lead in the tmux server of riff (see
-//! [`crate::start`]). In tmux, riff lays out two windows (01M3JD390F49HZSKEJ3VACX0ZA,
+//! A person runs the lead in a terminal. When that terminal is tmux,
+//! riff lays out two windows (01M3JD390F49HZSKEJ3VACX0ZA,
 //! 01M3JD392Q5ANX0FPZ51W7B0E3):
 //!
 //! - **The lead window.** `riff mcp` of the lead adds a pane with
@@ -24,8 +24,8 @@
 //!     participant M as riff mcp of the lead
 //!     participant T as tmux
 //!     participant S as riff-server
-//!     P->>T: riff: tmux -L riff new-session
-//!     T->>L: claude --remote-control
+//!     P->>T: tmux new -s riff
+//!     P->>L: claude --remote-control
 //!     L->>M: start
 //!     M->>S: register, who
 //!     S-->>M: this session is the lead
@@ -91,10 +91,6 @@ use crate::api::Api;
 pub const TAIL: &str = "tail";
 /// The pane option that holds the riff session ID of a worker.
 pub const SESSION_MARK: &str = "@riff-session";
-/// The pane option that holds the main clone of a worker: the broker
-/// of a lead acts only on the workers of its own clone
-/// ([`crate::door`]).
-pub const CLONE_MARK: &str = "@riff-clone";
 /// The mark of the window of the workers.
 pub const WORKERS: &str = "workers";
 /// The name of the window of the workers.
@@ -103,10 +99,7 @@ pub const WORKERS_WINDOW: &str = "riff-workers";
 pub const JOIN: &str = "Join the riff.";
 /// The flag settings of a worker: no Remote Control, also when the
 /// user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), no recap
-/// (01M3MN0D429T4Q80DYBE9S9XR7), no suggested prompt
-/// (01M4CGFMX16JY8W2P9JJDDTSFC), the riff status line
-/// (01M4BYH7Y3P1JMQR51TWFGVZ39), the plugin of an older riff off
-/// (01M4CMN13D97R2JKHYGFSAM313), and each plugin of `lsp` off: the
+/// (01M3MN0D429T4Q80DYBE9S9XR7), and each plugin of `lsp` off: the
 /// plugins with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3). A rule
 /// denies `riff cloud` (01M4262DY8NN30SC4REYX2G9DV).
 ///
@@ -114,76 +107,25 @@ pub const JOIN: &str = "Join the riff.";
 /// use riff::terminal::worker_settings;
 /// assert_eq!(
 ///     worker_settings(&[]),
-///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"riff@riff":false}}"#,
+///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}"#,
 /// );
 /// assert_eq!(
 ///     worker_settings(&["rust-analyzer-lsp@claude-plugins-official".into()]),
-///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"promptSuggestionEnabled":false,"statusLine":{"type":"command","command":"riff statusline"},"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"riff@riff":false,"rust-analyzer-lsp@claude-plugins-official":false}}"#,
+///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@claude-plugins-official":false}}"#,
 /// );
 /// ```
 pub fn worker_settings(lsp: &[String]) -> String {
-    let off: serde_json::Map<String, serde_json::Value> =
-        std::iter::once(crate::old_config::PLUGIN)
-            .chain(lsp.iter().map(String::as_str))
-            .map(|p| (p.to_owned(), false.into()))
-            .collect();
-    serde_json::json!({
+    let mut settings = serde_json::json!({
         "remoteControlAtStartup": false,
         "awaySummaryEnabled": false,
-        "promptSuggestionEnabled": false,
-        "statusLine": crate::launch::statusline(),
         "permissions": {"deny": ["Bash(riff cloud)", "Bash(riff cloud *)"]},
-        "enabledPlugins": off,
-    })
-    .to_string()
-}
-
-/// `args` of `claude` with its flag settings changed by `edit`. It
-/// changes the first `--settings` that holds a JSON object, and else
-/// adds a new `--settings` at the end.
-///
-/// ```
-/// use riff::terminal::with_settings;
-///
-/// let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-/// let on = |s: &mut serde_json::Map<String, serde_json::Value>| {
-///     s.insert("b".into(), true.into());
-/// };
-/// assert_eq!(
-///     with_settings(&args(&["--settings", "x.json", "--settings", r#"{"a":1}"#]), on),
-///     args(&["--settings", "x.json", "--settings", r#"{"a":1,"b":true}"#]),
-/// );
-/// assert_eq!(
-///     with_settings(&args(&["Join the riff."]), on),
-///     args(&["Join the riff.", "--settings", r#"{"b":true}"#]),
-/// );
-/// ```
-pub fn with_settings(
-    args: &[String],
-    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
-) -> Vec<String> {
-    let mut out = args.to_vec();
-    let at = out.windows(2).position(|pair| {
-        pair[0] == "--settings"
-            && serde_json::from_str::<serde_json::Value>(&pair[1]).is_ok_and(|v| v.is_object())
     });
-    match at {
-        Some(at) => {
-            let mut value: serde_json::Value =
-                serde_json::from_str(&out[at + 1]).unwrap_or_else(|_| serde_json::json!({}));
-            if let Some(settings) = value.as_object_mut() {
-                edit(settings);
-            }
-            out[at + 1] = value.to_string();
-        }
-        None => {
-            let mut settings = serde_json::Map::new();
-            edit(&mut settings);
-            out.push("--settings".to_owned());
-            out.push(serde_json::Value::Object(settings).to_string());
-        }
+    if !lsp.is_empty() {
+        let off: serde_json::Map<String, serde_json::Value> =
+            lsp.iter().map(|p| (p.clone(), false.into())).collect();
+        settings["enabledPlugins"] = off.into();
     }
-    out
+    settings.to_string()
 }
 
 /// A program to run in a new pane.
@@ -205,8 +147,6 @@ pub struct Program {
 pub struct Claude<'a> {
     /// The `claude` program.
     pub bin: &'a Path,
-    /// The root of the plugin (see [`crate::plugin::root`]).
-    pub plugin: &'a Path,
     /// The file with the only MCP servers of the worker (see
     /// [`crate::worker_mcp`]).
     pub mcp: &'a Path,
@@ -215,7 +155,7 @@ pub struct Claude<'a> {
 }
 
 /// A worker pane of this machine.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerPane {
     /// The tmux pane, for example `%3`.
     pub pane: String,
@@ -282,9 +222,8 @@ impl Program {
 
     /// A worker: `claude "Join the riff."` through `riff workers run`
     /// (see [`crate::worker`]) in the main worktree, with
-    /// `RIFF_WORKER=1`, `RIFF_ON=1`, its riff session ID in
-    /// `RIFF_SESSION`, and the flags of `claude` (see [`Claude`] and
-    /// [`crate::launch`]).
+    /// `RIFF_WORKER=1`, its riff session ID in `RIFF_SESSION`, and the
+    /// flags of `claude` (see [`Claude`]).
     /// With `slice`, the wrapper runs `claude` in a scope of that slice
     /// (see [`crate::limits`]).
     /// `--mcp-config` takes more than one value, so `--settings` comes
@@ -294,7 +233,6 @@ impl Program {
     /// use riff::terminal::{Claude, Program};
     /// let claude = Claude {
     ///     bin: "claude".as_ref(),
-    ///     plugin: "/d/riff".as_ref(),
     ///     mcp: "/run/riff/workers-mcp.json".as_ref(),
     ///     settings: r#"{"awaySummaryEnabled":false}"#,
     /// };
@@ -304,10 +242,9 @@ impl Program {
     /// );
     /// assert_eq!(
     ///     worker.command,
-    ///     r#"'/bin/riff' workers run 'claude' '--plugin-dir' '/d/riff' '--strict-mcp-config' '--mcp-config' '/run/riff/workers-mcp.json' '--settings' '{"awaySummaryEnabled":false}' 'Join the riff.'"#,
+    ///     r#"'/bin/riff' workers run 'claude' '--strict-mcp-config' '--mcp-config' '/run/riff/workers-mcp.json' '--settings' '{"awaySummaryEnabled":false}' 'Join the riff.'"#,
     /// );
     /// assert!(worker.env.contains(&("RIFF_WORKER".into(), "1".into())));
-    /// assert!(worker.env.contains(&("RIFF_ON".into(), "1".into())));
     /// assert!(worker.env.contains(&("RIFF_SESSION".into(), "w1".into())));
     /// assert!(worker.env.contains(&("RIFF_WORKER_SLICE".into(), "riff-workers.slice".into())));
     /// assert_eq!(worker.session.as_deref(), Some("w1"));
@@ -324,7 +261,6 @@ impl Program {
         let mut env = vec![
             ("RIFF_SERVER".into(), server.into()),
             ("RIFF_WORKER".into(), "1".into()),
-            (crate::launch::ON.0.into(), crate::launch::ON.1.into()),
             ("RIFF_SESSION".into(), session.into()),
         ];
         if let Some(slice) = slice {
@@ -334,17 +270,12 @@ impl Program {
             dir: main.to_owned(),
             env,
             command: format!(
-                "{} workers run {} {} {} {} {}",
+                "{} workers run {} {} {} {} {} {} {}",
                 quote(&riff.to_string_lossy()),
                 quote(&claude.bin.to_string_lossy()),
-                crate::launch::args(&crate::launch::Given {
-                    plugin: claude.plugin.to_owned(),
-                    mcp: claude.mcp.to_owned(),
-                })
-                .iter()
-                .map(|a| quote(a))
-                .collect::<Vec<_>>()
-                .join(" "),
+                quote("--strict-mcp-config"),
+                quote("--mcp-config"),
+                quote(&claude.mcp.to_string_lossy()),
                 quote("--settings"),
                 quote(claude.settings),
                 quote(JOIN)
@@ -386,9 +317,6 @@ pub trait Terminal {
 pub struct Tmux {
     bin: PathBuf,
     pane: String,
-    /// The socket name of the server (`-L`), or `None` for the server
-    /// of `TMUX`.
-    socket: Option<String>,
 }
 
 impl Tmux {
@@ -418,45 +346,13 @@ impl Tmux {
         Tmux {
             bin: bin.into(),
             pane: pane.to_owned(),
-            socket: None,
         }
     }
 
     /// The tmux of this machine, with `tmux` on `PATH`. It needs no
-    /// pane: it lists and stops the workers from any terminal. Outside
-    /// tmux, it is the server of riff (01M4BSSX66A2NNVQK48KQH8BEZ, see
-    /// [`crate::start`]).
+    /// pane: it lists and stops the workers from any terminal.
     pub fn machine() -> Self {
-        Self::machine_with("tmux", std::env::var_os("TMUX"))
-    }
-
-    /// [`Tmux::machine`] at `bin`, with `tmux`, the value of `TMUX`.
-    ///
-    /// ```
-    /// use riff::terminal::Tmux;
-    /// assert_eq!(Tmux::machine_with("tmux", None).socket(), Some("riff"));
-    /// assert_eq!(Tmux::machine_with("tmux", Some("".into())).socket(), Some("riff"));
-    /// let pane = Some("/tmp/tmux-1000/default,1,0".into());
-    /// assert_eq!(Tmux::machine_with("tmux", pane).socket(), None);
-    /// ```
-    pub fn machine_with(bin: impl Into<PathBuf>, tmux: Option<OsString>) -> Self {
-        let mut machine = Self::new(bin, "");
-        if tmux.is_none_or(|t| t.is_empty()) {
-            machine.socket = Some(crate::start::SOCKET.into());
-        }
-        machine
-    }
-
-    /// The pane of the session, or an empty text for the tmux of the
-    /// machine.
-    pub fn pane(&self) -> &str {
-        &self.pane
-    }
-
-    /// The socket name of the server, when it is not the server of
-    /// `TMUX`.
-    pub fn socket(&self) -> Option<&str> {
-        self.socket.as_deref()
+        Self::new("tmux", "")
     }
 
     /// The process ID of the program of `pane`, or `None` when tmux
@@ -478,11 +374,7 @@ impl Tmux {
 
     /// Runs tmux. The inner error is the stderr of a failed command.
     fn try_run(&self, args: &[&str]) -> Result<std::result::Result<String, String>> {
-        let mut cmd = Command::new(&self.bin);
-        if let Some(socket) = &self.socket {
-            cmd.args(["-L", socket]);
-        }
-        let out = cmd
+        let out = Command::new(&self.bin)
             .args(args)
             .output()
             .with_context(|| format!("cannot run {}", self.bin.display()))?;
@@ -492,24 +384,10 @@ impl Tmux {
         Ok(Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned()))
     }
 
-    /// The main clone of the worker in `pane` ([`CLONE_MARK`]), or
-    /// `None` when the pane has no such mark.
-    pub fn pane_clone(&self, pane: &str) -> Option<PathBuf> {
-        let format = format!("#{{{CLONE_MARK}}}");
-        let clone = self
-            .try_run(&["display-message", "-p", "-t", pane, &format])
-            .ok()?
-            .ok()?;
-        (!clone.is_empty()).then(|| PathBuf::from(clone))
-    }
-
-    /// Marks `pane` with the session of `program` and its folder, the
-    /// main clone, if it has a session.
+    /// Marks `pane` with the session of `program`, if it has one.
     fn mark(&self, pane: &str, program: &Program) -> Result<()> {
         if let Some(session) = &program.session {
             self.run(&["set-option", "-p", "-t", pane, SESSION_MARK, session])?;
-            let clone = program.dir.to_string_lossy();
-            self.run(&["set-option", "-p", "-t", pane, CLONE_MARK, &clone])?;
         }
         Ok(())
     }

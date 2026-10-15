@@ -268,8 +268,6 @@ pub fn show(record: &Record) -> String {
             s.plan.done.len()
         ),
         Change::PlanEnded(e) => format!("plan_ended  {}", e.thread),
-        Change::ForgeAllowed(a) if a.allowed => format!("forge_allowed  {}", a.owner),
-        Change::ForgeAllowed(a) => format!("forge_allowed  {} no more", a.owner),
     };
     format!(
         "{}  {}  {facts}  ({})",
@@ -308,7 +306,6 @@ fn thread_of(record: &Record) -> Option<String> {
             Scope::Riff | Scope::Other => None,
         },
         Change::SettingChanged(_)
-        | Change::ForgeAllowed(_)
         | Change::SessionForgotten(_)
         | Change::SessionStarted(_)
         | Change::RiffMade(_)
@@ -634,9 +631,20 @@ pub struct Verified {
 pub async fn verify(store: &dyn Store) -> Result<Verified, ToolError> {
     let mut verified = Verified::default();
     let checkpoints = checkpoint::names(store).await?;
+    let build = riff_core::build::Build::this().version;
     for (position, _, name) in &checkpoints {
         verified.checkpoints += 1;
         let read = match store.load(name).await? {
+            // A checkpoint of a later release line is not a problem: a
+            // start passes over it (01M4YNCEMNRCAXD37V03T4JQYR).
+            Some(loaded)
+                if serde_json::from_slice(&loaded.bytes)
+                    .ok()
+                    .and_then(|v| checkpoint::of_later_line(&v, &build))
+                    .is_some() =>
+            {
+                continue;
+            }
             Some(loaded) => checkpoint::decode(&loaded.bytes),
             None => Err("the checkpoint is gone".into()),
         };
@@ -1182,6 +1190,27 @@ mod tests {
         assert_eq!(verified.problems[0].object, name);
         assert!(verified.problems[0].why.starts_with("does not read"));
         assert_eq!(verified.good, Some(6));
+    }
+
+    /// 01M4YNCEMNRCAXD37V03T4JQYR: a checkpoint of a later release line
+    /// that this build cannot read is not a problem. A start passes over
+    /// it.
+    #[tokio::test]
+    async fn verify_passes_over_a_checkpoint_of_a_later_release_line() {
+        let store = store().await;
+        let name = checkpoint::name(2, 5);
+        let later = br#"{"format":1,"build":"999.0.0","state":{"position":"x"}}"#;
+        store.save(&name, later.to_vec(), None).await.unwrap();
+        let verified = verify(&store).await.unwrap();
+        assert!(verified.problems.is_empty(), "{:?}", verified.problems);
+        // The same checkpoint of this release line is a problem.
+        let this = riff_core::build::Build::this().version;
+        let same = format!(r#"{{"format":1,"build":"{this}","state":{{"position":"x"}}}}"#);
+        let other = checkpoint::name(3, 6);
+        store.save(&other, same.into_bytes(), None).await.unwrap();
+        let verified = verify(&store).await.unwrap();
+        assert_eq!(verified.problems.len(), 1, "{:?}", verified.problems);
+        assert_eq!(verified.problems[0].object, other);
     }
 
     #[tokio::test]

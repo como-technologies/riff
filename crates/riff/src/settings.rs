@@ -16,6 +16,7 @@
 //! memory = 22
 //! floor = 4
 //! tmp = "/data/riff-tmp"
+//! cache = "40G"
 //!
 //! [monitor]
 //! on = true
@@ -42,6 +43,7 @@
 //! | `workers.memory` | 0 | The most memory of all workers of the machine, in GB. 0: riff makes the number from the machine (01M3WFYZX6GVFYW6NTTTKF144R). |
 //! | `workers.floor` | 4 | The available memory in GB under which riff starts no new worker (01M3WFZ01PTAYYKG3T5CFA2W4D). |
 //! | `workers.tmp` | `~/.cache/riff/tmp` | The folder of the temp folders of the workers (see [`temp`](crate::temp), 01M41VAGJC69S9R2TD1B1EQ4W4). |
+//! | `workers.cache` | `40G` | The most size of the compile cache of the workers (see [`sccache`](crate::sccache), 01M49237BM12PVBERD6JXDSX5V). |
 //! | `monitor.on` | false | The monitor of this machine runs (see [`monitor`](crate::monitor), 01M421QPKWPX00X24F8V6DT8Z3). |
 //! | `monitor.every` | 15 | The seconds between two looks of the monitor. |
 //! | `monitor.load` | 1.5 | The 5-minute load over which the monitor tells the lead, for each physical core. |
@@ -50,7 +52,8 @@
 //! | `lead.wake` | 15 | The minutes that a block waits for an answer before riff wakes the lead again, and again before riff tells the person (see [`crate::look`], 01M41FZQ545HQ9Q75CSKX8HF8H). |
 //! | `lead.notify` | true | riff shows a block with no answer of the lead in a desktop notification on the machine of the lead (01M41FZQKZKW131Z8822G31T5G). |
 //! | `watch.limit` | 6000 | The longest time in seconds that `riff watch --once` waits for a wake. 0: no limit (01M3Z64J08GW6N1H42AR2FZQZ4). |
-//! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff` ask a person once when the key is missing (see [`ask_update_auto`]). |
+//! | `connect.scope` | none | The answer to the scope question of `riff connect claude`: `repo`, `global` or `none` (see [`enable`](crate::enable), 01M3XY2SNXQJRSH5QX82AFVM2S). With no key, nobody answered yet. |
+//! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff connect claude` ask a person once when the key is missing (see [`ask_update_auto`]). |
 
 use std::path::{Path, PathBuf};
 
@@ -298,6 +301,43 @@ pub fn set_workers_tmp(path: &Path, dir: &Path) -> Result<()> {
         "tmp",
         value(dir.to_string_lossy().as_ref()),
     )
+}
+
+/// The most size of the compile cache of the workers: `workers.cache`
+/// (01M49237BM12PVBERD6JXDSX5V). [`crate::sccache::SIZE`] when the
+/// file or the key is missing.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(riff::settings::workers_cache(&path)?, "40G");
+/// riff::settings::set_workers_cache(&path, "20G")?;
+/// assert_eq!(riff::settings::workers_cache(&path)?, "20G");
+/// assert!(riff::settings::set_workers_cache(&path, "20GB").is_err());
+/// std::fs::write(&path, "[workers]\ncache = 3\n")?;
+/// assert!(riff::settings::workers_cache(&path).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn workers_cache(path: &Path) -> Result<String> {
+    let doc = read(path)?;
+    let Some(item) = doc.get("workers").and_then(|w| w.get("cache")) else {
+        return Ok(crate::sccache::SIZE.to_owned());
+    };
+    match item.as_str() {
+        Some(size) if crate::sccache::valid_size(size) => Ok(size.to_owned()),
+        _ => bail!(
+            "workers.cache in {} is not a size such as 40G",
+            path.display()
+        ),
+    }
+}
+
+/// Sets `workers.cache`. It keeps each other key.
+pub fn set_workers_cache(path: &Path, size: &str) -> Result<()> {
+    if !crate::sccache::valid_size(size) {
+        bail!("the size of the cache is a number with K, M, G or T, for example 40G");
+    }
+    set(path, "workers", "cache", value(size))
 }
 
 /// The number `workers.KEY`, or `default` when the file or the key is
@@ -631,6 +671,42 @@ pub fn watch_limit(path: &Path) -> Result<u64> {
 pub fn set_watch_limit(path: &Path, secs: u64) -> Result<()> {
     let secs = i64::try_from(secs).context("the limit is too long")?;
     set(path, "watch", "limit", value(secs))
+}
+
+/// The answer of the person to the scope question of `riff connect
+/// claude`: `connect.scope` (01M3XY2SNXQJRSH5QX82AFVM2S). `None` when
+/// the file or the key is missing: nobody answered yet.
+///
+/// ```
+/// use riff::enable::Scope;
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(riff::settings::connect_scope(&path)?, None);
+/// riff::settings::set_connect_scope(&path, Scope::Global)?;
+/// assert_eq!(riff::settings::connect_scope(&path)?, Some(Scope::Global));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn connect_scope(path: &Path) -> Result<Option<crate::enable::Scope>> {
+    let doc = read(path)?;
+    let Some(scope) = doc.get("connect").and_then(|c| c.get("scope")) else {
+        return Ok(None);
+    };
+    scope
+        .as_str()
+        .and_then(crate::enable::Scope::parse)
+        .map(Some)
+        .with_context(|| {
+            format!(
+                "connect.scope in {} is not repo, global or none",
+                path.display()
+            )
+        })
+}
+
+/// Sets `connect.scope`. It keeps each other key.
+pub fn set_connect_scope(path: &Path, scope: crate::enable::Scope) -> Result<()> {
+    set(path, "connect", "scope", value(scope.as_str()))
 }
 
 /// The question about `update.auto` on a new machine.

@@ -127,74 +127,6 @@ The Gate on GitHub runs the same command. Tests read the pages of the
 book. So a change of only text that passes `just ci` can still fail a
 test in the Gate.
 
-## Run the tests in a sandbox
-
-`just test`, `just check` and `just ci` build the tests first. Then
-they run the tests in a sandbox of their own:
-
-- an empty home, at the path of your home;
-- an empty `/tmp` and `/var/tmp`;
-- their own processes: a process of your machine is not visible;
-- the loopback network only;
-- no write, except the `target` folder;
-- an environment from nothing: only the variables of the account, the
-  language, the terminal, the build (cargo, rustup, rustc and the pool
-  of build jobs) and `RIFF_SERVER`, and a D-Bus where nothing listens.
-  Each cargo variable has its exact name: see `TEST_RUN_VARS` of
-  `riff::profile`. `GH_TOKEN`, a cargo registry token, your agent
-  sockets and the secrets of a session never reach a test.
-
-A test that leaks a file, a process or a call out of the run cannot
-harm your machine. To run another command in the same sandbox, build
-first, then give the command to `riff test-run`:
-
-```sh
-cargo test --no-run -p riff --test pr
-riff test-run -- cargo test -p riff --test pr
-```
-
-```mermaid
-flowchart LR
-    J["just test"] --> B["cargo test --no-run:<br/>the build, with the network"]
-    B --> R["riff test-run -- cargo test"]
-    R --> W["bubblewrap: new home, new /tmp,<br/>own processes, loopback only"]
-```
-
-### Let bubblewrap make namespaces
-
-The sandbox is [bubblewrap](https://github.com/containers/bubblewrap).
-When your machine cannot make the sandbox, `riff test-run` runs
-nothing and prints one line with the command to run. Run it one time
-on each machine. On Ubuntu 24.04 and later:
-
-```sh
-sudo apt install bubblewrap apparmor
-sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
-```
-
-The Gate on GitHub installs bubblewrap and lets it make namespaces in
-its own step.
-
-### Run the tests that need your machine
-
-A few tests need a part of your machine that the sandbox hides. In
-the sandbox, they print a `skip:` line and check nothing. Run them
-with a plain `cargo test`, outside the sandbox:
-
-| Test | It needs |
-|---|---|
-| `workloads.rs`: `the_clear_stops_a_process_that_dropped_the_variables_of_its_worker`, `workers_stop_stops_each_process_in_the_scope_of_the_worker` | a systemd user manager (`systemd-run --user --scope`) |
-| `plugin.rs`: the tests that run `claude plugin validate` | the `claude` command |
-| `isolation.rs`: the tests that check the riff of the machine on port 7878 | the network of the machine: in the sandbox, no riff of the machine can listen, so the check proves less |
-
-```sh
-cargo test -p riff --test all -- workloads:: plugin::
-cargo test -p riff --test isolation
-```
-
-Each other test uses a fake: a fake `tmux` script on the `PATH`, and a
-D-Bus address where nothing listens in place of the keyring.
-
 ## Run one test many times
 
 A test that fails only on a busy machine waits for a fixed time
@@ -254,23 +186,6 @@ with its output:
 cargo test -p riff --test all hosts:: -- --nocapture 2>&1 | grep 'slow under load'
 ```
 
-## Allow a command for a role
-
-A worker, a verifier and the lead run some commands with no question
-from the auto mode check of Claude Code, for example `cargo test`,
-`just check` and `git commit` for a worker. The lists are in
-`crates/riff/src/role_rules.rs`. See the rules of a worker:
-
-```sh
-riff workers rules
-```
-
-To allow one more command, add its program and subcommand to the list
-of the role in `role_rules::bash`, and push the change. A rule that you
-add with `/permissions` in a pane does not last: each new session has a
-new Claude folder. Never add a shell, an interpreter or `Bash(*)`: a
-test fails for them.
-
 ## Run the tests of one file
 
 The integration tests of a crate are one test binary, `all`. Each file
@@ -311,12 +226,6 @@ of `tests` is in no test binary. To run that check:
 ```sh
 cargo test -p hygiene --test all test_files::
 ```
-
-The tests of one binary run in parallel, in one process. So a test does
-not change the environment of its process with `set_var` or
-`remove_var`. Give the variable to the child process with
-`Command::env` or `Command::env_remove`, or give the value to the code
-as a parameter. The same command checks it.
 
 The dev and test builds keep only the line tables of the code of the
 workspace, and no debug info for the dependencies. A backtrace still
@@ -512,10 +421,18 @@ safe to run again:
 just github
 ```
 
-It turns on auto-merge and squash merge only, and makes or updates two
-rulesets: `main`, and `releases` on the tags `v*`. With `releases`,
-only the repository admin role can create, move or delete a release
-tag. To see the result:
+It turns on auto-merge and squash merge only, and makes or updates
+three rulesets:
+
+- `main`: a change needs a pull request and the checks `Gate`,
+  `Hygiene` and `riff/verify`.
+- `release-branches` on the branches `release/**`: a change needs a
+  pull request and the checks `Gate` and `Hygiene`. See
+  [Make a patch of an older release](#make-a-patch-of-an-older-release).
+- `releases` on the tags `v*`: only the repository admin role can
+  create, move or delete a release tag.
+
+To see the result:
 
 ```sh
 gh api repos/como-technologies/riff --jq '{allow_auto_merge, allow_squash_merge, allow_merge_commit, allow_rebase_merge, squash_merge_commit_title, squash_merge_commit_message, delete_branch_on_merge}'
@@ -890,27 +807,6 @@ riff-server --issuer https://login.example.com --client-id ID --client-secret SE
 
 Without `--client-id`, the server has no sign-in.
 
-### Give your own server the GitHub App
-
-A riff-server with sign-in gives each session a forge token with the
-GitHub App of riff (see
-[The forge token of each role](how-it-works.md#the-forge-token-of-each-role)).
-On Cloud Run, riff-server reads the App from its secret in Secret
-Manager, `--forge-secret` (see
-[Make the GitHub App of riff](how-it-works.md#make-the-github-app-of-riff)).
-For a server that you run yourself, give it the App ID in
-`--forge-app` and the private key in the variable `RIFF_FORGE_KEY`.
-Never put the key on a command line:
-
-```sh
-RIFF_FORGE_KEY="$(cat riff.private-key.pem)" riff-server --client-id ID --forge-app APP_ID
-```
-
-Without the App, the server gives no forge token. With the App, it
-gives tokens only for the accounts that you allow with `riff forge
-allow OWNER` (see
-[Allow an account](how-it-works.md#allow-an-account)).
-
 ## Owner and members
 
 ```mermaid
@@ -1098,12 +994,12 @@ riff with sign-in is safer: see
 ### Update the local server
 
 Build the new binaries. Stop `riff-server` with Ctrl-C and start it
-again with your settings. Each session that riff starts after it gets
-the new plugin:
+again with your settings. Then update the plugin:
 
 ```sh
 just install
 riff-server
+riff connect claude
 ```
 
 ### Test a change without the shared riff
@@ -1134,10 +1030,9 @@ just dev
 It builds the workspace, and runs the debug `riff-server` of the tree
 on the first free port from 7900. Its log goes to
 `target/dev-server.log`. Then it starts Claude Code with the plugin of
-the tree, the riff MCP server and the status line, as riff gives them
-(see [What riff gives Claude](how-it-works.md#what-riff-gives-claude)),
-and the debug `riff` of the tree. `just dev` sets `RIFF_ON=1`, so riff
-is on in the session. When you end Claude Code, `just dev`
+the tree and the debug `riff` of the tree. The installed plugin is off
+in that session only. `just dev` sets `RIFF_ON=1`, so riff is on in the
+session with no `riff enable`. When you end Claude Code, `just dev`
 stops the server. It changes nothing that is installed.
 
 - Options after `dev` go to `riff-server`. Do not give `--listen`.
@@ -1155,11 +1050,9 @@ the shared riff nor the riff of your machine. Each test runs `riff`
 and `riff-server` through the helper crate `isolated`: a temp home of
 its own for each test, and the same `RIFF_SERVER` unless the test
 names its own server. A test fails a test file that runs a binary of
-riff without the helper. Your home can be a git repository. So
-`.cargo/config.toml` sets `TMPDIR` to `/var/tmp` for a cargo run with
-no `TMPDIR`. A worker keeps its own temp folder: its sandbox lets it
-write only there, and `just test` gives each test run its own `/tmp`.
-Run the tests of a worker with `just test` or `just check`, not with a
+riff without the helper. Your home can be a git repository, and a
+worker has its `TMPDIR` in your home. So `.cargo/config.toml` sets
+`TMPDIR` to `/var/tmp` for each cargo run in the repository, also a
 plain `cargo test`. A unit test or a
 doc test that needs a dir outside each git repository uses
 `isolated::outside_git()`, not `tempfile::tempdir()`.
@@ -1167,36 +1060,11 @@ doc test that needs a dir outside each git repository uses
 Use a dev session for a live check of new code, for example a new
 plugin command, hook or skill text. It needs no release and no update
 of the machine. A worker never runs `riff update`, `cargo install` of
-riff or `just install` in a worktree.
+riff, `just install` or `riff connect` in a worktree.
 
 A criterion that only the shared riff can test is a check after the
 release. Its item stays open until the release of the wave. See
 [Waves](waves.md).
-
-### See the git config of a worker
-
-A worker has its own git config: it reads nothing of your
-`~/.gitconfig`. To see it, run this in a worker:
-
-```sh
-git config --list --show-origin
-```
-
-### Find the commits of a session
-
-A commit of a session names the session, not you. Its author and its
-committer are `riff ROLE ID`, with the first 8 characters of the
-session ID that `riff who` shows, for example `riff worker 6a56bcf5`.
-The email is `ROLE-ID@riff.invalid`: it reaches no one. A WIP commit
-of `riff worktrees clean` has the author `riff`. To find the commits of
-a session on a branch:
-
-```sh
-git log --author='riff worker 6a56bcf5'
-```
-
-A pull request merges by squash. So the commit on `main` has the
-author of the pull request, not the session.
 
 ### Test a debug build with sign-in
 
@@ -1914,6 +1782,70 @@ Watch both jobs:
 gh run list --workflow CI --event push --limit 1
 gh run watch
 ```
+
+### Make a patch of an older release
+
+`main` holds the newest release line. A patch of an older line goes on
+the branch `release/MAJOR.x` of that line, for example `release/1.x`
+when `main` holds 2.x. The branch starts at the last release tag of
+the line. CI runs the `Gate` and `Hygiene` on it as on `main`. A push
+to the branch does not deploy.
+
+Make the branch one time, from the last release tag of the line. Then
+run `just github` in a checkout of the branch: the ruleset
+`release-branches` is in its `deploy/github.sh`:
+
+```sh
+git push origin 'v1.3.0^{commit}:refs/heads/release/1.x'
+git fetch origin
+git switch --no-track -c release-1.x origin/release/1.x
+just github
+```
+
+Each change goes in by a pull request to the branch, as on `main`:
+
+```sh
+git fetch origin
+git switch --no-track -c my-fix origin/release/1.x
+git push -u origin HEAD
+gh pr create --base release/1.x --title "My fix" --body-file pr.md
+gh pr merge --auto --squash
+```
+
+`just check` compares your branch with the last release tag of the
+line: the fork point of your branch and `origin/main`. So it runs the
+tests of each crate that changed on the line.
+
+Make the release as in [Make a release](#make-a-release), with
+`release/1.x` in place of `origin/main`. Set the version on a branch
+of the line:
+
+```sh
+git switch --no-track -c release-v1.3.1 origin/release/1.x
+sed -i 's/^version = ".*"/version = "1.3.1"/' Cargo.toml
+sed -i 's/"version": ".*"/"version": "1.3.1"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json
+cargo update --workspace
+git commit -am "Release v1.3.1"
+git push -u origin HEAD
+gh pr create --base release/1.x --title "Release v1.3.1" --label release --body-file pr.md
+```
+
+After the merge, tag the merge commit on the branch. Name the last
+tag of the line for the notes. The release of the line that the
+shared riff runs is the latest release on GitHub. This example is a
+patch of that line, so it is the latest:
+
+```sh
+git fetch origin
+git tag v1.3.1 origin/release/1.x
+git push origin v1.3.1
+gh release create v1.3.1 --verify-tag --title v1.3.1 --notes-file notes.md --generate-notes --notes-start-tag v1.3.0 --latest
+```
+
+A patch of a line that the shared riff does not run is not the latest:
+use `--latest=false`.
+
+The tag deploys the patch as each release tag does.
 
 ### Deploy the shared server at the end of a wave
 

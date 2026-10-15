@@ -21,20 +21,17 @@ use riff_core::wire::RiffState;
 
 /// A tmux with no worker pane.
 const FAKE_TMUX: &str = r#"#!/bin/sh
-# Outside tmux, riff names its own server: -L riff (see start.rs).
-[ "$1" = -L ] && shift 2
 case "$1" in
   display-message) echo "@0" ;;
 esac
 exit 0
 "#;
 
-/// `gh pr view --json FIELDS -- BRANCH` prints the file `pr-BRANCH.json`,
-/// else fails.
+/// `gh pr view BRANCH` prints the file `pr-BRANCH.json`, else fails.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
-if [ "$1 $2 $5" = "pr view --" ] && [ -f "$dir/pr-$6.json" ]; then cat "$dir/pr-$6.json"; exit 0; fi
-echo "no pull requests found for branch \"$6\"" >&2
+if [ "$1 $2" = "pr view" ] && [ -f "$dir/pr-$3.json" ]; then cat "$dir/pr-$3.json"; exit 0; fi
+echo "no pull requests found for branch \"$3\"" >&2
 exit 1
 "#;
 
@@ -95,6 +92,8 @@ impl Riff {
         let fake = tempfile::tempdir().unwrap();
         script(fake.path(), "tmux", FAKE_TMUX);
         script(fake.path(), "gh", FAKE_GH);
+        // A host installs no real sccache (01M4923963S666V9YWTZ46ZZ50).
+        script(fake.path(), "sccache", "#!/bin/sh\necho sccache 0.18.0\n");
         let root = tempfile::tempdir().unwrap();
         let origin = root.path().join("origin.git");
         git(root.path(), &["init", "-q", "--bare", "origin.git"]);

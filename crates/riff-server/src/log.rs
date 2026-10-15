@@ -62,6 +62,12 @@
 //! value, so a checkpoint of this build past the record loses what the
 //! record says.
 //!
+//! A record of a kind in [`DROPPED`] is not a skipped record
+//! (01M4YNCECQDQR3Z8QTGQ1PW3WV). It comes from a later release line,
+//! which has its own instance. This build drops it on purpose, so it
+//! writes checkpoints past it, and the state that the record gave in
+//! that line is gone.
+//!
 //! A start from a checkpoint reads only the records after its position
 //! ([`replay_after`]): from the chunk that holds the next position.
 //!
@@ -474,6 +480,12 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
                     }
                     records.push(*record);
                 }
+                Line::Unknown { position, kind } if DROPPED.contains(&kind.as_str()) => {
+                    tracing::info!(
+                        position,
+                        "dropped a record of the kind {kind} of a later release line"
+                    );
+                }
                 Line::Unknown { position, kind } => {
                     tracing::warn!(position, "skipped a record of the unknown kind {kind}");
                     skipped = skipped.or(Some(position));
@@ -502,6 +514,34 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
         chunks: chunks.len() as u64,
     })
 }
+
+/// The kinds of record of a later release line that this build drops
+/// (01M4YNCECQDQR3Z8QTGQ1PW3WV). `forge_allowed` is the forge state of
+/// 2.0: the 1.x instance does not keep it. A replay drops such a record
+/// with no warning, and it does not count as a skipped record.
+///
+/// ```
+/// # #[tokio::main] async fn main() -> Result<(), riff_server::store::StoreError> {
+/// use riff_server::log::{DROPPED, chunk_name, replay};
+/// use riff_server::store::{Memory, Store};
+///
+/// assert_eq!(DROPPED, ["forge_allowed"]);
+/// let store = Memory::default();
+/// let chunk = concat!(
+///     "{\"format\":1,\"first\":1}\n",
+///     "{\"position\":1,\"written_at_ms\":0,\"change\":{\"forge_allowed\":{\"owner\":\"acme\",\"allowed\":true}}}\n",
+///     "{\"position\":2,\"written_at_ms\":0,\"change\":{\"reacted\":{}}}\n",
+/// );
+/// store.save(&chunk_name(1), chunk.into(), None).await?;
+/// let replayed = replay(&store).await?;
+/// assert!(replayed.records.is_empty());
+/// assert_eq!(replayed.last, 2);
+/// // The dropped record is not a skip. The record of a kind that this
+/// // build does not know is one.
+/// assert_eq!((replayed.skipped, replayed.skips), (Some(2), 1));
+/// # Ok(()) }
+/// ```
+pub const DROPPED: &[&str] = &["forge_allowed"];
 
 /// The log as [`replay`] reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]

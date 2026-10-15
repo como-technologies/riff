@@ -9,10 +9,11 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
 use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
 use riff::link::STREAM_RETRY;
-use riff::terminal::Program;
+use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
-    activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, launch,
-    lifecycle, local, login, mcp, next, pr, settings, start, terminal, text, usage, view, worker,
+    activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, lifecycle,
+    local, login, mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view,
+    worker,
 };
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
@@ -29,14 +30,11 @@ const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
 /// (01M3MEEFETT9A0DRWBKQTG77Z2).
 const LEFT_POLL: Duration = Duration::from_millis(250);
 
-/// The longest wait of the picker of `riff` for the state of the riff.
-const START_WAIT: Duration = Duration::from_secs(5);
-
 /// The hidden option in which a watch gives the end of its wait to the
 /// new binary of an update (01M3Z64J08GW6N1H42AR2FZQZ4).
 const UNTIL_ARG: &str = "--until";
 
-/// The local client of riff. With no command, it starts the riff.
+/// The local client that finds sessions and wakes yours.
 #[derive(Parser)]
 #[command(version = riff_core::build::VERSION, about)]
 struct Cli {
@@ -59,7 +57,7 @@ struct Cli {
     place: Option<Place>,
 
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 }
 
 #[derive(Subcommand)]
@@ -213,7 +211,7 @@ enum Command {
         /// The work item, for example issue-12.
         item: String,
     },
-    /// Hold, free or check the work items of your repository
+    /// Hold or free a work item of the plan of your repository
     ///
     /// A held item is no free work: no worker can claim it. A hold is
     /// not a claim. Only a lead, the owner or an admin can hold and free
@@ -330,18 +328,6 @@ enum Command {
         #[arg(long, hide = true)]
         check: bool,
     },
-    /// Keep your Claude plan token for the sessions of this machine
-    ///
-    /// Run `claude setup-token` first. Then paste its output here, or
-    /// pipe it in. riff keeps the token in your keyring, and gives it
-    /// to each session that riff starts as CLAUDE_CODE_OAUTH_TOKEN. A
-    /// session never reads your keyring. The token never goes to
-    /// riff-server.
-    ClaudeToken {
-        /// Remove the token from this machine.
-        #[arg(long)]
-        remove: bool,
-    },
     /// Sign out of the riff on this device
     ///
     /// It removes the sign-in at riff-server from this device. With
@@ -407,9 +393,8 @@ enum Command {
     },
     /// Print the status line of a Claude Code session
     ///
-    /// It shows the label of the session as `riff top` names it
-    /// (`USER@HOST:REPO#WORKTREE (ID)`), its role, its state and its
-    /// claims. Claude Code runs it with the session on stdin. It always
+    /// It shows the short session ID, the claims, and `lead` or
+    /// `blocked`. Claude Code runs it with the session on stdin. It always
     /// exits with status 0.
     #[command(hide = true)]
     Statusline,
@@ -421,14 +406,49 @@ enum Command {
         #[command(subcommand)]
         event: HookEvent,
     },
-    /// Do nothing: riff gives Claude its plugin at each start
+    /// Install the riff plugin in an agent tool
     ///
-    /// `riff update` of riff 1.3 runs it after the install, so it ends
-    /// with success (01M4BYH84X7B2D9EFYGP11GP8Y).
-    #[command(hide = true)]
+    /// When the riff has sign-in and this machine has none, it signs you
+    /// in. Run it again to update the plugin.
     Connect {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+        #[command(subcommand)]
+        tool: Tool,
+    },
+    /// Add the Claude Code permission rules of riff to this project
+    ///
+    /// It adds each missing rule to .claude/settings.json at the top of
+    /// the repository: allow each riff tool, each riff command and the
+    /// pull request steps; deny a push to the default branch and
+    /// `gh pr merge --admin`. It keeps each rule and key that is there.
+    /// A rule in the user or the local settings counts as there. Commit
+    /// the file, so that each clone and each worktree has the rules.
+    Setup {
+        /// Change nothing. Name each missing rule, and exit with status 1
+        /// when a rule is missing.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Turn riff on in this repository
+    ///
+    /// riff is off in a Claude Code session until you turn it on for
+    /// the repository of the session. This command writes the entry
+    /// `riff@riff` to the key `enabledPlugins` of a Claude Code settings
+    /// file. It keeps each other key. A new session in the repository
+    /// then has riff.
+    Enable {
+        #[command(flatten)]
+        place: PlaceArgs,
+    },
+    /// Turn riff off in this repository
+    ///
+    /// It removes the entry that `riff enable` wrote. When another file
+    /// still turns riff on, for example after `riff enable --global`,
+    /// it writes a no for this repository to the local settings. No
+    /// other repository changes. A session that runs keeps riff until
+    /// it ends.
+    Disable {
+        #[command(flatten)]
+        place: PlaceArgs,
     },
     /// Show the riff that riff uses
     ///
@@ -444,9 +464,9 @@ enum Command {
     Server,
     /// Update riff on this machine
     ///
-    /// It installs riff and riff-server of a release with cargo. Each
-    /// session that riff starts after it gets the new plugin. It installs
-    /// the release that the riff runs, or the newest release when riff uses
+    /// It installs riff and riff-server of a release with cargo, then
+    /// updates the plugin with `riff connect claude`. It installs the
+    /// release that the riff runs, or the newest release when riff uses
     /// the riff of this machine or cannot read the build of the riff.
     /// When the riff of this machine runs the old build, it tells you to
     /// start riff-server again.
@@ -468,6 +488,9 @@ enum Command {
         /// The cargo command.
         #[arg(long, default_value = "cargo")]
         cargo: std::path::PathBuf,
+        /// The claude command.
+        #[arg(long, default_value = "claude")]
+        claude: std::path::PathBuf,
     },
     /// Open a pull request, and wait for its merge
     ///
@@ -524,25 +547,6 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
-    /// Make, install and check the GitHub App of riff
-    ///
-    /// riff-server makes a token for each session with the GitHub App of
-    /// riff, with only the rights of its role. An admin makes the App
-    /// first with riff forge create.
-    Forge {
-        #[command(subcommand)]
-        command: ForgeCommand,
-    },
-    /// Run one command outside the sandbox, when an admin approves
-    ///
-    /// The sandbox of a session is always on. A session asks to run one
-    /// command outside it, one time, with a reason. The owner or an admin
-    /// approves or denies the request in a terminal. riff-server posts
-    /// each step to the thread of the repository.
-    Outside {
-        #[command(subcommand)]
-        command: OutsideCommand,
-    },
     /// Start, list and stop the workers of this machine
     ///
     /// Workers are agent sessions in tmux. With no subcommand, it lists
@@ -553,22 +557,6 @@ enum Command {
         long: bool,
         #[command(subcommand)]
         command: Option<Workers>,
-    },
-    /// Run the tests in a sandbox: new home, new /tmp, no network
-    ///
-    /// It runs PROGRAM with bubblewrap in namespaces of its own: an empty
-    /// home, an empty /tmp, its own processes, and the loopback network
-    /// only. It reads the system, the toolchain and the worktree, and
-    /// writes only the target. Build first: the run has no network. When
-    /// the host cannot make the sandbox, it prints one line with the
-    /// sudo command and runs nothing. For example: riff test-run -- cargo
-    /// test --workspace
-    TestRun {
-        /// The program, for example cargo.
-        program: std::ffi::OsString,
-        /// The arguments of PROGRAM.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<std::ffi::OsString>,
     },
 }
 
@@ -586,102 +574,6 @@ impl From<ByArg> for riff::top::By {
             ByArg::Repo => Self::Repo,
         }
     }
-}
-
-/// The subcommands of `riff outside`.
-#[derive(Subcommand)]
-enum OutsideCommand {
-    /// Ask to run one command outside the sandbox of this session
-    ///
-    /// Run it in a session in its sandbox. riff-server keeps the request
-    /// for one hour and tells the lead. When the owner or an admin
-    /// approves it, the broker of the session runs the command one time,
-    /// in the current folder, and riff exits with its exit code.
-    Ask {
-        /// Why the session needs the command outside its sandbox.
-        #[arg(long)]
-        reason: String,
-        /// The program and its arguments.
-        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
-        command: Vec<std::ffi::OsString>,
-    },
-    /// List the requests of the last hour
-    ///
-    /// Only the owner or an admin, in a terminal.
-    List,
-    /// Approve a request: the session runs its command one time
-    ///
-    /// Only the owner or an admin, in a terminal: never in a worker or an
-    /// agent session.
-    Approve {
-        /// The ID of the request, from riff outside list.
-        id: String,
-    },
-    /// Deny a request: its command does not run
-    ///
-    /// Only the owner or an admin, in a terminal.
-    Deny {
-        /// The ID of the request, from riff outside list.
-        id: String,
-    },
-}
-
-/// The subcommands of `riff forge`.
-#[derive(Subcommand)]
-enum ForgeCommand {
-    /// Show the rights of the token of each role
-    ///
-    /// Run it in the clone of a repository where the GitHub App of riff
-    /// is installed. riff-server makes a token of each role for this
-    /// repository, checks its rights, and revokes it at once. It shows
-    /// no token.
-    Check,
-    /// Make the GitHub App of riff with one command
-    ///
-    /// Only the owner or an admin of the riff runs it, in a terminal:
-    /// never in a worker or an agent session. riff opens the browser on a
-    /// page of riff-server that sends the manifest of the App to GitHub.
-    /// Click "Create GitHub App", then install the App on the
-    /// repositories of ORG. GitHub gives the private key to riff-server
-    /// only. Then riff allows ORG and runs riff forge check.
-    Create {
-        /// The GitHub organization that owns the App, for example acme.
-        #[arg(long)]
-        org: String,
-    },
-    /// Install the GitHub App of riff on a GitHub account
-    ///
-    /// riff opens the install page of the App for OWNER, an organization
-    /// or a personal account. A person of OWNER picks the repositories.
-    /// riff waits for the install, then runs riff forge check. Run it in
-    /// a terminal, not in a worker or an agent session.
-    Install {
-        /// The GitHub account, for example acme.
-        owner: String,
-    },
-    /// Allow a GitHub account to get forge tokens
-    ///
-    /// riff-server makes forge tokens only for the repositories of the
-    /// GitHub accounts (organizations and personal accounts) that the
-    /// owner or an admin of the riff allowed. An installation of the App
-    /// on another account gives no token. With no OWNER, it lists the
-    /// allowed accounts. Only the owner or an admin can run it.
-    Allow {
-        /// The GitHub account, for example acme.
-        owner: Option<String>,
-        /// Allow OWNER no more. Its sessions lose their tokens.
-        #[arg(long, requires = "owner")]
-        remove: bool,
-    },
-    /// The git credential helper of a worker
-    ///
-    /// git runs it. It gives the forge token of the session for
-    /// https://github.com.
-    #[command(hide = true)]
-    Credential {
-        /// The operation of git: get, store or erase.
-        operation: String,
-    },
 }
 
 /// The subcommands of `riff cloud`.
@@ -713,21 +605,6 @@ enum CloudCommand {
     Signin {
         /// The name of the instance.
         name: String,
-    },
-    /// Give an instance a GitHub App of riff made by hand
-    ///
-    /// riff-server makes the forge token of each session with this App.
-    /// It stores the App ID and the private key in the secret of the App
-    /// in Secret Manager, where only the service account of riff-server
-    /// reads it. riff-server reads it at its next start. riff forge create
-    /// makes the App with no key file.
-    Forge {
-        /// The name of the instance.
-        name: String,
-        /// The App ID, from the settings page of the App.
-        app: String,
-        /// The private key file that GitHub gave you (.pem).
-        key: std::path::PathBuf,
     },
     /// Deploy riff-server to an instance
     ///
@@ -817,24 +694,6 @@ impl From<VerdictArg> for riff::pr::Verdict {
         match verdict {
             VerdictArg::Pass => Self::Pass,
             VerdictArg::Fail => Self::Fail,
-        }
-    }
-}
-
-/// The role of a session in a sandbox.
-#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum SandboxRole {
-    Lead,
-    Worker,
-    Verifier,
-}
-
-impl From<SandboxRole> for riff::profile::Role {
-    fn from(role: SandboxRole) -> Self {
-        match role {
-            SandboxRole::Lead => Self::Lead,
-            SandboxRole::Worker => Self::Worker,
-            SandboxRole::Verifier => Self::Verifier,
         }
     }
 }
@@ -978,7 +837,7 @@ enum Workers {
     /// On a machine with systemd, all workers run in the slice
     /// riff-workers.slice with this memory limit. The default is 0:
     /// three quarters of the memory of this machine. The next
-    /// worker that starts sets the new limit. It is in
+    /// `riff workers start` sets the new limit. It is in
     /// $XDG_CONFIG_HOME/riff/config.toml, key workers.memory.
     Memory {
         /// The new limit in GB. Leave it out to show it.
@@ -1005,6 +864,23 @@ enum Workers {
         /// The new folder. Leave it out to show the folder and its disk
         /// use.
         dir: Option<std::path::PathBuf>,
+    },
+    /// Show, set or empty the compile cache of the workers
+    ///
+    /// The workers of this machine share one compile cache: riff starts
+    /// each worker with RUSTC_WRAPPER=sccache, so a new worktree reads
+    /// each dependency from the cache. riff update and riff workers host
+    /// install sccache. SIZE is the most size of the cache, for example
+    /// 40G (the default). The next worker that starts gets the new size.
+    /// It is in $XDG_CONFIG_HOME/riff/config.toml, key workers.cache.
+    Cache {
+        /// The new most size: a number with K, M, G or T. Leave it out
+        /// to show the cache.
+        size: Option<String>,
+        /// Stop the sccache server and delete the cache. riff refuses it
+        /// while workers run on this machine.
+        #[arg(long, conflicts_with = "size")]
+        clear: bool,
     },
     /// Show or set the monitor of this machine
     ///
@@ -1084,18 +960,6 @@ enum Workers {
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
         after: Option<u64>,
     },
-    /// Show the permission rules of a worker in this clone
-    ///
-    /// riff makes them from the profile of the worker: it allows the
-    /// paths that the worker reads and writes, and denies each other
-    /// path of your home, the secrets, and the edit of each settings file
-    /// of Claude Code. Each worker gets them in its --settings. It prints
-    /// them as JSON.
-    Rules {
-        /// The claude command.
-        #[arg(long, default_value = "claude")]
-        claude: std::path::PathBuf,
-    },
     /// Run CLAUDE as a worker, and wait
     ///
     /// When CLAUDE exits on its own, it posts a note to the lead with the
@@ -1109,83 +973,6 @@ enum Workers {
         /// The arguments of CLAUDE.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
-    },
-    /// Run CLAUDE as the lead, and wait
-    ///
-    /// CLAUDE gets a temp folder of its own, the forge token of the lead
-    /// and an empty environment with only the kept variables. The pane of
-    /// the lead in the tmux server of riff runs it.
-    #[command(hide = true)]
-    Lead {
-        /// The name of the temp folder of the lead.
-        #[arg(long)]
-        name: String,
-        /// The claude command.
-        claude: std::path::PathBuf,
-        /// The arguments of CLAUDE.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-    /// Show or apply the sandbox of a session
-    ///
-    /// riff builds the profile of the role from the paths of this
-    /// session, and restricts the files, the TCP ports and the signals
-    /// with Landlock. With PROGRAM, it then runs PROGRAM in its place,
-    /// with its own Claude folder: each worker pane runs claude this way.
-    /// With --show, it prints the sandbox and what the kernel applies of
-    /// it, and runs nothing.
-    Sandbox {
-        /// The role of the session.
-        #[arg(long, value_enum, default_value_t = SandboxRole::Worker)]
-        role: SandboxRole,
-        /// The name of the Claude folder and the rules file of the
-        /// session (default: RIFF_SESSION).
-        #[arg(long)]
-        name: Option<String>,
-        /// Print the sandbox of the role here, and run nothing.
-        #[arg(long, conflicts_with = "program")]
-        show: bool,
-        /// The program to run in the sandbox.
-        #[arg(required_unless_present = "show")]
-        program: Option<std::path::PathBuf>,
-        /// The arguments of PROGRAM.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<std::ffi::OsString>,
-    },
-    /// Serve the broker of a sandbox on stdin
-    ///
-    /// riff workers sandbox starts it outside the sandbox. It runs only
-    /// the operations of its list, in the folder ROOT.
-    #[command(hide = true)]
-    Broker {
-        /// The role of the session. Only the broker of a lead runs the
-        /// operations of the lead.
-        #[arg(long, value_enum, default_value_t = SandboxRole::Worker)]
-        role: SandboxRole,
-        /// The worktree of the session.
-        #[arg(long)]
-        root: std::path::PathBuf,
-        /// The clone of the session.
-        #[arg(long)]
-        clone: std::path::PathBuf,
-        /// The path of the socket where the broker also listens: a
-        /// command of the session that has no file descriptor of the
-        /// session connects there.
-        #[arg(long)]
-        socket: Option<std::path::PathBuf>,
-    },
-    /// Run git in a worktree with the sandbox of a worker
-    ///
-    /// riff runs its git steps that read the files of a worktree this
-    /// way, for example in riff worktrees clean.
-    #[command(hide = true)]
-    Git {
-        /// The worktree, in .claude/worktrees of the clone.
-        #[arg(long)]
-        worktree: std::path::PathBuf,
-        /// The arguments of git.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<std::ffi::OsString>,
     },
     /// Run PROGRAM as the test runner of a worker, and wait
     ///
@@ -1258,13 +1045,6 @@ enum PlanCommand {
         /// The work item, for example issue-12.
         item: String,
     },
-    /// List each item of an open wave with no docs criterion
-    ///
-    /// It reads the open issues of the repository of this directory with
-    /// the gh of this machine. It prints each issue of an open wave whose
-    /// `Done when:` line has no criterion `- Docs:`. It exits with 1 when
-    /// it finds one.
-    Check,
 }
 
 #[derive(Subcommand)]
@@ -1382,10 +1162,9 @@ enum HookEvent {
         /// The riff session ID of the worker.
         #[arg(long)]
         session: String,
-        /// The tmux pane of the worker. With no pane, the check uses
-        /// the pane of the broker of the worker in its sandbox.
+        /// The tmux pane of the worker.
         #[arg(long)]
-        pane: Option<String>,
+        pane: String,
         /// The transcript of the session.
         #[arg(long)]
         transcript: Option<std::path::PathBuf>,
@@ -1425,53 +1204,90 @@ enum HookEvent {
     },
 }
 
+/// The settings file of `riff enable` and `riff disable`.
+#[derive(clap::Args)]
+#[group(multiple = false)]
+struct PlaceArgs {
+    /// Only for you: .claude/settings.local.json at the top of the
+    /// repository (the default).
+    #[arg(long)]
+    local: bool,
+    /// For the team: .claude/settings.json at the top of the
+    /// repository. Commit the file.
+    #[arg(long)]
+    shared: bool,
+    /// For each repository on this machine: the user settings of
+    /// Claude Code.
+    #[arg(long)]
+    global: bool,
+}
+
+impl PlaceArgs {
+    fn place(&self) -> enable::Place {
+        match (self.shared, self.global) {
+            (true, _) => enable::Place::Shared,
+            (_, true) => enable::Place::Global,
+            _ => enable::Place::Local,
+        }
+    }
+}
+
+/// Where `riff connect claude` turns riff on.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ScopeArg {
+    /// Only in the repository of this directory.
+    Repo,
+    /// In each repository on this machine.
+    Global,
+    /// Nowhere now. Run `riff enable` later.
+    None,
+}
+
+impl From<ScopeArg> for enable::Scope {
+    fn from(scope: ScopeArg) -> Self {
+        match scope {
+            ScopeArg::Repo => enable::Scope::Repo,
+            ScopeArg::Global => enable::Scope::Global,
+            ScopeArg::None => enable::Scope::None,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum Tool {
+    /// Add the riff plugin to Claude Code.
+    ///
+    /// riff stays off in a session until you turn it on for a
+    /// repository. In a terminal, the command asks one time where you
+    /// want riff on. With no terminal, it turns riff on nowhere, and
+    /// keeps an earlier choice.
+    Claude {
+        /// The claude command.
+        #[arg(long, default_value = "claude")]
+        claude: std::path::PathBuf,
+        /// Where to turn riff on, with no question.
+        #[arg(long, value_enum)]
+        scope: Option<ScopeArg>,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
     use_color(cli.color);
-    let Some(command) = cli.command else {
-        let (server, _) = server_of(cli.server.as_deref())?;
-        return start(&server).await;
-    };
-    // Each entry of the plugin does nothing in a session that riff did
-    // not start (01M3XY2ST8R67SKTXJECAYJZRX, 01M4BYH80CFW1TBGKVA2VN9ZBQ).
-    // A `riff mcp` that an update started again serves a session that
-    // runs: it goes on.
-    match &command {
-        Command::Hook { .. } | Command::Statusline if !enable::on() => return Ok(()),
-        Command::Mcp { client: None, .. } if !enable::on() => {
+    // Each entry of the plugin does nothing where riff is off
+    // (01M3XY2ST8R67SKTXJECAYJZRX). A `riff mcp` that an update started
+    // again serves a session that runs: it goes on.
+    match &cli.command {
+        Command::Hook { .. } | Command::Statusline if !enable::State::here().on => return Ok(()),
+        Command::Mcp { client: None, .. } if !enable::State::here().on => {
             return mcp::serve_off().await;
         }
         _ => {}
     }
-    // The Claude plan token needs no riff server (01M4CVXJCGRC59VVZEHBFA9MPG).
-    if let Command::ClaudeToken { remove } = &command {
-        return claude_token(*remove);
-    }
-    // A test run needs no riff server (01M4BTG72XPKSTDF4KYRKS4Z0D).
-    if let Command::TestRun { program, args } = &command {
-        // In a sandbox, the broker runs it outside (01M4C5AQGCA3TFZDW23HYKS83S).
-        if let Some(broker) = riff::broker::here() {
-            std::process::exit(riff::broker::test_run(broker, program, args)?);
-        }
-        match riff::sandbox::test_run(program, args) {
-            Ok(code) => std::process::exit(code),
-            Err(e) => match e.downcast_ref::<riff::sandbox::Missing>() {
-                Some(missing) => {
-                    eprintln!("{missing}");
-                    std::process::exit(1);
-                }
-                None => return Err(e),
-            },
-        }
-    }
-    if let Command::Connect { .. } = command {
-        println!("{}", text::CONNECT_GONE);
-        return Ok(());
-    }
     let (server, source) = server_of(cli.server.as_deref())?;
-    if let Command::Server = command {
+    if let Command::Server = cli.command {
         let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
         anstream::println!("{}", text::server_view(&view));
         return Ok(());
@@ -1481,7 +1297,8 @@ async fn main() -> Result<()> {
         auto,
         background,
         cargo,
-    } = &command
+        claude,
+    } = &cli.command
     {
         if let Some(auto) = auto {
             let path = settings::path()?;
@@ -1495,18 +1312,25 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         if let (true, Some(tag)) = (background, tag) {
-            return riff::auto_update::run(cargo, tag, &server, DEFAULT_SERVER, cli.place.as_ref())
-                .await;
+            return riff::auto_update::run(
+                cargo,
+                claude,
+                tag,
+                &server,
+                DEFAULT_SERVER,
+                cli.place.as_ref(),
+            )
+            .await;
         }
         println!(
             "{}",
-            lifecycle::update(cargo, tag.as_deref(), &server, DEFAULT_SERVER).await?
+            lifecycle::update(cargo, claude, tag.as_deref(), &server, DEFAULT_SERVER).await?
         );
         return Ok(());
     }
     if let Command::Hook {
         event: HookEvent::SessionStart,
-    } = command
+    } = cli.command
     {
         let output = session_start(&server).await;
         if !output.is_empty() {
@@ -1516,21 +1340,21 @@ async fn main() -> Result<()> {
     }
     if let Command::Hook {
         event: HookEvent::SessionEnd,
-    } = command
+    } = cli.command
     {
         session_end(&server).await;
         return Ok(());
     }
     if let Command::Hook {
         event: HookEvent::Stop,
-    } = command
+    } = cli.command
     {
         stop_hook();
         return Ok(());
     }
     if let Command::Hook {
         event: HookEvent::Tool { done },
-    } = command
+    } = cli.command
     {
         let mut stdin = String::new();
         let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -1544,7 +1368,7 @@ async fn main() -> Result<()> {
     }
     if let Command::Hook {
         event: HookEvent::Prompt,
-    } = command
+    } = cli.command
     {
         let mut stdin = String::new();
         let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -1559,9 +1383,8 @@ async fn main() -> Result<()> {
                 transcript,
                 turns,
             },
-    } = &command
+    } = &cli.command
     {
-        let pane = pane.as_deref();
         if let Err(e) = clear_check(session, pane, transcript.as_deref(), *turns, &server).await {
             eprintln!("riff: cannot clear the context of the worker: {e:#}");
         }
@@ -1574,7 +1397,7 @@ async fn main() -> Result<()> {
                 transcript,
                 pane,
             },
-    } = command
+    } = cli.command
     {
         let check = riff::compact::Check {
             session,
@@ -1588,20 +1411,20 @@ async fn main() -> Result<()> {
     }
     if let Command::Hook {
         event: HookEvent::Usage { session, before },
-    } = &command
+    } = &cli.command
     {
         if let Some(meter) = usage::Meter::here() {
             meter.release_all(session, *before);
         }
         return Ok(());
     }
-    if let Command::Usage { issue, wave, total } = &command {
+    if let Command::Usage { issue, wave, total } = &cli.command {
         print!("{}", usage_text(issue.as_deref(), wave.as_deref(), *total)?);
         return Ok(());
     }
     if let Command::Lead {
         command: Some(LeadCommand::Compact { switch, quiet }),
-    } = &command
+    } = &cli.command
     {
         let path = settings::path()?;
         if let Some(switch) = switch {
@@ -1616,7 +1439,7 @@ async fn main() -> Result<()> {
     }
     if let Command::Lead {
         command: Some(LeadCommand::Blocked { wake, notify }),
-    } = &command
+    } = &cli.command
     {
         let path = settings::path()?;
         if let Some(wake) = wake {
@@ -1632,7 +1455,7 @@ async fn main() -> Result<()> {
     if let Command::Watch {
         command: Some(WatchCommand::Limit { seconds }),
         ..
-    } = &command
+    } = &cli.command
     {
         let path = settings::path()?;
         if let Some(seconds) = seconds {
@@ -1642,44 +1465,49 @@ async fn main() -> Result<()> {
         anstream::println!("{}", view::watch_limit(limit, &path));
         return Ok(());
     }
-    if let Command::Statusline = command {
+    if let Command::Statusline = cli.command {
         println!("{}", statusline(&server).await);
         return Ok(());
     }
-    if let Command::Worktrees(WorktreesCommand::Clean) = &command {
+    if let Command::Connect {
+        tool: Tool::Claude { claude, scope },
+    } = &cli.command
+    {
+        let settings = plugin::user_settings();
+        let connected = plugin::connect(claude, &plugin::dir()?, settings.as_deref())?;
+        let scoped = connect_scope(settings.as_deref(), scope.map(Into::into))?;
+        println!("{}", text::connected(&connected, &scoped));
+        match login::ensure(&Api::new(&server), open_browser).await {
+            Ok(Some(_)) => println!("{}", text::connect_signed_in(&server)),
+            Ok(None) => {}
+            Err(e) => anstream::eprintln!("riff: {}", text::connect_no_sign_in(&server, &e)),
+        }
+        ask_auto_update();
+        return Ok(());
+    }
+    if let Command::Setup { check } = cli.command {
+        return setup(check);
+    }
+    if let Command::Enable { place } | Command::Disable { place } = &cli.command {
+        let on = matches!(cli.command, Command::Enable { .. });
+        println!("{}", text::enabled(&set_enabled(place.place(), on)?, on));
+        return Ok(());
+    }
+    if let Command::Worktrees(WorktreesCommand::Clean) = &cli.command {
         for line in riff::worktrees::clean_as_person(&identity::working_dir()?, &server).await? {
             println!("{line}");
         }
         return Ok(());
     }
-    if let Command::Workers { command, long } = &command {
+    if let Command::Workers { command, long } = &cli.command {
         return workers(command.as_ref(), *long, &server).await;
     }
-    if let Command::Cloud { command } = &command {
+    if let Command::Cloud { command } = &cli.command {
         return cloud(command).await;
-    }
-    if let Command::Forge { command } = &command {
-        return forge(command, &server).await;
-    }
-    if let Command::Outside { command } = &command {
-        match command {
-            OutsideCommand::Ask { reason, command } => {
-                let (program, args) = command.split_first().expect("clap needs a command");
-                std::process::exit(riff::outside::ask(&server, reason, program, args).await?);
-            }
-            OutsideCommand::List => print!("{}", riff::outside::list(&server).await?),
-            OutsideCommand::Approve { id } => {
-                println!("{}", riff::outside::decide(&server, id, true).await?);
-            }
-            OutsideCommand::Deny { id } => {
-                println!("{}", riff::outside::decide(&server, id, false).await?);
-            }
-        }
-        return Ok(());
     }
     if let Command::Pr {
         command: Pr::Wait { number, every },
-    } = &command
+    } = &cli.command
     {
         eprintln!("{}", text::pr_waits(*number));
         let every = Duration::from_secs(*every);
@@ -1700,7 +1528,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let api = Api::new(&server);
-    match &command {
+    match &cli.command {
         Command::Login => {
             let sign_in = login::login(&api, open_browser).await?;
             println!("{}", text::signed_in(&sign_in.user, api.base()));
@@ -1737,18 +1565,6 @@ async fn main() -> Result<()> {
         }
         Command::Members => {
             anstream::print!("{}", view::members(&api.signed_in(None)?.members().await?));
-            return Ok(());
-        }
-        Command::Plan {
-            command: PlanCommand::Check,
-        } => {
-            let here = identity::place(&identity::working_dir()?)?;
-            let open = riff::docs::open_items(&pr::Gh::default(), &here.repo_text())?;
-            let missing = riff::docs::missing(&open);
-            print!("{}", text::docs_missing(&missing));
-            if !missing.is_empty() {
-                std::process::exit(1);
-            }
             return Ok(());
         }
         Command::Audit { wave } => {
@@ -1803,7 +1619,7 @@ async fn main() -> Result<()> {
     if let Some(id) = me.who().session()
         && local::left_here(id)
     {
-        match command {
+        match cli.command {
             Command::Mcp { .. } => {}
             Command::Watch { .. } => {
                 println!("{}", text::WATCH_LEFT);
@@ -1813,7 +1629,7 @@ async fn main() -> Result<()> {
         }
     }
     let api = api.signed_in(me.who().session())?;
-    match command {
+    match cli.command {
         Command::Whoami => {
             let pauses = api.pauses(&me).await.map_err(|e| format!("{e:#}"));
             anstream::print!("{}", view::whoami(&me, pauses));
@@ -2067,15 +1883,16 @@ async fn main() -> Result<()> {
             served?
         }
         Command::Hook { .. }
-        | Command::Connect { .. }
         | Command::Usage { .. }
         | Command::Statusline
+        | Command::Connect { .. }
+        | Command::Setup { .. }
+        | Command::Enable { .. }
+        | Command::Disable { .. }
         | Command::Server
         | Command::Update { .. }
         | Command::Workers { .. }
         | Command::Cloud { .. }
-        | Command::Forge { .. }
-        | Command::Outside { .. }
         | Command::Worktrees(_)
         | Command::Lead {
             command: Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. }),
@@ -2089,36 +1906,10 @@ async fn main() -> Result<()> {
         | Command::Remove { .. }
         | Command::Members
         | Command::Audit { .. }
-        | Command::Plan {
-            command: PlanCommand::Check,
-        }
-        | Command::TestRun { .. }
-        | Command::ClaudeToken { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }
         | Command::Owner { .. } => unreachable!("handled before the identity"),
     }
-    Ok(())
-}
-
-/// `riff claude-token`: keeps the Claude plan token from stdin, or
-/// removes it (01M4CVXJCGRC59VVZEHBFA9MPG). The output names no token.
-fn claude_token(remove: bool) -> Result<()> {
-    if remove {
-        let had = riff::grant::remove_claude_token()?;
-        println!("{}", text::claude_token_removed(had));
-        return Ok(());
-    }
-    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        eprintln!("{}", text::CLAUDE_TOKEN_PASTE);
-    }
-    let mut input = String::new();
-    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
-    let Some(token) = riff::grant::token_of(&input) else {
-        anyhow::bail!(text::CLAUDE_TOKEN_NONE);
-    };
-    riff::grant::keep_claude_token(&token)?;
-    println!("{}", text::CLAUDE_TOKEN_KEPT);
     Ok(())
 }
 
@@ -2174,8 +1965,8 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             ask_host(host, request, server).await
         }
         Some(Workers::Reap { pane }) => {
-            let dir = local::riff_dir().context("no HOME: riff has no local dir")?;
-            for line in riff::door::Door::of_machine().reap(pane.as_deref(), &dir)? {
+            let dir = local::dir().context("no HOME: riff has no local dir")?;
+            for line in riff::worker::reap(&Tmux::machine(), pane.as_deref(), &dir)? {
                 println!("{line}");
             }
             Ok(())
@@ -2224,7 +2015,7 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
                 settings::set_workers_jobs(&path, *jobs)?;
             }
             let cores = riff::limits::Cores::here(&riff::machine::Machine::here());
-            let dir = riff::local::riff_dir().map(|dir| riff::jobserver::dir(&dir));
+            let dir = riff::local::dir().map(|dir| riff::jobserver::dir(&dir));
             let workers = dir.as_deref().map_or(0, riff::jobserver::workers);
             let limits = riff::limits::Limits::of(&path, &cores, workers)?;
             let pool = dir.as_deref().and_then(riff::jobserver::state);
@@ -2281,6 +2072,36 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
                     riff::machine::Machine::here().avail_gb,
                     &path
                 )
+            );
+            Ok(())
+        }
+        Some(Workers::Cache { size, clear }) => {
+            let path = settings::path()?;
+            if let Some(size) = size {
+                settings::set_workers_cache(&path, size)?;
+            }
+            let cache = riff::sccache::Cache::here(&path)?;
+            if *clear {
+                let Some(cache) = &cache else {
+                    anyhow::bail!(
+                        "this machine has no sccache, so it has no compile cache to empty"
+                    );
+                };
+                let workers = Tmux::machine().worker_panes()?.len();
+                if workers > 0 {
+                    anyhow::bail!(
+                        "{workers} workers run on this machine. Stop them first: riff workers stop"
+                    );
+                }
+                cache.clear()?;
+                anstream::println!("Emptied the compile cache in {}.", cache.dir.display());
+                return Ok(());
+            }
+            let stats = cache.as_ref().and_then(riff::sccache::Cache::stats);
+            let line = view::cache_line(cache.as_ref().map(|c| (c, stats.as_ref())));
+            anstream::print!(
+                "{}",
+                view::workers_cache(&settings::workers_cache(&path)?, &line, &path)
             );
             Ok(())
         }
@@ -2354,67 +2175,9 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             Ok(())
         }
         Some(Workers::Stop { pane, .. }) => stop_workers(pane.as_deref(), server).await,
-        // 01M4BT3JQCY5G7YZ373MV5C5JM
-        Some(Workers::Rules { claude }) => {
-            let rules = worker::profile_rules(claude, None, server).map_err(anyhow::Error::msg)?;
-            let value = serde_json::json!({
-                "permissions": {"allow": rules.allow, "deny": rules.deny}
-            });
-            anstream::println!("{}", serde_json::to_string_pretty(&value)?);
-            Ok(())
-        }
         Some(Workers::Run { claude, args }) => {
             std::process::exit(worker::run(claude, args, server).await?)
         }
-        Some(Workers::Lead { name, claude, args }) => {
-            std::process::exit(worker::run_lead(claude, args, server, name).await?)
-        }
-        Some(Workers::Sandbox {
-            role,
-            name,
-            show,
-            program,
-            args,
-        }) => {
-            let role = (*role).into();
-            let name = name.as_deref();
-            match program {
-                Some(program) if !show => riff::confine::run(role, server, name, program, args),
-                _ => {
-                    print!("{}", riff::confine::show(role, server, name)?);
-                    Ok(())
-                }
-            }
-        }
-        Some(Workers::Broker {
-            role,
-            root,
-            clone,
-            socket,
-        }) => {
-            use std::os::fd::AsFd;
-            let socket_pair = std::io::stdin().as_fd().try_clone_to_owned()?;
-            // The session of the sandbox: the broker takes its requests
-            // of `riff outside` (#614), at the first request.
-            let take = riff::outside::take(server);
-            // Only the broker of a lead runs the steps of the lead in tmux
-            // and on the processes of its workers (01M4DDWPC693RNWHY7P7XBZ9TB).
-            let lead = matches!(role, SandboxRole::Lead);
-            let here = riff::door::Here::of(lead, clone, server)?;
-            riff::broker::ignore_hangup()?;
-            let riff = riff::binary::this_on_disk()?;
-            let path = socket;
-            // With no socket, the broker still serves the file descriptor
-            // of the session: a failed listen must not end it.
-            let listener = path.as_deref().and_then(|p| riff::broker::listen(p).ok());
-            let served =
-                riff::broker::serve_with(socket_pair, listener, root, clone, &riff, take, here);
-            if let Some(path) = path {
-                let _ = std::fs::remove_file(path);
-            }
-            served
-        }
-        Some(Workers::Git { worktree, args }) => riff::confine::run_git(server, worktree, args),
         Some(Workers::TestRun { program, args }) => {
             std::process::exit(riff::jobserver::test_run(program, args).await?)
         }
@@ -2427,17 +2190,22 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
 /// session that is not the lead (01M3JPQT79FE47518Z8DFFQYYG). Outside
 /// tmux, it starts nothing and fails (01M3JD3973J7A9BG8G9EP9TVDP).
 async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Result<()> {
+    // A worker in a repository with riff off has no riff
+    // (01M3XY2T542DCHBN95H9PX4AGQ). `worker::start` checks it for each
+    // start; here the refusal comes before each other one.
+    if let Some(why) = worker::off(&identity::working_dir()?) {
+        eprintln!("{why}");
+        std::process::exit(1);
+    }
     if let Some(why) = start_refusal(server).await {
         eprintln!("{why}");
         std::process::exit(1);
     }
-    // In the sandbox of the lead, the broker starts them
-    // (01M4DDWPC693RNWHY7P7XBZ9TB).
-    let Some(door) = riff::door::Door::of_session() else {
+    let Some(tmux) = Tmux::from_env() else {
         eprintln!("{}", text::NO_TMUX);
         std::process::exit(1);
     };
-    let started = match door.start(count, claude, server, &identity::working_dir()?)? {
+    let started = match worker::start(&tmux, count, claude, server, &identity::working_dir()?)? {
         Ok(started) => started,
         Err(why) => {
             eprintln!("{why}");
@@ -2452,9 +2220,14 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
         "{}",
         text::workers_started(n, &started.window, &started.main)
     );
-    for line in [&started.limited, &started.no_pool, &started.no_cores]
-        .into_iter()
-        .flatten()
+    for line in [
+        &started.limited,
+        &started.no_scope,
+        &started.no_pool,
+        &started.no_cores,
+    ]
+    .into_iter()
+    .flatten()
     {
         println!("{line}");
     }
@@ -2466,270 +2239,8 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
     Ok(())
 }
 
-/// `riff` with no command (01M4BSSWWEBVHZGXCVYMJ7D7PQ): the picker, then
-/// the lead of the picked repository in the tmux server of riff. See
-/// [`riff::start`].
-async fn start(server: &str) -> Result<()> {
-    if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
-        anyhow::bail!(text::WORKER_STARTS_NO_RIFF);
-    }
-    let dir = local::dir().context("cannot find the local files of riff: set HOME")?;
-    std::fs::create_dir_all(&dir).with_context(|| format!("cannot make {}", dir.display()))?;
-    let config = dir.join(start::CONFIG_FILE);
-    std::fs::write(&config, start::CONFIG)
-        .with_context(|| format!("cannot write {}", config.display()))?;
-    let here = identity::working_dir()?;
-    let text = std::fs::read_to_string(dir.join(start::CLONES)).unwrap_or_default();
-    let mut paths = start::known(&text);
-    paths.push(here.clone());
-    let clones = start::clones(&paths);
-    old_config(clones.iter().map(|c| c.path.clone()).collect());
-    match login::ensure(&Api::new(server), open_browser).await {
-        Ok(Some(_)) => println!("{}", text::start_signed_in(server)),
-        Ok(None) => {}
-        Err(e) => anstream::eprintln!("riff: {}", text::start_no_sign_in(server, &e)),
-    }
-    ask_auto_update();
-    let rows = start::rows(
-        &clones,
-        riff_of(server, &here)
-            .await
-            .as_ref()
-            .map(|(p, w)| (p, &w[..])),
-    );
-    let clone = start::choose(
-        &rows,
-        &here,
-        &mut std::io::stdin().lock(),
-        &mut std::io::stdout(),
-    )?;
-    start::remember(&dir, &clone.path)?;
-    let tmux = start::RiffTmux::new("tmux", &config);
-    let name = start::session_name(&clone.repo);
-    if tmux.has_session(&name)? {
-        println!("{}", text::lead_runs(&clone.repo));
-    } else {
-        let env = vec![
-            ("RIFF_SERVER".to_owned(), server.to_owned()),
-            (launch::ON.0.to_owned(), launch::ON.1.to_owned()),
-        ];
-        let claude = std::path::Path::new("claude");
-        let lead = start::lead_name(&clone.repo);
-        let temp = riff::temp::here(&lead).unwrap_or_else(std::env::temp_dir);
-        let riff = riff::binary::this_on_disk()?;
-        let given = launch::Given::prepare(&clone.path, &riff)?;
-        let settings = lead_settings(&lead, &clone.path, &temp, claude, server)?;
-        let command = start::lead_command(&riff, &lead, claude, &given, &settings);
-        tmux.new_session(&name, &clone.path, &env, &command)?;
-        println!("{}", text::lead_started(&clone.repo, &clone.path));
-    }
-    let inside = start::inside_riff(std::env::var_os("TMUX").as_deref());
-    let status = tmux
-        .attach(&name, inside)
-        .status()
-        .context("cannot run tmux")?;
-    if !status.success() {
-        anyhow::bail!("tmux could not show the session {name}");
-    }
-    Ok(())
-}
-
-/// Writes the flag settings of the lead `name` of `clone`, with the
-/// temp folder `temp`, to its rules file, outside each write path of
-/// the lead (01M4BTB7DY1Y74PP3JWKVX58JQ), and gives the file: the status
-/// line, the rules of riff work (01M4BYH874WQ16Q0337WQA8AMV) and the
-/// permission rules of the profile of the lead. With no rules of the
-/// profile, it says why (01M4BT33Z914GBHCGCAXFVQ2X7).
-fn lead_settings(
-    name: &str,
-    clone: &std::path::Path,
-    temp: &std::path::Path,
-    claude: &std::path::Path,
-    server: &str,
-) -> Result<std::path::PathBuf> {
-    let role = riff::profile::Role::Lead;
-    let session = riff::role_rules::clone_session(clone, temp, claude, server, name)
-        .map_err(|why| anyhow::anyhow!(text::no_role_rules(role, &why)))?;
-    let rules = match riff::role_rules::here(role, &session) {
-        Ok(profile) => launch::merge(launch::riff_rules(clone), &profile),
-        Err(why) => {
-            eprintln!("{why}");
-            launch::riff_rules(clone)
-        }
-    };
-    start::write_lead_settings(&session.rules, &rules)?;
-    Ok(session.rules)
-}
-
-/// Finds the riff entries that older releases wrote to the Claude
-/// config of the person, lists them, and removes them when the person
-/// says yes (01M4BYH82P03FTXZBYC72BJ6F3). It only lists the entries in
-/// files that git tracks, and does not ask for them
-/// (01M4CMJPGS613K2FHQ6DKSY2WJ). `clones` are the clones that riff
-/// knows.
-fn old_config(clones: Vec<std::path::PathBuf>) {
-    let places = riff::old_config::Places::here(clones);
-    let found = riff::old_config::find(&places);
-    if found.is_empty() {
-        return;
-    }
-    let (tracked, found): (Vec<_>, Vec<_>) =
-        found.into_iter().partition(riff::old_config::is_tracked);
-    let lines = |entries: &[riff::old_config::Entry]| -> Vec<String> {
-        entries.iter().flat_map(riff::old_config::lines).collect()
-    };
-    print!("{}", text::old_config(&lines(&found), &lines(&tracked)));
-    if found.is_empty() {
-        return;
-    }
-    let _ = std::io::Write::flush(&mut std::io::stdout());
-    let mut answer = String::new();
-    let read = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut answer);
-    if !matches!(read, Ok(n) if n > 0) || !text::yes(&answer) {
-        println!("{}", text::OLD_CONFIG_KEPT);
-        return;
-    }
-    let failed = riff::old_config::remove(&found, std::path::Path::new("claude"), &places);
-    for line in &failed {
-        eprintln!("riff: {line}");
-    }
-    if failed.is_empty() {
-        println!("{}", text::OLD_CONFIG_REMOVED);
-    }
-}
-
-/// The pauses and the sessions of the riff at `server`, as the person
-/// in `here` sees them. `None` when riff-server does not answer in
-/// [`START_WAIT`].
-async fn riff_of(
-    server: &str,
-    here: &std::path::Path,
-) -> Option<(
-    riff_core::wire::RiffReply,
-    Vec<riff_core::wire::SessionInfo>,
-)> {
-    let ask = async {
-        let api = Api::new(server);
-        let place = identity::place(here)?;
-        let me = identity::person(&Place::host_only(place.host())?, api.base())?;
-        let api = api.signed_in(None)?;
-        anyhow::Ok((api.pauses(&me).await?, api.who(&me, false).await?))
-    };
-    tokio::time::timeout(START_WAIT, ask).await.ok()?.ok()
-}
-
 /// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A worker never runs it
 /// (01M4262DY8NN30SC4REYX2G9DV).
-/// `riff forge`: the token of a role, from riff-server
-/// ([`riff::forge`]).
-async fn forge(command: &ForgeCommand, server: &str) -> Result<()> {
-    use riff::forge;
-    match command {
-        ForgeCommand::Check => {
-            let place = identity::here(None)?;
-            anyhow::ensure!(
-                place.repo_text() != "-",
-                "riff forge check runs in the clone of a repository"
-            );
-            let me = identity::person(&place, server)?;
-            let api = Api::new(server).signed_in(None)?;
-            forge_check(&api, &me).await
-        }
-        ForgeCommand::Create { org } => {
-            forge::refuse_in_session("riff forge create")?;
-            let place = identity::here(None)?;
-            let me = identity::person(&place, server)?;
-            let api = Api::new(server).signed_in(None)?;
-            let start = api.forge_create(&me, org).await?;
-            forge::open_page(&start.url);
-            let mut poll = forge::Poll::new();
-            let mut made = false;
-            let mut installed = false;
-            while !installed && poll.next().await {
-                let reply = api.forge_created(&me, &start.state).await?;
-                if let Some(error) = &reply.error {
-                    anyhow::bail!("riff forge create failed: {error}");
-                }
-                if let (false, Some(app), Some(slug)) = (made, reply.app, &reply.slug) {
-                    made = true;
-                    println!("{}", text::forge_app_made(app, slug, org));
-                }
-                installed = reply.installed;
-            }
-            anyhow::ensure!(installed, text::FORGE_WAIT_END);
-            println!("{}", text::forge_installed(org));
-            let accounts = api.forge_allow(&me, Some(org), true).await?;
-            println!("{}", text::forge_accounts(&accounts.accounts));
-            forge_check_of(&api, &me, org).await
-        }
-        ForgeCommand::Install { owner } => {
-            forge::refuse_in_session("riff forge install")?;
-            let place = identity::here(None)?;
-            let me = identity::person(&place, server)?;
-            let api = Api::new(server).signed_in(None)?;
-            let mut poll = forge::Poll::new();
-            let mut installed = false;
-            let mut opened = false;
-            while !installed && poll.next().await {
-                let reply = api.forge_install(&me, owner).await?;
-                installed = reply.installed;
-                if !installed && !opened {
-                    opened = true;
-                    forge::open_page(&reply.url);
-                }
-            }
-            anyhow::ensure!(installed, text::FORGE_WAIT_END);
-            println!("{}", text::forge_installed(owner));
-            forge_check_of(&api, &me, owner).await
-        }
-        ForgeCommand::Allow { owner, remove } => {
-            let me = identity::person(&identity::here(None)?, server)?;
-            let api = Api::new(server).signed_in(None)?;
-            let accounts = api.forge_allow(&me, owner.as_deref(), !remove).await?;
-            println!("{}", text::forge_accounts(&accounts.accounts));
-            Ok(())
-        }
-        ForgeCommand::Credential { operation } => {
-            let mut input = String::new();
-            std::io::stdin().read_to_string(&mut input)?;
-            let files = forge::Files::here();
-            let answer = forge::credential(operation, &input, || {
-                files.context("this session has no forge token")?.token()
-            })?;
-            print!("{answer}");
-            Ok(())
-        }
-    }
-}
-
-/// `riff forge check` for `me`: one line for each role.
-async fn forge_check(api: &Api, me: &SessionUri) -> Result<()> {
-    let check = api.forge_check(me).await?;
-    println!("{}", text::forge_check_head(check.app, &check.repo));
-    let mut failed = false;
-    for role in &check.roles {
-        failed |= role.error.is_some();
-        println!("{}", text::forge_check_line(role));
-    }
-    anyhow::ensure!(!failed, "the App cannot make a token of each role");
-    Ok(())
-}
-
-/// `riff forge check` at the end of `riff forge create` and `riff forge
-/// install`: in the clone of a repository of the GitHub account
-/// `owner`. Elsewhere it says where to run it.
-async fn forge_check_of(api: &Api, me: &SessionUri, owner: &str) -> Result<()> {
-    let ours = matches!(
-        me.place().repo(),
-        riff_core::name::Repo::Git { owner: o, .. } if o.eq_ignore_ascii_case(owner)
-    );
-    if !ours {
-        println!("{}", text::forge_check_elsewhere(owner));
-        return Ok(());
-    }
-    forge_check(api, me).await
-}
-
 async fn cloud(command: &CloudCommand) -> Result<()> {
     if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
         anyhow::bail!(text::CLOUD_WORKER);
@@ -2759,15 +2270,6 @@ async fn cloud(command: &CloudCommand) -> Result<()> {
             let id = cloud::read_line("Client ID: ")?;
             let secret = cloud::read_hidden("Client secret (hidden): ")?;
             cloud::signin(&gcloud, &s, &cloud::file(&dir, name), &id, &secret)
-        }
-        CloudCommand::Forge { name, app, key } => {
-            let s = cloud::load(&dir, name)?;
-            let pem = std::fs::read_to_string(key)
-                .with_context(|| format!("cannot read {}", key.display()))?;
-            let app = app
-                .parse()
-                .with_context(|| format!("{app} is no App ID: give the number of the App"))?;
-            cloud::forge(&gcloud, &s, app, &pem)
         }
         CloudCommand::Deploy { name, tag, confirm } => {
             let s = cloud::load(&dir, name)?;
@@ -2905,26 +2407,20 @@ fn stop_hook() {
 /// Starts `riff hook clear` for the worker `id`, detached, so that the
 /// Stop hook returns at once (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It counts the
 /// prompts of the `transcript` first and gives the number to the check
-/// (01M3ZS67FTAC1784GEVEDXJ837). In its sandbox, the worker has no tmux:
-/// the check uses the pane of its broker (01M4DVW26Q5MX025XBW7JCK44S).
-/// It starts nothing outside tmux with no broker, or when the session
-/// left the riff.
+/// (01M3ZS67FTAC1784GEVEDXJ837). It starts nothing outside tmux, or when
+/// the session left the riff.
 fn start_clear_check(id: &str, transcript: Option<&std::path::Path>) -> Result<()> {
     use std::os::unix::process::CommandExt;
     let in_tmux = std::env::var_os("TMUX").is_some_and(|t| !t.is_empty());
     let pane = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty());
-    let pane = pane.filter(|_| in_tmux);
-    if pane.is_none() && riff::broker::here().is_none() {
+    let Some(pane) = pane.filter(|_| in_tmux) else {
         return Ok(());
-    }
+    };
     if local::left_here(id) {
         return Ok(());
     }
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
-    cmd.args(["hook", "clear", "--session", id]);
-    if let Some(pane) = &pane {
-        cmd.args(["--pane", pane]);
-    }
+    cmd.args(["hook", "clear", "--session", id, "--pane", &pane]);
     if let Some(transcript) = transcript {
         let turns = next::prompts(Some(transcript));
         cmd.arg("--transcript").arg(transcript);
@@ -2938,23 +2434,21 @@ fn start_clear_check(id: &str, transcript: Option<&std::path::Path>) -> Result<(
     Ok(())
 }
 
-/// The check of the clear of the worker `id` in the pane `pane`, else in
-/// the pane of its broker ([`next::check`], 01M3XV0562D3H3P22CJDBPAZBH,
-/// 01M4DVW26Q5MX025XBW7JCK44S).
+/// The check of the clear of the worker `id` in the pane `pane`
+/// ([`next::check`], 01M3XV0562D3H3P22CJDBPAZBH).
 async fn clear_check(
     id: &str,
-    pane: Option<&str>,
+    pane: &str,
     transcript: Option<&std::path::Path>,
     turns: Option<usize>,
     server: &str,
 ) -> Result<()> {
-    let own = riff::door::OwnPane::of(pane).context(riff::text::CLEAR_NO_PANE)?;
     let dir = identity::working_dir()?;
     let here = identity::place(&dir)?;
     let api = Api::new(server);
     let me = identity::agent(&here, id, api.base())?;
     let api = api.signed_in(Some(id))?;
-    next::check(&api, &me, &own, &dir, transcript, turns).await?;
+    next::check(&api, &me, pane, &dir, transcript, turns).await?;
     Ok(())
 }
 
@@ -3079,7 +2573,7 @@ fn start_compact_check(id: &str, transcript: Option<&std::path::Path>) -> Result
 /// Lists the workers of this machine, with their claims and status in
 /// `riff who` (01M3JPQTBDGT54WN7FZP9CD6B5).
 async fn list_workers(long: bool, server: &str) -> Result<()> {
-    let panes = riff::door::Door::of_machine().worker_panes()?;
+    let panes = Tmux::machine().worker_panes()?;
     let who = async {
         let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server);
@@ -3126,6 +2620,13 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
     {
         anstream::print!("{}", view::temp_line(&root, riff::temp::size(&root)));
     }
+    // The compile cache of this machine (01M492398HA0AXX0J8BZCKNGTG).
+    let cache = riff::sccache::Cache::here(&settings)?;
+    let stats = cache.as_ref().and_then(riff::sccache::Cache::stats);
+    anstream::print!(
+        "{}",
+        view::cache_line(cache.as_ref().map(|c| (c, stats.as_ref())))
+    );
     let workers = u16::try_from(panes.len()).unwrap_or(u16::MAX);
     let numbers = riff::monitor::Numbers::here(&settings, &machine, workers)?;
     let ago = local::dir()
@@ -3197,11 +2698,8 @@ async fn ask_host(host: &str, request: riff::host::Request, server: &str) -> Res
 /// pane, then sends the end call of the session
 /// (01M3JPQTDFW3C7QBSZZ2M831MH).
 async fn stop_workers(pane: Option<&str>, server: &str) -> Result<()> {
-    let stopped = riff::door::Door::of_machine().stop(pane, server).await?;
-    for line in &stopped.lines {
-        println!("{line}");
-    }
-    println!("{}", text::workers_stopped(stopped.count));
+    let stopped = worker::stop(&Tmux::machine(), pane, server).await?;
+    println!("{}", text::workers_stopped(stopped));
     Ok(())
 }
 
@@ -3211,9 +2709,7 @@ async fn stop_workers(pane: Option<&str>, server: &str) -> Result<()> {
 /// (01M3XM68N5M5DKB86W5079X2G9). An error goes to stderr: the tools
 /// still work.
 async fn tail_beside_lead(api: &Api, me: &SessionUri) {
-    // In the sandbox of the lead, the broker adds the pane
-    // (01M4DDWPC693RNWHY7P7XBZ9TB).
-    let Some(tmux) = riff::door::Door::of_session() else {
+    let Some(tmux) = Tmux::from_env() else {
         return;
     };
     let added = async {
@@ -3296,7 +2792,7 @@ async fn session_start(server: &str) -> String {
         // (01M3ZV0TJX2H77RW6ZA3ERZT9H).
         if riff::worker::is_worker()
             && input.source.is_new_start()
-            && let Some(dir) = local::riff_dir()
+            && let Some(dir) = local::dir()
             && let Err(e) = riff::workload::mark(&dir, id)
         {
             eprintln!("riff: cannot write the start of the context: {e:#}");
@@ -3379,6 +2875,25 @@ async fn session_start(server: &str) -> String {
     if worker::is_worker() {
         context.push_str(hook::WORKER_LINE);
     }
+    if let Some(line) = hook::on_line(&enable::State::here()) {
+        context.push_str(&line);
+    }
+    if mcp_off_here() {
+        context.push_str(hook::MCP_OFF_LINE);
+    }
+    if let Some(cwd) = cwd
+        .as_deref()
+        .filter(|_| uri.as_ref().is_some_and(SessionUri::lead))
+    {
+        let project = permissions::Project::of(cwd);
+        let user = plugin::settings_from(
+            std::env::var_os("CLAUDE_CONFIG_DIR"),
+            std::env::var_os("HOME"),
+        );
+        if let Some(line) = hook::rules_line(&project.missing(user.as_deref()), &project.top) {
+            context.push_str(&line);
+        }
+    }
     hook::start_output(&context)
 }
 
@@ -3404,6 +2919,85 @@ async fn start_facts(
     Ok((lead, riff, freed, who))
 }
 
+/// `riff setup`: adds the missing permission rules of riff to the
+/// project settings, or with `check`, names them
+/// (01M3Q53RNDJBDHVDFHJ9HCX9S1).
+fn setup(check: bool) -> Result<()> {
+    let project = permissions::Project::of(&identity::working_dir()?);
+    let user = plugin::settings_from(
+        std::env::var_os("CLAUDE_CONFIG_DIR"),
+        std::env::var_os("HOME"),
+    );
+    let left = project.missing(user.as_deref());
+    if check {
+        println!("{}", text::setup_check(&project.settings(), &left));
+        if !left.is_empty() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    let added = permissions::add(&project.settings(), &left)?;
+    println!("{}", text::setup_added(&project.settings(), &added));
+    Ok(())
+}
+
+/// `riff enable` (`on` true) or `riff disable` for the working
+/// directory (01M3XY2SKQ27K3TE4NV28FHTVV). A change of the user
+/// settings is a choice of the person, so riff keeps it as the answer
+/// to the scope question: an update then keeps it.
+fn set_enabled(place: enable::Place, on: bool) -> Result<enable::Changed> {
+    let dir = identity::working_dir()?;
+    let user = plugin::user_settings();
+    let done = if on {
+        enable::enable(&dir, place, user.as_deref())?
+    } else {
+        enable::disable(&dir, place, user.as_deref())?
+    };
+    if place == enable::Place::Global {
+        let scope = if on {
+            enable::Scope::Global
+        } else {
+            enable::Scope::None
+        };
+        settings::set_connect_scope(&settings::path()?, scope)?;
+    }
+    Ok(done)
+}
+
+/// The scope step of `riff connect claude` ([`enable::scope`]). It asks
+/// the scope question only in a terminal.
+fn connect_scope(
+    user: Option<&std::path::Path>,
+    flag: Option<enable::Scope>,
+) -> Result<enable::Scoped> {
+    use std::io::IsTerminal;
+    let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let riff = settings::path()?;
+    let claude = enable::claude_state();
+    let files = enable::Files {
+        user,
+        riff: &riff,
+        claude: claude.as_deref(),
+    };
+    enable::scope(&identity::working_dir()?, files, flag, || {
+        enable::ask_scope(
+            terminal,
+            &mut std::io::stdin().lock(),
+            &mut std::io::stdout(),
+        )
+    })
+}
+
+/// True when a person turned the riff server off for the project of
+/// the working directory in `/mcp` (01M3XY2T0R2Q39XYX8AYV7T0RK).
+fn mcp_off_here() -> bool {
+    let Ok(dir) = std::env::current_dir() else {
+        return false;
+    };
+    let repo = enable::Repo::of(&dir);
+    enable::mcp_off_in(enable::claude_state().as_deref(), &dir, repo.as_ref())
+}
+
 /// The status line of the Claude Code session on stdin
 /// ([`text::statusline`]). It finds the session like a hook does, and
 /// asks riff-server for only that session with `GET /v1/me`, not `who`
@@ -3418,6 +3012,9 @@ async fn statusline(server: &str) -> String {
     };
     if local::left_here(&id) {
         return text::statusline_left(&id);
+    }
+    if mcp_off_here() {
+        return text::statusline_mcp_off(&id);
     }
     if local::dir().is_some_and(|dir| local::mcp_gone_above(&dir)) {
         return text::statusline_mcp_gone(&id);
@@ -3658,9 +3255,7 @@ fn machine_here(me: &SessionUri) -> Option<riff::top::Machine> {
     if limit == 0 {
         return None;
     }
-    let panes = riff::door::Door::of_machine()
-        .worker_panes()
-        .unwrap_or_default();
+    let panes = Tmux::machine().worker_panes().unwrap_or_default();
     let main = identity::working_dir()
         .ok()
         .and_then(|dir| identity::main_worktree(&dir));
@@ -3782,7 +3377,7 @@ async fn draw_top(
 /// each minute while it runs ([`api::keep_alive`],
 /// 01M3WG240PNMQYZ7TX6Z7ZF6M9). In a worker it sends one each 10
 /// seconds. When the reply asks the worker to stop, it stops the wrapper
-/// of the worker and ends (01M4BTB7JGK4BASDVR5WMRTGPM).
+/// of the worker and ends (01M4385Z5BN03E6HTEB5GQVZ8X).
 ///
 /// With a `limit`, it ends with one line and status 0 when no wake came
 /// in that time (01M3Z64J08GW6N1H42AR2FZQZ4). On a new binary, it runs
@@ -3832,14 +3427,14 @@ async fn watch(
         std::future::pending().await
     };
     // The watch of a worker acts on the ask to stop too, so a worker
-    // whose riff mcp ended stops (01M4BTB7JGK4BASDVR5WMRTGPM).
+    // whose riff mcp ended stops (01M4385Z5BN03E6HTEB5GQVZ8X).
     let alive = async {
-        match riff::worker::stop_file_of_worker() {
-            Some(stop) => {
+        match riff::worker::wrapper_of_worker() {
+            Some(wrapper) => {
                 let every = riff_core::wire::WORKER_ALIVE_EVERY;
                 api::keep_alive_until_stop(api, me, every).await;
                 println!("riff: {}", text::IDLE_STOP);
-                riff::worker::ask_stop(&stop);
+                riff::worker::stop_wrapper(wrapper);
             }
             None => api::keep_alive(api, me, riff_core::wire::ALIVE_EVERY).await,
         }

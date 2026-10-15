@@ -45,22 +45,16 @@ fn repo() -> tempfile::TempDir {
             .success();
         assert!(ok);
     }
-    std::fs::create_dir_all(dir.path().join(OUT)).unwrap();
     dir
 }
-
-/// The folder where the fake `claude` lives and writes what it sees:
-/// the folder of the worktrees of the clone, which the sandbox of a
-/// worker writes (01M4BT341H1M1N1MT947HXNXDR).
-const OUT: &str = ".claude/worktrees";
 
 /// A fake `claude` in `dir` that runs `script`, and counts its starts in
 /// the file `starts`.
 fn fake_claude(dir: &Path, script: &str) -> PathBuf {
-    let path = dir.join(OUT).join("claude");
+    let path = dir.join("claude");
     let body = format!(
         "#!/bin/sh\necho start >> '{}'\n{script}\n",
-        dir.join(OUT).join("starts").display()
+        dir.join("starts").display()
     );
     std::fs::write(&path, body).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -76,6 +70,7 @@ fn riff(api: &Api, dir: &Path, session: &str) -> Command {
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_SESSION", session)
+        .env("RIFF_BIN", Isolated::shared().riff_path())
         .env("TMUX_PANE", "%5")
         .env("RIFF_HOME", dir)
         .env_remove("CLAUDE_CODE_SESSION_ID")
@@ -96,7 +91,7 @@ async fn lead_reads(api: &Api, lead: &SessionUri) -> String {
 }
 
 fn starts(dir: &Path) -> usize {
-    std::fs::read_to_string(dir.join(OUT).join("starts"))
+    std::fs::read_to_string(dir.join("starts"))
         .unwrap_or_default()
         .lines()
         .count()
@@ -217,7 +212,7 @@ async fn the_wrapper_marks_claude_as_a_worker() {
     let api = start_server().await;
     lead(&api).await;
     let dir = repo();
-    let seen = dir.path().join(OUT).join("seen");
+    let seen = dir.path().join("seen");
     let claude = fake_claude(
         dir.path(),
         &format!("echo \"$RIFF_WORKER\" > '{}'", seen.display()),
@@ -240,7 +235,7 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     let api = start_server().await;
     lead(&api).await;
     let dir = repo();
-    let seen = dir.path().join(OUT).join("seen");
+    let seen = dir.path().join("seen");
     let claude = fake_claude(
         dir.path(),
         &format!("printf '%s\\n' \"$@\" > '{}'", seen.display()),
@@ -256,158 +251,13 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let seen = std::fs::read_to_string(seen).unwrap();
-    let lines: Vec<&str> = seen.lines().collect();
     assert_eq!(
-        (lines[0], lines[2]),
-        ("--settings", "Join the riff."),
-        "{seen}"
+        std::fs::read_to_string(seen).unwrap(),
+        format!(
+            "--settings\n{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}},\"enabledPlugins\":{{\"rust-lsp@m\":false}},\"env\":{{\"TMPDIR\":\"{tmp}\",\"CLAUDE_CODE_TMPDIR\":\"{tmp}\"}}}}\nJoin the riff.\n",
+            tmp = dir.path().join("tmp/w1").display()
+        )
     );
-    let settings: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
-    let tmp = dir.path().join("tmp/w1").display().to_string();
-    assert_eq!(settings["remoteControlAtStartup"], false);
-    assert_eq!(settings["awaySummaryEnabled"], false);
-    // No suggested prompt: no person types into a worker (01M4CGFMX16JY8W2P9JJDDTSFC).
-    assert_eq!(settings["promptSuggestionEnabled"], false);
-    assert_eq!(settings["enabledPlugins"]["rust-lsp@m"], false);
-    // The plugin of an older riff is off (01M4CMN13D97R2JKHYGFSAM313).
-    assert_eq!(settings["enabledPlugins"]["riff@riff"], false);
-    assert_eq!(settings["env"]["TMPDIR"], tmp.as_str());
-    assert_eq!(settings["env"]["CLAUDE_CODE_TMPDIR"], tmp.as_str());
-    let deny = settings["permissions"]["deny"].as_array().unwrap();
-    assert_eq!(deny[..2], ["Bash(riff cloud)", "Bash(riff cloud *)"]);
-    // The rules of riff work (01M4BYH874WQ16Q0337WQA8AMV).
-    assert!(
-        deny.iter().any(|r| r == "Bash(git push * main)"),
-        "{settings}"
-    );
-    let allow = settings["permissions"]["allow"].as_array().unwrap();
-    for rule in ["mcp__riff", "Bash(riff)", "Bash(riff *)"] {
-        assert!(allow.iter().any(|r| r == rule), "{rule}: {settings}");
-    }
-}
-
-/// A fake home with a dot file and a folder of notes.
-fn home() -> tempfile::TempDir {
-    let home = tempfile::tempdir().unwrap();
-    std::fs::write(home.path().join(".bashrc"), "").unwrap();
-    std::fs::create_dir_all(home.path().join("notes")).unwrap();
-    home
-}
-
-/// The allow and the deny rules of the flag settings `settings`.
-fn rules(settings: &serde_json::Value) -> (Vec<String>, Vec<String>) {
-    let list = |name: &str| -> Vec<String> {
-        let rules = settings["permissions"][name].as_array().unwrap();
-        rules
-            .iter()
-            .map(|r| r.as_str().unwrap().to_owned())
-            .collect()
-    };
-    (list("allow"), list("deny"))
-}
-
-/// A rule of `tool` for the absolute path `path`, as Claude Code writes
-/// it: `//` and the path.
-fn rule(tool: &str, path: &Path, tail: &str) -> String {
-    format!("{tool}(/{}{tail})", path.display())
-}
-
-/// True when `deny` denies `tool` on `path`: a rule for `path` itself
-/// (with `tail`), or a rule for a folder above it with `/**`. A home
-/// that holds no path of the profile is denied as a whole.
-fn denies(deny: &[String], tool: &str, path: &Path, tail: &str) -> bool {
-    deny.contains(&rule(tool, path, tail))
-        || path
-            .ancestors()
-            .skip(1)
-            .any(|dir| deny.contains(&rule(tool, dir, "/**")))
-}
-
-/// The wrapper gives `claude` the permission rules of the profile of a
-/// worker (01M4BT33R71HXAVQGHFD4ZFGR5, 01M4BT33TPSXJVB6JZDZ3F1GGX,
-/// 01M4BT33X0WVVJH7Y6AXSWZEYC, 01M4BT341H1M1N1MT947HXNXDR).
-#[tokio::test(flavor = "multi_thread")]
-async fn the_wrapper_gives_claude_the_rules_of_the_profile() {
-    let api = start_server().await;
-    lead(&api).await;
-    let dir = repo();
-    let home = home();
-    let seen = dir.path().join(OUT).join("seen");
-    let claude = fake_claude(
-        dir.path(),
-        &format!("printf '%s\\n' \"$@\" > '{}'", seen.display()),
-    );
-    let out = riff(&api, dir.path(), "w1")
-        .env("HOME", home.path())
-        .env_remove("CLAUDE_CONFIG_DIR")
-        .args(["workers", "run"])
-        .arg(&claude)
-        .arg(riff::terminal::JOIN)
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let seen = std::fs::read_to_string(seen).unwrap();
-    let lines: Vec<&str> = seen.lines().collect();
-    assert_eq!(
-        (lines[0], lines[1]),
-        ("Join the riff.", "--settings"),
-        "{seen}"
-    );
-    let settings: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
-    let (allow, deny) = rules(&settings);
-    let worktrees = dir.path().canonicalize().unwrap().join(".claude/worktrees");
-    assert!(
-        allow.contains(&rule("Edit", &worktrees, "/**")),
-        "{allow:?}"
-    );
-    assert!(
-        allow.contains(&rule("Read", &worktrees, "/**")),
-        "{allow:?}"
-    );
-    let h = home.path();
-    assert!(denies(&deny, "Read", &h.join(".bashrc"), ""), "{deny:?}");
-    assert!(denies(&deny, "Edit", &h.join("notes"), "/**"), "{deny:?}");
-    // The session has its own Claude folder (01M4BTB7BPA38ARM789WBV507D),
-    // and no rule lets it edit the settings there.
-    assert!(
-        deny.iter()
-            .any(|r| r.starts_with("Edit(/") && r.ends_with("/riff/claude/w1/settings.json)")),
-        "{deny:?}"
-    );
-    assert!(deny.contains(&"Edit(//**/.claude/settings.local.json)".to_owned()));
-}
-
-/// `riff workers rules` prints the rules that a worker in this clone
-/// gets (01M4BT3JQCY5G7YZ373MV5C5JM).
-#[tokio::test(flavor = "multi_thread")]
-async fn riff_workers_rules_prints_the_rules_of_a_worker() {
-    let api = start_server().await;
-    let dir = repo();
-    let home = home();
-    let out = riff(&api, dir.path(), "w1")
-        .env("HOME", home.path())
-        .env_remove("CLAUDE_CONFIG_DIR")
-        .args(["workers", "rules"])
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let settings: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let (allow, deny) = rules(&settings);
-    let git = dir.path().canonicalize().unwrap().join(".git");
-    // 01M4CN0W3V733V6R2SG1YYZRCN: the objects and the refs, not the
-    // config and the hooks.
-    assert!(
-        allow.contains(&rule("Edit", &git.join("objects"), "/**")),
-        "{allow:?}"
-    );
-    assert!(
-        allow.contains(&rule("Edit", &git.join("refs"), "/**")),
-        "{allow:?}"
-    );
-    assert!(!allow.contains(&rule("Edit", &git, "/**")), "{allow:?}");
-    let bashrc = home.path().join(".bashrc");
-    assert!(denies(&deny, "Read", &bashrc, ""), "{deny:?}");
 }
 
 /// The worker gets a temp folder of its own on disk, in `TMPDIR` and
@@ -418,7 +268,7 @@ async fn the_worker_gets_a_temp_folder_and_its_end_deletes_it() {
     let api = start_server().await;
     lead(&api).await;
     let dir = repo();
-    let seen = dir.path().join(OUT).join("seen");
+    let seen = dir.path().join("seen");
     let claude = fake_claude(
         dir.path(),
         &format!(
@@ -479,7 +329,7 @@ async fn a_live_process_keeps_the_temp_folder_until_the_tidy() {
     let api = start_server().await;
     lead(&api).await;
     let dir = repo();
-    let pid = dir.path().join(OUT).join("pid");
+    let pid = dir.path().join("pid");
     let claude = fake_claude(
         dir.path(),
         &format!(
@@ -503,13 +353,11 @@ async fn a_live_process_keeps_the_temp_folder_until_the_tidy() {
     let killed = Command::new("kill").arg(pid.trim()).status().unwrap();
     assert!(killed.success());
     let begin = Instant::now();
-    // The broker of the sandbox ends with the last process of the
-    // session, so wait for each user of the folder.
-    while riff::temp::users().iter().any(|u| u.uses(&folder)) {
-        assert!(
-            begin.elapsed() < Duration::from_secs(60),
-            "a process uses the folder"
-        );
+    while riff::temp::users()
+        .iter()
+        .any(|u| u.pid.to_string() == pid.trim())
+    {
+        assert!(begin.elapsed() < Duration::from_secs(60), "the sleep lives");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert_eq!(
@@ -606,9 +454,9 @@ async fn a_hangup_stops_the_worker_with_no_message() {
 }
 
 /// The server stops an idle worker (01M3Q5A0NKY1FCS0YH6N6YD3GN,
-/// 01M4BTB7G5Q0HPP057KMBXBTE1): the `riff mcp` of the worker gets the
-/// ask in the reply to its keep-alive, and writes the stop file of its
-/// wrapper. The wrapper exits with 0, the session leaves `riff who`, and the lead
+/// 01M3Q5A0QZTSTXHHNYCE8HFJSB): the `riff mcp` of the worker gets the
+/// ask in the reply to its keep-alive, and stops its wrapper. The
+/// wrapper exits with 0, the session leaves `riff who`, and the lead
 /// gets a note (01M3Q5A0WRQT4SGPSD0CQFF011).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_server_stops_an_idle_worker_through_its_wrapper() {
@@ -617,10 +465,7 @@ async fn the_server_stops_an_idle_worker_through_its_wrapper() {
     let idle = api.idle(&person(&lead), Some(0), Some(1)).await.unwrap();
     assert_eq!((idle.per_host, idle.after_secs), (0, 1));
     let dir = repo();
-    let claude = fake_claude(
-        dir.path(),
-        &format!("exec '{}' mcp", Isolated::shared().riff_path().display()),
-    );
+    let claude = fake_claude(dir.path(), "exec \"$RIFF_BIN\" mcp");
     let mut child = riff(&api, dir.path(), "w6")
         .args(["workers", "run"])
         .arg(&claude)
@@ -729,7 +574,7 @@ async fn a_wake_of_the_lead_takes_back_the_ask_to_stop() {
 
 /// A worker whose `riff mcp` ended, for example at a self-update, has
 /// only its watch. The watch gets the ask to stop in the reply to its
-/// keep-alive, and stops the wrapper (01M4BTB7JGK4BASDVR5WMRTGPM). So the
+/// keep-alive, and stops the wrapper (01M4385Z5BN03E6HTEB5GQVZ8X). So the
 /// worker is gone within one minute.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_watch_of_a_worker_with_no_riff_mcp_stops_its_wrapper() {
@@ -741,13 +586,7 @@ async fn the_watch_of_a_worker_with_no_riff_mcp_stops_its_wrapper() {
         .unwrap();
     api.register_as(&w8, true).await.unwrap();
     let dir = repo();
-    let claude = fake_claude(
-        dir.path(),
-        &format!(
-            "exec '{}' watch --once",
-            Isolated::shared().riff_path().display()
-        ),
-    );
+    let claude = fake_claude(dir.path(), "exec \"$RIFF_BIN\" watch --once");
     let child = riff(&api, dir.path(), "w8")
         .args(["workers", "run"])
         .arg(&claude)

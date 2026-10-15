@@ -20,7 +20,6 @@
 //! - [`signed`]: the signature that each message carries.
 //! - [`record`]: the records of the log of `riff-server`.
 //! - [`build`]: the build of each side, and the check that they match.
-//! - [`forge`]: the roles and the rights of a forge token.
 //!
 //! ## Sessions
 //!
@@ -77,7 +76,6 @@
 
 pub mod build;
 pub mod dpop;
-pub mod forge;
 pub mod name;
 pub mod record;
 #[cfg(any(test, feature = "test-support"))]
