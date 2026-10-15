@@ -589,6 +589,9 @@
   checks `Gate` and `Hygiene`. No force push, no deletion, no bypass
   actor. The checks do not stop the push that makes a new branch of a
   line.
+- **01M4YTW8788K4XYTEMRSXDH7B9** The GitHub release of the line that
+  the shared riff runs is marked "Latest". A release of another line is
+  not, also when its version is higher.
 - **01M3JFEXJG2D651PWA30DNRGWF** No session pushes to `main` or runs
   `gh pr merge --admin`. The project settings of Claude Code deny both,
   and the skill says it.
