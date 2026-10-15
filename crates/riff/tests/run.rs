@@ -1356,7 +1356,10 @@ async fn a_sigint_stops_the_wait_of_the_verify_request() {
     let (out, took) =
         a_signal_in_the_end_steps(&machine, "/v1/post", nix::sys::signal::Signal::SIGINT).await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
-    assert!(took < Duration::from_secs(5), "{took:?}\n{stdout}\n{stderr}");
+    assert!(
+        took < Duration::from_secs(5),
+        "{took:?}\n{stdout}\n{stderr}"
+    );
     assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
     assert!(stdout.contains("The pull request #40"), "{stdout}");
     let not_sent = run_not_sent("issue-12", &[RUN_VERIFY_REQUEST, RUN_RELEASE, RUN_END]);
@@ -1374,10 +1377,12 @@ async fn a_sigterm_stops_the_wait_of_the_release() {
     // With no pull request, the release is the first end step.
     std::fs::write(machine.bin.path().join("no-pr"), "").unwrap();
     let (out, took) =
-        a_signal_in_the_end_steps(&machine, "/v1/release", nix::sys::signal::Signal::SIGTERM)
-            .await;
+        a_signal_in_the_end_steps(&machine, "/v1/release", nix::sys::signal::Signal::SIGTERM).await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
-    assert!(took < Duration::from_secs(5), "{took:?}\n{stdout}\n{stderr}");
+    assert!(
+        took < Duration::from_secs(5),
+        "{took:?}\n{stdout}\n{stderr}"
+    );
     assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
     assert!(stdout.contains("No open pull request"), "{stdout}");
     let not_sent = run_not_sent("issue-12", &[RUN_RELEASE, RUN_END]);
