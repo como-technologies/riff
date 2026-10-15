@@ -609,7 +609,12 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
 ///
 /// ```
 /// let line = riff::session_relay::error_answer(&serde_json::json!(7), "away");
-/// assert_eq!(line, r#"{"error":{"code":-32603,"message":"away"},"id":7,"jsonrpc":"2.0"}"#);
+/// let answer: serde_json::Value = serde_json::from_str(&line).unwrap();
+/// assert_eq!(
+///     answer,
+///     serde_json::json!({"jsonrpc": "2.0", "id": 7, "error": {"code": -32603, "message": "away"}})
+/// );
+/// assert!(!line.contains('\n'));
 /// ```
 pub fn error_answer(id: &Value, message: &str) -> String {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": message}}).to_string()

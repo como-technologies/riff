@@ -225,6 +225,10 @@ pub const EVENTS: &str = "events.jsonl";
 /// longest wait for the exit of the relay.
 const GONE_WAIT: Duration = Duration::from_secs(1);
 
+/// How often the daemon looks at the container of a session that it took
+/// up while no relay is connected: a relay that gave up does not come.
+const LOOK_EVERY: Duration = Duration::from_secs(30);
+
 /// The folder of the daemon in the data folder `data` of riff.
 ///
 /// ```
@@ -1247,6 +1251,15 @@ impl<R: Runtime + 'static> Daemon<R> {
                     Some(Note::Gone) => {}
                     None => break (None, false),
                 },
+                // A session that this daemon took up has no end of its
+                // own. Its relay can have given up before the daemon
+                // came back: then no relay connects.
+                () = tokio::time::sleep(LOOK_EVERY), if end.is_none() => {
+                    let back = owned.lock().relay.is_some();
+                    if !back && !self.runtime.running(&owned.name).await.unwrap_or(true) {
+                        break (None, false);
+                    }
+                }
                 exit = async { end.as_mut().expect("an end").await }, if end.is_some() => {
                     // The container ended. Its relay may have sent its
                     // exit just before: take it.
@@ -2396,6 +2409,30 @@ mod tests {
 
     #[tokio::test]
     async fn a_taken_up_session_whose_relay_and_container_end_ends() {
+        assert_eq!(
+            take_up_and_end(true).await,
+            Some(Say::Ended(Ended {
+                code: None,
+                failed: true
+            }))
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_taken_up_session_whose_relay_never_comes_ends_with_its_container() {
+        assert_eq!(
+            take_up_and_end(false).await,
+            Some(Say::Ended(Ended {
+                code: None,
+                failed: true
+            }))
+        );
+    }
+
+    /// A new daemon takes up a session whose container runs. With
+    /// `relay`, its relay connects. Then the container ends with no exit
+    /// of the relay. It gives the last line that a follower got.
+    async fn take_up_and_end(relay: bool) -> Option<Say> {
         let root = tempfile::tempdir().unwrap();
         let dir = dir_in(root.path());
         let fake = Fake::default().with_image(IMAGE);
@@ -2440,19 +2477,13 @@ mod tests {
             })
             .await
             .unwrap();
-        // The relay connects, and the container ends with no exit of the
-        // relay.
-        let (relay, _) = Relay::connect(&session_dir(&dir, name), 0, false).await;
+        let relay = match relay {
+            true => Some(Relay::connect(&session_dir(&dir, name), 0, false).await),
+            false => None,
+        };
         fake.stop(name).await.unwrap();
         drop((relay, running));
-        let (_, end) = to_the_end(&mut follower).await;
-        assert_eq!(
-            end,
-            Some(Say::Ended(Ended {
-                code: None,
-                failed: true
-            }))
-        );
+        to_the_end(&mut follower).await.1
     }
 
     #[tokio::test]
