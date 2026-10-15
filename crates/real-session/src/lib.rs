@@ -1140,3 +1140,68 @@ fn clean_up(options: &Options, issue: u64, held: bool, sessions: Option<&Path>) 
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_signal_fails_the_step_that_runs_and_each_step_after_it() {
+        let stop = AtomicBool::new(false);
+        let failure = step(Step::Run, &stop, || {
+            stop.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(failure.step, Step::Run);
+        assert_eq!(failure.reason, "a signal stopped the test");
+        let mut ran = false;
+        let failure = step(Step::Home, &stop, || {
+            ran = true;
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(failure.step, Step::Home);
+        assert!(!ran);
+    }
+
+    #[test]
+    fn a_sleep_ends_when_the_stop_is_set() {
+        let stop = AtomicBool::new(true);
+        let start = Instant::now();
+        sleep(Duration::from_secs(30), &stop);
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_new_folder_in_the_claude_folder_counts_only_for_its_path_with_the_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        let home = Home {
+            root: root.clone(),
+            skips: Vec::new(),
+            claude: root.join(".claude"),
+        };
+        let before = home.list();
+        let todos = root.join(".claude/todos");
+        std::fs::create_dir_all(&todos).unwrap();
+        std::fs::write(todos.join("other-agent.json"), "").unwrap();
+        std::fs::write(todos.join("1a2b3c4d-agent.json"), "").unwrap();
+        assert_eq!(
+            home.new_paths(&before, &["1a2b3c4d".into()]),
+            [todos.join("1a2b3c4d-agent.json")]
+        );
+        // No mark: nothing in the Claude folder counts.
+        assert!(home.new_paths(&before, &[String::new()]).is_empty());
+    }
+
+    #[test]
+    fn each_step_has_its_own_name_and_number() {
+        let names: HashSet<&str> = Step::ALL.iter().map(|s| s.name()).collect();
+        assert_eq!(names.len(), Step::ALL.len());
+        for (i, step) in Step::ALL.iter().enumerate() {
+            assert_eq!(step.number(), i + 1);
+        }
+    }
+}
