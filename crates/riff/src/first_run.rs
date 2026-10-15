@@ -628,7 +628,7 @@ mod tests {
         let dir = dir_in(root.path());
         let fake = Fake::default().with_registry(IMAGE);
         let listener = listen(&dir).await.unwrap();
-        let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()));
+        let daemon = Arc::new(Daemon::open(fake.clone(), dir.clone()).await.unwrap());
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let served = tokio::spawn(daemon.serve(listener, async {
             let _ = stopped.await;
@@ -660,7 +660,7 @@ mod tests {
         let dir = dir_in(root.path());
         let fake = Fake::default();
         let listener = listen(&dir).await.unwrap();
-        let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()));
+        let daemon = Arc::new(Daemon::open(fake.clone(), dir.clone()).await.unwrap());
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let served = tokio::spawn(daemon.serve(listener, async {
             let _ = stopped.await;
