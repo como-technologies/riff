@@ -110,10 +110,12 @@
 //! | [`Ask::Follow`] | each [`Say::Event`] after a number, then as [`Ask::Start`] |
 //! | [`Ask::Wave`] | [`Say::Done`] when the daemon runs the wave, or [`Say::Failed`] |
 //! | [`Ask::WaveStop`] | [`Say::Done`] when the daemon ran the wave, or [`Say::Failed`] |
+//! | [`Ask::Takeover`] | [`Say::Line`] while the turn ends, [`Say::Held`], then [`Say::Done`] after the go on, or [`Say::Failed`] |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
 //! [`Then::Stop`]: the daemon stops the container. When `riff` closes the
-//! connection, the session goes on: the daemon owns it.
+//! connection, the session goes on: the daemon owns it. After
+//! [`Say::Held`], `riff takeover` sends [`Then::GoOn`].
 //!
 //! `riff run` asks [`Ask::Follow`] after a new start of the daemon, with
 //! the number of the last event that it showed
@@ -129,6 +131,7 @@
 //! | [`SessionAsk::Hello`] | says [`Say::Session`]: the session ID, the item and the name of the container |
 //! | [`SessionAsk::Relay`] | relays the session ([`crate::session_relay`]) |
 //! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk ([`Daemon::tools_of`]) |
+//! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session ([`World::wake`]) |
 //!
 //! # A session
 //!
@@ -171,6 +174,37 @@
 //!     Note over D,C: no event for the quiet limit
 //!     D->>C: stop the container
 //! ```
+//!
+//! # The lead
+//!
+//! The lead is a session with a terminal (01M4Z60B81RTZT71PN5HV0GZHX,
+//! [`crate::lead`]). [`Ask::Start`] with [`Start::terminal`] starts it
+//! with [`Runtime::start_terminal`]: conmon holds its terminal, and
+//! `riff` attaches to it. Its command is `riff relay --terminal --
+//! claude ...`: the relay adds the riff tools. The lead does not wait
+//! for room, and does not count in the limit of the host: it runs no
+//! build of an item. While it runs, the daemon keeps its session on
+//! riff-server alive, and at its end it ends that session
+//! ([`World::resume`], [`World::leave`]).
+//!
+//! # A takeover
+//!
+//! A person takes over a worker with [`Ask::Takeover`]
+//! (01M4Z60B83ZH10HYKW7X1C0SSS). The daemon keeps the takeover in the
+//! [`Record`], and tells the relay [`Say::Hold`]: `claude` ends after
+//! its turn, and the relay waits ([`crate::session_relay`]). At the
+//! [`Up::Held`] of the relay, the daemon says [`Say::Held`] to `riff
+//! takeover`, which runs `claude --resume ID` in the container with the
+//! terminal of the person. At [`Then::GoOn`], or at the end of the
+//! connection of `riff takeover`, the daemon gives the session back: it
+//! tells the relay [`Say::GoOn`], and gives `claude` one new input
+//! ([`text::TAKEOVER_GO_ON`]). The quiet limit does not count during a
+//! takeover. A restart of the daemon keeps the takeover: a new `riff
+//! takeover NAME` gets [`Say::Held`] at once. The daemon refuses a
+//! takeover of a session with a terminal, and of a relay of a protocol
+//! before 4.
+//!
+//! [`Up::Held`]: crate::session_relay::Up::Held
 //!
 //! # A stop of the daemon
 //!
@@ -237,8 +271,12 @@ use crate::wave::{Job, Wave, World};
 
 /// The version of the protocol between `riff` and the daemon, and
 /// between the relay and the daemon. Version 3 adds the waves
-/// ([`Ask::Wave`], [`Ask::WaveStop`]).
-pub const PROTOCOL: u32 = 3;
+/// ([`Ask::Wave`], [`Ask::WaveStop`]). Version 4 adds the sessions with a
+/// terminal, the takeover and the watch of a session.
+pub const PROTOCOL: u32 = 4;
+
+/// The first protocol of a relay that takes [`Say::Hold`].
+pub const TAKEOVER_PROTOCOL: u32 = 4;
 
 /// The name of each socket of the daemon.
 pub const SOCKET: &str = "riff.sock";
@@ -470,6 +508,12 @@ pub enum Ask {
         /// The repository, as `OWNER/REPO`.
         repo: String,
     },
+    /// Take over the live session in the container `name`
+    /// (01M4Z60B83ZH10HYKW7X1C0SSS).
+    Takeover {
+        /// The name of its container.
+        name: String,
+    },
 }
 
 /// A session to start. It holds the values of the host and the
@@ -495,14 +539,21 @@ pub struct Start {
     pub server: String,
     /// The URI of the session.
     pub me: SessionUri,
+    /// True for a session with a terminal: the lead. Its start text is
+    /// in the command of the spec.
+    #[serde(default)]
+    pub terminal: bool,
 }
 
-/// A line of `riff` after [`Ask::Start`] or [`Ask::Follow`].
+/// A line of `riff` after [`Ask::Start`], [`Ask::Follow`] or
+/// [`Ask::Takeover`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "then", rename_all = "snake_case")]
 pub enum Then {
     /// Stop the container.
     Stop,
+    /// The terminal of the takeover ended: the session goes on.
+    GoOn,
 }
 
 /// What a session asks on its own socket: the first line of a
@@ -523,6 +574,10 @@ pub enum SessionAsk {
         inputs: u64,
         /// True when the relay closed the stdin of `claude`.
         closed: bool,
+        /// True when `claude` ended for a takeover, and the relay waits
+        /// for [`Say::GoOn`].
+        #[serde(default)]
+        held: bool,
     },
     /// The riff tools of the session, over MCP
     /// (01M4ZHSZXAY7F7E17B3CMHG562).
@@ -533,6 +588,29 @@ pub enum SessionAsk {
         /// daemon: the daemon skips the handshake.
         client: Option<Value>,
     },
+    /// Wait for the next wake of the session: `riff relay watch`.
+    Watch {
+        /// [`PROTOCOL`] of the relay.
+        protocol: u32,
+    },
+}
+
+/// What a session does now, as `riff view` shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    /// A turn of `claude` runs.
+    #[default]
+    Works,
+    /// After the result of the turn: `claude` ends, or waits for its
+    /// background tasks.
+    Ends,
+    /// A takeover waits for the end of the turn.
+    Holds,
+    /// `claude` ended for a takeover: a person has the session.
+    Taken,
+    /// A session with a terminal: the lead.
+    Terminal,
 }
 
 /// A session that the daemon owns.
@@ -548,6 +626,13 @@ pub struct Live {
     pub image: String,
     /// The start, in milliseconds since the epoch.
     pub since_ms: i64,
+    /// What the session does now.
+    #[serde(default)]
+    pub phase: Phase,
+    /// The last step of the session in a few words: the last line that
+    /// `riff run` shows of its events ([`crate::run::event_lines`]).
+    #[serde(default)]
+    pub last: String,
 }
 
 /// The state of the daemon.
@@ -658,6 +743,17 @@ pub enum Say {
         /// The sequence number.
         seq: u64,
     },
+    /// To the relay: a takeover. Close the stdin of `claude`, and keep
+    /// the container at its end.
+    Hold,
+    /// To the relay: the takeover ended. Start `claude` again.
+    GoOn,
+    /// To `riff takeover`: `claude` ended its turn. Run the terminal of
+    /// the person now.
+    Held {
+        /// The riff session ID: `claude --resume` takes it.
+        session: String,
+    },
     /// The ask is done.
     Done,
     /// The ask failed.
@@ -750,6 +846,13 @@ pub struct Record {
     /// ([`crate::wave`]). `None` for a session of `riff run`.
     #[serde(default)]
     pub job: Option<Job>,
+    /// True for a session with a terminal: the lead.
+    #[serde(default)]
+    pub terminal: bool,
+    /// True from the ask of a takeover until the daemon gives the
+    /// session back.
+    #[serde(default)]
+    pub takeover: bool,
 }
 
 /// What a link of a session tells the task that waits for its end.
@@ -794,6 +897,57 @@ struct SessionState {
     followers: Vec<Out>,
     /// The connection of the relay.
     relay: Option<Out>,
+    /// The protocol of the last relay that connected, or 0.
+    relay_protocol: u32,
+    /// True when `claude` ended for a takeover, and the relay waits.
+    held: bool,
+    /// The connection of `riff takeover`.
+    taker: Option<Out>,
+    /// The last step of the session ([`Live::last`]).
+    last_step: String,
+}
+
+impl SessionState {
+    /// What the session does now.
+    fn phase(&self) -> Phase {
+        let record = &self.record;
+        if record.terminal {
+            Phase::Terminal
+        } else if record.takeover && self.held {
+            Phase::Taken
+        } else if record.takeover {
+            Phase::Holds
+        } else if record.closed {
+            Phase::Ends
+        } else {
+            Phase::Works
+        }
+    }
+
+    /// Gives the session back after a takeover, when `claude` ended for
+    /// it: the relay starts `claude` again, with one new input.
+    fn go_on(&mut self) {
+        if !self.held || self.record.takeover {
+            return;
+        }
+        self.held = false;
+        let line = user_line(text::TAKEOVER_GO_ON);
+        self.record.inputs.push(line.clone());
+        self.record.closed = false;
+        if let Some(relay) = &self.relay {
+            relay.say(Say::GoOn);
+            relay.say(Say::Input { line });
+        }
+    }
+
+    /// The session as `riff daemon status` shows it.
+    fn live(&self) -> Live {
+        Live {
+            phase: self.phase(),
+            last: self.last_step.clone(),
+            ..self.record.live.clone()
+        }
+    }
 }
 
 impl Owned {
@@ -832,7 +986,14 @@ impl Owned {
         }
         state.seq = seq;
         state.last = tokio::time::Instant::now();
-        if let Ok(event) = serde_json::from_str::<Value>(&line)
+        let event = serde_json::from_str::<Value>(&line).ok();
+        if let Some(step) = event
+            .as_ref()
+            .and_then(|e| crate::run::event_lines(e).pop())
+        {
+            state.last_step = step;
+        }
+        if let Some(event) = event
             && event["type"] == "result"
         {
             state.record.failed |= event["is_error"] == true;
@@ -875,11 +1036,11 @@ impl Owned {
     }
 
     /// Relays the session on the connection of its relay: the hello said
-    /// `inputs` and `closed`.
+    /// `protocol`, `inputs`, `closed` and `held`.
     async fn relay(
         &self,
-        inputs: u64,
-        closed: bool,
+        protocol: u32,
+        (inputs, closed, held): (u64, bool, bool),
         mut lines: Lines<BufReader<OwnedReadHalf>>,
         write: OwnedWriteHalf,
     ) {
@@ -887,14 +1048,44 @@ impl Owned {
         {
             let mut state = self.lock();
             out.say(Say::Resume { events: state.seq });
+            state.relay_protocol = protocol;
+            state.held = held;
+            // A takeover that ended while the relay was away: go on
+            // first, so that the new input reaches the new claude.
+            let gone_on = held && !state.record.takeover;
+            if gone_on {
+                out.say(Say::GoOn);
+                state.held = false;
+            }
             let given = usize::try_from(inputs).unwrap_or(usize::MAX);
             for line in state.record.inputs.iter().skip(given) {
                 out.say(Say::Input { line: line.clone() });
             }
-            if state.record.closed && !closed {
+            if gone_on && usize::try_from(inputs).is_ok_and(|n| n >= state.record.inputs.len())
+            {
+                let line = user_line(text::TAKEOVER_GO_ON);
+                state.record.inputs.push(line.clone());
+                out.say(Say::Input { line });
+                state.record.closed = false;
+            }
+            if state.record.closed && !closed && !gone_on {
                 out.say(Say::Close);
             }
+            if state.record.takeover && !held {
+                out.say(Say::Hold);
+            }
+            if held
+                && state.record.takeover
+                && let Some(taker) = &state.taker
+            {
+                taker.say(Say::Held {
+                    session: state.record.live.session.clone(),
+                });
+            }
             state.relay = Some(out.clone());
+            if let Err(e) = self.save(&state.record) {
+                eprintln!("riff daemon: {e:#}");
+            }
         }
         while let Ok(Some(line)) = lines.next_line().await {
             // A line of a newer relay that this daemon does not know:
@@ -916,6 +1107,23 @@ impl Owned {
                     }
                     out.say(Say::Ack { seq });
                     let _ = self.notes.send(Note::Exit(code));
+                }
+                Ok(Up::Held) => {
+                    let mut state = self.lock();
+                    state.held = true;
+                    if state.record.takeover {
+                        if let Some(taker) = &state.taker {
+                            taker.say(Say::Held {
+                                session: state.record.live.session.clone(),
+                            });
+                        }
+                    } else {
+                        // The person left before the end of the turn.
+                        state.go_on();
+                        if let Err(e) = self.save(&state.record) {
+                            eprintln!("riff daemon: {e:#}");
+                        }
+                    }
                 }
                 Err(_) => {}
             }
@@ -1080,9 +1288,13 @@ impl<R: Runtime + 'static> Daemon<R> {
         &self.world
     }
 
-    /// The number of sessions that the daemon owns.
+    /// The number of sessions that the daemon owns, but the sessions
+    /// with a terminal: the lead counts in no limit.
     pub fn live_count(&self) -> usize {
-        self.lock().len()
+        self.lock()
+            .values()
+            .filter(|owned| !owned.lock().record.terminal)
+            .count()
     }
 
     /// The record of each session that the daemon owns.
@@ -1121,7 +1333,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             sessions: self
                 .lock()
                 .values()
-                .map(|owned| owned.lock().record.live.clone())
+                .map(|owned| owned.lock().live())
                 .collect(),
             limit: Some(self.room.limit()),
             waiting: self.room.waiting(),
@@ -1293,6 +1505,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                         error: format!("{e:#}"),
                     },
                 }),
+                Ok(Ask::Takeover { name }) => self.takeover(&name, lines, &out).await,
                 Err(error) => out.say(Say::Failed { error }),
             }
         }
@@ -1384,6 +1597,10 @@ impl<R: Runtime + 'static> Daemon<R> {
                 log,
                 followers: Vec::new(),
                 relay: None,
+                relay_protocol: 0,
+                held: false,
+                taker: None,
+                last_step: String::new(),
             }),
             notes,
             stop: Notify::new(),
@@ -1424,6 +1641,11 @@ impl<R: Runtime + 'static> Daemon<R> {
         out: &Out,
     ) {
         let name = start.spec.name.clone();
+        // The lead waits for no room: it runs no build of an item.
+        if start.terminal {
+            self.launch(start, None, None, Some(from), out).await;
+            return;
+        }
         let slot = {
             let admit = self.room.admit(
                 &name,
@@ -1450,18 +1672,19 @@ impl<R: Runtime + 'static> Daemon<R> {
                 }
             }
         };
-        self.launch(start, None, slot, Some(from), out).await;
+        self.launch(start, None, Some(slot), Some(from), out).await;
     }
 
     /// Starts the session of `start` in the room of `slot`, with the job
     /// `job` of a wave, says its events on `out`, and waits for its end.
     /// A [`Then::Stop`] on `from` stops it. It gives the record of the
-    /// session.
+    /// session. A session with a terminal takes no slot: it says
+    /// [`Say::Done`] when its container runs.
     pub(crate) async fn launch(
         self: &Arc<Self>,
         start: Start,
         job: Option<Job>,
-        slot: Slot,
+        slot: Option<Slot>,
         from: Option<Lines<BufReader<OwnedReadHalf>>>,
         out: &Out,
     ) -> Record {
@@ -1475,6 +1698,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             secrets,
             server,
             me,
+            terminal,
         } = start;
         let name = spec.name.clone();
         let record = Record {
@@ -1484,14 +1708,22 @@ impl<R: Runtime + 'static> Daemon<R> {
                 item: item.clone(),
                 image: spec.image.clone(),
                 since_ms: now_ms(),
+                phase: Phase::default(),
+                last: String::new(),
             },
             folder,
             server,
             me,
-            inputs: vec![user_line(&start)],
+            inputs: if terminal {
+                Vec::new()
+            } else {
+                vec![user_line(&start)]
+            },
             closed: false,
             failed: false,
             job,
+            terminal,
+            takeover: false,
         };
         if let Err(e) = self.check(&spec) {
             out.say(Say::Failed {
@@ -1527,7 +1759,12 @@ impl<R: Runtime + 'static> Daemon<R> {
             SOCKET_VAR.into(),
             in_session().to_string_lossy().into_owned(),
         ));
-        let mut command: Vec<String> = [RELAY_BIN, "relay", "--"].map(String::from).into();
+        let relay: &[&str] = if terminal {
+            &[RELAY_BIN, "relay", "--terminal", "--"]
+        } else {
+            &[RELAY_BIN, "relay", "--"]
+        };
+        let mut command: Vec<String> = relay.iter().map(|a| (*a).to_owned()).collect();
         command.append(&mut spec.command);
         spec.command = command;
         println!("{}", text::daemon_session_starts(&name, &item, &session));
@@ -1535,6 +1772,27 @@ impl<R: Runtime + 'static> Daemon<R> {
             name: name.clone(),
             socket: owned.socket.clone(),
         });
+        if terminal {
+            let end = match self.runtime.start_terminal(&spec, &values).await {
+                Ok(end) => end,
+                Err(e) => {
+                    self.close(&owned);
+                    println!("{}", text::daemon_session_failed(&name));
+                    out.say(Say::Failed {
+                        error: format!("{e:#}"),
+                    });
+                    return record;
+                }
+            };
+            self.world.resume(&record);
+            out.say(Say::Done);
+            let reader = from.map(|from| stop_on(from, owned.clone()));
+            self.clone().watch(owned, notes, Some(end)).await;
+            if let Some(reader) = reader {
+                reader.abort();
+            }
+            return record;
+        }
         let running = match self.runtime.start(&spec, &values).await {
             Ok(running) => running,
             Err(e) => {
@@ -1609,14 +1867,18 @@ impl<R: Runtime + 'static> Daemon<R> {
             // task of claude ended is no quiet.
             let quiet_at = {
                 let state = owned.lock();
-                state.record.closed.then(|| state.last + self.quiet)
+                (state.record.closed && !state.record.takeover).then(|| state.last + self.quiet)
             };
             tokio::select! {
                 () = owned.closing.notified() => {}
                 () = tokio::time::sleep_until(quiet_at.unwrap_or_else(tokio::time::Instant::now)),
                     if quiet_at.is_some() && !stopped =>
                 {
-                    if owned.lock().last.elapsed() >= self.quiet {
+                    let quiet = {
+                        let state = owned.lock();
+                        state.last.elapsed() >= self.quiet && !state.record.takeover
+                    };
+                    if quiet {
                         stopped = true;
                         let line = text::daemon_quiet(&owned.name, self.quiet);
                         println!("{line}");
@@ -1670,9 +1932,19 @@ impl<R: Runtime + 'static> Daemon<R> {
                 }
             }
         };
-        let failed = owned.lock().record.failed || stopped || !exited;
-        let ended = Ended { code, failed };
+        let (failed, record) = {
+            let state = owned.lock();
+            (state.record.failed, state.record.clone())
+        };
+        let ended = Ended {
+            code,
+            failed: failed || stopped || !exited,
+        };
         println!("{}", text::daemon_session_ends(&owned.name, code));
+        if record.terminal {
+            let world = self.world.clone();
+            tokio::spawn(async move { world.leave(&record).await });
+        }
         let followers = self.close(&owned);
         for out in followers {
             out.say(Say::Ended(ended));
@@ -1729,10 +2001,33 @@ impl<R: Runtime + 'static> Daemon<R> {
             return;
         };
         match session_hello(&first) {
-            Ok(SessionAsk::Relay { inputs, closed, .. }) => {
-                owned.relay(inputs, closed, lines, write).await;
+            Ok(SessionAsk::Relay {
+                protocol,
+                inputs,
+                closed,
+                held,
+            }) => {
+                owned
+                    .relay(protocol, (inputs, closed, held), lines, write)
+                    .await;
             }
             Ok(SessionAsk::Mcp { client, .. }) => self.mcp(&owned, client, lines, write).await,
+            Ok(SessionAsk::Watch { .. }) => {
+                let (out, written) = writer(write);
+                let record = owned.lock().record.clone();
+                let wake = self.world.wake(&record);
+                // The wait ends when the relay leaves.
+                let gone = async { while let Ok(Some(_)) = lines.next_line().await {} };
+                tokio::select! {
+                    woke = wake => out.say(match woke {
+                        Ok(text) => Say::Line { text },
+                        Err(e) => Say::Failed { error: format!("{e:#}") },
+                    }),
+                    () = gone => {}
+                }
+                drop(out);
+                let _ = written.await;
+            }
             Ok(SessionAsk::Hello { .. }) => {
                 let (out, written) = writer(write);
                 let record = owned.lock().record.live.clone();
@@ -1772,9 +2067,84 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// ([`crate::mcp::CONTAINER_TOOLS`], 01M4ZV3B6T2KB09WJ59F07HXET).
     pub fn tools_of(record: &Record) -> Result<crate::mcp::Tools> {
         let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
-        Ok(crate::mcp::Tools::new(api, record.me.clone())
-            .as_worker(true)
-            .in_container())
+        let tools = crate::mcp::Tools::new(api, record.me.clone()).as_worker(!record.terminal);
+        Ok(if record.terminal {
+            tools.in_lead_container()
+        } else {
+            tools.in_container()
+        })
+    }
+
+    /// Takes over the live session `name` for the person of `out`
+    /// (01M4Z60B83ZH10HYKW7X1C0SSS): see "A takeover" in the design. It
+    /// gives the session back at a [`Then::GoOn`] on `from`, or at the
+    /// end of `from`.
+    async fn takeover(&self, name: &str, mut from: Lines<BufReader<OwnedReadHalf>>, out: &Out) {
+        let Some(owned) = self.lock().get(name).cloned() else {
+            out.say(Say::Failed {
+                error: text::daemon_no_session(name),
+            });
+            return;
+        };
+        {
+            let mut state = owned.lock();
+            let refused = if state.record.terminal {
+                Some(text::takeover_terminal(name))
+            } else if state.taker.as_ref().is_some_and(Out::open) {
+                Some(text::takeover_runs(name))
+            } else if !state.record.takeover
+                && (state.relay.is_none() || state.relay_protocol < TAKEOVER_PROTOCOL)
+            {
+                Some(text::takeover_no_relay(name))
+            } else {
+                None
+            };
+            if let Some(error) = refused {
+                out.say(Say::Failed { error });
+                return;
+            }
+            state.taker = Some(out.clone());
+            state.followers.push(out.clone());
+            if state.held && state.record.takeover {
+                out.say(Say::Held {
+                    session: state.record.live.session.clone(),
+                });
+            } else {
+                if !state.record.takeover {
+                    state.record.takeover = true;
+                    if let Err(e) = owned.save(&state.record) {
+                        eprintln!("riff daemon: {e:#}");
+                    }
+                    if let Some(relay) = &state.relay {
+                        relay.say(Say::Hold);
+                    }
+                }
+                out.say(Say::Line {
+                    text: text::takeover_waits(name),
+                });
+            }
+        }
+        println!("{}", text::takeover_asked(name));
+        loop {
+            match from.next_line().await {
+                Ok(Some(line)) if matches!(serde_json::from_str::<Then>(&line), Ok(Then::GoOn)) => {
+                    break;
+                }
+                Ok(Some(_)) => {}
+                _ => break,
+            }
+        }
+        let mut state = owned.lock();
+        if state.taker.as_ref().is_some_and(|t| t.same(out)) {
+            state.taker = None;
+        }
+        state.record.takeover = false;
+        state.go_on();
+        if let Err(e) = owned.save(&state.record) {
+            eprintln!("riff daemon: {e:#}");
+        }
+        println!("{}", text::takeover_ended(name));
+        out.say(Say::Done);
     }
 
     /// Serves the riff tools of the session `owned` on one connection.
@@ -1838,6 +2208,11 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let _ = std::fs::remove_file(&path);
                 let _ = std::fs::remove_dir_all(session_dir(&self.dir, &name));
                 println!("{}", text::daemon_session_gone(&name));
+                if record.terminal {
+                    let world = self.world.clone();
+                    let record = record.clone();
+                    tokio::spawn(async move { world.leave(&record).await });
+                }
                 // The job of a wave does its steps after the end now:
                 // the session ended while no daemon ran.
                 if record.job.is_some() {
@@ -1852,6 +2227,10 @@ impl<R: Runtime + 'static> Daemon<R> {
             match self.own(record.clone(), Scrub::default(), true) {
                 Ok((owned, notes)) => {
                     println!("{}", text::daemon_takes_up(&name));
+                    // The lead keeps its session on riff-server alive.
+                    if record.terminal {
+                        self.world.resume(&record);
+                    }
                     // The job of a wave goes on: the keep-alive of its
                     // claim, and its steps after the end.
                     if record.job.is_some() {
@@ -1957,6 +2336,12 @@ impl Client {
     /// Asks the daemon to stop the session of this connection.
     pub async fn stop(&mut self) -> Result<()> {
         self.line(&Then::Stop).await
+    }
+
+    /// Tells the daemon that the terminal of the takeover of this
+    /// connection ended: the session goes on.
+    pub async fn go_on(&mut self) -> Result<()> {
+        self.line(&Then::GoOn).await
     }
 
     /// The next line of the daemon, or `None` when the daemon closed
@@ -2254,6 +2639,7 @@ mod tests {
                 secrets: vec!["gho_secret1".into()],
                 server: "http://127.0.0.1:1".into(),
                 me: me(name),
+                terminal: false,
             }
         }
 
@@ -2298,6 +2684,7 @@ mod tests {
                     protocol: PROTOCOL,
                     inputs,
                     closed,
+                    held: false,
                 })
                 .await;
             match relay.next().await {
@@ -2884,6 +3271,8 @@ mod tests {
                 item: "issue-1".into(),
                 image: IMAGE.into(),
                 since_ms: 0,
+                phase: Phase::default(),
+                last: String::new(),
             },
             folder,
             server: "http://127.0.0.1:1".into(),
@@ -2892,6 +3281,8 @@ mod tests {
             closed: false,
             failed: false,
             job: None,
+            terminal: false,
+            takeover: false,
         };
         std::fs::write(
             record_path(&dir, name),
@@ -2947,6 +3338,7 @@ mod tests {
                 secrets: vec![],
                 server: "http://127.0.0.1:1".into(),
                 me: me(name),
+                terminal: false,
             };
             let record = Record {
                 live: Live {
@@ -2955,6 +3347,8 @@ mod tests {
                     item: item.into(),
                     image: IMAGE.into(),
                     since_ms: 0,
+                    phase: Phase::default(),
+                    last: String::new(),
                 },
                 folder: folder.clone(),
                 server: start.server.clone(),
@@ -2963,6 +3357,8 @@ mod tests {
                 closed: false,
                 failed: false,
                 job: None,
+                terminal: false,
+                takeover: false,
             };
             std::fs::write(
                 record_path(&dir, name),
@@ -3068,6 +3464,8 @@ mod tests {
                 item: "issue-1".into(),
                 image: IMAGE.into(),
                 since_ms: 0,
+                phase: Phase::default(),
+                last: String::new(),
             },
             folder: folder.clone(),
             server: "http://127.0.0.1:1".into(),
@@ -3076,6 +3474,8 @@ mod tests {
             closed: false,
             failed: false,
             job: None,
+            terminal: false,
+            takeover: false,
         };
         private_dir(&dir.join(LIVE)).unwrap();
         std::fs::write(
@@ -3195,6 +3595,7 @@ mod tests {
             secrets: vec!["v".into()],
             server: "http://127.0.0.1:1".into(),
             me: me("n"),
+            terminal: false,
         };
         let line = serde_json::to_string(&Hello {
             protocol: PROTOCOL,
@@ -3227,10 +3628,24 @@ mod tests {
             serde_json::to_string(&SessionAsk::Relay {
                 protocol: 2,
                 inputs: 1,
-                closed: false
+                closed: false,
+                held: false,
             })
             .unwrap(),
-            r#"{"ask":"relay","protocol":2,"inputs":1,"closed":false}"#
+            r#"{"ask":"relay","protocol":2,"inputs":1,"closed":false,"held":false}"#
+        );
+        // The hello of a relay of protocol 3 has no held.
+        assert_eq!(
+            serde_json::from_str::<SessionAsk>(
+                r#"{"ask":"relay","protocol":3,"inputs":1,"closed":true}"#
+            )
+            .unwrap(),
+            SessionAsk::Relay {
+                protocol: 3,
+                inputs: 1,
+                closed: true,
+                held: false,
+            }
         );
         assert_eq!(
             serde_json::to_string(&Up::Event {

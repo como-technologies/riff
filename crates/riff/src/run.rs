@@ -1323,6 +1323,7 @@ async fn work(
             secrets,
             server: server.to_owned(),
             me: me.clone(),
+            terminal: false,
         },
     )
     .await?;

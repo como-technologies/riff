@@ -25,6 +25,14 @@
 //! stdout of the command is [`Running::events`]. `podman stop` ends the
 //! container and each of its processes (01M4Z60B7XT7462XMV49GJTVSJ).
 //!
+//! A session with a terminal, the lead, starts with `podman run --rm -d
+//! -i -t` ([`terminal_args`]): conmon holds its terminal, and `podman
+//! run` ends when the container runs. `podman wait NAME` gives its end.
+//! `podman attach NAME` shows the terminal to a person, until Ctrl-P
+//! Ctrl-Q. A takeover runs `podman exec -it NAME COMMAND` with the
+//! terminal of the person (01M4Z60B81RTZT71PN5HV0GZHX,
+//! 01M4Z60B83ZH10HYKW7X1C0SSS).
+//!
 //! conmon, the monitor of podman, holds the container. A stop of the
 //! daemon stops no container (01M4Z60B7Z24WBD6HV6ER0WN9K,
 //! 01M4ZDTW00B7N6T9P3MK066KA7):
@@ -98,10 +106,48 @@ pub struct Podman;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn run_args(spec: &SessionSpec) -> Result<Vec<OsString>> {
-    let mut args: Vec<OsString> = ["run", "--rm", "-i", "--sig-proxy=false", "--name"]
-        .into_iter()
-        .map(OsString::from)
-        .collect();
+    args_of(spec, &["run", "--rm", "-i", "--sig-proxy=false"])
+}
+
+/// The arguments of `podman` for `spec` with a terminal: `run`, with no
+/// wait for the end. conmon holds the terminal. The rest is as
+/// [`run_args`].
+///
+/// ```
+/// use riff::podman::terminal_args;
+/// use riff::runtime::SessionSpec;
+///
+/// let spec = SessionSpec {
+///     name: "riff-lead-o-r".into(),
+///     image: "img".into(),
+///     home: "/home/mike".into(),
+///     workdir: "/data/clone".into(),
+///     binds: vec![],
+///     env: vec![],
+///     memory: "8g".into(),
+///     cpus: 4,
+///     command: vec!["claude".into()],
+/// };
+/// let args: Vec<String> = terminal_args(&spec)?
+///     .into_iter()
+///     .map(|a| a.into_string().unwrap())
+///     .collect();
+/// assert_eq!(
+///     args.join(" "),
+///     "run --rm -d -i -t --name riff-lead-o-r --userns=keep-id --memory 8g --cpus 4 \
+///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
+///      -w /data/clone img claude"
+/// );
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn terminal_args(spec: &SessionSpec) -> Result<Vec<OsString>> {
+    args_of(spec, &["run", "--rm", "-d", "-i", "-t"])
+}
+
+/// The arguments of `podman` for `spec`, after the arguments `first`.
+fn args_of(spec: &SessionSpec, first: &[&str]) -> Result<Vec<OsString>> {
+    let mut args: Vec<OsString> = first.iter().map(OsString::from).collect();
+    args.push("--name".into());
     args.push(spec.name.clone().into());
     args.push("--userns=keep-id".into());
     args.push("--memory".into());
@@ -247,6 +293,51 @@ impl Runtime for Podman {
     async fn attach(&self, name: &str) -> Result<Exit> {
         let status = podman()
             .args(["attach", name])
+            .status()
+            .await
+            .with_context(|| text::no_program(PODMAN))?;
+        Ok(status.into())
+    }
+
+    /// Only the `podman` child gets the values of the host. The end is
+    /// `podman wait`: no exit code when it cannot say, for example when
+    /// the container went before the wait.
+    async fn start_terminal(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<End> {
+        spec.check_values(values)?;
+        let out = podman()
+            .args(terminal_args(spec)?)
+            .envs(values.iter().map(|(name, value)| (name, value)))
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .with_context(|| text::no_program(PODMAN))?;
+        if !out.status.success() {
+            bail!(
+                "podman run {}: {}",
+                spec.name,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        let name = spec.name.clone();
+        Ok(End::new(async move {
+            let out = podman()
+                .args(["wait", &name])
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output()
+                .await
+                .with_context(|| text::no_program(PODMAN))?;
+            let code = String::from_utf8_lossy(&out.stdout).trim().parse().ok();
+            Ok(Exit {
+                code: code.filter(|_| out.status.success()),
+            })
+        }))
+    }
+
+    async fn exec(&self, name: &str, command: &[String]) -> Result<Exit> {
+        let status = podman()
+            .args(["exec", "-it", name])
+            .args(command)
             .status()
             .await
             .with_context(|| text::no_program(PODMAN))?;
