@@ -2381,7 +2381,6 @@ dependencies = [
  "reqwest",
  "riff-core",
  "riff-state",
- "schemars",
  "serde",
  "serde_json",
  "sha2",
