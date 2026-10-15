@@ -105,11 +105,12 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
 
 /// A fake `claude` in the container. It logs its arguments, takes the
 /// start text, waits while `bin/hold` is there, and prints
-/// `bin/events`. When `bin/tools` is there, it first sends its lines to the riff tools, through the `riff relay mcp`
-/// of its MCP config, and logs the answers to `bin/mcp.out` until it has
-/// one for each request. Then, for
-/// each of `bin/later` and `bin/last` that is there, it waits for the
-/// file `.go` beside it, and prints it. It ends when its stdin closes.
+/// `bin/events`. When `bin/tools` is there, it first sends its lines to
+/// the riff tools, through the `riff relay mcp` of its MCP config, and
+/// logs the answers to `bin/mcp.out` until it has one for each request.
+/// Then, for each of `bin/later` and `bin/last` that is there, it waits
+/// for the file `.go` beside it, and prints it. It ends when its stdin
+/// closes.
 fn fake_claude(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
