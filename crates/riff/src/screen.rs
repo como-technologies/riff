@@ -1,0 +1,486 @@
+//! `riff view`: the ratatui view of the riff daemon of this machine
+//! (#720, 01M4Z60B81RTZT71PN5HV0GZHX, 01M501PA4MG5NYNK7FBBRRAT20).
+//!
+//! # Design
+//!
+//! The view asks the daemon for its status each [`LOOK_EVERY`]
+//! ([`crate::daemon::status`]), and draws it with ratatui:
+//!
+//! ```text
+//! riff daemon 1.3.1 06a0ae03be98, pid 4242, limit 3 sessions and a floor of 8 GB, 0 waiting
+//!   SESSION                    ITEM           STATE      AGE  LAST
+//! > riff-lead-o-r              lead           lead       2h
+//!   riff-issue-12-1a2b3c4d     issue-12       works      5m   > Bash: just check
+//!   riff-verify-issue-9-…      verify-issue-9 ends       1m   end: success, 8 turns, 22 s, 0.17 USD
+//! wave o/r: started issue-12
+//! Up/Down select   Enter attach to the lead   t take over the session   q quit
+//! ```
+//!
+//! [`Screen`] holds the state of the view, and [`Screen::on_key`] turns
+//! a key into an [`Action`]: both have no terminal, so a test checks
+//! them, and draws the view on the `TestBackend` of ratatui. [`view`]
+//! runs the loop with the terminal of the person.
+//!
+//! - Enter attaches to the lead ([`crate::lead::attach`]): the selected
+//!   row when it is a lead, else the first lead. The view gives the
+//!   terminal to `podman attach`, and takes it back after Ctrl-P Ctrl-Q.
+//! - `t` takes over the selected worker ([`crate::takeover`]). The view
+//!   gives the terminal to `claude --resume`, and takes it back after
+//!   `/exit`.
+//! - `q`, Esc or Ctrl-C ends the view. The sessions go on.
+
+use std::path::Path;
+use std::time::Duration;
+
+use anyhow::Result;
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Line;
+use ratatui::widgets::{Paragraph, Row, Table, TableState};
+
+use crate::daemon::{self, Live, Phase, Status};
+use crate::runtime::Runtime;
+use crate::text;
+
+/// How often the view asks the daemon for its status.
+pub const LOOK_EVERY: Duration = Duration::from_secs(1);
+
+/// A key of the person, as the view takes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Key {
+    /// Select the row above.
+    Up,
+    /// Select the row below.
+    Down,
+    /// Attach to the lead.
+    Enter,
+    /// Take over the selected session.
+    Takeover,
+    /// End the view.
+    Quit,
+}
+
+/// What the view does for a key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    /// Attach to the session with a terminal in this container.
+    Attach(String),
+    /// Take over the session in this container.
+    Takeover(String),
+    /// End the view.
+    Quit,
+}
+
+/// The state of the view.
+#[derive(Debug, Clone, Default)]
+pub struct Screen {
+    /// The last status of the daemon, or why no daemon answers.
+    status: Option<Result<Status, String>>,
+    /// The selected row of the sessions.
+    selected: usize,
+    /// A line for the person, after an action.
+    note: Option<String>,
+}
+
+impl Screen {
+    /// Takes the status of the daemon: `Err` says why no daemon answers.
+    /// The selection stays in the rows.
+    pub fn set(&mut self, status: Result<Status, String>) {
+        self.status = Some(status);
+        let rows = self.sessions().len();
+        self.selected = self.selected.min(rows.saturating_sub(1));
+    }
+
+    /// Shows `note` for the person, under the rows.
+    pub fn note(&mut self, note: impl Into<String>) {
+        self.note = Some(note.into());
+    }
+
+    /// The sessions of the daemon, in the order of the rows: each lead
+    /// first, then the others, each by its name.
+    pub fn sessions(&self) -> Vec<&Live> {
+        let Some(Ok(status)) = &self.status else {
+            return Vec::new();
+        };
+        let mut sessions: Vec<&Live> = status.sessions.iter().collect();
+        sessions.sort_by_key(|s| (s.phase != Phase::Terminal, s.name.clone()));
+        sessions
+    }
+
+    /// The selected row.
+    pub fn selected(&self) -> usize {
+        self.selected
+    }
+
+    /// Takes the key `key` of the person.
+    ///
+    /// ```
+    /// use riff::screen::{Action, Key, Screen};
+    ///
+    /// let mut screen = Screen::default();
+    /// assert_eq!(screen.on_key(Key::Quit), Some(Action::Quit));
+    /// // No daemon: no session to attach to.
+    /// assert_eq!(screen.on_key(Key::Enter), None);
+    /// ```
+    pub fn on_key(&mut self, key: Key) -> Option<Action> {
+        let sessions = self.sessions();
+        let selected = sessions.get(self.selected).copied();
+        let lead = selected
+            .filter(|s| s.phase == Phase::Terminal)
+            .or_else(|| sessions.iter().copied().find(|s| s.phase == Phase::Terminal))
+            .map(|s| s.name.clone());
+        let rows = sessions.len();
+        let selected = selected.map(|s| (s.name.clone(), s.phase));
+        match key {
+            Key::Quit => Some(Action::Quit),
+            Key::Up => {
+                self.selected = self.selected.saturating_sub(1);
+                None
+            }
+            Key::Down => {
+                if self.selected + 1 < rows {
+                    self.selected += 1;
+                }
+                None
+            }
+            Key::Enter => match lead {
+                Some(name) => Some(Action::Attach(name)),
+                None => {
+                    self.note(text::VIEW_NO_LEAD);
+                    None
+                }
+            },
+            Key::Takeover => match selected {
+                Some((name, Phase::Terminal)) => {
+                    self.note(text::view_no_takeover(&name));
+                    None
+                }
+                Some((name, _)) => Some(Action::Takeover(name)),
+                None => None,
+            },
+        }
+    }
+
+    /// Draws the view on `frame`, with the ages at the time `now_ms`.
+    pub fn draw(&self, frame: &mut Frame, now_ms: i64) {
+        let waves = match &self.status {
+            Some(Ok(status)) => status.waves.len() + usize::from(!status.waiting.is_empty()),
+            _ => 0,
+        };
+        let [head, rows, tail, note, keys] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(2),
+            Constraint::Length(u16::try_from(waves).unwrap_or(u16::MAX)),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(frame.area());
+        let head_line = match &self.status {
+            None => String::new(),
+            Some(Ok(status)) => text::view_daemon(status),
+            Some(Err(error)) => text::view_no_daemon(error),
+        };
+        frame.render_widget(Paragraph::new(head_line), head);
+
+        let sessions = self.sessions();
+        let table = Table::new(
+            sessions.iter().map(|s| {
+                let age = u64::try_from((now_ms - s.since_ms) / 1000).unwrap_or(0);
+                Row::new([
+                    text::safe(&s.name),
+                    text::safe(&s.item),
+                    text::phase_word(s.phase).to_owned(),
+                    text::ago(age),
+                    text::safe(&s.last),
+                ])
+            }),
+            [
+                Constraint::Length(28),
+                Constraint::Length(16),
+                Constraint::Length(20),
+                Constraint::Length(4),
+                Constraint::Fill(1),
+            ],
+        )
+        .header(
+            Row::new(["SESSION", "ITEM", "STATE", "AGE", "LAST"])
+                .style(Style::new().add_modifier(Modifier::BOLD)),
+        )
+        .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("> ");
+        let mut state = TableState::default().with_selected(
+            (!sessions.is_empty()).then_some(self.selected),
+        );
+        frame.render_stateful_widget(table, rows, &mut state);
+
+        if let Some(Ok(status)) = &self.status {
+            let mut lines: Vec<Line> = status
+                .waves
+                .iter()
+                .map(|w| Line::from(text::view_wave(w)))
+                .collect();
+            if !status.waiting.is_empty() {
+                lines.push(Line::from(text::view_waiting(&status.waiting)));
+            }
+            frame.render_widget(Paragraph::new(lines), tail);
+        }
+        if let Some(line) = &self.note {
+            frame.render_widget(Paragraph::new(line.as_str()), note);
+        }
+        frame.render_widget(
+            Paragraph::new(text::VIEW_KEYS).style(Style::new().add_modifier(Modifier::DIM)),
+            keys,
+        );
+    }
+}
+
+/// The key of the person in `event`, or `None` for another event.
+fn key_of(event: &ratatui::crossterm::event::Event) -> Option<Key> {
+    use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+    let Event::Key(key) = event else {
+        return None;
+    };
+    if key.kind != KeyEventKind::Press {
+        return None;
+    }
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Some(Key::Up),
+        KeyCode::Down | KeyCode::Char('j') => Some(Key::Down),
+        KeyCode::Enter => Some(Key::Enter),
+        KeyCode::Char('t') => Some(Key::Takeover),
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Key::Quit),
+        KeyCode::Char('q') | KeyCode::Esc => Some(Key::Quit),
+        _ => None,
+    }
+}
+
+/// `riff view`: shows the daemon in the folder `dir` until the person
+/// ends the view. It attaches and takes over with `runtime`.
+pub async fn view(dir: &Path, runtime: &impl Runtime) -> Result<()> {
+    use ratatui::crossterm::event;
+    let mut screen = Screen::default();
+    let mut terminal = ratatui::try_init()?;
+    let mut next = tokio::time::Instant::now();
+    let shown = loop {
+        if tokio::time::Instant::now() >= next {
+            screen.set(daemon::status(dir).await.map_err(|e| format!("{e:#}")));
+            next = tokio::time::Instant::now() + LOOK_EVERY;
+        }
+        if let Err(e) = terminal.draw(|frame| screen.draw(frame, crate::run::now_ms())) {
+            break Err(e.into());
+        }
+        match event::poll(Duration::from_millis(200)) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(e) => break Err(e.into()),
+        }
+        let key = match event::read() {
+            Ok(event) => key_of(&event),
+            Err(e) => break Err(e.into()),
+        };
+        let Some(action) = key.and_then(|key| screen.on_key(key)) else {
+            continue;
+        };
+        // The terminal goes to the action, and comes back after it.
+        ratatui::restore();
+        let note = match &action {
+            Action::Quit => break Ok(()),
+            Action::Attach(name) => crate::lead::attach(runtime, name)
+                .await
+                .err()
+                .map(|e| format!("{e:#}")),
+            Action::Takeover(name) => {
+                match crate::takeover::takeover(dir, runtime, name, |l| println!("{l}")).await {
+                    Ok(_) => Some(text::takeover_back(name)),
+                    Err(e) => Some(format!("{e:#}")),
+                }
+            }
+        };
+        if let Some(note) = note {
+            screen.note(note);
+        }
+        terminal = match ratatui::try_init() {
+            Ok(terminal) => terminal,
+            Err(e) => return Err(e.into()),
+        };
+        next = tokio::time::Instant::now();
+    };
+    ratatui::restore();
+    shown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    const NOW: i64 = 10_000_000;
+
+    fn live(name: &str, item: &str, phase: Phase, last: &str) -> Live {
+        Live {
+            name: name.into(),
+            session: format!("{name}-session"),
+            item: item.into(),
+            image: "img".into(),
+            since_ms: NOW - 300_000,
+            phase,
+            last: last.into(),
+        }
+    }
+
+    fn status(sessions: Vec<Live>) -> Status {
+        Status {
+            pid: 4242,
+            build: "1.3.1 06a0ae03be98".into(),
+            since_ms: 0,
+            dir: "/d".into(),
+            riff: None,
+            position: 0,
+            sessions,
+            limit: Some(crate::room::Limit::default()),
+            waiting: vec![],
+            waves: vec![],
+        }
+    }
+
+    /// The text of the screen after a draw of `screen`, one line for
+    /// each row of the terminal.
+    fn drawn(screen: &Screen, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| screen.draw(frame, NOW)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    fn two() -> Screen {
+        let mut screen = Screen::default();
+        screen.set(Ok(status(vec![
+            live(
+                "riff-issue-12-1a2b3c4d",
+                "issue-12",
+                Phase::Works,
+                "> Bash: just check",
+            ),
+            live("riff-lead-o-r", "lead", Phase::Terminal, ""),
+        ])));
+        screen
+    }
+
+    #[test]
+    fn the_view_shows_each_session_with_its_item_its_state_its_age_and_its_last_step() {
+        let lines = drawn(&two(), 110, 8);
+        assert_eq!(
+            lines[0],
+            "riff daemon 1.3.1 06a0ae03be98, pid 4242, limit 3 sessions and a floor of 8 GB, 0 waiting"
+        );
+        assert!(lines[1].contains("SESSION") && lines[1].contains("LAST"), "{lines:#?}");
+        // The lead is first, and selected.
+        assert!(lines[2].starts_with("> riff-lead-o-r"), "{lines:#?}");
+        assert!(lines[2].contains("lead") && lines[2].contains("5m"), "{lines:#?}");
+        assert!(lines[3].contains("riff-issue-12-1a2b3c4d"), "{lines:#?}");
+        assert!(lines[3].contains("issue-12"), "{lines:#?}");
+        assert!(lines[3].contains("works"), "{lines:#?}");
+        assert!(lines[3].contains("> Bash: just check"), "{lines:#?}");
+        assert_eq!(lines[7], text::VIEW_KEYS);
+    }
+
+    #[test]
+    fn the_view_shows_the_waves_the_starts_that_wait_and_a_note() {
+        let mut screen = Screen::default();
+        let mut shown = status(vec![live(
+            "riff-issue-12-1a2b3c4d",
+            "issue-12",
+            Phase::Holds,
+            "",
+        )]);
+        shown.waves = vec![daemon::WaveShown {
+            repo: "o/r".into(),
+            word: "started issue-12".into(),
+        }];
+        shown.waiting = vec!["riff-issue-13-2b3c4d5e".into()];
+        screen.set(Ok(shown));
+        screen.note("a note");
+        let lines = drawn(&screen, 110, 9);
+        assert!(lines[2].contains("holds for a takeover"), "{lines:#?}");
+        assert_eq!(lines[5], "wave o/r: started issue-12");
+        assert_eq!(lines[6], text::view_waiting(&["riff-issue-13-2b3c4d5e".into()]));
+        assert_eq!(lines[7], "a note");
+    }
+
+    #[test]
+    fn the_view_with_no_daemon_says_how_to_start_it() {
+        let mut screen = Screen::default();
+        screen.set(Err("no socket".into()));
+        let lines = drawn(&screen, 110, 6);
+        assert_eq!(lines[0], text::view_no_daemon("no socket"));
+        assert_eq!(screen.on_key(Key::Takeover), None);
+        assert_eq!(screen.on_key(Key::Enter), None);
+        let lines = drawn(&screen, 110, 6);
+        assert_eq!(lines[4], text::VIEW_NO_LEAD);
+    }
+
+    #[test]
+    fn the_keys_select_a_row_attach_to_the_lead_and_take_over_a_worker() {
+        let mut screen = two();
+        // The lead is selected: Enter attaches to it, t does not take it
+        // over.
+        assert_eq!(
+            screen.on_key(Key::Enter),
+            Some(Action::Attach("riff-lead-o-r".into()))
+        );
+        assert_eq!(screen.on_key(Key::Takeover), None);
+        assert_eq!(drawn(&screen, 110, 8)[6], text::view_no_takeover("riff-lead-o-r"));
+        // Down selects the worker, and stops at the last row.
+        assert_eq!(screen.on_key(Key::Down), None);
+        assert_eq!(screen.on_key(Key::Down), None);
+        assert_eq!(screen.selected(), 1);
+        assert!(drawn(&screen, 110, 8)[3].starts_with("> riff-issue-12"));
+        assert_eq!(
+            screen.on_key(Key::Takeover),
+            Some(Action::Takeover("riff-issue-12-1a2b3c4d".into()))
+        );
+        // Enter on a worker attaches to the lead.
+        assert_eq!(
+            screen.on_key(Key::Enter),
+            Some(Action::Attach("riff-lead-o-r".into()))
+        );
+        assert_eq!(screen.on_key(Key::Up), None);
+        assert_eq!(screen.on_key(Key::Up), None);
+        assert_eq!(screen.selected(), 0);
+        // A new status with fewer rows keeps the selection in them.
+        screen.on_key(Key::Down);
+        screen.set(Ok(status(vec![])));
+        assert_eq!(screen.selected(), 0);
+        assert_eq!(screen.on_key(Key::Quit), Some(Action::Quit));
+    }
+
+    #[test]
+    fn a_key_of_the_terminal_is_a_key_of_the_view() {
+        use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+        let press = |code, modifiers| Event::Key(KeyEvent::new(code, modifiers));
+        let none = KeyModifiers::NONE;
+        assert_eq!(key_of(&press(KeyCode::Up, none)), Some(Key::Up));
+        assert_eq!(key_of(&press(KeyCode::Char('j'), none)), Some(Key::Down));
+        assert_eq!(key_of(&press(KeyCode::Enter, none)), Some(Key::Enter));
+        assert_eq!(key_of(&press(KeyCode::Char('t'), none)), Some(Key::Takeover));
+        assert_eq!(key_of(&press(KeyCode::Esc, none)), Some(Key::Quit));
+        assert_eq!(
+            key_of(&press(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(Key::Quit)
+        );
+        assert_eq!(key_of(&press(KeyCode::Char('x'), none)), None);
+        let mut release = KeyEvent::new(KeyCode::Char('q'), none);
+        release.kind = KeyEventKind::Release;
+        assert_eq!(key_of(&Event::Key(release)), None);
+    }
+}

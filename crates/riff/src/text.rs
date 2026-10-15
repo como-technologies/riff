@@ -5805,9 +5805,18 @@ pub fn lead_detached(name: &str) -> String {
     format!("You left the terminal of the container {name}.")
 }
 
-/// `riff view`: no lead runs for the repository.
-pub fn view_no_lead(repo: &str) -> String {
-    format!("No lead runs for {repo}. Start it: riff lead start")
+/// `riff view`: no lead runs on this machine.
+pub const VIEW_NO_LEAD: &str = "No lead runs on this machine. Start it in a clone: riff lead start";
+
+/// `riff view`: the starts that wait for room in the limit of the host.
+///
+/// ```
+/// let line = riff::text::view_waiting(&["riff-issue-13-2b3c4d5e".into()]);
+/// assert_eq!(line, "waits for room: riff-issue-13-2b3c4d5e");
+/// ```
+pub fn view_waiting(names: &[String]) -> String {
+    let names: Vec<String> = names.iter().map(|n| safe(n)).collect();
+    format!("waits for room: {}", names.join(", "))
 }
 
 /// `riff view`: the keys, at the bottom of the view.

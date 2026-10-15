@@ -576,6 +576,25 @@ enum Command {
         #[command(subcommand)]
         command: WaveCommand,
     },
+    /// Show the sessions of the riff daemon of this machine
+    ///
+    /// It shows each session with its item, its state, its age and its
+    /// last step, the limit of this host and the waves of the daemon. It
+    /// draws them again each second. Up and Down select a session. Enter
+    /// attaches to the lead: Ctrl-P Ctrl-Q detaches and comes back here.
+    /// t takes over the selected session, as riff takeover does. q ends
+    /// the view; the sessions go on.
+    View,
+    /// Take over a session of the riff daemon in your terminal
+    ///
+    /// The session stops at the end of its turn. Then claude opens here
+    /// with the history of the session, in its container. When you end
+    /// it with /exit, the session goes on with its item. riff view and
+    /// riff daemon status show the names.
+    Takeover {
+        /// The name of the container, for example riff-issue-12-1a2b3c4d.
+        name: String,
+    },
     /// Run the riff daemon, or install, remove or show it
     ///
     /// The riff daemon owns the containers of riff run on this machine.
@@ -594,6 +613,10 @@ enum Command {
     /// session. While the daemon is away, it keeps the events.
     #[command(hide = true, args_conflicts_with_subcommands = true)]
     Relay {
+        /// Run the command with the terminal, in the place of the relay:
+        /// the lead, and the claude of a takeover.
+        #[arg(long)]
+        terminal: bool,
         /// The command of the session and its arguments.
         #[arg(last = true)]
         session: Vec<String>,
@@ -1140,6 +1163,10 @@ enum RelayCommand {
     ///
     /// claude runs it through the MCP config that riff relay gives it.
     Mcp,
+    /// Wait for the next wake of the session, and print its line
+    ///
+    /// The lead runs it as a background task: it ends at the next wake.
+    Watch,
 }
 
 #[derive(Subcommand)]
@@ -1200,6 +1227,14 @@ enum PlanCommand {
 
 #[derive(Subcommand)]
 enum LeadCommand {
+    /// Start the lead of this repository in a container, and attach to it
+    ///
+    /// The riff daemon starts claude with a terminal in a container of
+    /// the session image, with a clone and a Claude folder of its own
+    /// that stay between starts. When the lead runs already, riff
+    /// attaches to it. Ctrl-P Ctrl-Q detaches: the lead runs on. riff
+    /// view shows it and attaches to it too.
+    Start,
     /// Show or set how riff compacts the lead at the end of a wave
     ///
     /// When the riff is paused, the wave and its release are done, and
@@ -1452,8 +1487,23 @@ async fn main() -> Result<()> {
         }
         return Ok(());
     }
-    if let Command::Relay { session, command } = cli.command {
-        return relay_command(session, command).await;
+    if let Command::Relay {
+        terminal,
+        session,
+        command,
+    } = cli.command
+    {
+        return relay_command(terminal, session, command).await;
+    }
+    if let Command::View = cli.command {
+        return view_command().await;
+    }
+    if let Command::Takeover { name } = &cli.command {
+        let code = riff::takeover::here(name).await?;
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return Ok(());
     }
     let (server, source) = server_of(cli.server.as_deref())?;
     if let Command::Server = cli.command {
@@ -1789,6 +1839,13 @@ async fn main() -> Result<()> {
         let code = riff::run::run(api, &here, &server, item, image.as_deref()).await?;
         std::process::exit(code);
     }
+    if let Command::Lead {
+        command: Some(LeadCommand::Start),
+    } = &cli.command
+    {
+        let server = api.base().to_owned();
+        return riff::lead::start(api, &here, &server).await;
+    }
     if let Command::Wave { command } = &cli.command {
         let dir = riff::daemon::dir()?;
         match command {
@@ -2083,8 +2140,11 @@ async fn main() -> Result<()> {
         | Command::Relay { .. }
         | Command::Worktrees(_)
         | Command::Lead {
-            command: Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. }),
+            command:
+                Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. } | LeadCommand::Start),
         }
+        | Command::View
+        | Command::Takeover { .. }
         | Command::Pr {
             command: Pr::Wait { .. },
         }
@@ -2470,15 +2530,38 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
     }
 }
 
+/// `riff view` on this machine: the daemon of [`riff::daemon::dir`] and
+/// rootless podman.
+async fn view_command() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        riff::screen::view(&riff::daemon::dir()?, &riff::podman::Podman).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        anyhow::bail!(text::RUN_LINUX_ONLY)
+    }
+}
+
 /// `riff relay`: the riff in a session of the riff daemon
 /// ([`riff::session_relay`]). It ends with the exit code of the command
 /// of the session.
-async fn relay_command(session: Vec<String>, command: Option<RelayCommand>) -> Result<()> {
+async fn relay_command(
+    terminal: bool,
+    session: Vec<String>,
+    command: Option<RelayCommand>,
+) -> Result<()> {
     match command {
         Some(RelayCommand::Mcp) => {
             let socket = riff::session_relay::socket_here()?;
             riff::session_relay::mcp(&socket, tokio::io::stdin(), tokio::io::stdout()).await
         }
+        Some(RelayCommand::Watch) => {
+            let socket = riff::session_relay::socket_here()?;
+            println!("{}", riff::session_relay::watch(&socket).await?);
+            Ok(())
+        }
+        None if terminal => Err(riff::session_relay::terminal(&session)),
         None => {
             let code = riff::session_relay::main(session).await?;
             std::process::exit(code)

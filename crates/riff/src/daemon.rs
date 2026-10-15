@@ -2570,6 +2570,7 @@ mod tests {
         dir: PathBuf,
         fake: Fake,
         quiet: Duration,
+        world: Option<Arc<dyn World>>,
         daemon: Arc<Daemon<Fake>>,
         stop: Option<oneshot::Sender<()>>,
         served: JoinHandle<Result<()>>,
@@ -2583,10 +2584,23 @@ mod tests {
         JoinHandle<Result<()>>,
     );
 
-    async fn serve(fake: &Fake, dir: &Path, quiet: Duration) -> Served {
+    /// The riff-server of the daemon is `world` when it is given, else
+    /// the riff-server of this machine.
+    async fn serve_in(
+        fake: &Fake,
+        dir: &Path,
+        quiet: Duration,
+        world: Option<Arc<dyn World>>,
+    ) -> Served {
         let listener = listen(dir).await.unwrap();
-        let daemon = Daemon::open(fake.clone(), dir.to_owned()).await.unwrap();
-        let daemon = Arc::new(daemon.with_quiet(quiet));
+        let mut daemon = Daemon::open(fake.clone(), dir.to_owned())
+            .await
+            .unwrap()
+            .with_quiet(quiet);
+        if let Some(world) = world {
+            daemon = daemon.with_world(world);
+        }
+        let daemon = Arc::new(daemon);
         let (stop, stopped) = oneshot::channel::<()>();
         let served = tokio::spawn(daemon.clone().serve(listener, async {
             let _ = stopped.await;
@@ -2601,14 +2615,21 @@ mod tests {
 
         /// A daemon on `fake` with the quiet limit `quiet`.
         async fn with_quiet(fake: Fake, quiet: Duration) -> Here {
+            Here::with_world(fake, quiet, None).await
+        }
+
+        /// A daemon on `fake` with the quiet limit `quiet` and the
+        /// riff-server of `world`.
+        async fn with_world(fake: Fake, quiet: Duration, world: Option<Arc<dyn World>>) -> Here {
             let root = tempfile::tempdir().unwrap();
             let dir = dir_in(root.path());
-            let (daemon, stop, served) = serve(&fake, &dir, quiet).await;
+            let (daemon, stop, served) = serve_in(&fake, &dir, quiet, world.clone()).await;
             Here {
                 root,
                 dir,
                 fake,
                 quiet,
+                world,
                 daemon,
                 stop: Some(stop),
                 served,
@@ -2618,7 +2639,8 @@ mod tests {
         /// Stops the daemon, and starts a new one in the same folder.
         async fn restart(&mut self) {
             self.stop().await;
-            let (daemon, stop, served) = serve(&self.fake, &self.dir, self.quiet).await;
+            let (daemon, stop, served) =
+                serve_in(&self.fake, &self.dir, self.quiet, self.world.clone()).await;
             self.daemon = daemon;
             self.stop = Some(stop);
             self.served = served;
@@ -2673,20 +2695,27 @@ mod tests {
         /// Connects to the socket of the session in the folder `dir` as
         /// its relay, and gives the resume.
         async fn connect(dir: &Path, inputs: u64, closed: bool) -> (Relay, u64) {
+            Relay::connect_as(
+                dir,
+                SessionAsk::Relay {
+                    protocol: PROTOCOL,
+                    inputs,
+                    closed,
+                    held: false,
+                },
+            )
+            .await
+        }
+
+        /// Connects with the hello `hello`, and gives the resume.
+        async fn connect_as(dir: &Path, hello: SessionAsk) -> (Relay, u64) {
             let conn = connect_in(dir, SOCKET).await.unwrap();
             let (read, write) = conn.into_split();
             let mut relay = Relay {
                 lines: BufReader::new(read).lines(),
                 write,
             };
-            relay
-                .send(&SessionAsk::Relay {
-                    protocol: PROTOCOL,
-                    inputs,
-                    closed,
-                    held: false,
-                })
-                .await;
+            relay.send(&hello).await;
             match relay.next().await {
                 Say::Resume { events } => (relay, events),
                 other => panic!("{other:?}"),
@@ -3756,5 +3785,392 @@ mod tests {
         assert_eq!(mode & 0o777, 0o700);
         let chunks = std::fs::read_dir(state_dir(&dir).join("log")).unwrap();
         assert_eq!(chunks.count(), 1);
+    }
+
+    /// The riff-server of the lead, as the test plays it: it notes each
+    /// keep-alive and each end, and gives a wake at once. No wave runs.
+    #[derive(Default)]
+    struct Server {
+        said: Mutex<Vec<String>>,
+    }
+
+    impl Server {
+        fn said(&self) -> Vec<String> {
+            self.said
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+
+        fn note(&self, line: String) {
+            self.said
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(line);
+        }
+    }
+
+    impl World for Server {
+        fn look<'a>(&'a self, _: &'a Wave) -> crate::wave::BoxFuture<'a, Result<crate::wave::Look>> {
+            Box::pin(async { bail!("no wave in this test") })
+        }
+
+        fn image(&self, _: &Wave) -> Result<String> {
+            bail!("no wave in this test")
+        }
+
+        fn begin<'a>(
+            &'a self,
+            _: &'a Wave,
+            _: &'a crate::wave::Work,
+            _: &'a str,
+        ) -> crate::wave::BoxFuture<'a, Result<Option<Start>>> {
+            Box::pin(async { bail!("no wave in this test") })
+        }
+
+        fn resume(&self, record: &Record) {
+            self.note(format!("resume {}", record.live.session));
+        }
+
+        fn finish<'a>(&'a self, _: &'a Record, _: Ended) -> crate::wave::BoxFuture<'a, Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn sweep<'a>(&'a self, _: &'a Wave, _: &'a [PathBuf]) -> crate::wave::BoxFuture<'a, Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn tell<'a>(&'a self, _: &'a Wave, _: &'a str) -> crate::wave::BoxFuture<'a, ()> {
+            Box::pin(async {})
+        }
+
+        fn leave<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, ()> {
+            Box::pin(async move { self.note(format!("leave {}", record.live.session)) })
+        }
+
+        fn wake<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, Result<String>> {
+            Box::pin(async move { Ok(format!("a wake of {}", record.live.item)) })
+        }
+    }
+
+    /// Waits until `done` is true, for at most 5 s.
+    async fn until(mut done: impl FnMut() -> bool) {
+        for _ in 0..500 {
+            if done() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("it did not happen in 5 s");
+    }
+
+    /// The phase of the session `name` in the status of the daemon.
+    async fn phase_of(dir: &Path, name: &str) -> Phase {
+        status(dir)
+            .await
+            .unwrap()
+            .sessions
+            .into_iter()
+            .find(|s| s.name == name)
+            .map(|s| s.phase)
+            .unwrap()
+    }
+
+    /// Asks a takeover of `name`, and gives the client after the first
+    /// line of the daemon.
+    async fn take_over(dir: &Path, name: &str) -> (Client, Say) {
+        let mut taker = Client::connect(dir).await.unwrap();
+        taker
+            .ask(Ask::Takeover { name: name.into() })
+            .await
+            .unwrap();
+        let first = taker.next().await.unwrap().unwrap();
+        (taker, first)
+    }
+
+    /// The next line of `taker` that is not an event of the session.
+    async fn next_of(taker: &mut Client) -> Option<Say> {
+        loop {
+            match taker.next().await.unwrap() {
+                Some(Say::Event { .. } | Say::Stderr { .. }) => {}
+                other => return other,
+            }
+        }
+    }
+
+    /// A worker with its relay, after its start text and its first event.
+    async fn a_worker(here: &Here) -> (Client, String, Relay) {
+        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let (client, name) = here.started(start).await;
+        let socket = session_dir(&here.dir, &name);
+        let (mut relay, _) = Relay::connect(&socket, 0, false).await;
+        assert!(matches!(relay.next().await, Say::Input { .. }));
+        relay.event(1, TURN[0]).await;
+        (client, name, relay)
+    }
+
+    #[tokio::test]
+    async fn the_lead_runs_with_a_terminal_counts_in_no_limit_and_leaves_riff_server_at_its_end() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here = Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let mut start = here.start("riff-lead-o-r", "lead");
+        start.terminal = true;
+        let (mut client, name) = here.started(start).await;
+        assert_eq!(client.next().await.unwrap(), Some(Say::Done));
+        drop(client);
+
+        // The daemon starts it with a terminal: the relay runs claude in
+        // its own place.
+        assert_eq!(here.fake.calls(), ["terminal riff-lead-o-r"]);
+        let spec = here.fake.spec(&name).unwrap();
+        assert_eq!(
+            spec.command,
+            ["/opt/riff/riff", "relay", "--terminal", "--", "claude"]
+        );
+        // It counts in no limit, and keeps its session alive.
+        assert_eq!(here.daemon.live_count(), 0);
+        assert_eq!(phase_of(&here.dir, &name).await, Phase::Terminal);
+        assert_eq!(server.said(), ["resume riff-lead-o-r-session"]);
+        let record: Record =
+            serde_json::from_str(&std::fs::read_to_string(record_path(&here.dir, &name)).unwrap())
+                .unwrap();
+        assert!(record.terminal && record.inputs.is_empty());
+
+        // riff relay watch gets the next wake of the session.
+        let socket = session_dir(&here.dir, &name);
+        let conn = connect_in(&socket, SOCKET).await.unwrap();
+        let (read, mut write) = conn.into_split();
+        let ask = serde_json::to_string(&SessionAsk::Watch { protocol: PROTOCOL }).unwrap();
+        write
+            .write_all(format!("{ask}\n").as_bytes())
+            .await
+            .unwrap();
+        let line = BufReader::new(read).lines().next_line().await.unwrap().unwrap();
+        assert_eq!(
+            serde_json::from_str::<Say>(&line).unwrap(),
+            Say::Line {
+                text: "a wake of lead".into()
+            }
+        );
+
+        // A takeover of the lead is refused: a person attaches to it.
+        let (_, refused) = take_over(&here.dir, &name).await;
+        assert_eq!(
+            refused,
+            Say::Failed {
+                error: text::takeover_terminal(&name)
+            }
+        );
+
+        // At its end, the daemon ends its session on riff-server.
+        here.fake.stop(&name).await.unwrap();
+        until(|| server.said().len() == 2).await;
+        assert_eq!(server.said()[1], "leave riff-lead-o-r-session");
+        assert!(status(&here.dir).await.unwrap().sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_takeover_holds_the_worker_at_the_end_of_its_turn_and_gives_it_back_with_one_input() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (mut client, name, mut relay) = a_worker(&here).await;
+        assert_eq!(phase_of(&here.dir, &name).await, Phase::Works);
+
+        let (mut taker, first) = take_over(&here.dir, &name).await;
+        assert_eq!(
+            first,
+            Say::Line {
+                text: text::takeover_waits(&name)
+            }
+        );
+        // The relay closes the stdin of claude: it ends after its turn.
+        assert_eq!(relay.next().await, Say::Hold);
+        assert_eq!(phase_of(&here.dir, &name).await, Phase::Holds);
+        relay.event(2, TURN[1]).await;
+        relay.event(3, TURN[2]).await;
+        relay.send(&Up::Held).await;
+        assert_eq!(
+            next_of(&mut taker).await,
+            Some(Say::Held {
+                session: "riff-issue-12-1a2b3c4d-session".into()
+            })
+        );
+        assert_eq!(phase_of(&here.dir, &name).await, Phase::Taken);
+
+        // The terminal of the person ended: the session goes on.
+        taker.go_on().await.unwrap();
+        assert_eq!(next_of(&mut taker).await, Some(Say::Done));
+        assert_eq!(relay.next().await, Say::GoOn);
+        let go_on = user_line(text::TAKEOVER_GO_ON);
+        assert_eq!(relay.next().await, Say::Input { line: go_on.clone() });
+        assert_eq!(phase_of(&here.dir, &name).await, Phase::Works);
+        let record: Record =
+            serde_json::from_str(&std::fs::read_to_string(record_path(&here.dir, &name)).unwrap())
+                .unwrap();
+        assert_eq!(record.inputs, [user_line("Do it."), go_on]);
+        assert!(!record.takeover && !record.closed);
+
+        // The new turn ends as each turn: the close, then the exit.
+        relay.event(4, TURN[2]).await;
+        relay.exit(5, 0).await;
+        let (said, end) = to_the_end(&mut client).await;
+        assert_eq!(events(&said).len(), 4);
+        assert_eq!(
+            end,
+            Some(Say::Ended(Ended {
+                code: Some(0),
+                failed: false
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn the_quiet_limit_does_not_stop_a_session_in_a_takeover() {
+        let quiet = Duration::from_millis(200);
+        let here = Here::with_quiet(Fake::default().with_image(IMAGE), quiet).await;
+        let (_client, name, mut relay) = a_worker(&here).await;
+        let (mut taker, _) = take_over(&here.dir, &name).await;
+        assert_eq!(relay.next().await, Say::Hold);
+        // The result closes the input, and the quiet limit would count.
+        relay.event(2, TURN[2]).await;
+        relay.send(&Up::Held).await;
+        assert!(matches!(next_of(&mut taker).await, Some(Say::Held { .. })));
+        tokio::time::sleep(quiet * 4).await;
+        assert!(
+            !here.fake.calls().iter().any(|c| c.starts_with("stop")),
+            "{:?}",
+            here.fake.calls()
+        );
+        assert_eq!(phase_of(&here.dir, &name).await, Phase::Taken);
+    }
+
+    #[tokio::test]
+    async fn the_daemon_refuses_a_takeover_with_no_relay_or_with_a_relay_of_protocol_3() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let (_client, name) = here.started(start).await;
+        let refused = Say::Failed {
+            error: text::takeover_no_relay(&name),
+        };
+        // No relay yet.
+        assert_eq!(take_over(&here.dir, &name).await.1, refused);
+        // A relay of riff 3.0 before the takeover.
+        let socket = session_dir(&here.dir, &name);
+        let old = SessionAsk::Relay {
+            protocol: 3,
+            inputs: 0,
+            closed: false,
+            held: false,
+        };
+        let (_relay, _) = Relay::connect_as(&socket, old).await;
+        assert_eq!(take_over(&here.dir, &name).await.1, refused);
+        // A session that the daemon does not own.
+        assert_eq!(
+            take_over(&here.dir, "riff-other").await.1,
+            Say::Failed {
+                error: text::daemon_no_session("riff-other")
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_person_who_leaves_before_the_end_of_the_turn_gets_no_terminal_and_the_session_goes_on() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (_client, name, mut relay) = a_worker(&here).await;
+        let (taker, _) = take_over(&here.dir, &name).await;
+        assert_eq!(relay.next().await, Say::Hold);
+        // Ctrl-C before the end of the turn: the connection ends.
+        drop(taker);
+        until(|| {
+            std::fs::read_to_string(record_path(&here.dir, &name))
+                .ok()
+                .and_then(|t| serde_json::from_str::<Record>(&t).ok())
+                .is_some_and(|r| !r.takeover)
+        })
+        .await;
+        // claude ends its turn for the hold: the daemon goes on at once.
+        relay.event(2, TURN[2]).await;
+        relay.send(&Up::Held).await;
+        assert_eq!(relay.next().await, Say::GoOn);
+        assert_eq!(
+            relay.next().await,
+            Say::Input {
+                line: user_line(text::TAKEOVER_GO_ON)
+            }
+        );
+        assert_eq!(phase_of(&here.dir, &name).await, Phase::Works);
+    }
+
+    #[tokio::test]
+    async fn a_new_daemon_keeps_a_takeover_and_a_new_riff_takeover_gets_the_terminal_at_once() {
+        let mut here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (_client, name, mut relay) = a_worker(&here).await;
+        // The first taker stays: its process went with the old daemon.
+        let (mut first, _) = take_over(&here.dir, &name).await;
+        assert_eq!(relay.next().await, Say::Hold);
+        relay.send(&Up::Held).await;
+        assert!(matches!(next_of(&mut first).await, Some(Say::Held { .. })));
+
+        here.restart().await;
+        here.daemon.recover().await;
+        let socket = session_dir(&here.dir, &name);
+        let held = SessionAsk::Relay {
+            protocol: PROTOCOL,
+            inputs: 1,
+            closed: true,
+            held: true,
+        };
+        let (mut relay, had) = Relay::connect_as(&socket, held).await;
+        assert_eq!(had, 1);
+        let (mut taker, first_line) = take_over(&here.dir, &name).await;
+        assert_eq!(
+            first_line,
+            Say::Held {
+                session: "riff-issue-12-1a2b3c4d-session".into()
+            }
+        );
+        taker.go_on().await.unwrap();
+        assert_eq!(next_of(&mut taker).await, Some(Say::Done));
+        assert_eq!(relay.next().await, Say::GoOn);
+        assert!(matches!(relay.next().await, Say::Input { .. }));
+        drop(first);
+    }
+
+    #[tokio::test]
+    async fn riff_takeover_runs_the_terminal_of_the_person_and_gives_the_session_back() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (_client, name, mut relay) = a_worker(&here).await;
+        let (dir, fake, at) = (here.dir.clone(), here.fake.clone(), name.clone());
+        let shown = Arc::new(Mutex::new(Vec::new()));
+        let lines = shown.clone();
+        let taken = tokio::spawn(async move {
+            crate::takeover::takeover(&dir, &fake, &at, |line| {
+                lines
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(line.to_owned());
+            })
+            .await
+        });
+        assert_eq!(relay.next().await, Say::Hold);
+        relay.event(2, TURN[2]).await;
+        relay.send(&Up::Held).await;
+        assert_eq!(relay.next().await, Say::GoOn);
+        assert!(matches!(relay.next().await, Say::Input { .. }));
+        assert_eq!(taken.await.unwrap().unwrap(), 0);
+        let exec = format!(
+            "exec {name} /opt/riff/riff relay --terminal -- claude --resume \
+             riff-issue-12-1a2b3c4d-session --permission-mode auto"
+        );
+        assert!(here.fake.calls().contains(&exec), "{:?}", here.fake.calls());
+        let shown = shown.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        assert_eq!(
+            shown,
+            [
+                text::takeover_waits(&name),
+                text::takeover_held(&name),
+                text::takeover_back(&name)
+            ]
+        );
     }
 }

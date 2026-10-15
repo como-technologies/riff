@@ -48,6 +48,7 @@ anstyle = "1.0.14"
 textwrap = { version = "0.16.4", features = ["terminal_size"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 rustyline = { version = "18.0.1", default-features = false }
+ratatui = "0.30.2"
 
 # ── Testing ──
 assert_cmd = "2.2"
