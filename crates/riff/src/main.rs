@@ -536,15 +536,22 @@ enum Command {
     /// /etc/subgid give you 65536 IDs or more, and cgroup v2 gives cpu and
     /// memory to your user. It checks
     /// that riff.toml of the repository of this folder pins the session
-    /// image. It prints the fix of each check that fails, and stops. When
-    /// each check passes, it installs and starts the riff daemon, as riff
-    /// daemon install does, and the daemon pulls the session image. A
-    /// daemon that answers stays: riff init does not start it again.
+    /// image. It checks that your user settings of Claude Code have the
+    /// permission rules of riff. When rules are missing, it names them and
+    /// asks one question before it adds them. It prints the fix of each
+    /// check that fails, and stops. When each check passes, it installs and
+    /// starts the riff daemon, as riff daemon install does, and the daemon
+    /// pulls the session image. A daemon that answers stays: riff init does
+    /// not start it again.
     Init {
-        /// Change nothing. Print the fix of each check that fails, and exit
-        /// with status 1 when a check fails.
-        #[arg(long)]
+        /// Change nothing. Print the fix of each check that fails, and each
+        /// missing permission rule. Exit with status 1 when a check fails.
+        #[arg(long, conflicts_with = "yes")]
         check: bool,
+        /// Add the missing permission rules to your user settings of Claude
+        /// Code with no question.
+        #[arg(long)]
+        yes: bool,
     },
     /// Run one work item in a rootless podman container
     ///
@@ -564,14 +571,18 @@ enum Command {
         #[arg(long)]
         image: Option<String>,
     },
-    /// Let the riff daemon run the wave of this repository
+    /// See, make and end the waves of this repository, or run one
     ///
-    /// The daemon starts one session for each free item of the current
-    /// wave, and one for each pull request that waits for a verify, when
-    /// the host has room: see riff daemon limit. Each session does one
-    /// item in its own container, and ends. The daemon claims each item,
-    /// sends the verify request, reports the result of each verify, and
-    /// removes the clone of each item after its merge.
+    /// The lead plans the waves with riff wave list, riff wave make and
+    /// riff wave end. They use the gh of this machine, on the repository
+    /// of this folder.
+    ///
+    /// With riff wave run, the daemon starts one session for each free
+    /// item of the current wave, and one for each pull request that waits
+    /// for a verify, when the host has room: see riff daemon limit. Each
+    /// session does one item in its own container, and ends. The daemon
+    /// claims each item, sends the verify request, reports the result of
+    /// each verify, and removes the clone of each item after its merge.
     Wave {
         #[command(subcommand)]
         command: WaveCommand,
@@ -1098,6 +1109,28 @@ enum Workers {
 
 #[derive(Subcommand)]
 enum WaveCommand {
+    /// Show the open waves of this repository, with their items
+    ///
+    /// It shows the waves in number order, then each other open group of
+    /// items, for example the backlog. Each line has the number of the
+    /// open and the closed items.
+    List,
+    /// Make a wave
+    ///
+    /// The title is Wave N, or Wave N: NAME. Give N the last number plus
+    /// one. riff refuses a number that an open wave has.
+    Make {
+        /// The title, for example "Wave 6" or "Wave 6: Cloud".
+        #[arg(required = true)]
+        title: Vec<String>,
+    },
+    /// End a wave when each of its items is closed
+    ///
+    /// riff refuses a wave that has an open item.
+    End {
+        /// The number of the wave, for example 6 for Wave 6.
+        number: u64,
+    },
     /// Run the current wave of the repository of this folder
     ///
     /// The daemon keeps the wave, also over its own restart, until riff
@@ -1480,8 +1513,14 @@ async fn main() -> Result<()> {
     if let Command::Daemon { command } = &cli.command {
         return daemon_command(command.as_ref()).await;
     }
-    if let Command::Init { check } = cli.command {
-        let code = riff::first_run::init(check).await?;
+    if let Command::Init { check, yes } = cli.command {
+        use riff::first_run::Mode;
+        let mode = match (check, yes) {
+            (true, _) => Mode::Check,
+            (false, true) => Mode::Yes,
+            (false, false) => Mode::Ask,
+        };
+        let code = riff::first_run::init(mode).await?;
         if code != 0 {
             std::process::exit(code);
         }
@@ -1746,6 +1785,25 @@ async fn main() -> Result<()> {
         }
         return Ok(());
     }
+    if let Command::Wave { command } = &cli.command {
+        let gh = pr::Gh::default();
+        let line = match command {
+            WaveCommand::List => Some(text::waves_list(&riff::waves::open(&gh)?)),
+            WaveCommand::Make { title } => {
+                let made = riff::waves::make(&gh, &title.join(" "))?;
+                Some(text::waves_made(&made.title))
+            }
+            WaveCommand::End { number } => {
+                let ended = riff::waves::end(&gh, *number)?;
+                Some(text::waves_ended(&ended.title, ended.closed_issues))
+            }
+            WaveCommand::Run | WaveCommand::Stop => None,
+        };
+        if let Some(line) = line {
+            println!("{line}");
+            return Ok(());
+        }
+    }
     let api = Api::new(&server);
     match &cli.command {
         Command::Login => {
@@ -1851,6 +1909,9 @@ async fn main() -> Result<()> {
         match command {
             WaveCommand::Run => riff::wave::ask_run(&dir, &here, api.base()).await?,
             WaveCommand::Stop => riff::wave::ask_stop(&dir, &here).await?,
+            WaveCommand::List | WaveCommand::Make { .. } | WaveCommand::End { .. } => {
+                unreachable!("handled before the identity")
+            }
         }
         return Ok(());
     }

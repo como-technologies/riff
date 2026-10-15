@@ -655,7 +655,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "git push -u origin worktree-issue-12",
         &format!("Riff-Session: {session}"),
         "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 27\n",
-        "gh pr merge NUMBER --auto --squash",
+        "gh pr merge --auto --squash NUMBER",
     ] {
         assert!(start.contains(part), "{part}\nnot in\n{start}");
     }
@@ -711,9 +711,12 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         &std::fs::read_to_string(folder.join("claude/settings.json")).unwrap(),
     )
     .unwrap();
+    assert_eq!(settings["includeCoAuthoredBy"], false);
+    // The rules of the session place, so the auto mode check does not
+    // refuse a step of the start text (01M5084K4YQCZF20XA0P2485SG).
     assert_eq!(
-        settings,
-        serde_json::json!({ "includeCoAuthoredBy": false })
+        settings["permissions"]["allow"],
+        serde_json::json!(riff::permissions::session_rules().allow)
     );
 
     // The lead got the verify request, and the item is free again.

@@ -76,8 +76,7 @@ fn setup_writes_the_rules_once_and_check_finds_them() {
         "Bash(riff)",
         "Bash(riff *)",
         "Bash(gh pr create *)",
-        "Bash(gh pr merge * --auto --squash)",
-        "Bash(gh api repos/acme/app/statuses/*)",
+        "Bash(gh pr merge --auto --squash *)",
     ] {
         assert!(allow.iter().any(|r| r == rule), "{rule}: {value}");
     }

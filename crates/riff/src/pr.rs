@@ -373,7 +373,7 @@ pub fn open(gh: &Gh, title: &str, summary: &str, issue: u64, refs: bool) -> Resu
     let pr = number.to_string();
     gh.run(&["pr", "merge", &pr, "--auto", "--squash"], None)
         .with_context(|| {
-            format!("pull request #{number} is open, but auto-merge is off. Run: gh pr merge {number} --auto --squash")
+            format!("pull request #{number} is open, but auto-merge is off. Run: gh pr merge --auto --squash {number}")
         })?;
     Ok((number, url))
 }

@@ -42,7 +42,7 @@
 //! | File | Gives the session |
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
-//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, selectors, claims, `move` and the restart of the watch. |
+//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, what to do after a refusal of the auto mode check, selectors, claims, `move` and the restart of the watch. |
 //! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). The tool hooks, `riff hook tool` and `riff hook tool --done`, and the stop hook write the newest fact of the session (see [`crate::activity`]). The prompt hook, `riff hook prompt`, writes the time of the last prompt of the person. |
 //! | `riff/commands/leave.md`, `riff/commands/join.md` | The commands `/riff:leave` and `/riff:join`. They tell the session to call the `leave` or the `join` tool (see [`crate::leave`]). |
 //!
@@ -502,6 +502,60 @@ mod tests {
         }
     }
 
+    /// 01M5084K9J566981EXZ7YJRGRR: after a refusal of the auto mode
+    /// check, a session stops the step, writes it on the issue of its
+    /// item and tells the lead. The fix is a rule or a change of the
+    /// skill.
+    #[test]
+    fn the_skill_says_what_a_session_does_after_a_refusal() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let start = skill.find("## A refusal of the auto mode check").unwrap();
+        let end = start + 1 + skill[start + 1..].find("\n## ").unwrap();
+        let part = flat(&skill[start..end]);
+        for words in [
+            "1. Stop that step. Do not try it again in another form, and do not ask a person \
+             to type it.",
+            "2. Write the command and the reason of the refusal on the issue of your item, as \
+             a comment.",
+            "3. `tell` the lead the command, the reason and the issue.",
+            "The step is in bounds: a new rule in the table of the rules of riff \
+             (`riff::permissions::TABLE`).",
+            "The step is out of bounds: a change of this skill",
+            "The fix is never that a person does the refused step by hand.",
+        ] {
+            assert!(part.contains(words), "{words}\nis not in\n{part}");
+        }
+        assert!(flat(skill).contains(
+            "For a permission refusal, do the steps of \"A refusal of the auto mode check\"."
+        ));
+    }
+
+    /// 01M5084K79M5XJT3MP8FFVQKDX: a check calls the riff of a new build
+    /// by its path in the one folder of the check, and runs its
+    /// `riff init` with `--yes`.
+    #[test]
+    fn the_skill_says_how_a_check_calls_a_new_build() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for words in [
+            "Build it in the clone `~/.cache/riff/check`, outside `.claude/worktrees`. One check \
+             at a time on a machine uses it.",
+            "Call the riff of the build by its path, with no variable and no prefix",
+            "When the check runs `riff init` of the build, add `--yes`.",
+        ] {
+            assert!(flat.contains(words), "{words}");
+        }
+        for line in [
+            "\ngit clone -q https://github.com/OWNER/REPO.git ~/.cache/riff/check\n",
+            "\njust --justfile ~/.cache/riff/check/justfile static\n",
+            "\n~/.cache/riff/check/target/static/release/riff daemon install\n",
+        ] {
+            assert!(skill.contains(line), "{line}");
+        }
+        assert!(!skill.contains(".cache/riff/checks"));
+    }
+
     /// 01M3MEEFSD4TEQESRDJENCFW7N.
     #[test]
     fn the_skill_names_the_thread_tools() {
@@ -922,15 +976,18 @@ mod tests {
         let forge = &skill[skill.find("### Waves on GitHub").unwrap()..];
         let forge = &forge[..forge.find("\n## ").unwrap()];
         for command in [
-            "`gh api repos/OWNER/REPO/milestones --jq",
+            "`riff wave list`",
             "`gh issue list --milestone \"Wave 2\"`",
             "`gh issue list --search no:milestone`",
-            "`gh api repos/OWNER/REPO/milestones -f title=\"Wave 6\"`",
+            "`riff wave make \"Wave 6\"`",
             "`gh issue edit 12 --milestone \"Wave 3\"`",
-            "`gh api -X PATCH repos/OWNER/REPO/milestones/NUMBER -f state=closed`",
+            "`riff wave end 6`",
         ] {
             assert!(forge.contains(command), "no {command:?} in {forge}");
         }
+        // 01M509TJNREVNYR9MNN4P9P4RA: no step of the waves calls the API
+        // of the forge itself.
+        assert!(!forge.contains("gh api"), "{forge}");
         assert!(!forge.contains("\\|"), "a table cell escapes a pipe");
     }
 

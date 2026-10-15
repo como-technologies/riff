@@ -4,26 +4,38 @@
 //! # Design
 //!
 //! `riff init` gets a machine ready for `riff run`. It needs no
-//! riff-server and no sign-in. It does three steps, in order:
+//! riff-server and no sign-in. It does these steps, in order:
 //!
 //! ```mermaid
 //! flowchart LR
-//!     C["the checks<br/>podman, subuid, subgid,<br/>cgroup v2, riff.toml"] -- "each passed" --> D["the daemon<br/>riff.service"]
-//!     C -- "a check failed" --> F["a fix line for each,<br/>exit 1, no change"]
+//!     C["the checks<br/>podman, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the rules of Claude Code"] --> Q{"rules<br/>missing?"}
+//!     Q -- "one question:<br/>y, or --yes" --> W["add them to<br/>the user settings"]
+//!     Q -- "no" --> E{"each check<br/>passed?"}
+//!     W --> E
+//!     E -- "no" --> F["a fix line for each,<br/>exit 1"]
+//!     E -- "yes" --> D["the daemon<br/>riff.service"]
 //!     D --> I["the session image<br/>the daemon pulls it"]
 //!     I --> R["ready for riff run"]
 //! ```
 //!
 //! 1. The checks ([`checks`]). riff reads the [`Facts`] of the machine,
 //!    and prints one line for each check: `pass`, or `fail` with the
-//!    fix (01M4ZJN6TEWCYCB39XTH6BBD9H). When a check fails, riff
-//!    installs nothing, pulls nothing, and exits with 1. `--check` stops
-//!    after the checks (01M4ZJN6WR0JJ891R9JMQNPKGD).
-//! 2. The daemon. When a riff daemon answers, riff keeps it: it does
+//!    fix (01M4ZJN6TEWCYCB39XTH6BBD9H).
+//! 2. The rules. When the user settings of Claude Code lack a permission
+//!    rule of riff ([`crate::permissions::user_rules`]), riff names each
+//!    rule and asks one question (01M5084K09Z2S7N57315CX2R0F). `--yes`
+//!    answers yes ([`Mode`]). On a yes, riff adds the rules
+//!    ([`crate::permissions::add`]), and that check passes. riff asks also
+//!    when another check failed (01M5084K2Q3HH4BK7DJMYQD7C1). With no
+//!    terminal and no `--yes`, it asks nothing. `--check` names the rules
+//!    and asks nothing.
+//! 3. When a check still fails, riff installs nothing, pulls nothing, and
+//!    exits with 1. `--check` stops here (01M4ZJN6WR0JJ891R9JMQNPKGD).
+//! 4. The daemon. When a riff daemon answers, riff keeps it: it does
 //!    not start it again. When no daemon answers, riff installs it as
 //!    `riff daemon install` does ([`crate::daemon::install`],
 //!    01M4ZJN6Z1DGD43CKZ19QPN2NK).
-//! 3. The image. riff asks the daemon for the session image that
+//! 5. The image. riff asks the daemon for the session image that
 //!    `riff.toml` pins. The daemon pulls it when podman does not have
 //!    it (01M4ZJN718EF1PC9YY9GFD0EJ2).
 //!
@@ -36,6 +48,7 @@
 //! | `/etc/subgid` | the same | the same |
 //! | cgroup v2 | `/sys/fs/cgroup/cgroup.controllers`, and `cgroup.controllers` of `user@UID.service` | the file is there, and the controllers of the user have `cpu` and `memory` |
 //! | the session image | `riff.toml` of the repository of the current folder ([`crate::session_image::of_folder`]) | it pins an image by its digest |
+//! | the rules of Claude Code | the user settings of Claude Code: `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` ([`Settings`]) | they have each rule of [`crate::permissions::user_rules`] |
 //!
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
@@ -45,7 +58,8 @@
 //! containers with `cpu.max` (01M4Z60B7MW963MBQAPN2CJEQZ).
 //!
 //! ```
-//! use riff::first_run::{Facts, checks};
+//! use riff::first_run::{Facts, Settings, checks};
+//! use riff::permissions::Rules;
 //!
 //! let mut facts = Facts {
 //!     podman: Ok("podman version 5.7.0".into()),
@@ -56,6 +70,10 @@
 //!     cgroup: Some("cpuset cpu io memory pids\n".into()),
 //!     user_cgroup: Some("cpu memory pids\n".into()),
 //!     image: Ok(format!("ghcr.io/o/i@sha256:{}", "0".repeat(64))),
+//!     settings: Ok(Settings {
+//!         path: "/home/mike/.claude/settings.json".into(),
+//!         missing: Rules::default(),
+//!     }),
 //! };
 //! assert!(checks(&facts).iter().all(|c| c.passed()));
 //!
@@ -73,6 +91,7 @@
 //! For tests, [`ETC_VAR`] names a folder that riff reads in place of
 //! `/etc`, and [`CGROUP_VAR`] a folder in place of `/sys/fs/cgroup`.
 
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -80,6 +99,7 @@ use std::time::Duration;
 use anyhow::Result;
 use riff_core::build::Build;
 
+use crate::permissions::{self, Rules};
 use crate::service::{ServiceManager, Unit};
 use crate::{daemon, text};
 
@@ -124,6 +144,58 @@ pub struct Facts {
     pub user_cgroup: Option<String>,
     /// The session image that `riff.toml` pins, or why riff has none.
     pub image: Result<String, String>,
+    /// The user settings of Claude Code, or why riff cannot find them.
+    pub settings: Result<Settings, String>,
+}
+
+/// The user settings of Claude Code, and the permission rules of riff
+/// that they lack (01M5084K09Z2S7N57315CX2R0F).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settings {
+    /// The file: `$CLAUDE_CONFIG_DIR/settings.json`, else
+    /// `~/.claude/settings.json` ([`crate::plugin::user_settings`]).
+    pub path: PathBuf,
+    /// The rules of riff that the file does not have.
+    pub missing: Rules,
+}
+
+impl Settings {
+    /// The settings at `path`, with each rule of `rules` that they lack.
+    /// A file that is not there, or that is not JSON, has no rule.
+    ///
+    /// ```
+    /// use riff::first_run::Settings;
+    /// use riff::permissions::Rules;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let path = dir.path().join("settings.json");
+    /// let rules = Rules { allow: vec!["A".into(), "B".into()], deny: vec![] };
+    /// assert_eq!(Settings::of(&path, &rules).missing, rules);
+    /// std::fs::write(&path, r#"{"permissions": {"allow": ["A"]}}"#)?;
+    /// assert_eq!(Settings::of(&path, &rules).missing.allow, ["B"]);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn of(path: &Path, rules: &Rules) -> Settings {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        Settings {
+            path: path.to_owned(),
+            missing: permissions::missing(rules, &[&text]),
+        }
+    }
+
+    /// The user settings of the person who runs riff, with the rules of
+    /// [`permissions::user_rules`].
+    fn here() -> Result<Settings, String> {
+        let path =
+            crate::plugin::user_settings().ok_or_else(|| text::INIT_NO_SETTINGS.to_owned())?;
+        let home = std::env::var_os("HOME")
+            .filter(|h| !h.is_empty())
+            .map(PathBuf::from);
+        Ok(Settings::of(
+            &path,
+            &permissions::user_rules(home.as_deref()),
+        ))
+    }
 }
 
 /// The folder in the variable `var`, else `default`.
@@ -176,6 +248,7 @@ impl Facts {
             image: crate::session_image::of_folder(dir)
                 .map(|image| image.to_string())
                 .map_err(|e| format!("{e:#}")),
+            settings: Settings::here(),
         }
     }
 }
@@ -367,33 +440,127 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
         sub_check("gid", facts.subgid.as_deref(), facts),
         cgroup_check(facts),
         image,
+        rules_check(&facts.settings),
     ]
+}
+
+/// The check of the permission rules of riff in the user settings of
+/// Claude Code (01M5084K09Z2S7N57315CX2R0F).
+fn rules_check(settings: &Result<Settings, String>) -> Check {
+    match settings {
+        Ok(s) if s.missing.is_empty() => {
+            Check::pass(text::INIT_RULES, text::init_rules_there(&s.path))
+        }
+        Ok(s) => Check::fail(
+            text::INIT_RULES,
+            text::init_rules_missing(&s.path, s.missing.len()),
+            text::INIT_FIX_RULES.into(),
+        ),
+        Err(why) => Check::fail(
+            text::INIT_RULES,
+            why.clone(),
+            text::INIT_FIX_SETTINGS.into(),
+        ),
+    }
+}
+
+/// What `riff init` may change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// `--check`: riff changes nothing and asks nothing.
+    Check,
+    /// riff asks one question before it changes the user settings of
+    /// Claude Code.
+    Ask,
+    /// `--yes`: riff changes them with no question.
+    Yes,
+}
+
+/// Asks the one question of `riff init` about the rules for the user
+/// settings at `path`, when `terminal` is true
+/// (01M5084K09Z2S7N57315CX2R0F). It writes the question to `out`, and
+/// reads one line of `input`: `y` or `yes` is a yes. Each other answer,
+/// the end of the input, and no terminal are a no.
+///
+/// ```
+/// use riff::first_run::ask;
+///
+/// let path = std::path::Path::new("/h/s.json");
+/// let mut out = Vec::new();
+/// assert!(ask(path, true, &mut &b"y\n"[..], &mut out)?);
+/// assert!(ask(path, true, &mut &b"Yes\n"[..], &mut out)?);
+/// assert!(!ask(path, true, &mut &b"\n"[..], &mut out)?);
+/// assert!(!ask(path, true, &mut &b""[..], &mut out)?);
+/// assert_eq!(String::from_utf8(out)?, "Add them to /h/s.json? [y/N] ".repeat(4));
+///
+/// // No terminal: no question, and no.
+/// let mut out = Vec::new();
+/// assert!(!ask(path, false, &mut &b"y\n"[..], &mut out)?);
+/// assert!(String::from_utf8(out)?.contains("riff init --yes"));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn ask(
+    path: &Path,
+    terminal: bool,
+    input: &mut impl BufRead,
+    out: &mut impl Write,
+) -> Result<bool> {
+    if !terminal {
+        writeln!(out, "{}", text::INIT_NO_TERMINAL)?;
+        return Ok(false);
+    }
+    write!(out, "{}", text::init_ask_rules(path))?;
+    out.flush()?;
+    let mut answer = String::new();
+    input.read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 /// The first run on `facts`, with the daemon in the folder `dir`. It
 /// prints each step, and gives the exit code: 1 when a check failed.
-/// With `check_only`, it stops after the checks. When no daemon
-/// answers, it installs `unit` with `manager`, and waits up to `wait`
-/// for the daemon.
+/// When rules are missing, it names them, and in [`Mode::Ask`] asks
+/// `ask` with the path of the user settings. With [`Mode::Check`], it
+/// stops after the checks. When no daemon answers, it installs `unit`
+/// with `manager`, and waits up to `wait` for the daemon.
 pub async fn run(
     facts: &Facts,
-    check_only: bool,
+    mode: Mode,
+    ask: impl FnOnce(&Path) -> Result<bool>,
     dir: &Path,
     manager: &impl ServiceManager,
     unit: &Unit,
     wait: Duration,
 ) -> Result<i32> {
     println!("{}", text::INIT_CHECKS);
-    let checks = checks(facts);
+    let mut checks = checks(facts);
     for check in &checks {
         println!("  {}", check.line());
+    }
+    if let Ok(settings) = &facts.settings
+        && !settings.missing.is_empty()
+    {
+        println!("{}", text::init_rules(&settings.path, &settings.missing));
+        let yes = match mode {
+            Mode::Check => false,
+            Mode::Ask => ask(&settings.path)?,
+            Mode::Yes => true,
+        };
+        if yes {
+            let added = permissions::add(&settings.path, &settings.missing)?;
+            println!("{}", text::init_rules_added(&settings.path, added.len()));
+            for check in checks.iter_mut().filter(|c| c.name == text::INIT_RULES) {
+                *check = Check::pass(text::INIT_RULES, text::init_rules_there(&settings.path));
+            }
+        } else if mode == Mode::Ask {
+            println!("{}", text::init_rules_kept(&settings.path));
+        }
     }
     let failed = checks.iter().filter(|c| !c.passed()).count();
     if failed > 0 {
         println!("{}", text::init_failed(failed));
         return Ok(1);
     }
-    if check_only {
+    if mode == Mode::Check {
         println!("{}", text::INIT_CHECKED);
         return Ok(0);
     }
@@ -414,21 +581,33 @@ pub async fn run(
 }
 
 /// `riff init`: the first run on this machine, with the repository of
-/// the current folder and the daemon of this machine. It gives the exit
-/// code. On a host that is not Linux, it changes nothing.
-pub async fn init(check_only: bool) -> Result<i32> {
+/// the current folder and the daemon of this machine. It asks its
+/// question on the terminal. It gives the exit code. On a host that is
+/// not Linux, it changes nothing.
+pub async fn init(mode: Mode) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
         use anyhow::Context;
+        use std::io::IsTerminal;
         let here = std::env::current_dir().context("cannot read the current folder")?;
         let facts = Facts::here(&here);
         let manager = crate::service::Systemd::here()?;
         let unit = Unit::of_this()?;
-        run(&facts, check_only, &daemon::dir()?, &manager, &unit, WAIT).await
+        let question = |path: &Path| {
+            let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+            ask(
+                path,
+                terminal,
+                &mut std::io::stdin().lock(),
+                &mut std::io::stdout(),
+            )
+        };
+        let dir = daemon::dir()?;
+        run(&facts, mode, question, &dir, &manager, &unit, WAIT).await
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = check_only;
+        let _ = mode;
         anyhow::bail!("{}", text::INIT_LINUX_ONLY)
     }
 }
@@ -455,7 +634,30 @@ mod tests {
             cgroup: Some("cpuset cpu io memory hugetlb pids rdma misc\n".into()),
             user_cgroup: Some("cpu memory pids\n".into()),
             image: Ok(IMAGE.into()),
+            settings: Ok(Settings {
+                path: "/home/mike/.claude/settings.json".into(),
+                missing: Rules::default(),
+            }),
         }
+    }
+
+    /// The rules that `riff init` writes for the home `/home/mike`.
+    fn user_rules() -> Rules {
+        permissions::user_rules(Some("/home/mike".as_ref()))
+    }
+
+    /// A machine with each part, but with no rule of riff in the user
+    /// settings at `path`.
+    fn no_rules(path: &Path) -> Facts {
+        Facts {
+            settings: Ok(Settings::of(path, &user_rules())),
+            ..ready()
+        }
+    }
+
+    /// The question of a run that must ask nothing.
+    fn no_question(path: &Path) -> Result<bool> {
+        panic!("riff asked about {}", path.display())
     }
 
     fn failed(facts: &Facts) -> Vec<Check> {
@@ -473,6 +675,8 @@ mod tests {
                 "pass  /etc/subgid: 65536 IDs for mike",
                 "pass  cgroup v2: user@1000.service has cpu and memory",
                 &format!("pass  the session image: {IMAGE}"),
+                "pass  the rules of Claude Code: /home/mike/.claude/settings.json has each \
+                 permission rule of riff",
             ]
         );
     }
@@ -548,6 +752,32 @@ mod tests {
                 },
                 "fail  the session image: /tmp is not in a git repository.",
                 "riff.toml",
+            ),
+            (
+                "a missing rule",
+                Facts {
+                    settings: Ok(Settings {
+                        path: "/home/mike/.claude/settings.json".into(),
+                        missing: Rules {
+                            allow: vec!["Bash(gh issue list *)".into()],
+                            deny: vec![],
+                        },
+                    }),
+                    ..ready()
+                },
+                "fail  the rules of Claude Code: /home/mike/.claude/settings.json lacks 1 \
+                 permission rule of riff.",
+                "riff init --yes",
+            ),
+            (
+                "no user settings",
+                Facts {
+                    settings: Err(text::INIT_NO_SETTINGS.into()),
+                    ..ready()
+                },
+                "fail  the rules of Claude Code: riff cannot find the user settings of Claude \
+                 Code.",
+                "CLAUDE_CONFIG_DIR",
             ),
         ];
         let mut fixes = Vec::new();
@@ -652,9 +882,17 @@ mod tests {
             podman: Err(text::INIT_NO_PODMAN.into()),
             ..ready()
         };
-        let code = run(&facts, false, &dir_in(root.path()), &manager, &unit(), WAIT)
-            .await
-            .unwrap();
+        let code = run(
+            &facts,
+            Mode::Ask,
+            no_question,
+            &dir_in(root.path()),
+            &manager,
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
         assert_eq!(code, 1);
         assert!(manager.0.lock().unwrap().is_empty());
         assert!(!dir_in(root.path()).exists());
@@ -666,7 +904,8 @@ mod tests {
         let manager = Manager::default();
         let code = run(
             &ready(),
-            true,
+            Mode::Check,
+            no_question,
             &dir_in(root.path()),
             &manager,
             &unit(),
@@ -675,6 +914,136 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(code, 0);
+        assert!(manager.0.lock().unwrap().is_empty());
+    }
+
+    /// The user settings of a test: `.claude/settings.json` in `root`,
+    /// never the real config.
+    fn settings_in(root: &Path, text: Option<&str>) -> PathBuf {
+        let path = root.join(".claude/settings.json");
+        if let Some(text) = text {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, text).unwrap();
+        }
+        path
+    }
+
+    /// 01M5084K09Z2S7N57315CX2R0F, 01M5084K2Q3HH4BK7DJMYQD7C1: a yes adds
+    /// each missing rule, also when another check failed.
+    #[tokio::test]
+    async fn a_yes_adds_the_rules_and_keeps_each_other_key() {
+        let root = tempfile::tempdir().unwrap();
+        let path = settings_in(
+            root.path(),
+            Some(r#"{"model": "opus", "permissions": {"allow": ["Bash(ls)"]}}"#),
+        );
+        // podman fails, so the run stops before the daemon.
+        let facts = Facts {
+            podman: Err(text::INIT_NO_PODMAN.into()),
+            ..no_rules(&path)
+        };
+        assert_eq!(failed(&facts).len(), 2);
+        let manager = Manager::default();
+        let mut asked = None;
+        let question = |p: &Path| {
+            asked = Some(p.to_owned());
+            Ok(true)
+        };
+        let dir = dir_in(root.path());
+        let code = run(&facts, Mode::Ask, question, &dir, &manager, &unit(), WAIT)
+            .await
+            .unwrap();
+        assert_eq!(code, 1);
+        assert_eq!(asked.as_deref(), Some(path.as_path()));
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["model"], "opus");
+        assert_eq!(value["permissions"]["allow"][0], "Bash(ls)");
+        let after = Settings::of(&path, &user_rules());
+        assert!(after.missing.is_empty(), "{after:?}");
+        let now = Facts {
+            settings: Ok(after),
+            ..facts
+        };
+        assert_eq!(failed(&now).len(), 1, "only podman fails now");
+        assert!(manager.0.lock().unwrap().is_empty());
+    }
+
+    /// 01M5084K09Z2S7N57315CX2R0F: `--yes` adds the rules with no
+    /// question.
+    #[tokio::test]
+    async fn yes_adds_the_rules_with_no_question() {
+        let root = tempfile::tempdir().unwrap();
+        let path = settings_in(root.path(), None);
+        let facts = Facts {
+            podman: Err(text::INIT_NO_PODMAN.into()),
+            ..no_rules(&path)
+        };
+        let dir = dir_in(root.path());
+        let code = run(
+            &facts,
+            Mode::Yes,
+            no_question,
+            &dir,
+            &Manager::default(),
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, 1);
+        assert!(Settings::of(&path, &user_rules()).missing.is_empty());
+    }
+
+    /// 01M5084K09Z2S7N57315CX2R0F: a no changes nothing, and the check of
+    /// the rules fails, so riff installs no daemon.
+    #[tokio::test]
+    async fn a_no_changes_nothing_and_installs_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let text = r#"{"model": "opus"}"#;
+        let path = settings_in(root.path(), Some(text));
+        let facts = no_rules(&path);
+        assert_eq!(failed(&facts).len(), 1);
+        let manager = Manager::default();
+        let dir = dir_in(root.path());
+        let code = run(
+            &facts,
+            Mode::Ask,
+            |_| Ok(false),
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, 1);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        assert!(manager.0.lock().unwrap().is_empty());
+        assert!(!dir.exists());
+    }
+
+    /// 01M5084K09Z2S7N57315CX2R0F: `--check` names the missing rules,
+    /// asks nothing, and fails.
+    #[tokio::test]
+    async fn the_check_only_run_fails_on_missing_rules_and_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let path = settings_in(root.path(), None);
+        let manager = Manager::default();
+        let dir = dir_in(root.path());
+        let code = run(
+            &no_rules(&path),
+            Mode::Check,
+            no_question,
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, 1);
+        assert!(!path.exists());
         assert!(manager.0.lock().unwrap().is_empty());
     }
 
@@ -691,18 +1060,34 @@ mod tests {
         }));
 
         let manager = Manager::default();
-        let code = run(&ready(), false, &dir, &manager, &unit(), WAIT)
-            .await
-            .unwrap();
+        let code = run(
+            &ready(),
+            Mode::Ask,
+            no_question,
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
         assert_eq!(code, 0);
         // riff kept the daemon: no install, no restart.
         assert!(manager.0.lock().unwrap().is_empty());
         assert_eq!(fake.calls(), [format!("pull {IMAGE}")]);
 
         // A second run finds the image, and pulls nothing.
-        let code = run(&ready(), false, &dir, &manager, &unit(), WAIT)
-            .await
-            .unwrap();
+        let code = run(
+            &ready(),
+            Mode::Ask,
+            no_question,
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
         assert_eq!(code, 0);
         assert_eq!(fake.calls(), [format!("pull {IMAGE}")]);
 
@@ -722,9 +1107,17 @@ mod tests {
             let _ = stopped.await;
         }));
 
-        let error = run(&ready(), false, &dir, &Manager::default(), &unit(), WAIT)
-            .await
-            .unwrap_err();
+        let error = run(
+            &ready(),
+            Mode::Ask,
+            no_question,
+            &dir,
+            &Manager::default(),
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap_err();
         assert!(format!("{error:#}").contains(IMAGE), "{error:#}");
 
         let _ = stop.send(());

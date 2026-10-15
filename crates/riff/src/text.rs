@@ -1172,6 +1172,128 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
     )
 }
 
+/// The lines of `riff wave list`: each open milestone with its open and
+/// closed items (01M509TJRBE2J7HYKKHRJ1ZFR0).
+///
+/// ```
+/// use riff::waves::Milestone;
+///
+/// let m = |title: &str, open, closed| Milestone {
+///     number: 3,
+///     title: title.into(),
+///     open_issues: open,
+///     closed_issues: closed,
+/// };
+/// assert_eq!(
+///     riff::text::waves_list(&[m("Wave 27: Cloud", 3, 20), m("Backlog", 61, 4)]),
+///     "Wave 27: Cloud  3 open, 20 closed\nBacklog  61 open, 4 closed"
+/// );
+/// assert_eq!(riff::text::waves_list(&[]), "The repository has no open wave.");
+/// ```
+pub fn waves_list(milestones: &[crate::waves::Milestone]) -> String {
+    if milestones.is_empty() {
+        return "The repository has no open wave.".into();
+    }
+    milestones
+        .iter()
+        .map(|m| {
+            format!(
+                "{}  {} open, {} closed",
+                m.title, m.open_issues, m.closed_issues
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The answer to `riff wave make` (01M509TJTV7TC32EKXW0TEQ5NZ).
+///
+/// ```
+/// assert_eq!(riff::text::waves_made("Wave 6: Cloud"), "Made the wave Wave 6: Cloud.");
+/// ```
+pub fn waves_made(title: &str) -> String {
+    format!("Made the wave {title}.")
+}
+
+/// The answer to `riff wave end` (01M509TJXE04CTG5D1K751WXJY).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_ended("Wave 6", 9),
+///     "Ended the wave Wave 6. Its 9 items are closed."
+/// );
+/// assert_eq!(riff::text::waves_ended("Wave 6", 0), "Ended the wave Wave 6. It had no item.");
+/// ```
+pub fn waves_ended(title: &str, closed: u64) -> String {
+    match closed {
+        0 => format!("Ended the wave {title}. It had no item."),
+        1 => format!("Ended the wave {title}. Its 1 item is closed."),
+        n => format!("Ended the wave {title}. Its {n} items are closed."),
+    }
+}
+
+/// The refusal of `riff wave make` for a title that is not a wave title.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_bad_title("Sprint 3"),
+///     "riff wave make makes only a wave. Give the title `Wave N` or `Wave N: NAME`, not \
+///      \"Sprint 3\"."
+/// );
+/// ```
+pub fn waves_bad_title(title: &str) -> String {
+    format!(
+        "riff wave make makes only a wave. Give the title `Wave N` or `Wave N: NAME`, not \
+         {title:?}."
+    )
+}
+
+/// The refusal of `riff wave make` for the number of an open wave.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_is_there("Wave 6: Cloud"),
+///     "The open wave Wave 6: Cloud has that number. riff made no wave. Give the last number \
+///      plus one."
+/// );
+/// ```
+pub fn waves_is_there(title: &str) -> String {
+    format!(
+        "The open wave {title} has that number. riff made no wave. Give the last number plus one."
+    )
+}
+
+/// The refusal of `riff wave end` for a number that no open wave has.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_not_open(6),
+///     "No open wave has the number 6. riff wave list shows the open waves."
+/// );
+/// ```
+pub fn waves_not_open(number: u64) -> String {
+    format!("No open wave has the number {number}. riff wave list shows the open waves.")
+}
+
+/// The refusal of `riff wave end` for a wave with open items (R216,
+/// R224).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_open_items("Wave 6", 1),
+///     "The wave Wave 6 has 1 open item. riff ended nothing. End the wave when each of its \
+///      items is closed."
+/// );
+/// assert!(riff::text::waves_open_items("Wave 6", 2).contains("has 2 open items."));
+/// ```
+pub fn waves_open_items(title: &str, open: u64) -> String {
+    let items = if open == 1 { "item" } else { "items" };
+    format!(
+        "The wave {title} has {open} open {items}. riff ended nothing. End the wave when each of \
+         its items is closed."
+    )
+}
+
 /// The error of `riff workers start` outside tmux
 /// (01M3JD3973J7A9BG8G9EP9TVDP).
 pub const NO_TMUX: &str = "riff: riff workers start needs tmux. It started nothing. Run it in \
@@ -4728,7 +4850,7 @@ pub fn run_start(
          SUMMARY. Keep each other line:\n\n{frame}\n\
          7. Open the pull request, and turn on auto-merge at once:\n   \
          gh pr create --title \"TITLE\" --milestone \"{milestone}\" --body-file FILE\n   \
-         gh pr merge NUMBER --auto --squash\n   \
+         gh pr merge --auto --squash NUMBER\n   \
          Do not end the title with (#{issue}).\n\
          8. Stop each background task that you started, for example a Monitor or a command \
          in the background. Leave no background task at the end of your work: while one runs, \
@@ -5322,6 +5444,87 @@ pub const INIT_FIX_DELEGATE: &str = "let systemd give them to your user: sudo mk
 /// The fix when the repository pins no session image.
 pub const INIT_FIX_IMAGE: &str = "run riff init in a clone of a repository whose riff.toml pins \
      the session image. See \"Change the session image\" in the book";
+
+/// The name of the check of the permission rules in the user settings
+/// of Claude Code (01M5084K09Z2S7N57315CX2R0F).
+pub const INIT_RULES: &str = "the rules of Claude Code";
+
+/// riff cannot find the user settings of Claude Code.
+pub const INIT_NO_SETTINGS: &str = "riff cannot find the user settings of Claude Code";
+
+/// The fix when riff cannot find the user settings of Claude Code.
+pub const INIT_FIX_SETTINGS: &str = "set HOME or CLAUDE_CONFIG_DIR, then run riff init again";
+
+/// The user settings at `path` have each permission rule of riff.
+pub fn init_rules_there(path: &Path) -> String {
+    format!("{} has each permission rule of riff", path.display())
+}
+
+/// The user settings at `path` lack `count` permission rules of riff.
+///
+/// ```
+/// let found = riff::text::init_rules_missing("/h/.claude/settings.json".as_ref(), 1);
+/// assert_eq!(found, "/h/.claude/settings.json lacks 1 permission rule of riff");
+/// ```
+pub fn init_rules_missing(path: &Path, count: usize) -> String {
+    let s = if count == 1 { "" } else { "s" };
+    format!(
+        "{} lacks {count} permission rule{s} of riff",
+        path.display()
+    )
+}
+
+/// The fix of missing permission rules.
+pub const INIT_FIX_RULES: &str = "answer y to the question of riff init, or run riff init --yes";
+
+/// The missing permission rules of riff in the user settings at `path`,
+/// one line for each (01M5084K09Z2S7N57315CX2R0F).
+///
+/// ```
+/// use riff::permissions::Rules;
+///
+/// let missing = Rules { allow: vec!["Bash(gh issue list *)".into()], deny: vec![] };
+/// let text = riff::text::init_rules("/h/s.json".as_ref(), &missing);
+/// assert!(text.starts_with("These permission rules of riff are not in /h/s.json."), "{text}");
+/// assert!(text.ends_with(":\n  allow Bash(gh issue list *)"), "{text}");
+/// ```
+pub fn init_rules(path: &Path, missing: &Rules) -> String {
+    format!(
+        "These permission rules of riff are not in {}. Your sessions of riff need them, so \
+         that the auto mode check of Claude Code does not refuse a step of riff:{}",
+        path.display(),
+        rule_lines(missing)
+    )
+}
+
+/// The one question of `riff init` about the rules at `path`.
+pub fn init_ask_rules(path: &Path) -> String {
+    format!("Add them to {}? [y/N] ", path.display())
+}
+
+/// `riff init` added `count` rules to the user settings at `path`.
+///
+/// ```
+/// let added = riff::text::init_rules_added("/h/s.json".as_ref(), 2);
+/// assert_eq!(added, "riff added 2 permission rules to /h/s.json. Start Claude Code again to use them.");
+/// ```
+pub fn init_rules_added(path: &Path, count: usize) -> String {
+    let s = if count == 1 { "" } else { "s" };
+    format!(
+        "riff added {count} permission rule{s} to {}. Start Claude Code again to use them.",
+        path.display()
+    )
+}
+
+/// The person did not answer yes: `riff init` kept the user settings at
+/// `path` as they are.
+pub fn init_rules_kept(path: &Path) -> String {
+    format!("riff changed nothing in {}.", path.display())
+}
+
+/// `riff init` asks its question only in a terminal.
+pub const INIT_NO_TERMINAL: &str =
+    "riff init asks its question only in a terminal. To add the rules, run: riff init --yes";
 
 /// Some checks of `riff init` failed.
 ///

@@ -202,14 +202,14 @@ This is the only part of the skill that is special to one forge.
 
 | To | Run |
 |---|---|
-| See the open waves, with their numbers | `gh api repos/OWNER/REPO/milestones --jq 'map("\(.number) \(.title)")[]'` |
+| See the open waves, with their items | `riff wave list` |
 | See the open items of a wave | `gh issue list --milestone "Wave 2"` |
 | See the open items with no wave | `gh issue list --search no:milestone` |
-| Make a wave | `gh api repos/OWNER/REPO/milestones -f title="Wave 6"` |
+| Make a wave | `riff wave make "Wave 6"` |
 | Put an item in a wave | `gh issue edit 12 --milestone "Wave 3"` |
 | Move an item to the backlog | `gh issue edit 12 --milestone Backlog` |
 | See the items in the backlog | `gh issue list --milestone Backlog` |
-| End a wave | `gh api -X PATCH repos/OWNER/REPO/milestones/NUMBER -f state=closed` |
+| End a wave | `riff wave end 6` |
 | Make a release (riff repository, an admin) | "Make a release" in `development.md` of the book |
 | Deploy a release again, or roll back (riff repository, an admin) | `gh workflow run CI --ref main -f tag=vX.Y.Z` |
 
@@ -322,6 +322,37 @@ skill text, runs in a dev session: `just dev` in the worktree. It needs
 no release and no update of the machine. Never run `riff update`,
 `cargo install` of riff, `just install` or `riff connect` in a
 worktree.
+
+A check after a merge can need a new build of riff, for example of
+the daemon. Build it in the clone `~/.cache/riff/check`, outside
+`.claude/worktrees`. One check at a time on a machine uses it. When
+the folder is not there, clone the repository into it:
+
+```sh
+git clone -q https://github.com/OWNER/REPO.git ~/.cache/riff/check
+```
+
+Then put the clone on the default branch, and build it:
+
+```sh
+git -C ~/.cache/riff/check fetch -q origin
+
+git -C ~/.cache/riff/check checkout -q --detach origin/main
+just --justfile ~/.cache/riff/check/justfile static
+```
+
+Call the riff of the build by its path, with no variable and no
+prefix, for example:
+
+```sh
+~/.cache/riff/check/target/static/release/riff daemon install
+```
+
+A permission rule of `riff init` matches this form. A variable, for
+example `$R daemon install`, matches no rule. When the check runs
+`riff init` of the build, add `--yes`. With no terminal, `riff init`
+asks no question, and fails when a rule of Claude Code is missing.
+
 
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The verifier names it in the result.
@@ -609,6 +640,31 @@ the clear. `riff workers start` runs `riff worktrees clean`.
 A refusal of a raw command never blocks your work. When no riff
 command covers your case, file an issue for it, and `tell` the lead.
 
+## A refusal of the auto mode check
+
+riff sets the Claude Code permission rules of each role in its code:
+`riff init` writes them into the settings of your user, and the riff
+daemon writes them into the settings of each of its sessions. So the
+auto mode check must not refuse a step of this skill. When it refuses
+a step:
+
+1. Stop that step. Do not try it again in another form, and do not ask
+   a person to type it.
+2. Write the command and the reason of the refusal on the issue of your
+   item, as a comment. When you hold no item, put them only in the
+   message of step 3.
+3. `tell` the lead the command, the reason and the issue. When you
+   cannot go on, call `blocked` with them in place of `tell`.
+
+The lead files the fix as an issue. The fix is one of two:
+
+- The step is in bounds: a new rule in the table of the rules of riff
+  (`riff::permissions::TABLE`).
+- The step is out of bounds: a change of this skill, so that sessions
+  do not try it.
+
+The fix is never that a person does the refused step by hand.
+
 ## Build and test
 
 A build takes memory and each core that it gets. The sessions of a
@@ -780,8 +836,8 @@ Never ask your user there. This is also true when a permission
 refusal blocks you. When you need a decision from your user:
 
 1. Call `tell` with the session `lead` and the question. Name the
-   choices. For a permission refusal, name the action that was
-   refused and why you need it. When you cannot go on until the
+   choices. For a permission refusal, do the steps of "A refusal of
+   the auto mode check". When you cannot go on until the
    answer comes, call `blocked` with the question in place of `tell`:
    it also shows you as blocked (see "Status").
 2. Do not stop to ask in your own terminal. Wait for the answer, or

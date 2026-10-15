@@ -133,9 +133,35 @@ The waves of riff are its
 
 ### See the waves
 
+Run this in a clone of the repository. It shows each open wave in
+number order, then the backlog, with the number of the open and the
+closed items:
+
 ```sh
-gh api repos/como-technologies/riff/milestones --jq 'map("\(.number) \(.title)")[]'
+riff wave list
 ```
+
+### Make a wave
+
+Give the new wave the last number plus one. A name can follow the
+number. riff refuses a number that an open wave has:
+
+```sh
+riff wave make "Wave 6: Cloud"
+```
+
+### End a wave
+
+Give the number of the wave. riff closes its milestone. It refuses a
+wave that has an open item or an open pull request:
+
+```sh
+riff wave end 6
+```
+
+The lead does these steps for you when it plans the waves. They are
+`riff` commands, so the permission rule `Bash(riff *)` covers them.
+
 
 ### See the open items of a wave
 

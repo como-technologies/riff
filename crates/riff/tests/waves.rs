@@ -99,9 +99,10 @@ fn only_the_forge_parts_name_milestones() {
         forge += usize::from(rest.len() < text.len());
     }
     // The skill, the requirements, the page "Waves", the page
-    // "Development" (check a pull request) and the design of the plan
-    // each have a forge part.
-    assert_eq!(forge, 5);
+    // "Development" (check a pull request), the page "Start a Riff"
+    // (the rules of gh) and the design of the plan each have a forge
+    // part.
+    assert_eq!(forge, 6);
 }
 
 #[test]
@@ -247,14 +248,103 @@ fn each_riff_command_of_the_page_is_real() {
             riff.push(line.to_owned());
         }
     }
-    assert_eq!(riff, [r#"riff tell lead "New item: issue-70""#]);
+    assert_eq!(
+        riff,
+        [
+            r#"riff tell lead "New item: issue-70""#,
+            "riff wave list",
+            r#"riff wave make "Wave 6: Cloud""#,
+            "riff wave end 6",
+        ]
+    );
     for command in riff {
         let words: Vec<&str> = command.split_whitespace().collect();
         Isolated::shared()
             .assert_riff()
-            .args(&words[1..2])
+            .args(&words[1..3])
             .arg("--help")
             .assert()
             .success();
     }
+}
+
+/// A fake `gh` in `bin`: it logs each call to `bin/gh.log`, answers the
+/// list of the open milestones with two waves and the backlog, and
+/// answers a POST and a PATCH with a milestone.
+fn fake_gh(bin: &Path) {
+    let open = r#"[{"number":10,"title":"Backlog","open_issues":61,"closed_issues":4},{"number":33,"title":"Wave 28","open_issues":2,"closed_issues":0},{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}]"#;
+    let made = r#"{"number":34,"title":"Wave 29","open_issues":0,"closed_issues":0}"#;
+    let ended = r#"{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}"#;
+    let path = bin.join("gh");
+    fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"gh $*\" >> \"$(dirname \"$0\")/gh.log\"\ncase \"$*\" in\n\
+             'api repos/{{owner}}/{{repo}}/milestones?state=open&per_page=100') printf '%s' '{open}' ;;\n\
+             'api -X POST '*) printf '%s' '{made}' ;;\n\
+             'api -X PATCH '*) printf '%s' '{ended}' ;;\n\
+             *) exit 1 ;;\nesac\n"
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// `riff wave ARGS` with the fake `gh` of `bin` first in `PATH`.
+fn riff_wave(env: &Isolated, bin: &Path, args: &[&str]) -> std::process::Output {
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    env.riff()
+        .arg("wave")
+        .args(args)
+        .current_dir(bin)
+        .env("PATH", path)
+        .output()
+        .unwrap()
+}
+
+/// 01M509TJRBE2J7HYKKHRJ1ZFR0, 01M509TJTV7TC32EKXW0TEQ5NZ,
+/// 01M509TJXE04CTG5D1K751WXJY: the steps of the waves of the lead.
+#[test]
+fn riff_wave_lists_makes_and_ends_the_waves_with_gh() {
+    let env = Isolated::new();
+    let bin = tempfile::tempdir().unwrap();
+    fake_gh(bin.path());
+    let text = |out: &std::process::Output| {
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        stdout + &String::from_utf8_lossy(&out.stderr)
+    };
+
+    let list = riff_wave(&env, bin.path(), &["list"]);
+    assert!(list.status.success(), "{}", text(&list));
+    assert_eq!(
+        text(&list),
+        "Wave 27: Cloud  0 open, 9 closed\nWave 28  2 open, 0 closed\nBacklog  61 open, 4 \
+         closed\n"
+    );
+
+    let made = riff_wave(&env, bin.path(), &["make", "Wave", "29"]);
+    assert!(made.status.success(), "{}", text(&made));
+    assert_eq!(text(&made), "Made the wave Wave 29.\n");
+
+    let open = riff_wave(&env, bin.path(), &["end", "28"]);
+    assert_eq!(open.status.code(), Some(1), "{}", text(&open));
+    assert!(text(&open).contains("The wave Wave 28 has 2 open items. riff ended nothing."));
+
+    let ended = riff_wave(&env, bin.path(), &["end", "27"]);
+    assert!(ended.status.success(), "{}", text(&ended));
+    assert_eq!(
+        text(&ended),
+        "Ended the wave Wave 27: Cloud. Its 9 items are closed.\n"
+    );
+
+    let log = fs::read_to_string(bin.path().join("gh.log")).unwrap();
+    let writes: Vec<&str> = log.lines().filter(|l| l.contains(" -X ")).collect();
+    assert_eq!(
+        writes,
+        [
+            "gh api -X POST repos/{owner}/{repo}/milestones -f title=Wave 29",
+            "gh api -X PATCH repos/{owner}/{repo}/milestones/32 -f state=closed",
+        ]
+    );
 }

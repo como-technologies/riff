@@ -508,8 +508,9 @@ flowchart LR
 1. Use Linux: `riff run` starts nothing on another OS. Install podman,
    and run the first run of riff 3.0 in your clone (see
    [Get ready for riff 3.0](start-a-riff.md#get-ready-for-riff-30)). It
-   checks rootless podman, starts the riff daemon and gets the session
-   image. With no daemon, `riff run` stops before the claim:
+   checks rootless podman, asks to add the permission rules of riff to
+   your Claude Code settings, starts the riff daemon and gets the
+   session image. With no daemon, `riff run` stops before the claim:
 
    ```sh
    riff init
@@ -653,6 +654,10 @@ the session also has each event, with no secret.
   that Claude folder. `claude` adds no attribution line, so the
   trailers end each commit and each pull request body. riff does not
   read your own Claude settings.
+- The permission rules of the steps of a session in the same
+  `settings.json`, for example `Bash(gh issue view *)` and
+  `Bash(gh pr create *)`. So the auto mode check does not refuse a step
+  of the start text. The lead in a container gets them at each start.
 - A home of its own in memory. Each other write goes when the
   container ends.
 - The volumes `riff-cargo` and `riff-sccache` for the caches.
