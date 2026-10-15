@@ -1867,7 +1867,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 
 ## One instance
 
-Most requirements of this section hold for riff 1.x only, until
+The requirements of this section hold for riff 1.x only, until
 riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 (ID)."
 
@@ -4569,7 +4569,7 @@ share.
   and each claim commit is public, also after the release. A claim
   commit holds no secret.
 - **01M4Z60B8HN1C1XAG1CA1YS36H** Peer to peer comes right after local
-  isolation works. The transport is iroh (#697). The first milestone
+  isolation works. The transport is iroh (#697). The first release
   with two peers uses the defaults of iroh: the DNS discovery and the
   public relays of n0. A small discovery service on Cloud Run comes when
   riff leaves those defaults. DNS discovery on comotechnologies.io is
