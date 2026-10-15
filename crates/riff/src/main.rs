@@ -1227,7 +1227,7 @@ enum PlanCommand {
 
 #[derive(Subcommand)]
 enum LeadCommand {
-    /// Start the lead of this repository in a container, and attach to it
+    /// Start the lead of this repository in a container
     ///
     /// The riff daemon starts claude with a terminal in a container of
     /// the session image, with a clone and a Claude folder of its own
