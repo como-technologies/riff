@@ -165,7 +165,12 @@ impl Machine {
         std::fs::create_dir_all(main.parent().unwrap()).unwrap();
         git(
             env.path(),
-            &["clone", "-q", bare.to_str().unwrap(), main.to_str().unwrap()],
+            &[
+                "clone",
+                "-q",
+                bare.to_str().unwrap(),
+                main.to_str().unwrap(),
+            ],
         );
 
         // The home of the person: a git config, the sign-in of claude
@@ -197,11 +202,7 @@ impl Machine {
             "refreshToken": REFRESH,
             "expiresAt": now + minutes * 60_000,
         }});
-        std::fs::write(
-            home.join(".claude/.credentials.json"),
-            file.to_string(),
-        )
-        .unwrap();
+        std::fs::write(home.join(".claude/.credentials.json"), file.to_string()).unwrap();
     }
 
     /// `riff ARGS` in the main clone, with the fakes first in `PATH`. A
@@ -274,7 +275,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     let home = machine.env.home();
     let before = listing(&home);
 
-    let out = machine.run(None, &["run", "issue-12", "--image", IMAGE]).await;
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stdout}\n{stderr}");
 
@@ -408,7 +411,10 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     ] {
         assert!(stdout.contains(part), "{part}\nnot in\n{stdout}");
     }
-    assert!(stderr.contains("a line on stderr with [secret]"), "{stderr}");
+    assert!(
+        stderr.contains("a line on stderr with [secret]"),
+        "{stderr}"
+    );
     let log = std::fs::read_to_string(folder.join("events.jsonl")).unwrap();
     assert_eq!(log.lines().count(), 5, "{log}");
     for secret in [GH_TOKEN, ACCESS] {
@@ -423,8 +429,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         git(&clone, &["rev-parse", "--abbrev-ref", "HEAD"]),
         "worktree-issue-12"
     );
-    let alternates =
-        std::fs::read_to_string(clone.join(".git/objects/info/alternates")).unwrap();
+    let alternates = std::fs::read_to_string(clone.join(".git/objects/info/alternates")).unwrap();
     assert_eq!(alternates.trim(), o);
     let trust: Value =
         serde_json::from_str(&std::fs::read_to_string(folder.join("claude/.claude.json")).unwrap())
@@ -452,14 +457,23 @@ async fn riff_run_goes_on_from_the_branch_of_an_earlier_session() {
     std::fs::write(machine.main.join("work.md"), "earlier\n").unwrap();
     git(&machine.main, &["add", "work.md"]);
     git(&machine.main, &["commit", "-q", "-m", "WIP: earlier"]);
-    git(&machine.main, &["push", "-q", "origin", "worktree-issue-12"]);
+    git(
+        &machine.main,
+        &["push", "-q", "origin", "worktree-issue-12"],
+    );
     git(&machine.main, &["switch", "-q", "main"]);
 
-    let out = machine.run(None, &["run", "issue-12", "--image", IMAGE]).await;
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     let clone = machine.folder("issue-12").join("clone");
     assert_eq!(git(&clone, &["log", "-1", "--format=%s"]), "WIP: earlier");
-    assert!(machine.read("run.stdin").contains("work of an earlier session"));
+    assert!(
+        machine
+            .read("run.stdin")
+            .contains("work of an earlier session")
+    );
 }
 
 #[tokio::test]
@@ -468,7 +482,9 @@ async fn a_failed_check_takes_no_claim_and_starts_no_container() {
     machine.lead().await;
 
     std::fs::write(machine.bin.path().join("no-image"), "").unwrap();
-    let out = machine.run(None, &["run", "issue-12", "--image", IMAGE]).await;
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
     assert!(!out.status.success());
     assert!(
         text(&out.stderr).contains(&format!("The image {IMAGE} is not on this machine")),
@@ -478,7 +494,9 @@ async fn a_failed_check_takes_no_claim_and_starts_no_container() {
     std::fs::remove_file(machine.bin.path().join("no-image")).unwrap();
 
     Machine::sign_in(&machine.env.home(), 30);
-    let out = machine.run(None, &["run", "issue-12", "--image", IMAGE]).await;
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
     assert!(!out.status.success());
     assert!(
         text(&out.stderr).contains("riff run needs 60 minutes or more"),
@@ -501,7 +519,9 @@ async fn riff_run_starts_no_container_for_an_item_that_another_session_holds() {
     machine.lead().await;
     machine.ok(Some("other"), &["claim", "issue-12"]).await;
 
-    let out = machine.run(None, &["run", "issue-12", "--image", IMAGE]).await;
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
     assert!(machine.read("run.args").is_empty());
 }
@@ -513,7 +533,8 @@ async fn a_stop_of_riff_run_stops_the_container_and_releases_the_item() {
     // claude starts, and never ends its turn.
     std::fs::write(
         machine.bin.path().join("events"),
-        r#"{"type":"system","subtype":"init","model":"m","permissionMode":"auto"}"#.to_owned() + "\n",
+        r#"{"type":"system","subtype":"init","model":"m","permissionMode":"auto"}"#.to_owned()
+            + "\n",
     )
     .unwrap();
 
@@ -525,7 +546,10 @@ async fn a_stop_of_riff_run_stops_the_container_and_releases_the_item() {
         .unwrap();
     let started = Instant::now();
     while !machine.bin.path().join("run.stdin").exists() {
-        assert!(started.elapsed() < isolated::HANG, "podman run did not start");
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "podman run did not start"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let pid = nix::unistd::Pid::from_raw(child.id() as i32);
@@ -547,7 +571,9 @@ async fn a_stop_of_riff_run_stops_the_container_and_releases_the_item() {
         format!("podman stop riff-issue-12-{short}")
     );
     assert!(
-        text(&out.stdout).contains(&format!("riff run stops the container riff-issue-12-{short}")),
+        text(&out.stdout).contains(&format!(
+            "riff run stops the container riff-issue-12-{short}"
+        )),
         "{}",
         text(&out.stdout)
     );

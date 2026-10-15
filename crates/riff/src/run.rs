@@ -30,7 +30,12 @@
 //! Before the claim, riff checks each fact that it needs: podman and the
 //! image, the sign-in of `gh`, the sign-in of `claude`, `HOME` and
 //! `USER`, and the milestone of the issue. A failed check takes no
-//! claim.
+//! claim (01M4Z81B3A324KKE8M8Z71TM4M).
+//!
+//! When `claude` ends, riff finds the open pull request of the branch,
+//! sends a verify request to the lead, releases the item and ends the
+//! session. A SIGINT or a SIGTERM stops the container first
+//! (01M4Z81B1913NF6HBZ5G38B3Q9).
 //!
 //! # The folder of a session
 //!
@@ -81,7 +86,8 @@ use tokio::signal::unix::{SignalKind, signal};
 use crate::api::{self, Api};
 use crate::{dropped, home, identity, pr, rollout, terminal, text};
 
-/// The image of a session until the repository pins one (#713).
+/// The image of a session until the repository pins one (#713,
+/// 01M4Z81B5A456HDKW7G0WFGCY6).
 pub const IMAGE: &str = "localhost/riff-session:latest";
 
 /// The memory limit of each container (01M4Z60B7XT7462XMV49GJTVSJ).
@@ -586,7 +592,14 @@ fn first(text: &str) -> String {
 
 /// A short form of the input of a tool call.
 fn tool_input(input: &Value) -> String {
-    for key in ["command", "file_path", "pattern", "url", "description", "prompt"] {
+    for key in [
+        "command",
+        "file_path",
+        "pattern",
+        "url",
+        "description",
+        "prompt",
+    ] {
         if let Some(value) = input[key].as_str() {
             return first(value);
         }
@@ -651,7 +664,12 @@ pub fn event_lines(event: &Value) -> Vec<String> {
             .collect(),
         ("user", _) => blocks(event)
             .filter(|block| block["type"] == "tool_result" && block["is_error"] == true)
-            .map(|block| format!("! the tool failed: {}", first(&content_text(&block["content"]))))
+            .map(|block| {
+                format!(
+                    "! the tool failed: {}",
+                    first(&content_text(&block["content"]))
+                )
+            })
             .collect(),
         ("result", _) => vec![format!(
             "end: {}, {} turns, {} s, {:.2} USD",
@@ -869,7 +887,9 @@ async fn run_session(
         .with_context(|| text::run_no_program(PODMAN))?;
     let mut stdin = child.stdin.take();
     if let Some(input) = stdin.as_mut() {
-        input.write_all(format!("{}\n", user_line(start)).as_bytes()).await?;
+        input
+            .write_all(format!("{}\n", user_line(start)).as_bytes())
+            .await?;
         input.flush().await?;
     }
     let stdout = child.stdout.take().expect("stdout is piped");
@@ -978,7 +998,10 @@ pub async fn run(api: Api, here: &Place, server: &str, item: &str, image: &str) 
         println!("{line}");
     }
 
-    let worked = work(&api, &me, &thread, &main, &common, &checked, &session, item, issue, image).await;
+    let worked = work(
+        &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
+    )
+    .await;
     if let Err(e) = api.release(&me, &thread, item).await {
         eprintln!("riff: {e:#}");
     }
@@ -1077,7 +1100,9 @@ async fn work(
         None => println!("{}", text::run_no_pull(&branch)),
     }
     println!("{}", text::run_kept(&clone));
-    Ok(i32::from(!(ended.status.success() && !ended.failed && pull.is_some())))
+    Ok(i32::from(
+        !(ended.status.success() && !ended.failed && pull.is_some()),
+    ))
 }
 
 #[cfg(test)]

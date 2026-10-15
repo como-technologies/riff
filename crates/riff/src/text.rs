@@ -4685,10 +4685,7 @@ pub fn run_no_pull(branch: &str) -> String {
 
 /// Where the clone of a session of `riff run` stays.
 pub fn run_kept(clone: &Path) -> String {
-    format!(
-        "The clone stays until the merge: {}",
-        clone.display()
-    )
+    format!("The clone stays until the merge: {}", clone.display())
 }
 
 #[cfg(test)]
