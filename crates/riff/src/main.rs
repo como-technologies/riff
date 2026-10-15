@@ -525,6 +525,22 @@ enum Command {
     /// riff decides by facts, not by the word of an agent.
     #[command(subcommand)]
     Worktrees(WorktreesCommand),
+    /// Run one work item in a rootless podman container
+    ///
+    /// It claims ITEM as a new worker session, makes a clone of its own
+    /// in the folder of riff, and runs claude -p in a container of the
+    /// session image. It pulls the image when this machine does not have
+    /// it. It shows the events of the session. At the end, it sends a
+    /// verify request for the pull request of the branch, releases ITEM,
+    /// and keeps the clone until the merge. Ctrl-C stops the container.
+    Run {
+        /// The work item: an issue, for example issue-12.
+        item: String,
+        /// The session image, for example a local build. The default is
+        /// the image that riff.toml of the main clone pins.
+        #[arg(long)]
+        image: Option<String>,
+    },
     /// Check that a wave followed the rules
     ///
     /// It reads the log of the repository of this directory from the
@@ -1625,6 +1641,13 @@ async fn main() -> Result<()> {
     }
     let here = identity::here(cli.place.as_ref())?;
     riff::auto_update::remember(&here);
+    // `riff run` is a session of its own, not the session that runs it
+    // (01M4Z81APKC14AVNJWCGRQKNVW).
+    if let Command::Run { item, image } = &cli.command {
+        let server = api.base().to_owned();
+        let code = riff::run::run(api, &here, &server, item, image.as_deref()).await?;
+        std::process::exit(code);
+    }
     let me = identity::me(&here, api.base())?;
     // A session that left makes no call (01M3MEEFETT9A0DRWBKQTG77Z2).
     // `riff mcp` still runs: its `join` tool brings the session back.
@@ -1921,7 +1944,8 @@ async fn main() -> Result<()> {
         | Command::Audit { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }
-        | Command::Owner { .. } => unreachable!("handled before the identity"),
+        | Command::Owner { .. }
+        | Command::Run { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
 }

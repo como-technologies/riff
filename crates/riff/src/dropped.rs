@@ -86,7 +86,7 @@ pub const FETCH_WAIT: Duration = Duration::from_secs(5);
 pub const SHOWN: usize = 8;
 
 /// The prefix of the branch that the agent tool makes for a worktree.
-const BRANCH: &str = "worktree-";
+pub const BRANCH: &str = "worktree-";
 
 /// A branch of `origin` with earlier work.
 #[derive(Debug, Clone, PartialEq, Eq)]

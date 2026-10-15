@@ -4496,6 +4496,47 @@ share.
   riff shows the sessions, and attaches to the lead or to a takeover.
   riff 3.0 uses no tmux.
 
+### riff run
+
+- **01M4Z81APKC14AVNJWCGRQKNVW** `riff run ITEM` does one work item in
+  one rootless podman container, with no daemon. The host does each
+  riff step with riff 1.x: it starts a worker session, claims the item,
+  sends the verify request and releases the item. The container does
+  the work. No riff runs in the container. riff shows each event of
+  `claude` on the terminal, with no secret (01M4Z60B8KDXD190RWC7D184Q3).
+- **01M4Z81ARSTAK8HR96S084SDFD** Each session of `riff run` has a folder
+  of its own, `sessions/ITEM-ID8` in the data folder of riff, where
+  `ID8` is the start of the session ID. With `RIFF_HOME`, the folder is
+  `RIFF_HOME/sessions/ITEM-ID8`. It holds the clone, the own Claude
+  folder and `events.jsonl`, each event with no secret. The clone stays
+  until the merge.
+- **01M4Z81ATZK3FX9GRFTM236FE6** `claude` in a session of `riff run`
+  takes the riff session ID as its own session ID (`--session-id`), and
+  runs in the auto permission mode (`--permission-mode auto`).
+- **01M4Z81AX3ND5RX7V1GEY4HMF5** The branch of a session of `riff run`
+  is `worktree-ITEM`, the branch name of a worker of riff 1.x. When
+  `origin` has the branch, the clone goes on from it.
+- **01M4Z81AZ88ZS0HPHV5KGQF3HV** `riff run` takes only an issue,
+  `issue-N`. The session opens the pull request with `gh`, with the
+  frame of `riff pr open` (`Closes #N`, the summary, and the trailers
+  of the issue and its wave), and turns on auto-merge at once.
+- **01M4Z81B1913NF6HBZ5G38B3Q9** When `claude` ends, `riff run` finds
+  the open pull request of the branch with `gh`, and sends a verify
+  request to the lead of its user. Then it releases the item, and ends
+  the session. Ctrl-C or SIGTERM stops the container with
+  `podman stop`, and riff then releases the item. The exit code is 0
+  only when the turn ended with no error and the branch has an open
+  pull request.
+- **01M4Z81B3A324KKE8M8Z71TM4M** Before the claim, `riff run` checks
+  podman and the image, the sign-in of `gh`, the sign-in of `claude`
+  (01M4Z60B869HWDTZMSYPVYACD8), `HOME`, `USER`, and the wave of the
+  issue. A failed check takes no claim.
+- **01M4Z81B5A456HDKW7G0WFGCY6** `riff run` takes the session image
+  that `riff.toml` of the main clone pins (01M4Z7SP3KSKJYKNRP1MQ70C4Q).
+  `--image` gives another image, for example a local build. When podman
+  does not have the image, `riff run` pulls it before the claim. When
+  podman cannot pull it, riff takes no claim.
+
 ### How the relay drives claude
 
 - **01M4Z60B82FHN2YG9YJHW8XZX1** A worker and a verifier run `claude -p`

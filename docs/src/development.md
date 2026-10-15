@@ -312,6 +312,112 @@ The workflow builds the image of a folder one time only. To build it
 again, for example for new Debian packages, change a line of the
 Dockerfile, for example a version.
 
+## Run one item in a container
+
+`riff run ITEM` does one work item in a rootless podman container. It
+is the first part of [riff 3.0](riff-3.md). The riff of today still
+claims the item, wakes the lead and releases the item. The container
+does the work: `claude -p` in a clone of its own, with your sign-in of
+git, `gh` and `claude`.
+
+```mermaid
+flowchart LR
+    subgraph M["your machine"]
+        R["riff run issue-12"] -- "git clone --reference" --> L[("the clone<br/>in the folder of riff")]
+        R -- "podman run" --> C
+        subgraph C["container riff-issue-12-ID8"]
+            K["claude -p"]
+        end
+        L --- C
+    end
+    R -- "claim, verify request, release" --> S["riff-server"]
+    K -- "push, pull request" --> G["GitHub"]
+```
+
+### Get ready to run an item
+
+1. Install podman. It must run rootless. This command prints `true`:
+
+   ```sh
+   podman info --format '{{.Host.Security.Rootless}}'
+   ```
+
+2. Get the session image that `riff.toml` pins. `riff run` pulls it
+   when your machine does not have it. To pull it before the run:
+
+   ```sh
+   podman pull "$(riff image)"
+   ```
+
+3. Sign in to `gh`, and run `claude` once on this machine, so that its
+   sign-in has 60 minutes or more left:
+
+   ```sh
+   gh auth status
+   ```
+
+### Run an item
+
+In your clone of the repository:
+
+```sh
+riff run issue-12
+```
+
+### Run an item with a local image
+
+To try a change of the image, build it (see
+[Edit and build the image](#edit-and-build-the-image)), and give it
+with `--image`:
+
+```sh
+riff run issue-12 --image localhost/riff-session:test
+```
+
+### What riff run does
+
+First, riff checks the image, and pulls it when it must. It checks
+the sign-in of `gh` and of `claude`, and the wave of the issue. A
+failed check takes no claim. Then riff does these steps:
+
+1. It starts a worker session, and claims the item.
+2. It makes the clone of the session on the branch `worktree-ITEM`.
+   When `origin` has that branch, the clone goes on from it.
+3. It runs `claude -p` in the container, and shows each event: the
+   text, each tool call, each tool that failed, each call that the
+   rules refused, the push, and the end of the turn. The session
+   pushes the branch and opens the pull request.
+4. It finds the pull request of the branch, and sends a verify request
+   to your lead.
+5. It releases the item, and ends the session.
+
+The folder of the session is
+`~/.local/share/riff/sessions/ITEM-ID8`. Its `clone` stays until the
+merge. Its `events.jsonl` has each event, with no secret.
+
+### Stop a session
+
+Press Ctrl-C. riff stops the container with `podman stop`, and
+releases the item. The branch keeps the work that the session pushed.
+
+### What the container gets
+
+- The clone of the session, with write. The objects of your main clone,
+  with no write.
+- Your `~/.gitconfig` and `~/.config/gh`, with no write.
+- Your token of `gh` in `GH_TOKEN`. riff gives podman only the name of
+  the variable, so the token is in no command line.
+- A Claude folder of its own, and your sign-in of `claude` with no
+  write. `claude` runs in the auto permission mode.
+- A home of its own in memory. Each other write goes when the
+  container ends.
+- The volumes `riff-cargo` and `riff-sccache` for the caches.
+- `--memory 8g` and `--cpus 4`.
+
+A commit of the session has your git identity, no signature, and a
+`Riff-Session:` trailer. The table of what sessions share is on the
+page [riff 3.0](riff-3.md).
+
 ## Add a requirement
 
 Each requirement in `docs/src/requirements.md` has an ID. A new

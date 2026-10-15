@@ -20,6 +20,7 @@
 //! | `riff audit` | Checks from the log and from `gh` that a wave followed the rules. See [`audit`]. |
 //! | `riff cloud` | Makes and runs riff-server instances on Cloud Run, with `gcloud`. See [`cloud`]. |
 //! | `riff image` | Prints the session image that the riff config of the repository pins. See [`session_image`]. |
+//! | `riff run` | Runs one work item in a rootless podman container: the host claims, the container works. See [`run`]. |
 //!
 //! `riff --help` lists the commands under headings (see [`help`]).
 //!
@@ -105,6 +106,7 @@ pub mod pr;
 pub mod reap;
 pub mod relay;
 pub mod rollout;
+pub mod run;
 pub mod sccache;
 pub mod secrets;
 pub mod session_image;

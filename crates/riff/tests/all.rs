@@ -60,6 +60,7 @@ mod pr;
 mod read_length;
 mod restart;
 mod rollout;
+mod run;
 mod secrets;
 mod session;
 mod session_image;
