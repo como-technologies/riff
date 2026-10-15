@@ -400,7 +400,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         machine.read("podman.log"),
         format!("podman pull {PINNED}\n")
     );
-    assert!(stdout.contains(&format!("riff run pulls the image {PINNED}.")));
+    assert!(stdout.contains(&format!("The riff daemon pulls the image {PINNED}.")));
 
     // The home of the person has no new file, and no file changed size.
     assert_eq!(listing(&home), before);

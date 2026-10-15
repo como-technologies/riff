@@ -23,6 +23,7 @@ mod daemon;
 mod dev;
 mod enable;
 mod end;
+mod first_run;
 mod forge_text;
 mod fresh;
 mod github;

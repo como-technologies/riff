@@ -346,9 +346,10 @@ log after it, so the state stays.
 
 ### Install the daemon
 
-Use Linux, and install podman (see
-[Get ready to run an item](#get-ready-to-run-an-item)). Then run this
-command in a shell that finds `podman`:
+`riff init` installs the daemon at the first run (see
+[Get ready to run an item](#get-ready-to-run-an-item)). It keeps a
+daemon that runs. To install the daemon again, run this command in a
+shell that finds `podman`:
 
 ```sh
 riff daemon install
@@ -425,36 +426,24 @@ flowchart LR
 
 ### Get ready to run an item
 
-1. Use Linux: `riff run` starts nothing on another OS. Install podman.
-   It must run rootless. This command prints `true`:
+1. Use Linux: `riff run` starts nothing on another OS. Install podman,
+   and run the first run of riff 3.0 in your clone (see
+   [Get ready for riff 3.0](start-a-riff.md#get-ready-for-riff-30)). It
+   checks rootless podman, starts the riff daemon and gets the session
+   image. With no daemon, `riff run` stops before the claim:
 
    ```sh
-   podman info --format '{{.Host.Security.Rootless}}'
+   riff init
    ```
 
-2. Start the riff daemon (see
-   [Install the daemon](#install-the-daemon)). With no daemon,
-   `riff run` stops before the claim. This command shows the daemon:
-
-   ```sh
-   riff daemon status
-   ```
-
-3. Get the session image that `riff.toml` pins. The daemon pulls it
-   when your machine does not have it. To pull it before the run:
-
-   ```sh
-   podman pull "$(riff image)"
-   ```
-
-4. Sign in to `gh`, and run `claude` once on this machine, so that its
+2. Sign in to `gh`, and run `claude` once on this machine, so that its
    sign-in has 60 minutes or more left:
 
    ```sh
    gh auth status
    ```
 
-5. Give your clone an HTTPS `origin`. The clone of the session takes
+3. Give your clone an HTTPS `origin`. The clone of the session takes
    the URL of `origin` from your clone. The container has no SSH
    agent, so it cannot push to an SSH URL. To see the URL, and to
    change it to HTTPS:
