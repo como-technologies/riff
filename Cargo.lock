@@ -2182,6 +2182,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "real-session"
+version = "1.3.1"
+dependencies = [
+ "isolated",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

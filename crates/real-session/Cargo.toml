@@ -1,0 +1,24 @@
+[package]
+name = "real-session"
+description = "The real-session test of a release: riff run does one scratch item with a real claude on a real home"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+autotests = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+isolated = { path = "../isolated" }
+tempfile.workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

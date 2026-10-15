@@ -167,6 +167,15 @@ dev *ARGS:
     PATH="$tree/target/debug:$PATH" claude --plugin-dir "$tree/crates/riff/claude-plugin/riff" \
         --settings '{"enabledPlugins":{"riff@riff":false}}'
 
+# The real-session test of a release (01M4ZCFGCY301G2ARFMRXV7XDR): the
+# riff of this tree runs one scratch item with riff run, the session
+# image of riff.toml and a real claude. It needs podman. ARGS: --skip DIR,
+# --gate-wait SECONDS.
+# Run the real-session test on this host: one scratch item to a pull request
+real-session *ARGS:
+    cargo build -q -p riff -p real-session
+    target/debug/real-session --riff target/debug/riff {{ARGS}}
+
 # Set up the GitHub repository for pull requests: auto-merge, squash only, the rulesets on main, release/** and the tags
 github REPO="como-technologies/riff":
     deploy/github.sh {{REPO}}
