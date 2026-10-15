@@ -102,7 +102,8 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
 /// A fake `claude` in the container. It logs its arguments, takes the
 /// start text, and prints `bin/events`. When `bin/tools` is there, it
 /// first sends its lines to the riff tools, through the `riff relay mcp`
-/// of its MCP config, and logs the answers to `bin/mcp.out`. Then, for
+/// of its MCP config, and logs the answers to `bin/mcp.out` until it has
+/// one for each request. Then, for
 /// each of `bin/later` and `bin/last` that is there, it waits for the
 /// file `.go` beside it, and prints it. It ends when its stdin closes.
 fn fake_claude(bin: &Path) {
@@ -119,7 +120,8 @@ if [ -f "$dir/tools" ]; then
   "$riff" relay mcp < "$dir/mcp.in" > "$dir/mcp.out" &
   exec 3> "$dir/mcp.in"
   cat "$dir/tools" >&3
-  while ! grep -q '"id":2' "$dir/mcp.out"; do sleep 0.05; done
+  want=$(grep -c '"id"' "$dir/tools")
+  while [ "$(grep -c '"id"' "$dir/mcp.out")" -lt "$want" ]; do sleep 0.05; done
   exec 3>&-
   wait
 fi
@@ -969,11 +971,19 @@ async fn a_session_uses_the_riff_tools_through_the_relay() {
     let machine = Machine::new().await;
     machine.lead().await;
     // claude calls whoami and post through the MCP server of its relay.
+    // claim, release, leave and move act on the host: they refuse
+    // (01M4ZKX0H9N82ZBC9PKSPTQV4N).
+    let host = machine.bin.path().display().to_string();
     let calls = [
-        r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"2"}}}"#,
-        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}"#,
-        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"post","arguments":{"body":"hello from the container"}}}"#,
+        r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"2"}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"post","arguments":{"body":"hello from the container"}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"claim","arguments":{"item":"issue-13"}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"release","arguments":{"item":"issue-12"}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"leave","arguments":{}}}"#.to_owned(),
+        format!(r#"{{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{{"name":"move","arguments":{{"path":"{host}"}}}}}}"#),
+        r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"whoami","arguments":{}}}"#.to_owned(),
     ];
     std::fs::write(machine.bin.path().join("tools"), calls.join("\n") + "\n").unwrap();
 
@@ -998,15 +1008,27 @@ async fn a_session_uses_the_riff_tools_through_the_relay() {
             .unwrap_or_else(|| panic!("no answer {id} in {answers:?}"))
             .clone()
     };
-    let whoami = answer(1)["result"]["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let text = |id: u64| {
+        answer(id)["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let whoami = text(1);
     assert!(whoami.contains(&format!("session={session}")), "{whoami}");
     assert!(whoami.contains("claim=issue-12"), "{whoami}");
     assert_ne!(answer(2)["result"]["isError"], true, "{answers:?}");
     let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
     assert!(thread.contains("hello from the container"), "{thread}");
+
+    for (id, tool) in [(3, "claim"), (4, "release"), (5, "leave"), (6, "move")] {
+        assert_eq!(answer(id)["result"]["isError"], true, "{answers:?}");
+        assert_eq!(text(id), riff::text::not_in_a_container(tool));
+    }
+    // The claim and the place of the session stay. riff run releases
+    // the item at its end.
+    assert_eq!(text(7), whoami);
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 
 #[tokio::test]

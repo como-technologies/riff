@@ -372,6 +372,8 @@ struct Book {
     calls: Vec<String>,
     /// The sessions, by name.
     sessions: BTreeMap<String, Played>,
+    /// True when [`Runtime::running`] fails: podman cannot say.
+    no_answer: bool,
 }
 
 /// One session of a [`Fake`].
@@ -404,6 +406,13 @@ impl Fake {
     /// Each new session prints `lines`, one on each line.
     pub fn with_events<S: Into<String>>(self, lines: impl IntoIterator<Item = S>) -> Self {
         self.lock().events = lines.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// [`Runtime::running`] fails, as when podman cannot say whether a
+    /// container runs.
+    pub fn with_no_answer(self) -> Self {
+        self.lock().no_answer = true;
         self
     }
 
@@ -538,11 +547,11 @@ impl Runtime for Fake {
     }
 
     async fn running(&self, name: &str) -> Result<bool> {
-        Ok(self
-            .lock()
-            .sessions
-            .get(name)
-            .is_some_and(|p| p.exit.is_none()))
+        let book = self.lock();
+        if book.no_answer {
+            bail!("podman does not answer");
+        }
+        Ok(book.sessions.get(name).is_some_and(|p| p.exit.is_none()))
     }
 
     async fn attach(&self, name: &str) -> Result<Exit> {

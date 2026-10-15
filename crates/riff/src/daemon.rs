@@ -2077,6 +2077,58 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 3);
     }
 
+    /// The daemon acks no line that it lacks: it closes the connection,
+    /// and the relay sends the line again at the next one
+    /// (01M4ZHSZMH4Y8CB41FYGE3C3R2).
+    #[tokio::test]
+    async fn the_daemon_acks_no_line_that_it_lacks_and_the_relay_sends_it_again() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (mut client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let socket = session_dir(&here.dir, &name);
+        let (mut relay, _) = Relay::connect(&socket, 0, false).await;
+        assert!(matches!(relay.next().await, Say::Input { .. }));
+        relay.event(1, TURN[0]).await;
+
+        // An exit before the events 2 and 3.
+        relay
+            .send(&Up::Exit {
+                seq: 4,
+                code: Some(0),
+            })
+            .await;
+        assert_eq!(relay.lines.next_line().await.unwrap(), None);
+        // An event after a gap.
+        let (mut relay, had) = Relay::connect(&socket, 1, false).await;
+        assert_eq!(had, 1);
+        relay
+            .send(&Up::Event {
+                seq: 3,
+                line: TURN[2].into(),
+            })
+            .await;
+        assert_eq!(relay.lines.next_line().await.unwrap(), None);
+
+        let (mut relay, had) = Relay::connect(&socket, 1, false).await;
+        assert_eq!(had, 1);
+        relay.event(2, TURN[1]).await;
+        relay.event(3, TURN[2]).await;
+        relay.exit(4, 0).await;
+        let (said, end) = to_the_end(&mut client).await;
+        assert_eq!(
+            events(&said).iter().map(|l| l.0).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            end,
+            Some(Say::Ended(Ended {
+                code: Some(0),
+                failed: false
+            }))
+        );
+    }
+
     #[tokio::test]
     async fn a_follower_gets_each_event_after_its_number_and_the_end() {
         let here = Here::new(Fake::default().with_image(IMAGE)).await;
@@ -2310,6 +2362,56 @@ mod tests {
         assert_eq!(here.fake.exit(&name), None);
         // The record stays for the next daemon.
         assert!(record_path(&here.dir, &name).exists());
+    }
+
+    /// When podman cannot say whether the container of a record runs, a
+    /// new daemon takes up the session (01M4ZHT01HH88KPA8628M7VBEY).
+    #[tokio::test]
+    async fn a_new_daemon_takes_up_a_session_when_podman_cannot_say() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let name = "riff-issue-1-aaaaaaaa";
+        let folder = root.path().join("sessions/issue-1");
+        std::fs::create_dir_all(&folder).unwrap();
+        private_dir(&dir.join(LIVE)).unwrap();
+        let record = Record {
+            live: Live {
+                name: name.into(),
+                session: format!("{name}-session"),
+                item: "issue-1".into(),
+                image: IMAGE.into(),
+                since_ms: 0,
+            },
+            folder,
+            server: "http://127.0.0.1:1".into(),
+            me: me(name),
+            inputs: vec![user_line("Do it.")],
+            closed: false,
+            failed: false,
+        };
+        std::fs::write(
+            record_path(&dir, name),
+            serde_json::to_string(&record).unwrap(),
+        )
+        .unwrap();
+        private_dir(&session_dir(&dir, name)).unwrap();
+
+        let fake = Fake::default().with_image(IMAGE).with_no_answer();
+        let listener = listen(&dir).await.unwrap();
+        let daemon = Arc::new(Daemon::open(fake, dir.clone()).await.unwrap());
+        daemon.recover().await;
+        tokio::spawn(daemon.serve(listener, std::future::pending()));
+        let names: Vec<String> = status(&dir)
+            .await
+            .unwrap()
+            .sessions
+            .into_iter()
+            .map(|l| l.name)
+            .collect();
+        assert_eq!(names, [name]);
+        assert!(record_path(&dir, name).exists());
+        let (_relay, had) = Relay::connect(&session_dir(&dir, name), 1, false).await;
+        assert_eq!(had, 0);
     }
 
     #[tokio::test]
