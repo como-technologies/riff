@@ -556,6 +556,11 @@ steps:
    to your lead.
 5. It releases the item, and ends the session.
 
+When riff-server does not answer in steps 4 and 5, for example while
+a new instance of the server starts, riff tries again for up to 10
+minutes. You see `(waits for riff-server…)`. The session keeps its
+claim while riff waits.
+
 The folder of the session is
 `~/.local/share/riff/sessions/ITEM-ID8`. Its `clone` stays until the
 merge. Its `events.jsonl` has each event, with no secret: the daemon

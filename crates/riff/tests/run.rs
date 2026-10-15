@@ -15,10 +15,14 @@ use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use isolated::Isolated;
 use serde_json::Value;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
 const GH_TOKEN: &str = "gho_FAKEtoken0123456789";
 const ACCESS: &str = "sk-ant-oat01-FAKEaccess";
@@ -100,18 +104,20 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
 }
 
 /// A fake `claude` in the container. It logs its arguments, takes the
-/// start text, and prints `bin/events`. When `bin/tools` is there, it
-/// first sends its lines to the riff tools, through the `riff relay mcp`
-/// of its MCP config, and logs the answers to `bin/mcp.out` until it has
-/// one for each request. Then, for
-/// each of `bin/later` and `bin/last` that is there, it waits for the
-/// file `.go` beside it, and prints it. It ends when its stdin closes.
+/// start text, waits while `bin/hold` is there, and prints
+/// `bin/events`. When `bin/tools` is there, it first sends its lines to
+/// the riff tools, through the `riff relay mcp` of its MCP config, and
+/// logs the answers to `bin/mcp.out` until it has one for each request.
+/// Then, for each of `bin/later` and `bin/last` that is there, it waits
+/// for the file `.go` beside it, and prints it. It ends when its stdin
+/// closes.
 fn fake_claude(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$@" > "$dir/claude.args"
 IFS= read -r line
 printf '%s\n' "$line" > "$dir/run.stdin"
+while [ -f "$dir/hold" ]; do sleep 0.05; done
 echo "a line on stderr with GHTOKEN" >&2
 if [ -f "$dir/tools" ]; then
   for arg; do config=$arg; done
@@ -228,7 +234,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 
 /// A real riff-server of this build, with no sign-in.
 async fn server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
     format!("http://{addr}")
@@ -1028,6 +1034,131 @@ async fn a_session_uses_the_riff_tools_through_the_relay() {
     // The claim and the place of the session stay. riff run releases
     // the item at its end.
     assert_eq!(text(7), whoami);
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// A TCP proxy in front of the riff-server of a test. While it is away,
+/// it reads each request, gives no reply and keeps the connection open,
+/// as a riff-server while its new instance starts. A connection that
+/// got a request while the proxy was away stays silent. Each other
+/// connection goes to the server.
+struct Proxy {
+    url: String,
+    away: Arc<AtomicBool>,
+    /// The requests that got no reply.
+    held: Arc<AtomicUsize>,
+}
+
+impl Proxy {
+    async fn new(server: &str) -> Proxy {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let target = server.trim_start_matches("http://").to_owned();
+        let away = Arc::new(AtomicBool::new(false));
+        let held = Arc::new(AtomicUsize::new(0));
+        let (a, h) = (away.clone(), held.clone());
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                tokio::spawn(pass(client, target.clone(), a.clone(), h.clone()));
+            }
+        });
+        Proxy { url, away, held }
+    }
+
+    fn away(&self, away: bool) {
+        self.away.store(away, Ordering::SeqCst);
+    }
+
+    fn held(&self) -> usize {
+        self.held.load(Ordering::SeqCst)
+    }
+}
+
+/// Passes the bytes of one connection between `client` and the server
+/// at `target`, until a request comes while the proxy is away. Then it
+/// drops each byte of the client until the client closes.
+async fn pass(client: TcpStream, target: String, away: Arc<AtomicBool>, held: Arc<AtomicUsize>) {
+    let Ok(server) = TcpStream::connect(&target).await else {
+        return;
+    };
+    let (mut from_client, mut to_client) = client.into_split();
+    let (mut from_server, mut to_server) = server.into_split();
+    let back = tokio::spawn(async move {
+        let _ = tokio::io::copy(&mut from_server, &mut to_client).await;
+    });
+    let mut chunk = [0; 8192];
+    while let Ok(n) = from_client.read(&mut chunk).await
+        && n > 0
+    {
+        if away.load(Ordering::SeqCst) {
+            held.fetch_add(1, Ordering::SeqCst);
+            while matches!(from_client.read(&mut chunk).await, Ok(n) if n > 0) {}
+            break;
+        }
+        if to_server.write_all(&chunk[..n]).await.is_err() {
+            break;
+        }
+    }
+    back.abort();
+}
+
+/// riff-server stops answering at the end of a run, as while a new
+/// instance starts (#740, 01M4ZQVVGQYXTAVRB69C7YPC3Y). The verify
+/// request gets no reply, and its connection stays open. `riff run`
+/// tries again past the short budget, and sends the verify request and
+/// the release when the server answers again.
+#[tokio::test]
+async fn riff_run_sends_the_verify_request_and_the_release_when_the_server_answers_again() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let proxy = Proxy::new(&machine.server).await;
+    let hold = machine.bin.path().join("hold");
+    std::fs::write(&hold, "").unwrap();
+    // A short budget of 1 s, and a try of 300 ms: a short call fails
+    // while the server is away.
+    let child = machine
+        .command(None, &["run", "issue-12", "--image", IMAGE])
+        .env("RIFF_SERVER", &proxy.url)
+        .env(riff::link::BUDGET_VAR, "1000")
+        .env(riff::link::TRY_VAR, "300")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(&machine.bin.path().join("run.stdin"), "user").await;
+
+    // The server goes away. Then claude ends its turn.
+    proxy.away(true);
+    let away = Instant::now();
+    std::fs::remove_file(&hold).unwrap();
+    while proxy.held() < 2 || away.elapsed() < Duration::from_secs(3) {
+        assert!(away.elapsed() < isolated::HANG, "{} held", proxy.held());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // Three short budgets later: no verify request yet, and the item is
+    // still held.
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert!(!thread.contains("verify request: issue-12"), "{thread}");
+    let taken = machine.run(Some("lead1"), &["claim", "issue-12"]).await;
+    assert!(
+        !text(&taken.stdout).contains("You hold"),
+        "{}",
+        text(&taken.stdout)
+    );
+    proxy.away(false);
+
+    let out = output_of(child).await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("The pull request #40"), "{stdout}");
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert_eq!(
+        thread
+            .matches("verify request: issue-12, PR #40, branch worktree-issue-12")
+            .count(),
+        1,
+        "{thread}"
+    );
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 
