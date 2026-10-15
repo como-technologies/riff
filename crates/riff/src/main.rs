@@ -527,12 +527,14 @@ enum Command {
     Worktrees(WorktreesCommand),
     /// Run one work item in a rootless podman container
     ///
-    /// It claims ITEM as a new worker session, makes a clone of its own
-    /// in the folder of riff, and runs claude -p in a container of the
-    /// session image. It pulls the image when this machine does not have
-    /// it. It shows the events of the session. At the end, it sends a
-    /// verify request for the pull request of the branch, releases ITEM,
-    /// and keeps the clone until the merge. Ctrl-C stops the container.
+    /// It needs the riff daemon of this machine: see riff daemon. It
+    /// claims ITEM as a new worker session, makes a clone of its own in
+    /// the folder of riff, and asks the daemon to run claude -p in a
+    /// container of the session image. The daemon pulls the image when
+    /// this machine does not have it. riff run shows the events of the
+    /// session. At the end, it sends a verify request for the pull
+    /// request of the branch, releases ITEM, and keeps the clone until
+    /// the merge. Ctrl-C stops the container.
     Run {
         /// The work item: an issue, for example issue-12.
         item: String,
@@ -540,6 +542,16 @@ enum Command {
         /// the image that riff.toml of the main clone pins.
         #[arg(long)]
         image: Option<String>,
+    },
+    /// Run the riff daemon, or install it, or show it
+    ///
+    /// The riff daemon owns the containers of riff run on this machine.
+    /// With no subcommand, it runs the daemon in this terminal, as the
+    /// systemd user unit riff.service does, until Ctrl-C or SIGTERM. A
+    /// stop of the daemon stops no container.
+    Daemon {
+        #[command(subcommand)]
+        command: Option<DaemonCommand>,
     },
     /// Check that a wave followed the rules
     ///
@@ -1015,6 +1027,22 @@ enum Workers {
 }
 
 #[derive(Subcommand)]
+enum DaemonCommand {
+    /// Install and start the systemd user unit of the riff daemon
+    ///
+    /// It writes riff.service in ~/.config/systemd/user, with the path
+    /// of this riff and the PATH of this shell. It enables the unit and
+    /// starts it again, so a new riff takes effect. It waits until the
+    /// daemon answers. With RIFF_HOME set, it installs nothing.
+    Install,
+    /// Show the riff daemon and its sessions
+    ///
+    /// It exits with 1 when no daemon answers, and shows the state of
+    /// the unit riff.service.
+    Status,
+}
+
+#[derive(Subcommand)]
 enum WorktreesCommand {
     /// Tidy the worktrees that no live session owns
     ///
@@ -1313,6 +1341,9 @@ async fn main() -> Result<()> {
         let dir = std::env::current_dir().context("cannot read the current folder")?;
         println!("{}", riff::session_image::of_folder(&dir)?);
         return Ok(());
+    }
+    if let Command::Daemon { command } = &cli.command {
+        return daemon_command(command.as_ref()).await;
     }
     let (server, source) = server_of(cli.server.as_deref())?;
     if let Command::Server = cli.command {
@@ -1929,6 +1960,7 @@ async fn main() -> Result<()> {
         | Command::Workers { .. }
         | Command::Cloud { .. }
         | Command::Image
+        | Command::Daemon { .. }
         | Command::Worktrees(_)
         | Command::Lead {
             command: Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. }),
@@ -2278,6 +2310,27 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
 
 /// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A worker never runs it
 /// (01M4262DY8NN30SC4REYX2G9DV).
+/// `riff daemon`, `riff daemon install` and `riff daemon status`.
+async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
+    match command {
+        None => riff::daemon::serve_here().await,
+        Some(DaemonCommand::Install) => {
+            let manager = riff::service::Systemd::here()?;
+            let unit = riff::service::Unit::of_this()?;
+            let wait = Duration::from_secs(10);
+            riff::daemon::install(&manager, &unit, &riff::daemon::dir()?, wait).await
+        }
+        Some(DaemonCommand::Status) => {
+            let manager = riff::service::Systemd::here()?;
+            let code = riff::daemon::show_status(&riff::daemon::dir()?, &manager).await;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
+    }
+}
+
 async fn cloud(command: &CloudCommand) -> Result<()> {
     if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
         anyhow::bail!(text::CLOUD_WORKER);

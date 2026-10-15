@@ -11,10 +11,10 @@
 //! `cfg(target_os = "linux")`. A pod backend can take the same spec
 //! later.
 //!
-//! The code that drives a session takes its runtime as a parameter:
-//! `riff run` today ([`crate::run::run_with`]), the daemon next. So its
-//! tests take [`Fake`], a runtime with no container
-//! (01M4ZBGK5G3EFXWT61DR2NHMDD).
+//! The code that drives a session takes its runtime as a parameter: the
+//! daemon ([`crate::daemon::Daemon`]). So its tests take [`Fake`], a
+//! runtime with no container (01M4ZBGK5G3EFXWT61DR2NHMDD). A spec is
+//! plain data: `riff run` sends it to the daemon as JSON.
 //!
 //! ```mermaid
 //! flowchart LR
@@ -49,11 +49,12 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, ready};
 
 use anyhow::{Result, anyhow, bail};
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{mpsc, oneshot};
 
 /// Where a bind comes from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Source {
     /// A path on the host.
     Path(PathBuf),
@@ -62,7 +63,7 @@ pub enum Source {
 }
 
 /// One bind of a session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bind {
     /// The path on the host, or the volume.
     pub source: Source,
@@ -73,7 +74,7 @@ pub struct Bind {
 }
 
 /// One variable of a session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Env {
     /// The name and its value: the value is in the spec.
     Value(String, String),
@@ -109,7 +110,7 @@ pub enum Env {
 /// assert!(spec.check_values(&values).is_ok());
 /// assert!(spec.check_values(&[]).is_err());
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSpec {
     /// The name of the session: the name of its container.
     pub name: String,
