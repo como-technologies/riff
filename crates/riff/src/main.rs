@@ -547,6 +547,13 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
+    /// Print the session image of this repository
+    ///
+    /// It reads the key image in the table [session] of riff.toml, at the
+    /// top of the git work tree of the current folder. The image has a
+    /// digest and no tag, so podman pull takes it as it is. It fails when
+    /// riff.toml names a tag.
+    Image,
     /// Start, list and stop the workers of this machine
     ///
     /// Workers are agent sessions in tmux. With no subcommand, it lists
@@ -1286,6 +1293,11 @@ async fn main() -> Result<()> {
         }
         _ => {}
     }
+    if let Command::Image = cli.command {
+        let dir = std::env::current_dir().context("cannot read the current folder")?;
+        println!("{}", riff::session_image::of_folder(&dir)?);
+        return Ok(());
+    }
     let (server, source) = server_of(cli.server.as_deref())?;
     if let Command::Server = cli.command {
         let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
@@ -1893,6 +1905,7 @@ async fn main() -> Result<()> {
         | Command::Update { .. }
         | Command::Workers { .. }
         | Command::Cloud { .. }
+        | Command::Image
         | Command::Worktrees(_)
         | Command::Lead {
             command: Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. }),

@@ -242,6 +242,87 @@ just install
 
 `riff tail` shows the messages of the thread of your repository.
 
+## Change the session image
+
+riff 3.0 runs each session in a container from the session image of
+the repository. The file `riff.toml` at the root of the repository pins
+the image by its digest. A digest names one image, but a tag can move,
+so riff refuses a tag. The image of this repository comes from
+`deploy/session/Dockerfile`.
+
+```mermaid
+flowchart LR
+    D["deploy/session/Dockerfile"] -- "each change" --> W["workflow Session image"]
+    W -- "push tree-ID" --> G[("ghcr.io/como-technologies/riff-session")]
+    G -- "its digest" --> T["riff.toml"]
+```
+
+To see the image that your clone pins:
+
+```sh
+riff image
+```
+
+### Edit and build the image
+
+Change `deploy/session/Dockerfile`. When you change
+`rust-toolchain.toml`, also change the line `ARG RUST_CHANNEL` and the
+`--component` flags of the Dockerfile, in the same commit. A test
+fails when they do not agree.
+
+Build the image on your machine, and try it:
+
+```sh
+podman build -t localhost/riff-session:test deploy/session
+podman run --rm localhost/riff-session:test claude --version
+```
+
+### Pin the new digest
+
+Push your branch and open the pull request. The workflow "Session
+image" builds the image and pushes it to
+`ghcr.io/como-technologies/riff-session`, with the tag `tree-ID`. ID is
+the git tree of `deploy/session/`. Then the workflow fails, because
+`riff.toml` pins the old digest. Its error and its summary give the new
+line for `riff.toml`. To see them, find the run, and show it:
+
+```sh
+gh run list --workflow session-image.yml --branch "$(git branch --show-current)" --limit 1
+gh run view RUN_ID
+```
+
+Write that line in `riff.toml`. Commit it, and push:
+
+```sh
+git add riff.toml
+git commit -m "Pin the session image"
+git push
+```
+
+The workflow runs again. The registry has the image of the folder now,
+so the workflow builds nothing and passes. Check that podman pulls the
+image by its digest:
+
+```sh
+podman pull "$(riff image)"
+```
+
+The workflow builds the image of a folder one time only. To build it
+again, for example for new Debian packages, change a line of the
+Dockerfile, for example a version.
+
+### Let podman pull the image with no sign-in
+
+The first push of the workflow makes the package `riff-session` of
+`como-technologies` on GitHub. A new package is private. An admin
+makes it public one time: open the package on GitHub, then "Package
+settings", then "Change visibility", and select "Public". Then each
+person pulls the image with no sign-in:
+
+```sh
+podman pull "$(riff image)"
+```
+
 ## Add a requirement
 
 Each requirement in `docs/src/requirements.md` has an ID. A new

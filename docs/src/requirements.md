@@ -4388,6 +4388,29 @@ share.
   in its riff config. The first base is the Dockerfile of #707. An image
   has `claude`, `git`, `gh` at `/usr/bin/gh`, CA certificates, a POSIX
   shell and the toolchain of the repository. It holds no riff.
+- **01M4Z7SP3KSKJYKNRP1MQ70C4Q** The riff config of a repository is the
+  file `riff.toml` at its root. The key `image` of its table `[session]`
+  names the session image as `HOST/PATH@sha256:DIGEST`. riff refuses a
+  tag, also beside a digest, and a name with no registry host.
+- **01M4Z7SP5TGJ3DMWFGE5SN68N1** The session image of this repository is
+  built from the folder `deploy/session/`. Its Dockerfile installs the
+  Rust channel and the components of `rust-toolchain.toml`. A test
+  checks that they agree.
+- **01M4Z7SP7Y19BQ8QTV1T6AE8SR** The workflow "Session image" runs on
+  each change of `deploy/session/`, of `riff.toml` or of the workflow,
+  in a pull request and on `main`. It tags the image `tree-ID`, where ID
+  is the git tree of `deploy/session/`, and pushes it to
+  `ghcr.io/como-technologies/riff-session`. When the registry has that
+  tag, it builds nothing. The summary of the job names the digest.
+- **01M4Z7SP9YZ5JCHA8YD8R5A4Y9** The workflow "Session image" fails when
+  `riff.toml` does not pin the digest of the image of `deploy/session/`
+  of its commit. So a change of the Dockerfile and the change of its
+  pin go in one pull request.
+- **01M4Z7SPC20RWG218EWPEGYZTF** `riff image` prints the session image
+  that the riff config of the repository of the current folder pins.
+- **01M4Z7SPE5Q02RQWW5VZBEK2G3** The package `riff-session` on ghcr.io
+  is public, as the repository is. So podman pulls the image with no
+  sign-in. An admin sets this one time, in the settings of the package.
 - **01M4Z60B7KEV0H161RBZ1SDRY2** riff binds its own binary into each
   session with no write, and runs it as the entrypoint: `riff relay`. So
   the riff code in a session is always the riff code of the host.

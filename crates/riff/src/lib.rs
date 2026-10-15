@@ -19,6 +19,7 @@
 //! | `riff usage` | Shows the tokens and the models of an issue, of a wave, or of the sessions of this machine. See [`usage`]. |
 //! | `riff audit` | Checks from the log and from `gh` that a wave followed the rules. See [`audit`]. |
 //! | `riff cloud` | Makes and runs riff-server instances on Cloud Run, with `gcloud`. See [`cloud`]. |
+//! | `riff image` | Prints the session image that the riff config of the repository pins. See [`session_image`]. |
 //!
 //! `riff --help` lists the commands under headings (see [`help`]).
 //!
@@ -106,6 +107,7 @@ pub mod relay;
 pub mod rollout;
 pub mod sccache;
 pub mod secrets;
+pub mod session_image;
 pub mod settings;
 pub mod smoke;
 pub mod state;

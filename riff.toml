@@ -1,0 +1,7 @@
+# The riff config of this repository (01M4Z7SP3KSKJYKNRP1MQ70C4Q).
+
+[session]
+# The session image, pinned by digest. The workflow "Session image"
+# builds it from deploy/session/. See "Change the session image" in
+# docs/src/development.md.
+image = "ghcr.io/como-technologies/riff-session@sha256:0000000000000000000000000000000000000000000000000000000000000000"

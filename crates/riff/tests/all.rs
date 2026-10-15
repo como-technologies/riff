@@ -62,6 +62,7 @@ mod restart;
 mod rollout;
 mod secrets;
 mod session;
+mod session_image;
 mod setup;
 mod signed;
 mod smoke;
