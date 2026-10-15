@@ -102,6 +102,9 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// `.claude.json` of the person at `person`, else `auto`. A key that is
 /// there stays, so the answers of the person stay. It writes the
 /// `settings.json` of a session ([`run::settings`]) when it is not there.
+/// When it is there, it adds each rule of
+/// [`crate::permissions::session_rules`] that it lacks
+/// (01M5084K4YQCZF20XA0P2485SG).
 ///
 /// ```
 /// let dir = tempfile::tempdir()?;
@@ -117,6 +120,13 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// assert_eq!(json["theme"], "dark");
 /// assert_eq!(json["projects"]["/data/clone"]["hasTrustDialogAccepted"], true);
 /// assert_eq!(read("settings.json"), riff::run::settings());
+///
+/// // A folder of an earlier start gets the missing rules, and keeps its keys.
+/// std::fs::write(claude.join("settings.json"), r#"{"includeCoAuthoredBy":false,"model":"opus"}"#)?;
+/// riff::lead::claude_folder(&claude, "/data/clone".as_ref(), Some(&person))?;
+/// let settings = read("settings.json");
+/// assert_eq!(settings["model"], "opus");
+/// assert_eq!(settings["permissions"], riff::run::settings()["permissions"]);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn claude_folder(dir: &Path, clone: &Path, person: Option<&Path>) -> Result<()> {
@@ -152,7 +162,9 @@ pub fn claude_folder(dir: &Path, clone: &Path, person: Option<&Path>) -> Result<
         .with_context(|| format!("cannot write {}", tmp.display()))?;
     std::fs::rename(&tmp, &file).with_context(|| format!("cannot write {}", file.display()))?;
     let settings = dir.join("settings.json");
-    if !settings.exists() {
+    if settings.exists() {
+        crate::permissions::add(&settings, &crate::permissions::session_rules())?;
+    } else {
         std::fs::write(&settings, serde_json::to_string_pretty(&run::settings())?)
             .with_context(|| format!("cannot write {}", settings.display()))?;
     }

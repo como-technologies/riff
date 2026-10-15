@@ -536,15 +536,22 @@ enum Command {
     /// /etc/subgid give you 65536 IDs or more, and cgroup v2 gives cpu and
     /// memory to your user. It checks
     /// that riff.toml of the repository of this folder pins the session
-    /// image. It prints the fix of each check that fails, and stops. When
-    /// each check passes, it installs and starts the riff daemon, as riff
-    /// daemon install does, and the daemon pulls the session image. A
-    /// daemon that answers stays: riff init does not start it again.
+    /// image. It checks that your user settings of Claude Code have the
+    /// permission rules of riff. When rules are missing, it names them and
+    /// asks one question before it adds them. It prints the fix of each
+    /// check that fails, and stops. When each check passes, it installs and
+    /// starts the riff daemon, as riff daemon install does, and the daemon
+    /// pulls the session image. A daemon that answers stays: riff init does
+    /// not start it again.
     Init {
-        /// Change nothing. Print the fix of each check that fails, and exit
-        /// with status 1 when a check fails.
-        #[arg(long)]
+        /// Change nothing. Print the fix of each check that fails, and each
+        /// missing permission rule. Exit with status 1 when a check fails.
+        #[arg(long, conflicts_with = "yes")]
         check: bool,
+        /// Add the missing permission rules to your user settings of Claude
+        /// Code with no question.
+        #[arg(long)]
+        yes: bool,
     },
     /// Run one work item in a rootless podman container
     ///
@@ -1480,8 +1487,14 @@ async fn main() -> Result<()> {
     if let Command::Daemon { command } = &cli.command {
         return daemon_command(command.as_ref()).await;
     }
-    if let Command::Init { check } = cli.command {
-        let code = riff::first_run::init(check).await?;
+    if let Command::Init { check, yes } = cli.command {
+        use riff::first_run::Mode;
+        let mode = match (check, yes) {
+            (true, _) => Mode::Check,
+            (false, true) => Mode::Yes,
+            (false, false) => Mode::Ask,
+        };
+        let code = riff::first_run::init(mode).await?;
         if code != 0 {
             std::process::exit(code);
         }

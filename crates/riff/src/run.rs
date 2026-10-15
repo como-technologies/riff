@@ -448,14 +448,25 @@ pub fn trust(clone: &Path) -> Value {
 
 /// The `settings.json` of the own Claude folder: `claude` adds no
 /// attribution line to a commit or a pull request, so the trailers end
-/// each one (01M4ZD48DHAKJ1EHX6QHYAQ7ZM). It is a setting of riff for
-/// its sessions, not a copy of a setting of the person.
+/// each one (01M4ZD48DHAKJ1EHX6QHYAQ7ZM). It allows each rule of the
+/// session place of the permission table, so the auto mode check does
+/// not refuse a step of the start text
+/// ([`crate::permissions::session_rules`], 01M5084K4YQCZF20XA0P2485SG).
+/// It is a setting of riff for its sessions, not a copy of a setting of
+/// the person.
 ///
 /// ```
-/// assert_eq!(riff::run::settings()["includeCoAuthoredBy"], false);
+/// let settings = riff::run::settings();
+/// assert_eq!(settings["includeCoAuthoredBy"], false);
+/// let allow = settings["permissions"]["allow"].as_array().unwrap();
+/// assert!(allow.iter().any(|r| r == "Bash(gh issue view *)"));
+/// assert_eq!(allow.len(), riff::permissions::session_rules().allow.len());
 /// ```
 pub fn settings() -> Value {
-    json!({ "includeCoAuthoredBy": false })
+    json!({
+        "includeCoAuthoredBy": false,
+        "permissions": { "allow": crate::permissions::session_rules().allow },
+    })
 }
 
 /// Makes the own Claude folder `dir` of a session, with the
@@ -1477,10 +1488,8 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(facts.claude.join(name)).unwrap())
                 .unwrap()
         };
-        assert_eq!(
-            read("settings.json"),
-            json!({ "includeCoAuthoredBy": false })
-        );
+        assert_eq!(read("settings.json"), settings());
+        assert_eq!(read("settings.json")["includeCoAuthoredBy"], false);
         let clone = facts.clone.display().to_string();
         assert_eq!(
             read(".claude.json")["projects"][&clone]["hasTrustDialogAccepted"],

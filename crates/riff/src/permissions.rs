@@ -3,28 +3,36 @@
 //! # Design
 //!
 //! Claude Code auto mode can block normal riff work: a riff tool, `riff
-//! workers start`, or a step of the pull request flow. A session cannot
-//! add allow rules itself: auto mode blocks a session that edits its own
-//! settings. So a person runs `riff setup` once in the project
-//! (01M3Q53RNDJBDHVDFHJ9HCX9S1). It adds the rules of [`rules()`] to the
-//! project settings of Claude Code, `.claude/settings.json` at the top
-//! of the repository ([`Project::settings`]).
+//! workers start`, a step of the pull request flow, or the riff of a new
+//! build. A session cannot add allow rules itself: auto mode blocks a
+//! session that edits its own settings. So riff owns the rules of each
+//! role in one table, [`TABLE`] (01M5084JXTWZQEG7DJHS2E96NQ). riff writes
+//! each rule to its places:
 //!
-//! - It adds only the rules that are missing. It keeps each other rule
+//! | Place | riff writes it with | Into |
+//! |---|---|---|
+//! | project | `riff setup` (01M3Q53RNDJBDHVDFHJ9HCX9S1) | `.claude/settings.json` at the top of the repository ([`Project::settings`]) |
+//! | user | `riff init`, after one question (01M5084K09Z2S7N57315CX2R0F) | the user settings of Claude Code: `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` |
+//! | session | the riff daemon, for each session (01M5084K4YQCZF20XA0P2485SG) | the `settings.json` of the own Claude folder of the session ([`crate::run::settings`]) |
+//!
+//! - riff adds only the rules that are missing. It keeps each other rule
 //!   and each other key, in its order ([`with_rules`]).
-//! - A rule counts as there when the user settings, the project
-//!   settings or the local settings (`.claude/settings.local.json`) have
-//!   it ([`missing`]).
-//! - `riff setup --check` changes nothing. It names each missing rule.
-//! - The start hook tells the lead when rules are missing
+//! - For `riff setup`, a rule counts as there when the user settings,
+//!   the project settings or the local settings
+//!   (`.claude/settings.local.json`) have it ([`missing`]).
+//! - `riff setup --check` and `riff init --check` change nothing. Each
+//!   names each missing rule.
+//! - The start hook tells the lead when project rules are missing
 //!   (01M3Q53RQGXMYVYGCQQMWA9380).
 //!
 //! ```mermaid
 //! flowchart LR
-//!     G["git: origin, origin/HEAD"] --> R["rules()"]
-//!     R --> M{"missing in user,<br/>project or local?"}
-//!     M -- "some" --> W["add to<br/>.claude/settings.json"]
-//!     M -- "none" --> N["change nothing"]
+//!     T["TABLE"] --> P["project rules"]
+//!     T --> U["user rules"]
+//!     T --> S["session rules"]
+//!     P -- "riff setup" --> PF[".claude/settings.json<br/>of the repository"]
+//!     U -- "riff init" --> UF["~/.claude/settings.json"]
+//!     S -- "the daemon" --> SF["settings.json of<br/>each session"]
 //! ```
 //!
 //! ```
@@ -37,6 +45,53 @@
 //! assert_eq!(with_rules(&text, &rules)?, None);
 //! # Ok::<(), anyhow::Error>(())
 //! ```
+//!
+//! # The table
+//!
+//! Each `riff` and `gh` step of the skill matches a rule of the user
+//! place. Each step of the start text of a session of the daemon matches
+//! a rule of the session place for its role. A step that the skill
+//! forbids matches a deny rule. A step of a person has no rule: the auto
+//! mode check judges it. The tests check each step with [`matches`].
+//! `{HOME}`, `{OWNER}`, `{REPO}` and `{BRANCH}` take the [`Facts`] of the
+//! person and of the project.
+//!
+//! | Rule | Kind | Roles | Places | The step |
+//! |---|---|---|---|---|
+//! | `mcp__plugin_riff_riff` | allow | lead, worker, verifier | project, user | each riff tool of the plugin |
+//! | `mcp__riff` | allow | lead, worker, verifier | project, user, session | each riff tool of a worker, and of a session of the daemon |
+//! | `Bash(riff)` | allow | lead, worker, verifier | project, user | `riff` |
+//! | `Bash(riff *)` | allow | lead, worker, verifier | project, user | each `riff` command of the skill |
+//! | `Bash(~/.cache/riff/checks/*/riff *)` | allow | worker | user | the riff of a new build in a check (01M5084K79M5XJT3MP8FFVQKDX) |
+//! | `Bash({HOME}/.cache/riff/checks/*/riff *)` | allow | worker | user | the same riff, by its full path |
+//! | `Bash(/opt/riff/riff relay watch)` | allow | lead | session | the wakes of the lead in a container |
+//! | `Bash(gh pr create *)` | allow | worker | project, user, session | open the pull request |
+//! | `Bash(gh pr merge * --auto --squash)` | allow | worker | project, user, session | turn on auto-merge |
+//! | `Bash(gh pr comment *)` | allow | worker, verifier | project, user | write a comment on a pull request |
+//! | `Bash(gh pr view *)` | allow | lead, worker, verifier | project, user, session | read a pull request |
+//! | `Bash(gh pr checks *)` | allow | verifier | user, session | see the checks of a pull request |
+//! | `Bash(gh issue view *)` | allow | lead, worker, verifier | user, session | read an issue |
+//! | `Bash(gh issue list *)` | allow | lead, worker, verifier | user, session | find the items of a wave |
+//! | `Bash(gh issue create *)` | allow | lead, worker, verifier | user | file an issue |
+//! | `Bash(gh issue comment *)` | allow | worker, verifier | user | write the state on an issue |
+//! | `Bash(gh issue edit *)` | allow | lead, worker, verifier | user, session | put an item in a wave, write its `Done when:` line |
+//! | `Bash(gh api repos/*/milestones *)` | allow | lead | user, session | see the waves, make a wave |
+//! | `Bash(gh api -X PATCH repos/*/milestones/*)` | allow | lead | user, session | end a wave |
+//! | `Bash(gh api repos/{OWNER}/{REPO}/statuses/*)` | allow | verifier | project | set the status of a verify |
+//! | `Bash(git push * {BRANCH})` | deny | lead, worker, verifier | project | never push to the default branch |
+//! | `Bash(git push * {BRANCH} *)` | deny | lead, worker, verifier | project | the same |
+//! | `Bash(git push *:{BRANCH})` | deny | lead, worker, verifier | project | the same |
+//! | `Bash(git push *:{BRANCH} *)` | deny | lead, worker, verifier | project | the same |
+//! | `Bash(git push *:refs/heads/{BRANCH})` | deny | lead, worker, verifier | project | the same |
+//! | `Bash(git push *:refs/heads/{BRANCH} *)` | deny | lead, worker, verifier | project | the same |
+//! | `Bash(gh pr merge *--admin*)` | deny | lead, worker, verifier | project | never merge as an admin |
+//! | `Bash(gh workflow run *)` | person | - | - | an admin makes a release, deploys it again or rolls it back |
+//!
+//! When the auto mode check refuses a step, the session writes the step
+//! on the issue of its item, and tells the lead. The fix is a new row of
+//! the table (the step is in bounds), or a change of the skill (it is
+//! not). It is never a step that a person types by hand
+//! (01M5084K9J566981EXZ7YJRGRR).
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -68,9 +123,237 @@ impl Rules {
     }
 }
 
+/// A role of a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// The lead of a person in a repository.
+    Lead,
+    /// A session that does a work item.
+    Worker,
+    /// A session that verifies the work of another session.
+    Verifier,
+}
+
+impl Role {
+    /// The name of the role in the table.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::Lead => "lead",
+            Role::Worker => "worker",
+            Role::Verifier => "verifier",
+        }
+    }
+}
+
+/// A place where riff writes a rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    /// The project settings: `riff setup` (01M3Q53RNDJBDHVDFHJ9HCX9S1).
+    Project,
+    /// The user settings of the person: `riff init`
+    /// (01M5084K09Z2S7N57315CX2R0F).
+    User,
+    /// The settings of each session of the daemon
+    /// (01M5084K4YQCZF20XA0P2485SG).
+    Session,
+}
+
+impl Place {
+    /// The name of the place in the table.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Place::Project => "project",
+            Place::User => "user",
+            Place::Session => "session",
+        }
+    }
+}
+
+/// The kind of a row of the table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// A rule of `permissions.allow`.
+    Allow,
+    /// A rule of `permissions.deny`.
+    Deny,
+    /// The step of a person. riff writes no rule, so the auto mode check
+    /// judges the step.
+    Person,
+}
+
+impl Kind {
+    /// The name of the kind in the table.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Allow => "allow",
+            Kind::Deny => "deny",
+            Kind::Person => "person",
+        }
+    }
+}
+
+/// One row of [`TABLE`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Row {
+    /// The rule, with `{HOME}`, `{OWNER}`, `{REPO}` or `{BRANCH}` for a
+    /// fact ([`Facts`]).
+    pub rule: &'static str,
+    /// Allow, deny, or the step of a person.
+    pub kind: Kind,
+    /// The roles whose steps need the rule.
+    pub roles: &'static [Role],
+    /// Where riff writes the rule.
+    pub places: &'static [Place],
+}
+
+const ALL: &[Role] = &[Role::Lead, Role::Worker, Role::Verifier];
+
+const fn allow(rule: &'static str, roles: &'static [Role], places: &'static [Place]) -> Row {
+    Row {
+        rule,
+        kind: Kind::Allow,
+        roles,
+        places,
+    }
+}
+
+const fn deny(rule: &'static str) -> Row {
+    Row {
+        rule,
+        kind: Kind::Deny,
+        roles: ALL,
+        places: &[Place::Project],
+    }
+}
+
+/// The permission rules of each role (01M5084JXTWZQEG7DJHS2E96NQ). The
+/// table in the design of this module shows each row, with the step that
+/// needs it.
+pub const TABLE: &[Row] = {
+    use Place::{Project, Session, User};
+    use Role::{Lead, Verifier, Worker};
+    &[
+        allow("mcp__plugin_riff_riff", ALL, &[Project, User]),
+        allow("mcp__riff", ALL, &[Project, User, Session]),
+        allow("Bash(riff)", ALL, &[Project, User]),
+        allow("Bash(riff *)", ALL, &[Project, User]),
+        allow("Bash(~/.cache/riff/checks/*/riff *)", &[Worker], &[User]),
+        allow("Bash({HOME}/.cache/riff/checks/*/riff *)", &[Worker], &[User]),
+        allow("Bash(/opt/riff/riff relay watch)", &[Lead], &[Session]),
+        allow("Bash(gh pr create *)", &[Worker], &[Project, User, Session]),
+        allow(
+            "Bash(gh pr merge * --auto --squash)",
+            &[Worker],
+            &[Project, User, Session],
+        ),
+        allow("Bash(gh pr comment *)", &[Worker, Verifier], &[Project, User]),
+        allow("Bash(gh pr view *)", ALL, &[Project, User, Session]),
+        allow("Bash(gh pr checks *)", &[Verifier], &[User, Session]),
+        allow("Bash(gh issue view *)", ALL, &[User, Session]),
+        allow("Bash(gh issue list *)", ALL, &[User, Session]),
+        allow("Bash(gh issue create *)", ALL, &[User]),
+        allow("Bash(gh issue comment *)", &[Worker, Verifier], &[User]),
+        allow("Bash(gh issue edit *)", ALL, &[User, Session]),
+        allow("Bash(gh api repos/*/milestones *)", &[Lead], &[User, Session]),
+        allow(
+            "Bash(gh api -X PATCH repos/*/milestones/*)",
+            &[Lead],
+            &[User, Session],
+        ),
+        allow(
+            "Bash(gh api repos/{OWNER}/{REPO}/statuses/*)",
+            &[Verifier],
+            &[Project],
+        ),
+        deny("Bash(git push * {BRANCH})"),
+        deny("Bash(git push * {BRANCH} *)"),
+        deny("Bash(git push *:{BRANCH})"),
+        deny("Bash(git push *:{BRANCH} *)"),
+        deny("Bash(git push *:refs/heads/{BRANCH})"),
+        deny("Bash(git push *:refs/heads/{BRANCH} *)"),
+        deny("Bash(gh pr merge *--admin*)"),
+        Row {
+            rule: "Bash(gh workflow run *)",
+            kind: Kind::Person,
+            roles: &[],
+            places: &[],
+        },
+    ]
+};
+
+/// The facts that the rules of [`TABLE`] take.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Facts<'a> {
+    /// The home of the person: `{HOME}`.
+    pub home: Option<&'a Path>,
+    /// OWNER and REPO of a GitHub `origin`: `{OWNER}` and `{REPO}`.
+    pub repo: Option<(&'a str, &'a str)>,
+    /// The default branch: `{BRANCH}`.
+    pub branch: Option<&'a str>,
+}
+
+impl Row {
+    /// The rule with the facts `facts`, or `None` when it needs a fact
+    /// that `facts` does not have.
+    ///
+    /// ```
+    /// use riff::permissions::{Facts, TABLE};
+    ///
+    /// let row = TABLE.iter().find(|r| r.rule.contains("{HOME}")).unwrap();
+    /// assert_eq!(row.rule_of(&Facts::default()), None);
+    /// let facts = Facts { home: Some("/home/mike".as_ref()), ..Facts::default() };
+    /// assert_eq!(
+    ///     row.rule_of(&facts).unwrap(),
+    ///     "Bash(/home/mike/.cache/riff/checks/*/riff *)"
+    /// );
+    /// ```
+    pub fn rule_of(&self, facts: &Facts) -> Option<String> {
+        let home = facts.home.map(|h| h.display().to_string());
+        let values = [
+            ("{HOME}", home.as_deref()),
+            ("{OWNER}", facts.repo.map(|r| r.0)),
+            ("{REPO}", facts.repo.map(|r| r.1)),
+            ("{BRANCH}", facts.branch),
+        ];
+        let mut rule = self.rule.to_owned();
+        for (key, value) in values {
+            if rule.contains(key) {
+                rule = rule.replace(key, value?);
+            }
+        }
+        Some(rule)
+    }
+}
+
+/// The rules of [`TABLE`] for the place `place`, with the facts `facts`.
+/// It leaves out a rule that needs a fact that `facts` does not have.
+///
+/// ```
+/// use riff::permissions::{Facts, Place, rules_of};
+///
+/// let session = rules_of(Place::Session, &Facts::default());
+/// assert!(session.allow.contains(&"Bash(gh issue view *)".to_owned()));
+/// assert!(!session.allow.contains(&"Bash(riff *)".to_owned()));
+/// assert!(session.deny.is_empty());
+/// ```
+pub fn rules_of(place: Place, facts: &Facts) -> Rules {
+    let mut rules = Rules::default();
+    for row in TABLE.iter().filter(|r| r.places.contains(&place)) {
+        let Some(rule) = row.rule_of(facts) else {
+            continue;
+        };
+        match row.kind {
+            Kind::Allow => rules.allow.push(rule),
+            Kind::Deny => rules.deny.push(rule),
+            Kind::Person => {}
+        }
+    }
+    rules
+}
+
 /// The rules of riff work for the repository `repo` (OWNER and REPO,
-/// when it has a GitHub `origin`) with the default branch `branch`
-/// (01M3Q53RNDJBDHVDFHJ9HCX9S1).
+/// when it has a GitHub `origin`) with the default branch `branch`: the
+/// project place of [`TABLE`] (01M3Q53RNDJBDHVDFHJ9HCX9S1).
 ///
 /// - Allow: each riff tool (`mcp__plugin_riff_riff` from the plugin,
 ///   `mcp__riff` in a worker), each `riff` command, and the steps of the
@@ -89,32 +372,88 @@ impl Rules {
 /// assert!(!no_repo.allow.iter().any(|r| r.contains("statuses")));
 /// ```
 pub fn rules(repo: Option<(&str, &str)>, branch: &str) -> Rules {
-    let mut allow: Vec<String> = [
-        "mcp__plugin_riff_riff",
-        "mcp__riff",
-        "Bash(riff)",
-        "Bash(riff *)",
-        "Bash(gh pr create *)",
-        "Bash(gh pr merge * --auto --squash)",
-        "Bash(gh pr comment *)",
-        "Bash(gh pr view *)",
-    ]
-    .map(String::from)
-    .into();
-    if let Some((owner, name)) = repo {
-        allow.push(format!("Bash(gh api repos/{owner}/{name}/statuses/*)"));
+    let facts = Facts {
+        repo,
+        branch: Some(branch),
+        ..Facts::default()
+    };
+    rules_of(Place::Project, &facts)
+}
+
+/// The rules that `riff init` writes into the user settings of Claude
+/// Code, for the person with the home `home` (01M5084K09Z2S7N57315CX2R0F).
+/// They name no repository and deny nothing, so they hold in each
+/// project of the person.
+///
+/// ```
+/// let rules = riff::permissions::user_rules(Some("/home/mike".as_ref()));
+/// assert!(rules.allow.contains(&"Bash(gh issue list *)".to_owned()));
+/// assert!(rules.allow.contains(&"Bash(~/.cache/riff/checks/*/riff *)".to_owned()));
+/// assert!(rules.allow.contains(&"Bash(/home/mike/.cache/riff/checks/*/riff *)".to_owned()));
+/// assert!(rules.deny.is_empty());
+/// assert!(!riff::permissions::user_rules(None).allow.iter().any(|r| r.contains("/home/")));
+/// ```
+pub fn user_rules(home: Option<&Path>) -> Rules {
+    let facts = Facts {
+        home,
+        ..Facts::default()
+    };
+    rules_of(Place::User, &facts)
+}
+
+/// The rules that the daemon writes into the settings of each session
+/// (01M5084K4YQCZF20XA0P2485SG).
+///
+/// ```
+/// let rules = riff::permissions::session_rules();
+/// assert!(rules.allow.contains(&"mcp__riff".to_owned()));
+/// assert!(rules.allow.contains(&"Bash(gh pr checks *)".to_owned()));
+/// ```
+pub fn session_rules() -> Rules {
+    rules_of(Place::Session, &Facts::default())
+}
+
+/// True when the rule `rule` of Claude Code matches the Bash command
+/// `command`. It is the model of the match of Claude Code that the tests
+/// use: a rule `Bash(PATTERN)` matches the whole command, and each `*` in
+/// PATTERN matches each text, also no text. Each other rule matches no
+/// command.
+///
+/// ```
+/// use riff::permissions::matches;
+///
+/// assert!(matches("Bash(riff *)", "riff workers start 2"));
+/// assert!(!matches("Bash(riff *)", "riff"));
+/// assert!(matches("Bash(riff)", "riff"));
+/// assert!(matches("Bash(gh api repos/*/milestones *)", "gh api repos/o/r/milestones --jq ."));
+/// assert!(matches("Bash(gh pr merge *--admin*)", "gh pr merge --admin"));
+/// assert!(!matches("Bash(gh issue view *)", "gh issue list"));
+/// assert!(!matches("mcp__riff", "mcp__riff"));
+/// ```
+pub fn matches(rule: &str, command: &str) -> bool {
+    let Some(pattern) = rule.strip_prefix("Bash(").and_then(|r| r.strip_suffix(')')) else {
+        return false;
+    };
+    let (pattern, text) = (pattern.as_bytes(), command.as_bytes());
+    let (mut p, mut t) = (0, 0);
+    // The last `*` and the place in the text where it started.
+    let mut star: Option<(usize, usize)> = None;
+    while t < text.len() {
+        if pattern.get(p) == Some(&b'*') {
+            star = Some((p, t));
+            p += 1;
+        } else if pattern.get(p) == Some(&text[t]) {
+            p += 1;
+            t += 1;
+        } else if let Some((s, from)) = star {
+            star = Some((s, from + 1));
+            p = s + 1;
+            t = from + 1;
+        } else {
+            return false;
+        }
     }
-    let mut deny: Vec<String> = [
-        format!("Bash(git push * {branch})"),
-        format!("Bash(git push * {branch} *)"),
-        format!("Bash(git push *:{branch})"),
-        format!("Bash(git push *:{branch} *)"),
-        format!("Bash(git push *:refs/heads/{branch})"),
-        format!("Bash(git push *:refs/heads/{branch} *)"),
-    ]
-    .into();
-    deny.push("Bash(gh pr merge *--admin*)".into());
-    Rules { allow, deny }
+    pattern[p..].iter().all(|&c| c == b'*')
 }
 
 /// The rules of `rules` that none of the settings texts in `texts` has.
@@ -422,5 +761,178 @@ mod tests {
         let left = project.missing(None);
         assert!(!left.allow.contains(&"Bash(riff *)".into()));
         assert_eq!(left.len(), project.rules().len() - 1);
+    }
+
+    /// The names of `names`, or `-` when there is none.
+    fn names<T: Copy>(names: &[T], name: fn(T) -> &'static str) -> String {
+        if names.is_empty() {
+            return "-".into();
+        }
+        names.iter().map(|n| name(*n)).collect::<Vec<_>>().join(", ")
+    }
+
+    #[test]
+    fn the_table_of_the_design_shows_each_row_in_order() {
+        let source = include_str!("permissions.rs");
+        let lines: Vec<&str> = source
+            .lines()
+            .filter_map(|l| l.strip_prefix("//! | `"))
+            .collect();
+        assert_eq!(lines.len(), TABLE.len(), "{lines:#?}");
+        for (row, line) in TABLE.iter().zip(lines) {
+            let want = format!(
+                "{}` | {} | {} | {} | ",
+                row.rule,
+                row.kind.as_str(),
+                names(row.roles, Role::as_str),
+                names(row.places, Place::as_str),
+            );
+            assert!(line.starts_with(&want), "{line}\nis not\n{want}");
+        }
+    }
+
+    #[test]
+    fn a_row_of_a_person_has_no_place_and_each_other_row_has_one() {
+        for row in TABLE {
+            assert_eq!(row.kind == Kind::Person, row.places.is_empty(), "{row:?}");
+            assert_eq!(row.kind == Kind::Person, row.roles.is_empty(), "{row:?}");
+        }
+    }
+
+    /// True when the first word of `text` is `riff`, `gh`, or the path of
+    /// a riff.
+    fn is_step(text: &str) -> bool {
+        let first = text.split_whitespace().next().unwrap_or_default();
+        first == "riff" || first == "gh" || first.ends_with("/riff")
+    }
+
+    /// Each `riff` and `gh` step of the markdown `text`: each code span,
+    /// and each line of a code block.
+    fn skill_steps(text: &str) -> Vec<String> {
+        let mut steps = Vec::new();
+        let mut prose = String::new();
+        let mut block = false;
+        for line in text.lines() {
+            if line.trim_start().starts_with("```") {
+                block = !block;
+            } else if block {
+                steps.push(line.trim().to_owned());
+            } else {
+                prose.push_str(line);
+                prose.push('\n');
+            }
+        }
+        let spans = prose.split('`').skip(1).step_by(2);
+        steps.extend(spans.map(|s| s.split_whitespace().collect::<Vec<_>>().join(" ")));
+        steps.retain(|s| is_step(s));
+        steps.sort();
+        steps.dedup();
+        steps
+    }
+
+    /// Each `riff` and `gh` step of the plain text `text`: each code span,
+    /// each line that starts with a step, and each step after `: ` up to
+    /// the next comma.
+    fn text_steps(text: &str) -> Vec<String> {
+        let mut steps: Vec<String> = text.split('`').skip(1).step_by(2).map(Into::into).collect();
+        for line in text.lines().map(str::trim) {
+            let after = line.split_once(": ").map(|(_, rest)| rest);
+            for part in [Some(line), after].into_iter().flatten() {
+                steps.push(part.split(',').next().unwrap_or_default().trim().to_owned());
+            }
+        }
+        steps.retain(|s| is_step(s));
+        steps.sort();
+        steps.dedup();
+        steps
+    }
+
+    #[test]
+    fn the_steps_of_a_text_are_its_commands() {
+        assert_eq!(
+            skill_steps("Run `riff who`, or\n`riff\n  workers`.\n```sh\ngh issue list\n```\n`git log`"),
+            ["gh issue list", "riff who", "riff workers"]
+        );
+        assert_eq!(
+            text_steps("1. Read it: gh pr view 4 --comments, and git diff\n   gh pr checks 4\nriff does it, `/opt/riff/riff relay watch`"),
+            [
+                "/opt/riff/riff relay watch",
+                "gh pr checks 4",
+                "gh pr view 4 --comments",
+                "riff does it"
+            ]
+        );
+    }
+
+    /// 01M5084JXTWZQEG7DJHS2E96NQ: each `riff` and `gh` step of the skill
+    /// matches a rule of the user place, a deny rule (the skill forbids
+    /// the step), or the row of a person.
+    #[test]
+    fn each_step_of_the_skill_matches_a_user_rule() {
+        let (_, skill) = crate::plugin::FILES
+            .iter()
+            .find(|(path, _)| path.ends_with("SKILL.md"))
+            .unwrap();
+        let home = Path::new("/home/mike");
+        let user = user_rules(Some(home));
+        let deny = rules(Some(("o", "r")), "main").deny;
+        let person: Vec<&str> = TABLE
+            .iter()
+            .filter(|r| r.kind == Kind::Person)
+            .map(|r| r.rule)
+            .collect();
+        let steps = skill_steps(skill);
+        assert!(steps.len() > 40, "{steps:#?}");
+        // The check of a new build is in the skill (01M5084K79M5XJT3MP8FFVQKDX).
+        assert!(
+            steps.iter().any(|s| s.starts_with("~/.cache/riff/checks/")),
+            "{steps:#?}"
+        );
+        for step in &steps {
+            let found = user.allow.iter().any(|r| matches(r, step))
+                || deny.iter().any(|r| matches(r, step))
+                || person.iter().any(|r| matches(r, step));
+            assert!(found, "no rule of the table matches the step `{step}`");
+        }
+    }
+
+    /// 01M5084JXTWZQEG7DJHS2E96NQ: each `riff` and `gh` step of the start
+    /// text of a session of the daemon matches a rule of the session
+    /// place for the role of the session.
+    #[test]
+    fn each_step_of_a_session_of_the_daemon_matches_a_session_rule_of_its_role() {
+        use crate::text;
+        let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3";
+        let texts = [
+            (
+                Role::Worker,
+                text::run_start("o/r", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", true),
+            ),
+            (
+                Role::Worker,
+                text::wave_failed_verify(40, "1a2b3c4d", "https://c"),
+            ),
+            (
+                Role::Verifier,
+                text::wave_verify_start("o/r", 12, 40, "1a2b3c4d"),
+            ),
+            (Role::Lead, text::MCP_LEAD.to_owned()),
+        ];
+        for (role, text) in texts {
+            let rules: Vec<String> = TABLE
+                .iter()
+                .filter(|r| r.places.contains(&Place::Session) && r.roles.contains(&role))
+                .filter_map(|r| r.rule_of(&Facts::default()))
+                .collect();
+            let steps = text_steps(&text);
+            assert!(!steps.is_empty(), "{text}");
+            for step in &steps {
+                assert!(
+                    rules.iter().any(|r| matches(r, step)),
+                    "no session rule of the {} matches the step `{step}`",
+                    role.as_str()
+                );
+            }
+        }
     }
 }

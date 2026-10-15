@@ -5323,6 +5323,87 @@ pub const INIT_FIX_DELEGATE: &str = "let systemd give them to your user: sudo mk
 pub const INIT_FIX_IMAGE: &str = "run riff init in a clone of a repository whose riff.toml pins \
      the session image. See \"Change the session image\" in the book";
 
+/// The name of the check of the permission rules in the user settings
+/// of Claude Code (01M5084K09Z2S7N57315CX2R0F).
+pub const INIT_RULES: &str = "the rules of Claude Code";
+
+/// riff cannot find the user settings of Claude Code.
+pub const INIT_NO_SETTINGS: &str = "riff cannot find the user settings of Claude Code";
+
+/// The fix when riff cannot find the user settings of Claude Code.
+pub const INIT_FIX_SETTINGS: &str = "set HOME or CLAUDE_CONFIG_DIR, then run riff init again";
+
+/// The user settings at `path` have each permission rule of riff.
+pub fn init_rules_there(path: &Path) -> String {
+    format!("{} has each permission rule of riff", path.display())
+}
+
+/// The user settings at `path` lack `count` permission rules of riff.
+///
+/// ```
+/// let found = riff::text::init_rules_missing("/h/.claude/settings.json".as_ref(), 1);
+/// assert_eq!(found, "/h/.claude/settings.json lacks 1 permission rule of riff");
+/// ```
+pub fn init_rules_missing(path: &Path, count: usize) -> String {
+    let s = if count == 1 { "" } else { "s" };
+    format!(
+        "{} lacks {count} permission rule{s} of riff",
+        path.display()
+    )
+}
+
+/// The fix of missing permission rules.
+pub const INIT_FIX_RULES: &str = "answer y to the question of riff init, or run riff init --yes";
+
+/// The missing permission rules of riff in the user settings at `path`,
+/// one line for each (01M5084K09Z2S7N57315CX2R0F).
+///
+/// ```
+/// use riff::permissions::Rules;
+///
+/// let missing = Rules { allow: vec!["Bash(gh issue list *)".into()], deny: vec![] };
+/// let text = riff::text::init_rules("/h/s.json".as_ref(), &missing);
+/// assert!(text.starts_with("These permission rules of riff are not in /h/s.json."), "{text}");
+/// assert!(text.ends_with(":\n  allow Bash(gh issue list *)"), "{text}");
+/// ```
+pub fn init_rules(path: &Path, missing: &Rules) -> String {
+    format!(
+        "These permission rules of riff are not in {}. Your sessions of riff need them, so \
+         that the auto mode check of Claude Code does not refuse a step of riff:{}",
+        path.display(),
+        rule_lines(missing)
+    )
+}
+
+/// The one question of `riff init` about the rules at `path`.
+pub fn init_ask_rules(path: &Path) -> String {
+    format!("Add them to {}? [y/N] ", path.display())
+}
+
+/// `riff init` added `count` rules to the user settings at `path`.
+///
+/// ```
+/// let added = riff::text::init_rules_added("/h/s.json".as_ref(), 2);
+/// assert_eq!(added, "riff added 2 permission rules to /h/s.json. Start Claude Code again to use them.");
+/// ```
+pub fn init_rules_added(path: &Path, count: usize) -> String {
+    let s = if count == 1 { "" } else { "s" };
+    format!(
+        "riff added {count} permission rule{s} to {}. Start Claude Code again to use them.",
+        path.display()
+    )
+}
+
+/// The person did not answer yes: `riff init` kept the user settings at
+/// `path` as they are.
+pub fn init_rules_kept(path: &Path) -> String {
+    format!("riff changed nothing in {}.", path.display())
+}
+
+/// `riff init` asks its question only in a terminal.
+pub const INIT_NO_TERMINAL: &str =
+    "riff init asks its question only in a terminal. To add the rules, run: riff init --yes";
+
 /// Some checks of `riff init` failed.
 ///
 /// ```

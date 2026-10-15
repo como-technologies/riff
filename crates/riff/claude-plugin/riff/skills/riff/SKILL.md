@@ -323,6 +323,19 @@ no release and no update of the machine. Never run `riff update`,
 `cargo install` of riff, `just install` or `riff connect` in a
 worktree.
 
+A check after a merge can need a new build of riff, for example of
+the daemon. Clone the default branch into `~/.cache/riff/checks/NAME`,
+outside `.claude/worktrees`, and build it there with `just static`.
+Call the riff of the build by its path, with no variable and no
+prefix, for example:
+
+```sh
+~/.cache/riff/checks/NAME/target/static/release/riff daemon install
+```
+
+A permission rule of `riff init` matches this form. A variable, for
+example `$R daemon install`, matches no rule.
+
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The verifier names it in the result.
 Link the issue so that the merge leaves it open. After the merge, add a
@@ -609,6 +622,31 @@ the clear. `riff workers start` runs `riff worktrees clean`.
 A refusal of a raw command never blocks your work. When no riff
 command covers your case, file an issue for it, and `tell` the lead.
 
+## A refusal of the auto mode check
+
+riff sets the Claude Code permission rules of each role in its code:
+`riff init` writes them into the settings of your user, and the riff
+daemon writes them into the settings of each of its sessions. So the
+auto mode check must not refuse a step of this skill. When it refuses
+a step:
+
+1. Stop that step. Do not try it again in another form, and do not ask
+   a person to type it.
+2. Write the command and the reason of the refusal on the issue of your
+   item, as a comment. When you hold no item, put them only in the
+   message of step 3.
+3. `tell` the lead the command, the reason and the issue. When you
+   cannot go on, call `blocked` with them in place of `tell`.
+
+The lead files the fix as an issue. The fix is one of two:
+
+- The step is in bounds: a new rule in the table of the rules of riff
+  (`riff::permissions::TABLE`).
+- The step is out of bounds: a change of this skill, so that sessions
+  do not try it.
+
+The fix is never that a person does the refused step by hand.
+
 ## Build and test
 
 A build takes memory and each core that it gets. The sessions of a
@@ -780,8 +818,8 @@ Never ask your user there. This is also true when a permission
 refusal blocks you. When you need a decision from your user:
 
 1. Call `tell` with the session `lead` and the question. Name the
-   choices. For a permission refusal, name the action that was
-   refused and why you need it. When you cannot go on until the
+   choices. For a permission refusal, do the steps of "A refusal of
+   the auto mode check". When you cannot go on until the
    answer comes, call `blocked` with the question in place of `tell`:
    it also shows you as blocked (see "Status").
 2. Do not stop to ask in your own terminal. Wait for the answer, or
