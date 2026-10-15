@@ -52,7 +52,7 @@
 //! place. Each step of the start text of a session of the daemon matches
 //! a rule of the session place for its role. A step that the skill
 //! forbids matches a deny rule. A step of a person has no rule: the auto
-//! mode check judges it. The tests check each step with [`matches`].
+//! mode check judges it. The tests check each step with [`matches()`].
 //! `{HOME}`, `{OWNER}`, `{REPO}` and `{BRANCH}` take the [`Facts`] of the
 //! person and of the project.
 //!

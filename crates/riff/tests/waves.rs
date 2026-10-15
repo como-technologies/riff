@@ -99,9 +99,10 @@ fn only_the_forge_parts_name_milestones() {
         forge += usize::from(rest.len() < text.len());
     }
     // The skill, the requirements, the page "Waves", the page
-    // "Development" (check a pull request) and the design of the plan
-    // each have a forge part.
-    assert_eq!(forge, 5);
+    // "Development" (check a pull request), the page "Start a Riff"
+    // (the rules of gh) and the design of the plan each have a forge
+    // part.
+    assert_eq!(forge, 6);
 }
 
 #[test]

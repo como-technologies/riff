@@ -508,8 +508,9 @@ flowchart LR
 1. Use Linux: `riff run` starts nothing on another OS. Install podman,
    and run the first run of riff 3.0 in your clone (see
    [Get ready for riff 3.0](start-a-riff.md#get-ready-for-riff-30)). It
-   checks rootless podman, starts the riff daemon and gets the session
-   image. With no daemon, `riff run` stops before the claim:
+   checks rootless podman, asks to add the permission rules of riff to
+   your Claude Code settings, starts the riff daemon and gets the
+   session image. With no daemon, `riff run` stops before the claim:
 
    ```sh
    riff init

@@ -405,7 +405,7 @@ fn start_a_riff_names_each_rule_that_riff_init_writes() {
         .find("### Let riff set the permissions of Claude Code")
         .unwrap();
     let part = &book[start..];
-    let part = &part[..part[4..].find("\n#").map_or(part.len(), |end| end + 4)];
+    let part = &part[..part[4..].find("\n### ").map_or(part.len(), |end| end + 4)];
     let rules = riff::permissions::user_rules(None);
     assert!(!rules.allow.is_empty());
     for rule in &rules.allow {
