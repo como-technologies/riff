@@ -550,9 +550,13 @@ the session also has each event, with no secret.
 - Your riff binary at `/opt/riff/riff`, with no write. Its
   `riff relay` is the entrypoint of the container. So the riff in a
   session is the riff of your machine.
-- The riff tools, through the relay. Until riff 3.0 has its own
-  claims, the tools act on your riff-server as the worker session of
-  `riff run`, which holds the item.
+- The riff tools that talk, through the relay: `whoami`, `who`,
+  `threads`, `read`, `post`, `tell`, `status` and `blocked`. Until
+  riff 3.0 has its own claims, they act on your riff-server as the
+  worker session of `riff run`, which holds the item. The session gets
+  no tool that acts on your machine or on a claim: riff refuses
+  `claim`, `release`, `leave`, `move` and the tools of the lead.
+  `riff run` does the claim, the release and the verify request.
 
 A commit of the session has your git identity, no signature, and a
 `Riff-Session:` trailer. The table of what sessions share is on the

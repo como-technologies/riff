@@ -4593,9 +4593,9 @@ share.
   01M4ZKX0F25S284R0N7KZVTHNA.
 - **01M4ZHT01HH88KPA8628M7VBEY** The daemon keeps a record of each live
   session in `live/NAME.json` in its folder, with no secret. At its
-  start, the daemon takes up each session whose container runs: it
-  binds the socket of the session again in the same folder. It removes
-  the record of each other session.
+  start, the daemon takes up each session whose container runs, or when
+  podman cannot say: it binds the socket of the session again in the
+  same folder. It removes the record of each other session.
 - **01M4ZHT03MAH0B5Q4S6GZC5JRP** A session ends when the daemon has the
   exit of its relay, or when its container ends.
 - **01M4ZHT05QHQRQ2KGVJFB9F7HD** On the control socket, `riff` can
@@ -4618,7 +4618,10 @@ share.
   many inputs it gave `claude`, and the daemon says how many events it
   has. The relay sends each event that the daemon does not have. The
   daemon sends each input that the relay did not give. So no event and
-  no input goes two times, and none is lost.
+  no input goes two times, and none is lost. The daemon acks no event
+  that it cannot keep, and acks the exit of `claude` only when it has
+  each event before it. In place of that ack, it closes the connection,
+  and the relay sends the line again at the next connection.
 - **01M4ZHSZPRYK42C20ETXM3HJZ2** On the socket of a session, the daemon
   takes a hello of its own version of the protocol, of the version
   before it, and of the version after it. A change of the protocol adds
@@ -4635,7 +4638,11 @@ share.
 - **01M4ZKX0H9N82ZBC9PKSPTQV4N** Until #719, the daemon serves the riff
   tools of a session on the riff-server of `riff run`, as the worker
   session that `riff run` started. That session holds the claim of the
-  item. The daemon uses the sign-in of the person on its machine.
+  item. The daemon uses the sign-in of the person on its machine. A
+  session gets only the tools that act on riff-server, and on no folder
+  of the host and no claim: `whoami`, `who`, `threads`, `read`, `post`,
+  `tell`, `status` and `blocked`. The daemon refuses each other riff
+  tool with a text that says why.
 - **01M4ZHSZXAY7F7E17B3CMHG562** When the daemon goes away,
   `riff relay mcp` answers each call in flight with an error, and keeps
   each new line until the daemon comes back. At the new connection, it

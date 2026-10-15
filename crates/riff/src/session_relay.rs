@@ -97,7 +97,9 @@
 //! the MCP server `riff`, which runs `RELAY_BIN relay mcp`
 //! ([`with_tools`]). [`mcp`] passes each line between `claude` and the
 //! daemon, on the socket of the session ([`SessionAsk::Mcp`]). The
-//! daemon serves the tools as that session (01M4ZHSZV46RF3XDXDTQXWGXRG).
+//! daemon serves the tools as that session (01M4ZHSZV46RF3XDXDTQXWGXRG):
+//! only the tools that talk ([`crate::mcp::CONTAINER_TOOLS`],
+//! 01M4ZKX0H9N82ZBC9PKSPTQV4N).
 //! When the daemon goes away, each call in flight gets an error, and
 //! each new line waits for the daemon. At a new connection, `riff relay
 //! mcp` gives the daemon the initialize request of `claude`, so the
