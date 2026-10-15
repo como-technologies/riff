@@ -3580,6 +3580,86 @@ mod tests {
         );
     }
 
+    /// The rollback of 2.0.1 to the line 1.x (01M4YNCECQDQR3Z8QTGQ1PW3WV,
+    /// 01M4YNCEMNRCAXD37V03T4JQYR): the log has a record `forge_allowed`,
+    /// and the newest checkpoint comes from 2.0.1, with the field
+    /// `forge_accounts`. A build of 1.x drops the record, does not use the
+    /// checkpoint, and writes checkpoints again.
+    #[tokio::test(start_paused = true)]
+    async fn a_build_of_1_x_writes_checkpoints_past_the_records_and_the_checkpoint_of_2_0() {
+        let store = Arc::new(Gated::default());
+        let service = running(store.clone()).await;
+        post_n(&service, 2, "before").await;
+        let last = position(&service);
+        let snapshot = service
+            .0
+            .engine
+            .read(|state| state.snapshot(Instant::now(), 0));
+        drop(service);
+        let forge = format!(
+            "{{\"format\":1,\"first\":{n}}}\n{{\"position\":{n},\"written_at_ms\":0,\"by\":{{\"person\":\"ann\"}},\"command\":\"forge_allow\",\"change\":{{\"forge_allowed\":{{\"owner\":\"acme\",\"allowed\":true}}}}}}\n",
+            n = last + 1
+        );
+        store
+            .store
+            .save(&log::chunk_name(last + 1), forge.into_bytes(), None)
+            .await
+            .unwrap();
+        let mut later =
+            serde_json::to_value(checkpoint::Checkpoint::new("2.0.1", 5, snapshot)).unwrap();
+        later["state"]["position"] = (last + 1).into();
+        later["state"]["forge_accounts"] = serde_json::json!(["acme"]);
+        let name = checkpoint::name(last + 1, 5);
+        store
+            .store
+            .save(&name, serde_json::to_vec(&later).unwrap(), None)
+            .await
+            .unwrap();
+
+        let next = Service::load(with_checkpoints(1, "1.3.1"), store.clone())
+            .await
+            .unwrap();
+        assert_eq!(position(&next), last + 1);
+        let facts = next.0.server_facts();
+        assert_eq!((facts.skipped_records, facts.no_checkpoint), (0, None));
+        let read = Read {
+            after: None,
+            me: brett(),
+            thread: mike().default_thread().unwrap(),
+            all: true,
+        };
+        assert_eq!(read_messages(&next, read).await, ["before0", "before1"]);
+        post_n(&next, 3, "after").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let newest = next.0.server_facts().checkpoint.unwrap();
+        assert_eq!(newest.build, "1.3.1");
+        assert!(newest.position > last + 1, "{newest:?}");
+        assert!(checkpoints(&store).await.len() >= 2);
+
+        // A read moves the cursor of brett, and the next checkpoint keeps
+        // it. A start from that checkpoint does not set it back (#700).
+        let unread = || Read {
+            after: None,
+            me: brett(),
+            thread: mike().default_thread().unwrap(),
+            all: false,
+        };
+        assert_eq!(
+            read_messages(&next, unread()).await,
+            ["after0", "after1", "after2"]
+        );
+        post_n(&next, 1, "last").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        drop(next);
+        let again = Service::load(with_checkpoints(1, "1.3.1"), store.clone())
+            .await
+            .unwrap();
+        let facts = again.0.server_facts();
+        assert_eq!(facts.checkpoint.unwrap().build, "1.3.1");
+        assert_eq!((facts.skipped_records, facts.no_checkpoint), (0, None));
+        assert_eq!(read_messages(&again, unread()).await, ["last0"]);
+    }
+
     /// A rollback: the later build writes a checkpoint after the load of
     /// the older build, and before the older build takes the lease
     /// (01M3TJWJC08ZR5TWA1Y9CDE0QM).

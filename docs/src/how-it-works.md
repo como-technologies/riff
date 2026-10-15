@@ -337,8 +337,8 @@ server      https://riff.example.com  (from RIFF_SERVER)
 | `serves` | `yes`, or `no, it replies 503` and why. A server that does not serve still gives its facts. |
 | `error` | The last error of the server since its start, with its age. |
 | `log` | The position of the last record, and the time and the duration of the last chunk write. |
-| `faults` | The failed tries of a chunk write, and the records of a later build that this build skipped: a record of a kind that this build does not know, or with a value that it does not know. |
-| `saved` | The newest checkpoint: its position, its age and its release. When this build writes no checkpoint, the line says why. |
+| `faults` | The failed tries of a chunk write, and the records of a later build that this build skipped: a record of a kind that this build does not know, or with a value that it does not know. A record of the forge state of 2.0 is dropped, not skipped, so it does not count. |
+| `saved` | The newest checkpoint: its position, its age and its release. When this build writes no checkpoint, the line says why. A checkpoint of a later major release is the state of another instance: this build does not use it. |
 | `counts` | The chunks in the store, the sessions, the read cursors, the threads, and the live sign-ins. |
 | `memory` | The memory that the server uses. |
 | `started` | The age of the instance, and how long its load and its replay took. |
