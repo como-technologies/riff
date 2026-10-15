@@ -8,7 +8,9 @@
 //! before each tag, a person runs this test on a host with podman: the
 //! `riff` of the tree does one scratch item with `riff run`, the session
 //! image that the tree pins, and a real `claude`, from the start to a
-//! pull request (01M4ZCFGCY301G2ARFMRXV7XDR).
+//! pull request (01M4ZCFGCY301G2ARFMRXV7XDR). An admin runs it on the
+//! merge commit of the release pull request, before the tag
+//! (01M4ZCFGKDKH16KGKR5NBEK3Y4).
 //!
 //! ```mermaid
 //! sequenceDiagram

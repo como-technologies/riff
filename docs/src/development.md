@@ -429,6 +429,77 @@ A commit of the session has your git identity, no signature, and a
 `Riff-Session:` trailer. The table of what sessions share is on the
 page [riff 3.0](riff-3.md).
 
+## Run the real-session test
+
+The real-session test checks a release on a real machine, with your
+real home. The riff of your clone does one scratch item with
+`riff run`, the session image that `riff.toml` pins, and a real
+`claude`. The tests of `just ci` cannot do this: they give riff a fake
+home. Run it before each tag (see [Make a release](#make-a-release)).
+
+The test needs podman and the sign-ins of `riff run`: see
+[Get ready to run an item](#get-ready-to-run-an-item). In your clone:
+
+```sh
+just real-session
+```
+
+```mermaid
+flowchart LR
+    T["just real-session"] -- "a scratch issue" --> G["GitHub"]
+    T -- "riff run" --> C["container: claude -p"]
+    C -- "push, pull request" --> G
+    T -- "check the pull request<br/>and the Gate" --> G
+    T -- "check" --> H[("your home")]
+```
+
+The test does these steps. The messages name them:
+
+1. Check the host: podman runs rootless, `gh` has a sign-in, and
+   `riff image` names the image.
+2. List the home: the test lists the files of your home.
+3. Make the scratch item: an issue in the milestone `Backlog` that adds
+   one line to the book.
+4. Hold its verify: no worker verifies the scratch item. When riff
+   cannot hold it, the test goes on.
+5. Run the item: `riff run` does the issue. You see each event of the
+   session.
+6. Check the home: the test lists your home again. A new file outside
+   the folders of riff, the folders of podman, your clone and
+   `~/.cache` fails the test.
+7. Find the pull request: the branch of the session has an open pull
+   request.
+8. Check the change: the pull request adds the line to the book.
+9. Wait for the Gate: the Gate of the pull request starts.
+
+The first step that fails stops the test. Its message names the step
+and the reason. Then the test cleans up: it closes the pull request
+and the issue, deletes the branch, cancels its CI runs, frees the hold,
+and removes the folder of the session. It also cleans up when you
+press Ctrl-C. A second Ctrl-C stops it at once.
+
+### When another program writes in your home
+
+The home check fails when another program writes a new file in your
+home while the test runs, for example a browser. The message lists
+each new file. Leave out the folder of that program with `--skip`, and
+run the test again. Give `--skip` one time for each folder:
+
+```sh
+just real-session --skip ~/.mozilla --skip ~/.config/Code
+```
+
+Your other Claude Code sessions write in `~/.claude`. There, only a
+new file that names the session of the test counts.
+
+### Wait longer for the Gate
+
+The test waits 600 seconds for the Gate to start. To wait longer:
+
+```sh
+just real-session --gate-wait 1200
+```
+
 ## Add a requirement
 
 Each requirement in `docs/src/requirements.md` has an ID. A new
@@ -1936,8 +2007,18 @@ requests with this label:
 gh pr create --title "Release v0.2.0" --label release --body-file pr.md
 ```
 
-Get it verified and merged as each other change. Then tag the merge
-commit, and push the tag:
+Get it verified and merged as each other change. Then run the
+real-session test on the merge commit, on a machine with podman (see
+[Run the real-session test](#run-the-real-session-test)). It must pass
+before the tag:
+
+```sh
+git fetch origin
+git switch --detach origin/main
+just real-session
+```
+
+Then tag the merge commit, and push the tag:
 
 ```sh
 git fetch origin
