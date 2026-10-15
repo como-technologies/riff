@@ -4797,6 +4797,9 @@ share.
   current folder pins the session image (01M4Z7SP3KSKJYKNRP1MQ70C4Q).
   riff prints one line for each check: `pass`, or `fail` with what it
   found and the fix. Each failed check has a fix of its own.
+- **01M501K21EK8F8N9NPR4565FVP** The fix of `/etc/subuid` or
+  `/etc/subgid` adds a free range of 65536 IDs: it starts at the first
+  ID after the end of each range in the file, and at 100000 or more.
 - **01M4ZJN6WR0JJ891R9JMQNPKGD** When a check fails, `riff init`
   installs nothing and pulls nothing, and exits with 1.
   `riff init --check` runs the checks and changes nothing.

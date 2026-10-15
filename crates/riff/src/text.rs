@@ -5269,16 +5269,17 @@ pub fn init_too_few_ids(ids: u64, user: &str) -> String {
 }
 
 /// The fix of `/etc/subuid` (`kind` is `uid`) or `/etc/subgid` (`kind`
-/// is `gid`) for `user`.
+/// is `gid`) for `user`: add the range of `ids` IDs from `start`.
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::init_fix_sub_ids("gid", "mike"),
-///     "sudo usermod --add-subgids 100000-165535 mike, then podman system migrate"
+///     riff::text::init_fix_sub_ids("gid", "mike", 165536, 65536),
+///     "sudo usermod --add-subgids 165536-231071 mike, then podman system migrate"
 /// );
 /// ```
-pub fn init_fix_sub_ids(kind: &str, user: &str) -> String {
-    format!("sudo usermod --add-sub{kind}s 100000-165535 {user}, then podman system migrate")
+pub fn init_fix_sub_ids(kind: &str, user: &str, start: u64, ids: u64) -> String {
+    let end = start + ids - 1;
+    format!("sudo usermod --add-sub{kind}s {start}-{end} {user}, then podman system migrate")
 }
 
 /// This machine has cgroup v1.
