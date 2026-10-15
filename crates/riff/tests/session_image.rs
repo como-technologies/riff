@@ -41,10 +41,21 @@ fn the_workflow_builds_the_image_that_riff_toml_names() {
         workflow.contains(&format!("IMAGE: {}\n", image.name())),
         "{workflow}"
     );
-    for path in ["deploy/session/**", "riff.toml", ".github/workflows/session-image.yml"] {
-        assert_eq!(workflow.matches(&format!("- {path}\n")).count(), 2, "{path}");
+    for path in [
+        "deploy/session/**",
+        "riff.toml",
+        ".github/workflows/session-image.yml",
+    ] {
+        assert_eq!(
+            workflow.matches(&format!("- {path}\n")).count(),
+            2,
+            "{path}"
+        );
     }
-    assert!(workflow.contains("git rev-parse HEAD:deploy/session"), "{workflow}");
+    assert!(
+        workflow.contains("git rev-parse HEAD:deploy/session"),
+        "{workflow}"
+    );
 }
 
 #[test]
@@ -119,16 +130,23 @@ fn riff_image_refuses_a_tag() {
     assert!(!out.status.success(), "{out:?}");
     assert!(out.stdout.is_empty(), "{out:?}");
     let error = String::from_utf8(out.stderr).unwrap();
-    assert!(error.contains("has no digest"), "{error}");
+    assert!(error.contains("names a tag"), "{error}");
 
     let tagged = format!("ghcr.io/o/i:v1@sha256:{}", "ab".repeat(32));
-    fs::write(
-        root.path().join(FILE),
-        format!("[session]\nimage = \"{tagged}\"\n"),
-    )
-    .unwrap();
-    let error = String::from_utf8(riff_image(root.path()).stderr).unwrap();
-    assert!(error.contains("names a tag"), "{error}");
+    for (image, why) in [
+        (tagged.as_str(), "names a tag"),
+        ("ghcr.io/o/i", "has no digest"),
+    ] {
+        fs::write(
+            root.path().join(FILE),
+            format!("[session]\nimage = \"{image}\"\n"),
+        )
+        .unwrap();
+        let out = riff_image(root.path());
+        assert!(!out.status.success(), "{out:?}");
+        let error = String::from_utf8(out.stderr).unwrap();
+        assert!(error.contains(why), "{image}: {error}");
+    }
 }
 
 #[test]

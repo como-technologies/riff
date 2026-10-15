@@ -164,18 +164,12 @@ pub fn of_folder(dir: &Path) -> Result<Image> {
 impl FromStr for Image {
     type Err = anyhow::Error;
 
-    /// Reads `HOST/PATH@sha256:DIGEST`. It refuses a tag, a reference with
-    /// no digest, and a reference with no registry host.
+    /// Reads `HOST/PATH@sha256:DIGEST`. It refuses a reference with no
+    /// registry host, a tag, and a reference with no digest.
     fn from_str(text: &str) -> Result<Image> {
-        let Some((name, digest)) = text.split_once('@') else {
-            bail!("{text} has no digest: name the image as HOST/PATH@sha256:DIGEST");
-        };
-        let Some(hex) = digest.strip_prefix("sha256:") else {
-            bail!("the digest of {text} does not start with sha256:");
-        };
-        if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
-            bail!("the digest of {text} is not 64 lowercase hex digits");
-        }
+        let (name, digest) = text
+            .split_once('@')
+            .map_or((text, None), |(n, d)| (n, Some(d)));
         let Some((host, path)) = name.split_once('/') else {
             bail!("{text} has no registry host, for example ghcr.io/");
         };
@@ -183,11 +177,22 @@ impl FromStr for Image {
             bail!("{text} has no registry host, for example ghcr.io/");
         }
         if path.contains(':') {
-            bail!("{text} names a tag: a tag can move. Name the image by its digest only");
+            bail!("{text} names a tag: a tag can move. Pin the image as HOST/PATH@sha256:DIGEST");
+        }
+        let Some(digest) = digest else {
+            bail!("{text} has no digest: pin the image as HOST/PATH@sha256:DIGEST");
+        };
+        let Some(hex) = digest.strip_prefix("sha256:") else {
+            bail!("the digest of {text} does not start with sha256:");
+        };
+        if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            bail!("the digest of {text} is not 64 lowercase hex digits");
         }
         let allowed = |b: u8| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-');
         if !host.bytes().all(|b| allowed(b) || b == b':')
-            || path.split('/').any(|part| part.is_empty() || !part.bytes().all(allowed))
+            || path
+                .split('/')
+                .any(|part| part.is_empty() || !part.bytes().all(allowed))
         {
             bail!("{text} is not a valid image name: use lowercase letters, digits, . _ - and /");
         }
@@ -237,7 +242,8 @@ mod tests {
     #[test]
     fn a_tag_is_refused() {
         let d = digest();
-        refused("ghcr.io/o/i:latest", "has no digest");
+        refused("ghcr.io/o/i:latest", "names a tag");
+        refused("localhost:5000/i:v1", "names a tag");
         refused("ghcr.io/o/i", "has no digest");
         refused(&format!("ghcr.io/o/i:1.0@{d}"), "names a tag");
         refused(&format!("localhost:5000/i:v1@{d}"), "names a tag");
@@ -246,10 +252,19 @@ mod tests {
     #[test]
     fn a_bad_digest_is_refused() {
         let hex = "0".repeat(64);
-        refused(&format!("ghcr.io/o/i@sha512:{hex}"), "does not start with sha256:");
+        refused(
+            &format!("ghcr.io/o/i@sha512:{hex}"),
+            "does not start with sha256:",
+        );
         refused("ghcr.io/o/i@sha256:0123", "64 lowercase hex");
-        refused(&format!("ghcr.io/o/i@sha256:{}", "A".repeat(64)), "64 lowercase hex");
-        refused(&format!("ghcr.io/o/i@sha256:{hex}@sha256:{hex}"), "64 lowercase hex");
+        refused(
+            &format!("ghcr.io/o/i@sha256:{}", "A".repeat(64)),
+            "64 lowercase hex",
+        );
+        refused(
+            &format!("ghcr.io/o/i@sha256:{hex}@sha256:{hex}"),
+            "64 lowercase hex",
+        );
     }
 
     #[test]
@@ -267,7 +282,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join(FILE), "[session]\n").unwrap();
         let error = format!("{:#}", Image::of_repository(root.path()).unwrap_err());
-        assert!(error.contains("riff.toml has no image in [session]"), "{error}");
+        assert!(
+            error.contains("riff.toml has no image in [session]"),
+            "{error}"
+        );
         std::fs::write(root.path().join(FILE), "[session\n").unwrap();
         let error = format!("{:#}", Image::of_repository(root.path()).unwrap_err());
         assert!(error.contains("is not valid TOML"), "{error}");
