@@ -576,7 +576,7 @@ enum Command {
         #[command(subcommand)]
         command: WaveCommand,
     },
-    /// Run the riff daemon, or install it, or show it
+    /// Run the riff daemon, or install, remove or show it
     ///
     /// The riff daemon owns the containers of riff run on this machine.
     /// With no subcommand, it runs the daemon in this terminal, as the
@@ -1096,6 +1096,13 @@ enum DaemonCommand {
     /// starts it again, so a new riff takes effect. It waits until the
     /// daemon answers. With RIFF_HOME set, it installs nothing.
     Install,
+    /// Stop the riff daemon, and remove its systemd user unit
+    ///
+    /// It disables and stops riff.service, deletes the unit file that
+    /// riff daemon install wrote, and reloads systemd. Each container
+    /// runs on, and the folder of the daemon stays. With RIFF_HOME set,
+    /// it removes nothing.
+    Uninstall,
     /// Show the riff daemon and its sessions
     ///
     /// It exits with 1 when no daemon answers, and shows the state of
@@ -2422,7 +2429,7 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
     Ok(())
 }
 
-/// `riff daemon`, `riff daemon install` and `riff daemon status`.
+/// `riff daemon` and its subcommands.
 async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
     match command {
         None => riff::daemon::serve_here().await,
@@ -2431,6 +2438,14 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
             let unit = riff::service::Unit::of_this()?;
             let wait = Duration::from_secs(10);
             riff::daemon::install(&manager, &unit, &riff::daemon::dir()?, wait).await
+        }
+        Some(DaemonCommand::Uninstall) => {
+            let manager = riff::service::Systemd::here()?;
+            println!(
+                "{}",
+                riff::daemon::uninstall(&manager, &manager.unit_path())?
+            );
+            Ok(())
         }
         Some(DaemonCommand::Status) => {
             let manager = riff::service::Systemd::here()?;

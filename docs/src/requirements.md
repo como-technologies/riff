@@ -4553,6 +4553,13 @@ share.
   unit file and the link of its `enable` are the only files of riff in
   the home outside its own folders. With `RIFF_HOME` set, riff installs
   nothing.
+- **01M501M0T0JBWGMMHCT7HT95T9** `riff daemon uninstall` runs
+  `systemctl --user disable --now riff.service`, deletes the unit file
+  `riff.service`, and runs `systemctl --user daemon-reload`. It deletes
+  only a unit file whose first line riff wrote. It keeps the folder of
+  the daemon and each container. With no unit file, it says that no
+  daemon is installed, and exits with 0. With `RIFF_HOME` set, riff
+  removes nothing.
 - **01M4ZDTVNBKDM64043GGWQEV4S** `riff daemon status` shows the process
   ID, the build and the age of the daemon, its folder, and each session
   that it owns. When no daemon answers, it shows the state of the unit

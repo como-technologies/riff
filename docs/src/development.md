@@ -455,6 +455,19 @@ for a new daemon. Then it shows the session again from the next event.
 When no daemon comes back in that time, `riff run` says so, and
 releases the item. The session runs on.
 
+### Uninstall the daemon
+
+```sh
+riff daemon uninstall
+```
+
+It stops and disables the unit `riff.service`, deletes the unit file
+that `riff daemon install` wrote, and reloads systemd. Each container
+runs on: conmon holds it. The folder of the daemon,
+`~/.local/share/riff/daemon`, stays with its state. When no unit is
+installed, the command says so. To use the daemon again, run
+`riff daemon install`.
+
 ### Run the daemon in a terminal
 
 With `RIFF_HOME` set, for example in `just dev`, `riff daemon install`
