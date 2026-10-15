@@ -4541,9 +4541,10 @@ pub fn no_program(program: &str) -> String {
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff 3.0 runs on Linux only.";
 
-/// `riff run` pulls the image of the session.
+/// The daemon pulls the image of the session, for `riff run` or
+/// `riff init`.
 pub fn run_pulling(image: &str) -> String {
-    format!("riff run pulls the image {image}.")
+    format!("The riff daemon pulls the image {image}.")
 }
 
 /// The image is not on this machine, and podman cannot pull it.
@@ -4904,9 +4905,9 @@ pub fn daemon_unit_state(state: &str) -> String {
     )
 }
 
-/// `riff daemon install` with `RIFF_HOME` set.
-pub const DAEMON_INSTALL_RIFF_HOME: &str = "riff daemon install installs the daemon of this \
-     machine, but RIFF_HOME is set. Run the daemon of this RIFF_HOME in a terminal: riff daemon";
+/// `riff daemon install` or `riff init` with `RIFF_HOME` set.
+pub const DAEMON_INSTALL_RIFF_HOME: &str = "riff installs no daemon of this machine while \
+     RIFF_HOME is set. Run the daemon of this RIFF_HOME in a terminal: riff daemon";
 
 /// `riff daemon install` wrote the unit `path`.
 pub fn daemon_installed(path: &Path) -> String {

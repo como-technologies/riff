@@ -1,0 +1,264 @@
+//! `riff init`, the first run of riff 3.0 on a machine (#721,
+//! 01M4ZJN6R68YBD3XMM725ZRJ7W).
+//!
+//! The facts of the machine are fakes: `RIFF_ETC` gives `subuid` and
+//! `subgid`, and `RIFF_CGROUP` gives the controllers of cgroup v2. A
+//! fake `podman` logs each call. The fake `systemctl` of `run.rs` starts
+//! the `riff daemon` of this build, as systemd does. The repository is a
+//! real git repository with a `riff.toml`.
+
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::process::Output;
+
+use isolated::Isolated;
+
+use crate::run::{fake_systemctl, wait_for};
+
+/// The image that `riff.toml` of the repository pins.
+const IMAGE: &str = "ghcr.io/como-technologies/riff-session@sha256:\
+                     0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn text(out: &[u8]) -> String {
+    String::from_utf8_lossy(out).into_owned()
+}
+
+fn script(path: &Path, body: &str) {
+    std::fs::write(path, body).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A fake `podman` that logs each call to `bin/podman.log`. With the
+/// file `bin/no-podman`, `--version` fails. With `bin/no-image`, the
+/// image is not here, and a pull removes the file.
+fn fake_podman(bin: &Path) {
+    let body = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "podman $*" >> "$dir/podman.log"
+case "$1" in
+  --version)
+    if [ -f "$dir/no-podman" ]; then echo "podman: no runtime" >&2; exit 125; fi
+    echo "podman version 5.7.0" ;;
+  image) [ -f "$dir/no-image" ] && exit 1; exit 0 ;;
+  pull) rm -f "$dir/no-image" ;;
+  *) exit 2 ;;
+esac
+exit 0
+"#;
+    script(&bin.join("podman"), body);
+}
+
+/// A machine with fakes, and a repository that pins [`IMAGE`].
+struct Machine {
+    env: Isolated,
+    bin: PathBuf,
+    etc: PathBuf,
+    cgroup: PathBuf,
+    repo: PathBuf,
+    uid: u32,
+}
+
+impl Machine {
+    /// A machine with each part.
+    fn new() -> Machine {
+        let env = Isolated::new();
+        let root = env.path().to_owned();
+        let (bin, etc, cgroup, repo) = (
+            root.join("bin"),
+            root.join("etc"),
+            root.join("cgroup"),
+            root.join("repo"),
+        );
+        for dir in [&bin, &etc, &cgroup, &repo] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        fake_podman(&bin);
+        fake_systemctl(&bin);
+        let uid = std::fs::metadata(&root).unwrap().uid();
+        // By the user ID: the test does not know the login name.
+        std::fs::write(etc.join("subuid"), format!("{uid}:100000:65536\n")).unwrap();
+        std::fs::write(etc.join("subgid"), format!("{uid}:100000:65536\n")).unwrap();
+        std::fs::write(cgroup.join("cgroup.controllers"), "cpuset cpu io memory pids\n").unwrap();
+        let user = cgroup.join(format!("user.slice/user-{uid}.slice/user@{uid}.service"));
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(user.join("cgroup.controllers"), "cpu memory pids\n").unwrap();
+        let status = env
+            .command("git")
+            .args(["init", "-q"])
+            .arg(&repo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::fs::write(
+            repo.join("riff.toml"),
+            format!("[session]\nimage = \"{IMAGE}\"\n"),
+        )
+        .unwrap();
+        Machine {
+            env,
+            bin,
+            etc,
+            cgroup,
+            repo,
+            uid,
+        }
+    }
+
+    /// `riff init ARGS` in the folder `dir`, as the riff of the machine:
+    /// no `RIFF_HOME`.
+    async fn init(&self, dir: &Path, args: &[&str]) -> Output {
+        let mut cmd = self.env.riff();
+        cmd.arg("init")
+            .args(args)
+            .current_dir(dir)
+            .env_remove("RIFF_HOME")
+            .env(
+                "PATH",
+                format!("{}:{}", self.bin.display(), std::env::var("PATH").unwrap()),
+            )
+            .env("FAKE_RIFF", self.env.riff_path())
+            .env("RIFF_ETC", &self.etc)
+            .env("RIFF_CGROUP", &self.cgroup);
+        tokio::task::spawn_blocking(move || cmd.output().unwrap())
+            .await
+            .unwrap()
+    }
+
+    fn read(&self, name: &str) -> String {
+        std::fs::read_to_string(self.bin.join(name)).unwrap_or_default()
+    }
+
+    fn unit(&self) -> PathBuf {
+        self.env.home().join(".config/systemd/user/riff.service")
+    }
+}
+
+#[tokio::test]
+async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
+    let machine = Machine::new();
+    std::fs::write(machine.bin.join("no-image"), "").unwrap();
+    let out = machine.init(&machine.repo, &[]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    let uid = machine.uid;
+    for line in [
+        "riff checks this machine for riff 3.0:".to_owned(),
+        "  pass  podman: podman version 5.7.0".to_owned(),
+        format!("  pass  cgroup v2: user@{uid}.service has cpu and memory"),
+        format!("  pass  the session image: {IMAGE}"),
+        format!(
+            "riff wrote the unit {}, and started it again.",
+            machine.unit().display()
+        ),
+        format!("The riff daemon pulls the image {IMAGE}."),
+        format!("This machine has the session image {IMAGE}."),
+        "This machine is ready for riff 3.0. Run one item in a container: riff run ITEM"
+            .to_owned(),
+    ] {
+        assert!(stdout.lines().any(|l| l == line), "{line}\nnot in\n{stdout}");
+    }
+    for name in ["/etc/subuid", "/etc/subgid"] {
+        assert!(
+            stdout.contains(&format!("  pass  {name}: 65536 IDs for ")),
+            "{stdout}"
+        );
+    }
+    assert!(stdout.contains("The riff daemon runs: pid "), "{stdout}");
+    assert_eq!(
+        machine.read("systemctl.log"),
+        "systemctl --user daemon-reload\n\
+         systemctl --user enable riff.service\n\
+         systemctl --user restart riff.service\n"
+    );
+    let pulls = |log: &str| log.lines().filter(|l| l.starts_with("podman pull")).count();
+    let log = machine.read("podman.log");
+    assert!(log.contains(&format!("podman pull {IMAGE}\n")), "{log}");
+    assert_eq!(pulls(&log), 1, "{log}");
+
+    // A second run keeps the daemon, and pulls nothing.
+    let out = machine.init(&machine.repo, &[]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains("The riff daemon of this riff runs already: pid "),
+        "{stdout}"
+    );
+    assert!(stdout.contains("riff init keeps it."), "{stdout}");
+    assert!(
+        machine.read("systemctl.log").ends_with("restart riff.service\n")
+            && machine.read("systemctl.log").lines().count() == 3,
+        "{}",
+        machine.read("systemctl.log")
+    );
+    assert_eq!(pulls(&machine.read("podman.log")), 1);
+
+    // systemd stops the daemon with a SIGTERM.
+    let pid: i32 = machine.read("daemon.pid").trim().parse().unwrap();
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid),
+        nix::sys::signal::Signal::SIGTERM,
+    )
+    .unwrap();
+    wait_for(&machine.bin.join("daemon.out"), "The riff daemon stops").await;
+}
+
+#[tokio::test]
+async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
+    let machine = Machine::new();
+    std::fs::write(machine.bin.join("no-podman"), "").unwrap();
+    std::fs::write(machine.etc.join("subuid"), "someone:100000:65536\n").unwrap();
+    std::fs::remove_file(machine.etc.join("subgid")).unwrap();
+    std::fs::remove_file(machine.cgroup.join("cgroup.controllers")).unwrap();
+    // The isolated folder is in no git repository.
+    let out = machine.init(machine.env.path(), &[]).await;
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = text(&out.stdout);
+    let failed: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.starts_with("  fail  "))
+        .collect();
+    let starts = [
+        "  fail  podman: podman --version failed: podman: no runtime. Fix: ",
+        "  fail  /etc/subuid: 0 IDs for ",
+        "  fail  /etc/subgid: riff cannot read /etc/subgid. Fix: ",
+        "  fail  cgroup v2: this machine has no cgroup v2. Fix: ",
+        "  fail  the session image: ",
+    ];
+    assert_eq!(failed.len(), starts.len(), "{stdout}");
+    for (line, start) in failed.iter().zip(starts) {
+        assert!(line.starts_with(start), "{start}\nis not the start of\n{line}");
+    }
+    let mut fixes: Vec<&str> = failed
+        .iter()
+        .map(|l| l.split_once(". Fix: ").expect("a fix").1)
+        .collect();
+    fixes.sort_unstable();
+    fixes.dedup();
+    assert_eq!(fixes.len(), starts.len(), "each part has its own fix");
+    assert!(
+        stdout.contains(
+            "5 checks failed. riff installed nothing and pulled nothing. Do each fix, then run \
+             riff init again."
+        ),
+        "{stdout}"
+    );
+    assert_eq!(machine.read("systemctl.log"), "");
+    assert_eq!(machine.read("podman.log"), "podman --version\n");
+    assert!(!machine.unit().exists());
+}
+
+#[tokio::test]
+async fn riff_init_check_changes_nothing() {
+    let machine = Machine::new();
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert_eq!(stdout.matches("  pass  ").count(), 5, "{stdout}");
+    assert!(
+        stdout.ends_with("Each check passed. riff changed nothing: --check.\n"),
+        "{stdout}"
+    );
+    assert_eq!(machine.read("systemctl.log"), "");
+    assert_eq!(machine.read("podman.log"), "podman --version\n");
+    assert!(!machine.unit().exists());
+}
