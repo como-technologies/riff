@@ -4791,6 +4791,12 @@ share.
   of `--skip`.
   In the Claude folder of the person, only a new path that names the
   `ID8` of the session counts.
+- **01M4ZFPYNGFF49WWHR8EBWSTNG** Before `riff run`, the real-session
+  test starts `riff daemon` of the tree in a process group of its own,
+  and waits up to 10 seconds until `riff daemon status` answers. When a
+  riff daemon answers before the start, the step fails, and the test
+  does not stop that daemon. The clean-up stops the daemon of the test
+  with SIGTERM, and kills it when it does not end in 10 seconds.
 - **01M4ZCFGKDKH16KGKR5NBEK3Y4** Before each tag, an admin runs
   `just real-session` on the merge commit of the release pull request,
   on a host with podman. It passes before the tag.

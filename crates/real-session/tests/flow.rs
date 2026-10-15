@@ -3,18 +3,23 @@
 //! 01M4ZCFGF6QN6KZEVMBNW9G4EW, 01M4ZCFGHCS7WJ6CFYBZSX0AT5).
 //!
 //! Each fake writes its call to the file `log` of its control folder.
-//! A file in that folder changes what a fake does:
+//! The fake `riff daemon` makes the file `daemon-runs` there, and runs
+//! until SIGTERM. Then it writes `TERM riff daemon` to the log, and
+//! removes the file. The fake `riff run` fails when no daemon runs. A
+//! file in that folder changes what a fake does:
 //!
 //! | File | The fake |
 //! |---|---|
 //! | `rootful` | `podman info` says `false` |
+//! | `daemon-runs` | `riff daemon status` answers |
+//! | `daemon-fails` | `riff daemon` ends with 1 at once |
 //! | `run-fails` | `riff run` ends with 1 |
 //! | `run-waits` | `riff run` waits for a signal |
 //! | `stray` | `riff run` writes paths in the home |
 //! | `no-pull` | `gh pr view` finds no pull request |
 //! | `no-gate` | the head commit has no check run |
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -79,7 +84,14 @@ echo "riff $*" >> "$c/log"
 case "$1" in
 image) echo "ghcr.io/o/riff-session@sha256:00ff" ;;
 plan) exit 0 ;;
+daemon)
+  if [ "$2" = status ]; then [ -f "$c/daemon-runs" ]; exit; fi
+  if [ -f "$c/daemon-fails" ]; then echo "riff: the fake daemon cannot listen" >&2; exit 1; fi
+  trap 'echo "TERM riff daemon" >> "$c/log"; rm -f "$c/daemon-runs"; exit 0' TERM
+  touch "$c/daemon-runs"
+  while :; do sleep 0.05; done ;;
 run)
+  if [ ! -f "$c/daemon-runs" ]; then echo "riff: no riff daemon answers" >&2; exit 1; fi
   d="$XDG_DATA_HOME/riff/sessions/$2-ID8"
   mkdir -p "$d/clone" "$d/claude"
   echo work > "$d/clone/f"
@@ -194,13 +206,17 @@ fn find(log: &[String], start: &str) -> Option<usize> {
     log.iter().position(|line| line.starts_with(start))
 }
 
-/// The clean-up calls of each test that made the scratch issue.
-fn assert_clean(log: &[String], session: &Path) {
+/// The clean-up calls of each test that started the daemon.
+fn assert_clean(fake: &Fake) {
+    let log = &fake.log();
+    let stop = find(log, "TERM riff daemon");
     let close = find(log, "gh issue close 801 --reason not planned --comment ");
     let free = find(log, "riff plan free verify-issue-801");
-    assert!(close.is_some() && free.is_some(), "{log:#?}");
+    assert!(stop.is_some() && stop < close && free.is_some(), "{log:#?}");
+    assert!(!fake.ctl.join("daemon-runs").exists(), "{log:#?}");
     assert!(find(log, "gh run cancel 5").is_some(), "{log:#?}");
     assert!(find(log, "gh run cancel 6").is_none(), "{log:#?}");
+    let session = fake.session();
     assert!(!session.exists(), "{}", session.display());
 }
 
@@ -218,9 +234,10 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
         "{stdout}"
     );
     for step in [
-        "step 1 of 9: check the host",
-        "step 5 of 9: run the item",
-        "step 9 of 9: wait for the Gate",
+        "step 1 of 10: check the host",
+        "step 5 of 10: start the daemon",
+        "step 6 of 10: run the item",
+        "step 10 of 10: wait for the Gate",
     ] {
         assert!(stdout.contains(step), "{step}\n{stdout}");
     }
@@ -232,6 +249,8 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
         "riff image",
         "gh issue create --title Real-session test ",
         "riff plan hold verify-issue-801 the real-session test makes and closes this item",
+        "riff daemon status",
+        "riff daemon",
         "riff run issue-801 --image ghcr.io/o/riff-session@sha256:00ff",
         "gh pr view worktree-issue-801 --json number,url,headRefOid,state",
         "gh pr diff 900 --color never",
@@ -241,7 +260,13 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
         "gh issue close 801",
     ]
     .iter()
-    .map(|start| find(&log, start).unwrap_or_else(|| panic!("{start}\n{log:#?}")))
+    .map(|start| {
+        let at =
+            |line: &String| line.starts_with(start) && (*start != "riff daemon" || line == start);
+        log.iter()
+            .position(at)
+            .unwrap_or_else(|| panic!("{start}\n{log:#?}"))
+    })
     .collect();
     assert!(order.is_sorted(), "{order:?}\n{log:#?}");
     assert!(
@@ -249,7 +274,7 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
             .any(|l| l.contains("--milestone Backlog --body This is a scratch item")),
         "{log:#?}"
     );
-    assert_clean(&log, &fake.session());
+    assert_clean(&fake);
 }
 
 #[test]
@@ -262,7 +287,7 @@ fn a_failed_step_names_the_step_stops_the_test_and_cleans_up() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "real-session: FAIL at step 5 of 9, run the item: riff run issue-801 ended with \
+            "real-session: FAIL at step 6 of 10, run the item: riff run issue-801 ended with \
              exit status: 1"
         ),
         "{stderr}"
@@ -280,7 +305,7 @@ fn a_failed_step_names_the_step_stops_the_test_and_cleans_up() {
         "{log:#?}"
     );
     assert!(find(&log, "gh pr close").is_none(), "{log:#?}");
-    assert_clean(&log, &fake.session());
+    assert_clean(&fake);
 }
 
 #[test]
@@ -292,7 +317,7 @@ fn a_new_path_in_the_home_fails_the_check_of_the_home() {
     let stderr = text(&out.stderr);
     let home = fake.env.home();
     let shown = format!(
-        "real-session: FAIL at step 6 of 9, check the home: the home has 2 new paths outside \
+        "real-session: FAIL at step 7 of 10, check the home: the home has 2 new paths outside \
          the folders of riff:\n  {}\n  {}\n",
         home.join(".claude/projects/-x-issue-801-1a2b3c4d-clone")
             .display(),
@@ -308,7 +333,7 @@ fn a_new_path_in_the_home_fails_the_check_of_the_home() {
         find(&log, "gh pr close 900 --delete-branch").is_some(),
         "{log:#?}"
     );
-    assert_clean(&log, &fake.session());
+    assert_clean(&fake);
 }
 
 #[test]
@@ -336,12 +361,12 @@ fn no_pull_request_fails_the_test() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "FAIL at step 7 of 9, find the pull request: the branch worktree-issue-801 has no \
+            "FAIL at step 8 of 10, find the pull request: the branch worktree-issue-801 has no \
              open pull request"
         ),
         "{stderr}"
     );
-    assert_clean(&fake.log(), &fake.session());
+    assert_clean(&fake);
 }
 
 #[test]
@@ -353,11 +378,66 @@ fn a_gate_that_does_not_start_fails_the_test() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "FAIL at step 9 of 9, wait for the Gate: the Gate did not start on 0123abc in 0 s"
+            "FAIL at step 10 of 10, wait for the Gate: the Gate did not start on 0123abc in 0 s"
         ),
         "{stderr}"
     );
-    assert_clean(&fake.log(), &fake.session());
+    assert_clean(&fake);
+}
+
+#[test]
+fn a_daemon_that_runs_already_fails_the_step_and_the_test_does_not_stop_it() {
+    let fake = Fake::new();
+    // The daemon of the person, for example riff.service.
+    fake.set("daemon-runs");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("FAIL at step 5 of 10, start the daemon: a riff daemon runs already:"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("systemctl --user stop riff"), "{stderr}");
+    let log = fake.log();
+    assert!(!log.iter().any(|l| l == "riff daemon"), "{log:#?}");
+    assert!(find(&log, "riff run").is_none(), "{log:#?}");
+    assert!(find(&log, "TERM riff daemon").is_none(), "{log:#?}");
+    assert!(fake.ctl.join("daemon-runs").exists());
+    assert!(
+        find(&log, "gh issue close 801 --reason not planned").is_some(),
+        "{log:#?}"
+    );
+    assert!(
+        find(&log, "riff plan free verify-issue-801").is_some(),
+        "{log:#?}"
+    );
+}
+
+#[test]
+fn a_daemon_that_ends_before_it_answers_fails_the_step() {
+    let fake = Fake::new();
+    fake.set("daemon-fails");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(
+            "FAIL at step 5 of 10, start the daemon: riff daemon ended with exit status: 1 \
+             before it answered: see its message above"
+        ),
+        "{stderr}"
+    );
+    // The message of the daemon is in the output of the test.
+    assert!(
+        stderr.contains("riff: the fake daemon cannot listen"),
+        "{stderr}"
+    );
+    let log = fake.log();
+    assert!(find(&log, "riff run").is_none(), "{log:#?}");
+    assert!(
+        find(&log, "gh issue close 801 --reason not planned").is_some(),
+        "{log:#?}"
+    );
 }
 
 #[test]
@@ -369,7 +449,7 @@ fn a_failed_check_of_the_host_makes_no_item() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "FAIL at step 1 of 9, check the host: podman does not run rootless: podman info \
+            "FAIL at step 1 of 10, check the host: podman does not run rootless: podman info \
              says \"false\""
         ),
         "{stderr}"
@@ -404,14 +484,21 @@ fn a_signal_stops_the_test_and_it_cleans_up() {
     assert!(kill.success());
     let out = child.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(130), "{}", text(&out.stdout));
+    // The daemon has a process group of its own: Ctrl-C did not reach
+    // it, and the clean-up stopped it.
+    assert!(
+        text(&out.stdout).contains("  stop the riff daemon: done"),
+        "{}",
+        text(&out.stdout)
+    );
     let stderr = text(&out.stderr);
     assert!(
-        stderr.contains("FAIL at step 5 of 9, run the item: a signal stopped the test"),
+        stderr.contains("FAIL at step 6 of 10, run the item: a signal stopped the test"),
         "{stderr}"
     );
     let log = fake.log();
     assert!(find(&log, "gh pr diff").is_none(), "{log:#?}");
-    assert_clean(&log, &fake.session());
+    assert_clean(&fake);
 }
 
 #[test]

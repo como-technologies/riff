@@ -542,7 +542,9 @@ just real-session
 ```mermaid
 flowchart LR
     T["just real-session"] -- "a scratch issue" --> G["GitHub"]
-    T -- "riff run" --> C["container: claude -p"]
+    T -- "riff daemon" --> D["riff daemon"]
+    T -- "riff run" --> D
+    D -- "podman run" --> C["container: claude -p"]
     C -- "push, pull request" --> G
     T -- "check the pull request<br/>and the Gate" --> G
     T -- "check" --> H[("your home")]
@@ -557,21 +559,37 @@ The test does these steps. The messages name them:
    to the book. No worker takes an item of the backlog.
 4. Hold its verify: no worker verifies the scratch item. When riff
    cannot hold it, the test goes on.
-5. Run the item: `riff run` does the issue. You see each event of the
+5. Start the daemon: the test starts `riff daemon` of your clone, and
+   waits until it answers. When a riff daemon runs already, this step
+   fails.
+6. Run the item: `riff run` does the issue. You see each event of the
    session.
-6. Check the home: the test lists your home again. A new file outside
+7. Check the home: the test lists your home again. A new file outside
    the folders of riff, the folders of podman, your clone and
    `~/.cache` fails the test.
-7. Find the pull request: the branch of the session has an open pull
+8. Find the pull request: the branch of the session has an open pull
    request.
-8. Check the change: the pull request adds the line to the book.
-9. Wait for the Gate: the Gate of the pull request starts.
+9. Check the change: the pull request adds the line to the book.
+10. Wait for the Gate: the Gate of the pull request starts.
 
 The first step that fails stops the test. Its message names the step
-and the reason. Then the test cleans up: it closes the pull request
-and the issue, deletes the branch, cancels its CI runs, frees the hold,
-and removes the folder of the session. It also cleans up when you
-press Ctrl-C. A second Ctrl-C stops it at once.
+and the reason. Then the test cleans up: it stops its daemon, closes
+the pull request and the issue, deletes the branch, cancels its CI
+runs, frees the hold, and removes the folder of the session. It also
+cleans up when you press Ctrl-C. A second Ctrl-C stops it at once: then
+stop the daemon of the test yourself, with the process ID that step 5
+shows.
+
+### When a riff daemon runs already
+
+The test runs the riff daemon of your clone, not the daemon that you
+installed. Stop your daemon first, and start it again after the test:
+
+```sh
+systemctl --user stop riff
+just real-session
+systemctl --user start riff
+```
 
 ### When another program writes in your home
 

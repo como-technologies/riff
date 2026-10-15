@@ -2308,8 +2308,6 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
     Ok(())
 }
 
-/// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A worker never runs it
-/// (01M4262DY8NN30SC4REYX2G9DV).
 /// `riff daemon`, `riff daemon install` and `riff daemon status`.
 async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
     match command {
@@ -2331,6 +2329,8 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
     }
 }
 
+/// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A worker never runs it
+/// (01M4262DY8NN30SC4REYX2G9DV).
 async fn cloud(command: &CloudCommand) -> Result<()> {
     if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
         anyhow::bail!(text::CLOUD_WORKER);
