@@ -655,7 +655,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "git push -u origin worktree-issue-12",
         &format!("Riff-Session: {session}"),
         "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 27\n",
-        "gh pr merge NUMBER --auto --squash",
+        "gh pr merge --auto --squash NUMBER",
     ] {
         assert!(start.contains(part), "{part}\nnot in\n{start}");
     }

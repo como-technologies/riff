@@ -38,7 +38,7 @@
 //! ```
 //! use riff::permissions::{rules, with_rules};
 //!
-//! let rules = rules(Some(("acme", "app")), "main");
+//! let rules = rules("main");
 //! let text = with_rules("{}", &rules)?.unwrap();
 //! assert!(text.contains("\"Bash(riff *)\""));
 //! assert!(text.contains("\"Bash(git push * main)\""));
@@ -769,13 +769,19 @@ mod tests {
         let rules = rules("main");
         assert_eq!(add(&link, &rules).unwrap(), rules);
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
-        let value: Value = serde_json::from_str(&std::fs::read_to_string(&target).unwrap()).unwrap();
+        let value: Value =
+            serde_json::from_str(&std::fs::read_to_string(&target).unwrap()).unwrap();
         assert_eq!(value["model"], "opus");
         assert_eq!(missing(&rules, &[&value.to_string()]), Rules::default());
         let mode = std::fs::metadata(&target).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o640);
         // No temp file stays in the folder.
-        assert_eq!(std::fs::read_dir(dir.path().join("dotfiles")).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("dotfiles"))
+                .unwrap()
+                .count(),
+            1
+        );
     }
 
     /// True when the allow rule `rule` names its program and its words,

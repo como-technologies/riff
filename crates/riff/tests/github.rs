@@ -104,15 +104,22 @@ fn the_settings_deny_a_push_to_main_and_an_admin_merge() {
 fn the_settings_allow_the_steps_of_a_pull_request() {
     for command in [
         "gh pr create --title \"Show the wave\" --milestone \"Wave 3\" --body-file pr.md",
-        "gh pr merge 40 --auto --squash",
+        "gh pr merge --auto --squash 40",
         "gh pr comment 40 --body-file result.md",
-        "gh api repos/como-technologies/riff/statuses/1a2b3c4 -f state=success -f context=riff/verify",
         "riff pr open --title \"Show the wave\" --file summary.md",
         "riff pr wait 40",
         "riff verify pass 40 --file result.md",
         "riff verify fail 40 --file result.md",
     ] {
         assert!(allowed(command), "not allowed: {command}");
+    }
+    // No step of a session calls these: `riff verify` and `riff pr`
+    // call `gh` as their own child (01M509TJNREVNYR9MNN4P9P4RA).
+    for command in [
+        "gh api repos/como-technologies/riff/statuses/1a2b3c4 -f state=success -f context=riff/verify",
+        "gh pr merge 40 --admin --auto --squash",
+    ] {
+        assert!(!allowed(command), "allowed: {command}");
     }
 }
 

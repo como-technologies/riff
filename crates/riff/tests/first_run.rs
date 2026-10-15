@@ -418,5 +418,8 @@ fn start_a_riff_names_each_rule_that_riff_init_writes() {
     // 01M509TJNREVNYR9MNN4P9P4RA: the page names no rule of the API of
     // the forge, and the place of the `*` of a rule.
     assert!(!part.contains("gh api"), "{part}");
-    assert!(part.contains("Its only `*` is at its\nend, after a space."), "{part}");
+    assert!(
+        part.contains("Its only `*` is at its\nend, after a space."),
+        "{part}"
+    );
 }

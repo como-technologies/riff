@@ -989,7 +989,6 @@ mod tests {
         // of the forge itself.
         assert!(!forge.contains("gh api"), "{forge}");
         assert!(!forge.contains("\\|"), "a table cell escapes a pipe");
-
     }
 
     /// 01M3JDW9WN7KFGVY6HMCP2XN8B, 01M3JDW9YQQHSZC296ZCNV2V8A.

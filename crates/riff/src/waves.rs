@@ -92,7 +92,12 @@ pub fn wave_number(title: &str) -> Option<u64> {
 /// ```
 pub fn in_order(mut milestones: Vec<Milestone>) -> Vec<Milestone> {
     milestones.sort_by(|a, b| {
-        let key = |m: &Milestone| (wave_number(&m.title).map_or(u64::MAX, |n| n), m.title.clone());
+        let key = |m: &Milestone| {
+            (
+                wave_number(&m.title).map_or(u64::MAX, |n| n),
+                m.title.clone(),
+            )
+        };
         key(a).cmp(&key(b))
     });
     milestones
