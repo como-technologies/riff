@@ -4702,6 +4702,39 @@ share.
   service, the GCS bucket, the Secret Manager entries and the GitHub App
   of riff go. Mike decides when.
 
+### The real-session test
+
+- **01M4ZCFGCY301G2ARFMRXV7XDR** `just real-session` is the
+  real-session test (01M4Z60B8Q8YH6DRSZWPV42CQ0). It makes a scratch
+  issue in the backlog that adds one line to the book, and holds
+  `verify-issue-N`. The `riff` of the tree runs the issue with
+  `riff run` and the image that `riff image` of the tree names. The test
+  passes when `riff run` ends with 0, the home has no new path
+  (01M4ZCFGHCS7WJ6CFYBZSX0AT5), the branch of the item has an open pull
+  request that adds the line, and the check run `Gate` of its head
+  starts in 10 minutes. Then the test closes the pull request, deletes
+  its branch, cancels each CI run of the branch that did not end, closes
+  the issue as not planned, frees the hold and removes the folder of the
+  session. It cleans up also after a failed step, and after SIGINT or
+  SIGTERM.
+- **01M4ZCFGF6QN6KZEVMBNW9G4EW** The first step of the real-session
+  test that fails stops it. Its message names the step by its number
+  and its name, and gives the reason. The exit code is 1, or 130 after
+  a signal.
+- **01M4ZCFGHCS7WJ6CFYBZSX0AT5** The home check of the real-session
+  test lists each path of the home before and after `riff run`, on the
+  file system of the home, with no link followed. A new path fails the
+  test. A new folder shows as one path. The check leaves out the folders
+  of riff (`RIFF_HOME`, and `riff` in each XDG base folder),
+  `containers` in `XDG_DATA_HOME` and in `XDG_CONFIG_HOME`, the main
+  clone and the worktree of the test, `XDG_CACHE_HOME`, and each folder
+  of `--skip`.
+  In the Claude folder of the person, only a new path that names the
+  `ID8` of the session counts.
+- **01M4ZCFGKDKH16KGKR5NBEK3Y4** Before each tag, an admin runs
+  `just real-session` on the merge commit of the release pull request,
+  on a host with podman. It passes before the tag.
+
 ## Open
 
 None.
