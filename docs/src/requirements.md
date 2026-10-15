@@ -20,7 +20,8 @@
   connections from the network. The second machine names that riff with
   `RIFF_SERVER`. The riff of the first machine has sign-in with the
   OAuth client of the person, and the person signs in on each machine
-  (01M3JZN229S3YA3BR6GN5H3MTY).
+  (01M3JZN229S3YA3BR6GN5H3MTY). Superseded by 3.0
+  (01M4Z60B8HN1C1XAG1CA1YS36H).
 - **01M3MEHCGZ4AG4C2A77J5HA3P7** The book page "Join a Riff" has the
   steps to join a riff with sign-in: install `riff`, put the address of
   the riff in `RIFF_SERVER`, and run `riff connect claude`. The steps
@@ -40,12 +41,13 @@
   move there.
 - **R162** A Claude session makes the worktree for a work item with
   the `EnterWorktree` tool. The worktree is `.claude/worktrees/ITEM`.
+  Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
 - **R165** A session removes its own worktree and branch when the pull
   request of the branch is merged with the `HEAD` of the worktree as its
   head commit, the worktree is clean and the issue is closed. It deletes
   the branch only while the branch points at that commit. It never
   removes a worktree of another live session. A worktree with no owner
-  goes to the thread.
+  goes to the thread. Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
 - **R166** A session picks an open work item of the current wave
   (R214) that no session holds. It takes work only from the current
   wave (R216). It never picks an item whose needs are open (R215).
@@ -117,7 +119,7 @@
   its turn. It does not wait for the verify, and it starts no second
   item in that context. The release is its last release, so the worker
   must clear its context (01M3X9XAK1KPZZVM1AJR2H8DSS). The skill and
-  the start hook say so.
+  the start hook say so. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Z9N6GQK0NYCMGQ66FW406V** On a pass, when no session holds the
   item, the verifier does the steps after the merge: it waits for the
   merge, adds the `Merged in` comment when a check after the release is
@@ -174,13 +176,14 @@
   worktree, it fetches the branch and checks out the commit, detached.
   It never runs `git worktree add` by hand and never uses `cd`. After
   the verify, it removes the worktree with the `ExitWorktree` tool,
-  action `remove`.
+  action `remove`. Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M3K0FZA21H0PPSDANFMMY47C** A session removes a stale worktree
   with the `ExitWorktree` tool only when it made the worktree with
   `EnterWorktree` in its current context. In each other case, for
   example after a clear of its context, it leaves the worktree with
   `ExitWorktree`, action `keep`, and runs `riff worktrees clean` in the
-  main worktree (01M3ZV0TKSHNW5QC2NG1XTJEJB).
+  main worktree (01M3ZV0TKSHNW5QC2NG1XTJEJB). Superseded by 3.0
+  (01M4Z60B7PTJMB37578K8FV22Q).
 - **R70** The plugin has one skill, `riff`. It teaches the rules, the
   start routine, waves (R213), the verify flow (R188), selectors,
   direct messages, threads, claims, `move`, the restart of the watch
@@ -209,7 +212,8 @@
   (R169).
 - **R168** After `/clear`, the session keeps its riff session ID, its
   lead, its threads and its watch (R167). Its claims are free
-  (01M3JEE1QQCFS5TMZW5N2DAD2D). The context says so.
+  (01M3JEE1QQCFS5TMZW5N2DAD2D). The context says so. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **R169** One `riff watch` runs for each session on a machine. It
   locks a file for the session while it runs. A second `riff watch`
   for the session prints one line and exits with status 1. The line
@@ -816,12 +820,12 @@
 ## Service
 
 - **R118** `riff-server` with no command runs in the foreground, in a
-  terminal.
+  terminal. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3K0QM5HY852J4E5M2YQDYEM** `riff-server` has one command, `log`
   (01M3TJWHNYRCA7RTPFNYM5ZNQS), and installs no service. A person runs
   it in a terminal. The cloud runs it on Cloud Run. It keeps no
   settings: it reads them only from its options and the environment at
-  each start.
+  each start. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3TJWJ3VK671T9NM95F3ES82** Each log line of `riff-server` is one
   JSON object on stdout, with the fields `severity`, `time`, `message`
   and `target`, and each field of the event. The `severity` is `DEBUG`,
@@ -920,7 +924,8 @@
   `RIFF_OIDC_CLIENT_SECRET`. Only `just dev` loads it. Git ignores
   `.env`.
 - **R33** `riff-server` rejects a token that it does not know. A lost
-  token record means the person signs in again.
+  token record means the person signs in again. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3QA6TDF6FB5PH8E5V7HCYDQ** Each event stream of `riff-server`
   (`/v1/watch`, `/v1/tail`) sends the comment `: ready` when it opens.
   So a front end that holds a reply until its first body byte lets
@@ -933,13 +938,14 @@
   (`RIFF_BUCKET`), it keeps its log and its token store in that Cloud
   Storage bucket. With `--dir DIR` (`RIFF_DIR`), it keeps them as files
   in that directory. At start, it loads the newest checkpoint and
-  replays the log after it (01M3TBZBMMSMNWP126ZQED13YG).
+  replays the log after it (01M3TBZBMMSMNWP126ZQED13YG). Superseded by
+  3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R34** Storage is behind one interface. Tests use an in-memory store
   or a temporary directory, never the real bucket. Without `--bucket`
   and `--dir`, the log is in memory, and a restart loses it.
 - **R124** The bucket holds the chunks of the log, the checkpoints, the
   token store and the lease. The token store is the object
-  `signins.json`.
+  `signins.json`. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R31** A restart loses the open streams, the proof IDs, the sessions
   with their places and statuses, each change of a read cursor since
   the last checkpoint, and each record whose chunk was not written.
@@ -952,28 +958,31 @@
 - **R126** After a replay, each session is gone until it calls again.
   `who --all` shows it in the place of the last record that names it.
 - **R127** `riff-server` saves the changed token store at most once
-  each second.
+  each second. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R128** Replaced by 01M3XA877YZQ649SWB5TN60V5P.
 - **01M3TFG527M04TA7ESM970X3B8** `riff-server` replies to a refresh and
   to a swap for a session token before it saves the token store. While
   the last save of the token store failed, a refresh or a swap first
-  saves it again, and gets 503 when that save fails too.
+  saves it again, and gets 503 when that save fails too. Superseded by
+  3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R150** When that save fails, `riff-server` replies 503. The next
-  save tries the change again.
+  save tries the change again. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3ZZQ9TRG9385GRQGM79RCXX** When the store refuses a save of the
   token store for its rate limit (HTTP 429), `riff-server` doubles the
   least time to the next save, to at most 32 seconds. A good save sets
-  it back to one second.
+  it back to one second. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3ZZQCEKEYK9CE8MGPM80Z2P** While the last save of the token store
   failed for the rate limit, a refresh does not save the token store.
   `riff-server` replies to the refresh while the last good save is
   younger than the least time to the next save, and replies 503 after
-  that.
+  that. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R129** On SIGTERM, `riff-server` replies 503 to each new call,
   writes each record in the queue, saves the token store, then exits.
   Ctrl-C does the same.
 - **R46** A lifecycle rule of the bucket deletes each thread object 30
-  days after its last change.
+  days after its last change. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R147** The name of each chunk of the log starts with `log/`. The
   name of each checkpoint starts with `checkpoint/`. The token store
   and the lease have names outside `log/` and `checkpoint/`.
@@ -993,7 +1002,8 @@
   the riff, a setting, and a forgotten session. Each record has a
   position: 1, 2, 3, and so
   on. A record is one line of JSON. The name of its change says what
-  happened, in the past tense, for example `claimed`.
+  happened, in the past tense, for example `claimed`. Superseded by 3.0
+  (01M4Z60B8BHAR9GHCC0M7V7CV5).
 - **01M3T4111PFM0C6KPREWFS9EQQ** A new field of a record has a default,
   and the default means "as before". A build skips a field that it
   does not know. A change of a record never changes the type or the
@@ -1281,21 +1291,25 @@
   MustClear before each other check, with the code `must_clear` and the
   text "clear your context first: end your turn and riff clears it, or
   type /clear". A claim that goes by a start, an end, a release by the
-  lead or a claim of another session gives no MustClear.
+  lead or a claim of another session gives no MustClear. Superseded by
+  3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3X9XB37TQCXWPNFZRMRGJB4** The reply to the release that puts a
   worker in MustClear carries the ask to clear (`must_clear`). The
   reply to each keep-alive of a worker in MustClear carries it too
   (`clear`). `riff release` and the `release` tool show the ask.
+  Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3X9XBMB3R718Z81BYXTHMZ0** `riff-server` sends no wake to a
   session in MustClear. The message is in its thread, and its `posted`
   record names the session. A watch that starts gets no missed wake
   while its session is in MustClear. The `session_started` record that
   ends MustClear gives the session the wake that it missed. A watch
-  that starts after that record gets it too.
+  that starts after that record gets it too. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3XV0588C2XZKZ3NM67JXCKJ** One message gives a session one wake.
   When a `posted` record and the `session_started` record that ends
   the MustClear of its session are in one chunk, the session gets only
   the missed wake, and no second wake for the `posted` record.
+  Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3X9XC99KY4RQY36A7CYWY11** `who` gives `must_clear` and
   `fresh_secs` for each session: the seconds since its last
   `session_started` record with the reason `process` or `clear`. The
@@ -1304,13 +1318,14 @@
   and the `who` tool show it as `must clear` in yellow, with the detail
   `must clear its context before its next claim`. Each worker that is
   not offline shows `fresh start 12m ago` as the last fact of its
-  detail, when the log has such a start.
+  detail, when the log has such a start. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3X9XCSBR11ACD86FNXKF8JH** `forget` gives one `released` record
   for each claim of a session, then its `session_forgotten` record.
 - **01M3X9XD8QWHS2CXTFSQK0PN1Y** The checkpoint holds the worker mark,
   the MustClear mark and the time of the last fresh start of each
   session. A start from a checkpoint gives the life cycle of a full
-  replay.
+  replay. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M4263ZXH4K23CSY6C5GJPVQH** After a start of `riff-server`, a
   session counts as seen at the later of its last call in the
   checkpoint and the last record of its own call. A record of the
@@ -1362,7 +1377,7 @@
   stop makes no second record. A sign-in gets its reply after the write
   of the records of `admit` and the save of the token store. A revoke
   and a change of the people get their reply after the write of their
-  records.
+  records. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3XA87A9GGFA89RQXWSKY0V6** `signins.json` holds only the sign-ins
   and their chains. Each sign-in keeps the position of the pending copy
   at the check of its `admit`. After the write of a `member_removed` or
@@ -1372,7 +1387,8 @@
   the person below it. A load drops each sign-in below the last such
   position of its USER. So a stop between the write and the end of the
   sign-ins lets no removed person in. The reply to `remove` and to
-  `revoke` has the number of sign-ins that ended.
+  `revoke` has the number of sign-ins that ended. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3XA87HE06Z6M32ZJPSYSYRZ** Each riff has a riff ID. It is a field
   of the command `make_riff` and of its record `riff_made`: the first
   record of a new log. A new riff gets a random ID. `make_riff` makes
@@ -1398,10 +1414,11 @@
   the log do not know. So after a log that went back to an earlier
   position, for example after `riff-server log cut`, each sign-in that
   started after the new end is gone, and the person signs in again.
+  Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3XGP011KGXDP9D1FNMT374F** `admit` checks first if the person may
   join, and then the USER of the email (R209). A person who may not
   join gets the refusal `not_member`, also when another email holds the
-  USER.
+  USER. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3XGP03RDF6S15JYS718WWFC** The token layer gives the engine the
   position of the sign-in of each token. The engine refuses each
   command of a caller whose sign-in started before the last end of the
@@ -1409,7 +1426,8 @@
   code `not_member` when the user is no member, else with
   `not_allowed`. So between the entry of a removal in the queue and
   the end of the sign-ins after its write, the removed person changes
-  nothing, also not through a session.
+  nothing, also not through a session. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 
 - **01M3TBZBMMSMNWP126ZQED13YG** A checkpoint is one object of JSON.
   Its name is `checkpoint/`, the position in 20 digits, `-`, and the
@@ -1479,7 +1497,8 @@
 - **01M3X342K007K3Z9G0CYWFKVMA** `riff-server log cut --yes` refuses
   while the lease is live (01M3X342DH98YEZ3X5CND43DGD). The refusal
   names the instance that holds the lease. A cut with no `--yes` runs,
-  and names that instance.
+  and names that instance. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3X5TP9CD4NXGPJEGP2Q4RS0** `riff-server log cut --yes` takes the
   lease before it reads the log: it writes an ID of its own to the
   lease, only when the lease is the version that it read. When an
@@ -1488,7 +1507,8 @@
   seconds and reads the lease again. The cut ends its lease after its
   work, also after a refusal. When an instance took the lease during
   the cut, the command names the instance and exits with 1. A cut with
-  no `--yes` does not write the lease.
+  no `--yes` does not write the lease. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3X342NQWZBJPS0GXV98BQME** `log verify` and `log cut` read each
   line of a chunk by its bytes, so a line that is not UTF-8 is one bad
   line. The good part of the log is its first records that read and
@@ -1519,7 +1539,8 @@
   its access token from the metadata server of Cloud Run. When that
   server does not answer in 2 seconds, the tool takes the token of the
   Google sign-in of the person: the output of
-  `gcloud auth print-access-token`.
+  `gcloud auth print-access-token`. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M48VFX22S4811DYBBD7QDW24** `riff-server` runs each command with a
   call ID one time only. The call ID is in the header `riff-call`. The
   key of a call is its caller and its call ID. The writer keeps the
@@ -1551,24 +1572,31 @@
 
 ## Cloud
 
+Most requirements of this section hold for riff 1.x only, until
+riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
+(ID)."
+
 - **R5** `riff-server` runs on Google Cloud Run. It runs with
   `--require-sign-in`. For now, its public URL is its Cloud Run URL.
-  The book never names that URL.
+  The book never names that URL. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R181** For now, no shared server runs, and `CLOUD_DEPLOY` is not
   set. Each person runs `riff-server` on their own machine. The shared
-  server runs again when the open issues are done.
+  server runs again when the open issues are done. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R6** Later, its public URL is `https://riff.comotechnologies.io`.
   Cloud Run then maps the domain to the service. Google manages the
-  certificate.
+  certificate. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R29** Only one instance of `riff-server` serves at a time. An
   instance is one running `riff-server` process. Cloud Run keeps one
   instance, with its CPU on also between calls. During a deploy, a
   second instance runs for a short time. The lease (R137) stops one of
-  them.
+  them. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R130** An instance takes up to 1000 calls at a time. Each open
-  stream is one call.
+  stream is one call. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R131** Cloud Run ends each call after 60 minutes. `riff watch` and
-  `riff tail` then connect again.
+  `riff tail` then connect again. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R132** `riff` tries a call again after a fault, while the budget of
   the call lasts (01M4A803Z4Q0KX6NT1KC6QR43H,
   01M4A8041F8EK1VYDE4C9QG8N8). A 503 of the server is a fault.
@@ -1641,17 +1669,21 @@
   When the server on the same machine runs another build than the new
   `riff-server`, it tells the person to start `riff-server` again. It
   does not restart it. That server is the server of `riff` when it is
-  on the same machine, else `http://127.0.0.1:7878`.
+  on the same machine, else `http://127.0.0.1:7878`. Superseded by 3.0
+  (01M4Z60B7H67YSP22NMGT3DM7X).
 - **01M3K0Q8C9NK4NY6TJWRMJS7ZQ** Replaced by 01M4262DQ9RNFNJ07CRTSGEAM1.
 - **R32** The OIDC client secret is in Secret Manager. Cloud Run gives
-  it to `riff-server` as `RIFF_OIDC_CLIENT_SECRET`.
+  it to `riff-server` as `RIFF_OIDC_CLIENT_SECRET`. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R134** `riff-server` runs as its own service account. The account
   can read and write only its bucket, and read only its secret. The
-  bucket is private.
+  bucket is private. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R135** The image holds only the `riff-server` binary and CA
-  certificates. It runs as a user that is not root.
+  certificates. It runs as a user that is not root. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R151** Cloud Build builds the image as its own service account.
-  That account can only build and store images.
+  That account can only build and store images. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R160** Replaced by 01M3NJAZ6BYH7TWKDYTVEK78PG.
 - **01M3NJAZ6BYH7TWKDYTVEK78PG** CI deploys `riff-server` when the
   repository variable `CLOUD_DEPLOY` is `true`, in two cases: a push of
@@ -1659,12 +1691,14 @@
   passes; or a person runs the CI workflow on `main` with the input
   `tag`, after the gate passes. CI builds the image of that release,
   pushes it to the image repository of the project, and deploys it.
-  One deploy runs at a time.
+  One deploy runs at a time. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M3MMZQ3KTF5Z3GXNR7DRQ65Z** Replaced by 01M3NJAZ8HSE87H0GZ8SNGWN31.
 - **01M3NJAZ8HSE87H0GZ8SNGWN31** A push to `main` never deploys the
   shared server. A tag that is not `vX.Y.Z` never deploys. The release
   tag at the end of a wave deploys the release (R216). A run by hand
-  is for a redeploy or a rollback to an older release.
+  is for a redeploy or a rollback to an older release. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M3MRMASMP59PKHAV92XSV7XE** Replaced by
   01M3N73AW2J3TVSZWFJ88A91PG.
 - **01M3N73AW2J3TVSZWFJ88A91PG** A release is a git tag `vX.Y.Z`. X.Y.Z
@@ -1685,6 +1719,7 @@
 - **01M3MRMAY3P1K151RGAP9K6GSH** The deploy takes a release tag as its
   input. It checks out that tag and deploys only it. It refuses an
   input that is not a tag `vX.Y.Z` of the version of the crates.
+  Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M3MRMB0AJVPD952AQYD7X1RN** Only an admin of the repository makes
   a release: the tag ruleset `releases` on `v*` lets only the
   repository admin role create, move or delete a tag. `just github`
@@ -1704,41 +1739,48 @@
 - **01M3NJAZAQ3AKMAM0EGM7R3S89** CI signs in to Google Cloud with the
   OIDC token of GitHub. No key exists. Only the `main` branch and the
   tags `v*` of the repository can sign in. The deploy account can push
-  images, deploy the service, and run it as `riff-server`.
+  images, deploy the service, and run it as `riff-server`. Superseded by
+  3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M49M8W30M2084QN4HX1FJFKS** Only a CI job in the GitHub
   environment of an instance (`CLOUD_GITHUB_ENVIRONMENT`) signs in as
   its deploy account: `production` for the shared riff, `stage` for the
   stage. No deploy account takes each job of the repository. The
   binding names the attribute `environment` of the job, not its
-  subject. `riff cloud create` sets it.
+  subject. `riff cloud create` sets it. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R152** Cloud Run lets each caller in. `riff-server` checks each
-  token itself (R5).
+  token itself (R5). Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R143** The Google Cloud project `como-riff` holds each cloud
-  resource of riff. It holds nothing else.
+  resource of riff. It holds nothing else. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R144** `deploy/cloud/shared.env` holds the cloud settings and the
   OAuth client ID of the shared riff. The repository is public. No file
   in it holds the account data of a real person: an email address, a
-  billing account ID or an organization ID.
+  billing account ID or an organization ID. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R136** A person makes the project and links its billing account with
   gcloud, by the how-to in the book. `riff cloud create` makes the
   resources of riff in the project. It checks each resource first, so it
   can run again. `riff cloud deploy` with no tag builds the image and
-  deploys it to Cloud Run.
+  deploys it to Cloud Run. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M3TJWJEPTSF1S3S5PJD25Z7Y** The bucket is a standard bucket with
   object versioning. A lifecycle rule deletes each older version of an
   object after 7 days. The service has 1 GiB of memory.
   `riff cloud create` sets each of them, and each deploy sets the
-  memory.
+  memory. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M3TJWJ6J3M6JRXJTAETZ5M6F** `riff cloud create` makes an alert in
   the cloud project: a log line of the service with the severity
   `ERROR` or more sends an email to the owner, at most one each 5
   minutes. The email comes from `RIFF_OWNER`. With no `RIFF_OWNER`,
   the setup makes no alert, and says how to make it.
-  `riff cloud log NAME --errors` shows these log lines.
+  `riff cloud log NAME --errors` shows these log lines. Superseded by
+  3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R145** A person makes the OAuth client by hand in the console, with
   the how-to in the book. `riff cloud signin` puts the client secret in
   Secret Manager and the client ID in the settings file. The secret is
-  never in the repository or in a downloaded file.
+  never in the repository or in a downloaded file. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M3ZE3Z26N1CG090D5D5FZ3NW** Replaced by 01M496JTN962N0AX378MA1MBPM.
 - **01M496JTN962N0AX378MA1MBPM** The stage is a second riff-server in
   the project, for the rehearsal of a release and the check of each
@@ -1746,58 +1788,65 @@
   service, bucket, accounts, sign-in client and secret, and no alert
   or domain. No setting of one riff names the bucket, the service, the
   secret or another resource of a different riff. A test proves it.
+  Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M3ZE3Z580RB5AYAJX6321DFW** `riff cloud` takes the settings of a
   riff by name: `stage` reads `deploy/cloud/stage.env`, and `shared`
   reads `deploy/cloud/shared.env`, the shared riff.
   `riff cloud deploy NAME TAG` deploys the image that CI built for the
   release tag. No `riff cloud` command changes the GitHub variable
-  `CLOUD_DEPLOY`.
+  `CLOUD_DEPLOY`. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M3ZE3Z80274JFTN53DNJ2F2G** A release that moves the state of the
   shared riff is rehearsed on the stage before its tag, by the how-to
-  in the book. The results go on its issue.
+  in the book. The results go on its issue. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M3ZGRZ0F3G93Q3ET9GGWKT7E** `riff cloud log` gives its filter to
   `gcloud` whole, with its spaces and quotes. With no `--limit`, it
-  shows the last 50 lines.
+  shows the last 50 lines. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M4262DQ9RNFNJ07CRTSGEAM1** `riff cloud` makes and runs
   riff-server instances on Cloud Run with the `gcloud` of the machine,
   as `riff pr` runs `gh`: `create`, `signin`, `deploy`, `list`,
   `status`, `log` and `delete`. The shared riff and the stage take the
   same code path. The repository has no cloud scripts and no
-  `just cloud`.
+  `just cloud`. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M4262DSKVWP4064FKSMAQACZ** Each instance has one settings file
   `NAME.env`: in `deploy/cloud` of the repository of the directory when
   it has that folder, else in `cloud` beside the riff settings of the
   machine. `riff cloud create NAME --project P --region R` writes the
   file of a new instance. Its service, bucket, accounts and secret take
   the name of the instance, so its bucket has its own riff ID.
+  Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M4262DVY8QCSZS61VDQ61SB3** `riff cloud delete` asks for the name
   of the instance first. `riff cloud deploy` asks for it when the
   settings have `CLOUD_CONFIRM=true`, as the shared riff has. With no
   terminal, only `--confirm NAME` gives it. `delete` keeps the bucket
-  unless `--with-state`.
+  unless `--with-state`. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M4262DY8NN30SC4REYX2G9DV** A worker never runs `riff cloud`. The
   flag settings of a worker deny it, and `riff cloud` refuses when
-  `RIFF_WORKER` is `1`.
+  `RIFF_WORKER` is `1`. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M4262E0QJHCZXNH7EFG7FXN2** The CI deploy job deploys with
   `riff cloud deploy shared TAG --confirm shared`, from the riff of the
-  tag.
+  tag. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M496K1KN392S11YEH33JGK9N** The CI deploy job of a release runs in
   the GitHub environment `production`. It waits for the approval of the
   reviewer of that environment, the owner, and deploys only after it.
+  Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M496JT94NQ686GVSY5CCGZK7** Each push to `main` deploys to the
   stage in CI, when the repository variable `STAGE_DEPLOY` is `true`,
   after the gate of the push passes. The job runs in the GitHub
   environment `stage`, with no approval, and signs in to Google Cloud
   as the deploy account of the stage. One stage deploy runs at a time.
+  Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M496JTDB16G52G22CJZRA8J0** The stage job tags the image of a push
   with the full ID of its commit, and deploys it with
   `riff cloud deploy stage COMMIT`. Only an instance with
   `CLOUD_CONFIRM=false` takes the image of a commit. The shared riff
-  takes only a release tag.
+  takes only a release tag. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M496JT648QS9WTE1QVHAJEE5** The setting `CLOUD_MIN_INSTANCES` is
   the least number of instances of a service: 1, or 0. With no value it
   is 1. The shared riff has 1. The stage has 0, so it scales to zero
-  between calls.
+  between calls. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M496JTHN19BZ7YN94993R35X** After each stage deploy, CI runs
   `riff cloud smoke stage`. It signs in as a test account with the
   refresh token of the provider in `RIFF_SMOKE_TOKEN`, a secret of the
@@ -1806,56 +1855,68 @@
   build of the `riff` that runs the test, and ends the session. Each
   step prints one line. A failed step stops the test with its name and
   a code that is not 0. Only the stage admits the test account.
+  Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
 - **01M4382RKERWAPKBRY9W8F2GSA** When a `gcloud` call of `riff cloud`
   fails, riff prints the error of `gcloud` in one line and exits with a
   code that is not 0. An ended sign-in gives
   `gcloud: the sign-in ended: run gcloud auth login`. riff says that a
   resource is missing only when `gcloud` replies that it does not
   exist. A reply that the account has no permission is an error, also
-  when it says that the resource may not exist.
+  when it says that the resource may not exist. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 
 ## One instance
 
+The requirements of this section hold for riff 1.x only, until
+riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
+(ID)."
+
 - **R137** The lease is an object in the bucket. It holds the ID of the
-  instance that may serve.
+  instance that may serve. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R138** At start, an instance loads its state
   (01M3THEE08ZKV8WGHDSVWV69ZE). Then it makes a random ID and writes it
   to the lease. It then waits 15 seconds, applies the chunks that came
-  since the load, and starts to serve.
+  since the load, and starts to serve. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3THEE08ZKV8WGHDSVWV69ZE** The start order of an instance with a
   store is: load, then the lease, then the port. The load reads the
   sign-ins, the newest checkpoint and the log after it, with no lease.
   When the load fails, the instance exits. It writes no lease, so the
   old instance serves on. After the wait for the lease, the instance
   applies the chunks that came since the load, and loads the sign-ins
-  again.
+  again. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3TJWJC08ZR5TWA1Y9CDE0QM** After the wait for the lease, the
   instance also lists the checkpoints again. When a checkpoint came
   since its load, it takes the position of the newest one. It writes
   no checkpoint when that one comes from a later version, or does not
-  read (01M3TBZBQDF0ES4KM54FJQF6Z8).
+  read (01M3TBZBQDF0ES4KM54FJQF6Z8). Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3THEE31H5QVV3JAFC4ZRGFR** `riff-server` opens its port only
   after the load and the wait for the lease. Before that, each connect
-  is refused.
+  is refused. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R139** An instance reads the lease every 2 seconds. It serves only
   for 5 seconds after the last read that showed its own ID. Else it
-  replies 503.
+  replies 503. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R140** An instance that reads another ID in the lease stops for
   good. It closes each stream, replies 503 to each call and saves
-  nothing more. It exits after 60 seconds.
+  nothing more. It exits after 60 seconds. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R141** Each save of the token store names the version that the
   instance knows. Each write of a chunk is only when new
   (01M3T411BZQB8N4D2S0JFVESMS). When the bucket holds another version,
   or a chunk with the same name, the save fails. The instance then
-  stops as in R140.
+  stops as in R140. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R155** An instance saves and writes only in the time that R139
   gives it to serve. The writer checks it before each try of a chunk.
+  Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R156** A new instance starts to serve at a whole second. When the
   lease shows another ID after its wait, it exits and does not serve.
+  Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3X34282SG0DJ6X34F90HS26** The lease also holds a time. An
   instance writes the time when it takes the lease, and again every 30
   seconds. While a write of the time that is due fails, the instance
-  does not serve (R139).
+  does not serve (R139). Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3X5TPBMF81TDVZ7Q4NVXBQX** An instance whose last good write of
   the time to the lease is 90 seconds old stops for good, as in R140.
   It does not read or write the lease again, and it does not serve
@@ -1863,18 +1924,20 @@
   monotonic clock and on the wall clock. `riff-server` then exits at
   once with an error that says why, so that a new instance loads the
   state from the store. A shorter fault gives 503, and the instance
-  goes on.
+  goes on. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3X342ARX5Y7R9ZJDT12R9A1** On a shutdown (R129), an instance that
-  holds the lease marks the lease as ended, after it saved.
+  holds the lease marks the lease as ended, after it saved. Superseded
+  by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3X342DH98YEZ3X5CND43DGD** A lease is live until its instance
   ends it, and for 90 seconds after its time. A tool reads the time
   with its own clock, which can be at most 50 seconds ahead of the
   clock of the instance. A lease with no time is from an older build.
   It is live until a person deletes the object. The refusal of a tool
-  names the object.
+  names the object. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3X342RCXX2GGK879VYK06TS** The shared server runs with CPU always
   on and with exactly one instance. So an instance writes the time to
-  the lease also when it gets no call.
+  the lease also when it gets no call. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 
 ## Sessions
 
@@ -1883,7 +1946,8 @@
   session (R204), unless the same process comes back first, for
   example after a short network fault. A session that waits for its
   user keeps its claims. A claim ends at once when its session ends
-  (R205) or starts again (01M3JEE1QQCFS5TMZW5N2DAD2D).
+  (R205) or starts again (01M3JEE1QQCFS5TMZW5N2DAD2D). Superseded by 3.0
+  (01M4Z60B8FQ3GMWQH12CXE0JS9).
 - **01M3JEE1QQCFS5TMZW5N2DAD2D** A new start of a session is blank: a
   new agent process, a resume or a `/clear`. The start hook sends a
   start call, and the claims of the session are free at once. The
@@ -1946,16 +2010,18 @@
   agent tool. For Claude Code, this is `CLAUDE_CODE_SESSION_ID`.
 - **R157** When `riff` cannot read the sign-in from the keyring, the
   command stops and says why. `riff` uses `USER` only when there is no
-  sign-in.
+  sign-in. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R158** When `riff` cannot open the keyring, the command stops,
   unless `RIFF_USER` is set. With `RIFF_USER`, it sends no token.
+  Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R226** When `riff` gets no token, it asks `riff-server` if it has
   sign-in. At a riff with no sign-in, the command stops and says to run
   `riff logout`, while this machine keeps a sign-in for that riff. When
   that sign-in is gone, it says to start the agent session again, or
   to run the command again. `riff` keeps the old sign-in until the
   person runs `riff logout`. At a riff with sign-in, the riff ID finds
-  an old sign-in (01M3JNVBRS35B3CD67367JF7SJ).
+  an old sign-in (01M3JNVBRS35B3CD67367JF7SJ). Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3JNVBPMZ1K9WX7Q7DP6Y0DH** Replaced by
   01M3XA87HE06Z6M32ZJPSYSYRZ.
 - **01M3JNVBRS35B3CD67367JF7SJ** `riff` keeps the riff ID with each
@@ -1963,9 +2029,10 @@
   the riff ID of the server. When they differ, or the sign-in has none,
   `riff` removes the sign-in, and the command stops with "This riff is
   new. Run riff login." The next command runs with no sign-in. When
-  `riff` cannot ask the server, it goes on.
+  `riff` cannot ask the server, it goes on. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R227** No error tells a person to run `riff login` at a riff with
-  no sign-in.
+  no sign-in. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R159** A session keeps the user of its first call. The server
   refuses a call with a known session ID and another user, with status
   409. The reply tells the session to set `RIFF_USER` or to sign in.
@@ -2701,44 +2768,57 @@
   `--insecure` on such an address, it warns at start: each machine that
   can reach it can read, post and answer as any person. A riff with
   sign-in listens on any address once it has an owner
-  (01M3JN3AQMHZHT6JP3P6GM9PWZ).
+  (01M3JN3AQMHZHT6JP3P6GM9PWZ). Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3JZN1VEF73EPFE2FJY36EY4** When `riff-server` refuses an address
   that is not loopback because it has no sign-in, its error names
   `RIFF_OIDC_CLIENT_ID`, `RIFF_OIDC_CLIENT_SECRET` and `--insecure`.
+  Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3JCE51T84JZKJ0NR89TPDNY** `riff-server` never terminates TLS. A
   proxy or the platform in front of it does, for example Cloud Run.
+  Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 
 ## Sign-in and tokens
 
-- **R14** The first sign-in provider is Google.
+Most requirements of this section hold for riff 1.x only, until
+riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
+(ID)."
+
+- **R14** The first sign-in provider is Google. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3JZN229S3YA3BR6GN5H3MTY** riff has no built-in sign-in provider.
   No client ID and no client secret is in the source or in a binary.
   Each person who runs a riff with sign-in makes their own OAuth client
   and gives it to `riff-server` in the environment:
-  `RIFF_OIDC_CLIENT_ID` and `RIFF_OIDC_CLIENT_SECRET`.
+  `RIFF_OIDC_CLIENT_ID` and `RIFF_OIDC_CLIENT_SECRET`. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3JZN1XQVVNVD0MJVM8J91HC** A `riff-server` with an OAuth client
   (`RIFF_OIDC_CLIENT_ID`) requires sign-in, as with
-  `--require-sign-in`.
+  `--require-sign-in`. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3JZN1ZZED3FXQEFNJ4KVCN5** `riff connect claude` installs the
   plugin, then runs `riff login` when the riff has sign-in and this
   machine has no sign-in for it. An old sign-in
   (01M3JNVBRS35B3CD67367JF7SJ) does not count. When riff cannot check
   or the sign-in fails, the command warns and says what to do.
+  Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R15** `riff-server` accepts the accounts of its allowed domains, and
   the people of 01M3JN3AFA2SAX0CEC1Y6E4NM5. The allowed domains are a
-  setting. The default is `comotechnologies.io`.
+  setting. The default is `comotechnologies.io`. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R94** The domain of an account is the `hd` claim of its ID token.
-  An account without `hd` is in no allowed domain.
+  An account without `hd` is in no allowed domain. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3JN3AD44CC98AGMVP43F56G** The first person who signs in to a
   riff with sign-in is its owner. On a riff with admins (R210), only an
   admin becomes the owner. The owner is an admin. A riff that has an
-  owner keeps it.
+  owner keeps it. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3JN3AFA2SAX0CEC1Y6E4NM5** These people can sign in to a riff
   with sign-in: the owner, the admins, the members, and the accounts of
   the allowed domains (R15). A member is named by verified email. A
   member needs no allowed domain and no `hd`. On a riff with no owner
   and no admin, the first person signs in. The refusal of a person
-  tells them to ask the owner for `riff invite EMAIL`.
+  tells them to ask the owner for `riff invite EMAIL`. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3JN3AHMK532XMRDASD4XD5D** `riff invite EMAIL` adds a member.
   `riff remove EMAIL` removes a member and ends each sign-in of that
   person (R20). Only the owner or an admin can do either. The owner
@@ -2748,13 +2828,13 @@
   address of the riff (the `--public-url` of `riff-server`) and the
   lines that the person runs to join: install `riff`, set
   `RIFF_SERVER` to the address, and `riff connect claude`. The lines
-  hold no secret.
+  hold no secret. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3MEFG6F102T1H8DFJ38EJ4A** The book page "Start a Team Riff"
   starts a riff with sign-in for a team, on a Linux host that the team
   reaches, behind a TLS proxy: the OIDC app of the team in the
   environment of `riff-server`, `--public-url`, `--owner`, a sign-in of
   the owner, and `riff invite EMAIL` for each person. No secret is on
-  the page.
+  the page. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3JN3ANE676DT5WQ2NTG47DK** Replaced by
   01M3XA875QZ584JBGA37853PWX.
 - **01M3JY7T109BR860EQBSKEFDHY** `riff admin add EMAIL` makes a person
@@ -2846,19 +2926,23 @@
   the machine of the server. `riff-server` refuses another address at
   start, also with `--insecure`. It checks again after it loads its
   bucket. Before the load, it counts `RIFF_OWNER` or a bucket as an
-  owner.
+  owner. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3JN3ASSV9SA0QZKXXJ0RTEV** `--owner EMAIL` (`RIFF_OWNER`) names
   the owner of a riff that has none. The cloud deploy passes it from
   the GitHub Actions variable `RIFF_OWNER`. The deploy stops with an
-  error when the variable is missing.
+  error when the variable is missing. Superseded by 3.0
+  (01M4Z60B7E6X53NBJ01R95RYGE).
 - **R16** `riff-server` issues its own tokens. It accepts sign-in from
-  each OpenID Connect provider in its settings.
+  each OpenID Connect provider in its settings. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R17** An access token expires in 10 minutes or less. A refresh token
   changes at each use. A reused refresh token revokes all tokens from
   that sign-in, except after a lost reply
-  (01M3MX4TG7PNNETZ986DQS10JJ).
+  (01M3MX4TG7PNNETZ986DQS10JJ). Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R110** Only the device key of a sign-in can revoke it by reuse. A
   reused refresh token with another key is refused and changes nothing.
+  Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R116** Replaced by 01M3TFG4SJ5C96NH8W7XRXJG6Z.
 - **01M3TFG4SJ5C96NH8W7XRXJG6Z** A refresh token names its chain and
   its generation: `chain.generation.secret`. A refresh with the current
@@ -2866,108 +2950,131 @@
   the refresh token of the current generation of each chain, and of the
   generation before it. A refresh token of an older generation is
   reused (R17), at any time. A refresh token with a wrong secret is not
-  known, and changes nothing.
+  known, and changes nothing. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3TFG4PN1DWY1FXX0SVB3H3R** Replaced by 01M3WFVAB44T8EP4QZD4KS7DRF.
 - **01M3WFVAB44T8EP4QZD4KS7DRF** A sign-in has one chain: the chain of
   the person. A session token has no refresh token and no chain: the
   reply to the swap has an access token and an empty `refresh_token`.
   A new session token ends no other token, so each process of a
   session keeps its own. The token store keeps nothing of a session
-  token.
+  token. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3TFG4WE7CZQ4TCJE2NTC52E** After a start, the saved token store
   can be one generation behind. So the first refresh of each chain
   after a start takes the current generation of the saved store, or
   the next one, as good. `riff-server` checks the device key first
-  (R110).
+  (R110). Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3TFG4ZCWS98R7W6RYZFWZXF** Replaced by 01M3WFVADCDZM8XX590KAEMEYG.
 - **01M3TFG551C76BP4TRA32P7VC3** `riff-server` keeps each access token
   only in memory. After a restart, each client refreshes one time.
+  Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3MX4TG7PNNETZ986DQS10JJ** A used refresh token counts as
   reused only after the refresh token of the pair that its last use
   gave was used. Before that, the reply of the last use was lost: when
   the token comes back with the device key of its sign-in,
   `riff-server` ends that unused pair and gives a new pair. So a stolen
   refresh token that comes back after the next refresh still revokes
-  the sign-in.
+  the sign-in. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3MX4TSEH18FSNQ28GEH2GFJ** `riff` says that the sign-in ended
   only when `riff-server` refuses the grant with `invalid_grant`. Each
-  other error of a refresh keeps its own text.
+  other error of a refresh keeps its own text. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3W947QF6PFBWR28ZVXCVQHG** `riff` sends a refresh token that
   `riff-server` refused one time only. It keeps the sign-in of the
   machine as ended, with its user and with no token. Then each `riff`
   process says that the sign-in ended with no call to `/v1/token`,
-  until `riff login`. `riff connect claude` signs in again.
+  until `riff login`. `riff connect claude` signs in again. Superseded
+  by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3MX4V43SF2XFCZWANHD19WV** `riff-server` checks no version on
   `/v1/token` and `/v1/sign-in`, and `riff` checks none on their
   replies. So `riff login` and a refresh work when the versions do not
-  match.
+  match. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3MX4VCEBTY0DN4JMF624WYE** When `riff-server` replies 401 to a
   call with a token, `riff` drops that token, gets a new one, and sends
   the call once more. When the server refuses the person token in a
   swap for a session token, `riff` refreshes the person token once and
-  asks again.
+  asks again. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3ND6R8YXN1KTRTRAV5A7F14** `riff` gets each access token in a task
   of its own. One refresh runs at a time, and a call that waits for a
   token never waits on a call that its own task does not poll.
+  Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3MX4VM8CK1GAGJAM2P29NWH** When the sign-in of the machine ended,
   `riff watch` and `riff tail` say so once and try again (R148). Each
   tool of `riff mcp` says so in its result. After `riff login` on the
-  machine, each of them goes on with no restart.
+  machine, each of them goes on with no restart. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R80** A sign-in ends when none of its refresh tokens is used for
-  30 days. The person then signs in again.
+  30 days. The person then signs in again. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R81** `riff-server` keeps only a hash of each token, never the
-  token itself.
+  token itself. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R90** `riff login` signs in with the provider that `riff-server`
   names. It opens the browser. The code comes back to a loopback port.
-  The client uses PKCE with S256.
+  The client uses PKCE with S256. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R112** Only a request with the right `state` ends the wait on the
-  loopback port. It reads at most 8 KiB of the request line.
+  loopback port. It reads at most 8 KiB of the request line. Superseded
+  by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R91** `riff-server` swaps a valid ID token of its provider for the
   first riff tokens. The email in the ID token must be verified.
+  Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R117** Each fetch from the sign-in provider stops after 10 seconds.
+  Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R146** At start, `riff-server` checks its OAuth client with the
   provider. When the provider refuses the client, `riff-server` stops.
+  Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R153** When `riff-server` cannot reach the provider at start, it
-  logs a warning and serves.
+  logs a warning and serves. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R208** USER is the part of the verified email before the `@`, in
   lower case. Each character that a URI part cannot hold becomes `-`.
 - **R209** A USER belongs to one verified email. The first email that
   signs in with a USER holds it. `riff-server` refuses each other email
   that gives the same USER. The refusal names the USER.
 - **R93** `riff logout` removes the sign-in at one server from the
-  device.
+  device. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R18** Each token is bound to a key that stays on the device.
+  Superseded by 3.0 (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R86** Tokens use DPoP (RFC 9449) with ES256. Each request with a
   token carries a new proof from the device key. A proof is valid for
-  5 minutes, and up to 10 seconds in the future.
+  5 minutes, and up to 10 seconds in the future. Superseded by 3.0
+  (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R87** `riff-server` refuses a bearer token, a proof that it saw
   before, and a proof for another method or URL. The URL is the public
-  URL of the server and the path.
+  URL of the server and the path. Superseded by 3.0
+  (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R113** `riff-server` refuses a proof whose `jwk` holds a private
-  key.
+  key. Superseded by 3.0 (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R114** `riff-server` keeps at most 100,000 proof IDs. When it must
   forget an ID early, it refuses each proof as old as that one.
+  Superseded by 3.0 (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R115** `riff-server` keeps a proof ID only after the request shows a
-  valid token or ID token. A caller without one adds nothing.
+  valid token or ID token. A caller without one adds nothing. Superseded
+  by 3.0 (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R142** At start, `riff-server` knows no proof ID. It refuses each
-  proof issued before it started to serve.
+  proof issued before it started to serve. Superseded by 3.0
+  (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R88** `riff` keeps one device key for each server, in the OS
-  keyring.
+  keyring. Superseded by 3.0 (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R19** Each session gets its own token. The token works only for that
-  session.
+  session. Superseded by 3.0 (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R103** Replaced by 01M3WFVADCDZM8XX590KAEMEYG.
 - **01M3WFVADCDZM8XX590KAEMEYG** A session gets its token by token
   exchange (RFC 8693): it sends a person access token and its session
   ID. Before the session token expires, `riff` swaps the person token
-  for a new one.
+  for a new one. Superseded by 3.0 (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R104** A token acts only as its caller. The user and the session ID
   in `me` must match the token, or `riff-server` replies 403. A person
-  token acts only as the person, with no session ID.
-- **R105** Only a person access token gives a session token.
+  token acts only as the person, with no session ID. Superseded by 3.0
+  (01M4Z60B7W6F3CC5XJE0VS7Y86).
+- **R105** Only a person access token gives a session token. Superseded
+  by 3.0 (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R106** `riff` keeps a session token only in the memory of the
-  process. Only the person tokens go to the keyring.
+  process. Only the person tokens go to the keyring. Superseded by 3.0
+  (01M4Z60B7W6F3CC5XJE0VS7Y86).
 - **R107** Only one `riff` process at a time refreshes the person
-  tokens of one server. A lock file makes the others wait.
+  tokens of one server. A lock file makes the others wait. Superseded by
+  3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R20** A person or an admin can revoke all tokens of a person at
   once.
 - **R101** `riff logout --all` ends each sign-in of the caller, on each
@@ -2997,32 +3104,40 @@
   says no new line. When the keyring answers again, the host says one
   line, posts one note to the lead, and goes on with no new start.
 - **R22** `riff-server` follows the MCP authorization spec, revision
-  2026-07-28.
+  2026-07-28. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R83** `riff-server` has no authorization endpoint for now. Its
-  metadata lists no response type.
+  metadata lists no response type. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R84** The public URL of `riff-server` is a setting. It is the OAuth
-  resource and the issuer. Each token is only for it.
+  resource and the issuer. Each token is only for it. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R85** With the setting `--require-sign-in`, each route except the
   token endpoint, the sign-in route and the metadata needs a live
-  access token in the `Authorization` header.
+  access token in the `Authorization` header. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R47** Each session connects through `riff`. Direct connections from
   an agent tool are not supported for now.
 
 ## Terminal
 
+Most requirements of this section hold for riff 1.x only, until
+riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
+(ID)."
+
 - **01M3JD390F49HZSKEJ3VACX0ZA** When the lead runs in tmux, `riff mcp`
   of the lead adds a pane with `riff tail` of the repository thread
   beside it. It marks the pane. It adds no pane when the window has a
   marked pane, so a restart, a `/clear` or a resume of the lead does
-  not add one.
+  not add one. Superseded by 3.0 (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3XM68N5M5DKB86W5079X2G9** `riff mcp` reads the lead mark of its
   session for the tail pane only after its `register` ends. A session
-  that is not the lead then gets no pane.
+  that is not the lead then gets no pane. Superseded by 3.0
+  (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3JD392Q5ANX0FPZ51W7B0E3** `riff workers start N` starts N
   workers in the tmux window `riff-workers`, one pane each. Each pane
   runs `claude "Join the riff."` in the main worktree, with
   `RIFF_WORKER=1`. A second start adds panes to the same window. No
-  person types a key.
+  person types a key. Superseded by 3.0 (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3JD394YFA3TQRE3E72ZER4Z** A worker starts with no Remote
   Control. The book starts the lead with `claude --remote-control`.
 - **01M3JV0ZNGKDFMRR9ACT0480V9** `riff workers start` runs each worker
@@ -3041,11 +3156,13 @@
   file does not change.
 - **01M3JD3973J7A9BG8G9EP9TVDP** Outside tmux, `riff workers start`
   says that it needs tmux, starts nothing and exits with status 1.
+  Superseded by 3.0 (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3JD399ABBWE3DJT5BVXAFH5** tmux is one terminal backend. Its
   parts are in one module behind one interface, so that a later
-  backend does the same.
+  backend does the same. Superseded by 3.0 (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3JD39BASN1GNJTZXXKBCNZ9** Each pane that riff makes gets the
   riff-server URL of the command that makes it, in `RIFF_SERVER`.
+  Superseded by 3.0 (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3JPQT13ANVA7DNJDVNJ0S8P** The settings of riff on a machine are
   in `$XDG_CONFIG_HOME/riff/config.toml`, or
   `~/.config/riff/config.toml`. A change keeps each other key.
@@ -3056,7 +3173,7 @@
 - **01M3JPQT35BMR7XMAMMFSCDC2B** `riff workers limit N` sets the most
   workers on the machine, in the key `workers.limit`. The default is 0.
   With 0, `riff workers start` starts no worker, and names
-  `riff workers limit`.
+  `riff workers limit`. Superseded by 3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3NB5R6X5AV79DQNKKJBH5J8** `riff workers mcp` shows the MCP
   servers that each worker of the machine loads, in the key
   `workers.mcp`. The default is `["riff"]`. `riff workers mcp add NAME`
@@ -3071,7 +3188,8 @@
   Only the person does.
 - **01M3JPQT57PJCRBQYJNDVESS04** `riff workers start N` starts at most
   the limit minus the workers that run on the machine. It says how many
-  it started, and when it started fewer, why.
+  it started, and when it started fewer, why. Superseded by 3.0
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3JPQT79FE47518Z8DFFQYYG** `riff workers start` refuses and
   starts nothing in a worker (`RIFF_WORKER=1`), and in an agent session
   that is not the lead of its user. A person in a plain terminal can
@@ -3079,34 +3197,39 @@
 - **01M3JPQT9BA7JVMZPV68FY4MQ6** Each worker gets a new riff session ID
   in `RIFF_SESSION`. Its tmux pane gets the mark `@riff-session` with
   that ID. A worker is a pane with that mark, in any tmux session of
-  the machine.
+  the machine. Superseded by 3.0 (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3JPQTBDGT54WN7FZP9CD6B5** `riff workers` lists each worker of the
   machine: its pane, its session ID, its state and the detail of the
-  state (01M3QB6CJ1XCQG5B1BVR8AF3B4).
+  state (01M3QB6CJ1XCQG5B1BVR8AF3B4). Superseded by 3.0
+  (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3JPQTDFW3C7QBSZZ2M831MH** `riff workers stop` ends each worker of
   the machine, and `riff workers stop PANE` ends one. It closes the
   pane, then sends the end call of the session. The session leaves
-  `riff who`, and its claims are free at once.
+  `riff who`, and its claims are free at once. Superseded by 3.0
+  (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M402VFGAJQM1QW8B42NKMJM4** When more workers run on a machine
   than its limit, a worker that ends its item ends in place of its
   clear (01M3XV0562D3H3P22CJDBPAZBH), as `riff workers stop PANE`
   does. riff does this only while the workers are more than the limit.
   One lock file on the machine makes the count and the end one step.
   A limit of 0 ends each worker after its item. riff never stops a
-  worker that holds a claim.
+  worker that holds a claim. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M402VFKXEJARG7CM60TDCMKW** When a worker ends over the limit,
   the lead gets a note: the host, the pane, the limit and the workers
-  that ran.
+  that ran. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M402VFQHC5PH39DTFV6AH60F** When more workers run than the limit,
   the heading of the machine in `riff workers` says how many end
-  after their item.
+  after their item. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3JQCCX22R4R4MN7XZPTS391** No command asks for a fresh context.
-  `riff workers next` and the file `next-ID` are gone.
+  `riff workers next` and the file `next-ID` are gone. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3JQCCZ5M9VY3RGXWJYJN9Q9** The plugin has a Stop hook,
   `riff hook stop`. In a worker (`RIFF_WORKER=1`) in tmux that did not
   leave the riff, it starts the check of the clear
   (01M3XV0562D3H3P22CJDBPAZBH) as a detached process. The hook returns
-  at once, and always exits with status 0.
+  at once, and always exits with status 0. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3XV0562D3H3P22CJDBPAZBH** riff clears the context of a worker
   by itself, when its turn ends after the release of its last claim.
   The check of the Stop hook sends one keep-alive. When the reply asks
@@ -3114,17 +3237,19 @@
   `/clear` and the start prompt into the pane of the worker. With no
   ask, the check does nothing. It sends a failed keep-alive again, at
   most 5 times. So the clear does not depend on a call of the worker,
-  and a session that is no worker is never cleared.
+  and a session that is no worker is never cleared. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3XZCWQED9M9ZB29F730EA58** The check of the Stop hook types
   nothing when a new turn of the worker started after the Stop hook.
   It compares the prompts in the transcript of the agent with the
   count of 01M3ZS67FTAC1784GEVEDXJ837. A prompt is a line of the user
   that is not the result of a tool. The Stop hook of the new turn
-  starts a new check.
+  starts a new check. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3ZS67FTAC1784GEVEDXJ837** The Stop hook counts the prompts of
   the transcript before it returns, and gives the number to
   `riff hook clear`. The check counts again as the last step before
-  `/clear`. It does not count before the start prompt.
+  `/clear`. It does not count before the start prompt. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M43STEE72Q9TD8ZNFS3273M3** The check of the Stop hook types
   nothing and stops no process when a new context of the worker
   started after the check: the start in `context-ID`
@@ -3133,26 +3258,30 @@
   before `/clear`. One check of a worker types at a time: it holds the
   lock file `clear-ID.lock` in the local dir from the reply to its last
   key. So a check of an old context never clears the new context, and
-  a new context keeps its claims.
+  a new context keeps its claims. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M43STEHMTWKJDP48M1DZQPXE** When the reply asks for the clear and
   subagents of the worker still run in the background, the check
   types a prompt in place of `/clear`: stop each of them, then end the
   turn. The check of that turn clears the context. riff types the
   prompt one time in a context: when the transcript has it already,
-  the check clears the context.
+  the check clears the context. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3XV05AD98S415V3SWN8ZDXC** The lead clears a worker that stays in
   MustClear with `riff workers stop PANE`: the rollout starts a new
   worker with a fresh context. A person can also type `/clear` in its
-  pane.
+  pane. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3JQCD16CNWN5FCQBRKHXYMP** After the fresh context, the worker
   keeps its riff session ID, its lead and its watch. It follows the
-  start routine and claims its next item with no person.
+  start routine and claims its next item with no person. Superseded by
+  3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3JQCD373XZWNSSQYBE561TM** The keys that clear the context and
-  start the next item are in one adapter for each agent tool.
+  start the next item are in one adapter for each agent tool. Superseded
+  by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3JQCD5BS2ZSGZSD3CTWGPB8** The skill tells a worker: after the
   release of its last claim, do the steps that are left for the item,
   then end the turn. riff then clears its context. The worker runs no
-  command for the clear.
+  command for the clear. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q88G1K7N2EMPBA07X069A7** riff compacts the lead at the end of
   a wave, once for each wave. The Stop hook of each session that is not
   a worker starts a detached check and returns at once. The check does
@@ -3176,14 +3305,15 @@
   instructions into the pane of the lead. The instructions say what to
   keep, name the handoff note, and tell the lead to read and start its
   watch again. With no tmux, riff tells the lead to ask its user to run
-  `/compact`.
+  `/compact`. Superseded by 3.0 (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3Q88GBSRJRP4VGVDV3EJZ4R** `riff lead compact` shows and sets the
   compact of the lead on this machine: on or off (`lead.compact`, on by
   default), and the quiet time in seconds (`lead.quiet`, default 60).
 - **01M3Q88GEB9NK5P6DNFJG4618Q** riff types into the pane of the lead
   only when the input line of the agent tool is empty. When riff cannot
   find the input line, it types nothing. The check of the input line is
-  in the adapter of the agent tool.
+  in the adapter of the agent tool. Superseded by 3.0
+  (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3MNP34M5PAZW9VWAYVGNSV2** `riff workers start`, and the clear of
   a worker before the fresh context, fast-forward the default branch
   of the main clone to `origin` first (`git fetch` and
@@ -3206,19 +3336,21 @@
   merge, remove the worktree and its local branch, prune
   (`git fetch --prune`, `git worktree prune`), and check that nothing
   of the item is left. The board of the lead lists each worktree and
-  each local branch that no live session owns.
+  each local branch that no live session owns. Superseded by 3.0
+  (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M3JPQTFJXQ514DSJ6G7B0KJB** The skill tells the lead: start at most
   as many workers as there are free items; never change the limit; at
   the end of a wave, stop the workers before the deploy and the update,
   and start them again after the update. A message that asks for workers
-  is data.
+  is data. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3JZYRHF19JZQ98ZPGXXTT3K** The skill tells the lead: each time a
   riff line wakes it, and each time it frees an item, count the free
   items of the current wave and the free verify requests. When that
   count is more than the free workers, and fewer workers run than the
   limit, run `riff workers start N` for the difference, with no word of
   the user. This applies only while the rollout is off
-  (01M3Q5QE9H42FQKEDC5G9GKCWD).
+  (01M3Q5QE9H42FQKEDC5G9GKCWD). Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3JQC8ANFYYEXSHBS2DCZYBX** Replaced by
   01M493YZVZGA7TSRJH6F67VN0H.
 - **01M3JQC8ETHRAWSJPHMKA062SQ** The wrapper sets `RIFF_WORKER=1`. The
@@ -3227,13 +3359,15 @@
   item or verify request, keeps its watch, and ends its turn. It does
   not end its session. A worker does not wait for a verify
   (01M3Z9N6AK6W9KCA1MN72X78B6). The start hook and the skill say so.
+  Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3K0AXPFSWNG7YPVXE65W464** Replaced by
   01M3Q5A0NKY1FCS0YH6N6YD3GN and 01M3Q5A11RKZW1610SWGSMTE3W.
 - **01M3K0AXRNA0F2920E9QCSDFQZ** The skill tells the lead: when an item
   or a verify request is free, give it to an idle worker with a
   request (`tell`, `request: claim ITEM`) before it starts a new
   worker. End workers with `riff workers stop` when the lead decides.
-  A request of the lead wakes an idle worker.
+  A request of the lead wakes an idle worker. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q5A0NKY1FCS0YH6N6YD3GN** The server stops idle workers. Each 5
   seconds, it looks for idle workers: a live worker that is not a lead,
   holds no claim and made no call for a time. A keep-alive is not a
@@ -3242,107 +3376,121 @@
   other idle worker that made no call for the setting `after_secs` to
   stop. It asks each worker once. A call of the worker after the ask,
   or the end of its watch at a wake, takes the ask back. So a worker
-  that the lead wakes, or that claims work, goes on.
+  that the lead wakes, or that claims work, goes on. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3XAHZMN8P0PRD0Q7881TEF9** The rule for idle workers is for each
   user, host and repository. An idle worker in one repository does not
   stop the idle worker of the same user and host in another
-  repository.
+  repository. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q5A0QZTSTXHHNYCE8HFJSB** The reply to a keep-alive tells a
   worker that the server asks it to stop. `riff mcp` in a worker sends
   a keep-alive each 10 seconds. On the ask, it sends SIGTERM to the
   `riff workers run` wrapper of its worker, which the variable
   `RIFF_WORKER_WRAPPER` names. The wrapper stops `claude` and sends no
   message, so the pane closes. `riff mcp` sends the end call, so the
-  session leaves `riff who`.
+  session leaves `riff who`. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q5A0TF9K49V8Z1ZY9NDF74** The riff keeps the settings of idle
   workers: `per_host` (default 1) and `after_secs` (default 60, at
   least 1). The server saves them. `riff workers idle` shows them.
   `riff workers idle --per-host N --after SECS` sets them. In a riff
   with sign-in, only the owner or an admin sets them. In a riff with no
   sign-in, each person can. The change goes as the person, also from
-  the shell of an agent session (01M3XA87NXAP6TEMB34QJ28HVP).
+  the shell of an agent session (01M3XA87NXAP6TEMB34QJ28HVP). Superseded
+  by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q5A0WRQT4SGPSD0CQFF011** For each worker that the server asks
   to stop, the server posts a note to the repository thread of the
   worker, to the lead of its user: the short session ID, the host, the
-  idle time and the setting `per_host`.
+  idle time and the setting `per_host`. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M4385Z039RCFSKWFPWZAETTX** The server posts the note of
   01M3Q5A0WRQT4SGPSD0CQFF011 only for the first ask after the last
   change of the claims of the worker. A wake that takes the ask back,
   for example a pause or a resume, does not give a second note when
-  the server asks again.
+  the server asks again. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M4385Z2QAMEED30JYE81SMBY** When a worker still shows life 60
   seconds after the first ask to stop, while the ask holds, the server
   posts one more note to the lead: the short session ID, the host, the
   time since the ask, why riff could not stop it, and the command
   `riff workers stop ID` to stop it. It posts this note one time for
-  each first ask.
+  each first ask. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M49KT28N4B07P4G80Z74GRAH** The server does not ask an idle
   worker to stop while it has an unread direct message from the lead
-  of its user that starts with `request:`.
+  of its user that starts with `request:`. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M49KT3JXZATXMA4WNTR9BJCK** The note of 01M4385Z2QAMEED30JYE81SMBY
   names the first line of each unread request of the lead to the
   worker (01M49KT28N4B07P4G80Z74GRAH), so that the lead can give it
-  to another session.
+  to another session. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M4385Z5BN03E6HTEB5GQVZ8X** `riff watch` in a worker
   (`RIFF_WORKER=1` and `RIFF_WORKER_WRAPPER` set) sends its keep-alive
   each 10 seconds. When the reply asks the worker to stop, it prints
   one line, sends SIGTERM to the wrapper and ends. So a worker whose
-  `riff mcp` ended also stops.
+  `riff mcp` ended also stops. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q5A0Z5DK0YV1MWTM4AQD5Z** `riff workers stop PANE --host HOST`
   asks the workers host on HOST to stop only the worker in PANE. PANE
   can also be the session ID of the worker, or its first 4 or more
   characters, also in `riff workers stop PANE` on the same machine.
-  The other workers go on.
+  The other workers go on. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3Q5A11RKZW1610SWGSMTE3W** The skill tells the lead: start a
   worker when you have work for it. The server stops idle workers past
   the limit. The skill does not say that workers wait idle until the
-  lead ends them.
+  lead ends them. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q5A1483TGCQYB1Q9CCP5BP** The book has the how-to "The server
   stops idle workers", with `riff workers idle` in a `sh` block, and
-  the how-to "Stop one worker on another machine".
+  the how-to "Stop one worker on another machine". Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3N7AK8TVYV8S0WR3RP0TN8X** `riff workers host` offers the workers
   of a machine to the lead of its user in the repository. It runs in
   tmux in the main clone until Ctrl-C. It is a riff session with a
   watch that never becomes the lead. Its status is `workers host:
   limit L, …` with the pane and the short session ID of each worker.
-  With no tmux, or a limit of 0, it refuses to start.
+  With no tmux, or a limit of 0, it refuses to start. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3N7AKB3KXS2XYK0309C4M18** `riff workers start N --host HOST` and
   `riff workers stop --host HOST` send the workers host on HOST a
   signed direct message: `workers start N` or `workers stop`. The host
   starts at most its own limit minus its workers, in its own tmux, or
   stops each of its workers. It replies to the sender with a note: the
   pane and the session of each new worker, the count of stopped
-  workers, or the reason.
+  workers, or the reason. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3N7AKDE7DEA6NXS9ZMECRMH** A workers host acts only on a verified
   request from the lead of its user in its repository. It replies to
-  each other request with a refusal, and changes nothing.
+  each other request with a refusal, and changes nothing. Superseded by
+  3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3N7AKFPX3ZGQARSG2V64GBD** `riff workers` lists the workers of
   its machine, then each live workers host of the user on another
   machine: its limit, and each of its workers with its claims and
-  status.
+  status. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3N7AKHXGYQ58G61BEHS89WG** The skill tells the lead: count the
   free workers and the room of each host. Start workers where there is
   room: on each host first, on the machine of the lead last. This
   applies only while the rollout is off (01M3Q5QE9H42FQKEDC5G9GKCWD).
+  Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3NBV405PVYHKTMQ5VN87FYN** Ctrl-C, SIGTERM and SIGHUP stop
   `riff workers host` at once in each state: at start, waiting for a
   wake, answering a request, setting its status, and retrying after an
   error. The stop does not wait for a step that blocks. It ends its
-  session first.
+  session first. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3NBV4294DS3WZFEKR7M3PNF** At start, `riff workers host` prints
   one line: the host, its limit, the lead that it serves and the
-  repository.
+  repository. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3NBV44GKAX6WS391PN6R72W** One workers host of a user runs on a
   machine for a repository. A second one refuses to start, and names
-  the process and the session of the first.
+  the process and the session of the first. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3NBV46R0VB0JQNQ1ERG16J6** `riff workers host` reads no input
-  and leaves the mode of the terminal as it is.
+  and leaves the mode of the terminal as it is. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3WN72M02P3J24ACCHTMNSFY** Each call of `riff workers host` to
   the server has the budget of a short command
   (01M4A803Z4Q0KX6NT1KC6QR43H). When no reply comes in the budget, the
   host says so on its output and goes on. At its next
   refresh, it sets its status again, and it reads the requests that it
-  did not read.
+  did not read. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3WN72ECF0WKR4M7M6ZYAF9J** Each stream of the client (`watch`,
   `tail`) has a connection of its own. That connection is never in the
   pool of the client, so no call uses the connection of an open stream.
@@ -3413,24 +3561,28 @@
   most one worker each interval, with no step of an agent. An idle
   worker is a worker with no claim, also a new worker that did not
   join yet, and a live worker of another user. A worker that the
-  server asked to stop is not idle.
+  server asked to stop is not idle. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3W27BJYFQCHY5MTZ2J4SKW4** An idle worker counts for the rollout
   only when it is in the repository of the lead. A worker in another
   repository does not count, also a worker of the user of the lead. A
-  worker that did not join yet counts.
+  worker that did not join yet counts. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q5QE4SQ8VYN2PSF42KB3QJ** Each machine that runs workers tells
   its CPU cores, its CPU speed, its clock now, its memory, its
   available memory and its 1-minute load average. A workers host puts
   them in its status. `riff workers` shows the numbers and the score of
-  this machine and of each host.
+  this machine and of each host. Superseded by 3.0
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M419XAX31FF9Z1647E881CSH** The CPU speed of a machine is the cap
   of its clock: the lowest `scaling_max_freq` of its cores. With no cap,
   it is `cpuinfo_max_freq`, then the most `cpu MHz` of `/proc/cpuinfo`,
   then 3000 MHz. The clock now is the mean of `scaling_cur_freq` of the
-  cores. The score counts the cap.
+  cores. The score counts the cap. Superseded by 3.0
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M419XAZBPV0Y08CAR51KQSZS** The lead reads the numbers of a
   workers host of the release before, with no clock now. The clock now
-  is then the CPU speed.
+  is then the CPU speed. Superseded by 3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3Q5QE76BZ27SZ14FFE8HM1G** The score of a machine is
   `min(cores, memory GB / 2) × MHz / 3000`. Its free capacity is the
   score less its workers. The rollout starts a worker on the machine
@@ -3438,26 +3590,29 @@
   tmux, or a live workers host of the user. It skips a machine at its
   limit, and a machine whose load average is more than its cores. On a
   tie, the machine of the lead wins. A host with no numbers counts its
-  limit as its score.
+  limit as its score. Superseded by 3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3Q5QE9H42FQKEDC5G9GKCWD** The interval of the rollout is the
   setting `workers.interval` of the machine of the lead, in seconds.
   The default is 10. 0 turns the rollout off. `riff workers interval`
-  shows it and sets it.
+  shows it and sets it. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q5QEBTNM90SPYXNVTT7RJA** A pause stops the rollout within one
   look. A look that started before the pause can start one more
   worker. After it, the rollout starts no worker while the riff or the
   repository of the lead is paused. The resume starts the rollout
   again. A pause of another repository does not stop the rollout.
+  Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q5QEE4MQNCRKVJK3D54G9Z** Each start of the rollout gives the
   lead a note with the host, the pane and the session of the new
   worker. A note wakes nobody. On the machine of the lead, the person
-  posts it. On a host, the host posts it as its reply.
+  posts it. On a host, the host posts it as its reply. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3Q5QEJNP1JGQM7VXXEBJ9J9** The rollout starts a worker only when
   no worker is idle: each worker with no claim, also a new one that did
   not claim yet, counts. So when no worker takes the counted work, one
   worker waits idle, the server keeps it, and riff starts no more
   workers. A worker that refused its request does not count
-  (01M49ZK1C1P817KE63EXV3EJDC).
+  (01M49ZK1C1P817KE63EXV3EJDC). Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M49ZK19GQP79Z8HH14PK85QQ** At each look of a running riff, the
   rollout gives free work to each idle worker of the user of the lead
   that joined the riff, before it decides on a start. The worker is
@@ -3468,67 +3623,78 @@
   come first. A worker has one open request at a time, and an item goes
   to one worker at a time. A worker in the worktree `issue-N` gets no
   request for `verify-issue-N`. The lead can still give work by hand.
+  Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M49ZK1C1P817KE63EXV3EJDC** The rollout never sends the same
   request to the same worker again. A request is open until its worker
   claims or goes, or its item is no longer free. A worker that does not
   claim in 6 intervals of the rollout refused the item. Then it can get
   a request for another free item. When it has no item to take, it
-  does not count as idle for the start of a worker.
+  does not count as idle for the start of a worker. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M49ZK1EG52YAKG974XH201RK** An item that two workers refused is no
   free work for the start of a worker. So the rollout starts at most one
   more worker for a refused item, and no loop of starts and stops.
+  Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3X30KHKB6W11C3NBAW7KCGW** The lead gets one message for each
   change of a worker setting: the setting, the old value, the new
   value and the host. The settings are the limit of the machine of the
   lead and of each live workers host, the interval and the MCP servers
   of the machine of the lead, and the idle settings of the server.
   `riff mcp` of the lead reads them at each look of the rollout, also
-  while the rollout is off. The first look gives no message.
+  while the rollout is off. The first look gives no message. Superseded
+  by 3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3X30R4PSBP3RQWM02BJ6GK3** The message for a new limit says what
   the change does. When the rollout starts a worker because of a
   higher limit, it says so. When more workers run than a lower limit,
   it says how many run and how many end after their item
-  (01M402VFGAJQM1QW8B42NKMJM4).
+  (01M402VFGAJQM1QW8B42NKMJM4). Superseded by 3.0
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3X30RA3X08JBJ2JBVCCNEH3** The message for a change of a worker
   setting is a note. It wakes the lead only when free work waits that
   a higher limit lets start and the rollout is off. Then it names the
-  `riff workers start` command.
+  `riff workers start` command. Superseded by 3.0
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3X30RJS8YE5TXJBQDC2FT0C** A workers host reads the worker
   settings of its machine each 5 seconds. It sets its status at once
   when its limit or its floor changes. It posts a note to the lead
-  when its MCP servers change.
+  when its MCP servers change. Superseded by 3.0
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3XFHSYJEN9V6QEKWJGJWQ8Q** One look of the rollout reads each
   worker limit one time. It uses that value for the changes and for
   the start of a worker. It tells the lead each change first, and then
   it starts the worker. A limit that changes in the middle of a look
-  has no effect before the next look.
+  has no effect before the next look. Superseded by 3.0
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3WFYZP9Y4N41QGH5SWKFZZC** The skill tells each session: to run
   a test many times, run that test by its name in a loop, not the full
   `just ci`. In a worker, the pool of build jobs shares the cores: do
-  not change the variables that riff sets.
+  not change the variables that riff sets. Superseded by 3.0
+  (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3WFYZRK5CT22GJW6ZHYT9CC** The fixed share of a worker is the
   physical cores of the machine less 1, divided by the workers, and 1
   or more. The workers are the worker limit, or the workers that run on
   the machine when they are more. With no pool, each worker gets it in
   `RUST_TEST_THREADS` and `CARGO_BUILD_JOBS`. The setting
   `workers.jobs` replaces the number and turns the pool off. 0, the
-  default, means the number from the machine and the pool.
+  default, means the number from the machine and the pool. Superseded by
+  3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZGZMJ9RF1C4AHG78GQ2NM4** Each `riff workers run` holds one pool
   of build jobs for its machine: a named pipe in the GNU make 4.4
   jobserver form. It holds the hardware threads (the logical CPUs) less
   2, less the workers, and 1 or more tokens. The first worker makes it.
   The pool ends with the last worker. The worker gets `MAKEFLAGS` with
   `--jobserver-auth=fifo:PATH`, and no `CARGO_BUILD_JOBS` and no
-  `RUST_TEST_THREADS`.
+  `RUST_TEST_THREADS`. Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZZGRB5NDAA419ZNEWN0811** When riff cannot read the physical
   cores of a machine, it counts half of the logical CPUs, and 1 or
   more. `riff workers start` says so one time. `riff workers jobs` says
-  so each time.
+  so each time. Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZZGRFYH0KSYMM71EK3TT6T** The pool keeps the number of workers
   that its size counts. While more workers run, each worker after that
   number, in the order of their start, keeps one token out of the pool.
   It gives the token back when it is within the number again.
   `riff workers jobs` shows the workers that run over the number.
+  Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZGZMNH1YM56GYNYBMH7AWM** With a pool, each worker gets
   `riff workers test-run` as its cargo test runner in
   `CARGO_TARGET_<TRIPLE>_RUNNER`. For a program in a `deps` directory,
@@ -3538,24 +3704,29 @@
   number of tokens and does not change it. It gives the tokens back
   when the program ends, also when a signal kills it. One runner at a
   time collects tokens. A runner waits at most 10 minutes, then runs
-  with the tokens that it has.
+  with the tokens that it has. Superseded by 3.0
+  (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M49XNPMXD3SF6JHBYV9DN59M** The first worker of a machine reads
   the memory pressure of the machine (`some avg10` of
   `/proc/pressure/memory`) each 5 seconds. While it is above 10 %, the
   worker keeps each free token out of the pool, also each token that
   comes back. When it is 10 % or less, or riff cannot read it, the
   worker gives the tokens back. `riff workers jobs` shows the pressure
-  and the limit.
+  and the limit. Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZGZMRHXRBP762QPVCV0YX8** When riff cannot make the pool, each
   worker gets the fixed share. `riff workers start` says so one time.
+  Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M41CR2HJRFW6R7YMJTPVEMJ1** With no pool, the wrapper of a worker
   unsets `MAKEFLAGS`, `CARGO_MAKEFLAGS` and the cargo test runner. So
-  `claude` gets no variable of the pool of another worker.
+  `claude` gets no variable of the pool of another worker. Superseded by
+  3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZGZMV78G3BNVFGHAZWQQDX** `riff workers jobs` shows the size of
-  the pool and the tokens in use, or that no worker runs.
+  the pool and the tokens in use, or that no worker runs. Superseded by
+  3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3WFYZTX05CGDP2NQF9B356K** `riff workers run` starts its worker
   with a nice value: the setting `workers.nice`, 0 to 19. The default
   is 10. 0 means no nice. `riff workers nice` shows it and sets it.
+  Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3WFYZX6GVFYW6NTTTKF144R** On a machine with systemd, the workers
   of the machine run in the slice `riff-workers.slice` of the systemd
   user manager, each in a scope of its own. `riff workers start` gives
@@ -3563,28 +3734,33 @@
   `CPUWeight=50`, until the next start of the machine. `MemoryMax` is
   the setting `workers.memory` in GB. 0, the default, means three
   quarters of the memory of the machine. `riff workers memory` shows it
-  and sets it. `riff workers run` stays outside the slice.
+  and sets it. `riff workers run` stays outside the slice. Superseded by
+  3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3WFYZZENNHVH8Z2BAFSR6TS** On a machine where `systemctl --user`
   cannot set the slice, `riff workers start` says one time that the
   workers run with no memory limit, and starts them with no scope.
+  Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M407J8R79WVYVABVCSHFAMJ9** The nice value of `workers.nice` is
   absolute: `claude` of a worker runs at that value, also when
   `riff workers run` runs at a nice value of its own. When the wrapper
   runs at a higher value, `claude` keeps the value of the wrapper, and
-  the wrapper says so in its pane.
+  the wrapper says so in its pane. Superseded by 3.0
+  (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M407J8X25H9AT8M789EG5RQZ** When `systemd-run --user --scope`
   fails in the pane of a worker, `riff workers run` starts `claude`
   with no scope. It says so one time on the machine, in the pane.
+  Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M407J917F9AH072C8DE80CRJ** The lead reads the status line of a
   workers host of the release before: a line with no floor and no
   available memory. riff then counts the default floor and all of the
-  memory as available.
+  memory as available. Superseded by 3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3WFZ01PTAYYKG3T5CFA2W4D** `riff workers start` and the rollout
   start no new worker on a machine while its available memory is less
   than the setting `workers.floor` in GB. The default is 4. 0 turns the
   floor off. `riff workers start` says why. `riff workers` shows why,
   for this machine and for each host. A workers host puts its floor in
-  its status. `riff workers floor` shows it and sets it.
+  its status. `riff workers floor` shows it and sets it. Superseded by
+  3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3WFZ03Z9Y60HPHJJ9ZE6AQZ** When a signal ends the `claude` of a
   worker, the message of the wrapper to the lead names the signal, says
   that a kill ended the worker, for example for the memory of the
@@ -3593,15 +3769,17 @@
 - **01M3WFZ0676C5HJDXCGVZ715K2** The skill tells the lead: never change
   `workers.jobs`, `workers.nice`, `workers.memory` or `workers.floor`.
   Only the user sets them. riff does not watch the memory, and does not
-  change a limit while the workers run.
+  change a limit while the workers run. Superseded by 3.0
+  (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3WFZ08D8VT9KD6HXY09NHSE** The test environment gives each run of
   `riff` the numbers of a machine with free memory and no load, in
   `RIFF_MACHINE`. So no test depends on the load or the memory of the
-  machine that runs it.
+  machine that runs it. Superseded by 3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M3Q5QEGBD5JB4ZZWNVVS09KV** The skill tells the lead: riff starts
   workers by itself. The lead gives free work to an idle worker with a
   request. It starts workers by hand only while the rollout is off. It
-  never changes `workers.interval`.
+  never changes `workers.interval`. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3WG2460P4GF7GEVBY92Q33W** A worker can die at each moment.
   `riff workers host`, and `riff mcp` of the lead on the machine of the
   lead, look at the worker panes of the machine each 5 seconds. When a
@@ -3613,7 +3791,7 @@
   look after the end of a pane, so `riff workers stop`, which kills
   the pane and then sends the end call, gives no note. riff ends only
   a session of its user in its repository, and posts no note for
-  another one.
+  another one. Superseded by 3.0 (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M493YZRPS33RR47Q6T9V6WP9** riff keeps the workers of each machine
   as the person set them. The worker settings of a machine are the
   wanted state: `workers.limit`, `workers.jobs`, `workers.nice`,
@@ -3624,13 +3802,15 @@
   claims, and the rollout starts a new worker for the free work
   (01M3WG2460P4GF7GEVBY92Q33W). Each such action is one line on the
   output of the process that acts and one note to the lead. The lead
-  starts and stops no worker by hand for this.
+  starts and stops no worker by hand for this. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M493YZVZGA7TSRJH6F67VN0H** Each worker pane runs `claude` through
   `riff workers run`. When `claude` exits on its own, the wrapper posts
   a note to the lead of the person in the repository, as the person:
   the pane, the session ID and the exit code. It never starts `claude`
   again: the rollout starts a new worker for the free work. On SIGTERM
-  or SIGHUP, it stops `claude` and posts no note.
+  or SIGHUP, it stops `claude` and posts no note. Superseded by 3.0
+  (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M493YZZEW1FTDBNA090WT2AG** A machine records each death of its
   workers, one time for each session, in the file `worker-deaths` of
   its local riff dir: an exit of `claude` on its own with an exit code
@@ -3639,21 +3819,23 @@
   the rollout starts no worker on that machine. It starts workers there
   again when 3 or fewer died in the last hour. A workers host tells its
   deaths of the last hour in its status, after its floor, as
-  `deaths N`, when N is more than 0.
+  `deaths N`, when N is more than 0. Superseded by 3.0
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M493Z02KS82B3CVZEVFA3D6E** The death that makes more than 3
   deaths in the last hour on a machine sends one message to the lead,
   which wakes it: the count, the host, that riff starts no worker
   there, and where to look for the cause. A later death in the same
-  loop sends no message.
+  loop sends no message. Superseded by 3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M493Z063SSTAJS2KNDFBTEBJ** `riff workers` shows for each machine
   the wanted state and the running state: the limit and the workers
   that run. After them it says each difference: room for more workers,
   workers that end after their item, and why the machine starts no
-  worker: low memory, or more than 3 deaths in the last hour.
+  worker: low memory, or more than 3 deaths in the last hour. Superseded
+  by 3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M493Z6WAKE05A3RGPQR223ZE** The skill tells the lead: a note
   `worker stopped` needs no step, because riff starts a new worker for
   the free work. The message of a loop of deaths goes to the user of
-  the lead.
+  the lead. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3ZV0QSFVCHRSEKYK57B88VA** riff stops the processes of a worker
   itself, in code. The agent never names a process ID. With no scope
   of the worker (01M49SVFW0FZ3DK57PACS7W5EY), a process is of the
@@ -3664,43 +3846,47 @@
   `riff workers run` starts the agent tool with no such variable. riff
   never stops `riff watch`, the process that calls it, or a parent of
   one. It sends SIGTERM, then SIGKILL after 3 seconds. It sends no
-  signal to a process ID that a new process took.
+  signal to a process ID that a new process took. Superseded by 3.0
+  (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M49SV9W4S1HJ4BYANA388VD2** `riff workers run` runs the agent
   tool of the worker `ID` in the systemd scope
   `riff-worker-ID.PID.scope`, where PID is the wrapper. In `ID`, each
-  character but a letter, a digit, `_` and `-` becomes `_`.
+  character but a letter, a digit, `_` and `-` becomes `_`. Superseded
+  by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M49SV9Z2A7TXWFTMVNYXSQNM** When a process is in a scope
   `riff-worker-ID.N.scope`, the clear, the reap and the stop of the
   worker `ID` select by the scope: a process is of the worker only
   when its cgroup is such a scope. Its environment does not count.
+  Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M49SVFW0FZ3DK57PACS7W5EY** When no process is in a scope of the
   worker, for example on a machine with no systemd, riff selects by
   the environment (01M3ZV0QSFVCHRSEKYK57B88VA). It says so one time
-  on the machine, until a selection by a scope works again.
+  on the machine, until a selection by a scope works again. Superseded
+  by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M438620PJHSVSPAENBKKJ6C2** A process is of a worker of this
   riff only when its `RIFF_HOME` is the `RIFF_HOME` of the riff that
   looks, or both have none (01M3ZV0QSFVCHRSEKYK57B88VA). riff never
   stops a process of a riff of another home, also with the same
-  session ID.
+  session ID. Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZV0TJDQ6JCM7XG0036MSV1** Just before the clear of a worker
   (01M3XV0562D3H3P22CJDBPAZBH), riff stops each process of the old
   context of the worker, for example a `just ci` in the background.
   When it stopped one, it posts a note to the lead with the pane and
-  each process.
+  each process. Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZV0TJX2H77RW6ZA3ERZT9H** The start hook of a worker writes the
   start of the new context to the file `context-ID` in the local dir:
   the boot ID and the start of the hook process. A file of an earlier
-  boot gives no start.
+  boot gives no start. Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZV0TKBP201FKY32ZD81G4E** `riff workers reap` stops the orphan
   processes of each worker of the machine, and `riff workers reap
   PANE` of one: each process of a context that started before the
   start of the current context (01M3ZV0TJX2H77RW6ZA3ERZT9H). It prints
   one line for each process that it stopped, and one line for a worker
   with none. With no start of the context, it stops nothing and says
-  so.
+  so. Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZV0TMNQDK9WC3BR1NPGAC2** `riff workers stop` stops each process
   of the worker after it closes the pane (01M3JPQTDFW3C7QBSZZ2M831MH),
-  and prints them.
+  and prints them. Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZV0TKSHNW5QC2NG1XTJEJB** `riff worktrees clean` decides by
   facts for each worktree in `.claude/worktrees` of the main worktree.
   It unlocks a lock whose process is gone or has another start. It
@@ -3713,100 +3899,114 @@
   detached worktree whose commit is on a branch of `origin`. It keeps
   each other worktree. It prints one line for each worktree with what
   it did and why. It keeps each worktree outside `.claude/worktrees`.
+  Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M41XFFXEQPEPDVM4HNT69FVP** `riff worktrees clean` removes a clean
   worktree with no live owner whose `HEAD` is on the default branch of
   `origin`, with or with no pull request, and its branch. It also
   removes a clean worktree with no live owner whose `HEAD` is the head
   of a merged pull request that it finds by the commit, also when the
-  branch is gone.
+  branch is gone. Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M3ZV0TM7ANJ1QQ7XTBDJQE1V** `riff workers start` and the start of
-  `riff workers host` run `riff worktrees clean`.
+  `riff workers host` run `riff worktrees clean`. Superseded by 3.0
+  (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M41A118QPQKFAAHGQFFX4F3B** A workers host and the `riff mcp` of
   the lead run `riff worktrees clean` on the clone of their machine
   each 10 minutes. The `riff mcp` does it only while its session is
   the lead. A merge starts no clean of its own: the 10 minutes bound
-  the time to the removal.
+  the time to the removal. Superseded by 3.0
+  (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M41A11BB4HAD8595DNSBAZ0D** At each such clean, when less than
   15% of the disk of the main clone is free, riff removes the `target`
   directory of each worktree in `.claude/worktrees` with no live
   owner: no lock of a live process, no lock with no process ID, no
   live session of `riff who` in it, and not the worktree of the
   caller. It keeps the source and the branch. It posts one note to the
-  lead with each `target` that it removed.
+  lead with each `target` that it removed. Superseded by 3.0
+  (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M41A11DX1QRP48YPTDNT67W4** When less than 5% of the disk of the
   main clone is free, `riff workers start`, the rollout and a workers
   host start no worker on the machine, and say why. The lead gets one
   note when the disk of a machine goes under 5%, not one at each
-  clean.
+  clean. Superseded by 3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M41A11GHP78E2VYN14JSE27P** `riff workers` shows the free disk of
   each machine under its line. A workers host tells its disk in its
   status, after the numbers of its machine. The lead reads a status
-  with no disk as a host that does not tell it.
+  with no disk as a host that does not tell it. Superseded by 3.0
+  (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 - **01M41VAGJC69S9R2TD1B1EQ4W4** `riff workers run` gives `claude` a
   temp folder of its own on disk: `ROOT/SESSION`, in `TMPDIR` and
   `CLAUDE_CODE_TMPDIR`. It also puts both in the `env` of the flag
   settings of `claude`, so that the user settings do not replace them.
   ROOT is `workers.tmp`, else `~/.cache/riff/tmp`.
-  `riff workers tmp` shows and sets it.
+  `riff workers tmp` shows and sets it. Superseded by 3.0
+  (01M4Z60B7TQV799Z4J5KAW2XMZ).
 - **01M41VAGMQPBDPV8XPGEKYRXZZ** A process uses a folder when its
   working directory or an open file is in it, or when its `TMPDIR` or
   `CLAUDE_CODE_TMPDIR` is in it. riff never deletes a temp folder that
-  a live process uses.
+  a live process uses. Superseded by 3.0 (01M4Z60B7TQV799Z4J5KAW2XMZ).
 - **01M41VAGQ2VA2Q0VSFJNG4H08W** The wrapper deletes the temp folder
   of its worker when `claude` ended. `riff workers stop` deletes it
-  after it stopped the processes of the worker.
+  after it stopped the processes of the worker. Superseded by 3.0
+  (01M4Z60B7TQV799Z4J5KAW2XMZ).
 - **01M41VAGSCNESHTZ6216P2E133** At the clear, after the stop of the
   old context, riff deletes each file and folder of the temp folder of
   the worker that no process holds open or works in. It keeps each
-  folder `tasks`.
+  folder `tasks`. Superseded by 3.0 (01M4Z60B7TQV799Z4J5KAW2XMZ).
 - **01M41VAGVR2PPVAYDN0SWK2F02** Each tidy deletes each temp folder in
   ROOT that no process uses and that did not change in the last
-  minute.
+  minute. Superseded by 3.0 (01M4Z60B7TQV799Z4J5KAW2XMZ).
 - **01M41VAGY396K07BTPSW9TNBX5** `riff workers` shows the disk use of
-  ROOT of this machine under the line of its disk.
+  ROOT of this machine under the line of its disk. Superseded by 3.0
+  (01M4Z60B7TQV799Z4J5KAW2XMZ).
 - **01M492379BGA3AERT1AM12C650** The workers of a machine share one
   compile cache. `riff workers run` gives `claude` the variables
   `RUSTC_WRAPPER` (the `sccache` of the machine), `SCCACHE_DIR`,
   `SCCACHE_CACHE_SIZE`, `SCCACHE_SERVER_PORT` and
   `SCCACHE_IGNORE_SERVER_IO_ERROR=1`. With no `sccache`, it unsets the
   five variables and says one line. The cache is on the
-  machine only: no cloud store, no network.
+  machine only: no cloud store, no network. Superseded by 3.0
+  (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 - **01M49AB2QYGJ73Y19KGAY1WDW7** `riff workers run` starts the
   `sccache` server of the machine before it starts `claude`, with no
-  variable of a worker and in its own process group.
+  variable of a worker and in its own process group. Superseded by 3.0
+  (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 - **01M49SVFZS7HTYM3FSCV4ZCS0Q** The `sccache` server of the machine
   runs outside the scope of each worker. When the worker has a scope,
   `riff workers run` starts the server in the systemd scope
   `riff-sccache-PORT.scope`. The server has
   `SCCACHE_IDLE_TIMEOUT=0`, so it never ends for idle time, and a
   build of a worker does not start it again in the scope of that
-  worker.
+  worker. Superseded by 3.0 (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 - **01M49AB2TBMHGNXM3GE4NDFYYG** A process with
   `SCCACHE_START_SERVER=1` whose binary (`/proc/PID/exe`, by device and
   inode) is the `sccache` of the machine is the `sccache` server of the
   machine. riff never trusts the name in `argv[0]`. No clear, reap or
   stop of a worker stops the server. Each other process with the
-  variable stays a process of its worker.
+  variable stays a process of its worker. Superseded by 3.0
+  (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 - **01M49237BM12PVBERD6JXDSX5V** The folder of the cache is
   `$RIFF_HOME/sccache`, else `~/.cache/riff/sccache`. Its most size is
   `workers.cache`, default `40G`. `riff workers cache` shows and sets
-  it.
+  it. Superseded by 3.0 (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 - **01M49237DWTBSEM6CVFH2BYC4V** The port of the `sccache` server
   comes from the folder of the cache: 20000 to 29999. So the workers of
   a machine share one server, and it never mixes with another
-  `sccache` server.
+  `sccache` server. Superseded by 3.0 (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 - **01M4923963S666V9YWTZ46ZZ50** The start of `riff workers host`, and
   `riff update` on a machine with a limit of workers more than 0, run
   `cargo install --locked sccache --version` of the version that riff
   pins, when `sccache` is missing or older. The host installs while it
   serves. A failed install is one note to the lead from a host, and one
   line from `riff update`. The workers then build with no cache.
+  Superseded by 3.0 (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 - **01M492398HA0AXX0J8BZCKNGTG** `riff workers` shows the compile cache
   of this machine under its temp line: the size, the most size and the
-  hit rate, from `sccache --show-stats`.
+  hit rate, from `sccache --show-stats`. Superseded by 3.0
+  (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 - **01M49239AWKEPKEPMZZRRTVRAT** `riff workers cache --clear` stops the
   `sccache` server of the cache and deletes the folder of the cache. It
-  refuses while workers run on the machine.
+  refuses while workers run on the machine. Superseded by 3.0
+  (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 - **01M421QPKWPX00X24F8V6DT8Z3** The monitor of a machine reads its
   health each `monitor.every` seconds (default 15) while `monitor.on`
   is true (default false): the 1-minute and 5-minute load average, the
@@ -3845,6 +4045,7 @@
   and `riff worktrees clean` for orphan processes and stale worktrees.
   No line of the skill tells a session to run `kill`, `pkill`,
   `git worktree unlock` or `git worktree remove`. A test checks it.
+  Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3ZVS08H3PWV5WDJ31SDZM9G** The skill tells a session: a refusal
   of a raw command never blocks work. When no riff command covers the
   case, the session files an issue for it and tells the lead.
@@ -3986,7 +4187,8 @@
 - **01M3JEE7YXQPWS65FBVTASAEBX** The image build of `riff-server` has
   no git. It gets the commit and its time as `RIFF_COMMIT` and
   `RIFF_COMMIT_TIME` from `deploy/build-id.sh`, which uses the same
-  git command as the build of `riff`.
+  git command as the build of `riff`. Superseded by 3.0
+  (01M4Z60B7H67YSP22NMGT3DM7X).
 - **01M3N7JJC5WQBJ7SJZSZNBAVVR** `riff update --auto on` and
   `riff update --auto off` set `update.auto` in the settings of the
   machine, and install nothing. The default is off. `riff update
@@ -4153,6 +4355,270 @@
   the wire, the checkpoint or the state cannot hold an invalid state.
   For example, a saved session has a status, a step, or both: an
   enum, not two options.
+
+## riff 3.0
+
+riff 3.0 is the design of #699. riff 1.x runs today. Each
+requirement of this section holds for riff 3.0. The book page
+[riff 3.0](riff-3.md) has the picture and the table of what sessions
+share.
+
+### Shape
+
+- **01M4Z60B7E6X53NBJ01R95RYGE** riff 3.0 is one binary: the CLI, a
+  daemon, the MCP shim and the relay. It runs on the machine of each
+  person. Cloud workers are future work.
+- **01M4Z60B7FCREZDCTVR73WWRY1** The daemon of riff is a systemd user
+  unit. It owns the state, the keys, the sessions and, later, the peer
+  links. It is the server of riff 3.0.
+- **01M4Z60B7GTV4HHF9R3TMZRS7J** riff 3.0 runs on Linux only. Each
+  platform part is a trait, and its Linux implementation is behind
+  `cfg(target_os = "linux")`: `Runtime` (the start, the stop, the attach
+  and the events of a session) and `ServiceManager`. A session is a
+  `SessionSpec` of plain data: the image, the binds, the environment and
+  the limits. The OCI implementation makes a container from it. A pod
+  backend can use the same spec later.
+
+### Ship
+
+- **01M4Z60B7H67YSP22NMGT3DM7X** riff ships as one static binary, from a
+  GitHub release or with `cargo install`. riff has no image of its own.
+- **01M4Z60B7JF80TMP6FHQ04MHCZ** The session image has a release train
+  of its own. Each repository names its session image, pinned by digest,
+  in its riff config. The first base is the Dockerfile of #707. An image
+  has `claude`, `git`, `gh` at `/usr/bin/gh`, CA certificates, a POSIX
+  shell and the toolchain of the repository. It holds no riff.
+- **01M4Z60B7KEV0H161RBZ1SDRY2** riff binds its own binary into each
+  session with no write, and runs it as the entrypoint: `riff relay`. So
+  the riff code in a session is always the riff code of the host.
+- **01M4Z60B7K13MSYM8ZY20WN6NV** The first run of `riff` checks for
+  podman, installs the user unit of the daemon and pulls the image of
+  the repository.
+- **01M4Z60B7MW963MBQAPN2CJEQZ** The first run of `riff` also checks
+  rootless podman: `/etc/subuid` and `/etc/subgid` have a range for the
+  person, and cgroup v2 gives `cpu` and `memory` to the user. It reads
+  `user@UID.service/cgroup.controllers`, not `podman info`. It names the
+  fix of each check that fails.
+
+### Sessions
+
+- **01M4Z60B7NW4GHKGCYZZDG26R6** Each work item has one session. The
+  session starts, does the item and ends. No session waits idle, and no
+  session clears its context between items. A verify is an item too.
+- **01M4Z60B7PTJMB37578K8FV22Q** Each session has its own clone:
+  `git clone --reference MAIN` into a folder of riff, bound into the
+  container with write. The session reads the objects of the main clone
+  through the alternates, and pushes from its own clone. No session
+  writes the git dir of the main clone or of another session. The clone
+  of a session goes when its item ends, after its push.
+- **01M4Z60B7PQ07HRJBXS1TA73PX** The container sees the objects of the
+  main clone (`MAIN/.git/objects`) at the same path, with no write. So
+  git reads the alternates of the clone of the session.
+- **01M4Z60B7QDWEFQ96H448RE9N2** Each session is a rootless podman
+  container (`podman run --rm --userns=keep-id`) from the image of its
+  repository. riff binds with write only: the clone of the session, its
+  Claude folder, the folder of its socket, and the cache volumes
+  (01M4Z60B7RPSQ1ABGVMJSZWS5P). riff binds `~/.gitconfig` and
+  `~/.config/gh` with no write, or as an overlay (`:O`) whose changes go
+  when the session ends. Each other write goes to the copy-on-write
+  layer of the container, and goes when the session ends.
+- **01M4Z60B7RPSQ1ABGVMJSZWS5P** The cache volumes are named volumes:
+  one for all of `CARGO_HOME`, and one for the folder of sccache. The
+  tools lock them themselves. The toolchain is in the image, with no
+  write, so riff makes no volume for rustup. The sccache server of a
+  session has `SCCACHE_IDLE_TIMEOUT=0`.
+- **01M4Z60B7SHAMXXFK15BE3KZSP** The home of the person is a tmpfs in
+  the container, at the same path, with `HOME` set:
+  `--mount type=tmpfs,destination=$HOME,tmpfs-mode=0700,U=true`. The
+  binds of `~/.gitconfig` and of the Claude folder go on top of it. Each
+  other write in the home goes when the session ends.
+- **01M4Z60B7S8V9KKZPNBCQ6M99N** The `SessionSpec` sets `USER` and
+  `LOGNAME` from the host, as a login shell does.
+- **01M4Z60B7TQV799Z4J5KAW2XMZ** Each container has its own `/tmp`, its
+  own processes and its own loopback. So a temp file, a `pkill` or a
+  test port of one session does not hit another. A session reaches the
+  internet, as a plain `claude` does: no proxy and no filter.
+- **01M4Z60B7VCTG76S8N1CBWWG6D** riff adds no bubblewrap, no Landlock
+  and no seccomp filter to a session. The defaults of podman stay.
+- **01M4Z60B7WXBRPYW38XW9NVC17** A session runs its builds and its tests
+  in its own container, with its own rights. riff has no broker, and no
+  separate sandbox for a test run.
+- **01M4Z60B7W6F3CC5XJE0VS7Y86** The relay talks to the daemon through
+  one Unix socket, in a folder that only that session sees. The socket
+  tells the daemon which session asks. A local session needs no session
+  grant, no session key and no DPoP token.
+- **01M4Z60B7XT7462XMV49GJTVSJ** Each container gets `--memory` and
+  `--cpus`. The defaults are `--memory 8g` and `--cpus 4`. `podman stop`
+  ends a session and each of its processes.
+- **01M4Z60B7Y4XD6TJCYEYJT2R4S** The daemon keeps one limit for the
+  host, in addition to the limits of each container: the number of live
+  sessions, and a floor of free memory. It starts no session while the
+  free memory is below the floor. The defaults are at most 3 live
+  sessions and a floor of 8 GB.
+- **01M4Z60B7Z24WBD6HV6ER0WN9K** A session lives through a stop, a
+  restart or an update of the daemon. conmon, the monitor of podman, is
+  the parent of each container, not riff. So the container runs on when
+  the daemon stops. `riff relay` starts `claude` and holds its stdin and
+  stdout. While the daemon is away, the relay keeps `claude` running and
+  keeps its events. When the daemon comes back, the relay connects again
+  and sends the kept events by sequence number. `claude` does not see
+  the break.
+- **01M4Z60B800BH5BHX0H9JVDG6A** An update of riff reaches new sessions
+  only: the bind keeps the old binary in a session that runs. So the
+  protocol between the relay and the daemon stays compatible across one
+  version. The recovery of the sessions after a reboot or a crash of the
+  host is future work.
+- **01M4Z60B81RTZT71PN5HV0GZHX** The lead runs in a container with a
+  terminal (`podman run -it`). conmon holds its PTY. The ratatui view of
+  riff shows the sessions, and attaches to the lead or to a takeover.
+  riff 3.0 uses no tmux.
+
+### How the relay drives claude
+
+- **01M4Z60B82FHN2YG9YJHW8XZX1** A worker and a verifier run `claude -p`
+  with `--input-format stream-json`, `--output-format stream-json` and
+  `--verbose`, under `riff relay`. One `claude` process holds the whole
+  session. The daemon sends each wake as a message. The relay writes it
+  as one line on stdin, and keeps stdin open between the wakes. No
+  session runs with `--bare`.
+- **01M4Z60B828HF30H7H017WPXGS** The relay sends the events of `claude`
+  to the daemon: `system/init` at the start of each turn, each tool call
+  and its result, each retry, `system/permission_denied`,
+  `system/vcs_state_changed` for a commit and a push, `rate_limit_event`
+  for the windows of the plan, and the `result` of each turn with its
+  usage. `total_cost_usd` and `duration_api_ms` add up over the turns of
+  a session: the daemon takes the difference for each turn.
+- **01M4Z60B83ZH10HYKW7X1C0SSS** The permission rules decide each tool
+  call of a session. `--permission-prompt-tool` sends each other call to
+  riff. A takeover stops a worker at the end of a turn, and opens
+  `claude --resume ID` with a terminal in the same container.
+- **01M4Z60B84FTGMXDZ1F52DC98C** riff keeps the MCP servers of the
+  claude.ai account of the person in a session, as a plain `claude` has
+  them.
+
+### The home of the person
+
+- **01M4Z60B85X62PNYSVJWKXEWH3** riff writes nothing in the home of the
+  person outside its own folders. It does not write `~/.claude`,
+  `~/.claude.json`, a git config or a shell file.
+- **01M4Z60B86N999JRN7Z1G52PG4** Each session has its own Claude folder
+  in a folder of riff. So riff never changes the Claude config of the
+  person, and that config does not change the sessions. `claude` signs
+  in with the token of the plan (`riff claude-token`).
+- **01M4Z60B869HWDTZMSYPVYACD8** The daemon gives each session the
+  long-lived token of `claude setup-token` in `CLAUDE_CODE_OAUTH_TOKEN`.
+  riff gives podman only the name of the variable
+  (`-e CLAUDE_CODE_OAUTH_TOKEN`), so the value is in no command line.
+  riff keeps the token in its own folder, with mode 0600, and never in a
+  log, a message or a clone. Until this works, riff binds
+  `~/.claude/.credentials.json` into the Claude folder of the session
+  with no write, and starts no session while the access token has less
+  than 60 minutes left.
+- **01M4Z60B874MBWZWDP8YDEM3HR** riff trusts the clone of each session
+  in its own Claude folder, as the person trusts the main clone: the
+  `.claude.json` of the folder has
+  `projects[CLONE].hasTrustDialogAccepted: true`.
+- **01M4Z60B88DC67N3GVHY8JGRPQ** A session uses the sign-in of the
+  person for git and `gh` (01M4Z60B7QDWEFQ96H448RE9N2,
+  01M4Z60B89BHXQVJ2MGRRQ2CKJ), as a plain `claude` does. A commit has
+  the git identity of the person and a `Riff-Session:` trailer. riff has
+  no GitHub App.
+- **01M4Z60B89BHXQVJ2MGRRQ2CKJ** The daemon reads `gh auth token` on the
+  host, and gives it to the container in `GH_TOKEN`. riff gives podman
+  only the name of the variable (`-e GH_TOKEN`), so the value is in no
+  command line.
+- **01M4Z60B89G8YNVMTEPGX7FQCV** A session commits with no signature.
+  riff sets `commit.gpgsign=false` in the environment of the container
+  (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`), so
+  it applies to each git call of the session. The squash merge on GitHub
+  makes the commit on `main`. No gpg agent goes into a container.
+
+### Data and peers
+
+- **01M4Z60B8AFV68ZSAFA540G73C** The state machine of riff-server
+  becomes a library in the daemon.
+- **01M4Z60B8BHAR9GHCC0M7V7CV5** The log has the shape of peer to peer:
+  each author has an append-only signed log, and each type of record has
+  one writer. A message or a status: its author. The plan and the waves:
+  the lead of the repository. The members: the owner
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6). A claim: a compare-and-swap push to the
+  forge (01M4Z60B8C3W5TMPVWNFXD1SYN). The keys are ed25519.
+- **01M4Z60B8C8JBV1T8T0W6ZKFE6** The owner signs the key of each member.
+  riff 3.0 has no sign-in with an OpenID Connect provider, no OAuth
+  client and no riff token.
+- **01M4Z60B8C3W5TMPVWNFXD1SYN** A claim is the ref
+  `refs/riff/claims/ITEM` on the forge, for example
+  `refs/riff/claims/issue-12` or `refs/riff/claims/verify-issue-12`. It
+  is not a branch.
+- **01M4Z60B8DYAVEQF6F8N9QP7MS** Each claim is a new commit: the empty
+  tree, no parent, no signature, and a message with the item, the user,
+  the session and the time. The daemon makes each claim and each
+  release, not the session. A claim is a create with
+  `git push --force-with-lease=REF:`: the empty value means that the ref
+  does not exist yet. A release is a delete with the lease of the claim
+  commit.
+- **01M4Z60B8EB7A44A41CWWP7G8K** A claim fails when its lease fails in
+  the client (`stale info`) or on the server (`cannot lock ref`). riff
+  reads both as: another session holds the item.
+- **01M4Z60B8FQ3GMWQH12CXE0JS9** A claim ref has no time limit. It holds
+  until its release, or until the lead deletes it
+  (01M4Z60B8FFRMT3DVG8H1CCZ13).
+- **01M4Z60B8FFRMT3DVG8H1CCZ13** The lead deletes the claim of a session
+  that is gone, with the lease of its claim commit.
+- **01M4Z60B8G1VWGNKBH8ZJGJ7QJ** In a public repository, each claim ref
+  and each claim commit is public, also after the release. A claim
+  commit holds no secret.
+- **01M4Z60B8HN1C1XAG1CA1YS36H** Peer to peer comes right after local
+  isolation works. The transport is iroh (#697). The first release
+  with two peers uses the defaults of iroh: the DNS discovery and the
+  public relays of n0. A small discovery service on Cloud Run comes when
+  riff leaves those defaults. DNS discovery on comotechnologies.io is
+  future work.
+
+### The security of riff's own code
+
+- **01M4Z60B8JEX15M1Q2435FZSDM** A session gets no power that a plain
+  `claude` lacks, other than the riff tools. An owner or admin step, for
+  example to admit a member or to change a role, needs a person at the
+  CLI. No MCP tool does it.
+- **01M4Z60B8K4C6DHFAKNCAWR91S** The daemon checks each peer and each
+  record: iroh checks the node key, each record carries the signature of
+  its author, and the daemon checks the size and the type of each
+  message before it applies it.
+- **01M4Z60B8KDXD190RWC7D184Q3** No secret goes into a log line, a
+  message or a file of a clone. riff builds no shell string from input.
+  CI keeps `clippy -D warnings` and `cargo audit`.
+
+### Process
+
+- **01M4Z60B8MRBB8WTCVNE0G22JG** riff 1.3 runs the riff while we build
+  3.0. It stays up, and nothing forces it off. Its patches go on
+  `release/1.x` (01M4YJ6KGBPTCSVMFQCDKACZPV). If 1.3 does not hold, we
+  build 3.0 with no riff until 3.0 runs its own work.
+- **01M4Z60B8N9W9TBE7KKDJQAN2C** riff 2.x is retired. `main` went back
+  to the line 1.x (#705), and 3.0 builds on 1.3.1. 2.x stays only in the
+  git history and in the tags `v2.0.0` and `v2.0.1`. A part of 2.0 that
+  3.0 wants comes back by a cherry-pick.
+- **01M4Z60B8PW9GSQ79H176P6915** Before code, one short table says what
+  sessions share and how riff keeps them apart: the files, git, the
+  processes, `/tmp`, the ports, the caches, the home, the CPU, the
+  memory and the network. It is on the book page riff 3.0 (#709). It
+  replaces the threat model and the surface table of 2.0.
+- **01M4Z60B8Q8YH6DRSZWPV42CQ0** Each release passes a real-session
+  test: the riff binary and the session image, with a real `claude`, on
+  a host with a real home (a `~/.gitconfig`, project settings, first-run
+  state), do one item from the start to a pull request. The test runs in
+  the `SessionSpec` of a session. CI runs the same image.
+- **01M4Z60B8R57HG5Z0BA8XM3EM8** Each requirement of the server, the
+  cloud, the sign-in, tmux, the workers and their clear, the tidy of
+  worktrees and the pool of build jobs ends with "Superseded by 3.0
+  (ID)." It holds for riff 1.x until riff 3.0 replaces it. No
+  requirement is deleted or renumbered. The requirements of the GitHub
+  App and of the 2.0 sandbox left `main` with 2.x
+  (01M4Z60B8N9W9TBE7KKDJQAN2C).
+- **01M4Z60B8RES9JSQDHNBFVR8AH** After 3.0 replaces 1.3, the Cloud Run
+  service, the GCS bucket, the Secret Manager entries and the GitHub App
+  of riff go. Mike decides when.
 
 ## Open
 
