@@ -3635,6 +3635,29 @@ mod tests {
         assert_eq!(newest.build, "1.3.1");
         assert!(newest.position > last + 1, "{newest:?}");
         assert!(checkpoints(&store).await.len() >= 2);
+
+        // A read moves the cursor of brett, and the next checkpoint keeps
+        // it. A start from that checkpoint does not set it back (#700).
+        let unread = || Read {
+            after: None,
+            me: brett(),
+            thread: mike().default_thread().unwrap(),
+            all: false,
+        };
+        assert_eq!(
+            read_messages(&next, unread()).await,
+            ["after0", "after1", "after2"]
+        );
+        post_n(&next, 1, "last").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        drop(next);
+        let again = Service::load(with_checkpoints(1, "1.3.1"), store.clone())
+            .await
+            .unwrap();
+        let facts = again.0.server_facts();
+        assert_eq!(facts.checkpoint.unwrap().build, "1.3.1");
+        assert_eq!((facts.skipped_records, facts.no_checkpoint), (0, None));
+        assert_eq!(read_messages(&again, unread()).await, ["last0"]);
     }
 
     /// A rollback: the later build writes a checkpoint after the load of

@@ -49,7 +49,7 @@
 //! - A checkpoint of a later major version comes from a later release
 //!   line, which has its own instance (01M4YNCEMNRCAXD37V03T4JQYR). A
 //!   start does not use it, and it does not block: the build reads only
-//!   its text `build` ([`later_line`]). A checkpoint of a later minor or
+//!   its text `build` ([`of_later_line`]). A checkpoint of a later minor or
 //!   patch of the same line still blocks.
 //!
 //! # Example
@@ -176,6 +176,11 @@ pub fn encode(checkpoint: &Checkpoint) -> Vec<u8> {
 /// Reads a checkpoint. A checkpoint of a later format does not read.
 pub fn decode(bytes: &[u8]) -> Result<Checkpoint, String> {
     let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    decode_value(value)
+}
+
+/// Reads a checkpoint from its JSON, as [`decode`] does.
+fn decode_value(value: serde_json::Value) -> Result<Checkpoint, String> {
     let format = value
         .get("format")
         .and_then(serde_json::Value::as_u64)
@@ -229,11 +234,21 @@ pub fn later_line(theirs: &str, ours: &str) -> bool {
     }
 }
 
-/// The text `build` of the checkpoint `bytes`, also when the rest does
-/// not read.
-fn build_of(bytes: &[u8]) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-    value.get("build")?.as_str().map(str::to_owned)
+/// The text `build` of the checkpoint JSON `value` when it comes from a
+/// later release line than `build` ([`later_line`]). It reads only that
+/// field, so the rest of the checkpoint need not read.
+///
+/// ```
+/// use riff_server::checkpoint::of_later_line;
+///
+/// let theirs = serde_json::json!({"format": 1, "build": "2.0.1", "state": "x"});
+/// assert_eq!(of_later_line(&theirs, "1.3.1").as_deref(), Some("2.0.1"));
+/// assert_eq!(of_later_line(&theirs, "2.0.0"), None);
+/// assert_eq!(of_later_line(&serde_json::json!({"format": 1}), "1.3.1"), None);
+/// ```
+pub fn of_later_line(value: &serde_json::Value, build: &str) -> Option<String> {
+    let theirs = value.get("build")?.as_str()?;
+    later_line(theirs, build).then(|| theirs.to_owned())
 }
 
 /// What a start finds in `checkpoint/`.
@@ -259,25 +274,22 @@ pub async fn load(store: &dyn Store, build: &str) -> Result<Found, StoreError> {
     let newest = names.last().map(|(_, _, name)| name.clone());
     let mut blocked = None;
     for (_, _, name) in names.iter().rev() {
-        let loaded = store.load(name).await?;
-        if let Some(theirs) = loaded.as_ref().and_then(|l| build_of(&l.bytes))
-            && later_line(&theirs, build)
-        {
+        let value = match store.load(name).await? {
+            Some(loaded) => serde_json::from_slice(&loaded.bytes).map_err(|e| e.to_string()),
+            None => Err("the checkpoint is gone".into()),
+        };
+        if let Some(theirs) = value.as_ref().ok().and_then(|v| of_later_line(v, build)) {
             tracing::info!(
                 "the checkpoint {} comes from the later release line of {theirs}: this build does not use it",
                 store.locate(name)
             );
             continue;
         }
-        let read = match loaded {
-            Some(loaded) => decode(&loaded.bytes),
-            None => Err("the checkpoint is gone".into()),
-        };
-        match read {
+        match value.and_then(decode_value) {
             Ok(checkpoint) => {
                 if blocked.is_none() && later(&checkpoint.build, build) {
                     blocked = Some(format!(
-                        "the newest checkpoint {name} comes from the later version {}",
+                        "the checkpoint {name} comes from the later version {}",
                         checkpoint.build
                     ));
                 }
@@ -289,8 +301,7 @@ pub async fn load(store: &dyn Store, build: &str) -> Result<Found, StoreError> {
             }
             Err(why) => {
                 tracing::warn!("the checkpoint {} does not read: {why}", store.locate(name));
-                blocked
-                    .get_or_insert_with(|| format!("the newest checkpoint {name} does not read"));
+                blocked.get_or_insert_with(|| format!("the checkpoint {name} does not read"));
             }
         }
     }
