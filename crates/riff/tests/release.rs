@@ -93,17 +93,21 @@ fn the_static_build_runs_in_the_rust_image_of_the_channel_of_the_repository() {
     let tree = format!("{}:/src", top().display());
     assert_eq!(args[..2], ["run", "--rm"], "{args:?}");
     assert!(has(["-v", &tree]), "{args:?}");
-    assert!(has(["-e", "CARGO_TARGET_DIR=/src/target/static"]), "{args:?}");
+    assert!(
+        has(["-e", "CARGO_TARGET_DIR=/src/target/static"]),
+        "{args:?}"
+    );
     assert!(has(["-e", "RIFF_COMMIT"]), "{args:?}");
     assert!(has(["-e", "RIFF_COMMIT_TIME"]), "{args:?}");
     let image = format!("docker.io/library/rust:{channel}-alpine");
     assert!(args.contains(&image.as_str()), "{args:?}");
-    let run = args.iter().find(|a| a.contains("cargo build")).unwrap();
-    assert!(
-        run.contains("cargo build --locked --profile \"$1\" -p riff -p riff-server"),
-        "{run}"
-    );
-    assert!(run.contains("apk add -q --no-cache musl-dev linux-headers"), "{run}");
+    // The script of the container has lines of its own.
+    for part in [
+        "apk add -q --no-cache musl-dev linux-headers\n",
+        "cargo build --locked --profile \"$1\" -p riff -p riff-server\n",
+    ] {
+        assert!(log.contains(part), "{part} is not in:\n{log}");
+    }
     assert_eq!(args.last(), Some(&"release"), "{args:?}");
 
     let id = std::process::Command::new(top().join("deploy/build-id.sh"))
@@ -187,7 +191,10 @@ fn ci_builds_and_checks_the_static_riff_of_each_pull_request() {
         "run: deploy/static/build.sh release\n",
         "run: deploy/static/check.sh release\n",
     ] {
-        assert!(job.contains(part), "{part} is not in the job static:\n{job}");
+        assert!(
+            job.contains(part),
+            "{part} is not in the job static:\n{job}"
+        );
     }
     assert!(!job.contains("contents: write"), "{job}");
 }
@@ -206,7 +213,10 @@ fn a_release_tag_gets_the_files_that_riff_update_downloads() {
     let assets: Vec<String> = binaries.iter().map(|b| asset(b, target)).collect();
     let sums = format!("sha256sum -- {} > {SUMS}\n", assets.join(" "));
     for part in [each, copy, sums] {
-        assert!(job.contains(&part), "{part} is not in the job static:\n{job}");
+        assert!(
+            job.contains(&part),
+            "{part} is not in the job static:\n{job}"
+        );
     }
     assert!(job.contains("if: github.ref_type == 'tag'"), "{job}");
 

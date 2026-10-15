@@ -265,20 +265,19 @@ pub fn check(bytes: &[u8], machine: u16) -> Result<(), String> {
 /// where the person installed it with cargo.
 ///
 /// ```
+/// use std::ffi::OsString;
 /// use std::path::Path;
 /// use riff::release::bin_dir;
 ///
-/// let env = |root: Option<&str>, home: Option<&str>| {
-///     move |name: &str| match name {
-///         "CARGO_INSTALL_ROOT" => root.map(Into::into),
-///         "CARGO_HOME" => home.map(Into::into),
-///         "HOME" => Some("/home/ana".into()),
-///         _ => None,
-///     }
-/// };
-/// assert_eq!(bin_dir(env(Some("/opt/c"), Some("/c"))).unwrap(), Path::new("/opt/c/bin"));
-/// assert_eq!(bin_dir(env(None, Some("/c"))).unwrap(), Path::new("/c/bin"));
-/// assert_eq!(bin_dir(env(None, None)).unwrap(), Path::new("/home/ana/.cargo/bin"));
+/// fn env(vars: &'static [(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+///     |name| vars.iter().find(|(k, _)| *k == name).map(|(_, v)| v.into())
+/// }
+/// let all = env(&[("CARGO_INSTALL_ROOT", "/opt/c"), ("CARGO_HOME", "/c"), ("HOME", "/h")]);
+/// assert_eq!(bin_dir(all).unwrap(), Path::new("/opt/c/bin"));
+/// let cargo_home = env(&[("CARGO_HOME", "/c"), ("HOME", "/h")]);
+/// assert_eq!(bin_dir(cargo_home).unwrap(), Path::new("/c/bin"));
+/// assert_eq!(bin_dir(env(&[("HOME", "/h")])).unwrap(), Path::new("/h/.cargo/bin"));
+/// assert_eq!(bin_dir(env(&[])), None);
 /// ```
 pub fn bin_dir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
     let set = |name: &str| var(name).filter(|v| !v.is_empty()).map(PathBuf::from);
@@ -342,7 +341,12 @@ impl Source {
 
     /// The bytes of the release file `name` of `tag`. `None` when the
     /// release has no such file: a 404, or no file in the folder.
-    async fn get(&self, client: &reqwest::Client, tag: &str, name: &str) -> Result<Option<Vec<u8>>> {
+    async fn get(
+        &self,
+        client: &reqwest::Client,
+        tag: &str,
+        name: &str,
+    ) -> Result<Option<Vec<u8>>> {
         let place = self.place(tag, name);
         match self {
             Source::Web(_) => fetch(client, &place).await,
@@ -539,7 +543,10 @@ mod tests {
         }
         let mut far = good.clone();
         far[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
-        assert_eq!(elf(&far).unwrap_err(), "its program headers are past its end");
+        assert_eq!(
+            elf(&far).unwrap_err(),
+            "its program headers are past its end"
+        );
         let mut far = good.clone();
         far[64 + 8..64 + 16].copy_from_slice(&u64::MAX.to_le_bytes());
         assert_eq!(elf(&far).unwrap_err(), "its interpreter is past its end");

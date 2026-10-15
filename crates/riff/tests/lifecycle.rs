@@ -888,9 +888,15 @@ async fn update_installs_nothing_when_a_file_fails_a_check() {
     let sum = |bytes: &[u8], binary: &str| {
         format!("{}  {}\n", riff::release::sha256(bytes), asset(binary))
     };
-    let wrong_sums = format!("{zeros}  {}\n{}", asset("riff"), sum(&server, "riff-server"));
+    let wrong_sums = format!(
+        "{zeros}  {}\n{}",
+        asset("riff"),
+        sum(&server, "riff-server")
+    );
     let missing_sums = sum(&good, "riff") + &sum(&server, "riff-server");
-    let cases: [(&[(&str, &[u8])], Option<&str>, String); 3] = [
+    // The files of the release, its SHA256SUMS, and the reason.
+    type Case<'a> = (&'a [(&'a str, &'a [u8])], Option<&'a str>, String);
+    let cases: [Case; 3] = [
         (
             &[("riff", &good), ("riff-server", &server)],
             Some(&wrong_sums),
