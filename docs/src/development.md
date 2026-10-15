@@ -356,6 +356,16 @@ flowchart LR
    gh auth status
    ```
 
+4. Give your clone an HTTPS `origin`. The clone of the session takes
+   the URL of `origin` from your clone. The container has no SSH
+   agent, so it cannot push to an SSH URL. To see the URL, and to
+   change it to HTTPS:
+
+   ```sh
+   git remote get-url origin
+   git remote set-url origin https://github.com/OWNER/REPO.git
+   ```
+
 ### Run an item
 
 In your clone of the repository:
