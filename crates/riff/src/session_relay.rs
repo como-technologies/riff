@@ -622,7 +622,7 @@ struct Calls(BTreeMap<String, Value>);
 impl Calls {
     /// Notes a line of `claude`. It gives the params of an initialize
     /// request.
-    fn from_claude(&mut self, line: &str) -> Option<Value> {
+    fn of_claude(&mut self, line: &str) -> Option<Value> {
         let message = serde_json::from_str::<Value>(line).ok()?;
         match (message.get("method"), message.get("id")) {
             (Some(method), Some(id)) => {
@@ -640,7 +640,7 @@ impl Calls {
     }
 
     /// Notes a line of the daemon.
-    fn from_daemon(&mut self, line: &str) {
+    fn of_daemon(&mut self, line: &str) {
         let Ok(message) = serde_json::from_str::<Value>(line) else {
             return;
         };
@@ -690,7 +690,7 @@ pub async fn mcp(
         first = false;
         let mut open = send(&mut write, &hello).await.is_ok();
         while open && let Some(line) = waiting.pop_front() {
-            client = calls.from_claude(&line).or(client);
+            client = calls.of_claude(&line).or(client);
             open = write
                 .write_all(format!("{line}\n").as_bytes())
                 .await
@@ -700,14 +700,14 @@ pub async fn mcp(
             tokio::select! {
                 line = from_claude.next_line() => match line? {
                     Some(line) => {
-                        client = calls.from_claude(&line).or(client);
+                        client = calls.of_claude(&line).or(client);
                         open = write.write_all(format!("{line}\n").as_bytes()).await.is_ok();
                     }
                     None => return Ok(()),
                 },
                 line = from_daemon.next_line() => match line {
                     Ok(Some(line)) => {
-                        calls.from_daemon(&line);
+                        calls.of_daemon(&line);
                         output.write_all(format!("{line}\n").as_bytes()).await?;
                         output.flush().await?;
                     }
