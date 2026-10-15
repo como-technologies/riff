@@ -1598,6 +1598,25 @@ mod tests {
         assert!(!here.daemon.stop_wave("o/r").unwrap());
     }
 
+    #[tokio::test]
+    async fn a_new_ask_with_another_main_clone_runs_the_wave_with_it() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[], 3, free).await;
+        here.run();
+        let other = Wave {
+            repo: "o/r".into(),
+            main: "/src/other".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        here.daemon.run_wave(other.clone()).unwrap();
+        let kept = read_waves(here.daemon.dir()).unwrap();
+        assert_eq!(kept.get("o/r"), Some(&other));
+        assert_eq!(here.daemon.waves_shown().len(), 1);
+        here.until(0, |h| h.daemon.waves_shown()[0].word == text::WAVE_NO_WORK)
+            .await;
+    }
+
     #[test]
     fn a_wave_goes_to_its_file_and_comes_back() {
         let dir = tempfile::tempdir().unwrap();

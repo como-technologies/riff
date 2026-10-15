@@ -963,8 +963,12 @@ pub struct Daemon<R> {
 
 /// A wave that runs in the daemon.
 struct Running {
+    /// The wave.
+    wave: Wave,
     /// The task of its loop.
     task: JoinHandle<()>,
+    /// The items of its jobs that the daemon does not own yet.
+    taken: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// What it did last.
     word: Arc<Mutex<String>>,
 }
@@ -1121,19 +1125,23 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .collect(),
             limit: Some(self.room.limit()),
             waiting: self.room.waiting(),
-            waves: self
-                .waves_lock()
-                .iter()
-                .map(|(repo, running)| WaveShown {
-                    repo: repo.clone(),
-                    word: running
-                        .word
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .clone(),
-                })
-                .collect(),
+            waves: self.waves_shown(),
         }
+    }
+
+    /// Each wave that the daemon runs, with what it did last.
+    pub fn waves_shown(&self) -> Vec<WaveShown> {
+        self.waves_lock()
+            .iter()
+            .map(|(repo, running)| WaveShown {
+                repo: repo.clone(),
+                word: running
+                    .word
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone(),
+            })
+            .collect()
     }
 
     fn waves_lock(&self) -> MutexGuard<'_, BTreeMap<String, Running>> {
@@ -1151,15 +1159,19 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Starts the loop of `wave`, when it does not run.
+    /// A loop that runs with other facts of the wave, for example
+    /// another main clone, starts again with the new facts. Its jobs go
+    /// on.
     fn spawn_wave(self: &Arc<Self>, wave: Wave) {
         let mut running = self.waves_lock();
-        if running
-            .get(&wave.repo)
-            .is_some_and(|r| !r.task.is_finished())
-        {
-            return;
-        }
-        let taken = Arc::new(Mutex::new(std::collections::BTreeSet::new()));
+        let taken = match running.get(&wave.repo) {
+            Some(old) if old.wave == wave && !old.task.is_finished() => return,
+            Some(old) => {
+                old.task.abort();
+                old.taken.clone()
+            }
+            None => Arc::new(Mutex::new(std::collections::BTreeSet::new())),
+        };
         let word = Arc::new(Mutex::new(text::wave_starts()));
         let task = tokio::spawn(crate::wave::run(
             self.clone(),
@@ -1167,7 +1179,15 @@ impl<R: Runtime + 'static> Daemon<R> {
             taken.clone(),
             word.clone(),
         ));
-        running.insert(wave.repo, Running { task, word });
+        running.insert(
+            wave.repo.clone(),
+            Running {
+                wave,
+                task,
+                taken,
+                word,
+            },
+        );
     }
 
     /// Starts no new session for the wave of `repo`. The sessions that

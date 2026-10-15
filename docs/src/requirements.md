@@ -4718,10 +4718,11 @@ share.
   room, the daemon says why to `riff run`. When `riff run` stops it, or
   leaves, the daemon starts nothing.
 - **01M4ZV3B6HAFTSC2K63FMC5FYA** `riff daemon limit` shows the limit of
-  the host. `--sessions N` and `--floor GB` set it in `limit.json` in the
-  folder of the daemon. The daemon reads the file at each look for room,
-  so a change counts at once. `riff daemon status` shows the limit, each
-  start that waits for room, and each wave with what it did last.
+  the host. `--sessions N` and `--floor GB` set it in `limit.json` in
+  the folder of the daemon. The daemon reads the file at each look for
+  room, so a change counts at once. `riff daemon status` shows the
+  limit, each start that waits for room, and each wave with what it did
+  last.
 - **01M4ZV3B6J89KJQ0F14YWTZMJQ** `riff wave run` in a clone asks the
   daemon to run the current wave of the repository of the clone. The
   daemon keeps each wave in `waves.json` in its folder, with the main
