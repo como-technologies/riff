@@ -27,6 +27,9 @@ case $branch in
 esac
 
 mkdir -p "$dir/claude"
+# Before a container makes them: are the cache volumes new?
+fresh=new
+podman volume exists "$vol-cargo" && podman volume exists "$vol-sccache" && fresh=warm
 results=$dir/results.md
 : > "$results"
 failed=0
@@ -88,7 +91,7 @@ else
     fail "podman build: see $dir/build.log"
     exit 1
 fi
-note "- Size: $(podman image inspect --format '{{.Size}}' "$image" | awk '{printf "%.1f GB", $1/1e9}')"
+note "- Size: $(podman images --format '{{.Size}}' "$image" | head -n 1)"
 
 note ""
 note "## 3. The clone of the session"
@@ -125,12 +128,21 @@ cat > "$dir/claude/settings.json" <<'EOF'
   }
 }
 EOF
+# claude applies the allow rules of the .claude/settings.json of the
+# clone only in a trusted folder. The own Claude folder of the session
+# trusts its clone, as the person trusts the main clone.
+python3 -I -c '
+import json, sys
+json.dump({"projects": {sys.argv[2]: {"hasTrustDialogAccepted": True}}},
+          open(sys.argv[1], "w"), indent=2)
+' "$dir/claude/.claude.json" "$dir/riff"
 
 # The spec of a session (decision 10 with decisions 30 to 32). The home
-# is a tmpfs: each write there goes when the container ends.
+# is a tmpfs: each write there goes when the container ends. A login
+# shell sets USER and LOGNAME; riff reads USER.
 home=(--rm --userns=keep-id --memory "$memory" --cpus "$cpus"
     --mount "type=tmpfs,destination=$HOME,tmpfs-mode=0700,U=true"
-    -e HOME="$HOME")
+    -e HOME="$HOME" -e USER="$(id -un)" -e LOGNAME="$(id -un)")
 objects=(-v "$common/objects:$common/objects:ro")
 gitcfg=(-v "$HOME/.gitconfig:$HOME/.gitconfig:ro")
 nosign=(-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=commit.gpgsign -e GIT_CONFIG_VALUE_0=false)
@@ -255,6 +267,11 @@ if python3 -I "$here/drive.py" --log "$dir/events.jsonl" --stderr "$dir/claude-s
 else
     fail "claude -p in stream-json: see $dir/events.md and $dir/claude-stderr.log"
 fi
+if [ -s "$dir/claude-stderr.log" ]; then
+    note "- NOTE: the stderr of claude: $(head -c 400 "$dir/claude-stderr.log" | tr '\n' ' ')"
+else
+    pass "the stderr of claude is empty: the trusted clone applies its project rules"
+fi
 remote_commit=$(git ls-remote "$remote" "refs/heads/$branch" | cut -f1)
 local_commit=$(git -C "$dir/riff" rev-parse -q --verify "refs/heads/$branch" || true)
 if [ -n "$remote_commit" ] && [ "$remote_commit" = "$local_commit" ]; then
@@ -267,21 +284,37 @@ fi
 
 note ""
 note "## 6. The time of just check"
-fresh=new
-podman volume exists "$vol-cargo" && podman volume exists "$vol-sccache" && fresh=warm
-note "- The cache volumes before the first check: $fresh."
+note "- The cache volumes at the start of the run: $fresh."
+# Each line of the log starts with the seconds since the start of just
+# check. The parts: the fast checks up to the cargo test line, the build
+# of the tests, and the tests.
+parts() { # $1: the log
+    awk '
+        $2 ~ /^RIFF_SERVER=/ && !t { t = $1 }
+        /Finished `test` profile/ && !b { b = $1 }
+        $1 ~ /^[0-9]+$/ { e = $1 }
+        END {
+            if (t) printf "the fast checks %d s, the build of the tests %d s, the tests %d s", t, b - t, e - b
+            else printf "the fast checks %d s, no tests", e
+        }' "$1"
+}
 check() { # $1: the clone, $2: the name of the check
-    local t
+    local t log=$dir/check-$2.log
     t=$(date +%s)
     # shellcheck disable=SC2046
     if podman run "${session[@]}" $(at "$1") "$image" bash -c '
-        just check; rc=$?
+        set -o pipefail
+        start=$EPOCHSECONDS
+        just check 2>&1 | while IFS= read -r line; do
+            printf "%d %s\n" $((EPOCHSECONDS - start)) "$line"
+        done
+        rc=$?
         echo "memory.peak $(cat /sys/fs/cgroup/memory.peak)"
         sccache --show-stats | grep -E "^(Compile requests|Cache hits|Cache misses) "
-        exit $rc' > "$dir/check-$2.log" 2>&1; then
-        pass "just check, $2: $(since "$t") s, peak memory $(awk '/^memory.peak/ {printf "%.1f GiB", $2/2^30}' "$dir/check-$2.log"), sccache $(grep -E '^Cache (hits|misses) ' "$dir/check-$2.log" | awk '{print $1, $2, $NF}' | paste -sd ' ')"
+        exit $rc' > "$log" 2>&1; then
+        pass "just check, $2: $(since "$t") s ($(parts "$log")), peak memory $(awk '/^memory.peak/ {printf "%.1f GiB", $2/2^30}' "$log"), sccache $(grep -E '^Cache (hits|misses) ' "$log" | awk '{print $1, $2, $NF}' | paste -sd ' ')"
     else
-        fail "just check, $2: $(since "$t") s: see $dir/check-$2.log"
+        fail "just check, $2: $(since "$t") s ($(parts "$log")): see $log"
     fi
 }
 check "$dir/riff" "1 (a new clone: no target)"

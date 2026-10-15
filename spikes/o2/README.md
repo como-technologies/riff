@@ -44,12 +44,15 @@ The container of a session has:
 | Part | In the container |
 |---|---|
 | The home | A tmpfs at the path of your home. A write there goes when the container ends. |
+| The user name | `USER` and `LOGNAME`, as a login shell sets them. riff reads `USER`. |
 | The clone | A bind with write, at the same path as on the host. |
 | The objects of the main clone | A bind with no write, at the same path. |
 | `~/.gitconfig` | A bind with no write. |
 | The signature | `GIT_CONFIG_*` sets `commit.gpgsign=false`. |
 | The sign-in of `gh` | `GH_TOKEN`, from `gh auth token` on the host. |
 | The sign-in of `claude` | Its own Claude folder, with `~/.claude/.credentials.json` bound with no write. |
+| The trust of the clone | The `.claude.json` of its own Claude folder trusts the clone. Else `claude` ignores the allow rules of `.claude/settings.json` of the clone. |
+| The permission rules | `settings.json` of its own Claude folder allows `Read`, `Edit` and the git commands of the item. |
 | The caches | The named volumes `riff-spike-o2-cargo` (`CARGO_HOME`) and `riff-spike-o2-sccache`. |
 | The limits | `--memory 8g --cpus 4`, and `CARGO_BUILD_JOBS=4`. |
 
