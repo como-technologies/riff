@@ -4772,6 +4772,33 @@ pub fn run_verify_request(
     )
 }
 
+/// The end steps of `riff run`, as [`run_not_sent`] names them.
+pub const RUN_VERIFY_REQUEST: &str = "the verify request";
+/// See [`RUN_VERIFY_REQUEST`].
+pub const RUN_RELEASE: &str = "the release";
+/// See [`RUN_VERIFY_REQUEST`].
+pub const RUN_END: &str = "the end of the session";
+
+/// A SIGINT or a SIGTERM stopped `riff run` in its end steps: it names
+/// each step that it did not send (01M4ZYFJFTX9ZEX7QT4QH7E9T6).
+///
+/// ```
+/// use riff::text::{RUN_END, RUN_RELEASE, run_not_sent};
+///
+/// assert_eq!(
+///     run_not_sent("issue-12", &[RUN_RELEASE, RUN_END]),
+///     "riff run stopped at a signal. It did not send the release, the end of the session. \
+///      riff-server frees the claim of issue-12 when the session stops."
+/// );
+/// ```
+pub fn run_not_sent(item: &str, steps: &[&str]) -> String {
+    format!(
+        "riff run stopped at a signal. It did not send {}. riff-server frees the claim of \
+         {item} when the session stops.",
+        steps.join(", ")
+    )
+}
+
 /// A session of `riff run` with no open pull request.
 pub fn run_no_pull(branch: &str) -> String {
     format!("No open pull request has the branch {branch}. The work is in the clone.")

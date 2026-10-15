@@ -565,6 +565,14 @@ a new instance of the server starts, riff tries again for up to 10
 minutes. You see `(waits for riff-server…)`. The session keeps its
 claim while riff waits.
 
+To stop the wait, press Ctrl-C. A SIGTERM does the same. riff sends no
+more step, says which steps it did not send, and ends with the exit
+code 1. riff-server frees the claim when the session stops:
+
+```text
+riff run stopped at a signal. It did not send the verify request, the release, the end of the session. riff-server frees the claim of issue-12 when the session stops.
+```
+
 The folder of the session is
 `~/.local/share/riff/sessions/ITEM-ID8`. Its `clone` stays until the
 merge. Its `events.jsonl` has each event, with no secret: the daemon
