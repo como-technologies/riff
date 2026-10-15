@@ -4378,6 +4378,17 @@ share.
   `SessionSpec` of plain data: the image, the binds, the environment and
   the limits. The OCI implementation makes a container from it. A pod
   backend can use the same spec later.
+- **01M4ZBGK3A977KZW50AZFR95E9** The steps of a `Runtime` are: find an
+  image, pull an image, start a `SessionSpec`, stop a session, and
+  attach a terminal to a session. A start gives the input, the events,
+  the errors and the end of the session. A spec holds no secret: the
+  value of each variable that comes from the host goes to the start
+  beside the spec.
+- **01M4ZBGK5G3EFXWT61DR2NHMDD** The code that drives a session takes
+  its `Runtime` as a parameter. Its tests use the fake runtime of riff,
+  which starts no container. A session of the fake runtime prints the
+  events that the test gives, keeps its input, and ends with the exit 0
+  when its input closes. A stop ends it with no exit code.
 
 ### Ship
 
@@ -4527,6 +4538,8 @@ share.
   `podman stop`, and riff then releases the item. The exit code is 0
   only when the turn ended with no error and the branch has an open
   pull request.
+- **01M4ZBGK7SFEXE1AGH6Z0YQHJP** On a host that is not Linux,
+  `riff run` starts nothing, and says that it needs Linux.
 - **01M4Z81B3A324KKE8M8Z71TM4M** Before the claim, `riff run` checks
   podman and the image, the sign-in of `gh`, the sign-in of `claude`
   (01M4Z60B869HWDTZMSYPVYACD8), `HOME`, `USER`, and the wave of the

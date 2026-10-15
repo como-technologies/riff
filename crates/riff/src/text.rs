@@ -4533,10 +4533,13 @@ pub fn run_not_an_issue(item: &str) -> String {
     format!("riff run takes an issue, for example issue-12, not {item}.")
 }
 
-/// A program that `riff run` cannot start.
-pub fn run_no_program(program: &str) -> String {
-    format!("riff run cannot start {program}. Install it, or put it on PATH.")
+/// A program that riff cannot start.
+pub fn no_program(program: &str) -> String {
+    format!("riff cannot start {program}. Install it, or put it on PATH.")
 }
+
+/// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
+pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff 3.0 runs on Linux only.";
 
 /// `riff run` pulls the image of the session.
 pub fn run_pulling(image: &str) -> String {
@@ -4579,10 +4582,10 @@ pub fn run_no_milestone(issue: u64) -> String {
 }
 
 /// A path that podman cannot take in an option.
-pub fn run_bad_path(path: &str) -> String {
+pub fn podman_bad_path(path: &str) -> String {
     format!(
-        "riff run cannot give the path {path} to podman: it has a comma or a colon. Use a \
-         path with neither."
+        "riff cannot give the path {path} to podman: it has a comma or a colon. Use a path \
+         with neither."
     )
 }
 
