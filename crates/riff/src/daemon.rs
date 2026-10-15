@@ -142,6 +142,26 @@
 //! container ends (01M4ZHT03MAH0B5Q4S6GZC5JRP). A [`Then::Stop`] stops
 //! the container: the relay gives `claude` the SIGTERM.
 //!
+//! `claude -p` does not end while one of its background tasks runs. The
+//! end of each task starts a new turn. So a session can stay up after
+//! the close. When no event comes for the quiet limit after the close
+//! ([`QUIET_LIMIT`]), the daemon stops the container, and tells each
+//! `riff` that follows the session why (01M4ZSZX77AJDGWNQMGBPV2QXG). Each
+//! event moves the end of the quiet.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant D as riff daemon
+//!     participant C as riff relay and claude -p
+//!     C->>D: result
+//!     D->>C: close the input
+//!     C->>D: background_tasks_changed: one task runs
+//!     Note over C: the task ends: a new turn
+//!     C->>D: init, ..., result
+//!     Note over D,C: no event for the quiet limit
+//!     D->>C: stop the container
+//! ```
+//!
 //! # A stop of the daemon
 //!
 //! A stop or a restart of the daemon stops no container
@@ -233,6 +253,28 @@ const GONE_WAIT: Duration = Duration::from_secs(1);
 /// How often the daemon looks at the container of a session that it took
 /// up while no relay is connected: a relay that gave up does not come.
 const LOOK_EVERY: Duration = Duration::from_secs(30);
+
+/// The quiet limit: after the input of `claude` closed, the longest time
+/// with no event of the session. Then the daemon stops its container
+/// (01M4ZSZX77AJDGWNQMGBPV2QXG). It is longer than the longest check of
+/// a session: a `just ci` can take 15 minutes.
+pub const QUIET_LIMIT: Duration = Duration::from_secs(30 * 60);
+
+/// The variable that gives the quiet limit of a `riff daemon` in
+/// milliseconds. Only a test sets it.
+///
+/// ```
+/// assert_eq!(riff::daemon::QUIET_VAR, "RIFF_DAEMON_QUIET_MS");
+/// ```
+pub const QUIET_VAR: &str = "RIFF_DAEMON_QUIET_MS";
+
+/// [`QUIET_LIMIT`], or the milliseconds of [`QUIET_VAR`].
+fn quiet_limit() -> Duration {
+    std::env::var(QUIET_VAR)
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map_or(QUIET_LIMIT, Duration::from_millis)
+}
 
 /// The folder of the daemon in the data folder `data` of riff.
 ///
@@ -688,6 +730,8 @@ struct Owned {
     notes: mpsc::UnboundedSender<Note>,
     /// A `riff` asked to stop the container.
     stop: Notify,
+    /// The input of `claude` closed: the quiet limit counts from now.
+    closing: Notify,
     /// The task of the socket of the session.
     door: Mutex<Option<JoinHandle<()>>>,
 }
@@ -697,6 +741,8 @@ struct SessionState {
     record: Record,
     /// The number of events in `events.jsonl`.
     seq: u64,
+    /// The time of the last event, or of the start of the ownership.
+    last: tokio::time::Instant,
     log: std::fs::File,
     /// The connections of `riff` that follow the session.
     followers: Vec<Out>,
@@ -739,6 +785,7 @@ impl Owned {
             return state.seq;
         }
         state.seq = seq;
+        state.last = tokio::time::Instant::now();
         if let Ok(event) = serde_json::from_str::<Value>(&line)
             && event["type"] == "result"
         {
@@ -750,6 +797,7 @@ impl Owned {
                 if let Some(relay) = &state.relay {
                     relay.say(Say::Close);
                 }
+                self.closing.notify_one();
             }
             if let Err(e) = self.save(&state.record) {
                 eprintln!("riff daemon: {e:#}");
@@ -853,6 +901,8 @@ pub struct Daemon<R> {
     since_ms: i64,
     /// The binary that the daemon binds into each session.
     relay_bin: PathBuf,
+    /// The quiet limit of each session ([`QUIET_LIMIT`]).
+    quiet: Duration,
     live: Mutex<BTreeMap<String, Arc<Owned>>>,
     state: Local,
 }
@@ -886,7 +936,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// loads its state from [`state_dir`]: the newest checkpoint, and
     /// the log after it. At its first start, it makes the riff of this
     /// machine with a random ID. Only one daemon may open a folder: call
-    /// [`listen`] first.
+    /// [`listen`] first. Its quiet limit is [`QUIET_LIMIT`], or the
+    /// value of [`QUIET_VAR`].
     pub async fn open(runtime: R, dir: PathBuf) -> Result<Self> {
         private_dir(&dir)?;
         let state_dir = state_dir(&dir);
@@ -908,9 +959,18 @@ impl<R: Runtime + 'static> Daemon<R> {
             dir,
             since_ms: now_ms(),
             relay_bin: own_binary().unwrap_or_else(|_| PathBuf::from("riff")),
+            quiet: quiet_limit(),
             live: Mutex::new(BTreeMap::new()),
             state,
         })
+    }
+
+    /// The daemon with the quiet limit `quiet` in place of
+    /// [`QUIET_LIMIT`].
+    #[must_use]
+    pub fn with_quiet(mut self, quiet: Duration) -> Self {
+        self.quiet = quiet;
+        self
     }
 
     /// The state of riff on this machine. The riff tools of a session
@@ -1080,12 +1140,14 @@ impl<R: Runtime + 'static> Daemon<R> {
             state: Mutex::new(SessionState {
                 record,
                 seq,
+                last: tokio::time::Instant::now(),
                 log,
                 followers: Vec::new(),
                 relay: None,
             }),
             notes,
             stop: Notify::new(),
+            closing: Notify::new(),
             door: Mutex::new(None),
         });
         {
@@ -1239,7 +1301,10 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// Waits for the end of the session `owned`: the exit of its relay,
     /// the end of its container, or, with no `end` of this daemon, the
-    /// end of the relay in a container that does not run.
+    /// end of the relay in a container that does not run. After the
+    /// input of `claude` closed, it stops the container when no event
+    /// comes for the quiet limit, and says why
+    /// (01M4ZSZX77AJDGWNQMGBPV2QXG).
     async fn watch(
         self: Arc<Self>,
         owned: Arc<Owned>,
@@ -1249,7 +1314,25 @@ impl<R: Runtime + 'static> Daemon<R> {
         let mut end = end.map(|end| Box::pin(end.wait()));
         let mut stopped = false;
         let (code, exited) = loop {
+            // Each event moves the end of the quiet: a new turn after a
+            // task of claude ended is no quiet.
+            let quiet_at = {
+                let state = owned.lock();
+                state.record.closed.then(|| state.last + self.quiet)
+            };
             tokio::select! {
+                () = owned.closing.notified() => {}
+                () = tokio::time::sleep_until(quiet_at.unwrap_or_else(tokio::time::Instant::now)),
+                    if quiet_at.is_some() && !stopped =>
+                {
+                    if owned.lock().last.elapsed() >= self.quiet {
+                        stopped = true;
+                        let line = text::daemon_quiet(&owned.name, self.quiet);
+                        println!("{line}");
+                        Owned::tell(&mut owned.lock(), &Say::Line { text: line });
+                        let _ = self.runtime.stop(&owned.name).await;
+                    }
+                }
                 note = notes.recv() => match note {
                     Some(Note::Exit(code)) => break (code, true),
                     Some(Note::Gone) if end.is_none() => {
@@ -1624,10 +1707,12 @@ pub async fn show_events(dir: &Path, name: &str) -> Result<i32> {
             after: 0,
         })
         .await?;
+    let mut view = crate::run::View::default();
     loop {
         match client.next().await? {
-            Some(Say::Event { line, .. }) => crate::run::show(&line),
+            Some(Say::Event { line, .. }) => view.show(&line),
             Some(Say::Stderr { line }) => eprintln!("{line}"),
+            Some(Say::Line { text }) => println!("{text}"),
             Some(Say::Ended(ended)) => {
                 println!("{}", text::daemon_session_ends(name, ended.code));
                 return Ok(i32::from(ended.failed));

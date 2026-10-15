@@ -53,6 +53,14 @@
 //! session. A SIGINT or a SIGTERM asks the daemon to stop the container
 //! first (01M4Z81B1913NF6HBZ5G38B3Q9).
 //!
+//! `claude` does not end while one of its background tasks runs. After
+//! a result, `riff run` shows each task that `claude` waits for
+//! ([`View`], 01M4ZSZX9H59T04QSJ01V4F9TE). The start text tells the
+//! session to leave no background task (01M4ZSZXBXM6T6MGQ00ACQA66X).
+//! When no event comes for the quiet limit after the result, the daemon
+//! stops the container ([`daemon::QUIET_LIMIT`]). `riff run` shows why,
+//! then does the steps of the end.
+//!
 //! When the daemon stops before the end of the session, the session
 //! runs on: its relay keeps the events. `riff run` waits up to
 //! [`DAEMON_WAIT`] for a new daemon, and follows the session again after
@@ -822,16 +830,86 @@ fn make_clone(main: &Path, clone: &Path, branch: &str) -> Result<bool> {
     Ok(earlier)
 }
 
-/// Shows one line of the output of the session: the lines of its event,
-/// or the line itself when it is not JSON.
-pub(crate) fn show(line: &str) {
-    match serde_json::from_str::<Value>(line) {
-        Ok(event) => {
-            for shown in event_lines(&event) {
-                println!("{shown}");
+/// What the terminal shows of the events of one session: the lines of
+/// each event ([`event_lines`]), and a line when `claude` waits for its
+/// background tasks after the `result` of a turn
+/// (01M4ZSZX9H59T04QSJ01V4F9TE).
+///
+/// ```
+/// use riff::run::View;
+/// use serde_json::json;
+///
+/// let mut view = View::default();
+/// let tasks = json!({"type":"system","subtype":"background_tasks_changed",
+///     "tasks":[{"task_id":"b1","task_type":"local_bash","description":"wait for just check"}]});
+/// assert!(view.lines(&tasks).is_empty());
+/// let result = json!({"type":"result","subtype":"success","num_turns":2,"duration_ms":1000});
+/// assert_eq!(
+///     view.lines(&result),
+///     ["end: success, 2 turns, 1 s, 0.00 USD", "wait: claude waits for 1 background task: wait for just check"]
+/// );
+/// let none = json!({"type":"system","subtype":"background_tasks_changed","tasks":[]});
+/// assert_eq!(view.lines(&none), ["wait: each background task ended"]);
+/// ```
+#[derive(Debug, Default)]
+pub struct View {
+    /// The description of each background task that runs.
+    tasks: Vec<String>,
+    /// True after a `result`, until the next turn starts.
+    after_result: bool,
+}
+
+impl View {
+    /// The lines that the terminal shows for `event`.
+    pub fn lines(&mut self, event: &Value) -> Vec<String> {
+        let mut lines = event_lines(event);
+        match (event["type"].as_str(), event["subtype"].as_str()) {
+            (Some("system"), Some("init")) => self.after_result = false,
+            (Some("system"), Some("background_tasks_changed")) => {
+                self.tasks = event["tasks"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|task| first(task["description"].as_str().unwrap_or("?")))
+                    .collect();
+                if self.after_result {
+                    lines.push(self.waits());
+                }
             }
+            (Some("result"), _) => {
+                self.after_result = true;
+                if !self.tasks.is_empty() {
+                    lines.push(self.waits());
+                }
+            }
+            _ => {}
         }
-        Err(_) => println!("{line}"),
+        lines
+    }
+
+    /// The line of the background tasks that `claude` waits for.
+    fn waits(&self) -> String {
+        match self.tasks.len() {
+            0 => "wait: each background task ended".to_owned(),
+            1 => format!("wait: claude waits for 1 background task: {}", self.tasks[0]),
+            n => format!(
+                "wait: claude waits for {n} background tasks: {}",
+                self.tasks.join("; ")
+            ),
+        }
+    }
+
+    /// Shows one line of the output of the session: the lines of its
+    /// event, or the line itself when it is not JSON.
+    pub fn show(&mut self, line: &str) {
+        match serde_json::from_str::<Value>(line) {
+            Ok(event) => {
+                for shown in self.lines(&event) {
+                    println!("{shown}");
+                }
+            }
+            Err(_) => println!("{line}"),
+        }
     }
 }
 
@@ -846,12 +924,13 @@ const DAEMON_RETRY: Duration = Duration::from_millis(250);
 /// `start`, shows its events, and waits for its end ([`follow`]).
 async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
     let name = start.spec.name.clone();
+    let mut view = View::default();
     follow(
         daemon,
         Ask::Start(Box::new(start)),
         &name,
         DAEMON_WAIT,
-        show,
+        |line| view.show(line),
     )
     .await
 }
