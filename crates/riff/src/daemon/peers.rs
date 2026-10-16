@@ -706,6 +706,18 @@ mod tests {
             user: "brett".into(),
             host: None,
         };
+        // --host removes only a key on that host.
+        let elsewhere = Ask::Remove {
+            user: "brett".into(),
+            host: Some("lynx".into()),
+        };
+        let error = o.ask(elsewhere).await.unwrap_err().to_string();
+        assert_eq!(error, text::remove_no_key("brett", Some("lynx")));
+        let links = o.daemon.links().unwrap().clone();
+        until("the links of brett", || {
+            links.online(&n.key()) && links.online(&t.key())
+        })
+        .await;
         let lines = o.ask(remove()).await.unwrap();
         assert_eq!(lines.len(), 2, "{lines:?}");
         let host = crate::identity::this_host();
@@ -714,6 +726,11 @@ mod tests {
             assert!(lines.contains(&text::removed_key(&who)), "{lines:?}");
             assert!(o.hub().read(|state| state.members()[&key].removed));
         }
+        // Each removed key loses its link.
+        until("the end of the links of brett", || {
+            !links.online(&n.key()) && !links.online(&t.key())
+        })
+        .await;
         let rows = crate::daemon::members(&o.dir).await.unwrap();
         assert_eq!(rows.iter().filter(|row| row.removed).count(), 2);
         let error = o.ask(remove()).await.unwrap_err().to_string();
