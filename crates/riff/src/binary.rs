@@ -225,6 +225,75 @@ pub fn replaced(exe: &Path) -> bool {
     })
 }
 
+/// True when the process `pid` runs a binary that a new one replaced
+/// ([`replaced`] of its `/proc/PID/exe`). A process that riff cannot
+/// read does not run a replaced binary.
+///
+/// ```
+/// assert!(!riff::binary::runs_replaced(std::process::id()));
+/// assert!(!riff::binary::runs_replaced(u32::MAX));
+/// ```
+pub fn runs_replaced(pid: u32) -> bool {
+    replaced(&PathBuf::from(format!("/proc/{pid}/exe")))
+}
+
+/// True when `a` and `b` name one file: the same path, or two paths
+/// that lead to the same file, for example through a link.
+///
+/// ```
+/// use riff::binary::same_file;
+///
+/// let dir = tempfile::tempdir()?;
+/// let riff = dir.path().join("riff");
+/// std::fs::write(&riff, "riff")?;
+/// let link = dir.path().join("link");
+/// std::os::unix::fs::symlink(&riff, &link)?;
+/// assert!(same_file(&riff, &link));
+/// assert!(same_file(&dir.path().join("gone"), &dir.path().join("gone")));
+/// assert!(!same_file(&riff, &dir.path().join("gone")));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    a == b
+        || std::fs::canonicalize(a)
+            .ok()
+            .is_some_and(|a| std::fs::canonicalize(b).ok() == Some(a))
+}
+
+/// The absolute path of the program `name` on `PATH`: the first folder
+/// with an absolute path that has an executable file `name`. `None`
+/// when no folder has it.
+///
+/// ```
+/// use std::os::unix::fs::PermissionsExt;
+/// use riff::binary::on_path_in;
+///
+/// let dir = tempfile::tempdir()?;
+/// let riff = dir.path().join("riff");
+/// std::fs::write(&riff, "")?;
+/// let path = format!("relative:/no/such/folder:{}", dir.path().display());
+/// assert_eq!(on_path_in("riff", Some(path.clone().into())), None);
+/// std::fs::set_permissions(&riff, std::fs::Permissions::from_mode(0o755))?;
+/// assert_eq!(on_path_in("riff", Some(path.into())), Some(riff));
+/// assert_eq!(on_path_in("riff", None), None);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn on_path_in(name: &str, path: Option<OsString>) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    std::env::split_paths(&path?)
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join(name))
+        .find(|file| {
+            std::fs::metadata(file)
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
+}
+
+/// [`on_path_in`] with the `PATH` of this process.
+pub fn on_path(name: &str) -> Option<PathBuf> {
+    on_path_in(name, std::env::var_os("PATH"))
+}
+
 /// The path of the `riff` binary on disk, for a process that this one
 /// starts. After `cargo install` put a new binary in place, Linux names
 /// the binary of a process that still runs `PATH (deleted)`. That path

@@ -247,6 +247,41 @@
 //!     R->>D2: follow NAME after 2
 //!     D2-->>R: event 3
 //! ```
+//!
+//! # A new riff
+//!
+//! `riff update` puts a new riff on disk, and the daemon goes on with
+//! the old one. The daemon runs an old riff when its binary was
+//! replaced, or when its unit names another riff ([`stale`]). Two steps
+//! start it again on the new riff, only when it is idle: it owns no
+//! session, no start waits for room, and no job of a wave runs
+//! ([`Status::busy`]).
+//!
+//! - `riff update` ([`after_update`]): when the `ExecStart` of the unit
+//!   is not the `riff` on `PATH`, it writes the unit again with that riff
+//!   and the same variables (01M517BTDRKDXD3X84P6AEAF7P). When the
+//!   daemon runs an old riff and is idle, it starts the unit again. Else
+//!   it says that the daemon starts again after its last session
+//!   (01M517BTJ9EV4ZGPYRB6HXJJC9).
+//! - The daemon ([`Daemon::restart_when_old`]): at the end of each
+//!   session and of each job, and each [`OLD_LOOK`], it looks. When it
+//!   is idle, runs an old riff, and is the process of the unit, it asks
+//!   systemd once to start the unit again (01M517BTP6BAGTRBYWPX9GPVE0).
+//!   The stop stops no container (01M4ZDTW00B7N6T9P3MK066KA7).
+//!
+//! ```mermaid
+//! flowchart TD
+//!     U["riff update"] --> X{"ExecStart is the riff on PATH?"}
+//!     X -- no --> W["write the unit with the riff on PATH,<br/>systemctl --user daemon-reload"]
+//!     X -- yes --> O
+//!     W --> O{"the daemon runs an old riff?"}
+//!     O -- no --> N["nothing"]
+//!     O -- yes --> B{"a session, a start that waits,<br/>or a job of a wave?"}
+//!     B -- no --> R["systemctl --user --no-block try-restart riff.service"]
+//!     B -- yes --> L["the daemon starts again<br/>after its last session"]
+//!     L --> E["the end of a session or a job, each minute"]
+//!     E --> B
+//! ```
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -419,6 +454,95 @@ pub fn own_binary() -> Result<PathBuf> {
         Some(path) => PathBuf::from(path),
         None => exe,
     })
+}
+
+/// How often the daemon looks for a new riff (01M517BTP6BAGTRBYWPX9GPVE0).
+/// The end of each session and of each job looks too.
+pub const OLD_LOOK: Duration = Duration::from_secs(60);
+
+/// True when a daemon that runs the binary `own` runs an old riff: its
+/// binary was `replaced`, or its `unit` names another riff
+/// (01M517BTJ9EV4ZGPYRB6HXJJC9).
+///
+/// ```
+/// use std::path::Path;
+/// use riff::daemon::stale;
+/// use riff::service::Unit;
+///
+/// let own = Path::new("/home/mike/.cargo/bin/riff");
+/// let unit = |exe: &str| Unit { exe: exe.into(), env: vec![] };
+/// let cargo = unit("/home/mike/.cargo/bin/riff");
+/// assert!(!stale(Some(&cargo), own, false));
+/// assert!(stale(Some(&cargo), own, true));
+/// let check = unit("/home/mike/.cache/riff/check/target/static/release/riff");
+/// assert!(stale(Some(&check), own, false));
+/// assert!(!stale(None, own, false));
+/// ```
+pub fn stale(unit: Option<&crate::service::Unit>, own: &Path, replaced: bool) -> bool {
+    replaced || unit.is_some_and(|unit| !crate::binary::same_file(&unit.exe, own))
+}
+
+/// True when this daemon runs an old riff ([`stale`]), and the unit of
+/// `manager` runs it (01M517BTP6BAGTRBYWPX9GPVE0). The daemon of a
+/// `RIFF_HOME` is never the daemon of the unit.
+fn old_here(manager: &impl crate::service::ServiceManager) -> bool {
+    if crate::home::dir().is_some() {
+        return false;
+    }
+    let Ok(own) = own_binary() else {
+        return false;
+    };
+    let unit = manager.installed().ok().flatten();
+    let replaced = crate::binary::replaced(Path::new("/proc/self/exe"));
+    stale(unit.as_ref(), &own, replaced)
+        && manager.main_pid().ok().flatten() == Some(std::process::id())
+}
+
+/// The step of `riff update` for the daemon of this machine, whose
+/// folder is `dir`, with the new `riff` on `PATH`: one line for each
+/// change.
+///
+/// When the `ExecStart` of the unit of `manager` is not `riff`, it
+/// writes the unit again with `riff` and the same variables
+/// (01M517BTDRKDXD3X84P6AEAF7P). When the daemon answers, runs an old
+/// riff ([`stale`]) and is idle ([`Status::busy`]), it starts the unit
+/// again. When it is not idle, the daemon starts again after its last
+/// session ([`Daemon::restart_when_old`], 01M517BTJ9EV4ZGPYRB6HXJJC9).
+/// With no unit, it does nothing.
+pub async fn after_update(
+    manager: &impl crate::service::ServiceManager,
+    riff: &Path,
+    dir: &Path,
+) -> Result<Vec<String>> {
+    let Some(old) = manager.installed()? else {
+        return Ok(Vec::new());
+    };
+    let mut lines = Vec::new();
+    let unit = crate::service::Unit {
+        exe: riff.to_owned(),
+        env: old.env.clone(),
+    };
+    if !crate::binary::same_file(&old.exe, riff) {
+        let path = manager.rewrite(&unit)?;
+        lines.push(text::daemon_unit_moved(&path, &old.exe, riff));
+    }
+    let Ok(status) = status(dir).await else {
+        return Ok(lines);
+    };
+    let exe = std::fs::read_link(format!("/proc/{}/exe", status.pid))
+        .map(crate::binary::on_disk)
+        .unwrap_or(old.exe);
+    if !stale(Some(&unit), &exe, crate::binary::runs_replaced(status.pid)) {
+        return Ok(lines);
+    }
+    match status.busy() {
+        0 => {
+            manager.try_restart()?;
+            lines.push(text::DAEMON_STARTS_AGAIN.to_owned());
+        }
+        busy => lines.push(text::daemon_starts_again_later(busy)),
+    }
+    Ok(lines)
 }
 
 /// Makes the folder `dir` with mode 0700.
@@ -672,6 +796,30 @@ pub struct Status {
     /// The waves that the daemon runs, by repository.
     #[serde(default)]
     pub waves: Vec<WaveShown>,
+    /// The jobs of the waves that run: from the pick of the item to the
+    /// end of the steps after its session.
+    #[serde(default)]
+    pub jobs: usize,
+}
+
+impl Status {
+    /// The work of the daemon: its sessions, the starts that wait for
+    /// room, and the jobs of its waves. The daemon starts again on a new
+    /// riff only at 0 (01M517BTJ9EV4ZGPYRB6HXJJC9).
+    ///
+    /// ```
+    /// let status: riff::daemon::Status = serde_json::from_value(serde_json::json!({
+    ///     "pid": 7, "build": "1.4.0", "since_ms": 0, "dir": "/d", "sessions": [],
+    /// }))?;
+    /// assert_eq!(status.busy(), 0);
+    /// let waits = riff::daemon::Status { waiting: vec!["riff-issue-12".into()], ..status.clone() };
+    /// assert_eq!(waits.busy(), 1);
+    /// assert_eq!(riff::daemon::Status { jobs: 2, ..status }.busy(), 2);
+    /// # Ok::<(), serde_json::Error>(())
+    /// ```
+    pub fn busy(&self) -> usize {
+        self.sessions.len() + self.waiting.len() + self.jobs
+    }
 }
 
 /// A wave that the daemon runs, as `riff daemon status` shows it.
@@ -1365,6 +1513,47 @@ impl<R: Runtime + 'static> Daemon<R> {
             limit: Some(self.room.limit()),
             waiting: self.room.waiting(),
             waves: self.waves_shown(),
+            jobs: self
+                .waves_lock()
+                .values()
+                .map(|running| {
+                    running
+                        .taken
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .len()
+                })
+                .sum(),
+        }
+    }
+
+    /// Asks for a new start of the daemon with `restart` when it runs an
+    /// old riff (`old`) and is idle ([`Status::busy`] is 0,
+    /// 01M517BTP6BAGTRBYWPX9GPVE0). It looks at the end of each session
+    /// and of each job, and each [`OLD_LOOK`]. It asks once, then ends.
+    pub async fn restart_when_old(
+        &self,
+        old: impl Fn() -> bool,
+        restart: impl FnOnce() -> Result<()>,
+    ) {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.status().await.busy() == 0 && old() {
+                println!("{}", text::DAEMON_NEW_RIFF);
+                if let Err(e) = restart() {
+                    eprintln!(
+                        "riff daemon: {}",
+                        text::daemon_no_restart(&format!("{e:#}"))
+                    );
+                }
+                return;
+            }
+            tokio::select! {
+                () = &mut changed => {}
+                () = tokio::time::sleep(OLD_LOOK) => {}
+            }
         }
     }
 
@@ -2487,6 +2676,15 @@ pub async fn serve_here() -> Result<()> {
         );
         daemon.recover().await;
         daemon.run_waves();
+        // A new riff on disk (01M517BTP6BAGTRBYWPX9GPVE0).
+        if let Ok(manager) = crate::service::Systemd::here() {
+            let daemon = daemon.clone();
+            tokio::spawn(async move {
+                let old = || old_here(&manager);
+                let restart = || crate::service::ServiceManager::try_restart(&manager);
+                daemon.restart_when_old(old, restart).await;
+            });
+        }
         let stop = async move {
             tokio::select! {
                 _ = term.recv() => {}
@@ -2573,6 +2771,7 @@ mod tests {
     use super::*;
     use crate::run::HIDDEN;
     use crate::runtime::{Exit, Fake};
+    use crate::service::{ServiceManager, Unit};
     use tokio::sync::oneshot;
 
     const IMAGE: &str = "localhost/riff-session:latest";
@@ -4312,5 +4511,199 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(!record_path(&here.dir, &name).exists());
         assert!(status(&here.dir).await.unwrap().sessions.is_empty());
+    }
+
+    /// The path of the unit file of [`Units`].
+    const UNIT_FILE: &str = "/home/mike/.config/systemd/user/riff.service";
+
+    /// A service manager with its unit in memory. It logs each change.
+    #[derive(Default)]
+    struct Units {
+        unit: Mutex<Option<Unit>>,
+        calls: Mutex<Vec<&'static str>>,
+    }
+
+    impl Units {
+        /// A unit that runs `exe`, with a `PATH`.
+        fn of(exe: &Path) -> Units {
+            let unit = Unit {
+                exe: exe.to_owned(),
+                env: vec![("PATH".into(), "/home/mike/.cargo/bin:/usr/bin".into())],
+            };
+            Units {
+                unit: Mutex::new(Some(unit)),
+                calls: Mutex::default(),
+            }
+        }
+
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn exe(&self) -> Option<PathBuf> {
+            self.unit.lock().unwrap().as_ref().map(|u| u.exe.clone())
+        }
+    }
+
+    impl ServiceManager for Units {
+        fn install(&self, _: &Unit) -> Result<PathBuf> {
+            bail!("this test installs nothing")
+        }
+
+        fn uninstall(&self) -> Result<Option<PathBuf>> {
+            bail!("this test removes nothing")
+        }
+
+        fn state(&self) -> Result<String> {
+            Ok("active".into())
+        }
+
+        fn installed(&self) -> Result<Option<Unit>> {
+            Ok(self.unit.lock().unwrap().clone())
+        }
+
+        fn rewrite(&self, unit: &Unit) -> Result<PathBuf> {
+            self.calls.lock().unwrap().push("rewrite");
+            *self.unit.lock().unwrap() = Some(unit.clone());
+            Ok(UNIT_FILE.into())
+        }
+
+        fn try_restart(&self) -> Result<()> {
+            self.calls.lock().unwrap().push("try-restart");
+            Ok(())
+        }
+
+        fn main_pid(&self) -> Result<Option<u32>> {
+            Ok(Some(std::process::id()))
+        }
+    }
+
+    /// The riff of a verify after the release, which a unit can still
+    /// run, and the new riff on `PATH`.
+    fn check_and_new(here: &Here) -> (PathBuf, PathBuf) {
+        let check = PathBuf::from("/home/mike/.cache/riff/check/target/static/release/riff");
+        (check, here.root.path().join("bin/riff"))
+    }
+
+    /// The unit runs an old riff, and the daemon owns no session: `riff
+    /// update` writes the unit with the riff on `PATH`, keeps its
+    /// variables, and starts the daemon again at once
+    /// (01M517BTDRKDXD3X84P6AEAF7P, 01M517BTJ9EV4ZGPYRB6HXJJC9).
+    #[tokio::test]
+    async fn after_an_update_an_idle_daemon_runs_the_new_riff_at_once() {
+        let here = Here::new(Fake::default()).await;
+        let (check, riff) = check_and_new(&here);
+        let units = Units::of(&check);
+        let lines = after_update(&units, &riff, &here.dir).await.unwrap();
+        assert_eq!(
+            lines,
+            [
+                text::daemon_unit_moved(Path::new(UNIT_FILE), &check, &riff),
+                text::DAEMON_STARTS_AGAIN.to_owned()
+            ]
+        );
+        assert_eq!(units.calls(), ["rewrite", "try-restart"]);
+        let unit = units.installed().unwrap().unwrap();
+        assert_eq!(unit.exe, riff);
+        assert_eq!(
+            unit.env,
+            Units::of(&check).installed().unwrap().unwrap().env
+        );
+    }
+
+    /// While the daemon runs a session, `riff update` writes the unit and
+    /// starts nothing. The daemon looks, and asks for its new start only
+    /// at the end of its last session (01M517BTJ9EV4ZGPYRB6HXJJC9,
+    /// 01M517BTP6BAGTRBYWPX9GPVE0).
+    #[tokio::test]
+    async fn after_an_update_a_busy_daemon_starts_again_after_its_last_session() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (check, riff) = check_and_new(&here);
+        let units = Arc::new(Units::of(&check));
+        let (mut client, _, mut relay) = a_worker(&here).await;
+
+        let lines = after_update(&*units, &riff, &here.dir).await.unwrap();
+        assert_eq!(
+            lines,
+            [
+                text::daemon_unit_moved(Path::new(UNIT_FILE), &check, &riff),
+                text::daemon_starts_again_later(1)
+            ]
+        );
+        assert_eq!(units.calls(), ["rewrite"]);
+
+        // The daemon runs the riff of the test, not the riff of the unit.
+        let watch = {
+            let (daemon, units) = (here.daemon.clone(), units.clone());
+            tokio::spawn(async move {
+                let own = own_binary().unwrap();
+                let old = || stale(units.installed().unwrap().as_ref(), &own, false);
+                let restart = || units.try_restart();
+                daemon.restart_when_old(old, restart).await;
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(units.calls(), ["rewrite"], "a new start with a session");
+        assert!(!watch.is_finished());
+
+        relay.exit(2, 0).await;
+        let (_, end) = to_the_end(&mut client).await;
+        assert!(matches!(end, Some(Say::Ended(_))));
+        tokio::time::timeout(Duration::from_secs(5), watch)
+            .await
+            .expect("the end of the session looks")
+            .unwrap();
+        assert_eq!(units.calls(), ["rewrite", "try-restart"]);
+    }
+
+    /// The unit runs the riff on `PATH`, and the daemon runs that riff:
+    /// `riff update` changes nothing, and the daemon asks nothing. With
+    /// no unit, riff changes nothing. With no daemon, riff only writes
+    /// the unit.
+    #[tokio::test]
+    async fn after_an_update_a_daemon_on_the_new_riff_stays() {
+        let here = Here::new(Fake::default()).await;
+        let own = own_binary().unwrap();
+        let units = Arc::new(Units::of(&own));
+        assert!(
+            after_update(&*units, &own, &here.dir)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(units.calls().is_empty());
+        let watch = {
+            let (daemon, units) = (here.daemon.clone(), units.clone());
+            tokio::spawn(async move {
+                let own = own_binary().unwrap();
+                let old = || stale(units.installed().unwrap().as_ref(), &own, false);
+                let restart = || units.try_restart();
+                daemon.restart_when_old(old, restart).await;
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!watch.is_finished());
+        watch.abort();
+        assert!(units.calls().is_empty());
+
+        let none = Units::default();
+        assert!(
+            after_update(&none, &own, &here.dir)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(none.calls().is_empty());
+
+        let (check, riff) = check_and_new(&here);
+        let units = Units::of(&check);
+        let away = here.root.path().join("no-daemon");
+        let lines = after_update(&units, &riff, &away).await.unwrap();
+        assert_eq!(
+            lines,
+            [text::daemon_unit_moved(Path::new(UNIT_FILE), &check, &riff)]
+        );
+        assert_eq!(units.calls(), ["rewrite"]);
+        assert_eq!(units.exe(), Some(riff));
     }
 }

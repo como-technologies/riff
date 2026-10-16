@@ -68,6 +68,7 @@
 //!     end
 //!     U->>C: install --locked --git REPOSITORY --tag vX.Y.Z riff riff-server
 //!     U->>R: connect claude
+//!     U->>U: the unit of the riff daemon: the new riff
 //!     U->>S: probe
 //!     alt it answers with another build than the new riff-server
 //!         U-->>U: print "Stop riff-server and start it again."
@@ -361,7 +362,8 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// [`text::latest_instead`](crate::text::latest_instead) and installs
 /// the Latest release. Then it updates the plugin with the new
 /// `riff connect claude --claude CLAUDE`, which gets no terminal and so
-/// asks nothing. On a machine with a limit of workers it installs
+/// asks nothing. Then the riff daemon runs the new riff
+/// ([`crate::daemon::after_update`]). On a machine with a limit of workers it installs
 /// the pinned `sccache` ([`crate::sccache::ensure`]). Then it looks for
 /// an old riff with
 /// [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
@@ -407,6 +409,11 @@ pub async fn update(
             .current_dir(&dir),
         "riff connect claude",
     )?;
+    // The riff daemon of this machine runs the new riff
+    // (01M517BTDRKDXD3X84P6AEAF7P). A failed step fails no update.
+    for line in daemon_after_update().await {
+        println!("{line}");
+    }
     // The compile cache of the workers of this machine
     // (01M4923963S666V9YWTZ46ZZ50). A failed install fails no update.
     let workers = crate::settings::path().and_then(|path| crate::settings::workers_limit(&path));
@@ -428,6 +435,24 @@ pub async fn update(
     let new = version_build(&String::from_utf8_lossy(&out.stdout));
     let old = old_riff(new.as_ref(), server, local).await;
     Ok(crate::text::updated(old.as_deref()))
+}
+
+/// The step of [`update`] for the riff daemon of this machine
+/// ([`crate::daemon::after_update`]), with the `riff` on `PATH`. It does
+/// nothing with `RIFF_HOME` set. It gives an error as a line.
+async fn daemon_after_update() -> Vec<String> {
+    if crate::home::dir().is_some() {
+        return Vec::new();
+    }
+    let Some(riff) = crate::binary::on_path("riff") else {
+        return Vec::new();
+    };
+    let done = async {
+        let manager = crate::service::Systemd::here()?;
+        crate::daemon::after_update(&manager, &riff, &crate::daemon::dir()?).await
+    };
+    done.await
+        .unwrap_or_else(|e| vec![crate::text::daemon_update_failed(&format!("{e:#}"))])
 }
 
 /// The riff of this machine when it runs another build than `new`, the

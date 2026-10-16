@@ -124,6 +124,21 @@
 //!     C -- yes --> N["note to the lead"]
 //!     N --> E["end the worker: close the pane, end the session"]
 //! ```
+//!
+//! # An old riff
+//!
+//! `riff update` puts a new riff on disk. The riff tools and the watch
+//! of a worker then run it ([`crate::binary`]), but its wrapper
+//! `riff workers run` never does: it lives as long as the worker. So
+//! the binary of the wrapper tells whether the worker started before
+//! the update, with the settings and the plugin of the old riff. When
+//! the reply asks for the clear and Linux names the binary of the
+//! wrapper `PATH (deleted)` ([`crate::binary::runs_replaced`]), the
+//! worker ends in place of the clear (01M517BT9WBQ4R79Z9KVY9SG1B), as
+//! over the limit: a note to the lead, then [`crate::worker::stop`].
+//! The rollout starts a new worker on the new riff for the free work
+//! ([`crate::rollout`]). A worker that holds a claim gets no ask to
+//! clear, so riff never ends a busy worker.
 
 use std::path::Path;
 use std::time::Duration;
@@ -341,6 +356,11 @@ pub async fn check(
         Ok(false) => {}
         Err(e) => eprintln!("riff: cannot count the workers of this machine: {e:#}"),
     }
+    match end_old_riff(api, me, pane, crate::worker::wrapper()).await {
+        Ok(true) => return Ok(false),
+        Ok(false) => {}
+        Err(e) => eprintln!("riff: cannot end the worker that runs an old riff: {e:#}"),
+    }
     // One check of the worker types at a time, so the next check sees
     // the new context of this one (01M43STEE72Q9TD8ZNFS3273M3).
     let _typing = clear_lock(session)?;
@@ -432,6 +452,30 @@ async fn end_over_limit(api: &Api, me: &SessionUri, pane: &str) -> Result<bool> 
     }
     crate::worker::stop(&tmux, Some(pane), api.base()).await?;
     drop(lock);
+    Ok(true)
+}
+
+/// Ends the worker `me` in `pane` when its wrapper `wrapper`
+/// (`riff workers run`) runs a binary that a new one replaced
+/// (01M517BT9WBQ4R79Z9KVY9SG1B). It posts a note to the lead, and ends
+/// the worker with [`crate::worker::stop`]. True when it ended the
+/// worker.
+async fn end_old_riff(
+    api: &Api,
+    me: &SessionUri,
+    pane: &str,
+    wrapper: Option<u32>,
+) -> Result<bool> {
+    if !wrapper.is_some_and(crate::binary::runs_replaced) {
+        return Ok(false);
+    }
+    let to = Selector::lead(me.who().user(), &me.place().repo_text());
+    let note = crate::text::worker_old_riff(me.place().host(), pane);
+    eprintln!("riff: {note}");
+    if let Err(e) = api.post(me, None, &[to], &note, Kind::Note).await {
+        eprintln!("riff: cannot post the note to the lead: {e:#}");
+    }
+    crate::worker::stop(&Tmux::machine(), Some(pane), api.base()).await?;
     Ok(true)
 }
 

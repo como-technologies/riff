@@ -472,6 +472,10 @@ enum Command {
     /// the release that the riff runs, or the release that GitHub marks
     /// Latest when riff uses the riff of this machine or cannot read the
     /// build of the riff.
+    /// When the unit of the riff daemon runs another riff than the riff on
+    /// PATH, it writes the unit again with that riff. It starts the daemon
+    /// again on the new riff when the daemon runs no session; else the
+    /// daemon starts again after its last session.
     /// When the riff of this machine runs the old build, it tells you to
     /// start riff-server again.
     Update {

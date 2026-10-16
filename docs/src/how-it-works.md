@@ -636,9 +636,8 @@ sequenceDiagram
 
 - One update runs at a time on the machine. Each release gets one
   try.
-- `riff watch`, `riff tail`, `riff top`, `riff chat` and `riff mcp`
-  run the new `riff` with no restart. A worker takes the new `riff` at
-  its next item.
+- Each riff process starts again on the new `riff` when it is idle.
+  See [Which processes start again](#which-processes-start-again).
 - The update stops no session, and a running test goes on. Your
   sign-in and the device key stay.
 - Your lead gets one direct message: the host, the old release and
@@ -666,6 +665,77 @@ sequenceDiagram
 
 The output of the update is in `update.log`, in the local files of
 riff: `$XDG_RUNTIME_DIR/riff`, else `~/.local/state/riff`.
+
+#### Which processes start again
+
+After an update, by you or by itself, each riff process of the
+machine starts again on the new `riff`. It does this only when it is
+idle, so no work stops:
+
+| Process | What it does | When |
+|---|---|---|
+| `riff watch`, `riff tail`, `riff top` | runs the new `riff` in its place | at once |
+| `riff chat` | runs the new `riff` in its place | between two lines |
+| `riff mcp` | checks the new `riff`, then runs it in its place | when no tool call runs |
+| `riff workers host` | runs the new `riff` in its place, with the same session | between two requests of the lead |
+| A worker | ends, and riff starts a new worker on the new `riff` | after its item, in place of its clear |
+| The riff daemon | starts again on the `riff` on `PATH` | when it runs no session, else after its last session |
+
+You still start `riff-server` again yourself. `riff update` tells you
+when it runs the old build.
+
+A worker ends after its item when its `riff workers run` runs the old
+`riff`. A worker that holds a claim never ends. The lead gets a note:
+
+```text
+workers: the worker in the pane %3 on pangolin runs an old riff. It ends after its item, in place of a clear. riff starts a new worker on the new riff for the free work.
+```
+
+The unit of the riff daemon can run another `riff` than the `riff` on
+your `PATH`, for example the build of a check after a release. Then
+`riff update` writes the unit again with the `riff` on your `PATH`. It
+keeps the variables of the unit:
+
+```sh
+riff update
+```
+
+```text
+riff wrote the unit /home/mike/.config/systemd/user/riff.service again: it ran /home/mike/.cache/riff/check/target/static/release/riff, and runs /home/mike/.cargo/bin/riff now.
+The riff daemon runs 2 sessions or jobs. It starts again on the new riff after its last session.
+```
+
+When the daemon runs no session, it starts again at once:
+
+```text
+The riff daemon runs no session. It starts again on the new riff now.
+```
+
+The stop of the daemon stops no container. Still, riff starts the
+daemon again only when it owns no session, no start waits for room,
+and no job of a wave runs. The daemon looks at the end of each session
+and each job, and each minute:
+
+```mermaid
+flowchart TD
+    U["riff update"] --> X{"the unit runs the riff on PATH?"}
+    X -- no --> W["write the unit with the riff on PATH"]
+    X -- yes --> O
+    W --> O{"the daemon runs an old riff?"}
+    O -- no --> N["nothing to do"]
+    O -- yes --> B{"a session, a start that waits,<br/>or a job of a wave?"}
+    B -- no --> R["systemd starts the daemon again"]
+    B -- yes --> L["the daemon waits"]
+    L --> E["the end of a session or a job, or a minute"]
+    E --> B
+```
+
+To start the daemon again at once, also with sessions, install it
+again. Its sessions go on:
+
+```sh
+riff daemon install
+```
 
 ### A new machine asks about the update by itself
 
@@ -1188,21 +1258,22 @@ First, update riff on the machine of the session:
 riff update
 ```
 
-The riff tools of a session and `riff workers host` then run the new
-riff by themselves. See
+Each riff process then starts again on the new riff when it is idle.
+See [Which processes start again](#which-processes-start-again) and
 [When the builds differ](#when-the-builds-differ). The mark goes in a
-few seconds. When the mark stays, do the step for
-the session:
+minute. A session in a container keeps the mark until the riff daemon
+starts again, after its last session. When the mark stays, do the
+step for the session:
 
-- A worker: stop it when it has no claim. riff starts a new worker on
-  the new riff. Give the short ID that `riff top` shows:
+- A worker with no claim: stop it. riff starts a new worker on the
+  new riff. Give the short ID that `riff top` shows:
 
   ```sh
   riff workers stop 5b1e2a90
   ```
 
 - A session in a container: install the riff daemon again. It starts
-  again on the new riff:
+  again on the new riff at once:
 
   ```sh
   riff daemon install

@@ -387,6 +387,7 @@ mod tests {
             limit: Some(crate::room::Limit::default()),
             waiting: vec![],
             waves: vec![],
+            jobs: 0,
         }
     }
 
