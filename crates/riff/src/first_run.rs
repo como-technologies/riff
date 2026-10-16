@@ -1280,13 +1280,16 @@ mod tests {
     }
 
     /// 01M5084K09Z2S7N57315CX2R0F: `--yes` adds the rules with no
-    /// question.
+    /// question. 01M51M3ZRKQZ8KDVRGJR3XAY00: it marks the add for the
+    /// workers.
     #[tokio::test]
     async fn yes_adds_the_rules_with_no_question() {
         let root = tempfile::tempdir().unwrap();
         let path = settings_in(root.path(), None);
+        let local = root.path().join("local");
         let facts = Facts {
             podman: Err(text::INIT_NO_PODMAN.into()),
+            local: Some(local.clone()),
             ..no_rules(&path)
         };
         let dir = dir_in(root.path());
@@ -1303,6 +1306,7 @@ mod tests {
         .unwrap();
         assert_eq!(code, 1);
         assert!(Settings::of(&path, &user_rules()).missing.is_empty());
+        assert!(crate::local::rules_added(&local).is_some());
     }
 
     /// 01M5084K09Z2S7N57315CX2R0F: a no changes nothing, and the check of
@@ -1312,7 +1316,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let text = r#"{"model": "opus"}"#;
         let path = settings_in(root.path(), Some(text));
-        let facts = no_rules(&path);
+        let local = root.path().join("local");
+        let facts = Facts {
+            local: Some(local.clone()),
+            ..no_rules(&path)
+        };
         assert_eq!(failed(&facts).len(), 1);
         let manager = Manager::default();
         let dir = dir_in(root.path());
@@ -1331,6 +1339,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         assert!(manager.0.lock().unwrap().is_empty());
         assert!(!dir.exists());
+        assert_eq!(crate::local::rules_added(&local), None);
     }
 
     /// 01M5084K09Z2S7N57315CX2R0F: `--check` names the missing rules,
