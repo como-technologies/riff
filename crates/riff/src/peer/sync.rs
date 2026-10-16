@@ -510,11 +510,12 @@ fn out_of(state: &State, key: &Public) -> bool {
 /// The user and the host of a key, when the records name them.
 type Names = (Option<String>, Option<String>);
 
-/// The user and the host of `key`, when the records name them.
+/// The user and the host of `key`, when the records name them: for the
+/// owner, its `riff` record (01M521J6T2PWA9JREDXJK6DZ0V).
 fn names_of(state: &State, key: &Public) -> Names {
     (
         state.user_of(key).map(str::to_owned),
-        state.members().get(key).map(|member| member.host.clone()),
+        state.host_of(key).map(str::to_owned),
     )
 }
 
@@ -1167,5 +1168,46 @@ mod tests {
         assert!(!kept_left(&closed(0)));
         assert!(!kept_left(&ConnectionError::LocallyClosed));
         assert!(!kept_left(&ConnectionError::TimedOut));
+    }
+
+    /// The names of each key of the riff of the owner [1] mike, with its
+    /// `riff` record of the host `host`, and the member brett on kadomony
+    /// [2].
+    fn names(host: Option<&str>) -> [Names; 2] {
+        use crate::daemon_key::Key;
+        use crate::peer::body::{Body, Member, Riff};
+        use crate::peer::keep::Peers;
+
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Key::from_bytes(&[1; 32]);
+        let brett = Key::from_bytes(&[2; 32]).public();
+        let mut peers = Peers::open(dir.path(), owner.public(), |_| {}).unwrap();
+        let riff = Riff {
+            user: "mike".into(),
+            host: host.map(str::to_owned),
+        };
+        peers.write(&owner, &Body::Riff(riff), 1).unwrap();
+        let member = Member {
+            key: brett,
+            user: "brett".into(),
+            host: "kadomony".into(),
+        };
+        peers.write(&owner, &Body::Member(member), 2).unwrap();
+        [owner.public(), brett].map(|key| names_of(peers.state(), &key))
+    }
+
+    /// 01M51ZA0BDZNXBB7R5SB8CEGA9, 01M521J6T2PWA9JREDXJK6DZ0V: a link to
+    /// the owner names the host of its `riff` record, as a link to a
+    /// member names the host of its `member` record. A `riff` record with
+    /// no host gives no host.
+    #[test]
+    fn a_link_to_the_owner_names_the_host_of_its_riff_record() {
+        let some = |text: &str| Some(text.to_owned());
+        let brett = (some("brett"), some("kadomony"));
+        assert_eq!(
+            names(Some("pangolin")),
+            [(some("mike"), some("pangolin")), brett.clone()]
+        );
+        assert_eq!(names(None), [(some("mike"), None), brett]);
     }
 }
