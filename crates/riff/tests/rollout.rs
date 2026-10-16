@@ -10,7 +10,8 @@
 //! An idle worker that joined gets free work with a request of the lead
 //! (01M49ZK19GQP79Z8HH14PK85QQ to 01M49ZK1EG52YAKG974XH201RK). The author
 //! of an item never gets its verify (01M51533BJSD0RB7BFQR9CAFYW). A held
-//! item is no free work (01M51A55Q2MDZT38JDCEJ1QECP).
+//! item is no free work (01M51A55Q2MDZT38JDCEJ1QECP). The fix item of a
+//! broken `main` comes first (01M51QEYS538XA58KDRY844T52).
 
 use isolated::Isolated;
 use std::path::{Path, PathBuf};
@@ -58,12 +59,16 @@ exit 0
 
 /// The wave `Wave 1` holds the issues of the file `issues`. The open
 /// pull requests are in the file `pulls`. With no file, no pull request
-/// is open.
+/// is open. The head of `main` has no Gate yet.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$*" >> "$dir/gh.log"
 case "$1 $2" in
-  api*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
+  api*)
+    case "$2" in
+      */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
+      *) echo '[]' ;;
+    esac ;;
   "issue list") cat "$dir/issues" ;;
   "pr list") cat "$dir/pulls" 2>/dev/null || echo '[]' ;;
   *) exit 1 ;;
@@ -200,7 +205,7 @@ impl Lead {
         std::fs::read_to_string(self.fake.path().join("gh.log"))
             .unwrap_or_default()
             .lines()
-            .filter(|line| line.starts_with("api "))
+            .filter(|line| line.starts_with("api ") && line.contains("/milestones"))
             .count()
     }
 
@@ -594,6 +599,26 @@ async fn an_idle_worker_gets_a_request_for_a_free_item() {
     let worker = lead.join_idle(1).await;
     let _stream = lead.api.watch(&worker).await.unwrap();
     reads(&lead.api, &worker, "request: claim issue-1").await;
+}
+
+/// The fix item of a broken `main` (the label `broken-main`) is free work
+/// before each other item: also before a verify, and also from the
+/// backlog (01M51QEYS538XA58KDRY844T52).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_idle_worker_gets_the_fix_item_of_a_broken_main_first() {
+    let lead = lead(5).await;
+    lead.issues(
+        r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":9,"body":"Needs: nothing","comments":[],"milestone":{"title":"Backlog"},"labels":[{"name":"broken-main"}]}]"#,
+    );
+    lead.pull_of(r#""headRefName":"worktree-issue-2""#, None);
+    lead.riff(RiffState::Running).await;
+    let worker = lead.join_idle(1).await;
+    let _stream = lead.api.watch(&worker).await.unwrap();
+    let read = reads(&lead.api, &worker, "request: claim").await;
+    assert!(read.contains("request: claim issue-9"), "{read}");
+    assert!(!read.contains("verify-issue-2"), "{read}");
 }
 
 /// A worker on a task of the lead with no work item holds a task claim

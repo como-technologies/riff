@@ -17,7 +17,7 @@
 //!     R -- "no: paused" --> T
 //!     R -- yes --> P{"a machine with room,<br/>or an idle worker that joined?"}
 //!     P -- no --> T
-//!     P -- yes --> W["free work (gh): free items of the current wave,<br/>pull requests that wait for a verify,<br/>no held item"]
+//!     P -- yes --> W["free work (gh): a fix item of a broken main first,<br/>pull requests that wait for a verify,<br/>free items of the current wave, no held item"]
 //!     W --> O["each idle worker with no open request:<br/>tell it request: claim ITEM"]
 //!     O --> I{"free work, and no idle worker?<br/>(a worker that refused does not count)"}
 //!     I -- no --> T
@@ -48,6 +48,13 @@
 //!   request for it. Each look reads the holds of the repository thread
 //!   again ([`Api::plan_show`]), so a free of the item makes it free work
 //!   at the next look.
+//! - **A fix item first** ([`fix_items`], 01M51QEYS538XA58KDRY844T52). An
+//!   open issue with the label [`BROKEN_MAIN`] fixes a broken `main`: the
+//!   look of the lead files it when the Gate of `main` fails
+//!   ([`crate::look::MainWatch`]). It comes before each other item, its
+//!   verify first, also outside the current wave. So the first idle
+//!   worker gets it. The wave of the daemon takes the same order
+//!   ([`crate::wave`]).
 //! - **One count for an item** ([`Verify`], [`in_verify`],
 //!   01M3Z9N5HHHS1E17NFGMVBKZ0K). The author of a pull request releases
 //!   its item at the verify request. So an open issue with no claim can
@@ -908,6 +915,12 @@ pub fn current_wave(open: &[Milestone]) -> Option<&str> {
 /// test has it.
 pub const NO_VERIFY: &str = "no-verify";
 
+/// The label of a fix item: an issue to fix a broken `main`
+/// (01M51QEYPGD6W345MZ4F85C38F). The look of the lead files it when the
+/// Gate of `main` fails ([`crate::look::MainWatch`]). It is free work
+/// before each other item ([`free_work_of`], 01M51QEYS538XA58KDRY844T52).
+pub const BROKEN_MAIN: &str = "broken-main";
+
 /// An open issue, as `gh issue list --json
 /// number,body,comments,milestone,labels` gives it.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -949,6 +962,12 @@ impl Issue {
     /// (01M5157V0P92EBHF4M7N9K0RGR).
     pub fn no_verify(&self) -> bool {
         self.labels.iter().any(|l| l.name == NO_VERIFY)
+    }
+
+    /// True when the issue is a fix item: it has the label
+    /// [`BROKEN_MAIN`] (01M51QEYPGD6W345MZ4F85C38F).
+    pub fn broken_main(&self) -> bool {
+        self.labels.iter().any(|l| l.name == BROKEN_MAIN)
     }
 }
 
@@ -1078,10 +1097,51 @@ pub fn free_items(
     claims: &HashSet<String>,
     pulls: &[Pull],
 ) -> Vec<u64> {
+    free_of(open, claims, pulls, |i| {
+        i.milestone.as_ref().is_some_and(|m| m.title == wave)
+    })
+}
+
+/// The free fix items of `open` (01M51QEYS538XA58KDRY844T52): each open
+/// issue with the label [`BROKEN_MAIN`] that is free as an item of
+/// [`free_items`] is, in each milestone and with no milestone.
+///
+/// ```
+/// use std::collections::HashSet;
+/// use riff::rollout::{Issue, Label, Milestone, fix_items};
+///
+/// let issue = |number, wave: Option<&str>, label: &str| Issue {
+///     number,
+///     milestone: wave.map(|title| Milestone { title: title.into() }),
+///     labels: vec![Label { name: label.into() }],
+///     ..Issue::default()
+/// };
+/// let open = [
+///     issue(1, Some("Wave 2"), "bug"),
+///     issue(9, None, "broken-main"),
+///     issue(10, Some("Wave 7"), "broken-main"),
+///     issue(11, Some("Wave 2"), "broken-main"),
+/// ];
+/// let claims: HashSet<String> = ["issue-11".to_owned()].into();
+/// assert_eq!(fix_items(&open, &claims, &[]), [9, 10]);
+/// ```
+pub fn fix_items(open: &[Issue], claims: &HashSet<String>, pulls: &[Pull]) -> Vec<u64> {
+    free_of(open, claims, pulls, Issue::broken_main)
+}
+
+/// The issues of `open` that `pick` takes and that are free: no claim,
+/// no comment `Merged in #`, no pull request that waits for a verify or
+/// for the merge, and no open need.
+fn free_of(
+    open: &[Issue],
+    claims: &HashSet<String>,
+    pulls: &[Pull],
+    pick: impl Fn(&Issue) -> bool,
+) -> Vec<u64> {
     let numbers: HashSet<u64> = open.iter().map(|i| i.number).collect();
     let in_verify = in_verify(pulls);
     open.iter()
-        .filter(|i| i.milestone.as_ref().is_some_and(|m| m.title == wave))
+        .filter(|i| pick(i))
         .filter(|i| !i.merged())
         .filter(|i| !claims.contains(&format!("issue-{}", i.number)))
         .filter(|i| !in_verify.contains(&i.number))
@@ -1708,6 +1768,10 @@ pub struct Work {
 /// in `holds` is no work (01M51A55Q2MDZT38JDCEJ1QECP): a hold names one
 /// item, so a hold of `issue-N` keeps `verify-issue-N` free.
 ///
+/// A fix item ([`BROKEN_MAIN`], 01M51QEYS538XA58KDRY844T52) comes before
+/// each other item: its verify first, then the item. It is free work in
+/// each milestone ([`fix_items`]).
+///
 /// ```
 /// use std::collections::HashSet;
 /// use riff::rollout::{Issue, Label, Milestone, Pull, free_work_of};
@@ -1738,6 +1802,16 @@ pub struct Work {
 /// // A free of the hold: the item is work again.
 /// let holds: HashSet<String> = ["verify-issue-2".to_owned()].into();
 /// assert_eq!(free_work_of(&open, &issues, &pulls, &none, &holds), ["issue-1"]);
+///
+/// // main is broken: the fix item 9 comes first, also from the backlog.
+/// // The verify of the fix item 8 comes before it.
+/// let fix = |number, wave| Issue { labels: vec![Label { name: "broken-main".into() }], ..issue(number, wave, &[]) };
+/// let issues = [issue(1, "Wave 2", &[]), issue(2, "Backlog", &[]), fix(8, "Wave 2"), fix(9, "Backlog")];
+/// let pulls = [pull(40, 2), pull(41, 8)];
+/// assert_eq!(
+///     free_work_of(&open, &issues, &pulls, &none, &none),
+///     ["verify-issue-8", "issue-9", "verify-issue-2", "issue-1"]
+/// );
 /// ```
 pub fn free_work_of(
     open: &[Milestone],
@@ -1753,13 +1827,31 @@ pub fn free_work_of(
         .filter(|i| i.no_verify())
         .map(|i| i.number)
         .collect();
-    waiting_verifies(pulls, claims)
+    let fixes: HashSet<u64> = issues
+        .iter()
+        .filter(|i| i.broken_main())
+        .map(|i| i.number)
+        .collect();
+    let mut work: Vec<String> = waiting_verifies(pulls, claims)
         .iter()
         .filter(|n| !kept.contains(n))
         .map(|n| format!("verify-issue-{n}"))
-        .chain(items.iter().map(|n| format!("issue-{n}")))
+        .chain(
+            fix_items(issues, claims, pulls)
+                .iter()
+                .map(|n| format!("issue-{n}")),
+        )
+        .chain(
+            items
+                .iter()
+                .filter(|n| !fixes.contains(n))
+                .map(|n| format!("issue-{n}")),
+        )
         .filter(|item| !holds.contains(item))
-        .collect()
+        .collect();
+    // A stable sort: the fix items first, each in its order of above.
+    work.sort_by_key(|item| !usage::issue_of(item).is_some_and(|(n, _)| fixes.contains(&n)));
+    work
 }
 
 /// The real world of the rollout: the riff, `gh`, and tmux.

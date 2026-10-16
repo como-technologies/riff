@@ -713,7 +713,7 @@ pub fn same_commit(head: &str, tested: &str) -> Result<()> {
 pub const GATE: &str = "Gate";
 
 /// A check run, as `gh api repos/R/commits/C/check-runs` gives it.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct CheckRun {
     /// `queued`, `in_progress` or `completed`.
     #[serde(deserialize_with = "crate::text::forge_de")]
@@ -721,6 +721,13 @@ pub struct CheckRun {
     /// `success`, `failure`, `cancelled` and so on, when it is completed.
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
     pub conclusion: Option<String>,
+    /// The commit of the run.
+    #[serde(default, deserialize_with = "crate::text::forge_de")]
+    pub head_sha: String,
+    /// The page of the job, for example
+    /// `https://github.com/o/r/actions/runs/38861280871/job/1`.
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+    pub html_url: Option<String>,
 }
 
 /// The check runs of one commit.
@@ -752,6 +759,7 @@ pub enum Gate {
 /// let run = |status: &str, conclusion: Option<&str>| CheckRun {
 ///     status: status.into(),
 ///     conclusion: conclusion.map(Into::into),
+///     ..CheckRun::default()
 /// };
 /// assert_eq!(gate_state(&[run("completed", Some("success"))]), Gate::Passed);
 /// assert_eq!(gate_state(&[]), Gate::Missing);
