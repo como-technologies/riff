@@ -95,55 +95,120 @@ use crate::settings;
 /// a Rust test.
 pub const JOBS_VARS: [&str; 2] = ["CARGO_BUILD_JOBS", "RUST_TEST_THREADS"];
 
-/// The variable of cargo that names the test runner of the target of
-/// this build: `CARGO_TARGET_<TRIPLE>_RUNNER`.
+/// The variable of cargo that names the test runner of `target`:
+/// `CARGO_TARGET_<TRIPLE>_RUNNER`.
 ///
 /// ```
-/// let var = riff::limits::runner_var();
-/// assert!(var.starts_with("CARGO_TARGET_") && var.ends_with("_RUNNER"), "{var}");
-/// assert!(!var.contains('-') && var == var.to_uppercase(), "{var}");
+/// assert_eq!(
+///     riff::limits::runner_var("x86_64-unknown-linux-gnu"),
+///     "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER",
+/// );
+/// assert_eq!(
+///     riff::limits::runner_var("thumbv7em-none-eabi.v2"),
+///     "CARGO_TARGET_THUMBV7EM_NONE_EABI_V2_RUNNER",
+/// );
 /// ```
-pub fn runner_var() -> String {
-    let triple = env!("RIFF_TARGET").to_uppercase().replace(['-', '.'], "_");
+pub fn runner_var(target: &str) -> String {
+    let triple = target.to_uppercase().replace(['-', '.'], "_");
     format!("CARGO_TARGET_{triple}_RUNNER")
 }
 
-/// The variables of a worker with `limits`: the value to set, or `None`
-/// to unset. With the `MAKEFLAGS` of a pool, each build takes its jobs
+/// The target of the tests of a worker (01M515PDCD1RRBKJPZHKKZWMY3):
+/// the `host` line of `version`, the output of `rustc -vV`. A
+/// `cargo test` with no `--target` builds for it. With no such line,
+/// the target `build` of this riff.
+///
+/// A static riff is a musl build, and the `rustc` of the machine has
+/// the gnu host. The runner goes to the gnu target:
+///
+/// ```
+/// use riff::limits::{runner_var, test_target};
+///
+/// let version = "rustc 1.95.0 (59807616e 2026-04-14)\n\
+///                binary: rustc\n\
+///                host: x86_64-unknown-linux-gnu\n\
+///                release: 1.95.0\n";
+/// let musl = "x86_64-unknown-linux-musl";
+/// assert_eq!(test_target(Some(version), musl), "x86_64-unknown-linux-gnu");
+/// assert_eq!(
+///     runner_var(&test_target(Some(version), musl)),
+///     "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER",
+/// );
+/// // riff cannot run rustc, or reads no host.
+/// assert_eq!(test_target(None, musl), musl);
+/// assert_eq!(test_target(Some("error: no toolchain\n"), musl), musl);
+/// assert_eq!(test_target(Some("host: \n"), musl), musl);
+/// ```
+pub fn test_target(version: Option<&str>, build: &str) -> String {
+    version
+        .and_then(|v| v.lines().find_map(|line| line.strip_prefix("host:")))
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .unwrap_or(build)
+        .to_owned()
+}
+
+/// The target of this riff build.
+pub const BUILD_TARGET: &str = env!("RIFF_TARGET");
+
+/// The target of the tests of a worker on this machine ([`test_target`]):
+/// riff runs `rustc -vV`, or `$RUSTC -vV` when `RUSTC` is set, as cargo
+/// does. Else the target of this riff build ([`BUILD_TARGET`]).
+pub fn test_target_here() -> String {
+    let rustc = std::env::var_os("RUSTC")
+        .filter(|rustc| !rustc.is_empty())
+        .unwrap_or_else(|| "rustc".into());
+    let version = Command::new(rustc)
+        .arg("-vV")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| String::from_utf8(out.stdout).ok());
+    test_target(version.as_deref(), BUILD_TARGET)
+}
+
+/// The variables of a worker with `limits`, whose tests build for
+/// `target` ([`test_target_here`]): the value to set, or `None` to
+/// unset. With the `MAKEFLAGS` of a pool, each build takes its jobs
 /// from the pool (01M3ZGZMJ9RF1C4AHG78GQ2NM4), and the test runner of
-/// `riff` takes the test threads from it (01M3ZGZMNH1YM56GYNYBMH7AWM): no
-/// `RUST_TEST_THREADS`.
+/// `riff` takes the test threads from it (01M3ZGZMNH1YM56GYNYBMH7AWM,
+/// 01M515PDCD1RRBKJPZHKKZWMY3): no `RUST_TEST_THREADS`.
 /// With no pool, each build and test run gets the fixed share
 /// (01M3WFYZRK5CT22GJW6ZHYT9CC), and no `MAKEFLAGS`,
 /// `CARGO_MAKEFLAGS` or test runner of another pool
 /// (01M41CR2HJRFW6R7YMJTPVEMJ1).
 ///
 /// ```
-/// use riff::limits::{jobs_env, runner_var, Limits};
+/// use riff::limits::{jobs_env, Limits};
 ///
 /// let limits = Limits { jobs: 2, tokens: 4, counted: 3, nice: 10 };
 /// let flags = "-j --jobserver-auth=fifo:/run/riff/jobs/fifo";
-/// let env = jobs_env(&limits, Some(flags), "/bin/riff".as_ref());
+/// let gnu = "x86_64-unknown-linux-gnu";
+/// let runner = "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER";
+/// let env = jobs_env(&limits, Some(flags), "/bin/riff".as_ref(), gnu);
 /// let get = |var: &str| env.iter().find(|(v, _)| v == var).map(|(_, value)| value.clone());
 /// assert_eq!(get("MAKEFLAGS"), Some(Some(flags.to_owned())));
 /// assert_eq!(get("CARGO_BUILD_JOBS"), Some(None), "no cap below the pool");
 /// assert_eq!(get("RUST_TEST_THREADS"), Some(None), "the threads come from the pool");
-/// assert_eq!(get(&runner_var()), Some(Some("/bin/riff workers test-run".to_owned())));
+/// assert_eq!(get(runner), Some(Some("/bin/riff workers test-run".to_owned())));
 ///
-/// let env = jobs_env(&limits, None, "/bin/riff".as_ref());
+/// let env = jobs_env(&limits, None, "/bin/riff".as_ref(), gnu);
 /// assert_eq!(
 ///     env,
 ///     [("MAKEFLAGS".to_owned(), None),
 ///      ("CARGO_MAKEFLAGS".to_owned(), None),
 ///      ("CARGO_BUILD_JOBS".to_owned(), Some("2".to_owned())),
 ///      ("RUST_TEST_THREADS".to_owned(), Some("2".to_owned())),
-///      (runner_var(), None)],
+///      (runner.to_owned(), None)],
 /// );
 /// ```
 pub fn jobs_env(
     limits: &Limits,
     makeflags: Option<&str>,
     riff: &Path,
+    target: &str,
 ) -> Vec<(String, Option<String>)> {
     let jobs = Some(limits.jobs.to_string());
     let Some(makeflags) = makeflags else {
@@ -152,7 +217,7 @@ pub fn jobs_env(
             ("CARGO_MAKEFLAGS".into(), None),
             ("CARGO_BUILD_JOBS".into(), jobs.clone()),
             ("RUST_TEST_THREADS".into(), jobs),
-            (runner_var(), None),
+            (runner_var(target), None),
         ];
     };
     vec![
@@ -161,7 +226,7 @@ pub fn jobs_env(
         ("CARGO_BUILD_JOBS".into(), None),
         ("RUST_TEST_THREADS".into(), None),
         (
-            runner_var(),
+            runner_var(target),
             Some(format!("{} workers test-run", riff.display())),
         ),
     ]

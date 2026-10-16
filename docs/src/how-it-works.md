@@ -1026,7 +1026,7 @@ brett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim
      working on #88 Split the store
 mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 ├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims
-│  │  load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  jobs 2
+│  │  load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10
 │  │  last kill 14:03:12 by systemd-oomd
 │  ├─ 5b1e2a90  #issue-7  worker  busy
 │  │    working on #7 Fix the help
@@ -1110,8 +1110,11 @@ The table of each state, its color and its detail is in
   numbers. `load 13.2 9.8/8` is the load average of 1 and 5 minutes,
   and the physical cores. `3000MHz now 2990` is the cap of the clock
   and the clock now. `20GB avail/4` is the available memory and the
-  floor. `workers 3/4` is the workers and the limit. `jobs 2` is the
-  jobs of each worker. A number over its limit is yellow. A second
+  floor. `workers 3/4` is the workers and the limit. `pool 10` is the
+  tokens of the pool of build jobs, or `jobs 2` the jobs of each
+  worker with no pool (see
+  [See the pool of build jobs](#see-the-pool-of-build-jobs)). A number
+  over its limit is yellow. A second
   line shows the time and the cause of the last kill that the monitor
   saw. See
   [Watch the health of a machine](#watch-the-health-of-a-machine).
@@ -3868,8 +3871,13 @@ four builds at once:  10 + 4 = 14 jobs
 ```
 
 A test program runs its tests as threads, and Rust does not read the
-pool. So riff gives each worker a test runner. For each test program,
-it waits for one token, then takes each free token. It runs the
+pool. So riff gives each worker a test runner in
+`CARGO_TARGET_<TRIPLE>_RUNNER`. The triple is the `host` of
+`rustc -vV` (or of `$RUSTC -vV`): cargo builds the tests for that
+target. It is not the target of the riff build: a static riff is a
+musl build, and the tests build for the gnu host. For each test
+program, the runner waits for one token, then takes each free token.
+It runs the
 program with one test thread for each token, and gives the tokens back
 at the end, also when the test is killed. When you set
 `RUST_TEST_THREADS` yourself, the runner takes that number of tokens,
@@ -3902,6 +3910,18 @@ riff workers jobs
 workers.jobs  0  (/home/mike/.config/riff/config.toml)
 The machine has 8 physical cores and 16 hardware threads. All workers take their compile jobs and test threads from one pool of 10 tokens: the hardware threads less 2, less 4 workers (the limit, or the workers that run when they are more). Each build also has one job of its own. A test program takes each free token, and runs one test thread for each. Now 3 tokens are in use. While the memory pressure is above 10%, the pool gives out no new token. Now it is 0.5%. Set it with: riff workers jobs N (N turns the pool off; 0: the pool)
 ```
+
+The line of the monitor in `riff workers` shows the pool too (see
+[Watch the health of a machine](#watch-the-health-of-a-machine)):
+
+| The line shows | When |
+|---|---|
+| `pool 10 (3 in use)` | the pool of the workers that run: its tokens, and the tokens that are not in the pool now |
+| `pool 10 (0 in use)` | no worker runs: the pool that the next worker makes |
+| `jobs 2` | no pool: each worker builds with 2 jobs and tests with 2 threads, because `riff workers jobs N` turned the pool off, or riff could not make it |
+
+`riff top` shows only `pool 10` or `jobs 2`, so that its line fits in
+80 columns.
 
 #### The pool and the memory pressure
 
@@ -4291,7 +4311,7 @@ riff workers
 
 ```text
 thelio  limit 3  runs 1: room for 2 workers, the rollout starts them for free work  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
-monitor on  load5 2.40 of 24.00 (16 cores)  jobs 7  last look 4s ago
+monitor on  load5 2.40 of 24.00 (16 cores)  pool 27 (3 in use)  last look 4s ago
 PANE  ID        STATE  DETAIL
 %3    2a880834  busy   working on #12  1m ago: tests of issue-12
 ```
@@ -4693,12 +4713,14 @@ riff workers monitor
 ```
 
 `riff workers` shows a line of the monitor under each machine: on or
-off, the 5-minute load and its limit, the jobs of each worker, and the
+off, the 5-minute load and its limit, the pool of build jobs with its
+tokens in use or the jobs of each worker (see
+[See the pool of build jobs](#see-the-pool-of-build-jobs)), and the
 last kill. `riff top` shows the numbers under each host. See
 [See what each session does](#see-what-each-session-does).
 
 ```text
-monitor on  load5 9.80 of 12.00 (8 cores)  jobs 2  last kill 14:03:12 systemd-oomd  last look 4s ago
+monitor on  load5 9.80 of 12.00 (8 cores)  pool 10 (3 in use)  last kill 14:03:12 systemd-oomd  last look 4s ago
 ```
 
 The settings are in `config.toml`: `monitor.on`, `monitor.every` and

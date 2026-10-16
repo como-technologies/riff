@@ -555,31 +555,40 @@ pub fn machines(sessions: &[SessionInfo], here: Option<Machine>) -> Vec<Machine>
 /// (01M421QPZ9E01PQ62PDBH378SJ): the load average of 1 and 5 minutes
 /// against the physical cores, the cap of the clock and the clock now,
 /// the available memory against the floor, the workers against the
-/// limit, and the jobs of each worker. A number over its limit has the
-/// warning style. A host that tells fewer numbers gets fewer parts.
+/// limit, and the pool of build jobs or the jobs of each worker, with
+/// no tokens in use ([`crate::monitor::Jobs::short`],
+/// 01M515PDFZZXQ9ZCQE7SQ6KB8G). A number over its limit has the warning
+/// style. A host that tells fewer numbers gets fewer parts.
 ///
 /// ```
 /// use riff::host::HostStatus;
 /// use riff::machine::Machine;
-/// use riff::monitor::Numbers;
+/// use riff::monitor::{Jobs, Numbers};
 /// use riff::top::numbers;
 ///
 /// let plain = |parts: Vec<(String, anstyle::Style)>| {
 ///     parts.into_iter().map(|(t, _)| t).collect::<Vec<_>>().join("  ")
 /// };
+/// let jobs = Jobs::Pool { size: 10, used: 3 };
 /// let status = HostStatus {
 ///     limit: 4,
 ///     floor: 4,
 ///     deaths: 0,
 ///     machine: Some(Machine { cores: 16, mhz: 3000, now_mhz: 2990, mem_gb: 31, avail_gb: 20, load: 13.2 }),
 ///     disk: None,
-///     monitor: Some(Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs: 2, kill: None }),
+///     monitor: Some(Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs, kill: None }),
 ///     workers: vec![("%3".into(), "1a2b3c4d".into()); 3],
 /// };
 /// assert_eq!(
 ///     plain(numbers(&status)),
-///     "load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  jobs 2"
+///     "load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10"
 /// );
+/// // No pool: the jobs of each worker.
+/// let fixed = HostStatus {
+///     monitor: status.monitor.clone().map(|n| Numbers { jobs: Jobs::Fixed(2), ..n }),
+///     ..status.clone()
+/// };
+/// assert!(plain(numbers(&fixed)).ends_with("  workers 3/4  jobs 2"));
 /// // Over the limits: the warning style.
 /// let over = HostStatus {
 ///     machine: status.machine.map(|m| Machine { avail_gb: 3, ..m }),
@@ -596,7 +605,14 @@ pub fn machines(sessions: &[SessionInfo], here: Option<Machine>) -> Vec<Machine>
 /// let big = HostStatus {
 ///     limit: 10,
 ///     machine: Some(Machine { cores: 64, mhz: 5883, now_mhz: 5800, mem_gb: 256, avail_gb: 200, load: 33.2 }),
-///     monitor: Some(Numbers { on: true, load5: 28.4, limit: 48.0, physical: 32, jobs: 12, kill: None }),
+///     monitor: Some(Numbers {
+///         on: true,
+///         load5: 28.4,
+///         limit: 48.0,
+///         physical: 32,
+///         jobs: Jobs::Pool { size: 52, used: 52 },
+///         kill: None,
+///     }),
 ///     workers: vec![("%3".into(), "1a2b3c4d".into()); 10],
 ///     ..status.clone()
 /// };
@@ -635,7 +651,7 @@ pub fn numbers(status: &HostStatus) -> Vec<(String, anstyle::Style)> {
         style(runs > usize::from(status.limit)),
     ));
     if let Some(n) = monitor {
-        parts.push((format!("jobs {}", n.jobs), anstyle::Style::new()));
+        parts.push((n.jobs.short(), anstyle::Style::new()));
     }
     parts
 }
@@ -645,10 +661,11 @@ pub fn numbers(status: &HostStatus) -> Vec<(String, anstyle::Style)> {
 ///
 /// ```
 /// use riff::host::HostStatus;
-/// use riff::monitor::{Kill, Numbers};
+/// use riff::monitor::{Jobs, Kill, Numbers};
 ///
 /// let kill = Kill { at: 1727980000, by: "systemd-oomd".into(), what: String::new() };
-/// let monitor = Numbers { on: true, load5: 1.0, limit: 12.0, physical: 8, jobs: 2, kill: Some(kill) };
+/// let jobs = Jobs::Fixed(2);
+/// let monitor = Numbers { on: true, load5: 1.0, limit: 12.0, physical: 8, jobs, kill: Some(kill) };
 /// let status = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: Some(monitor), workers: vec![] };
 /// assert_eq!(
 ///     riff::top::kill_line(&status).unwrap().0,

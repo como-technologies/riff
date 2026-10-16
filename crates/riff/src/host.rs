@@ -217,7 +217,7 @@ pub const END_WAIT: Duration = Duration::from_secs(1);
 /// use riff::disk::Disk;
 /// use riff::host::HostStatus;
 /// use riff::machine::Machine;
-/// use riff::monitor::Numbers;
+/// use riff::monitor::{Jobs, Numbers};
 ///
 /// let none = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, workers: vec![] };
 /// assert_eq!(none.line(), "workers host: limit 2, floor 4GB, no workers");
@@ -250,12 +250,16 @@ pub const END_WAIT: Duration = Duration::from_secs(1);
 ///
 /// // The numbers of the monitor come after the disk
 /// // (01M421QPX01BB15GJXHFYRETTX).
-/// let monitor = Some(Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs: 2, kill: None });
+/// // The pool of build jobs, or the jobs of each worker
+/// // (01M515PDFZZXQ9ZCQE7SQ6KB8G).
+/// let jobs = Jobs::Pool { size: 10, used: 3 };
+/// let monitor = Some(Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs, kill: None });
 /// let with_monitor = HostStatus { monitor: monitor.clone(), ..with_disk.clone() };
 /// assert!(with_monitor.line().contains(
-///     "(3%), monitor on, load5 9.80 of 12.00, 8 cores, jobs 2, workers: %3"
+///     "(3%), monitor on, load5 9.80 of 12.00, 8 cores, pool 10 (3 in use), workers: %3"
 /// ));
 /// assert_eq!(HostStatus::parse(&with_monitor.line()), Some(with_monitor));
+/// let monitor = monitor.map(|n| Numbers { jobs: Jobs::Fixed(2), ..n });
 /// let only_monitor = HostStatus { monitor, ..none.clone() };
 /// assert_eq!(
 ///     only_monitor.line(),
