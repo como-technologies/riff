@@ -669,7 +669,12 @@ async fn tail_and_watch_keep_their_place_over_an_update() {
         cmd.env("RIFF_HOME", &logs);
         runs.push(spawn(cmd, &logs));
     }
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Each riff knows its place when it says its first line: the tail
+    // names its thread, and the watch says that the server does not
+    // answer. Only then does the worktree go (#294).
+    let said = |err: &Path| !read(err).is_empty();
+    let started = wait_for(WAIT, || runs.iter().all(|(_, _, err)| said(err))).await;
+    assert!(started, "{}\n{}", read(&runs[0].2), read(&runs[1].2));
     std::fs::remove_dir_all(&worktree).unwrap();
     install(&Isolated::shared().riff_path(), &bin.join("riff"));
     let moved = |err: &Path| read(err).contains("The new riff runs in");

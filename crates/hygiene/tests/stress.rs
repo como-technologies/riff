@@ -124,6 +124,21 @@ fn stress_passes_when_each_run_passes_and_removes_old_logs() {
     assert_eq!(std::fs::read_dir(&logs).unwrap().count(), 0);
 }
 
+/// cargo cannot build doc tests with `--no-run`: rustdoc builds them in
+/// each run.
+#[test]
+fn stress_of_doc_tests_runs_no_build_first() {
+    let dir = tempfile::tempdir().unwrap();
+    fake_cargo(dir.path(), &[]);
+    let out = stress(dir.path(), &["-p", "riff", "--doc", "local"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let calls = std::fs::read_to_string(dir.path().join("cargo.log")).unwrap();
+    assert_eq!(
+        calls.lines().collect::<Vec<_>>(),
+        ["test -q -p riff --doc local"; 5]
+    );
+}
+
 #[test]
 fn stress_with_no_test_shows_the_usage() {
     let dir = tempfile::tempdir().unwrap();

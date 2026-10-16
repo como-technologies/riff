@@ -28,7 +28,12 @@ mkdir -p "$logs"
 rm -f "$logs"/run-*.log
 
 # The build runs before the load, so the load slows only the tests.
-cargo test -q --no-run "$@"
+# rustdoc builds each doc test in each run, and cargo has no --no-run
+# for doc tests: the recipe built the library with the binaries.
+case " $* " in
+    *" --doc "*) ;;
+    *) cargo test -q --no-run "$@" ;;
+esac
 
 loops=()
 stop() {
