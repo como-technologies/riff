@@ -376,8 +376,10 @@ enum Command {
     /// The riff daemon of this machine connects to the daemon of the owner,
     /// and gets each record of the riff. The daemon of the owner must be
     /// online. A daemon is in one riff at a time: riff join refuses while
-    /// your riff has another member. Run it in a terminal. A failed join
-    /// changes nothing, and says why.
+    /// your riff has another member. A machine that left a riff joins it
+    /// again with a new invite string of the owner. A machine that the
+    /// owner removed cannot join again. Run it in a terminal. A failed
+    /// join changes nothing, and says why.
     Join {
         /// The invite string of the owner: riff1-...
         invite: String,
@@ -388,15 +390,17 @@ enum Command {
     /// and has a riff of its own again, with the same key. It waits up to
     /// 5 seconds until a member got the news. When none got it, it says so,
     /// and names the riff remove command for the owner. Each session of
-    /// this machine leaves with it. The owner cannot leave. Run it in a
-    /// terminal.
+    /// this machine leaves with it. The owner cannot leave. To join that
+    /// riff again, ask the owner for a new invite string, and run riff
+    /// join with it. Run it in a terminal.
     Leave,
     /// Remove a member of this riff
     ///
     /// riff remove USER removes each machine of the user USER from the riff
     /// of the riff daemon of this machine. With --host, it removes one
     /// machine. Each daemon of the riff then refuses the key of that
-    /// machine. Only the owner runs it, in a terminal. The owner cannot
+    /// machine. A removed machine cannot join again, also with a new
+    /// invite. Only the owner runs it, in a terminal. The owner cannot
     /// remove itself.
     ///
     /// With --email, it acts on riff-server 1.x: it removes a person, and

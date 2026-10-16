@@ -538,6 +538,7 @@ pub(crate) mod tests {
                 key: brett,
                 user: "brett".into(),
                 host: "kadomony".into(),
+                after: None,
             }),
         ];
         bodies.extend(more.iter().cloned());

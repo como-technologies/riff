@@ -58,7 +58,7 @@
 //! ```
 //! use riff::daemon_key::{Key, Public};
 //! use riff::peer::body::{Body, Riff, Type};
-//! use riff::peer::record::{Context, Fault, Id, Record, Standing, check};
+//! use riff::peer::record::{Admitted, Context, Fault, Id, Record, Standing, check};
 //! use riff_core::name::ThreadName;
 //!
 //! /// A riff of one owner with no record yet.
@@ -66,9 +66,10 @@
 //!
 //! impl Context for New {
 //!     fn riff(&self) -> Public { self.0 }
-//!     fn standing(&self, key: &Public) -> Standing {
+//!     fn standing(&self, key: &Public, _: u64) -> Standing {
 //!         if *key == self.0 { Standing::Owner { user: None } } else { Standing::Unknown }
 //!     }
+//!     fn admitted(&self, _: &Public) -> Option<Admitted> { None }
 //!     fn next(&self, _: &Public) -> (u64, Id) { (1, Id::ZERO) }
 //!     fn leads(&self, _: &Public, _: Option<&ThreadName>) -> bool { false }
 //! }
@@ -332,18 +333,29 @@ pub struct Checked {
     pub body: Body,
 }
 
-/// What the riff of a reader knows of one key.
+/// What the riff of a reader knows of one key, for one record of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Standing {
     /// The owner: the riff ID. Its user is the user of its `riff`
     /// record, `None` before that record.
     Owner { user: Option<String> },
-    /// A member key that a record of the owner admits, with its user.
-    /// `until` is the last sequence number that it may write: the last
-    /// of its `removed` record, or the number of its `left` record.
+    /// A member key that a record of the owner admits: the user of the
+    /// join of the record (01M5328FVZJGCY9VPQFERM7P81). `until` is the
+    /// last sequence number that it may write in that join: the last of
+    /// its `removed` record, or the number of its `left` record.
     Member { user: String, until: Option<u64> },
     /// No record of the owner admits the key yet.
     Unknown,
+}
+
+/// What the records of the owner say of one member key: for the writer
+/// check of a `member` record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Admitted {
+    /// The `after` of its last `member` record: 0 for its first join.
+    pub after: u64,
+    /// True after a `removed` record of the key.
+    pub removed: bool,
 }
 
 /// The state of the riff of a reader that a check needs.
@@ -351,11 +363,18 @@ pub trait Context {
     /// The riff ID: the key of the owner.
     fn riff(&self) -> Public;
 
-    /// What the riff knows of the key `key`.
-    fn standing(&self, key: &Public) -> Standing;
+    /// What the riff knows of the key `key`, for its record `seq`.
+    fn standing(&self, key: &Public, seq: u64) -> Standing;
+
+    /// What the records of the owner say of the member key `key`:
+    /// `None` for a key with no `member` record.
+    fn admitted(&self, key: &Public) -> Option<Admitted>;
 
     /// The next sequence number of the author `author`, and the ID of
-    /// its last record: `(1, Id::ZERO)` for an author with no record.
+    /// the record before it: `(1, Id::ZERO)` for an author with no
+    /// record. That is the ID of its last record, but at the first
+    /// record of a join again: the ID of the `member` record of that
+    /// join (01M5328FPJT7Q5Q1509BC5F0J7).
     fn next(&self, author: &Public) -> (u64, Id);
 
     /// True when the daemon `author` runs a session with a lead mark: in
@@ -455,9 +474,9 @@ pub fn check(bytes: Vec<u8>, context: &impl Context) -> Result<Checked, Fault> {
     if record.riff() != context.riff() {
         return Err(Fault::Riff);
     }
-    // 4: the author.
+    // 4: the author, in the join of the record.
     let author = record.author();
-    let standing = context.standing(&author);
+    let standing = context.standing(&author, record.seq());
     match &standing {
         Standing::Unknown => return Err(Fault::Author(Author::Unknown)),
         Standing::Member {
@@ -515,13 +534,21 @@ fn writer(
                 member.key == context.riff(),
                 "the owner is no member of its riff",
             )?;
-            // A key has one user: the riff refuses a second `member`
-            // record of a key, so the user of a key does not depend on
-            // the order of the records (01M521J6MKSBAA2QP6ZFHYT9ZQ).
-            refuse(
-                context.standing(&member.key) != Standing::Unknown,
-                "the key is a member already, or was one",
-            )
+            // The check reads only the records of the owner. So the joins
+            // of a key do not depend on the order of the records
+            // (01M5328FVZJGCY9VPQFERM7P81).
+            match (member.after, context.admitted(&member.key)) {
+                (None, None) => Ok(()),
+                (None, Some(_)) => Err("the key is a member already, or was one"),
+                (Some(_), None) => Err("a join again of a key that was no member"),
+                (Some(_), Some(admitted)) if admitted.removed => {
+                    Err("a join again of a removed key")
+                }
+                (Some(after), Some(admitted)) if after <= admitted.after => {
+                    Err("a join again names no left record after the last join of the key")
+                }
+                (Some(_), Some(_)) => Ok(()),
+            }
         }
         Body::Removed(removed) => {
             refuse(!owner, "only the owner removes a member")?;
@@ -558,7 +585,7 @@ fn writer(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use riff_core::wire;
 
@@ -567,10 +594,12 @@ mod tests {
 
     /// A riff of the owner [1; 32] and the member [2; 32] (`brett`), with
     /// no record yet of each. The member [3; 32] left after its record
-    /// 4. The member [4; 32] is a lead in `o/r`.
+    /// 4. The member [4; 32] is a lead in `o/r`. The owner removed the
+    /// member [7; 32] after its record 2.
     struct Here {
         riff: Public,
         members: BTreeMap<Public, Standing>,
+        removed: BTreeSet<Public>,
         next: BTreeMap<Public, (u64, Id)>,
         leads: Option<(Public, ThreadName)>,
     }
@@ -589,9 +618,11 @@ mod tests {
             members.insert(key(2).public(), member("brett", None));
             members.insert(key(3).public(), member("ann", Some(4)));
             members.insert(key(4).public(), member("mike", None));
+            members.insert(key(7).public(), member("zed", Some(2)));
             Here {
                 riff: key(1).public(),
                 members,
+                removed: BTreeSet::from([key(7).public()]),
                 next: BTreeMap::new(),
                 leads: Some((key(4).public(), "o/r".parse().unwrap())),
             }
@@ -603,13 +634,21 @@ mod tests {
             self.riff
         }
 
-        fn standing(&self, key: &Public) -> Standing {
+        fn standing(&self, key: &Public, _: u64) -> Standing {
             if *key == self.riff {
                 return Standing::Owner {
                     user: Some("mike".into()),
                 };
             }
             self.members.get(key).cloned().unwrap_or(Standing::Unknown)
+        }
+
+        /// Each member joined one time.
+        fn admitted(&self, key: &Public) -> Option<Admitted> {
+            self.members.contains_key(key).then(|| Admitted {
+                after: 0,
+                removed: self.removed.contains(key),
+            })
         }
 
         fn next(&self, author: &Public) -> (u64, Id) {
@@ -937,13 +976,15 @@ mod tests {
                 ended: false,
             }))
         };
-        let admit = |of: u8, user: &str| {
+        let again = |of: u8, user: &str, after: Option<u64>| {
             Body::Member(Member {
                 key: key(of).public(),
                 user: user.into(),
                 host: "h".into(),
+                after,
             })
         };
+        let admit = |of: u8, user: &str| again(of, user, None);
         let member = admit(6, "eve");
         let removed = |of: u8| {
             Body::Removed(Removed {
@@ -985,6 +1026,28 @@ mod tests {
                 1,
                 admit(3, "ann"),
                 Some("the key is a member already, or was one"),
+            ),
+            // 01M5328FPJT7Q5Q1509BC5F0J7: ann left at 4 and joins again.
+            (1, again(3, "eve", Some(4)), None),
+            (
+                2,
+                again(3, "ann", Some(4)),
+                Some("only the owner admits a member"),
+            ),
+            (
+                1,
+                again(3, "ann", Some(0)),
+                Some("a join again names no left record after the last join of the key"),
+            ),
+            (
+                1,
+                again(6, "eve", Some(4)),
+                Some("a join again of a key that was no member"),
+            ),
+            (
+                1,
+                again(7, "zed", Some(9)),
+                Some("a join again of a removed key"),
             ),
             (1, removed(2), None),
             (2, removed(4), Some("only the owner removes a member")),

@@ -88,7 +88,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use tokio::sync::broadcast;
 
 use crate::daemon_key::{Key, Public};
@@ -290,9 +290,17 @@ impl Peers {
     }
 
     /// Writes a record of `key` with the body `body` and the time
-    /// `time_ms`, and applies it.
+    /// `time_ms`, and applies it. A daemon that joined again writes no
+    /// record before it has its own records up to its `left` record: the
+    /// record would fork its chain (01M532QC66ER7BZPYWR7QDXAP1).
     pub fn write(&mut self, key: &Key, body: &Body, time_ms: u64) -> Result<(Id, Applied)> {
         let (seq, before) = self.state.next(&key.public());
+        if let Some(member) = self.state.members().get(&key.public()) {
+            let after = member.last_join().after;
+            if seq <= after {
+                bail!("{}", crate::text::peer_lacks_own_records(seq - 1, after));
+            }
+        }
         let record = Record::sign(key, self.state.riff(), seq, before, time_ms, body)?;
         let checked = check(record.bytes().to_vec(), &self.state)?;
         let id = checked.record.id();
@@ -440,6 +448,7 @@ mod tests {
             key: key.public(),
             user: user.into(),
             host: "h".into(),
+            after: None,
         })
     }
 
@@ -543,6 +552,7 @@ mod tests {
             key: member.public(),
             user: "brett".into(),
             host: "kadomony".into(),
+            after: None,
         });
         peers.write(&owner, &admit, 2).unwrap();
 
@@ -603,6 +613,7 @@ mod tests {
             key: member.public(),
             user: "brett".into(),
             host: "kadomony".into(),
+            after: None,
         });
         let riff_record = Record::sign(
             &owner,
@@ -675,6 +686,64 @@ mod tests {
         assert_eq!(third.state().view(), second.state().view());
         let (_, kept) = crate::peer::book::Book::open(three.path()).unwrap();
         assert_eq!(kept.len(), 4);
+    }
+
+    /// 01M532QC66ER7BZPYWR7QDXAP1: a daemon that joined again, and lacks
+    /// its own records up to its `left` record, writes no record: it would
+    /// fork its chain. With its records, its next record names the new
+    /// `member` record, and each other daemon keeps it.
+    #[test]
+    fn a_daemon_that_joined_again_writes_only_after_its_own_records() {
+        use crate::peer::body::Left;
+        let owner = Key::from_bytes(&[1; 32]);
+        let member = Key::from_bytes(&[2; 32]);
+        let riff = owner.public();
+        let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let mut of_owner = Peers::open(one.path(), riff, |_| {}).unwrap();
+        let body = Body::Riff(Riff {
+            user: "mike".into(),
+            host: None,
+        });
+        of_owner.write(&owner, &body, 1).unwrap();
+        of_owner.write(&owner, &admit(&member, "brett"), 2).unwrap();
+        let hello = Record::sign(&member, riff, 1, Id::ZERO, 3, &message("brett", "hi")).unwrap();
+        let left = Record::sign(&member, riff, 2, hello.id(), 4, &Body::Left(Left {})).unwrap();
+        for record in [&hello, &left] {
+            of_owner.keep(record.bytes().to_vec(), None).unwrap();
+        }
+        let again = Body::Member(Member {
+            key: member.public(),
+            user: "brett".into(),
+            host: "h".into(),
+            after: Some(2),
+        });
+        of_owner.write(&owner, &again, 5).unwrap();
+
+        // The member gets the records of the owner first: it lacks its
+        // own two records.
+        let mut of_member = Peers::open(two.path(), riff, |_| {}).unwrap();
+        for record in of_owner.lacks(&Heads::new()) {
+            if record.author() == riff {
+                of_member.keep(record.bytes().to_vec(), None).unwrap();
+            }
+        }
+        let error = of_member
+            .write(&member, &message("brett", "back"), 6)
+            .unwrap_err();
+        assert_eq!(error.to_string(), crate::text::peer_lacks_own_records(0, 2));
+        assert!(!of_member.state().heads().contains_key(&member.public()));
+
+        for record in [&hello, &left] {
+            of_member.keep(record.bytes().to_vec(), None).unwrap();
+        }
+        let (id, _) = of_member
+            .write(&member, &message("brett", "back"), 6)
+            .unwrap();
+        let back = of_member.lacks(&of_owner.heads());
+        assert_eq!(back.len(), 1);
+        assert_eq!((back[0].id(), back[0].seq()), (id, 3));
+        let outcome = of_owner.keep(back[0].bytes().to_vec(), None).unwrap();
+        assert!(matches!(outcome, Outcome::Kept(_)), "{outcome:?}");
     }
 
     /// A daemon writes no record that fails its own check: a member

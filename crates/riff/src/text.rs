@@ -7758,18 +7758,44 @@ pub const INVITE_ENDED: &str = "that invite ended: ask the owner for a new one";
 /// Only the daemon of the owner answers a join.
 pub const JOIN_NOT_THE_OWNER: &str = "that daemon is not the owner of its riff";
 
-/// The key of a join is in the riff already (01M521J6MKSBAA2QP6ZFHYT9ZQ).
+/// The key of a join is the owner of the riff
+/// (01M5328FS8XGVW3X6N94F65FA8).
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::join_known_key("8a88e3dd7409f1"),
-///     "the key 8a88e3dd is in the riff already: the owner, a member, a removed key, or a key \
-///      that left"
+///     riff::text::join_owner_key("8a88e3dd7409f1"),
+///     "the key 8a88e3dd is the owner of the riff"
 /// );
 /// ```
-pub fn join_known_key(key: &str) -> String {
+pub fn join_owner_key(key: &str) -> String {
+    format!("the key {} is the owner of the riff", short_key(key))
+}
+
+/// The key of a join is a member of the riff already
+/// (01M5328FS8XGVW3X6N94F65FA8).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_member_key("8a88e3dd7409f1"),
+///     "the key 8a88e3dd is a member of the riff already"
+/// );
+/// ```
+pub fn join_member_key(key: &str) -> String {
+    format!("the key {} is a member of the riff already", short_key(key))
+}
+
+/// The owner removed the key of a join (01M5328FS8XGVW3X6N94F65FA8): a
+/// removed key cannot join again.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_removed_key("8a88e3dd7409f1"),
+///     "the owner removed the key 8a88e3dd: a removed key cannot join again"
+/// );
+/// ```
+pub fn join_removed_key(key: &str) -> String {
     format!(
-        "the key {} is in the riff already: the owner, a member, a removed key, or a key that left",
+        "the owner removed the key {}: a removed key cannot join again",
         short_key(key)
     )
 }
@@ -7838,6 +7864,23 @@ pub fn join_refused_line(key: &str, why: &str) -> String {
 /// ```
 pub fn join_admitted(who: &str) -> String {
     format!("The riff daemon admitted a new member: {who}.")
+}
+
+/// A daemon that joined a riff again has its own records only up to
+/// `have`, and its `left` record is `left` (01M5328FPJT7Q5Q1509BC5F0J7).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::peer_lacks_own_records(0, 7),
+///     "this daemon joined the riff again and has its own records only up to 0 of 7: it writes \
+///      no record until the other daemons send them"
+/// );
+/// ```
+pub fn peer_lacks_own_records(have: u64, left: u64) -> String {
+    format!(
+        "this daemon joined the riff again and has its own records only up to {have} of {left}: it \
+         writes no record until the other daemons send them"
+    )
 }
 
 /// A link ended after the `left` record of this daemon.

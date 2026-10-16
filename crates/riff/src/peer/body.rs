@@ -205,7 +205,8 @@ pub struct Riff {
     pub host: Option<String>,
 }
 
-/// The body of `member`: the owner admits one key.
+/// The body of `member`: the owner admits one key. A key that left joins
+/// again with a second `member` record (01M5328FPJT7Q5Q1509BC5F0J7).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
     /// The key of the daemon of the member.
@@ -214,6 +215,11 @@ pub struct Member {
     pub user: String,
     /// The host of the daemon.
     pub host: String,
+    /// At a join again: the sequence number of the `left` record of the
+    /// key. The records of the key after it count with this user and
+    /// host. `None` at the first join of the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<u64>,
 }
 
 /// The body of `removed`: the owner removes one key
@@ -355,6 +361,13 @@ mod tests {
                 key: public,
                 user: "brett".into(),
                 host: "kadomony".into(),
+                after: None,
+            }),
+            Body::Member(Member {
+                key: public,
+                user: "brett".into(),
+                host: "kadomony".into(),
+                after: Some(9),
             }),
             Body::Removed(Removed {
                 key: public,

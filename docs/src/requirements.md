@@ -6145,7 +6145,37 @@ then.
   owner, a member, a removed key, or a key that left. The writer check
   of a `member` record refuses the key of the owner and a key that the
   riff knows. So the user of a key does not depend on the order of the
-  records.
+  records. Superseded in part by 01M5328FPJT7Q5Q1509BC5F0J7 and
+  01M5328FVZJGCY9VPQFERM7P81: a key that left joins again.
+- **01M5328FPJT7Q5Q1509BC5F0J7** `riff leave` only leaves. A key that
+  left joins again with a new invite string of the owner. The daemon of
+  the owner then writes a new `member` record of the key, with the user
+  and the host of the new invite, and with `after`: the sequence number
+  of the `left` record of the key. It writes it only when it kept that
+  `left` record. The records of the key after that number count with
+  the new user. The first of them names the new `member` record as the
+  record before it. So a record that the key signed after its `left`
+  record and before the new `member` record stays refused.
+- **01M5328FS8XGVW3X6N94F65FA8** The daemon of the owner refuses a join
+  of the key of the owner, of a member key, and of a removed key. The
+  refusal names which of the three. A key that `riff remove` removed
+  stays refused, also with a new invite: a remove is the choice of the
+  owner.
+- **01M5328FVZJGCY9VPQFERM7P81** Each `member` record of a key starts a
+  join of the key. The user of a record of the key is the user of its
+  join: the last `member` record whose `after` is lower than the number
+  of the record. The writer check of a `member` record reads only the
+  records of the owner: a first `member` record needs a key that the
+  riff does not know, and a `member` record with `after` needs a key
+  with a `member` record, not removed, and an `after` higher than the
+  `after` of its last `member` record. So two daemons that get the
+  `member`, `left` and new `member` records of a key in different orders
+  agree on the user and the state of the key.
+- **01M532QC66ER7BZPYWR7QDXAP1** A daemon that joined again writes no
+  record until it has its own records up to its `left` record: the
+  record would fork its chain. At `riff leave`, a removed daemon writes
+  no `left` record, because each daemon refuses it, and it still gets a
+  riff of its own.
 - **01M521J6QBQFRDWRPR0NGHE7TM** `riff join` and `riff leave` need a
   terminal too, as `riff invite` and `riff remove` do. An agent session
   has no terminal, so it cannot move the daemon of the machine to

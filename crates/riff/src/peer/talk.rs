@@ -1103,7 +1103,7 @@ fn info(state: &State, run: &Run) -> SessionInfo {
 /// let riff = Body::Riff(Riff { user: "mike".into(), host: None });
 /// let riff = keep(&owner, 1, Id::ZERO, 1_000, &riff);
 /// let host = "kadomony".to_owned();
-/// let member = Member { key: brett.public(), user: "brett".into(), host };
+/// let member = Member { key: brett.public(), user: "brett".into(), host, after: None };
 /// keep(&owner, 2, riff, 2_000, &Body::Member(member));
 /// let session = Session {
 ///     session: "riff://brett@kadomony/o/r?session=77e0aaaa".parse().unwrap(),
@@ -1193,6 +1193,7 @@ pub(crate) fn three_daemons(now_ms: i64) -> Vec<SessionInfo> {
             key: key.public(),
             user: user.into(),
             host: host.into(),
+            after: None,
         })
     };
     let session = |uri: &str, lead: bool, claim: Option<&str>, status: &str| {
@@ -1504,6 +1505,7 @@ mod tests {
             key: brett.public(),
             user: "brett".into(),
             host: "kadomony".into(),
+            after: None,
         });
         hub.write(&admit).unwrap();
         let riff = hub.public();

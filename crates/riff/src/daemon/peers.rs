@@ -11,7 +11,10 @@
 //! riff are in `state/records`, and the records of a joined riff are in
 //! `state/riffs/RIFF/records` ([`peers_dir`]). A start of the daemon opens
 //! the riff of [`JOINED`]. A leave goes back to the riff of its own, and
-//! the records of the old riff stay in their folder.
+//! the records of the old riff stay in their folder. A daemon that left
+//! a riff joins it again with a new invite (01M5328FPJT7Q5Q1509BC5F0J7):
+//! it opens that folder again, with its own records up to its `left`
+//! record, and the new `member` record comes over the join link.
 //!
 //! | Step | Who | What the daemon does |
 //! |---|---|---|
@@ -197,11 +200,13 @@ impl<R: Runtime + 'static> Daemon<R> {
         let host = crate::identity::this_host();
         let conn = crate::peer::join::ask(links.endpoint(), &invite, &host).await?;
         // The daemon of the owner wrote the member record: this daemon is
-        // a member of the riff of the invite now.
+        // a member of the riff of the invite now. A daemon that left that
+        // riff has its old records, with its `left` record, until the new
+        // member record comes (01M5328FPJT7Q5Q1509BC5F0J7).
         self.switch(invite.riff)?;
         links.serve_joined(conn);
         let _ = tokio::time::timeout(crate::peer::join::LIMIT, async {
-            while hub.read(|state| state.user_of(&me).is_none()) {
+            while hub.read(|state| state.members().get(&me).is_none_or(|member| member.left)) {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
         })
@@ -235,6 +240,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 state
                     .members()
                     .get(&me)
+                    .filter(|member| !member.removed)
                     .map(|member| (member.user.clone(), member.host.clone())),
             )
         });
@@ -250,6 +256,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             &me.to_string(),
         )];
         // A daemon whose member record did not come yet writes no record.
+        // A removed daemon writes none too: each daemon refuses it
+        // (01M532QC66ER7BZPYWR7QDXAP1).
         if let Some((user, host)) = member {
             let links = self.links.get();
             let before = links.map_or(0, |links| links.left_sent());
@@ -694,7 +702,7 @@ mod tests {
         let (seq, _) = o.hub().read(|state| state.heads()[&me]);
         assert!(o.hub().read(|state| state.members()[&me].left));
         assert_eq!(
-            o.hub().read(|state| state.standing(&me)),
+            o.hub().read(|state| state.standing(&me, seq + 1)),
             Standing::Member {
                 user: "brett".into(),
                 until: Some(seq)
@@ -792,6 +800,129 @@ mod tests {
             ]
         );
         assert_eq!(n.riff().await, me.to_string());
+    }
+
+    /// A message of `user` on thelio in `o/r` with the text `body`.
+    fn note(user: &str, body: &str) -> Body {
+        Body::Message(Box::new(Message {
+            from: format!("riff://{user}@thelio/o/r?session=s1")
+                .parse()
+                .unwrap(),
+            thread: "o/r".parse().unwrap(),
+            to: vec![],
+            kind: Default::default(),
+            body: body.into(),
+        }))
+    }
+
+    /// True when the daemon of `machine` kept a message with the text
+    /// `body` in `o/r`.
+    fn has(machine: &Machine, body: &str) -> bool {
+        let thread = "o/r".parse().unwrap();
+        machine.hub().read(|state| {
+            state
+                .messages(&thread)
+                .iter()
+                .any(|kept| kept.message.body == body)
+        })
+    }
+
+    /// 01M5328FPJT7Q5Q1509BC5F0J7, 01M5328FS8XGVW3X6N94F65FA8 (#939): join,
+    /// leave, a new invite, and join again. The key is a member again on
+    /// each daemon, and riff members shows it once, as a member. It gets
+    /// the records of the riff from the time when it was out, and each
+    /// daemon takes its new records. A removed key stays refused, also
+    /// with a new invite.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_machine_that_left_joins_again_with_a_new_invite() {
+        let (o, n, t) = three().await;
+        n.join(&o.invite("brett").await.unwrap().0).await.unwrap();
+        t.join(&o.invite("ann").await.unwrap().0).await.unwrap();
+        let me = n.key();
+        let links = o.daemon.links().unwrap().clone();
+        until("the links of the members", || {
+            links.online(&me) && links.online(&t.key())
+        })
+        .await;
+        n.ask(Ask::Leave).await.unwrap();
+        let left = |machine: &Machine| {
+            machine
+                .hub()
+                .read(|state| state.members().get(&me).is_some_and(|m| m.left))
+        };
+        until("the left record on the owner and on t", || {
+            left(&o) && left(&t)
+        })
+        .await;
+        o.hub()
+            .write(&note(&o.user(), "while brett was out"))
+            .unwrap();
+
+        // The join again, with a new invite.
+        let lines = n.join(&o.invite("brett").await.unwrap().0).await.unwrap();
+        let host = crate::identity::this_host();
+        assert_eq!(
+            lines.last().unwrap(),
+            &text::joined_peers(&o.key().to_string(), Some(&o.user()), "brett", &host)
+        );
+        assert_eq!(n.riff().await, o.key().to_string());
+        for machine in [&o, &n, &t] {
+            until("the member again on each daemon", || {
+                machine.hub().read(|state| {
+                    state
+                        .members()
+                        .get(&me)
+                        .is_some_and(|m| !m.left && m.joins.len() == 2 && m.user == "brett")
+                })
+            })
+            .await;
+        }
+        for machine in [&o, &n, &t] {
+            let rows = crate::daemon::members(&machine.dir).await.unwrap();
+            let of_me: Vec<_> = rows.iter().filter(|r| r.key == me.to_string()).collect();
+            assert_eq!(of_me.len(), 1, "{rows:?}");
+            assert!(!of_me[0].left && !of_me[0].removed, "{rows:?}");
+        }
+        until("the records from the time when it was out", || {
+            has(&n, "while brett was out")
+        })
+        .await;
+        n.hub().write(&note("brett", "back again")).unwrap();
+        until("the new record of brett on the owner and on t", || {
+            has(&o, "back again") && has(&t, "back again")
+        })
+        .await;
+
+        // A removed key stays refused, also with a new invite.
+        let remove = Ask::Remove {
+            user: "ann".into(),
+            host: None,
+        };
+        o.ask(remove).await.unwrap();
+        // 01M532QC66ER7BZPYWR7QDXAP1: the removed daemon has the removed
+        // record. Its leave writes no left record, and does not wait.
+        let removed = o
+            .hub()
+            .with_peers(|peers| peers.lacks(&Default::default()))
+            .into_iter()
+            .find(|record| record.of() == Type::Removed)
+            .unwrap();
+        t.hub().keep(removed.bytes().to_vec(), None).unwrap();
+        let ann = t.key();
+        assert!(t.hub().read(|state| state.members()[&ann].removed));
+        let lines = t.ask(Ask::Leave).await.unwrap();
+        let gone = text::left_riff(&o.key().to_string(), Some(&o.user()), &ann.to_string());
+        assert_eq!(lines, [gone]);
+        assert_eq!(t.riff().await, t.key().to_string());
+        let owner_heads = o.heads();
+        let error = t
+            .join(&o.invite("ann").await.unwrap().0)
+            .await
+            .unwrap_err()
+            .to_string();
+        let why = text::join_removed_key(&t.key().to_string());
+        assert_eq!(error, text::join_refused(&why));
+        assert_eq!(o.heads(), owner_heads);
     }
 
     /// 01M519Z45J9RC734KBY1G8D49V: riff remove brett removes each key of

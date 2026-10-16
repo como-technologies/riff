@@ -57,6 +57,7 @@ fn admit(byte: u8, user: &str, host: &str) -> Body {
         key: key(byte).public(),
         user: user.into(),
         host: host.into(),
+        after: None,
     })
 }
 

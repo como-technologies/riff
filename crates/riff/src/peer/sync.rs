@@ -421,7 +421,7 @@ pub enum LinkState {
 ///     owner.write(&Body::Riff(Riff { user: "mike".into(), host: None }))?;
 ///     let key = Key::from_bytes(&[2; 32]).public();
 ///     let host = "kadomony".into();
-///     owner.write(&Body::Member(Member { key, user: "brett".into(), host }))?;
+///     owner.write(&Body::Member(Member { key, user: "brett".into(), host, after: None }))?;
 ///
 ///     let (member, member_links, _b) = daemon(2, riff, &seen_by_member).await?;
 ///     seen_by_member.set_endpoint_info(owner_links.endpoint().addr());
@@ -1191,6 +1191,7 @@ mod tests {
             key: brett,
             user: "brett".into(),
             host: "kadomony".into(),
+            after: None,
         };
         peers.write(&owner, &Body::Member(member), 2).unwrap();
         [owner.public(), brett].map(|key| names_of(peers.state(), &key))
