@@ -1068,8 +1068,8 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 - A session: the first line has the short session ID, the worktree of
   the session (`#issue-7` in the worktree `issue-7`, nothing in the
   main worktree), its tags (`lead`, `worker`, `container` or
-  `host`), and the state of the session in its color. Under it comes one line for each fact of the
-  detail of the state. See
+  `host`), and the state of the session in its color. Under it comes
+  one line for each fact of the detail of the state. See
   [The state of a session](#the-state-of-a-session). A lead is the
   lead of the repository on the line above it.
 
