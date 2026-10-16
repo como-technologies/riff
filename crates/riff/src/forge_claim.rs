@@ -193,12 +193,15 @@ pub fn reference(item: &str) -> Result<String> {
     Ok(format!("{REFS}{item}"))
 }
 
-/// Runs `git ARGS` in the clone `main`, with no input.
+/// Runs `git ARGS` in the clone `main`, with no input. git asks for no
+/// sign-in on a terminal (`GIT_TERMINAL_PROMPT=0`): a push or a fetch
+/// with no sign-in fails at once (01M527NXZ6KRFAA641ZKPVGC4V).
 fn git(main: &Path, args: &[&str]) -> Result<Output> {
     Command::new("git")
         .args(args)
         .current_dir(main)
         .stdin(Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0")
         .output()
         .with_context(|| text::no_program("git"))
 }

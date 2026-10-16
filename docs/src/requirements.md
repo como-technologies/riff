@@ -6223,6 +6223,9 @@ then.
   (`hold`, `free`, `pause`, `resume`) needs the lead, or a session of
   the daemon of the owner that is not a worker. A worker of the daemon
   of the owner is refused, as each worker (01M519Z3FTAZ20DQKDTW09M6NS).
+- **01M527NXZ6KRFAA641ZKPVGC4V** Each git call of a claim, a release
+  and a read of the claims runs with `GIT_TERMINAL_PROMPT=0`: git asks
+  for no sign-in, and a push or a fetch with no sign-in fails at once.
 - **01M526Z224A1CVPJQE8W7ERXV6** A session with no riff-server has no
   riff-server in the environment of its auto mode
   (01M516HETNZCBFBJNHT8BKFB1Y).
