@@ -202,6 +202,10 @@ fn the_session_tests_run_in_the_pinned_image_with_an_init() {
     assert!(has(["--cpus", "4"]), "{args:?}");
     assert!(has(["--memory", "8g"]), "{args:?}");
     assert!(has(["-e", "HOME=/tmp/home"]), "{args:?}");
+    let id = Command::new("id").arg("-un").output().unwrap();
+    let user = String::from_utf8(id.stdout).unwrap().trim().to_owned();
+    assert!(has(["-e", &format!("USER={user}")]), "{args:?}");
+    assert!(has(["-e", &format!("LOGNAME={user}")]), "{args:?}");
     let target = format!("CARGO_TARGET_DIR={root}/target/session");
     assert!(has(["-e", &target]), "{args:?}");
     let image = Image::of_repository(&top()).unwrap().to_string();
