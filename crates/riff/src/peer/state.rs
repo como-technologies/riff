@@ -64,7 +64,7 @@
 //!
 //! let owner = Key::from_bytes(&[1; 32]);
 //! let mut state = State::new(owner.public());
-//! let riff = Body::Riff(Riff { user: "mike".into() });
+//! let riff = Body::Riff(Riff { user: "mike".into(), host: None });
 //! let record = Record::sign(&owner, owner.public(), 1, Id::ZERO, 1, &riff)?;
 //! state.keep(&check(record.bytes().to_vec(), &state)?);
 //!
@@ -201,6 +201,8 @@ pub struct State {
     heads: BTreeMap<Public, (u64, Id)>,
     /// The time of its author of the last record of each author.
     times: BTreeMap<Public, u64>,
+    /// The host of the owner, from its `riff` record.
+    owner_host: Option<String>,
     /// The ID of each record that the state kept.
     ids: BTreeSet<Id>,
     runs: BTreeMap<(Public, String), Run>,
@@ -223,6 +225,7 @@ impl State {
             members: BTreeMap::new(),
             heads: BTreeMap::new(),
             times: BTreeMap::new(),
+            owner_host: None,
             ids: BTreeSet::new(),
             runs: BTreeMap::new(),
             named: BTreeSet::new(),
@@ -242,6 +245,12 @@ impl State {
     /// The user of the owner, after the `riff` record.
     pub fn owner(&self) -> Option<&str> {
         self.owner.as_deref()
+    }
+
+    /// The host of the owner, when its `riff` record names it
+    /// (01M521J6T2PWA9JREDXJK6DZ0V).
+    pub fn owner_host(&self) -> Option<&str> {
+        self.owner_host.as_deref()
     }
 
     /// Each member key.
@@ -287,7 +296,10 @@ impl State {
         self.ids.insert(id);
         let user = self.user_of(&author).unwrap_or_default().to_owned();
         match &checked.body {
-            Body::Riff(riff) => self.owner = Some(riff.user.clone()),
+            Body::Riff(riff) => {
+                self.owner = Some(riff.user.clone());
+                self.owner_host.clone_from(&riff.host);
+            }
             Body::Member(member) => {
                 let entry = self.members.entry(member.key).or_insert(Member {
                     user: member.user.clone(),
@@ -665,6 +677,7 @@ mod tests {
                     0,
                     Body::Riff(Riff {
                         user: "mike".into(),
+                        host: None,
                     }),
                 ),
                 self.write(0, b1),
@@ -791,6 +804,49 @@ mod tests {
         let view = a.view();
         assert_eq!(view.holds, BTreeSet::from([thelio[2].id()]));
         assert_eq!(view.leads.len(), 2);
+    }
+
+    /// 01M521J6MKSBAA2QP6ZFHYT9ZQ: a second `member` record of a key, with
+    /// another user, is refused in each order with a session record of
+    /// that key. So the key keeps its first user, and its session record
+    /// passes in both orders.
+    #[test]
+    fn a_second_member_record_of_a_key_is_refused_in_each_order() {
+        let mut d = Daemons::new();
+        let riff = d.public(0);
+        let start = d.start();
+        let second = d.write(
+            0,
+            Body::Member(MemberBody {
+                key: d.public(2),
+                user: "ann".into(),
+                host: "kadomony".into(),
+            }),
+        );
+        let kadomony = d.write(2, session(KADOMONY, None));
+        for order in [
+            [second.clone(), kadomony.clone()],
+            [kadomony.clone(), second.clone()],
+        ] {
+            let mut state = keep_all(riff, &start);
+            for record in &order {
+                match check(record.bytes().to_vec(), &state) {
+                    Ok(checked) => {
+                        assert_eq!(checked.record, kadomony);
+                        state.keep(&checked);
+                    }
+                    Err(fault) => {
+                        assert_eq!(record, &second);
+                        assert_eq!(
+                            fault,
+                            Fault::Writer("the key is a member already, or was one")
+                        );
+                    }
+                }
+            }
+            assert_eq!(state.user_of(&d.public(2)), Some("brett"));
+            assert_eq!(state.runs().count(), 1);
+        }
     }
 
     /// 01M519Z3J7Z0M3PNDY249Q57FH: an item that two leads hold stays held

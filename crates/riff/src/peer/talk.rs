@@ -62,6 +62,7 @@
 //! of the daemon, each message is unread again.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -110,7 +111,7 @@ pub const PAGE: usize = 50;
 /// let dir = tempfile::tempdir()?;
 /// let key = Key::from_bytes(&[1; 32]);
 /// let mut peers = Peers::open(dir.path(), key.public(), |_| {})?;
-/// peers.write(&key, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+/// peers.write(&key, &Body::Riff(Riff { user: "mike".into(), host: None }), 1)?;
 /// let hub = Arc::new(Hub::new(key, peers));
 /// let a: SessionUri = "riff://mike@h/o/r?session=a".parse()?;
 /// let b: SessionUri = "riff://mike@h/o/r?session=b".parse()?;
@@ -191,6 +192,19 @@ impl Hub {
         let (id, applied) = lock(&self.peers).write(&self.key, body, now_ms())?;
         self.wake(&applied);
         Ok((id, applied))
+    }
+
+    /// The daemon is in the riff `riff` now, with its records in the
+    /// folder `dir`: after a join or a leave
+    /// (01M521J6WZT2KR5ZQE9DZ9A5AC, [`Peers::reopen`]). The records of the
+    /// old riff stay in their folder. The hub forgets each wake and each
+    /// read cursor: the numbers of the messages are of the new riff.
+    pub fn switch(&self, dir: &Path, riff: Public, say: impl FnMut(String)) -> Result<()> {
+        lock(&self.peers).reopen(dir, riff, say)?;
+        lock(&self.wakes).clear();
+        lock(&self.reads).clear();
+        self.woke.notify_waiters();
+        Ok(())
     }
 
     /// Reads the records of the daemon with `read`: for example its heads,
@@ -468,7 +482,7 @@ fn blocking<T: Send + 'static>(
 /// let dir = tempfile::tempdir()?;
 /// let key = Key::from_bytes(&[1; 32]);
 /// let mut peers = Peers::open(dir.path(), key.public(), |_| {})?;
-/// peers.write(&key, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+/// peers.write(&key, &Body::Riff(Riff { user: "mike".into(), host: None }), 1)?;
 /// let hub = Arc::new(Hub::new(key, peers));
 /// let a: SessionUri = "riff://mike@h/o/r?session=a".parse()?;
 /// let b: SessionUri = "riff://mike@h/o/r?session=b".parse()?;
@@ -1082,7 +1096,8 @@ fn info(state: &State, run: &Run) -> SessionInfo {
 ///     state.keep(&check(record.bytes().to_vec(), &state).unwrap());
 ///     record.id()
 /// };
-/// let riff = keep(&owner, 1, Id::ZERO, 1_000, &Body::Riff(Riff { user: "mike".into() }));
+/// let riff = Body::Riff(Riff { user: "mike".into(), host: None });
+/// let riff = keep(&owner, 1, Id::ZERO, 1_000, &riff);
 /// let host = "kadomony".to_owned();
 /// let member = Member { key: brett.public(), user: "brett".into(), host };
 /// keep(&owner, 2, riff, 2_000, &Body::Member(member));
@@ -1188,6 +1203,7 @@ pub(crate) fn three_daemons(now_ms: i64) -> Vec<SessionInfo> {
     };
     let riff_body = Body::Riff(Riff {
         user: "mike".into(),
+        host: None,
     });
     write(&keys[0], 1_000, riff_body);
     write(&keys[0], 2_000, member(&keys[1], "brett", "kadomony"));
@@ -1379,6 +1395,7 @@ mod tests {
         let mut peers = Peers::open(dir, key.public(), |_| {}).unwrap();
         let riff = Body::Riff(Riff {
             user: "mike".into(),
+            host: None,
         });
         peers.write(&key, &riff, 1).unwrap();
         let hub = Arc::new(Hub::new(key, peers));

@@ -720,6 +720,23 @@ ends, and for each record that the daemon refuses:
 journalctl --user -u riff | grep "peer link"
 ```
 
+### Share the riff of the daemon
+
+The owner of a riff invites a person in a terminal of their own, and
+the person joins with the invite string on their machine.
+[Share a riff](riff-3-peers.md#share-a-riff) has each step: invite,
+join, leave, remove, and see the members.
+
+```sh
+riff invite brett
+riff join riff1-...
+riff members
+```
+
+After a join, the line `Its riff:` of `riff daemon status` shows the
+riff of the owner, and the line `The owner of its riff:` shows the
+user of the owner.
+
 ### Restart or stop the daemon
 
 ```sh
@@ -2159,7 +2176,7 @@ A member needs no allowed domain, so a person with a personal Google
 account can join. Only the owner or an admin can invite:
 
 ```sh
-riff invite bob@gmail.com
+riff invite --email bob@gmail.com
 ```
 
 It prints the address of the riff (the `--public-url` of the server)
@@ -2173,7 +2190,7 @@ It removes the member and ends each sign-in of that person, on each
 device. Only the owner or an admin can remove. The owner stays:
 
 ```sh
-riff remove bob@gmail.com
+riff remove --email bob@gmail.com
 ```
 
 A person of an allowed domain can still sign in after a removal. To
@@ -2218,7 +2235,7 @@ It shows each person once, with the highest role: owner, then admin,
 then member:
 
 ```sh
-riff members
+riff members --email
 ```
 
 ```text
@@ -3615,7 +3632,7 @@ the stage admits. Invite it on the stage, as the owner of the stage:
 
 ```sh
 . deploy/cloud/stage.env
-riff invite --server "$CLOUD_URL" TEST_EMAIL
+riff invite --server "$CLOUD_URL" --email TEST_EMAIL
 ```
 
 Get a refresh token of the test account for the sign-in client of the
@@ -3732,7 +3749,7 @@ riff update --auto on
 In the terminal of `ann`, invite `bob`, and resume the riff:
 
 ```sh
-riff invite BOB_EMAIL
+riff invite --email BOB_EMAIL
 riff resume
 ```
 

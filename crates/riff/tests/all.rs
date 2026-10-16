@@ -73,6 +73,7 @@ mod secrets;
 mod session;
 mod session_image;
 mod setup;
+mod share;
 mod signed;
 mod smoke;
 mod start_a_riff;

@@ -80,21 +80,36 @@
 //!
 //! The members come from the records of the owner. So the plan of the
 //! links changes with each `riff`, `member`, `removed` and `left` record,
-//! and at least each [`PLAN_AGAIN`]. A link of a key that may link no
-//! more closes ([`Close::Gone`]). [`Links::shown`] gives the state of
-//! each link for `riff daemon status` (01M51ZA0BDZNXBB7R5SB8CEGA9).
+//! at a join and at a leave ([`Fresh::Switched`]), and at least each
+//! [`PLAN_AGAIN`]. A link of a key that may link no more closes
+//! ([`Close::Gone`]). [`Links::shown`] gives the state of each link for
+//! `riff daemon status` (01M51ZA0BDZNXBB7R5SB8CEGA9).
 //!
 //! A daemon of the riff is online while a link to it runs
 //! ([`Links::online`], 01M522MRYR89SY6WRV720806RA). Else it was last seen
 //! at the later of the end of its last link ([`Links::seen`]) and the
 //! time of its last record ([`State::last_ms`]). `riff view` and
 //! `riff top` show the sessions of a daemon that is offline with that
-//! time (01M519Z554SC3EAT69Q3M6JDAP).
+//! time (01M519Z554SC3EAT69Q3M6JDAP), and `riff members` shows each key
+//! with it.
+//!
+//! # A join and a leave
+//!
+//! The endpoint also takes the ALPN of a join ([`crate::peer::join`]). A
+//! daemon that takes joins ([`Links::take_joins`]) answers a join, and on
+//! a join the connection goes on as the peer link. The new daemon runs
+//! its side of that link with [`Links::serve_joined`].
+//!
+//! At `riff leave`, the daemon writes its `left` record. Each link sends
+//! it, ends its stream, and waits up to [`LEAVE_LIMIT`] for the other
+//! daemon to close the connection: the other daemon reads each frame in
+//! order, so it kept the record (01M521J6ZRNWBSPK7WB23TVY59). Then the
+//! link ends. [`Links::wait_no_links`] waits for the end of each link.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -110,6 +125,8 @@ use zeroize::Zeroize;
 
 use crate::daemon_key::{Key, Public};
 use crate::peer::body::Type;
+use crate::peer::invite::Invites;
+use crate::peer::join;
 use crate::peer::keep::{Fresh, Heads, Outcome, Peers};
 use crate::peer::record::{Fault, author_and_seq};
 use crate::peer::state::State;
@@ -140,6 +157,10 @@ pub const LATER_HEADS: Duration = Duration::from_secs(1);
 
 /// The plan of the links looks at the members again after this time.
 pub const PLAN_AGAIN: Duration = Duration::from_secs(30);
+
+/// A link waits this long for the other daemon to read the `left`
+/// record of this daemon (01M521J6ZRNWBSPK7WB23TVY59).
+pub const LEAVE_LIMIT: Duration = Duration::from_secs(5);
 
 /// The variable that picks the net of the daemon: `local` gives
 /// [`Net::Local`], with no address. The tests of riff set it, so that no
@@ -359,7 +380,7 @@ pub enum LinkState {
 ///     let riff = Key::from_bytes(&[1; 32]).public();
 ///     let (seen_by_owner, seen_by_member) = (MemoryLookup::new(), MemoryLookup::new());
 ///     let (owner, owner_links, _a) = daemon(1, riff, &seen_by_owner).await?;
-///     owner.write(&Body::Riff(Riff { user: "mike".into() }))?;
+///     owner.write(&Body::Riff(Riff { user: "mike".into(), host: None }))?;
 ///     let key = Key::from_bytes(&[2; 32]).public();
 ///     let host = "kadomony".into();
 ///     owner.write(&Body::Member(Member { key, user: "brett".into(), host }))?;
@@ -393,6 +414,8 @@ pub struct Links {
     ended: Notify,
     /// The records that a link got and the daemon had already.
     duplicates: AtomicU64,
+    /// The invites of the daemon of the owner: it answers a join.
+    joins: OnceLock<Arc<Invites>>,
     say: Box<dyn Fn(String) + Send + Sync>,
 }
 
@@ -459,7 +482,7 @@ impl Links {
         };
         builder
             .secret_key(secret)
-            .alpns(vec![ALPN.to_vec()])
+            .alpns(vec![ALPN.to_vec(), join::ALPN.to_vec()])
             .bind()
             .await
             .context(text::PEER_NO_ENDPOINT)
@@ -482,6 +505,7 @@ impl Links {
             tasks: Mutex::new(Vec::new()),
             ended: Notify::new(),
             duplicates: AtomicU64::new(0),
+            joins: OnceLock::new(),
             say: Box::new(say),
         });
         let accept = tokio::spawn(sync.clone().accept_all());
@@ -520,6 +544,43 @@ impl Links {
     /// ([`State::last_ms`]): the later of the two counts.
     pub fn seen(&self, key: &Public) -> Option<i64> {
         lock(&self.seen).get(key).copied()
+    }
+
+    /// The daemon answers each join with the invites `invites`: the
+    /// daemon of the owner ([`crate::peer::join`]). Without it, the
+    /// daemon closes each connection of a join.
+    pub fn take_joins(&self, invites: Arc<Invites>) {
+        let _ = self.joins.set(invites);
+    }
+
+    /// Runs the peer link on the connection `conn` of a join that this
+    /// daemon asked for ([`crate::peer::join::ask`]), after the daemon
+    /// took the records of the new riff.
+    pub fn serve_joined(self: &Arc<Self>, conn: Connection) {
+        let sync = self.clone();
+        let task = tokio::spawn(async move {
+            sync.serve(conn, true).await;
+        });
+        lock(&self.tasks).push(task);
+    }
+
+    /// Waits up to `limit` for the end of each link: at a leave, each
+    /// link ends after the other daemon read the `left` record. It gives
+    /// true when no link runs.
+    pub async fn wait_no_links(&self, limit: Duration) -> bool {
+        tokio::time::timeout(limit, async {
+            loop {
+                let ended = self.ended.notified();
+                tokio::pin!(ended);
+                ended.as_mut().enable();
+                if lock(&self.links).is_empty() {
+                    return;
+                }
+                ended.await;
+            }
+        })
+        .await
+        .is_ok()
     }
 
     /// The state of the link to each other daemon of the riff.
@@ -577,15 +638,48 @@ impl Links {
         self.endpoint.close().await;
     }
 
-    /// Takes each connection of another daemon.
+    /// Takes each connection of another daemon: a peer link, or a join.
     async fn accept_all(self: Arc<Self>) {
         while let Some(incoming) = self.endpoint.accept().await {
             let sync = self.clone();
             tokio::spawn(async move {
-                if let Ok(Ok(conn)) = tokio::time::timeout(CONNECT_LIMIT, incoming).await {
+                let Ok(Ok(conn)) = tokio::time::timeout(CONNECT_LIMIT, incoming).await else {
+                    return;
+                };
+                if conn.alpn() == join::ALPN {
+                    sync.answer_join(conn).await;
+                } else {
                     sync.serve(conn, false).await;
                 }
             });
+        }
+    }
+
+    /// Answers the join of the connection `conn`. On a join, the
+    /// connection goes on as the peer link.
+    async fn answer_join(self: &Arc<Self>, conn: Connection) {
+        let key = public_of(&conn);
+        let Some(invites) = self.joins.get().cloned() else {
+            (self.say)(text::join_refused_line(
+                &key.to_string(),
+                text::JOIN_NOT_THE_OWNER,
+            ));
+            Close::NotMember.close(&conn);
+            return;
+        };
+        match join::answer(&conn, &self.hub, &invites).await {
+            Ok(join::Answer::Joined) => {
+                (self.say)(text::join_admitted(&self.who(&key)));
+                self.serve(conn, false).await;
+            }
+            Ok(join::Answer::Refused { why }) => {
+                (self.say)(text::join_refused_line(&key.to_string(), &why));
+                Close::NotMember.close(&conn);
+            }
+            Err(e) => {
+                (self.say)(text::join_refused_line(&key.to_string(), &format!("{e:#}")));
+                Close::NotMember.close(&conn);
+            }
         }
     }
 
@@ -604,7 +698,8 @@ impl Links {
                             record.of(),
                             Type::Riff | Type::Member | Type::Removed | Type::Left
                         ) => break,
-                        Ok(_) => {}
+                        Ok(Fresh::Switched) => break,
+                        Ok(Fresh::Kept { .. } | Fresh::Fork(_)) => {}
                         Err(RecvError::Lagged(_)) => break,
                         Err(RecvError::Closed) => return,
                     },
@@ -851,6 +946,24 @@ impl Links {
     }
 }
 
+/// Sends the `left` record `record` of this daemon on `send`, ends the
+/// stream, and waits up to [`LEAVE_LIMIT`] for the other daemon to close
+/// the connection: it read each frame before the end of the stream, so
+/// it kept the record (01M521J6ZRNWBSPK7WB23TVY59).
+async fn left(
+    send: &mut SendStream,
+    record: &crate::peer::record::Record,
+    conn: &Connection,
+) -> End {
+    let frame = Frame::Record(record.bytes().to_vec());
+    if let Err(e) = wire::write(send, &frame).await {
+        return End::lost(conn, e.to_string());
+    }
+    let _ = send.finish();
+    let _ = tokio::time::timeout(LEAVE_LIMIT, conn.closed()).await;
+    End::Closed(Close::Gone, text::PEER_LEFT.into())
+}
+
 /// Sends the frames of the link to `remote` on `send`: what the reader
 /// asks, each fresh record, and the heads each [`HEADS_AGAIN`].
 async fn write_all(
@@ -875,10 +988,15 @@ async fn write_all(
                 None => return End::lost(&conn, text::PEER_STREAM_ENDED.into()),
             },
             got = fresh.recv() => match got {
+                Ok(Fresh::Kept { record, from: None })
+                    if record.of() == Type::Left && record.author() == hub.public() =>
+                {
+                    return left(&mut send, &record, &conn).await;
+                }
                 Ok(Fresh::Kept { record, from }) if from != Some(remote) => {
                     vec![Frame::Record(record.bytes().to_vec())]
                 }
-                Ok(Fresh::Kept { .. }) => continue,
+                Ok(Fresh::Kept { .. } | Fresh::Switched) => continue,
                 Ok(Fresh::Fork(fork)) => vec![
                     Frame::Record(fork.first.bytes().to_vec()),
                     Frame::Record(fork.second.bytes().to_vec()),

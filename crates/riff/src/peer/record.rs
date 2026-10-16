@@ -75,7 +75,7 @@
 //!
 //! let owner = Key::from_bytes(&[1; 32]);
 //! let riff = owner.public();
-//! let body = Body::Riff(Riff { user: "mike".into() });
+//! let body = Body::Riff(Riff { user: "mike".into(), host: None });
 //! let record = Record::sign(&owner, riff, 1, Id::ZERO, 1_790_000_000_000, &body)?;
 //! assert_eq!((record.of(), record.seq(), record.author()), (Type::Riff, 1, riff));
 //!
@@ -304,7 +304,7 @@ impl fmt::Debug for Record {
 /// use riff::peer::record::{Id, Record, author_and_seq};
 ///
 /// let key = Key::from_bytes(&[1; 32]);
-/// let body = Body::Riff(Riff { user: "mike".into() });
+/// let body = Body::Riff(Riff { user: "mike".into(), host: None });
 /// let record = Record::sign(&key, key.public(), 1, Id::ZERO, 1, &body)?;
 /// assert_eq!(author_and_seq(record.bytes()), Some((key.public(), 1)));
 /// assert_eq!(author_and_seq(&[1, 1]), None);
@@ -509,7 +509,20 @@ fn writer(
             !owner || record.seq() != 1,
             "only the first record of the owner makes the riff",
         ),
-        Body::Member(_) => refuse(!owner, "only the owner admits a member"),
+        Body::Member(member) => {
+            refuse(!owner, "only the owner admits a member")?;
+            refuse(
+                member.key == context.riff(),
+                "the owner is no member of its riff",
+            )?;
+            // A key has one user: the riff refuses a second `member`
+            // record of a key, so the user of a key does not depend on
+            // the order of the records (01M521J6MKSBAA2QP6ZFHYT9ZQ).
+            refuse(
+                context.standing(&member.key) != Standing::Unknown,
+                "the key is a member already, or was one",
+            )
+        }
         Body::Removed(removed) => {
             refuse(!owner, "only the owner removes a member")?;
             refuse(
@@ -613,6 +626,7 @@ mod tests {
     fn riff_body() -> Body {
         Body::Riff(Riff {
             user: "mike".into(),
+            host: None,
         })
     }
 
@@ -881,7 +895,7 @@ mod tests {
             1,
             Id::ZERO,
             7,
-            &Body::Riff(Riff { user }),
+            &Body::Riff(Riff { user, host: None }),
         )
         .unwrap_err();
         assert!(
@@ -923,11 +937,14 @@ mod tests {
                 ended: false,
             }))
         };
-        let member = Body::Member(Member {
-            key: key(6).public(),
-            user: "eve".into(),
-            host: "h".into(),
-        });
+        let admit = |of: u8, user: &str| {
+            Body::Member(Member {
+                key: key(of).public(),
+                user: user.into(),
+                host: "h".into(),
+            })
+        };
+        let member = admit(6, "eve");
         let removed = |of: u8| {
             Body::Removed(Removed {
                 key: key(of).public(),
@@ -954,6 +971,21 @@ mod tests {
             ),
             (1, member.clone(), None),
             (2, member, Some("only the owner admits a member")),
+            (
+                1,
+                admit(1, "mike"),
+                Some("the owner is no member of its riff"),
+            ),
+            (
+                1,
+                admit(2, "eve"),
+                Some("the key is a member already, or was one"),
+            ),
+            (
+                1,
+                admit(3, "ann"),
+                Some("the key is a member already, or was one"),
+            ),
             (1, removed(2), None),
             (2, removed(4), Some("only the owner removes a member")),
             (1, removed(1), Some("the owner cannot remove itself")),

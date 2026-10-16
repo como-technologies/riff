@@ -40,7 +40,10 @@
 //! | `sessions/NAME/riff.sock` | The socket of that session. |
 //! | `live/NAME.json` | The [`Record`] of the session `NAME`, with no secret. |
 //! | `state/` | The log and the checkpoints of the state of the daemon ([`state_dir`]), and its riff (`riff.json`, [`RIFF`]). |
-//! | `state/records` | The records of the riff of peers, in the order in which the daemon kept them ([`crate::peer::book`]). |
+//! | `state/records` | The records of the riff of peers of its own, in the order in which the daemon kept them ([`crate::peer::book`]). |
+//! | `state/joined` | The riff ID of the riff that the daemon joined, when it is in the riff of another owner ([`peers::JOINED`]). |
+//! | `state/riffs/RIFF/records` | The records of each riff that the daemon joined ([`peers::peers_dir`]). |
+//! | `invites.json` | The invites of the owner, with mode 0600: the hash of each secret, its user, its end, and whether a join used it ([`crate::peer::invite`]). |
 //! | `state.lost-MS/` | The old state of a lost key, from the time `MS` ([`Lost`]). riff never reads it. |
 //! | `limit.json` | The limit of the host ([`crate::room`]), when `riff daemon limit` set it. |
 //! | `waves.json` | The waves that the daemon runs ([`crate::wave`]). |
@@ -167,6 +170,9 @@
 //! | [`Ask::Wave`] | [`Say::Done`] when the daemon runs the wave, or [`Say::Failed`] |
 //! | [`Ask::WaveStop`] | [`Say::Done`] when the daemon ran the wave, or [`Say::Failed`] |
 //! | [`Ask::Takeover`] | [`Say::Line`] while the turn stops or ends, [`Say::Held`], then [`Say::Done`] after the go on, or [`Say::Failed`] |
+//! | [`Ask::Invite`] | [`Say::Invited`], or [`Say::Failed`] ([`peers`]) |
+//! | [`Ask::Join`], [`Ask::Leave`], [`Ask::Remove`] | each [`Say::Line`], then [`Say::Done`] or [`Say::Failed`] ([`peers`]) |
+//! | [`Ask::Members`] | [`Say::Members`], or [`Say::Failed`] ([`peers`]) |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
 //! [`Then::Stop`]: the daemon stops the container. When `riff` closes the
@@ -373,6 +379,7 @@ use tokio::task::{JoinHandle, JoinSet};
 
 use crate::daemon_key::{Found, Key};
 use crate::peer::body::Body;
+use crate::peer::invite::Invites;
 use crate::peer::keep::{Outcome, Peers};
 use crate::peer::record::Id;
 use crate::peer::state::{Applied, State as PeerState};
@@ -384,6 +391,8 @@ use crate::runtime::{Bind, End, Env, Runtime, SessionSpec, Source};
 use crate::session_relay::Up;
 use crate::text;
 use crate::wave::{Job, Wave, World};
+
+pub mod peers;
 
 /// The version of the protocol between `riff` and the daemon, and
 /// between the relay and the daemon. Version 3 adds the waves
@@ -725,6 +734,29 @@ pub enum Ask {
         #[serde(default)]
         at_end: bool,
     },
+    /// `riff invite USER`: an invite of one new key of `user`
+    /// (01M519Z3SGEHVMS85HZD169CAP).
+    Invite {
+        /// The user of the new key.
+        user: String,
+    },
+    /// `riff join STRING` (01M519Z3YA9WBH9TWQPAH6A64Z).
+    Join {
+        /// The invite string. It holds a secret.
+        invite: crate::peer::invite::Text,
+    },
+    /// `riff leave` (01M519Z435DTR693NAK5GSB6XA).
+    Leave,
+    /// `riff remove USER [--host HOST]` (01M519Z45J9RC734KBY1G8D49V).
+    Remove {
+        /// The user.
+        user: String,
+        /// The host of the one key to remove.
+        #[serde(default)]
+        host: Option<String>,
+    },
+    /// `riff members` (01M519Z4823WC7D3VVTFSDYBS4).
+    Members,
 }
 
 /// A session to start. It holds the values of the host and the
@@ -1024,6 +1056,18 @@ pub enum Say {
     Held {
         /// The riff session ID: `claude --resume` takes it.
         session: String,
+    },
+    /// The invite of [`Ask::Invite`].
+    Invited {
+        /// The invite string. It holds a secret.
+        invite: crate::peer::invite::Text,
+        /// Its end, in milliseconds since the epoch.
+        ends_ms: i64,
+    },
+    /// The owner and each member key of [`Ask::Members`].
+    Members {
+        /// One row for each key.
+        rows: Vec<crate::peer::members::Shown>,
     },
     /// The ask is done.
     Done,
@@ -1480,6 +1524,9 @@ pub struct Daemon<R> {
     /// The peer links of the daemon, from its riff on
     /// ([`crate::peer::sync`]).
     links: OnceLock<Arc<Links>>,
+    /// The invites of the owner ([`crate::peer::invite`]): `riff invite`
+    /// makes them, and the peer links take a join with them.
+    invites: Arc<Invites>,
 }
 
 /// A wave that runs in the daemon.
@@ -1614,8 +1661,8 @@ async fn keep_made(store: &Dir, made: &Made) -> Result<()> {
 
 /// Opens the records of the riff of the daemon of `key` in `state_dir`
 /// ([`Peers::open`]). A riff of its own with no record gets its first
-/// record: `riff`, with the user of the owner `owner`
-/// (01M519Z2JMAKN0T6JZFBPSTKC8).
+/// record: `riff`, with the user of the owner `owner` and the host of
+/// this machine (01M519Z2JMAKN0T6JZFBPSTKC8, 01M521J6T2PWA9JREDXJK6DZ0V).
 fn open_peers(
     state_dir: &Path,
     key: &Key,
@@ -1626,6 +1673,7 @@ fn open_peers(
     if peers.state().owner().is_none() && peers.state().riff() == key.public() {
         let riff = Body::Riff(crate::peer::body::Riff {
             user: owner.to_owned(),
+            host: Some(crate::identity::this_host()),
         });
         peers.write(key, &riff, u64::try_from(now_ms()).unwrap_or_default())?;
     }
@@ -1717,6 +1765,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     pub fn new(runtime: R, dir: PathBuf) -> Result<Self> {
         private_dir(&dir)?;
         let room = Room::new(dir.clone(), Arc::new(crate::room::free_memory));
+        let invites = Arc::new(Invites::in_dir(&dir));
         Ok(Daemon {
             runtime,
             dir,
@@ -1733,6 +1782,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             changed: Notify::new(),
             net: None,
             links: OnceLock::new(),
+            invites,
         })
     }
 
@@ -1796,7 +1846,16 @@ impl<R: Runtime + 'static> Daemon<R> {
                 (key, owner, line)
             }
         };
-        let peers = open_peers(&state_dir, &key, &owner, &mut say)?;
+        // The riff that the daemon joined, else the riff of its own
+        // (01M521J6WZT2KR5ZQE9DZ9A5AC).
+        let peers = match peers::joined(&state_dir)? {
+            Some(riff) if riff != key.public() => Peers::open(
+                &peers::peers_dir(&state_dir, &riff, &key.public()),
+                riff,
+                &mut say,
+            )?,
+            _ => open_peers(&state_dir, &key, &owner, &mut say)?,
+        };
         // The endpoint has the key of the daemon (01M519Z2DSFGHNV5S88AYFK7PY).
         let endpoint = match &self.net {
             Some(net) => match Links::bind(&key, net).await {
@@ -1818,6 +1877,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             .map_err(|_| anyhow!("the riff daemon has its riff already"))?;
         if let Some(endpoint) = endpoint {
             let links = Links::start(endpoint, hub, |line| println!("{line}"));
+            links.take_joins(self.invites.clone());
             let _ = self.links.set(links);
         }
         // A session that started while the daemon waited for its key gets
@@ -2009,12 +2069,14 @@ impl<R: Runtime + 'static> Daemon<R> {
     pub async fn status(&self) -> Status {
         let (waits, key, riff, owner, position) = match self.riff.get() {
             Some(riff) => {
-                let (id, position) = riff
-                    .state
-                    .read(|state| (state.riff_id(), state.written_position()))
-                    .await;
+                let position = riff.state.read(|state| state.written_position()).await;
                 let key = riff.hub.public().to_string();
-                (None, Some(key), id, Some(riff.owner.clone()), position)
+                // The riff of peers that the daemon is in: the riff of its
+                // own, or the riff that it joined (01M521J6WZT2KR5ZQE9DZ9A5AC).
+                let (id, owner) = riff
+                    .hub
+                    .read(|state| (state.riff().to_string(), state.owner().map(str::to_owned)));
+                (None, Some(key), Some(id), owner, position)
             }
             None => {
                 let waits = self.waits.lock().unwrap_or_else(PoisonError::into_inner);
@@ -2277,6 +2339,33 @@ impl<R: Runtime + 'static> Daemon<R> {
                 Ok(Ask::Takeover { name, at_end }) => {
                     self.takeover(&name, at_end, lines, &out).await;
                 }
+                Ok(Ask::Invite { user }) => {
+                    let now = u64::try_from(now_ms()).unwrap_or_default();
+                    out.say(match self.invite(&user, now) {
+                        Ok(invite) => Say::Invited {
+                            invite: crate::peer::invite::Text(invite.text().to_string()),
+                            ends_ms: i64::try_from(invite.ends_ms).unwrap_or(i64::MAX),
+                        },
+                        Err(e) => Say::Failed {
+                            error: format!("{e:#}"),
+                        },
+                    });
+                }
+                Ok(Ask::Join { invite }) => {
+                    let show = |text: String| out.say(Say::Line { text });
+                    let done = self.join(&invite.0, show).await;
+                    say_lines(&out, done.map(|line| vec![line]));
+                }
+                Ok(Ask::Leave) => say_lines(&out, self.leave().await.map(|line| vec![line])),
+                Ok(Ask::Remove { user, host }) => {
+                    say_lines(&out, self.remove(&user, host.as_deref()));
+                }
+                Ok(Ask::Members) => out.say(match self.members() {
+                    Ok(rows) => Say::Members { rows },
+                    Err(e) => Say::Failed {
+                        error: format!("{e:#}"),
+                    },
+                }),
                 Err(error) => out.say(Say::Failed { error }),
             }
         }
@@ -3225,6 +3314,45 @@ impl Client {
             )),
             None => Ok(None),
         }
+    }
+}
+
+/// Says each line of `done` and [`Say::Done`], or [`Say::Failed`].
+fn say_lines(out: &Out, done: Result<Vec<String>>) {
+    match done {
+        Ok(lines) => {
+            for text in lines {
+                out.say(Say::Line { text });
+            }
+            out.say(Say::Done);
+        }
+        Err(e) => out.say(Say::Failed {
+            error: format!("{e:#}"),
+        }),
+    }
+}
+
+/// `riff invite USER`: asks the daemon in the folder `dir` for an invite
+/// of `user`. It gives the invite string and its end, in milliseconds.
+pub async fn invite(dir: &Path, user: &str) -> Result<(crate::peer::invite::Text, i64)> {
+    let mut client = Client::connect(dir).await?;
+    client.ask(Ask::Invite { user: user.into() }).await?;
+    match client.next().await? {
+        Some(Say::Invited { invite, ends_ms }) => Ok((invite, ends_ms)),
+        Some(Say::Failed { error }) => bail!("{error}"),
+        _ => bail!("{}", text::DAEMON_GONE),
+    }
+}
+
+/// `riff members`: the owner and each member key of the riff of the
+/// daemon in the folder `dir`.
+pub async fn members(dir: &Path) -> Result<Vec<crate::peer::members::Shown>> {
+    let mut client = Client::connect(dir).await?;
+    client.ask(Ask::Members).await?;
+    match client.next().await? {
+        Some(Say::Members { rows }) => Ok(rows),
+        Some(Say::Failed { error }) => bail!("{error}"),
+        _ => bail!("{}", text::DAEMON_GONE),
     }
 }
 

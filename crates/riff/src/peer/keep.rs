@@ -70,9 +70,9 @@
 //! let owner = Key::from_bytes(&[1; 32]);
 //! let riff = owner.public();
 //! let mut peers = Peers::open(dir.path(), riff, |_| {})?;
-//! peers.write(&owner, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+//! peers.write(&owner, &Body::Riff(Riff { user: "mike".into(), host: None }), 1)?;
 //! // The owner signs another first record: a fork.
-//! let other = Body::Riff(Riff { user: "ann".into() });
+//! let other = Body::Riff(Riff { user: "ann".into(), host: None });
 //! let second = Record::sign(&owner, riff, 1, Id::ZERO, 2, &other)?;
 //! let Outcome::Fork(fork) = peers.keep(second.bytes().to_vec(), None)? else {
 //!     panic!("no fork");
@@ -150,6 +150,9 @@ pub enum Fresh {
     },
     /// The proof of a new fork.
     Fork(Fork),
+    /// The daemon is in another riff now: after a join or a leave
+    /// ([`Peers::reopen`], 01M521J6WZT2KR5ZQE9DZ9A5AC).
+    Switched,
 }
 
 /// The riff of peers of a daemon: its state and its book.
@@ -173,7 +176,28 @@ impl Peers {
     /// record that fails a check: the book of a daemon holds only
     /// records that passed. It reads the proofs of the forks in [`FORKS`]
     /// too.
-    pub fn open(dir: &Path, riff: Public, mut say: impl FnMut(String)) -> Result<Peers> {
+    pub fn open(dir: &Path, riff: Public, say: impl FnMut(String)) -> Result<Peers> {
+        Peers::open_with(dir, riff, broadcast::channel(FRESH).0, say)
+    }
+
+    /// The records of the riff `riff` in the folder `dir`, as
+    /// [`Peers::open`], in place of these records: after a join or a
+    /// leave (01M521J6WZT2KR5ZQE9DZ9A5AC). The records of this riff stay
+    /// in their folder. Each subscriber gets [`Fresh::Switched`], then
+    /// the fresh records of the new riff.
+    pub fn reopen(&mut self, dir: &Path, riff: Public, say: impl FnMut(String)) -> Result<()> {
+        *self = Peers::open_with(dir, riff, self.fresh.clone(), say)?;
+        let _ = self.fresh.send(Fresh::Switched);
+        Ok(())
+    }
+
+    /// [`Peers::open`] with the sender `fresh` of the fresh records.
+    fn open_with(
+        dir: &Path,
+        riff: Public,
+        fresh: broadcast::Sender<Fresh>,
+        mut say: impl FnMut(String),
+    ) -> Result<Peers> {
         let (book, kept) = Book::open(dir)?;
         let (proofs, pairs) = Book::open_file(dir, FORKS)?;
         let (state, chains) = replay(riff, kept, &mut say);
@@ -196,7 +220,7 @@ impl Peers {
             chains,
             proofs,
             forks,
-            fresh: broadcast::channel(FRESH).0,
+            fresh,
         };
         // A crash after the append of a `removed` record and before the
         // drop leaves the later records of its key in the book.
@@ -438,6 +462,7 @@ mod tests {
         let mut fresh = peers.subscribe();
         let riff_body = Body::Riff(Riff {
             user: "mike".into(),
+            host: None,
         });
         for body in [riff_body, admit(&brett, "brett"), admit(&ann, "ann")] {
             peers.write(&owner, &body, 1).unwrap();
@@ -511,6 +536,7 @@ mod tests {
         let mut peers = Peers::open(dir.path(), riff, |_| {}).unwrap();
         let body = Body::Riff(Riff {
             user: "mike".into(),
+            host: None,
         });
         peers.write(&owner, &body, 1).unwrap();
         let admit = Body::Member(Member {
@@ -586,6 +612,7 @@ mod tests {
             1,
             &Body::Riff(Riff {
                 user: "mike".into(),
+                host: None,
             }),
         )
         .unwrap();

@@ -118,6 +118,7 @@ impl Daemon {
         let owner = Daemon::start(byte, key(byte).public(), tempfile::tempdir().unwrap()).await;
         let riff = Body::Riff(Riff {
             user: "mike".into(),
+            host: None,
         });
         owner.hub.write(&riff).unwrap();
         for (member, user, host) in members {
@@ -442,4 +443,80 @@ async fn a_gap_waits_for_the_next_heads_and_a_bad_record_closes_the_link() {
         "{}",
         refused[0]
     );
+}
+
+/// 01M519Z3YA9WBH9TWQPAH6A64Z, 01M521J6HX5BN0FNDBSKZDVQE7,
+/// 01M519Z3VXY4R3WDSSBQCVYTS4: a join over iroh. The daemon of the owner
+/// refuses a wrong secret, and takes the join of the secret of an invite:
+/// the connection goes on as the peer link, and the new daemon gets each
+/// record of the riff. No log line of either daemon holds the secret.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_join_goes_on_as_the_peer_link_and_no_line_holds_the_secret() {
+    use riff::peer::invite::{Invite, Invites, PREFIX, Secret};
+    use riff::peer::join;
+    use riff::text;
+
+    let owner = Daemon::owner(1, &[]).await;
+    let invites = Arc::new(Invites::in_dir(owner.dir.path()));
+    owner.links.take_joins(invites.clone());
+    let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
+    let invite = invites.make(owner.public(), "brett", now).unwrap();
+    owner
+        .hub
+        .write(&message("mike", "before the join"))
+        .unwrap();
+    // The new daemon, as after its switch to the riff of the owner: no
+    // record yet.
+    let new = Daemon::start(2, owner.public(), tempfile::tempdir().unwrap()).await;
+    new.knows(&owner);
+    owner.knows(&new);
+
+    let wrong = Invite::new(
+        owner.public(),
+        "brett",
+        Secret::from_bytes([7; 32]),
+        invite.ends_ms,
+    );
+    let error = join::ask(new.links.endpoint(), &wrong, "kadomony")
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), text::join_refused(text::INVITE_UNKNOWN));
+    let joiner = new.public().to_string();
+    let refused = text::join_refused_line(&joiner, text::INVITE_UNKNOWN);
+    until("the line of the refused join", || {
+        !owner.said(&refused).is_empty()
+    })
+    .await;
+
+    let conn = join::ask(new.links.endpoint(), &invite, "kadomony")
+        .await
+        .unwrap();
+    new.links.serve_joined(conn);
+    until("each record of the owner", || {
+        new.messages() == texts(&["before the join"])
+    })
+    .await;
+    let me = new.public();
+    assert_eq!(
+        new.hub.read(|state| state.user_of(&me).map(str::to_owned)),
+        Some("brett".into())
+    );
+    let who = text::peer_who(&joiner, Some("brett"), Some("kadomony"));
+    assert_eq!(owner.said(&text::join_admitted(&who)).len(), 1);
+    // A new record of the new member reaches the owner.
+    new.hub.write(&message("brett", "after the join")).unwrap();
+    until("the record of the new member", || {
+        owner.messages() == texts(&["before the join", "after the join"])
+    })
+    .await;
+
+    let hex = invite.secret().hex();
+    let string = invite.text();
+    for daemon in [&owner, &new] {
+        let lines = daemon.lines.lock().unwrap();
+        for line in lines.iter() {
+            assert!(!line.contains(hex.as_str()), "{line}");
+            assert!(!line.contains(&string[PREFIX.len()..]), "{line}");
+        }
+    }
 }

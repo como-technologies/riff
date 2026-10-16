@@ -18,14 +18,14 @@ fn text(out: &[u8]) -> String {
 }
 
 /// An environment with the fake `systemctl` first in `PATH`.
-struct Here {
+pub(crate) struct Here {
     env: Isolated,
     bin: tempfile::TempDir,
     path: String,
 }
 
 impl Here {
-    fn new() -> Here {
+    pub(crate) fn new() -> Here {
         let env = Isolated::new();
         let bin = tempfile::tempdir().unwrap();
         fake_systemctl(bin.path());
@@ -39,7 +39,7 @@ impl Here {
 
     /// `riff ARGS`, with no `RIFF_HOME` when `machine` is true: the riff
     /// of the machine, in the isolated home.
-    fn command(&self, machine: bool, args: &[&str]) -> Command {
+    pub(crate) fn command(&self, machine: bool, args: &[&str]) -> Command {
         let mut cmd = self.env.riff();
         cmd.args(args)
             .env("PATH", &self.path)
@@ -50,7 +50,7 @@ impl Here {
         cmd
     }
 
-    async fn run(&self, machine: bool, args: &[&str]) -> Output {
+    pub(crate) async fn run(&self, machine: bool, args: &[&str]) -> Output {
         let mut cmd = self.command(machine, args);
         tokio::task::spawn_blocking(move || cmd.output().unwrap())
             .await
@@ -416,7 +416,7 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
 impl Here {
     /// Starts `riff daemon` of the `RIFF_HOME`, writes its output to
     /// `name`, and waits until it listens and has its riff.
-    async fn daemon(&self, name: &str) -> std::process::Child {
+    pub(crate) async fn daemon(&self, name: &str) -> std::process::Child {
         let log = self.bin.path().join(name);
         let out = std::fs::File::create(&log).unwrap();
         let child = self
@@ -436,7 +436,7 @@ impl Here {
     }
 
     /// The line of `riff daemon status` that starts with `start`.
-    async fn status_line(&self, start: &str) -> String {
+    pub(crate) async fn status_line(&self, start: &str) -> String {
         let out = self.run(false, &["daemon", "status"]).await;
         let status = text(&out.stdout);
         assert!(out.status.success(), "{status}");
@@ -448,7 +448,7 @@ impl Here {
     }
 
     /// The folder of the daemon of the `RIFF_HOME`.
-    fn daemon_dir(&self) -> PathBuf {
+    pub(crate) fn daemon_dir(&self) -> PathBuf {
         self.env.riff_home().join("daemon")
     }
 
@@ -471,7 +471,7 @@ impl Here {
 const RIFF_LINE: &str = ", of the owner ";
 
 /// Stops `child` with a SIGTERM, and waits for its end.
-async fn stop(mut child: std::process::Child) {
+pub(crate) async fn stop(mut child: std::process::Child) {
     term(child.id());
     let status = tokio::task::spawn_blocking(move || child.wait().unwrap())
         .await

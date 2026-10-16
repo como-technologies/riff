@@ -9,7 +9,7 @@
 //!
 //! | Type | Byte | Writer | Largest record | Body |
 //! |---|---|---|---|---|
-//! | `riff` | 1 | the owner, in its first record | 1 KiB | [`Riff`]: the user of the owner |
+//! | `riff` | 1 | the owner, in its first record | 1 KiB | [`Riff`]: the user and the host of the owner |
 //! | `member` | 2 | the owner | 1 KiB | [`Member`]: a member key, its user and its host |
 //! | `removed` | 3 | the owner, for a key that is not its own | 1 KiB | [`Removed`]: a member key, and its last sequence number |
 //! | `left` | 4 | a member, for its own key | 1 KiB | [`Left`]: nothing more |
@@ -199,6 +199,10 @@ impl Body {
 pub struct Riff {
     /// The user of the owner.
     pub user: String,
+    /// The host of the daemon of the owner, for `riff members`
+    /// (01M521J6T2PWA9JREDXJK6DZ0V). A riff of an older build has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 /// The body of `member`: the owner admits one key.
@@ -345,6 +349,7 @@ mod tests {
         let bodies = [
             Body::Riff(Riff {
                 user: "mike".into(),
+                host: None,
             }),
             Body::Member(Member {
                 key: public,
@@ -424,7 +429,8 @@ mod tests {
         assert_eq!(
             Body::read(Type::Riff, json).unwrap(),
             Body::Riff(Riff {
-                user: "mike".into()
+                user: "mike".into(),
+                host: None,
             })
         );
         let json = br#"{"plan":"vote","item":"issue-12"}"#;

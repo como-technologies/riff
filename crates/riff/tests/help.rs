@@ -124,8 +124,13 @@ fn riff_help_of_a_command_shows_the_long_text() {
         help.starts_with("Let a person join this riff\n\n"),
         "{help}"
     );
+    // riff 3.0 and riff-server 1.x (01M519Z4AEMDFGBF22RZ3HQR1R).
     assert!(
-        help.contains("It adds their verified email to the members."),
+        help.contains("riff invite USER prints an invite string for one new machine"),
+        "{help}"
+    );
+    assert!(
+        help.contains("With --email, it acts on riff-server 1.x"),
         "{help}"
     );
     assert_eq!(riff(&["invite", "--help"]), help);

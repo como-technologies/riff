@@ -126,6 +126,7 @@ pub mod service;
 pub mod session_image;
 pub mod session_relay;
 pub mod settings;
+pub mod share;
 pub mod smoke;
 pub mod state;
 pub mod style;

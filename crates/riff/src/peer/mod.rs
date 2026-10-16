@@ -16,13 +16,19 @@
 //! | The state of the riff: what the set of records gives | [`state`] |
 //! | The file of the records that a daemon keeps | [`book`] |
 //! | The state and the book together: write and keep a record | [`keep`] |
+//! | The invite string, and the invites of the daemon of the owner | [`invite`] |
+//! | A join of a new daemon over iroh | [`join`] |
+//! | The members of a riff, as `riff members` shows them, and the keys that `riff remove` removes | [`members`] |
 //! | The riff tools of a session of the daemon on its records | [`talk`] |
 //! | The frames of a peer link | [`wire`] |
 //! | The peer links of a daemon over iroh: the sync of the records | [`sync`] |
 
 pub mod body;
 pub mod book;
+pub mod invite;
+pub mod join;
 pub mod keep;
+pub mod members;
 pub mod record;
 pub mod state;
 pub mod sync;
