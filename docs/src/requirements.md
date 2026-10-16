@@ -6382,8 +6382,8 @@ with "Superseded by Wave C (ID)." holds until then.
 
 ### Wave C: the move of a repository
 
-- **01M51R8GSP3ZAJKGCY0KYGQYXT** `riff move` in a clone moves the work of
-  its repository from riff-server to riff 3.0. It is a command of a
+- **01M51R8GSP3ZAJKGCY0KYGQYXT** `riff move` in a clone moves the work
+  of its repository from riff-server to riff 3.0. It is a command of a
   person at the CLI, not the `move` tool of a session. First it checks,
   and a failed check changes nothing: the riff daemon of the machine
   answers; `riff.toml` of the repository pins a session image
@@ -6391,13 +6391,13 @@ with "Superseded by Wave C (ID)." holds until then.
   signed in; no session holds a claim in the repository on riff-server;
   and no worker of riff 1.x runs for the repository. Each failed check
   names its fix.
-- **01M51R8GW67GFMFZ6S2MAAV6AX** After its checks, `riff move` pauses the
-  repository on riff-server. It copies each hold of the repository on
-  riff-server into a hold of the daemon, with the same item and reason
-  (01M519Z3J7Z0M3PNDY249Q57FH). It turns riff 1.x off in the repository,
-  as `riff disable` does. It posts a note to the thread of the
-  repository on riff-server and on the daemon: who moved it, when, and
-  that `riff move --back` undoes it. Then it names the next step:
+- **01M51R8GW67GFMFZ6S2MAAV6AX** After its checks, `riff move` pauses
+  the repository on riff-server. It copies each hold of the repository
+  on riff-server into a hold of the daemon, with the same item and
+  reason (01M519Z3J7Z0M3PNDY249Q57FH). It turns riff 1.x off in the
+  repository, as `riff disable` does. It posts a note to the thread of
+  the repository on riff-server and on the daemon: who moved it, when,
+  and that `riff move --back` undoes it. Then it names the next step:
   `riff lead start`.
 - **01M51R8GYRF329RKH4F7HP1TAA** `riff move` copies the memory of the
   lead of riff 1.x into the Claude folder of the lead of riff 3.0, when
