@@ -1075,7 +1075,7 @@ room, and each wave. It draws them again each second.
 |---|---|
 | Up, Down (or k, j) | Select a session. |
 | Enter | Attach to the lead. Ctrl-P Ctrl-Q comes back to the view. |
-| t | Take over the selected session (see [Take over a session](#take-over-a-session)). |
+| t | Stop the turn of the selected session, and take it over (see [Take over a session](#take-over-a-session)). |
 | q, Esc, Ctrl-C | End the view. The sessions go on. |
 
 After a takeover, the note under the rows says that the session goes
@@ -1087,7 +1087,7 @@ The states of a session:
 |---|---|
 | `works` | A turn of `claude` runs. |
 | `ends` | The turn gave its result. `claude` ends, or waits for its background tasks. |
-| `holds for a takeover` | A takeover waits for the end of the turn. |
+| `holds for a takeover` | A takeover stops the turn, or waits for its end. |
 | `taken over` | A person has the session in a terminal. |
 | `lead` | The lead, with its terminal. |
 
@@ -1097,25 +1097,41 @@ session.
 ### Take over a session
 
 You can take over a session that works on an item, for example to
-help it or to look at its work. Find the name of its container with
+help it or to stop a wrong step. Find the name of its container with
 `riff view` or `riff daemon status`. Then:
 
 ```sh
 riff takeover riff-issue-12-1a2b3c4d
 ```
 
-The session stops at the end of its turn. Then `claude` opens in your
-terminal, in the container of the session, with the history of the
-session. When you are done, type `/exit`. The session goes on with its
-item: riff starts `claude -p` again with `--resume`, and tells it that
-a person used the session. While you have the session, the quiet limit
-of the daemon does not stop it.
+riff stops the turn of the session at once, also in the middle of a
+tool call. `claude` opens in your terminal in a few seconds, in the
+container of the session, with the history of the session. When you
+are done, type `/exit`. The session goes on with its item: riff starts
+`claude -p` again with `--resume`, and tells it that a person used the
+session. While you have the session, the quiet limit of the daemon
+does not stop it.
 
-When you press Ctrl-C before `claude` opens, the session goes on after
-its turn. When `riff takeover` ends while `claude` is open, for example
-when your terminal closes, riff gives the session back at once. When
-the daemon restarts during a takeover, the session waits for you: run
-`riff takeover NAME` again, and type `/exit`.
+riff cannot stop a turn after the result of the session (the state
+`ends`), or of a session that started with riff 1.5. Then
+`riff takeover` says that it waits for the end of the turn.
+
+When you press Ctrl-C before `claude` opens, the session goes on when
+`claude -p` ends. When `riff takeover` ends while `claude` is open, for
+example when your terminal closes, riff gives the session back at once.
+When the daemon restarts during a takeover, the session waits for you:
+run `riff takeover NAME` again, and type `/exit`.
+
+### Take over a session at the end of its turn
+
+To let the session finish its turn first, add `--at-end`:
+
+```sh
+riff takeover --at-end riff-issue-12-1a2b3c4d
+```
+
+riff does not stop the turn. `claude` opens when the turn ends. The
+first turn of `riff run` can be the whole item.
 
 ## Run the real-session test
 
