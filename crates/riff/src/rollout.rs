@@ -17,7 +17,7 @@
 //!     R -- "no: paused" --> T
 //!     R -- yes --> P{"a machine with room,<br/>or an idle worker that joined?"}
 //!     P -- no --> T
-//!     P -- yes --> W["free work (gh): free items of the current wave,<br/>pull requests that wait for a verify"]
+//!     P -- yes --> W["free work (gh): free items of the current wave,<br/>pull requests that wait for a verify,<br/>no held item"]
 //!     W --> O["each idle worker with no open request:<br/>tell it request: claim ITEM"]
 //!     O --> I{"free work, and no idle worker?<br/>(a worker that refused does not count)"}
 //!     I -- no --> T
@@ -35,6 +35,12 @@
 //!   status `riff/verify`, and no session claims `verify-issue-N` for
 //!   it. The pull request of an issue with the label [`NO_VERIFY`] is no
 //!   work (01M5157V0P92EBHF4M7N9K0RGR).
+//! - **No held item** ([`free_work_of`], 01M51A55Q2MDZT38JDCEJ1QECP). A
+//!   held item is no free work: `issue-N` and `verify-issue-N`, each by
+//!   its own hold. The rollout starts no worker for it and sends no
+//!   request for it. Each look reads the holds of the repository thread
+//!   again ([`Api::plan_show`]), so a free of the item makes it free work
+//!   at the next look.
 //! - **One count for an item** ([`Verify`], [`in_verify`],
 //!   01M3Z9N5HHHS1E17NFGMVBKZ0K). The author of a pull request releases
 //!   its item at the verify request. So an open issue with no claim can
@@ -1600,7 +1606,12 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
 /// [`free_work_of`] with its open milestones, its open issues and its
 /// open pull requests. The usage comments of the issue of each verify
 /// name its authors ([`authors`], 01M51533BJSD0RB7BFQR9CAFYW).
-pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<Work> {
+pub fn free_work(
+    gh: &Gh,
+    repo: &str,
+    claims: &HashSet<String>,
+    holds: &HashSet<String>,
+) -> Result<Work> {
     let open: Vec<Milestone> = gh.json(&[
         "api",
         &format!("repos/{repo}/milestones?state=open&per_page=100"),
@@ -1619,7 +1630,7 @@ pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<Work> 
         "number,body,comments,milestone,labels",
     ])?;
     Ok(Work {
-        items: free_work_of(&open, &issues, &pulls, claims),
+        items: free_work_of(&open, &issues, &pulls, claims, holds),
         authors: authors(&issues, &waiting_verifies(&pulls, claims)),
     })
 }
@@ -1639,7 +1650,9 @@ pub struct Work {
 /// (`verify-issue-N`), then the free items of the current wave
 /// (`issue-N`). An item counts one time: as a build or as a verify
 /// (01M3Z9N5HHHS1E17NFGMVBKZ0K). The pull request of an issue with the
-/// label [`NO_VERIFY`] is no work (01M5157V0P92EBHF4M7N9K0RGR).
+/// label [`NO_VERIFY`] is no work (01M5157V0P92EBHF4M7N9K0RGR). An item
+/// in `holds` is no work (01M51A55Q2MDZT38JDCEJ1QECP): a hold names one
+/// item, so a hold of `issue-N` keeps `verify-issue-N` free.
 ///
 /// ```
 /// use std::collections::HashSet;
@@ -1660,16 +1673,24 @@ pub struct Work {
 /// let issues = [issue(1, "Wave 2", &[]), issue(2, "Backlog", &[]), issue(3, "Backlog", &["no-verify"])];
 /// // Each pull request waits for a verify: the one of 3 is no work.
 /// let pulls = [pull(40, 2), pull(41, 3)];
+/// let none = HashSet::new();
 /// assert_eq!(
-///     free_work_of(&open, &issues, &pulls, &HashSet::new()),
+///     free_work_of(&open, &issues, &pulls, &none, &none),
 ///     ["verify-issue-2", "issue-1"]
 /// );
+/// // The lead holds issue-1: it is no work. The verify of 2 stays.
+/// let holds: HashSet<String> = ["issue-1".to_owned(), "issue-2".to_owned()].into();
+/// assert_eq!(free_work_of(&open, &issues, &pulls, &none, &holds), ["verify-issue-2"]);
+/// // A free of the hold: the item is work again.
+/// let holds: HashSet<String> = ["verify-issue-2".to_owned()].into();
+/// assert_eq!(free_work_of(&open, &issues, &pulls, &none, &holds), ["issue-1"]);
 /// ```
 pub fn free_work_of(
     open: &[Milestone],
     issues: &[Issue],
     pulls: &[Pull],
     claims: &HashSet<String>,
+    holds: &HashSet<String>,
 ) -> Vec<String> {
     let items =
         current_wave(open).map_or_else(Vec::new, |wave| free_items(issues, wave, claims, pulls));
@@ -1683,6 +1704,7 @@ pub fn free_work_of(
         .filter(|n| !kept.contains(n))
         .map(|n| format!("verify-issue-{n}"))
         .chain(items.iter().map(|n| format!("issue-{n}")))
+        .filter(|item| !holds.contains(item))
         .collect()
 }
 
@@ -1834,8 +1856,14 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
             }));
         }
         let claims = claims(&sessions);
+        let holds = match me.default_thread() {
+            Some(thread) => self.api.plan_show(&me, &thread).await?.holds,
+            None => BTreeMap::new(),
+        };
+        let holds: HashSet<String> = holds.into_keys().collect();
         let (gh, repo) = (self.gh.clone(), me.place().repo_text());
-        let work = tokio::task::spawn_blocking(move || free_work(&gh, &repo, &claims)).await??;
+        let work =
+            tokio::task::spawn_blocking(move || free_work(&gh, &repo, &claims, &holds)).await??;
         add(&mut authors, &work.authors);
         Ok(Some(View {
             running: true,
@@ -2934,5 +2962,82 @@ mod tests {
         );
         // The next session holds it: no work.
         assert_eq!(work(&failed, &["issue-12"]), (vec![], vec![]));
+    }
+
+    /// A held item is no free work (01M51A55Q2MDZT38JDCEJ1QECP): the
+    /// rollout starts no worker for it and sends no request for it. A
+    /// hold names one item. A free makes the item free work at the next
+    /// look.
+    #[test]
+    fn a_held_item_is_no_free_work() {
+        let open = [Milestone {
+            title: "Wave 3".into(),
+        }];
+        let issues: Vec<Issue> = serde_json::from_str(
+            r#"[{"number":12,"body":"","comments":[],"milestone":{"title":"Wave 3"}},
+                {"number":13,"body":"","comments":[],"milestone":{"title":"Wave 3"}}]"#,
+        )
+        .unwrap();
+        // The pull request of 13 waits for a verify.
+        let pulls: Vec<Pull> = serde_json::from_str(
+            r#"[{"number":40,"headRefName":"worktree-issue-13","isDraft":false,"statusCheckRollup":[]}]"#,
+        )
+        .unwrap();
+        let work = |holds: &[&str]| {
+            let holds: HashSet<String> = holds.iter().map(|h| (*h).to_owned()).collect();
+            free_work_of(&open, &issues, &pulls, &HashSet::new(), &holds)
+        };
+        assert_eq!(work(&[]), ["verify-issue-13", "issue-12"]);
+        assert_eq!(work(&["issue-12"]), ["verify-issue-13"]);
+        // A hold of issue-13 does not stop its verify.
+        assert_eq!(work(&["issue-13"]), ["verify-issue-13", "issue-12"]);
+        assert_eq!(work(&["verify-issue-13"]), ["issue-12"]);
+
+        // Each item held: an idle worker gets no request, and no worker
+        // starts.
+        let me: SessionUri = "riff://mike@thelio/o/riff?session=l1&lead=true"
+            .parse()
+            .unwrap();
+        let sessions = [info("riff://mike@thelio/o/riff?session=aaaa1111-x", true)];
+        let panes = [WorkerPane {
+            pane: "%1".into(),
+            session: "aaaa1111".into(),
+        }];
+        let look = |items: Vec<String>| View {
+            running: true,
+            work: items.len(),
+            idle: idle(&sessions, &me, &panes),
+            places: vec![thelio()],
+            items,
+            idlers: idlers(&sessions, &me),
+            ..View::default()
+        };
+        let wait = Duration::from_secs(60);
+        let mut offers = Offers::default();
+        let (requests, seen) = offers.plan(
+            &look(work(&["issue-12", "verify-issue-13"])),
+            Instant::now(),
+            wait,
+        );
+        assert_eq!(requests, []);
+        assert_eq!(decide(&seen), None);
+        // No idle worker: still no start.
+        let none = View {
+            idle: 0,
+            idlers: vec![],
+            ..look(work(&["issue-12", "verify-issue-13"]))
+        };
+        assert_eq!(decide(&none), None);
+
+        // The lead frees issue-12: the next look gives it to the worker.
+        let (requests, _) = offers.plan(&look(work(&["verify-issue-13"])), Instant::now(), wait);
+        assert_eq!(requests, [("aaaa1111-x".to_owned(), "issue-12".to_owned())]);
+        // With no idle worker, it starts one.
+        let none = View {
+            idle: 0,
+            idlers: vec![],
+            ..look(work(&["verify-issue-13"]))
+        };
+        assert_eq!(decide(&none), Some(0));
     }
 }
