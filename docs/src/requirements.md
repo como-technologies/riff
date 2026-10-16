@@ -4379,11 +4379,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   or is cancelled, and it passes only when each of them passed. The
   ruleset needs only `Gate`.
 - **01M513W2NSE303E6XAM18BW7T6** `just test-part I/N` lists each test of
-  the workspace, also each doc test, with `cargo test -- --list`. It
-  runs each test whose name has the 64-bit FNV-1a hash H with H mod N
-  = I − 1, with `cargo test -- --exact`. It prints one line with the
-  count of its tests and of all tests. A list with no test fails. The
-  N parts together run each test.
+  the workspace, also each doc test, with `cargo test -- --list`. Of
+  the tests that are not doc tests, it runs each test whose name has
+  the 64-bit FNV-1a hash H with H mod N = I − 1, with `cargo test
+  --tests -- --exact`. Part 1 also runs each doc test, with `cargo test
+  --doc`: the name of a doc test has spaces, and rustdoc splits a
+  filter at each space. It prints one line with the count of its tests
+  and of all tests. A list with no test fails. The N parts together
+  run each test.
 - **01M513W2RERJES76ZXKKHCV0DP** Each job of the CI workflow runs on the
   runner that the repository variable `RIFF_RUNNER` names. With no
   `RIFF_RUNNER`, the runner is `ubuntu-latest`.

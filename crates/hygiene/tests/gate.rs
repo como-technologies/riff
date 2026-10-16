@@ -66,7 +66,10 @@ fn recipe(name: &str) -> Vec<String> {
 fn recipes(job: &str) -> Vec<String> {
     job.lines()
         .filter_map(|line| line.trim().strip_prefix("- run: just "))
-        .flat_map(|line| line.split_whitespace().take_while(|w| !w.starts_with("${{")))
+        .flat_map(|line| {
+            line.split_whitespace()
+                .take_while(|w| !w.starts_with("${{"))
+        })
         .map(|word| if word == "test-part" { "test" } else { word })
         .map(str::to_owned)
         .collect()
@@ -168,8 +171,8 @@ fn gate_step(results: &str) -> (Option<i32>, String) {
             .unwrap()
     };
     let out = child.wait_with_output().unwrap();
-    let text = String::from_utf8_lossy(&out.stdout).into_owned()
-        + &String::from_utf8_lossy(&out.stderr);
+    let text =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     (out.status.code(), text)
 }
 

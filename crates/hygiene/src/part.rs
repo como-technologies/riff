@@ -9,9 +9,16 @@
 //!
 //! 1. `cargo test --workspace -- --list --format terse` builds each test
 //!    binary and lists the name of each test, also of each doc test.
-//! 2. [`names`] reads the names, and [`Part::select`] keeps each name
-//!    whose [`fnv1a`] hash modulo N is I − 1.
-//! 3. `cargo test --workspace -- --exact NAME...` runs these tests.
+//! 2. [`names`] reads the names, and [`Part::plan`] keeps each name of a
+//!    test that is not a doc test whose [`fnv1a`] hash modulo N is I − 1.
+//! 3. `cargo test --workspace --tests -- --exact NAME...` runs these
+//!    tests.
+//! 4. Part 1 also runs each doc test: `cargo test --workspace --doc`.
+//!
+//! A doc test has a name with spaces ([`is_doc`]), for example
+//! `crates/x/src/lib.rs - ulid (line 57)`. rustdoc splits each filter at
+//! its spaces, so no filter names one doc test. The doc tests take
+//! seconds, so they run as one group.
 //!
 //! A name is in one part only, so the N parts together run each test. A
 //! name that two test binaries share runs in each of them, as in a full
@@ -20,24 +27,31 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     L["cargo test -- --list:<br/>each name"] --> H{"fnv1a(name) mod N"}
-//!     H -- "I − 1" --> R["cargo test -- --exact<br/>the names of part I"]
-//!     H -- "another part" --> S["the job of that part"]
+//!     L["cargo test -- --list:<br/>each name"] --> D{"a doc test?"}
+//!     D -- yes --> P1["part 1: cargo test --doc"]
+//!     D -- no --> H{"fnv1a(name) mod N"}
+//!     H -- "I − 1" --> R["cargo test --tests -- --exact<br/>the names of part I"]
+//!     H -- "another value" --> S["the job of another part"]
 //! ```
 //!
 //! ```
 //! use hygiene::part::{names, Part};
 //!
 //! let list = "cli::help: test\n\
+//!             cli::version: test\n\
 //!             src/lib.rs - ulid (line 57): test\n\
 //!             bench::fast: benchmark\n";
 //! let all = names(list);
-//! assert_eq!(all, ["cli::help", "src/lib.rs - ulid (line 57)"]);
+//! assert_eq!(all, ["cli::help", "cli::version", "src/lib.rs - ulid (line 57)"]);
 //!
-//! let parts: Vec<Part> = ["1/2", "2/2"].iter().map(|p| p.parse().unwrap()).collect();
-//! let mut each: Vec<&str> = parts.iter().flat_map(|p| p.select(&all)).collect();
+//! let plans: Vec<_> = ["1/2", "2/2"]
+//!     .iter()
+//!     .map(|p| p.parse::<Part>().unwrap().plan(&all))
+//!     .collect();
+//! let mut each: Vec<&str> = plans.iter().flat_map(|p| p.tests.clone()).collect();
 //! each.sort();
-//! assert_eq!(each, all);
+//! assert_eq!(each, ["cli::help", "cli::version"]);
+//! assert_eq!((plans[0].doc, plans[1].doc), (1, 0));
 //! assert!("3/2".parse::<Part>().is_err());
 //! ```
 
@@ -92,8 +106,20 @@ impl fmt::Display for Part {
     }
 }
 
+/// What one part runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Plan<'a> {
+    /// The names of the tests of the part that are not doc tests, in
+    /// the order of the list.
+    pub tests: Vec<&'a str>,
+    /// The count of the doc tests that the part runs: each doc test in
+    /// part 1, else none.
+    pub doc: usize,
+}
+
 impl Part {
-    /// True when the test `name` is in this part.
+    /// True when the test `name`, which is not a doc test, is in this
+    /// part.
     ///
     /// ```
     /// use hygiene::part::Part;
@@ -105,14 +131,29 @@ impl Part {
         fnv1a(name) % self.count == self.index - 1
     }
 
-    /// The names of `names` that are in this part, in their order.
-    pub fn select<'a>(&self, names: &'a [String]) -> Vec<&'a str> {
-        names
-            .iter()
-            .map(String::as_str)
-            .filter(|name| self.has(name))
-            .collect()
+    /// What this part runs of the tests `names`.
+    pub fn plan<'a>(&self, names: &'a [String]) -> Plan<'a> {
+        let (doc, tests): (Vec<&str>, Vec<&str>) =
+            names.iter().map(String::as_str).partition(|n| is_doc(n));
+        Plan {
+            tests: tests.into_iter().filter(|name| self.has(name)).collect(),
+            doc: if self.index == 1 { doc.len() } else { 0 },
+        }
     }
+}
+
+/// True when `name` is the name of a doc test: it has a space, as in
+/// `crates/x/src/lib.rs - ulid (line 57)`. The name of each other test
+/// is a Rust path.
+///
+/// ```
+/// use hygiene::part::is_doc;
+///
+/// assert!(is_doc("crates/x/src/lib.rs - ulid (line 57)"));
+/// assert!(!is_doc("cli::help"));
+/// ```
+pub fn is_doc(name: &str) -> bool {
+    name.contains(' ')
 }
 
 /// The 64-bit FNV-1a hash of `text`. It is the same on each machine and
@@ -145,18 +186,34 @@ pub fn names(list: &str) -> Vec<String> {
     names
 }
 
-/// The line that `just test-part` prints before it runs the tests.
+/// The line that `just test-part` prints before it runs the tests of
+/// `plan`, of the tests `names`.
 ///
 /// ```
-/// use hygiene::part::{summary, Part};
+/// use hygiene::part::{summary, Plan, Part};
 ///
+/// let names = ["a".to_owned(), "b".to_owned(), "x.rs - f (line 1)".to_owned()];
+/// let part = Part { index: 1, count: 2 };
+/// let plan = Plan { tests: vec!["a"], doc: 1 };
 /// assert_eq!(
-///     summary(Part { index: 2, count: 4 }, 731, 2903),
-///     "just test-part 2/4 runs 731 of 2903 tests"
+///     summary(part, &plan, &names),
+///     "just test-part 1/2 runs 1 of 2 tests, and the 1 doc tests"
 /// );
+/// let part = Part { index: 2, count: 2 };
+/// let plan = Plan { tests: vec!["b"], doc: 0 };
+/// assert_eq!(summary(part, &plan, &names), "just test-part 2/2 runs 1 of 2 tests");
 /// ```
-pub fn summary(part: Part, mine: usize, all: usize) -> String {
-    format!("just test-part {part} runs {mine} of {all} tests")
+pub fn summary(part: Part, plan: &Plan<'_>, names: &[String]) -> String {
+    let all = names.iter().filter(|n| !is_doc(n)).count();
+    let line = format!(
+        "just test-part {part} runs {} of {all} tests",
+        plan.tests.len()
+    );
+    if plan.doc == 0 {
+        line
+    } else {
+        format!("{line}, and the {} doc tests", plan.doc)
+    }
 }
 
 #[cfg(test)]
@@ -183,7 +240,7 @@ mod tests {
     fn the_parts_are_near_the_same_size() {
         let names: Vec<String> = (0..2000).map(|i| format!("module::test_{i}")).collect();
         for part in all(4) {
-            let size = part.select(&names).len();
+            let size = part.plan(&names).tests.len();
             assert!((350..=650).contains(&size), "{part}: {size} of 2000");
         }
     }
@@ -195,11 +252,24 @@ mod tests {
         more.push("a_new_test".to_owned());
         for part in all(3) {
             let after: Vec<&str> = part
-                .select(&more)
+                .plan(&more)
+                .tests
                 .into_iter()
                 .filter(|n| *n != "a_new_test")
                 .collect();
-            assert_eq!(part.select(&names), after, "{part}");
+            assert_eq!(part.plan(&names).tests, after, "{part}");
+        }
+    }
+
+    #[test]
+    fn only_part_one_runs_the_doc_tests() {
+        let names: Vec<String> = ["a::b", "x.rs - f (line 1)", "x.rs - g (line 9)"]
+            .map(str::to_owned)
+            .to_vec();
+        for part in all(3) {
+            let plan = part.plan(&names);
+            assert!(plan.tests.iter().all(|n| !is_doc(n)), "{plan:?}");
+            assert_eq!(plan.doc, if part.index == 1 { 2 } else { 0 });
         }
     }
 
