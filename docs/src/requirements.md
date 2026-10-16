@@ -2829,54 +2829,59 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **R11** Messages do not carry secrets.
 - **R195** Each message carries a signature from the device key of
   its sender (R18). A message from the command line (R65) carries the
-  signature of the device key of the person.
+  signature of the device key of the person. Superseded by 3.0
+  (01M519Z1Z1FVZQQ612DEMSQ7PG).
 - **R196** The signature covers the user, the session ID and the lead
   mark of the sender, the thread, the `to` selectors, the body, the
   kind and the time. It does not cover the place and the claims of the
   sender. A direct message signs no thread. Its one selector must match
-  the other session of its thread.
+  the other session of its thread. Superseded by 3.0
+  (01M519Z1Z1FVZQQ612DEMSQ7PG).
 - **R197** With sign-in (R85), `riff-server` refuses a post with
   status 403 when it has no signature, when the signature is not
   valid, when the key is not the key of the token, or when the signed
   time is more than 5 minutes old or more than 10 seconds in the
-  future.
+  future. Superseded by 3.0 (01M519Z1Z1FVZQQ612DEMSQ7PG).
 - **R198** `riff-server` keeps the payload and the signature with the
   message, also in the log (01M3T411N0HM699VJXW6RTVWKB). The time of a
   signed message is its signed time. The sender of a signed message
   has `lead=true` only when the signature covers it. `riff-server`
   refuses a signed post with the lead mark from a session that is not
   the lead. A signed-in `riff` asks for its lead mark before it signs.
+  Superseded by 3.0 (01M519Z1Z1FVZQQ612DEMSQ7PG).
 - **R199** The reader verifies each message before it shows it. Each
   message shows `verified` or `not verified`. A message is verified
   when its signature is valid over its kept payload, the payload holds
   the message as the reader got it, and its key is the key of a live
   sign-in of the user of the sender.
   `read` and `tail` give these keys. A message from a riff with no
-  sign-in is verified too (R212).
+  sign-in is verified too (R212). Superseded by 3.0
+  (01M519Z1Z1FVZQQ612DEMSQ7PG).
 - **R200** A message that is not verified never counts as from the
   lead. The reader shows its sender without `lead=true`.
 - **R201** Without sign-in, `riff-server` keeps no signature and gives
   no keys. So only a riff with no sign-in verifies such a message
-  (R211).
+  (R211). Superseded by 3.0 (01M519Z1Z1FVZQQ612DEMSQ7PG).
 - **01M3T411N0HM699VJXW6RTVWKB** A signed post carries its payload:
   the bytes that the signature covers, the base64url of the JSON of the
   signed fields. `riff-server` checks the signature over the payload,
   and checks that the payload holds the fields of the post. No build
   encodes a payload again. A build skips a field of a payload that it
-  does not know.
+  does not know. Superseded by 3.0 (01M519Z1Z1FVZQQ612DEMSQ7PG).
 - **01M3JEJVXXEPPNGT3FY4ZSFCWZ** `riff-server` refuses a signed post
   whose payload is the payload of a message in the same thread: a
   copy. It compares a hash of the payload, not the signature. So a
   session gets each request of its lead once. With R197, a copy older
-  than 5 minutes fails the time check too.
+  than 5 minutes fails the time check too. Superseded by 3.0
+  (01M519Z21ECQY89RS60DZKZQVR).
 - **R211** A `riff-server` with no sign-in provider and no
   `--require-sign-in` is a riff with no sign-in. It trusts each caller.
   A person runs it only on a network that they trust (R203). Each
   `read` reply and each `tail` event of such a riff says that it
-  trusts its callers.
+  trusts its callers. Superseded by 3.0 (01M519Z2WAGQEX1H4EGZXWBZT6).
 - **R212** The reader counts each message of a riff that trusts its
   callers as verified. The lead mark of such a message is the lead mark
-  that the server gives.
+  that the server gives. Superseded by 3.0 (01M519Z2WAGQEX1H4EGZXWBZT6).
 - **01M3JCE4ZD4DZCQ21FA69RT52D** A riff with no sign-in (R211) listens
   only on a loopback address. `riff-server` refuses to start on another
   address, unless it gets `--insecure` (`RIFF_INSECURE`). With
@@ -2939,6 +2944,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   person (R20). Only the owner or an admin can do either. The owner
   cannot be removed. `riff members` shows the owner, the admins, the
   members and the allowed domains to each person who signed in.
+  Superseded by 3.0 (01M519Z4AEMDFGBF22RZ3HQR1R).
 - **01M3MEF4B33Z6WVJMDP29C7SS2** `riff invite EMAIL` prints the public
   address of the riff (the `--public-url` of `riff-server`) and the
   lines that the person runs to join: install `riff`, set
@@ -2955,17 +2961,20 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3JY7T109BR860EQBSKEFDHY** `riff admin add EMAIL` makes a person
   an admin and a member. `riff admin remove EMAIL` makes an admin a
   member again. Only the owner can do either. The owner stays an admin.
-  `riff remove` refuses an admin that the owner made.
+  `riff remove` refuses an admin that the owner made. Superseded by 3.0
+  (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3JY7T3645CMQ8CS4T4ABZTP** `riff-server` keeps the admins that
   the owner made with the owner and the members. They stay after a
   restart with a bucket. The admins of R210 add to them. `riff members`
-  shows both.
+  shows both. Superseded by 3.0 (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3JYX8NPZASQY6031R35H39P** `riff owner EMAIL` passes the owner
   role to a member or an admin. Only the owner can. A riff has one
-  owner at a time. The old owner stays an admin.
+  owner at a time. The old owner stays an admin. Superseded by 3.0
+  (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3JYX8QSEZDB5RZJ3Y57DR4Y** `riff-server` keeps a passed owner
   role in its state. It stays after a restart with a bucket, also when
-  `--owner` names the old owner.
+  `--owner` names the old owner. Superseded by 3.0
+  (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3MN14ZCTRVD3T455P6TFK1B** After `riff-server` makes a change of
   the members, `riff invite`, `riff remove`, `riff admin add`,
   `riff admin remove` and `riff owner` post a note of the change to the
@@ -2978,27 +2987,31 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   command still prints the change, and prints the error of the post.
 - **01M3MN157X8N9QKER1AJEPEJVX** `riff members` lists each person
   once, with the highest role: owner, then admin, then member.
+  Superseded by 3.0 (01M519Z4AEMDFGBF22RZ3HQR1R).
 - **01M3N7K3ZAZFGABN7032AYJWEM** `riff owner --take`: an admin asks
   for the owner role. Only an admin can. `riff-server` tells the owner
   at once: a direct message to each live lead of the owner, and a note.
   One request waits at a time. A second request is refused, and the
-  refusal names the admin that asked first.
+  refusal names the admin that asked first. Superseded by 3.0
+  (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3WRJAFS6W3J2ZRJ6XSW3SB5** `riff owner --take` by the owner is
   not an error. It says that the user is the owner already, and exits
   with 0. It changes nothing: no request, no note and no message.
+  Superseded by 3.0 (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3N7K41N03P26BEFFNX5617K** The owner answers a request in N
   minutes. `riff owner EMAIL` passes the role and ends the request.
   `riff owner --deny` keeps the role: the riff tells the admin with a
   direct message to each live lead of the admin, and a note. With no
   answer in N minutes, the admin that asked is the owner. The old owner
-  stays an admin.
+  stays an admin. Superseded by 3.0 (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3N7K443DGPZ8XH5WWKK6M35** Replaced by
   01M3Q5460YESBSQHTV3M15PE53.
 - **01M3Q5460YESBSQHTV3M15PE53** `riff-server` has three settings of
   the owner role, each 1 or more: N is `--owner-take-minutes`
   (`RIFF_OWNER_TAKE_MINUTES`, default 10). M is `--owner-ping-minutes`
   (`RIFF_OWNER_PING_MINUTES`, default 10). P is `--owner-pings`
-  (`RIFF_OWNER_PINGS`, default 3).
+  (`RIFF_OWNER_PINGS`, default 3). Superseded by 3.0
+  (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3N7K46H5BRFJCB46P3JNAFZ** Replaced by
   01M3Q546335NBTKG5BHQ27QC93.
 - **01M3Q546335NBTKG5BHQ27QC93** `riff-server` checks the owner each M
@@ -3011,14 +3024,15 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the owner is gone, and stays an admin. The admin of a request that
   waits is the owner at once. With no request, the riff has no owner,
   and asks for a volunteer: a direct message to each live lead of each
-  admin, and a note.
+  admin, and a note. Superseded by 3.0 (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3N7K48XQ8XSP7R0HD535ZX3** Replaced by 01M3Q63NNC6SC03BFCG80M7B4D.
 - **01M3Q63NNC6SC03BFCG80M7B4D** On a riff with no owner,
   `riff owner --take` of an admin makes that admin the owner at once.
   `riff members` shows the owner `none` and ends with the line that
   says that the riff has no owner, in yellow. `riff admin`,
   `riff owner EMAIL` and `riff owner --deny` are refused, with a text
-  that names `riff owner --take`. A sign-in makes no owner.
+  that names `riff owner --take`. A sign-in makes no owner. Superseded
+  by 3.0 (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3N7K4BC1RPZKQ1XNDTBRPGF** `riff-server` posts its own notes and
   messages as `riff://riff@server`. The USER `riff` belongs to the
   server: no person signs in with it. A post of the server has no
@@ -3028,14 +3042,16 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   pass, a deny, a grant after N minutes, a gone owner, and a take on a
   riff with no owner. The note wakes no session and holds no token. The
   server posts each of these notes, except the note of a pass
-  (01M3MN14ZCTRVD3T455P6TFK1B).
+  (01M3MN14ZCTRVD3T455P6TFK1B). Superseded by 3.0
+  (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3N7K4GAKJ621V5AWJRQVF3M** `riff-server` keeps a request that
   waits, and a riff with no owner, with the tokens in its state. They
   stay after a restart with a bucket. A request whose time ended while
   the server was down is granted at the first look after the load.
   `--owner` names no owner on a riff with no owner. A riff with no
   owner counts as a riff with an owner for the listen address
-  (01M3JN3AQMHZHT6JP3P6GM9PWZ).
+  (01M3JN3AQMHZHT6JP3P6GM9PWZ). Superseded by 3.0
+  (01M519Z3Q27V93QTFKXPQX42J1).
 - **01M3JN3AQMHZHT6JP3P6GM9PWZ** A riff with sign-in listens only on a
   loopback address until it has an owner, so the owner signs in from
   the machine of the server. `riff-server` refuses another address at
@@ -4905,7 +4921,7 @@ share.
   `riff-state`. At each start, it loads the newest checkpoint that it
   reads, and replays the log after it. At its first start, it makes the
   riff of its machine with a random ID. At a stop, it writes a
-  checkpoint.
+  checkpoint. Superseded by Wave B (01M519Z2JMAKN0T6JZFBPSTKC8).
 - **01M4ZHW22F8HE2E1WDSTNDJW4H** The daemon runs one command at a time.
   The records of a command are in its log before the command gets its
   reply. When a write of the log fails for good, each next command
@@ -4990,7 +5006,8 @@ share.
   on no folder of the host and no claim: `whoami`, `who`, `threads`,
   `read`, `post`, `tell`, `status` and `blocked`. The daemon refuses
   each other riff tool with a text that says why. The state of the
-  daemon gets the tools with peer to peer.
+  daemon gets the tools with peer to peer. Superseded by Wave B
+  (01M519Z3FTAZ20DQKDTW09M6NS).
 - **01M4ZHSZXAY7F7E17B3CMHG562** When the daemon goes away,
   `riff relay mcp` answers each call in flight with an error, and keeps
   each new line until the daemon comes back. At the new connection, it
@@ -5109,13 +5126,14 @@ share.
   restart. At the end of the lead, the daemon ends that session. The
   lead gets the riff tools that talk, and `lead`, `hold`, `free`,
   `pause` and `resume`. The daemon refuses each other tool with a text
-  that says why.
+  that says why. Superseded by Wave B (01M519Z3FTAZ20DQKDTW09M6NS).
 - **01M501PA04NP79RJQEDP4D7YTM** `riff relay watch` in a session asks
   the daemon, on the socket of the session, to wait for the next wake
   of the session on riff-server. It prints the line of the wake, as
   `riff watch --once` does, and ends. While the daemon is away, it
   tries again. The instructions of the riff tools of the lead tell it
-  to keep `riff relay watch` running as a background task.
+  to keep `riff relay watch` running as a background task. Superseded by
+  Wave B (01M519Z3DB3MVP0FK3FBC9KSGD).
 - **01M501PA2C087SEN4M4QTK5J1E** The daemon starts a session with a
   terminal with `podman run --rm -d -i -t`: conmon holds the terminal.
   `podman wait` gives its end. Such a session does not wait for room,
@@ -5467,6 +5485,256 @@ share.
   public relays of n0. A small discovery service on Cloud Run comes when
   riff leaves those defaults. DNS discovery on comotechnologies.io is
   future work.
+
+### Wave B: the record
+
+The requirements of Wave B (#803) say how the daemons of two or more
+people share one riff. The book page
+[riff 3.0: peers](riff-3-peers.md) has the picture. A requirement of
+Wave B holds when the item of Wave B that builds it merges. A
+requirement that ends with "Superseded by Wave B (ID)." holds until
+then.
+
+- **01M519Z1WKH6THH971AQWHH8CN** A record is one change of the riff by
+  one author. Its bytes are, in this order: the format version (1, one
+  byte), the type (one byte), the riff ID (32 bytes), the key of the
+  author (32 bytes), the sequence number (8 bytes), the hash of the
+  record before it (32 bytes), the time of the author (8 bytes, in
+  milliseconds since the Unix epoch), the length of the body (4 bytes),
+  the body, and the signature (64 bytes). Each number is big-endian.
+  The riff ID and the key of the author are ed25519 public keys. The
+  body is the JSON of the type, in UTF-8.
+- **01M519Z1Z1FVZQQ612DEMSQ7PG** The signature of a record is an
+  ed25519 signature by the author over the tag `riff record 1` and each
+  byte of the record before the signature. A reader checks it with
+  `verify_strict`. Each daemon keeps the bytes of a record as it got
+  them, and never encodes a record again. The ID of a record is the
+  BLAKE3 hash of its bytes.
+- **01M519Z21ECQY89RS60DZKZQVR** The first record of an author has the
+  sequence number 1 and a hash of 32 zero bytes. Each next record of
+  that author has the next sequence number and the ID of the record
+  before it. So the records of one author make one chain with no gap.
+- **01M519Z23WX0A142N74BKAKKYY** Each type of record has one writer and
+  a largest size of the whole record. `riff`: the owner, when it makes
+  the riff, 1 KiB. `member` and `removed`: the owner, 1 KiB. `left`: a
+  member, for its own key, 1 KiB. `session`: the daemon of the session,
+  for its start, its place, its lead mark, its claims, its status and
+  its end, 4 KiB. `message`: the daemon of the session that posts, for
+  a message, a note or a status request, 64 KiB. `plan`: the daemon of
+  a lead, for a hold, a free, a pause and a resume, 4 KiB.
+- **01M519Z26AP5NZSFHWRQ2QCV9D** A reader skips a field of a body that
+  it does not know. It keeps and passes on a record of a type that it
+  does not know, after the checks of the bytes, the chain and the
+  signature, with a largest size of 64 KiB. It does not apply that
+  record.
+- **01M519Z28S7FB4T1H52642JXZ1** The time of a record is the time of
+  its author. riff shows it, and never orders records by it. Each daemon
+  gives each message the next number of its own: the order in which it
+  kept the messages. Another daemon can give the same message another
+  number.
+
+### Wave B: the keys
+
+- **01M519Z2BB0YJY5CRMB54JVYFA** Each daemon has one ed25519 key. The
+  daemon makes it at its first start, and keeps it in the OS keyring
+  (R21). The private key never leaves the machine, and never goes into
+  a log line, a message, a record or a file of a clone.
+- **01M519Z2DSFGHNV5S88AYFK7PY** The key of the daemon is also the key
+  of its iroh endpoint. So one public key is the endpoint ID of the
+  daemon, the author of each record that it writes, and the member key
+  that the owner signs.
+- **01M519Z2G77CT94Y6XPW9BCRK9** The key and the records of a daemon go
+  together. When a daemon finds its key but not its own records, or its
+  records but not its key, it makes a new key and a riff of its own.
+  The owner then invites the new key. Recovery of a lost key is future
+  work.
+- **01M519Z2JMAKN0T6JZFBPSTKC8** The daemon keeps its state in the
+  folder `state` in its folder: the records of each author, and the log
+  and the checkpoints of `riff-state`. At each start, it loads the
+  newest checkpoint that it reads, and replays the log after it. At its
+  first start, it makes its key and a riff of its own: the riff ID is
+  its public key, and its first record is `riff` with the user name of
+  the person (`USER`). At a stop, it writes a checkpoint.
+- **01M519Z2N2PMZJ0CYAPV0A47BZ** `riff daemon status` shows the public
+  key of the daemon, the riff ID, and the user of the owner.
+
+### Wave B: the sync
+
+- **01M519Z2QE6QYPJX8HVY17GR6Z** Each daemon binds one iroh endpoint at
+  its start, with the preset `N0`: the DNS discovery and the public
+  relays of n0 (01M4Z60B8HN1C1XAG1CA1YS36H). It keeps the endpoint
+  bound while it runs. Its ALPN is `riff/3`, the major version of riff,
+  so a daemon of another major version does not connect. riff takes
+  iroh with no feature `metrics`.
+- **01M519Z2SV9XSQA4N59N10JAQC** A daemon keeps one connection to each
+  other daemon of its riff that is online. Of two daemons, the one with
+  the lower key connects. When a connection ends, it connects again:
+  each try has a limit of 5 seconds, and the wait between two tries
+  starts at 1 second and doubles up to 60 seconds.
+- **01M519Z2WAGQEX1H4EGZXWBZT6** At each connect, each side checks that
+  iroh gave the key of the other side, and that the key is the owner or
+  a member of its riff that is not removed and did not leave. Else it
+  closes the connection. The one other connect is a join
+  (01M519Z3YA9WBH9TWQPAH6A64Z).
+- **01M519Z2YSXADT45A1R0N70WRQ** After the connect, each side sends its
+  heads: for each author of the riff, the highest sequence number that
+  it has. Then each side sends each record that the other side lacks,
+  for each author in sequence order, the records of the owner first.
+  After that, each side sends each new record at once: its own, and
+  each record that it got from another daemon. So a record reaches each
+  member through each daemon that has it.
+- **01M519Z317AT7KT7Q643NVYZD1** A daemon checks each record before it
+  keeps it (01M4Z60B8K4C6DHFAKNCAWR91S), in this order: the size of its
+  type; the version and the type; the riff ID; the author is the owner,
+  or a member that the records of the owner admit and that is not
+  removed and did not leave; the sequence number is the next one of the
+  author; the hash of the record before it; the signature; the body is
+  the JSON of its type; the writer of the type. The user of a `session`
+  or a `message` record is the user of the member key of its author.
+- **01M519Z33N2MW43XY62NYC6RRH** A daemon does not keep a record that it
+  cannot check yet: a sequence number after the next one, or an author
+  that no record of the owner admits yet. The next heads give it again,
+  in order.
+- **01M519Z363W5GV4MV5RDB6ECG0** A daemon refuses a record that fails a
+  check. It closes the connection to the daemon that sent it, and logs
+  the author, the sequence number and the check that failed, with no
+  body. It connects again after the wait of 01M519Z2SV9XSQA4N59N10JAQC.
+- **01M519Z38G3RAZPKGFA3R2CB3P** A fork is two records of one author,
+  each with a good signature, with the same sequence number and other
+  bytes. The daemon keeps the first one that it kept, and keeps no next
+  record of that author. It keeps both records as the proof, shows the
+  author as forked in `riff members`, and posts a note to the lead of
+  its user. The owner removes the forked key, and the person joins
+  again with a new key.
+- **01M519Z3AXFKBHJSAW46KWFTXS** A daemon applies each record that it
+  keeps to its state, in the order that it keeps them. The state of each
+  type comes from one writer, so two daemons that keep the same records
+  have the same state.
+- **01M519Z3DB3MVP0FK3FBC9KSGD** When a daemon keeps a message, also a
+  message of another daemon, it wakes each session of its own that the
+  `to` selectors of the message match. `riff relay watch` in a session
+  waits for the next wake of the session on its daemon.
+- **01M519Z3FTAZ20DQKDTW09M6NS** The daemon serves the riff tools of
+  each session that it owns on its own state, which it shares with its
+  peers. It does not use riff-server. A worker and a verifier get the
+  tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`,
+  `status` and `blocked`. The lead also gets `lead`, `hold`, `free`,
+  `pause` and `resume`. The daemon refuses each other riff tool with a
+  text that says why.
+- **01M519Z3J7Z0M3PNDY249Q57FH** An item is held while one lead holds
+  it, and a repository is paused while one lead pauses it. Each lead
+  frees and resumes only what its user held or paused. The owner frees
+  and resumes each. Only the owner pauses and resumes the whole riff.
+  When two daemons of one user give that user a lead in one repository,
+  the lead with the newer time counts, then the higher key.
+- **01M519Z3MMW5RKAR1R14PPQ4T9** A new member gets each record of the
+  riff, from the first one. A prune of old records is future work.
+
+### Wave B: the members
+
+- **01M519Z3Q27V93QTFKXPQX42J1** A riff of Wave B has an owner and
+  members. The owner is the key that made the riff. The owner role does
+  not pass to another key, and the riff has no admin: both are future
+  work. A member is one key, with one user and one host. A user can have
+  many keys: one for each machine.
+- **01M519Z3SGEHVMS85HZD169CAP** `riff invite USER` makes an invite for
+  one new key of the user USER. Only the owner runs it, at the CLI, with
+  a terminal (01M4Z60B8JEX15M1Q2435FZSDM). It prints one invite string:
+  `riff1-` and the base32 of the riff ID, the user, a random secret of
+  32 bytes and the end time. An invite works one time, for 24 hours.
+  The daemon of the owner keeps the hash of the secret, the user and the
+  end time in its folder. They go into no record.
+- **01M519Z3VXY4R3WDSSBQCVYTS4** An invite string is a secret until it
+  is used or ends: a person who has it can join one time as USER. The
+  owner sends it to the person by hand. `riff invite` says so.
+- **01M519Z3YA9WBH9TWQPAH6A64Z** `riff join STRING` on the machine of a
+  person: the daemon connects to the daemon of the owner by the riff ID,
+  and sends the secret and its host name. The daemon of the owner checks
+  that the invite is known, not used and not ended. Then it writes a
+  `member` record with the key of the new daemon, the user of the invite
+  and the host. The new daemon gets the records of the riff and syncs
+  with each member. The daemon of the owner must be online. A failed
+  join changes nothing, and says why.
+- **01M519Z40SHPJ1BB2SZN9AW43F** A daemon is in one riff at a time.
+  `riff join` refuses while the riff of the daemon has another member.
+  The records of the old riff stay in the folder of the daemon.
+- **01M519Z435DTR693NAK5GSB6XA** `riff leave` on a member: the daemon
+  writes a `left` record, sends it to its peers, ends its peer links,
+  and makes a riff of its own with the same key. The owner cannot leave.
+  The command `riff leave` of a person is not the `leave` tool of a
+  session.
+- **01M519Z45J9RC734KBY1G8D49V** `riff remove USER` writes a `removed`
+  record for each key of USER, or for one key with `--host HOST`. Only
+  the owner runs it, at the CLI, with a terminal. The record names the
+  highest sequence number of that key that the daemon of the owner has.
+  Each daemon then refuses each connection of that key, and each record
+  of it after that number. The owner cannot remove itself.
+- **01M519Z4823WC7D3VVTFSDYBS4** `riff members` shows the owner and each
+  member key: the user, the host, the start of the key, online or the
+  time when it was last seen, and forked, removed or left.
+- **01M519Z4AEMDFGBF22RZ3HQR1R** Until Wave C, the member commands of
+  riff-server 1.x stay with the flag `--email`:
+  `riff invite --email EMAIL`, `riff remove --email EMAIL` and
+  `riff members --email`.
+
+### Wave B: the claims
+
+- **01M519Z4CT0PRXPRM22037Z5RY** The daemon makes each claim and each
+  release (01M4Z60B8DYAVEQF6F8N9QP7MS) in the main clone of the
+  repository, with the git sign-in of the person. The message of a
+  claim commit is `riff claim ITEM`, then the trailers `Riff-Item`,
+  `Riff-User`, `Riff-Session`, `Riff-Key` (the public key of the daemon)
+  and `Riff-Time` (UTC, RFC 3339).
+- **01M519Z4F7Z87BXQYT7F8EABCN** The `session` record of a session names
+  its claims. So each peer shows the claims in `who`, `top` and `view`
+  with no call to the forge. The forge decides: before a wave picks an
+  item, it reads `git ls-remote origin 'refs/riff/claims/*'`.
+- **01M519Z4HK333JWVXAWQHCGK6M** The daemon releases the claim of a
+  session at the end of the session. At its start, a daemon deletes each
+  claim whose commit names its key and whose session does not run.
+- **01M519Z4M0F2RY0VDQNB2QFAPJ** The daemon of the lead of a user
+  deletes a claim of another session of that user, with the lease of
+  its claim commit (01M4Z60B8FFRMT3DVG8H1CCZ13), when the daemon of the
+  session wrote the end of the session, or when it had no connection to
+  that daemon for 15 minutes. A claim of another user whose daemon is
+  offline holds.
+- **01M519Z4PESWFV8Y03SKTSGV4Q** `riff release ITEM` at the CLI deletes a
+  claim with the lease of its claim commit. A person deletes a claim of
+  their own user. The owner deletes each claim. It refuses a claim of
+  another user for a member.
+- **01M519Z4RWHWP3TKNP4T5GKKE9** `riff run` and the waves of the daemon
+  do each riff step with the daemon, and with no riff-server: the
+  daemon claims the item on the forge, the session talks through the
+  state of the daemon, and at the end the daemon sends the verify
+  request to the lead as a `message` record and releases the item. This
+  replaces the steps with riff 1.x of 01M4ZKX0NXN7E33VC3PSFGSPDT and
+  01M4ZV3B6KP33YV750DJ89SMFF.
+
+### Wave B: the scope and the way over
+
+- **01M519Z4V991WXHQ9WRANDF63N** One riff for each owner. It holds each
+  repository that a session of a member works in: one thread for each
+  repository, and the thread `chat`. Each member reads each thread.
+- **01M519Z4XPS0AE026ZC3CPATP5** riff-server 1.x runs on until Wave C. A
+  daemon of 3.0 does not talk to it, and riff-server does not see the
+  riff of 3.0. A session of 1.x and a session of 3.0 do not see the
+  messages or the claims of each other.
+- **01M519Z506XWTSV1CJ6CCVFXEF** The work of one repository runs on the
+  riff of 1.x or on the riff of 3.0, not on both at one time. riff does
+  not check it. Mike decides when a repository moves.
+- **01M519Z52NHWATA0D61N8A2C3V** iroh encrypts each connection between
+  two daemons. The relays of n0 see the endpoint IDs, and no record.
+  Each member reads each record of the riff, so a record holds no
+  secret (01M4Z60B8KDXD190RWC7D184Q3).
+- **01M519Z554SC3EAT69Q3M6JDAP** `riff view` and `riff top` show each
+  session of each daemon of the riff: the user, the host, the item, the
+  state and the status. The sessions of a daemon that is offline show
+  as offline, with the time when the daemon was last seen. A takeover
+  works only for a session of this machine.
+- **01M519Z57K3SPRN8Z517VZ62BB** The book page "riff 3.0: peers" (#803)
+  has the picture of a riff of peers, the steps to share a riff, and a
+  mermaid diagram of the sync, of a join and of a claim. Each item of
+  Wave B adds its how-to to it.
 
 ### The security of riff's own code
 

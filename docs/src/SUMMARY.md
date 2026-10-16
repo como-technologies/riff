@@ -2,6 +2,7 @@
 
 [Introduction](introduction.md)
 [riff 3.0](riff-3.md)
+[riff 3.0: peers](riff-3-peers.md)
 
 - [Start a Riff](start-a-riff.md)
 - [Start a Team Riff](start-a-team-riff.md)

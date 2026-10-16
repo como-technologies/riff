@@ -58,7 +58,8 @@ flowchart LR
   discovery and the public relays of n0. The spike of #697 checked
   it between two machines. Its
   [result](https://github.com/como-technologies/riff/blob/main/spikes/iroh/README.md)
-  has the numbers and the notes for that work.
+  has the numbers and the notes for that work. The page
+  [riff 3.0: peers](riff-3-peers.md) has the design.
 
 ## What sessions share
 
