@@ -523,7 +523,12 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
         .collect();
     assert_eq!(
         init,
-        ["riff init", "riff init --yes", "riff init", "riff init --check"]
+        [
+            "riff init",
+            "riff init --yes",
+            "riff init",
+            "riff init --check"
+        ]
     );
     each_is_real(&init);
 }

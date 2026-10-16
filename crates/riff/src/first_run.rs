@@ -1463,10 +1463,7 @@ mod tests {
             Wide::of(&[files.user.clone(), link], None),
             wide[..1].to_vec()
         );
-        let facts = Facts {
-            wide,
-            ..ready()
-        };
+        let facts = Facts { wide, ..ready() };
         assert!(failed(&facts).is_empty());
         let text = text::init_wide(&facts.wide);
         assert!(

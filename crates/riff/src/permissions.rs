@@ -430,7 +430,10 @@ pub const OUT_OF_BOUNDS: &[&str] = &[
 /// The commands of [`OUT_OF_BOUNDS`] with the facts `facts`. It leaves
 /// out a command that needs a fact that `facts` does not have.
 fn out_of_bounds(facts: &Facts) -> Vec<String> {
-    OUT_OF_BOUNDS.iter().filter_map(|c| fill(c, facts)).collect()
+    OUT_OF_BOUNDS
+        .iter()
+        .filter_map(|c| fill(c, facts))
+        .collect()
 }
 
 /// The rules of [`TABLE`] for the place `place`, with the facts `facts`.
@@ -845,7 +848,11 @@ pub fn missing(rules: &Rules, texts: &[&str]) -> Rules {
 pub fn wide_rules(text: &str, facts: &Facts) -> Rules {
     let value: Value = serde_json::from_str(text).unwrap_or_default();
     let mut allow: Vec<String> = Vec::new();
-    for rule in value["permissions"]["allow"].as_array().into_iter().flatten() {
+    for rule in value["permissions"]["allow"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
         if let Some(rule) = rule.as_str()
             && wide(rule, facts)
             && !allow.iter().any(|r| r == rule)
@@ -1087,8 +1094,7 @@ pub fn remove(path: &Path, rules: &Rules) -> Result<Rules> {
         allow: had(&rules.allow, &left.allow),
         deny: had(&rules.deny, &left.deny),
     };
-    let Some(new) = without_rules(&text, rules).with_context(|| path.display().to_string())?
-    else {
+    let Some(new) = without_rules(&text, rules).with_context(|| path.display().to_string())? else {
         return Ok(Rules::default());
     };
     write(path, &new)?;
@@ -1379,9 +1385,9 @@ mod tests {
         let facts = mike();
         let commands = out_of_bounds(&facts);
         assert_eq!(commands.len(), OUT_OF_BOUNDS.len());
-        assert!(
-            commands.contains(&"/home/mike/.cache/riff/check/target/static/release/riffx daemon install".into())
-        );
+        assert!(commands.contains(
+            &"/home/mike/.cache/riff/check/target/static/release/riffx daemon install".into()
+        ));
         for place in [Place::Project, Place::User, Place::Session] {
             let allow = rules_of(place, &facts).allow;
             for command in &commands {

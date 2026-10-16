@@ -5971,7 +5971,10 @@ pub const INIT_ASK_WIDE: &str = "Remove them? riff keeps each other rule and key
 /// ```
 pub fn init_wide_removed(path: &Path, count: usize) -> String {
     let s = if count == 1 { "" } else { "s" };
-    format!("riff removed {count} allow rule{s} from {}.", path.display())
+    format!(
+        "riff removed {count} allow rule{s} from {}.",
+        path.display()
+    )
 }
 
 /// `riff init` kept each wide rule: no `y` in a terminal.
