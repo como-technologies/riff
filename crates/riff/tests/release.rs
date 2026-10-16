@@ -231,7 +231,9 @@ fn the_static_build_of_ci_has_a_cache_and_a_tag_uses_none() {
     );
     // The container writes as root; the cache saves as the runner user.
     let chown = "run: sudo chown -R \"$(id -u):$(id -g)\" target/static target/static-cargo\n";
-    let at = job.find(chown).unwrap_or_else(|| panic!("no chown:\n{job}"));
+    let at = job
+        .find(chown)
+        .unwrap_or_else(|| panic!("no chown:\n{job}"));
     assert!(
         job[..at]
             .rsplit_once("\n      - ")

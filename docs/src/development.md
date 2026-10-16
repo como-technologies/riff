@@ -159,9 +159,10 @@ fails the Gate. While the other jobs run, `gh pr checks` shows no
 ### Run one part of the tests
 
 The Gate runs the tests in 4 parts. Each part lists each test of the
-workspace, also each doc test. It runs only the tests whose name falls
-in its part. The hash of the name gives the part. So the 4 parts
-together run each test, and a new test moves no other test.
+workspace. It runs only the tests whose name falls in its part. The
+hash of the name gives the part. Part 1 also runs each doc test. So
+the 4 parts together run each test, and a new test moves no other
+test.
 
 To run one part on your machine, for example a part that failed on
 GitHub:
@@ -173,7 +174,7 @@ just test-part 2/4
 It first prints one line:
 
 ```text
-just test-part 2/4 runs 731 of 2903 tests
+just test-part 2/4 runs 571 of 2280 tests
 ```
 
 ### Choose the runner of CI

@@ -186,8 +186,9 @@ fn crates(base: &str) -> ExitCode {
 }
 
 /// Lists each test of the workspace, and runs the tests of part `part`
-/// (01M513W2NSE303E6XAM18BW7T6). The exit status is the status of
-/// `cargo test`, or 2 when the list holds no test.
+/// (01M513W2NSE303E6XAM18BW7T6). Part 1 also runs the doc tests. The
+/// exit status is 1 when a `cargo test` fails, and 2 when the list holds
+/// no test.
 fn test_part(part: &str) -> ExitCode {
     let part: hygiene::part::Part = match part.parse() {
         Ok(part) => part,
@@ -214,20 +215,29 @@ fn test_part(part: &str) -> ExitCode {
     if names.is_empty() {
         return tool_error(&format!("cargo {} listed no test", list.join(" ")));
     }
-    let mine = part.select(&names);
-    eprintln!("{}", hygiene::part::summary(part, mine.len(), names.len()));
+    let plan = part.plan(&names);
+    eprintln!("{}", hygiene::part::summary(part, &plan, &names));
+    let mut runs: Vec<Vec<&str>> = Vec::new();
     // With no name, cargo test would run each test.
-    if mine.is_empty() {
-        return ExitCode::SUCCESS;
+    if !plan.tests.is_empty() {
+        let mut run = vec!["test", "--workspace", "--tests", "--", "--exact"];
+        run.extend(&plan.tests);
+        runs.push(run);
     }
-    match Command::new(&cargo)
-        .args(["test", "--workspace", "--", "--exact"])
-        .args(&mine)
-        .status()
-    {
-        Ok(status) if status.success() => ExitCode::SUCCESS,
-        Ok(_) => ExitCode::FAILURE,
-        Err(e) => tool_error(&format!("cargo test --workspace: {e}")),
+    if plan.doc > 0 {
+        runs.push(vec!["test", "--workspace", "--doc"]);
+    }
+    let mut failed = false;
+    for run in runs {
+        match Command::new(&cargo).args(&run).status() {
+            Ok(status) => failed |= !status.success(),
+            Err(e) => return tool_error(&format!("cargo {}: {e}", run[..3].join(" "))),
+        }
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
