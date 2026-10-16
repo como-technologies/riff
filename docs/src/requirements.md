@@ -88,6 +88,14 @@
   commit has a result.
 - **R191** The verifier checks out the commit in a worktree of its own
   and tests each criterion. It does not change the code.
+- **01M5174ASF376JDNBQ4423TTAR** A control is a run of a test with no
+  fix, to show the fault that the work fixes. The verifier runs a
+  control only at the base commit of the pull request, in its verify
+  worktree, and then checks out the commit of the pull request again.
+  It never edits a file to take the fix out. When the base commit
+  cannot show the fault, the verifier uses the control of the author
+  on the issue, or checks by a read, and says so in the result. The
+  skill says so.
 - **R192** The verifier posts the result to the author with the
   selector `claim=ITEM`. A pass names each criterion and how the
   verifier checked it. A fail names each criterion that failed and the
