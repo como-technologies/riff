@@ -1441,6 +1441,21 @@ enum HookEvent {
     },
 }
 
+impl HookEvent {
+    /// True for a hook that the agent tool runs. riff starts the others
+    /// itself.
+    fn of_the_agent(&self) -> bool {
+        match self {
+            HookEvent::SessionStart
+            | HookEvent::SessionEnd
+            | HookEvent::Stop
+            | HookEvent::Tool { .. }
+            | HookEvent::Prompt => true,
+            HookEvent::Clear { .. } | HookEvent::Compact { .. } | HookEvent::Usage { .. } => false,
+        }
+    }
+}
+
 /// The settings file of `riff enable` and `riff disable`.
 #[derive(clap::Args)]
 #[group(multiple = false)]
@@ -1520,6 +1535,26 @@ async fn main() -> Result<()> {
         Command::Hook { .. } | Command::Statusline if !enable::State::here().on => return Ok(()),
         Command::Mcp { client: None, .. } if !enable::State::here().on => {
             return mcp::serve_off().await;
+        }
+        _ => {}
+    }
+    // An agent inside a riff session, for example a `claude -p` of a
+    // Bash command of the session, is no session: its hooks and its
+    // `riff mcp` act for no session (01M517N75C0Z5BAFQAWRN3YTYB).
+    match &cli.command {
+        Command::Hook { event } if event.of_the_agent() => {
+            if let Some(outer) = hook::outer_session() {
+                if matches!(event, HookEvent::SessionStart) {
+                    println!("{}", hook::start_output(&hook::nested_line(&outer)));
+                }
+                return Ok(());
+            }
+        }
+        Command::Mcp { client: None, .. } => {
+            let agent = std::os::unix::process::parent_id();
+            if let Some(outer) = local::dir().and_then(|dir| local::outer(&dir, agent)) {
+                return mcp::serve_nested(&outer).await;
+            }
         }
         _ => {}
     }
@@ -1957,7 +1992,13 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Whoami => {
             let pauses = api.pauses(&me).await.map_err(|e| format!("{e:#}"));
-            anstream::print!("{}", view::whoami(&me, pauses));
+            // The URI of the server holds the claims and the lead
+            // (01M517N7ANC06S4GTEEZHAB255).
+            let shown = match api.me(&me).await {
+                Ok(reply) => reply.session.map_or(me, |s| s.uri),
+                Err(_) => me,
+            };
+            anstream::print!("{}", view::whoami(&shown, pauses));
         }
         Command::Who { all, long } => {
             let pauses = api.pauses(&me).await?;

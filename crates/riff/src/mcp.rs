@@ -738,7 +738,13 @@ Your session ID and your claims stay. Call it each time you change worktree."
             .map_err(err)?;
         *self.me.lock().unwrap_or_else(|p| p.into_inner()) = moved.clone();
         *self.dir.lock().unwrap_or_else(|p| p.into_inner()) = path;
-        Ok(format!("You moved. Your URI is now {moved}"))
+        // The URI of the server holds the claims and the lead
+        // (01M517N7ANC06S4GTEEZHAB255).
+        let shown = match self.api.me(&moved).await {
+            Ok(reply) => reply.session.map_or(moved, |s| s.uri),
+            Err(_) => moved,
+        };
+        Ok(format!("You moved. Your URI is now {shown}"))
     }
 }
 
@@ -779,15 +785,15 @@ impl ServerHandler for Tools {
     }
 }
 
-/// The server of `riff mcp` in a directory where riff is off: it has
-/// no tool, and its instructions name `riff enable`
+/// The server of `riff mcp` with no tool. Its instructions say why: in
+/// a directory where riff is off, they name `riff enable`
 /// (01M3XY2ST8R67SKTXJECAYJZRX).
-struct Off;
+struct Off(String);
 
 impl ServerHandler for Off {
     fn get_info(&self) -> rmcp::model::ServerConfig {
         let mut info = rmcp::model::ServerConfig::default();
-        info.instructions = Some(text::MCP_OFF.into());
+        info.instructions = Some(self.0.clone());
         info
     }
 }
@@ -797,7 +803,19 @@ impl ServerHandler for Off {
 /// the agent tool closes the stream. It makes no call to
 /// `riff-server`, and keeps no file of the session.
 pub async fn serve_off() -> Result<()> {
-    let service = Off.serve(rmcp::transport::stdio()).await?;
+    serve_no_tools(text::MCP_OFF.into()).await
+}
+
+/// `riff mcp` of an agent that runs inside the riff session `outer`
+/// (01M517N75C0Z5BAFQAWRN3YTYB). As [`serve_off`], with the
+/// instructions [`crate::hook::nested_line`]. It registers no session,
+/// and sends no keep-alive and no end call.
+pub async fn serve_nested(outer: &str) -> Result<()> {
+    serve_no_tools(crate::hook::nested_line(outer)).await
+}
+
+async fn serve_no_tools(instructions: String) -> Result<()> {
+    let service = Off(instructions).serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
     Ok(())
 }

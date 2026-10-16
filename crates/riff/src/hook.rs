@@ -470,6 +470,40 @@ server stops an idle worker when too many wait (01M3Q5A0NKY1FCS0YH6N6YD3GN). You
 item ends at the verify request: write the state on the issue, release the item, and end your \
 turn. Do not wait for the verify.\n";
 
+/// The riff session that the agent of this hook runs inside, when
+/// there is one (01M517N75C0Z5BAFQAWRN3YTYB): a live `riff mcp` of a
+/// process above the agent ([`crate::local::outer`]). Then the agent is
+/// no session of the riff, and the hook acts for no session. Claude
+/// Code gives the PID of the agent to each hook
+/// ([`crate::next::Agent::context_var`]). With no PID, the agent is no
+/// agent inside a session.
+pub fn outer_session() -> Option<String> {
+    let var = crate::next::Agent::context_var(&crate::next::ClaudeCode);
+    let agent = std::env::var(var).ok()?.parse().ok()?;
+    crate::local::outer(&crate::local::dir()?, agent)
+}
+
+/// The start context of an agent that runs inside the riff session
+/// `outer` (01M517N75C0Z5BAFQAWRN3YTYB). It is the whole context: the
+/// agent gets no start routine.
+///
+/// ```
+/// let line = riff::hook::nested_line("8f8443df");
+/// assert_eq!(
+///     line,
+///     "riff: this agent runs inside the riff session 8f8443df. It is not a riff session: riff \
+///      sends no start and no end for it, and gives it no riff tools. Do not use riff commands \
+///      here. They act for the session 8f8443df.\n"
+/// );
+/// ```
+pub fn nested_line(outer: &str) -> String {
+    format!(
+        "riff: this agent runs inside the riff session {outer}. It is not a riff session: riff \
+         sends no start and no end for it, and gives it no riff tools. Do not use riff commands \
+         here. They act for the session {outer}.\n"
+    )
+}
+
 /// The line of the start context that names the file that turned riff
 /// on, and how to turn it off (01M3XY2SYKG91SAB2FS1QNCZ2H). `None` when
 /// no file decides: `RIFF_ON` turned riff on.

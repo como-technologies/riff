@@ -361,12 +361,22 @@ async fn move_changes_the_place_and_keeps_the_claims() {
     )
     .await;
     assert!(!is_error, "{moved}");
+    // The reply shows the claims, as the server has them
+    // (01M517N7ANC06S4GTEEZHAB255).
+    assert!(moved.contains("session=a1&claim=issue-6#notes"), "{moved}");
     let (me, _) = call(&mike, "whoami", serde_json::json!({})).await;
     assert!(me.contains("session=a1&claim=issue-6#notes"), "{me}");
     assert_eq!(
         api.who(&MIKE.parse().unwrap(), false).await.unwrap().len(),
         1
     );
+
+    // A keep-alive and a status keep the claim (01M517N7FRG389BETVWA1SX5YD).
+    api.alive(&MIKE.parse().unwrap()).await.unwrap();
+    let (text, is_error) = call(&mike, "status", serde_json::json!({ "step": "tests" })).await;
+    assert!(!is_error, "{text}");
+    let who = api.who(&MIKE.parse().unwrap(), false).await.unwrap();
+    assert_eq!(who[0].uri.claims(), ["issue-6"], "{:?}", who[0].uri);
 
     let (text, is_error) = call(&mike, "move", serde_json::json!({ "path": "/no/such/dir" })).await;
     assert!(is_error, "{text}");

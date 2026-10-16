@@ -2161,9 +2161,25 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   So `/clear` does not change the riff session ID. The file is in
   `$XDG_RUNTIME_DIR/riff`, else `$XDG_STATE_HOME/riff`, else
   `~/.local/state/riff`. A file with no lock does not count.
+- **01M517N75C0Z5BAFQAWRN3YTYB** An agent that runs inside a riff
+  session is not a riff session, for example a `claude -p` that a Bash
+  command of the session starts. riff knows it by a live record of
+  `riff mcp` (R167) of a process above the agent. The agent of a hook
+  is the process in `CLAUDE_PID`. The agent of `riff mcp` is its
+  parent. The hooks of that agent make no call: no start, no end. Its
+  start hook gives one line of context that says so. Its `riff mcp`
+  has no tools and makes no call.
 - **R59** A session ID is not a secret. It never gives access.
 - **R64** The `move` tool gives a session a new place. Its session ID
   and its claims stay.
+- **01M517N7ANC06S4GTEEZHAB255** The reply of `move` and `riff whoami`
+  show the URI of the session from `riff-server`, with its claims and
+  `lead=true`.
+- **01M517N7FRG389BETVWA1SX5YD** Only these steps end a claim: its
+  release, a release of the lead for the session, the end of the
+  session (R205), a new start of the session
+  (01M3JEE1QQCFS5TMZW5N2DAD2D), and a stop with no end (R9). `move`, a
+  keep-alive, `status` and each other call keep each claim.
 - **R65** A person who posts from the command line has no session ID.
   The sender is `riff://USER@HOST`. A selector with `user` reaches the
   person through `riff tail`.
