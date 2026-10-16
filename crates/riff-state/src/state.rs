@@ -1425,7 +1425,7 @@ impl State {
     /// ```
     /// use std::time::{Duration, Instant};
     /// use riff_core::name::SessionUri;
-    /// use riff_core::wire::SessionState;
+    /// use riff_core::wire::{RiffState, SessionState};
     /// use riff_state::state::{GONE, State};
     ///
     /// let lead: SessionUri = "riff://mike@thelio/como-technologies/riff?session=l1".parse()?;
@@ -1433,6 +1433,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&lead, now);
+    /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
     /// state.worker(&box1, true, now);
     /// let shown = |state: &State, at: Instant| {
     ///     state.who(at, 0, false).into_iter().find(|s| s.uri.who() == box1.who())
