@@ -29,6 +29,9 @@ hold each decision.
   `riff takeover` and `riff image`.
 - The peers: `riff invite`, `riff join`, `riff leave`, `riff remove`,
   `riff members` and `riff release`.
+- Two flags of Wave B go: `riff run` and `riff wave run` need no
+  `--peers`, and `riff release` needs no `--forge`. Each one acts on
+  the riff of the daemon.
 - The commands of a person: `riff top`, `riff chat`, `riff tail`,
   `riff pause`, `riff resume` and `riff plan`. They act on the daemon.
 - The work on GitHub: `riff pr`, `riff verify`, `riff usage`,

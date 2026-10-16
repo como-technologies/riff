@@ -5995,7 +5995,8 @@ then.
   The daemon serves the riff tools on its riff of peers
   (01M519Z3FTAZ20DQKDTW09M6NS) only to a session with no riff-server.
   So the work of one repository is on one riff only
-  (01M519Z506XWTSV1CJ6CCVFXEF).
+  (01M519Z506XWTSV1CJ6CCVFXEF). Superseded by Wave C
+  (01M51R8FXQFXWHRD374577HZ3H).
 - **01M51BFYT2ZGN4W5E5R87GPVCM** A session takes the lead with a
   `session` record that has the lead mark. The record names the ID of
   the record that gave the old lead of its user in the repository its
@@ -6204,13 +6205,15 @@ then.
   daemon of the machine to delete the claim on the forge of the main
   clone of the working folder. The daemon decides with its riff of
   peers (01M519Z4PESWFV8Y03SKTSGV4Q). A ref whose commit is not a claim
-  commit of riff names no user: only the owner deletes it.
+  commit of riff names no user: only the owner deletes it. Superseded
+  in part by Wave C (01M51R8G59KA4WFCD7CBAYP5DN).
 - **01M526Z1Q3QM3X0C7N6MCX8Z6T** `riff run ITEM --peers` and
   `riff wave run --peers` do the steps of 01M519Z4RWHWP3TKNP4T5GKKE9.
   With no `--peers`, `riff run` and `riff wave run` use riff-server 1.x
   until Wave C (01M519Z506XWTSV1CJ6CCVFXEF). A wave with no riff-server
   keeps an empty riff-server, and the daemon picks the world of each
-  wave and of each session by it.
+  wave and of each session by it. Superseded in part by Wave C
+  (01M51R8G59KA4WFCD7CBAYP5DN).
 - **01M526Z1SVG3ZK38GH51AHCRHP** `riff run ITEM --peers` does the checks
   before the claim, then asks the daemon to do the build of ITEM as a
   job of a wave, in the room of the host. It shows each line, each event
@@ -6276,7 +6279,8 @@ then.
   riff-server. With no daemon, it shows the sessions of riff-server
   only. A takeover of a session of another daemon, in `riff view` or
   with `riff takeover` and its session ID, refuses with a text that
-  names the host of that session.
+  names the host of that session. Superseded in part by Wave C
+  (01M51R8G7R46NC07YVWYJ211NM).
 - **01M519Z57K3SPRN8Z517VZ62BB** The book page "riff 3.0: peers" (#803)
   has the picture of a riff of peers, the steps to share a riff, and a
   mermaid diagram of the sync, of a join and of a claim. Each item of
@@ -6331,7 +6335,9 @@ with "Superseded by Wave C (ID)." holds until then.
   `riff join`, `riff leave`, `riff remove`, `riff members` and
   `riff release`), and the commands of a person of
   01M51R8G7R46NC07YVWYJ211NM. `riff release ITEM` acts on the claim on
-  the forge (01M519Z4PESWFV8Y03SKTSGV4Q), with no flag `--forge`. The
+  the forge (01M519Z4PESWFV8Y03SKTSGV4Q), with no flag `--forge`.
+  `riff run` and `riff wave run` do the steps of
+  01M519Z4RWHWP3TKNP4T5GKKE9, with no flag `--peers`. The
   crates `riff`, `riff-core`, `riff-state`, `hygiene`, `reqs`,
   `real-session` and `isolated` stay.
 - **01M51R8G7R46NC07YVWYJ211NM** After Wave C, a person at the CLI has
