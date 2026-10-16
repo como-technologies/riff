@@ -511,3 +511,96 @@ async fn a_server_that_cannot_renew_the_lease_replies_503_until_it_can() {
     sleep(common::LEASE.read_every * 4).await;
     assert_eq!(status(&base, "who", who).await, 200);
 }
+
+/// Serves a server on `store` as `main` does, through
+/// [`riff_server::listen::serve`], with the [`common::LEASE`] times.
+/// Returns its task, its base URL and its address.
+async fn serve(
+    store: &Memory,
+) -> (
+    tokio::task::JoinHandle<std::io::Result<()>>,
+    String,
+    std::net::SocketAddr,
+) {
+    use riff_server::listen::{Port, Start};
+    common::client();
+    let port = Port::reserve("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = port.addr();
+    let base = format!("http://{addr}");
+    let config = riff_server::auth::Config {
+        lease: common::LEASE,
+        save_every: common::SAVE_EVERY,
+        ..riff_server::auth::Config::new(&base)
+    };
+    let loaded = Service::prepare(config, Arc::new(store.clone()))
+        .await
+        .unwrap();
+    let start = Start::AfterLease(loaded);
+    let task = tokio::spawn(riff_server::listen::serve(
+        port,
+        start,
+        std::future::pending(),
+        |_| Ok(()),
+    ));
+    (task, base, addr)
+}
+
+/// Waits until the server at `base` serves `register`. Before that, its
+/// port can be closed, or give 503.
+async fn serves(base: &str) {
+    let span = isolated::Span::start();
+    loop {
+        let sent = common::client()
+            .post(format!("{base}/v1/register"))
+            .json(&json!({ "me": MIKE }))
+            .send()
+            .await;
+        if sent.is_ok_and(|reply| reply.status() == 200) {
+            return;
+        }
+        assert!(span.within(Duration::from_secs(10)), "{base} does not serve");
+        sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// A stopped instance takes no new call: it closes its port soon after
+/// the stop, so Cloud Run sends each call to the new instance. It exits
+/// with success after the checkpoint of the hand-over, long before 60
+/// seconds (01M52JYGPX5ETP3HKR0S0Y0YCR).
+#[tokio::test]
+async fn a_stopped_instance_closes_its_port_and_exits_after_the_hand_over() {
+    let store = Memory::default();
+    let (old, old_base, old_addr) = serve(&store).await;
+    serves(&old_base).await;
+    let lease = store.load(LEASE).await.unwrap().unwrap().bytes;
+    let before = riff_state::checkpoint::names(&store).await.unwrap();
+
+    let (new, new_base, _) = serve(&store).await;
+    // The new instance takes the lease.
+    in_time(Duration::from_secs(5), async {
+        while store.load(LEASE).await.unwrap().unwrap().bytes == lease {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // The old instance reads it, stops and closes its port.
+    in_time(Duration::from_secs(5), async {
+        while tokio::net::TcpStream::connect(old_addr).await.is_ok() {
+            sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // It exits after the hand-over: its last checkpoint is there.
+    in_time(Duration::from_secs(5), old)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let after = riff_state::checkpoint::names(&store).await.unwrap();
+    assert_eq!(after.len(), before.len() + 1, "{before:?} {after:?}");
+    // The new instance serves.
+    serves(&new_base).await;
+    new.abort();
+}

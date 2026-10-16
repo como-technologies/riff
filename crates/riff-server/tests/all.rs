@@ -17,6 +17,7 @@ mod format;
 mod gcs;
 mod help;
 mod import;
+mod instance_change;
 mod lease;
 mod log_lines;
 mod log_tools;
