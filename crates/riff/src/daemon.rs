@@ -1526,13 +1526,21 @@ async fn keep_made(store: &Dir, made: &Made) -> Result<()> {
 }
 
 /// Moves the folder `state_dir` of an old key to `state.lost-MS` beside
-/// it (01M51JW25SPDW564A3DG31D7XM). It gives the new path, or `None`
-/// when there is no such folder.
+/// it, or to `state.lost-MS-N` when that name is taken
+/// (01M51JW25SPDW564A3DG31D7XM). It gives the new path, or `None` when
+/// there is no such folder.
 fn put_aside(state_dir: &Path) -> Result<Option<PathBuf>> {
     if !state_dir.exists() {
         return Ok(None);
     }
-    let lost = state_dir.with_file_name(format!("state.lost-{}", now_ms()));
+    let stamp = format!("state.lost-{}", now_ms());
+    let lost = (0..)
+        .map(|n| match n {
+            0 => state_dir.with_file_name(&stamp),
+            n => state_dir.with_file_name(format!("{stamp}-{n}")),
+        })
+        .find(|path| !path.exists())
+        .expect("a free name");
     std::fs::rename(state_dir, &lost)
         .with_context(|| format!("cannot move {} to {}", state_dir.display(), lost.display()))?;
     Ok(Some(lost))
@@ -3171,6 +3179,7 @@ mod tests {
         world: Option<Arc<dyn World>>,
     ) -> Served {
         let listener = listen(dir).await.unwrap();
+        crate::secrets::mock_store();
         let mut daemon = Daemon::open(fake.clone(), dir.to_owned())
             .await
             .unwrap()
@@ -3884,6 +3893,7 @@ mod tests {
         // A daemon binds its own binary: the test binary, which is not
         // static with glibc.
         let root = tempfile::tempdir().unwrap();
+        crate::secrets::mock_store();
         let own = Daemon::open(Fake::default(), dir_in(root.path()))
             .await
             .unwrap();
@@ -3950,6 +3960,7 @@ mod tests {
 
         let fake = Fake::default().with_image(IMAGE).with_no_answer();
         let listener = listen(&dir).await.unwrap();
+        crate::secrets::mock_store();
         let daemon = Arc::new(Daemon::open(fake, dir.clone()).await.unwrap());
         daemon.recover().await;
         tokio::spawn(daemon.serve(listener, std::future::pending()));
@@ -4030,6 +4041,7 @@ mod tests {
         }
 
         let listener = listen(&dir).await.unwrap();
+        crate::secrets::mock_store();
         let daemon = Arc::new(Daemon::open(fake.clone(), dir.clone()).await.unwrap());
         daemon.recover().await;
         tokio::spawn(daemon.serve(listener, std::future::pending()));
@@ -4145,6 +4157,7 @@ mod tests {
         let running = fake.start(&spec, &[]).await.unwrap();
 
         let listener = listen(&dir).await.unwrap();
+        crate::secrets::mock_store();
         let daemon = Arc::new(Daemon::open(fake.clone(), dir.clone()).await.unwrap());
         daemon.recover().await;
         tokio::spawn(daemon.serve(listener, std::future::pending()));
@@ -4353,7 +4366,7 @@ mod tests {
             .await
     }
 
-    /// 01M4ZHW2083VFTQJ772ZJ27XAC: the first start makes the riff; a
+    /// 01M519Z2JMAKN0T6JZFBPSTKC8: the first start makes the riff; a
     /// stop writes a checkpoint; the next start loads it, with the riff
     /// and the claims.
     #[tokio::test]
@@ -4361,7 +4374,7 @@ mod tests {
         let mut here = Here::new(Fake::default()).await;
         let first = status(&here.dir).await.unwrap();
         let riff = first.riff.clone().unwrap();
-        assert_eq!(riff.len(), 32);
+        assert_eq!(riff.len(), 64);
         assert!(riff.chars().all(|c| c.is_ascii_hexdigit()), "{riff}");
         claim(&here.daemon, "issue-12").await;
         let position = here.daemon.status().await.position;
@@ -4386,6 +4399,7 @@ mod tests {
     async fn a_start_after_a_crash_replays_the_log() {
         let root = tempfile::tempdir().unwrap();
         let dir = dir_in(root.path());
+        crate::secrets::mock_store();
         let daemon = Daemon::open(Fake::default(), dir.clone()).await.unwrap();
         claim(&daemon, "issue-12").await;
         let before = daemon.status().await;
@@ -4393,6 +4407,7 @@ mod tests {
 
         let store = Dir::new(state_dir(&dir));
         assert!(checkpoint::names(&store).await.unwrap().is_empty());
+        crate::secrets::mock_store();
         let daemon = Daemon::open(Fake::default(), dir.clone()).await.unwrap();
         let after = daemon.status().await;
         assert_eq!(after.riff, before.riff);
@@ -4408,11 +4423,176 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let dir = dir_in(root.path());
+        crate::secrets::mock_store();
         Daemon::open(Fake::default(), dir.clone()).await.unwrap();
         let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700);
         let chunks = std::fs::read_dir(state_dir(&dir).join("log")).unwrap();
         assert_eq!(chunks.count(), 1);
+    }
+
+    /// A daemon in `dir` on a fake runtime, with the mock keyring. It
+    /// gives the lines of its key.
+    async fn open_key(dir: &Path) -> (Daemon<Fake>, Vec<String>) {
+        crate::secrets::mock_store();
+        let mut lines = Vec::new();
+        let say = |line| lines.push(line);
+        let daemon = Daemon::open_with(Fake::default(), dir.to_owned(), Duration::from_millis(10), say)
+            .await
+            .unwrap();
+        (daemon, lines)
+    }
+
+    /// The public key of the secret of the daemon in `dir`.
+    fn kept_key(dir: &Path) -> Option<String> {
+        let name = crate::daemon_key::secret_name(dir);
+        match crate::daemon_key::read(&name).unwrap() {
+            Found::Key(key) => Some(key.public().to_string()),
+            _ => None,
+        }
+    }
+
+    /// The folders `state.lost-MS` of the daemon in `dir`.
+    fn lost(dir: &Path) -> Vec<PathBuf> {
+        let mut lost: Vec<PathBuf> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.to_string_lossy().contains("state.lost-"))
+            .collect();
+        lost.sort();
+        lost
+    }
+
+    /// 01M519Z2BB0YJY5CRMB54JVYFA, 01M519Z2JMAKN0T6JZFBPSTKC8,
+    /// 01M519Z2N2PMZJ0CYAPV0A47BZ: the first start makes a key in the
+    /// keyring (the mock) and a riff whose ID is the public key, of the
+    /// owner USER. A second start loads the same key and the same riff.
+    #[tokio::test]
+    async fn the_first_start_makes_a_key_and_a_riff_of_its_own() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let (daemon, lines) = open_key(&dir).await;
+        let first = daemon.status().await;
+        let key = first.key.clone().unwrap();
+        assert_eq!(key.len(), 64);
+        assert_eq!(first.riff.as_deref(), Some(key.as_str()));
+        assert_eq!(first.owner, Some(this_user().unwrap()));
+        assert_eq!(kept_key(&dir).as_deref(), Some(key.as_str()));
+        let owner = first.owner.clone().unwrap();
+        assert_eq!(lines, [text::daemon_made_riff(&key, &owner)]);
+        let store = Dir::new(state_dir(&dir));
+        let made = made(&store).await.unwrap().unwrap();
+        assert_eq!(made, Made { riff: key.clone(), owner });
+        drop(daemon);
+
+        let (daemon, lines) = open_key(&dir).await;
+        let again = daemon.status().await;
+        assert!(lines.is_empty(), "{lines:?}");
+        assert_eq!((again.key, again.riff, again.owner), (first.key, first.riff, first.owner));
+        assert_eq!(again.position, first.position);
+        assert!(lost(&dir).is_empty());
+    }
+
+    /// 01M519Z2G77CT94Y6XPW9BCRK9, 01M51JW25SPDW564A3DG31D7XM: a key with
+    /// no state, a state with no key, another key, and a value that is
+    /// not a key each make a new key and a new riff, with a line that
+    /// says why. The old state goes to `state.lost-MS`.
+    #[tokio::test]
+    async fn a_key_and_a_state_that_do_not_go_together_make_a_new_riff() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let name = crate::daemon_key::secret_name(&dir);
+        let (daemon, _) = open_key(&dir).await;
+        let mut riffs = vec![daemon.status().await.riff.unwrap()];
+        drop(daemon);
+
+        // The key, and no state.
+        std::fs::remove_dir_all(state_dir(&dir)).unwrap();
+        let (daemon, lines) = open_key(&dir).await;
+        let status = daemon.status().await;
+        let riff = status.riff.clone().unwrap();
+        let owner = status.owner.clone().unwrap();
+        assert_eq!(lines, [text::daemon_new_riff(&Lost::NoState, &riff, &owner, None)]);
+        assert!(lost(&dir).is_empty());
+        riffs.push(riff);
+        drop(daemon);
+
+        // The state, and no key.
+        crate::secrets::delete(&name).unwrap();
+        let (daemon, lines) = open_key(&dir).await;
+        let riff = daemon.status().await.riff.unwrap();
+        let old = lost(&dir);
+        assert_eq!(old.len(), 1);
+        assert!(old[0].join("log").exists(), "{old:?}");
+        assert_eq!(
+            lines,
+            [text::daemon_new_riff(&Lost::NoKey, &riff, &owner, Some(&old[0]))]
+        );
+        riffs.push(riff);
+        drop(daemon);
+
+        // Another key.
+        let other = Key::generate();
+        crate::daemon_key::keep(&name, &other).unwrap();
+        let (daemon, lines) = open_key(&dir).await;
+        let riff = daemon.status().await.riff.unwrap();
+        let why = Lost::OtherKey {
+            riff: riffs[2].clone(),
+        };
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with(&text::daemon_new_riff(&why, &riff, &owner, None)[..80]));
+        assert!(lines[0].contains(&format!("the riff {} of its state", riffs[2])));
+        assert_ne!(riff, other.public().to_string());
+        riffs.push(riff);
+        drop(daemon);
+
+        // A value that is not a key.
+        crate::secrets::set(&name, "not a key").unwrap();
+        let (daemon, lines) = open_key(&dir).await;
+        let riff = daemon.status().await.riff.unwrap();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("that is not a key"), "{lines:?}");
+        riffs.push(riff);
+
+        // Each new riff is the key in the keyring, and no riff comes back.
+        assert_eq!(kept_key(&dir).as_ref(), riffs.last());
+        let mut each = riffs.clone();
+        each.sort();
+        each.dedup();
+        assert_eq!(each.len(), riffs.len(), "{riffs:?}");
+        assert_eq!(lost(&dir).len(), 3);
+    }
+
+    /// 01M51BFYNMYHSQ62BBJES3CCWT: a locked keyring (the mock refuses one
+    /// read) makes the daemon wait. It says one line, makes no new key
+    /// and no riff, and then loads the same key and the same riff.
+    #[tokio::test]
+    async fn a_locked_keyring_makes_the_daemon_wait_for_the_same_key() {
+        use keyring_core::{Entry, Error, mock};
+
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let (daemon, _) = open_key(&dir).await;
+        let before = daemon.status().await;
+        drop(daemon);
+
+        let name = crate::daemon_key::secret_name(&dir);
+        let entry = Entry::new(crate::secrets::SERVICE, &name).unwrap();
+        let cred: &mock::Cred = entry.as_any().downcast_ref().unwrap();
+        cred.set_error(Error::NoStorageAccess(Box::new(std::io::Error::other(
+            "the collection is locked",
+        ))));
+        let (daemon, lines) = open_key(&dir).await;
+        let after = daemon.status().await;
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("The riff daemon waits for its key"), "{lines:?}");
+        assert!(lines[0].contains("is locked or does not answer"), "{lines:?}");
+        assert!(lines[0].contains("It makes no new key"), "{lines:?}");
+        assert_eq!(lines[1], text::daemon_keyring_back());
+        assert_eq!((after.key, after.riff), (before.key.clone(), before.riff));
+        assert_eq!(after.position, before.position);
+        assert_eq!(kept_key(&dir), before.key);
+        assert!(lost(&dir).is_empty());
     }
 
     /// The riff-server of the lead, as the test plays it: it notes each

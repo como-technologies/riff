@@ -5643,6 +5643,19 @@ then.
   the person (`USER`). At a stop, it writes a checkpoint.
 - **01M519Z2N2PMZJ0CYAPV0A47BZ** `riff daemon status` shows the public
   key of the daemon, the riff ID, and the user of the owner.
+- **01M51JW1XRZWC3Q7G32V0X0D89** The OS keyring keeps the key of a
+  daemon in the secret `daemon-key DIR`, where `DIR` is the folder of
+  the daemon. So each folder of a daemon has its own key.
+- **01M51JW20CSAECFRZTJ95P6F3E** Each error of the keyring is a wait of
+  the daemon, also a keyring that riff cannot open. The daemon says the
+  error in one line, and looks again each 30 seconds.
+- **01M51JW233MXB72MHHRAX4E4NF** While the daemon waits for its key,
+  it answers `riff daemon status` with the line of the wait, and
+  refuses each other ask with that line.
+- **01M51JW25SPDW564A3DG31D7XM** When the daemon makes a new key
+  because its key and its state do not go together, it moves the old
+  folder `state` to `state.lost-MS` beside it. riff never reads that
+  folder.
 
 ### Wave B: the sync
 

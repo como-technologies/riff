@@ -572,8 +572,10 @@ your machine, and later the claims, the messages and the plan of its
 sessions. It uses the state machine of riff-server, the crate
 `riff-state`. The log and the checkpoints of the state are in
 `~/.local/share/riff/daemon/state`. The first start of the daemon
-makes the riff. Each next start loads the newest checkpoint and the
-log after it, so the state stays.
+makes its key and the riff (see
+[See the key of the daemon](#see-the-key-of-the-daemon)). Each next
+start loads the newest checkpoint and the log after it, so the state
+stays.
 
 ### Install the daemon
 
@@ -606,6 +608,39 @@ shows the state of the unit, and exits with
 ```sh
 journalctl --user -u riff -f
 ```
+
+### See the key of the daemon
+
+The daemon has one key: an ed25519 key. The first start of the daemon
+makes the key, and keeps it in the OS keyring. The key never leaves
+your machine. Its public key is the ID of the daemon. In Wave B of
+riff 3.0, it is the ID of the daemon for the other daemons, and it
+signs each change of the daemon (see [riff 3.0: peers](riff-3-peers.md)).
+
+The first start also makes a riff of your own. The ID of the riff is
+the public key of the daemon, and you (`USER`) are its owner. To see
+the key, the riff and the owner:
+
+```sh
+riff daemon status
+```
+
+```text
+Its key: 8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c
+Its riff: 8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c, at position 2 of its log.
+The owner of its riff: mike
+```
+
+The key and the state go together. When the keyring has no key of the
+daemon, or the state has no riff, the daemon makes a new key and a new
+riff of its own. Its log says why. The old state goes to
+`~/.local/share/riff/daemon/state.lost-MS`, where `MS` is the time.
+riff does not read it.
+
+While the OS keyring is locked, or does not answer, the daemon waits
+for it. It makes no new key. It says one line in its log, and looks
+again each 30 seconds. `riff daemon status` shows that line. Unlock
+the keyring at the desktop: the daemon then reads its key and goes on.
 
 ### Restart or stop the daemon
 
@@ -1680,7 +1715,9 @@ the OS keyring of pangolin is locked or does not answer: unlock it at the deskto
 
 A workers host says the line one time, and the lead gets a note
 `keyring: the OS keyring of pangolin is locked ...`. The host looks at
-the keyring again each 30 seconds. It does not stop.
+the keyring again each 30 seconds. It does not stop. The riff daemon
+waits for the keyring too: see
+[See the key of the daemon](#see-the-key-of-the-daemon).
 
 ```mermaid
 sequenceDiagram
