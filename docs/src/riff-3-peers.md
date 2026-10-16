@@ -1,0 +1,272 @@
+# riff 3.0: peers
+
+This page is the design of Wave B of riff 3.0 (#803): two or more
+people share one riff, and no server holds it. The daemon of each
+machine keeps a copy of the riff, and the daemons connect peer to
+peer.
+
+The commands on this page come with the items of Wave B. Until then,
+`riff --help` does not show them, and `riff invite`, `riff remove`,
+`riff members` and `riff release` act on riff-server 1.x. The
+[requirements of Wave B](requirements.md#wave-b-the-record) hold each
+decision.
+
+## The picture
+
+```mermaid
+flowchart LR
+    subgraph T["thelio: Mike, the owner"]
+        DT["riff daemon, key T"]
+    end
+    subgraph P["pangolin: Mike"]
+        DP["riff daemon, key P"]
+    end
+    subgraph K["kadomony: Brett"]
+        DK["riff daemon, key K"]
+    end
+    DT <-- "iroh" --> DP
+    DT <-- "iroh" --> DK
+    DP <-- "iroh" --> DK
+    N["the DNS and the relays of n0"] -.- DT
+    N -.- DP
+    N -.- DK
+    DT -- "claims" --> G["GitHub: refs/riff/claims/ITEM"]
+    DP -- "claims" --> G
+    DK -- "claims" --> G
+```
+
+- Each machine runs one riff daemon. Each daemon has one key. The key
+  is in the OS keyring, and it never leaves the machine. While the
+  keyring is locked, the daemon waits for it, and makes no new key.
+- A riff belongs to its owner: the key that made it. The owner admits
+  the key of each machine of each member.
+- Each change of the riff is a record, signed by the daemon that wrote
+  it. Each daemon keeps a copy of each record, and sends each record to
+  the daemons that lack it.
+- The daemons connect over iroh. iroh finds a daemon by its key, with
+  the DNS and the relays of n0, and then tries a direct path. iroh
+  encrypts each connection. A relay sees no record.
+- A claim is a ref on GitHub. GitHub gives each item to one session.
+
+## Share a riff
+
+The first start of the daemon makes a riff of your own. You are its
+owner. These steps add other people and other machines to it.
+
+### Invite a person
+
+On the machine of the owner:
+
+```sh
+riff invite brett
+```
+
+It prints one invite string that starts with `riff1-`. Send the
+string to the person by hand, for example in a chat. The string works
+one time, for 24 hours. Until then, it is a secret: a person who has
+it can join as `brett`.
+
+### Join a riff
+
+On the machine of the person, with the string of the owner:
+
+```sh
+riff join riff1-...
+```
+
+The daemon of the owner must be online. Your daemon gets each record
+of the riff, then it connects to each other member. A daemon is in
+one riff at a time: `riff join` refuses while your own riff has
+another member.
+
+### Add a second machine of your own
+
+On the machine of the owner, invite your own user. Then run
+`riff join` with the new string on the second machine:
+
+```sh
+riff invite mike
+```
+
+### See the members
+
+```sh
+riff members
+```
+
+It shows the owner and each member key: the user, the host, the start
+of the key, online or the time when it was last seen, and forked,
+removed or left.
+
+### Leave a riff
+
+On the machine of a member:
+
+```sh
+riff leave
+```
+
+It takes this machine out of the riff, and makes a riff of your own
+again. Each session of this machine leaves with it. The owner cannot
+leave.
+
+### Remove a member
+
+On the machine of the owner. The first command removes each machine of
+the user. The second removes one machine:
+
+```sh
+riff remove brett
+riff remove brett --host kadomony
+```
+
+### Free the claim of a machine that is gone
+
+The claim of a machine of another user that is offline holds. You
+free a claim of your own user. The owner frees each claim:
+
+```sh
+riff release issue-12 --forge
+```
+
+## The records
+
+A record is one change of the riff by one daemon: its author. Each
+author has one chain of records: the sequence numbers 1, 2, 3 and so
+on, and each record holds the hash of the record before it. The
+author signs each record with its key.
+
+| Field | Size |
+|---|---|
+| The format version | 1 byte |
+| The type | 1 byte |
+| The riff ID: the key of the owner | 32 bytes |
+| The key of the author | 32 bytes |
+| The sequence number | 8 bytes |
+| The hash of the record before it | 32 bytes |
+| The time of the author | 8 bytes |
+| The length of the body | 4 bytes |
+| The body: JSON | up to the size of the type |
+| The ed25519 signature | 64 bytes |
+
+Each type has one writer. So two daemons with the same records have
+the same riff.
+
+| Type | Writer | What it holds | Largest record |
+|---|---|---|---|
+| `riff` | The owner | The riff ID and the user of the owner | 1 KiB |
+| `member`, `removed` | The owner | A member key, its user and its host | 1 KiB |
+| `left` | A member | The leave of its own key | 1 KiB |
+| `session` | The daemon of the session | The start, the place, the lead mark, the claims, the status and the end | 4 KiB |
+| `message` | The daemon of the session that posts | A message, a note or a status request | 64 KiB |
+| `plan` | The daemon of a lead | A hold, a free, a pause or a resume | 4 KiB |
+
+## How the sync works
+
+```mermaid
+sequenceDiagram
+    participant A as daemon A
+    participant B as daemon B
+    participant C as daemon C
+    A->>B: connect: iroh checks the key of each side
+    Note over A,B: each side: is the other key a member?
+    A->>B: heads: owner 7, A 40, B 12, C 3
+    B->>A: heads: owner 7, A 38, B 15, C 5
+    A->>B: the records A 39 and A 40
+    B->>A: the records B 13 to B 15, C 4 and C 5
+    Note over A: check each record, keep it, apply it, wake its sessions
+    A->>B: a new record A 41, at once
+    B->>C: A 41, passed on
+```
+
+- Each daemon keeps one connection to each other daemon of the riff
+  that is online. When a connection ends, it connects again.
+- The heads say, for each author, the highest sequence number that a
+  daemon has. Each side then sends what the other side lacks, and
+  after that each new record at once.
+- A daemon checks each record before it keeps it: the size, the type,
+  the riff, the author is a member, the next sequence number, the hash
+  of the record before it, the signature, and the writer of the type.
+  It refuses a bad record, and closes that connection.
+- A daemon drops a record that it has already, with no fault, and
+  sends no record back to the daemon that sent it. So a record that
+  comes over two paths is kept one time.
+- A fork is two records of one author with the same sequence number.
+  The daemon keeps the first one, keeps no next record of that author,
+  and tells the lead of your user. The owner removes that key.
+- When a daemon keeps a message, it wakes each of its own sessions
+  that the message selects, also for a message of another machine.
+
+## Holds, pauses and the lead
+
+Two daemons can keep the same records in two orders. The state does
+not change with the order:
+
+- A free names each hold that it ends, and a resume names each pause
+  that it ends. An item is held while one of its holds has no free.
+- A session that takes the lead names the lead mark that it replaces.
+  The lead of a user is the lead mark that no other mark names. When
+  two are left, the daemon with the higher key wins.
+- No daemon orders records by the time of their author.
+
+## How a join works
+
+```mermaid
+sequenceDiagram
+    participant M as Mike, the owner
+    participant O as the daemon of Mike
+    participant B as Brett
+    participant N as the daemon of Brett
+    M->>O: riff invite brett
+    O-->>M: riff1-... (one time, 24 hours)
+    M->>B: the string, by hand
+    B->>N: riff join riff1-...
+    N->>O: connect to the riff ID; the secret and the host
+    O->>O: check the invite; write the member record
+    O-->>N: the records of the riff
+    N->>N: connect to each member, and sync
+```
+
+## How a claim works
+
+```mermaid
+sequenceDiagram
+    participant A as the daemon of Mike
+    participant G as GitHub
+    participant B as the daemon of Brett
+    A->>G: push refs/riff/claims/issue-12, lease: no ref
+    B->>G: push refs/riff/claims/issue-12, lease: no ref
+    G-->>A: a new ref: the session of A holds issue-12
+    G-->>B: refused: another session holds issue-12
+    A->>B: a session record that names the claim
+    Note over A: the session works, pushes and opens the pull request
+    A->>G: delete refs/riff/claims/issue-12, lease: the claim commit
+```
+
+The daemon makes each claim in the main clone of the repository, with
+your git sign-in. Each claim is a new commit with the item, the user,
+the session, the key of the daemon and the time. GitHub compares the
+lease on the server, so only one session gets an item.
+
+```mermaid
+flowchart TD
+    C["a claim on GitHub"] --> E{"its session"}
+    E -- "ends" --> R["its daemon deletes the claim"]
+    E -- "does not run after a new start of its daemon" --> R
+    E -- "ended, or its daemon is offline for 15 minutes" --> L["the daemon of the lead of the same user deletes the claim"]
+    E -- "of another user, and its daemon is offline" --> H["the claim holds: riff release --forge frees it"]
+```
+
+## The way over from riff 1.x
+
+- riff-server 1.x runs on until Wave C. A daemon of 3.0 does not talk
+  to it. A session of 1.x and a session of 3.0 do not see the messages
+  or the claims of each other.
+- The work of one repository runs on 1.x or on 3.0, not on both at
+  one time. Mike decides when a repository moves.
+- Until Wave C, the member commands of 1.x take `--email`:
+  `riff invite --email EMAIL`, `riff remove --email EMAIL` and
+  `riff members --email`.
+- Until Wave C, `riff claim` and `riff release` act on riff-server
+  1.x. Only `riff release ITEM --forge` acts on a claim of 3.0. The
+  daemon makes each claim of 3.0.
