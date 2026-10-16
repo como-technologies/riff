@@ -784,7 +784,10 @@ mod tests {
         let part = |from: &str, to: &str| {
             let start = skill.find(from).unwrap();
             let end = start + skill[start..].find(to).unwrap();
-            skill[start..end].split_whitespace().collect::<Vec<_>>().join(" ")
+            skill[start..end]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
         };
         let conduct = part("## Conduct the sessions of your user", "### Workers");
         for text in [
