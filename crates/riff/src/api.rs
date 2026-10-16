@@ -122,6 +122,7 @@ use riff_core::wire::{
     SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads,
     TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
 };
+use riff_core::wire::SetMachine;
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
@@ -1399,6 +1400,18 @@ impl Api {
             me: me.clone(),
             status: status.clone(),
         };
+        self.call(&request).await
+    }
+
+    /// Sends the numbers of the machine of `me`: the text of the status
+    /// of a workers host (01M515KSWVGCBS76AWZV74TJQ3). New numbers
+    /// replace the old ones.
+    pub async fn machine(&self, me: &SessionUri, numbers: &str) -> Result<()> {
+        let request = SetMachine {
+            me: me.clone(),
+            numbers: numbers.to_owned(),
+        };
+        request.check().map_err(anyhow::Error::msg)?;
         self.call(&request).await
     }
 

@@ -365,6 +365,10 @@ mod tests {
                 secs: 9,
                 failed: Some(text("502")),
             }),
+            machine: Some(MachineInfo {
+                numbers: text("workers host: limit 2, floor 4GB, no workers"),
+                age_secs: 10,
+            }),
         }
     }
 
@@ -504,6 +508,10 @@ mod tests {
         ] {
             c.trip(&SetStep { me: me(), change });
         }
+        c.trip(&SetMachine {
+            me: me(),
+            numbers: text("workers host: limit 2, floor 4GB, no workers"),
+        });
         c.trip(&BlockedLook {
             me: me(),
             after_secs: 60,

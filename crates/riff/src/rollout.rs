@@ -1481,6 +1481,7 @@ pub fn holders(sessions: &[SessionInfo], me: &SessionUri) -> Authors {
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
+///     machine: None,
 /// };
 /// let me = "riff://mike@pangolin/o/riff?session=l1&lead=true".parse().unwrap();
 /// let strata = worker("riff://brett@kadomony/o/strata?session=w1");
@@ -1550,6 +1551,7 @@ pub fn idle(sessions: &[SessionInfo], me: &SessionUri, panes: &[WorkerPane]) -> 
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
+///     machine: None,
 /// };
 /// let me = "riff://mike@pangolin/o/riff?session=l1&lead=true".parse().unwrap();
 /// let sessions = [
@@ -2728,6 +2730,7 @@ mod tests {
             waits: None,
             blocked: None,
             step: None,
+            machine: None,
         }
     }
 

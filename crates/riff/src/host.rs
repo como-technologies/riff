@@ -382,6 +382,21 @@ impl HostStatus {
         Ok(status)
     }
 
+    /// The status of this machine with its worker panes, when it runs
+    /// workers: its limit of workers is more than 0. The disk is the one
+    /// of the main clone of `dir`. `riff top` shows it for its own
+    /// machine (01M515KST9Z0B4B1D4HJV3Y2CM), and the `riff mcp` of the
+    /// lead sends it to the server (01M515KSWVGCBS76AWZV74TJQ3).
+    pub fn of_this_machine(dir: Option<&Path>) -> Option<Self> {
+        let limit = settings::workers_limit(&settings::path().ok()?).ok()?;
+        if limit == 0 {
+            return None;
+        }
+        let panes = Tmux::machine().worker_panes().unwrap_or_default();
+        let main = dir.and_then(identity::main_worktree);
+        HostStatus::here(main.as_deref(), &panes).ok()
+    }
+
     /// The status line. It has at most [`STATUS_CHARS`] characters at
     /// each size (01M517W4NP2WKSRCK52ZBVWBD3). When the workers do not
     /// fit, each gets the first [`SHORT_ID`] characters of its session

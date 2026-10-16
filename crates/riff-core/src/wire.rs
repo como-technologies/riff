@@ -221,6 +221,7 @@ calls! {
     SetStatus => "/v1/status", ();
     SetBlocked => "/v1/blocked", ();
     SetStep => "/v1/step", ();
+    SetMachine => "/v1/machine", ();
     BlockedLook => "/v1/blocked/look", BlockedLookReply;
     ItemFacts => "/v1/items", ();
     Alive => "/v1/alive", AliveReply;
@@ -674,6 +675,10 @@ pub struct SessionInfo {
     /// (01M48VDGTD40P8RBZMS0XB5M9N).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<StepInfo>,
+    /// The last numbers of the machine of the session, with their age,
+    /// when it sent some (01M515KSWVGCBS76AWZV74TJQ3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<MachineInfo>,
 }
 
 impl SessionInfo {
@@ -1064,6 +1069,46 @@ impl SetStep {
             StepChange::Fail { reason } => one_line("reason", reason),
         }
     }
+}
+
+/// `POST /v1/machine`: the numbers of the machine of `me`
+/// (01M515KSWVGCBS76AWZV74TJQ3). The `riff mcp` of the lead sends them
+/// for its machine, which has no `riff workers host`. The numbers are
+/// the text of the status of a workers host: riff-server keeps the
+/// text and does not read it. It is a signal, like a status.
+///
+/// ```
+/// use riff_core::wire::SetMachine;
+///
+/// let me: riff_core::name::SessionUri = "riff://mike@pangolin/o/r?session=a1".parse()?;
+/// let set = |numbers: &str| SetMachine { me: me.clone(), numbers: numbers.into() };
+/// assert!(set("workers host: limit 2, floor 4GB, no workers").check().is_ok());
+/// assert_eq!(set(" ").check().unwrap_err(), "the text of the numbers is empty");
+/// assert!(set(&"x".repeat(401)).check().is_err());
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SetMachine {
+    pub me: SessionUri,
+    pub numbers: String,
+}
+
+impl SetMachine {
+    /// Refuses numbers that are not one line of at most
+    /// [`STATUS_CHARS`] characters.
+    pub fn check(&self) -> Result<(), String> {
+        one_line("text of the numbers", &self.numbers)
+    }
+}
+
+/// The numbers of the machine of a session in the reply to `who`
+/// (01M515KSWVGCBS76AWZV74TJQ3).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MachineInfo {
+    /// The text of [`SetMachine`].
+    pub numbers: String,
+    /// The seconds since the session sent them.
+    pub age_secs: u64,
 }
 
 /// A long step in the reply to `who` (01M48VDGTD40P8RBZMS0XB5M9N).

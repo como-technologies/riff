@@ -143,6 +143,10 @@ pub enum Signal {
     /// A change of the long step of the session at `at_ms`
     /// (01M48VDGTD40P8RBZMS0XB5M9N). It is a sign of life.
     Step { change: StepChange, at_ms: u64 },
+    /// The numbers of the machine of the session, sent at `at_ms`
+    /// (01M515KSWVGCBS76AWZV74TJQ3). New numbers replace the old ones. A
+    /// checkpoint does not keep them: the session sends them again.
+    Machine { numbers: String, at_ms: u64 },
     /// What a client saw of the items of `thread` on the forge
     /// (01M41FZP2C4Z4J6WKRXZ5B31EH). With `all`, the facts replace each
     /// fact of the thread.
@@ -277,6 +281,10 @@ impl Signal {
                         failed: Some(reason),
                     }),
                 };
+            }
+            Signal::Machine { numbers, at_ms } => {
+                session.live(now);
+                session.machine = Some((numbers, at_ms));
             }
             Signal::WatchStarted => session.watchers += 1,
             Signal::WatchEnded => {
@@ -719,6 +727,10 @@ pub(super) struct Session {
     /// The last change of the claims of the session, or its arrival
     /// (01M3Q551WCMPQRCNJ8FXQEBFY4).
     pub(super) claims_changed: Instant,
+    /// The last numbers of the machine of the session, and the time of
+    /// the send in milliseconds since the Unix epoch
+    /// (01M515KSWVGCBS76AWZV74TJQ3).
+    pub(super) machine: Option<(String, u64)>,
 }
 
 /// A status with the time that the session set it.
@@ -791,6 +803,7 @@ impl Session {
             asked: None,
             told_stuck: false,
             claims_changed: now,
+            machine: None,
         }
     }
 

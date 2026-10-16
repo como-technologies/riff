@@ -224,6 +224,7 @@ use riff_core::wire::{
     SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
     TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
+use riff_core::wire::SetMachine;
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
     Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,
@@ -1851,6 +1852,7 @@ impl Service {
             .route(SetStatus::PATH, post(status))
             .route(SetBlocked::PATH, post(blocked))
             .route(SetStep::PATH, post(step))
+            .route(SetMachine::PATH, post(machine))
             .route(BlockedLook::PATH, post(look_blocks))
             .route(ItemFacts::PATH, post(item_facts))
             .route(Alive::PATH, post(alive))
@@ -2134,6 +2136,23 @@ async fn step(AxumState(s): AxumState<Shared>, proof: Proof, Json(r): Json<SetSt
         at_ms: now_ms(),
     };
     s.engine.signal(&caller, step).await?;
+    Ok(Json(()))
+}
+
+/// Keeps the numbers of the machine of a session
+/// (01M515KSWVGCBS76AWZV74TJQ3). It is a signal, like a status.
+async fn machine(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<SetMachine>,
+) -> Reply<()> {
+    let caller = admit(&s, &proof, &r.me)?;
+    r.check().map_err(bad_request)?;
+    let machine = Signal::Machine {
+        numbers: r.numbers,
+        at_ms: now_ms(),
+    };
+    s.engine.signal(&caller, machine).await?;
     Ok(Json(()))
 }
 
