@@ -2675,8 +2675,10 @@ async fn exchange(
             // (R209), or the email gives no USER (R208). Each refuses the
             // person, who must read why. The trace of the refused
             // command `admit` is its log line: it names no email
-            // (01M3XA87CJHCGZX283ZQAFKARZ).
-            refused => TokenError {
+            // (01M3XA87CJHCGZX283ZQAFKARZ). Each variant has an arm, so a
+            // new one does not compile until a person decides what the
+            // person reads (01M51JBTEM10W68K6F267BB79N).
+            refused @ (Failed::Denied(_) | Failed::Refused(_)) => TokenError {
                 error: "access_denied".into(),
                 error_description: Some(refused.text()),
             },

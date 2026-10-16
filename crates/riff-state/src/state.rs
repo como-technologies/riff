@@ -947,8 +947,9 @@ impl State {
     ///    presence.
     /// 2. A caller that the state does not know registers first: the
     ///    state runs [`Arrive`] for it, and queues its records
-    ///    ([`Check::registered`]). A `register` and an `end` do not
-    ///    register first. A known caller is seen now.
+    ///    ([`Check::registered`]), when
+    ///    [`CommandKind::registers_first`] says so: a `register` and an
+    ///    `end` do not register first. A known caller is seen now.
     /// 3. The caller gets its worker mark from the pending copy. A
     ///    session that the riff does not know is not a worker. [`permits`] and
     ///    [`Command::handle`] run. They change nothing.
@@ -985,7 +986,7 @@ impl State {
         // A command of the people names no `me`: its caller is the
         // person of the token, with no place. So it changes no presence.
         let has_place = !C::KIND.of_people();
-        if has_place && matches!(caller.class(), Class::Person | Class::Session) {
+        if has_place && caller.class().has_role() {
             let me = caller.me().clone();
             if let Err(reason) = self.check_user(&me) {
                 return Check {
@@ -998,7 +999,7 @@ impl State {
             let place = me.place().clone();
             if self.presence.knows(who) {
                 Signal::Called { place }.set(&mut self.presence, who, now);
-            } else if !matches!(C::KIND, CommandKind::Register | CommandKind::End) {
+            } else if C::KIND.registers_first() {
                 let arrive = Arrive { me: me.clone() };
                 let (changes, ()) = arrive
                     .handle(&caller, &self.pending_view(), self.now(now))
