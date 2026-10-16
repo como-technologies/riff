@@ -1978,13 +1978,15 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   to the lease. It then waits 15 seconds, applies the chunks that came
   since the load, and starts to serve. Superseded by 3.0
   (01M4Z60B7FCREZDCTVR73WWRY1).
-- **01M3THEE08ZKV8WGHDSVWV69ZE** The start order of an instance with a
-  store is: load, then the lease, then the port. The load reads the
+- **01M3THEE08ZKV8WGHDSVWV69ZE** Replaced by 01M52JYGHHK5X0XS39VFT3ZGGM.
+- **01M52JYGHHK5X0XS39VFT3ZGGM** The start order of an instance with a
+  store is: load, then the port, then the lease. The load reads the
   sign-ins, the newest checkpoint and the log after it, with no lease.
-  When the load fails, the instance exits. It writes no lease, so the
-  old instance serves on. After the wait for the lease, the instance
-  applies the chunks that came since the load, and loads the sign-ins
-  again. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
+  When the load fails, the instance exits. It opens no port and writes
+  no lease, so the old instance serves on. After the wait for the
+  lease, the instance applies the chunks that came since the load, and
+  loads the sign-ins again. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3TJWJC08ZR5TWA1Y9CDE0QM** After the wait for the lease, the
   instance also lists the checkpoints again. When a checkpoint came
   since its load, it takes the position of the newest one. It writes
@@ -2005,17 +2007,24 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   So the read cursors, the statuses and the last calls of the old
   instance stay after a deploy. Superseded by 3.0
   (01M4Z60B7FCREZDCTVR73WWRY1).
-- **01M3THEE31H5QVV3JAFC4ZRGFR** `riff-server` opens its port only
-  after the load and the wait for the lease. Before that, each connect
-  is refused. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
+- **01M3THEE31H5QVV3JAFC4ZRGFR** Replaced by 01M52JYGM7WH565B7PCVBEJC17.
+- **01M52JYGM7WH565B7PCVBEJC17** `riff-server` opens its port after the
+  load, before it takes the lease. Until it serves, it replies 503 to
+  each call, with the build of riff-server. So at an instance change,
+  Cloud Run always has an open port for the calls. Before the end of
+  the load, each connect is refused. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R139** An instance reads the lease every 2 seconds. It serves only
   for 5 seconds after the last read that showed its own ID. Else it
   replies 503. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
-- **R140** An instance that reads another ID in the lease stops for
-  good. It closes each stream, replies 503 to each call and saves
-  nothing more, except the checkpoint of the hand-over
-  (01M51X8MG0YQT5KBZC9H7917J3). It exits after 60 seconds. Superseded
-  by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
+- **R140** Replaced by 01M52JYGPX5ETP3HKR0S0Y0YCR.
+- **01M52JYGPX5ETP3HKR0S0Y0YCR** An instance that reads another ID in
+  the lease stops for good. It closes each stream, replies 503 to each
+  call in flight, and saves nothing more, except the checkpoint of the
+  hand-over (01M51X8MG0YQT5KBZC9H7917J3). It closes its port at once,
+  so it takes no new call, and Cloud Run sends each call to the new
+  instance. It exits when the hand-over is written, at most 10 seconds
+  after the stop. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R141** Each save of the token store names the version that the
   instance knows. Each write of a chunk is only when new
   (01M3T411BZQB8N4D2S0JFVESMS). When the bucket holds another version,
@@ -3188,21 +3197,28 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   known, and changes nothing. Superseded by 3.0
   (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3TFG4PN1DWY1FXX0SVB3H3R** Replaced by 01M3WFVAB44T8EP4QZD4KS7DRF.
-- **01M3WFVAB44T8EP4QZD4KS7DRF** A sign-in has one chain: the chain of
+- **01M3WFVAB44T8EP4QZD4KS7DRF** Replaced by 01M52JYGWD3ZJKNYE3HG5BJYTP.
+- **01M52JYGWD3ZJKNYE3HG5BJYTP** A sign-in has one chain: the chain of
   the person. A session token has no refresh token and no chain: the
   reply to the swap has an access token and an empty `refresh_token`.
   A new session token ends no other token, so each process of a
-  session keeps its own. The token store keeps nothing of a session
-  token. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
+  session keeps its own. The token store keeps the hash of each session
+  token (01M52JYGSNTFPQ0ZP50AD2BG89). Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3TFG4WE7CZQ4TCJE2NTC52E** After a start, the saved token store
   can be one generation behind. So the first refresh of each chain
   after a start takes the current generation of the saved store, or
   the next one, as good. `riff-server` checks the device key first
   (R110). Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3TFG4ZCWS98R7W6RYZFWZXF** Replaced by 01M3WFVADCDZM8XX590KAEMEYG.
-- **01M3TFG551C76BP4TRA32P7VC3** `riff-server` keeps each access token
-  only in memory. After a restart, each client refreshes one time.
-  Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
+- **01M3TFG551C76BP4TRA32P7VC3** Replaced by 01M52JYGSNTFPQ0ZP50AD2BG89.
+- **01M52JYGSNTFPQ0ZP50AD2BG89** The token store keeps the hash of each
+  live access token, of a person or of a session, with its sign-in, its
+  session and the time when it expires. So an access token works after
+  a restart and after a deploy, until it expires, and a new start makes
+  no client refresh. A new token from the last second before a crash
+  can be lost: its client refreshes one time. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **01M3MX4TG7PNNETZ986DQS10JJ** A used refresh token counts as
   reused only after the refresh token of the pair that its last use
   gave was used. Before that, the reply of the last use was lost: when

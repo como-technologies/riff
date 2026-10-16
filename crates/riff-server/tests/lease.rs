@@ -558,7 +558,10 @@ async fn serves(base: &str) {
         if sent.is_ok_and(|reply| reply.status() == 200) {
             return;
         }
-        assert!(span.within(Duration::from_secs(10)), "{base} does not serve");
+        assert!(
+            span.within(Duration::from_secs(10)),
+            "{base} does not serve"
+        );
         sleep(Duration::from_millis(10)).await;
     }
 }

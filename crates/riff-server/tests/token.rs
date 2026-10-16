@@ -201,7 +201,11 @@ async fn each_token_stays_valid_across_a_restart_and_a_deploy() {
     // A deploy: a new instance takes the lease while this one serves.
     let (deployed, url) = common::start_signed_on(Arc::new(store.clone())).await;
     restarted.stopped().await;
-    for (token, me) in [(&third.access_token, MIKE), (&a.access_token, A), (&b.access_token, B)] {
+    for (token, me) in [
+        (&third.access_token, MIKE),
+        (&a.access_token, A),
+        (&b.access_token, B),
+    ] {
         assert_eq!(register(&url, &key, token, me).await, 200, "{me}");
     }
     // Another device key cannot use them.

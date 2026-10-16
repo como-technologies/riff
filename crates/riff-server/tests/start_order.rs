@@ -221,14 +221,20 @@ async fn the_port_opens_after_the_load_and_gives_503_until_the_server_serves() {
     }
     // The real wait is 15 seconds, and the port opened before the take.
     let waited = opened.wall();
-    assert!(waited >= Duration::from_secs(14), "it served after {waited:?}");
+    assert!(
+        waited >= Duration::from_secs(14),
+        "it served after {waited:?}"
+    );
     call(&base, "register", json!({ "me": MIKE })).await;
     let log = fs::read_to_string(log.path()).unwrap();
     let at = |text: &str| {
         log.find(text)
             .unwrap_or_else(|| panic!("no {text} in {log}"))
     };
-    assert!(at("loaded the checkpoint") < at("riff-server listens on"), "{log}");
+    assert!(
+        at("loaded the checkpoint") < at("riff-server listens on"),
+        "{log}"
+    );
     assert!(at("riff-server listens on") < at("took the lease"), "{log}");
     assert!(
         at("took the lease") < at("applied the records that came since the load"),

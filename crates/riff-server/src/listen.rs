@@ -274,7 +274,7 @@ fn starting() -> Response {
 ///   An error stops the start: `main` checks the listen address there.
 /// - At the end of `shutdown`, the server stops taking calls, saves and
 ///   ends its lease (R129).
-/// - When the server stops for good (R140, R141), it closes the port at
+/// - When the server stops for good (01M52JYGPX5ETP3HKR0S0Y0YCR, R141), it closes the port at
 ///   once, and returns when the hand-over is written, at most
 ///   [`crate::lease::Timing::exit_after`] later
 ///   (01M52JYGPX5ETP3HKR0S0Y0YCR). When its lease ended by its age, it
@@ -339,7 +339,8 @@ where
     let (service, mut serving) = match start {
         Start::Now(service) => {
             service.save().await.map_err(failed)?;
-            check(&service).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+            check(&service)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
             let _ = routes.set(service.router());
             (service, open(port)?)
         }
@@ -349,7 +350,8 @@ where
             // The owner of the settings is a record of the start: wait
             // for its write, so that the check reads it.
             service.save().await.map_err(failed)?;
-            check(&service).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+            check(&service)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
             let _ = routes.set(service.router());
             (service, serving)
         }

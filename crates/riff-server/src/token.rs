@@ -2025,7 +2025,10 @@ mod tests {
         // token (01M52JYGSNTFPQ0ZP50AD2BG89).
         let saved = |token: &str| text.contains(&URL_SAFE_NO_PAD.encode(hash(token)));
         assert!(saved(&second.refresh_token), "{text}");
-        assert!(saved(&first.access_token) && saved(&second.access_token), "{text}");
+        assert!(
+            saved(&first.access_token) && saved(&second.access_token),
+            "{text}"
+        );
     }
 
     #[test]

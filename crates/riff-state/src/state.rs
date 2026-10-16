@@ -612,7 +612,7 @@ impl State {
 
     /// Applies the records that came after the load: the old instance
     /// wrote them between the load and the lease of this instance
-    /// (01M3THEE08ZKV8WGHDSVWV69ZE). Call it before the first call of a
+    /// (01M52JYGHHK5X0XS39VFT3ZGGM). Call it before the first call of a
     /// session. The claim timer of each session still starts at the
     /// load.
     ///

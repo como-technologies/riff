@@ -101,7 +101,7 @@
 //!
 //! A lease of an older build has no time. The tool cannot know that
 //! its instance stopped, so the lease is live until a person deletes
-//! the object. An instance that still runs then stops for good (R140).
+//! the object. An instance that still runs then stops for good (01M52JYGPX5ETP3HKR0S0Y0YCR).
 //!
 //! # A tool takes the lease
 //!
@@ -114,7 +114,7 @@
 //!   ([`ToolLease::take`], 01M3X5TP9CD4NXGPJEGP2Q4RS0). The write names
 //!   the version of the lease that the tool read, so it fails when an
 //!   instance wrote the lease in between. The old instance then reads
-//!   another ID and stops for good (R140). After a lease that ended by
+//!   another ID and stops for good (01M52JYGPX5ETP3HKR0S0Y0YCR). After a lease that ended by
 //!   its age, the tool waits [`Timing::settle`] and reads the lease
 //!   again, before it changes the log.
 //! - An instance whose last write of the time is

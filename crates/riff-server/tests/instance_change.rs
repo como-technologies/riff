@@ -128,6 +128,9 @@ async fn at_an_instance_change_each_call_gets_a_reply_within_20_seconds() {
         sleep(Duration::from_millis(100)).await;
     }
     let log = fs::read_to_string(old_log.path()).unwrap();
-    assert!(log.contains("another instance serves: the port is closed"), "{log}");
+    assert!(
+        log.contains("another instance serves: the port is closed"),
+        "{log}"
+    );
     assert!(log.contains("exiting: another instance serves"), "{log}");
 }

@@ -459,7 +459,7 @@ pub struct Loaded {
 struct Gate {
     /// With a lease: the server serves until this time (R139).
     until: Mutex<Option<Instant>>,
-    /// True once the server stopped for good (R140).
+    /// True once the server stopped for good (01M52JYGPX5ETP3HKR0S0Y0YCR).
     stopped: tokio::sync::watch::Sender<bool>,
     /// True once the server stopped because its lease ended by its age
     /// (01M3X5TPBMF81TDVZ7Q4NVXBQX).
@@ -783,7 +783,7 @@ impl Server {
     }
 
     /// True while the server holds the lease and has not stopped, so it
-    /// may save (R139, R140).
+    /// may save (R139, 01M52JYGPX5ETP3HKR0S0Y0YCR).
     fn leased(&self) -> bool {
         !self.is_stopped() && self.until().is_none_or(|until| Instant::now() < until)
     }
@@ -798,7 +798,7 @@ impl Server {
         *self.gate.stopped.borrow()
     }
 
-    /// Stops for good (R140). Each command that waits for the writer
+    /// Stops for good (01M52JYGPX5ETP3HKR0S0Y0YCR). Each command that waits for the writer
     /// fails.
     fn stop(&self, why: &str) {
         if !self.gate.stopped.send_replace(true) {
@@ -901,7 +901,7 @@ impl Server {
         }
     }
 
-    /// Stops for good, because another holder took the lease (R140).
+    /// Stops for good, because another holder took the lease (01M52JYGPX5ETP3HKR0S0Y0YCR).
     /// When that holder is another instance, a deploy took the lease:
     /// the server then writes its last checkpoint, the hand-over
     /// (01M51X8MG0YQT5KBZC9H7917J3). The new instance loads its state
@@ -1233,12 +1233,13 @@ impl Service {
     }
 
     /// A server with the state that `store` holds
-    /// (01M3THEE08ZKV8WGHDSVWV69ZE).
+    /// (01M52JYGHHK5X0XS39VFT3ZGGM).
     ///
     /// ```mermaid
     /// flowchart TD
     ///     L[load the sign-ins and the newest checkpoint,<br/>replay the log after it] -->|fails| X[error: no lease.<br/>The old instance serves on]
-    ///     L -->|works| T[take the lease, wait]
+    ///     L -->|works| P[the port opens: 503 until it serves]
+    ///     P --> T[take the lease, wait]
     ///     T --> K[list the checkpoints again]
     ///     K -->|a checkpoint came| R[load the state again from it,<br/>replay the log after it]
     ///     K -->|none came| C
@@ -1246,9 +1247,12 @@ impl Service {
     ///     C --> S[serve from the next whole second]
     /// ```
     ///
-    /// - It loads first, with no lease. So a build that cannot load
-    ///   changes nothing in the store, and the old instance serves on.
-    /// - Then it takes the lease and waits [`lease::Timing::wait`]. The
+    /// - It loads first, with no lease ([`Service::prepare`]). So a build
+    ///   that cannot load changes nothing in the store, and the old
+    ///   instance serves on. `main` opens the port after the load
+    ///   ([`listen::serve`]).
+    /// - Then it takes the lease and waits [`lease::Timing::wait`]
+    ///   ([`Loaded::serve`]). The
     ///   old instance writes until it reads the new lease. So the new
     ///   instance then applies the chunks that came since its load, and
     ///   loads the sign-ins again.
@@ -1704,7 +1708,7 @@ impl Service {
     /// Waits until each record in the queue is written, then saves the
     /// token store when it changed. A server with no store saves no
     /// token store. A server that does not hold the lease now, or that
-    /// stopped, saves nothing (R140, R155). A save that finds another
+    /// stopped, saves nothing (01M52JYGPX5ETP3HKR0S0Y0YCR, R155). A save that finds another
     /// version stops the server for good (R141).
     pub async fn save(&self) -> Result<(), StoreError> {
         if !self.0.leased() {
@@ -1751,7 +1755,7 @@ impl Service {
         saved
     }
 
-    /// Ends when the server stops for good (R140, R141).
+    /// Ends when the server stops for good (01M52JYGPX5ETP3HKR0S0Y0YCR, R141).
     pub async fn stopped(&self) {
         self.0.stopping().await;
     }
@@ -2226,7 +2230,6 @@ impl Loaded {
         }
         Ok(service)
     }
-
 }
 
 /// The HTTP routes of a new `riff-server`.
@@ -2797,7 +2800,7 @@ async fn stamp_build(request: Request, next: Next) -> Response {
 }
 
 /// Replies 503 to each call while the server does not serve (R139,
-/// R140).
+/// 01M52JYGPX5ETP3HKR0S0Y0YCR).
 async fn gate(AxumState(s): AxumState<Shared>, request: Request, next: Next) -> Response {
     if s.serving() {
         return next.run(request).await;

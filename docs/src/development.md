@@ -2502,11 +2502,13 @@ account of the server must have write access to the bucket.
 from your machine.
 
 With a bucket, the server loads the checkpoint and replays the log at
-start. Then it takes the lease, waits 15 seconds, and opens its port.
-Only one server serves from a bucket. When a new server takes the
-lease, the old one replies 503 and exits after 60 seconds. A server
-that cannot load takes no lease, and the old one serves on. See
-[how it works](how-it-works.md#wait-while-the-server-starts).
+start. Then it opens its port, takes the lease, waits 15 seconds, and
+serves. Until it serves, each call gets 503. Only one server serves
+from a bucket. When a new server takes the lease, the old one closes
+its port at once, and exits after its last checkpoint, at most 10
+seconds later. A server that cannot load opens no port and takes no
+lease, and the old one serves on. See
+[how it works](how-it-works.md#a-restart-with-a-bucket).
 
 ### Start again with an empty state
 
@@ -2540,7 +2542,8 @@ and the owner invites each member again.
 For local work, `--dir` (`RIFF_DIR`) keeps the log, the checkpoints,
 the sign-ins (`signins.json`) and the lease as files in a directory. It
 works as a bucket: the server loads the checkpoint and replays the
-log, then waits 15 seconds for the lease, and then opens its port:
+log, then opens its port, waits 15 seconds for the lease, and then
+serves:
 
 ```sh
 riff-server --dir ~/.local/state/riff-server
@@ -3380,7 +3383,7 @@ the log. It needs no flag. See
 flowchart TD
     A[agree on the time with the lead of each repository] --> P[pause the whole riff, stop the workers]
     P --> T[push the tag v1.0.0: the deploy]
-    T --> I[the new server imports the old objects, then opens its port]
+    T --> I[the new server imports the old objects, then serves]
     I --> C[check: riff server, the log line of the import]
     C --> U[each machine updates itself: check riff server again]
     U --> R[resume the whole riff, start the workers]
