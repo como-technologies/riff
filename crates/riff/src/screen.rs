@@ -8,10 +8,10 @@
 //!
 //! ```text
 //! riff daemon 1.3.1 06a0ae03be98, pid 4242, limit 3 sessions and a floor of 8 GB, 0 waiting
-//!   SESSION                    ITEM           STATE      AGE  LAST
-//! > riff-lead-o-r              lead           lead       2h
-//!   riff-issue-12-1a2b3c4d     issue-12       works      5m   > Bash: just check
-//!   riff-verify-issue-9-…      verify-issue-9 ends       1m   end: success, 8 turns, 22 s, 0.17 USD
+//!   SESSION                      ITEM           STATE      AGE  LAST
+//! > riff-lead-o-r                lead           lead       2h
+//!   riff-issue-12-1a2b3c4d       issue-12       works      5m   > Bash: just check
+//!   riff-verify-issue-9-2b3c4d5e verify-issue-9 ends       1m   end: success, 8 turns, 22 s, 0.17 USD
 //! wave o/r: started issue-12
 //! Up/Down select   Enter attach to the lead   t take over now   q quit
 //! ```
@@ -21,9 +21,13 @@
 //! them, and draws the view on the `TestBackend` of ratatui. [`view`]
 //! runs the loop with the terminal of the person.
 //!
+//! - The SESSION column is as wide as the longest name, so each name
+//!   shows in full (01M51PD7T7451SR11W7JA7QW3X).
 //! - Enter attaches to the lead ([`crate::lead::attach`]): the selected
 //!   row when it is a lead, else the first lead. The view gives the
-//!   terminal to `podman attach`, and takes it back after Ctrl-P Ctrl-Q.
+//!   terminal to `podman attach`, and takes it back after Ctrl-P Ctrl-Q
+//!   or the end of the lead. The note under the rows says that the lead
+//!   runs on, or that it ended ([`Screen::attached`]).
 //! - `t` takes over the selected worker ([`crate::takeover`]). The view
 //!   gives the terminal to `claude --resume`, and takes it back after
 //!   `/exit`. The note under the rows says that the session goes on,
@@ -99,6 +103,27 @@ impl Screen {
     /// Shows `note` for the person, under the rows.
     pub fn note(&mut self, note: impl Into<String>) {
         self.note = Some(note.into());
+    }
+
+    /// Shows the end of the attach to the lead `name`
+    /// (01M51PD7Q24N252V66NFEHY49N): a detach, the end of the lead, or
+    /// the error of the attach.
+    ///
+    /// ```
+    /// use riff::lead::Left;
+    /// use riff::screen::Screen;
+    ///
+    /// let mut screen = Screen::default();
+    /// screen.attached("n", &Ok(Left::Ended));
+    /// assert_eq!(screen.shown_note(), Some(riff::text::lead_ended("n").as_str()));
+    /// screen.attached("n", &Ok(Left::Detached));
+    /// assert_eq!(screen.shown_note(), Some(riff::text::lead_detached("n").as_str()));
+    /// ```
+    pub fn attached(&mut self, name: &str, left: &Result<crate::lead::Left>) {
+        self.note(match left {
+            Ok(left) => left.line(name),
+            Err(e) => format!("{e:#}"),
+        });
     }
 
     /// Shows the end of the takeover of `name` with the exit code
@@ -220,11 +245,18 @@ impl Screen {
         frame.render_widget(Paragraph::new(head_line), head);
 
         let sessions = self.sessions();
+        let names: Vec<String> = sessions.iter().map(|s| text::safe(&s.name)).collect();
+        let wide = names
+            .iter()
+            .map(|n| n.chars().count())
+            .chain(["SESSION".len()])
+            .max()
+            .unwrap_or_default();
         let table = Table::new(
-            sessions.iter().map(|s| {
+            sessions.iter().zip(names).map(|(s, name)| {
                 let age = u64::try_from((now_ms - s.since_ms) / 1000).unwrap_or(0);
                 Row::new([
-                    text::safe(&s.name),
+                    name,
                     text::safe(&s.item),
                     text::phase_word(s.phase).to_owned(),
                     text::ago(age),
@@ -232,7 +264,7 @@ impl Screen {
                 ])
             }),
             [
-                Constraint::Length(28),
+                Constraint::Length(u16::try_from(wide).unwrap_or(u16::MAX)),
                 Constraint::Length(16),
                 Constraint::Length(20),
                 Constraint::Length(4),
@@ -335,9 +367,8 @@ pub async fn view(dir: &Path, runtime: &impl Runtime) -> Result<()> {
         match &action {
             Action::Quit => break Ok(()),
             Action::Attach(name) => {
-                if let Err(e) = crate::lead::attach(runtime, name).await {
-                    screen.note(format!("{e:#}"));
-                }
+                let left = crate::lead::attach(runtime, name).await;
+                screen.attached(name, &left);
             }
             Action::Takeover(name) => {
                 let taken =
@@ -449,6 +480,33 @@ mod tests {
         assert_eq!(lines[7], text::VIEW_KEYS);
     }
 
+    /// 01M51PD7T7451SR11W7JA7QW3X
+    #[test]
+    fn the_view_shows_the_full_name_of_each_session() {
+        let lead = "riff-lead-como-technologies-riff";
+        let mut screen = Screen::default();
+        screen.set(Ok(status(vec![
+            live(
+                "riff-verify-issue-123-1a2b3c4d",
+                "verify-issue-123",
+                Phase::Works,
+                "",
+            ),
+            live(lead, "lead", Phase::Terminal, ""),
+        ])));
+        let lines = drawn(&screen, 110, 8);
+        assert!(
+            lines[2].starts_with(&format!("> {lead} lead")),
+            "{lines:#?}"
+        );
+        assert!(
+            lines[3].starts_with("  riff-verify-issue-123-1a2b3c4d   verify-issue-123"),
+            "{lines:#?}"
+        );
+        // The next column starts after the longest name.
+        assert_eq!(lines[1].find("ITEM"), Some(2 + lead.len() + 1));
+    }
+
     #[test]
     fn the_view_shows_the_waves_the_starts_that_wait_and_a_note() {
         let mut screen = Screen::default();
@@ -523,6 +581,25 @@ mod tests {
         screen.set(Ok(status(vec![])));
         assert_eq!(screen.selected(), 0);
         assert_eq!(screen.on_key(Key::Quit), Some(Action::Quit));
+    }
+
+    /// 01M51PD7Q24N252V66NFEHY49N
+    #[test]
+    fn an_attach_says_that_the_lead_runs_on_or_that_it_ended() {
+        use crate::lead::Left;
+        let mut screen = two();
+        screen.attached("riff-lead-o-r", &Ok(Left::Ended));
+        assert_eq!(
+            drawn(&screen, 110, 8)[6],
+            text::lead_ended("riff-lead-o-r")
+        );
+        screen.attached("riff-lead-o-r", &Ok(Left::Detached));
+        assert_eq!(
+            drawn(&screen, 110, 8)[6],
+            text::lead_detached("riff-lead-o-r")
+        );
+        screen.attached("riff-lead-o-r", &Err(anyhow::anyhow!("no podman")));
+        assert_eq!(drawn(&screen, 110, 8)[6], "no podman");
     }
 
     #[test]

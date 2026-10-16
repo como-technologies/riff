@@ -210,3 +210,24 @@ fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
         );
     }
 }
+
+/// 01M51PD7Q24N252V66NFEHY49N: "Start the lead" in `development.md`
+/// shows the lines that riff prints at the end of the lead.
+#[test]
+fn start_the_lead_shows_the_lines_of_the_end_of_the_lead() {
+    let page = read("development.md");
+    let start = page
+        .find("\n### Start the lead\n")
+        .expect("development.md has \"### Start the lead\"");
+    let rest = &page[start + 1..];
+    let part = rest[4..].find("\n### ").map_or(rest, |end| &rest[..end + 4]);
+    for line in [
+        riff::text::lead_ended("riff-lead-OWNER-REPO"),
+        riff::text::LEAD_NO_RESUME.to_owned(),
+    ] {
+        assert!(
+            part.contains(&format!("\n{line}\n")),
+            "\"Start the lead\" has no line {line:?}"
+        );
+    }
+}

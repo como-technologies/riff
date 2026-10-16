@@ -6735,13 +6735,10 @@ pub fn lead_detached(name: &str) -> String {
 /// ```
 /// let line = riff::text::lead_ended("riff-lead-o-r");
 /// assert!(line.starts_with("The lead in the container riff-lead-o-r ended."));
-/// assert!(line.contains("riff lead start"));
+/// assert!(line.ends_with("Start it again in a clone: riff lead start"));
 /// ```
 pub fn lead_ended(name: &str) -> String {
-    format!(
-        "The lead in the container {name} ended. To start it again, run riff lead start in a \
-         clone of its repository."
-    )
+    format!("The lead in the container {name} ended. Start it again in a clone: riff lead start")
 }
 
 /// `riff lead start` after the end of the lead: `claude` printed a
