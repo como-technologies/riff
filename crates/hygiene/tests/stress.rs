@@ -157,11 +157,8 @@ fn stress_with_no_test_shows_the_usage() {
 #[test]
 fn the_recipe_runs_the_script_as_just_test_runs_cargo_test() {
     let justfile = std::fs::read_to_string(top().join("justfile")).unwrap();
-    let env = "RIFF_SERVER=http://127.0.0.1:9 \
-               DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus";
-    let recipe = format!(
-        "\nstress *ARGS:\n    cargo build -q --workspace --bins\n    {env} deploy/stress.sh {{{{ARGS}}}}\n"
-    );
-    assert!(justfile.contains(&recipe), "{recipe}");
-    assert!(justfile.contains(&format!("    {env} cargo test {{{{ARGS}}}}\n")));
+    let recipe = "\nstress *ARGS:\n    cargo build -q --workspace --bins\n    \
+                  {{test_env}} deploy/stress.sh {{ARGS}}\n";
+    assert!(justfile.contains(recipe), "{recipe}");
+    assert!(justfile.contains("    {{test_env}} cargo test {{ARGS}}\n"));
 }

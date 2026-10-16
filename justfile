@@ -124,7 +124,7 @@ cargo-test *ARGS:
 # Run a test many times on a busy machine: just stress -p riff --test all hosts::
 stress *ARGS:
     cargo build -q --workspace --bins
-    RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus deploy/stress.sh {{ARGS}}
+    {{test_env}} deploy/stress.sh {{ARGS}}
 
 # Build the API docs; a broken doc link fails
 doc:
