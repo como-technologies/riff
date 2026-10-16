@@ -389,7 +389,11 @@ async fn the_riff_of_the_bin_folder_puts_the_static_files_of_its_release_in_plac
     // The build of a clone starts nothing.
     let out = output(with_files(machine.riff("w1", &["who"]))).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
-    assert!(!text(&out.stderr).contains("not static"), "{}", text(&out.stderr));
+    assert!(
+        !text(&out.stderr).contains("not static"),
+        "{}",
+        text(&out.stderr)
+    );
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(riff::local::tried(&machine.state()), None);
 

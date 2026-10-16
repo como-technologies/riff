@@ -392,8 +392,12 @@ async fn riff_init_with_the_riff_of_a_plain_cargo_build_fails_one_check() {
             "  fail  the riff binary: {}: it needs the shared libraries of /",
             riff.display()
         );
-        assert!(failed[0].starts_with(&start), "{start}
-{}", failed[0]);
+        assert!(
+            failed[0].starts_with(&start),
+            "{start}
+{}",
+            failed[0]
+        );
         assert!(
             failed[0].ends_with(
                 ": it is not static. Fix: run riff update. It installs the static riff and \
