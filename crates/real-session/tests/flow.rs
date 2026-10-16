@@ -135,7 +135,13 @@ impl Fake {
         let clone = env.home().join("src/riff");
         // A host with claude has its state folder before the test.
         let claude_state = env.home().join(".local/state/claude");
-        for dir in [&bin, &ctl, &clone, &env.home().join(".claude/projects"), &claude_state] {
+        for dir in [
+            &bin,
+            &ctl,
+            &clone,
+            &env.home().join(".claude/projects"),
+            &claude_state,
+        ] {
             std::fs::create_dir_all(dir).unwrap();
         }
         // The files of the person that are there before the test.
