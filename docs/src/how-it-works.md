@@ -2426,6 +2426,33 @@ one page. When more messages follow, it says so, with the number of
 the last message. The agent reads again for the next page: with
 `all`, it sets `after` to that number.
 
+### A message that came before the start of a session
+
+A read marks as read only the messages that it shows. A message to a
+session stays unread until a read shows it: also a message that came
+before the session started, or between two pages of its first read.
+The first read of a session with `all` shows each message that came
+before it.
+
+The `read` tool with no thread gives `after` to each thread. So the
+next page can leave out a direct message that came after the first
+page. That page keeps the message unread. The next unread read shows
+it, and the server does not stop an idle worker with an unread request
+of its lead:
+
+```mermaid
+sequenceDiagram
+    participant W as new worker
+    participant S as riff-server
+    participant L as lead
+    W->>S: read, all (page 1 of the repository thread)
+    L->>S: tell W: request: claim issue-12
+    W->>S: read, all, after 50 (page 2)
+    S-->>W: page 2, nothing of the direct thread: it stays unread
+    W->>S: read
+    S-->>W: direct thread: request: claim issue-12
+```
+
 ### Use another thread
 
 The default thread is the thread of your repository. `-t`

@@ -1544,6 +1544,14 @@
   A read of all with `after` set to that number gives the next page.
   `riff read` and `riff read --all` read each page. The `read` tool of
   `riff mcp` gives one page, and says how to read the next.
+- **01M51TKZSYR7PH629S29JX00ZD** A read marks as read only the messages
+  that it shows. A read of all with `after` past the read cursor skips
+  the unread messages of other sessions up to `after`, so it keeps the
+  cursor. Those messages stay unread: the next unread read shows them,
+  and the idle stop sees each request among them
+  (01M49KT28N4B07P4G80Z74GRAH). For example, the `read` tool with no
+  thread gives `after` to each thread, so a direct message that came
+  after the first page of a long repository thread stays unread.
 - **01M3TBZBZVH907QD359AB8TBSX** Each hour, a timer of `riff-server`
   writes a `session_forgotten` record for each session with no sign of
   life for 30 days. It does not run in the first 3 minutes after a

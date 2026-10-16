@@ -298,6 +298,71 @@ async fn a_worker_asks_the_lead_and_gets_the_answer() {
     assert!(text.contains("Ask your own user"), "{text}");
 }
 
+/// A tell of the lead to a new worker reaches it, before its first read
+/// and between two pages of its start read (#651). The repository
+/// thread is longer than one page. The first read with no thread and
+/// `all` shows a tell that came before it. The next page, a read of all
+/// after a seq of the repository thread, shows nothing of a tell that
+/// came after the first page: it keeps the tell unread
+/// (01M51TKZSYR7PH629S29JX00ZD), and the next read shows it.
+#[tokio::test]
+async fn a_tell_to_a_new_worker_stays_unread_until_a_read_shows_it() {
+    use riff_state::state::PAGE;
+    let api = start_server().await;
+    let lead = connect(&api, MIKE).await;
+    let lead_uri: SessionUri = MIKE.parse().unwrap();
+    let repo = lead_uri.default_thread().unwrap();
+    for n in 1..=PAGE + 10 {
+        let body = format!("history {n}");
+        api.post(&lead_uri, Some(&repo), &[], &body, Default::default())
+            .await
+            .unwrap();
+    }
+    let direct = "direct with mike@pangolin:riff#api (a1)";
+    let more =
+        format!("More messages follow. Read this thread again. With all, set after to {PAGE}.");
+
+    let w1 = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=w1",
+    )
+    .await;
+    let tell = serde_json::json!({ "session": "w1", "body": "request: claim issue-7" });
+    call(&lead, "tell", tell).await;
+    let (first, _) = call(&w1, "read", serde_json::json!({ "all": true })).await;
+    assert!(first.contains(&more), "{first}");
+    assert!(
+        first.contains(&format!("{direct}\n[1] ")) && first.contains("request: claim issue-7"),
+        "{first}"
+    );
+
+    let w2 = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=w2",
+    )
+    .await;
+    let (first, _) = call(&w2, "read", serde_json::json!({ "all": true })).await;
+    assert!(first.contains(&more) && !first.contains(direct), "{first}");
+    let tell = serde_json::json!({ "session": "w2", "body": "request: claim issue-12" });
+    call(&lead, "tell", tell).await;
+    let next = serde_json::json!({ "all": true, "after": PAGE });
+    let (second, _) = call(&w2, "read", next).await;
+    assert!(
+        second.contains(&format!("history {}", PAGE + 10)),
+        "{second}"
+    );
+    let (threads, _) = call(&w2, "threads", serde_json::json!({})).await;
+    assert!(
+        threads.contains(&format!("{direct}: 2 members, 1 unread")),
+        "{threads}"
+    );
+    let (read, _) = call(&w2, "read", serde_json::json!({})).await;
+    assert!(
+        read.contains(&format!("{direct}\n[1] ")) && read.contains("request: claim issue-12"),
+        "{read}"
+    );
+}
+
 #[tokio::test]
 async fn a_status_request_gets_an_answer_with_the_status_tool() {
     let api = start_server().await;
