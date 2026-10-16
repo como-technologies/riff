@@ -858,6 +858,15 @@ fn counts(sessions: &[&SessionInfo], kinds: bool, server: Option<&Build>) -> Str
             format!("{n} {word}s")
         }
     };
+    let old = sessions
+        .iter()
+        .filter(|_| kinds)
+        .filter(|s| out_of_date(s, server))
+        .count();
+    let old: Vec<String> = (old > 0)
+        .then(|| format!("{old} out of date"))
+        .into_iter()
+        .collect();
     let kinds: Vec<String> = SessionKind::ALL
         .into_iter()
         .filter(|_| kinds)
@@ -886,15 +895,6 @@ fn counts(sessions: &[&SessionInfo], kinds: bool, server: Option<&Build>) -> Str
     if claims > 0 {
         parts.push(many(claims, "claim"));
     }
-    let old = sessions
-        .iter()
-        .filter(|_| kinds)
-        .filter(|s| out_of_date(s, server))
-        .count();
-    let old: Vec<String> = (old > 0)
-        .then(|| format!("{old} out of date"))
-        .into_iter()
-        .collect();
     let head = many(sessions.len(), "session");
     let groups: Vec<String> = [kinds, old, parts]
         .into_iter()
