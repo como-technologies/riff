@@ -536,6 +536,28 @@ mod tests {
         ));
     }
 
+    /// 01M51V0Q5E7MNPWP9T7TSJFT5W: the skill says to run each `riff` and
+    /// `gh` step alone, with no `cd`, and with each file by its absolute
+    /// path.
+    #[test]
+    fn the_skill_says_to_run_each_step_alone() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let start = skill.find("## Run each step alone").unwrap();
+        let end = start + 1 + skill[start + 1..].find("\n## ").unwrap();
+        let part = flat(&skill[start..end]);
+        for words in [
+            "Claude Code matches a permission rule to each part of a Bash call.",
+            "run each `riff` and `gh` step of this skill alone, in its own Bash call",
+            "Put no `cd` before the step.",
+            "Join no other command to the step with `&&`, `||` or `;`.",
+            "Give each file by its absolute path",
+            "Put the repository after the words of the step",
+        ] {
+            assert!(part.contains(words), "{words}\nis not in\n{part}");
+        }
+    }
+
     /// 01M51JBET7R9QTT15BXDPM5QG7: the skill says what a session does
     /// with the message of the server that ends its claim.
     #[test]

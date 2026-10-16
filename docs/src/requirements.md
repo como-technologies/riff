@@ -5489,6 +5489,11 @@ share.
   step is in bounds) or a change of the skill (the step is out of
   bounds). The fix is never that a person does the refused step by
   hand.
+- **01M51V0Q5E7MNPWP9T7TSJFT5W** A session runs each `riff` and `gh`
+  step alone, in its own Bash call, and gives each file of the step by
+  its absolute path. No `cd` comes before the step, and no `&&`, `||`
+  or `;` joins another command to it. The skill says so. A test checks
+  that no code line of the skill joins a step to another command.
 - **01M516HETNZCBFBJNHT8BKFB1Y** riff gives each session that it starts
   the auto mode settings of one place in its code
   (`riff::permissions::auto_mode`): `skillOverrides` with

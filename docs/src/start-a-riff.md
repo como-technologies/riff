@@ -280,6 +280,22 @@ not change its own permissions. The auto mode check gives the reason
 | `Bash(gh pr create *)`, `Bash(gh pr merge --auto --squash *)`, `Bash(gh pr comment *)`, `Bash(gh pr view *)`, `Bash(gh pr checks *)` | the steps of a pull request |
 | `Bash(gh issue view *)`, `Bash(gh issue list *)`, `Bash(gh issue create *)`, `Bash(gh issue comment *)`, `Bash(gh issue edit *)` | the steps of an issue |
 
+#### One step in each call
+
+Claude Code matches a rule to each part of a Bash call. So a session
+of riff runs each `riff` and `gh` step alone, in its own call, and
+gives each file by its absolute path:
+
+```sh
+gh issue edit 12 --body-file /home/you/tmp/body-12.md
+```
+
+A rule allows no call that also has a `cd` out of the working folders
+of the session, for example `cd ~/tmp && gh issue edit 12 --body-file
+body-12.md`. Then the auto mode check judges the whole call, and it
+can refuse it. A `-R` before the words of a step also matches no rule:
+put `--repo OWNER/REPO` after them.
+
 #### Remove a wide rule
 
 riff adds rules, and removes none with no yes. A rule that you added
