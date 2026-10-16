@@ -1378,6 +1378,7 @@ The test leaves out these paths with no `--skip`:
 | `~/.cache` | the caches of your tools |
 | `~/snap` | the snap apps, for example the Firefox snap |
 | `~/.local/state/claude/locks` | each `claude` on your machine |
+| `.claude/worktrees` and `.git` in each git clone of your home, except `.git/hooks`, `.git/config` and `.git/config.worktree` | your other sessions: they build and commit in their worktrees, and git writes in the `.git` of the clone |
 | `~/.claude`, `~/.claude.json`, `~/.claude.json.lock` | your other Claude Code sessions (see [What the home check compares](#what-the-home-check-compares)) |
 
 The test uses `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and

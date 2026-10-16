@@ -6173,6 +6173,14 @@ then.
   `claude/locks` in `XDG_STATE_HOME`. The snap apps and each `claude`
   on the host write there while the test runs. `--skip` stays for the
   other programs.
+- **01M51SPS50QQ9Y5C6VE26A18FZ** The home check of the real-session
+  test also leaves out, with no flag, each path in a folder `.git`
+  except `hooks`, `config` and `config.worktree`, and the folder
+  `.claude/worktrees` of each git clone of the home (a folder with
+  `.git` in it). The other sessions of the person build and commit in
+  their worktrees, and make new worktrees, while the test runs. A new
+  path in the rest of each clone still counts, also a new hook and a
+  new config file of git.
 - **01M4ZFPYNGFF49WWHR8EBWSTNG** Before `riff run`, the real-session
   test starts `riff daemon` of the tree in a process group of its own,
   and waits up to 10 seconds until `riff daemon status` answers. When a
