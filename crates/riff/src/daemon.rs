@@ -5299,6 +5299,30 @@ mod tests {
         let read = tb.ok("read", json!({})).await;
         assert!(read.contains("a direct word"), "{read}");
 
+        // A tells B, posts a note, and tells B again. A read of all after
+        // the note shows the second tell and skips the first, so the first
+        // stays unread until a read shows it (01M51TKZSYR7PH629S29JX00ZD).
+        let request = "request: claim issue-12";
+        ta.ok("tell", json!({"session": b_id, "body": request}))
+            .await;
+        let note = ta
+            .ok("post", json!({"body": "a note", "kind": "note"}))
+            .await;
+        let after: u64 = note
+            .strip_prefix("Posted message ")
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|seq| seq.parse().ok())
+            .unwrap_or_else(|| panic!("{note}"));
+        ta.ok("tell", json!({"session": b_id, "body": "a second word"}))
+            .await;
+        let read = tb.ok("read", json!({"all": true, "after": after})).await;
+        assert!(read.contains("a second word"), "{read}");
+        assert!(!read.contains(request), "{read}");
+        let threads = tb.ok("threads", json!({})).await;
+        assert!(threads.contains(", 2 unread"), "{threads}");
+        let read = tb.ok("read", json!({})).await;
+        assert!(read.contains(request), "{read}");
+
         // A sets its status, and who shows it. whoami of A shows its claim.
         ta.ok("status", json!({"step": "runs the tests"})).await;
         let who = tb.ok("who", json!({})).await;
