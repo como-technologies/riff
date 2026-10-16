@@ -65,6 +65,7 @@ fn share_a_riff_in_the_book_has_each_member_command() {
             "riff join riff1-...",
             "riff members",
             "riff invite sandman",
+            "riff join riff1-...",
             "riff members",
             "riff view",
             "riff top",
@@ -85,9 +86,11 @@ fn share_a_riff_in_the_book_has_each_member_command() {
         "{part}"
     );
     for words in [
-        "The user of the owner is `USER` of the machine of the owner.",
+        "The user of the owner is `USER` of the machine of the owner: your login name \
+         there.",
         "A new key gets the user of its invite.",
         "So invite the user that `riff members` shows for this machine.",
+        "On the second machine, with the new string:",
     ] {
         assert!(part.contains(words), "{words}: {part}");
     }
