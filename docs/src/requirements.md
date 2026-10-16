@@ -5331,6 +5331,20 @@ share.
   that reads the file at the same time sees the old text or the new
   text, never a part. The file keeps its mode. A settings file that is
   a symbolic link stays a link: riff writes the file that it names.
+- **01M51JCW04FAHZDQ144KDNCCPX** `riff init` and `riff init --check`
+  name each wide allow rule, with its file: in the user settings of
+  Claude Code, and in the project settings and the local settings of
+  the repository of the current folder. A rule is wide when it is a
+  rule of the Bash tool, and it has no pattern, or it has a `*` that is
+  not at its end after a space, or it matches a command of the list
+  `riff::permissions::OUT_OF_BOUNDS`. The old end `:*` of a pattern is
+  ` *`. A rule of another tool is never wide. A wide rule fails no
+  check.
+- **01M51JCW2EKF8H8QFQYSVRSPET** `riff init` asks one yes or no
+  question before it removes the wide rules. Only a `y` in a terminal
+  removes them. A no, no terminal, `--yes` and `--check` keep each
+  rule. riff removes only the wide rules, and keeps each other rule and
+  key in its order.
 
 - **01M5084K9J566981EXZ7YJRGRR** When the auto mode check refuses a
   step, the session stops that step, writes the command and the reason

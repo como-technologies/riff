@@ -5930,6 +5930,57 @@ pub fn init_rules_kept(path: &Path) -> String {
 pub const INIT_NO_TERMINAL: &str =
     "riff init asks its question only in a terminal. To add the rules, run: riff init --yes";
 
+/// The allow rules of Claude Code that are wider than the steps of riff,
+/// with their files (01M51JCW04FAHZDQ144KDNCCPX).
+///
+/// ```
+/// use riff::first_run::Wide;
+/// use riff::permissions::Rules;
+///
+/// let wide = [Wide {
+///     path: "/h/s.json".into(),
+///     rules: Rules { allow: vec!["Bash(git push *)".into()], deny: vec![] },
+/// }];
+/// let text = riff::text::init_wide(&wide);
+/// assert!(text.starts_with("These allow rules of Claude Code are wider than the steps of riff."), "{text}");
+/// assert!(text.ends_with(":\n  /h/s.json:\n    allow Bash(git push *)"), "{text}");
+/// ```
+pub fn init_wide(wide: &[crate::first_run::Wide]) -> String {
+    let mut files = String::new();
+    for file in wide {
+        files.push_str(&format!("\n  {}:", file.path.display()));
+        for rule in &file.rules.allow {
+            files.push_str(&format!("\n    allow {rule}"));
+        }
+    }
+    format!(
+        "These allow rules of Claude Code are wider than the steps of riff. Each one also \
+         allows commands that no step of riff needs:{files}"
+    )
+}
+
+/// The question of `riff init` about the wide rules
+/// (01M51JCW2EKF8H8QFQYSVRSPET).
+pub const INIT_ASK_WIDE: &str = "Remove them? riff keeps each other rule and key. [y/N] ";
+
+/// `riff init` removed `count` wide rules from the settings at `path`.
+///
+/// ```
+/// let removed = riff::text::init_wide_removed("/h/s.json".as_ref(), 1);
+/// assert_eq!(removed, "riff removed 1 allow rule from /h/s.json.");
+/// ```
+pub fn init_wide_removed(path: &Path, count: usize) -> String {
+    let s = if count == 1 { "" } else { "s" };
+    format!(
+        "riff removed {count} allow rule{s} from {}.",
+        path.display()
+    )
+}
+
+/// `riff init` kept each wide rule: no `y` in a terminal.
+pub const INIT_WIDE_KEPT: &str =
+    "riff removed no rule. To remove them, run riff init in a terminal, and answer y.";
+
 /// Some checks of `riff init` failed.
 ///
 /// ```
