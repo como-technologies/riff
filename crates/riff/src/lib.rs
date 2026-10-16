@@ -135,6 +135,7 @@ pub mod terminal;
 pub mod text;
 pub mod tidy;
 pub mod top;
+pub mod update_steps;
 pub mod usage;
 pub mod view;
 pub mod wave;

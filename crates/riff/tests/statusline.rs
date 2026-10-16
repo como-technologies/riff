@@ -3,6 +3,8 @@
 //! fails. It adds a tag when the riff runs a newer release
 //! (01M3NT6X22A4GNFTNKRYV8Z4N1, 01M3NJCWDN5APKZ3Z53XQR8P0B). It asks
 //! riff-server with `GET /v1/me`, not `who` (01M3T5GFVS8NMA992KHZN4VE17).
+//! It adds a tag for a step of an update that only the person can do
+//! (01M51QFPW37EXVH4AXH70MSXBT).
 
 use axum::http::HeaderValue;
 use axum::response::Response;
@@ -242,6 +244,25 @@ async fn a_release_that_riff_cannot_talk_to_still_gives_the_tag() {
             far.version
         )
     );
+}
+
+/// 01M51QFPW37EXVH4AXH70MSXBT: a step of an update that only the person
+/// can do gives a tag with its fix, until it is in step. The tag reads
+/// only a local file.
+#[tokio::test]
+async fn a_step_that_needs_the_person_gives_a_tag_with_its_fix() {
+    let dir = repo();
+    let state = dir.path().join("state");
+    let server = server_of(Build::this()).await;
+    join(&server, dir.path()).await;
+    let step = "the init of podman: sudo apt install catatonit";
+    riff::local::set_needs_you(&state, Some(step)).unwrap();
+    assert_eq!(
+        line(&server, dir.path()).await,
+        format!("riff a6cf2205 lead needs you: {step}\n")
+    );
+    riff::local::set_needs_you(&state, None).unwrap();
+    assert_eq!(line(&server, dir.path()).await, "riff a6cf2205 lead\n");
 }
 
 #[tokio::test]

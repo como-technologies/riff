@@ -604,6 +604,28 @@ fn cgroup_check(facts: &Facts) -> Check {
 /// Each check of the first run on `facts`, in order
 /// (01M4ZJN6TEWCYCB39XTH6BBD9H).
 pub fn checks(facts: &Facts) -> Vec<Check> {
+    let image = match &facts.image {
+        Ok(image) => Check::pass("the session image", image.clone()),
+        Err(why) => Check::fail(
+            "the session image",
+            why.clone(),
+            text::INIT_FIX_IMAGE.into(),
+        ),
+    };
+    let riff = match &facts.riff {
+        Ok(found) => Check::pass(text::INIT_RIFF, found.clone()),
+        Err(found) => Check::fail(text::INIT_RIFF, found.clone(), text::INIT_FIX_RIFF.into()),
+    };
+    let mut checks = machine_checks(facts);
+    checks.extend([image, rules_check(&facts.settings), riff]);
+    checks
+}
+
+/// The checks of the machine on `facts`, in order: podman, the init of
+/// podman, `/etc/subuid`, `/etc/subgid` and cgroup v2. Only a person
+/// can do their fix, for example with `sudo`, so the riff daemon never
+/// does it (01M51QFPW37EXVH4AXH70MSXBT, [`crate::update_steps`]).
+pub fn machine_checks(facts: &Facts) -> Vec<Check> {
     let podman = match &facts.podman {
         Ok(_) if facts.uid == 0 => {
             Check::fail("podman", text::INIT_ROOT.into(), text::INIT_FIX_ROOT.into())
@@ -619,27 +641,12 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
             text::INIT_FIX_INIT.into(),
         ),
     };
-    let image = match &facts.image {
-        Ok(image) => Check::pass("the session image", image.clone()),
-        Err(why) => Check::fail(
-            "the session image",
-            why.clone(),
-            text::INIT_FIX_IMAGE.into(),
-        ),
-    };
-    let riff = match &facts.riff {
-        Ok(found) => Check::pass(text::INIT_RIFF, found.clone()),
-        Err(found) => Check::fail(text::INIT_RIFF, found.clone(), text::INIT_FIX_RIFF.into()),
-    };
     vec![
         podman,
         init,
         sub_check("uid", facts.subuid.as_deref(), facts),
         sub_check("gid", facts.subgid.as_deref(), facts),
         cgroup_check(facts),
-        image,
-        rules_check(&facts.settings),
-        riff,
     ]
 }
 

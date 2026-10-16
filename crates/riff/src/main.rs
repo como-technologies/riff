@@ -486,10 +486,18 @@ enum Command {
         /// Turn the update by itself on or off for this machine, and
         /// install nothing now. When it is on, riff installs each new
         /// release that the riff runs, in the background, and the riff
-        /// daemon adds the new permission rules of Claude Code of each
-        /// release. With no value, show the setting.
+        /// daemon of each release does each step of riff init that needs
+        /// no person: the permission rules of Claude Code, the unit of the
+        /// daemon and the session images. With no value, show the setting.
         #[arg(long, value_enum, conflicts_with_all = ["tag", "background"])]
         auto: Option<Option<Switch>>,
+        /// Show each step of an update on this machine, and change
+        /// nothing: the riff binary, the rules of Claude Code, the unit of
+        /// the riff daemon, the session images and the checks of the
+        /// machine, each in step or not, with the fix. It exits with 1
+        /// when a step is not in step.
+        #[arg(long, conflicts_with_all = ["tag", "auto", "background"])]
+        check: bool,
         /// Run as the update by itself: take the update lock of this
         /// machine, and tell the lead the result.
         #[arg(long, hide = true, requires = "tag")]
@@ -1616,11 +1624,15 @@ async fn main() -> Result<()> {
     if let Command::Update {
         tag,
         auto,
+        check,
         background,
         cargo,
         claude,
     } = &cli.command
     {
+        if *check {
+            std::process::exit(update_check().await?);
+        }
         if let Some(auto) = auto {
             let path = settings::path()?;
             if let Some(switch) = auto {
@@ -2665,6 +2677,20 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
     }
 }
 
+/// `riff update --check` on this machine, in the working directory
+/// (01M51QFPYHK0916C5ZN2B55BR0). It gives the exit code.
+async fn update_check() -> Result<i32> {
+    #[cfg(target_os = "linux")]
+    {
+        let (daemon, here) = (riff::daemon::dir()?, identity::working_dir()?);
+        Ok(riff::update_steps::check(&riff::podman::Podman, &daemon, &here).await)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        anyhow::bail!(text::RUN_LINUX_ONLY)
+    }
+}
+
 /// `riff view` on this machine: the daemon of [`riff::daemon::dir`] and
 /// rootless podman.
 async fn view_command() -> Result<()> {
@@ -3501,11 +3527,16 @@ async fn statusline(server: &str) -> String {
         _ => riff::link::server_build(),
     };
     let info = found.ok().and_then(Result::ok).flatten();
-    let line = text::statusline(&id, info.as_ref());
-    match server.and_then(|server| update_tag(&server)) {
-        Some(tag) => format!("{line} {}", text::update_tag(&tag)),
-        None => line,
+    let mut line = text::statusline(&id, info.as_ref());
+    if let Some(tag) = server.and_then(|server| update_tag(&server)) {
+        line = format!("{line} {}", text::update_tag(&tag));
     }
+    // A step of an update that only the person can do
+    // (01M51QFPW37EXVH4AXH70MSXBT). It reads only a local file.
+    if let Some(step) = local::dir().as_deref().and_then(local::needs_you) {
+        line = format!("{line} {}", text::needs_you_tag(&step));
+    }
+    line
 }
 
 /// The tag of the status line for a riff of `server`

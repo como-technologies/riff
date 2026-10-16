@@ -238,6 +238,13 @@ pub trait ServiceManager {
     /// An error for a unit file that riff did not write.
     fn installed(&self) -> Result<Option<Unit>>;
 
+    /// The text of the unit file, or `None` when no unit file is there.
+    /// An error for a unit file that riff did not write. A manager that
+    /// keeps no text gives the text of [`ServiceManager::installed`].
+    fn installed_text(&self) -> Result<Option<String>> {
+        self.installed()?.map(|unit| unit.text()).transpose()
+    }
+
     /// Writes `unit`, and reloads the manager. It does not start the
     /// unit again (01M517BTDRKDXD3X84P6AEAF7P). Gives the path of the
     /// unit file.
@@ -336,6 +343,15 @@ impl ServiceManager for Systemd {
     }
 
     fn installed(&self) -> Result<Option<Unit>> {
+        let Some(text) = self.installed_text()? else {
+            return Ok(None);
+        };
+        Unit::parse(&text)
+            .map(Some)
+            .with_context(|| text::unit_unreadable(&self.unit_path()))
+    }
+
+    fn installed_text(&self) -> Result<Option<String>> {
         let path = self.unit_path();
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
@@ -345,9 +361,7 @@ impl ServiceManager for Systemd {
         if text.lines().next() != Some(MARK) {
             bail!("{}", text::unit_not_of_riff(&path));
         }
-        Unit::parse(&text)
-            .map(Some)
-            .with_context(|| text::unit_unreadable(&path))
+        Ok(Some(text))
     }
 
     fn rewrite(&self, unit: &Unit) -> Result<PathBuf> {

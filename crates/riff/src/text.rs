@@ -2986,6 +2986,20 @@ pub fn update_tag(tag: &crate::auto_update::Tag) -> String {
     }
 }
 
+/// The tag of the status line for a step of an update that only a
+/// person can do (01M51QFPW37EXVH4AXH70MSXBT): `line` is
+/// [`crate::update_steps::needs_you`].
+///
+/// ```
+/// assert_eq!(
+///     riff::text::needs_you_tag("podman: sudo apt install podman"),
+///     "needs you: podman: sudo apt install podman"
+/// );
+/// ```
+pub fn needs_you_tag(line: &str) -> String {
+    format!("needs you: {line}")
+}
+
 /// The answer to `status`.
 ///
 /// ```
@@ -3929,6 +3943,197 @@ pub fn rules_synced(build: &str, path: &Path, synced: &crate::rule_sync::Synced)
 /// failed with `error` (01M51M3ZPAEMJ64266QSJBNQ46).
 pub fn rules_sync_failed(build: &str, error: &str) -> String {
     format!("riff {build} cannot sync the rules: {error}")
+}
+
+/// The fix of the step of the rules of Claude Code
+/// (01M51QFPYHK0916C5ZN2B55BR0).
+pub const STEP_FIX_RULES: &str = "riff init --yes";
+
+/// The name of the step of the riff binary (01M51QFPYHK0916C5ZN2B55BR0).
+pub const STEP_BINARY: &str = "the riff binary";
+
+/// The fix of the step of the riff binary.
+pub const STEP_FIX_BINARY: &str = "riff update";
+
+/// The step of the riff binary is in step: it is the release `tag`.
+pub fn step_binary_release(tag: &str) -> String {
+    format!("it is the release {tag}")
+}
+
+/// The name of the step of the unit of the daemon
+/// (01M51QFPQ68JHS08TWXNNWZ0D7).
+pub const STEP_UNIT: &str = "the unit of the daemon";
+
+/// The fix of the step of the unit of the daemon.
+pub const STEP_FIX_UNIT: &str = "riff daemon install";
+
+/// The step of the unit: no unit file.
+pub const STEP_NO_UNIT: &str = "no unit of the riff daemon is installed";
+
+/// The step of the unit: the unit file has no `ExecStart` of
+/// `riff daemon`.
+pub const STEP_UNIT_UNREADABLE: &str =
+    "riff cannot read the riff and the variables of the unit file";
+
+/// The step of the unit: the file is not the text that this riff writes.
+pub const STEP_UNIT_OLD: &str = "the unit file is not the text that this riff writes for it";
+
+/// The step of the unit is in step: the unit runs `exe`.
+pub fn step_unit_there(exe: &Path) -> String {
+    format!("it runs {}", exe.display())
+}
+
+/// The daemon wrote the unit file at `path` again
+/// (01M51QFPQ68JHS08TWXNNWZ0D7).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::step_unit_written("/h/riff.service".as_ref()),
+///     "riff wrote /h/riff.service again. The daemon starts again on it when it is idle."
+/// );
+/// ```
+pub fn step_unit_written(path: &Path) -> String {
+    format!(
+        "riff wrote {} again. The daemon starts again on it when it is idle.",
+        path.display()
+    )
+}
+
+/// The name of the step of the session image of `repo`
+/// (01M51QFPSMDDMFPZXAEYWZYJPV).
+pub fn step_image(repo: &str) -> String {
+    format!("the session image of {repo}")
+}
+
+/// The name of the repository of the current folder in the step of its
+/// image, in `riff update --check`.
+pub const STEP_HERE: &str = "this folder";
+
+/// The step of an image: podman does not have `image`.
+pub fn step_no_image(image: &str) -> String {
+    format!("podman does not have {image}")
+}
+
+/// The fix of the step of an image.
+pub fn step_fix_image(image: &str) -> String {
+    format!("podman pull {image}")
+}
+
+/// The daemon pulled `image` (01M51QFPSMDDMFPZXAEYWZYJPV).
+pub fn step_pulled(image: &str) -> String {
+    format!("riff pulled {image}")
+}
+
+/// The line of a step of an update (01M51QFPYHK0916C5ZN2B55BR0): its
+/// state, its name `name`, and what riff found or did.
+///
+/// ```
+/// use riff::update_steps::State;
+///
+/// let line = |state| riff::text::step_line("the unit of the daemon", &state);
+/// assert_eq!(line(State::InStep("it runs /r".into())), "in step  the unit of the daemon: it runs /r");
+/// assert_eq!(line(State::Done("riff wrote it".into())), "done  the unit of the daemon: riff wrote it");
+/// assert_eq!(
+///     line(State::Behind { found: "an old text".into(), fix: "riff daemon install".into() }),
+///     "not in step  the unit of the daemon: an old text. Fix: riff daemon install"
+/// );
+/// assert_eq!(line(State::Failed("no systemctl".into())), "failed  the unit of the daemon: no systemctl");
+/// ```
+pub fn step_line(name: &str, state: &crate::update_steps::State) -> String {
+    use crate::update_steps::State;
+    let found = |found: &str| found.trim_end_matches('.').to_owned();
+    match state {
+        State::InStep(found) => format!("in step  {name}: {found}"),
+        State::Done(did) => format!("done  {name}: {did}"),
+        State::Behind { found: f, fix } => format!("not in step  {name}: {}. Fix: {fix}", found(f)),
+        State::Person { found: f, fix } => format!("needs you  {name}: {}. Fix: {fix}", found(f)),
+        State::Failed(why) => format!("failed  {name}: {why}"),
+    }
+}
+
+/// The step `name` that only a person can do, with its fix `fix`, and
+/// `more` other such steps (01M51QFPW37EXVH4AXH70MSXBT).
+pub fn needs_you(name: &str, fix: &str, more: usize) -> String {
+    match more {
+        0 => format!("{name}: {fix}"),
+        1 => format!("{name}: {fix} (and 1 more step: riff update --check)"),
+        more => format!("{name}: {fix} (and {more} more steps: riff update --check)"),
+    }
+}
+
+/// The log line of the gate of the steps of an update of the riff
+/// daemon `build` (01M51QFPJAABDP1V7WFY8NQR60).
+///
+/// ```
+/// use riff::update_steps::Gate;
+///
+/// let line = |g| riff::text::steps_gate("1.5.0 (abc)", &g);
+/// assert_eq!(
+///     line(Gate::Off),
+///     "riff 1.5.0 (abc) does no step of an update: update.auto is off"
+/// );
+/// assert_eq!(
+///     line(Gate::NotRelease("it is a dev build".into())),
+///     "riff 1.5.0 (abc) does no step of an update: it is not a release: it is a dev build"
+/// );
+/// assert_eq!(
+///     line(Gate::Open("v1.5.0".into())),
+///     "riff 1.5.0 (abc) is the release v1.5.0, and update.auto is on: it does each step of an \
+///      update that is not in step"
+/// );
+/// ```
+pub fn steps_gate(build: &str, gate: &crate::update_steps::Gate) -> String {
+    use crate::update_steps::Gate;
+    match gate {
+        Gate::Off => format!("riff {build} does no step of an update: update.auto is off"),
+        Gate::NotRelease(why) => {
+            format!("riff {build} does no step of an update: it is not a release: {why}")
+        }
+        Gate::Open(tag) => format!(
+            "riff {build} is the release {tag}, and update.auto is on: it does each step of an \
+             update that is not in step"
+        ),
+    }
+}
+
+/// The first line of `riff update --check`: what the riff daemon of this
+/// riff does at its next start (01M51QFPYHK0916C5ZN2B55BR0).
+///
+/// ```
+/// use riff::update_steps::Gate;
+///
+/// let line = |g| riff::text::steps_check_gate(&g);
+/// assert_eq!(
+///     line(Gate::Off),
+///     "update.auto is off, so the riff daemon does no step. To turn it on, run: riff update \
+///      --auto on"
+/// );
+/// assert_eq!(
+///     line(Gate::NotRelease("it is a dev build".into())),
+///     "update.auto is on, but this riff is not a release, so the riff daemon of this riff does \
+///      no step: it is a dev build"
+/// );
+/// assert_eq!(
+///     line(Gate::Open("v1.5.0".into())),
+///     "update.auto is on, and this riff is the release v1.5.0: at its next start, the riff \
+///      daemon does each step that is not in step and needs no person"
+/// );
+/// ```
+pub fn steps_check_gate(gate: &crate::update_steps::Gate) -> String {
+    use crate::update_steps::Gate;
+    match gate {
+        Gate::Off => "update.auto is off, so the riff daemon does no step. To turn it on, run: \
+                      riff update --auto on"
+            .to_owned(),
+        Gate::NotRelease(why) => format!(
+            "update.auto is on, but this riff is not a release, so the riff daemon of this riff \
+             does no step: {why}"
+        ),
+        Gate::Open(tag) => format!(
+            "update.auto is on, and this riff is the release {tag}: at its next start, the riff \
+             daemon does each step that is not in step and needs no person"
+        ),
+    }
 }
 
 /// The refusal of `riff workers host` outside tmux
