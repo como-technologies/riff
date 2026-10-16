@@ -139,6 +139,18 @@ impl fmt::Debug for Secret {
     }
 }
 
+/// An invite string on its way: on the control socket of the daemon. Its
+/// `Debug` shows no part of it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Text(pub String);
+
+impl fmt::Debug for Text {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Text(..)")
+    }
+}
+
 /// One invite: what the invite string holds.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Invite {

@@ -343,26 +343,79 @@ enum Command {
     },
     /// Let a person join this riff
     ///
-    /// It adds their verified email to the members. They need no allowed
-    /// domain. Only the owner or an admin can. It prints the address of
-    /// the riff and the lines that the person runs to join.
+    /// riff invite USER prints an invite string for one new machine of the
+    /// user USER, in the riff of the riff daemon of this machine. Only the
+    /// owner of the riff runs it, in a terminal. The string works one time,
+    /// for 24 hours. It is a secret: send it to the person by hand. They
+    /// run riff join with it. The daemon of the owner must be online for
+    /// the join.
+    ///
+    /// With --email, it acts on riff-server 1.x: it adds the verified
+    /// email of a person to the members, and prints the address of the riff
+    /// and the lines that the person runs to join. Only the owner or an
+    /// admin can.
+    #[command(group = clap::ArgGroup::new("who").required(true).args(["user", "email"]))]
     Invite {
-        /// The email that the person signs in with.
-        email: String,
+        /// The user of the new machine, for example brett.
+        user: Option<String>,
+        /// riff-server 1.x: the email that the person signs in with.
+        #[arg(long)]
+        email: Option<String>,
     },
+    /// Join the riff of another person with an invite string
+    ///
+    /// The riff daemon of this machine connects to the daemon of the owner,
+    /// and gets each record of the riff. The daemon of the owner must be
+    /// online. A daemon is in one riff at a time: riff join refuses while
+    /// your riff has another member. Run it in a terminal. A failed join
+    /// changes nothing, and says why.
+    Join {
+        /// The invite string of the owner: riff1-...
+        invite: String,
+    },
+    /// Take this machine out of the riff of another person
+    ///
+    /// The riff daemon of this machine tells each member that it leaves,
+    /// and has a riff of its own again, with the same key. Each session of
+    /// this machine leaves with it. The owner cannot leave. Run it in a
+    /// terminal.
+    Leave,
     /// Remove a member of this riff
     ///
-    /// It also ends each sign-in of that person. Only the owner or an
-    /// admin can. The owner stays.
+    /// riff remove USER removes each machine of the user USER from the riff
+    /// of the riff daemon of this machine. With --host, it removes one
+    /// machine. Each daemon of the riff then refuses the key of that
+    /// machine. Only the owner runs it, in a terminal. The owner cannot
+    /// remove itself.
+    ///
+    /// With --email, it acts on riff-server 1.x: it removes a person, and
+    /// ends each sign-in of that person. Only the owner or an admin can.
+    /// The owner stays.
+    #[command(group = clap::ArgGroup::new("who").required(true).args(["user", "email"]))]
     Remove {
-        /// The email of the person.
-        email: String,
+        /// The user, for example brett.
+        user: Option<String>,
+        /// Remove only the machine of USER on this host.
+        #[arg(long, requires = "user")]
+        host: Option<String>,
+        /// riff-server 1.x: the email of the person.
+        #[arg(long, conflicts_with = "user")]
+        email: Option<String>,
     },
     /// List who may join this riff
     ///
-    /// It lists the owner, the admins, the members and the allowed
-    /// domains.
-    Members,
+    /// It lists the owner and each machine of the riff of the riff daemon
+    /// of this machine: the user, the host, the start of its key, and its
+    /// state: this machine, online, or when it was last seen, and forked,
+    /// removed or left.
+    ///
+    /// With --email, it acts on riff-server 1.x: it lists the owner, the
+    /// admins, the members and the allowed domains.
+    Members {
+        /// riff-server 1.x: list the people of the riff of riff-server.
+        #[arg(long)]
+        email: bool,
+    },
     /// Make a person an admin, or a member again
     ///
     /// An admin can invite and remove members. Only the owner can.
@@ -1614,6 +1667,22 @@ async fn main() -> Result<()> {
     if let Command::View = cli.command {
         return view_command().await;
     }
+    // The member commands of a riff of peers (#843). With --email they act
+    // on riff-server 1.x, below (01M519Z4AEMDFGBF22RZ3HQR1R).
+    match &cli.command {
+        Command::Invite {
+            user: Some(user), ..
+        } => return riff::share::invite(user).await,
+        Command::Join { invite } => return riff::share::join(invite).await,
+        Command::Leave => return riff::share::leave().await,
+        Command::Remove {
+            user: Some(user),
+            host,
+            ..
+        } => return riff::share::remove(user, host.as_deref()).await,
+        Command::Members { email: false } => return riff::share::members().await,
+        _ => {}
+    }
     if let Command::Takeover { name, at_end } = &cli.command {
         let code = riff::takeover::here(name, *at_end).await?;
         if code != 0 {
@@ -1907,14 +1976,18 @@ async fn main() -> Result<()> {
             println!("{}", text::revoked(&done));
             return Ok(());
         }
-        Command::Invite { email } => {
+        Command::Invite {
+            email: Some(email), ..
+        } => {
             let me = person(&api)?;
             let changed = api.signed_in(None)?.invite(&me, email).await?;
             println!("{}", text::invited(&changed.done));
             print_members_news(&changed.news);
             return Ok(());
         }
-        Command::Remove { email } => {
+        Command::Remove {
+            email: Some(email), ..
+        } => {
             let me = person(&api)?;
             let changed = api.signed_in(None)?.remove(&me, email).await?;
             println!("{}", text::removed(&changed.done));
@@ -1925,7 +1998,7 @@ async fn main() -> Result<()> {
             let me = person(&api)?;
             return riff::chat::run(&api.signed_in(None)?, &me, *after).await;
         }
-        Command::Members => {
+        Command::Members { email: true } => {
             anstream::print!("{}", view::members(&api.signed_in(None)?.members().await?));
             return Ok(());
         }
@@ -2304,8 +2377,10 @@ async fn main() -> Result<()> {
         | Command::Login
         | Command::Logout { .. }
         | Command::Invite { .. }
+        | Command::Join { .. }
+        | Command::Leave
         | Command::Remove { .. }
-        | Command::Members
+        | Command::Members { .. }
         | Command::Audit { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }
