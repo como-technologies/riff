@@ -3738,6 +3738,15 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   workers. A worker that refused its request does not count
   (01M49ZK1C1P817KE63EXV3EJDC). Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+- **01M518P1N8R893MG9Z3VAQZR6Z** A request of the lead with no work
+  item names a task claim `task-NAME`, for example
+  `request: claim task-iroh-listener, then ...`. The worker claims it
+  before it starts the task, and releases it when the task ends. When a
+  request of the lead names no claim, the worker claims a `task-NAME`
+  of its own first. A task claim is a claim: the rollout sends its
+  worker no request and does not count it as idle
+  (01M3Q5QEJNP1JGQM7VXXEBJ9J9), and the server does not ask its worker
+  to stop as idle. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M49ZK19GQP79Z8HH14PK85QQ** At each look of a running riff, the
   rollout gives free work to each idle worker of the user of the lead
   that joined the riff, before it decides on a start. The worker is

@@ -590,6 +590,43 @@ async fn an_idle_worker_gets_a_request_for_a_free_item() {
     reads(&lead.api, &worker, "request: claim issue-1").await;
 }
 
+/// A worker on a task of the lead with no work item holds a task claim
+/// (01M518P1N8R893MG9Z3VAQZR6Z). It is busy: the rollout sends it no
+/// request, and starts a new worker for the free item. The new worker
+/// gets the request.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_with_a_task_claim_gets_no_free_work() {
+    let lead = lead(5).await;
+    lead.issues("[]");
+    lead.riff(RiffState::Running).await;
+    // A live worker of the user that joined, and claims its task while
+    // the wave has no free work.
+    let task = SessionUri::new(
+        Who::new("mike", Some("t1")).unwrap(),
+        lead.me.place().clone(),
+    );
+    lead.api.register_as(&task, true).await.unwrap();
+    let _task = lead.api.watch(&task).await.unwrap();
+    let thread = lead.me.default_thread().unwrap();
+    let reply = lead
+        .api
+        .claim(&task, &thread, "task-iroh-listener")
+        .await
+        .unwrap();
+    assert!(reply.granted, "{reply:?}");
+
+    lead.issues(ONE_ITEM);
+    let worker = lead.join_idle(1).await;
+    let _stream = lead.api.watch(&worker).await.unwrap();
+    reads(&lead.api, &worker, "request: claim issue-1").await;
+    // The look that gave the request gave none to the worker with the
+    // task.
+    let inbox = lead.api.inbox(&task, None, false).await.unwrap();
+    let read = riff::text::inbox(&inbox, &task);
+    assert!(!read.contains("request: claim"), "{read}");
+    assert_eq!(lead.settled().await, 1, "{}", lead.tmux_log());
+}
+
 /// The worker does not claim in 6 intervals: it refused the item, and
 /// the rollout starts a new worker (01M49ZK1C1P817KE63EXV3EJDC). The new
 /// worker gets the request and also does not claim. Two workers refused
