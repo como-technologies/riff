@@ -813,6 +813,10 @@ mod tests {
     struct Waits(Child);
 
     impl Waits {
+        /// It returns when the child has the name of `program`. The
+        /// kernel lets the parent go on in the exec before it names the
+        /// child, so a read at once can find the name of the test thread
+        /// (#826, 01M41A0M2XWCWTWGF7T9DR03W0).
         fn start(program: &Path, dir: &Path) -> Waits {
             let child = Command::new(program)
                 .args(["-c", "read line"])
@@ -822,7 +826,16 @@ mod tests {
                 .stderr(Stdio::null())
                 .spawn()
                 .unwrap();
-            Waits(child)
+            let waits = Waits(child);
+            let name = program.file_name().unwrap().to_string_lossy();
+            let comm = format!("/proc/{}/comm", waits.id());
+            let span = isolated::Span::start();
+            while std::fs::read_to_string(&comm).unwrap_or_default().trim() != name {
+                let limit = std::time::Duration::from_secs(10);
+                assert!(span.within(limit), "the child is not {name}");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            waits
         }
 
         fn id(&self) -> u32 {
