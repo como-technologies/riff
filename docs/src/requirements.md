@@ -4126,10 +4126,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   with no live owner as WIP, pushes its branch, and posts a note to the
   lead. It removes a clean worktree whose pull request is merged with
   its `HEAD`, and its branch while the branch points at that `HEAD`. It
-  removes a clean detached worktree whose commit is on a branch of
-  `origin`. It keeps each other worktree. It prints one line for each
-  worktree with what it did and why. It keeps each worktree outside
-  `.claude/worktrees`. Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
+  removes a clean worktree whose pull request merged with another head
+  when each of its commits is in the merge
+  (01M51JCQ7V7SHTY1ANF0WSTBDF). It removes a clean detached worktree
+  whose commit is on a branch of `origin`. It keeps each other
+  worktree. It prints one line for each worktree with what it did and
+  why. It keeps each worktree outside `.claude/worktrees`. Superseded
+  by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M41XFFXEQPEPDVM4HNT69FVP** `riff worktrees clean` removes a clean
   worktree with no live owner whose `HEAD` is on the default branch of
   `origin`, with or with no pull request, and its branch. It also
@@ -4152,6 +4155,18 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   that a new build deleted still counts. riff reads each process that
   it can read: the processes of its user. The line says `kept: the
   running process PID (NAME) uses it`. Superseded by 3.0
+  (01M4Z60B7PTJMB37578K8FV22Q).
+- **01M51JCQ7V7SHTY1ANF0WSTBDF** `riff worktrees clean` removes a clean
+  worktree with no live owner whose pull request merged with another
+  head, for example after a rebase on another machine, when each of its
+  commits is in the merge. It also removes its branch while the branch
+  points at `HEAD`. A commit is in the merge when the pull request has
+  it or a commit with the same patch, or when the default branch of
+  `origin` has it. When the clone does not have the head of the pull
+  request, riff fetches `refs/pull/N/head` of `origin`, with no ref.
+  riff keeps a worktree with a commit that is not in the merge. The
+  line names the commits, at most 3: `kept: its commit 1a2b3c4 is not
+  in the merged pull request #N`. Superseded by 3.0
   (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M3ZV0TM7ANJ1QQ7XTBDJQE1V** `riff workers start` and the start of
   `riff workers host` run `riff worktrees clean`. Superseded by 3.0

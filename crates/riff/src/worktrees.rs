@@ -22,7 +22,10 @@
 //!     A -- yes --> R["remove the worktree<br/>and its branch"]
 //!     A -- no --> M{"a merged pull request has HEAD as its head?<br/>detached: or HEAD is on origin?"}
 //!     M -- yes --> R
+//!     M -- "no, its branch merged<br/>with another head" --> P{"each commit of HEAD<br/>is in the merge?"}
 //!     M -- no --> K
+//!     P -- yes --> R
+//!     P -- no --> K
 //! ```
 //!
 //! - riff acts only on a worktree of the agent tool, in
@@ -48,6 +51,13 @@
 //!   fails, and for a detached worktree, riff finds a merged pull
 //!   request by the commit of `HEAD`. So the verify worktree of a merged
 //!   pull request goes, also after the merge deleted the branch.
+//! - A session on another machine can rebase the branch and push it. The
+//!   pull request then merges with another head, and the worktree of the
+//!   first author stays at the old head. riff removes it when each of
+//!   its commits is in the merge: a commit of the pull request, the same
+//!   patch, or a commit of the default branch. Else it keeps it and
+//!   names the commits that are not in the merge ([`Outside`],
+//!   01M51JCQ7V7SHTY1ANF0WSTBDF).
 //! - riff deletes the branch only while it points at HEAD
 //!   (`git update-ref -d`). It never forces.
 //! - `riff workers start` and the start of `riff workers host` run it
@@ -135,12 +145,54 @@ impl Lock {
 pub enum Pr {
     /// Merged, and its head is the `HEAD` of the worktree.
     MergedAtHead(u64),
-    /// Merged, with another head.
-    MergedElsewhere(u64),
+    /// Merged, with another head, for example after a rebase on another
+    /// machine. [`Outside`] gives the commits of the worktree that are
+    /// not in the merge.
+    MergedElsewhere(u64, Outside),
     /// Open or closed, not merged.
     NotMerged(u64),
     /// No pull request, or `gh` failed.
     Unknown(String),
+}
+
+/// The commits of a worktree that a merged pull request with another
+/// head does not have (01M51JCQ7V7SHTY1ANF0WSTBDF). A commit is in the
+/// merge when the pull request has it or a commit with the same patch
+/// (`git cherry`), or when the default branch of `origin` has it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outside {
+    /// Each commit of the worktree is in the merge.
+    None,
+    /// The short commits that are not in the merge, the newest first.
+    Commits(Vec<String>),
+    /// riff cannot compare the commits, for this reason.
+    Unknown(String),
+}
+
+impl Outside {
+    /// The reason to keep a worktree with `commits` that are not in the
+    /// merge of the pull request `number`. It names at most 3 commits.
+    ///
+    /// ```
+    /// use riff::worktrees::Outside;
+    ///
+    /// let c = |n: usize| (1..=n).map(|i| format!("c{i}")).collect::<Vec<_>>();
+    /// assert_eq!(Outside::not_in(&c(1), 40), "its commit c1 is not in the merged pull request #40");
+    /// assert_eq!(Outside::not_in(&c(2), 40), "its commits c1, c2 are not in the merged pull request #40");
+    /// assert_eq!(Outside::not_in(&c(5), 40), "its commits c1, c2, c3 and 2 more are not in the merged pull request #40");
+    /// ```
+    pub fn not_in(commits: &[String], number: u64) -> String {
+        const NAMED: usize = 3;
+        let mut names = commits[..commits.len().min(NAMED)].join(", ");
+        if commits.len() > NAMED {
+            names = format!("{names} and {} more", commits.len() - NAMED);
+        }
+        let (what, verb) = match commits.len() {
+            1 => ("commit", "is"),
+            _ => ("commits", "are"),
+        };
+        format!("its {what} {names} {verb} not in the merged pull request #{number}")
+    }
 }
 
 /// Who uses a worktree, so that riff keeps it.
@@ -214,9 +266,7 @@ pub enum Step {
 /// The steps for a worktree with `facts` (01M3ZV0TKSHNW5QC2NG1XTJEJB).
 ///
 /// ```
-/// use riff::worktrees::{Facts, Lock, Pr, decide, Step};
-///
-/// use riff::worktrees::Owner;
+/// use riff::worktrees::{Facts, Lock, Outside, Owner, Pr, decide, Step};
 ///
 /// let free = Facts { agent: true, lock: Lock::None, owner: None, changed: false, branch: true, pr: None, on_origin: false, on_main: false };
 /// let changed = Facts { changed: true, ..free.clone() };
@@ -233,6 +283,12 @@ pub enum Step {
 /// assert_eq!(decide(&fresh), [Step::Remove("its HEAD is on the default branch of origin: it has no commit of its own".into())]);
 /// let open = Facts { pr: Some(Pr::NotMerged(41)), ..free.clone() };
 /// assert_eq!(decide(&open), [Step::Keep("pull request #41 is not merged".into())]);
+/// let rebased = Facts { pr: Some(Pr::MergedElsewhere(42, Outside::None)), ..free.clone() };
+/// assert_eq!(decide(&rebased), [Step::Remove("each of its commits is in the merged pull request #42".into())]);
+/// let extra = Facts { pr: Some(Pr::MergedElsewhere(42, Outside::Commits(vec!["1a2b3c4".into()]))), ..free.clone() };
+/// assert_eq!(decide(&extra), [Step::Keep("its commit 1a2b3c4 is not in the merged pull request #42".into())]);
+/// let unknown = Facts { pr: Some(Pr::MergedElsewhere(42, Outside::Unknown("git fetch failed: no network".into()))), ..free.clone() };
+/// assert_eq!(decide(&unknown), [Step::Keep("its HEAD is not the head of pull request #42, and riff cannot compare their commits: git fetch failed: no network".into())]);
 /// let owned = Facts { owner: Some(Owner::Session), lock: Lock::Dead, ..free.clone() };
 /// assert_eq!(decide(&owned), [Step::Unlock, Step::Keep("a live session works in it".into())]);
 /// let held = Facts { owner: Some(Owner::Claim("issue-12".into())), ..fresh.clone() };
@@ -279,9 +335,16 @@ pub fn decide(facts: &Facts) -> Vec<Step> {
     } else {
         match &facts.pr {
             Some(Pr::MergedAtHead(n)) => Step::Remove(format!("its pull request #{n} is merged")),
-            Some(Pr::MergedElsewhere(n)) => {
-                Step::Keep(format!("its HEAD is not the head of pull request #{n}"))
+            Some(Pr::MergedElsewhere(n, Outside::None)) => Step::Remove(format!(
+                "each of its commits is in the merged pull request #{n}"
+            )),
+            Some(Pr::MergedElsewhere(n, Outside::Commits(commits))) => {
+                Step::Keep(Outside::not_in(commits, *n))
             }
+            Some(Pr::MergedElsewhere(n, Outside::Unknown(why))) => Step::Keep(format!(
+                "its HEAD is not the head of pull request #{n}, and riff cannot compare their \
+                 commits: {why}"
+            )),
             Some(Pr::NotMerged(n)) => Step::Keep(format!("pull request #{n} is not merged")),
             Some(Pr::Unknown(why)) => Step::Keep(why.clone()),
             None => Step::Keep("riff found no pull request".into()),
@@ -366,14 +429,70 @@ struct PrView {
     head_ref_oid: String,
 }
 
-/// The pull request of `branch` with `gh`, compared with `head`.
-fn pr_of(gh: &Gh, branch: &str, head: &str) -> Pr {
+/// The pull request of `branch` with `gh`, compared with `head` in the
+/// clone of `main`.
+fn pr_of(gh: &Gh, main: &Path, branch: &str, head: &str) -> Pr {
     let args = ["pr", "view", branch, "--json", "number,state,headRefOid"];
     match gh.json::<PrView>(&args) {
         Ok(pr) if pr.state == "MERGED" && pr.head_ref_oid == head => Pr::MergedAtHead(pr.number),
-        Ok(pr) if pr.state == "MERGED" => Pr::MergedElsewhere(pr.number),
+        Ok(pr) if pr.state == "MERGED" => {
+            let outside = outside(main, head, pr.number, &pr.head_ref_oid);
+            Pr::MergedElsewhere(pr.number, outside)
+        }
         Ok(pr) => Pr::NotMerged(pr.number),
         Err(e) => Pr::Unknown(format!("riff found no pull request: {}", first_line(&e))),
+    }
+}
+
+/// The commits of `head` in the clone of `main` that are not in the
+/// merge of the pull request `number` with the head `merged`
+/// (01M51JCQ7V7SHTY1ANF0WSTBDF): `git log --cherry-pick --right-only
+/// MERGED...HEAD`, with no commit of the default branch of `origin`.
+/// When the clone does not have `merged`, riff fetches
+/// `refs/pull/NUMBER/head` of `origin`, with no ref and no `FETCH_HEAD`.
+/// riff gives git only a `merged` of hex digits, so it is never an
+/// option.
+fn outside(main: &Path, head: &str, number: u64, merged: &str) -> Outside {
+    if merged.is_empty() || !merged.chars().all(|c| c.is_ascii_hexdigit()) {
+        let merged = crate::text::safe(merged);
+        return Outside::Unknown(format!("the head {merged:?} is not a commit ID"));
+    }
+    let commit = format!("{merged}^{{commit}}");
+    if git(main, &["cat-file", "-e", &commit]).is_err() {
+        let pull = format!("refs/pull/{number}/head");
+        let fetch = [
+            "fetch",
+            "-q",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "origin",
+            &pull,
+        ];
+        if let Err(why) = git(main, &fetch) {
+            return Outside::Unknown(why);
+        }
+    }
+    let branch = crate::permissions::Project::of(main).branch;
+    let base = format!("^refs/remotes/origin/{branch}");
+    let range = format!("{merged}...{head}");
+    let log = [
+        "log",
+        "--format=%h",
+        "--cherry-pick",
+        "--right-only",
+        &range,
+        &base,
+    ];
+    match git(main, &log) {
+        Ok(out) => {
+            let commits: Vec<String> = out.lines().map(str::to_owned).collect();
+            if commits.is_empty() {
+                Outside::None
+            } else {
+                Outside::Commits(commits)
+            }
+        }
+        Err(why) => Outside::Unknown(why),
     }
 }
 
@@ -560,7 +679,7 @@ pub fn clean(
             if free && !facts.changed {
                 facts.on_main = on_main(main, &tree.head);
                 if !facts.on_main {
-                    facts.pr = match tree.branch.as_ref().map(|b| pr_of(gh, b, &tree.head)) {
+                    facts.pr = match tree.branch.as_ref().map(|b| pr_of(gh, main, b, &tree.head)) {
                         Some(Pr::Unknown(why)) => Some(
                             merged_at(gh, &tree.head).map_or(Pr::Unknown(why), Pr::MergedAtHead),
                         ),
@@ -942,5 +1061,91 @@ mod tests {
             Some(Owner::Session)
         );
         assert_eq!(owner_of(&tree, elsewhere, &[], &none), None);
+    }
+
+    /// A git command in `dir` that must pass, with a name and no
+    /// signature.
+    fn run(dir: &Path, args: &[&str]) -> String {
+        let mut all = vec!["-c", "user.name=t", "-c", "user.email=t@t"];
+        all.extend([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "init.defaultBranch=main",
+        ]);
+        all.extend_from_slice(args);
+        git(dir, &all).unwrap_or_else(|e| panic!("{args:?}: {e}"))
+    }
+
+    /// A commit of the new file `name` in `dir`. Returns the commit.
+    fn commit(dir: &Path, name: &str) -> String {
+        std::fs::write(dir.join(name), name).unwrap();
+        run(dir, &["add", name]);
+        run(dir, &["commit", "-q", "-m", name]);
+        run(dir, &["rev-parse", "HEAD"]).trim().to_owned()
+    }
+
+    /// The case of #849: a session in another clone rebased the branch
+    /// of a worktree on a newer default branch, added a commit, and the
+    /// pull request merged at that head. The clone of the worktree does
+    /// not have that head, so riff fetches it.
+    #[test]
+    fn outside_finds_each_commit_that_is_not_in_the_merge() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        run(root, &["init", "-q", "--bare", "origin.git"]);
+        run(root, &["clone", "-q", "origin.git", "main"]);
+        let main = root.join("main");
+        commit(&main, "base");
+        run(&main, &["push", "-q", "origin", "HEAD:main"]);
+        run(&main, &["checkout", "-q", "-b", "worktree-issue-9"]);
+        commit(&main, "one");
+        let old = commit(&main, "two");
+        run(&main, &["push", "-q", "origin", "HEAD"]);
+
+        run(root, &["clone", "-q", "origin.git", "other"]);
+        let other = root.join("other");
+        commit(&other, "moves");
+        run(&other, &["push", "-q", "origin", "HEAD"]);
+        run(&other, &["checkout", "-q", "worktree-issue-9"]);
+        run(&other, &["rebase", "-q", "main"]);
+        let merged = commit(&other, "fix");
+        run(&other, &["push", "-q", "origin", "HEAD:refs/pull/9/head"]);
+
+        run(&main, &["fetch", "-q", "origin"]);
+        let object = format!("{merged}^{{commit}}");
+        assert!(git(&main, &["cat-file", "-e", &object]).is_err());
+        assert_eq!(outside(&main, &old, 9, &merged), Outside::None);
+        assert!(git(&main, &["cat-file", "-e", &object]).is_ok(), "fetched");
+
+        let extra = commit(&main, "extra");
+        let short = run(&main, &["rev-parse", "--short", &extra]);
+        let short = short.trim().to_owned();
+        assert_eq!(
+            outside(&main, &extra, 9, &merged),
+            Outside::Commits(vec![short])
+        );
+
+        // The default branch moves on after the merge, and the worktree
+        // takes it in a rebase: a commit of the default branch is in the
+        // merge.
+        run(&other, &["checkout", "-q", "main"]);
+        commit(&other, "later");
+        run(&other, &["push", "-q", "origin", "HEAD"]);
+        run(&main, &["fetch", "-q", "origin"]);
+        run(&main, &["checkout", "-q", "-b", "rebased", &old]);
+        run(&main, &["rebase", "-q", "origin/main"]);
+        let rebased = run(&main, &["rev-parse", "HEAD"]);
+        assert_eq!(outside(&main, rebased.trim(), 9, &merged), Outside::None);
+
+        let none = "0".repeat(40);
+        let Outside::Unknown(why) = outside(&main, &old, 10, &none) else {
+            panic!("origin has no pull request 10");
+        };
+        assert!(why.starts_with("git fetch failed: "), "{why}");
+        assert_eq!(
+            outside(&main, &old, 9, "--output=x"),
+            Outside::Unknown(r#"the head "--output=x" is not a commit ID"#.into())
+        );
     }
 }
