@@ -529,6 +529,7 @@ pub(crate) mod tests {
         let mut bodies = vec![
             Body::Riff(Riff {
                 user: "mike".into(),
+                host: None,
             }),
             Body::Member(Member {
                 key: brett,

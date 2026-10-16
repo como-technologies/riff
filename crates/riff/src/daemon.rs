@@ -404,8 +404,8 @@ use crate::session_relay::Up;
 use crate::text;
 use crate::wave::{Job, Wave, World};
 
-pub mod peers;
 pub mod forge;
+pub mod peers;
 
 pub use forge::Forge;
 
@@ -2401,16 +2401,18 @@ impl<R: Runtime + 'static> Daemon<R> {
                         error: format!("{e:#}"),
                     },
                 }),
-                Ok(Ask::Release { main, item }) => out.say(match self.release_asked(main, item).await {
-                    Ok(text) => {
-                        println!("{text}");
-                        out.say(Say::Line { text });
-                        Say::Done
-                    }
-                    Err(e) => Say::Failed {
-                        error: format!("{e:#}"),
-                    },
-                }),
+                Ok(Ask::Release { main, item }) => {
+                    out.say(match self.release_asked(main, item).await {
+                        Ok(text) => {
+                            println!("{text}");
+                            out.say(Say::Line { text });
+                            Say::Done
+                        }
+                        Err(e) => Say::Failed {
+                            error: format!("{e:#}"),
+                        },
+                    })
+                }
                 Err(error) => out.say(Say::Failed { error }),
             }
         }

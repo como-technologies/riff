@@ -119,32 +119,6 @@ fn add_forge(dir: &Path, repo: &str, main: &Path) -> Result<()> {
     std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
 }
 
-/// The time of each link of the daemon: the last time that the daemon
-/// saw a link to each key ([`Daemon::tidy_forges`]).
-#[derive(Debug, Default)]
-pub struct Seen {
-    /// The last time that a link to each key ran.
-    up: BTreeMap<Public, i64>,
-}
-
-impl Seen {
-    /// Notes that a link to each key of `linked` runs at `now_ms`.
-    pub fn note(&mut self, linked: &BTreeSet<Public>, now_ms: i64) {
-        for key in linked {
-            self.up.insert(*key, now_ms);
-        }
-    }
-
-    /// The link to the daemon of `key`, with the keys `linked` that have
-    /// a link now.
-    pub fn link(&self, key: &Public, linked: &BTreeSet<Public>) -> Link {
-        Link {
-            online: linked.contains(key),
-            seen_ms: self.up.get(key).copied(),
-        }
-    }
-}
-
 impl<R: Runtime + 'static> Daemon<R> {
     /// Claims `item` for the session `me` on the forge of the main clone
     /// `main` (01M519Z4CT0PRXPRM22037Z5RY): the claim commit names the
@@ -241,15 +215,20 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// of the daemon that is the lead of its user in its repository, it
     /// deletes each claim of that user on the forge of the repository
     /// that [`forge_claim::stale`] gives, with the lease of its commit.
-    /// `seen` holds the time of each link, and `now_ms` is the time now.
-    /// It gives a line for each claim that it deleted.
-    pub async fn tidy_forges(&self, seen: &mut Seen, now_ms: i64) -> Vec<String> {
+    /// The peer links give the link to each daemon
+    /// ([`Links::online`](crate::peer::sync::Links::online),
+    /// [`Links::seen`](crate::peer::sync::Links::seen)), and `now_ms` is
+    /// the time now. It gives a line for each claim that it deleted.
+    pub async fn tidy_forges(&self, now_ms: i64) -> Vec<String> {
         let Some(riff) = self.riff.get() else {
             return Vec::new();
         };
         let me = riff.hub.public();
-        let linked = self.links().map(|links| links.linked()).unwrap_or_default();
-        seen.note(&linked, now_ms);
+        let links = self.links();
+        let link = |key: &Public| Link {
+            online: links.is_some_and(|links| links.online(key)),
+            seen_ms: links.and_then(|links| links.seen(key)),
+        };
         let leads: BTreeSet<(String, String)> = riff.hub.read(|state| {
             state
                 .runs()
@@ -279,13 +258,12 @@ impl<R: Runtime + 'static> Daemon<R> {
                     .into_iter()
                     .filter_map(|found| {
                         let claim = found.claim?;
-                        let link = seen.link(&claim.key, &linked);
                         let why = forge_claim::stale(
                             &claim,
                             &user,
                             &me,
                             state,
-                            link,
+                            link(&claim.key),
                             self.since_ms,
                             now_ms,
                         )?;
@@ -319,9 +297,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             for line in daemon.sweep_forges().await {
                 println!("{line}");
             }
-            let mut seen = Seen::default();
             loop {
-                for line in daemon.tidy_forges(&mut seen, now_ms()).await {
+                for line in daemon.tidy_forges(now_ms()).await {
                     println!("{line}");
                 }
                 tokio::time::sleep(TIDY_EVERY).await;
@@ -546,27 +523,21 @@ mod tests {
 
         let since = a.daemon.since_ms;
         let minutes = |m: i64| since + m * 60_000;
-        let mut seen = Seen::default();
-        let lines = a.daemon.tidy_forges(&mut seen, minutes(14)).await;
+        let lines = a.daemon.tidy_forges(minutes(14)).await;
         let ended = forge_claim::Stale::Ended;
         assert_eq!(
             lines,
             [text::forge_lead_freed("issue-1", "e1-session", ended)]
         );
         assert_eq!(items(&main), set(&["issue-2", "issue-3", "issue-4"]));
-        let lines = a.daemon.tidy_forges(&mut seen, minutes(15)).await;
+        let lines = a.daemon.tidy_forges(minutes(15)).await;
         let offline = forge_claim::Stale::Offline(15);
         assert_eq!(lines, [text::forge_lead_freed("issue-2", "x1", offline)]);
         assert_eq!(items(&main), set(&["issue-3", "issue-4"]));
         // With no lead, the daemon deletes no claim.
         take("issue-5", &user);
         hub.end("lead1").unwrap();
-        assert!(
-            a.daemon
-                .tidy_forges(&mut seen, minutes(99))
-                .await
-                .is_empty()
-        );
+        assert!(a.daemon.tidy_forges(minutes(99)).await.is_empty());
         assert_eq!(items(&main), set(&["issue-3", "issue-4", "issue-5"]));
     }
 
