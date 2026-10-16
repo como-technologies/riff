@@ -476,7 +476,7 @@ async fn a_session_that_runs_an_old_riff_has_the_mark_and_the_host_line_counts_i
     ] {
         assert_eq!(session(&top, id)[0], head, "{top}");
     }
-    let host_line = "└─ thelio  › riff  4 sessions: 4 workers; 2 out of date; 4 idle";
+    let host_line = "└─ thelio  › riff  4 sessions: 4 workers; 2 to update; 4 idle";
     assert!(rows(&top).iter().any(|r| r == host_line), "{top}");
     // The lead named no riff: no mark, and no count on its host.
     assert_eq!(session(&top, "a1")[0], "│  └─ a1  lead  idle", "{top}");
@@ -667,8 +667,10 @@ fn the_book_shows_real_top_commands() {
 /// The example table of "See what each session does" in How It Works
 /// has the form of the output: a board for each repository, the four
 /// levels of the tree, the short form, the counts, and the worktree on
-/// each session line (01M3WNHCD659FH3Z5VYYH69WWR,
-/// 01M42KHN33M4K13GKTX2WM6CMM, 01M42KHN80V49HDDZF953HXDT0).
+/// each session line, and the mark of a session that runs an old riff
+/// with its count (01M3WNHCD659FH3Z5VYYH69WWR,
+/// 01M42KHN33M4K13GKTX2WM6CMM, 01M42KHN80V49HDDZF953HXDT0,
+/// 01M514C142K5BM2746F1D9Y448, 01M514C16VG9PD70A8424J173B).
 #[test]
 fn the_book_example_has_the_four_level_tree() {
     let page = std::fs::read_to_string(
@@ -710,9 +712,9 @@ fn the_book_example_has_the_four_level_tree() {
         "\nbrett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim\n",
         "\n├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims\n",
         "\n│  └─ 9c0d1e2f  #issue-9  container  busy\n",
-        "\n└─ thelio  5 sessions: 2 leads, 1 host; 3 idle, 1 blocked, 1 claim\n",
+        "\n└─ thelio  5 sessions: 2 leads, 1 host; 1 to update; 3 idle, 1 blocked, 1 claim\n",
         "\n   ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim\n",
-        "\n   │  ├─ 6e7f8a9b  host  idle\n",
+        "\n   │  ├─ 6e7f8a9b  ↑  host  idle\n",
         "\n   └─ strata  1 session: 1 idle\n",
     ] {
         assert!(example.contains(row), "{row}: {example}");

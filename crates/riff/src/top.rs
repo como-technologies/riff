@@ -848,7 +848,7 @@ fn groups<'a>(sessions: &[&'a SessionInfo], levels: &[Level]) -> Vec<Group<'a>> 
 ///
 /// ```text
 /// 3 sessions: 1 busy, 1 idle, 1 blocked, 2 claims
-/// 6 sessions: 3 workers, 2 containers, 1 host; 2 out of date; 4 busy, 2 idle, 4 claims
+/// 6 sessions: 3 workers, 2 containers, 1 host; 2 to update; 4 busy, 2 idle, 4 claims
 /// ```
 fn counts(sessions: &[&SessionInfo], kinds: bool, server: Option<&Build>) -> String {
     let many = |n: usize, word: &str| {
@@ -864,7 +864,7 @@ fn counts(sessions: &[&SessionInfo], kinds: bool, server: Option<&Build>) -> Str
         .filter(|s| out_of_date(s, server))
         .count();
     let old: Vec<String> = (old > 0)
-        .then(|| format!("{old} out of date"))
+        .then(|| format!("{old} to update"))
         .into_iter()
         .collect();
     let kinds: Vec<String> = SessionKind::ALL

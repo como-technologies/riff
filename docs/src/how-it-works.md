@@ -1034,7 +1034,7 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 │  │    20m ago: tests
 │  └─ 9c0d1e2f  #issue-9  container  busy
 │       working on #9 Mark the hosts
-└─ thelio  5 sessions: 2 leads, 1 host; 3 idle, 1 blocked, 1 claim
+└─ thelio  5 sessions: 2 leads, 1 host; 1 to update; 3 idle, 1 blocked, 1 claim
    ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim
    │  ├─ 3a3f8d5d  #issue-8  blocked
    │  │    which of two designs? (32m ago)
@@ -1043,7 +1043,7 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
    │  ├─ 4e54d4e5  lead  idle
    │  │    monitoring work for 2h
    │  │    5m ago: plan the next wave
-   │  ├─ 6e7f8a9b  host  idle
+   │  ├─ 6e7f8a9b  ↑  host  idle
    │  │    ready for work for 3h
    │  │    1m ago: workers host: limit 2, floor 4GB, no workers
    │  └─ 8f1c2d3e  offline
@@ -1067,7 +1067,9 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
   `leads`, `containers`, `workers` and `hosts`. A session counts
   once, as the first kind that matches. A session with none of these
   tags has no kind. In the example, thelio has 5 sessions: 2 leads, 1
-  host, and 2 sessions with no kind.
+  host, and 2 sessions with no kind. After the kinds, a host line
+  counts the sessions that run an old riff: `1 to update`. See
+  [Update a session that runs an old riff](#update-a-session-that-runs-an-old-riff).
 - A line with only one line under it takes that line, after a `›`. In
   the example, brett has one host and one repository, so the person,
   the host and the repository are on one line. So a small riff stays
@@ -1075,7 +1077,8 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 - A repository line has the short name of the repository. When the
   repositories have more than one owner, it has the owner too:
   `como-technologies/riff`.
-- A session: the first line has the short session ID, the worktree of
+- A session: the first line has the short session ID, the mark `↑`
+  when the session runs an old riff, the worktree of
   the session (`#issue-7` in the worktree `issue-7`, nothing in the
   main worktree), its tags (`lead`, `worker`, `container` or
   `host`), and the state of the session in its color. Under it comes
@@ -1142,6 +1145,75 @@ board.
 `riff top` only reads. It posts nothing and wakes no session.
 
 The lead can keep it in a tmux pane beside `riff tail`.
+
+### Update a session that runs an old riff
+
+A session can run an old riff after an update. Then `riff top` puts
+the mark `↑`, in yellow, after the short ID of the session, and the
+line of its host counts it:
+
+```text
+└─ thelio  5 sessions: 2 leads, 1 host; 1 to update; 3 idle, 1 blocked, 1 claim
+   ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim
+   │  ├─ 6e7f8a9b  ↑  host  idle
+```
+
+The mark shows one of two facts:
+
+- The build of the riff of the session is older than the build of the
+  server: a lower version, or the same version from an older commit.
+- The file of the riff of the session was replaced, for example by
+  `riff update`, and the session still runs the old file.
+
+The process that lives as long as the session tells the server its
+riff in each keep-alive: `riff mcp` for a session of Claude Code, the
+riff daemon for a session in a container, and `riff workers host` for
+its own session. A session of a riff from before the mark tells no
+riff, so it gets no mark.
+
+```mermaid
+flowchart LR
+    P["riff mcp, the riff daemon,<br/>riff workers host"] -- "keep-alive: build, replaced" --> S["riff-server"]
+    S -- "who" --> T{"riff top: replaced, or<br/>older than the server?"}
+    T -- yes --> M["↑ on the session,<br/>N to update on the host"]
+    T -- no --> N["no mark"]
+```
+
+First, update riff on the machine of the session:
+
+```sh
+riff update
+```
+
+The riff tools of a session and `riff workers host` then run the new
+riff by themselves. See
+[When the builds differ](#when-the-builds-differ). The mark goes in a
+few seconds. When the mark stays, do the step for
+the session:
+
+- A worker: stop it when it has no claim. riff starts a new worker on
+  the new riff. Give the short ID that `riff top` shows:
+
+  ```sh
+  riff workers stop 5b1e2a90
+  ```
+
+- A session in a container: install the riff daemon again. It starts
+  again on the new riff:
+
+  ```sh
+  riff daemon install
+  ```
+
+- The session of `riff workers host`: stop it with Ctrl-C in its pane,
+  and start it again:
+
+  ```sh
+  riff workers host
+  ```
+
+- Your own session: run `/mcp` in the session, and reconnect the
+  server `riff`. Or start the session again.
 
 ### When riff cannot reach the server
 
