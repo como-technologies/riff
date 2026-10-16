@@ -27,6 +27,7 @@ clap.workspace = true
 futures.workspace = true
 getrandom.workspace = true
 ed25519-dalek.workspace = true
+blake3.workspace = true
 zeroize.workspace = true
 gethostname.workspace = true
 keyring.workspace = true

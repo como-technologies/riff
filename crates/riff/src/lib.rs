@@ -105,6 +105,7 @@ pub mod machine;
 pub mod mcp;
 pub mod monitor;
 pub mod next;
+pub mod peer;
 pub mod permissions;
 pub mod plugin;
 #[cfg(target_os = "linux")]

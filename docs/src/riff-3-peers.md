@@ -133,33 +133,39 @@ riff release issue-12 --forge
 
 A record is one change of the riff by one daemon: its author. Each
 author has one chain of records: the sequence numbers 1, 2, 3 and so
-on, and each record holds the hash of the record before it. The
-author signs each record with its key.
+on, and each record holds the ID of the record before it. The ID of a
+record is the BLAKE3 hash of its bytes. The author signs each record
+with its key, over the tag `riff record 1` and each byte before the
+signature.
 
 | Field | Size |
 |---|---|
-| The format version | 1 byte |
+| The format version: 1 | 1 byte |
 | The type | 1 byte |
 | The riff ID: the key of the owner | 32 bytes |
 | The key of the author | 32 bytes |
 | The sequence number | 8 bytes |
-| The hash of the record before it | 32 bytes |
-| The time of the author | 8 bytes |
+| The ID of the record before it: 32 zero bytes before the first record | 32 bytes |
+| The time of the author, in milliseconds | 8 bytes |
 | The length of the body | 4 bytes |
 | The body: JSON | up to the size of the type |
 | The ed25519 signature | 64 bytes |
 
-Each type has one writer. So two daemons with the same records have
-the same riff.
+Each number is big-endian. Each type has one writer. So two daemons
+with the same records have the same riff.
 
-| Type | Writer | What it holds | Largest record |
-|---|---|---|---|
-| `riff` | The owner | The riff ID and the user of the owner | 1 KiB |
-| `member`, `removed` | The owner | A member key, its user and its host | 1 KiB |
-| `left` | A member | The leave of its own key | 1 KiB |
-| `session` | The daemon of the session | The start, the place, the lead mark, the claims, the status and the end | 4 KiB |
-| `message` | The daemon of the session that posts | A message, a note or a status request | 64 KiB |
-| `plan` | The daemon of a lead | A hold, a free, a pause or a resume | 4 KiB |
+| Type | Byte | Writer | What it holds | Largest record |
+|---|---|---|---|---|
+| `riff` | 1 | The owner, in its first record | The user of the owner | 1 KiB |
+| `member` | 2 | The owner | A member key, its user and its host | 1 KiB |
+| `removed` | 3 | The owner | A member key, and its last sequence number | 1 KiB |
+| `left` | 4 | A member | The leave of its own key | 1 KiB |
+| `session` | 5 | The daemon of the session | The whole session: its place, its lead mark, its claims, its status and its end | 4 KiB |
+| `message` | 6 | The daemon of the session that posts | A message, a note or a status request | 64 KiB |
+| `plan` | 7 | A daemon of a lead, or the daemon of the owner | A hold, a free, a pause or a resume | 4 KiB |
+
+A daemon keeps a record of another type byte, and does not apply it.
+The byte 0 is no type.
 
 ## How the sync works
 

@@ -109,17 +109,15 @@ impl Key {
         Public(self.0.verifying_key().to_bytes())
     }
 
+    /// The ed25519 signature of `message` by this key.
+    pub fn sign(&self, message: &[u8]) -> [u8; 64] {
+        use ed25519_dalek::Signer;
+        self.0.sign(message).to_bytes()
+    }
+
     /// The key from the text of its secret: 64 hex characters.
     fn from_secret(text: &str) -> Option<Key> {
-        let mut bytes = Zeroizing::new([0u8; 32]);
-        let text = text.trim().as_bytes();
-        if text.len() != 64 {
-            return None;
-        }
-        for (byte, pair) in bytes.iter_mut().zip(text.chunks(2)) {
-            let pair = std::str::from_utf8(pair).ok()?;
-            *byte = u8::from_str_radix(pair, 16).ok()?;
-        }
+        let bytes = Zeroizing::new(hex32(text.trim())?);
         Some(Key::from_bytes(&bytes))
     }
 }
@@ -146,9 +144,65 @@ impl fmt::Debug for Key {
 pub struct Public([u8; 32]);
 
 impl Public {
+    /// The public key with the 32 bytes `bytes`, for example of the
+    /// author of a record ([`crate::peer::record`]). It does not check
+    /// that the bytes are a point of the curve: a check of a signature
+    /// does.
+    pub fn from_bytes(bytes: [u8; 32]) -> Public {
+        Public(bytes)
+    }
+
     /// The 32 bytes of the public key.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    /// The public key from its text: 64 hex characters.
+    ///
+    /// ```
+    /// use riff::daemon_key::{Key, Public};
+    ///
+    /// let public = Key::from_bytes(&[1; 32]).public();
+    /// assert_eq!(Public::parse(&public.to_string()), Some(public));
+    /// assert_eq!(Public::parse("8a88"), None);
+    /// ```
+    pub fn parse(text: &str) -> Option<Public> {
+        hex32(text).map(Public)
+    }
+
+    /// The signature `signature` by this key over `message`, checked with
+    /// `verify_strict` (01M519Z1Z1FVZQQ612DEMSQ7PG).
+    pub fn verifies(&self, message: &[u8], signature: &[u8; 64]) -> bool {
+        let signature = ed25519_dalek::Signature::from_bytes(signature);
+        ed25519_dalek::VerifyingKey::from_bytes(&self.0)
+            .is_ok_and(|key| key.verify_strict(message, &signature).is_ok())
+    }
+}
+
+/// The 32 bytes of the text `text`: 64 hex characters.
+pub(crate) fn hex32(text: &str) -> Option<[u8; 32]> {
+    let text = text.as_bytes();
+    if text.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    for (byte, pair) in bytes.iter_mut().zip(text.chunks(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(bytes)
+}
+
+impl serde::Serialize for Public {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Public {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Public::parse(&text)
+            .ok_or_else(|| serde::de::Error::custom("not a public key: 64 hex characters"))
     }
 }
 
