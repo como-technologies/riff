@@ -2655,8 +2655,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M51QEYS538XA58KDRY844T52** An open issue with the label
   `broken-main` is free work before each other item: its verify first,
   then the item. This is true for the rollout of the lead and for the
-  wave of the daemon. It is free work in each milestone and with no
-  milestone, when no session claims it, it has no comment
+  wave of the daemon. It is free work also outside the current wave and
+  outside each wave, when no session claims it, it has no comment
   `Merged in #`, no pull request of it waits for a verify or the merge,
   each issue of its `Needs:` line is closed, and no lead holds it. The
   skill tells a session that picks its own item to take it first.
