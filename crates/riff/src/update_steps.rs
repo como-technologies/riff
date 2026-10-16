@@ -411,7 +411,7 @@ pub struct Machine<'a, M, R> {
     pub checks: Vec<Check>,
 }
 
-/// Each step on `at`, in order: [`rules`], [`unit`], [`image`] and
+/// Each step on `at`, in order: [`rules`], [`unit()`], [`image`] and
 /// [`machine`]. Only with an open `gate` do the unit and the images
 /// change (01M51QFPJAABDP1V7WFY8NQR60). The sync of the rules runs before
 /// it ([`rule_sync::sync`]).
@@ -493,7 +493,11 @@ fn manager_here() -> Option<crate::service::Systemd> {
 
 /// The steps on this machine with `runtime` and the session `images`,
 /// behind `gate`.
-async fn sync_here(gate: &Gate, runtime: &impl Runtime, images: Vec<(String, Result<String, String>)>) -> Vec<Step> {
+async fn sync_here(
+    gate: &Gate,
+    runtime: &impl Runtime,
+    images: Vec<(String, Result<String, String>)>,
+) -> Vec<Step> {
     let user = crate::plugin::user_settings();
     let home = home_here();
     let manager = manager_here();

@@ -639,7 +639,8 @@ sequenceDiagram
 - Each riff process starts again on the new `riff` when it is idle.
   See [Which processes start again](#which-processes-start-again).
 - The riff daemon of the release does each step of `riff init` that
-  needs no person. See [Each step of an update](#each-step-of-an-update).
+  needs no person. See
+  [Each step of an update](#each-step-of-an-update).
 - The update stops no session, and a running test goes on. Your
   sign-in and the device key stay.
 - Your lead gets one direct message: the host, the old release and

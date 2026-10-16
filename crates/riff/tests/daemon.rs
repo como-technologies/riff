@@ -218,7 +218,10 @@ async fn a_daemon_of_a_dev_build_does_no_step_of_an_update() {
         exe: std::fs::canonicalize(here.env.riff_path()).unwrap(),
         env: vec![("PATH".into(), here.path.clone())],
     };
-    let old = unit.text().unwrap().replace("RestartSec=2\n", "RestartSec=9\n");
+    let old = unit
+        .text()
+        .unwrap()
+        .replace("RestartSec=2\n", "RestartSec=9\n");
     let unit_path = here.env.home().join(".config/systemd/user/riff.service");
     std::fs::create_dir_all(unit_path.parent().unwrap()).unwrap();
     std::fs::write(&unit_path, &old).unwrap();

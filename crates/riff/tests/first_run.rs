@@ -517,10 +517,7 @@ async fn riff_update_check_shows_each_step_and_changes_nothing() {
         );
     }
     // It changes nothing.
-    assert_eq!(
-        std::fs::read_to_string(machine.settings()).unwrap(),
-        before
-    );
+    assert_eq!(std::fs::read_to_string(machine.settings()).unwrap(), before);
     assert!(!machine.unit().exists());
     assert_eq!(machine.read("systemctl.log"), "");
     let log = machine.read("podman.log");
@@ -531,17 +528,17 @@ async fn riff_update_check_shows_each_step_and_changes_nothing() {
     assert_eq!(riff::local::needs_you(&local), Some(fix));
 
     // After the fix of the person, the step is in step, and the file goes.
-    script(
-        &machine.init.join("catatonit"),
-        "#!/bin/sh\nexec \"$@\"\n",
-    );
+    script(&machine.init.join("catatonit"), "#!/bin/sh\nexec \"$@\"\n");
     let out = check().await;
     let stdout = self::text(&out.stdout);
     let line = format!(
         "in step  the init of podman: {}",
         machine.init.join("catatonit").display()
     );
-    assert!(stdout.lines().any(|l| l == line), "{line}\nnot in\n{stdout}");
+    assert!(
+        stdout.lines().any(|l| l == line),
+        "{line}\nnot in\n{stdout}"
+    );
     assert_eq!(riff::local::needs_you(&local), None);
 }
 

@@ -3972,7 +3972,8 @@ pub const STEP_NO_UNIT: &str = "no unit of the riff daemon is installed";
 
 /// The step of the unit: the unit file has no `ExecStart` of
 /// `riff daemon`.
-pub const STEP_UNIT_UNREADABLE: &str = "riff cannot read the riff and the variables of the unit file";
+pub const STEP_UNIT_UNREADABLE: &str =
+    "riff cannot read the riff and the variables of the unit file";
 
 /// The step of the unit: the file is not the text that this riff writes.
 pub const STEP_UNIT_OLD: &str = "the unit file is not the text that this riff writes for it";
