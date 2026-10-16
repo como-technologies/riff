@@ -3777,6 +3777,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the only idle worker, it has no item to take, and the rollout can
   start a new worker for the verify. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+- **01M51A55Q2MDZT38JDCEJ1QECP** A held item is no free work for the
+  rollout: the rollout starts no worker for it and sends no request for
+  it. A hold names one item, so a hold of `issue-N` does not stop
+  `verify-issue-N`. Each look reads the holds of the repository thread
+  again, so a free of the item makes it free work at the next look.
+  Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3X30KHKB6W11C3NBAW7KCGW** The lead gets one message for each
   change of a worker setting: the setting, the old value, the new
   value and the host. The settings are the limit of the machine of the

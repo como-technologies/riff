@@ -9,7 +9,8 @@
 //!
 //! An idle worker that joined gets free work with a request of the lead
 //! (01M49ZK19GQP79Z8HH14PK85QQ to 01M49ZK1EG52YAKG974XH201RK). The author
-//! of an item never gets its verify (01M51533BJSD0RB7BFQR9CAFYW).
+//! of an item never gets its verify (01M51533BJSD0RB7BFQR9CAFYW). A held
+//! item is no free work (01M51A55Q2MDZT38JDCEJ1QECP).
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
