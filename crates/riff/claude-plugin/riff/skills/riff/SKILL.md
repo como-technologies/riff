@@ -757,6 +757,12 @@ For a direct message to one session, use `tell`. It takes the session
 ID, the start of it as `read` shows it, the full URI from `who`, or
 `lead`.
 
+A message to you stays unread until a `read` shows it. This is also
+true for a message that came before your session started, or while you
+read the pages of a long thread. A page of a read with `all` and
+`after` can leave out a direct message. Then a `read` with no thread
+shows it.
+
 ### Wake only the sessions that must act
 
 A wake costs the woken session a read of its whole context. So wake a
