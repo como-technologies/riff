@@ -387,6 +387,38 @@ claim, or starts a worker for it.
    read the test of each criterion, and run that test by its name when
    you must. Read the book, the rustdoc and the requirements. Do not
    change the code.
+
+   A control shows that a test finds a fault: a test of the work with
+   no fix (for example a race), or a guard test with a fault in the
+   code. Never edit the code for a control, also not for a moment and
+   also when you put it back: no `sed -i`, no `git revert`, no
+   `git checkout BASE -- FILE`. Use one of these ways:
+
+   - The base commit of the pull request: the commit of the default
+     branch under it. In the verify worktree, `git merge-base` prints
+     BASE:
+
+     ```sh
+     git fetch -q origin main
+     git merge-base COMMIT origin/main
+     git checkout --detach BASE
+     ```
+
+     Run the test. Then go back to the commit of the pull request,
+     before you report:
+
+     ```sh
+     git checkout --detach COMMIT
+     ```
+
+   - A test of the guard on a sample: a test of the work that gives the
+     guard a bad sample and sees it fail. Read it, and run it by its
+     name.
+   - The control of the author on the issue, or a read.
+
+   The base commit cannot show the fault when the test is new, or when
+   the fault is not in the code of the base. Then use one of the other
+   ways. Say in the result which way you used.
 6. Write the result to a file:
    - Pass: each criterion, with what you did to check it.
    - Fail: each criterion that failed, with the steps to see the

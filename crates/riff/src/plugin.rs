@@ -42,7 +42,7 @@
 //! | File | Gives the session |
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
-//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, what to do after a refusal of the auto mode check, selectors, claims, `move` and the restart of the watch. |
+//! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, how a verifier runs a control, what to do after a refusal of the auto mode check, selectors, claims, `move` and the restart of the watch. |
 //! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). The tool hooks, `riff hook tool` and `riff hook tool --done`, and the stop hook write the newest fact of the session (see [`crate::activity`]). The prompt hook, `riff hook prompt`, writes the time of the last prompt of the person. |
 //! | `riff/commands/leave.md`, `riff/commands/join.md` | The commands `/riff:leave` and `/riff:join`. They tell the session to call the `leave` or the `join` tool (see [`crate::leave`]). |
 //!
@@ -51,6 +51,11 @@
 //! riff::plugin::write(dir.path())?;
 //! assert!(dir.path().join("riff/.mcp.json").is_file());
 //! assert!(dir.path().join("riff/skills/riff/SKILL.md").is_file());
+//!
+//! // A verifier never edits the code for a control
+//! // (01M5174ASF376JDNBQ4423TTAR).
+//! let skill = std::fs::read_to_string(dir.path().join("riff/skills/riff/SKILL.md"))?;
+//! assert!(skill.contains("Never edit the code for a control"));
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
@@ -623,6 +628,50 @@ mod tests {
                 part.contains("`tell` the lead the fault. The lead decides on a private advisory."),
                 "{part}"
             );
+        }
+    }
+
+    /// 01M5174ASF376JDNBQ4423TTAR: a verifier never edits the code for a
+    /// control, also not for a moment. It runs the control at the base
+    /// commit and goes back to the commit before it reports, or uses a
+    /// test of the guard on a sample, the control of the author or a
+    /// read.
+    #[test]
+    fn the_skill_says_how_a_verifier_runs_a_control() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let start = skill
+            .find("### Verify the work of another session")
+            .unwrap();
+        let end = start + skill[start..].find("### Pull requests on GitHub").unwrap();
+        let part = &skill[start..end];
+        let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+        let at = |text: &str| {
+            flat.find(text)
+                .unwrap_or_else(|| panic!("no {text:?} in {part}"))
+        };
+        let no_change = at("Do not change the code.");
+        let control = at("A control shows that a test finds a fault");
+        let guard = at("or a guard test with a fault in the code.");
+        let no_edit = at(
+            "Never edit the code for a control, also not for a moment and also \
+                          when you put it back",
+        );
+        let base = at("- The base commit of the pull request");
+        let to_base = at("git checkout --detach BASE");
+        let back = at("```sh git checkout --detach COMMIT ```");
+        let sample = at("- A test of the guard on a sample");
+        let author = at("- The control of the author on the issue, or a read.");
+        let which = at("Say in the result which way you used.");
+        let report = at("6. Write the result to a file:");
+        assert!(no_change < control && control < guard && guard < no_edit);
+        assert!(no_edit < base && base < to_base && to_base < back);
+        assert!(back < sample && sample < author && author < which && which < report);
+        for words in [
+            "no `sed -i`, no `git revert`, no `git checkout BASE -- FILE`",
+            "git merge-base COMMIT origin/main",
+            "The base commit cannot show the fault when the test is new",
+        ] {
+            at(words);
         }
     }
 

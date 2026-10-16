@@ -88,6 +88,15 @@
   commit has a result.
 - **R191** The verifier checks out the commit in a worktree of its own
   and tests each criterion. It does not change the code.
+- **01M5174ASF376JDNBQ4423TTAR** A control shows that a test finds a
+  fault: a test of the work with no fix, or a guard test with a fault
+  in the code. The verifier never edits the code for a control, also
+  not for a moment. It runs a control at the base commit of the pull
+  request, in its verify worktree, and then checks out the commit of
+  the pull request again. When the base commit cannot show the fault,
+  it reads and runs a test of the guard on a sample, uses the control
+  of the author on the issue, or checks by a read. The result says
+  which way it used. The skill says so.
 - **R192** The verifier posts the result to the author with the
   selector `claim=ITEM`. A pass names each criterion and how the
   verifier checked it. A fail names each criterion that failed and the
