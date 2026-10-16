@@ -9,14 +9,40 @@
 //!
 //! | Talk | For | Acts on |
 //! |---|---|---|
-//! | [`Api`] | a session on the host, and the default | riff-server 1.x |
-//! | [`crate::peer::talk::Session`] | a session of the riff daemon | the riff of peers of the daemon, with no riff-server (01M519Z3FTAZ20DQKDTW09M6NS) |
+//! | [`Api`] | a session on the host, a session of the riff daemon with a riff-server, and the default | riff-server 1.x |
+//! | [`crate::peer::talk::Session`] | a session of the riff daemon with no riff-server | the riff of peers of the daemon (01M519Z3FTAZ20DQKDTW09M6NS, 01M51VZG27DXSRHBT8M14S7B9A) |
 //!
 //! ```mermaid
 //! flowchart LR
 //!     T["the riff tools: post, read, tell, status, ..."] --> K{"Talk"}
 //!     K -->|"Api"| S["riff-server 1.x"]
 //!     K -->|"peer::talk::Session"| D["the riff daemon: its records"]
+//! ```
+//!
+//! Each side is a [`Talk`], so a tool calls the one that its session
+//! has:
+//!
+//! ```
+//! use std::sync::Arc;
+//!
+//! use riff::daemon_key::Key;
+//! use riff::peer::body::{Body, Riff};
+//! use riff::peer::keep::Peers;
+//! use riff::peer::talk::{Hub, Session};
+//! use riff::talk::Talk;
+//!
+//! let dir = tempfile::tempdir()?;
+//! let key = Key::from_bytes(&[1; 32]);
+//! let mut peers = Peers::open(dir.path(), key.public(), |_| {})?;
+//! peers.write(&key, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+//! let hub = Arc::new(Hub::new(key, peers));
+//!
+//! let sides: [Box<dyn Talk>; 2] = [
+//!     Box::new(riff::api::Api::new("http://127.0.0.1:1")),
+//!     Box::new(Session::new(hub)),
+//! ];
+//! assert_eq!(sides.len(), 2);
+//! # Ok::<(), anyhow::Error>(())
 //! ```
 
 use anyhow::Result;

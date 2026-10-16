@@ -2784,8 +2784,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             crate::mcp::Tools::new(api, record.me.clone())
                 .with_talk(Arc::new(PeerTalk::new(riff.hub.clone())))
         } else {
-            let api =
-                crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
+            let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
             crate::mcp::Tools::new(api, record.me.clone())
         }
         .as_worker(!record.terminal);

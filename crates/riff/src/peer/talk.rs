@@ -91,6 +91,44 @@ pub const PAGE: usize = 50;
 /// The riff of peers of one daemon. See the design of the module. Each
 /// call that writes a record syncs a file: call it on a thread for
 /// blocking work.
+///
+/// Two sessions of the daemon: b posts to a, the watch of a wakes, and
+/// a reads the message.
+///
+/// ```
+/// use std::sync::Arc;
+///
+/// use riff::daemon_key::Key;
+/// use riff::peer::body::{Body, Riff};
+/// use riff::peer::keep::Peers;
+/// use riff::peer::talk::{Hub, Session};
+/// use riff::talk::Talk;
+/// use riff_core::name::{SessionUri, ThreadName};
+/// use riff_core::selector::Selector;
+/// use riff_core::wire::Kind;
+///
+/// let dir = tempfile::tempdir()?;
+/// let key = Key::from_bytes(&[1; 32]);
+/// let mut peers = Peers::open(dir.path(), key.public(), |_| {})?;
+/// peers.write(&key, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+/// let hub = Arc::new(Hub::new(key, peers));
+/// let a: SessionUri = "riff://mike@h/o/r?session=a".parse()?;
+/// let b: SessionUri = "riff://mike@h/o/r?session=b".parse()?;
+/// hub.start(&a, true, false, vec!["issue-1".into()])?;
+/// hub.start(&b, true, false, vec!["issue-2".into()])?;
+///
+/// let talk = Session::new(hub.clone());
+/// let repo: ThreadName = "o/r".parse()?;
+/// tokio::runtime::Runtime::new()?.block_on(async {
+///     let to_a = [Selector::session("a")];
+///     talk.post(&b, Some(&repo), &to_a, "hello a", Kind::Message).await?;
+///     assert!(hub.wait("a").await.contains("wrote to you in o/r"));
+///     let pages = talk.inbox_page(&a, None, false, None).await?;
+///     assert_eq!(pages[0].messages[0].message.body, "hello a");
+///     Ok::<(), anyhow::Error>(())
+/// })?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 #[derive(Debug)]
 pub struct Hub {
     key: Key,
@@ -202,10 +240,12 @@ impl Hub {
     }
 
     /// Writes the `session` record of the end of the session `id` of the
-    /// daemon, when it runs. The hub forgets the wakes of the session.
+    /// daemon, when it runs. Then the hub forgets the wakes of the
+    /// session: after the record, no message wakes it.
     pub fn end(&self, id: &str) -> Result<()> {
+        self.change(id, |body| body.ended = true)?;
         lock(&self.wakes).remove(id);
-        self.change(id, |body| body.ended = true).map(|_| ())
+        Ok(())
     }
 
     /// Writes the next `session` record of the session `id` of the
@@ -1038,7 +1078,9 @@ mod tests {
 
     /// A session of mike on the host h in the repository `repo`.
     fn uri(id: &str, repo: &str) -> SessionUri {
-        format!("riff://mike@h/{repo}?session={id}").parse().unwrap()
+        format!("riff://mike@h/{repo}?session={id}")
+            .parse()
+            .unwrap()
     }
 
     /// The hub of a riff of its own of mike, with the workers `sessions`
