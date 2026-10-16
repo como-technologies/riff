@@ -54,6 +54,11 @@ flowchart LR
   [Change the session image](development.md#change-the-session-image).
 - The daemon makes the claims on GitHub. The session pushes its work
   with your sign-in.
+- Later, the daemons of two people connect over iroh, with the DNS
+  discovery and the public relays of n0. The spike of #697 checked
+  it between two machines. Its
+  [result](https://github.com/como-technologies/riff/blob/main/spikes/iroh/README.md)
+  has the numbers and the notes for that work.
 
 ## What sessions share
 
