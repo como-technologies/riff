@@ -251,7 +251,7 @@ impl Fake {
         }
         // Git makes the folder of the hooks only from its templates.
         std::fs::create_dir_all(clone.join(".git/hooks")).unwrap();
-        std::fs::write(clone.join(".git/hooks/pre-push"), "#!/bin/sh\n").unwrap();
+        isolated::write_program(clone.join(".git/hooks/pre-push"), "#!/bin/sh\n");
         clone
     }
 
