@@ -2430,7 +2430,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     let done = self.join(&invite.0, show).await;
                     say_lines(&out, done.map(|line| vec![line]));
                 }
-                Ok(Ask::Leave) => say_lines(&out, self.leave().await.map(|line| vec![line])),
+                Ok(Ask::Leave) => say_lines(&out, self.leave().await),
                 Ok(Ask::Remove { user, host }) => {
                     say_lines(&out, self.remove(&user, host.as_deref()));
                 }

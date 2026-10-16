@@ -6136,6 +6136,17 @@ then.
   record, ends its stream, and waits up to 5 seconds for the other
   daemon to close the connection. Then the daemon is in its riff of its
   own again.
+- **01M52JF709YHYE7SG6V3SDHR74** At `riff leave`, the daemon goes to its
+  riff of its own only after a peer link sent the `left` record and no
+  link runs, or after 5 seconds. A link sent the record only when the
+  other daemon then closed it with the code of a key that left: it does
+  so when it keeps the record, and at the end of the stream of a key
+  that left. A link that a new connection replaced does not count, and a
+  moment with no link does not end the wait. A link that starts during
+  the leave sends the `left` record with the records that the other
+  daemon lacks, and then ends its stream. When no link sent the record
+  in 5 seconds, `riff leave` says so, and names the `riff remove` command
+  that the owner runs.
 - **01M521J72EC8Z5HAKA1Q9P5Z24** `riff members` shows a key that has no
   link as last seen at the later of two times: the end of its last link
   since the start of the daemon, and the time of its last record.

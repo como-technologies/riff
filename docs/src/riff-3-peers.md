@@ -151,10 +151,16 @@ riff leave
 ```
 
 Your daemon sends a `left` record to each member, and waits up to 5
-seconds for each one to get it. Then this machine has a riff of your
+seconds until one of them got it. Then this machine has a riff of your
 own again, with the same key. Each session of this machine leaves
 with it. The owner cannot leave. A daemon that left cannot join that
 riff again: the riff refuses its key.
+
+When no daemon of the riff got the record in 5 seconds, for example
+when the owner is offline, `riff leave` says so in a second line. The
+riff can then still show your machine as a member. The line names the
+command for the owner, for example `riff remove brett --host kadomony`.
+See "Remove a member".
 
 ### Remove a member
 

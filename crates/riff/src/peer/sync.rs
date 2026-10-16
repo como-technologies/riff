@@ -102,13 +102,38 @@
 //!
 //! At `riff leave`, the daemon writes its `left` record. Each link sends
 //! it, ends its stream, and waits up to [`LEAVE_LIMIT`] for the other
-//! daemon to close the connection: the other daemon reads each frame in
-//! order, so it kept the record (01M521J6ZRNWBSPK7WB23TVY59). Then the
-//! link ends. [`Links::wait_no_links`] waits for the end of each link.
+//! daemon to close the connection (01M521J6ZRNWBSPK7WB23TVY59). A link
+//! that starts during the leave sends the `left` record with the records
+//! that the other daemon lacks, and then ends its stream in the same way.
+//! The other daemon reads each frame in order. At the end of the stream
+//! of a key that left, or when it keeps the `left` record, it closes the
+//! link with [`Close::Gone`].
+//!
+//! A link sent the `left` record only when the other daemon closed it
+//! with [`Close::Gone`] ([`kept_left`]). A new connection can take the
+//! place of a link during the leave ([`Close::Replaced`]): the other
+//! daemon then drops the frames of the old link that it did not read, and
+//! the new link is not in the links until its first step. So
+//! [`Links::wait_left`] waits until a link sent the record and no link
+//! runs, or up to [`LEAVE_LIMIT`]. A moment with no link, or a link that a
+//! replace closed, does not count (01M52JF709YHYE7SG6V3SDHR74).
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant M as the daemon that leaves
+//!     participant O as the daemon of the owner
+//!     Note over M,O: a new connection takes the place of the old link
+//!     O->>M: close the old link (code 4): it does not count
+//!     M->>M: write the left record; no link runs
+//!     M->>O: the new link: heads, then the records that O lacks, with left
+//!     M->>O: the end of the stream
+//!     O->>M: close (code 5, Gone): the new link sent it
+//!     M->>M: no link runs: the riff of its own
+//! ```
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
@@ -128,7 +153,7 @@ use crate::peer::body::Type;
 use crate::peer::invite::Invites;
 use crate::peer::join;
 use crate::peer::keep::{Fresh, Heads, Outcome, Peers};
-use crate::peer::record::{Fault, author_and_seq};
+use crate::peer::record::{Fault, Record, author_and_seq};
 use crate::peer::state::State;
 use crate::peer::talk::Hub;
 use crate::peer::wire::{self, Frame};
@@ -288,6 +313,19 @@ impl End {
     }
 }
 
+/// True when the other daemon closed the connection with [`Close::Gone`]:
+/// it kept the `left` record of this daemon (01M52JF709YHYE7SG6V3SDHR74).
+/// Each other end gives false: a close of this daemon, a replace, a
+/// fault, a drop or a lost connection. Then the other daemon can have
+/// dropped frames that it did not read.
+fn kept_left(reason: &ConnectionError) -> bool {
+    matches!(
+        reason,
+        ConnectionError::ApplicationClosed(close)
+            if Close::of(close.error_code.into_inner()) == Some(Close::Gone)
+    )
+}
+
 impl fmt::Display for End {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -414,9 +452,14 @@ pub struct Links {
     ended: Notify,
     /// The records that a link got and the daemon had already.
     duplicates: AtomicU64,
+    /// The links that sent the `left` record of this daemon: [`Links::left_sent`].
+    left_sent: AtomicU64,
     /// The invites of the daemon of the owner: it answers a join.
     joins: OnceLock<Arc<Invites>>,
     say: Box<dyn Fn(String) + Send + Sync>,
+    /// A test holds each new link here: [`Links::hold_new_links`].
+    #[cfg(test)]
+    new_links: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl fmt::Debug for Links {
@@ -454,6 +497,14 @@ fn keys_of(state: &State, me: &Public) -> BTreeSet<Public> {
     keys.insert(state.riff());
     keys.remove(me);
     keys
+}
+
+/// True when the member `key` left or was removed.
+fn out_of(state: &State, key: &Public) -> bool {
+    state
+        .members()
+        .get(key)
+        .is_some_and(|member| member.left || member.removed)
 }
 
 /// The user and the host of a key, when the records name them.
@@ -505,8 +556,11 @@ impl Links {
             tasks: Mutex::new(Vec::new()),
             ended: Notify::new(),
             duplicates: AtomicU64::new(0),
+            left_sent: AtomicU64::new(0),
             joins: OnceLock::new(),
             say: Box::new(say),
+            #[cfg(test)]
+            new_links: Arc::default(),
         });
         let accept = tokio::spawn(sync.clone().accept_all());
         let plan = tokio::spawn(sync.clone().plan_all());
@@ -564,23 +618,55 @@ impl Links {
         lock(&self.tasks).push(task);
     }
 
-    /// Waits up to `limit` for the end of each link: at a leave, each
-    /// link ends after the other daemon read the `left` record. It gives
-    /// true when no link runs.
-    pub async fn wait_no_links(&self, limit: Duration) -> bool {
-        tokio::time::timeout(limit, async {
+    /// The count of the links that sent the `left` record of this daemon
+    /// since its start: each link that ended its stream after that record,
+    /// and that the other daemon then closed with [`Close::Gone`]
+    /// ([`kept_left`]). Read it before the daemon writes its `left`
+    /// record, and give it to [`Links::wait_left`].
+    pub fn left_sent(&self) -> u64 {
+        self.left_sent.load(Ordering::SeqCst)
+    }
+
+    /// Waits at a leave, up to `limit`, until the count of
+    /// [`Links::left_sent`] is more than `before`, and no link runs
+    /// (01M52JF709YHYE7SG6V3SDHR74). So a moment with no link, for example
+    /// between the end of a replaced link and the first step of the new
+    /// one, does not end the wait. It gives true when a link sent the
+    /// `left` record.
+    pub async fn wait_left(&self, before: u64, limit: Duration) -> bool {
+        let _ = tokio::time::timeout(limit, async {
             loop {
                 let ended = self.ended.notified();
                 tokio::pin!(ended);
                 ended.as_mut().enable();
-                if lock(&self.links).is_empty() {
+                if self.left_sent() > before && lock(&self.links).is_empty() {
                     return;
                 }
                 ended.await;
             }
         })
-        .await
-        .is_ok()
+        .await;
+        self.left_sent() > before
+    }
+
+    /// A test: each new link of this daemon waits before its first step
+    /// while the test holds the guard.
+    #[cfg(test)]
+    pub(crate) async fn hold_new_links(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        self.new_links.clone().lock_owned().await
+    }
+
+    /// A test: this daemon makes one more connection to the daemon of
+    /// `key`. It takes the place of the link to that key on both sides.
+    #[cfg(test)]
+    pub(crate) fn connect_again(self: &Arc<Self>, key: Public) {
+        let sync = self.clone();
+        let task = tokio::spawn(async move {
+            let id = iroh::PublicKey::from_bytes(key.as_bytes()).expect("an endpoint ID");
+            let conn = sync.endpoint.connect(id, ALPN).await.expect("a connect");
+            sync.serve(conn, true).await;
+        });
+        lock(&self.tasks).push(task);
     }
 
     /// The state of the link to each other daemon of the riff.
@@ -802,6 +888,8 @@ impl Links {
     /// Runs the link of the connection `conn` until it ends. `dialed` is
     /// true when this daemon connected.
     async fn serve(self: &Arc<Self>, conn: Connection, dialed: bool) -> End {
+        #[cfg(test)]
+        drop(self.new_links.lock().await);
         let remote = public_of(&conn);
         let me = self.hub.public();
         if remote == me || !self.hub.read(|state| keys_of(state, &me).contains(&remote)) {
@@ -818,7 +906,11 @@ impl Links {
         }
         let who = self.who(&remote);
         (self.say)(text::peer_link_up(&who));
-        let end = self.run(&conn, remote, dialed).await;
+        let sent = Arc::new(AtomicBool::new(false));
+        let end = self.run(&conn, remote, dialed, sent.clone()).await;
+        if sent.load(Ordering::SeqCst) && conn.close_reason().is_some_and(|why| kept_left(&why)) {
+            self.left_sent.fetch_add(1, Ordering::SeqCst);
+        }
         if let End::Closed(close, _) = &end {
             close.close(&conn);
         }
@@ -837,8 +929,16 @@ impl Links {
         end
     }
 
-    /// The frames of the link `conn` to `remote`, both ways.
-    async fn run(&self, conn: &Connection, remote: Public, dialed: bool) -> End {
+    /// The frames of the link `conn` to `remote`, both ways. The writer
+    /// sets `sent` when it ended its stream after the `left` record of
+    /// this daemon.
+    async fn run(
+        &self,
+        conn: &Connection,
+        remote: Public,
+        dialed: bool,
+        sent: Arc<AtomicBool>,
+    ) -> End {
         // The fresh records from before the heads: so the other side
         // gets each record, also one that the daemon keeps while it sends
         // what the other side lacks.
@@ -864,6 +964,7 @@ impl Links {
             self.hub.clone(),
             remote,
             conn.clone(),
+            sent,
         ));
         let end = tokio::select! {
             end = self.read_all(recv, out, remote, conn) => end,
@@ -885,6 +986,12 @@ impl Links {
         loop {
             let frame = match wire::read(&mut recv).await {
                 Ok(Some(frame)) => frame,
+                // The other daemon ends its stream after its `left`
+                // record. The close with `Gone` tells it that this daemon
+                // kept that record (01M52JF709YHYE7SG6V3SDHR74).
+                Ok(None) if self.hub.read(|state| out_of(state, &remote)) => {
+                    return End::Closed(Close::Gone, text::PEER_OTHER_LEFT.into());
+                }
                 Ok(None) => return End::lost(conn, text::PEER_STREAM_ENDED.into()),
                 Err(wire::Bad::Read(e)) => return End::lost(conn, e.to_string()),
                 Err(bad) => {
@@ -946,26 +1053,36 @@ impl Links {
     }
 }
 
-/// Sends the `left` record `record` of this daemon on `send`, ends the
-/// stream, and waits up to [`LEAVE_LIMIT`] for the other daemon to close
-/// the connection: it read each frame before the end of the stream, so
-/// it kept the record (01M521J6ZRNWBSPK7WB23TVY59).
-async fn left(
-    send: &mut SendStream,
-    record: &crate::peer::record::Record,
-    conn: &Connection,
-) -> End {
-    let frame = Frame::Record(record.bytes().to_vec());
-    if let Err(e) = wire::write(send, &frame).await {
-        return End::lost(conn, e.to_string());
+/// After the `left` record of this daemon went out on `send`: ends the
+/// stream, sets `sent`, and waits up to [`LEAVE_LIMIT`] for the other
+/// daemon to close the connection: it reads each frame in order, and
+/// closes with [`Close::Gone`] when it kept the record
+/// (01M521J6ZRNWBSPK7WB23TVY59, [`kept_left`]).
+async fn left(send: &mut SendStream, conn: &Connection, sent: &AtomicBool) -> End {
+    if send.finish().is_ok() {
+        sent.store(true, Ordering::SeqCst);
     }
-    let _ = send.finish();
-    let _ = tokio::time::timeout(LEAVE_LIMIT, conn.closed()).await;
-    End::Closed(Close::Gone, text::PEER_LEFT.into())
+    match tokio::time::timeout(LEAVE_LIMIT, conn.closed()).await {
+        Ok(why) if kept_left(&why) => End::Closed(Close::Gone, text::PEER_LEFT.into()),
+        Ok(_) => End::lost(conn, text::PEER_STREAM_ENDED.into()),
+        Err(_) => End::Closed(Close::Gone, text::peer_left_no_close(LEAVE_LIMIT)),
+    }
+}
+
+/// True for the `left` record of the daemon of `me`.
+fn own_left(record: &Record, me: &Public) -> bool {
+    record.of() == Type::Left && record.author() == *me
+}
+
+/// The frame of the record `record`.
+fn frame_of(record: &Record) -> Frame {
+    Frame::Record(record.bytes().to_vec())
 }
 
 /// Sends the frames of the link to `remote` on `send`: what the reader
-/// asks, each fresh record, and the heads each [`HEADS_AGAIN`].
+/// asks, each fresh record, and the heads each [`HEADS_AGAIN`]. After the
+/// `left` record of this daemon, fresh or in what the other side lacks,
+/// it ends the stream ([`left`]).
 async fn write_all(
     mut send: SendStream,
     mut asks: mpsc::UnboundedReceiver<Out>,
@@ -973,45 +1090,82 @@ async fn write_all(
     hub: Arc<Hub>,
     remote: Public,
     conn: Connection,
+    sent: Arc<AtomicBool>,
 ) -> End {
+    let me = hub.public();
     let mut again = tokio::time::interval_at(Instant::now() + HEADS_AGAIN, HEADS_AGAIN);
     loop {
-        let frames: Vec<Frame> = tokio::select! {
+        let (frames, last): (Vec<Frame>, bool) = tokio::select! {
             biased;
             ask = asks.recv() => match ask {
-                Some(Out::Heads) => vec![Frame::Heads(hub.with_peers(Peers::heads))],
-                Some(Out::Lacks(theirs)) => hub
-                    .with_peers(|peers| peers.lacks(&theirs))
-                    .into_iter()
-                    .map(|record| Frame::Record(record.bytes().to_vec()))
-                    .collect(),
+                Some(Out::Heads) => (vec![Frame::Heads(hub.with_peers(Peers::heads))], false),
+                Some(Out::Lacks(theirs)) => {
+                    let lacked = hub.with_peers(|peers| peers.lacks(&theirs));
+                    let last = lacked.iter().any(|record| own_left(record, &me));
+                    (lacked.iter().map(frame_of).collect(), last)
+                }
                 None => return End::lost(&conn, text::PEER_STREAM_ENDED.into()),
             },
             got = fresh.recv() => match got {
-                Ok(Fresh::Kept { record, from: None })
-                    if record.of() == Type::Left && record.author() == hub.public() =>
-                {
-                    return left(&mut send, &record, &conn).await;
+                Ok(Fresh::Kept { record, from: None }) if own_left(&record, &me) => {
+                    (vec![frame_of(&record)], true)
                 }
                 Ok(Fresh::Kept { record, from }) if from != Some(remote) => {
-                    vec![Frame::Record(record.bytes().to_vec())]
+                    (vec![frame_of(&record)], false)
                 }
                 Ok(Fresh::Kept { .. } | Fresh::Switched) => continue,
-                Ok(Fresh::Fork(fork)) => vec![
-                    Frame::Record(fork.first.bytes().to_vec()),
-                    Frame::Record(fork.second.bytes().to_vec()),
-                ],
+                Ok(Fresh::Fork(fork)) => (vec![frame_of(&fork.first), frame_of(&fork.second)], false),
                 Err(RecvError::Lagged(_)) => {
                     return End::Closed(Close::Behind, Close::Behind.to_string());
                 }
                 Err(RecvError::Closed) => return End::lost(&conn, text::PEER_STREAM_ENDED.into()),
             },
-            _ = again.tick() => vec![Frame::Heads(hub.with_peers(Peers::heads))],
+            _ = again.tick() => (vec![Frame::Heads(hub.with_peers(Peers::heads))], false),
         };
         for frame in &frames {
             if let Err(e) = wire::write(&mut send, frame).await {
                 return End::lost(&conn, e.to_string());
             }
         }
+        if last {
+            return left(&mut send, &conn, &sent).await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iroh::endpoint::{ApplicationClose, VarInt};
+
+    use super::*;
+
+    /// A close of the other daemon with the code `code`.
+    fn closed(code: u32) -> ConnectionError {
+        ConnectionError::ApplicationClosed(ApplicationClose {
+            error_code: VarInt::from_u32(code),
+            reason: Default::default(),
+        })
+    }
+
+    /// 01M52JF709YHYE7SG6V3SDHR74: only a close of the other daemon with
+    /// `Gone` says that it kept the `left` record. A replace, a drop with
+    /// the code 0, a fault, a close of this daemon and a lost connection
+    /// do not.
+    #[test]
+    fn only_a_close_with_gone_says_that_the_other_daemon_kept_the_left_record() {
+        assert!(kept_left(&closed(Close::Gone as u32)));
+        for close in [
+            Close::NotMember,
+            Close::Refused,
+            Close::BadFrame,
+            Close::Replaced,
+            Close::Behind,
+            Close::Disk,
+        ] {
+            assert!(!kept_left(&closed(close as u32)), "{close:?}");
+        }
+        assert!(!kept_left(&closed(0)));
+        assert!(!kept_left(&ConnectionError::LocallyClosed));
+        assert!(!kept_left(&ConnectionError::TimedOut));
     }
 }
