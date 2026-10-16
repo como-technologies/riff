@@ -366,14 +366,18 @@ async fn the_monitor_line_shows_the_pool_or_the_jobs() {
         assert!(out.status.success(), "{out:?}");
         let text = stdout(&out);
         assert!(
-            text.contains(&format!("monitor on  load5 1.00 of 12.00 (8 cores)  {want}")),
+            text.contains(&format!(
+                "monitor on  load5 1.00 of 12.00 (8 cores)  {want}"
+            )),
             "no {want:?}: {text}"
         );
     };
     // A pool of 6 tokens that a worker holds, with 2 tokens in use.
     let pool = riff::jobserver::Pool::hold(&r.home.path().join("state/jobs"), 6, 2).unwrap();
     let wait = std::time::Duration::from_secs(10);
-    let taken = riff::jobserver::take(&pool.fifo(), 2, wait).unwrap().unwrap();
+    let taken = riff::jobserver::take(&pool.fifo(), 2, wait)
+        .unwrap()
+        .unwrap();
     assert_eq!(taken.count(), 2);
     line("pool 6 (2 in use)");
     drop(taken);
@@ -529,7 +533,11 @@ fn the_book_has_a_how_to_for_the_monitor() {
         "the example of riff top has no line of numbers"
     );
     // What the line shows of the pool (01M515PDFZZXQ9ZCQE7SQ6KB8G).
-    for want in ["| `pool 10 (3 in use)` |", "| `pool 10 (0 in use)` |", "| `jobs 2` |"] {
+    for want in [
+        "| `pool 10 (3 in use)` |",
+        "| `pool 10 (0 in use)` |",
+        "| `jobs 2` |",
+    ] {
         assert!(top.contains(want), "the pool section has no {want:?}");
     }
 }
