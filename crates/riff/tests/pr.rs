@@ -595,6 +595,30 @@ async fn pr_open_makes_a_body_that_passes_the_hygiene_check_and_turns_on_auto_me
     assert!(create.is_some() && create < merge, "{log}");
 }
 
+/// The trailer names a wave with a name by its number, so a rename of
+/// the wave breaks no pull request (01M518A07QF1YACBYT91M0DD1R).
+#[tokio::test]
+async fn pr_open_names_a_wave_with_a_name_by_its_number() {
+    let named = OPEN.replace(r#""title":"Wave 3""#, r#""title":"Wave 3: Cloud""#);
+    let machine = Machine::new(&named).await;
+    machine.claim("author", "issue-12").await;
+    machine
+        .ok("author", &["pr", "open", "--title", "Show the wave"])
+        .await;
+    let (_, body) = created(machine.bin.path());
+    assert_eq!(body, "Closes #12\n\nIssue: #12\nMilestone: Wave 3\n");
+    let log = log(machine.bin.path());
+    assert!(
+        log.contains("gh pr create --title Show the wave --milestone Wave 3: Cloud --body-file -"),
+        "{log}"
+    );
+    for renamed in ["Wave 3: Cloud", "Wave 3: The view"] {
+        let pr = hygiene::PullRequest::new("Show the wave", &body, Some(renamed));
+        let issue = hygiene::Issue::new(12, "OPEN", Some(renamed));
+        assert_eq!(hygiene::check_pr(&pr, Some(&issue)), [], "{renamed}");
+    }
+}
+
 #[tokio::test]
 async fn pr_open_with_refs_links_with_refs() {
     let machine = Machine::new(OPEN).await;

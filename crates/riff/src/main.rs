@@ -571,11 +571,11 @@ enum Command {
         #[arg(long)]
         image: Option<String>,
     },
-    /// See, make and end the waves of this repository, or run one
+    /// See, make, rename and end the waves of this repository, or run one
     ///
-    /// The lead plans the waves with riff wave list, riff wave make and
-    /// riff wave end. They use the gh of this machine, on the repository
-    /// of this folder.
+    /// The lead plans the waves with riff wave list, riff wave make, riff
+    /// wave rename and riff wave end. They use the gh of this machine, on
+    /// the repository of this folder.
     ///
     /// With riff wave run, the daemon starts one session for each free
     /// item of the current wave, and one for each pull request that waits
@@ -820,7 +820,9 @@ enum Pr {
     ///
     /// It is for the issue that this session claims, and it turns on
     /// auto-merge with a squash. The body has the link line and the
-    /// trailers Issue: and Milestone: of the issue. Push the branch first.
+    /// trailers Issue: and Milestone: of the issue. The trailer
+    /// Milestone: names a wave by its number, for example Wave 3. Push
+    /// the branch first.
     Open {
         /// The title. Do not end it with (#N).
         #[arg(long)]
@@ -1123,6 +1125,18 @@ enum WaveCommand {
         /// The title, for example "Wave 6" or "Wave 6: Cloud".
         #[arg(required = true)]
         title: Vec<String>,
+    },
+    /// Rename a wave, and keep its number
+    ///
+    /// The open wave N gets the title Wave N: NAME. Each pull request
+    /// names its wave by the number (Milestone: Wave N), so no pull
+    /// request changes.
+    Rename {
+        /// The number of the wave, for example 6 for Wave 6.
+        number: u64,
+        /// The new name, for example "Cloud" for Wave 6: Cloud.
+        #[arg(required = true)]
+        name: Vec<String>,
     },
     /// End a wave when each of its items is closed
     ///
@@ -1793,6 +1807,10 @@ async fn main() -> Result<()> {
                 let made = riff::waves::make(&gh, &title.join(" "))?;
                 Some(text::waves_made(&made.title))
             }
+            WaveCommand::Rename { number, name } => {
+                let (old, new) = riff::waves::rename(&gh, *number, &name.join(" "))?;
+                Some(text::waves_renamed(&old.title, &new.title))
+            }
             WaveCommand::End { number } => {
                 let ended = riff::waves::end(&gh, *number)?;
                 Some(text::waves_ended(&ended.title, ended.closed_issues))
@@ -1909,9 +1927,10 @@ async fn main() -> Result<()> {
         match command {
             WaveCommand::Run => riff::wave::ask_run(&dir, &here, api.base()).await?,
             WaveCommand::Stop => riff::wave::ask_stop(&dir, &here).await?,
-            WaveCommand::List | WaveCommand::Make { .. } | WaveCommand::End { .. } => {
-                unreachable!("handled before the identity")
-            }
+            WaveCommand::List
+            | WaveCommand::Make { .. }
+            | WaveCommand::Rename { .. }
+            | WaveCommand::End { .. } => unreachable!("handled before the identity"),
         }
         return Ok(());
     }

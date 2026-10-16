@@ -115,6 +115,31 @@ fn a_broken_pull_request_fails_with_each_rule() {
     }
 }
 
+/// 01M518A04JWYJE5FA1VR309SAA: the lead renamed the wave after the
+/// pull request got its trailer. The trailer names the wave by its
+/// number, so the check passes. A trailer of another wave fails.
+#[test]
+fn a_trailer_of_the_old_title_passes_after_a_rename_of_the_wave() {
+    let renamed = Some("Wave 28: 1.x, fixes that slow the work");
+    let old = GOOD.replace("Wave 3", "Wave 28: after 1.4.0");
+    let gh = fake_gh(&pr_json(&old, renamed), &[issue_json(77, "OPEN", renamed)]);
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+
+    let other = GOOD.replace("Wave 3", "Wave 27: after 1.4.0");
+    let gh = fake_gh(&pr_json(&other, renamed), &[issue_json(77, "OPEN", renamed)]);
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(
+            "error: milestone-trailer: `Milestone: Wave 27: after 1.4.0` is not the milestone of \
+             the pull request (Wave 28: 1.x, fixes that slow the work)"
+        ),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn a_pull_request_of_an_unknown_issue_is_a_tool_error() {
     let gh = fake_gh(&pr_json(GOOD, Some("Wave 3")), &[]);

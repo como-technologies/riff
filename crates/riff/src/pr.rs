@@ -16,9 +16,11 @@
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
 //! writes the body in the form of the hygiene check: the link line and
-//! the trailers `Issue:` and `Milestone:` ([`body`]). It adds each of
-//! them only when the summary does not have it, and refuses a summary
-//! with a line for another issue or another milestone
+//! the trailers `Issue:` and `Milestone:` ([`body`]). The trailer
+//! `Milestone:` names a wave by its number, `Wave N` with no name
+//! ([`hygiene::milestone_value`], 01M518A07QF1YACBYT91M0DD1R). It adds
+//! each of them only when the summary does not have it, and refuses a
+//! summary with a line for another issue or another wave
 //! (01M3W2627GYXR8CFW76KB6CB9W). It checks the pull request with
 //! [`hygiene::check_pr`] before it opens it, and turns on auto-merge
 //! with a squash at once (01M3NB6FTGPD0S5JTXXXNGNNDT).
@@ -209,7 +211,10 @@ impl Gh {
 /// It adds the link line and each trailer only when `summary` does not
 /// have it. It refuses a link line, or a trailer `Issue:` or
 /// `Milestone:`, of `summary` that is not the one of the pull request,
-/// and names the line (01M3W2627GYXR8CFW76KB6CB9W).
+/// and names the line (01M3W2627GYXR8CFW76KB6CB9W). The trailer
+/// `Milestone:` names a wave by its number (01M518A07QF1YACBYT91M0DD1R),
+/// and a trailer of the summary with the same number is the one of the
+/// pull request.
 ///
 /// ```
 /// use hygiene::{Issue, Link, PullRequest};
@@ -218,6 +223,12 @@ impl Gh {
 /// assert_eq!(body, "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n");
 /// let pr = PullRequest::new("Show the wave", &body, Some("Wave 3"));
 /// assert!(hygiene::check_pr(&pr, Some(&Issue::new(12, "OPEN", Some("Wave 3")))).is_empty());
+///
+/// // A wave with a name: the trailer has only its number.
+/// let body = riff::pr::body(Link::Closes(12), "Show the wave.\n", "Wave 3: Cloud").unwrap();
+/// assert_eq!(body, "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n");
+/// let named = "Text.\n\nMilestone: Wave 3: Old name\n";
+/// assert!(riff::pr::body(Link::Closes(12), named, "Wave 3: Cloud").is_ok());
 ///
 /// let body = riff::pr::body(Link::Refs(12), "", "Wave 3").unwrap();
 /// assert_eq!(body, "Refs #12\n\nIssue: #12\nMilestone: Wave 3\n");
@@ -264,12 +275,17 @@ pub fn body(link: hygiene::Link, summary: &str, milestone: &str) -> Result<Strin
 
     let trailers = hygiene::trailers(summary);
     let mut missing = String::new();
+    let issue = format!("#{n}");
     for (key, want) in [
-        ("Issue", format!("#{n}")),
-        ("Milestone", milestone.to_owned()),
+        ("Issue", issue.clone()),
+        ("Milestone", hygiene::milestone_value(milestone)),
     ] {
+        let fits = |value: &str| match key {
+            "Milestone" => hygiene::names_milestone(value, milestone),
+            _ => value == issue,
+        };
         let mut values = trailers.iter().filter(|(k, _)| k == key).map(|(_, v)| v);
-        if let Some(value) = values.find(|value| **value != want) {
+        if let Some(value) = values.find(|value| !fits(value)) {
             bail!(
                 "the body has the line `{key}: {value}`, but this pull request needs \
                  `{key}: {want}`. Change the line, or remove it."

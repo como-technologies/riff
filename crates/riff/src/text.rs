@@ -1216,6 +1216,39 @@ pub fn waves_made(title: &str) -> String {
     format!("Made the wave {title}.")
 }
 
+/// The answer to `riff wave rename` (01M518A0BEQBX9RH9H0CEFYF9Q).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_renamed("Wave 28: after 1.4.0", "Wave 28: Fixes"),
+///     "Renamed the wave Wave 28: after 1.4.0 to Wave 28: Fixes. Each pull request names it \
+///      `Milestone: Wave 28`, so no pull request changes."
+/// );
+/// ```
+pub fn waves_renamed(old: &str, new: &str) -> String {
+    format!(
+        "Renamed the wave {old} to {new}. Each pull request names it `Milestone: {}`, so no \
+         pull request changes.",
+        hygiene::milestone_value(new)
+    )
+}
+
+/// The refusal of `riff wave rename` for a blank name.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_bad_name(" "),
+///     "riff wave rename needs a name, not \" \". The number stays: riff wave rename 6 Cloud \
+///      gives the title Wave 6: Cloud."
+/// );
+/// ```
+pub fn waves_bad_name(name: &str) -> String {
+    format!(
+        "riff wave rename needs a name, not {name:?}. The number stays: riff wave rename 6 Cloud \
+         gives the title Wave 6: Cloud."
+    )
+}
+
 /// The answer to `riff wave end` (01M509TJXE04CTG5D1K751WXJY).
 ///
 /// ```
