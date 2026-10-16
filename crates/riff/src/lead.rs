@@ -53,8 +53,7 @@ use crate::api::Api;
 use crate::daemon::{self, Ask, Say, Status};
 use crate::run::{self, Facts};
 use crate::runtime::{Runtime, SessionSpec};
-use crate::session_image::Image;
-use crate::{identity, terminal, text};
+use crate::{identity, session_image, terminal, text};
 
 /// The work item of the lead in the daemon.
 pub const ITEM: &str = "lead";
@@ -310,7 +309,7 @@ pub async fn start_with(
     }
     let work = identity::working_dir()?;
     let (main, common) = run::main_clone(&work)?;
-    let image = Image::of_repository(&main)?.to_string();
+    let image = session_image::merged(&main, |line| println!("{line}"))?.to_string();
     daemon::image(dir, &image, |line| println!("{line}")).await?;
     let host = run::host_facts(&main)?;
     let folder = folder_of(&run::data_dir()?, &repo);

@@ -4855,8 +4855,8 @@ mod tests {
             Box::pin(async { bail!("no wave in this test") })
         }
 
-        fn image(&self, _: &Wave) -> Result<String> {
-            bail!("no wave in this test")
+        fn image<'a>(&'a self, _: &'a Wave) -> crate::wave::BoxFuture<'a, Result<String>> {
+            Box::pin(async { bail!("no wave in this test") })
         }
 
         fn begin<'a>(

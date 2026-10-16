@@ -105,8 +105,7 @@ use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
-use crate::session_image::Image;
-use crate::{identity, pr, rollout, terminal, text};
+use crate::{identity, pr, rollout, session_image, terminal, text};
 
 /// The file of the waves that the daemon runs, in its folder.
 pub const WAVES_FILE: &str = "waves.json";
@@ -191,7 +190,7 @@ pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
     }
     let (main, _) = run::main_clone(&identity::working_dir()?)?;
     // The repository pins its session image: each session needs it.
-    Image::of_repository(&main)?;
+    session_image::merged(&main, |line| println!("{line}"))?;
     let repo = here.repo_text();
     let wave = Wave {
         repo: repo.clone(),
@@ -386,8 +385,9 @@ pub trait World: Send + Sync {
     /// The facts of the wave now.
     fn look<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<Look>>;
 
-    /// The session image of the repository of the wave.
-    fn image(&self, wave: &Wave) -> Result<String>;
+    /// The session image of the repository of the wave: the merged pin
+    /// of its main clone ([`session_image::merged`]).
+    fn image<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<String>>;
 
     /// The steps before the start: the checks, the claim, the clone and
     /// the start text. `None` when another session holds the item, or
@@ -543,7 +543,7 @@ async fn start_job<R: Runtime + 'static>(
     slot: Slot,
 ) -> Result<Option<(Record, Ended)>> {
     let world = daemon.world().clone();
-    let image = world.image(wave)?;
+    let image = world.image(wave).await?;
     daemon.have_image(&image, |line| println!("{line}")).await?;
     let Some(start) = world.begin(wave, work, &image).await? else {
         return Ok(None);
@@ -1131,8 +1131,12 @@ impl World for Live {
         })
     }
 
-    fn image(&self, wave: &Wave) -> Result<String> {
-        Ok(Image::of_repository(&wave.main)?.to_string())
+    fn image<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<String>> {
+        let (main, repo) = (wave.main.clone(), wave.repo.clone());
+        Box::pin(blocking(move || {
+            let image = session_image::merged(&main, |line| println!("{repo}: {line}"))?;
+            Ok(image.to_string())
+        }))
     }
 
     fn begin<'a>(
@@ -1380,8 +1384,8 @@ mod tests {
             })
         }
 
-        fn image(&self, _: &Wave) -> Result<String> {
-            Ok(IMAGE.into())
+        fn image<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<String>> {
+            Box::pin(async { Ok(IMAGE.into()) })
         }
 
         fn begin<'a>(
