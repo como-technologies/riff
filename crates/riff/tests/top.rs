@@ -292,12 +292,12 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
         rows,
         [
             "mike  online  3 sessions: 1 busy, 1 idle, 1 blocked, 1 claim",
-            "├─ pangolin  › riff  2 sessions: 1 idle, 1 blocked",
+            "├─ pangolin  › riff  2 sessions: 1 lead; 1 idle, 1 blocked",
             "│  ├─ c3  blocked",
             "│  │    waits for a review (Ns ago)",
             "│  └─ a1  lead  idle",
             "│       monitoring work for Ns",
-            "└─ thelio  › riff  1 session: 1 busy, 1 claim",
+            "└─ thelio  › riff  1 session: 1 worker; 1 busy, 1 claim",
             "   └─ b2  worker  busy",
             "        working on #12 Show the wave",
             "        Ns ago: tests",
@@ -334,6 +334,95 @@ async fn a_worker_of_another_host_shows_worker() {
     assert!(line("b2").contains("  working on #12  "), "{who}");
     assert!(!line("c3").contains("worker"), "{who}");
     assert!(line("a1").contains("  you lead"), "{who}");
+}
+
+/// A fake server with each kind of session: the lead, a worker in tmux,
+/// a session in a container and the session of `riff workers host`.
+/// Each one has its tag in `riff top` and `riff who`, and the line of a
+/// host counts each kind (01M510MG2YSETB2CCAS8XDHPZ0,
+/// 01M510MG5J92PYDWZSDQS8HMWK). The session in a container has no
+/// watch: the keep-alive of the daemon makes it live, and the end of
+/// its container makes it gone (01M510MG0CKDXAKF6YJ768K7E8).
+#[tokio::test(flavor = "multi_thread")]
+async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    for (id, args) in [("a1", &["lead"][..]), ("a1", &["resume", "--riff"][..])] {
+        output(riff(&server, dir, Some(id), bin.path(), args)).await;
+    }
+    live(&server, "pangolin", "a1").await;
+    let api = Api::new(&server);
+    let uri = |id: &str| -> SessionUri {
+        format!("riff://mike@thelio/como-technologies/riff?session={id}")
+            .parse()
+            .unwrap()
+    };
+    let w1 = uri("w1");
+    api.register_as(&w1, true).await.unwrap();
+    live_at(&server, w1).await;
+    let c1 = uri("c1#issue-12");
+    api.start(&c1, StartReason::Process, true).await.unwrap();
+    let thread = c1.default_thread().unwrap();
+    assert!(api.claim(&c1, &thread, "issue-12").await.unwrap().granted);
+    api.alive_in_container(&c1).await.unwrap();
+    // The host never registers: its watch makes it known.
+    let h1 = uri("h1");
+    live_at(&server, h1.clone()).await;
+    let host = riff::host::HostStatus {
+        limit: 2,
+        floor: 4,
+        deaths: 0,
+        machine: None,
+        disk: None,
+        monitor: None,
+        workers: vec![],
+    };
+    let step = riff_core::wire::Status { step: host.line() };
+    api.status(&h1, &step).await.unwrap();
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    let lead_line = "├─ pangolin  › riff  1 session: 1 lead; 1 idle";
+    assert!(rows(&top).iter().any(|r| r == lead_line), "{top}");
+    assert_eq!(session(&top, "a1")[0], "│  └─ a1  lead  idle", "{top}");
+    for (id, head) in [
+        ("c1", "   ├─ c1  #issue-12  container  busy"),
+        ("h1", "   ├─ h1  host  idle"),
+        ("w1", "   └─ w1  worker  idle"),
+    ] {
+        assert_eq!(session(&top, id)[0], head, "{top}");
+    }
+    // A pipe has 80 columns: riff cuts the end of the line with `…`.
+    let host_line = "└─ thelio  › riff  3 sessions: 1 container, 1 worker, 1 host; 1 busy, ";
+    assert!(rows(&top).iter().any(|r| r.starts_with(host_line)), "{top}");
+
+    let who = ["who", "--color", "never"];
+    let who = output(riff(&server, dir, Some("a1"), bin.path(), &who)).await;
+    let line = |id: &str| {
+        who.lines()
+            .find(|l| l.contains(&format!("({id})")))
+            .unwrap_or_else(|| panic!("{id}: {who}"))
+            .to_owned()
+    };
+    for (id, state, tag) in [
+        ("c1", "busy", "container"),
+        ("h1", "idle", "host"),
+        ("w1", "idle", "worker"),
+    ] {
+        let line = line(id);
+        let words: Vec<&str> = line.split_whitespace().collect();
+        assert_eq!(words[2..4], [state, tag], "{id}: {who}");
+    }
+
+    // The daemon ends the session at the end of its container: gone.
+    api.end(&c1).await.unwrap();
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    assert!(!top.contains("─ c1  "), "{top}");
+    let host_line = "└─ thelio  › riff  2 sessions: 1 worker, 1 host; 2 idle";
+    assert!(rows(&top).iter().any(|r| r == host_line), "{top}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -703,10 +792,10 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     );
     let rows = rows(&top);
     for row in [
-        "├─ pangolin  5 sessions: 2 busy, 2 idle, 1 blocked, 2 claims",
+        "├─ pangolin  5 sessions: 2 leads; 2 busy, 2 idle, 1 blocked, 2 claims",
         "│  ├─ riff  3 sessions: 2 idle, 1 blocked",
         "│  └─ strata  2 sessions: 2 busy, 2 claims",
-        "└─ thelio  › riff  1 session: 1 idle",
+        "└─ thelio  › riff  1 session: 1 worker; 1 idle",
     ] {
         assert!(rows.iter().any(|r| r == row), "{row}: {top}");
     }
@@ -821,7 +910,7 @@ async fn two_owners_show_the_owner_of_each_repository() {
         "│  ├─ acme/strata  1 session: 1 busy, 1 claim",
         "│  │  └─ d4  #issue-88  lead  busy",
         "│  └─ como-technologies/riff  2 sessions: 1 idle, 1 blocked",
-        "└─ thelio  › como-technologies/riff  1 session: 1 busy, 1 claim",
+        "└─ thelio  › como-technologies/riff  1 session: 1 worker; 1 busy, 1 claim",
     ] {
         assert!(rows.iter().any(|r| r == row), "{row}: {top}");
     }

@@ -2616,7 +2616,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///
 /// ```
 /// use riff::host::HostStatus;
-/// use riff::text::Kind;
+/// use riff::text::SessionKind;
 /// use riff_core::wire::{SessionInfo, Status, StatusInfo};
 ///
 /// let row = |uri: &str, worker: bool, container: bool| SessionInfo {
@@ -2637,12 +2637,12 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     step: None,
 /// };
 /// let lead = row("riff://mike@thelio/o/r?session=a1&lead=true", false, true);
-/// assert_eq!(Kind::of(&lead), Some(Kind::Lead));
+/// assert_eq!(SessionKind::of(&lead), Some(SessionKind::Lead));
 /// let boxed = row("riff://mike@thelio/o/r?session=c1", true, true);
-/// assert_eq!(Kind::of(&boxed), Some(Kind::Container));
+/// assert_eq!(SessionKind::of(&boxed), Some(SessionKind::Container));
 /// let worker = row("riff://mike@thelio/o/r?session=w1", true, false);
-/// assert_eq!(Kind::of(&worker), Some(Kind::Worker));
-/// assert_eq!(Kind::of(&row("riff://mike@thelio/o/r?session=b2", false, false)), None);
+/// assert_eq!(SessionKind::of(&worker), Some(SessionKind::Worker));
+/// assert_eq!(SessionKind::of(&row("riff://mike@thelio/o/r?session=b2", false, false)), None);
 ///
 /// // The session of `riff workers host` says so in its status.
 /// let mut host = row("riff://mike@thelio/o/r?session=h1", false, false);
@@ -2651,31 +2651,36 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 /// };
 /// let status = Status { step: status.line() };
 /// host.status = Some(StatusInfo { status, age_secs: 1, stale: false });
-/// assert_eq!(Kind::of(&host), Some(Kind::Host));
-/// assert_eq!(Kind::Host.word(), "host");
+/// assert_eq!(SessionKind::of(&host), Some(SessionKind::Host));
+/// assert_eq!(SessionKind::Host.word(), "host");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Kind {
+pub enum SessionKind {
     Lead,
     Container,
     Worker,
     Host,
 }
 
-impl Kind {
+impl SessionKind {
     /// Each kind, in the order of the counts of `riff top`.
-    pub const ALL: [Kind; 4] = [Kind::Lead, Kind::Container, Kind::Worker, Kind::Host];
+    pub const ALL: [SessionKind; 4] = [
+        SessionKind::Lead,
+        SessionKind::Container,
+        SessionKind::Worker,
+        SessionKind::Host,
+    ];
 
     /// The kind of `s`, or `None`.
-    pub fn of(s: &SessionInfo) -> Option<Kind> {
+    pub fn of(s: &SessionInfo) -> Option<SessionKind> {
         if s.uri.lead() {
-            Some(Kind::Lead)
+            Some(SessionKind::Lead)
         } else if s.container {
-            Some(Kind::Container)
+            Some(SessionKind::Container)
         } else if s.worker {
-            Some(Kind::Worker)
+            Some(SessionKind::Worker)
         } else if is_host(s) {
-            Some(Kind::Host)
+            Some(SessionKind::Host)
         } else {
             None
         }
@@ -2684,10 +2689,10 @@ impl Kind {
     /// The word of the kind: the same as its tag.
     pub fn word(self) -> &'static str {
         match self {
-            Kind::Lead => "lead",
-            Kind::Container => "container",
-            Kind::Worker => "worker",
-            Kind::Host => "host",
+            SessionKind::Lead => "lead",
+            SessionKind::Container => "container",
+            SessionKind::Worker => "worker",
+            SessionKind::Host => "host",
         }
     }
 }
@@ -2754,15 +2759,15 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
         tags.push("owner");
     }
     if s.uri.lead() {
-        tags.push(Kind::Lead.word());
+        tags.push(SessionKind::Lead.word());
     }
     if s.container {
-        tags.push(Kind::Container.word());
+        tags.push(SessionKind::Container.word());
     } else if s.worker {
-        tags.push(Kind::Worker.word());
+        tags.push(SessionKind::Worker.word());
     }
     if is_host(s) {
-        tags.push(Kind::Host.word());
+        tags.push(SessionKind::Host.word());
     }
     tags
 }

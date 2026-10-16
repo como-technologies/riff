@@ -99,7 +99,7 @@ use serde::Deserialize;
 use crate::host::HostStatus;
 use crate::state;
 use crate::style::{BOLD, ERROR, MUTED, WARNING, session as session_style, styled};
-use crate::text::{Kind, safe};
+use crate::text::{SessionKind, safe};
 use crate::view;
 
 /// The time between two draws of `riff top` with no message.
@@ -800,14 +800,15 @@ fn groups<'a>(sessions: &[&'a SessionInfo], levels: &[Level]) -> Vec<Group<'a>> 
 }
 
 /// The counts of a row of the tree (01M42KHN33M4K13GKTX2WM6CMM): the
-/// sessions, then each kind ([`Kind`], 01M510MG5J92PYDWZSDQS8HMWK), then
-/// the busy, idle and blocked ones and the claims, each that is more
-/// than 0.
+/// sessions, then the busy, idle and blocked ones and the claims, each
+/// that is more than 0. With `kinds`, the line of a host, each kind
+/// ([`SessionKind`]) comes before the states (01M510MG5J92PYDWZSDQS8HMWK).
 ///
 /// ```text
+/// 3 sessions: 1 busy, 1 idle, 1 blocked, 2 claims
 /// 6 sessions: 3 workers, 2 containers, 1 host; 4 busy, 2 idle, 4 claims
 /// ```
-fn counts(sessions: &[&SessionInfo]) -> String {
+fn counts(sessions: &[&SessionInfo], kinds: bool) -> String {
     let many = |n: usize, word: &str| {
         if n == 1 {
             format!("1 {word}")
@@ -815,12 +816,13 @@ fn counts(sessions: &[&SessionInfo]) -> String {
             format!("{n} {word}s")
         }
     };
-    let kinds: Vec<String> = Kind::ALL
+    let kinds: Vec<String> = SessionKind::ALL
         .into_iter()
+        .filter(|_| kinds)
         .map(|kind| {
             let n = sessions
                 .iter()
-                .filter(|s| Kind::of(s) == Some(kind))
+                .filter(|s| SessionKind::of(s) == Some(kind))
                 .count();
             (n, kind.word())
         })
@@ -1004,7 +1006,7 @@ impl Top<'_> {
     /// assert_eq!(tree, [
     ///     "ann  admin  offline  seen 1h ago",
     ///     "mike  owner  online  5 sessions: 2 busy, 1 idle, 1 blocked, 3 claims",
-    ///     "├─ pangolin  2 sessions: 1 busy, 1 blocked, 2 claims",
+    ///     "├─ pangolin  2 sessions: 1 lead, 1 worker; 1 busy, 1 blocked, 2 claims",
     ///     "│  ├─ r  1 session: 1 blocked, 1 claim",
     ///     "│  │  └─ dddd4444  #verify-13  worker  blocked",
     ///     "│  │       waits for the lead (25m ago)",
@@ -1014,7 +1016,7 @@ impl Top<'_> {
     ///     "│     └─ eeee5555  lead  busy",
     ///     "│          working on #14",
     ///     "│          2m ago: plan",
-    ///     "└─ thelio  › r  3 sessions: 1 busy, 1 idle, 1 claim",
+    ///     "└─ thelio  › r  3 sessions: 1 lead, 1 worker; 1 busy, 1 idle, 1 claim",
     ///     "   ├─ aaaa1111  lead  idle",
     ///     "   │    monitoring work for 10m",
     ///     "   │    2m ago: plan",
@@ -1038,9 +1040,9 @@ impl Top<'_> {
     ///     .collect();
     /// assert_eq!(rows, [
     ///     "r  › mike  owner  online  4 sessions: 1 busy, 1 idle, 1 blocked, 2 claims",
-    ///     "├─ pangolin  1 session: 1 blocked, 1 claim",
-    ///     "└─ thelio  3 sessions: 1 busy, 1 idle, 1 claim",
-    ///     "s  › mike  owner  online  › pangolin  1 session: 1 busy, 1 claim",
+    ///     "├─ pangolin  1 session: 1 worker; 1 blocked, 1 claim",
+    ///     "└─ thelio  3 sessions: 1 lead, 1 worker; 1 busy, 1 idle, 1 claim",
+    ///     "s  › mike  owner  online  › pangolin  1 session: 1 lead; 1 busy, 1 claim",
     /// ], "{text}");
     /// top.show = &all;
     ///
@@ -1159,7 +1161,8 @@ impl Top<'_> {
             parts.extend(label);
         }
         if !group.sessions.is_empty() {
-            parts.push((counts(&group.sessions), MUTED));
+            let host = chain.iter().any(|r| r.level == Level::Host);
+            parts.push((counts(&group.sessions, host), MUTED));
         }
         lines.push(Line::new(pre, parts));
         // The numbers of the machine of each host on the line
@@ -1491,13 +1494,13 @@ mod tests {
         assert_eq!(
             tree(&text),
             [
-                "brett  online  › kadomony  › strata  2 sessions: 1 busy, 1 idle, 1 claim",
+                "brett  online  › kadomony  › strata  2 sessions: 1 lead; 1 busy, 1 idle, 1 claim",
                 "├─ b1  #issue-88  busy",
                 "│    working on #88",
                 "└─ b2  lead  idle",
                 "     monitoring work for 0s",
                 "mike  online  4 sessions: 1 busy, 2 idle, 1 blocked, 2 claims",
-                "├─ pangolin  3 sessions: 1 busy, 2 idle, 1 claim",
+                "├─ pangolin  3 sessions: 1 lead; 1 busy, 2 idle, 1 claim",
                 "│  ├─ riff  2 sessions: 1 busy, 1 idle, 1 claim",
                 "│  │  ├─ m1  #issue-7  busy",
                 "│  │  │    working on #7",
