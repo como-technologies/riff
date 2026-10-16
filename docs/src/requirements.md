@@ -5144,6 +5144,11 @@ share.
   of the `.claude.json` of the person (else `auto`), and the trust of
   the clone. A key that is there stays. riff writes the `settings.json`
   of a session (01M4ZD48DHAKJ1EHX6QHYAQ7ZM) only when it is not there.
+- **01M51JACH6TQP318ZFG6NQ9GRM** The Claude folder of each session of
+  `riff run` and of the daemon gets the same first-run answers as the
+  Claude folder of the lead (01M501P9SDGVWG3MTVCW5BDRQQ). So a takeover
+  shows the history of the session with no first-run question. One
+  function of riff writes the Claude folder of each session.
 - **01M501P9VN47QAKZ6B8P39ZSW4** The spec of the lead is the spec of a
   worker with the name of the lead, and the command `claude
   --session-id ID --permission-mode auto START`, where START is the

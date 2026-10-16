@@ -824,6 +824,10 @@ the session also has each event, with no secret.
   the variable, so the token is in no command line.
 - A Claude folder of its own, and your sign-in of `claude` with no
   write. `claude` runs in the auto permission mode.
+- The first-run answers of `claude` in the `.claude.json` of that
+  Claude folder: the onboarding, your theme from `~/.claude.json`, and
+  the trust of the clone. So a takeover asks no first-run question. See
+  [Take over a session](#take-over-a-session).
 - The setting `includeCoAuthoredBy: false` in the `settings.json` of
   that Claude folder. `claude` adds no attribution line, so the
   trailers end each commit and each pull request body. riff does not

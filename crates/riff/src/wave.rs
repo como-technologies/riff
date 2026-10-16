@@ -725,7 +725,7 @@ impl Live {
         let clone = folder.join("clone");
         let claude = folder.join("claude");
         let auto = crate::permissions::Trust::of(me.place().repo(), &wave.server);
-        run::claude_folder(&claude, &clone, &auto)?;
+        run::claude_folder(&claude, &clone, &host.home.join(".claude.json"), &auto)?;
         let (main, common) = run::main_clone(&wave.main)?;
         let start = match work {
             Work::Build { issue } => {

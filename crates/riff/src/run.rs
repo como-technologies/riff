@@ -143,7 +143,7 @@
 //! | Path | Holds |
 //! |---|---|
 //! | `clone/` | The clone of the session: `git clone --reference MAIN`. It stays until the merge. |
-//! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the trust of the clone ([`trust`]), no attribution line of `claude`, and the auto mode settings ([`settings`]). |
+//! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the first-run answers of `claude` with the trust of the clone, no attribution line of `claude`, and the auto mode settings ([`settings`]). |
 //! | `events.jsonl` | Each event of `claude`, with no secret ([`Scrub`]). The daemon writes it. |
 //!
 //! # The spec of the container
@@ -448,22 +448,6 @@ pub fn sessions_dir() -> Result<PathBuf> {
     Ok(data_dir()?.join("sessions"))
 }
 
-/// The `.claude.json` of the own Claude folder: it trusts the clone, as
-/// the person trusts the main clone (01M4Z60B874MBWZWDP8YDEM3HR).
-///
-/// ```
-/// let trust = riff::run::trust("/data/clone".as_ref());
-/// assert_eq!(trust["projects"]["/data/clone"]["hasTrustDialogAccepted"], true);
-/// ```
-pub fn trust(clone: &Path) -> Value {
-    let mut projects = serde_json::Map::new();
-    projects.insert(
-        clone.to_string_lossy().into_owned(),
-        json!({ "hasTrustDialogAccepted": true }),
-    );
-    json!({ "projects": projects })
-}
-
 /// The `settings.json` of the own Claude folder: `claude` adds no
 /// attribution line to a commit or a pull request, so the trailers end
 /// each one (01M4ZD48DHAKJ1EHX6QHYAQ7ZM). It allows each rule of the
@@ -501,32 +485,102 @@ pub fn settings(auto: &crate::permissions::Trust) -> Value {
     settings
 }
 
-/// Makes the own Claude folder `dir` of a session, with the
-/// `.claude.json` of [`trust`] for `clone` and the `settings.json` of
-/// [`settings`] with `auto`.
+/// Writes the own Claude folder `dir` of a session: the lead, a session
+/// of `riff run` and a session of the daemon (01M51JACH6TQP318ZFG6NQ9GRM).
+///
+/// Its `.claude.json` has the first-run answers of `claude`, so an
+/// interactive `claude`, for example a takeover, asks no question
+/// (01M501P9SDGVWG3MTVCW5BDRQQ): the onboarding, the theme, and the
+/// trust of `clone`, as the person trusts the main clone
+/// (01M4Z60B874MBWZWDP8YDEM3HR). The theme is the `theme` of the
+/// `.claude.json` of the person at `person`, else `auto`. A key that is
+/// there stays, so the answers of the person stay.
+///
+/// It writes the `settings.json` of [`settings`] with `auto` when it is
+/// not there. When it is there, it adds each rule of
+/// [`crate::permissions::session_rules`] that it lacks
+/// (01M5084K4YQCZF20XA0P2485SG), and the auto mode settings of `auto`
+/// that it lacks ([`crate::permissions::with_auto_mode`],
+/// 01M516HEX3GVTN9K2QS12A4PG3).
 ///
 /// ```
 /// use riff::permissions::Trust;
 ///
-/// let dir = std::env::temp_dir().join(format!("riff-doc-claude-{}", std::process::id()));
-/// let auto = Trust { owner: Some("acme"), server: None };
-/// riff::run::claude_folder(&dir, "/data/clone".as_ref(), &auto).unwrap();
-/// let read = |name| -> serde_json::Value {
-///     serde_json::from_str(&std::fs::read_to_string(dir.join(name)).unwrap()).unwrap()
+/// let dir = tempfile::tempdir()?;
+/// let claude = dir.path().join("claude");
+/// let person = dir.path().join("person.json");
+/// std::fs::write(&person, r#"{"theme":"dark"}"#)?;
+/// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878") };
+/// riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto)?;
+/// let read = |name: &str| -> serde_json::Value {
+///     serde_json::from_slice(&std::fs::read(claude.join(name)).unwrap()).unwrap()
 /// };
-/// assert_eq!(read(".claude.json"), riff::run::trust("/data/clone".as_ref()));
+/// let json = read(".claude.json");
+/// assert_eq!(json["hasCompletedOnboarding"], true);
+/// assert_eq!(json["theme"], "dark");
+/// assert_eq!(json["projects"]["/data/clone"]["hasTrustDialogAccepted"], true);
 /// assert_eq!(read("settings.json"), riff::run::settings(&auto));
-/// std::fs::remove_dir_all(&dir).unwrap();
+///
+/// // With no config of the person, the theme is auto.
+/// let other = dir.path().join("other");
+/// riff::run::claude_folder(&other, "/data/clone".as_ref(), &dir.path().join("none"), &auto)?;
+/// let json: serde_json::Value = serde_json::from_slice(&std::fs::read(other.join(".claude.json"))?)?;
+/// assert_eq!(json["theme"], "auto");
+///
+/// // A folder of an earlier start gets the missing rules and auto mode
+/// // settings, and keeps its keys.
+/// std::fs::write(claude.join("settings.json"), r#"{"includeCoAuthoredBy":false,"model":"opus"}"#)?;
+/// riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto)?;
+/// let settings = read("settings.json");
+/// assert_eq!(settings["model"], "opus");
+/// assert_eq!(settings["permissions"], riff::run::settings(&auto)["permissions"]);
+/// assert_eq!(settings["skillOverrides"], riff::run::settings(&auto)["skillOverrides"]);
+/// assert_eq!(settings["autoMode"], riff::run::settings(&auto)["autoMode"]);
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn claude_folder(dir: &Path, clone: &Path, auto: &crate::permissions::Trust) -> Result<()> {
+pub fn claude_folder(
+    dir: &Path,
+    clone: &Path,
+    person: &Path,
+    auto: &crate::permissions::Trust,
+) -> Result<()> {
+    let read =
+        |path: &Path| -> Option<Value> { serde_json::from_slice(&std::fs::read(path).ok()?).ok() };
     std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
-    for (name, value) in [
-        (".claude.json", trust(clone)),
-        ("settings.json", settings(auto)),
-    ] {
-        let path = dir.join(name);
-        std::fs::write(&path, serde_json::to_string_pretty(&value)?)
-            .with_context(|| format!("cannot write {}", path.display()))?;
+    let file = dir.join(".claude.json");
+    let mut root = match read(&file) {
+        Some(Value::Object(map)) => map,
+        _ => serde_json::Map::new(),
+    };
+    root.entry("hasCompletedOnboarding").or_insert(json!(true));
+    let theme = read(person)
+        .and_then(|p| p.get("theme").cloned())
+        .unwrap_or_else(|| json!("auto"));
+    root.entry("theme").or_insert(theme);
+    let projects = root
+        .entry("projects")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .context("`projects` in the Claude config is not an object")?;
+    let project = projects
+        .entry(clone.to_string_lossy().into_owned())
+        .or_insert_with(|| json!({}));
+    if let Some(project) = project.as_object_mut() {
+        project
+            .entry("hasTrustDialogAccepted")
+            .or_insert(json!(true));
+    }
+    let tmp = dir.join(".claude.json.riff");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&Value::Object(root))?)
+        .with_context(|| format!("cannot write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &file).with_context(|| format!("cannot write {}", file.display()))?;
+    let settings_file = dir.join("settings.json");
+    if settings_file.exists() {
+        crate::permissions::add(&settings_file, &crate::permissions::session_rules())?;
+        crate::permissions::add_auto_mode(&settings_file, auto)?;
+    } else {
+        std::fs::write(&settings_file, serde_json::to_string_pretty(&settings(auto))?)
+            .with_context(|| format!("cannot write {}", settings_file.display()))?;
     }
     Ok(())
 }
@@ -1400,10 +1454,10 @@ async fn work(
     let clone = folder.join("clone");
     let claude = folder.join("claude");
     let auto = crate::permissions::Trust::of(me.place().repo(), server);
-    claude_folder(&claude, &clone, &auto)?;
+    let home = &checked.home;
+    claude_folder(&claude, &clone, &home.join(".claude.json"), &auto)?;
     let branch = branch(item);
     let earlier = make_clone(main, &clone, &branch)?;
-    let home = &checked.home;
     let existing = |p: PathBuf| p.exists().then_some(p);
     let facts = Facts {
         session: session.to_owned(),
@@ -1590,7 +1644,7 @@ mod tests {
     }
 
     #[test]
-    fn the_claude_folder_of_the_spec_turns_off_the_attribution_line_and_the_auto_mode_dialog() {
+    fn the_claude_folder_of_the_spec_has_the_first_run_answers_and_no_dialog() {
         let root = tempfile::tempdir().unwrap();
         let facts = Facts {
             claude: root.path().join("claude"),
@@ -1601,7 +1655,12 @@ mod tests {
             owner: Some("acme"),
             server: Some("http://h:7878"),
         };
-        claude_folder(&facts.claude, &facts.clone, &auto).unwrap();
+        // The config of the person: their theme, and keys that are not an
+        // answer of the first run.
+        let person = root.path().join("person.json");
+        let config = r#"{"theme":"light-daltonized","numStartups":7}"#;
+        std::fs::write(&person, config).unwrap();
+        claude_folder(&facts.claude, &facts.clone, &person, &auto).unwrap();
 
         // claude in the container reads this folder as its config folder.
         let spec = spec(&facts);
@@ -1627,11 +1686,17 @@ mod tests {
         let environment = read("settings.json")["autoMode"]["environment"].clone();
         assert_eq!(environment[0], "$defaults");
         assert!(environment.to_string().contains("github.com/acme "));
+
+        // The first-run answers: an interactive claude, for example a
+        // takeover, asks no question (01M51JACH6TQP318ZFG6NQ9GRM).
+        let json = read(".claude.json");
+        assert_eq!(json["hasCompletedOnboarding"], true);
+        assert_eq!(json["theme"], "light-daltonized");
         let clone = facts.clone.display().to_string();
-        assert_eq!(
-            read(".claude.json")["projects"][&clone]["hasTrustDialogAccepted"],
-            true
-        );
+        assert_eq!(json["projects"][&clone]["hasTrustDialogAccepted"], true);
+        assert_eq!(json.get("numStartups"), None);
+        // The config of the person does not change.
+        assert_eq!(std::fs::read_to_string(&person).unwrap(), config);
     }
 
     #[test]
