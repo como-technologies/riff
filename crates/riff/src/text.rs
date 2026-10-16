@@ -8193,6 +8193,116 @@ pub fn members_of_peers(rows: &[crate::peer::members::Shown], now_ms: i64) -> St
     out
 }
 
+/// A claim on the forge: the item cannot be one part of a ref
+/// ([`crate::forge_claim::reference`]).
+pub fn forge_claim_bad_item(item: &str) -> String {
+    format!(
+        "riff makes no claim of \"{}\" on the forge: an item has only letters, digits, -, _ and ., for example issue-12.",
+        safe(item)
+    )
+}
+
+/// The daemon: it claimed `item` on the forge with the commit `commit`.
+pub fn forge_claimed(item: &str, commit: &str) -> String {
+    format!("riff daemon: claimed {item} on the forge: {commit}.")
+}
+
+/// The daemon: another session holds `item` on the forge.
+pub fn forge_held(item: &str) -> String {
+    format!("riff daemon: another session holds {item} on the forge.")
+}
+
+/// The daemon at its start: it released the claim of `item` of its
+/// session `session`, which does not run (01M519Z4HK333JWVXAWQHCGK6M).
+pub fn forge_swept(item: &str, session: &str) -> String {
+    format!(
+        "riff daemon: released {} on the forge: its session {} does not run.",
+        safe(item),
+        safe(session)
+    )
+}
+
+/// The daemon of a lead: it deleted the claim of `item` of the session
+/// `session` (01M519Z4M0F2RY0VDQNB2QFAPJ).
+pub fn forge_lead_freed(item: &str, session: &str, why: crate::forge_claim::Stale) -> String {
+    let why = match why {
+        crate::forge_claim::Stale::Ended => "the session ended".to_owned(),
+        crate::forge_claim::Stale::Offline(minutes) => {
+            format!("its daemon has no link for {minutes} minutes")
+        }
+    };
+    format!(
+        "riff daemon: the lead freed {} of the session {} on the forge: {why}.",
+        safe(item),
+        safe(session)
+    )
+}
+
+/// The daemon at the end of the session `session`: it released `item`
+/// on the forge.
+pub fn forge_released_at_end(item: &str, session: &str) -> String {
+    format!("riff daemon: released {item} on the forge at the end of the session {session}.")
+}
+
+/// The daemon at the end of a session: the claim of `item` is gone from
+/// the forge already, or holds another claim.
+pub fn forge_gone_at_end(item: &str) -> String {
+    format!(
+        "riff daemon: the claim of {item} is not on the forge any more: another step freed it. The release changed nothing."
+    )
+}
+
+/// `riff release ITEM --forge`: the forge has no claim of `item`.
+pub fn forge_release_none(item: &str) -> String {
+    format!("The forge has no claim of {}.", safe(item))
+}
+
+/// `riff release ITEM --forge`: the daemon deleted the claim of `item`
+/// of the user `user`.
+pub fn forge_released(item: &str, user: Option<&str>) -> String {
+    match user {
+        Some(user) => format!(
+            "Freed the claim of {} by {} on the forge.",
+            safe(item),
+            safe(user)
+        ),
+        None => format!("Freed the ref of {} on the forge.", safe(item)),
+    }
+}
+
+/// `riff release ITEM --forge`: the claim changed between the read and
+/// the delete.
+pub fn forge_release_changed(item: &str) -> String {
+    format!(
+        "The claim of {} changed on the forge while riff freed it. Run riff release {} --forge again.",
+        safe(item),
+        safe(item)
+    )
+}
+
+/// `riff release ITEM --forge` of a member: the claim is of another user
+/// (01M519Z4PESWFV8Y03SKTSGV4Q).
+pub fn forge_release_not_yours(item: &str, user: &str, mine: Option<&str>) -> String {
+    let mine = mine.map_or_else(|| "no user of this riff".to_owned(), safe);
+    format!(
+        "riff does not free the claim of {} on the forge: it is a claim of {}, and you are {mine}. A person frees a claim of their own user. The owner of the riff frees each claim.",
+        safe(item),
+        safe(user)
+    )
+}
+
+/// `riff release ITEM --forge` of a member: the ref holds no claim
+/// commit of riff.
+pub const FORGE_RELEASE_NOT_RIFF: &str = "riff does not free this ref on the forge: its commit is no claim commit of riff, so it names no user. Only the owner of the riff frees it.";
+
+/// A claim on the forge: the lease is no full commit ID.
+pub fn forge_claim_bad_commit(commit: &str) -> String {
+    format!(
+        "\"{}\" is no claim commit: riff needs the full commit ID.",
+        safe(commit)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

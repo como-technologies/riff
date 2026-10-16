@@ -6175,6 +6175,32 @@ then.
   request to the lead as a `message` record and releases the item. This
   replaces the steps with riff 1.x of 01M4ZKX0NXN7E33VC3PSFGSPDT and
   01M4ZV3B6KP33YV750DJ89SMFF.
+- **01M5232XDH1B3BGX7FXT0A2BRE** The daemon keeps the main clone of each
+  repository where it made a claim in the file `forges.json` of its
+  folder, by repository. It writes the main clone there before the push
+  of the claim. The release at its start
+  (01M519Z4HK333JWVXAWQHCGK6M) and the step of the lead
+  (01M519Z4M0F2RY0VDQNB2QFAPJ) read the claims on the forge of each main
+  clone of that file and of each wave of the daemon. The release at its
+  start deletes only a claim with a `Riff-Time` before the second of its
+  start: a claim of this run of the daemon stays, for example the claim
+  of a job of a wave before its session runs.
+- **01M5232XGM1GYENFCWBQ5TFYBN** The daemon of a lead looks at the
+  claims of its user each minute. A claim of a session with no `session`
+  record counts as a claim of a session that runs. When the daemon of
+  the lead had no link to the daemon of the claim since its own start,
+  the 15 minutes count from that start.
+- **01M5232XKPG96CTQ7HSAM4726S** `riff release ITEM --forge` asks the
+  daemon of the machine to delete the claim on the forge of the main
+  clone of the working folder. The daemon decides with its riff of
+  peers (01M519Z4PESWFV8Y03SKTSGV4Q). A ref whose commit is not a claim
+  commit of riff names no user: only the owner deletes it.
+- **01M5232XPKES7R8P3F3H8X6V4B** A claim reads as held only when the
+  forge refuses its ref for a failed lease: `stale info`, `cannot lock
+  ref`, a ref that is there already, or `failed to update ref`. Each
+  other refusal and each fault of git is an error, and riff claims
+  nothing. A push of a claim or of a release runs no pre-push hook of
+  the clone (`git push --no-verify`).
 
 ### Wave B: the scope and the way over
 

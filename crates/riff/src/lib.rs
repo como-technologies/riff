@@ -86,6 +86,7 @@ pub mod disk;
 pub mod dropped;
 pub mod enable;
 pub mod first_run;
+pub mod forge_claim;
 pub mod help;
 pub mod home;
 pub mod hook;

@@ -13,6 +13,10 @@ commands act on riff-server 1.x (see
 [requirements of Wave B](requirements.md#wave-b-the-record) hold each
 decision.
 
+The claims on the forge are here: see
+[Free the claim of a machine that is gone](#free-the-claim-of-a-machine-that-is-gone)
+and [How a claim works](#how-a-claim-works).
+
 ## The picture
 
 ```mermaid
@@ -169,11 +173,16 @@ The owner cannot remove itself.
 ### Free the claim of a machine that is gone
 
 The claim of a machine of another user that is offline holds. You
-free a claim of your own user. The owner frees each claim:
+free a claim of your own user. The owner frees each claim. Run the
+command in the clone of the repository:
 
 ```sh
 riff release issue-12 --forge
 ```
+
+The riff daemon of your machine deletes the claim on GitHub. The
+daemon of a member refuses a claim of another user, and says whose
+claim it is. It needs no riff-server.
 
 ## The records
 
@@ -322,9 +331,29 @@ sequenceDiagram
 ```
 
 The daemon makes each claim in the main clone of the repository, with
-your git sign-in. Each claim is a new commit with the item, the user,
-the session, the key of the daemon and the time. GitHub compares the
-lease on the server, so only one session gets an item.
+your git sign-in. Each claim is a new commit: the empty tree, no
+parent, no signature, and the message `riff claim ITEM` with the
+trailers `Riff-Item`, `Riff-User`, `Riff-Session`, `Riff-Key` (the key
+of the daemon) and `Riff-Time` (UTC). GitHub compares the lease on the
+server, so only one session gets an item. A failed lease means that
+another session holds the item. To see the claims of a repository, run
+this in its clone:
+
+```sh
+git ls-remote origin 'refs/riff/claims/*'
+```
+
+The daemon keeps the main clone of each repository where it made a
+claim. It looks at the claims there, and at the claims of each of its
+waves:
+
+- At the end of a session, its daemon deletes the claim of the
+  session.
+- At its start, a daemon deletes each claim of its key whose session
+  does not run.
+- Each minute, the daemon of the lead of a user deletes each claim of
+  that user whose session ended. It also deletes each claim of that user
+  whose daemon had no link to it for 15 minutes.
 
 ```mermaid
 flowchart TD

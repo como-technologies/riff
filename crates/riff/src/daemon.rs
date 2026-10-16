@@ -173,6 +173,7 @@
 //! | [`Ask::Invite`] | [`Say::Invited`], or [`Say::Failed`] ([`peers`]) |
 //! | [`Ask::Join`], [`Ask::Leave`], [`Ask::Remove`] | each [`Say::Line`], then [`Say::Done`] or [`Say::Failed`] ([`peers`]) |
 //! | [`Ask::Members`] | [`Say::Members`], or [`Say::Failed`] ([`peers`]) |
+//! | [`Ask::Release`] | [`Say::Line`] and [`Say::Done`] when the daemon deleted the claim on the forge, or [`Say::Failed`] |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
 //! [`Then::Stop`]: the daemon stops the container. When `riff` closes the
@@ -353,6 +354,17 @@
 //! again, and pulls the session image of each wave. When it wrote its
 //! unit, it starts again on it as for an old riff. So a new release
 //! needs no `riff init`.
+//!
+//! # The claims on the forge
+//!
+//! A session with no riff-server holds its item with a claim on the
+//! forge, `refs/riff/claims/ITEM` ([`crate::forge_claim`]). The daemon
+//! makes it, keeps its commit in the [`Record`] of the session
+//! ([`Forge`]), and releases it at the end of the session, before the
+//! end record. At its start it releases each claim of its key whose
+//! session does not run. The daemon of a lead deletes the claims of its
+//! user whose session ended or whose daemon has no link for 15 minutes.
+//! [`Ask::Release`] is `riff release ITEM --forge`. See [`forge`].
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -392,7 +404,10 @@ use crate::session_relay::Up;
 use crate::text;
 use crate::wave::{Job, Wave, World};
 
+pub mod forge;
 pub mod peers;
+
+pub use forge::Forge;
 
 /// The version of the protocol between `riff` and the daemon, and
 /// between the relay and the daemon. Version 3 adds the waves
@@ -757,6 +772,14 @@ pub enum Ask {
     },
     /// `riff members` (01M519Z4823WC7D3VVTFSDYBS4).
     Members,
+    /// `riff release ITEM --forge`: delete the claim of an item on the
+    /// forge (01M519Z4PESWFV8Y03SKTSGV4Q, [`Daemon::release_asked`]).
+    Release {
+        /// The main clone of the repository.
+        main: PathBuf,
+        /// The work item, for example `issue-12`.
+        item: String,
+    },
 }
 
 /// A session to start. It holds the values of the host and the
@@ -788,6 +811,11 @@ pub struct Start {
     /// in the command of the spec.
     #[serde(default)]
     pub terminal: bool,
+    /// The claim of the item on the forge, for a session with no
+    /// riff-server ([`Daemon::claim_forge`]): the daemon releases it at
+    /// the end of the session.
+    #[serde(default)]
+    pub claim: Option<Forge>,
 }
 
 /// A line of `riff` after [`Ask::Start`], [`Ask::Follow`] or
@@ -1174,6 +1202,11 @@ pub struct Record {
     /// (01M51KJ1R9K7A7RW8T8XH8VW43).
     #[serde(default)]
     pub interrupt: bool,
+    /// The claim of the item on the forge, for a session with no
+    /// riff-server: the daemon releases it at the end of the session
+    /// (01M519Z4HK333JWVXAWQHCGK6M).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<Forge>,
 }
 
 impl Record {
@@ -1951,20 +1984,22 @@ impl<R: Runtime + 'static> Daemon<R> {
         }))
     }
 
-    /// Writes the `session` record of the end of the session of `record`,
-    /// when the session has no riff-server and the daemon has its riff.
+    /// Releases the claim of the session of `record` on the forge, and
+    /// then writes the `session` record of the end of the session, when
+    /// the session has no riff-server and the daemon has its riff
+    /// (01M519Z4HK333JWVXAWQHCGK6M).
     fn peer_end(&self, record: &Record) {
-        let Some(riff) = self.riff.get().filter(|_| record.on_peers()) else {
+        if !record.on_peers() {
             return;
-        };
-        let (hub, id, name) = (
-            riff.hub.clone(),
-            record.live.session.clone(),
-            record.live.name.clone(),
-        );
+        }
+        let hub = self.riff.get().map(|riff| riff.hub.clone());
+        let record = record.clone();
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = hub.end(&id) {
-                eprintln!("riff daemon: {name}: {e:#}");
+            forge::release_at_end(&record);
+            if let Some(hub) = hub
+                && let Err(e) = hub.end(&record.live.session)
+            {
+                eprintln!("riff daemon: {}: {e:#}", record.live.name);
             }
         });
     }
@@ -2366,6 +2401,18 @@ impl<R: Runtime + 'static> Daemon<R> {
                         error: format!("{e:#}"),
                     },
                 }),
+                Ok(Ask::Release { main, item }) => {
+                    out.say(match self.release_asked(main, item).await {
+                        Ok(text) => {
+                            println!("{text}");
+                            out.say(Say::Line { text });
+                            Say::Done
+                        }
+                        Err(e) => Say::Failed {
+                            error: format!("{e:#}"),
+                        },
+                    })
+                }
                 Err(error) => out.say(Say::Failed { error }),
             }
         }
@@ -2575,6 +2622,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             server,
             me,
             terminal,
+            claim,
         } = start;
         let name = spec.name.clone();
         let record = Record {
@@ -2601,6 +2649,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             terminal,
             takeover: false,
             interrupt: false,
+            claim,
         };
         if let Err(e) = self.check(&spec).and_then(|()| self.check_relay()) {
             out.say(Say::Failed {
@@ -3391,6 +3440,18 @@ pub async fn ask_done(dir: &Path, ask: Ask, mut show: impl FnMut(&str)) -> Resul
     }
 }
 
+/// `riff release ITEM --forge`: asks the daemon in the folder `dir` to
+/// delete the claim of `item` on the forge of the main clone `main`
+/// ([`Ask::Release`], 01M519Z4PESWFV8Y03SKTSGV4Q). It prints the line of
+/// the daemon.
+pub async fn ask_release(dir: &Path, main: &Path, item: &str) -> Result<()> {
+    let ask = Ask::Release {
+        main: main.to_owned(),
+        item: item.to_owned(),
+    };
+    ask_done(dir, ask, |line| println!("{line}")).await
+}
+
 /// `riff daemon events NAME`: shows each event of the live session in
 /// the container `name` from its start, as `riff run` does, and each new
 /// one until the end of the session (01M4ZKX0KMS58NR2E9AF8229A8). A
@@ -3452,6 +3513,7 @@ pub async fn serve_here() -> Result<()> {
         );
         daemon.recover().await;
         daemon.run_waves();
+        daemon.watch_forges();
         // The steps of an update of this release: the rules of Claude
         // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
         let steps = dir.clone();
@@ -3557,7 +3619,7 @@ mod tests {
     use crate::service::{ServiceManager, Unit};
     use tokio::sync::oneshot;
 
-    const IMAGE: &str = "localhost/riff-session:latest";
+    pub(super) const IMAGE: &str = "localhost/riff-session:latest";
 
     /// The events of one turn of a fake `claude`, with a token in a
     /// tool result.
@@ -3567,7 +3629,7 @@ mod tests {
         r#"{"type":"result","subtype":"success","is_error":false,"num_turns":1}"#,
     ];
 
-    fn me(name: &str) -> SessionUri {
+    pub(super) fn me(name: &str) -> SessionUri {
         format!("riff://mike@thelio/como-technologies/riff?session={name}-session#issue-1")
             .parse()
             .unwrap()
@@ -3593,13 +3655,13 @@ mod tests {
 
     /// A daemon on `fake` in a temp folder, with a session folder for
     /// each session.
-    struct Here {
-        root: tempfile::TempDir,
-        dir: PathBuf,
-        fake: Fake,
+    pub(super) struct Here {
+        pub(super) root: tempfile::TempDir,
+        pub(super) dir: PathBuf,
+        pub(super) fake: Fake,
         quiet: Duration,
         world: Option<Arc<dyn World>>,
-        daemon: Arc<Daemon<Fake>>,
+        pub(super) daemon: Arc<Daemon<Fake>>,
         stop: Option<oneshot::Sender<()>>,
         served: JoinHandle<Result<()>>,
     }
@@ -3645,7 +3707,7 @@ mod tests {
     }
 
     impl Here {
-        async fn new(fake: Fake) -> Here {
+        pub(super) async fn new(fake: Fake) -> Here {
             Here::with_quiet(fake, QUIET_LIMIT).await
         }
 
@@ -3683,7 +3745,7 @@ mod tests {
         }
 
         /// The [`Start`] of the session `name` of `item`.
-        fn start(&self, name: &str, item: &str) -> Start {
+        pub(super) fn start(&self, name: &str, item: &str) -> Start {
             let folder = self.root.path().join("sessions").join(name);
             let clone = folder.join("clone");
             std::fs::create_dir_all(&clone).unwrap();
@@ -3698,12 +3760,13 @@ mod tests {
                 server: "http://127.0.0.1:1".into(),
                 me: me(name),
                 terminal: false,
+                claim: None,
             }
         }
 
         /// Asks the daemon to start `start`. Gives the client after the
         /// line `Started`.
-        async fn started(&self, start: Start) -> (Client, String) {
+        pub(super) async fn started(&self, start: Start) -> (Client, String) {
             let mut client = Client::connect(&self.dir).await.unwrap();
             client.ask(Ask::Start(Box::new(start))).await.unwrap();
             match client.next().await.unwrap() {
@@ -3715,7 +3778,7 @@ mod tests {
             }
         }
 
-        async fn stop(&mut self) {
+        pub(super) async fn stop(&mut self) {
             let _ = self.stop.take().unwrap().send(());
             (&mut self.served).await.unwrap().unwrap();
         }
@@ -4400,6 +4463,7 @@ mod tests {
             terminal: false,
             takeover: false,
             interrupt: false,
+            claim: None,
         };
         std::fs::write(
             record_path(&dir, name),
@@ -4457,6 +4521,7 @@ mod tests {
                 server: "http://127.0.0.1:1".into(),
                 me: me(name),
                 terminal: false,
+                claim: None,
             };
             let record = Record {
                 live: Live {
@@ -4478,6 +4543,7 @@ mod tests {
                 terminal: false,
                 takeover: false,
                 interrupt: false,
+                claim: None,
             };
             std::fs::write(
                 record_path(&dir, name),
@@ -4597,6 +4663,7 @@ mod tests {
             terminal: false,
             takeover: false,
             interrupt: false,
+            claim: None,
         };
         private_dir(&dir.join(LIVE)).unwrap();
         std::fs::write(
@@ -4718,6 +4785,7 @@ mod tests {
             server: "http://127.0.0.1:1".into(),
             me: me("n"),
             terminal: false,
+            claim: None,
         };
         let line = serde_json::to_string(&Hello {
             protocol: PROTOCOL,
@@ -5310,7 +5378,7 @@ mod tests {
     }
 
     /// Waits until `done` is true, for at most 5 s.
-    async fn until(mut done: impl FnMut() -> bool) {
+    pub(super) async fn until(mut done: impl FnMut() -> bool) {
         for _ in 0..500 {
             if done() {
                 return;

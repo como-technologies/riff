@@ -1037,7 +1037,7 @@ pub(crate) fn now_ms() -> i64 {
 }
 
 /// The main clone of the working folder `dir`: its top, and its git dir.
-pub(crate) fn main_clone(dir: &Path) -> Result<(PathBuf, PathBuf)> {
+pub fn main_clone(dir: &Path) -> Result<(PathBuf, PathBuf)> {
     let common = PathBuf::from(output(
         "git",
         dir,
@@ -1542,6 +1542,7 @@ async fn work(
             server: server.to_owned(),
             me: me.clone(),
             terminal: false,
+            claim: None,
         },
         signals,
     )

@@ -1956,6 +1956,62 @@ async fn take_over_a_session(flags: &[&str]) {
     );
 }
 
+/// 01M519Z4PESWFV8Y03SKTSGV4Q, 01M51BFYW85YBEWAB20YTCJQFK: `riff release
+/// ITEM --forge` in the main clone asks the riff daemon, and the daemon
+/// deletes the claim on the forge with the lease of its commit. The
+/// daemon is the owner of its own riff, so it frees a claim of another
+/// user too. It needs no riff-server.
+#[tokio::test]
+async fn riff_release_forge_frees_a_claim_on_the_forge_through_the_daemon() {
+    let machine = Machine::new().await;
+    let log = machine.bin.path().join("daemon.out");
+    wait_for(&log, "riff of its own").await;
+    git(&machine.main, &["config", "user.name", "Brett"]);
+    git(
+        &machine.main,
+        &["config", "user.email", "brett@example.com"],
+    );
+    let other = riff::daemon_key::Key::from_bytes(&[9; 32]).public();
+    let claim = riff::forge_claim::Claim::now("issue-12", "brett", "s1", other);
+    let took = riff::forge_claim::take(&machine.main, &claim).unwrap();
+    assert!(matches!(took, riff::forge_claim::Took::Won(_)), "{took:?}");
+    let claims = git(
+        &machine.main,
+        &["ls-remote", "origin", "refs/riff/claims/*"],
+    );
+    assert!(claims.ends_with("refs/riff/claims/issue-12"), "{claims}");
+
+    let freed = machine.ok(None, &["release", "issue-12", "--forge"]).await;
+    assert_eq!(
+        freed.trim(),
+        riff::text::forge_released("issue-12", Some("brett"))
+    );
+    let claims = git(
+        &machine.main,
+        &["ls-remote", "origin", "refs/riff/claims/*"],
+    );
+    assert_eq!(claims, "");
+    assert!(
+        machine
+            .read("daemon.out")
+            .contains(&freed.trim().to_owned())
+    );
+
+    // A second release finds no claim.
+    let out = machine.run(None, &["release", "issue-12", "--forge"]).await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains(&riff::text::forge_release_none("issue-12")),
+        "{}",
+        text(&out.stderr)
+    );
+    // --forge takes no thread and no session of riff-server.
+    let out = machine
+        .run(None, &["release", "issue-12", "--forge", "--session", "s1"])
+        .await;
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
+}
+
 #[tokio::test]
 async fn riff_takeover_of_a_session_that_the_daemon_does_not_own_fails() {
     let machine = Machine::new().await;
