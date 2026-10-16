@@ -1723,11 +1723,24 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   With no `--tag`, it installs the release that the server of `riff`
   runs, from the version of its build, also when a newer tag exists.
   When `riff` uses the server of the same machine, it installs the
-  newest release tag.
+  newest release tag. Superseded in part by 01M510MPR1S0EQNRK2195XTXG5.
 - **01M3N73Y9DMVMCV0PJE1R8YCFH** When the server of `riff` answers
   with no build that `riff update` can read, `riff update` installs
   the newest release tag, and says so in one line. When the server
   does not answer, `riff update` installs nothing and names `--tag`.
+  Superseded in part by 01M510MPR1S0EQNRK2195XTXG5.
+- **01M510MPR1S0EQNRK2195XTXG5** Where 01M3MRMAVVKJ5WS8GWCJHWH0R4 and
+  01M3N73Y9DMVMCV0PJE1R8YCFH say the newest release tag, `riff update`
+  installs the release that GitHub marks "Latest"
+  (01M4YTW8788K4XYTEMRSXDH7B9), not the highest tag. It asks the API of
+  GitHub, with no sign-in. With `RIFF_RELEASES`, it reads the file
+  `latest` there, in the form of the reply of the API. When it finds no
+  Latest release, it installs nothing and names `--tag`.
+- **01M510MPTKK285C9Z2TW54M5P7** Each GitHub release of a retired line
+  is a prerelease, so GitHub never marks it "Latest". The first line of
+  its notes says that the line is retired, and names the issue that
+  retired it. The line 2.x is retired (#706): its one GitHub release,
+  `v2.0.1`, is a prerelease. The tag `v2.0.0` has no GitHub release.
 - **01M3MRMAY3P1K151RGAP9K6GSH** The deploy takes a release tag as its
   input. It checks out that tag and deploys only it. It refuses an
   input that is not a tag `vX.Y.Z` of the version of the crates.

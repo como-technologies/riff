@@ -44,10 +44,20 @@
 //!     end
 //! ```
 //!
+//! With no tag from the person or the riff, `riff update` installs the
+//! release that GitHub marks "Latest" ([`latest`],
+//! 01M510MPR1S0EQNRK2195XTXG5): the release of the line that the shared
+//! riff runs (01M4YTW8788K4XYTEMRSXDH7B9). It is not always the highest
+//! tag. A release of a retired line, for example `v2.0.1`, is a
+//! prerelease, and GitHub never marks a prerelease "Latest"
+//! (01M510MPTKK285C9Z2TW54M5P7). riff asks the API of GitHub with no
+//! sign-in, and reads the tag of the reply ([`tag_of`]).
+//!
 //! The variable [`RELEASES`] names another place of the release files:
-//! a URL, or a folder, for example of a mirror. The test environment
-//! gives each test an empty folder, so no test reaches GitHub
-//! ([`Source`]).
+//! a URL, or a folder, for example of a mirror. There the file
+//! [`LATEST`] holds the reply for the Latest release. The test
+//! environment gives each test an empty folder, so no test reaches
+//! GitHub ([`Source`]).
 //!
 //! ```
 //! use riff::release::{asset, check, sum_of};
@@ -78,6 +88,10 @@ pub const BINARIES: [&str; 2] = ["riff-server", "riff"];
 /// The variable with another place of the release files: a URL, or a
 /// folder. A file is at `RELEASES/TAG/NAME`.
 pub const RELEASES: &str = "RIFF_RELEASES";
+
+/// The file of [`RELEASES`] with the reply for the release that GitHub
+/// marks "Latest", in the form of the API of GitHub: `RELEASES/latest`.
+pub const LATEST: &str = "latest";
 
 /// The target of the static binaries for this machine. `None` when the
 /// releases have none for it.
@@ -291,6 +305,8 @@ pub fn bin_dir(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathB
 /// else the value of [`RELEASES`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
+    /// The GitHub releases of the repository.
+    GitHub,
     /// A web server, with no `/` at the end.
     Web(String),
     /// A folder.
@@ -305,17 +321,13 @@ impl Source {
     /// ```
     /// use riff::release::Source;
     ///
-    /// let github = "https://github.com/como-technologies/riff/releases/download";
-    /// assert_eq!(Source::of(None), Source::Web(github.into()));
+    /// assert_eq!(Source::of(None), Source::GitHub);
     /// assert_eq!(Source::of(Some("http://127.0.0.1:9/")), Source::Web("http://127.0.0.1:9".into()));
     /// assert_eq!(Source::of(Some("/srv/riff")), Source::Folder("/srv/riff".into()));
     /// ```
     pub fn of(releases: Option<&str>) -> Source {
         match releases {
-            None => Source::Web(format!(
-                "{}/releases/download",
-                env!("CARGO_PKG_REPOSITORY")
-            )),
+            None => Source::GitHub,
             Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
                 Source::Web(url.trim_end_matches('/').to_owned())
             }
@@ -328,14 +340,43 @@ impl Source {
     /// ```
     /// use riff::release::Source;
     ///
-    /// let place = Source::of(None).place("v1.4.0", "SHA256SUMS");
+    /// let place = Source::GitHub.place("v1.4.0", "SHA256SUMS");
     /// assert_eq!(place, "https://github.com/como-technologies/riff/releases/download/v1.4.0/SHA256SUMS");
     /// assert_eq!(Source::of(Some("/srv/riff")).place("v1.4.0", "riff-x"), "/srv/riff/v1.4.0/riff-x");
     /// ```
     pub fn place(&self, tag: &str, name: &str) -> String {
         match self {
+            Source::GitHub => format!(
+                "{}/releases/download/{tag}/{name}",
+                env!("CARGO_PKG_REPOSITORY")
+            ),
             Source::Web(base) => format!("{base}/{tag}/{name}"),
             Source::Folder(dir) => dir.join(tag).join(name).display().to_string(),
+        }
+    }
+
+    /// Where the reply for the release that GitHub marks "Latest" is
+    /// (01M510MPR1S0EQNRK2195XTXG5): the API of GitHub, else the file
+    /// [`LATEST`].
+    ///
+    /// ```
+    /// use riff::release::Source;
+    ///
+    /// assert_eq!(
+    ///     Source::GitHub.latest_place(),
+    ///     "https://api.github.com/repos/como-technologies/riff/releases/latest"
+    /// );
+    /// assert_eq!(Source::of(Some("http://m:9/")).latest_place(), "http://m:9/latest");
+    /// assert_eq!(Source::of(Some("/srv/riff")).latest_place(), "/srv/riff/latest");
+    /// ```
+    pub fn latest_place(&self) -> String {
+        match self {
+            Source::GitHub => format!(
+                "https://api.github.com/repos/{}/releases/latest",
+                env!("CARGO_PKG_REPOSITORY").trim_start_matches("https://github.com/")
+            ),
+            Source::Web(base) => format!("{base}/{LATEST}"),
+            Source::Folder(dir) => dir.join(LATEST).display().to_string(),
         }
     }
 
@@ -347,10 +388,15 @@ impl Source {
         tag: &str,
         name: &str,
     ) -> Result<Option<Vec<u8>>> {
-        let place = self.place(tag, name);
+        self.read(client, &self.place(tag, name)).await
+    }
+
+    /// The bytes at `place`, a place of this source. `None` when there is
+    /// no such file: a 404, or no file in the folder.
+    async fn read(&self, client: &reqwest::Client, place: &str) -> Result<Option<Vec<u8>>> {
         match self {
-            Source::Web(_) => fetch(client, &place).await,
-            Source::Folder(_) => match std::fs::read(&place) {
+            Source::GitHub | Source::Web(_) => fetch(client, place).await,
+            Source::Folder(_) => match std::fs::read(place) {
                 Ok(bytes) => Ok(Some(bytes)),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
                 Err(e) => Err(e).with_context(|| format!("cannot read {place}")),
@@ -380,11 +426,7 @@ pub async fn install(tag: &str) -> Result<Installed> {
         return Ok(Installed::None);
     };
     let source = Source::of(std::env::var(RELEASES).ok().as_deref());
-    let client = reqwest::Client::builder()
-        .connect_timeout(WAIT)
-        .read_timeout(WAIT)
-        .build()
-        .context("cannot make the HTTP client of the download")?;
+    let client = client()?;
     let Some(sums) = source.get(&client, tag, SUMS).await? else {
         return Ok(Installed::None);
     };
@@ -437,6 +479,63 @@ pub async fn install(tag: &str) -> Result<Installed> {
         }
     }
     Ok(Installed::Static(dir))
+}
+
+/// The tag of the release in `reply`, a reply of the API of GitHub for
+/// one release: its `tag_name`. An error when the reply has none, or
+/// when the tag is not a release tag `vX.Y.Z`.
+///
+/// ```
+/// use riff::release::tag_of;
+///
+/// let reply = br#"{"tag_name": "v1.4.0", "prerelease": false, "draft": false}"#;
+/// assert_eq!(tag_of(reply).unwrap(), "v1.4.0");
+/// assert!(tag_of(br#"{"tag_name": "main"}"#).is_err());
+/// assert!(tag_of(br#"{"message": "Not Found"}"#).is_err());
+/// assert!(tag_of(b"<html></html>").is_err());
+/// ```
+pub fn tag_of(reply: &[u8]) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct Release {
+        tag_name: String,
+    }
+    let release: Release = serde_json::from_slice(reply)
+        .map_err(|e| format!("it is not a release of the API of GitHub: {e}"))?;
+    crate::lifecycle::parse_tag(&release.tag_name)
+}
+
+/// The tag of the release that GitHub marks "Latest"
+/// (01M510MPR1S0EQNRK2195XTXG5), from [`Source::latest_place`] of
+/// [`RELEASES`]. It is never a release of a retired line, also when its
+/// tag is higher (01M510MPTKK285C9Z2TW54M5P7). An error names
+/// `riff update --tag`.
+pub async fn latest() -> Result<String> {
+    let source = Source::of(std::env::var(RELEASES).ok().as_deref());
+    let place = source.latest_place();
+    let name_one = || {
+        format!("cannot find the Latest release at {place}. Name one: riff update --tag vX.Y.Z")
+    };
+    let reply = source
+        .read(&client()?, &place)
+        .await
+        .with_context(name_one)?
+        .with_context(|| {
+            format!("{place} names no Latest release. Name one: riff update --tag vX.Y.Z")
+        })?;
+    tag_of(&reply)
+        .map_err(anyhow::Error::msg)
+        .with_context(name_one)
+}
+
+/// The HTTP client of the release files. It names riff in its
+/// `User-Agent`: the API of GitHub refuses a request with none.
+fn client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(concat!("riff/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(WAIT)
+        .read_timeout(WAIT)
+        .build()
+        .context("cannot make the HTTP client of the releases")
 }
 
 /// The body of `url`. `None` for a 404: the release has no such file.
