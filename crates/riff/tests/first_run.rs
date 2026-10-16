@@ -2,7 +2,8 @@
 //! 01M4ZJN6R68YBD3XMM725ZRJ7W).
 //!
 //! The facts of the machine are fakes: `RIFF_ETC` gives `subuid` and
-//! `subgid`, and `RIFF_CGROUP` gives the controllers of cgroup v2. A
+//! `subgid`, `RIFF_CGROUP` gives the controllers of cgroup v2, and
+//! `RIFF_PODMAN_INIT` gives the folder of the init of podman. A
 //! fake `podman` logs each call. The fake `systemctl` of `run.rs` starts
 //! the `riff daemon` of this build, as systemd does. The repository is a
 //! real git repository with a `riff.toml`.
@@ -62,6 +63,8 @@ struct Machine {
     bin: PathBuf,
     etc: PathBuf,
     cgroup: PathBuf,
+    /// The folder of the init of podman.
+    init: PathBuf,
     repo: PathBuf,
     uid: u32,
 }
@@ -71,16 +74,18 @@ impl Machine {
     fn new() -> Machine {
         let env = Isolated::new();
         let root = env.path().to_owned();
-        let (bin, etc, cgroup, repo) = (
+        let (bin, etc, cgroup, init, repo) = (
             root.join("bin"),
             root.join("etc"),
             root.join("cgroup"),
+            root.join("podman-init"),
             root.join("repo"),
         );
-        for dir in [&bin, &etc, &cgroup, &repo] {
+        for dir in [&bin, &etc, &cgroup, &init, &repo] {
             std::fs::create_dir_all(dir).unwrap();
         }
         fake_podman(&bin);
+        script(&init.join("catatonit"), "#!/bin/sh\nexec \"$@\"\n");
         fake_systemctl(&bin);
         let uid = std::fs::metadata(&root).unwrap().uid();
         // By the user ID: the test does not know the login name.
@@ -111,6 +116,7 @@ impl Machine {
             bin,
             etc,
             cgroup,
+            init,
             repo,
             uid,
         }
@@ -136,7 +142,8 @@ impl Machine {
             )
             .env("FAKE_RIFF", self.env.riff_path())
             .env("RIFF_ETC", &self.etc)
-            .env("RIFF_CGROUP", &self.cgroup);
+            .env("RIFF_CGROUP", &self.cgroup)
+            .env("RIFF_PODMAN_INIT", &self.init);
         cmd
     }
 
@@ -182,6 +189,10 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
     for line in [
         "riff checks this machine for riff 3.0:".to_owned(),
         "  pass  podman: podman version 5.7.0".to_owned(),
+        format!(
+            "  pass  the init of podman: {}",
+            machine.init.join("catatonit").display()
+        ),
         format!("  pass  cgroup v2: user@{uid}.service has cpu and memory"),
         format!("  pass  the session image: {IMAGE}"),
         format!(
@@ -273,6 +284,8 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
 async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
     let machine = Machine::new();
     std::fs::write(machine.bin.join("no-podman"), "").unwrap();
+    // No init of podman (01M511JYPZ8H73DCJ7867YSFGH).
+    std::fs::remove_file(machine.init.join("catatonit")).unwrap();
     std::fs::write(machine.etc.join("subuid"), "someone:100000:65536\n").unwrap();
     std::fs::remove_file(machine.etc.join("subgid")).unwrap();
     std::fs::remove_file(machine.cgroup.join("cgroup.controllers")).unwrap();
@@ -286,6 +299,7 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
         .collect();
     let starts = [
         "  fail  podman: podman --version failed: podman: no runtime. Fix: ",
+        "  fail  the init of podman: podman has no init: no catatonit in ",
         "  fail  /etc/subuid: 0 IDs for ",
         "  fail  /etc/subgid: riff cannot read /etc/subgid. Fix: ",
         "  fail  cgroup v2: this machine has no cgroup v2. Fix: ",
@@ -334,7 +348,7 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
     assert!(!machine.settings().exists());
     assert!(
         stdout.contains(
-            "6 checks failed. riff installed nothing and pulled nothing. Do each fix, then run \
+            "7 checks failed. riff installed nothing and pulled nothing. Do each fix, then run \
              riff init again."
         ),
         "{stdout}"
@@ -354,7 +368,7 @@ async fn riff_init_check_changes_nothing() {
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
-    assert_eq!(stdout.matches("  pass  ").count(), 7, "{stdout}");
+    assert_eq!(stdout.matches("  pass  ").count(), 8, "{stdout}");
     assert!(
         stdout.ends_with("Each check passed. riff changed nothing: --check.\n"),
         "{stdout}"

@@ -5553,6 +5553,19 @@ pub fn init_podman_failed(stderr: &str) -> String {
 pub const INIT_FIX_PODMAN: &str =
     "install podman and run riff as your own user, for example: sudo apt install podman";
 
+/// `riff init` finds no init of podman in the folders `dirs`
+/// (01M511JYPZ8H73DCJ7867YSFGH).
+pub fn init_no_init(dirs: &[&str]) -> String {
+    format!(
+        "podman has no init: no catatonit in {}, so no session can start",
+        dirs.join(", ")
+    )
+}
+
+/// The fix when podman has no init.
+pub const INIT_FIX_INIT: &str =
+    "install catatonit, the init of podman, for example: sudo apt install catatonit";
+
 /// `riff init` runs as root.
 pub const INIT_ROOT: &str = "riff runs as root, so podman runs with no user namespace";
 

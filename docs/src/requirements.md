@@ -4972,6 +4972,11 @@ share.
   binary of its own process: its ELF has no interpreter. A riff of
   `cargo install` or `just install` links the libc of the machine, so
   this check fails, and its fix is `riff update`.
+- **01M511JYPZ8H73DCJ7867YSFGH** After the check of podman, `riff init`
+  checks the init of podman: `catatonit` in a helper folder of podman
+  (`/usr/local/libexec/podman`, `/usr/local/lib/podman`,
+  `/usr/libexec/podman` or `/usr/lib/podman`). Each session needs it
+  (01M51117K3WXK35CE67KPRFMA8). The fix installs `catatonit`.
 - **01M501K21EK8F8N9NPR4565FVP** The fix of `/etc/subuid` or
   `/etc/subgid` adds a free range of 65536 IDs: it starts at the first
   ID after the end of each range in the file, and at 100000 or more.
