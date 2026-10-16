@@ -131,9 +131,11 @@ impl SignInError {
     /// assert!(provider.for_log().ends_with("timeout"));
     /// ```
     pub fn for_log(&self) -> String {
+        // Each variant has an arm: a new one does not compile until a
+        // person decides what its line holds (01M51JBTEM10W68K6F267BB79N).
         match self {
             SignInError::Invalid(_) => "the ID token is not valid".to_owned(),
-            other => other.to_string(),
+            SignInError::Provider(_) | SignInError::Client(_) => self.to_string(),
         }
     }
 }

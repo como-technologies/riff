@@ -418,7 +418,9 @@ async fn check_client(provider: &Provider) {
             tracing::error!("riff-server stops: {e}");
             std::process::exit(1);
         }
-        Err(e) => tracing::warn!("cannot check the OAuth client: {e}"),
+        Err(e @ (SignInError::Provider(_) | SignInError::Invalid(_))) => {
+            tracing::warn!("cannot check the OAuth client: {}", e.for_log());
+        }
     }
 }
 

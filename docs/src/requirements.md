@@ -1209,6 +1209,14 @@
   The engine adds the worker mark and the role under the lock of the
   state. A refusal of `permits` has the code `not_allowed`. A worker
   cannot send `lead`.
+- **01M51JBTEM10W68K6F267BB79N** A rule fails closed. A new kind of
+  command, class of caller, sign-in error or failure of a call does
+  not compile until a person gives it its rules. Each of these rules is
+  a `match` that names each kind, with no wildcard arm and no
+  `matches!`: the classes and the worker rule of `permits`, the
+  commands of the people, the commands that register an unknown caller
+  first, the log text of a caller and of a sign-in error, and the reply
+  to a refused sign-in.
 - **01M3WRD97EZJK3AABXECXEY133** A status, the place of a session, a
   keep-alive, the start and the end of a watch stream, and a read cursor
   are signals. A signal changes only the presence: it makes no record

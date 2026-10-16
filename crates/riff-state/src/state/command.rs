@@ -63,6 +63,23 @@ impl Class {
             Class::Server => "the server",
         }
     }
+
+    /// True for a class with a role and a place: a person or a
+    /// session. A sign-in comes before its token, and the server is no
+    /// member (01M51JBTEM10W68K6F267BB79N).
+    ///
+    /// ```
+    /// use riff_state::state::Class;
+    ///
+    /// assert!(Class::Person.has_role() && Class::Session.has_role());
+    /// assert!(!Class::SignIn.has_role() && !Class::Server.has_role());
+    /// ```
+    pub fn has_role(self) -> bool {
+        match self {
+            Class::Person | Class::Session => true,
+            Class::SignIn | Class::Server => false,
+        }
+    }
 }
 
 /// The role of a caller. The owner has the role of an admin too, and an
@@ -242,7 +259,7 @@ impl Caller {
     pub fn traced(&self) -> By {
         match self.class {
             Class::SignIn => By::SignIn(self.who().user().to_owned()),
-            _ => self.by(),
+            Class::Person | Class::Session | Class::Server => self.by(),
         }
     }
 }
@@ -370,20 +387,93 @@ impl CommandKind {
     /// assert_eq!(CommandKind::ALL.iter().filter(|kind| kind.of_people()).count(), 11);
     /// ```
     pub fn of_people(self) -> bool {
-        matches!(
-            self,
+        // Each kind has an arm: a new kind does not compile until a
+        // person decides (01M51JBTEM10W68K6F267BB79N).
+        match self {
             CommandKind::Admit
-                | CommandKind::Invite
-                | CommandKind::Remove
-                | CommandKind::SetAdmin
-                | CommandKind::PassOwner
-                | CommandKind::TakeOwner
-                | CommandKind::DenyOwner
-                | CommandKind::GrantOwner
-                | CommandKind::EndOwner
-                | CommandKind::NameOwner
-                | CommandKind::Revoke
-        )
+            | CommandKind::Invite
+            | CommandKind::Remove
+            | CommandKind::SetAdmin
+            | CommandKind::PassOwner
+            | CommandKind::TakeOwner
+            | CommandKind::DenyOwner
+            | CommandKind::GrantOwner
+            | CommandKind::EndOwner
+            | CommandKind::NameOwner
+            | CommandKind::Revoke => true,
+            CommandKind::Register
+            | CommandKind::Start
+            | CommandKind::End
+            | CommandKind::Join
+            | CommandKind::Leave
+            | CommandKind::Post
+            | CommandKind::Announce
+            | CommandKind::Claim
+            | CommandKind::Release
+            | CommandKind::ReleaseFor
+            | CommandKind::Lead
+            | CommandKind::MakeRiff
+            | CommandKind::Pause
+            | CommandKind::Resume
+            | CommandKind::SetIdle
+            | CommandKind::Forget
+            | CommandKind::Import
+            | CommandKind::Hold
+            | CommandKind::Free
+            | CommandKind::Plan
+            | CommandKind::PlanOff => false,
+        }
+    }
+
+    /// True for a command that a person or a session sends from a
+    /// place. A caller that the state does not know registers first,
+    /// before the command runs ([`State::check`](super::State::check)).
+    /// A `register` registers the caller itself, and an `end` of a
+    /// session that the state does not know registers nothing. A
+    /// command of the people and a command of the server have no place
+    /// (01M51JBTEM10W68K6F267BB79N).
+    ///
+    /// ```
+    /// use riff_state::state::CommandKind;
+    ///
+    /// assert!(CommandKind::Claim.registers_first() && CommandKind::Hold.registers_first());
+    /// assert!(!CommandKind::Register.registers_first() && !CommandKind::End.registers_first());
+    /// assert!(!CommandKind::Invite.registers_first() && !CommandKind::Forget.registers_first());
+    /// ```
+    pub fn registers_first(self) -> bool {
+        match self {
+            CommandKind::Start
+            | CommandKind::Join
+            | CommandKind::Leave
+            | CommandKind::Post
+            | CommandKind::Claim
+            | CommandKind::Release
+            | CommandKind::ReleaseFor
+            | CommandKind::Lead
+            | CommandKind::Pause
+            | CommandKind::Resume
+            | CommandKind::SetIdle
+            | CommandKind::Hold
+            | CommandKind::Free
+            | CommandKind::Plan
+            | CommandKind::PlanOff => true,
+            CommandKind::Register | CommandKind::End => false,
+            CommandKind::Admit
+            | CommandKind::Invite
+            | CommandKind::Remove
+            | CommandKind::SetAdmin
+            | CommandKind::PassOwner
+            | CommandKind::TakeOwner
+            | CommandKind::DenyOwner
+            | CommandKind::Revoke => false,
+            CommandKind::MakeRiff
+            | CommandKind::Announce
+            | CommandKind::Forget
+            | CommandKind::Import
+            | CommandKind::GrantOwner
+            | CommandKind::EndOwner
+            | CommandKind::NameOwner => false,
+        }
     }
 }
 
@@ -520,11 +610,22 @@ impl From<&str> for Refused {
     }
 }
 
+/// Whether a worker can send a command (01M3WRD959DYNZHDKP5ZT9Q1C7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Workers {
+    /// A worker can send it.
+    Can,
+    /// Only a caller that is not a worker can send it. The text says
+    /// what a worker cannot do, and what it does in its place.
+    Cannot(&'static str),
+}
+
 // ANCHOR: permits
 /// Says if `caller` can send a command of `kind` that needs the role
 /// `needs` (01M3WRD959DYNZHDKP5ZT9Q1C7). It reads only the caller: its
 /// class, its worker mark and its role. It does not read the state.
-/// Each kind has a row: a kind with no row does not compile. The life
+/// Each kind has a row with its classes and its worker rule: a kind
+/// with no row does not compile (01M51JBTEM10W68K6F267BB79N). The life
 /// cycle of a session is a check of `handle`, not of this table.
 ///
 /// ```
@@ -551,27 +652,33 @@ impl From<&str> for Refused {
 /// ```
 pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Refused> {
     use Class::{Person, Server, Session, SignIn};
+    use Workers::{Can, Cannot};
     let class = caller.class();
-    let classes: &[Class] = match kind {
+    let (classes, workers): (&[Class], Workers) = match kind {
         // The engine registers the first call of a person too. A person
         // has no life cycle.
-        CommandKind::Register => &[Person, Session],
-        CommandKind::Start | CommandKind::End => &[Session],
-        CommandKind::Join | CommandKind::Leave | CommandKind::Post => &[Person, Session],
-        CommandKind::Claim | CommandKind::Release => &[Person, Session],
+        CommandKind::Register => (&[Person, Session], Can),
+        CommandKind::Start | CommandKind::End => (&[Session], Can),
+        CommandKind::Join | CommandKind::Leave | CommandKind::Post => (&[Person, Session], Can),
+        CommandKind::Claim | CommandKind::Release => (&[Person, Session], Can),
         // `handle` checks that the caller is the lead of the user of
         // the holder.
-        CommandKind::ReleaseFor => &[Session],
-        CommandKind::Lead => &[Session],
+        CommandKind::ReleaseFor => (&[Session], Can),
+        CommandKind::Lead => (
+            &[Session],
+            Cannot("be the lead. Make another session the lead."),
+        ),
         // The command gives the role: an admin for the whole riff.
         // `handle` checks that a session is a lead.
-        CommandKind::Pause | CommandKind::Resume => &[Person, Session],
+        CommandKind::Pause | CommandKind::Resume => (&[Person, Session], Can),
         // `handle` checks that the caller is a lead of the thread, the
         // owner or an admin (01M43GSGGY0QMB5D5EH92M6ZFP).
-        CommandKind::Hold | CommandKind::Free => &[Person, Session],
+        CommandKind::Hold => (&[Person, Session], Cannot("hold an item. Tell the lead.")),
+        CommandKind::Free => (&[Person, Session], Cannot("free an item. Tell the lead.")),
         // `handle` checks that the caller is a session in the thread, the
         // owner or an admin (01M4A4YTWK68JDA0DKXX2HV4FA).
-        CommandKind::Plan | CommandKind::PlanOff => &[Person, Session],
+        CommandKind::Plan => (&[Person, Session], Cannot("send plan. Tell the lead.")),
+        CommandKind::PlanOff => (&[Person, Session], Cannot("send plan_off. Tell the lead.")),
         // Only a person changes the settings and the people.
         CommandKind::SetIdle
         | CommandKind::Invite
@@ -580,15 +687,15 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         | CommandKind::PassOwner
         | CommandKind::TakeOwner
         | CommandKind::DenyOwner
-        | CommandKind::Revoke => &[Person],
-        CommandKind::Admit => &[SignIn],
+        | CommandKind::Revoke => (&[Person], Can),
+        CommandKind::Admit => (&[SignIn], Can),
         CommandKind::MakeRiff
         | CommandKind::Announce
         | CommandKind::Forget
         | CommandKind::Import
         | CommandKind::GrantOwner
         | CommandKind::EndOwner
-        | CommandKind::NameOwner => &[Server],
+        | CommandKind::NameOwner => (&[Server], Can),
     };
     if !classes.contains(&class) {
         let reason = match (kind, class) {
@@ -597,25 +704,15 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         };
         return Err(Refused::new(Code::NotAllowed, reason));
     }
-    if kind == CommandKind::Lead && caller.worker() {
+    if let Cannot(what) = workers
+        && caller.worker()
+    {
         return Err(Refused::new(
             Code::NotAllowed,
-            "a worker cannot be the lead. Make another session the lead.",
+            format!("a worker cannot {what}"),
         ));
     }
-    if matches!(kind, CommandKind::Hold | CommandKind::Free) && caller.worker() {
-        return Err(Refused::new(
-            Code::NotAllowed,
-            format!("a worker cannot {kind} an item. Tell the lead."),
-        ));
-    }
-    if matches!(kind, CommandKind::Plan | CommandKind::PlanOff) && caller.worker() {
-        return Err(Refused::new(
-            Code::NotAllowed,
-            format!("a worker cannot send {kind}. Tell the lead."),
-        ));
-    }
-    if matches!(class, Person | Session) && caller.role() < needs {
+    if class.has_role() && caller.role() < needs {
         let user = caller.who().user();
         let admin = |what: &str| format!("{user} is not an admin; only an admin {what}");
         let owner = |what: &str| format!("{user} is not the owner; only the owner {what}");
@@ -732,39 +829,154 @@ mod tests {
         Caller::of(&me).with_class(class)
     }
 
-    /// The table "Who can send a command" of the design: the classes
-    /// that can send the kind, and whether a worker can.
-    fn row(kind: CommandKind) -> (&'static [Class], bool) {
-        use Class::{Person, Server, Session, SignIn};
-        match kind {
-            CommandKind::Register => (&[Person, Session], true),
-            CommandKind::Start | CommandKind::End => (&[Session], true),
-            CommandKind::Join | CommandKind::Leave | CommandKind::Post => {
-                (&[Person, Session], true)
-            }
-            CommandKind::Claim | CommandKind::Release => (&[Person, Session], true),
-            CommandKind::ReleaseFor => (&[Session], true),
-            CommandKind::Lead => (&[Session], false),
-            CommandKind::Pause | CommandKind::Resume => (&[Person, Session], true),
-            CommandKind::Hold | CommandKind::Free => (&[Person, Session], false),
-            CommandKind::Plan | CommandKind::PlanOff => (&[Person, Session], false),
-            CommandKind::SetIdle
-            | CommandKind::Invite
-            | CommandKind::Remove
-            | CommandKind::SetAdmin
-            | CommandKind::PassOwner
-            | CommandKind::TakeOwner
-            | CommandKind::DenyOwner
-            | CommandKind::Revoke => (&[Person], true),
-            CommandKind::Admit => (&[SignIn], true),
-            CommandKind::MakeRiff
-            | CommandKind::Announce
-            | CommandKind::Forget
-            | CommandKind::Import
-            | CommandKind::GrantOwner
-            | CommandKind::EndOwner
-            | CommandKind::NameOwner => (&[Server], true),
+    /// One row of [`TABLE`].
+    struct Row {
+        kind: CommandKind,
+        /// The classes that can send the kind.
+        classes: &'static [Class],
+        /// True when a worker can send it.
+        worker: bool,
+        /// True for a command of the people: a riff with no sign-in
+        /// refuses it.
+        people: bool,
+        /// True when a caller that the state does not know registers
+        /// first.
+        registers: bool,
+    }
+
+    const fn row(
+        kind: CommandKind,
+        classes: &'static [Class],
+        worker: bool,
+        people: bool,
+        registers: bool,
+    ) -> Row {
+        Row {
+            kind,
+            classes,
+            worker,
+            people,
+            registers,
         }
+    }
+
+    const PS: &[Class] = &[Class::Person, Class::Session];
+    const S: &[Class] = &[Class::Session];
+    const P: &[Class] = &[Class::Person];
+
+    /// The table "Who can send a command" of the design, with the
+    /// answer for a worker and for a riff with no sign-in
+    /// (01M51JBTEM10W68K6F267BB79N). It has one row for each kind, in
+    /// the order of [`CommandKind::ALL`]: a new kind does not compile
+    /// until it has a row.
+    ///
+    /// The columns: the kind, the classes, a worker can send it, a
+    /// command of the people, an unknown caller registers first.
+    #[rustfmt::skip]
+    const TABLE: [Row; CommandKind::ALL.len()] = [
+        row(CommandKind::Register,   PS, true,  false, false),
+        row(CommandKind::Start,      S,  true,  false, true),
+        row(CommandKind::End,        S,  true,  false, false),
+        row(CommandKind::Join,       PS, true,  false, true),
+        row(CommandKind::Leave,      PS, true,  false, true),
+        row(CommandKind::Post,       PS, true,  false, true),
+        row(CommandKind::Announce,   &[Class::Server], true, false, false),
+        row(CommandKind::Claim,      PS, true,  false, true),
+        row(CommandKind::Release,    PS, true,  false, true),
+        row(CommandKind::ReleaseFor, S,  true,  false, true),
+        row(CommandKind::Lead,       S,  false, false, true),
+        row(CommandKind::MakeRiff,   &[Class::Server], true, false, false),
+        row(CommandKind::Pause,      PS, true,  false, true),
+        row(CommandKind::Resume,     PS, true,  false, true),
+        row(CommandKind::SetIdle,    P,  true,  false, true),
+        row(CommandKind::Forget,     &[Class::Server], true, false, false),
+        row(CommandKind::Import,     &[Class::Server], true, false, false),
+        row(CommandKind::Admit,      &[Class::SignIn], true, true, false),
+        row(CommandKind::Invite,     P,  true,  true,  false),
+        row(CommandKind::Remove,     P,  true,  true,  false),
+        row(CommandKind::SetAdmin,   P,  true,  true,  false),
+        row(CommandKind::PassOwner,  P,  true,  true,  false),
+        row(CommandKind::TakeOwner,  P,  true,  true,  false),
+        row(CommandKind::DenyOwner,  P,  true,  true,  false),
+        row(CommandKind::GrantOwner, &[Class::Server], true, true, false),
+        row(CommandKind::EndOwner,   &[Class::Server], true, true, false),
+        row(CommandKind::NameOwner,  &[Class::Server], true, true, false),
+        row(CommandKind::Revoke,     P,  true,  true,  false),
+        row(CommandKind::Hold,       PS, false, false, true),
+        row(CommandKind::Free,       PS, false, false, true),
+        row(CommandKind::Plan,       PS, false, false, true),
+        row(CommandKind::PlanOff,    PS, false, false, true),
+    ];
+
+    /// The row of `kind` in [`TABLE`].
+    fn row_of(kind: CommandKind) -> &'static Row {
+        TABLE.iter().find(|row| row.kind == kind).unwrap()
+    }
+
+    /// Each kind has one row in the table, in the order of
+    /// [`CommandKind::ALL`]. Its worker answer is the answer of
+    /// `permits` for a worker of each class that can send it, and its
+    /// sign-in answer is [`CommandKind::of_people`]
+    /// (01M51JBTEM10W68K6F267BB79N).
+    #[test]
+    fn each_kind_has_the_worker_and_the_sign_in_answer_of_the_table() {
+        let kinds: Vec<CommandKind> = TABLE.iter().map(|row| row.kind).collect();
+        assert_eq!(kinds, CommandKind::ALL);
+        for row in &TABLE {
+            let kind = row.kind;
+            assert_eq!(kind.of_people(), row.people, "{kind}: of the people");
+            assert_eq!(
+                kind.registers_first(),
+                row.registers,
+                "{kind}: registers first"
+            );
+            for &class in row.classes {
+                let worker = caller(class).with_worker(true).with_role(Role::Owner);
+                let result = permits(kind, &worker, Role::Member);
+                assert_eq!(
+                    result.is_ok(),
+                    row.worker,
+                    "{kind} by a worker {class:?}: {result:?}"
+                );
+                if let Err(refused) = result {
+                    assert_eq!(refused.code, Code::NotAllowed);
+                    assert!(refused.reason.starts_with("a worker cannot "), "{refused}");
+                }
+                let not_worker = caller(class).with_role(Role::Owner);
+                assert!(
+                    permits(kind, &not_worker, Role::Member).is_ok(),
+                    "{kind} by {class:?}"
+                );
+            }
+        }
+    }
+
+    /// The texts of the refusals of a worker, as the book and the tools
+    /// show them.
+    #[test]
+    fn a_worker_reads_what_it_cannot_do_and_what_to_do() {
+        let worker = caller(Class::Session).with_worker(true);
+        let reason = |kind| permits(kind, &worker, Role::Member).unwrap_err().reason;
+        assert_eq!(
+            reason(CommandKind::Lead),
+            "a worker cannot be the lead. Make another session the lead."
+        );
+        assert_eq!(
+            reason(CommandKind::Hold),
+            "a worker cannot hold an item. Tell the lead."
+        );
+        assert_eq!(
+            reason(CommandKind::Free),
+            "a worker cannot free an item. Tell the lead."
+        );
+        assert_eq!(
+            reason(CommandKind::Plan),
+            "a worker cannot send plan. Tell the lead."
+        );
+        assert_eq!(
+            reason(CommandKind::PlanOff),
+            "a worker cannot send plan_off. Tell the lead."
+        );
     }
 
     /// The role that each command of the people needs, in the table of
@@ -931,15 +1143,15 @@ mod tests {
     fn permits_is_the_table_for_each_kind_class_mark_and_role() {
         let mut tried = 0;
         for kind in CommandKind::ALL {
-            let (classes, workers) = row(kind);
+            let row = row_of(kind);
             for class in Class::ALL {
                 for worker in [false, true] {
                     for role in Role::ALL {
                         let caller = caller(class).with_worker(worker).with_role(role);
                         let has_role = matches!(class, Class::Person | Class::Session);
                         for needs in needs(kind, &caller) {
-                            let expected = classes.contains(&class)
-                                && (workers || !worker)
+                            let expected = row.classes.contains(&class)
+                                && (row.worker || !worker)
                                 && (!has_role || role >= needs);
                             let result = permits(kind, &caller, needs);
                             assert_eq!(
