@@ -313,6 +313,14 @@ impl End {
     }
 }
 
+impl fmt::Display for End {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            End::Closed(_, why) | End::Lost(_, why) => f.write_str(why),
+        }
+    }
+}
+
 /// True when the other daemon closed the connection with [`Close::Gone`]:
 /// it kept the `left` record of this daemon (01M52JF709YHYE7SG6V3SDHR74).
 /// Each other end gives false: a close of this daemon, a replace, a
@@ -324,14 +332,6 @@ fn kept_left(reason: &ConnectionError) -> bool {
         ConnectionError::ApplicationClosed(close)
             if Close::of(close.error_code.into_inner()) == Some(Close::Gone)
     )
-}
-
-impl fmt::Display for End {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            End::Closed(_, why) | End::Lost(_, why) => f.write_str(why),
-        }
-    }
 }
 
 /// What the reader asks the writer to send.
