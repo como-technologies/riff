@@ -4317,6 +4317,8 @@ riff worktrees clean
 | a lock whose process is gone | unlocks it, then goes on |
 | a lock of a live process, or a lock with no process ID | keeps it |
 | a live session of `riff who` works in it | keeps it |
+| a live session of `riff who` on this machine holds its item, also when the session works in another worktree | keeps it |
+| a running process has its program or its working directory in it, for example a shell or a check build that a systemd unit runs | keeps it |
 | work that is not committed, and no live owner | commits it as WIP, pushes its branch, and posts a note to the lead |
 | clean, and its `HEAD` is on the default branch of `origin`: no commit of its own | removes it and its branch |
 | clean, and a merged pull request has its `HEAD` as head, also when the branch is gone | removes it and its branch |
@@ -4329,7 +4331,17 @@ It prints one line for each worktree, with what it did and why:
 /home/mike/src/riff/.claude/worktrees/issue-12: unlocked: the process of its lock is gone; removed with its branch worktree-issue-12: its pull request #40 is merged
 /home/mike/src/riff/.claude/worktrees/verify-issue-14-a6cf: removed: its commit is the head of the merged pull request #41
 /home/mike/src/riff/.claude/worktrees/issue-13: kept: a live session works in it
+/home/mike/src/riff/.claude/worktrees/issue-756: kept: a live session holds its item issue-756
+/home/mike/src/riff/.claude/worktrees/live-712: kept: the running process 4242 (riff) uses it
 ```
+
+The item of a worktree is its name, for example `issue-756`. The
+verify worktree `verify-issue-12-a6cf` is of the claim
+`verify-issue-12` of the session whose ID starts with `a6cf`. riff
+reads each running process of your user in `/proc`. A program that a
+new build deleted still counts. When a process keeps a worktree that
+you do not use, stop that process. The next clean removes the
+worktree.
 
 `riff workers start` and the start of `riff workers host` run it too.
 A workers host and the `riff mcp` of the lead also run it each 10
@@ -4367,9 +4379,9 @@ flowchart TD
 ```
 
 - Under 15% free, riff removes the `target` of each worktree with no
-  live owner: no lock of a live process, no lock of a person, and no
-  live session in it. The source and the branch stay. The next build
-  makes the `target` again.
+  live owner: no lock of a live process, no lock of a person, no live
+  session in it or with its item, and no running process in it. The
+  source and the branch stay. The next build makes the `target` again.
 - Under 5% free, `riff workers start`, the rollout and a workers host
   start no worker on the machine. The lead gets one note when the disk
   goes under 5%.

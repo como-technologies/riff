@@ -13,7 +13,7 @@
 //! flowchart TD
 //!     L{"a lock whose process<br/>is gone?"} -- yes --> U["unlock"]
 //!     L -- no --> O
-//!     U --> O{"a live owner: a lock of a live process,<br/>a live session in it, or this process?"}
+//!     U --> O{"a live owner: a lock of a live process,<br/>a live session in it or with its item,<br/>a running process in it, or this process?"}
 //!     O -- yes --> K["keep"]
 //!     O -- no --> D{"work that is not committed?"}
 //!     D -- "yes, on a branch" --> W["WIP commit, push,<br/>a note to the lead"]
@@ -34,7 +34,13 @@
 //!   another start: a new process, or a new boot. A lock with no
 //!   process ID is of a person: riff keeps it ([`Lock::of`]).
 //! - A live session owns a worktree when `riff who` shows it live, on
-//!   this host, in this repository, in that worktree.
+//!   this host, in this repository, in that worktree. It also owns the
+//!   worktree of an item that it holds, when it works in another
+//!   worktree ([`Owner::Claim`], 01M515233TRCW2PK3V4QBR4V17).
+//! - A running process owns a worktree when its program or its working
+//!   directory is in it, for example a check build of riff that a
+//!   systemd unit runs, or the shell of a person ([`Owner::Process`],
+//!   01M5152361VDRV7NZ2N2Z7BVNP).
 //! - A clean worktree whose `HEAD` is on the default branch of `origin`
 //!   has no commit of its own. riff removes it, with or with no pull
 //!   request (01M41XFFXEQPEPDVM4HNT69FVP).
@@ -52,7 +58,7 @@
 //! ```
 //! use riff::worktrees::{Facts, Lock, Pr, decide, Step};
 //!
-//! let facts = Facts { agent: true, lock: Lock::Dead, owned: false, changed: false, branch: true, pr: Some(Pr::MergedAtHead(40)), on_origin: true, on_main: false };
+//! let facts = Facts { agent: true, lock: Lock::Dead, owner: None, changed: false, branch: true, pr: Some(Pr::MergedAtHead(40)), on_origin: true, on_main: false };
 //! assert_eq!(decide(&facts), [Step::Unlock, Step::Remove("its pull request #40 is merged".into())]);
 //! let facts = Facts { agent: true, lock: Lock::Live, ..facts };
 //! assert_eq!(decide(&facts), [Step::Keep("a live process holds its lock".into())]);
@@ -137,6 +143,39 @@ pub enum Pr {
     Unknown(String),
 }
 
+/// Who uses a worktree, so that riff keeps it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Owner {
+    /// A live session works in it, or this process does.
+    Session,
+    /// A live session on this host holds its item, also when that
+    /// session works in another worktree (01M515233TRCW2PK3V4QBR4V17).
+    Claim(String),
+    /// A running process has its program or its working directory in
+    /// it (01M5152361VDRV7NZ2N2Z7BVNP).
+    Process { pid: u32, name: String },
+}
+
+impl Owner {
+    /// The reason to keep the worktree.
+    ///
+    /// ```
+    /// use riff::worktrees::Owner;
+    ///
+    /// assert_eq!(Owner::Session.why(), "a live session works in it");
+    /// assert_eq!(Owner::Claim("issue-12".into()).why(), "a live session holds its item issue-12");
+    /// let process = Owner::Process { pid: 4242, name: "riff".into() };
+    /// assert_eq!(process.why(), "the running process 4242 (riff) uses it");
+    /// ```
+    pub fn why(&self) -> String {
+        match self {
+            Owner::Session => "a live session works in it".into(),
+            Owner::Claim(item) => format!("a live session holds its item {item}"),
+            Owner::Process { pid, name } => format!("the running process {pid} ({name}) uses it"),
+        }
+    }
+}
+
 /// The facts of one worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Facts {
@@ -144,8 +183,9 @@ pub struct Facts {
     /// main worktree. riff keeps each other worktree: a person made it.
     pub agent: bool,
     pub lock: Lock,
-    /// A live session works in it, or this process does.
-    pub owned: bool,
+    /// Who uses it, when a live session, this process or a running
+    /// process does.
+    pub owner: Option<Owner>,
     /// It has files that are not committed.
     pub changed: bool,
     /// It is on a branch, not detached.
@@ -176,7 +216,9 @@ pub enum Step {
 /// ```
 /// use riff::worktrees::{Facts, Lock, Pr, decide, Step};
 ///
-/// let free = Facts { agent: true, lock: Lock::None, owned: false, changed: false, branch: true, pr: None, on_origin: false, on_main: false };
+/// use riff::worktrees::Owner;
+///
+/// let free = Facts { agent: true, lock: Lock::None, owner: None, changed: false, branch: true, pr: None, on_origin: false, on_main: false };
 /// let changed = Facts { changed: true, ..free.clone() };
 /// assert_eq!(decide(&changed), [Step::Save]);
 /// let detached = Facts { branch: false, ..changed.clone() };
@@ -191,8 +233,12 @@ pub enum Step {
 /// assert_eq!(decide(&fresh), [Step::Remove("its HEAD is on the default branch of origin: it has no commit of its own".into())]);
 /// let open = Facts { pr: Some(Pr::NotMerged(41)), ..free.clone() };
 /// assert_eq!(decide(&open), [Step::Keep("pull request #41 is not merged".into())]);
-/// let owned = Facts { owned: true, lock: Lock::Dead, ..free };
+/// let owned = Facts { owner: Some(Owner::Session), lock: Lock::Dead, ..free.clone() };
 /// assert_eq!(decide(&owned), [Step::Unlock, Step::Keep("a live session works in it".into())]);
+/// let held = Facts { owner: Some(Owner::Claim("issue-12".into())), ..fresh.clone() };
+/// assert_eq!(decide(&held), [Step::Keep("a live session holds its item issue-12".into())]);
+/// let used = Facts { owner: Some(Owner::Process { pid: 7, name: "riff".into() }), ..fresh };
+/// assert_eq!(decide(&used), [Step::Keep("the running process 7 (riff) uses it".into())]);
 /// ```
 pub fn decide(facts: &Facts) -> Vec<Step> {
     if !facts.agent {
@@ -207,8 +253,8 @@ pub fn decide(facts: &Facts) -> Vec<Step> {
         Lock::Person => return vec![Step::Keep("a person locked it".into())],
         Lock::None => {}
     }
-    let last = if facts.owned {
-        Step::Keep("a live session works in it".into())
+    let last = if let Some(owner) = &facts.owner {
+        Step::Keep(owner.why())
     } else if facts.changed && facts.branch {
         Step::Save
     } else if facts.changed {
@@ -362,34 +408,155 @@ fn first_line(e: &anyhow::Error) -> String {
     crate::text::safe(text.lines().next().unwrap_or_default())
 }
 
+/// A running process: its program and its working directory, from
+/// `/proc/PID/exe` and `/proc/PID/cwd`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Running {
+    pub pid: u32,
+    /// The name of its program, from `/proc/PID/comm`.
+    pub name: String,
+    pub exe: Option<PathBuf>,
+    pub cwd: Option<PathBuf>,
+}
+
+impl Running {
+    /// Each process that riff can read: of this user, on Linux. None on
+    /// a system with no `/proc`.
+    pub fn all() -> Vec<Running> {
+        let Ok(dir) = std::fs::read_dir("/proc") else {
+            return Vec::new();
+        };
+        dir.filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok())
+            .filter_map(Running::read)
+            .collect()
+    }
+
+    /// The process `pid`, or `None` when riff can read neither its
+    /// program nor its working directory.
+    fn read(pid: u32) -> Option<Running> {
+        let dir = PathBuf::from(format!("/proc/{pid}"));
+        let link = |name: &str| std::fs::read_link(dir.join(name)).ok().map(live_path);
+        let (exe, cwd) = (link("exe"), link("cwd"));
+        if exe.is_none() && cwd.is_none() {
+            return None;
+        }
+        let name = std::fs::read_to_string(dir.join("comm")).unwrap_or_default();
+        Some(Running {
+            pid,
+            name: crate::text::safe(name.trim()),
+            exe,
+            cwd,
+        })
+    }
+
+    /// True when its program or its working directory is in `dir`.
+    pub fn uses(&self, dir: &Path) -> bool {
+        [&self.exe, &self.cwd]
+            .into_iter()
+            .flatten()
+            .any(|path| path.starts_with(dir))
+    }
+}
+
+/// The path of a link in `/proc/PID`, with no mark ` (deleted)`: the
+/// program of a process still counts after a new build deleted its file.
+///
+/// ```
+/// use riff::worktrees::live_path;
+///
+/// let deleted = live_path("/r/.claude/worktrees/live-712/target/release/riff (deleted)".into());
+/// assert_eq!(deleted, std::path::Path::new("/r/.claude/worktrees/live-712/target/release/riff"));
+/// assert_eq!(live_path("/usr/bin/sleep".into()), std::path::Path::new("/usr/bin/sleep"));
+/// ```
+pub fn live_path(path: PathBuf) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = path.as_os_str().as_bytes();
+    match bytes.strip_suffix(b" (deleted)") {
+        Some(live) => PathBuf::from(std::ffi::OsStr::from_bytes(live)),
+        None => path,
+    }
+}
+
+/// The first process of `running` that uses the worktree `dir`
+/// (01M5152361VDRV7NZ2N2Z7BVNP).
+///
+/// ```
+/// use riff::worktrees::{Owner, Running, used_by};
+/// use std::path::Path;
+///
+/// let p = |pid, exe: &str, cwd: &str| Running { pid, name: "riff".into(), exe: Some(exe.into()), cwd: Some(cwd.into()) };
+/// let running = [
+///     p(10, "/usr/bin/bash", "/r/.claude/worktrees/issue-12"),
+///     p(20, "/r/.claude/worktrees/live-712/target/release/riff", "/"),
+/// ];
+/// let used = |dir: &str| used_by(&running, Path::new(dir));
+/// assert_eq!(used("/r/.claude/worktrees/issue-12"), Some(Owner::Process { pid: 10, name: "riff".into() }));
+/// assert_eq!(used("/r/.claude/worktrees/live-712"), Some(Owner::Process { pid: 20, name: "riff".into() }));
+/// assert_eq!(used("/r/.claude/worktrees/issue-1"), None, "a path in another worktree");
+/// ```
+pub fn used_by(running: &[Running], dir: &Path) -> Option<Owner> {
+    running
+        .iter()
+        .find(|p| p.uses(dir))
+        .map(|p| Owner::Process {
+            pid: p.pid,
+            name: p.name.clone(),
+        })
+}
+
+/// The owner of `tree`: this process in `here`, a live session of
+/// `owner`, or a process of `running`.
+fn owner_of(
+    tree: &Tree,
+    here: &Path,
+    running: &[Running],
+    owner: &impl Fn(&Tree) -> Option<Owner>,
+) -> Option<Owner> {
+    if here.starts_with(&tree.path) {
+        return Some(Owner::Session);
+    }
+    owner(tree).or_else(|| {
+        // `/proc` gives each path with no link in it.
+        let real = std::fs::canonicalize(&tree.path).unwrap_or_else(|_| tree.path.clone());
+        used_by(running, &real)
+    })
+}
+
 /// Cleans each linked worktree of the clone of `main`
-/// (01M3ZV0TKSHNW5QC2NG1XTJEJB). `owned` tells whether a live session
-/// works in a worktree. `here` is the directory of this process: riff
-/// never acts on its worktree. Returns one [`Done`] for each worktree.
-pub fn clean(main: &Path, here: &Path, gh: &Gh, owned: impl Fn(&Tree) -> bool) -> Vec<Done> {
+/// (01M3ZV0TKSHNW5QC2NG1XTJEJB). `owner` tells whether a live session
+/// works in a worktree or holds its item ([`owner_in`]). riff also keeps
+/// a worktree that a running process uses ([`used_by`]). `here` is the
+/// directory of this process: riff never acts on its worktree. Returns
+/// one [`Done`] for each worktree.
+pub fn clean(
+    main: &Path,
+    here: &Path,
+    gh: &Gh,
+    owner: impl Fn(&Tree) -> Option<Owner>,
+) -> Vec<Done> {
     let Ok(list) = git(main, &["worktree", "list", "--porcelain"]) else {
         return Vec::new();
     };
     let start = |pid| workload::read(pid, "").map(|p| p.start);
+    let running = Running::all();
     parse(&list)
         .into_iter()
         .map(|tree| {
             let lock = Lock::of(tree.lock.as_deref(), start);
-            let here = here.starts_with(&tree.path);
             let changed = git(&tree.path, &["status", "--porcelain"])
                 .map(|out| !out.trim().is_empty())
                 .unwrap_or(true);
             let mut facts = Facts {
                 agent: tree.path.starts_with(main.join(AGENT_DIR)),
                 lock,
-                owned: here || owned(&tree),
+                owner: owner_of(&tree, here, &running, &owner),
                 changed,
                 branch: tree.branch.is_some(),
                 pr: None,
                 on_origin: false,
                 on_main: false,
             };
-            let free = matches!(facts.lock, Lock::None | Lock::Dead) && !facts.owned;
+            let free = matches!(facts.lock, Lock::None | Lock::Dead) && facts.owner.is_none();
             if free && !facts.changed {
                 facts.on_main = on_main(main, &tree.head);
                 if !facts.on_main {
@@ -421,13 +588,14 @@ fn on_main(main: &Path, head: &str) -> bool {
 
 /// The worktrees of the agent tool in the clone of `main` that no live
 /// owner has: no lock of a live process or of a person, no live
-/// session in it (`owned`), and not the worktree of `here`
-/// (01M41A11BB4HAD8595DNSBAZ0D).
-pub fn ownerless(main: &Path, here: &Path, owned: impl Fn(&Tree) -> bool) -> Vec<Tree> {
+/// session in it or with its item (`owner`), no running process in it,
+/// and not the worktree of `here` (01M41A11BB4HAD8595DNSBAZ0D).
+pub fn ownerless(main: &Path, here: &Path, owner: impl Fn(&Tree) -> Option<Owner>) -> Vec<Tree> {
     let Ok(list) = git(main, &["worktree", "list", "--porcelain"]) else {
         return Vec::new();
     };
     let start = |pid| workload::read(pid, "").map(|p| p.start);
+    let running = Running::all();
     parse(&list)
         .into_iter()
         .filter(|tree| {
@@ -436,8 +604,7 @@ pub fn ownerless(main: &Path, here: &Path, owned: impl Fn(&Tree) -> bool) -> Vec
                     Lock::of(tree.lock.as_deref(), start),
                     Lock::None | Lock::Dead
                 )
-                && !here.starts_with(&tree.path)
-                && !owned(tree)
+                && owner_of(tree, here, &running, &owner).is_none()
         })
         .collect()
 }
@@ -525,12 +692,18 @@ fn git(dir: &Path, args: &[&str]) -> std::result::Result<String, String> {
     ))
 }
 
-/// The worktrees that a live session in `who` owns: live, on `host`, in
-/// the repository `repo`, in a worktree with the name of the last part
-/// of the path.
+/// The owner of `tree` in `who`, from the live sessions on `host` in the
+/// repository `repo`. [`Owner::Session`]: a session works in the
+/// worktree with the name of the last part of the path.
+/// [`Owner::Claim`]: a session holds the item of the worktree, also from
+/// another worktree (01M515233TRCW2PK3V4QBR4V17). The item of a worktree
+/// is its name, for example `issue-12`. A verify worktree has the first
+/// 4 characters of the session ID after the item: the worktree
+/// `verify-issue-12-a6cf` is of the claim `verify-issue-12` of the
+/// session `a6cf…`.
 ///
 /// ```
-/// use riff::worktrees::{Tree, owned_by};
+/// use riff::worktrees::{Owner, Tree, owner_in};
 /// use riff_core::wire::SessionInfo;
 ///
 /// let info = |uri: &str, live| SessionInfo { uri: uri.parse().unwrap(), live, idle_secs: 0, status: None, worker: false, container: false, stopping: false, claims_secs: 0, must_clear: false, fresh_secs: None, state: Default::default(), work: None, waits: None, blocked: None, step: None };
@@ -538,21 +711,42 @@ fn git(dir: &Path, args: &[&str]) -> std::result::Result<String, String> {
 ///     info("riff://mike@pangolin/o/r?session=a1#issue-12", true),
 ///     info("riff://mike@pangolin/o/r?session=b2#issue-13", false),
 ///     info("riff://mike@thelio/o/r?session=c3#issue-14", true),
+///     info("riff://mike@pangolin/o/r?session=d4d4d4&claim=issue-756&claim=verify-issue-9#issue-753", true),
+///     info("riff://mike@thelio/o/r?session=e5&claim=issue-15", true),
 /// ];
 /// let tree = |name: &str| Tree { path: format!("/r/.claude/worktrees/{name}").into(), branch: None, head: "1".into(), lock: None };
-/// let owned = |name| owned_by(&who, "pangolin", "o/r", &tree(name));
-/// assert!(owned("issue-12"));
-/// assert!(!owned("issue-13"), "not live");
-/// assert!(!owned("issue-14"), "on another host");
+/// let owner = |name| owner_in(&who, "pangolin", "o/r", &tree(name));
+/// assert_eq!(owner("issue-12"), Some(Owner::Session));
+/// assert_eq!(owner("issue-13"), None, "not live");
+/// assert_eq!(owner("issue-14"), None, "on another host");
+/// assert_eq!(owner("issue-756"), Some(Owner::Claim("issue-756".into())), "it works in issue-753");
+/// assert_eq!(owner("verify-issue-9-d4d4"), Some(Owner::Claim("verify-issue-9".into())));
+/// assert_eq!(owner("verify-issue-9-a1a1"), None, "the verify worktree of another session");
+/// assert_eq!(owner("issue-15"), None, "a claim on another host");
 /// ```
-pub fn owned_by(who: &[riff_core::wire::SessionInfo], host: &str, repo: &str, tree: &Tree) -> bool {
-    let name = tree.path.file_name().and_then(|n| n.to_str());
-    who.iter().any(|s| {
-        s.live
-            && s.uri.place().host() == host
-            && s.uri.place().repo_text() == repo
-            && s.uri.place().worktree().is_some()
-            && s.uri.place().worktree() == name
+pub fn owner_in(
+    who: &[riff_core::wire::SessionInfo],
+    host: &str,
+    repo: &str,
+    tree: &Tree,
+) -> Option<Owner> {
+    let name = tree.path.file_name().and_then(|n| n.to_str())?;
+    let mut live = who
+        .iter()
+        .filter(|s| s.live && s.uri.place().host() == host && s.uri.place().repo_text() == repo);
+    if live.clone().any(|s| s.uri.place().worktree() == Some(name)) {
+        return Some(Owner::Session);
+    }
+    live.find_map(|s| {
+        let short = s.uri.who().session().and_then(|id| id.get(..4));
+        s.uri
+            .claims()
+            .iter()
+            .find(|item| {
+                name == item.as_str()
+                    || short.is_some_and(|short| name == format!("{item}-{short}"))
+            })
+            .map(|item| Owner::Claim(item.clone()))
     })
 }
 
@@ -575,7 +769,7 @@ pub async fn clean_here(
         let (here, repo) = (dir.to_owned(), repo.clone());
         tokio::task::spawn_blocking(move || {
             clean(&main, &here, &Gh::default(), |tree| {
-                owned_by(&who, &host, &repo, tree)
+                owner_in(&who, &host, &repo, tree)
             })
         })
         .await?
@@ -607,4 +801,133 @@ pub async fn clean_as_person(dir: &Path, server: &str) -> Result<Vec<String>> {
     let me = crate::identity::person(&here, server)?;
     let api = crate::api::Api::new(server).signed_in(None)?;
     clean_here(&api, &me, dir).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Child;
+
+    /// A shell `program` that waits on its stdin in the directory `dir`,
+    /// stopped on drop: also when a test fails.
+    struct Waits(Child);
+
+    impl Waits {
+        fn start(program: &Path, dir: &Path) -> Waits {
+            let child = Command::new(program)
+                .args(["-c", "read line"])
+                .current_dir(dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            Waits(child)
+        }
+
+        fn id(&self) -> u32 {
+            self.0.id()
+        }
+    }
+
+    impl Drop for Waits {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn running_has_the_directory_and_the_program_of_this_process() {
+        let me = Running::all()
+            .into_iter()
+            .find(|p| p.pid == std::process::id())
+            .expect("this process is in /proc");
+        assert_eq!(me.cwd, Some(std::env::current_dir().unwrap()));
+        assert_eq!(me.exe, Some(std::env::current_exe().unwrap()));
+    }
+
+    #[test]
+    fn a_process_in_a_worktree_uses_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = std::fs::canonicalize(dir.path()).unwrap();
+        let child = Waits::start(Path::new("sh"), &worktree);
+        let found = Running::read(child.id()).unwrap();
+        assert_eq!(found.name, "sh");
+        assert_eq!(found.cwd.as_deref(), Some(worktree.as_path()));
+        let running = [found];
+        assert_eq!(
+            used_by(&running, &worktree),
+            Some(Owner::Process {
+                pid: child.id(),
+                name: "sh".into()
+            })
+        );
+        assert_eq!(used_by(&running, &worktree.join("other")), None);
+    }
+
+    /// The case of #762: a systemd unit runs a check build of riff in a
+    /// worktree, and a new build deletes the file of the program.
+    #[test]
+    fn a_program_in_a_worktree_uses_it_also_after_a_new_build_deleted_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = std::fs::canonicalize(dir.path()).unwrap();
+        let program = worktree.join("target/release/riff");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        // A copy of `sh` is the build. A child `cp` writes it, so this
+        // process holds no write fd of it when it runs (`ETXTBSY`).
+        let cp = Command::new("cp")
+            .arg("-L")
+            .arg("/bin/sh")
+            .arg(&program)
+            .status()
+            .unwrap();
+        assert!(cp.success());
+        let elsewhere = tempfile::tempdir().unwrap();
+        let child = Waits::start(&program, elsewhere.path());
+        std::fs::remove_file(&program).unwrap();
+        let found = Running::read(child.id()).unwrap();
+        assert_eq!(found.name, "riff");
+        assert_eq!(found.exe.as_deref(), Some(program.as_path()));
+        assert!(found.uses(&worktree));
+    }
+
+    #[test]
+    fn the_owner_is_this_process_then_a_session_then_a_running_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = std::fs::canonicalize(dir.path()).unwrap().join("issue-12");
+        std::fs::create_dir(&real).unwrap();
+        // git can give the path of a worktree through a link.
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(dir.path(), &link).unwrap();
+        let tree = Tree {
+            path: link.join("issue-12"),
+            branch: None,
+            head: "1".into(),
+            lock: None,
+        };
+        let running = [Running {
+            pid: 7,
+            name: "bash".into(),
+            exe: None,
+            cwd: Some(real.join("crates")),
+        }];
+        let process = Some(Owner::Process {
+            pid: 7,
+            name: "bash".into(),
+        });
+        let none = |_: &Tree| None;
+        let claim = |_: &Tree| Some(Owner::Claim("issue-12".into()));
+        let elsewhere = Path::new("/elsewhere");
+        assert_eq!(owner_of(&tree, elsewhere, &running, &none), process);
+        assert_eq!(
+            owner_of(&tree, elsewhere, &running, &claim),
+            Some(Owner::Claim("issue-12".into()))
+        );
+        assert_eq!(
+            owner_of(&tree, &tree.path.join("crates"), &running, &claim),
+            Some(Owner::Session)
+        );
+        assert_eq!(owner_of(&tree, elsewhere, &[], &none), None);
+    }
 }

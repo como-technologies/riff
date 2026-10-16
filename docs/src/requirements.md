@@ -3950,21 +3950,40 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   facts for each worktree in `.claude/worktrees` of the main worktree.
   It unlocks a lock whose process is gone or has another start. It
   keeps a worktree with a lock of a live process, a lock with no
-  process ID, or a live session of `riff who` in it, and the worktree
-  of the caller. It commits the work of a worktree with no live owner
-  as WIP, pushes its branch, and posts a note to the lead. It removes a
-  clean worktree whose pull request is merged with its `HEAD`, and its
-  branch while the branch points at that `HEAD`. It removes a clean
-  detached worktree whose commit is on a branch of `origin`. It keeps
-  each other worktree. It prints one line for each worktree with what
-  it did and why. It keeps each worktree outside `.claude/worktrees`.
-  Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
+  process ID, or a live session of `riff who` in it, the worktree of
+  an item that a live session holds (01M515233TRCW2PK3V4QBR4V17), a
+  worktree that a running process uses (01M5152361VDRV7NZ2N2Z7BVNP),
+  and the worktree of the caller. It commits the work of a worktree
+  with no live owner as WIP, pushes its branch, and posts a note to the
+  lead. It removes a clean worktree whose pull request is merged with
+  its `HEAD`, and its branch while the branch points at that `HEAD`. It
+  removes a clean detached worktree whose commit is on a branch of
+  `origin`. It keeps each other worktree. It prints one line for each
+  worktree with what it did and why. It keeps each worktree outside
+  `.claude/worktrees`. Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M41XFFXEQPEPDVM4HNT69FVP** `riff worktrees clean` removes a clean
   worktree with no live owner whose `HEAD` is on the default branch of
   `origin`, with or with no pull request, and its branch. It also
   removes a clean worktree with no live owner whose `HEAD` is the head
   of a merged pull request that it finds by the commit, also when the
   branch is gone. Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
+- **01M515233TRCW2PK3V4QBR4V17** `riff worktrees clean` and the
+  removal of a `target` (01M41A11BB4HAD8595DNSBAZ0D) keep the worktree
+  of an item that a live session of `riff who` holds, on the same
+  host and in the same repository, also when that session works in
+  another worktree. The item of a worktree is its name, for example
+  `issue-12`. The verify worktree `verify-issue-12-a6cf` is of the
+  claim `verify-issue-12` of the session whose ID starts with `a6cf`.
+  The line says `kept: a live session holds its item ITEM`. Superseded
+  by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
+- **01M5152361VDRV7NZ2N2Z7BVNP** `riff worktrees clean` and the
+  removal of a `target` (01M41A11BB4HAD8595DNSBAZ0D) keep a worktree
+  that a running process uses: its program (`/proc/PID/exe`) or its
+  working directory (`/proc/PID/cwd`) is in the worktree. A program
+  that a new build deleted still counts. riff reads each process that
+  it can read: the processes of its user. The line says `kept: the
+  running process PID (NAME) uses it`. Superseded by 3.0
+  (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M3ZV0TM7ANJ1QQ7XTBDJQE1V** `riff workers start` and the start of
   `riff workers host` run `riff worktrees clean`. Superseded by 3.0
   (01M4Z60B7PTJMB37578K8FV22Q).
@@ -3978,9 +3997,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   15% of the disk of the main clone is free, riff removes the `target`
   directory of each worktree in `.claude/worktrees` with no live
   owner: no lock of a live process, no lock with no process ID, no
-  live session of `riff who` in it, and not the worktree of the
-  caller. It keeps the source and the branch. It posts one note to the
-  lead with each `target` that it removed. Superseded by 3.0
+  live session of `riff who` in it, no live session that holds its
+  item (01M515233TRCW2PK3V4QBR4V17), no running process that uses it
+  (01M5152361VDRV7NZ2N2Z7BVNP), and not the worktree of the caller. It
+  keeps the source and the branch. It posts one note to the lead with
+  each `target` that it removed. Superseded by 3.0
   (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M41A11DX1QRP48YPTDNT67W4** When less than 5% of the disk of the
   main clone is free, `riff workers start`, the rollout and a workers

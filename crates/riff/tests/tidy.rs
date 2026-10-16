@@ -340,6 +340,16 @@ async fn a_host_on_a_tight_disk_removes_the_target_of_a_worktree_with_no_owner()
     let (owned, session) = r.owned("issue-8", "b8b8").await;
     let _live = Box::pin(r.api.watch(&session).await.unwrap());
     let owned_target = build(&owned);
+    // A live session in the main clone holds issue-9
+    // (01M515233TRCW2PK3V4QBR4V17).
+    let held = r.worktree("issue-9");
+    let held_target = build(&held);
+    let place = identity::place_in(&r.main(), "pangolin").unwrap();
+    let holder = SessionUri::new(Who::new("mike", Some("c9c9")).unwrap(), place);
+    r.api.register(&holder).await.unwrap();
+    let thread = holder.default_thread().unwrap();
+    r.api.claim(&holder, &thread, "issue-9").await.unwrap();
+    let _holder_live = Box::pin(r.api.watch(&holder).await.unwrap());
     // `target` is not ignored in this clone: ignore it, as the riff
     // repository does, so that the worktree is clean.
     std::fs::write(r.main().join(".git/info/exclude"), "target/\n").unwrap();
@@ -358,6 +368,7 @@ async fn a_host_on_a_tight_disk_removes_the_target_of_a_worktree_with_no_owner()
     assert!(!free_target.exists());
     assert!(free.join("work.txt").exists(), "the source stays");
     assert!(owned_target.exists(), "the target of a live session stays");
+    assert!(held_target.exists(), "the target of a held item stays");
     assert!(!note.contains("under 5%"), "{note}");
     drop(host);
 }
