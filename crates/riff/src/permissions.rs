@@ -555,7 +555,8 @@ impl<'a> Trust<'a> {
     /// `server`. A repository with no `origin` remote has the owner
     /// `local` ([`crate::identity::place`]): it has no owner on GitHub.
     /// An empty `server` is a session with no riff-server: the riff of
-    /// peers of the daemon (01M519Z4RWHWP3TKNP4T5GKKE9).
+    /// peers of the daemon (01M519Z4RWHWP3TKNP4T5GKKE9,
+    /// 01M526Z224A1CVPJQE8W7ERXV6).
     ///
     /// ```
     /// use riff::permissions::Trust;

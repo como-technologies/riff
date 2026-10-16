@@ -5046,7 +5046,8 @@ share.
   `riff run`. With no daemon, `riff run` stops before the claim, and
   says how to start the daemon. Ctrl-C asks the daemon to stop the
   container. When `riff run` ends with no stop, the session goes on in
-  the daemon.
+  the daemon. Superseded in part by 01M519Z4RWHWP3TKNP4T5GKKE9 for
+  `riff run --peers` (01M526Z1Q3QM3X0C7N6MCX8Z6T).
 - **01M4ZDTW00B7N6T9P3MK066KA7** A stop or a restart of the daemon stops
   no container. The daemon starts each `podman` with no
   `INVOCATION_ID`, so podman puts conmon in a scope of its own, not in
@@ -5208,7 +5209,8 @@ share.
   for a verify, then the free items of the current wave, as the rollout
   of the lead takes them. It starts one session for the first work that
   it may start. With no such work, it waits for the end of a session,
-  or 60 seconds.
+  or 60 seconds. Superseded in part by 01M519Z4RWHWP3TKNP4T5GKKE9 for
+  `riff wave run --peers` (01M526Z1Q3QM3X0C7N6MCX8Z6T).
 - **01M4ZV3B6M7PZRJ39XTXBZP3ZH** A wave starts nothing while the riff or
   the repository is paused. It never starts a held item, an item that a
   session claims, or an item that a session of the wave runs.
@@ -6195,6 +6197,35 @@ then.
   clone of the working folder. The daemon decides with its riff of
   peers (01M519Z4PESWFV8Y03SKTSGV4Q). A ref whose commit is not a claim
   commit of riff names no user: only the owner deletes it.
+- **01M526Z1Q3QM3X0C7N6MCX8Z6T** `riff run ITEM --peers` and
+  `riff wave run --peers` do the steps of 01M519Z4RWHWP3TKNP4T5GKKE9.
+  With no `--peers`, `riff run` and `riff wave run` use riff-server 1.x
+  until Wave C (01M519Z506XWTSV1CJ6CCVFXEF). A wave with no riff-server
+  keeps an empty riff-server, and the daemon picks the world of each
+  wave and of each session by it.
+- **01M526Z1SVG3ZK38GH51AHCRHP** `riff run ITEM --peers` does the checks
+  before the claim, then asks the daemon to do the build of ITEM as a
+  job of a wave, in the room of the host. It shows each line, each event
+  and the end of the session, then a line for each step after the end.
+  A SIGINT or a SIGTERM asks the daemon to stop the container. The
+  daemon does the steps after the end in each case, so `riff run` has
+  no end step of its own.
+- **01M526Z1WH3865PKGFPYPFWQT7** A job with no riff-server does its
+  steps after the end in this order: the verify request, the note or
+  the result of a verify, as a `message` record to the lead; then the
+  release of its claim on the forge. The end of the session writes the
+  end record of the session, and releases no claim of a job.
+- **01M526Z1Z80JFAS0GS04PVF1KG** The steps after the end of a job with
+  no riff-server wait for the riff of the daemon: for example a job
+  whose session ended while no daemon ran, after a new start of the
+  daemon that waits for its keyring.
+- **01M5274Z2NQEKN6B4H7V95KKW0** On the riff of peers, a step of a lead
+  (`hold`, `free`, `pause`, `resume`) needs the lead, or a session of
+  the daemon of the owner that is not a worker. A worker of the daemon
+  of the owner is refused, as each worker (01M519Z3FTAZ20DQKDTW09M6NS).
+- **01M526Z224A1CVPJQE8W7ERXV6** A session with no riff-server has no
+  riff-server in the environment of its auto mode
+  (01M516HETNZCBFBJNHT8BKFB1Y).
 - **01M5232XPKES7R8P3F3H8X6V4B** A claim reads as held only when the
   forge refuses its ref for a failed lease: `stale info`, `cannot lock
   ref`, a ref that is there already, or `failed to update ref`. Each

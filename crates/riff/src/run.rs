@@ -143,6 +143,44 @@
 //!     Note over S: the session stops: the claim is free
 //! ```
 //!
+//! # With no riff-server
+//!
+//! `riff run ITEM --peers` needs no riff-server ([`run_peers`],
+//! 01M519Z4RWHWP3TKNP4T5GKKE9). riff does the same checks before the
+//! claim. Then it sends [`Ask::Run`]: the daemon does the item as a job of
+//! a wave, with the world of the riff of peers
+//! ([`crate::wave::peers::Peers`], `crate::wave::run_one`). The daemon
+//! claims the item on the forge with the git sign-in of the person
+//! ([`crate::forge_claim`]), makes the clone and the start text, and runs
+//! the session: its riff tools talk on the riff of peers of the daemon.
+//! After the end, the daemon sends the verify request to the lead as a
+//! `message` record, and then releases the claim with the lease of its
+//! commit. `riff run` shows each line, each event and the lines of the
+//! steps after the end, until [`Say::Done`].
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant H as riff run --peers (host)
+//!     participant D as riff daemon
+//!     participant G as GitHub
+//!     participant C as riff relay and claude -p (container)
+//!     H->>D: the image: pull it when it is not here
+//!     H->>D: Ask::Run: the wave of the repository, the build of ITEM
+//!     D->>G: push refs/riff/claims/ITEM, lease: no ref
+//!     D->>D: the clone, the session record with the claim
+//!     D->>C: start the session
+//!     D-->>H: each event, with no secret
+//!     C-->>D: the end
+//!     D->>D: the verify request to the lead: a message record
+//!     D->>G: delete refs/riff/claims/ITEM, lease: the claim commit
+//!     D-->>H: the lines of the steps after the end, then Done
+//! ```
+//!
+//! A SIGINT or a SIGTERM asks the daemon to stop the container. The
+//! daemon does the steps after the end in each case, also after its own
+//! restart ([`crate::daemon::Daemon::recover`]): `riff run` has no end
+//! step of its own.
+//!
 //! # The folder of a session
 //!
 //! Each session has a folder of its own in [`sessions_dir`]: `ITEM-ID8`,
@@ -1401,8 +1439,8 @@ pub async fn run(
     }
 }
 
-/// `riff run ITEM --peers` (01M519Z4RWHWP3TKNP4T5GKKE9): one work item
-/// with no riff-server. See "With no riff-server" in the design. It
+/// `riff run ITEM --peers` (01M519Z4RWHWP3TKNP4T5GKKE9,
+/// 01M526Z1SVG3ZK38GH51AHCRHP): one work item with no riff-server. See "With no riff-server" in the design. It
 /// gives the exit code of the command. On a host that is not Linux, it
 /// starts nothing.
 pub async fn run_peers(here: &Place, item: &str, image: Option<&str>) -> Result<i32> {
@@ -1419,7 +1457,7 @@ pub async fn run_peers(here: &Place, item: &str, image: Option<&str>) -> Result<
 
 /// [`run_peers`] with the daemon in the folder `daemon`: the checks
 /// before the claim, then [`Ask::Run`]. The daemon does each riff step
-/// as for a job of a wave ([`crate::wave::run_one`]).
+/// as for a job of a wave (`crate::wave::run_one`).
 pub async fn run_peers_with(
     daemon: &Path,
     here: &Place,

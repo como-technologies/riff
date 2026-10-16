@@ -590,4 +590,28 @@ mod tests {
         assert_eq!(client.next().await.unwrap(), Some(Say::Line { text: line }));
         assert_eq!(client.next().await.unwrap(), Some(Say::Done));
     }
+
+    /// 01M526Z1Q3QM3X0C7N6MCX8Z6T: the daemon runs a job of `riff run
+    /// --peers` only with no riff-server.
+    #[tokio::test]
+    async fn the_daemon_runs_one_job_only_with_no_riff_server() {
+        let a = here().await;
+        let wave = crate::wave::Wave {
+            repo: "o/r".into(),
+            main: a.dir.clone(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        let ask = Ask::Run {
+            wave,
+            work: crate::wave::Work::Build { issue: 12 },
+            image: IMAGE.into(),
+        };
+        let mut client = Client::connect(&a.dir).await.unwrap();
+        client.ask(ask).await.unwrap();
+        let refused = Say::Failed {
+            error: text::RUN_ONE_PEERS_ONLY.into(),
+        };
+        assert_eq!(client.next().await.unwrap(), Some(refused));
+    }
 }

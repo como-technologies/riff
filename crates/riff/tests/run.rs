@@ -2056,7 +2056,10 @@ async fn riff_run_and_a_wave_with_peers_do_one_item_with_no_riff_server() {
         stdout.contains(&riff::text::run_verify_sent("issue-12", 40)),
         "{stdout}"
     );
-    assert!(stdout.contains("released issue-12 on the forge"), "{stdout}");
+    assert!(
+        stdout.contains("released issue-12 on the forge"),
+        "{stdout}"
+    );
     assert_eq!(claims_of(&machine.main), "");
     let sent = verify_requests(&machine);
     assert_eq!(sent.len(), 1, "{sent:?}");
@@ -2099,6 +2102,36 @@ async fn riff_run_and_a_wave_with_peers_do_one_item_with_no_riff_server() {
     assert_eq!(sent[1].to, [lead]);
     machine.ok(None, &["wave", "stop"]).await;
     assert!(!machine.read("daemon.out").contains(NO_SERVER));
+}
+
+/// 01M4Z60B8EB7A44A41CWWP7G8K: `riff run --peers` of an item that another
+/// session holds on the forge starts nothing, and ends with the code 1.
+#[tokio::test]
+async fn riff_run_peers_of_an_item_that_the_forge_holds_starts_nothing() {
+    let machine = Machine::with_no_server().await;
+    wait_for(&machine.bin.path().join("daemon.out"), "a riff of its own").await;
+    git(&machine.main, &["config", "user.name", "Brett"]);
+    git(
+        &machine.main,
+        &["config", "user.email", "brett@example.com"],
+    );
+    let other = riff::daemon_key::Key::from_bytes(&[9; 32]).public();
+    let claim = riff::forge_claim::Claim::now("issue-12", "brett", "s1", other);
+    riff::forge_claim::take(&machine.main, &claim).unwrap();
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--peers", "--image", IMAGE])
+        .await;
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(&riff::text::run_held_on_forge("issue-12")),
+        "{stderr}"
+    );
+    assert_eq!(machine.read("run.args"), "");
+    // The claim of the other session stays.
+    let claims = claims_of(&machine.main);
+    assert!(claims.ends_with("refs/riff/claims/issue-12"), "{claims}");
 }
 
 /// 01M519Z4PESWFV8Y03SKTSGV4Q, 01M51BFYW85YBEWAB20YTCJQFK: `riff release

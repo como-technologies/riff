@@ -84,6 +84,28 @@
 //! world, with the fake runtime ([`crate::runtime::Fake`]). The daemon
 //! also keeps the session of the lead alive through it, and follows the
 //! wakes of a session for `riff relay watch` ([`World::wake`]).
+//!
+//! # With no riff-server
+//!
+//! A wave with an empty riff-server (`riff wave run --peers`) and a job
+//! of `riff run --peers` (`run_one`) use the world of the riff of
+//! peers of the daemon ([`peers::Peers`], 01M519Z4RWHWP3TKNP4T5GKKE9).
+//! The daemon picks the world of each wave and of each session by its
+//! riff-server (`Daemon::world_of`). The look reads the
+//! pause and the holds from the `plan` records and the claims from
+//! `git ls-remote` (01M519Z4F7Z87BXQYT7F8EABCN). A job claims its item on
+//! the forge ([`crate::forge_claim`]). After the end, it sends the verify
+//! request or the result of a verify to the lead as a `message` record
+//! (`EndTalk`), and then releases the claim. The steps after the end
+//! of the riff of peers and of riff-server are one code: `EndTalk`
+//! picks where they talk.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     W["a wave or riff run --peers"] --> S{"its riff-server"}
+//!     S -- "a URL" --> L["Live: riff-server 1.x and gh"]
+//!     S -- "empty" --> P["peers::Peers: the riff of peers, the forge and gh"]
+//! ```
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
@@ -129,7 +151,9 @@ pub struct Wave {
     pub repo: String,
     /// The main clone of the repository on this machine.
     pub main: PathBuf,
-    /// The riff-server of the riff of the repository.
+    /// The riff-server of the riff of the repository. Empty for a wave
+    /// with no riff-server: the riff of peers of the daemon
+    /// ([`peers::Peers`]).
     pub server: String,
     /// The name of this host in the URI of a session.
     pub host: String,
@@ -188,7 +212,8 @@ pub fn write_waves(dir: &Path, waves: &BTreeMap<String, Wave>) -> Result<()> {
 
 /// `riff wave run`: asks the daemon in the folder `dir` to run the
 /// current wave of the repository of the place `here`, on the
-/// riff-server `server` (01M4ZV3B6J89KJQ0F14YWTZMJQ).
+/// riff-server `server` (01M4ZV3B6J89KJQ0F14YWTZMJQ). An empty `server`
+/// is `riff wave run --peers`: the wave has no riff-server.
 pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
     if here.default_thread().is_none() {
         bail!("{}", text::RUN_NO_REPO);
@@ -409,9 +434,9 @@ pub trait World: Send + Sync {
     fn resume(&self, record: &Record);
 
     /// The steps after the end of the session of `record`. It gives a
-    /// line for each step, for `riff run` ([`run_one`]).
+    /// line for each step, for `riff run` (`run_one`).
     fn finish<'a>(&'a self, record: &'a Record, ended: Ended)
-        -> BoxFuture<'a, Result<Vec<String>>>;
+    -> BoxFuture<'a, Result<Vec<String>>>;
 
     /// Removes the folder of each session of the wave whose item merged.
     /// `keep` names the folders of the sessions that run.
@@ -552,7 +577,8 @@ async fn job<R: Runtime + 'static>(
 }
 
 /// `riff run ITEM --peers` ([`crate::daemon::Ask::Run`],
-/// 01M519Z4RWHWP3TKNP4T5GKKE9): one job of `wave` with no riff-server,
+/// 01M519Z4RWHWP3TKNP4T5GKKE9, 01M526Z1SVG3ZK38GH51AHCRHP): one job of
+/// `wave` with no riff-server,
 /// with the image `image`. It waits for room in the limit of the host,
 /// and does the job as a wave does: the claim on the forge, the clone,
 /// the session, then the steps after the end. It says each line, each
@@ -680,7 +706,7 @@ pub(crate) async fn after<R: Runtime + 'static>(
 /// The steps after the end of the session of `record`, as it `ended`,
 /// with the world of its riff. It gives the line of each step. A session
 /// with no riff-server waits for the riff of the daemon: a job that
-/// ended while no daemon ran.
+/// ended while no daemon ran (01M526Z1Z80JFAS0GS04PVF1KG).
 pub(crate) async fn finish<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     record: Record,
@@ -875,7 +901,11 @@ impl EndTalk<'_> {
     }
 
     /// The holds of the repository `thread`, by item, as `me`.
-    async fn holds(&self, me: &SessionUri, thread: &ThreadName) -> Result<BTreeMap<String, HoldInfo>> {
+    async fn holds(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+    ) -> Result<BTreeMap<String, HoldInfo>> {
         match self {
             EndTalk::Server(api) => Ok(api.plan_show(me, thread).await?.holds),
             EndTalk::Peers(_, hub) => Ok(hub.read(|state| peers::holds_in(state, thread))),
@@ -1089,7 +1119,6 @@ impl Live {
             claim: None,
         })
     }
-
 }
 
 /// The line for the start text of a build when the verify of the pull
@@ -2082,9 +2111,15 @@ esac
         /// Runs [`after_build`] with `gh`, and gives each message that the
         /// lead can read, with its kind.
         async fn after_build(&self, gh: pr::Gh) -> Vec<(Kind, String)> {
-            after_build(gh, &EndTalk::Server(&self.api), &self.record, &self.wave, 12)
-                .await
-                .unwrap();
+            after_build(
+                gh,
+                &EndTalk::Server(&self.api),
+                &self.record,
+                &self.wave,
+                12,
+            )
+            .await
+            .unwrap();
             let thread = self.wave.thread().unwrap();
             self.api
                 .read(&self.lead, &thread, true)

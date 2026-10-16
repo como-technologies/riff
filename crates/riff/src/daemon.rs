@@ -782,7 +782,7 @@ pub enum Ask {
         item: String,
     },
     /// `riff run ITEM --peers`: one job of a wave with no riff-server
-    /// (01M519Z4RWHWP3TKNP4T5GKKE9, [`crate::wave::run_one`]).
+    /// (01M519Z4RWHWP3TKNP4T5GKKE9, `crate::wave::run_one`).
     Run {
         /// The wave of the job: its repository, its main clone and the
         /// host. Its riff-server is empty.
@@ -2006,7 +2006,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// then writes the `session` record of the end of the session, when
     /// the session has no riff-server and the daemon has its riff
     /// (01M519Z4HK333JWVXAWQHCGK6M). A job of a wave releases its claim
-    /// after its steps after the end ([`crate::wave`]).
+    /// after its steps after the end ([`crate::wave`],
+    /// 01M526Z1WH3865PKGFPYPFWQT7).
     fn peer_end(&self, record: &Record) {
         if !record.on_peers() {
             return;
@@ -2091,8 +2092,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// `server`: the forge and riff-server 1.x ([`crate::wave::Live`], or
     /// the world of a test), or for no riff-server the riff of
     /// peers of the daemon ([`crate::wave::peers::Peers`],
-    /// 01M519Z4RWHWP3TKNP4T5GKKE9). The riff of peers fails while the
-    /// daemon has no riff.
+    /// 01M519Z4RWHWP3TKNP4T5GKKE9, 01M526Z1Q3QM3X0C7N6MCX8Z6T). The riff
+    /// of peers fails while the daemon has no riff.
     pub(crate) fn world_of(&self, server: &str) -> Result<Arc<dyn World>> {
         if !server.is_empty() {
             return Ok(self.world.clone());

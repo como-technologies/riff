@@ -6111,8 +6111,7 @@ pub fn daemon_keyring_back() -> String {
 
 /// A step of a lead of a session of the riff daemon that is not the
 /// lead (01M519Z3FTAZ20DQKDTW09M6NS).
-pub const PEER_NOT_LEAD: &str =
-    "only the lead of your user in your repository, or the daemon of the owner, can do this";
+pub const PEER_NOT_LEAD: &str = "only the lead of your user in your repository, or a session of the daemon of the owner that is not a worker, can do this";
 
 /// A tool of a session that the riff of the daemon does not know: it
 /// ended, or the daemon had no riff at its start.

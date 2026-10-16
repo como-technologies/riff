@@ -13,13 +13,13 @@
 //! | The claims of the look | the claims of the sessions in `who` | `git ls-remote origin 'refs/riff/claims/*'` (01M519Z4F7Z87BXQYT7F8EABCN) |
 //! | The session | a worker session, and its keep-alive | the `session` records of the daemon |
 //! | The claim | a claim on riff-server | a claim on the forge ([`crate::daemon::forge`]) |
-//! | The verify request, the note and the result of a verify | a post | a `message` record to the lead ([`EndTalk::peers`]) |
+//! | The verify request, the note and the result of a verify | a post | a `message` record to the lead (`EndTalk::peers`) |
 //! | The release | a release on riff-server, at the end of the steps | the delete of the claim on the forge, at the end of the steps |
 //!
 //! The user of a session is the user of the key of the daemon
 //! (01M51T470TNWVFF97E474FV7BY). The daemon picks the world of each wave
 //! and of each session by its riff-server: empty is the riff of peers
-//! ([`crate::daemon::Daemon::world_of`]).
+//! (`Daemon::world_of`).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -237,7 +237,7 @@ impl World for Peers {
                 }
             };
             // The verify request comes before the release
-            // (01M519Z4RWHWP3TKNP4T5GKKE9).
+            // (01M519Z4RWHWP3TKNP4T5GKKE9, 01M526Z1WH3865PKGFPYPFWQT7).
             let ending = record.clone();
             let released = blocking(move || Ok(crate::daemon::forge::release_at_end(&ending)))
                 .await
@@ -284,5 +284,64 @@ impl World for Peers {
     /// ([`Hub::wait`]).
     fn wake<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<String>> {
         Box::pin(async move { bail!("{}", text::peers_no_server_wake(&record.live.name)) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon_key::Key;
+    use crate::peer::body::{Body, Plan, Riff};
+    use crate::peer::record::{Id, Record as Signed, check};
+
+    /// The state of the riff of the owner (mike) with the `plan` records
+    /// `plans`.
+    fn riff_with(plans: &[Plan]) -> State {
+        let owner = Key::from_bytes(&[1; 32]);
+        let mut state = State::new(owner.public());
+        let mut bodies = vec![Body::Riff(Riff {
+            user: "mike".into(),
+            host: None,
+        })];
+        bodies.extend(plans.iter().cloned().map(Body::Plan));
+        let mut before = Id::ZERO;
+        for (seq, body) in (1..).zip(bodies) {
+            let record = Signed::sign(&owner, owner.public(), seq, before, seq, &body).unwrap();
+            before = record.id();
+            state.keep(&check(record.bytes().to_vec(), &state).unwrap());
+        }
+        state
+    }
+
+    /// 01M519Z4RWHWP3TKNP4T5GKKE9: the look of a wave with no riff-server
+    /// reads the pause and the holds of its repository from the `plan`
+    /// records. A hold of another repository does not count. A pause of
+    /// another repository does not stop it; a pause of the whole riff
+    /// does.
+    #[test]
+    fn the_look_reads_the_pause_and_the_holds_of_the_repository_from_the_plan_records() {
+        let (here, there): (ThreadName, ThreadName) =
+            ("o/r".parse().unwrap(), "o/other".parse().unwrap());
+        let hold = |thread: &ThreadName, item: &str| Plan::Hold {
+            thread: thread.clone(),
+            item: item.into(),
+            reason: "wait for Mike".into(),
+        };
+        let state = riff_with(&[
+            hold(&here, "issue-12"),
+            hold(&there, "issue-13"),
+            Plan::Pause {
+                thread: Some(there.clone()),
+            },
+        ]);
+        let (paused, holds) = look_in(&state, &here);
+        assert!(!paused);
+        assert_eq!(holds, BTreeSet::from(["issue-12".to_owned()]));
+        let info = &holds_in(&state, &here)["issue-12"];
+        assert_eq!(info.reason, "wait for Mike");
+        assert_eq!(info.by, Some(By::Person("mike".into())));
+        assert!(look_in(&state, &there).0);
+        let state = riff_with(&[hold(&here, "issue-12"), Plan::Pause { thread: None }]);
+        assert!(look_in(&state, &here).0);
     }
 }

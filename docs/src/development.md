@@ -864,6 +864,22 @@ with `--image`:
 riff run issue-12 --image localhost/riff-session:test
 ```
 
+### Run an item with no riff-server
+
+With `--peers`, `riff run` needs no riff-server: riff 3.0 (see
+[riff 3.0: peers](riff-3-peers.md)). The riff daemon of your machine
+claims the item on GitHub, and the session talks on the riff of the
+daemon. Until Wave C, riff-server stays the default, and the work of
+one repository runs on one riff only. In your clone of the
+repository:
+
+```sh
+riff run issue-12 --peers
+```
+
+See
+[What riff run does with no riff-server](#what-riff-run-does-with-no-riff-server).
+
 ### What riff run does
 
 First, riff asks the daemon for the image: the daemon pulls it when
@@ -907,6 +923,45 @@ The folder of the session is
 `~/.local/share/riff/sessions/ITEM-ID8`. Its `clone` stays until the
 merge. Its `events.jsonl` has each event, with no secret: the daemon
 writes it.
+
+### What riff run does with no riff-server
+
+With `--peers`, riff does the same checks first. A failed check takes
+no claim. Then riff asks the daemon to do the item, as for a job of a
+wave, and shows each line and each event. The daemon does these steps:
+
+```mermaid
+sequenceDiagram
+    participant H as riff run --peers
+    participant D as riff daemon
+    participant G as GitHub
+    participant C as the container
+    H->>D: do issue-12
+    D->>G: claim: push refs/riff/claims/issue-12, lease: no ref
+    D->>D: the clone, the session record with the claim
+    D->>C: start the session
+    C->>G: push the branch, open the pull request
+    C-->>D: the end
+    D->>D: the verify request to your lead: a message record
+    D->>G: release: delete the ref, lease: the claim commit
+    D-->>H: the lines of the steps, then done
+```
+
+1. It claims the item on GitHub with your git sign-in (see
+   [How a claim works](riff-3-peers.md#how-a-claim-works)). When
+   another session holds the item, riff starts nothing, and ends with
+   the exit code 1.
+2. It makes the clone of the session, and runs the session. The riff
+   tools of the session talk on the riff of the daemon.
+3. At the end, it finds the pull request of the branch, and sends the
+   verify request to your lead as a message of the riff of the daemon.
+   It sends none when the issue has the label `no-verify`, or when a
+   lead holds `verify-ITEM`: your lead gets a note with the reason.
+4. It releases the item on GitHub.
+
+Ctrl-C stops the container. The daemon still does steps 3 and 4. When
+the daemon stops before the end, the session runs on, and the next
+daemon does steps 3 and 4.
 
 ### Stop a session
 
@@ -1013,9 +1068,10 @@ page [riff 3.0](riff-3.md).
 
 The riff tools of a session of the daemon act on the riff-server of
 the session, as in riff 1.x. Each session of `riff run`, of a wave and
-of `riff lead start` has your riff-server. So the lead of your user
-sees each post of the session, and `riff relay watch` of the session
-wakes on a message of riff-server.
+of `riff lead start` has your riff-server, but a session of
+`riff run --peers` and of `riff wave run --peers`. So the lead of your
+user sees each post of the session, and `riff relay watch` of the
+session wakes on a message of riff-server.
 
 A session with no riff-server talks on the riff of peers of the
 daemon, with no riff-server: each post, status, lead mark, hold and
@@ -1024,14 +1080,16 @@ pause is a record of the daemon (see
 start and at the end of each such session, and a worker claims its
 item in it. A session of 1.x and a session of the riff of peers do not
 see the messages of each other. So the work of a repository is on one
-riff only. A repository gets sessions with no riff-server when it
-moves to riff 3.0 (Wave C).
+riff only. `--peers` gives sessions with no riff-server (see
+[Run an item with no riff-server](#run-an-item-with-no-riff-server)).
+Each session has no riff-server when the repository moves to riff 3.0
+(Wave C).
 
 ```mermaid
 flowchart LR
     S["a session of the daemon: post, read, tell, status"] --> Q{"a riff-server?"}
     Q -- "yes: riff run, a wave, riff lead start" --> R["your riff-server: the lead of your user sees it"]
-    Q -- "no" --> D["the riff daemon: its records"]
+    Q -- "no: riff run --peers, riff wave run --peers" --> D["the riff daemon: its records"]
     D -- "a message to a session of the daemon" --> W["riff relay watch of that session wakes"]
 ```
 
@@ -1074,6 +1132,21 @@ riff wave run
 
 The daemon keeps the wave, also over its own restart, until you stop
 it.
+
+### Run the wave with no riff-server
+
+With `--peers`, the wave needs no riff-server, as
+[Run an item with no riff-server](#run-an-item-with-no-riff-server).
+The look reads the pause and the holds from the riff of the daemon,
+and the claims from GitHub. Each job claims its item on GitHub, and
+sends its verify request and the result of a verify to your lead as
+messages of the riff of the daemon. In your clone of the repository:
+
+```sh
+riff wave run --peers
+```
+
+`riff wave stop` stops it, as each wave.
 
 ### See the wave
 
