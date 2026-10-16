@@ -5698,9 +5698,9 @@ then.
   session wrote the end of the session, or when it had no connection to
   that daemon for 15 minutes. A claim of another user whose daemon is
   offline holds.
-- **01M519Z4PESWFV8Y03SKTSGV4Q** `riff release ITEM` at the CLI deletes a
-  claim with the lease of its claim commit. A person deletes a claim of
-  their own user. The owner deletes each claim. It refuses a claim of
+- **01M519Z4PESWFV8Y03SKTSGV4Q** `riff release ITEM` at the CLI deletes
+  a claim with the lease of its claim commit. A person deletes a claim
+  of their own user. The owner deletes each claim. It refuses a claim of
   another user for a member.
 - **01M519Z4RWHWP3TKNP4T5GKKE9** `riff run` and the waves of the daemon
   do each riff step with the daemon, and with no riff-server: the
