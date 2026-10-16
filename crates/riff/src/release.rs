@@ -512,9 +512,8 @@ pub fn tag_of(reply: &[u8]) -> Result<String, String> {
 pub async fn latest() -> Result<String> {
     let source = Source::of(std::env::var(RELEASES).ok().as_deref());
     let place = source.latest_place();
-    let name_one = || {
-        format!("cannot find the Latest release at {place}. Name one: riff update --tag vX.Y.Z")
-    };
+    let name_one =
+        || format!("cannot find the Latest release at {place}. Name one: riff update --tag vX.Y.Z");
     let reply = source
         .read(&client()?, &place)
         .await
