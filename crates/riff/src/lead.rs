@@ -28,7 +28,7 @@
 //! |---|---|---|
 //! | The container | `riff-lead-OWNER-REPO` ([`name_of`]): one lead for each repository | 01M4Z60B81RTZT71PN5HV0GZHX, 01M501P9MXNAP5QXNVBVF5JJFN |
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
-//! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z |
+//! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change and git can fast-forward it ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z, 01M51JYDHAQDJ3GH2J8DT3AZQS |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM |
 //! | The command | `claude --session-id ID --permission-mode auto START` ([`spec`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4 |
 //! | The riff tools | [`crate::mcp::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
@@ -172,8 +172,8 @@ pub enum Fresh {
     /// It fetched `origin`, and fast-forwarded the branch to its
     /// upstream.
     Forward,
-    /// The clone has a local change, or the fetch failed: it stays as
-    /// it is. The text says why.
+    /// The clone has a local change, or the fetch or the fast-forward
+    /// failed: it stays as it is. The text says why.
     Kept(String),
 }
 
@@ -182,7 +182,9 @@ pub enum Fresh {
 /// When it is not there, it makes it from the main clone `main`, on the
 /// default branch of `origin`. Else it fetches `origin`, and
 /// fast-forwards the branch to its upstream, when the clone has no
-/// local change.
+/// local change. When git refuses the fast-forward, for example because
+/// of an untracked file with the path of a new file of `origin`, the
+/// clone stays as it is (01M51JYDHAQDJ3GH2J8DT3AZQS).
 pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
     if !clone.join(".git").exists() {
         let remote = run::output("git", main, &["remote", "get-url", "origin"])?;
@@ -208,7 +210,9 @@ pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
     if git(&["rev-list", "--count", "@{upstream}..HEAD"])? != "0" {
         return Ok(Fresh::Kept(text::LEAD_CLONE_AHEAD.into()));
     }
-    git(&["merge", "-q", "--ff-only", "@{upstream}"])?;
+    if let Err(e) = git(&["merge", "-q", "--ff-only", "@{upstream}"]) {
+        return Ok(Fresh::Kept(text::lead_clone_no_forward(&format!("{e:#}"))));
+    }
     Ok(Fresh::Forward)
 }
 

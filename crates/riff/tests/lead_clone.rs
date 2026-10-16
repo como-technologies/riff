@@ -105,3 +105,31 @@ fn a_clone_with_a_local_change_stays_as_it_is_with_a_note() {
     assert!(note.contains(&*clone.to_string_lossy()), "{note}");
     assert!(note.contains(riff::text::LEAD_CLONE_AHEAD), "{note}");
 }
+
+/// 01M51JYDHAQDJ3GH2J8DT3AZQS
+#[test]
+fn a_clone_that_git_cannot_fast_forward_stays_as_it_is_with_the_error_of_git() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, main) = origin_and_main(dir.path());
+    let clone = dir.path().join("lead/clone");
+    fresh_clone(&main, &clone).unwrap();
+    let old = git(&clone, &["rev-parse", "HEAD"]);
+
+    // origin gets the new file b, and the clone has an untracked file b.
+    std::fs::write(origin.join("b"), "origin").unwrap();
+    git(&origin, &["add", "b"]);
+    git(&origin, &["commit", "-q", "-m", "two"]);
+    std::fs::write(clone.join("b"), "mine").unwrap();
+
+    let Fresh::Kept(why) = fresh_clone(&main, &clone).unwrap() else {
+        panic!("the clone is not kept");
+    };
+    let start = riff::text::lead_clone_no_forward("");
+    assert!(why.starts_with(start.trim_end_matches(')')), "{why}");
+    assert!(
+        why.contains("git merge -q --ff-only @{upstream}: "),
+        "{why}"
+    );
+    assert_eq!(git(&clone, &["rev-parse", "HEAD"]), old);
+    assert_eq!(std::fs::read_to_string(clone.join("b")).unwrap(), "mine");
+}

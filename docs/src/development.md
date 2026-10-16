@@ -1053,6 +1053,17 @@ When the clone has a local change, it stays as it is, and riff shows a
 note that says why. A local change is a change that is not committed,
 a commit that is not on the upstream, or a branch with no upstream.
 
+When riff cannot bring the clone up to date, the clone also stays as
+it is, and the lead starts. The fetch can fail, or git can refuse the
+fast-forward, for example when an untracked file has the path of a new
+file of `origin`. The note gives the error of git. To bring the clone
+up to date, move or remove that file, then start the lead again. The
+clone is in the data folder of riff, for example:
+
+```sh
+git -C ~/.local/share/riff/leads/OWNER-REPO/clone status
+```
+
 The lead gets the riff tools that talk, and the tools of a lead that
 act on riff-server: `lead`, `hold`, `free`, `pause` and `resume`. It
 gets its wakes from `/opt/riff/riff relay watch`, a background task

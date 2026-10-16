@@ -6470,6 +6470,17 @@ pub const LEAD_CLONE_NO_UPSTREAM: &str = "its branch has no upstream";
 /// that is not on its upstream.
 pub const LEAD_CLONE_AHEAD: &str = "its branch has a commit that is not on its upstream";
 
+/// `riff lead start`: git cannot fast-forward the branch of the clone of
+/// the lead, with the error `error` of git.
+///
+/// ```
+/// let why = riff::text::lead_clone_no_forward("untracked file b");
+/// assert_eq!(why, "git cannot fast-forward its branch (untracked file b)");
+/// ```
+pub fn lead_clone_no_forward(error: &str) -> String {
+    format!("git cannot fast-forward its branch ({error})")
+}
+
 /// `riff lead start`: the clone of the lead at `clone` stays as it is,
 /// for the reason `why`.
 pub fn lead_clone_kept(clone: &Path, why: &str) -> String {

@@ -5177,6 +5177,10 @@ share.
   its upstream. A clone with a local change stays as it is, and riff
   shows a note. A local change is a change that is not committed, a
   commit that is not on the upstream, or a branch with no upstream.
+- **01M51JYDHAQDJ3GH2J8DT3AZQS** When git cannot fast-forward the
+  clone of the lead, for example because of an untracked file with the
+  path of a new file of `origin`, the clone stays as it is. riff shows
+  the note with the error of git, and starts the lead.
 - **01M501P9SDGVWG3MTVCW5BDRQQ** The Claude folder of the lead gets the
   first-run answers of `claude`: `hasCompletedOnboarding`, the `theme`
   of the `.claude.json` of the person (else `auto`), and the trust of
