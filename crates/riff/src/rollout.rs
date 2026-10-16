@@ -63,6 +63,17 @@
 //!   worker that does not claim in [`offer_wait`] refused the item: it
 //!   does not block a start. An item that two workers refused starts no
 //!   more workers.
+//! - **No verify for the author** ([`Authors`], [`authored`],
+//!   01M51533BJSD0RB7BFQR9CAFYW). A session that held `issue-N` never
+//!   gets a request for `verify-issue-N`. riff knows the author from two
+//!   facts. The rollout keeps each session that it saw with the claim
+//!   ([`holders`]): a `/clear` keeps the session ID, so the author stays
+//!   known after its clear. The release of a claim puts a usage comment
+//!   on the issue with the first characters of the session ID
+//!   ([`crate::usage`]): it stays after the end of the session and after
+//!   a new start of `riff mcp` ([`authors`]). When the author is the only
+//!   idle worker, it has no item to take, and the rollout starts a new
+//!   worker for the verify.
 //! - **Machines** ([`Place`], [`pick`], 01M3Q5QE76BZ27SZ14FFE8HM1G).
 //!   The machine of the lead, when the lead runs in tmux, and each live
 //!   workers host of the user. A machine has room when its workers are
@@ -143,7 +154,7 @@ use crate::host::{self, Request};
 use crate::machine::Machine;
 use crate::pr::Gh;
 use crate::terminal::{Terminal, Tmux, WorkerPane};
-use crate::{identity, settings, text, worker};
+use crate::{identity, settings, text, usage, worker};
 
 /// How often a rollout that is off looks at its setting again.
 pub const OFF_WAIT: Duration = Duration::from_secs(10);
@@ -223,6 +234,61 @@ pub struct View {
     pub items: Vec<String>,
     /// The idle workers that can get a request ([`idlers`]).
     pub idlers: Vec<Idler>,
+    /// The sessions that held each item: of the claims of this look
+    /// ([`holders`]) and of the usage comments ([`authors`]).
+    pub authors: Authors,
+}
+
+/// The sessions that held the work claim `issue-N`, by the issue N
+/// (01M51533BJSD0RB7BFQR9CAFYW). A session is its ID, or the first
+/// characters of its ID as a usage comment names it
+/// ([`crate::usage::Report`]).
+pub type Authors = BTreeMap<u64, BTreeSet<String>>;
+
+/// Adds each session of `from` to `into`.
+fn add(into: &mut Authors, from: &Authors) {
+    for (issue, sessions) in from {
+        into.entry(*issue)
+            .or_default()
+            .extend(sessions.iter().cloned());
+    }
+}
+
+/// True when `idler` can be the author of the verify `item`
+/// (01M51533BJSD0RB7BFQR9CAFYW): it works in the worktree `issue-N`, or
+/// `authors` names it for the issue N. A name of `authors` is the
+/// session ID or its start. An item that is no verify has no author.
+///
+/// ```
+/// use riff::rollout::{Authors, Idler, authored};
+///
+/// let idler = |session: &str, worktree: Option<&str>| Idler {
+///     session: session.into(),
+///     worktree: worktree.map(str::to_owned),
+/// };
+/// let authors: Authors = [(12, ["a6cf0123".to_owned()].into())].into();
+/// // A usage comment names the first characters of the session ID.
+/// assert!(authored(&idler("a6cf0123-4567", None), "verify-issue-12", &authors));
+/// assert!(authored(&idler("w1", Some("issue-12")), "verify-issue-12", &Authors::new()));
+/// assert!(!authored(&idler("b7d01234-4567", None), "verify-issue-12", &authors));
+/// assert!(!authored(&idler("a6cf0123-4567", None), "verify-issue-13", &authors));
+/// assert!(!authored(&idler("a6cf0123-4567", None), "issue-12", &authors));
+/// ```
+pub fn authored(idler: &Idler, item: &str, authors: &Authors) -> bool {
+    let Some(own) = item.strip_prefix("verify-") else {
+        return false;
+    };
+    if idler.worktree.as_deref() == Some(own) {
+        return true;
+    }
+    let Some((issue, usage::Kind::Work)) = usage::issue_of(own) else {
+        return false;
+    };
+    authors.get(&issue).is_some_and(|sessions| {
+        sessions
+            .iter()
+            .any(|s| !s.is_empty() && idler.session.starts_with(s.as_str()))
+    })
 }
 
 impl View {
@@ -358,8 +424,11 @@ pub fn request(item: &str) -> String {
 ///
 /// At each look, [`Offers::plan`] gives each idle worker with no open
 /// request one free item: a verify first. An item goes to one worker at
-/// a time. A worker in the worktree `issue-N` gets no request for
-/// `verify-issue-N`: it can be the author. A request is open until its
+/// a time. A session that held `issue-N` gets no request for
+/// `verify-issue-N` ([`authored`], 01M51533BJSD0RB7BFQR9CAFYW): the
+/// offers keep each author of each view, so a `/clear` of the author
+/// changes nothing. A worker in the worktree `issue-N` gets none either:
+/// it can be the author. A request is open until its
 /// worker claims or goes, or its item is no longer free. A worker that
 /// does not claim in [`offer_wait`] refused the item. It never gets that
 /// request again. It does not block the start of a new worker, when it
@@ -383,6 +452,16 @@ pub fn request(item: &str) -> String {
 /// // count as idle, so the rollout can start a worker.
 /// let (requests, seen) = offers.plan(&view, t0 + wait, wait);
 /// assert_eq!((requests, seen.idle, seen.work), (vec![], 0, 1));
+///
+/// // w1 held issue-7 at a look. After its release and its `/clear`, it
+/// // is idle, and the verify of issue-7 waits: w1 gets no request for
+/// // it, and it does not count as idle, so a new worker starts.
+/// let held = View { authors: [(7, ["w1".to_owned()].into())].into(), ..View::default() };
+/// let mut offers = Offers::default();
+/// offers.plan(&held, t0, wait);
+/// let verify = View { items: vec!["verify-issue-7".into()], ..view };
+/// let (requests, seen) = offers.plan(&verify, t0, wait);
+/// assert_eq!((requests, seen.idle), (vec![], 0));
 /// ```
 #[derive(Debug, Default)]
 pub struct Offers {
@@ -391,6 +470,8 @@ pub struct Offers {
     open: Vec<(String, String, Instant)>,
     /// The workers that refused each item.
     refused: BTreeMap<String, BTreeSet<String>>,
+    /// Each author of each view (01M51533BJSD0RB7BFQR9CAFYW).
+    authors: Authors,
 }
 
 impl Offers {
@@ -404,6 +485,7 @@ impl Offers {
         now: Instant,
         wait: Duration,
     ) -> (Vec<(String, String)>, View) {
+        add(&mut self.authors, &view.authors);
         let idle: HashSet<&str> = view.idlers.iter().map(|i| i.session.as_str()).collect();
         let free: HashSet<&str> = view.items.iter().map(String::as_str).collect();
         self.refused.retain(|item, _| free.contains(item.as_str()));
@@ -431,9 +513,7 @@ impl Offers {
                         .refused
                         .get(*item)
                         .is_some_and(|r| r.contains(&idler.session))
-                    && item
-                        .strip_prefix("verify-")
-                        .is_none_or(|own| idler.worktree.as_deref() != Some(own))
+                    && !authored(idler, item, &self.authors)
             });
             match item {
                 Some(item) => {
@@ -857,6 +937,52 @@ impl Issue {
     }
 }
 
+/// The authors of the issues `of` from their usage comments in `open`
+/// (01M51533BJSD0RB7BFQR9CAFYW): the session of each valid report of a
+/// work claim `issue-N` on the issue N ([`crate::usage::Report`]). The
+/// comment stays after the end of the session that held the claim, and
+/// after a new start of `riff mcp`. Each person who can comment can
+/// write one. A false one only keeps a request from a worker.
+///
+/// ```
+/// use riff::rollout::{Comment, Issue, authors};
+/// use riff::usage::{Claim, Report};
+///
+/// let comment = |item: &str, session: &str| {
+///     let claim = Claim { thread: "o/r".into(), item: item.into(), from_ms: 1, to_ms: Some(2), models: Default::default() };
+///     Comment { body: Report::of(&claim, session).unwrap().1.comment() }
+/// };
+/// let issue = Issue {
+///     number: 12,
+///     comments: vec![
+///         comment("issue-12", "a6cf0123-4567"),
+///         // A verify, and a report of another issue: no author.
+///         comment("verify-issue-12", "b7d01234-4567"),
+///         comment("issue-13", "c8e01234-4567"),
+///         Comment { body: "A comment of a person.".into() },
+///     ],
+///     ..Issue::default()
+/// };
+/// let authors = authors(&[issue], &[12, 14]);
+/// assert_eq!(authors, [(12, ["a6cf0123".to_owned()].into())].into());
+/// ```
+pub fn authors(open: &[Issue], of: &[u64]) -> Authors {
+    let mut authors = Authors::new();
+    for issue in open.iter().filter(|i| of.contains(&i.number)) {
+        let sessions: BTreeSet<String> = issue
+            .comments
+            .iter()
+            .filter_map(|c| usage::Report::parse(&c.body))
+            .filter(|r| r.valid(issue.number) && r.kind == usage::Kind::Work)
+            .map(|r| r.session)
+            .collect();
+        if !sessions.is_empty() {
+            authors.insert(issue.number, sessions);
+        }
+    }
+    authors
+}
+
 /// The issues of the `Needs:` line of `body`. `Needs: nothing` and no
 /// line give none.
 ///
@@ -1268,6 +1394,62 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
         .collect()
 }
 
+/// The authors of the claims in `sessions` for the lead `me`
+/// (01M51533BJSD0RB7BFQR9CAFYW): each session in the repository of `me`
+/// with a claim `issue-N`, by N. A `/clear` keeps the session ID, so
+/// [`Offers`] knows the author after its clear.
+///
+/// ```
+/// use riff::rollout::holders;
+/// use riff_core::wire::SessionInfo;
+///
+/// let session = |uri: &str| SessionInfo {
+///     uri: uri.parse().unwrap(),
+///     live: true,
+///     idle_secs: 0,
+///     status: None,
+///     worker: true,
+///     container: false,
+///     stopping: false,
+///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
+///     state: None,
+///     work: None,
+///     waits: None,
+///     blocked: None,
+///     step: None,
+/// };
+/// let me = "riff://mike@pangolin/o/riff?session=l1&lead=true".parse().unwrap();
+/// let sessions = [
+///     session("riff://mike@pangolin/o/riff?session=w1&claim=issue-12#issue-12"),
+///     session("riff://mike@pangolin/o/riff?session=w2&claim=verify-issue-7"),
+///     session("riff://brett@kadomony/o/riff?session=w3&claim=issue-7"),
+///     session("riff://mike@pangolin/o/strata?session=w4&claim=issue-12"),
+/// ];
+/// assert_eq!(
+///     holders(&sessions, &me),
+///     [(7, ["w3".to_owned()].into()), (12, ["w1".to_owned()].into())].into()
+/// );
+/// ```
+pub fn holders(sessions: &[SessionInfo], me: &SessionUri) -> Authors {
+    let mut authors = Authors::new();
+    for s in sessions.iter().filter(|s| s.uri.place().repo() == me.place().repo()) {
+        let Some(session) = s.uri.who().session() else {
+            continue;
+        };
+        for claim in s.uri.claims() {
+            if let Some((issue, usage::Kind::Work)) = usage::issue_of(claim) {
+                authors
+                    .entry(issue)
+                    .or_default()
+                    .insert(session.to_owned());
+            }
+        }
+    }
+    authors
+}
+
 /// The idle workers for the lead `me`: each worker pane in `panes` whose
 /// session holds no claim, also one that is not in `sessions` yet, and
 /// each live worker of another user with no claim. A worker that the
@@ -1407,8 +1589,9 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
 
 /// The free work of the repository `repo` (`OWNER/REPO`), with `gh`:
 /// [`free_work_of`] with its open milestones, its open issues and its
-/// open pull requests.
-pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<Vec<String>> {
+/// open pull requests. The usage comments of the issue of each verify
+/// name its authors ([`authors`], 01M51533BJSD0RB7BFQR9CAFYW).
+pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<Work> {
     let open: Vec<Milestone> = gh.json(&[
         "api",
         &format!("repos/{repo}/milestones?state=open&per_page=100"),
@@ -1426,7 +1609,21 @@ pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<Vec<St
         "--json",
         "number,body,comments,milestone,labels",
     ])?;
-    Ok(free_work_of(&open, &issues, &pulls, claims))
+    Ok(Work {
+        items: free_work_of(&open, &issues, &pulls, claims),
+        authors: authors(&issues, &waiting_verifies(&pulls, claims)),
+    })
+}
+
+/// The free work of a look ([`free_work`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Work {
+    /// The free work by name, the verifies first: `verify-issue-N` and
+    /// `issue-N` ([`free_work_of`]).
+    pub items: Vec<String>,
+    /// The authors of the issue of each verify, from its usage comments
+    /// ([`authors`]).
+    pub authors: Authors,
 }
 
 /// The free work, by name: the pull requests that wait for a verify
@@ -1615,6 +1812,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         }
         let idle = idle(&sessions, &me, &panes);
         let idlers = idlers(&sessions, &me);
+        let mut authors = holders(&sessions, &me);
         // With no room and no idle worker to give work to, the free
         // work changes nothing: no call of gh.
         if !places.iter().any(Place::room) && idlers.is_empty() {
@@ -1622,19 +1820,22 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 running: true,
                 idle,
                 places,
+                authors,
                 ..View::default()
             }));
         }
         let claims = claims(&sessions);
         let (gh, repo) = (self.gh.clone(), me.place().repo_text());
-        let items = tokio::task::spawn_blocking(move || free_work(&gh, &repo, &claims)).await??;
+        let work = tokio::task::spawn_blocking(move || free_work(&gh, &repo, &claims)).await??;
+        add(&mut authors, &work.authors);
         Ok(Some(View {
             running: true,
-            work: items.len(),
+            work: work.items.len(),
             idle,
             places,
-            items,
+            items: work.items,
             idlers,
+            authors,
         }))
     }
 
@@ -1762,6 +1963,8 @@ mod tests {
         idlers: Vec<Idler>,
         /// Each request: the worker and the item, with its time.
         offers: Vec<(String, String, tokio::time::Instant)>,
+        /// The authors that a look sees.
+        authors: Authors,
     }
 
     impl World {
@@ -1854,6 +2057,7 @@ mod tests {
                     places: w.places.clone(),
                     items: w.items.clone(),
                     idlers: w.idlers.clone(),
+                    authors: w.authors.clone(),
                 })
             }))
         }
@@ -1935,6 +2139,7 @@ mod tests {
             items: Vec::new(),
             idlers: Vec::new(),
             offers: Vec::new(),
+            authors: Authors::new(),
         }
     }
 
@@ -2167,6 +2372,75 @@ mod tests {
         );
         // w3 has no item to take: it does not count as idle.
         assert_eq!(seen.idle, 2);
+    }
+
+    /// w1 held issue-12. It released the item at its verify request, and
+    /// riff cleared its context: the session ID stays, and the worktree
+    /// is gone. w1 never gets a request for the verify. The rollout
+    /// starts a new worker, and the new worker w2 gets the request
+    /// (01M51533BJSD0RB7BFQR9CAFYW).
+    #[tokio::test(start_paused = true)]
+    async fn the_author_gets_no_request_for_its_verify_after_a_clear() {
+        let fake = Fake::new(World {
+            authors: [(12, ["w1".to_owned()].into())].into(),
+            claim_after: None,
+            ..world(0)
+        });
+        let begin = tokio::time::Instant::now();
+        let task = tokio::spawn(run(fake.clone()));
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        fake.with(|w| {
+            // The release and the clear of w1: no claim names it now.
+            w.authors.clear();
+            w.work = 1;
+            w.idle = 1;
+            w.items = vec!["verify-issue-12".into()];
+            w.idlers = vec![idler("w1")];
+        });
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        fake.with(|w| {
+            // The new worker joins.
+            w.new.clear();
+            w.idle += 1;
+            w.idlers.push(idler("w2"));
+        });
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        task.abort();
+        let starts: Vec<u64> = fake.with(|w| {
+            w.starts
+                .iter()
+                .map(|(_, at)| (*at - begin).as_secs())
+                .collect()
+        });
+        assert_eq!(starts, [20], "a new worker for the verify");
+        assert_eq!(
+            offers(&fake, begin),
+            [("w2".into(), "verify-issue-12".into(), 30)]
+        );
+    }
+
+    /// A usage comment names the author with the first characters of its
+    /// session ID: no request of its verify goes to that session, also
+    /// from a rollout that never saw the claim (01M51533BJSD0RB7BFQR9CAFYW).
+    #[test]
+    fn the_session_of_a_usage_comment_gets_no_request_for_the_verify() {
+        let view = View {
+            running: true,
+            work: 2,
+            idle: 2,
+            items: vec!["verify-issue-12".into(), "issue-7".into()],
+            idlers: vec![idler("a6cf0123-4567"), idler("b7d01234-4567")],
+            authors: [(12, ["a6cf0123".to_owned()].into())].into(),
+            ..View::default()
+        };
+        let (requests, _) = Offers::default().plan(&view, Instant::now(), Duration::from_secs(60));
+        assert_eq!(
+            requests,
+            [
+                ("a6cf0123-4567".to_owned(), "issue-7".to_owned()),
+                ("b7d01234-4567".to_owned(), "verify-issue-12".to_owned())
+            ]
+        );
     }
 
     #[tokio::test(start_paused = true)]
