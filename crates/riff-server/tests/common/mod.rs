@@ -2,11 +2,14 @@
 
 #![allow(dead_code)]
 
+use std::path::Path;
+use std::process::{Child, Stdio};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::routing::get;
 use axum::{Json, Router};
+use isolated::Isolated;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use riff_core::wire::Discovery;
 use serde_json::{Value, json};
@@ -97,16 +100,22 @@ pub async fn start_on(store: Arc<dyn Store>) -> (Service, String) {
 /// As [`start_on`], with `save_every` between two writes of the token
 /// store.
 pub async fn start_on_every(store: Arc<dyn Store>, save_every: Duration) -> (Service, String) {
-    start_on_with(store, save_every, false).await
+    start_on_with(store, LEASE, save_every, false).await
+}
+
+/// As [`start_on`], with the lease times `lease`.
+pub async fn start_on_lease(store: Arc<dyn Store>, lease: Timing) -> (Service, String) {
+    start_on_with(store, lease, SAVE_EVERY, false).await
 }
 
 /// As [`start_on`], for a riff with sign-in: each call needs a token.
 pub async fn start_signed_on(store: Arc<dyn Store>) -> (Service, String) {
-    start_on_with(store, SAVE_EVERY, true).await
+    start_on_with(store, LEASE, SAVE_EVERY, true).await
 }
 
 async fn start_on_with(
     store: Arc<dyn Store>,
+    lease: Timing,
     save_every: Duration,
     require_sign_in: bool,
 ) -> (Service, String) {
@@ -115,7 +124,7 @@ async fn start_on_with(
     let url = format!("http://{}", listener.local_addr().unwrap());
     let config = Config {
         require_sign_in,
-        lease: LEASE,
+        lease,
         save_every,
         ..Config::new(&url)
     };
@@ -123,6 +132,38 @@ async fn start_on_with(
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (service, url)
+}
+
+/// A `riff-server` process that stops when the test ends.
+pub struct Server(pub Child);
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A free port on the loopback address.
+pub fn free_address() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.local_addr().unwrap().to_string()
+}
+
+/// The real `riff-server` with its state in `dir`, on `listen`. Its log
+/// goes to `log`. It has the real lease wait of 15 seconds.
+pub fn server_on_dir(dir: &Path, listen: &str, log: &tempfile::NamedTempFile) -> Child {
+    Isolated::shared()
+        .riff_server()
+        .arg("--dir")
+        .arg(dir)
+        .env("RIFF_LISTEN", listen)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(log.reopen().unwrap())
+        .stderr(log.reopen().unwrap())
+        .spawn()
+        .unwrap()
 }
 
 /// Loads a server from `store` with the [`LEASE`] times, and does not

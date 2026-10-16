@@ -4,13 +4,11 @@
 use crate::common;
 
 use std::fs;
-use std::process::{Child, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures::future::{BoxFuture, FutureExt};
-use isolated::Isolated;
 use riff_state::log::chunk_name;
 use riff_state::store::{LEASE, Loaded, Memory, Store, StoreError, Version};
 use serde_json::{Value, json};
@@ -174,38 +172,6 @@ async fn a_good_start_applies_the_chunks_written_between_the_load_and_the_lease(
     assert!(held.contains("holds issue-339"), "{held}");
 }
 
-/// A `riff-server` process that stops when the test ends.
-struct Server(Child);
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// A free port on the loopback address.
-fn free_address() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().to_string()
-}
-
-/// `riff-server` with its state in `dir`, on `listen`. Its log goes to
-/// `log`.
-fn server(dir: &std::path::Path, listen: &str, log: &tempfile::NamedTempFile) -> Child {
-    Isolated::shared()
-        .riff_server()
-        .arg("--dir")
-        .arg(dir)
-        .env("RIFF_LISTEN", listen)
-        .env("NO_COLOR", "1")
-        .stdin(Stdio::null())
-        .stdout(log.reopen().unwrap())
-        .stderr(log.reopen().unwrap())
-        .spawn()
-        .unwrap()
-}
-
 async fn open(listen: &str) -> bool {
     tokio::net::TcpStream::connect(listen).await.is_ok()
 }
@@ -214,9 +180,9 @@ async fn open(listen: &str) -> bool {
 #[tokio::test]
 async fn the_port_opens_only_after_the_load() {
     let dir = tempfile::tempdir().unwrap();
-    let listen = free_address();
+    let listen = common::free_address();
     let log = tempfile::NamedTempFile::new().unwrap();
-    let _server = Server(server(dir.path(), &listen, &log));
+    let _server = common::Server(common::server_on_dir(dir.path(), &listen, &log));
 
     // The lease is there: the load is done. The port is still closed.
     let lease = dir.path().join(LEASE);
@@ -261,9 +227,9 @@ async fn a_riff_server_that_cannot_load_exits_with_no_lease_and_no_open_port() {
     let chunk = dir.path().join(chunk_name(LATER_CHUNK));
     fs::create_dir_all(chunk.parent().unwrap()).unwrap();
     fs::write(&chunk, LATER_FORMAT).unwrap();
-    let listen = free_address();
+    let listen = common::free_address();
     let log = tempfile::NamedTempFile::new().unwrap();
-    let mut child = server(dir.path(), &listen, &log);
+    let mut child = common::server_on_dir(dir.path(), &listen, &log);
 
     // It exits long before the end of a lease wait.
     let span = isolated::Span::start();
