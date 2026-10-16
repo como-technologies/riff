@@ -924,13 +924,13 @@ async fn worktrees_clean_keeps_a_worktree_in_use() {
     );
     assert_eq!(
         line(&unit),
-        format!("kept: the running process {} (riff) uses it", from_unit.id())
+        format!(
+            "kept: the running process {} (riff) uses it",
+            from_unit.id()
+        )
     );
 
-    r.api
-        .release(&session, &thread, "issue-756")
-        .await
-        .unwrap();
+    r.api.release(&session, &thread, "issue-756").await.unwrap();
     drop((in_shell, from_unit));
     let line = clean();
     let no_commit = "its HEAD is on the default branch of origin: it has no commit of its own";

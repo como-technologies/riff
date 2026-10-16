@@ -495,10 +495,13 @@ pub fn live_path(path: PathBuf) -> PathBuf {
 /// assert_eq!(used("/r/.claude/worktrees/issue-1"), None, "a path in another worktree");
 /// ```
 pub fn used_by(running: &[Running], dir: &Path) -> Option<Owner> {
-    running.iter().find(|p| p.uses(dir)).map(|p| Owner::Process {
-        pid: p.pid,
-        name: p.name.clone(),
-    })
+    running
+        .iter()
+        .find(|p| p.uses(dir))
+        .map(|p| Owner::Process {
+            pid: p.pid,
+            name: p.name.clone(),
+        })
 }
 
 /// The owner of `tree`: this process in `here`, a live session of
@@ -728,9 +731,9 @@ pub fn owner_in(
     tree: &Tree,
 ) -> Option<Owner> {
     let name = tree.path.file_name().and_then(|n| n.to_str())?;
-    let mut live = who.iter().filter(|s| {
-        s.live && s.uri.place().host() == host && s.uri.place().repo_text() == repo
-    });
+    let mut live = who
+        .iter()
+        .filter(|s| s.live && s.uri.place().host() == host && s.uri.place().repo_text() == repo);
     if live.clone().any(|s| s.uri.place().worktree() == Some(name)) {
         return Some(Owner::Session);
     }
@@ -740,7 +743,8 @@ pub fn owner_in(
             .claims()
             .iter()
             .find(|item| {
-                name == item.as_str() || short.is_some_and(|short| name == format!("{item}-{short}"))
+                name == item.as_str()
+                    || short.is_some_and(|short| name == format!("{item}-{short}"))
             })
             .map(|item| Owner::Claim(item.clone()))
     })
