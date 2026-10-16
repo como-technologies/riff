@@ -182,7 +182,10 @@ async fn the_daemon_of_a_release_adds_the_missing_rules_at_its_start() {
     assert_eq!(value["model"], "opus");
     assert_eq!(value["permissions"]["allow"][0], "Read(~/**)");
     let want = riff::permissions::user_rules(Some(&here.env.home()));
-    assert!(riff::permissions::missing(&want, &[&after]).is_empty(), "{after}");
+    assert!(
+        riff::permissions::missing(&want, &[&after]).is_empty(),
+        "{after}"
+    );
     let logged = std::fs::read_to_string(&log).unwrap();
     for rule in &want.allow {
         let added = format!("added the allow rule {rule} to {}", settings.display());
@@ -192,7 +195,11 @@ async fn the_daemon_of_a_release_adds_the_missing_rules_at_its_start() {
     assert!(riff::local::rules_added(&local).is_some());
     let last = riff::local::rules_sync(&local).unwrap();
     assert!(
-        last.contains(&format!("added {} rules to {}", want.len(), settings.display())),
+        last.contains(&format!(
+            "added {} rules to {}",
+            want.len(),
+            settings.display()
+        )),
         "{last}"
     );
 

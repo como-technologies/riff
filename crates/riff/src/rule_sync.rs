@@ -311,7 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn auto_update_on_and_a_release_adds_the_missing_rules_and_keeps_each_other_rule_and_key()
-     {
+    {
         let m = Machine::new(SETTINGS, b"the riff of v1.5.0", b"the riff of v1.5.0");
         let want = permissions::user_rules(Some(Path::new("/home/mike")));
         let Synced::Added(added) = m.sync(true).await else {
@@ -332,8 +332,14 @@ mod tests {
             allow[..3],
             ["Read(~/**)", "Bash(riff *)", "Bash(cargo test *)"]
         );
-        assert_eq!(allow[3..], added.allow.iter().map(String::as_str).collect::<Vec<_>>());
-        assert_eq!(after["permissions"]["deny"], serde_json::json!(["Bash(rm -rf *)"]));
+        assert_eq!(
+            allow[3..],
+            added.allow.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            after["permissions"]["deny"],
+            serde_json::json!(["Bash(rm -rf *)"])
+        );
         assert!(permissions::missing(&want, &[&m.settings()]).is_empty());
         // The next start finds each rule.
         let text = m.settings();

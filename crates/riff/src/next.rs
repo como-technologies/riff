@@ -362,7 +362,9 @@ pub async fn check(
         Err(e) => eprintln!("riff: cannot count the workers of this machine: {e:#}"),
     }
     let new_rules = crate::rule_sync::new_rules(
-        std::env::var(crate::rule_sync::WORKER_RULES).ok().as_deref(),
+        std::env::var(crate::rule_sync::WORKER_RULES)
+            .ok()
+            .as_deref(),
         local::dir()
             .and_then(|dir| local::rules_added(&dir))
             .as_deref(),
