@@ -63,7 +63,7 @@
 //!     D["deploy/session/Dockerfile"] -- "each change" --> W["workflow Session image"]
 //!     W -- "push tree-ID" --> G[("ghcr.io/como-technologies/riff-session")]
 //!     G -- "its digest" --> T["riff.toml: [session] image"]
-//!     T --> R["riff image, riff run"]
+//!     T -- "the merged pin" --> R["riff run, riff lead start, the waves"]
 //!     R -- "podman pull NAME@sha256:…" --> G
 //! ```
 //!
