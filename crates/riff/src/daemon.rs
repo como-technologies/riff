@@ -1614,17 +1614,14 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let riff = key.public().to_string();
                 let owner = match made(&store).await? {
                     Some(made) if made.riff == riff => made.owner,
+                    // A crash after the riff and before its object.
                     _ => {
-                        let owner = this_user()?;
-                        keep_made(
-                            &store,
-                            &Made {
-                                riff,
-                                owner: owner.clone(),
-                            },
-                        )
-                        .await?;
-                        owner
+                        let made = Made {
+                            riff,
+                            owner: this_user()?,
+                        };
+                        keep_made(&store, &made).await?;
+                        made.owner
                     }
                 };
                 (key, owner)
@@ -4499,9 +4496,9 @@ mod tests {
         let owner = first.owner.clone().unwrap();
         assert_eq!(lines, [text::daemon_made_riff(&key, &owner)]);
         let store = Dir::new(state_dir(&dir));
-        let made = made(&store).await.unwrap().unwrap();
+        let kept = made(&store).await.unwrap().unwrap();
         assert_eq!(
-            made,
+            kept,
             Made {
                 riff: key.clone(),
                 owner
@@ -4513,11 +4510,21 @@ mod tests {
         let again = daemon.status().await;
         assert!(lines.is_empty(), "{lines:?}");
         assert_eq!(
-            (again.key, again.riff, again.owner),
-            (first.key, first.riff, first.owner)
+            (&again.key, &again.riff, &again.owner),
+            (&first.key, &first.riff, &first.owner)
         );
         assert_eq!(again.position, first.position);
         assert!(lost(&dir).is_empty());
+        drop(daemon);
+
+        // A crash after the riff and before its object: the next start
+        // writes the object again, with the same key and riff.
+        std::fs::remove_file(state_dir(&dir).join(RIFF)).unwrap();
+        let (daemon, lines) = open_key(&dir).await;
+        assert!(lines.is_empty(), "{lines:?}");
+        let status = daemon.status().await;
+        assert_eq!((status.key, status.owner), (first.key, first.owner));
+        assert_eq!(made(&store).await.unwrap().unwrap(), kept);
     }
 
     /// 01M519Z2G77CT94Y6XPW9BCRK9, 01M51JW25SPDW564A3DG31D7XM: a key with
