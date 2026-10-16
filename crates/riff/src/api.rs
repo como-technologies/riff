@@ -111,6 +111,7 @@ use riff_core::build::{self, Build, Mismatch};
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
+use riff_core::wire::SetMachine;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
     DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
@@ -122,7 +123,6 @@ use riff_core::wire::{
     SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads,
     TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
 };
-use riff_core::wire::SetMachine;
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 

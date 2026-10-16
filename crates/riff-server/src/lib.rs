@@ -214,6 +214,7 @@ use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::record::Record;
 use riff_core::selector::Selector;
+use riff_core::wire::SetMachine;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
     Claim, DenyOwner, End, FactError, Free, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
@@ -224,7 +225,6 @@ use riff_core::wire::{
     SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
     TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
-use riff_core::wire::SetMachine;
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
     Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,

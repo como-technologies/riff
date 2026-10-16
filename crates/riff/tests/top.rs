@@ -1239,9 +1239,7 @@ async fn top_on_each_machine_shows_the_numbers_of_both_machines() {
     let start = std::time::Instant::now();
     let sent = loop {
         let who = api.who(&a1, false).await.unwrap_or_default();
-        let lead = who
-            .iter()
-            .find(|s| s.uri.who() == a1.who() && s.uri.lead());
+        let lead = who.iter().find(|s| s.uri.who() == a1.who() && s.uri.lead());
         if let Some(machine) = lead.and_then(|s| s.machine.clone()) {
             break machine;
         }
