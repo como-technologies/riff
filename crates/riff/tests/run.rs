@@ -736,9 +736,10 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     let environment = settings["autoMode"]["environment"].as_array().unwrap();
     assert_eq!(environment[0], "$defaults");
     assert!(
-        environment
-            .iter()
-            .any(|e| e.as_str().unwrap().starts_with("Key internal services: the riff server at http")),
+        environment.iter().any(|e| e
+            .as_str()
+            .unwrap()
+            .starts_with("Key internal services: the riff server at http")),
         "{environment:?}"
     );
 

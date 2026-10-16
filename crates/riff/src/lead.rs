@@ -179,8 +179,11 @@ pub fn claude_folder(
         crate::permissions::add(&settings, &crate::permissions::session_rules())?;
         crate::permissions::add_auto_mode(&settings, auto)?;
     } else {
-        std::fs::write(&settings, serde_json::to_string_pretty(&run::settings(auto))?)
-            .with_context(|| format!("cannot write {}", settings.display()))?;
+        std::fs::write(
+            &settings,
+            serde_json::to_string_pretty(&run::settings(auto))?,
+        )
+        .with_context(|| format!("cannot write {}", settings.display()))?;
     }
     Ok(())
 }
