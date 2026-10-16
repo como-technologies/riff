@@ -72,6 +72,24 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T> + Send + '
         .map_err(|e| anyhow!("{e}"))?
 }
 
+/// True when the time `time` of a claim (RFC 3339, in seconds) is before
+/// the second `start_s` of the start of this daemon, or when riff cannot
+/// read it. A claim that this daemon made after its start is not one of
+/// the claims of its start: for example the claim of a job of a wave
+/// before its session runs.
+///
+/// ```
+/// use riff::daemon::forge::before;
+///
+/// let start = 1_791_000_000; // 2026-10-03T04:00:00Z
+/// assert!(before("2026-10-03T03:59:59Z", start));
+/// assert!(!before("2026-10-03T04:00:00Z", start));
+/// assert!(before("not a time", start));
+/// ```
+pub fn before(time: &str, start_s: i64) -> bool {
+    chrono::DateTime::parse_from_rfc3339(time).map_or(true, |t| t.timestamp() < start_s)
+}
+
 /// The main clones in the file [`FORGES`] of the folder `dir`, by
 /// repository. With no file, none.
 pub fn read_forges(dir: &Path) -> Result<BTreeMap<String, PathBuf>> {
@@ -190,6 +208,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         };
         let me = riff.hub.public();
         let running: BTreeSet<String> = self.records().into_iter().map(|r| r.live.session).collect();
+        let start_s = self.since_ms.div_euclid(1000);
         let mut lines = Vec::new();
         for (repo, main) in self.forges() {
             let running = running.clone();
@@ -197,7 +216,10 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let mut lines = Vec::new();
                 for found in forge_claim::found(&main)? {
                     let Some(claim) = found.claim else { continue };
-                    if claim.key != me || running.contains(&claim.session) {
+                    if claim.key != me
+                        || running.contains(&claim.session)
+                        || !before(&claim.time, start_s)
+                    {
                         continue;
                     }
                     if forge_claim::release(&main, &found.item, &found.commit)? == Freed::Deleted {
@@ -427,21 +449,42 @@ mod tests {
 
     /// 01M519Z4HK333JWVXAWQHCGK6M: at its start, a daemon deletes each
     /// claim whose commit names its key and whose session does not run.
-    /// The claim of a session that runs, and a claim of another daemon,
-    /// stay.
+    /// The claim of a session that runs, a claim of another daemon, and a
+    /// claim that the daemon made after its start, stay.
     #[tokio::test]
     async fn at_its_start_a_daemon_deletes_each_claim_of_its_key_whose_session_does_not_run() {
         let (a, b) = (here().await, here().await);
         let root = tempfile::tempdir().unwrap();
         let (main, other) = (clone_of(root.path(), "a"), clone_of(root.path(), "b"));
-        let gone = a.daemon.claim_forge(&main, "issue-12", &me("gone")).await;
-        assert!(gone.unwrap().is_some());
-        let runs = a.daemon.claim_forge(&main, "issue-13", &me("runs")).await;
+        let (key_a, key_b) = (
+            a.daemon.peers(|s| s.riff()).unwrap(),
+            b.daemon.peers(|s| s.riff()).unwrap(),
+        );
+        // The claims of an earlier run of each daemon, before its start.
+        let earlier = |item: &str, session: &str, key: Public| {
+            let claim = Claim {
+                time: "2026-01-01T00:00:00Z".into(),
+                ..Claim::now(item, "mike", session, key)
+            };
+            match forge_claim::take(&main, &claim).unwrap() {
+                Took::Won(commit) => commit,
+                Took::Held => panic!("{item} is held"),
+            }
+        };
+        earlier("issue-12", "gone-session", key_a);
+        let runs = earlier("issue-13", "runs-session", key_a);
+        earlier("issue-14", "of-b-session", key_b);
         let mut start = a.start("runs", "issue-13");
         start.server = String::new();
-        start.claim = runs.unwrap();
+        start.claim = Some(Forge {
+            main: main.clone(),
+            commit: runs,
+        });
         let (_client, _) = a.started(start).await;
-        let of_b = b.daemon.claim_forge(&other, "issue-14", &me("of-b")).await;
+        // A claim of this daemon after its start: a job before its session.
+        let fresh = a.daemon.claim_forge(&main, "issue-15", &me("job")).await;
+        assert!(fresh.unwrap().is_some());
+        let of_b = b.daemon.claim_forge(&other, "issue-16", &me("of-b")).await;
         assert!(of_b.unwrap().is_some());
         assert_eq!(
             read_forges(&a.dir).unwrap(),
@@ -450,7 +493,10 @@ mod tests {
 
         let lines = a.daemon.sweep_forges().await;
         assert_eq!(lines, [text::forge_swept("issue-12", "gone-session")]);
-        assert_eq!(items(&main), set(&["issue-13", "issue-14"]));
+        assert_eq!(
+            items(&main),
+            set(&["issue-13", "issue-14", "issue-15", "issue-16"])
+        );
         assert!(a.daemon.sweep_forges().await.is_empty());
     }
 
