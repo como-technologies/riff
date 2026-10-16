@@ -8193,6 +8193,23 @@ pub fn members_of_peers(rows: &[crate::peer::members::Shown], now_ms: i64) -> St
     out
 }
 
+/// A claim on the forge: the item cannot be one part of a ref
+/// ([`crate::forge_claim::reference`]).
+pub fn forge_claim_bad_item(item: &str) -> String {
+    format!(
+        "riff makes no claim of \"{}\" on the forge: an item has only letters, digits, -, _ and ., for example issue-12.",
+        safe(item)
+    )
+}
+
+/// A claim on the forge: the lease is no full commit ID.
+pub fn forge_claim_bad_commit(commit: &str) -> String {
+    format!(
+        "\"{}\" is no claim commit: riff needs the full commit ID.",
+        safe(commit)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
