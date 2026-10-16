@@ -134,7 +134,7 @@ async fn step_3_connects_to_the_riff_of_this_machine_with_no_sign_in() {
     let claude = fake_claude(dir.path());
     let installed = dir.path().join("home/.cargo/bin/riff");
     fs::create_dir_all(installed.parent().unwrap()).unwrap();
-    fs::write(&installed, "#!/bin/sh\necho riff 0.1.0 release\n").unwrap();
+    isolated::write_program(&installed, "#!/bin/sh\necho riff 0.1.0 release\n");
 
     let connect = riff(
         &server,

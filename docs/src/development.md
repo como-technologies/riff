@@ -255,11 +255,21 @@ A test that runs a fake program, for example a fake `gh` or `tmux`,
 writes it with `isolated::write_program`. A child process writes the
 file. So no child of another test thread holds the file open to
 write, and the run cannot fail with `ETXTBSY` ("Text file busy"). To
-copy a program, use `isolated::copy_program`. A test fails on each
-test file that writes a program in the test process.
+copy a program, use `isolated::copy_program`. To give a program a new
+text, write it again with `isolated::write_program`:
 
 ```rust,ignore
 let gh = isolated::write_program(bin.join("gh"), "#!/bin/sh\necho '[]'\n");
+isolated::write_program(&gh, "#!/bin/sh\necho '[{\"number\": 40}]'\n");
+```
+
+A test of the crate `isolated` reads each integration test. It fails
+on each line that writes a program in the test process: a mode 755, a
+text that starts with `#!`, or a write to a program that the file made
+with the helper. Run it by its name:
+
+```sh
+cargo test -p isolated --test check no_test_file_writes_a_program_in_the_test_process
 ```
 
 ### Time a step in a test

@@ -630,7 +630,7 @@ fn knows_pr_40(machine: &Machine) {
              case \"$1 $2\" in\n"
         ),
     );
-    std::fs::write(&gh, with_pr).unwrap();
+    isolated::write_program(&gh, with_pr);
 }
 
 /// A POST of the total that fails one time with an empty reply: the

@@ -482,17 +482,15 @@ async fn update_installs_sccache_on_a_machine_with_workers() {
     // The install puts sccache in place.
     let bin = tempfile::tempdir().unwrap();
     let cmd = with(bin.path());
-    let cargo = bin.path().join("cargo");
-    std::fs::write(
-        &cargo,
+    isolated::write_program(
+        bin.path().join("cargo"),
         format!(
             "#!/bin/sh\necho \"$*\" >> {}/cargo.log\n\
              case \"$*\" in *sccache*) printf '#!/bin/sh\\necho sccache 0.18.0\\n' > {0}/sccache; \
              chmod +x {0}/sccache ;; esac\n",
             bin.path().display()
         ),
-    )
-    .unwrap();
+    );
     let out = run(cmd).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(log(bin.path(), "cargo"), install(&release()) + pinned);

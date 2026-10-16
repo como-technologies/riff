@@ -51,6 +51,51 @@ fn no_test_file_writes_a_program_in_the_test_process() {
     );
 }
 
+/// The check fails a write over a program that the helper made, and a
+/// write of a script, also when the write sets no mode
+/// (01M517P9J77TZX28QYBR9SH6WW).
+#[test]
+fn the_check_fails_a_new_text_of_a_program_and_a_script_with_no_mode() {
+    let root = tempfile::tempdir().unwrap();
+    let tests = root.path().join("crates/riff/tests");
+    std::fs::create_dir_all(&tests).unwrap();
+    std::fs::write(
+        tests.join("usage.rs"),
+        "impl Machine {\n\
+         \x20   fn new() -> Machine {\n\
+         \x20       let gh = bin.path().join(\"gh\");\n\
+         \x20       isolated::write_program(&gh, FAKE_GH);\n\
+         \x20   }\n\
+         }\n\
+         fn knows_pr_40(machine: &Machine) {\n\
+         \x20   let gh = machine.bin.path().join(\"gh\");\n\
+         \x20   std::fs::write(&gh, with_pr).unwrap();\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tests.join("lifecycle.rs"),
+        "let cargo = bin.path().join(\"cargo\");\n\
+         std::fs::write(\n\
+         \x20   &cargo,\n\
+         \x20   format!(\"#!/bin/sh\\necho \\\"$*\\\" >> {}/cargo.log\\n\", bin.path().display()),\n\
+         )\n\
+         .unwrap();\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tests.join("good.rs"),
+        "let gh = isolated::write_program(bin.join(\"gh\"), FAKE_GH);\n\
+         isolated::write_program(&gh, with_pr);\n\
+         std::fs::write(bin.join(\"gh.log\"), \"\").unwrap();\n",
+    )
+    .unwrap();
+    assert_eq!(
+        program_writers(root.path()),
+        ["crates/riff/tests/lifecycle.rs:2", "crates/riff/tests/usage.rs:9"]
+    );
+}
+
 /// A program of the helper runs at once each time, while other threads
 /// of the process start children all the time (01M517P9J77TZX28QYBR9SH6WW).
 #[test]

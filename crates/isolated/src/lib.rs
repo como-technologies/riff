@@ -71,7 +71,9 @@ use tempfile::TempDir;
 pub mod program;
 pub mod time;
 
-pub use program::{copy_program, program_writers, write_program, writes_a_program};
+pub use program::{
+    copy_program, file_name, program_writers, program_writes, write_program, writes_a_program,
+};
 pub use time::{HANG, Late, PRESSURE_LIMIT, Span, in_time, stall};
 
 /// The prefixes of the variables that the helper removes: riff and the
@@ -325,13 +327,16 @@ isolate!(tokio::process::Command);
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn offenders(root: &Path) -> Vec<String> {
-    test_lines(root, names_a_binary)
+    test_lines(root, |text| {
+        let lines = text.lines().enumerate();
+        lines.filter(|(_, line)| names_a_binary(line)).map(|(n, _)| n + 1).collect()
+    })
 }
 
-/// Each line of a test file under `root/crates/*/tests` for which
-/// `matches` is true, as `PATH:LINE`. The helper crate itself does not
-/// count.
-fn test_lines(root: &Path, matches: fn(&str) -> bool) -> Vec<String> {
+/// Each line of a test file under `root/crates/*/tests` that `lines`
+/// gives for the text of the file, as `PATH:LINE`. `lines` gives the
+/// numbers of the lines from 1. The helper crate itself does not count.
+fn test_lines(root: &Path, lines: impl Fn(&str) -> Vec<usize>) -> Vec<String> {
     let mut files = Vec::new();
     let Ok(crates) = std::fs::read_dir(root.join("crates")) else {
         return Vec::new();
@@ -352,11 +357,7 @@ fn test_lines(root: &Path, matches: fn(&str) -> bool) -> Vec<String> {
             .unwrap_or(&file)
             .display()
             .to_string();
-        for (n, line) in text.lines().enumerate() {
-            if matches(line) {
-                found.push(format!("{name}:{}", n + 1));
-            }
-        }
+        found.extend(lines(&text).into_iter().map(|n| format!("{name}:{n}")));
     }
     found
 }

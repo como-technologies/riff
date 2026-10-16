@@ -160,7 +160,7 @@ fn the_static_check_refuses_a_binary_with_an_interpreter() {
         "{stderr}"
     );
 
-    fs::write(dir.path().join("riff"), "#!/bin/sh\n").unwrap();
+    isolated::write_program(dir.path().join("riff"), "#!/bin/sh\n");
     let out = script(
         "check.sh",
         &["release"],
