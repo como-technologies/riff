@@ -883,6 +883,47 @@ mod tests {
         drop(three);
     }
 
+    /// A read of the state while the first worker of a machine makes
+    /// the pool never makes that worker join the old pipe, which has no
+    /// tokens.
+    #[test]
+    fn reads_of_the_state_while_workers_join_never_leave_an_empty_pool() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        for round in 0..300 {
+            let dir = tempfile::tempdir().unwrap();
+            // An old pool leaves its pipe and its size.
+            drop(Pool::hold(dir.path(), 2, 1).unwrap());
+            let span = isolated::Span::start();
+            while state(dir.path()).is_some() {
+                assert!(span.within(Duration::from_secs(10)), "the pool did not end");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let (stop, reads) = (AtomicBool::new(false), AtomicUsize::new(0));
+            let pools = std::thread::scope(|s| {
+                s.spawn(|| {
+                    while !stop.load(Ordering::Relaxed) {
+                        let _ = state(dir.path());
+                        reads.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+                while reads.load(Ordering::Relaxed) == 0 {
+                    std::thread::yield_now();
+                }
+                let first = Pool::hold(dir.path(), 4, 1).unwrap();
+                let second = Pool::hold(dir.path(), 4, 1).unwrap();
+                stop.store(true, Ordering::Relaxed);
+                (first, second)
+            });
+            assert_eq!(
+                state(dir.path()).map(|s| (s.size, s.free)),
+                Some((4, 4)),
+                "round {round}: the workers joined the old pipe"
+            );
+            drop(pools);
+        }
+    }
+
     #[test]
     fn tokens_go_back_when_they_drop() {
         let dir = tempfile::tempdir().unwrap();
