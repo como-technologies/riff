@@ -674,6 +674,22 @@ the clear. `riff workers start` runs `riff worktrees clean`.
 A refusal of a raw command never blocks your work. When no riff
 command covers your case, file an issue for it, and `tell` the lead.
 
+## Run each step alone
+
+Claude Code matches a permission rule to each part of a Bash call. So
+run each `riff` and `gh` step of this skill alone, in its own Bash
+call:
+
+- Put no `cd` before the step. A `cd` out of your worktree, for
+  example to your scratchpad, matches no rule. Then the auto mode check
+  judges the whole call.
+- Join no other command to the step with `&&`, `||` or `;`.
+- Give each file by its absolute path, for example
+  `gh issue edit 12 --body-file /ABS/body-12.md`.
+- Put the repository after the words of the step, for example
+  `gh issue view 12 --repo OWNER/REPO`. A `-R` before the words
+  matches no rule.
+
 ## A refusal of the auto mode check
 
 riff sets the Claude Code permission rules of each role in its code:

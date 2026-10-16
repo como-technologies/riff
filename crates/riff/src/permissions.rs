@@ -67,6 +67,13 @@
 //! `wave` commands (01M51K1VJ67KYHRD7DQ86DSX1X). The tests check each
 //! allow rule, and a list of commands that no allow rule may match.
 //!
+//! Claude Code matches a rule to each part of a Bash call. A `cd` out of
+//! the working folders matches no rule, and then the auto mode check
+//! judges the whole call. So a session runs each step alone, with each
+//! file by its absolute path, and the skill says so. A test checks that
+//! no code line of the skill joins a step to another command
+//! (01M51V0Q5E7MNPWP9T7TSJFT5W).
+//!
 //! | Rule | Kind | Roles | Places | The step |
 //! |---|---|---|---|---|
 //! | `mcp__plugin_riff_riff` | allow | lead, worker, verifier | project, user | each riff tool of the plugin |
@@ -1560,24 +1567,31 @@ mod tests {
         is_step(text) && !text.starts_with("riff ")
     }
 
-    /// Each `riff` and `gh` step of the markdown `text`: each code span,
-    /// and each line of a code block.
-    fn skill_steps(text: &str) -> Vec<String> {
-        let mut steps = Vec::new();
+    /// Each code span and each line of a code block of the markdown
+    /// `text`.
+    fn code_lines(text: &str) -> Vec<String> {
+        let mut lines = Vec::new();
         let mut prose = String::new();
         let mut block = false;
         for line in text.lines() {
             if line.trim_start().starts_with("```") {
                 block = !block;
             } else if block {
-                steps.push(line.trim().to_owned());
+                lines.push(line.trim().to_owned());
             } else {
                 prose.push_str(line);
                 prose.push('\n');
             }
         }
         let spans = prose.split('`').skip(1).step_by(2);
-        steps.extend(spans.map(|s| s.split_whitespace().collect::<Vec<_>>().join(" ")));
+        lines.extend(spans.map(|s| s.split_whitespace().collect::<Vec<_>>().join(" ")));
+        lines
+    }
+
+    /// Each `riff` and `gh` step of the markdown `text`: each code span,
+    /// and each line of a code block.
+    fn skill_steps(text: &str) -> Vec<String> {
+        let mut steps = code_lines(text);
         steps.retain(|s| is_step(s));
         steps.sort();
         steps.dedup();
@@ -1665,6 +1679,65 @@ mod tests {
                 || person.iter().any(|r| matches(r, step));
             assert!(found, "no rule of the table matches the step `{step}`");
         }
+    }
+
+    /// True when the shell line `line` joins a `riff` or `gh` step to
+    /// another command with `&&`, `||` or `;`, or names the repository
+    /// with `gh -R` before the words of the step. Claude Code matches a
+    /// rule to each part of a call (01M51V0Q5E7MNPWP9T7TSJFT5W).
+    fn joins_a_step(line: &str) -> bool {
+        let parts: Vec<&str> = line
+            .split("&&")
+            .flat_map(|p| p.split("||"))
+            .flat_map(|p| p.split(';'))
+            .map(str::trim)
+            .collect();
+        let joined = parts.len() > 1 && parts.iter().any(|p| is_step(p));
+        joined || line.contains("gh -R ") || line.contains("gh --repo ")
+    }
+
+    /// 01M51V0Q5E7MNPWP9T7TSJFT5W: the refused calls of #897 joined their
+    /// steps to a `cd` out of the worktree. Alone, each step matches a
+    /// rule of the user place; the `cd` matches none.
+    #[test]
+    fn a_step_alone_matches_a_user_rule_and_a_cd_to_the_scratchpad_matches_none() {
+        let user = user_rules(Some(Path::new("/home/mike")));
+        let allowed = |c: &str| user.allow.iter().any(|r| matches(r, c));
+        let scratchpad = "/home/mike/.cache/riff/tmp/e750ad62/scratchpad";
+        let refused = format!(
+            "cd {scratchpad} && gh issue edit 840 --body-file body-840.md && gh issue edit \
+             841 --body-file body-841.md"
+        );
+        assert!(joins_a_step(&refused));
+        assert!(!allowed(&format!("cd {scratchpad}")));
+        for step in [
+            format!("gh issue edit 840 --body-file {scratchpad}/body-840.md"),
+            format!("gh issue edit 884 --repo o/r --body-file {scratchpad}/new-884.md"),
+        ] {
+            assert!(!joins_a_step(&step), "{step}");
+            assert!(allowed(&step), "{step}");
+        }
+        let early = format!("gh -R o/r issue edit 884 --body-file {scratchpad}/new-884.md");
+        assert!(joins_a_step(&early));
+        assert!(!allowed(&early));
+        assert!(!joins_a_step("git diff --cached --quiet || git commit -q -m \"WIP: STEP\""));
+    }
+
+    /// 01M51V0Q5E7MNPWP9T7TSJFT5W: no code line of the skill joins a
+    /// `riff` or `gh` step to another command, and the skill says to run
+    /// each step alone.
+    #[test]
+    fn no_code_line_of_the_skill_joins_a_step_to_another_command() {
+        let (_, skill) = crate::plugin::FILES
+            .iter()
+            .find(|(path, _)| path.ends_with("SKILL.md"))
+            .unwrap();
+        let lines = code_lines(skill);
+        assert!(lines.len() > 100, "{lines:#?}");
+        for line in &lines {
+            assert!(!joins_a_step(line), "the skill joins a step: `{line}`");
+        }
+        assert!(skill.contains("\n## Run each step alone\n"));
     }
 
     /// 01M5084JXTWZQEG7DJHS2E96NQ: each `riff` and `gh` step of the start
