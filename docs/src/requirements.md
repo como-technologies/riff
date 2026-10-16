@@ -985,6 +985,9 @@
   settings in `DIR/config.toml`, its local files in `DIR/state`, and
   each secret in a file of `DIR/secrets` that only the owner can read.
   It never opens the OS keyring. Only the tests and `just dev` set it.
+- **01M51KE2HCRCM69EG1KHZAHH7A** With `RIFF_HOME`, the file of a secret
+  is the name of the secret in hex. When that is longer than 255 bytes,
+  the file is `sha256-` and the SHA-256 of the name in hex.
 - **01M3K0QM89E2XM1NWSPT4KXSTC** `just dev` loads `.env` at the root of
   its tree, when the file exists, into the environment of `riff` and
   `riff-server`, for example `RIFF_OIDC_CLIENT_ID` and
@@ -5685,6 +5688,20 @@ then.
   the person (`USER`). At a stop, it writes a checkpoint.
 - **01M519Z2N2PMZJ0CYAPV0A47BZ** `riff daemon status` shows the public
   key of the daemon, the riff ID, and the user of the owner.
+- **01M51JW1XRZWC3Q7G32V0X0D89** The OS keyring keeps the key of a
+  daemon in the secret `daemon-key DIR`, where `DIR` is the folder of
+  the daemon. So each folder of a daemon has its own key.
+- **01M51JW20CSAECFRZTJ95P6F3E** Each error of the keyring is a wait of
+  the daemon, also a keyring that riff cannot open. The daemon says the
+  error in one line, and looks again each 30 seconds.
+- **01M51JW233MXB72MHHRAX4E4NF** The daemon serves at its start, and
+  reads its key in the background. While it waits for its key, it runs
+  its sessions, and `riff daemon status` shows the line of the wait.
+  Until the records of Wave B, a session needs no key of the daemon.
+- **01M51JW25SPDW564A3DG31D7XM** When the daemon makes a new key
+  because its key and its state do not go together, it moves the old
+  folder `state` to `state.lost-MS` beside it. riff never reads that
+  folder.
 
 ### Wave B: the sync
 

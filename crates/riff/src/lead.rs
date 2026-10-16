@@ -154,8 +154,9 @@ pub fn spec(facts: &Facts, repo: &str) -> SessionSpec {
 ///     last: String::new(),
 /// };
 /// let status = Status {
-///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), riff: None, position: 0,
-///     sessions: vec![live], limit: None, waiting: vec![], waves: vec![], jobs: 0,
+///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), waits: None, key: None,
+///     riff: None, owner: None, position: 0, sessions: vec![live], limit: None,
+///     waiting: vec![], waves: vec![], jobs: 0,
 /// };
 /// assert!(riff::lead::runs(&status, "riff-lead-o-r"));
 /// assert!(!riff::lead::runs(&status, "riff-lead-o-other"));

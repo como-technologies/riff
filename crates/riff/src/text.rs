@@ -5419,6 +5419,139 @@ pub fn daemon_no_state(dir: &Path) -> String {
     )
 }
 
+/// What a daemon waits for while it reads its key and its state, before
+/// its key says a line (01M51JW233MXB72MHHRAX4E4NF).
+pub const DAEMON_OPENS: &str = "The riff daemon reads its key and its state.";
+
+/// The daemon cannot read its key or load its state: `error`. Its
+/// sessions run on, and it has no riff.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_no_riff("set USER"),
+///     "The riff daemon has no riff: set USER. Its sessions run on. Start it again after the fix."
+/// );
+/// ```
+pub fn daemon_no_riff(error: &str) -> String {
+    format!(
+        "The riff daemon has no riff: {error}. Its sessions run on. Start it again after the fix."
+    )
+}
+
+/// A start of a daemon read its key, and loaded its riff.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_read_riff("8a88", "mike"),
+///     "The riff daemon read its key and its riff: 8a88, of the owner mike."
+/// );
+/// ```
+pub fn daemon_read_riff(riff: &str, owner: &str) -> String {
+    format!("The riff daemon read its key and its riff: {riff}, of the owner {owner}.")
+}
+
+/// A daemon with no `USER`: it needs the user of the owner of its riff.
+pub const DAEMON_NO_USER: &str =
+    "The riff daemon needs USER: the user of the owner of its riff. Set USER.";
+
+/// The keyring of the daemon refuses, also when it is locked or does
+/// not answer: the daemon waits, and makes no new key
+/// (01M51BFYNMYHSQ62BBJES3CCWT, 01M51JW20CSAECFRZTJ95P6F3E).
+///
+/// ```
+/// use std::time::Duration;
+///
+/// let text = riff::text::daemon_keyring_waits("locked", Duration::from_secs(30));
+/// assert_eq!(
+///     text,
+///     "The riff daemon waits for its key in the OS keyring: locked. It makes no new key, \
+///      and looks again each 30 seconds."
+/// );
+/// ```
+pub fn daemon_keyring_waits(error: &str, retry: std::time::Duration) -> String {
+    format!(
+        "The riff daemon waits for its key in the OS keyring: {error}. It makes no new key, and \
+         looks again each {} seconds.",
+        retry.as_secs()
+    )
+}
+
+/// The keyring of the daemon answers again after a refusal.
+pub fn daemon_keyring_back() -> String {
+    "The OS keyring answers again: the riff daemon reads its key.".into()
+}
+
+/// The first start of a daemon made its key and a riff of its own
+/// (01M519Z2JMAKN0T6JZFBPSTKC8).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_made_riff("8a88", "mike"),
+///     "The riff daemon made its key and a riff of its own: 8a88, of the owner mike."
+/// );
+/// ```
+pub fn daemon_made_riff(riff: &str, owner: &str) -> String {
+    format!("The riff daemon made its key and a riff of its own: {riff}, of the owner {owner}.")
+}
+
+/// A daemon made a new key and a riff of its own, because its key and
+/// its state do not go together (01M519Z2G77CT94Y6XPW9BCRK9,
+/// 01M51JW25SPDW564A3DG31D7XM). `old` is the folder of the old state.
+///
+/// ```
+/// use std::path::Path;
+/// use riff::daemon::Lost;
+///
+/// let old = Path::new("/d/state.lost-7");
+/// let text = riff::text::daemon_new_riff(&Lost::NoKey, "8a88", "mike", Some(old));
+/// assert_eq!(
+///     text,
+///     "The riff daemon made a new key and a riff of its own: 8a88, of the owner mike. Why: \
+///      its state has a riff, but the OS keyring has no key of the daemon. Its old state is \
+///      in /d/state.lost-7: riff does not read it. To join a riff again, the owner invites \
+///      the new key."
+/// );
+/// let text = riff::text::daemon_new_riff(&Lost::NoState, "8a88", "mike", None);
+/// assert!(text.contains("Why: the OS keyring has a key of the daemon, but its state has no riff."));
+/// assert!(!text.contains("old state"));
+/// let other = Lost::OtherKey { riff: "0a1b".into() };
+/// let text = riff::text::daemon_new_riff(&other, "8a88", "mike", None);
+/// assert!(text.contains("Why: the riff 0a1b of its state is not the riff of its key."));
+/// let text = riff::text::daemon_new_riff(&Lost::NotAKey, "8a88", "mike", None);
+/// assert!(text.contains("Why: the OS keyring holds a value for the key of the daemon that is not a key."));
+/// ```
+pub fn daemon_new_riff(
+    lost: &crate::daemon::Lost,
+    riff: &str,
+    owner: &str,
+    old: Option<&Path>,
+) -> String {
+    use crate::daemon::Lost;
+    let why = match lost {
+        Lost::NoState => "the OS keyring has a key of the daemon, but its state has no riff".into(),
+        Lost::NoKey => "its state has a riff, but the OS keyring has no key of the daemon".into(),
+        Lost::NotAKey => {
+            "the OS keyring holds a value for the key of the daemon that is not a key".into()
+        }
+        Lost::OtherKey { riff } => {
+            format!("the riff {riff} of its state is not the riff of its key")
+        }
+    };
+    let mut text = format!(
+        "The riff daemon made a new key and a riff of its own: {riff}, of the owner {owner}. \
+         Why: {why}."
+    );
+    if let Some(old) = old {
+        let _ = write!(
+            text,
+            " Its old state is in {}: riff does not read it.",
+            old.display()
+        );
+    }
+    text.push_str(" To join a riff again, the owner invites the new key.");
+    text
+}
+
 /// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S,
 /// 01M4ZHW24JZZXM3JJXG3PRJS7N, 01M501PADKZNRHBZD9XPMJGW06).
 ///
@@ -5431,7 +5564,10 @@ pub fn daemon_no_state(dir: &Path) -> String {
 ///     build: "1.3.1 06a0ae03be98".into(),
 ///     since_ms: 0,
 ///     dir: "/h/.local/share/riff/daemon".into(),
+///     waits: None,
+///     key: Some("0a1b".into()),
 ///     riff: Some("0a1b".into()),
+///     owner: Some("mike".into()),
 ///     position: 3,
 ///     sessions: vec![],
 ///     limit: Some(Limit::default()),
@@ -5441,7 +5577,9 @@ pub fn daemon_no_state(dir: &Path) -> String {
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
+/// assert!(text.contains("Its key: 0a1b\n"));
 /// assert!(text.contains("Its riff: 0a1b, at position 3 of its log.\n"));
+/// assert!(text.contains("The owner of its riff: mike\n"));
 /// assert!(text.contains("Sessions: none.\n"));
 /// status.sessions.push(Live {
 ///     name: "riff-issue-12-1a2b3c4d".into(),
@@ -5461,6 +5599,14 @@ pub fn daemon_no_state(dir: &Path) -> String {
 /// assert!(text.contains("The limit of this host: 3 live sessions, and 8 GB"));
 /// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
+///
+/// // A daemon that waits for its keyring (01M51JW233MXB72MHHRAX4E4NF).
+/// let waits: Status = serde_json::from_value(serde_json::json!({
+///     "pid": 42, "build": "b", "since_ms": 0, "dir": "/d", "sessions": [], "waits": "It waits.",
+/// })).unwrap();
+/// let text = riff::text::daemon_status(&waits, 300_000);
+/// assert!(text.contains("Its folder: /d\nIt waits.\nIts riff: none yet.\n"), "{text}");
+/// assert!(!text.contains("Its key") && !text.contains("owner"), "{text}");
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -5471,6 +5617,12 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
         age(status.since_ms),
         status.dir.display()
     );
+    if let Some(waits) = &status.waits {
+        let _ = writeln!(out, "{waits}");
+    }
+    if let Some(key) = &status.key {
+        let _ = writeln!(out, "Its key: {key}");
+    }
     match &status.riff {
         Some(riff) => {
             let _ = writeln!(
@@ -5480,6 +5632,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
             );
         }
         None => out.push_str("Its riff: none yet.\n"),
+    }
+    if let Some(owner) = &status.owner {
+        let _ = writeln!(out, "The owner of its riff: {owner}");
     }
     if let Some(limit) = &status.limit {
         let _ = writeln!(out, "{}", daemon_limit(limit));
@@ -5520,14 +5675,28 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     out
 }
 
-/// One line: the daemon answers.
+/// One line: the daemon answers, and what it waits for while it has no
+/// riff (01M51JW233MXB72MHHRAX4E4NF).
+///
+/// ```
+/// let waits: riff::daemon::Status = serde_json::from_value(serde_json::json!({
+///     "pid": 7, "build": "b", "since_ms": 0, "dir": "/d", "sessions": [], "waits": "It waits.",
+/// }))?;
+/// let line = riff::text::daemon_runs(&waits);
+/// assert_eq!(line, "The riff daemon runs: pid 7, build b, 0 sessions. It waits.");
+/// # Ok::<(), serde_json::Error>(())
+/// ```
 pub fn daemon_runs(status: &crate::daemon::Status) -> String {
-    format!(
+    let mut line = format!(
         "The riff daemon runs: pid {}, build {}, {} sessions.",
         status.pid,
         status.build,
         status.sessions.len()
-    )
+    );
+    if let Some(waits) = &status.waits {
+        let _ = write!(line, " {waits}");
+    }
+    line
 }
 
 /// The state of the unit of the daemon, when no daemon answers.
@@ -6006,7 +6175,10 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 ///     build: "1.3.1 aaa".into(),
 ///     since_ms: 0,
 ///     dir: "/d".into(),
+///     waits: None,
+///     key: None,
 ///     riff: None,
+///     owner: None,
 ///     position: 0,
 ///     sessions: vec![],
 ///     limit: None,

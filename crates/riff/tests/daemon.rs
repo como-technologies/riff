@@ -114,6 +114,12 @@ async fn riff_daemon_install_writes_the_unit_and_starts_the_daemon() {
     let status = text(&out.stdout);
     assert!(out.status.success(), "{status}");
     assert!(status.contains("Sessions: none."), "{status}");
+    // The isolated home has no OS keyring: the daemon waits for its key,
+    // and says why (01M51JW20CSAECFRZTJ95P6F3E, 01M51JW233MXB72MHHRAX4E4NF).
+    let waits = "The riff daemon waits for its key in the OS keyring: riff cannot open the OS \
+                 keyring.";
+    assert!(status.contains(waits), "{status}");
+    assert!(status.contains("Its riff: none yet."), "{status}");
     assert!(
         status.contains(&format!(
             "Its folder: {}",
@@ -287,7 +293,7 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
 
 impl Here {
     /// Starts `riff daemon` of the `RIFF_HOME`, writes its output to
-    /// `name`, and waits until it listens.
+    /// `name`, and waits until it listens and has its riff.
     async fn daemon(&self, name: &str) -> std::process::Child {
         let log = self.bin.path().join(name);
         let out = std::fs::File::create(&log).unwrap();
@@ -298,21 +304,48 @@ impl Here {
             .spawn()
             .unwrap();
         wait_for(&log, "The riff daemon listens on").await;
+        wait_for(&log, RIFF_LINE).await;
         child
     }
 
     /// The line `Its riff: ...` of `riff daemon status`.
     async fn riff_line(&self) -> String {
+        self.status_line("Its riff: ").await
+    }
+
+    /// The line of `riff daemon status` that starts with `start`.
+    async fn status_line(&self, start: &str) -> String {
         let out = self.run(false, &["daemon", "status"]).await;
         let status = text(&out.stdout);
         assert!(out.status.success(), "{status}");
         status
             .lines()
-            .find(|line| line.starts_with("Its riff: "))
-            .unwrap_or_else(|| panic!("no riff line in\n{status}"))
+            .find(|line| line.starts_with(start))
+            .unwrap_or_else(|| panic!("no line {start:?} in\n{status}"))
             .to_owned()
     }
+
+    /// The folder of the daemon of the `RIFF_HOME`.
+    fn daemon_dir(&self) -> PathBuf {
+        self.env.riff_home().join("daemon")
+    }
+
+    /// The file of the key of the daemon of the `RIFF_HOME`: the file
+    /// store of the secrets of the tests stands for the OS keyring.
+    fn key_file(&self) -> PathBuf {
+        let name = riff::daemon_key::secret_name(&self.daemon_dir());
+        riff::secrets::file_of(&self.env.riff_home().join("secrets"), &name)
+    }
+
+    /// The text of the file `name` of the output of a daemon.
+    fn output(&self, name: &str) -> String {
+        std::fs::read_to_string(self.bin.path().join(name)).unwrap()
+    }
 }
+
+/// A part of each line of a daemon that has its riff: it made it, made
+/// a new one, or read it.
+const RIFF_LINE: &str = ", of the owner ";
 
 /// Stops `child` with a SIGTERM, and waits for its end.
 async fn stop(mut child: std::process::Child) {
@@ -339,4 +372,205 @@ async fn a_restart_of_the_daemon_keeps_its_riff() {
     let second = here.daemon("second.out").await;
     assert_eq!(here.riff_line().await, line);
     stop(second).await;
+}
+
+/// 01M519Z2BB0YJY5CRMB54JVYFA, 01M519Z2N2PMZJ0CYAPV0A47BZ: the first
+/// start makes the key in the keyring and a riff whose ID is the public
+/// key. `riff daemon status` shows the key, the riff and the user of the
+/// owner. A second start loads the same key and the same riff.
+#[tokio::test]
+async fn riff_daemon_status_shows_the_key_the_riff_and_the_owner() {
+    let here = Here::new();
+    let first = here.daemon("first.out").await;
+    let out = here.run(false, &["daemon", "status"]).await;
+    let status = text(&out.stdout);
+    assert!(out.status.success(), "{status}");
+    let key = here.status_line("Its key: ").await["Its key: ".len()..].to_owned();
+    assert_eq!(key.len(), 64, "{status}");
+    assert!(
+        status.contains(&format!("Its riff: {key}, at position ")),
+        "{status}"
+    );
+    let user = std::env::var("USER").unwrap().to_lowercase();
+    assert!(
+        status.contains(&format!("The owner of its riff: {user}\n")),
+        "{status}"
+    );
+    assert!(here.key_file().exists());
+    let said = here.output("first.out");
+    assert!(
+        said.contains(&riff::text::daemon_made_riff(&key, &user)),
+        "{said}"
+    );
+    stop(first).await;
+
+    let second = here.daemon("second.out").await;
+    assert_eq!(
+        here.status_line("Its key: ").await,
+        format!("Its key: {key}")
+    );
+    assert!(
+        here.riff_line()
+            .await
+            .starts_with(&format!("Its riff: {key}, "))
+    );
+    let said = here.output("second.out");
+    assert!(
+        said.contains(&riff::text::daemon_read_riff(&key, &user)),
+        "{said}"
+    );
+    assert!(!said.contains("made"), "{said}");
+    stop(second).await;
+}
+
+/// 01M519Z2G77CT94Y6XPW9BCRK9, 01M51JW25SPDW564A3DG31D7XM: a state with
+/// no key, and a key with no state, each make a new key and a new riff.
+/// The log of the daemon says why. The old state goes to
+/// `state.lost-MS`.
+#[tokio::test]
+async fn a_lost_key_or_a_lost_state_makes_a_new_key_and_a_new_riff() {
+    let here = Here::new();
+    let first = here.daemon("first.out").await;
+    let key1 = here.status_line("Its key: ").await;
+    stop(first).await;
+
+    std::fs::remove_file(here.key_file()).unwrap();
+    let second = here.daemon("second.out").await;
+    let key2 = here.status_line("Its key: ").await;
+    assert_ne!(key2, key1);
+    let said = here.output("second.out");
+    assert!(
+        said.contains(
+            "Why: its state has a riff, but the OS keyring has no key of the daemon. Its old \
+             state is in "
+        ),
+        "{said}"
+    );
+    stop(second).await;
+    let lost: Vec<_> = std::fs::read_dir(here.daemon_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("state.lost-"))
+        .collect();
+    assert_eq!(lost.len(), 1, "{lost:?}");
+    assert!(said.contains(&lost[0]), "{said}");
+
+    std::fs::remove_dir_all(here.daemon_dir().join("state")).unwrap();
+    let third = here.daemon("third.out").await;
+    let key3 = here.status_line("Its key: ").await;
+    assert_ne!(key3, key2);
+    assert_ne!(key3, key1);
+    let said = here.output("third.out");
+    assert!(
+        said.contains("Why: the OS keyring has a key of the daemon, but its state has no riff."),
+        "{said}"
+    );
+    let riff = here.riff_line().await;
+    assert!(riff.starts_with(&format!("Its riff: {}, ", &key3["Its key: ".len()..])));
+    stop(third).await;
+}
+
+/// 01M519Z2BB0YJY5CRMB54JVYFA: no file of the folder of the daemon and
+/// no line of its log holds the secret key, as hex or as bytes.
+#[tokio::test]
+async fn no_file_of_the_daemon_and_no_line_of_its_log_holds_the_secret_key() {
+    let here = Here::new();
+    let first = here.daemon("first.out").await;
+    here.riff_line().await;
+    stop(first).await;
+    let second = here.daemon("second.out").await;
+    here.riff_line().await;
+    stop(second).await;
+
+    let hex = std::fs::read_to_string(here.key_file()).unwrap();
+    assert_eq!(hex.len(), 64, "{hex}");
+    let bytes: Vec<u8> = (0..32)
+        .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+        .collect();
+    let upper = hex.to_uppercase();
+    let holds = |data: &[u8]| {
+        data.windows(64)
+            .any(|w| w == hex.as_bytes() || w == upper.as_bytes())
+            || data.windows(32).any(|w| w == bytes.as_slice())
+    };
+    let mut files = vec![
+        here.bin.path().join("first.out"),
+        here.bin.path().join("second.out"),
+    ];
+    let mut dirs = vec![here.daemon_dir()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                dirs.push(entry.path());
+            } else if kind.is_file() {
+                files.push(entry.path());
+            }
+        }
+    }
+    assert!(files.len() > 4, "{files:?}");
+    for file in &files {
+        let data = std::fs::read(file).unwrap();
+        assert!(!holds(&data), "{} holds the secret key", file.display());
+    }
+}
+
+/// 01M51BFYNMYHSQ62BBJES3CCWT, 01M51JW233MXB72MHHRAX4E4NF: while the
+/// keyring refuses (a secret file that riff may not read), the daemon
+/// waits: one line, no new key and no riff. `riff daemon status` says
+/// why. When the keyring answers, the daemon loads the same key.
+#[tokio::test]
+async fn a_locked_keyring_makes_the_daemon_wait_and_say_why() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let here = Here::new();
+    let first = here.daemon("first.out").await;
+    let key = here.status_line("Its key: ").await;
+    let riff = here.riff_line().await;
+    stop(first).await;
+
+    let secrets = here.env.riff_home().join("secrets");
+    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let log = here.bin.path().join("locked.out");
+    let out = std::fs::File::create(&log).unwrap();
+    let child = here
+        .command(false, &["daemon"])
+        .env(riff::secrets::RETRY_VAR, "1")
+        .stdout(out.try_clone().unwrap())
+        .stderr(out)
+        .spawn()
+        .unwrap();
+    wait_for(&log, "The riff daemon waits for its key in the OS keyring").await;
+    let out = here.run(false, &["daemon", "status"]).await;
+    let status = text(&out.stdout);
+    assert!(out.status.success(), "{status}");
+    assert!(
+        status.contains("The riff daemon waits for its key in the OS keyring: the OS keyring of"),
+        "{status}"
+    );
+    assert!(status.contains("Its riff: none yet."), "{status}");
+    assert!(!status.contains("Its key"), "{status}");
+    // The daemon serves while it waits: its sessions need no key.
+    wait_for(&log, "The riff daemon listens on").await;
+    // A second look gives no new line.
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
+    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o700)).unwrap();
+    wait_for(&log, "The riff daemon read its key and its riff").await;
+    assert_eq!(here.status_line("Its key: ").await, key);
+    assert_eq!(here.riff_line().await, riff);
+    stop(child).await;
+    let said = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(said.matches("waits for its key").count(), 1, "{said}");
+    assert_eq!(said.matches("answers again").count(), 1, "{said}");
+    assert!(!said.contains("made"), "{said}");
+    let lost = std::fs::read_dir(here.daemon_dir())
+        .unwrap()
+        .filter(|entry| {
+            let name = entry.as_ref().unwrap().file_name();
+            name.to_string_lossy().starts_with("state.lost-")
+        })
+        .count();
+    assert_eq!(lost, 0);
 }

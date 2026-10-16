@@ -1184,10 +1184,12 @@ enum DaemonCommand {
     /// runs on, and the folder of the daemon stays. With RIFF_HOME set,
     /// it removes nothing.
     Uninstall,
-    /// Show the riff daemon and its sessions
+    /// Show the riff daemon, its key, its riff and its sessions
     ///
-    /// It exits with 1 when no daemon answers, and shows the state of
-    /// the unit riff.service.
+    /// It shows the public key of the daemon, the ID of its riff and the
+    /// user of its owner. While the daemon waits for its key in the OS
+    /// keyring, it shows why. It exits with 1 when no daemon answers, and
+    /// shows the state of the unit riff.service.
     Status,
     /// Show the events of a session of the riff daemon
     ///

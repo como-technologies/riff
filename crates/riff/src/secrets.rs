@@ -61,8 +61,8 @@
 //! With `RIFF_HOME`, riff keeps each secret in a file of
 //! `$RIFF_HOME/secrets` and never opens the OS keyring
 //! (01M3MY2KSV73WS8D902YCH2PRX). Only the tests and `just dev` set it.
-//! The file name is the name of the secret in hex. Only the owner can
-//! read the files.
+//! The file name is the name of the secret in hex ([`file_of`]). Only the
+//! owner can read the files.
 //!
 //! # Example
 //!
@@ -306,16 +306,37 @@ fn files() -> Option<PathBuf> {
     crate::home::dir().map(|home| home.join("secrets"))
 }
 
-/// The file of the secret `name` in `dir`.
+/// The file of the secret `name` in `dir`: the name in hex. A name
+/// whose hex is longer than [`LONGEST_FILE`] bytes gives `sha256-` and
+/// the SHA-256 of the name in hex, so that the file system takes the
+/// name of the file (01M51KE2HCRCM69EG1KHZAHH7A).
 ///
 /// ```
 /// # use std::path::Path;
-/// let file = riff::secrets::file_of(Path::new("/s"), "access http://a");
+/// use riff::secrets::{LONGEST_FILE, file_of};
+///
+/// let file = file_of(Path::new("/s"), "access http://a");
 /// assert_eq!(file, Path::new("/s/61636365737320687474703a2f2f61"));
+/// let long = format!("daemon-key /{}", "d".repeat(200));
+/// let file = file_of(Path::new("/s"), &long);
+/// let name = file.file_name().unwrap().to_str().unwrap();
+/// assert!(name.starts_with("sha256-") && name.len() == 71, "{name}");
+/// assert!(name.len() <= LONGEST_FILE);
+/// assert_ne!(file, file_of(Path::new("/s"), &format!("{long}e")));
 /// ```
 pub fn file_of(dir: &Path, name: &str) -> PathBuf {
-    dir.join(name.bytes().map(|b| format!("{b:02x}")).collect::<String>())
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let file = hex(name.as_bytes());
+    if file.len() <= LONGEST_FILE {
+        return dir.join(file);
+    }
+    use sha2::{Digest, Sha256};
+    dir.join(format!("sha256-{}", hex(&Sha256::digest(name.as_bytes()))))
 }
+
+/// The longest name of a secret file: the longest file name of most file
+/// systems.
+pub const LONGEST_FILE: usize = 255;
 
 /// Returns the secret `name` from the files in `dir`.
 ///
