@@ -3310,6 +3310,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **R107** Only one `riff` process at a time refreshes the person
   tokens of one server. A lock file makes the others wait. Superseded by
   3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
+- **01M52JMEKD4P2ZT659CBNPN9CC** The lock file of R107 is in the local
+  directory of riff (`riff::local::dir`), not in `TMPDIR`. So each
+  `riff` process of one user on one machine finds the same lock file,
+  also a worker with a `TMPDIR` of its own. With `RIFF_HOME`, it is in
+  `$RIFF_HOME/state`. A process that sets the store of its secrets
+  itself, a test, keeps its sign-in in that store, and its lock file in
+  `TMPDIR` (01M3MY2KWKBJCQ0BCNC6533RBW). Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R20** A person or an admin can revoke all tokens of a person at
   once.
 - **R101** `riff logout --all` ends each sign-in of the caller, on each

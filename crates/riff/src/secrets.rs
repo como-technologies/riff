@@ -81,6 +81,7 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -266,7 +267,38 @@ pub fn delete(name: &str) -> Result<()> {
 pub fn has_keyring() -> bool {
     files().is_some()
         || keyring_core::get_default_store().is_some()
-        || in_time(KEYRING_WAIT, || keyring::Entry::store_status().is_ok()).unwrap_or(true)
+        || in_time(KEYRING_WAIT, || os_store().is_ok()).unwrap_or(true)
+}
+
+/// True when riff set the store of the OS keyring in this process.
+static OS_STORE: AtomicBool = AtomicBool::new(false);
+
+/// Sets the store of the OS keyring as the default store of
+/// `keyring-core`, one time for the process, and gives the result.
+fn os_store() -> &'static keyring_core::Result<()> {
+    let status = keyring::Entry::store_status();
+    if status.is_ok() {
+        OS_STORE.store(true, Ordering::SeqCst);
+    }
+    status
+}
+
+/// True when this process set the store of its secrets itself, before
+/// riff opened the OS keyring: a test with the mock store of
+/// `keyring-core`, or a store of its own. Its secrets are in that store,
+/// not in the OS keyring or in `$RIFF_HOME/secrets`, so no other process
+/// of the machine shares them. False with `RIFF_HOME`, and in a process
+/// that has not opened a keyring yet.
+///
+/// ```standalone_crate
+/// assert!(!riff::secrets::own_store());
+/// keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+/// assert!(riff::secrets::own_store());
+/// ```
+pub fn own_store() -> bool {
+    files().is_none()
+        && keyring_core::get_default_store().is_some()
+        && !OS_STORE.load(Ordering::SeqCst)
 }
 
 /// Runs `call` on a thread of its own, and waits at most `wait` for it.
@@ -395,7 +427,7 @@ fn file_fail(what: &str, name: &str, file: &Path, e: std::io::Error) -> anyhow::
 
 fn entry(name: &str) -> Result<Entry> {
     if keyring_core::get_default_store().is_none() {
-        keyring::Entry::store_status()
+        os_store()
             .as_ref()
             .map_err(|e| anyhow!("{e}"))
             .context(NO_KEYRING)?;

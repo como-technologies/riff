@@ -35,7 +35,9 @@
 //! pair when the access token has less than [`REFRESH_MARGIN`] left.
 //! Only one `riff` process at a time refreshes the pair of one server:
 //! a lock file makes the others wait (R107). Two processes that use one
-//! refresh token would end the sign-in.
+//! refresh token would end the sign-in. The lock file is in the local
+//! directory of riff, not in `TMPDIR`, because each worker has a
+//! `TMPDIR` of its own: see [`lock_path`].
 //!
 //! Only a refusal of the grant says that the sign-in ended
 //! ([`ENDED`], 01M3MX4TSEH18FSNQ28GEH2GFJ). Each other error of a
@@ -88,6 +90,7 @@
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
@@ -104,7 +107,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
 use crate::api::{Api, TokenRefused};
-use crate::{device, secrets};
+use crate::{device, local, secrets};
 
 /// [`access_token`] refreshes when less than this is left.
 pub const REFRESH_MARGIN: Duration = Duration::from_secs(60);
@@ -431,25 +434,50 @@ fn live(server: &str) -> Result<Option<SignIn>> {
     Ok((now() + REFRESH_MARGIN.as_secs() < sign_in.expires_at).then_some(sign_in))
 }
 
-/// The lock file for refreshes of the pair at `server`, one for each OS
-/// user and server (R107).
+/// The lock file for refreshes of the pair at `server` (R107): one for
+/// each server, in the local directory of riff ([`local::dir`]), never
+/// in `TMPDIR` (01M52JMEKD4P2ZT659CBNPN9CC), except in a test.
+///
+/// `riff workers run` gives each worker a `TMPDIR` of its own. A lock
+/// in `TMPDIR` is then one lock for each worker, and two workers send
+/// one refresh token at the same time. The server keeps only the pair
+/// of one of them, and the next refresh with the other pair ends the
+/// sign-in. The local directory is the same in each `riff` process of
+/// the user on the machine, so it holds one lock. It is per user, so
+/// the name holds only the server. An old lock file in `TMPDIR` stays
+/// there: no `riff` opens it again. `Err` when riff has no local
+/// directory (no `HOME`).
+///
+/// A process that set the store of its secrets itself, a test, keeps
+/// its sign-in in that store, not in the OS keyring
+/// ([`secrets::own_store`]). Its lock file stays in `TMPDIR`, so that a
+/// test never touches the local files of the machine
+/// (01M3MY2KWKBJCQ0BCNC6533RBW).
 ///
 /// ```
-/// let a = riff::login::lock_path("http://a");
-/// assert_ne!(a, riff::login::lock_path("http://b"));
-/// assert!(a.starts_with(std::env::temp_dir()));
+/// let a = riff::login::lock_path("http://a")?;
+/// assert_ne!(a, riff::login::lock_path("http://b")?);
+/// assert_eq!(a.parent(), riff::local::dir().as_deref());
+/// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn lock_path(server: &str) -> std::path::PathBuf {
-    let owner = std::env::var("USER").unwrap_or_default();
-    let hash = Sha256::digest(format!("{owner} {server}").as_bytes());
+pub fn lock_path(server: &str) -> Result<PathBuf> {
+    let dir = if secrets::own_store() {
+        std::env::temp_dir()
+    } else {
+        local::dir().context("no HOME: riff has no local dir")?
+    };
+    let hash = Sha256::digest(server.as_bytes());
     let name = URL_SAFE_NO_PAD.encode(&hash[..12]);
-    std::env::temp_dir().join(format!("riff-sign-in-{name}.lock"))
+    Ok(dir.join(format!("riff-sign-in-{name}.lock")))
 }
 
 /// Waits for the refresh lock of `server`. The lock ends when the file
 /// closes.
 async fn refresh_lock(server: &str) -> Result<std::fs::File> {
-    let path = lock_path(server);
+    let path = lock_path(server)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    }
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
