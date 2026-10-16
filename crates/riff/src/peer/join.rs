@@ -17,16 +17,19 @@
 //! nothing:
 //!
 //! 1. The daemon is the owner of its riff.
-//! 2. The key of the new daemon, that iroh checked, is not in the riff:
-//!    not the owner, not a member, not removed, and it did not leave
-//!    (01M521J6MKSBAA2QP6ZFHYT9ZQ).
+//! 2. The key of the new daemon, that iroh checked, is not the owner, not
+//!    a member and not removed. The refusal names which of the three
+//!    (01M5328FS8XGVW3X6N94F65FA8). A key that left may join again
+//!    (01M5328FPJT7Q5Q1509BC5F0J7).
 //! 3. The host is a name that riff takes.
 //! 4. The invite of the secret is known, not used and not ended
 //!    ([`Invites::take`]).
 //!
 //! Then it writes the `member` record: the key of the new daemon, the
-//! user of the invite and the host. When the write fails, it gives the
-//! invite back.
+//! user of the invite and the host. For a key that left, the record
+//! also names the sequence number of its `left` record (`after`): the
+//! records of the key after it count with the user of the new invite.
+//! When the write fails, it gives the invite back.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -53,7 +56,7 @@ use zeroize::Zeroizing;
 use crate::daemon_key::Public;
 use crate::peer::body::{Body, Member};
 use crate::peer::invite::{Invite, Invites, Secret};
-use crate::peer::record::{Context as _, Standing};
+use crate::peer::state::State;
 use crate::peer::talk::Hub;
 use crate::text;
 
@@ -104,13 +107,14 @@ pub enum Answer {
 pub fn admit(hub: &Hub, invites: &Invites, key: Public, ask: &Ask, now_ms: u64) -> Result<Answer> {
     let refused = |why: String| Ok(Answer::Refused { why });
     let me = hub.public();
-    let (riff, standing) = hub.read(|state| (state.riff(), state.standing(&key)));
+    let (riff, known) = hub.read(|state| (state.riff(), known(state, &key)));
     if riff != me {
         return refused(text::JOIN_NOT_THE_OWNER.into());
     }
-    if standing != Standing::Unknown {
-        return refused(text::join_known_key(&key.to_string()));
-    }
+    let after = match known {
+        Ok(after) => after,
+        Err(why) => return refused(why),
+    };
     if riff_core::name::check("host", &ask.host).is_err() {
         return refused(text::JOIN_BAD_HOST.into());
     }
@@ -125,12 +129,34 @@ pub fn admit(hub: &Hub, invites: &Invites, key: Public, ask: &Ask, now_ms: u64) 
         key,
         user,
         host: ask.host.clone(),
+        after,
     });
     if let Err(e) = hub.write(&member) {
         invites.give_back(&secret)?;
         return Err(e);
     }
     Ok(Answer::Joined)
+}
+
+/// What the riff of `state` knows of the key `key` of a join: the
+/// `after` of its new `member` record (`None` for a key that the riff
+/// does not know, the number of its `left` record for a key that left),
+/// or why the daemon of the owner refuses it (01M5328FS8XGVW3X6N94F65FA8).
+fn known(state: &State, key: &Public) -> Result<Option<u64>, String> {
+    let short = key.to_string();
+    if *key == state.riff() {
+        return Err(text::join_owner_key(&short));
+    }
+    let Some(member) = state.members().get(key) else {
+        return Ok(None);
+    };
+    if member.removed {
+        return Err(text::join_removed_key(&short));
+    }
+    member
+        .left_at()
+        .map(Some)
+        .ok_or_else(|| text::join_member_key(&short))
 }
 
 /// The time now, in milliseconds since the epoch.
@@ -218,6 +244,7 @@ mod tests {
             key: Key::from_bytes(&[2; 32]).public(),
             user: "mike".into(),
             host: "pangolin".into(),
+            after: None,
         }))
         .unwrap();
         hub
@@ -230,9 +257,9 @@ mod tests {
         }
     }
 
-    /// 01M519Z3YA9WBH9TWQPAH6A64Z, 01M521J6MKSBAA2QP6ZFHYT9ZQ: the checks
-    /// of a join, in order. A refusal writes no record, and keeps the
-    /// invite.
+    /// 01M519Z3YA9WBH9TWQPAH6A64Z, 01M5328FS8XGVW3X6N94F65FA8: the checks
+    /// of a join, in order. A refusal writes no record, keeps the invite,
+    /// and names its reason: the owner or a member.
     #[test]
     fn a_join_writes_the_member_record_only_after_each_check() {
         let dir = tempfile::tempdir().unwrap();
@@ -250,12 +277,12 @@ mod tests {
         let good = ask(invite.secret(), "kadomony");
         assert_eq!(
             refused(hub.public(), &good),
-            text::join_known_key(&hub.public().to_string())
+            text::join_owner_key(&hub.public().to_string())
         );
         let member = Key::from_bytes(&[2; 32]).public();
         assert_eq!(
             refused(member, &good),
-            text::join_known_key(&member.to_string())
+            text::join_member_key(&member.to_string())
         );
         assert_eq!(
             refused(new, &ask(invite.secret(), "a b")),
@@ -281,6 +308,59 @@ mod tests {
         assert_eq!((user.as_str(), host.as_str()), ("brett", "kadomony"));
         let other = Key::from_bytes(&[4; 32]).public();
         assert_eq!(refused(other, &good), text::INVITE_USED);
+    }
+
+    /// 01M5328FPJT7Q5Q1509BC5F0J7, 01M5328FS8XGVW3X6N94F65FA8: a key that
+    /// left joins again with a new invite: the new `member` record names
+    /// its `left` record, and the key has the user of the new invite. A
+    /// removed key stays refused, also with a new invite, and keeps the
+    /// invite.
+    #[test]
+    fn a_key_that_left_joins_again_and_a_removed_key_is_refused() {
+        use crate::peer::body::{Left, Removed};
+        use crate::peer::record::{Id, Record};
+
+        let dir = tempfile::tempdir().unwrap();
+        let hub = owner(dir.path());
+        let invites = Invites::in_dir(dir.path());
+        let pangolin = Key::from_bytes(&[2; 32]);
+        let left = Record::sign(&pangolin, hub.public(), 1, Id::ZERO, 5, &Body::Left(Left {}))
+            .unwrap();
+        hub.keep(left.bytes().to_vec(), None).unwrap();
+        assert!(hub.read(|state| state.members()[&pangolin.public()].left));
+
+        let invite = invites.make(hub.public(), "ann", 1_000).unwrap();
+        let answer = admit(&hub, &invites, pangolin.public(), &ask(invite.secret(), "h"), 2_000);
+        assert_eq!(answer.unwrap(), Answer::Joined);
+        let member = hub.read(|state| state.members()[&pangolin.public()].clone());
+        assert_eq!((member.user.as_str(), member.left), ("ann", false));
+        assert_eq!(member.joins.len(), 2);
+        assert_eq!(member.joins[1].after, 1);
+        // The key is a member again: a second join is refused.
+        let invite = invites.make(hub.public(), "ann", 1_000).unwrap();
+        let answer = admit(&hub, &invites, pangolin.public(), &ask(invite.secret(), "h"), 2_000);
+        assert_eq!(
+            answer.unwrap(),
+            Answer::Refused {
+                why: text::join_member_key(&pangolin.public().to_string())
+            }
+        );
+
+        let removed = Body::Removed(Removed {
+            key: pangolin.public(),
+            last: 1,
+        });
+        hub.write(&removed).unwrap();
+        let heads = hub.with_peers(crate::peer::keep::Peers::heads);
+        let answer = admit(&hub, &invites, pangolin.public(), &ask(invite.secret(), "h"), 2_000);
+        assert_eq!(
+            answer.unwrap(),
+            Answer::Refused {
+                why: text::join_removed_key(&pangolin.public().to_string())
+            }
+        );
+        assert_eq!(hub.with_peers(crate::peer::keep::Peers::heads), heads);
+        assert!(invites.take(invite.secret(), 2_000).unwrap().is_ok());
     }
 
     /// A daemon that is not the owner of its riff refuses each join.

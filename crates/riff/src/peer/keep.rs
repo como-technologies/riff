@@ -88,7 +88,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use tokio::sync::broadcast;
 
 use crate::daemon_key::{Key, Public};
@@ -290,9 +290,17 @@ impl Peers {
     }
 
     /// Writes a record of `key` with the body `body` and the time
-    /// `time_ms`, and applies it.
+    /// `time_ms`, and applies it. A daemon that joined again writes no
+    /// record before it has its own records up to its `left` record: the
+    /// record would fork its chain (01M5328FPJT7Q5Q1509BC5F0J7).
     pub fn write(&mut self, key: &Key, body: &Body, time_ms: u64) -> Result<(Id, Applied)> {
         let (seq, before) = self.state.next(&key.public());
+        if let Some(member) = self.state.members().get(&key.public()) {
+            let after = member.last_join().after;
+            if seq <= after {
+                bail!("{}", crate::text::peer_lacks_own_records(seq - 1, after));
+            }
+        }
         let record = Record::sign(key, self.state.riff(), seq, before, time_ms, body)?;
         let checked = check(record.bytes().to_vec(), &self.state)?;
         let id = checked.record.id();
@@ -440,6 +448,7 @@ mod tests {
             key: key.public(),
             user: user.into(),
             host: "h".into(),
+            after: None,
         })
     }
 
@@ -543,6 +552,7 @@ mod tests {
             key: member.public(),
             user: "brett".into(),
             host: "kadomony".into(),
+            after: None,
         });
         peers.write(&owner, &admit, 2).unwrap();
 
@@ -603,6 +613,7 @@ mod tests {
             key: member.public(),
             user: "brett".into(),
             host: "kadomony".into(),
+            after: None,
         });
         let riff_record = Record::sign(
             &owner,

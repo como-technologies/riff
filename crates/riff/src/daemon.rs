@@ -5235,6 +5235,7 @@ mod tests {
                 key: member.public(),
                 user: "brett".into(),
                 host: "kadomony".into(),
+                after: None,
             }))
             .unwrap();
         let hello = Body::Message(Box::new(Message {
@@ -5984,6 +5985,7 @@ mod tests {
                 key: member.public(),
                 user: "brett".into(),
                 host: "kadomony".into(),
+                after: None,
             }))
             .unwrap();
         let riff = here.daemon.riff.get().unwrap().hub.public();

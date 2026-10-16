@@ -19,7 +19,7 @@
 //! | Part | From | Rule |
 //! |---|---|---|
 //! | The owner | the `riff` record | The riff ID is the key of the owner. The record gives its user. |
-//! | The members | `member`, `removed` and `left` | A member key has a user and a host. A `removed` record gives the last sequence number that the key may write. A `left` record is the last record of its key. |
+//! | The members | `member`, `removed` and `left` | A member key has a user and a host for each join. A `removed` record gives the last sequence number that the key may write. A `left` record is the last record of its key in its join. See "A join again". |
 //! | The heads | each record | The last sequence number and the ID of each author: [`Context::next`]. The time of its author of the last record of each author: [`State::last_ms`]. |
 //! | The sessions | `session` | The last record of each session of each author counts (01M51Q0JZR00GHDQSGGSAQR4HG). A session runs until its record says that it ended. |
 //! | The leads | the lead marks of `session` | See "The lead". |
@@ -41,6 +41,34 @@
 //!     B --> L{"the lead"}
 //!     C["mark C names no mark"] --> L
 //!     L -->|"B and C are not named"| H["the higher key of the daemons of B and C"]
+//! ```
+//!
+//! # A join again
+//!
+//! A key that left joins again with a new `member` record of the owner
+//! (01M5328FPJT7Q5Q1509BC5F0J7). Its `after` is the sequence number of
+//! the `left` record of the key. Each `member` record of a key starts a
+//! [`Join`]. The join of a record of the key is the last join whose
+//! `after` is lower than the number of the record: its user and its host
+//! count for that record. The first record of a join again names the
+//! `member` record of the join as the record before it
+//! ([`Context::next`]). So a record that the key signed after its `left`
+//! record, and before the new `member` record, stays refused: before that
+//! record, its author left; after it, it names the wrong record before it.
+//!
+//! The `member` records come in the order of the chain of the owner, and
+//! the writer check of a join again reads only the records of the owner
+//! (01M5328FVZJGCY9VPQFERM7P81). So two daemons that get the first
+//! `member` record, the `left` record and the new `member` record in two
+//! orders have the same joins, the same user and the same state of the
+//! key.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     M1["member: brett, after none"] --> R1["records 1 to 6 of the key: brett"]
+//!     R1 --> L["left: record 7"]
+//!     L --> M2["member: ann, after 7"]
+//!     M2 --> R2["record 8 names the member record of ann: ann"]
 //! ```
 //!
 //! # Holds and pauses
@@ -84,25 +112,116 @@
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 
 use riff_core::name::{SessionUri, ThreadName};
 
 use crate::daemon_key::Public;
 use crate::peer::body::{Body, Message, Plan, Session};
-use crate::peer::record::{Author, Checked, Context, Fault, Id, Standing};
+use crate::peer::record::{Admitted, Author, Checked, Context, Fault, Id, Standing};
 
-/// A member key.
+/// A member key. See "A join again".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Member {
+    /// The user of its last join.
     pub user: String,
+    /// The host of its last join.
     pub host: String,
-    /// The last sequence number that the key may write: the last of its
-    /// `removed` record, or the number of its `left` record.
+    /// The last sequence number that the key may write in its last join:
+    /// the last of its `removed` record, or the number of its `left`
+    /// record after its last join.
     pub until: Option<u64>,
     /// True after a `removed` record of the key.
     pub removed: bool,
-    /// True after the `left` record of the key.
+    /// True after a `left` record of the key after its last join.
     pub left: bool,
+    /// Each join of the key, in the order of the chain of the owner.
+    pub joins: Vec<Join>,
+    /// The sequence number of each `left` record of the key.
+    pub lefts: BTreeSet<u64>,
+    /// The last number of its `removed` record.
+    pub last: Option<u64>,
+}
+
+/// One join of a member key: one `member` record of the owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Join {
+    /// The number of the `left` record of the key before this join: 0
+    /// for its first join.
+    pub after: u64,
+    pub user: String,
+    pub host: String,
+    /// The ID of the `member` record.
+    pub id: Id,
+}
+
+impl Member {
+    /// The member of its first join `join`.
+    fn new(join: Join) -> Member {
+        let mut member = Member {
+            user: String::new(),
+            host: String::new(),
+            until: None,
+            removed: false,
+            left: false,
+            joins: vec![join],
+            lefts: BTreeSet::new(),
+            last: None,
+        };
+        member.settle();
+        member
+    }
+
+    /// The join of the record `seq` of the key: the last join whose
+    /// `after` is lower than `seq`.
+    pub fn join_of(&self, seq: u64) -> &Join {
+        self.joins
+            .iter()
+            .rev()
+            .find(|join| join.after < seq)
+            .unwrap_or(&self.joins[0])
+    }
+
+    /// The last join of the key.
+    pub fn last_join(&self) -> &Join {
+        self.joins.last().unwrap_or(&self.joins[0])
+    }
+
+    /// The last sequence number that the key may write in the join of
+    /// its record `seq`: the last of its `removed` record, or the number
+    /// of its `left` record in that join.
+    pub fn until_of(&self, seq: u64) -> Option<u64> {
+        let left = self.left_after(self.join_of(seq).after);
+        match (left, self.last) {
+            (Some(left), Some(last)) => Some(left.min(last)),
+            (left, last) => left.or(last),
+        }
+    }
+
+    /// The number of the `left` record of the key after its last join.
+    pub fn left_at(&self) -> Option<u64> {
+        self.left_after(self.last_join().after)
+    }
+
+    /// The number of the first `left` record of the key after its record
+    /// `after`.
+    fn left_after(&self, after: u64) -> Option<u64> {
+        self.lefts
+            .range((Bound::Excluded(after), Bound::Unbounded))
+            .next()
+            .copied()
+    }
+
+    /// Sets the user, the host, `until`, `removed` and `left` from the
+    /// joins, the `left` records and the `removed` record.
+    fn settle(&mut self) {
+        let join = self.last_join().clone();
+        self.user = join.user;
+        self.host = join.host;
+        self.until = self.until_of(u64::MAX);
+        self.removed = self.last.is_some();
+        self.left = self.left_at().is_some();
+    }
 }
 
 /// One session of one author: its last `session` record.
@@ -287,9 +406,9 @@ impl State {
     }
 
     /// The host of the key `key`: of the owner from its `riff` record
-    /// (01M521J6T2PWA9JREDXJK6DZ0V), of a member from its `member`
-    /// record. `None` for an owner whose `riff` record names no host, and
-    /// for a key that is not in the riff.
+    /// (01M521J6T2PWA9JREDXJK6DZ0V), of a member from the `member`
+    /// record of its last join. `None` for an owner whose `riff` record
+    /// names no host, and for a key that is not in the riff.
     ///
     /// ```
     /// use riff::daemon_key::Key;
@@ -302,7 +421,8 @@ impl State {
     /// let mut peers = Peers::open(dir.path(), owner.public(), |_| {})?;
     /// let riff = Riff { user: "mike".into(), host: Some("pangolin".into()) };
     /// peers.write(&owner, &Body::Riff(riff), 1)?;
-    /// let member = Member { key: brett, user: "brett".into(), host: "kadomony".into() };
+    /// let host = "kadomony".into();
+    /// let member = Member { key: brett, user: "brett".into(), host, after: None };
     /// peers.write(&owner, &Body::Member(member), 2)?;
     ///
     /// let state = peers.state();
@@ -318,6 +438,17 @@ impl State {
         self.members.get(key).map(|member| member.host.as_str())
     }
 
+    /// The user of the record `seq` of the key `key`: the owner, or a
+    /// member in the join of that record (01M5328FVZJGCY9VPQFERM7P81).
+    pub fn user_at(&self, key: &Public, seq: u64) -> Option<&str> {
+        if *key == self.riff {
+            return self.owner();
+        }
+        self.members
+            .get(key)
+            .map(|member| member.join_of(seq).user.as_str())
+    }
+
     /// Applies the checked record `checked`. The caller checked it with
     /// this state as the [`Context`].
     pub fn keep(&mut self, checked: &Checked) -> Applied {
@@ -326,33 +457,39 @@ impl State {
         self.heads.insert(author, (seq, id));
         self.times.insert(author, record.time_ms());
         self.ids.insert(id);
-        let user = self.user_of(&author).unwrap_or_default().to_owned();
+        let user = self.user_at(&author, seq).unwrap_or_default().to_owned();
         match &checked.body {
             Body::Riff(riff) => {
                 self.owner = Some(riff.user.clone());
                 self.owner_host.clone_from(&riff.host);
             }
             Body::Member(member) => {
-                let entry = self.members.entry(member.key).or_insert(Member {
+                let join = Join {
+                    after: member.after.unwrap_or_default(),
                     user: member.user.clone(),
                     host: member.host.clone(),
-                    until: None,
-                    removed: false,
-                    left: false,
-                });
-                entry.user.clone_from(&member.user);
-                entry.host.clone_from(&member.host);
+                    id,
+                };
+                match self.members.get_mut(&member.key) {
+                    Some(known) => {
+                        known.joins.push(join);
+                        known.settle();
+                    }
+                    None => {
+                        self.members.insert(member.key, Member::new(join));
+                    }
+                }
             }
             Body::Removed(removed) => {
                 if let Some(member) = self.members.get_mut(&removed.key) {
-                    member.removed = true;
-                    member.until = Some(member.until.map_or(removed.last, |u| u.min(removed.last)));
+                    member.last = Some(member.last.map_or(removed.last, |l| l.min(removed.last)));
+                    member.settle();
                 }
             }
             Body::Left(_) => {
                 if let Some(member) = self.members.get_mut(&author) {
-                    member.left = true;
-                    member.until = Some(member.until.map_or(seq, |u| u.min(seq)));
+                    member.lefts.insert(seq);
+                    member.settle();
                 }
             }
             Body::Session(session) => self.session(author, id, record.time_ms(), session),
@@ -610,7 +747,7 @@ impl Context for State {
         self.riff
     }
 
-    fn standing(&self, key: &Public) -> Standing {
+    fn standing(&self, key: &Public, seq: u64) -> Standing {
         if *key == self.riff {
             return Standing::Owner {
                 user: self.owner.clone(),
@@ -618,17 +755,33 @@ impl Context for State {
         }
         match self.members.get(key) {
             Some(member) => Standing::Member {
-                user: member.user.clone(),
-                until: member.until,
+                user: member.join_of(seq).user.clone(),
+                until: member.until_of(seq),
             },
             None => Standing::Unknown,
         }
     }
 
+    fn admitted(&self, key: &Public) -> Option<Admitted> {
+        self.members.get(key).map(|member| Admitted {
+            after: member.last_join().after,
+            removed: member.removed,
+        })
+    }
+
+    /// The first record of a key in a join again names the `member`
+    /// record of that join (01M5328FPJT7Q5Q1509BC5F0J7).
     fn next(&self, author: &Public) -> (u64, Id) {
-        self.heads
-            .get(author)
-            .map_or((1, Id::ZERO), |(seq, id)| (seq + 1, *id))
+        let Some((seq, id)) = self.heads.get(author) else {
+            return (1, Id::ZERO);
+        };
+        let join = self.members.get(author).and_then(|member| {
+            member
+                .joins
+                .iter()
+                .find(|join| join.after > 0 && join.after == *seq)
+        });
+        (seq + 1, join.map_or(*id, |join| join.id))
     }
 
     /// The daemon `author` runs a session with a lead mark: in the
@@ -700,6 +853,7 @@ mod tests {
                     key: d.public(daemon),
                     user: user.into(),
                     host: host.into(),
+                    after: None,
                 })
             };
             let b1 = member(self, 1, "mike", "pangolin");
@@ -853,6 +1007,7 @@ mod tests {
                 key: d.public(2),
                 user: "ann".into(),
                 host: "kadomony".into(),
+                after: None,
             }),
         );
         let kadomony = d.write(2, session(KADOMONY, None));
@@ -1129,7 +1284,7 @@ mod tests {
         let pangolin = &state.members()[&d.public(1)];
         assert!(pangolin.left && pangolin.until == Some(1));
         assert_eq!(
-            state.standing(&d.public(1)),
+            state.standing(&d.public(1), 2),
             Standing::Member {
                 user: "mike".into(),
                 until: Some(1)

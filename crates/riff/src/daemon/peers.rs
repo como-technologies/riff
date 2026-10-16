@@ -197,11 +197,13 @@ impl<R: Runtime + 'static> Daemon<R> {
         let host = crate::identity::this_host();
         let conn = crate::peer::join::ask(links.endpoint(), &invite, &host).await?;
         // The daemon of the owner wrote the member record: this daemon is
-        // a member of the riff of the invite now.
+        // a member of the riff of the invite now. A daemon that left that
+        // riff has its old records, with its `left` record, until the new
+        // member record comes (01M5328FPJT7Q5Q1509BC5F0J7).
         self.switch(invite.riff)?;
         links.serve_joined(conn);
         let _ = tokio::time::timeout(crate::peer::join::LIMIT, async {
-            while hub.read(|state| state.user_of(&me).is_none()) {
+            while hub.read(|state| state.members().get(&me).is_none_or(|member| member.left)) {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
         })
@@ -694,7 +696,7 @@ mod tests {
         let (seq, _) = o.hub().read(|state| state.heads()[&me]);
         assert!(o.hub().read(|state| state.members()[&me].left));
         assert_eq!(
-            o.hub().read(|state| state.standing(&me)),
+            o.hub().read(|state| state.standing(&me, seq + 1)),
             Standing::Member {
                 user: "brett".into(),
                 until: Some(seq)

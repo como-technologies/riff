@@ -41,7 +41,7 @@
 //! let mut peers = Peers::open(dir.path(), owner.public(), |_| {})?;
 //! let riff = Riff { user: "mike".into(), host: Some("thelio".into()) };
 //! peers.write(&owner, &Body::Riff(riff), 1)?;
-//! let member = Member { key: brett, user: "brett".into(), host: "kadomony".into() };
+//! let member = Member { key: brett, user: "brett".into(), host: "kadomony".into(), after: None };
 //! peers.write(&owner, &Body::Member(member), 2)?;
 //!
 //! let rows = shown(peers.state(), owner.public(), &Default::default(), |_| false, |_| None);
@@ -189,6 +189,7 @@ mod tests {
                 key: key(byte).public(),
                 user: user.into(),
                 host: host.into(),
+                after: None,
             };
             peers.write(&owner, &Body::Member(member), 2).unwrap();
         }
