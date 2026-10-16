@@ -558,6 +558,26 @@ mod tests {
         }
     }
 
+    /// 01M51JBET7R9QTT15BXDPM5QG7: the part for workers says one thing
+    /// about a claim that the lead frees. It points to "When riff ends
+    /// your claim", and does not tell the worker to claim again.
+    #[test]
+    fn the_skill_says_one_thing_about_a_claim_that_the_lead_frees() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let start = skill.find("### When you are a worker").unwrap();
+        let end = start + 1 + skill[start + 1..].find("\n## ").unwrap();
+        let part = flat(&skill[start..end]);
+        assert!(
+            part.contains(
+                "A claim that a new start or the lead frees does not count: the server asks \
+                 for no clear. See \"When riff ends your claim\"."
+            ),
+            "{part}"
+        );
+        assert!(!flat(skill).contains("claim again and go on"));
+    }
+
     /// 01M5084K79M5XJT3MP8FFVQKDX: a check calls the riff of a new build
     /// by its path in the one folder of the check, and runs its
     /// `riff init` with `--yes`.
