@@ -5939,6 +5939,23 @@ then.
   machine. `riff-state` decides a post by the live sessions and the
   clock of one server, so two daemons with the same records could get
   two states.
+- **01M51T470TNWVFF97E474FV7BY** In the riff of peers, the user of a
+  session of a daemon is the user of the key of that daemon, also when
+  riff-server gave the session another user.
+- **01M51T4734E3B3Z4BZZJQYYR32** A daemon that runs a session with a
+  lead mark may write a `plan` record, also when another lead mark
+  names that mark. So the writer check of a `plan` record reads only
+  the records of its author, and does not depend on the order of the
+  records of two authors.
+- **01M51VZG27DXSRHBT8M14S7B9A** The riff tools of a session of the
+  daemon with a riff-server act on that riff-server, as in riff 1.x:
+  each session of `riff run`, of a wave and of `riff lead start` that
+  has one. `riff relay watch` of that session waits for its wake on
+  riff-server, and the riff of peers has no record of that session.
+  The daemon serves the riff tools on its riff of peers
+  (01M519Z3FTAZ20DQKDTW09M6NS) only to a session with no riff-server.
+  So the work of one repository is on one riff only
+  (01M519Z506XWTSV1CJ6CCVFXEF).
 - **01M51BFYT2ZGN4W5E5R87GPVCM** A session takes the lead with a
   `session` record that has the lead mark. The record names the ID of
   the record that gave the old lead of its user in the repository its

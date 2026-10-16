@@ -202,6 +202,13 @@ impl Record {
         Ok(Record { bytes })
     }
 
+    /// The record of `bytes` that passed a check before, for example from
+    /// the book of the daemon, with no check again. `None` when the bytes
+    /// are shorter than a header and a signature.
+    pub fn kept(bytes: Vec<u8>) -> Option<Record> {
+        (bytes.len() >= HEADER + SIGNATURE).then_some(Record { bytes })
+    }
+
     /// The bytes of the record.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
@@ -317,9 +324,10 @@ pub trait Context {
     /// its last record: `(1, Id::ZERO)` for an author with no record.
     fn next(&self, author: &Public) -> (u64, Id);
 
-    /// True when the daemon `author` runs a session that is the lead of
-    /// its user: in the repository `thread`, or with `None` in any
-    /// repository.
+    /// True when the daemon `author` runs a session with a lead mark: in
+    /// the repository `thread`, or with `None` in any repository. A mark
+    /// that another mark names counts too, so the answer reads only the
+    /// records of `author` (01M51T4734E3B3Z4BZZJQYYR32).
     fn leads(&self, author: &Public, thread: Option<&ThreadName>) -> bool;
 }
 

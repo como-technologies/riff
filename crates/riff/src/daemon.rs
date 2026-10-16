@@ -68,11 +68,11 @@
 //! - [`Daemon::open_riff`] reads the key of the daemon, then loads the
 //!   state: the newest checkpoint, and the log after it. See "The key of
 //!   the daemon".
-//! - Each change goes through [`Daemon::state`]: one command at a time,
-//!   with its records in the log before its reply
-//!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session act on it
-//!   with peer to peer. Until then, they act on the riff-server of the
-//!   session ([`Daemon::tools_of`]).
+//! - Each change of `riff-state` goes through [`Daemon::state`]: one
+//!   command at a time, with its records in the log before its reply
+//!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session with no
+//!   riff-server act on the riff of peers, not on it
+//!   (01M51QQGYDR9NZ702NFEQR512W, [`Daemon::tools_of`]).
 //! - At the stop, [`Daemon::serve`] writes a checkpoint. A start after a
 //!   crash replays the log after the last checkpoint.
 //! - `riff daemon status` shows the public key of the daemon, the ID of
@@ -178,8 +178,8 @@
 //! |---|---|
 //! | [`SessionAsk::Hello`] | says [`Say::Session`]: the session ID, the item and the name of the container |
 //! | [`SessionAsk::Relay`] | relays the session ([`crate::session_relay`]) |
-//! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk ([`Daemon::tools_of`]) |
-//! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session ([`World::wake`]) |
+//! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk: on its riff-server, or on the riff of peers of the daemon for a session with no riff-server ([`Daemon::tools_of`]) |
+//! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session: from riff-server ([`World::wake`]), or from the riff of peers ([`crate::peer::talk::Hub::wait`]) for a session with no riff-server |
 //!
 //! # A session
 //!
@@ -364,6 +364,7 @@ use crate::peer::body::Body;
 use crate::peer::keep::{Outcome, Peers};
 use crate::peer::record::Id;
 use crate::peer::state::{Applied, State as PeerState};
+use crate::peer::talk::{Hub, Session as PeerTalk};
 use crate::room::{Limit, Room, Slot};
 use crate::run::{Scrub, user_line};
 use crate::runtime::{Bind, End, Env, Runtime, SessionSpec, Source};
@@ -732,7 +733,9 @@ pub struct Start {
     pub values: Vec<(String, String)>,
     /// The secrets that no event shows ([`Scrub`]).
     pub secrets: Vec<String>,
-    /// The riff-server of the session: its riff tools act there.
+    /// The riff-server of the session: its riff tools act there. Empty
+    /// for a session with no riff-server: its riff tools act on the riff
+    /// of peers of the daemon (01M51VZG27DXSRHBT8M14S7B9A).
     pub server: String,
     /// The URI of the session.
     pub me: SessionUri,
@@ -1075,7 +1078,8 @@ pub struct Record {
     pub live: Live,
     /// The folder of the session: `events.jsonl` is there.
     pub folder: PathBuf,
-    /// The riff-server of the session: its riff tools act there.
+    /// The riff-server of the session: its riff tools act there. Empty
+    /// for a session with no riff-server ([`Record::on_peers`]).
     pub server: String,
     /// The URI of the session.
     pub me: SessionUri,
@@ -1102,6 +1106,14 @@ pub struct Record {
     /// (01M51KJ1R9K7A7RW8T8XH8VW43).
     #[serde(default)]
     pub interrupt: bool,
+}
+
+impl Record {
+    /// True when the session has no riff-server: its riff tools act on
+    /// the riff of peers of the daemon (01M51VZG27DXSRHBT8M14S7B9A).
+    pub fn on_peers(&self) -> bool {
+        self.server.is_empty()
+    }
 }
 
 /// What a link of a session tells the task that waits for its end.
@@ -1455,12 +1467,11 @@ struct Running {
 /// The riff of a daemon: its key ([`crate::daemon_key`]), the user of
 /// the owner, and the state of riff on the machine.
 struct Riff {
-    key: Key,
     owner: String,
     state: Local,
-    /// The records of the riff of peers, and their state
-    /// ([`crate::peer`]).
-    peers: Mutex<Peers>,
+    /// The key, the records and the state of the riff of peers, and the
+    /// wakes of the sessions ([`crate::peer::talk`]).
+    hub: Arc<Hub>,
 }
 
 /// The object of the riff of the daemon in its state: the riff ID and
@@ -1753,12 +1764,19 @@ impl<R: Runtime + 'static> Daemon<R> {
         let peers = open_peers(&state_dir, &key, &owner, &mut say)?;
         self.riff
             .set(Riff {
-                key,
                 owner,
                 state,
-                peers: Mutex::new(peers),
+                hub: Arc::new(Hub::new(key, peers)),
             })
-            .map_err(|_| anyhow!("the riff daemon has its riff already"))
+            .map_err(|_| anyhow!("the riff daemon has its riff already"))?;
+        // A session that started while the daemon waited for its key gets
+        // its record now.
+        for record in self.records() {
+            if let Some(start) = self.peer_start(&record) {
+                let _ = start.await;
+            }
+        }
+        Ok(())
     }
 
     /// Writes a record of the daemon with the body `body`: signed by its
@@ -1766,24 +1784,63 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// ([`Peers::write`]). It fails while the daemon has no riff.
     pub fn write(&self, body: &Body) -> Result<(Id, Applied)> {
         let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
-        let mut peers = riff.peers.lock().unwrap_or_else(PoisonError::into_inner);
-        peers.write(&riff.key, body, u64::try_from(now_ms()).unwrap_or_default())
+        riff.hub.write(body)
     }
 
     /// Takes the bytes of a record of another daemon ([`Peers::keep`]).
     /// It fails while the daemon has no riff.
     pub fn keep(&self, bytes: Vec<u8>) -> Result<Outcome> {
         let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
-        let mut peers = riff.peers.lock().unwrap_or_else(PoisonError::into_inner);
-        peers.keep(bytes)
+        riff.hub.keep(bytes)
     }
 
     /// Reads the state of the riff of peers with `read`. `None` while the
     /// daemon has no riff.
     pub fn peers<T>(&self, read: impl FnOnce(&PeerState) -> T) -> Option<T> {
-        let riff = self.riff.get()?;
-        let peers = riff.peers.lock().unwrap_or_else(PoisonError::into_inner);
-        Some(read(peers.state()))
+        Some(self.riff.get()?.hub.read(read))
+    }
+
+    /// Writes the `session` record of the start of the session of
+    /// `record`, when the session has no riff-server, the daemon has its
+    /// riff and the riff has no record of the session that runs. A
+    /// worker claims its item. The lead takes the lead
+    /// (01M519Z3FTAZ20DQKDTW09M6NS, 01M51VZG27DXSRHBT8M14S7B9A).
+    /// The write syncs a file, so it runs on a thread for blocking work:
+    /// await the handle when the record must be there.
+    fn peer_start(&self, record: &Record) -> Option<JoinHandle<()>> {
+        if !record.on_peers() {
+            return None;
+        }
+        let hub = self.riff.get()?.hub.clone();
+        let claims = if record.terminal {
+            Vec::new()
+        } else {
+            vec![record.live.item.clone()]
+        };
+        let (me, lead, name) = (record.me.clone(), record.terminal, record.live.name.clone());
+        Some(tokio::task::spawn_blocking(move || {
+            if let Err(e) = hub.start(&me, !lead, lead, claims) {
+                eprintln!("riff daemon: {name}: {e:#}");
+            }
+        }))
+    }
+
+    /// Writes the `session` record of the end of the session of `record`,
+    /// when the session has no riff-server and the daemon has its riff.
+    fn peer_end(&self, record: &Record) {
+        let Some(riff) = self.riff.get().filter(|_| record.on_peers()) else {
+            return;
+        };
+        let (hub, id, name) = (
+            riff.hub.clone(),
+            record.live.session.clone(),
+            record.live.name.clone(),
+        );
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = hub.end(&id) {
+                eprintln!("riff daemon: {name}: {e:#}");
+            }
+        });
     }
 
     /// While the daemon has no riff, it waits for `line`.
@@ -1823,8 +1880,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The state of riff on this machine, when the daemon has its riff.
-    /// The riff tools of a session act on riff-server 1.x until peer to
-    /// peer (Wave B).
+    /// The riff tools of a session do not act on it
+    /// ([`Daemon::tools_of`]).
     pub fn state(&self) -> Option<&Local> {
         self.riff.get().map(|riff| &riff.state)
     }
@@ -1881,7 +1938,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     .state
                     .read(|state| (state.riff_id(), state.written_position()))
                     .await;
-                let key = riff.key.public().to_string();
+                let key = riff.hub.public().to_string();
                 (None, Some(key), id, Some(riff.owner.clone()), position)
             }
             None => {
@@ -2248,6 +2305,8 @@ impl<R: Runtime + 'static> Daemon<R> {
         match opened {
             Ok(door) => {
                 *owned.door.lock().unwrap_or_else(PoisonError::into_inner) = Some(door);
+                let record = owned.lock().record.clone();
+                self.peer_start(&record);
                 Ok((owned, noted))
             }
             Err(e) => {
@@ -2584,7 +2643,12 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// and its record go. It gives the connections that followed it.
     fn close(&self, owned: &Owned) -> Vec<Out> {
         // From now on, no step writes its record again.
-        owned.lock().ended = true;
+        let record = {
+            let mut state = owned.lock();
+            state.ended = true;
+            state.record.clone()
+        };
+        self.peer_end(&record);
         if let Some(door) = owned
             .door
             .lock()
@@ -2647,7 +2711,18 @@ impl<R: Runtime + 'static> Daemon<R> {
             Ok(SessionAsk::Watch { .. }) => {
                 let (out, written) = writer(write);
                 let record = owned.lock().record.clone();
-                let wake = self.world.wake(&record);
+                // The daemon wakes a session with no riff-server itself
+                // (01M519Z3DB3MVP0FK3FBC9KSGD, 01M51VZG27DXSRHBT8M14S7B9A).
+                let wake: crate::wave::BoxFuture<'_, Result<String>> =
+                    match (record.on_peers(), self.riff.get()) {
+                        (true, Some(riff)) => {
+                            let hub = riff.hub.clone();
+                            let id = record.live.session.clone();
+                            Box::pin(async move { Ok(hub.wait(&id).await) })
+                        }
+                        (true, None) => Box::pin(async { bail!("{}", text::DAEMON_NO_RIFF_YET) }),
+                        (false, _) => self.world.wake(&record),
+                    };
                 // The wait ends when the relay leaves.
                 let gone = async { while let Ok(Some(_)) = lines.next_line().await {} };
                 tokio::select! {
@@ -2690,16 +2765,29 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
     }
 
-    /// The riff tools of the session of `record`: they act on its
-    /// riff-server as that session, with the sign-in of the person on
-    /// this machine (01M4ZHSZV46RF3XDXDTQXWGXRG). That session is the
-    /// worker session of `riff run` or of a wave, which holds the claim
-    /// of the item. The session gets only the tools that act on
-    /// riff-server, and on no folder of the host and no claim
+    /// The riff tools of the session of `record`. They act on the
+    /// riff-server of the session, as in riff 1.x, with the sign-in of
+    /// the person on this machine (01M4ZHSZV46RF3XDXDTQXWGXRG,
+    /// 01M51VZG27DXSRHBT8M14S7B9A). That session is the worker session
+    /// of `riff run` or of a wave, which holds the claim of the item. A
+    /// session with no riff-server talks on the riff of peers of the
+    /// daemon ([`crate::peer::talk`], 01M519Z3FTAZ20DQKDTW09M6NS): it
+    /// fails while the daemon has no riff. The session gets only the
+    /// tools that talk, and act on no folder of the host and no claim
     /// ([`crate::mcp::CONTAINER_TOOLS`], 01M4ZV3B6T2KB09WJ59F07HXET).
-    pub fn tools_of(record: &Record) -> Result<crate::mcp::Tools> {
-        let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
-        let tools = crate::mcp::Tools::new(api, record.me.clone()).as_worker(!record.terminal);
+    pub fn tools_of(&self, record: &Record) -> Result<crate::mcp::Tools> {
+        let tools = if record.on_peers() {
+            let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
+            // Each tool of the session talks, so no call reaches the
+            // riff-server of this client.
+            let api = crate::api::Api::new(&record.server);
+            crate::mcp::Tools::new(api, record.me.clone())
+                .with_talk(Arc::new(PeerTalk::new(riff.hub.clone())))
+        } else {
+            let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
+            crate::mcp::Tools::new(api, record.me.clone())
+        }
+        .as_worker(!record.terminal);
         Ok(if record.terminal {
             tools.in_lead_container()
         } else {
@@ -2813,7 +2901,11 @@ impl<R: Runtime + 'static> Daemon<R> {
     ) {
         use rmcp::ServiceExt;
         let record = owned.lock().record.clone();
-        let tools = match Self::tools_of(&record) {
+        // The tools need the session record of the session.
+        if let Some(start) = self.peer_start(&record) {
+            let _ = start.await;
+        }
+        let tools = match self.tools_of(&record) {
             Ok(tools) => tools,
             Err(e) => {
                 eprintln!("riff daemon: {}: {e:#}", record.live.name);
@@ -4743,7 +4835,7 @@ mod tests {
         let (daemon, _) = open_key(&dir).await;
         let status = daemon.status().await;
         let owner = status.owner.clone().unwrap();
-        let key = daemon.riff.get().unwrap().key.public();
+        let key = daemon.riff.get().unwrap().hub.public();
         let first = daemon
             .peers(|peers| (peers.owner().map(str::to_owned), peers.heads().clone()))
             .unwrap();
@@ -4961,6 +5053,227 @@ mod tests {
         (client, name, relay)
     }
 
+    /// `riff relay watch` of the session `name`: the line of its next
+    /// wake.
+    fn wake_of(dir: &Path, name: &str) -> JoinHandle<String> {
+        let socket = session_dir(dir, name);
+        tokio::spawn(async move {
+            let conn = connect_in(&socket, SOCKET).await.unwrap();
+            let (read, mut write) = conn.into_split();
+            let ask = serde_json::to_string(&SessionAsk::Watch { protocol: PROTOCOL }).unwrap();
+            write
+                .write_all(format!("{ask}\n").as_bytes())
+                .await
+                .unwrap();
+            let line = BufReader::new(read)
+                .lines()
+                .next_line()
+                .await
+                .unwrap()
+                .unwrap();
+            drop(write);
+            match serde_json::from_str::<Say>(&line).unwrap() {
+                Say::Line { text } => text,
+                other => panic!("{other:?}"),
+            }
+        })
+    }
+
+    /// A client of the riff tools of one session, on its socket, as
+    /// `riff relay mcp` is.
+    struct ToolsOf {
+        lines: Lines<BufReader<OwnedReadHalf>>,
+        write: OwnedWriteHalf,
+        id: u64,
+    }
+
+    impl ToolsOf {
+        async fn connect(dir: &Path, name: &str) -> ToolsOf {
+            let conn = connect_in(&session_dir(dir, name), SOCKET).await.unwrap();
+            let (read, write) = conn.into_split();
+            let mut tools = ToolsOf {
+                lines: BufReader::new(read).lines(),
+                write,
+                id: 0,
+            };
+            let hello = SessionAsk::Mcp {
+                protocol: PROTOCOL,
+                client: None,
+            };
+            tools.send(&serde_json::to_value(hello).unwrap()).await;
+            let init = serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "claude-code", "version": "2"},
+            });
+            tools.ask("initialize", init).await;
+            let initialized =
+                serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+            tools.send(&initialized).await;
+            tools
+        }
+
+        async fn send(&mut self, value: &Value) {
+            let line = format!("{value}\n");
+            self.write.write_all(line.as_bytes()).await.unwrap();
+        }
+
+        async fn ask(&mut self, method: &str, params: Value) -> Value {
+            self.id += 1;
+            let ask = serde_json::json!({"jsonrpc": "2.0", "id": self.id, "method": method, "params": params});
+            self.send(&ask).await;
+            loop {
+                let line = self.lines.next_line().await.unwrap().unwrap();
+                let answer: Value = serde_json::from_str(&line).unwrap();
+                if answer["id"] == self.id {
+                    return answer;
+                }
+            }
+        }
+
+        /// The names of the tools, in order.
+        async fn names(&mut self) -> Vec<String> {
+            let list = self.ask("tools/list", serde_json::json!({})).await;
+            let mut names: Vec<String> = list["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tool| tool["name"].as_str().unwrap().to_owned())
+                .collect();
+            names.sort();
+            names
+        }
+
+        /// The text of a call of `tool`, and true when it is an error.
+        async fn call(&mut self, tool: &str, arguments: Value) -> (String, bool) {
+            let params = serde_json::json!({"name": tool, "arguments": arguments});
+            let answer = self.ask("tools/call", params).await;
+            let result = &answer["result"];
+            let text = result["content"][0]["text"].as_str().unwrap_or_default();
+            (text.to_owned(), result["isError"] == true)
+        }
+
+        /// The text of a call of `tool` that must not be an error.
+        async fn ok(&mut self, tool: &str, arguments: Value) -> String {
+            let (text, error) = self.call(tool, arguments).await;
+            assert!(!error, "{tool}: {text}");
+            text
+        }
+    }
+
+    /// 01M519Z3FTAZ20DQKDTW09M6NS, 01M519Z3DB3MVP0FK3FBC9KSGD,
+    /// 01M51VZG27DXSRHBT8M14S7B9A: a session of the fake runtime with no
+    /// riff-server posts, reads, tells and sets its status through the
+    /// daemon. A second session wakes on a message to it. A worker gets
+    /// only the tools that talk. The lead also gets `lead`, `hold`,
+    /// `free`, `pause` and `resume`.
+    #[tokio::test]
+    async fn the_tools_of_a_session_talk_through_the_daemon_with_no_riff_server() {
+        use serde_json::json;
+
+        let world: Arc<dyn World> = Arc::new(Server::default());
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let start = |name: &str, item: &str| Start {
+            server: String::new(),
+            ..here.start(name, item)
+        };
+        let (_a, a) = here
+            .started(start("riff-issue-1-aaaaaaaa", "issue-1"))
+            .await;
+        let (_b, b) = here
+            .started(start("riff-issue-2-bbbbbbbb", "issue-2"))
+            .await;
+        let lead = Start {
+            terminal: true,
+            ..start("riff-lead-o-r", "lead")
+        };
+        let (_l, l) = here.started(lead).await;
+        until(|| here.daemon.peers(|peers| peers.runs().count()) == Some(3)).await;
+        let (mut ta, mut tb, mut tl) = (
+            ToolsOf::connect(&here.dir, &a).await,
+            ToolsOf::connect(&here.dir, &b).await,
+            ToolsOf::connect(&here.dir, &l).await,
+        );
+        let sorted = |names: &[&str]| {
+            let mut names: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+            names.sort();
+            names
+        };
+        assert_eq!(ta.names().await, sorted(&crate::mcp::CONTAINER_TOOLS));
+        assert_eq!(tl.names().await, sorted(&crate::mcp::LEAD_TOOLS));
+
+        // A posts to B, and B wakes. B reads the message.
+        let b_id = "riff-issue-2-bbbbbbbb-session";
+        let woke = wake_of(&here.dir, &b);
+        let posted = ta
+            .ok(
+                "post",
+                json!({"body": "hello b", "to": [{"session": b_id}]}),
+            )
+            .await;
+        assert!(posted.contains("Woke "), "{posted}");
+        let line = woke.await.unwrap();
+        assert!(
+            line.contains("wrote to you in como-technologies/riff"),
+            "{line}"
+        );
+        let read = tb.ok("read", json!({})).await;
+        assert!(read.contains("hello b"), "{read}");
+        assert!(!tb.ok("read", json!({})).await.contains("hello b"));
+
+        // A tells B: a direct message, and B reads it.
+        let woke = wake_of(&here.dir, &b);
+        ta.ok("tell", json!({"session": b_id, "body": "a direct word"}))
+            .await;
+        assert!(woke.await.unwrap().contains("a direct message"));
+        let read = tb.ok("read", json!({})).await;
+        assert!(read.contains("a direct word"), "{read}");
+
+        // A sets its status, and who shows it. whoami of A shows its claim.
+        ta.ok("status", json!({"step": "runs the tests"})).await;
+        let who = tb.ok("who", json!({})).await;
+        assert!(who.contains("runs the tests"), "{who}");
+        let whoami = ta.ok("whoami", json!({})).await;
+        assert!(whoami.contains("claim=issue-1"), "{whoami}");
+        assert!(
+            tb.ok("threads", json!({}))
+                .await
+                .contains("como-technologies/riff")
+        );
+
+        // A worker has no tool of the lead.
+        let (refused, error) = ta
+            .call("hold", json!({"item": "issue-9", "reason": "x"}))
+            .await;
+        assert!(error, "{refused}");
+
+        // The lead holds and frees an item.
+        let holds = || here.daemon.peers(|peers| peers.holds().count());
+        tl.ok(
+            "hold",
+            json!({"item": "issue-9", "reason": "wait for Mike"}),
+        )
+        .await;
+        assert_eq!(holds(), Some(1));
+        tl.ok("free", json!({"item": "issue-9"})).await;
+        assert_eq!(holds(), Some(0));
+
+        // The lead pauses the repository: A wakes, and whoami says so.
+        let woke = wake_of(&here.dir, &a);
+        tl.ok("pause", json!({})).await;
+        assert!(woke.await.unwrap().contains("wrote to you"));
+        assert!(ta.ok("whoami", json!({})).await.contains("paused"));
+        tl.ok("resume", json!({})).await;
+        assert_eq!(here.daemon.peers(|peers| peers.pauses().count()), Some(0));
+
+        // The lead is the lead already. A worker cannot take the lead.
+        let led = tl.ok("lead", json!({})).await;
+        assert!(led.starts_with("You are the lead of "), "{led}");
+        let (_, error) = ta.call("lead", json!({})).await;
+        assert!(error);
+    }
+
     #[tokio::test]
     async fn the_lead_runs_with_a_terminal_counts_in_no_limit_and_leaves_riff_server_at_its_end() {
         let server = Arc::new(Server::default());
@@ -4990,27 +5303,11 @@ mod tests {
                 .unwrap();
         assert!(record.terminal && record.inputs.is_empty());
 
-        // riff relay watch gets the next wake of the session.
-        let socket = session_dir(&here.dir, &name);
-        let conn = connect_in(&socket, SOCKET).await.unwrap();
-        let (read, mut write) = conn.into_split();
-        let ask = serde_json::to_string(&SessionAsk::Watch { protocol: PROTOCOL }).unwrap();
-        write
-            .write_all(format!("{ask}\n").as_bytes())
-            .await
-            .unwrap();
-        let line = BufReader::new(read)
-            .lines()
-            .next_line()
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<Say>(&line).unwrap(),
-            Say::Line {
-                text: "a wake of lead".into()
-            }
-        );
+        // The lead has a riff-server: riff relay watch gets the next wake
+        // of the session there, and the riff of peers of the daemon has no
+        // record of it (01M51VZG27DXSRHBT8M14S7B9A).
+        assert_eq!(wake_of(&here.dir, &name).await.unwrap(), "a wake of lead");
+        assert_eq!(here.daemon.peers(|peers| peers.runs_all().count()), Some(0));
 
         // A takeover of the lead is refused: a person attaches to it.
         let (_, refused) = take_over(&here.dir, &name).await;

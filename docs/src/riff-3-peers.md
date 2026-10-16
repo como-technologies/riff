@@ -271,6 +271,10 @@ flowchart TD
   or the claims of each other.
 - The work of one repository runs on 1.x or on 3.0, not on both at
   one time. Mike decides when a repository moves.
+- Until Wave C, each session of `riff run`, of a wave and of
+  `riff lead start` has a riff-server, so its riff tools act on 1.x.
+  See
+  [The riff tools of a session](development.md#the-riff-tools-of-a-session).
 - Until Wave C, the member commands of 1.x take `--email`:
   `riff invite --email EMAIL`, `riff remove --email EMAIL` and
   `riff members --email`.

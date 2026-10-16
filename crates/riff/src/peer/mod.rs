@@ -16,9 +16,11 @@
 //! | The state of the riff: what the set of records gives | [`state`] |
 //! | The file of the records that a daemon keeps | [`book`] |
 //! | The state and the book together: write and keep a record | [`keep`] |
+//! | The riff tools of a session of the daemon on its records | [`talk`] |
 
 pub mod body;
 pub mod book;
 pub mod keep;
 pub mod record;
 pub mod state;
+pub mod talk;

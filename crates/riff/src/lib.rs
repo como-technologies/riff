@@ -130,6 +130,7 @@ pub mod smoke;
 pub mod state;
 pub mod style;
 pub mod takeover;
+pub mod talk;
 pub mod temp;
 pub mod terminal;
 pub mod text;

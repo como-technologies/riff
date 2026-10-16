@@ -605,15 +605,15 @@ binary. When it is not static, the daemon starts no container, and
 its error names `riff update`. See
 [Get the static riff](start-a-riff.md#get-the-static-riff).
 
-The daemon also keeps the state of riff on your machine: the riff of
-your machine, and later the claims, the messages and the plan of its
-sessions. It uses the state machine of riff-server, the crate
-`riff-state`. The log and the checkpoints of the state are in
-`~/.local/share/riff/daemon/state`. The first start of the daemon
-makes its key and the riff (see
+The daemon also keeps the state of riff on your machine, in
+`~/.local/share/riff/daemon/state`: the records of its riff of peers
+in the file `records`, and the log and the checkpoints of `riff-state`
+for the ID of the riff. The messages, the status, the lead marks, the
+holds and the pauses of its sessions with no riff-server are records
+(see [riff 3.0: peers](riff-3-peers.md#the-records)). The first start
+of the daemon makes its key and the riff (see
 [See the key of the daemon](#see-the-key-of-the-daemon)). Each next
-start loads the newest checkpoint and the log after it, so the state
-stays.
+start reads the records again, so the state stays.
 
 ### Install the daemon
 
@@ -929,17 +929,51 @@ the session also has each event, with no secret.
   `riff relay` is the entrypoint of the container. So the riff in a
   session is the riff of your machine.
 - The riff tools that talk, through the relay: `whoami`, `who`,
-  `threads`, `read`, `post`, `tell`, `status` and `blocked`. Until
-  riff 3.0 has its own claims, they act on your riff-server as the
-  worker session of `riff run` or of the wave, which holds the item.
-  The session gets no tool that acts on your machine or on a claim:
-  riff refuses `claim`, `release`, `leave`, `move` and the tools of the
+  `threads`, `read`, `post`, `tell`, `status` and `blocked`. They act
+  on your riff-server as the worker session of `riff run` or of the
+  wave, which holds the item: see
+  [The riff tools of a session](#the-riff-tools-of-a-session). The
+  session gets no tool that acts on your machine or on a claim: riff
+  refuses `claim`, `release`, `leave`, `move` and the tools of the
   lead. `riff run` or the daemon does the claim, the release and the
   verify request.
 
 A commit of the session has your git identity, no signature, and a
 `Riff-Session:` trailer. The table of what sessions share is on the
 page [riff 3.0](riff-3.md).
+
+### The riff tools of a session
+
+The riff tools of a session of the daemon act on the riff-server of
+the session, as in riff 1.x. Each session of `riff run`, of a wave and
+of `riff lead start` has your riff-server. So the lead of your user
+sees each post of the session, and `riff relay watch` of the session
+wakes on a message of riff-server.
+
+A session with no riff-server talks on the riff of peers of the
+daemon, with no riff-server: each post, status, lead mark, hold and
+pause is a record of the daemon (see
+[riff 3.0: peers](riff-3-peers.md)). The daemon writes a record at the
+start and at the end of each such session, and a worker claims its
+item in it. A session of 1.x and a session of the riff of peers do not
+see the messages of each other. So the work of a repository is on one
+riff only. A repository gets sessions with no riff-server when it
+moves to riff 3.0 (Wave C).
+
+```mermaid
+flowchart LR
+    S["a session of the daemon: post, read, tell, status"] --> Q{"a riff-server?"}
+    Q -- "yes: riff run, a wave, riff lead start" --> R["your riff-server: the lead of your user sees it"]
+    Q -- "no" --> D["the riff daemon: its records"]
+    D -- "a message to a session of the daemon" --> W["riff relay watch of that session wakes"]
+```
+
+In the riff of peers, a session has the user of the key of the daemon.
+To see the sessions, the key and the owner of that riff:
+
+```sh
+riff daemon status
+```
 
 ## Let riff run the wave
 
@@ -1157,11 +1191,13 @@ clone is in the data folder of riff, for example:
 git -C ~/.local/share/riff/leads/OWNER-REPO/clone status
 ```
 
-The lead gets the riff tools that talk, and the tools of a lead that
-act on riff-server: `lead`, `hold`, `free`, `pause` and `resume`. It
-gets its wakes from `/opt/riff/riff relay watch`, a background task
-that ends at each wake. The instructions of its riff tools tell it to
-run that task. It plans the waves with `/opt/riff/riff wave`: see
+The lead gets the riff tools that talk, and the tools of a lead:
+`lead`, `hold`, `free`, `pause` and `resume`. They act on your
+riff-server (see
+[The riff tools of a session](#the-riff-tools-of-a-session)). It gets
+its wakes from `/opt/riff/riff relay watch`, a background task that
+ends at each wake. The instructions of its riff tools tell it to run
+that task. It plans the waves with `/opt/riff/riff wave`: see
 [Waves](waves.md). To make it the lead of your user, tell it to call the
 riff tool `lead`.
 

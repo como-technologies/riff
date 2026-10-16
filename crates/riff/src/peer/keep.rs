@@ -65,7 +65,20 @@ impl Peers {
     pub fn open(dir: &Path, riff: Public, mut say: impl FnMut(String)) -> Result<Peers> {
         let (book, kept) = Book::open(dir)?;
         let state = replay(riff, kept, &mut say);
-        Ok(Peers { state, book })
+        let mut peers = Peers { state, book };
+        // A crash after the append of a `removed` record and before the
+        // drop leaves the later records of its key in the book.
+        let removed: Vec<(Public, u64)> = peers
+            .state
+            .members()
+            .iter()
+            .filter(|(_, member)| member.removed)
+            .filter_map(|(key, member)| Some((*key, member.until?)))
+            .collect();
+        for (key, last) in removed {
+            peers.drop_after(key, last)?;
+        }
+        Ok(peers)
     }
 
     /// The state of the riff.
@@ -127,11 +140,8 @@ impl Peers {
             .records()?
             .into_iter()
             .filter(|bytes| {
-                // Each record in the book passed its check, so it has a
-                // whole header.
-                let author = Public::from_bytes(bytes[34..66].try_into().expect("32 bytes"));
-                let seq = u64::from_be_bytes(bytes[66..74].try_into().expect("8 bytes"));
-                author != key || seq <= last
+                Record::kept(bytes.clone())
+                    .is_none_or(|record| record.author() != key || record.seq() <= last)
             })
             .collect();
         self.book.rewrite(&records)?;
@@ -296,6 +306,28 @@ mod tests {
         drop(first);
         let first = Peers::open(one.path(), riff, |_| {}).unwrap();
         assert_eq!(first.state().view(), second.state().view());
+
+        // A crash after the append of the removed record, and before the
+        // drop: the book still holds the later records of the key. The
+        // next open drops them.
+        drop(first);
+        let three = tempfile::tempdir().unwrap();
+        let (mut book, _) = crate::peer::book::Book::open(three.path()).unwrap();
+        for record in [
+            &riff_record,
+            &admit,
+            &chain[0],
+            &chain[1],
+            &chain[2],
+            &removed,
+        ] {
+            book.append(record.bytes()).unwrap();
+        }
+        drop(book);
+        let third = Peers::open(three.path(), riff, |_| {}).unwrap();
+        assert_eq!(third.state().view(), second.state().view());
+        let (_, kept) = crate::peer::book::Book::open(three.path()).unwrap();
+        assert_eq!(kept.len(), 4);
     }
 
     /// A daemon writes no record that fails its own check: a member
