@@ -4072,6 +4072,8 @@ worker. Each pane runs `claude "Join the riff."` in the main worktree,
 with no Remote Control and no recap. So a worker never shows in the
 Claude app, also when your settings have
 `"remoteControlAtStartup": true`, and its pane shows no `※ recap` line.
+It also gets the settings of [The auto mode settings of a
+session](#the-auto-mode-settings-of-a-session).
 riff gives these settings on the command line of each worker. Your
 settings file does not change. Each worker joins the riff and finds its
 own work. A second `riff workers start` adds panes to the same window.
@@ -4138,6 +4140,58 @@ pgrep -a rust-analyzer
 
 A worker that started before this release keeps its server. Stop it
 with `riff workers stop`. riff starts new workers by itself.
+
+#### The auto mode settings of a session
+
+In auto mode, Claude Code can block a normal step. After some blocks,
+when the settings have no `autoMode.environment` entries, Claude Code
+shows the dialog "Teach auto mode about your environment?" at the end
+of a turn. No person answers it in a worker. A wake that riff types
+into the pane can pick a choice. So riff gives each session that it
+starts two Claude Code settings:
+
+| Setting | Value | Why |
+|---|---|---|
+| `skillOverrides` | `{"auto-mode-setup": "off"}` | No dialog, and no `/auto-mode-setup`. |
+| `autoMode.environment` | `"$defaults"`, then the places of riff work | Auto mode blocks fewer normal steps. `"$defaults"` keeps the entries of Claude Code. |
+
+The places of riff work are the GitHub owner of the repository, the
+repository of riff with its releases, `crates.io`, `ghcr.io` and the
+riff server of the session.
+
+```mermaid
+flowchart LR
+    R["riff: the owner of the repository,<br/>the riff server"] --> A["skillOverrides<br/>autoMode.environment"]
+    A -- "riff workers start" --> W["the command line<br/>of each worker"]
+    A -- "the daemon" --> S["settings.json of<br/>each session"]
+```
+
+- A worker gets them on its command line, with `--settings`. Your
+  settings file does not change. A worker also reads your own entries
+  in `~/.claude/settings.json`: Claude Code adds the entries of each
+  place.
+- A session of the daemon gets them in the `settings.json` of its own
+  Claude folder. The lead in a container gets each missing one at each
+  start.
+
+Claude Code does not read `autoMode` from the project settings of a
+repository. So riff does not write them there.
+
+Check that each worker has the settings. Each worker shows two lines:
+its `riff workers run` and its `claude`:
+
+```sh
+pgrep -af '"auto-mode-setup":"off"'
+```
+
+A worker that started before this release shows no line. Stop it with
+`riff workers stop`. riff starts new workers by itself.
+
+See the entries that auto mode uses in your own session:
+
+```sh
+claude auto-mode config
+```
 
 #### Give workers another MCP server
 

@@ -928,6 +928,58 @@ mod tests {
     }
 
     #[test]
+    fn the_auto_mode_settings_keep_each_other_skill_and_entry() {
+        let trust = Trust {
+            owner: Some("acme"),
+            server: None,
+        };
+        let text = r#"{
+            "skillOverrides": {"other": "off", "auto-mode-setup": "on"},
+            "autoMode": {"environment": ["Mine"], "allow": ["$defaults"]}
+        }"#;
+        let out: Value =
+            serde_json::from_str(&with_auto_mode(text, &trust).unwrap().unwrap()).unwrap();
+        assert_eq!(
+            out["skillOverrides"],
+            json!({"other": "off", "auto-mode-setup": "off"})
+        );
+        assert_eq!(out["autoMode"]["allow"], json!(["$defaults"]));
+        let mut want = vec![json!("Mine")];
+        want.extend(environment(&trust).into_iter().map(Value::from));
+        assert_eq!(out["autoMode"]["environment"], Value::Array(want));
+    }
+
+    #[test]
+    fn the_auto_mode_settings_fail_on_a_key_of_the_wrong_type() {
+        for text in [
+            r#"{"skillOverrides": []}"#,
+            r#"{"autoMode": []}"#,
+            r#"{"autoMode": {"environment": "x"}}"#,
+            "[1]",
+            "no json",
+        ] {
+            assert!(with_auto_mode(text, &Trust::default()).is_err(), "{text}");
+        }
+    }
+
+    #[test]
+    fn each_environment_entry_is_one_line_of_prose_with_no_quote() {
+        // A worker gets the entries in a quoted argument of a shell
+        // command, and the classifier reads each one as a sentence.
+        let trust = Trust {
+            owner: Some("acme"),
+            server: Some("http://h:7878"),
+        };
+        for entry in environment(&trust).iter().skip(1) {
+            assert!(
+                !entry.contains(['\n', '\'']) && !entry.contains("  "),
+                "{entry:?}"
+            );
+            assert!(entry.ends_with('.'), "{entry:?}");
+        }
+    }
+
+    #[test]
     fn a_clone_gets_its_default_branch() {
         let dir = tempfile::tempdir().unwrap();
         git_in(dir.path(), &["init", "-q", "-b", "trunk"]);

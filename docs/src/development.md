@@ -690,6 +690,10 @@ the session also has each event, with no secret.
   `settings.json`, for example `Bash(gh issue view *)` and
   `Bash(gh pr create *)`. So the auto mode check does not refuse a step
   of the start text. The lead in a container gets them at each start.
+- The auto mode settings of riff in the same `settings.json`: no
+  dialog of `/auto-mode-setup`, and the places of riff work. See "The
+  auto mode settings of a session" in [How it
+  works](how-it-works.md#the-auto-mode-settings-of-a-session).
 - A home of its own in memory. Each other write goes when the
   container ends.
 - The volumes `riff-cargo` and `riff-sccache` for the caches.
