@@ -201,49 +201,13 @@ pub fn check(
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ipv6_loopback_needs_no_flag() {
-        assert_eq!(
-            check("[::1]:7878".parse().unwrap(), true, false, false),
-            Ok(None)
-        );
-    }
-
-    #[test]
-    fn a_network_address_needs_the_flag() {
-        let err = check("192.168.1.5:7878".parse().unwrap(), true, false, false).unwrap_err();
-        assert!(err.contains("192.168.1.5:7878"), "{err}");
-        assert!(err.contains("RIFF_INSECURE"), "{err}");
-    }
-
-    #[test]
-    fn insecure_on_loopback_gives_no_warning() {
-        assert_eq!(
-            check("127.0.0.1:0".parse().unwrap(), true, true, false),
-            Ok(None)
-        );
-    }
-
-    /// --insecure is for a riff with no sign-in. It does not let a riff
-    /// with sign-in and no owner listen on the network.
-    #[test]
-    fn insecure_does_not_replace_an_owner() {
-        let err = check("192.168.1.5:7878".parse().unwrap(), false, true, false).unwrap_err();
-        assert!(err.contains("RIFF_OWNER"), "{err}");
-    }
-}
-
 /// How a server starts in [`serve`].
 pub enum Start {
     /// A server with no store: it serves at once.
     Now(Service),
     /// A server with a store, loaded with no lease: it opens its port,
     /// then takes the lease (01M52JYGHHK5X0XS39VFT3ZGGM).
-    AfterLease(Loaded),
+    AfterLease(Box<Loaded>),
 }
 
 /// The text of the 503 of a server that does not serve yet
@@ -274,11 +238,13 @@ fn starting() -> Response {
 ///   An error stops the start: `main` checks the listen address there.
 /// - At the end of `shutdown`, the server stops taking calls, saves and
 ///   ends its lease (R129).
-/// - When the server stops for good (01M52JYGPX5ETP3HKR0S0Y0YCR, R141), it closes the port at
-///   once, and returns when the hand-over is written, at most
-///   [`crate::lease::Timing::exit_after`] later
-///   (01M52JYGPX5ETP3HKR0S0Y0YCR). When its lease ended by its age, it
-///   returns an error at once (01M3X5TPBMF81TDVZ7Q4NVXBQX).
+/// - When the server stops for good (R141, 01M52JYGPX5ETP3HKR0S0Y0YCR),
+///   it closes the port at once, and returns when the hand-over is
+///   written, at most [`crate::lease::Timing::exit_after`] later. When
+///   its lease ended by its age, it returns an error at once
+///   (01M3X5TPBMF81TDVZ7Q4NVXBQX).
+/// - When the start fails after the port opened, it closes the port, and
+///   returns the error.
 ///
 /// ```
 /// # #[tokio::main] async fn main() -> std::io::Result<()> {
@@ -286,7 +252,7 @@ fn starting() -> Response {
 /// use riff_server::listen::{Port, Start, serve};
 ///
 /// let port = Port::reserve("127.0.0.1:0".parse().unwrap())?;
-/// let url = format!("http://{}/v1/build", port.addr());
+/// let url = format!("http://{}/.well-known/oauth-authorization-server", port.addr());
 /// let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
 /// let server = tokio::spawn(serve(port, Start::Now(Service::default()), async {
 ///     let _ = stopped.await;
@@ -346,14 +312,25 @@ where
         }
         Start::AfterLease(loaded) => {
             let serving = open(port)?;
-            let service = loaded.serve().await.map_err(failed)?;
-            // The owner of the settings is a record of the start: wait
-            // for its write, so that the check reads it.
-            service.save().await.map_err(failed)?;
-            check(&service)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-            let _ = routes.set(service.router());
-            (service, serving)
+            let started = async {
+                let service = loaded.serve().await.map_err(failed)?;
+                // The owner of the settings is a record of the start:
+                // wait for its write, so that the check reads it.
+                service.save().await.map_err(failed)?;
+                check(&service)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+                Ok::<_, std::io::Error>(service)
+            };
+            match started.await {
+                Ok(service) => {
+                    let _ = routes.set(service.router());
+                    (service, serving)
+                }
+                Err(error) => {
+                    let _ = close.send(true);
+                    return Err(error);
+                }
+            }
         }
     };
     tracing::info!("riff-server serves");
@@ -392,5 +369,41 @@ where
             tracing::info!("exiting: another instance serves");
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ipv6_loopback_needs_no_flag() {
+        assert_eq!(
+            check("[::1]:7878".parse().unwrap(), true, false, false),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn a_network_address_needs_the_flag() {
+        let err = check("192.168.1.5:7878".parse().unwrap(), true, false, false).unwrap_err();
+        assert!(err.contains("192.168.1.5:7878"), "{err}");
+        assert!(err.contains("RIFF_INSECURE"), "{err}");
+    }
+
+    #[test]
+    fn insecure_on_loopback_gives_no_warning() {
+        assert_eq!(
+            check("127.0.0.1:0".parse().unwrap(), true, true, false),
+            Ok(None)
+        );
+    }
+
+    /// --insecure is for a riff with no sign-in. It does not let a riff
+    /// with sign-in and no owner listen on the network.
+    #[test]
+    fn insecure_does_not_replace_an_owner() {
+        let err = check("192.168.1.5:7878".parse().unwrap(), false, true, false).unwrap_err();
+        assert!(err.contains("RIFF_OWNER"), "{err}");
     }
 }

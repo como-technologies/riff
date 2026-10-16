@@ -346,7 +346,7 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
     };
     let start = match store {
         Some(store) => match Service::prepare(config, store).await {
-            Ok(loaded) => Start::AfterLease(loaded),
+            Ok(loaded) => Start::AfterLease(Box::new(loaded)),
             Err(e) => {
                 // The text names the object and the fix
                 // (01M3MMXYS1V8CA89D2XHKPR6C4).

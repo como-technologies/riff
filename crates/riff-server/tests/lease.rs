@@ -535,7 +535,7 @@ async fn serve(
     let loaded = Service::prepare(config, Arc::new(store.clone()))
         .await
         .unwrap();
-    let start = Start::AfterLease(loaded);
+    let start = Start::AfterLease(Box::new(loaded));
     let task = tokio::spawn(riff_server::listen::serve(
         port,
         start,
