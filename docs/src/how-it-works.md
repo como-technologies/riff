@@ -693,7 +693,7 @@ flowchart TD
 |---|---|---|
 | 1. The rules of Claude Code | your user settings have each rule of riff | adds the missing rules (see [Keep the rules in step with each release](start-a-riff.md#keep-the-rules-in-step-with-each-release)) |
 | 2. The unit of the daemon | `riff.service` is the text that the new riff writes for it, with your riff and your variables | writes it again, and starts again on it when it runs no session |
-| 3. The session image of each wave | podman has the image that `riff.toml` of the main clone pins | pulls it |
+| 3. The session image of each wave | podman has the merged pin: the image that `riff.toml` on the default branch of `origin` pins (see [Only a merged pin counts](development.md#only-a-merged-pin-counts)) | pulls it |
 | 4. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
 
 - Only a release does a step: a `riff` whose SHA-256 is in

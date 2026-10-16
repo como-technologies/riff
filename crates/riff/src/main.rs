@@ -583,7 +583,8 @@ enum Command {
         /// The work item: an issue, for example issue-12.
         item: String,
         /// The session image, for example a local build. The default is
-        /// the image that riff.toml of the main clone pins.
+        /// the merged pin: the image that riff.toml on the default branch
+        /// of origin pins.
         #[arg(long)]
         image: Option<String>,
     },
@@ -681,7 +682,8 @@ enum Command {
     /// It reads the key image in the table [session] of riff.toml, at the
     /// top of the git work tree of the current folder. The image has a
     /// digest and no tag, so podman pull takes it as it is. It fails when
-    /// riff.toml names a tag.
+    /// riff.toml names a tag. riff run, riff lead start and the waves use
+    /// only the merged pin: riff.toml on the default branch of origin.
     Image,
     /// Start, list and stop the workers of this machine
     ///
