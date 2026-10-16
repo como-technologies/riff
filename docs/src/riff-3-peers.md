@@ -91,7 +91,9 @@ The daemon of the owner must be online. Your daemon connects to it,
 and the daemon of the owner adds the key of your daemon as a member.
 Then your daemon gets each record of the riff, and connects to each
 other member. A failed join changes nothing, and says why: for
-example, the invite ended, or a join used it already.
+example, the invite ended, a join used it already, or the owner
+removed your machine. A machine that left a riff joins it again with
+a new invite: see "Join a riff again".
 
 A daemon is in one riff at a time. `riff join` refuses while your own
 riff has another member, and while your daemon is in the riff of
@@ -153,14 +155,36 @@ riff leave
 Your daemon sends a `left` record to each member, and waits up to 5
 seconds until one of them got it. Then this machine has a riff of your
 own again, with the same key. Each session of this machine leaves
-with it. The owner cannot leave. A daemon that left cannot join that
-riff again: the riff refuses its key.
+with it. The owner cannot leave. A leave only leaves: this machine can
+join that riff again with a new invite. See "Join a riff again".
 
 When no daemon of the riff got the record in 5 seconds, for example
 when the owner is offline, `riff leave` says so in a second line. The
 riff can then still show your machine as a member. The line names the
 command for the owner, for example `riff remove brett --host kadomony`.
 See "Remove a member".
+
+### Join a riff again
+
+A machine that left a riff joins it again with a new invite string of
+the owner. The old string works one time only. On the machine of the
+owner:
+
+```sh
+riff invite brett
+```
+
+Then, on the machine that left, with the new string:
+
+```sh
+riff join riff1-...
+```
+
+Your machine is a member again, with the user of the new invite, and
+with the same key. It gets the records of the time when it was out.
+`riff members` shows it one time, as a member. The daemon of the owner
+must have the `left` record of your machine: else it refuses the join,
+because your machine is a member still.
 
 ### Remove a member
 
@@ -174,7 +198,8 @@ riff remove brett --host kadomony
 
 Each daemon of the riff then refuses the key of each machine that you
 removed: its connections, and each of its records after its last one.
-The owner cannot remove itself.
+A removed machine cannot join again, also with a new invite. The owner
+cannot remove itself.
 
 ### Free the claim of a machine that is gone
 
@@ -218,7 +243,7 @@ with the same records have the same riff.
 | Type | Byte | Writer | What it holds | Largest record |
 |---|---|---|---|---|
 | `riff` | 1 | The owner, in its first record | The user and the host of the owner | 1 KiB |
-| `member` | 2 | The owner | A member key, its user and its host | 1 KiB |
+| `member` | 2 | The owner | A member key, its user and its host; at a join again, the number of its `left` record | 1 KiB |
 | `removed` | 3 | The owner | A member key, and its last sequence number | 1 KiB |
 | `left` | 4 | A member | The leave of its own key | 1 KiB |
 | `session` | 5 | The daemon of the session | The whole session: its place, its lead mark, its claims, its status and its end | 4 KiB |
@@ -310,10 +335,27 @@ sequenceDiagram
 ```
 
 The daemon of the owner checks, in this order, that it is the owner of
-its riff, that the riff does not know the key of the new daemon yet,
-that the host is a name that riff takes, and that the invite is known,
-not used and not ended. The first check that fails refuses the join,
-and nothing changes.
+its riff, that the key of the new daemon is not the owner, not a
+member and not removed, that the host is a name that riff takes, and
+that the invite is known, not used and not ended. The first check that
+fails refuses the join, says why, and changes nothing.
+
+A key that left joins again with a new `member` record. That record
+names the number of the `left` record of the key. The records of the
+key after that number count with the user of the new invite. The first
+of them names the new `member` record as the record before it. So a
+record that the key signed while it was out stays refused on each
+daemon, and two daemons that get the records in two orders agree on
+the user of the key.
+
+```mermaid
+flowchart LR
+    M1["member: brett"] --> R1["records 1 to 6 of the key, as brett"]
+    R1 --> L["record 7: left"]
+    L --> M2["member: brett again, after 7"]
+    M2 --> R2["record 8 names the new member record"]
+    L -.-> X["a record 8 that names record 7: refused"]
+```
 
 A daemon keeps the riff that it joined in the file `state/joined` of
 its folder, and its records in `state/riffs/RIFF`. A new start of the

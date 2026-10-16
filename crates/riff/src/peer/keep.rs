@@ -292,7 +292,7 @@ impl Peers {
     /// Writes a record of `key` with the body `body` and the time
     /// `time_ms`, and applies it. A daemon that joined again writes no
     /// record before it has its own records up to its `left` record: the
-    /// record would fork its chain (01M5328FPJT7Q5Q1509BC5F0J7).
+    /// record would fork its chain (01M532QC66ER7BZPYWR7QDXAP1).
     pub fn write(&mut self, key: &Key, body: &Body, time_ms: u64) -> Result<(Id, Applied)> {
         let (seq, before) = self.state.next(&key.public());
         if let Some(member) = self.state.members().get(&key.public()) {
@@ -688,7 +688,7 @@ mod tests {
         assert_eq!(kept.len(), 4);
     }
 
-    /// 01M5328FPJT7Q5Q1509BC5F0J7: a daemon that joined again, and lacks
+    /// 01M532QC66ER7BZPYWR7QDXAP1: a daemon that joined again, and lacks
     /// its own records up to its `left` record, writes no record: it would
     /// fork its chain. With its records, its next record names the new
     /// `member` record, and each other daemon keeps it.

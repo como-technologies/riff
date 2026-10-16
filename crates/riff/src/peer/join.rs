@@ -324,13 +324,26 @@ mod tests {
         let hub = owner(dir.path());
         let invites = Invites::in_dir(dir.path());
         let pangolin = Key::from_bytes(&[2; 32]);
-        let left = Record::sign(&pangolin, hub.public(), 1, Id::ZERO, 5, &Body::Left(Left {}))
-            .unwrap();
+        let left = Record::sign(
+            &pangolin,
+            hub.public(),
+            1,
+            Id::ZERO,
+            5,
+            &Body::Left(Left {}),
+        )
+        .unwrap();
         hub.keep(left.bytes().to_vec(), None).unwrap();
         assert!(hub.read(|state| state.members()[&pangolin.public()].left));
 
         let invite = invites.make(hub.public(), "ann", 1_000).unwrap();
-        let answer = admit(&hub, &invites, pangolin.public(), &ask(invite.secret(), "h"), 2_000);
+        let answer = admit(
+            &hub,
+            &invites,
+            pangolin.public(),
+            &ask(invite.secret(), "h"),
+            2_000,
+        );
         assert_eq!(answer.unwrap(), Answer::Joined);
         let member = hub.read(|state| state.members()[&pangolin.public()].clone());
         assert_eq!((member.user.as_str(), member.left), ("ann", false));
@@ -338,7 +351,13 @@ mod tests {
         assert_eq!(member.joins[1].after, 1);
         // The key is a member again: a second join is refused.
         let invite = invites.make(hub.public(), "ann", 1_000).unwrap();
-        let answer = admit(&hub, &invites, pangolin.public(), &ask(invite.secret(), "h"), 2_000);
+        let answer = admit(
+            &hub,
+            &invites,
+            pangolin.public(),
+            &ask(invite.secret(), "h"),
+            2_000,
+        );
         assert_eq!(
             answer.unwrap(),
             Answer::Refused {
@@ -352,7 +371,13 @@ mod tests {
         });
         hub.write(&removed).unwrap();
         let heads = hub.with_peers(crate::peer::keep::Peers::heads);
-        let answer = admit(&hub, &invites, pangolin.public(), &ask(invite.secret(), "h"), 2_000);
+        let answer = admit(
+            &hub,
+            &invites,
+            pangolin.public(),
+            &ask(invite.secret(), "h"),
+            2_000,
+        );
         assert_eq!(
             answer.unwrap(),
             Answer::Refused {

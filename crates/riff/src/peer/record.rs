@@ -1029,7 +1029,11 @@ mod tests {
             ),
             // 01M5328FPJT7Q5Q1509BC5F0J7: ann left at 4 and joins again.
             (1, again(3, "eve", Some(4)), None),
-            (2, again(3, "ann", Some(4)), Some("only the owner admits a member")),
+            (
+                2,
+                again(3, "ann", Some(4)),
+                Some("only the owner admits a member"),
+            ),
             (
                 1,
                 again(3, "ann", Some(0)),

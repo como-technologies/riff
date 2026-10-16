@@ -1351,7 +1351,10 @@ mod tests {
             records.extend(order.into_iter().cloned());
             let state = keep_all(riff, &records);
             let member = &state.members()[&d.public(2)];
-            assert_eq!((member.user.as_str(), member.host.as_str()), ("ann", "lynx"));
+            assert_eq!(
+                (member.user.as_str(), member.host.as_str()),
+                ("ann", "lynx")
+            );
             assert!(!member.left && !member.removed && member.until.is_none());
             assert_eq!(member.joins.len(), 2);
             assert_eq!(member.lefts, BTreeSet::from([2]));

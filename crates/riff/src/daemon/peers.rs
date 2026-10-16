@@ -11,7 +11,10 @@
 //! riff are in `state/records`, and the records of a joined riff are in
 //! `state/riffs/RIFF/records` ([`peers_dir`]). A start of the daemon opens
 //! the riff of [`JOINED`]. A leave goes back to the riff of its own, and
-//! the records of the old riff stay in their folder.
+//! the records of the old riff stay in their folder. A daemon that left
+//! a riff joins it again with a new invite (01M5328FPJT7Q5Q1509BC5F0J7):
+//! it opens that folder again, with its own records up to its `left`
+//! record, and the new `member` record comes over the join link.
 //!
 //! | Step | Who | What the daemon does |
 //! |---|---|---|
@@ -253,7 +256,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             &me.to_string(),
         )];
         // A daemon whose member record did not come yet writes no record.
-        // A removed daemon writes none too: each daemon refuses it.
+        // A removed daemon writes none too: each daemon refuses it
+        // (01M532QC66ER7BZPYWR7QDXAP1).
         if let Some((user, host)) = member {
             let links = self.links.get();
             let before = links.map_or(0, |links| links.left_sent());
@@ -895,7 +899,20 @@ mod tests {
             host: None,
         };
         o.ask(remove).await.unwrap();
-        t.ask(Ask::Leave).await.unwrap();
+        // 01M532QC66ER7BZPYWR7QDXAP1: the removed daemon has the removed
+        // record. Its leave writes no left record, and does not wait.
+        let removed = o
+            .hub()
+            .with_peers(|peers| peers.lacks(&Default::default()))
+            .into_iter()
+            .find(|record| record.of() == Type::Removed)
+            .unwrap();
+        t.hub().keep(removed.bytes().to_vec(), None).unwrap();
+        let ann = t.key();
+        assert!(t.hub().read(|state| state.members()[&ann].removed));
+        let lines = t.ask(Ask::Leave).await.unwrap();
+        let gone = text::left_riff(&o.key().to_string(), Some(&o.user()), &ann.to_string());
+        assert_eq!(lines, [gone]);
         assert_eq!(t.riff().await, t.key().to_string());
         let owner_heads = o.heads();
         let error = t
