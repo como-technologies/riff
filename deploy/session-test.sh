@@ -7,12 +7,26 @@
 # (01M4Z60B7XT7462XMV49GJTVSJ), and with the values of `just cargo-test`.
 #
 #   deploy/session-test.sh [ARGS]
+#   deploy/session-test.sh --part I/N
 #
-# ARGS go to cargo test, for example the name of one test. It runs
-# podman, else docker, or the engine in RIFF_ENGINE. The image has a
-# toolchain of its own, so the build goes to target/session.
+# ARGS go to cargo test, for example the name of one test. With --part,
+# it runs `just test-part I/N` in place of the tests of crates/riff: part
+# I of N of the tests of the workspace, as the jobs Tests I/N of the Gate
+# run them (01M515Z3Y7GSFNTJGXJD727MQK). It runs podman, else docker, or
+# the engine in RIFF_ENGINE. The image has a toolchain of its own, so the
+# build goes to target/session.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
+
+if [ "${1:-}" = --part ]; then
+    if [ $# -ne 2 ]; then
+        echo "session-test.sh: give one part, for example --part 2/4." >&2
+        exit 2
+    fi
+    run=(just test-part "$2")
+else
+    run=(just cargo-test -p riff "$@")
+fi
 
 ENGINE="${RIFF_ENGINE:-}"
 if [ -z "$ENGINE" ]; then
@@ -51,11 +65,12 @@ case "$common" in
 esac
 
 mkdir -p target/session
-echo "session-test.sh: the tests of crates/riff in $IMAGE, with $ENGINE."
+echo "session-test.sh: ${run[*]} in $IMAGE, with $ENGINE."
 exec "$ENGINE" run --rm --init "${user[@]}" --cpus 4 --memory 8g \
     "${binds[@]}" -w "$ROOT" \
     -e HOME=/tmp/home -e USER="$(id -un)" -e LOGNAME="$(id -un)" \
     -e CARGO_HOME="$ROOT/target/session/cargo" \
     -e CARGO_TARGET_DIR="$ROOT/target/session" \
+    -e CARGO_INCREMENTAL \
     "$IMAGE" \
-    bash -c 'mkdir -p "$HOME" && exec just cargo-test -p riff "$@"' bash "$@"
+    bash -c 'mkdir -p "$HOME" && exec "$@"' bash "${run[@]}"

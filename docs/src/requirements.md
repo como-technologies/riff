@@ -4373,20 +4373,23 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   01M43DKYVAX0TJ2F5YYGYFSZ4G.
 - **01M513W2K3HNRWPQTQNBQPT8MZ** The Gate on GitHub runs its checks as
   jobs at the same time: `Clippy` runs `just lint`, `Tests I/N` runs
-  part I of N of the tests, and `Checks` runs `just fmt-check doc book
-  reqs wrap`. Together they run each check of `just ci-full`. The last
-  job, `Gate`, needs each of them. It runs also when one of them fails
-  or is cancelled, and it passes only when each of them passed. The
-  ruleset needs only `Gate`.
+  part I of N of the tests in the session image, and `Checks` runs
+  `just fmt-check doc book reqs wrap`. Together they run each check of
+  `just ci-full`. The last job, `Gate`, needs each of them. Each of
+  them has the condition
+  `github.event_name != 'schedule' && github.ref_type != 'tag'`, and
+  `Gate` has `always()` and the same condition. So `Gate` runs also
+  when one of them fails or is cancelled, and it passes only when each
+  of them passed. The ruleset needs only `Gate`.
 - **01M513W2NSE303E6XAM18BW7T6** `just test-part I/N` lists each test of
   the workspace, also each doc test, with `cargo test -- --list`. Of
   the tests that are not doc tests, it runs each test whose name has
   the 64-bit FNV-1a hash H with H mod N = I − 1, with `cargo test
-  --tests -- --exact`. Part 1 also runs each doc test, with `cargo test
-  --doc`: the name of a doc test has spaces, and rustdoc splits a
-  filter at each space. It prints one line with the count of its tests
-  and of all tests. A list with no test fails. The N parts together
-  run each test.
+  --tests --no-fail-fast -- --exact`. Part 1 also runs each doc test,
+  with `cargo test --doc --no-fail-fast`: the name of a doc test has
+  spaces, and rustdoc splits a filter at each space. It prints one line
+  with the count of its tests and of all tests. A list with no test
+  fails. The N parts together run each test.
 - **01M513W2RERJES76ZXKKHCV0DP** Each job of the CI workflow runs on the
   runner that the repository variable `RIFF_RUNNER` names. With no
   `RIFF_RUNNER`, the runner is `ubuntu-latest`.
@@ -4479,13 +4482,18 @@ share.
   ELF has an interpreter, or when `riff --version` does not run in the
   session image that `riff.toml` pins, with `riff` bound at
   `/opt/riff/riff` with no write.
-- **01M51117NDKF11FNZ915TTQED4** The CI job "Session tests" runs the
-  tests of `crates/riff` in a container of the session image that
-  `riff.toml` pins, on each pull request and each push. The container
-  has `--init`, the user of the host with `USER` and `LOGNAME`, a home
-  of its own and the limits of a session (`--cpus 4`, `--memory 8g`),
-  as a session has.
-  `just session-test` runs the same tests on a machine.
+- **01M51117NDKF11FNZ915TTQED4** `just session-test` runs the tests of
+  `crates/riff` in a container of the session image that `riff.toml`
+  pins. The container has `--init`, the user of the host with `USER`
+  and `LOGNAME`, a home of its own and the limits of a session (`--cpus
+  4`, `--memory 8g`), as a session has. In CI, the test parts of the
+  Gate run there (01M515Z3Y7GSFNTJGXJD727MQK).
+- **01M515Z3Y7GSFNTJGXJD727MQK** The jobs `Tests I/N` of the Gate run
+  `deploy/session-test.sh --part I/N`: part I of N of the tests of the
+  workspace, in the container of 01M51117NDKF11FNZ915TTQED4, with
+  docker and a cache of `target/session`. The key of the cache is the
+  hash of `riff.toml`, `rust-toolchain.toml` and `Cargo.lock`. No other
+  job runs the tests in the session image.
 - **01M511FGMFF17G2G8RV6ST9070** Before the tests, `just cargo-test`
   builds each binary of the workspace. So a test of one crate finds the
   binary of another crate, for example `riff-server` in a test of

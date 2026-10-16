@@ -1,8 +1,9 @@
 //! The Gate on GitHub: its parts run at the same time, together they run
 //! each check of `just ci-full`, and the job `Gate` fails when a part
 //! does not pass (01M3WNN7VQJKN5MJH7JN50VF4D, 01M513W2K3HNRWPQTQNBQPT8MZ,
-//! 01M513W2NSE303E6XAM18BW7T6, 01M513W2RERJES76ZXKKHCV0DP). The tests
-//! read `.github/workflows/ci.yml` and the justfile.
+//! 01M513W2NSE303E6XAM18BW7T6, 01M513W2RERJES76ZXKKHCV0DP,
+//! 01M515Z3Y7GSFNTJGXJD727MQK). The tests read
+//! `.github/workflows/ci.yml`, the justfile and `deploy/session-test.sh`.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -61,8 +62,12 @@ fn recipe(name: &str) -> Vec<String> {
         .collect()
 }
 
+/// The step of the job `test`: a part of the tests in the session image,
+/// with `just test-part` (01M515Z3Y7GSFNTJGXJD727MQK).
+const TEST_STEP: &str = "\n      - run: deploy/session-test.sh --part ${{ matrix.part }}\n";
+
 /// The recipes that the steps `run: just ...` of `job` name. The
-/// recipe `test-part` runs a part of `test`.
+/// recipe `test-part`, and [`TEST_STEP`], run a part of `test`.
 fn recipes(job: &str) -> Vec<String> {
     job.lines()
         .filter_map(|line| line.trim().strip_prefix("- run: just "))
@@ -70,6 +75,7 @@ fn recipes(job: &str) -> Vec<String> {
             line.split_whitespace()
                 .take_while(|w| !w.starts_with("${{"))
         })
+        .chain(job.contains(TEST_STEP).then_some("test"))
         .map(|word| if word == "test-part" { "test" } else { word })
         .map(str::to_owned)
         .collect()
@@ -109,9 +115,11 @@ fn the_tests_run_in_parts_that_together_hold_each_test() {
     let test = job("test");
     assert_eq!(field(&test, "name"), "Tests ${{ matrix.part }}");
     assert!(test.contains("\n      fail-fast: false\n"), "{test}");
+    assert!(test.contains(TEST_STEP), "{test}");
+    let script = std::fs::read_to_string(top().join("deploy/session-test.sh")).unwrap();
     assert!(
-        test.contains("\n      - run: just test-part ${{ matrix.part }}\n"),
-        "{test}"
+        script.contains("    run=(just test-part \"$2\")\n"),
+        "{script}"
     );
     let parts = test
         .split_once("\n        part: [")

@@ -220,12 +220,19 @@ fn test_part(part: &str) -> ExitCode {
     let mut runs: Vec<Vec<&str>> = Vec::new();
     // With no name, cargo test would run each test.
     if !plan.tests.is_empty() {
-        let mut run = vec!["test", "--workspace", "--tests", "--", "--exact"];
+        let mut run = vec![
+            "test",
+            "--workspace",
+            "--tests",
+            "--no-fail-fast",
+            "--",
+            "--exact",
+        ];
         run.extend(&plan.tests);
         runs.push(run);
     }
     if plan.doc > 0 {
-        runs.push(vec!["test", "--workspace", "--doc"]);
+        runs.push(vec!["test", "--workspace", "--doc", "--no-fail-fast"]);
     }
     let mut failed = false;
     for run in runs {

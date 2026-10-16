@@ -3,9 +3,10 @@
 //! from `deploy/session/` (01M4Z7SP7Y19BQ8QTV1T6AE8SR), its Dockerfile
 //! has the toolchain of `rust-toolchain.toml`
 //! (01M4Z7SP5TGJ3DMWFGE5SN68N1), `riff image` prints it
-//! (01M4Z7SPC20RWG218EWPEGYZTF), and the tests of `crates/riff` run in it
-//! with `deploy/session-test.sh` and the CI job "Session tests"
-//! (01M51117NDKF11FNZ915TTQED4).
+//! (01M4Z7SPC20RWG218EWPEGYZTF), the tests of `crates/riff` run in it
+//! with `deploy/session-test.sh` (01M51117NDKF11FNZ915TTQED4), and the
+//! jobs "Tests I/N" of the Gate run each test of the workspace in it
+//! (01M515Z3Y7GSFNTJGXJD727MQK).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -164,9 +165,8 @@ fn riff_image_names_a_missing_config() {
 }
 
 /// Runs `deploy/session-test.sh` with `args`, the fake engines of `bin`
-/// first in `PATH`, and the engine `engine` when it is set. The engine
-/// logs its arguments to `bin/podman.log`, one on each line.
-fn session_test(args: &[&str], bin: &Path, engine: Option<&str>) -> Vec<String> {
+/// first in `PATH`, and the engine `engine` when it is set.
+fn session_test_output(args: &[&str], bin: &Path, engine: Option<&str>) -> Output {
     let env = Isolated::new();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let mut cmd = env.command(top().join("deploy/session-test.sh"));
@@ -174,10 +174,24 @@ fn session_test(args: &[&str], bin: &Path, engine: Option<&str>) -> Vec<String> 
     if let Some(engine) = engine {
         cmd.env("RIFF_ENGINE", engine);
     }
-    let out = cmd.output().unwrap();
+    cmd.output().unwrap()
+}
+
+/// [`session_test_output`] that passes. The engine logs its arguments
+/// to `bin/podman.log`, one on each line.
+fn session_test(args: &[&str], bin: &Path, engine: Option<&str>) -> Vec<String> {
+    let out = session_test_output(args, bin, engine);
     assert!(out.status.success(), "{out:?}");
     let log = fs::read_to_string(bin.join("podman.log")).unwrap();
     log.lines().map(str::to_owned).collect()
+}
+
+/// The command that the container runs: the arguments after `bash`.
+fn command_of(args: &[String]) -> Vec<String> {
+    let at = args.iter().position(|a| a == "bash").unwrap();
+    assert_eq!(args[at + 1], "-c", "{args:?}");
+    let shell = args[at + 3..].iter().position(|a| a == "bash").unwrap();
+    args[at + 3 + shell + 1..].to_vec()
 }
 
 /// 01M51117NDKF11FNZ915TTQED4, 01M51117K3WXK35CE67KPRFMA8: the tests of
@@ -208,15 +222,40 @@ fn the_session_tests_run_in_the_pinned_image_with_an_init() {
     assert!(has(["-e", &format!("LOGNAME={user}")]), "{args:?}");
     let target = format!("CARGO_TARGET_DIR={root}/target/session");
     assert!(has(["-e", &target]), "{args:?}");
+    assert!(has(["-e", "CARGO_INCREMENTAL"]), "{args:?}");
     let image = Image::of_repository(&top()).unwrap().to_string();
     assert!(args.contains(&image), "{args:?}");
-    let script = "mkdir -p \"$HOME\" && exec just cargo-test -p riff \"$@\"";
+    let script = "mkdir -p \"$HOME\" && exec \"$@\"";
     assert!(has(["-c", script]), "{args:?}");
     assert_eq!(
-        args[args.len() - 2..],
-        ["bash", "run::riff_lead_start"],
+        command_of(&args),
+        ["just", "cargo-test", "-p", "riff", "run::riff_lead_start"],
         "{args:?}"
     );
+}
+
+/// 01M515Z3Y7GSFNTJGXJD727MQK: with `--part I/N`, the container runs
+/// part I of N of the tests of the workspace, in place of the tests of
+/// `crates/riff`. A part needs one value.
+#[test]
+fn the_session_tests_run_one_part_of_the_tests_of_the_workspace() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_engine(bin.path());
+    let args = session_test(&["--part", "2/4"], bin.path(), None);
+    assert_eq!(args[..3], ["run", "--rm", "--init"], "{args:?}");
+    assert_eq!(command_of(&args), ["just", "test-part", "2/4"], "{args:?}");
+
+    for bad in [&["--part"][..], &["--part", "1/4", "2/4"]] {
+        let bin = tempfile::tempdir().unwrap();
+        fake_engine(bin.path());
+        let out = session_test_output(bad, bin.path(), None);
+        assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("give one part, for example --part 2/4"),
+            "{out:?}"
+        );
+        assert!(!bin.path().join("podman.log").exists(), "{bad:?}");
+    }
 }
 
 /// 01M51117NDKF11FNZ915TTQED4: docker has no `--userns=keep-id`, so the
@@ -238,25 +277,28 @@ fn the_session_tests_run_as_the_user_of_the_host_in_docker() {
         "{args:?}"
     );
     assert!(!args.iter().any(|a| a.starts_with("--userns")), "{args:?}");
-    assert_eq!(args.last().map(String::as_str), Some("bash"), "{args:?}");
+    assert_eq!(command_of(&args), ["just", "cargo-test", "-p", "riff"]);
 }
 
-/// 01M51117NDKF11FNZ915TTQED4: CI runs the session tests of each pull
-/// request and each push, with docker.
+/// 01M515Z3Y7GSFNTJGXJD727MQK: the jobs "Tests I/N" of the Gate run each
+/// part of the tests in the session image, with docker and a cache of
+/// `target/session`. No other job runs the session tests.
 #[test]
-fn ci_runs_the_tests_of_crates_riff_in_the_session_image() {
-    let job = ci_job("session_tests");
+fn the_gate_runs_the_tests_in_the_session_image() {
+    let job = ci_job("test");
     for part in [
-        "name: Session tests\n",
-        "if: github.event_name == 'push' || github.event_name == 'pull_request'\n",
         "RIFF_ENGINE: docker\n",
-        "run: deploy/session-test.sh\n",
+        "CARGO_INCREMENTAL: 0\n",
+        "uses: actions/cache@",
+        "path: target/session\n",
+        "key: session-${{ hashFiles('riff.toml', 'rust-toolchain.toml', 'Cargo.lock') }}\n",
+        "run: deploy/session-test.sh --part ${{ matrix.part }}\n",
     ] {
-        assert!(
-            job.contains(part),
-            "{part} is not in the job session_tests:\n{job}"
-        );
+        assert!(job.contains(part), "{part} is not in the job test:\n{job}");
     }
+    let workflow = read(".github/workflows/ci.yml");
+    assert_eq!(workflow.matches("deploy/session-test.sh").count(), 1);
+    assert!(!workflow.contains("\n  session_tests:\n"), "{workflow}");
     let justfile = read("justfile");
     assert!(
         justfile.contains("\nsession-test *ARGS:\n    deploy/session-test.sh {{ARGS}}\n"),
