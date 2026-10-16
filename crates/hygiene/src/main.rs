@@ -3,18 +3,19 @@
 //! the book in DIR with `mdbook` and checks it. `hygiene wrap [DIR]`
 //! checks the wrap of each Markdown file in DIR. `hygiene ci [BASE]`
 //! prints the recipe that `just ci` runs. `hygiene crates [BASE]` prints
-//! the arguments of `cargo test` that `just check` runs. See the library
-//! docs.
+//! the arguments of `cargo test` that `just check` runs. `hygiene
+//! test-part I/N` runs part I of N of the tests. See the library docs.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 
 use hygiene::{Issue, PullRequest};
 use serde::de::DeserializeOwned;
 
 const USAGE: &str = "usage: hygiene pr NUMBER | hygiene commit [REV] | hygiene book [DIR] \
-                     | hygiene wrap [DIR] | hygiene ci [BASE] | hygiene crates [BASE]";
+                     | hygiene wrap [DIR] | hygiene ci [BASE] | hygiene crates [BASE] \
+                     | hygiene test-part I/N";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -30,6 +31,7 @@ fn main() -> ExitCode {
         ["ci", base] => ci(base),
         ["crates"] => crates("origin/main"),
         ["crates", base] => crates(base),
+        ["test-part", part] => test_part(part),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -181,6 +183,52 @@ fn crates(base: &str) -> ExitCode {
     eprintln!("{choice}");
     println!("{}", choice.tests.args());
     ExitCode::SUCCESS
+}
+
+/// Lists each test of the workspace, and runs the tests of part `part`
+/// (01M513W2NSE303E6XAM18BW7T6). The exit status is the status of
+/// `cargo test`, or 2 when the list holds no test.
+fn test_part(part: &str) -> ExitCode {
+    let part: hygiene::part::Part = match part.parse() {
+        Ok(part) => part,
+        Err(e) => {
+            eprintln!("error: {e}\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let list = ["test", "--workspace", "--", "--list", "--format", "terse"];
+    let out = match Command::new(&cargo)
+        .args(list)
+        .stderr(Stdio::inherit())
+        .output()
+    {
+        Ok(out) => out,
+        Err(e) => return tool_error(&format!("cargo {}: {e}", list.join(" "))),
+    };
+    if !out.status.success() {
+        eprintln!("error: cargo {}: {}", list.join(" "), out.status);
+        return ExitCode::FAILURE;
+    }
+    let names = hygiene::part::names(&String::from_utf8_lossy(&out.stdout));
+    if names.is_empty() {
+        return tool_error(&format!("cargo {} listed no test", list.join(" ")));
+    }
+    let mine = part.select(&names);
+    eprintln!("{}", hygiene::part::summary(part, mine.len(), names.len()));
+    // With no name, cargo test would run each test.
+    if mine.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    match Command::new(&cargo)
+        .args(["test", "--workspace", "--", "--exact"])
+        .args(&mine)
+        .status()
+    {
+        Ok(status) if status.success() => ExitCode::SUCCESS,
+        Ok(_) => ExitCode::FAILURE,
+        Err(e) => tool_error(&format!("cargo test --workspace: {e}")),
+    }
 }
 
 /// The crates of the workspace, from `cargo metadata --no-deps`.

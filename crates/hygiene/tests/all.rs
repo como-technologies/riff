@@ -13,5 +13,7 @@ mod book;
 mod ci;
 mod ci_lock;
 mod cli;
+mod gate;
+mod part;
 mod test_files;
 mod tracked;

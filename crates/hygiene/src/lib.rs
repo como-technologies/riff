@@ -61,6 +61,7 @@ use serde::Deserialize;
 
 pub mod book;
 pub mod ci;
+pub mod part;
 pub mod wrap;
 
 /// A milestone, as `gh --json milestone` gives it.
