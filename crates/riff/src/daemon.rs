@@ -2892,6 +2892,29 @@ impl<R: Runtime + 'static> Daemon<R> {
         })
     }
 
+    /// The refusal of a takeover of `name` that names a session of
+    /// another daemon of the riff of peers: its session ID, or the start
+    /// of it. The text names the host of that session: a takeover works
+    /// only for a session of this machine (01M519Z554SC3EAT69Q3M6JDAP).
+    fn elsewhere(&self, name: &str) -> Option<String> {
+        let riff = self.riff.get().filter(|_| !name.is_empty())?;
+        let me = riff.hub.public();
+        riff.hub.read(|state| {
+            let run = state.runs().filter(|run| run.author != me).find(|run| {
+                run.body
+                    .session
+                    .who()
+                    .session()
+                    .is_some_and(|id| id.starts_with(name))
+            })?;
+            let uri = run.uri(state.is_lead(run));
+            Some(text::takeover_other_host(
+                &text::name(&uri),
+                uri.place().host(),
+            ))
+        })
+    }
+
     /// Takes over the live session `name` for the person of `out`
     /// (01M4Z60B83ZH10HYKW7X1C0SSS): see "A takeover" in the design. It
     /// interrupts the turn, or with `at_end` waits for its end. It gives
@@ -2906,7 +2929,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     ) {
         let Some(owned) = self.lock().get(name).cloned() else {
             out.say(Say::Failed {
-                error: text::daemon_no_session(name),
+                error: self
+                    .elsewhere(name)
+                    .unwrap_or_else(|| text::daemon_no_session(name)),
             });
             return;
         };
@@ -5669,6 +5694,66 @@ mod tests {
         let (_relay, _) = Relay::connect_as(&socket, old).await;
         assert_eq!(take_over(&here.dir, &name).await.1, refused);
         // A session that the daemon does not own.
+        assert_eq!(
+            take_over(&here.dir, "riff-other").await.1,
+            Say::Failed {
+                error: text::daemon_no_session("riff-other")
+            }
+        );
+    }
+
+    /// 01M519Z554SC3EAT69Q3M6JDAP: the status of the daemon has each
+    /// session of the riff of peers. A session of another daemon with no
+    /// link is offline, seen at its last record. A takeover of it refuses
+    /// with a text that names its host.
+    #[tokio::test]
+    async fn the_status_shows_a_session_of_another_daemon_and_its_takeover_names_its_host() {
+        use crate::peer::body::{Member, Session as SessionBody};
+        use crate::peer::record::Record;
+
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let member = Key::from_bytes(&[7; 32]);
+        here.daemon
+            .write(&Body::Member(Member {
+                key: member.public(),
+                user: "brett".into(),
+                host: "kadomony".into(),
+            }))
+            .unwrap();
+        let riff = here.daemon.riff.get().unwrap().hub.public();
+        let session = Body::Session(Box::new(SessionBody {
+            session: "riff://brett@kadomony/o/riff?session=77e0aaaa-1#issue-14"
+                .parse()
+                .unwrap(),
+            worker: true,
+            lead: None,
+            claims: vec!["issue-14".into()],
+            status: Some("tests".into()),
+            ended: false,
+        }));
+        let at = u64::try_from(crate::run::now_ms() - 120_000).unwrap();
+        let record = Record::sign(&member, riff, 1, Id::ZERO, at, &session).unwrap();
+        here.daemon.keep(record.bytes().to_vec()).unwrap();
+
+        let shown = status(&here.dir).await.unwrap();
+        let [brett] = shown.riff_sessions.as_slice() else {
+            panic!("{:?}", shown.riff_sessions);
+        };
+        assert_eq!(
+            brett.uri.to_string(),
+            "riff://brett@kadomony/o/riff?session=77e0aaaa-1&claim=issue-14#issue-14"
+        );
+        assert!(!brett.live);
+        assert_eq!(brett.state, Some(riff_core::wire::SessionState::Offline));
+        assert!((120..130).contains(&brett.idle_secs), "{}", brett.idle_secs);
+        assert_eq!(brett.status.as_ref().unwrap().status.step, "tests");
+
+        let refused = Say::Failed {
+            error: text::takeover_other_host("brett@kadomony:riff#issue-14 (77e0aaaa)", "kadomony"),
+        };
+        assert_eq!(take_over(&here.dir, "77e0aaaa").await.1, refused);
+        assert_eq!(take_over(&here.dir, "77e0aaaa-1").await.1, refused);
+        // A name that names no session of the riff.
         assert_eq!(
             take_over(&here.dir, "riff-other").await.1,
             Say::Failed {

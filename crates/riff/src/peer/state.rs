@@ -117,6 +117,9 @@ pub struct Run {
     pub mark: Option<Id>,
     /// The time of the author of the last record: the time of the status.
     pub time_ms: u64,
+    /// The time of the author of the record that gave the session its
+    /// claims now: the first record, or the last one that changed them.
+    pub claims_ms: u64,
 }
 
 impl Run {
@@ -372,8 +375,14 @@ impl State {
             self.named.insert(replaces);
         }
         let key = (author, name.to_owned());
-        let old = self.runs.get(&key).and_then(|run| run.mark);
-        let mark = session.lead.as_ref().map(|_| old.unwrap_or(id));
+        let old = self.runs.get(&key);
+        let mark = session
+            .lead
+            .as_ref()
+            .map(|_| old.and_then(|run| run.mark).unwrap_or(id));
+        let claims_ms = old
+            .filter(|run| run.body.claims == session.claims)
+            .map_or(time_ms, |run| run.claims_ms);
         self.runs.insert(
             key,
             Run {
@@ -381,6 +390,7 @@ impl State {
                 body: session.clone(),
                 mark,
                 time_ms,
+                claims_ms,
             },
         );
     }
@@ -986,7 +996,27 @@ mod tests {
         assert_eq!(state.last_ms(&d.public(0)), Some(3));
         assert_eq!(state.last_ms(&d.public(1)), Some(5));
         assert_eq!(state.last_ms(&d.public(2)), None);
-        assert_eq!(state.run(&d.public(1), "p1").unwrap().time_ms, 4);
+        let run = state.run(&d.public(1), "p1").unwrap();
+        assert_eq!((run.time_ms, run.claims_ms), (4, 4));
+
+        // A new status at 6 keeps the time of the claims. A claim at 7
+        // moves it.
+        let mut status = session(PANGOLIN, None);
+        if let Body::Session(s) = &mut status {
+            s.status = Some("tests".into());
+        }
+        records.push(d.write(1, status.clone()));
+        let state = keep_all(riff, &records);
+        let run = state.run(&d.public(1), "p1").unwrap();
+        assert_eq!((run.time_ms, run.claims_ms), (6, 4));
+        if let Body::Session(s) = &mut status {
+            s.claims = vec!["issue-12".into()];
+        }
+        records.push(d.write(1, status));
+        let state = keep_all(riff, &records);
+        let run = state.run(&d.public(1), "p1").unwrap();
+        assert_eq!((run.time_ms, run.claims_ms), (7, 7));
+        assert_eq!(state.last_ms(&d.public(1)), Some(7));
     }
 
     #[test]

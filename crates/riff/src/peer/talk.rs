@@ -1062,7 +1062,8 @@ fn info(state: &State, run: &Run) -> SessionInfo {
 /// time when its daemon was last seen, the later of `seen` (the end of
 /// its last link, [`crate::peer::sync::Links::seen`]) and the time of
 /// its last record ([`State::last_ms`]). The age of the status is the
-/// age of the last record of the session. A session in a repository that
+/// age of the last record of the session, and the age of the claims is
+/// the age of the record that gave them. A session in a repository that
 /// the riff of peers pauses is `paused`. The times are of the authors,
 /// and `now_ms` is the time now.
 ///
@@ -1124,6 +1125,7 @@ pub fn shown(
             if let Some(status) = &mut s.status {
                 status.age_secs = ago(time(run.time_ms));
             }
+            s.claims_secs = ago(time(run.claims_ms));
             s.live = run.author == *me || online(&run.author);
             if !s.live {
                 let last = seen(&run.author).max(state.last_ms(&run.author).map(time));

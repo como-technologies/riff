@@ -3800,6 +3800,12 @@ async fn draw_top(
             let pauses = api.pauses(me).await?;
             let mut who = api.roster(me, false).await?;
             riff::state::fill(&mut who.sessions, pauses.state);
+            // Each session of each daemon of the riff of peers
+            // (01M519Z554SC3EAT69Q3M6JDAP).
+            if let Ok(dir) = riff::daemon::dir() {
+                let riff = riff::top::riff_sessions(&dir).await;
+                riff::top::with_riff_sessions(&mut who.sessions, riff);
+            }
             anyhow::Ok((pauses, who))
         };
         // Each call of a look has the budget of a short command
