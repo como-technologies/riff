@@ -52,7 +52,12 @@ pub fn second_blank_lines(text: &str) -> Vec<usize> {
 pub fn check(name: &str, text: &str) -> Vec<Error> {
     second_blank_lines(text)
         .into_iter()
-        .map(|n| Error::new("blank", format!("{name}:{n}: a second blank line. Remove it.")))
+        .map(|n| {
+            Error::new(
+                "blank",
+                format!("{name}:{n}: a second blank line. Remove it."),
+            )
+        })
         .collect()
 }
 

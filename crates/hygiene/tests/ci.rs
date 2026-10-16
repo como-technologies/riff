@@ -297,8 +297,16 @@ fn wrap_fails_on_a_long_line_of_a_page() {
 #[test]
 fn blank_fails_on_two_blank_lines_in_a_row_in_a_subfolder() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), "book/a.md", "# A\n\nText.\n\n```sh\nx\n\n\n```\n");
-    write(dir.path(), "plugin/skills/s/SKILL.md", "---\nname: s\n---\n\nText.\n");
+    write(
+        dir.path(),
+        "book/a.md",
+        "# A\n\nText.\n\n```sh\nx\n\n\n```\n",
+    );
+    write(
+        dir.path(),
+        "plugin/skills/s/SKILL.md",
+        "---\nname: s\n---\n\nText.\n",
+    );
     write(dir.path(), "plugin/notes.txt", "a\n\n\nb\n");
     let out = hygiene(dir.path(), &["blank", "book", "plugin"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
@@ -307,14 +315,17 @@ fn blank_fails_on_two_blank_lines_in_a_row_in_a_subfolder() {
         "ok: the blank lines of the pages in book, plugin\n"
     );
 
-    write(dir.path(), "plugin/skills/s/SKILL.md", "---\nname: s\n---\n\n\nText.\n");
+    write(
+        dir.path(),
+        "plugin/skills/s/SKILL.md",
+        "---\nname: s\n---\n\n\nText.\n",
+    );
     let out = hygiene(dir.path(), &["blank", "book", "plugin"]);
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     assert!(
-        stderr.contains(
-            "error: blank: plugin/skills/s/SKILL.md:5: a second blank line. Remove it."
-        ),
+        stderr
+            .contains("error: blank: plugin/skills/s/SKILL.md:5: a second blank line. Remove it."),
         "{stderr}"
     );
     assert!(
@@ -362,5 +373,7 @@ fn the_text_recipe_of_the_justfile_runs_no_code_check() {
     assert!(full.ends_with("{{just_executable()}} ci-checks"), "{full}");
     assert!(justfile.contains("recipe=$(cargo run -q -p hygiene -- ci)"));
     assert!(justfile.contains("cargo run -q -p hygiene -- wrap docs/src"));
-    assert!(justfile.contains("cargo run -q -p hygiene -- blank docs/src crates/riff/claude-plugin"));
+    assert!(
+        justfile.contains("cargo run -q -p hygiene -- blank docs/src crates/riff/claude-plugin")
+    );
 }
