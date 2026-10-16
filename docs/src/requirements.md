@@ -2209,6 +2209,21 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   session (R205), a new start of the session
   (01M3JEE1QQCFS5TMZW5N2DAD2D), and a stop with no end (R9). `move`, a
   keep-alive, `status` and each other call keep each claim.
+- **01M51JBEQRWWZKKP3GWW8QX96C** When a new start of a live session
+  (01M3JEE1QQCFS5TMZW5N2DAD2D) or a release of the lead for it
+  (01M3WG243BW7P6E1ME0DFNQF8C) ends its claims, `riff-server` sends
+  that session one direct message from `riff@server`, of the kind
+  `message`, so it wakes. The message names each claim, the reason and
+  the step: after a new start, claim the item again to go on, or stop
+  the work on it; after a release of the lead, stop the work on it. It
+  is in the chunk of the command, after the `released` records. A
+  session that is gone gets no message. The release of the holder
+  itself sends none.
+- **01M51JBET7R9QTT15BXDPM5QG7** The skill says what a session does
+  with that message. After a new start, it claims the item again when
+  it still works on it. After a release of the lead, it stops the work
+  on the item, pushes its work as WIP, writes the state on the issue,
+  and claims the item again only when the lead asks it to.
 - **R65** A person who posts from the command line has no session ID.
   The sender is `riff://USER@HOST`. A selector with `user` reaches the
   person through `riff tail`.

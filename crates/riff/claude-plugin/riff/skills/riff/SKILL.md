@@ -1198,6 +1198,24 @@ branch.
   gone or does not answer, `tell` the lead. Only the lead frees the
   claim of another session (see "Workers").
 
+### When riff ends your claim
+
+Two steps end your claim while your session lives: a new start of your
+session (a new Claude Code process, a resume or `/clear`), and a release
+of the lead for you. Then a direct message of `riff@server` wakes you.
+It names the claim, the reason and the step. Your own release sends no
+message.
+
+- A new start freed the claim: when you still work on the item, claim
+  it again, and go on from your work (see "Pick up dropped work"). When
+  the claim fails, another session took the item: stop the work on it,
+  and `tell` the lead.
+- The lead released the claim: stop the work on the item. Push your
+  work as WIP (see "Push your work as WIP"), and write the state on the
+  issue. Claim the item again only when the lead asks you to. In a
+  worker with no claim left, end your turn: the lead gives you your
+  next work with a request.
+
 ## Status
 
 riff makes the state of each session from facts. You do not report

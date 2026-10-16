@@ -14,6 +14,7 @@ mod behind;
 mod build;
 mod chat;
 mod claim;
+mod claim_end;
 mod clear;
 mod cli;
 mod cloud;

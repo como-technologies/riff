@@ -132,6 +132,11 @@
 //! - [`State::start`] is a new start of a session: a new agent process,
 //!   a resume or a `/clear`. It frees the claims of the session at once,
 //!   and keeps its lead (01M3JEE1QQCFS5TMZW5N2DAD2D).
+//! - When a new start or a release of the lead ends the claims of a
+//!   live session, a direct message of the server in the same chunk
+//!   names each claim, the reason and the step, and wakes the session
+//!   ([`dropped`], 01M51JBEQRWWZKKP3GWW8QX96C). The release of the
+//!   holder itself, an end and a stop with no end send none.
 //! - A worker that releases its last claim must clear its context before
 //!   its next claim (01M3X9XAK1KPZZVM1AJR2H8DSS). The reply to that release and to each
 //!   keep-alive carries the ask (01M3X9XB37TQCXWPNFZRMRGJB4). The server sends it no wake
@@ -292,7 +297,7 @@ pub use snapshot::Snapshot;
 pub use the_riff::{Forget, Import, MakeRiff, Pauses};
 pub use threads::{Announce, may_read};
 pub use view::{Settings, View};
-pub use work::{MUST_CLEAR, released_for};
+pub use work::{Dropped, MUST_CLEAR, dropped, released_for};
 
 use presence::{Block, LongStep, Session, SetStatus};
 use sessions::Known;

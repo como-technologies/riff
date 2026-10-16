@@ -1462,7 +1462,10 @@ sequenceDiagram
 A session that starts again comes back blank: after `/clear`, after a
 resume, and in a new Claude Code process. It keeps its ID, its threads
 and its lead, but its claims are free at once. The start hook tells
-the session which claims it lost. Another session can take them.
+the session which claims it lost. A message of the server wakes the
+session too, so a process of the session that still works hears of it
+(see [When riff ends your claim](#when-riff-ends-your-claim)).
+Another session can take them.
 
 ```mermaid
 sequenceDiagram
@@ -1633,6 +1636,8 @@ You released issue-12 in como-technologies/riff for the session 068a2cc2. The it
   shell.
 - The server posts a note in the thread. The note names the lead, the
   item and the session.
+- A live session gets a message that wakes it. See
+  [When riff ends your claim](#when-riff-ends-your-claim).
 - The next session claims the item, and goes on from the pushed
   branch. See
   [See the earlier work on an item](#see-the-earlier-work-on-an-item).
@@ -2612,13 +2617,13 @@ The answer names the pause, who set it, and who can end it.
 
 A claim stays while its session works. Only these steps end it:
 
-| Step | The claim ends |
-|---|---|
-| The session releases the item. | At once. |
-| The lead frees it (see [Free the claim of another session](#free-the-claim-of-another-session)). | At once. |
-| The session ends, for example with `/exit`. | At once. |
-| The session starts again: `/clear`, a resume, a new Claude Code process (see [A new start is blank](#a-new-start-is-blank)). | At once. |
-| The session stops with no end, for example after `kill -9`. | 5 minutes after its last sign of life. |
+| Step | The claim ends | The session hears of it |
+|---|---|---|
+| The session releases the item. | At once. | It made the step. |
+| The lead frees it (see [Free the claim of another session](#free-the-claim-of-another-session)). | At once. | A message wakes it. |
+| The session ends, for example with `/exit`. | At once. | No: it is gone. |
+| The session starts again: `/clear`, a resume, a new Claude Code process (see [A new start is blank](#a-new-start-is-blank)). | At once. | A message wakes it. |
+| The session stops with no end, for example after `kill -9`. | 5 minutes after its last sign of life. | No: it is gone. |
 
 Each other step keeps the claim: `move`, a keep-alive, `status`, a
 read, a post, a compaction, a pause, and an agent that the session
@@ -2628,6 +2633,39 @@ To see the claims of your session after a step, look at its URI:
 
 ```sh
 riff whoami
+```
+
+### When riff ends your claim
+
+A new start of a live session and a release of the lead end its
+claims. Then `riff-server` sends the session one direct message from
+`riff@server`. The message wakes the session, also a process of the
+session that still works, for example the outer session of a
+`claude -p`. It names each claim, the reason and the step:
+
+- After a new start: claim the item again to go on with it, or stop
+  the work on it.
+- After a release of the lead: stop the work on the item, push it as
+  WIP, and write the state on the issue.
+
+The release of the session itself sends no message.
+
+```mermaid
+sequenceDiagram
+    participant W as worker (w1)
+    participant E as riff-server
+    participant L as lead
+    W->>E: claim issue-12
+    L->>E: release issue-12 --session w1
+    E-->>W: wake: riff@server wrote to you in a direct message
+    W->>E: read
+    E-->>W: claims: the lead released your claim issue-12 ...
+```
+
+To see the message, read your threads:
+
+```sh
+riff read
 ```
 
 ### Claim an item by hand
