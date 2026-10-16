@@ -3844,6 +3844,26 @@ pub fn not_release_read(tag: &str, error: &str) -> String {
     )
 }
 
+/// Why a riff is not a release for the sync of the rules: the variable
+/// `RIFF_RELEASES` names the place `place` of the release files, and the
+/// sync reads `SHA256SUMS` only from the GitHub release
+/// (01M51QARV45MGEKC6KGWX1N5NS).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::not_release_releases("/srv/riff"),
+///     "RIFF_RELEASES is set to /srv/riff, and the sync reads SHA256SUMS only from the GitHub \
+///      release"
+/// );
+/// ```
+pub fn not_release_releases(place: &str) -> String {
+    format!(
+        "{} is set to {place}, and the sync reads {} only from the GitHub release",
+        crate::release::RELEASES,
+        crate::release::SUMS
+    )
+}
+
 /// The log line of the riff daemon `build` for each `rule` that its
 /// sync added to the user settings at `path` (01M51M3ZPAEMJ64266QSJBNQ46).
 ///

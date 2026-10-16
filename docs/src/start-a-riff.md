@@ -312,7 +312,7 @@ riff update --auto on
 ```mermaid
 flowchart LR
     S["the riff daemon starts"] --> A{"update.auto on?"}
-    A -- "yes" --> R{"its riff is a release?"}
+    A -- "yes" --> R{"its riff is a release<br/>on GitHub?"}
     R -- "yes" --> W["add each missing rule<br/>to your user settings"]
     A -- "no" --> N["no change"]
     R -- "no" --> N
@@ -326,8 +326,10 @@ flowchart LR
   rules: the owner approves each release.
 - Only a release changes your settings: a `riff` whose SHA-256 is in
   `SHA256SUMS` of the GitHub release of its version. A check build or
-  a dev build changes nothing. So a session cannot build a branch with
-  a wide rule and get that rule into your settings.
+  a dev build changes nothing. The daemon reads `SHA256SUMS` only from
+  GitHub: when `RIFF_RELEASES` is set for the daemon, it changes
+  nothing. So a session cannot build a branch with a wide rule and get
+  that rule into your settings.
 - Claude Code reads its rules only when it starts. Each worker starts
   again after its item (see
   [Which processes start again](how-it-works.md#which-processes-start-again)).

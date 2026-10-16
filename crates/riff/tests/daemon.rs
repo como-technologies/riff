@@ -134,20 +134,20 @@ async fn riff_daemon_install_writes_the_unit_and_starts_the_daemon() {
     wait_for(&here.bin.path().join("daemon.out"), "The riff daemon stops").await;
 }
 
-/// 01M51M3ZHHBE61CEG9T6ENFG18, 01M51M3ZKWQYBBPD97R0G9QAX0,
-/// 01M51M3ZPAEMJ64266QSJBNQ46, 01M51M3ZRKQZ8KDVRGJR3XAY00,
-/// 01M51M3ZTV61C9BMFT3J1M06NF: with `update.auto` on, a daemon whose
-/// riff is in `SHA256SUMS` of the release of its version adds each
-/// missing rule to the user settings of `CLAUDE_CONFIG_DIR` at its start.
-/// It keeps each other rule and key, logs each rule, keeps the line of
-/// the sync, and marks the add for the workers.
+/// 01M51QARV45MGEKC6KGWX1N5NS, 01M51M3ZKWQYBBPD97R0G9QAX0,
+/// 01M51M3ZPAEMJ64266QSJBNQ46, 01M51M3ZTV61C9BMFT3J1M06NF: a daemon with
+/// `RIFF_RELEASES` and its own SHA-256 in `SHA256SUMS` there changes no
+/// rule, also with `update.auto` on. Its line names the variable, and it
+/// keeps that line. The unit keeps `CLAUDE_CONFIG_DIR`. The add of the
+/// rules has its tests in `rule_sync::tests`.
 #[tokio::test]
-async fn the_daemon_of_a_release_adds_the_missing_rules_at_its_start() {
+async fn a_daemon_with_riff_releases_and_its_own_sha256_there_changes_no_rule() {
     let Some(target) = riff::release::TARGET else {
         return;
     };
     let here = Here::new();
-    // The release files of this version: the SHA-256 of this riff.
+    // RIFF_RELEASES of the test environment names this folder. Its
+    // SHA256SUMS has the SHA-256 of this riff, a dev build.
     let tag = format!("v{}", env!("CARGO_PKG_VERSION"));
     let files = here.env.releases().join(&tag);
     std::fs::create_dir_all(&files).unwrap();
@@ -176,68 +176,16 @@ async fn the_daemon_of_a_release_adds_the_missing_rules_at_its_start() {
     assert!(unit.lines().any(|l| l == line), "{line}\nnot in\n{unit}");
 
     let log = here.bin.path().join("daemon.out");
-    wait_for(&log, "rules to").await;
-    let after = std::fs::read_to_string(&settings).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&after).unwrap();
-    assert_eq!(value["model"], "opus");
-    assert_eq!(value["permissions"]["allow"][0], "Read(~/**)");
-    let want = riff::permissions::user_rules(Some(&here.env.home()));
-    assert!(
-        riff::permissions::missing(&want, &[&after]).is_empty(),
-        "{after}"
-    );
-    let logged = std::fs::read_to_string(&log).unwrap();
-    for rule in &want.allow {
-        let added = format!("added the allow rule {rule} to {}", settings.display());
-        assert!(logged.contains(&added), "{added}\nnot in\n{logged}");
-    }
-    let local = here.env.path().join("run/riff");
-    assert!(riff::local::rules_added(&local).is_some());
-    let last = riff::local::rules_sync(&local).unwrap();
-    assert!(
-        last.contains(&format!(
-            "added {} rules to {}",
-            want.len(),
-            settings.display()
-        )),
-        "{last}"
-    );
-
-    let pid: u32 = here.read("daemon.pid").trim().parse().unwrap();
-    term(pid);
-    wait_for(&log, "The riff daemon stops").await;
-}
-
-/// 01M51M3ZKWQYBBPD97R0G9QAX0: a daemon whose riff is not in
-/// `SHA256SUMS`, for example a dev build, changes no rule, also with
-/// `update.auto` on.
-#[tokio::test]
-async fn the_daemon_of_a_dev_build_changes_no_rule() {
-    let Some(target) = riff::release::TARGET else {
-        return;
-    };
-    let here = Here::new();
-    let tag = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let files = here.env.releases().join(&tag);
-    std::fs::create_dir_all(&files).unwrap();
-    let name = riff::release::asset("riff", target);
-    let sum = riff::release::sha256(b"the riff of the release");
-    std::fs::write(files.join("SHA256SUMS"), format!("{sum}  {name}\n")).unwrap();
-    let claude = here.env.home().join(".claude");
-    std::fs::create_dir_all(&claude).unwrap();
-    let settings = claude.join("settings.json");
-    let before = r#"{"permissions": {"allow": ["Read(~/**)"]}}"#;
-    std::fs::write(&settings, before).unwrap();
-    let out = here.run(true, &["update", "--auto", "on"]).await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
-
-    let out = here.run(true, &["daemon", "install"]).await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let log = here.bin.path().join("daemon.out");
-    wait_for(&log, "it is a check build or a dev build").await;
+    let why = riff::text::not_release_releases(&here.env.releases().display().to_string());
+    wait_for(&log, &why).await;
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), before);
+    let logged = std::fs::read_to_string(&log).unwrap();
+    assert!(!logged.contains("the sync of the rules"), "{logged}");
     let local = here.env.path().join("run/riff");
     assert_eq!(riff::local::rules_added(&local), None);
+    let last = riff::local::rules_sync(&local).unwrap();
+    assert!(last.contains("changed no rule"), "{last}");
+    assert!(last.ends_with(&why), "{last}");
 
     let pid: u32 = here.read("daemon.pid").trim().parse().unwrap();
     term(pid);

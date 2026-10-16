@@ -5406,10 +5406,14 @@ share.
   nothing. `riff update --auto` is the only switch, and it asks no other
   question.
 - **01M51M3ZKWQYBBPD97R0G9QAX0** A binary is a release when its
-  SHA-256 is the line of `riff-TARGET` in `SHA256SUMS` of the release of
-  its version tag. With each other binary, for example a check build or
-  a dev build, and when riff cannot read `SHA256SUMS`, the riff daemon
-  changes no settings of Claude Code.
+  SHA-256 is the line of `riff-TARGET` in `SHA256SUMS` of the GitHub
+  release of its version tag. With each other binary, for example a
+  check build or a dev build, and when riff cannot read `SHA256SUMS`,
+  the riff daemon changes no settings of Claude Code.
+- **01M51QARV45MGEKC6KGWX1N5NS** The sync of the rules reads
+  `SHA256SUMS` only from the GitHub releases. When `RIFF_RELEASES` is
+  set for the riff daemon, its sync changes no settings of Claude Code,
+  and its line names the variable.
 - **01M51M3ZPAEMJ64266QSJBNQ46** The riff daemon logs each rule that
   its sync adds, and one line of the result. It keeps that line in the
   local files of riff. `riff init` and `riff init --check` show whether
@@ -5417,7 +5421,6 @@ share.
 - **01M51M3ZTV61C9BMFT3J1M06NF** The unit of the riff daemon gets
   `CLAUDE_CONFIG_DIR` when it is set at the install, so the daemon and
   `riff init` change the same user settings of Claude Code.
-
 - **01M5084K9J566981EXZ7YJRGRR** When the auto mode check refuses a
   step, the session stops that step, writes the command and the reason
   on the issue of its item, and tells the lead. It does not try the
