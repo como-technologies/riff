@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use super::{Daemon, Record, now_ms};
 use crate::daemon_key::Public;
 use crate::forge_claim::{self, Claim, Freed, Link, Took};
+use crate::peer::talk::Hub;
 use crate::runtime::Runtime;
 use crate::text;
 
@@ -119,6 +120,39 @@ fn add_forge(dir: &Path, repo: &str, main: &Path) -> Result<()> {
     std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
 }
 
+/// [`Daemon::claim_forge`] for the daemon in the folder `dir` with the
+/// riff of peers `hub`: the waves of the daemon claim through it
+/// ([`crate::wave`]).
+pub(crate) async fn claim(
+    dir: &Path,
+    hub: &Hub,
+    main: &Path,
+    item: &str,
+    me: &SessionUri,
+) -> Result<Option<Forge>> {
+    let peer = hub.peer(me);
+    let session = me.who().session().context("a claim needs a session ID")?;
+    let claim = Claim::now(item, peer.who().user(), session, hub.public());
+    // The daemon knows the main clone before the push: a claim after a
+    // crash goes at the next start.
+    add_forge(dir, &me.place().repo_text(), main)?;
+    let at = main.to_owned();
+    let took = blocking(move || forge_claim::take(&at, &claim)).await?;
+    Ok(match took {
+        Took::Won(commit) => {
+            println!("{}", text::forge_claimed(item, &commit));
+            Some(Forge {
+                main: main.to_owned(),
+                commit,
+            })
+        }
+        Took::Held => {
+            println!("{}", text::forge_held(item));
+            None
+        }
+    })
+}
+
 impl<R: Runtime + 'static> Daemon<R> {
     /// Claims `item` for the session `me` on the forge of the main clone
     /// `main` (01M519Z4CT0PRXPRM22037Z5RY): the claim commit names the
@@ -132,27 +166,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         me: &SessionUri,
     ) -> Result<Option<Forge>> {
         let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
-        let peer = riff.hub.peer(me);
-        let session = me.who().session().context("a claim needs a session ID")?;
-        let claim = Claim::now(item, peer.who().user(), session, riff.hub.public());
-        // The daemon knows the main clone before the push: a claim after
-        // a crash goes at the next start.
-        add_forge(&self.dir, &me.place().repo_text(), main)?;
-        let at = main.to_owned();
-        let took = blocking(move || forge_claim::take(&at, &claim)).await?;
-        Ok(match took {
-            Took::Won(commit) => {
-                println!("{}", text::forge_claimed(item, &commit));
-                Some(Forge {
-                    main: main.to_owned(),
-                    commit,
-                })
-            }
-            Took::Held => {
-                println!("{}", text::forge_held(item));
-                None
-            }
-        })
+        claim(&self.dir, &riff.hub, main, item, me).await
     }
 
     /// The main clone of each repository that the daemon knows: of
@@ -334,21 +348,22 @@ impl<R: Runtime + 'static> Daemon<R> {
 }
 
 /// Releases the claim of the session of `record` on the forge, at the
-/// end of the session (01M519Z4HK333JWVXAWQHCGK6M). It blocks: call it on
-/// a thread for blocking work.
-pub(super) fn release_at_end(record: &Record) {
-    let Some(claim) = &record.claim else {
-        return;
-    };
+/// end of the session (01M519Z4HK333JWVXAWQHCGK6M). It gives the line of
+/// the release, and the daemon log shows it. It blocks: call it on a
+/// thread for blocking work.
+pub(crate) fn release_at_end(record: &Record) -> Option<String> {
+    let claim = record.claim.as_ref()?;
     let item = &record.live.item;
-    match forge_claim::release(&claim.main, item, &claim.commit) {
-        Ok(Freed::Deleted) => println!(
-            "{}",
-            text::forge_released_at_end(item, &record.live.session)
-        ),
-        Ok(Freed::NotAt) => println!("{}", text::forge_gone_at_end(item)),
-        Err(e) => eprintln!("riff daemon: {}: {e:#}", record.live.name),
-    }
+    let line = match forge_claim::release(&claim.main, item, &claim.commit) {
+        Ok(Freed::Deleted) => text::forge_released_at_end(item, &record.live.session),
+        Ok(Freed::NotAt) => text::forge_gone_at_end(item),
+        Err(e) => {
+            eprintln!("riff daemon: {}: {e:#}", record.live.name);
+            return None;
+        }
+    };
+    println!("{line}");
+    Some(line)
 }
 
 #[cfg(test)]
@@ -574,5 +589,29 @@ mod tests {
         let line = text::forge_released("issue-8", Some("brett"));
         assert_eq!(client.next().await.unwrap(), Some(Say::Line { text: line }));
         assert_eq!(client.next().await.unwrap(), Some(Say::Done));
+    }
+
+    /// 01M526Z1Q3QM3X0C7N6MCX8Z6T: the daemon runs a job of `riff run
+    /// --peers` only with no riff-server.
+    #[tokio::test]
+    async fn the_daemon_runs_one_job_only_with_no_riff_server() {
+        let a = here().await;
+        let wave = crate::wave::Wave {
+            repo: "o/r".into(),
+            main: a.dir.clone(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        let ask = Ask::Run {
+            wave,
+            work: crate::wave::Work::Build { issue: 12 },
+            image: IMAGE.into(),
+        };
+        let mut client = Client::connect(&a.dir).await.unwrap();
+        client.ask(ask).await.unwrap();
+        let refused = Say::Failed {
+            error: text::RUN_ONE_PEERS_ONLY.into(),
+        };
+        assert_eq!(client.next().await.unwrap(), Some(refused));
     }
 }

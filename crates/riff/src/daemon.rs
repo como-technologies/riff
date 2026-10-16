@@ -174,6 +174,7 @@
 //! | [`Ask::Join`], [`Ask::Leave`], [`Ask::Remove`] | each [`Say::Line`], then [`Say::Done`] or [`Say::Failed`] ([`peers`]) |
 //! | [`Ask::Members`] | [`Say::Members`], or [`Say::Failed`] ([`peers`]) |
 //! | [`Ask::Release`] | [`Say::Line`] and [`Say::Done`] when the daemon deleted the claim on the forge, or [`Say::Failed`] |
+//! | [`Ask::Run`] | as [`Ask::Start`], then [`Say::Line`] for each step after the end, then [`Say::Done`], or [`Say::Failed`] |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
 //! [`Then::Stop`]: the daemon stops the container. When `riff` closes the
@@ -779,6 +780,17 @@ pub enum Ask {
         main: PathBuf,
         /// The work item, for example `issue-12`.
         item: String,
+    },
+    /// `riff run ITEM --peers`: one job of a wave with no riff-server
+    /// (01M519Z4RWHWP3TKNP4T5GKKE9, `crate::wave::run_one`).
+    Run {
+        /// The wave of the job: its repository, its main clone and the
+        /// host. Its riff-server is empty.
+        wave: Wave,
+        /// The work.
+        work: crate::wave::Work,
+        /// The image of the session.
+        image: String,
     },
 }
 
@@ -1560,6 +1572,9 @@ pub struct Daemon<R> {
     /// The invites of the owner ([`crate::peer::invite`]): `riff invite`
     /// makes them, and the peer links take a join with them.
     invites: Arc<Invites>,
+    /// The world of the waves with no riff-server, from its riff on
+    /// ([`Daemon::world_of`]).
+    peer_world: OnceLock<Arc<dyn World>>,
 }
 
 /// A wave that runs in the daemon.
@@ -1816,6 +1831,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             net: None,
             links: OnceLock::new(),
             invites,
+            peer_world: OnceLock::new(),
         })
     }
 
@@ -1901,6 +1917,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             None => None,
         };
         let hub = Arc::new(Hub::new(key, peers));
+        let world = crate::wave::peers::Peers::new(hub.clone(), self.dir.clone());
+        let _ = self.peer_world.set(Arc::new(world));
         self.riff
             .set(Riff {
                 owner,
@@ -1987,7 +2005,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// Releases the claim of the session of `record` on the forge, and
     /// then writes the `session` record of the end of the session, when
     /// the session has no riff-server and the daemon has its riff
-    /// (01M519Z4HK333JWVXAWQHCGK6M).
+    /// (01M519Z4HK333JWVXAWQHCGK6M). A job of a wave releases its claim
+    /// after its steps after the end ([`crate::wave`],
+    /// 01M526Z1WH3865PKGFPYPFWQT7).
     fn peer_end(&self, record: &Record) {
         if !record.on_peers() {
             return;
@@ -1995,7 +2015,9 @@ impl<R: Runtime + 'static> Daemon<R> {
         let hub = self.riff.get().map(|riff| riff.hub.clone());
         let record = record.clone();
         tokio::task::spawn_blocking(move || {
-            forge::release_at_end(&record);
+            if record.job.is_none() {
+                forge::release_at_end(&record);
+            }
             if let Some(hub) = hub
                 && let Err(e) = hub.end(&record.live.session)
             {
@@ -2066,9 +2088,26 @@ impl<R: Runtime + 'static> Daemon<R> {
         &self.room
     }
 
-    /// The forge and the riff of the waves.
-    pub(crate) fn world(&self) -> &Arc<dyn World> {
-        &self.world
+    /// The world of a wave or of a session with the riff-server
+    /// `server`: the forge and riff-server 1.x ([`crate::wave::Live`], or
+    /// the world of a test), or for no riff-server the riff of
+    /// peers of the daemon ([`crate::wave::peers::Peers`],
+    /// 01M519Z4RWHWP3TKNP4T5GKKE9, 01M526Z1Q3QM3X0C7N6MCX8Z6T). The riff
+    /// of peers fails while the daemon has no riff.
+    pub(crate) fn world_of(&self, server: &str) -> Result<Arc<dyn World>> {
+        if !server.is_empty() {
+            return Ok(self.world.clone());
+        }
+        self.peer_world
+            .get()
+            .cloned()
+            .context(text::DAEMON_NO_RIFF_YET)
+    }
+
+    /// The world of the session of `record` ([`Daemon::world_of`]): `None`
+    /// for a session with no riff-server while the daemon has no riff.
+    fn world_for(&self, record: &Record) -> Option<Arc<dyn World>> {
+        self.world_of(&record.server).ok()
     }
 
     /// The number of sessions that the daemon owns, but the sessions
@@ -2401,6 +2440,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                         error: format!("{e:#}"),
                     },
                 }),
+                Ok(Ask::Run { wave, work, image }) => {
+                    crate::wave::run_one(self.clone(), wave, work, image, lines, &out).await;
+                }
                 Ok(Ask::Release { main, item }) => {
                     out.say(match self.release_asked(main, item).await {
                         Ok(text) => {
@@ -2569,33 +2611,46 @@ impl<R: Runtime + 'static> Daemon<R> {
             self.launch(start, None, None, Some(from), out).await;
             return;
         }
-        let slot = {
-            let admit = self.room.admit(
-                &name,
-                || self.live_count(),
-                |full| {
-                    out.say(Say::Line {
-                        text: text::daemon_waits(&name, full),
-                    });
-                },
-            );
-            tokio::pin!(admit);
-            loop {
-                tokio::select! {
-                    slot = &mut admit => break slot,
-                    line = from.next_line() => match line {
-                        Ok(Some(line)) if !matches!(serde_json::from_str::<Then>(&line), Ok(Then::Stop)) => {}
-                        _ => {
-                            out.say(Say::Failed {
-                                error: text::daemon_no_start(&name),
-                            });
-                            return;
-                        }
-                    },
-                }
-            }
+        let Some(slot) = self.room_for(&name, &mut from, out).await else {
+            return;
         };
         self.launch(start, None, Some(slot), Some(from), out).await;
+    }
+
+    /// Waits for room in the limit of the host for the session `name`,
+    /// and says why it waits on `out`. A [`Then::Stop`] on `from`, or the
+    /// end of `from`, ends the wait: it says [`Say::Failed`] and gives
+    /// `None` (01M4ZV3B6VS0RAR0P7MRHKE8CQ).
+    pub(crate) async fn room_for(
+        &self,
+        name: &str,
+        from: &mut Lines<BufReader<OwnedReadHalf>>,
+        out: &Out,
+    ) -> Option<Slot> {
+        let admit = self.room.admit(
+            name,
+            || self.live_count(),
+            |full| {
+                out.say(Say::Line {
+                    text: text::daemon_waits(name, full),
+                });
+            },
+        );
+        tokio::pin!(admit);
+        loop {
+            tokio::select! {
+                slot = &mut admit => return Some(slot),
+                line = from.next_line() => match line {
+                    Ok(Some(line)) if !matches!(serde_json::from_str::<Then>(&line), Ok(Then::Stop)) => {}
+                    _ => {
+                        out.say(Say::Failed {
+                            error: text::daemon_no_start(name),
+                        });
+                        return None;
+                    }
+                },
+            }
+        }
     }
 
     /// Starts the session of `start` in the room of `slot`, with the job
@@ -2710,7 +2765,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                     return record;
                 }
             };
-            self.world.resume(&record);
+            if let Some(world) = self.world_for(&record) {
+                world.resume(&record);
+            }
             out.say(Say::Done);
             let reader = from.map(|from| stop_on(from, owned.clone()));
             self.clone().watch(owned, notes, Some(end)).await;
@@ -2867,8 +2924,9 @@ impl<R: Runtime + 'static> Daemon<R> {
             failed: failed || stopped || !exited,
         };
         println!("{}", text::daemon_session_ends(&owned.name, code));
-        if record.terminal {
-            let world = self.world.clone();
+        if record.terminal
+            && let Some(world) = self.world_for(&record)
+        {
             tokio::spawn(async move { world.leave(&record).await });
         }
         let followers = self.close(&owned);
@@ -3217,8 +3275,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let _ = std::fs::remove_file(&path);
                 let _ = std::fs::remove_dir_all(session_dir(&self.dir, &name));
                 println!("{}", text::daemon_session_gone(&name));
-                if record.terminal {
-                    let world = self.world.clone();
+                if record.terminal
+                    && let Some(world) = self.world_for(&record)
+                {
                     let record = record.clone();
                     tokio::spawn(async move { world.leave(&record).await });
                 }
@@ -3237,15 +3296,19 @@ impl<R: Runtime + 'static> Daemon<R> {
                 Ok((owned, notes)) => {
                     println!("{}", text::daemon_takes_up(&name));
                     // The lead keeps its session on riff-server alive.
-                    if record.terminal {
-                        self.world.resume(&record);
+                    if record.terminal
+                        && let Some(world) = self.world_for(&record)
+                    {
+                        world.resume(&record);
                     }
                     // The job of a wave goes on: the keep-alive of its
                     // claim, and its steps after the end.
                     if record.job.is_some() {
                         let (out, said) = Out::keep();
                         owned.lock().followers.push(out);
-                        self.world.resume(&record);
+                        if let Some(world) = self.world_for(&record) {
+                            world.resume(&record);
+                        }
                         tokio::spawn(crate::wave::after(self.clone(), record, said));
                     }
                     tokio::spawn(self.clone().watch(owned, notes, None));
@@ -5352,8 +5415,12 @@ mod tests {
             self.note(format!("resume {}", record.live.session));
         }
 
-        fn finish<'a>(&'a self, _: &'a Record, _: Ended) -> crate::wave::BoxFuture<'a, Result<()>> {
-            Box::pin(async { Ok(()) })
+        fn finish<'a>(
+            &'a self,
+            _: &'a Record,
+            _: Ended,
+        ) -> crate::wave::BoxFuture<'a, Result<Vec<String>>> {
+            Box::pin(async { Ok(Vec::new()) })
         }
 
         fn sweep<'a>(

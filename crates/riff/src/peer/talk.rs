@@ -880,10 +880,14 @@ impl Session {
     }
 
     /// The error of a step that only a lead does, when `me` is not the
-    /// lead and the daemon is not the daemon of the owner.
+    /// lead, and is a worker or a session of a daemon that is not the
+    /// daemon of the owner (01M519Z3FTAZ20DQKDTW09M6NS, 01M5274Z2NQEKN6B4H7V95KKW0).
     fn must_lead(&self, me: &SessionUri) -> Result<()> {
-        let owner = self.hub.read(|state| state.riff() == self.hub.public());
-        if owner || self.is_lead(me) {
+        let (owner, worker) = self.hub.read(|state| {
+            let worker = self.run_of(state, me).is_some_and(|run| run.body.worker);
+            (state.riff() == self.hub.public(), worker)
+        });
+        if self.is_lead(me) || (owner && !worker) {
             Ok(())
         } else {
             bail!("{}", text::PEER_NOT_LEAD)
@@ -1617,9 +1621,13 @@ mod tests {
     #[test]
     fn a_pause_of_the_riff_tells_each_repository_that_it_stops() {
         let dir = tempfile::tempdir().unwrap();
-        let sessions = [("a", "o/r"), ("b", "o/r"), ("c", "o/s"), ("d", "o/u")];
-        let s = Session::new(hub(dir.path(), &sessions));
+        let sessions = [("b", "o/r"), ("c", "o/s"), ("d", "o/u")];
+        let hub = hub(dir.path(), &sessions);
+        // The lead pauses: a worker cannot, also on the daemon of the
+        // owner.
         let a = uri("a", "o/r");
+        hub.start(&a, false, true, Vec::new()).unwrap();
+        let s = Session::new(hub);
         let threads = |posted: &[Posted]| -> Vec<String> {
             posted.iter().map(|p| p.thread.to_string()).collect()
         };
@@ -1651,5 +1659,35 @@ mod tests {
             .set_pause(&a, &PauseScope::Riff, RiffState::Running)
             .unwrap();
         assert_eq!(threads(&posted), ["o/u"]);
+    }
+
+    /// 01M5274Z2NQEKN6B4H7V95KKW0 (#844): on the daemon of the owner, a
+    /// worker cannot do a step of a lead: hold, free, pause and resume.
+    /// A session of that daemon that is not a worker can, and so can the
+    /// lead.
+    #[test]
+    fn a_worker_of_the_daemon_of_the_owner_cannot_do_a_step_of_a_lead() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = hub(dir.path(), &[("w", "o/r")]);
+        let (worker, person) = (uri("w", "o/r"), uri("p", "o/r"));
+        hub.start(&person, false, false, Vec::new()).unwrap();
+        let s = Session::new(hub);
+        let repo: ThreadName = "o/r".parse().unwrap();
+        let refused = |result: Result<_>| match result {
+            Err(e) => assert_eq!(e.to_string(), text::PEER_NOT_LEAD),
+            Ok(_) => panic!("a worker did a step of a lead"),
+        };
+        refused(s.hold(&worker, &repo, "issue-12", "wait").map(drop));
+        refused(s.free(&worker, &repo, "issue-12").map(drop));
+        refused(
+            s.set_pause(&worker, &PauseScope::Here, RiffState::Paused)
+                .map(drop),
+        );
+        s.hold(&person, &repo, "issue-12", "wait").unwrap();
+        s.free(&person, &repo, "issue-12").unwrap();
+        s.set_pause(&person, &PauseScope::Here, RiffState::Paused)
+            .unwrap();
+        s.set_pause(&person, &PauseScope::Here, RiffState::Running)
+            .unwrap();
     }
 }

@@ -375,6 +375,12 @@ flowchart TD
   `riff lead start` has a riff-server, so its riff tools act on 1.x.
   See
   [The riff tools of a session](development.md#the-riff-tools-of-a-session).
+  With `--peers`, `riff run` and `riff wave run` need no riff-server:
+  the daemon claims on GitHub, and each riff step goes to the riff of
+  the daemon. See
+  [Run an item with no riff-server](development.md#run-an-item-with-no-riff-server)
+  and
+  [Run the wave with no riff-server](development.md#run-the-wave-with-no-riff-server).
 - Until Wave C, the member commands of 1.x take `--email`:
   `riff invite --email EMAIL`, `riff remove --email EMAIL` and
   `riff members --email`.

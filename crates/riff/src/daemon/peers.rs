@@ -752,4 +752,40 @@ mod tests {
         std::fs::write(dir.path().join(JOINED), "not a key").unwrap();
         assert!(joined(dir.path()).is_err());
     }
+
+    /// 01M519Z4PESWFV8Y03SKTSGV4Q (#844): `riff release ITEM --forge` on
+    /// the daemon of a member that joined frees a claim of its own user,
+    /// and refuses a claim of another user. The daemon of the owner frees
+    /// that claim.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn riff_release_forge_of_a_member_frees_only_a_claim_of_its_user() {
+        use crate::forge_claim::{self, Claim};
+        let (o, n, _t) = three().await;
+        n.join(&o.invite("brett").await.unwrap().0).await.unwrap();
+        until("the member record of brett", || {
+            n.hub()
+                .read(|state| state.user_of(&n.key()) == Some("brett"))
+        })
+        .await;
+        let forge = tempfile::tempdir().unwrap();
+        let main = forge_claim::tests::clone_of(forge.path(), "b");
+        let owner = o.user();
+        for (item, user) in [("issue-1", "brett"), ("issue-2", owner.as_str())] {
+            forge_claim::take(&main, &Claim::now(item, user, "s1", o.key())).unwrap();
+        }
+        crate::daemon::ask_release(&n.dir, &main, "issue-1")
+            .await
+            .unwrap();
+        let refused = crate::daemon::ask_release(&n.dir, &main, "issue-2")
+            .await
+            .unwrap_err();
+        let why = text::forge_release_not_yours("issue-2", &owner, Some("brett"));
+        assert_eq!(refused.to_string(), why);
+        let left: Vec<String> = forge_claim::list(&main).unwrap().into_keys().collect();
+        assert_eq!(left, ["issue-2"]);
+        crate::daemon::ask_release(&o.dir, &main, "issue-2")
+            .await
+            .unwrap();
+        assert!(forge_claim::list(&main).unwrap().is_empty());
+    }
 }
