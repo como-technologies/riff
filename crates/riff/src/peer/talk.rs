@@ -65,7 +65,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use riff_core::name::{SessionUri, ThreadName, Who};
+use riff_core::name::{Place, SessionUri, ThreadName, Who};
 use riff_core::record::By;
 use riff_core::selector::Selector;
 use riff_core::wire::{
@@ -77,7 +77,7 @@ use tokio::sync::Notify;
 use crate::api::{Checked as Shown, Inbox, PauseScope, Told};
 use crate::daemon_key::{Key, Public};
 use crate::peer::body::{Body, Lead, Message, Plan, Session as SessionBody};
-use crate::peer::keep::{Outcome, Peers};
+use crate::peer::keep::{Fork, Outcome, Peers};
 use crate::peer::record::Id;
 use crate::peer::state::{Applied, Kept, Mark, Run, State};
 use crate::talk::Talk;
@@ -193,15 +193,74 @@ impl Hub {
         Ok((id, applied))
     }
 
-    /// Takes a record of another daemon ([`Peers::keep`]), and wakes the
-    /// sessions that a new message selects.
-    pub fn keep(&self, bytes: Vec<u8>) -> Result<Outcome> {
-        let outcome = lock(&self.peers).keep(bytes)?;
+    /// Reads the records of the daemon with `read`: for example its heads,
+    /// or the records that another daemon lacks ([`Peers::lacks`]).
+    pub fn with_peers<T>(&self, read: impl FnOnce(&Peers) -> T) -> T {
+        read(&lock(&self.peers))
+    }
+
+    /// Takes a record that the daemon `from` sent ([`Peers::keep`]), and
+    /// wakes the sessions that a new message selects. On a new fork, it
+    /// posts a note to the lead of the user of the daemon
+    /// ([`Hub::tell_fork`]).
+    pub fn keep(&self, bytes: Vec<u8>, from: Option<Public>) -> Result<Outcome> {
+        let outcome = lock(&self.peers).keep(bytes, from)?;
         match &outcome {
             Outcome::Kept(applied) => self.wake(applied),
-            Outcome::Duplicate | Outcome::Later(_) | Outcome::Refused(_) => {}
+            Outcome::Fork(fork) => self.tell_fork(fork)?,
+            Outcome::Duplicate | Outcome::Forked | Outcome::Later(_) | Outcome::Refused(_) => {}
         }
         Ok(outcome)
+    }
+
+    /// Posts a note on the fork `fork` to the lead of the user of the
+    /// daemon (01M519Z38G3RAZPKGFA3R2CB3P): one note in each repository
+    /// where that user has a lead. The note comes from the daemon: the
+    /// user of its key, on this host, with no session.
+    pub fn tell_fork(&self, fork: &Fork) -> Result<()> {
+        let author = fork.first.author();
+        let notes = self.read(|state| {
+            let Some(user) = state.user_of(&self.public()) else {
+                return Ok(Vec::new());
+            };
+            let from = SessionUri::new(
+                Who::new(user, None)?,
+                Place::host_only(&crate::identity::this_host())?,
+            );
+            let (of, host) = (
+                state.user_of(&author),
+                state.members().get(&author).map(|m| m.host.as_str()),
+            );
+            let body = text::peer_fork(&author.to_string(), of, host, fork.first.seq());
+            let leads: BTreeSet<ThreadName> = state
+                .runs()
+                .filter_map(Run::thread)
+                .filter(|thread| state.lead(user, thread).is_some())
+                .collect();
+            Ok::<_, anyhow::Error>(
+                leads
+                    .into_iter()
+                    .map(|thread| {
+                        Body::Message(Box::new(Message {
+                            from: from.clone(),
+                            to: vec![Selector {
+                                user: Some(user.to_owned()),
+                                repo: Some(thread.to_string()),
+                                lead: Some(true),
+                                ..Selector::default()
+                            }],
+                            thread,
+                            kind: Kind::Note,
+                            body: body.clone(),
+                        }))
+                    })
+                    .collect::<Vec<Body>>(),
+            )
+        })?;
+        for note in notes {
+            self.write(&note)?;
+        }
+        Ok(())
     }
 
     /// Writes the `session` record of the start of the session `me` of

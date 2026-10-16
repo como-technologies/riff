@@ -51,9 +51,15 @@ impl Book {
     /// whole record in it. It makes the folder and the file when they are
     /// not there. It drops a last record that is cut short.
     pub fn open(dir: &Path) -> Result<(Book, Vec<Vec<u8>>)> {
+        Book::open_file(dir, FILE)
+    }
+
+    /// [`Book::open`] of the file `name` in the folder `dir`, for example
+    /// the proofs of the forks ([`crate::peer::keep::FORKS`]).
+    pub fn open_file(dir: &Path, name: &str) -> Result<(Book, Vec<Vec<u8>>)> {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("cannot make the folder {}", dir.display()))?;
-        let path = dir.join(FILE);
+        let path = dir.join(name);
         let mut file = OpenOptions::new()
             .read(true)
             .append(true)

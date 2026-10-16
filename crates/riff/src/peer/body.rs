@@ -60,6 +60,10 @@ use crate::peer::record::Id;
 /// One KiB.
 const KIB: usize = 1024;
 
+/// The largest size of a record of each type: [`Type::largest`] of a
+/// `message`. A peer link reads no larger record ([`crate::peer::wire`]).
+pub const LARGEST: usize = 64 * KIB;
+
 /// The type of a record: its byte in the bytes of the record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Type {
@@ -108,7 +112,7 @@ impl Type {
         match self {
             Type::Riff | Type::Member | Type::Removed | Type::Left => KIB,
             Type::Session | Type::Plan => 4 * KIB,
-            Type::Message | Type::Other(_) => 64 * KIB,
+            Type::Message | Type::Other(_) => LARGEST,
         }
     }
 }
