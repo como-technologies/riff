@@ -639,15 +639,15 @@ async fn a_worker_with_a_task_claim_gets_no_free_work() {
 /// the body names the item (01M51BF5S2YKB8JG10DF6YVT42).
 const RELEASE: &str = r#""headRefName":"release-v1.5.0","body":"Refs #1\n\nLevel: minor.\n\nIssue: #1\nMilestone: Wave 1\n""#;
 
-/// A live worker of the user that joined, with no claim, and its watch.
-async fn idle_worker(lead: &Lead) -> (SessionUri, impl Sized) {
+/// A worker of the user that joined, with no claim. A watch of it keeps
+/// it live.
+async fn idle_worker(lead: &Lead) -> SessionUri {
     let idle = SessionUri::new(
         Who::new("mike", Some("t1")).unwrap(),
         lead.me.place().clone(),
     );
     lead.api.register_as(&idle, true).await.unwrap();
-    let watch = lead.api.watch(&idle).await.unwrap();
-    (idle, watch)
+    idle
 }
 
 /// A release pull request counts for the issue of its trailer
@@ -660,7 +660,8 @@ async fn a_release_pull_request_that_waits_for_the_merge_gives_no_build() {
     let lead = lead(5).await;
     lead.issues(ONE_ITEM);
     lead.pull_of(RELEASE, Some("SUCCESS"));
-    let (idle, _watch) = idle_worker(&lead).await;
+    let idle = idle_worker(&lead).await;
+    let _watch = lead.api.watch(&idle).await.unwrap();
     lead.riff(RiffState::Running).await;
     lead.looked().await;
     assert_eq!(lead.settled().await, 0, "{}", lead.tmux_log());
@@ -679,7 +680,8 @@ async fn a_release_pull_request_that_waits_for_a_verify_gives_the_verify() {
     let lead = lead(5).await;
     lead.issues(ONE_ITEM);
     lead.pull_of(RELEASE, None);
-    let (idle, _watch) = idle_worker(&lead).await;
+    let idle = idle_worker(&lead).await;
+    let _watch = lead.api.watch(&idle).await.unwrap();
     lead.riff(RiffState::Running).await;
     let read = reads(&lead.api, &idle, "request: claim verify-issue-1").await;
     assert!(!read.contains("request: claim issue-1"), "{read}");
@@ -698,7 +700,8 @@ async fn a_held_item_gets_no_worker_until_the_lead_frees_it() {
         .hold(&lead.me, &thread, "issue-1", "waits for the word of Mike")
         .await
         .unwrap();
-    let (idle, _watch) = idle_worker(&lead).await;
+    let idle = idle_worker(&lead).await;
+    let _watch = lead.api.watch(&idle).await.unwrap();
     lead.riff(RiffState::Running).await;
     lead.looked().await;
     assert_eq!(lead.settled().await, 0, "{}", lead.tmux_log());
