@@ -280,7 +280,10 @@ fn a_test_program_runs_a_thread_for_each_free_token() {
         .env_remove("CARGO_BUILD_RUSTC_WRAPPER")
         .env_remove("RUSTC_WRAPPER")
         .env("MAKEFLAGS", pool.makeflags())
-        .env(riff::limits::runner_var(), runner)
+        .env(
+            riff::limits::runner_var(&riff::limits::test_target_here()),
+            runner,
+        )
         .env("CARGO_TARGET_DIR", root.path().join("target"))
         .env("THREADS_FILE", &threads)
         .output()

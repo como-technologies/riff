@@ -18,6 +18,16 @@ const LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=lead1";
 /// pangolin: 16 cores and 30 GB, with 24 GB available.
 const PANGOLIN: &str = "cpu 16x4500MHz, mem 30GB, 24GB available, load 0.50";
 
+/// A fake `rustc` whose host is not the target of the riff build: the
+/// test runner goes to its target (01M515PDCD1RRBKJPZHKKZWMY3).
+const FAKE_RUSTC: &str = r#"#!/bin/sh
+[ "$1" = "-vV" ] || exit 2
+printf 'rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\nhost: riscv64gc-unknown-linux-gnu\nrelease: 1.95.0\n'
+"#;
+
+/// The variable of the test runner for the host of [`FAKE_RUSTC`].
+const RUNNER: &str = "CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_RUNNER";
+
 /// A fake `tmux`: it writes each call to the file `tmux.log`, and has
 /// no worker panes.
 const FAKE_TMUX: &str = r#"#!/bin/sh
@@ -115,6 +125,7 @@ impl Machine {
         );
         git(&main, &["commit", "-q", "--allow-empty", "-m", "x"]);
         script(&m.bin(), "tmux", FAKE_TMUX);
+        script(&m.bin(), "rustc", FAKE_RUSTC);
         m
     }
 
@@ -157,7 +168,9 @@ impl Machine {
             .env(riff::jobserver::PSI_VAR, self.root.path().join("no-psi"))
             // A test that runs in a worker has the pool and the test
             // runner of that worker: the machine of the test has none.
-            .env_remove("MAKEFLAGS");
+            .env_remove("MAKEFLAGS")
+            // The rustc of `PATH` gives the target of the tests.
+            .env_remove("RUSTC");
         for (name, _) in std::env::vars() {
             if name.starts_with("CARGO_TARGET_") && name.ends_with("_RUNNER") {
                 cmd.env_remove(name);
@@ -250,9 +263,8 @@ fn the_wrapper_gives_claude_the_jobs_of_a_worker() {
     let m = Machine::new(isolated::DEAD_SERVER);
     let seen = m.bin().join("seen");
     let claude = m.claude(&format!(
-        "echo \"[$CARGO_BUILD_JOBS] $RUST_TEST_THREADS [$MAKEFLAGS] [${}]\" > '{}'\n\
+        "echo \"[$CARGO_BUILD_JOBS] $RUST_TEST_THREADS [$MAKEFLAGS] [${RUNNER}]\" > '{}'\n\
          cat '{}/state/jobs/size' >> '{}'",
-        riff::limits::runner_var(),
         seen.display(),
         m.root.path().join("home").display(),
         seen.display()
@@ -284,8 +296,49 @@ fn the_wrapper_gives_claude_the_jobs_of_a_worker() {
     // The setting wins, with no pool, and no variable of an outer pool
     // stays (01M41CR2HJRFW6R7YMJTPVEMJ1).
     m.workers(&["jobs", "6"]);
-    m.wrapper(&claude, &outer_pool(&riff::limits::runner_var()));
+    m.wrapper(&claude, &outer_pool(RUNNER));
     assert!(read(&seen).starts_with("[6] 6 [] []"), "{}", read(&seen));
+}
+
+/// 01M515PDCD1RRBKJPZHKKZWMY3: the test runner of the pool goes to the
+/// host target of the `rustc` of the worker, not to the target of the
+/// riff build: a static riff is a musl build on a gnu host. `RUSTC`
+/// names the rustc, as for cargo. When riff cannot run it, the runner
+/// goes to the target of the riff build.
+#[test]
+fn the_test_runner_goes_to_the_host_target_of_rustc() {
+    let m = Machine::new(isolated::DEAD_SERVER);
+    let seen = m.bin().join("seen");
+    let build = riff::limits::runner_var(riff::limits::BUILD_TARGET);
+    let ppc = "CARGO_TARGET_POWERPC64LE_UNKNOWN_LINUX_GNU_RUNNER";
+    let claude = m.claude(&format!(
+        "echo \"riscv [${RUNNER}] ppc [${ppc}] build [${build}]\" > '{}'",
+        seen.display()
+    ));
+    m.workers(&["limit", "4"]);
+    let runner = |vars: &[(&str, &str)]| {
+        let out = m.wrapper(&claude, vars);
+        assert_eq!(out.status.code(), Some(0), "{out:?}");
+        let seen = read(&seen);
+        let set: Vec<&str> = ["riscv", "ppc", "build"]
+            .into_iter()
+            .filter(|name| !seen.contains(&format!("{name} []")))
+            .collect();
+        assert!(seen.contains(" workers test-run]"), "{seen}");
+        set.join(" ")
+    };
+    // The host of the rustc of PATH.
+    assert_eq!(runner(&[]), "riscv");
+    // RUSTC names another rustc.
+    let other = script(
+        &m.bin(),
+        "other-rustc",
+        &FAKE_RUSTC.replace("riscv64gc", "powerpc64le"),
+    );
+    assert_eq!(runner(&[("RUSTC", other.to_str().unwrap())]), "ppc");
+    // riff cannot run rustc: the target of the riff build.
+    script(&m.bin(), "rustc", "#!/bin/sh\nexit 1\n");
+    assert_eq!(runner(&[]), "build");
 }
 
 /// Waits until the pool in `dir` has `free` free tokens.
@@ -357,14 +410,13 @@ fn with_no_pool_the_worker_gets_the_fixed_share() {
     // A file where the pool must go.
     std::fs::write(state.join("jobs"), "").unwrap();
     let seen = m.bin().join("seen");
-    let runner = riff::limits::runner_var();
     let claude = m.claude(&format!(
-        "echo \"$CARGO_BUILD_JOBS $RUST_TEST_THREADS [$MAKEFLAGS] [$CARGO_MAKEFLAGS] [${runner}]\" > '{}'",
+        "echo \"$CARGO_BUILD_JOBS $RUST_TEST_THREADS [$MAKEFLAGS] [$CARGO_MAKEFLAGS] [${RUNNER}]\" > '{}'",
         seen.display()
     ));
     m.workers(&["limit", "4"]);
     // The wrapper starts in a worker with a pool (01M41CR2HJRFW6R7YMJTPVEMJ1).
-    let out = m.wrapper(&claude, &outer_pool(&runner));
+    let out = m.wrapper(&claude, &outer_pool(RUNNER));
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(read(&seen).trim(), "3 3 [] [] []");
     assert!(

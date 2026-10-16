@@ -339,12 +339,13 @@ async fn the_monitor_tells_the_lead_once_at_a_limit_and_once_when_good() {
     .await;
 
     // riff workers shows the monitor and its last numbers
-    // (01M421QPX01BB15GJXHFYRETTX).
+    // (01M421QPX01BB15GJXHFYRETTX). No worker runs: the pool of the
+    // settings, 8 threads less 2, less 2 workers (01M515PDFZZXQ9ZCQE7SQ6KB8G).
     let out = r.riff(&["workers"]).output().unwrap();
     assert!(out.status.success(), "{out:?}");
     let text = stdout(&out);
     assert!(
-        text.contains("monitor on  load5 5.00 of 12.00 (8 cores)  jobs 3"),
+        text.contains("monitor on  load5 5.00 of 12.00 (8 cores)  pool 4 (0 in use)"),
         "{text}"
     );
     assert!(
@@ -352,6 +353,35 @@ async fn the_monitor_tells_the_lead_once_at_a_limit_and_once_when_good() {
         "{text}"
     );
     drop(host);
+}
+
+/// 01M515PDFZZXQ9ZCQE7SQ6KB8G: the line of the monitor shows the pool
+/// that a worker holds, with its tokens in use, and the jobs of each
+/// worker when a number turns the pool off.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_monitor_line_shows_the_pool_or_the_jobs() {
+    let r = Riff::new().await;
+    let line = |want: &str| {
+        let out = r.riff(&["workers"]).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let text = stdout(&out);
+        assert!(
+            text.contains(&format!("monitor on  load5 1.00 of 12.00 (8 cores)  {want}")),
+            "no {want:?}: {text}"
+        );
+    };
+    // A pool of 6 tokens that a worker holds, with 2 tokens in use.
+    let pool = riff::jobserver::Pool::hold(&r.home.path().join("state/jobs"), 6, 2).unwrap();
+    let wait = std::time::Duration::from_secs(10);
+    let taken = riff::jobserver::take(&pool.fifo(), 2, wait).unwrap().unwrap();
+    assert_eq!(taken.count(), 2);
+    line("pool 6 (2 in use)");
+    drop(taken);
+    drop(pool);
+    // A number turns the pool off.
+    let out = r.riff(&["workers", "jobs", "3"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    line("jobs 3");
 }
 
 /// 01M421QPRF45DQDA8S4PT1Q12V: the monitor only reads and tells. Over
@@ -495,7 +525,7 @@ fn the_book_has_a_how_to_for_the_monitor() {
     book::each_is_real(&commands);
     let top = book::page("how-it-works.md");
     assert!(
-        top.contains("load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  jobs 2"),
+        top.contains("load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10"),
         "the example of riff top has no line of numbers"
     );
 }

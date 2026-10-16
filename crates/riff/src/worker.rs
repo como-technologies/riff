@@ -287,7 +287,8 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         }
     }
     let makeflags = pool.as_ref().map(jobserver::Pool::makeflags);
-    for (var, value) in limits::jobs_env(&limit, makeflags.as_deref(), &riff) {
+    let target = limits::test_target_here();
+    for (var, value) in limits::jobs_env(&limit, makeflags.as_deref(), &riff, &target) {
         match value {
             Some(value) => cmd.env(var, value),
             None => cmd.env_remove(var),

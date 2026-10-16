@@ -1019,14 +1019,22 @@ pub fn disk_line(disk: Option<&crate::disk::Disk>) -> String {
 
 /// The line of the monitor of one machine in `riff workers`, under its
 /// heading (01M421QPX01BB15GJXHFYRETTX): on or off, and its last
-/// numbers. `ago` is the age in seconds of the last look, when riff
-/// knows it. A host that tells no numbers gives no line.
+/// numbers. The pool of build jobs with its tokens in use, or the jobs
+/// of each worker with no pool (01M515PDFZZXQ9ZCQE7SQ6KB8G). `ago` is
+/// the age in seconds of the last look, when riff knows it. A host that
+/// tells no numbers gives no line.
 ///
 /// ```
-/// use riff::monitor::{Kill, Numbers};
+/// use riff::monitor::{Jobs, Kill, Numbers};
 ///
 /// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
-/// let n = Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs: 2, kill: None };
+/// let jobs = Jobs::Pool { size: 20, used: 3 };
+/// let pool = Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs, kill: None };
+/// assert_eq!(
+///     plain(riff::view::monitor_line(Some(&pool), Some(12))),
+///     "monitor on  load5 9.80 of 12.00 (8 cores)  pool 20 (3 in use)  last look 12s ago\n"
+/// );
+/// let n = Numbers { jobs: Jobs::Fixed(2), ..pool };
 /// assert_eq!(
 ///     plain(riff::view::monitor_line(Some(&n), Some(12))),
 ///     "monitor on  load5 9.80 of 12.00 (8 cores)  jobs 2  last look 12s ago\n"
@@ -1063,7 +1071,7 @@ pub fn monitor_line(numbers: Option<&crate::monitor::Numbers>, ago: Option<u64>)
     let mut out = format!(
         "{}  {load}  {}",
         styled(DIM, state),
-        styled(DIM, &format!("jobs {}", n.jobs))
+        styled(DIM, &n.jobs.to_string())
     );
     if let Some(kill) = &n.kill {
         let kill = format!("last kill {} {}", text::clock(kill.at), safe(&kill.by));
