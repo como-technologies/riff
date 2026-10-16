@@ -194,12 +194,29 @@ flowchart LR
 | cgroup v2 | Your user gets `cpu` and `memory`. |
 | The session image | `riff.toml` of the project pins it. |
 | The rules of Claude Code | Your user settings of Claude Code have each permission rule of riff. |
+| The riff binary | It is static, so `riff relay` starts in each session image. |
 
 A line with `fail` also gives the fix. Do each fix, then run
 `riff init` again. When each check passes, `riff init` installs and
 starts the riff daemon, and the daemon gets the session image. A riff
 daemon that runs already stays. Then do one item: see
 [Run one item in a container](development.md#run-one-item-in-a-container).
+
+### Get the static riff
+
+A riff of `cargo install` or `just install` links the libc of your
+machine. A session image can have an older libc, so that riff may not
+start there. Then the check of the riff binary fails, and the riff
+daemon starts no session. Get the static riff of the release:
+
+```sh
+riff update
+```
+
+Then run `riff init` again. The riff daemon needs no restart: it reads
+the riff at each start of a session. With `update.auto` on, riff gets
+the static riff by itself: see
+[Update riff by itself](how-it-works.md#update-riff-by-itself).
 
 ### Let riff set the permissions of Claude Code
 

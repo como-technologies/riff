@@ -49,6 +49,16 @@
 //! gives each test an empty folder, so no test reaches GitHub
 //! ([`Source`]).
 //!
+//! A riff of `cargo install` or `just install` links the libc of the
+//! machine. So `riff init` fails its check of the riff binary, and the
+//! daemon starts no session with it ([`check_file`],
+//! 01M510NW68CTZBHHW7ZYFV7Q3X, 01M510NW8YEVMQKD6RWJPW38N3). The fix is
+//! `riff update`. The update by itself also puts the static files of
+//! the release in place of a build of that release that is not static
+//! (01M510NWBNC20GXFRMHPW12TW9). In a test, a fake `podman` runs
+//! `riff relay` on the host, so the test environment sets [`DYNAMIC`]
+//! (01M510NWEFSN0NWQH8KQ6FA7DC).
+//!
 //! ```
 //! use riff::release::{asset, check, sum_of};
 //!
@@ -87,6 +97,17 @@ pub const TARGET: Option<&str> = if cfg!(all(target_os = "linux", target_arch = 
     None
 };
 
+/// The variable that lets `riff init` and the daemon take a riff that
+/// is not static, with the value `1` (01M510NWEFSN0NWQH8KQ6FA7DC). Only
+/// for tests: there a fake `podman` runs `riff relay` on the host,
+/// which has the libc of the riff under test.
+pub const DYNAMIC: &str = "RIFF_DYNAMIC";
+
+/// True when [`DYNAMIC`] is `1`.
+pub fn takes_dynamic() -> bool {
+    std::env::var_os(DYNAMIC).is_some_and(|value| value == "1")
+}
+
 /// The ELF machine of x86-64.
 pub const EM_X86_64: u16 = 62;
 
@@ -100,6 +121,9 @@ pub const MACHINE: u16 = if cfg!(target_arch = "aarch64") {
 /// The longest wait for the first byte of a server, and between two
 /// reads of a file.
 const WAIT: Duration = Duration::from_secs(30);
+
+/// The bytes at the start of a binary that [`check_file`] reads first.
+const HEAD: u64 = 64 * 1024;
 
 /// The name of the release file of `binary` for `target`.
 ///
@@ -245,7 +269,11 @@ pub fn elf(bytes: &[u8]) -> Result<Elf, String> {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn check(bytes: &[u8], machine: u16) -> Result<(), String> {
-    let elf = elf(bytes)?;
+    static_elf(elf(bytes)?, machine)
+}
+
+/// Checks that `elf` is a static binary for the ELF machine `machine`.
+fn static_elf(elf: Elf, machine: u16) -> Result<(), String> {
     if elf.machine != machine {
         return Err(format!(
             "its code is for the ELF machine {}, not {machine}",
@@ -258,6 +286,71 @@ pub fn check(bytes: &[u8], machine: u16) -> Result<(), String> {
         )),
         None => Ok(()),
     }
+}
+
+/// [`check`] of the file at `path`, for the ELF machine of this CPU
+/// ([`MACHINE`]). The error says why it is not a static binary.
+///
+/// ```
+/// use riff::release::check_file;
+///
+/// let dir = tempfile::tempdir()?;
+/// let script = dir.path().join("riff");
+/// std::fs::write(&script, "#!/bin/sh\n")?;
+/// assert_eq!(check_file(&script).unwrap_err(), "it is not an ELF file");
+/// let none = check_file(&dir.path().join("none")).unwrap_err();
+/// assert!(none.starts_with("riff cannot read "), "{none}");
+/// let me = std::env::current_exe()?;
+/// if cfg!(target_env = "gnu") {
+///     assert!(check_file(&me).unwrap_err().ends_with("it is not static"));
+/// }
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn check_file(path: &Path) -> Result<(), String> {
+    use std::io::Read;
+    let cannot = |e: std::io::Error| format!("riff cannot read {}: {e}", path.display());
+    // The headers are at the start of the file: riff reads the whole
+    // file only when they go past the head.
+    let mut head = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(HEAD).read_to_end(&mut head))
+        .map_err(cannot)?;
+    let elf = match elf(&head) {
+        Err(_) if head.len() as u64 == HEAD => elf(&std::fs::read(path).map_err(cannot)?)?,
+        read => read?,
+    };
+    static_elf(elf, MACHINE)
+}
+
+/// True when the riff of this process must be static, and is not
+/// (01M510NWBNC20GXFRMHPW12TW9): `me` is the `riff` of the bin folder
+/// `bin` of cargo, and the `riff` or the `riff-server` there is not
+/// static. A binary that is not there needs nothing. A riff that runs
+/// from another folder, for example the build of a clone, needs
+/// nothing.
+///
+/// ```
+/// use riff::release::needs_static;
+///
+/// let bin = tempfile::tempdir()?;
+/// let riff = bin.path().join("riff");
+/// std::fs::write(&riff, "#!/bin/sh\n")?;
+/// assert!(needs_static(&riff, bin.path()));
+/// let other = tempfile::tempdir()?;
+/// assert!(!needs_static(&other.path().join("riff"), bin.path()));
+/// assert!(!needs_static(&riff, other.path()));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn needs_static(me: &Path, bin: &Path) -> bool {
+    let riff = std::fs::canonicalize(bin.join("riff"));
+    let me = std::fs::canonicalize(me);
+    if !matches!((riff, me), (Ok(riff), Ok(me)) if riff == me) {
+        return false;
+    }
+    BINARIES
+        .iter()
+        .map(|binary| bin.join(binary))
+        .any(|path| path.exists() && check_file(&path).is_err())
 }
 
 /// The bin folder of `cargo install`: `CARGO_INSTALL_ROOT/bin`, else
@@ -482,31 +575,66 @@ fn write_new(dir: &Path, binary: &str, bytes: &[u8]) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// A 64-bit little-endian ELF of `machine` with one program header of
+/// each type in `types`, for tests. A `PT_INTERP` (3) names `interp`.
+#[cfg(test)]
+pub(crate) fn fake_elf(machine: u16, types: &[u32], interp: &str) -> Vec<u8> {
+    let table = 64usize;
+    let strings = table + 56 * types.len();
+    let mut bytes = vec![0u8; strings];
+    bytes[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    bytes[16..18].copy_from_slice(&3u16.to_le_bytes());
+    bytes[18..20].copy_from_slice(&machine.to_le_bytes());
+    bytes[32..40].copy_from_slice(&(table as u64).to_le_bytes());
+    bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
+    bytes[56..58].copy_from_slice(&(types.len() as u16).to_le_bytes());
+    for (i, kind) in types.iter().enumerate() {
+        let at = table + 56 * i;
+        bytes[at..at + 4].copy_from_slice(&kind.to_le_bytes());
+        bytes[at + 8..at + 16].copy_from_slice(&(strings as u64).to_le_bytes());
+        bytes[at + 32..at + 40].copy_from_slice(&(interp.len() as u64 + 1).to_le_bytes());
+    }
+    bytes.extend_from_slice(interp.as_bytes());
+    bytes.push(0);
+    bytes
+}
+
+/// Writes a fake riff to `path` for a test: a static ELF of this CPU,
+/// or, with `interp`, one that needs the shared libraries of `interp`.
+#[cfg(test)]
+pub(crate) fn fake_riff(path: &Path, interp: Option<&str>) -> PathBuf {
+    let bytes = match interp {
+        Some(interp) => fake_elf(MACHINE, &[3, 1], interp),
+        None => fake_elf(MACHINE, &[1], ""),
+    };
+    std::fs::write(path, bytes).unwrap();
+    path.to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A 64-bit little-endian ELF of `machine` with one program header
-    /// of each type in `types`. A `PT_INTERP` names `interp`.
-    fn fake_elf(machine: u16, types: &[u32], interp: &str) -> Vec<u8> {
-        let table = 64usize;
-        let strings = table + 56 * types.len();
-        let mut bytes = vec![0u8; strings];
-        bytes[..6].copy_from_slice(b"\x7fELF\x02\x01");
-        bytes[16..18].copy_from_slice(&3u16.to_le_bytes());
-        bytes[18..20].copy_from_slice(&machine.to_le_bytes());
-        bytes[32..40].copy_from_slice(&(table as u64).to_le_bytes());
-        bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
-        bytes[56..58].copy_from_slice(&(types.len() as u16).to_le_bytes());
-        for (i, kind) in types.iter().enumerate() {
-            let at = table + 56 * i;
-            bytes[at..at + 4].copy_from_slice(&kind.to_le_bytes());
-            bytes[at + 8..at + 16].copy_from_slice(&(strings as u64).to_le_bytes());
-            bytes[at + 32..at + 40].copy_from_slice(&(interp.len() as u64 + 1).to_le_bytes());
-        }
-        bytes.extend_from_slice(interp.as_bytes());
-        bytes.push(0);
-        bytes
+    #[test]
+    fn a_riff_needs_the_static_files_only_when_it_runs_from_the_bin_folder() {
+        let bin = tempfile::tempdir().unwrap();
+        let riff = fake_riff(&bin.path().join("riff"), None);
+        assert!(!needs_static(&riff, bin.path()), "a static riff");
+        let server = bin.path().join("riff-server");
+        fake_riff(&server, Some("/lib64/ld-linux-x86-64.so.2"));
+        assert!(needs_static(&riff, bin.path()), "riff-server is not static");
+        fake_riff(&server, None);
+        fake_riff(&riff, Some("/lib64/ld-linux-x86-64.so.2"));
+        assert!(needs_static(&riff, bin.path()), "riff is not static");
+        // A link to the riff of the folder is that riff.
+        let other = tempfile::tempdir().unwrap();
+        let link = other.path().join("riff");
+        std::os::unix::fs::symlink(&riff, &link).unwrap();
+        assert!(needs_static(&link, bin.path()));
+        // A riff of another folder.
+        let copy = other.path().join("copy");
+        std::fs::copy(&riff, &copy).unwrap();
+        assert!(!needs_static(&copy, bin.path()));
     }
 
     #[test]

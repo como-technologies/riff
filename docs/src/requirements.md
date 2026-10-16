@@ -340,6 +340,10 @@
   processes that have it, also outside a repository. `just dev` and
   the helper crate `isolated` set it. A worker that such a process
   starts gets `RIFF_ON=1`.
+- **01M510NWEFSN0NWQH8KQ6FA7DC** `RIFF_DYNAMIC=1` lets `riff init` and
+  the riff daemon take a riff that is not static. Only the helper crate
+  `isolated` sets it: in a test, a fake `podman` runs `riff relay` on
+  the host.
 - **01M3XY2SYKG91SAB2FS1QNCZ2H** The state is obvious. The last line
   of `riff connect claude` says where riff is on, or
   `riff is installed but off`, with the command to change it.
@@ -4433,6 +4437,14 @@ share.
 - **01M4ZPJ0DJ9FTYNPTBBVJCTB37** When the release has no `SHA256SUMS`,
   or no line for the binaries of this machine, `riff update` builds the
   release with `cargo install`, and says so.
+- **01M510NWBNC20GXFRMHPW12TW9** With `update.auto = true`, when the
+  `riff` of the bin folder of cargo gets a reply from a `riff-server` of
+  its own build, and that `riff` or the `riff-server` beside it is not
+  static, it starts `riff update --tag vX.Y.Z` of its own release in the
+  background. So `riff update` puts the static files of the release in
+  place. This fix gets one try for each release, apart from the try of
+  the update to that release. A riff that runs from another folder
+  starts no fix.
 - **01M4ZPJ0FXTC78Z8GG2QA65167** `just real-session` runs the static
   riff of the tree, so its daemon can run `riff relay` in the session
   image.
@@ -4668,6 +4680,11 @@ share.
   `/opt/riff/riff` in each container, with no write. The command of a
   session is `/opt/riff/riff relay -- COMMAND`. The daemon starts no
   session whose spec binds a path at `/opt/riff/riff`.
+- **01M510NW8YEVMQKD6RWJPW38N3** Before each start of a session, the
+  daemon reads the ELF of the binary that it binds at `/opt/riff/riff`.
+  When the ELF has an interpreter, the daemon starts no container, and
+  its error names `riff update`. It reads the file at each start, so
+  after `riff update` the next start works with no restart.
 - **01M4ZHSZMH4Y8CB41FYGE3C3R2** The relay and the daemon count the
   events and the inputs. Each event has a sequence number: the event N
   is line N of `events.jsonl`. At each connection, the relay says how
@@ -4900,6 +4917,10 @@ share.
   current folder pins the session image (01M4Z7SP3KSKJYKNRP1MQ70C4Q).
   riff prints one line for each check: `pass`, or `fail` with what it
   found and the fix. Each failed check has a fix of its own.
+- **01M510NW68CTZBHHW7ZYFV7Q3X** `riff init` also checks the riff
+  binary of its own process: its ELF has no interpreter. A riff of
+  `cargo install` or `just install` links the libc of the machine, so
+  this check fails, and its fix is `riff update`.
 - **01M501K21EK8F8N9NPR4565FVP** The fix of `/etc/subuid` or
   `/etc/subgid` adds a free range of 65536 IDs: it starts at the first
   ID after the end of each range in the file, and at 100000 or more.

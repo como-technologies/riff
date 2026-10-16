@@ -46,6 +46,18 @@
 //!     U->>L: tell: the host, v0.3.0, v0.4.0, or the error
 //! ```
 //!
+//! A machine that comes from an older riff can have a build of the
+//! release of the server that is not static: the update of the older
+//! riff built it with cargo. The daemon starts no session with it
+//! (01M510NW8YEVMQKD6RWJPW38N3). So when the `riff` of the bin folder of
+//! cargo gets a reply from a server of its own build, and that `riff` or
+//! the `riff-server` beside it is not static, [`begin`] also starts
+//! `riff update --tag vX.Y.Z` of that release, and `riff update` puts
+//! the static files of the release in place (01M510NWBNC20GXFRMHPW12TW9,
+//! [`crate::release::needs_static`]). This fix gets one try for each
+//! release of its own ([`mark`]). A riff that runs from another folder,
+//! for example the build of a clone, starts no fix.
+//!
 //! After the install, the new `riff` is on disk. `riff watch`,
 //! `riff tail`, `riff top`, `riff chat` and `riff mcp` run it (see
 //! [`binary`](crate::binary)). The update tells the lead of the
@@ -65,7 +77,7 @@ use anyhow::{Context, Result};
 use riff_core::build::Build;
 use riff_core::name::Place;
 
-use crate::{identity, lifecycle, local, settings, text};
+use crate::{identity, lifecycle, local, release, settings, text};
 
 /// True in the update in the background: it starts no other update.
 static OFF: AtomicBool = AtomicBool::new(false);
@@ -116,36 +128,88 @@ pub fn wanted(this: &Build, server: &Build) -> Option<String> {
     (new > this).then(|| lifecycle::release_tag(&server.version))
 }
 
+/// The record of the try of `tag` ([`local::tried`]): the tag, and
+/// for the release of this riff the tag and ` static`. An update of
+/// the release of this riff only puts its static files in place, so
+/// that fix gets one try of its own, also after an update of the
+/// release with cargo (01M510NWBNC20GXFRMHPW12TW9).
+///
+/// ```
+/// use riff::auto_update::mark;
+///
+/// let this = format!("v{}", env!("CARGO_PKG_VERSION"));
+/// assert_eq!(mark(&this), format!("{this} static"));
+/// assert_eq!(mark("v0.0.1"), "v0.0.1");
+/// ```
+pub fn mark(tag: &str) -> String {
+    if tag == lifecycle::release_tag(env!("CARGO_PKG_VERSION")) {
+        format!("{tag} static")
+    } else {
+        tag.to_owned()
+    }
+}
+
+/// True when this riff is the `riff` of the bin folder of cargo, and
+/// that `riff` or the `riff-server` beside it is not static
+/// ([`release::needs_static`]).
+fn needs_static() -> bool {
+    let Some(bin) = release::bin_dir(|name| std::env::var_os(name)) else {
+        return false;
+    };
+    crate::binary::this_on_disk().is_ok_and(|me| release::needs_static(&me, &bin))
+}
+
 /// Starts the update in the background when the riff at `url` runs
 /// `server`, a newer release than this riff, and this machine has
-/// `update.auto = true` (01M3N7JJEKZMN1E5NJQRK2QYVB). It does nothing
-/// when an update runs, when the release was tried, or when this
-/// process started it already. The check of each reply calls it.
+/// `update.auto = true` (01M3N7JJEKZMN1E5NJQRK2QYVB). When `server` is
+/// the build of this riff, it starts the update of that release only
+/// when this riff must be static and is not ([`needs_static`],
+/// 01M510NWBNC20GXFRMHPW12TW9). It does nothing when an update runs,
+/// when the release was tried ([`mark`]), or when this process started
+/// it already. The check of each reply calls it.
 pub fn begin(url: &str, server: &Build) {
-    let Some(tag) = wanted(&Build::this(), server) else {
-        return;
+    let this = Build::this();
+    let (tag, fix) = match wanted(&this, server) {
+        Some(tag) => (tag, false),
+        None if this.matches(server) && release::TARGET.is_some() => {
+            (lifecycle::release_tag(&this.version), true)
+        }
+        None => return,
     };
     if OFF.load(Ordering::Relaxed) {
         return;
     }
+    let mark = mark(&tag);
     let Ok(mut started) = STARTED.lock() else {
         return;
     };
-    if started.as_deref() == Some(&tag) || !settings::path().is_ok_and(|p| on(&p)) {
+    if started.as_deref() == Some(&mark) {
+        return;
+    }
+    if fix {
+        // The server of this build answers each call: a process looks
+        // once.
+        *started = Some(mark.clone());
+    }
+    if !settings::path().is_ok_and(|p| on(&p)) {
         return;
     }
     let Some(dir) = local::dir() else {
         return;
     };
-    if local::updating(&dir) || local::tried(&dir).as_deref() == Some(&tag) {
-        *started = Some(tag);
+    if local::updating(&dir) || local::tried(&dir).as_deref() == Some(&mark) {
+        *started = Some(mark);
+        return;
+    }
+    if fix && !needs_static() {
         return;
     }
     match start(&dir, &tag, url) {
+        Ok(()) if fix => eprintln!("riff: {}", text::auto_update_static_started(&tag)),
         Ok(()) => eprintln!("riff: {}", text::auto_update_started(&tag)),
         Err(e) => eprintln!("riff: cannot start the update of riff: {e:#}"),
     }
-    *started = Some(tag);
+    *started = Some(mark);
 }
 
 /// True when the settings at `path` turn the update by itself on. A
@@ -188,12 +252,12 @@ fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
 }
 
 /// The update in the background (01M3N7JJH0SXXQYYBAHWPCNQGX): takes
-/// the update lock, records `tag`, runs [`lifecycle::update`], and tells
-/// the lead of the user in the repository of `place` the result
-/// (01M3N7JJKBME6VSNTHD8VPN3K9). It stops at once when another update
-/// holds the lock, or when `tag` was tried. When its working directory
-/// is missing, it stops before it records `tag`
-/// (01M3NT2PYFHPB0C19Q2QB2AE6W). `riff` passes
+/// the update lock, records the try of `tag` ([`mark`]), runs
+/// [`lifecycle::update`], and tells the lead of the user in the
+/// repository of `place` the result (01M3N7JJKBME6VSNTHD8VPN3K9). It
+/// stops at once when another update holds the lock, or when `tag` was
+/// tried. When its working directory is missing, it stops before it
+/// records the try (01M3NT2PYFHPB0C19Q2QB2AE6W). `riff` passes
 /// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
 pub async fn run(
     cargo: &Path,
@@ -209,7 +273,8 @@ pub async fn run(
         println!("riff: another update of riff runs on this machine.");
         return Ok(());
     };
-    if local::tried(&dir).as_deref() == Some(tag) {
+    let mark = mark(tag);
+    if local::tried(&dir).as_deref() == Some(mark.as_str()) {
         println!("riff: this machine tried {tag} already.");
         return Ok(());
     }
@@ -217,7 +282,7 @@ pub async fn run(
     let host = crate::identity::this_host();
     let done = match identity::working_dir() {
         Ok(_) => {
-            local::set_tried(&dir, tag)?;
+            local::set_tried(&dir, &mark)?;
             lifecycle::update(cargo, claude, Some(tag), server, local).await
         }
         Err(e) => Err(e),
@@ -225,10 +290,14 @@ pub async fn run(
     let body = match &done {
         Ok(words) => {
             println!("{words}");
-            text::auto_updated(&host, &old, tag)
+            if tag == old {
+                text::auto_updated_static(&host, tag)
+            } else {
+                text::auto_updated(&host, &old, tag)
+            }
         }
         Err(e) => {
-            let tried = local::tried(&dir).as_deref() == Some(tag);
+            let tried = local::tried(&dir).as_deref() == Some(mark.as_str());
             text::auto_update_failed(&host, &old, tag, &format!("{e:#}"), tried)
         }
     };

@@ -255,7 +255,7 @@ older libc.
 |---|---|
 | `riff update` on Linux x86-64 | The static `riff` and `riff-server` of the GitHub release. riff checks the SHA-256 of each file against `SHA256SUMS` of the release, and that each one is static. Then it puts them in the bin folder of cargo (`~/.cargo/bin`). |
 | `riff update` on another machine, or for a release with no static binaries | A build with `cargo install --git` of the release tag, as before. |
-| `cargo install`, `just install` | A build that links the libc of your machine. It is not static. Run `riff update` to get the static riff. |
+| `cargo install`, `just install` | A build that links the libc of your machine. It is not static: `riff init` fails its check of the riff binary, and the riff daemon starts no session with it. Run `riff update` to get the static riff. |
 | `just static` | The static `riff` and `riff-server` of your clone, in `target/static`. |
 
 ```mermaid
@@ -395,6 +395,12 @@ The daemon also gives each container your riff binary, with no write.
 `riff relay` is the entrypoint of the container. It starts `claude`
 with the riff tools, gives `claude` its input, and sends each event of
 `claude` to the daemon on the socket.
+
+Your riff binary must be static, because a session image can have an
+older libc than your machine. Before each start, the daemon reads the
+binary. When it is not static, the daemon starts no container, and
+its error names `riff update`. See
+[Get the static riff](start-a-riff.md#get-the-static-riff).
 
 The daemon also keeps the state of riff on your machine: the riff of
 your machine, and later the claims, the messages and the plan of its

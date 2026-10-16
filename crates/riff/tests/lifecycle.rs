@@ -749,7 +749,7 @@ async fn update_with_no_release_tag_names_the_flag() {
 /// A fake binary of a release: a 64-bit ELF of x86-64 with one program
 /// header, then `text`. With `interpreter`, the header is a `PT_INTERP`
 /// that names it, so the binary is not static.
-fn fake_binary(text: &str, interpreter: Option<&str>) -> Vec<u8> {
+pub fn fake_binary(text: &str, interpreter: Option<&str>) -> Vec<u8> {
     let mut bytes = vec![0u8; 64 + 56];
     bytes[..6].copy_from_slice(b"\x7fELF\x02\x01");
     bytes[16..18].copy_from_slice(&3u16.to_le_bytes());
@@ -768,13 +768,13 @@ fn fake_binary(text: &str, interpreter: Option<&str>) -> Vec<u8> {
 }
 
 /// The name of the release file of `binary` for this machine.
-fn asset(binary: &str) -> String {
+pub fn asset(binary: &str) -> String {
     riff::release::asset(binary, riff::release::TARGET.unwrap())
 }
 
 /// Puts the release `tag` in the folder `dir`: each binary of `files`,
 /// and `SHA256SUMS` with `sums`, else with the sum of each file.
-fn put_release(dir: &Path, tag: &str, files: &[(&str, &[u8])], sums: Option<&str>) {
+pub fn put_release(dir: &Path, tag: &str, files: &[(&str, &[u8])], sums: Option<&str>) {
     let dir = dir.join(tag);
     std::fs::create_dir_all(&dir).unwrap();
     let mut lines = String::new();
@@ -826,7 +826,9 @@ fn names(dir: &Path) -> Vec<String> {
 
 /// 01M4ZPJ0BAQZ6AN06FGXS5D4FP: on Linux x86-64, `riff update` puts the
 /// static binaries of the release in the bin folder of cargo, from a web
-/// server or from a folder. cargo does not run.
+/// server or from a folder. cargo does not run. The old binaries are
+/// not static, as the builds of `cargo install` are
+/// (01M510NWBNC20GXFRMHPW12TW9).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[tokio::test]
 async fn update_downloads_the_static_binaries_of_the_release() {
@@ -845,7 +847,10 @@ async fn update_downloads_the_static_binaries_of_the_release() {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("bin");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("riff"), "the old riff").unwrap();
+        let glibc = Some("/lib64/ld-linux-x86-64.so.2");
+        for binary in ["riff", "riff-server"] {
+            std::fs::write(dir.join(binary), fake_binary("the old one", glibc)).unwrap();
+        }
 
         let out = run(update_from(bin.path(), "v0.9.0", releases, root.path())).await;
         assert!(out.status.success(), "{releases}: {}", text(&out.stderr));
