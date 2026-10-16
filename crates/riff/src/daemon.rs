@@ -4964,12 +4964,21 @@ mod tests {
                 before.push(line);
             };
             let shown = status(&dir).await.unwrap();
-            let key = shown.key.clone().unwrap_or_else(|| panic!("{start}: {shown:?}"));
+            let key = shown
+                .key
+                .clone()
+                .unwrap_or_else(|| panic!("{start}: {shown:?}"));
             assert_eq!(shown.riff.as_deref(), Some(key.as_str()), "{start}");
             let owner = shown.owner.clone().unwrap();
-            assert!(line.contains(&format!("{key}, of the owner {owner}.")), "{line}");
+            assert!(
+                line.contains(&format!("{key}, of the owner {owner}.")),
+                "{line}"
+            );
             assert_eq!(shown.waits, None, "{start}");
-            assert!(before.iter().any(|l| l.starts_with(&bad)), "{start}: {before:?}");
+            assert!(
+                before.iter().any(|l| l.starts_with(&bad)),
+                "{start}: {before:?}"
+            );
             opened.await.unwrap().unwrap();
             stop.send(()).unwrap();
             served.await.unwrap().unwrap();
