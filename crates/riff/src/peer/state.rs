@@ -286,6 +286,38 @@ impl State {
         self.members.get(key).map(|member| member.user.as_str())
     }
 
+    /// The host of the key `key`: of the owner from its `riff` record
+    /// (01M521J6T2PWA9JREDXJK6DZ0V), of a member from its `member`
+    /// record. `None` for an owner whose `riff` record names no host, and
+    /// for a key that is not in the riff.
+    ///
+    /// ```
+    /// use riff::daemon_key::Key;
+    /// use riff::peer::body::{Body, Member, Riff};
+    /// use riff::peer::keep::Peers;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let owner = Key::from_bytes(&[1; 32]);
+    /// let brett = Key::from_bytes(&[2; 32]).public();
+    /// let mut peers = Peers::open(dir.path(), owner.public(), |_| {})?;
+    /// let riff = Riff { user: "mike".into(), host: Some("pangolin".into()) };
+    /// peers.write(&owner, &Body::Riff(riff), 1)?;
+    /// let member = Member { key: brett, user: "brett".into(), host: "kadomony".into() };
+    /// peers.write(&owner, &Body::Member(member), 2)?;
+    ///
+    /// let state = peers.state();
+    /// assert_eq!(state.host_of(&owner.public()), Some("pangolin"));
+    /// assert_eq!(state.host_of(&brett), Some("kadomony"));
+    /// assert_eq!(state.host_of(&Key::from_bytes(&[3; 32]).public()), None);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn host_of(&self, key: &Public) -> Option<&str> {
+        if *key == self.riff {
+            return self.owner_host();
+        }
+        self.members.get(key).map(|member| member.host.as_str())
+    }
+
     /// Applies the checked record `checked`. The caller checked it with
     /// this state as the [`Context`].
     pub fn keep(&mut self, checked: &Checked) -> Applied {

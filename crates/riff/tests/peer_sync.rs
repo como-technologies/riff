@@ -115,10 +115,15 @@ impl Daemon {
     /// Starts the owner `byte` of a new riff, with its `riff` record and
     /// a `member` record of each of `members`.
     async fn owner(byte: u8, members: &[(u8, &str, &str)]) -> Daemon {
+        Daemon::owner_on(byte, None, members).await
+    }
+
+    /// [`Daemon::owner`], with a `riff` record of the host `host`.
+    async fn owner_on(byte: u8, host: Option<&str>, members: &[(u8, &str, &str)]) -> Daemon {
         let owner = Daemon::start(byte, key(byte).public(), tempfile::tempdir().unwrap()).await;
         let riff = Body::Riff(Riff {
             user: "mike".into(),
-            host: None,
+            host: host.map(str::to_owned),
         });
         owner.hub.write(&riff).unwrap();
         for (member, user, host) in members {
@@ -393,6 +398,42 @@ async fn a_key_that_is_not_a_member_is_closed_at_connect() {
     let stranger = key(9).public().to_string();
     assert_eq!(owner.said(&stranger).len(), 1, "{:?}", owner.said(""));
     assert!(owner.links.linked().is_empty());
+}
+
+/// 01M51ZA0BDZNXBB7R5SB8CEGA9, 01M521J6T2PWA9JREDXJK6DZ0V (#940): a
+/// member shows its link to the owner with the host of the `riff` record,
+/// and its log line of the link names that host. The owner names the host
+/// of the `member` record.
+#[tokio::test]
+async fn a_link_to_the_owner_shows_and_logs_the_host_of_its_riff_record() {
+    let owner = Daemon::owner_on(1, Some("pangolin"), &[(2, "mike", "thelio")]).await;
+    let thelio = Daemon::joined(2, &owner).await;
+    owner.knows(&thelio);
+    thelio.knows(&owner);
+    // The link is up before its log line.
+    let up = "has a peer link to";
+    until("the log line of the link on thelio", || {
+        !thelio.said(up).is_empty()
+    })
+    .await;
+    until("the log line of the link on the owner", || {
+        !owner.said(up).is_empty()
+    })
+    .await;
+
+    let shown = thelio.links.shown();
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert_eq!(shown[0].key, owner.public().to_string());
+    assert_eq!(shown[0].user.as_deref(), Some("mike"));
+    assert_eq!(shown[0].host.as_deref(), Some("pangolin"));
+
+    let short = &owner.public().to_string()[..8];
+    for line in thelio.said(up) {
+        assert!(line.contains(&format!("{short} (mike on pangolin)")), "{line}");
+    }
+    for line in owner.said(up) {
+        assert!(line.contains("(mike on thelio)"), "{line}");
+    }
 }
 
 /// 01M519Z33N2MW43XY62NYC6RRH, 01M519Z363W5GV4MV5RDB6ECG0: a record
