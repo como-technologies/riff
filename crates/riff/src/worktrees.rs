@@ -798,3 +798,132 @@ pub async fn clean_as_person(dir: &Path, server: &str) -> Result<Vec<String>> {
     let api = crate::api::Api::new(server).signed_in(None)?;
     clean_here(&api, &me, dir).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Child;
+
+    /// A shell `program` that waits on its stdin in the directory `dir`,
+    /// stopped on drop: also when a test fails.
+    struct Waits(Child);
+
+    impl Waits {
+        fn start(program: &Path, dir: &Path) -> Waits {
+            let child = Command::new(program)
+                .args(["-c", "read line"])
+                .current_dir(dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            Waits(child)
+        }
+
+        fn id(&self) -> u32 {
+            self.0.id()
+        }
+    }
+
+    impl Drop for Waits {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn running_has_the_directory_and_the_program_of_this_process() {
+        let me = Running::all()
+            .into_iter()
+            .find(|p| p.pid == std::process::id())
+            .expect("this process is in /proc");
+        assert_eq!(me.cwd, Some(std::env::current_dir().unwrap()));
+        assert_eq!(me.exe, Some(std::env::current_exe().unwrap()));
+    }
+
+    #[test]
+    fn a_process_in_a_worktree_uses_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = std::fs::canonicalize(dir.path()).unwrap();
+        let child = Waits::start(Path::new("sh"), &worktree);
+        let found = Running::read(child.id()).unwrap();
+        assert_eq!(found.name, "sh");
+        assert_eq!(found.cwd.as_deref(), Some(worktree.as_path()));
+        let running = [found];
+        assert_eq!(
+            used_by(&running, &worktree),
+            Some(Owner::Process {
+                pid: child.id(),
+                name: "sh".into()
+            })
+        );
+        assert_eq!(used_by(&running, &worktree.join("other")), None);
+    }
+
+    /// The case of #762: a systemd unit runs a check build of riff in a
+    /// worktree, and a new build deletes the file of the program.
+    #[test]
+    fn a_program_in_a_worktree_uses_it_also_after_a_new_build_deleted_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = std::fs::canonicalize(dir.path()).unwrap();
+        let program = worktree.join("target/release/riff");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        // A copy of `sh` is the build. A child `cp` writes it, so this
+        // process holds no write fd of it when it runs (`ETXTBSY`).
+        let cp = Command::new("cp")
+            .arg("-L")
+            .arg("/bin/sh")
+            .arg(&program)
+            .status()
+            .unwrap();
+        assert!(cp.success());
+        let elsewhere = tempfile::tempdir().unwrap();
+        let child = Waits::start(&program, elsewhere.path());
+        std::fs::remove_file(&program).unwrap();
+        let found = Running::read(child.id()).unwrap();
+        assert_eq!(found.name, "riff");
+        assert_eq!(found.exe.as_deref(), Some(program.as_path()));
+        assert!(found.uses(&worktree));
+    }
+
+    #[test]
+    fn the_owner_is_this_process_then_a_session_then_a_running_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = std::fs::canonicalize(dir.path()).unwrap().join("issue-12");
+        std::fs::create_dir(&real).unwrap();
+        // git can give the path of a worktree through a link.
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(dir.path(), &link).unwrap();
+        let tree = Tree {
+            path: link.join("issue-12"),
+            branch: None,
+            head: "1".into(),
+            lock: None,
+        };
+        let running = [Running {
+            pid: 7,
+            name: "bash".into(),
+            exe: None,
+            cwd: Some(real.join("crates")),
+        }];
+        let process = Some(Owner::Process {
+            pid: 7,
+            name: "bash".into(),
+        });
+        let none = |_: &Tree| None;
+        let claim = |_: &Tree| Some(Owner::Claim("issue-12".into()));
+        let elsewhere = Path::new("/elsewhere");
+        assert_eq!(owner_of(&tree, elsewhere, &running, &none), process);
+        assert_eq!(
+            owner_of(&tree, elsewhere, &running, &claim),
+            Some(Owner::Claim("issue-12".into()))
+        );
+        assert_eq!(
+            owner_of(&tree, &tree.path.join("crates"), &running, &claim),
+            Some(Owner::Session)
+        );
+        assert_eq!(owner_of(&tree, elsewhere, &[], &none), None);
+    }
+}

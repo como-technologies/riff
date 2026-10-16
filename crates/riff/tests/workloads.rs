@@ -822,6 +822,127 @@ async fn worktrees_clean_removes_a_worktree_with_no_work_of_its_own() {
     );
 }
 
+/// A process that waits on its stdin, stopped on drop: also when a
+/// test fails.
+struct Waits(Child);
+
+impl Waits {
+    /// `program -c "read line"` in the directory `dir`: `program` is a
+    /// shell.
+    fn start(program: &Path, dir: &Path) -> Waits {
+        let child = Command::new(program)
+            .args(["-c", "read line"])
+            .current_dir(dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        Waits(child)
+    }
+
+    fn id(&self) -> u32 {
+        self.0.id()
+    }
+}
+
+impl Drop for Waits {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// 01M515233TRCW2PK3V4QBR4V17 and 01M5152361VDRV7NZ2N2Z7BVNP (#762):
+/// `riff worktrees clean` keeps a worktree with no work of its own while
+/// it is in use: the worktree of an item that a live session holds from
+/// another worktree, a detached worktree with a shell of a person in it,
+/// and one whose program a systemd unit runs, also after a new build
+/// deleted the file. The first clean after the use ends removes each
+/// one.
+#[tokio::test(flavor = "multi_thread")]
+async fn worktrees_clean_keeps_a_worktree_in_use() {
+    let r = Riff::new().await;
+    let main = r.main();
+    git(&main, &["remote", "set-head", "origin", "--auto"]);
+    std::fs::write(main.join(".git/info/exclude"), "target/\n").unwrap();
+
+    // A worker holds issue-756, and works in issue-753 on the request of
+    // the lead.
+    let held = worktree(&r, "issue-756");
+    let other = worktree(&r, "issue-753");
+    let session = r.uri(&other, "c6c6");
+    r.api.register(&session).await.unwrap();
+    let thread = session.default_thread().unwrap();
+    r.api.claim(&session, &thread, "issue-756").await.unwrap();
+    // An open watch makes the session live.
+    let _live = Box::pin(r.api.watch(&session).await.unwrap());
+    let detached = |name: &str| {
+        let path = main.join(".claude/worktrees").join(name);
+        git(
+            &main,
+            &["worktree", "add", "-q", "--detach", &path.to_string_lossy()],
+        );
+        path
+    };
+    let shell = detached("live-712");
+    let in_shell = Waits::start(Path::new("sh"), &shell);
+    // A systemd unit runs a check build from the worktree live-716, and a
+    // new build deleted the file. A copy of `sh` is the build: a child
+    // `cp` writes it, so no fd of this process holds it (`ETXTBSY`).
+    let unit = detached("live-716");
+    let program = unit.join("target/release/riff");
+    std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+    let out = Command::new("cp")
+        .arg("-L")
+        .arg("/bin/sh")
+        .arg(&program)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let from_unit = Waits::start(&program, r.root.path());
+    std::fs::remove_file(&program).unwrap();
+
+    let clean = || {
+        let out = r.riff(&main, &["worktrees", "clean"]).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let printed = stdout(&out);
+        move |path: &Path| {
+            let start = format!("{}: ", path.display());
+            printed
+                .lines()
+                .find_map(|l| l.strip_prefix(&start).map(str::to_owned))
+                .unwrap_or_else(|| panic!("no line for {}: {printed}", path.display()))
+        }
+    };
+    let line = clean();
+    assert_eq!(line(&held), "kept: a live session holds its item issue-756");
+    assert_eq!(line(&other), "kept: a live session works in it");
+    assert_eq!(
+        line(&shell),
+        format!("kept: the running process {} (sh) uses it", in_shell.id())
+    );
+    assert_eq!(
+        line(&unit),
+        format!("kept: the running process {} (riff) uses it", from_unit.id())
+    );
+
+    r.api
+        .release(&session, &thread, "issue-756")
+        .await
+        .unwrap();
+    drop((in_shell, from_unit));
+    let line = clean();
+    let no_commit = "its HEAD is on the default branch of origin: it has no commit of its own";
+    assert_eq!(
+        line(&held),
+        format!("removed with its branch worktree-issue-756: {no_commit}")
+    );
+    assert_eq!(line(&shell), format!("removed: {no_commit}"));
+    assert_eq!(line(&unit), format!("removed: {no_commit}"));
+    assert_eq!(line(&other), "kept: a live session works in it");
+}
+
 /// The book has a how-to with an `sh` block for each new command, and
 /// each command in it runs with `--help`.
 #[test]
