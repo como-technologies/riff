@@ -6427,10 +6427,11 @@ pub fn lead_start(repo: &str) -> String {
 }
 
 /// The input that a worker gets after a takeover
-/// (01M4Z60B83ZH10HYKW7X1C0SSS).
-pub const TAKEOVER_GO_ON: &str = "riff stopped you after your last turn for a takeover: a person \
-used this session in a terminal, and gives it back now. Go on with your item from where it is \
-now. End as your start text says.";
+/// (01M4Z60B83ZH10HYKW7X1C0SSS, 01M51KJ1R9K7A7RW8T8XH8VW43).
+pub const TAKEOVER_GO_ON: &str = "riff stopped you for a takeover: a person used this session in \
+a terminal, and gives it back now. The stop can come in the middle of a step, for example a tool \
+call: check your last step before you go on. Go on with your item from where it is now. End as \
+your start text says.";
 
 /// The daemon refuses the takeover of a session with a terminal.
 pub fn takeover_terminal(name: &str) -> String {
@@ -6457,6 +6458,14 @@ pub fn takeover_no_relay(name: &str) -> String {
 /// `riff takeover` waits for the end of the turn.
 pub fn takeover_waits(name: &str) -> String {
     format!("The session in the container {name} stops at the end of its turn. riff waits for it.")
+}
+
+/// `riff takeover` interrupts the turn (01M51KJ1R9K7A7RW8T8XH8VW43).
+pub fn takeover_interrupts(name: &str) -> String {
+    format!(
+        "riff stops the turn of the session in the container {name} now, also in the middle of a \
+         tool call. claude opens here in a moment."
+    )
 }
 
 /// The daemon writes that a person asked a takeover.
@@ -6554,8 +6563,7 @@ pub fn view_waiting(names: &[String]) -> String {
 }
 
 /// `riff view`: the keys, at the bottom of the view.
-pub const VIEW_KEYS: &str =
-    "Up/Down select   Enter attach to the lead   t take over the session   q quit";
+pub const VIEW_KEYS: &str = "Up/Down select   Enter attach to the lead   t take over now   q quit";
 
 /// `riff view`: the riff daemon does not answer.
 pub fn view_no_daemon(error: &str) -> String {

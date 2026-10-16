@@ -5236,7 +5236,17 @@ share.
   --terminal -- claude --resume ID --permission-mode auto` with the
   terminal of the person. When that ends, it tells the daemon to go on.
   It exits with 0 when the session goes on, and with 1 when the session
-  ended before the takeover.
+  ended before the takeover. Superseded in part by
+  01M51KJ1R9K7A7RW8T8XH8VW43.
+- **01M51KJ1R9K7A7RW8T8XH8VW43** `riff takeover NAME` and `t` in
+  `riff view` stop the turn of the session at once, also in the middle
+  of a tool call. `riff takeover --at-end NAME` waits for the end of the
+  turn. A takeover also waits for the end when the input of `claude`
+  closed after the result of its turn, and when the relay of the
+  session cannot stop a turn. `riff takeover` and the view say which
+  one they do. The result of a turn that a takeover stops is no fail of
+  the session. The new input after the takeover says that the stop can
+  come in the middle of a step.
 - **01M501PA94CDZDH214GGFMTH5V** On the socket of a session, `hold`
   tells the relay to close the stdin of `claude`, and to keep the
   container at the end of `claude`. The relay then says `held`, and
@@ -5244,6 +5254,12 @@ share.
   in place of `--session-id ID`. The sequence numbers of the events go
   on. The hello of the relay says `held` while it waits, so a new
   daemon knows.
+- **01M51KJ1V0STB4QCN4N5SBYGSP** `hold` has the field `interrupt`.
+  With it, the relay writes the interrupt control request of
+  stream-json on the stdin of `claude` before the close, as the Agent
+  SDK does. The hello of the relay says `interrupts` when the relay can
+  do it. A relay of riff 1.5 reads a `hold` with `interrupt` as its own
+  `hold`. The protocol stays 4.
 - **01M501PABB010P4S8YF7R29XXS** The daemon keeps a takeover in the
   record of the session, from the ask until it gives the session back.
   It gives the session back at the `go on` of `riff takeover`, or at
@@ -5501,6 +5517,7 @@ share.
   call of a session. `--permission-prompt-tool` sends each other call to
   riff. A takeover stops a worker at the end of a turn, and opens
   `claude --resume ID` with a terminal in the same container.
+  Superseded in part by 01M51KJ1R9K7A7RW8T8XH8VW43.
 - **01M4Z60B84FTGMXDZ1F52DC98C** riff keeps the MCP servers of the
   claude.ai account of the person in a session, as a plain `claude` has
   them.

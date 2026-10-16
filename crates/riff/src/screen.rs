@@ -13,7 +13,7 @@
 //!   riff-issue-12-1a2b3c4d     issue-12       works      5m   > Bash: just check
 //!   riff-verify-issue-9-…      verify-issue-9 ends       1m   end: success, 8 turns, 22 s, 0.17 USD
 //! wave o/r: started issue-12
-//! Up/Down select   Enter attach to the lead   t take over the session   q quit
+//! Up/Down select   Enter attach to the lead   t take over now   q quit
 //! ```
 //!
 //! [`Screen`] holds the state of the view, and [`Screen::on_key`] turns
@@ -341,7 +341,7 @@ pub async fn view(dir: &Path, runtime: &impl Runtime) -> Result<()> {
             }
             Action::Takeover(name) => {
                 let taken =
-                    crate::takeover::takeover(dir, runtime, name, |l| println!("{l}")).await;
+                    crate::takeover::takeover(dir, runtime, name, false, |l| println!("{l}")).await;
                 screen.took_over(name, &taken);
             }
         }
