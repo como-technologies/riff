@@ -162,8 +162,8 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::fs::Metadata;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -1743,11 +1743,7 @@ mod tests {
         let marks = ["1a2b3c4d".to_owned()];
         assert_eq!(home.changes(&before, &marks), Changes::default());
         // A project of the session in it counts.
-        std::fs::write(
-            &json,
-            r#"{"projects":{"/s/issue-12-1a2b3c4d/clone":{}}}"#,
-        )
-        .unwrap();
+        std::fs::write(&json, r#"{"projects":{"/s/issue-12-1a2b3c4d/clone":{}}}"#).unwrap();
         assert_eq!(home.changes(&before, &marks).changed, [json]);
     }
 
