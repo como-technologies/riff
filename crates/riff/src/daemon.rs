@@ -126,6 +126,14 @@
 //! them waits for no lock of `tokio`: a write of a record holds the lock
 //! of the records for one append and one sync of the file.
 //!
+//! With its riff, the daemon binds its iroh endpoint with its key, and
+//! runs its peer links ([`crate::peer::sync`], 01M519Z2QE6QYPJX8HVY17GR6Z):
+//! it sends its records to the other daemons of its riff, and keeps
+//! theirs. `riff daemon` takes the net of [`crate::peer::sync::NET_VAR`]
+//! ([`Daemon::with_net`]). A daemon with no net, or whose bind fails, runs
+//! its sessions with no peer links. At its stop, it closes its endpoint
+//! ([`Daemon::close_links`]). [`Status::links`] shows each link.
+//!
 //! # The relay
 //!
 //! The daemon binds its own binary at [`RELAY_BIN`] in each container,
@@ -1460,7 +1468,7 @@ pub struct Daemon<R> {
     net: Option<Net>,
     /// The peer links of the daemon, from its riff on
     /// ([`crate::peer::sync`]).
-    sync: OnceLock<Arc<Links>>,
+    links: OnceLock<Arc<Links>>,
 }
 
 /// A wave that runs in the daemon.
@@ -1713,7 +1721,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             waves: Mutex::new(BTreeMap::new()),
             changed: Notify::new(),
             net: None,
-            sync: OnceLock::new(),
+            links: OnceLock::new(),
         })
     }
 
@@ -1798,8 +1806,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             })
             .map_err(|_| anyhow!("the riff daemon has its riff already"))?;
         if let Some(endpoint) = endpoint {
-            let sync = Links::start(endpoint, hub, |line| println!("{line}"));
-            let _ = self.sync.set(sync);
+            let links = Links::start(endpoint, hub, |line| println!("{line}"));
+            let _ = self.links.set(links);
         }
         // A session that started while the daemon waited for its key gets
         // its record now.
@@ -1829,15 +1837,15 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// The peer links of the daemon: `None` while it has no riff or no
     /// iroh endpoint.
-    pub fn sync(&self) -> Option<&Arc<Links>> {
-        self.sync.get()
+    pub fn links(&self) -> Option<&Arc<Links>> {
+        self.links.get()
     }
 
     /// Closes the peer links and the iroh endpoint of the daemon, at its
     /// stop.
     pub async fn close_links(&self) {
-        if let Some(sync) = self.sync.get() {
-            sync.close().await;
+        if let Some(links) = self.links.get() {
+            links.close().await;
         }
     }
 
@@ -2002,7 +2010,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 (Some(waits.clone()), None, None, None, 0)
             }
         };
-        let links = self.sync.get().map(|sync| sync.shown());
+        let links = self.links.get().map(|links| links.shown());
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
