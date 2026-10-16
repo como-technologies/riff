@@ -223,7 +223,22 @@ async fn a_record_goes_through_b_and_a_stopped_daemon_gets_what_it_lacks() {
         owner.hub.read(|state| state.view())
     );
 
+    // 01M519Z554SC3EAT69Q3M6JDAP: B sees C online, and no link to C
+    // ended yet.
+    let c_key = key(c).public();
+    until("the link of C on B", || brett.links.online(&c_key)).await;
+    assert_eq!(brett.links.seen(&c_key), None);
+
+    let before = chrono::Utc::now().timestamp_millis();
     let dir = pangolin.stop().await;
+    until("the end of the link of C on B", || {
+        !brett.links.online(&c_key)
+    })
+    .await;
+    let seen = brett.links.seen(&c_key).expect("the end of the link of C");
+    assert!(seen >= before, "{seen} < {before}");
+    assert!(brett.links.online(&owner.public()));
+    assert_eq!(brett.links.seen(&owner.public()), None);
     owner.hub.write(&message("mike", "two")).unwrap();
     brett.hub.write(&message("brett", "three")).unwrap();
     until("the three records on B", || brett.messages().len() == 3).await;
@@ -234,6 +249,10 @@ async fn a_record_goes_through_b_and_a_stopped_daemon_gets_what_it_lacks() {
         pangolin.messages() == texts(&["one", "two", "three"])
     })
     .await;
+    // The new link runs, and seen still gives the end of the link before
+    // it.
+    until("the new link of C on B", || brett.links.online(&c_key)).await;
+    assert_eq!(brett.links.seen(&c_key), Some(seen));
     assert_eq!(
         pangolin.hub.read(|state| state.view()),
         brett.hub.read(|state| state.view())
