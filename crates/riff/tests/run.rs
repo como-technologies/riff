@@ -1693,6 +1693,52 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
     }
 }
 
+/// 01M51JYDHAQDJ3GH2J8DT3AZQS: git cannot fast-forward the clone of the
+/// lead, so the clone stays as it is, and the lead starts.
+#[tokio::test]
+async fn riff_lead_start_keeps_a_clone_that_git_cannot_fast_forward_and_starts_the_lead() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let name = "riff-lead-como-technologies-riff";
+    let until_the_lead_ends = || async {
+        let started = Instant::now();
+        while machine.ok(None, &["daemon", "status"]).await.contains(name) {
+            assert!(started.elapsed() < isolated::HANG, "the lead did not end");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    };
+    machine.ok(None, &["lead", "start"]).await;
+    until_the_lead_ends().await;
+    let clone = machine
+        .env
+        .riff_home()
+        .join("leads/como-technologies-riff/clone");
+    let old = git(&clone, &["rev-parse", "HEAD"]);
+
+    // origin gets the new file b, and the clone has an untracked file b.
+    std::fs::write(machine.main.join("b"), "origin\n").unwrap();
+    git(&machine.main, &["add", "b"]);
+    git(&machine.main, &["commit", "-q", "-m", "two"]);
+    git(&machine.main, &["push", "-q", "origin", "main"]);
+    std::fs::write(clone.join("b"), "mine\n").unwrap();
+
+    let out = machine.ok(None, &["lead", "start"]).await;
+    // The note with the reason, and the error of git in it.
+    let kept = riff::text::lead_clone_kept(&clone, &riff::text::lead_clone_no_forward(""));
+    let (kept, _) = kept.split_once(')').unwrap();
+    assert!(out.contains(kept), "{out}");
+    assert!(out.contains("git merge -q --ff-only @{upstream}: "), "{out}");
+    assert!(
+        out.contains(&format!(
+            "The lead of como-technologies/riff starts in the container {name}"
+        )),
+        "{out}"
+    );
+    assert_eq!(git(&clone, &["rev-parse", "HEAD"]), old);
+    assert_eq!(std::fs::read_to_string(clone.join("b")).unwrap(), "mine\n");
+    until_the_lead_ends().await;
+}
+
 #[tokio::test]
 async fn riff_takeover_gives_the_person_the_session_and_the_session_goes_on() {
     let machine = Machine::new().await;
