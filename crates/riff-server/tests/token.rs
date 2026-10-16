@@ -127,50 +127,99 @@ impl riff_state::store::Store for Broken {
     }
 }
 
-/// A refresh token works after a restart. An access token is only in
-/// memory: after a restart, the client refreshes one time
-/// (01M3TFG551C76BP4TRA32P7VC3).
+const MIKE: &str = "riff://mike@pangolin";
+const A: &str = "riff://mike@pangolin/como-technologies/riff?session=a";
+const B: &str = "riff://mike@pangolin/como-technologies/riff?session=b";
+
+/// Swaps the person access token `token` for a token of `session`.
+async fn for_session(base: &str, key: &Key, token: &str, session: &str) -> TokenReply {
+    let form = format!(
+        "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange\
+         &subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token\
+         &subject_token={token}&session={session}"
+    );
+    pair(common::refresh(base, key, &form).await).await
+}
+
+/// Registers `me` with the access token `token`. Returns the status.
+async fn register(base: &str, key: &Key, token: &str, me: &str) -> u16 {
+    common::post(&format!("{base}/v1/register"), key, Some(token))
+        .json(&serde_json::json!({ "me": me }))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+/// Each access token works after a restart and after a deploy, until it
+/// expires: a person token and a session token. So a new start makes no
+/// client refresh (01M52JYGSNTFPQ0ZP50AD2BG89). A refresh token works
+/// too, and a generation from before still ends the sign-in.
 #[tokio::test]
-async fn refresh_tokens_stay_valid_across_a_restart() {
+async fn each_token_stays_valid_across_a_restart_and_a_deploy() {
     let store = Memory::default();
-    let (service, url) = common::start_on(Arc::new(store.clone())).await;
+    let (service, url) = common::start_signed_on(Arc::new(store.clone())).await;
     let key = Key::generate();
-    let jkt = key.thumbprint();
+    // The log knows the person, so the sign-in stays after a restart.
     let first = service
-        .tokens()
-        .sign_in("mike@comotechnologies.io", &jkt, Instant::now())
+        .admit("mike@comotechnologies.io", true, &key.thumbprint())
+        .await
         .unwrap();
     let second = pair(common::refresh(&url, &key, &form(&first.refresh_token)).await).await;
     let third = pair(common::refresh(&url, &key, &form(&second.refresh_token)).await).await;
+    let a = for_session(&url, &key, &third.access_token, "a").await;
+    assert_eq!(register(&url, &key, &a.access_token, A).await, 200);
     // A stop saves the token store (R129).
     service.shutdown().await.unwrap();
     assert!(store.load(SIGN_INS).await.unwrap().is_some());
     drop(service);
 
-    let (restarted, url) = common::start_on(Arc::new(store.clone())).await;
-    assert!(
-        restarted
-            .tokens()
-            .check(&third.access_token, &jkt, Instant::now())
-            .is_err(),
-        "an access token is only in memory"
-    );
-    let fourth = pair(common::refresh(&url, &key, &form(&third.refresh_token)).await).await;
-    assert_eq!(
-        restarted
-            .tokens()
-            .check(&fourth.access_token, &jkt, Instant::now()),
-        Ok("mike".to_owned())
-    );
+    // A restart: each access token works, with no refresh.
+    let (restarted, url) = common::start_signed_on(Arc::new(store.clone())).await;
+    assert_eq!(register(&url, &key, &third.access_token, MIKE).await, 200);
+    assert_eq!(register(&url, &key, &a.access_token, A).await, 200);
+    let b = for_session(&url, &key, &third.access_token, "b").await;
+    // The task of each second saves the swap: the hash of its token.
+    let hash = {
+        use base64::Engine;
+        use sha2::Digest;
+        let digest = sha2::Sha256::digest(b.access_token.as_bytes());
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+    };
+    let span = isolated::Span::start();
+    loop {
+        let saved = store.load(SIGN_INS).await.unwrap().unwrap().bytes;
+        let saved = String::from_utf8(saved).unwrap();
+        if saved.contains(&hash) {
+            break;
+        }
+        assert!(span.within(Duration::from_secs(10)), "{saved}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 
+    // A deploy: a new instance takes the lease while this one serves.
+    let (deployed, url) = common::start_signed_on(Arc::new(store.clone())).await;
+    restarted.stopped().await;
+    for (token, me) in [(&third.access_token, MIKE), (&a.access_token, A), (&b.access_token, B)] {
+        assert_eq!(register(&url, &key, token, me).await, 200, "{me}");
+    }
+    // Another device key cannot use them.
+    let thief = Key::generate();
+    assert_eq!(register(&url, &thief, &b.access_token, B).await, 401);
+
+    let fourth = pair(common::refresh(&url, &key, &form(&third.refresh_token)).await).await;
+    assert_eq!(register(&url, &key, &fourth.access_token, MIKE).await, 200);
     // A generation from before the restart still ends the sign-in.
     let reused = common::refresh(&url, &key, &form(&first.refresh_token)).await;
     assert_eq!(error(reused).await, (400, "invalid_grant".into()));
-    restarted.shutdown().await.unwrap();
-    let (restarted, url) = common::start_on(Arc::new(store)).await;
+    assert_eq!(register(&url, &key, &b.access_token, B).await, 401);
+    deployed.shutdown().await.unwrap();
+    let (restarted, url) = common::start_signed_on(Arc::new(store)).await;
     assert_eq!(restarted.tokens().chains(), 0, "the revoke was saved too");
     let gone = common::refresh(&url, &key, &form(&fourth.refresh_token)).await;
     assert_eq!(error(gone).await, (400, "invalid_grant".into()));
+    assert_eq!(register(&url, &key, &a.access_token, A).await, 401);
 }
 
 /// A store whose saves of the token store fail while `failing` is true.
