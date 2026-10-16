@@ -6014,6 +6014,11 @@ then.
   it, for example its lock, count as the Claude folder: only a new path
   that names the `ID8` of the session counts. A changed `.claude.json`
   counts only when its text names the `ID8`.
+- **01M51MQB46AYY39YSAY18NMD8T** The home check of the real-session
+  test also leaves out, with no flag, `snap` in the home and
+  `claude/locks` in `XDG_STATE_HOME`. The snap apps and each `claude`
+  on the host write there while the test runs. `--skip` stays for the
+  other programs.
 - **01M4ZFPYNGFF49WWHR8EBWSTNG** Before `riff run`, the real-session
   test starts `riff daemon` of the tree in a process group of its own,
   and waits up to 10 seconds until `riff daemon status` answers. When a
