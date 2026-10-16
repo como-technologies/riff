@@ -1201,11 +1201,7 @@ impl EndSteps {
 /// Asks the daemon in the folder `daemon` to run the session of
 /// `start`, shows its events, and waits for its end ([`follow`]). The
 /// streams of `signals` listen from here on.
-async fn run_session(
-    daemon: &Path,
-    start: daemon::Start,
-    signals: &mut Signals,
-) -> Result<Ended> {
+async fn run_session(daemon: &Path, start: daemon::Start, signals: &mut Signals) -> Result<Ended> {
     let name = start.spec.name.clone();
     let mut view = View::default();
     follow(
