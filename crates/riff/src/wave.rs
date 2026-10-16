@@ -1833,6 +1833,7 @@ mod tests {
                 }),
                 terminal: false,
                 takeover: false,
+                interrupt: false,
             };
             Self {
                 api,
