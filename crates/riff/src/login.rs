@@ -68,7 +68,7 @@
 //!
 //! # Example
 //!
-//! ```
+//! ```standalone_crate
 //! # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
 //! use riff::login::{self, SignIn};
 //!

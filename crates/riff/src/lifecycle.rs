@@ -151,7 +151,7 @@ fn seen(url: &str, answer: Result<Probe, String>) -> Seen {
 /// this machine at `local` when it is another riff (see [`same_riff`]).
 /// `riff` passes [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
 ///
-/// ```
+/// ```standalone_crate
 /// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() {
 /// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());

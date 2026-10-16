@@ -19,6 +19,15 @@
 //! set, the first call sets the store of the OS. A test sets the mock
 //! store of `keyring-core` first, so tests never touch the real keyring.
 //!
+//! The default store is global to the process, and rustdoc can run the
+//! merged doc tests of a crate as threads of one process. So a doc test
+//! sets the mock store in a hidden first line, and is a
+//! `standalone_crate`: it runs in a process of its own, as the example
+//! below does. The unit test
+//! `each_doc_test_that_sets_the_store_is_a_crate_of_its_own` checks
+//! each file of `crates/riff/src` (01M514XARN6564BBWHWWYVCH9K). A unit
+//! test sets the mock store once for each process, with a `Once`.
+//!
 //! Each keyring error is an error, also when riff cannot open the
 //! keyring. [`has_keyring`] tells the caller which case it is.
 //!
@@ -53,7 +62,7 @@
 //!
 //! # Example
 //!
-//! ```
+//! ```standalone_crate
 //! # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
 //! use riff::secrets;
 //!
@@ -519,5 +528,90 @@ mod tests {
         assert!(is_locked(&file(denied)));
         let other = std::io::Error::from(std::io::ErrorKind::InvalidData);
         assert!(!is_locked(&file(other)));
+    }
+
+    /// The first line of each doc test in `text` that sets the default
+    /// store of `keyring_core` and is not a `standalone_crate`
+    /// (01M514XARN6564BBWHWWYVCH9K).
+    fn shared_store_tests(text: &str) -> Vec<usize> {
+        let mut fence: Option<(usize, bool)> = None;
+        let mut shared = Vec::new();
+        for (at, line) in text.lines().enumerate() {
+            let line = line.trim_start();
+            let Some(doc) = line.strip_prefix("///").or(line.strip_prefix("//!")) else {
+                continue;
+            };
+            let doc = doc.trim_start();
+            if let Some(tag) = doc.strip_prefix("```") {
+                let own = tag.split(',').any(|t| t.trim() == "standalone_crate");
+                fence = if fence.is_some() {
+                    None
+                } else {
+                    Some((at + 1, own))
+                };
+            } else if let Some((start, false)) = fence
+                && doc.contains("set_default_store")
+                && shared.last() != Some(&start)
+            {
+                shared.push(start);
+            }
+        }
+        shared
+    }
+
+    fn rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                rust_files(&path, files);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    #[test]
+    fn each_doc_test_that_sets_the_store_is_a_crate_of_its_own() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rust_files(&src, &mut files);
+        assert!(files.contains(&src.join("secrets.rs")), "{files:?}");
+        let mut shared = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).unwrap();
+            for line in shared_store_tests(&text) {
+                shared.push(format!("{}:{line}", file.display()));
+            }
+        }
+        assert!(
+            shared.is_empty(),
+            "make these doc tests standalone_crate: {shared:?}"
+        );
+    }
+
+    #[test]
+    fn the_check_finds_each_doc_test_that_shares_the_store() {
+        let text = concat!(
+            "//! ```\n",
+            "//! # keyring_core::set_default_store(a);\n",
+            "//! keyring_core::set_default_store(b);\n",
+            "//! ```\n",
+            "/// ```standalone_crate\n",
+            "/// # keyring_core::set_default_store(c);\n",
+            "/// ```\n",
+            "/// ```\n",
+            "/// riff::secrets::get(\"k\")?;\n",
+            "/// ```\n",
+            "/// ```rust, standalone_crate\n",
+            "/// # keyring_core::set_default_store(d);\n",
+            "/// ```\n",
+            "/// A test calls `set_default_store` first.\n",
+            "///     ```should_panic\n",
+            "///     keyring_core::set_default_store(e);\n",
+            "///     ```\n",
+            "// keyring_core::set_default_store(f);\n",
+            "fn g() { keyring_core::set_default_store(g) }\n",
+        );
+        assert_eq!(shared_store_tests(text), [1, 15]);
     }
 }
