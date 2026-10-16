@@ -88,6 +88,7 @@ pub fn http_status(reply: &str) -> Option<&str> {
 pub const VERIFY_CONTEXT: &str = "riff/verify";
 
 /// The `gh` of the machine.
+#[derive(Debug, Clone)]
 pub struct Gh {
     program: PathBuf,
     /// The repository of each call, as `OWNER/REPO`: `GH_REPO`. With

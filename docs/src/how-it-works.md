@@ -2738,9 +2738,9 @@ issue-12 in como-technologies/riff is free of its hold: a worker can claim it.
 
 ### Keep the verify of an item from the workers
 
-A hold of `verify-issue-12` stops the claim of the verify by a worker,
-and `riff run` sends no verify request for the item. Only a lead, the
-owner or an admin can hold it:
+A hold of `verify-issue-12` stops the claim of the verify by a worker.
+`riff run` and the wave of the daemon send no verify request for the
+item. Only a lead, the owner or an admin can hold it:
 
 ```sh
 riff plan hold verify-issue-12 a scratch item
@@ -2748,8 +2748,9 @@ riff plan hold verify-issue-12 a scratch item
 
 A worker cannot hold an item. The label `no-verify` on the issue works
 for each session: riff offers no verify of the pull request of the
-issue to a worker, and `riff run` sends no verify request for it. The
-first command makes the label, or updates it:
+issue to a worker, and `riff run` and the wave of the daemon send no
+verify request for it. The first command makes the label, or updates
+it:
 
 ```sh
 gh label create no-verify --description "riff offers no verify of this item" --force
@@ -2760,6 +2761,13 @@ gh issue edit 12 --add-label no-verify
 
 ```text
 riff run sends no verify request for issue-12: issue #12 has the label no-verify.
+```
+
+The wave of the daemon (`riff wave run`) posts a note to the lead in
+place of the verify request, with the reason:
+
+```text
+issue-12: the session of the wave ended, and the item is free. The riff daemon sends no verify request for PR #40, branch worktree-issue-12, commit 1a2b3c4 (session 9f8e7d6c): issue #12 has the label no-verify.
 ```
 
 With no verify, the pull request does not merge. To let riff offer the

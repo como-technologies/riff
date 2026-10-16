@@ -5129,33 +5129,31 @@ pub fn run_verify_request(
     )
 }
 
-/// `riff run` sends no verify request for `item`: the issue `issue` has
-/// the label [`crate::rollout::NO_VERIFY`] (01M5157V0P92EBHF4M7N9K0RGR).
+/// Why riff sends no verify request: the issue `issue` has the label
+/// [`crate::rollout::NO_VERIFY`] (01M5157V0P92EBHF4M7N9K0RGR).
 ///
 /// ```
-/// assert_eq!(
-///     riff::text::run_no_verify_label("issue-12", 12),
-///     "riff run sends no verify request for issue-12: issue #12 has the label no-verify."
-/// );
+/// assert_eq!(riff::text::no_verify_label(12), "issue #12 has the label no-verify.");
 /// ```
-pub fn run_no_verify_label(item: &str, issue: u64) -> String {
+pub fn no_verify_label(issue: u64) -> String {
     format!(
-        "riff run sends no verify request for {item}: issue #{issue} has the label {}.",
+        "issue #{issue} has the label {}.",
         crate::rollout::NO_VERIFY
     )
 }
 
-/// `riff run` sends no verify request for `item`: a lead holds its
-/// verify (01M5157TYDEHZHDXSC1AHCRDRN). `held` is the text of the hold.
+/// `riff run` sends no verify request for `item`, for the reason `why`
+/// of [`crate::run::no_verify`]: the label of the issue, or the hold of
+/// its verify (01M5157TYDEHZHDXSC1AHCRDRN).
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::run_verify_held("issue-12", "verify-issue-12 is held by the lead"),
+///     riff::text::run_no_verify("issue-12", "verify-issue-12 is held by the lead"),
 ///     "riff run sends no verify request for issue-12: verify-issue-12 is held by the lead"
 /// );
 /// ```
-pub fn run_verify_held(item: &str, held: &str) -> String {
-    format!("riff run sends no verify request for {item}: {held}")
+pub fn run_no_verify(item: &str, why: &str) -> String {
+    format!("riff run sends no verify request for {item}: {why}")
 }
 
 /// The end steps of `riff run`, as [`run_not_sent`] names them.
@@ -6227,6 +6225,42 @@ pub fn wave_verify_request(
         "verify request: {item}, PR #{number}, branch {branch}, commit {commit}, from the riff \
          daemon (session {session}). The session ended, and the item is free. The wave starts \
          the verify when the Gate is done."
+    )
+}
+
+/// The note to the lead in place of the verify request of a build of a
+/// wave, for the reason `why` of [`crate::run::no_verify`]
+/// (01M51KH0H7J35PEKMHP5KQB84T).
+///
+/// ```
+/// let body = riff::text::wave_no_verify(
+///     "issue-12",
+///     40,
+///     "worktree-issue-12",
+///     "1a2b3c4d5e",
+///     "9f8e7d6c",
+///     "issue #12 has the label no-verify.",
+/// );
+/// assert_eq!(
+///     body,
+///     "issue-12: the session of the wave ended, and the item is free. The riff daemon sends \
+///      no verify request for PR #40, branch worktree-issue-12, commit 1a2b3c4 (session \
+///      9f8e7d6c): issue #12 has the label no-verify."
+/// );
+/// ```
+pub fn wave_no_verify(
+    item: &str,
+    number: u64,
+    branch: &str,
+    commit: &str,
+    session: &str,
+    why: &str,
+) -> String {
+    let commit = commit.get(..7).unwrap_or(commit);
+    format!(
+        "{item}: the session of the wave ended, and the item is free. The riff daemon sends no \
+         verify request for PR #{number}, branch {branch}, commit {commit} (session {session}): \
+         {why}"
     )
 }
 
