@@ -201,6 +201,8 @@ pub struct State {
     heads: BTreeMap<Public, (u64, Id)>,
     /// The time of its author of the last record of each author.
     times: BTreeMap<Public, u64>,
+    /// The host of the owner, from its `riff` record.
+    owner_host: Option<String>,
     /// The ID of each record that the state kept.
     ids: BTreeSet<Id>,
     runs: BTreeMap<(Public, String), Run>,
@@ -223,6 +225,7 @@ impl State {
             members: BTreeMap::new(),
             heads: BTreeMap::new(),
             times: BTreeMap::new(),
+            owner_host: None,
             ids: BTreeSet::new(),
             runs: BTreeMap::new(),
             named: BTreeSet::new(),
@@ -243,6 +246,13 @@ impl State {
     pub fn owner(&self) -> Option<&str> {
         self.owner.as_deref()
     }
+
+    /// The host of the owner, when its `riff` record names it
+    /// (01M521J6T2PWA9JREDXJK6DZ0V).
+    pub fn owner_host(&self) -> Option<&str> {
+        self.owner_host.as_deref()
+    }
+
 
     /// Each member key.
     pub fn members(&self) -> &BTreeMap<Public, Member> {
@@ -287,7 +297,10 @@ impl State {
         self.ids.insert(id);
         let user = self.user_of(&author).unwrap_or_default().to_owned();
         match &checked.body {
-            Body::Riff(riff) => self.owner = Some(riff.user.clone()),
+            Body::Riff(riff) => {
+                self.owner = Some(riff.user.clone());
+                self.owner_host.clone_from(&riff.host);
+            }
             Body::Member(member) => {
                 let entry = self.members.entry(member.key).or_insert(Member {
                     user: member.user.clone(),

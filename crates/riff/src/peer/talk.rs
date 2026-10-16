@@ -62,6 +62,7 @@
 //! of the daemon, each message is unread again.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -191,6 +192,19 @@ impl Hub {
         let (id, applied) = lock(&self.peers).write(&self.key, body, now_ms())?;
         self.wake(&applied);
         Ok((id, applied))
+    }
+
+    /// The daemon is in the riff `riff` now, with its records in the
+    /// folder `dir`: after a join or a leave
+    /// (01M521J6WZT2KR5ZQE9DZ9A5AC, [`Peers::reopen`]). The records of the
+    /// old riff stay in their folder. The hub forgets each wake and each
+    /// read cursor: the numbers of the messages are of the new riff.
+    pub fn switch(&self, dir: &Path, riff: Public, say: impl FnMut(String)) -> Result<()> {
+        lock(&self.peers).reopen(dir, riff, say)?;
+        lock(&self.wakes).clear();
+        lock(&self.reads).clear();
+        self.woke.notify_waiters();
+        Ok(())
     }
 
     /// Reads the records of the daemon with `read`: for example its heads,

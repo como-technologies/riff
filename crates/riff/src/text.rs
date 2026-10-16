@@ -7739,6 +7739,453 @@ pub fn takeover_other_host(name: &str, host: &str) -> String {
     )
 }
 
+// ── The members of a riff of peers (#843) ──
+
+/// A string that is not an invite string of a riff of peers
+/// (01M521J6CEJB24QFN17077KG9S).
+pub const INVITE_NOT_A_STRING: &str = "that is not an invite string: it starts with riff1-. Copy the \
+                                       whole string that the owner sent you.";
+
+/// The daemon of the owner has no invite with that secret.
+pub const INVITE_UNKNOWN: &str = "the daemon of the owner has no invite with that secret";
+
+/// A join used the invite already.
+pub const INVITE_USED: &str = "a join used that invite already: an invite works one time";
+
+/// The invite ended.
+pub const INVITE_ENDED: &str = "that invite ended: ask the owner for a new one";
+
+/// Only the daemon of the owner answers a join.
+pub const JOIN_NOT_THE_OWNER: &str = "that daemon is not the owner of its riff";
+
+/// The key of a join is in the riff already (01M521J6MKSBAA2QP6ZFHYT9ZQ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_known_key("8a88e3dd7409f1"),
+///     "the key 8a88e3dd is in the riff already: the owner, a member, a removed key, or a key \
+///      that left"
+/// );
+/// ```
+pub fn join_known_key(key: &str) -> String {
+    format!(
+        "the key {} is in the riff already: the owner, a member, a removed key, or a key that left",
+        short_key(key)
+    )
+}
+
+/// The host of a join is not a name that riff takes.
+pub const JOIN_BAD_HOST: &str = "the host of the new daemon is not a name that riff takes";
+
+/// The ask of a join is not JSON of a join.
+pub const JOIN_BAD_ASK: &str = "the ask is not a join of riff";
+
+/// The daemon of the owner gave no answer that riff can read.
+pub const JOIN_NO_ANSWER: &str = "the daemon of the owner gave no answer that riff can read";
+
+/// The new daemon cannot reach the daemon of the owner.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_no_owner("no connect in 30 s"),
+///     "Your daemon cannot reach the daemon of the owner: no connect in 30 s. The daemon of the \
+///      owner must be online. Nothing changed."
+/// );
+/// ```
+pub fn join_no_owner(why: &str) -> String {
+    format!(
+        "Your daemon cannot reach the daemon of the owner: {why}. The daemon of the owner must be \
+         online. Nothing changed."
+    )
+}
+
+/// The daemon of the owner refused the join, and changed nothing.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_refused("that invite ended: ask the owner for a new one"),
+///     "The daemon of the owner refused the join: that invite ended: ask the owner for a new \
+///      one. Nothing changed."
+/// );
+/// ```
+pub fn join_refused(why: &str) -> String {
+    format!("The daemon of the owner refused the join: {why}. Nothing changed.")
+}
+
+/// The log line of the daemon of the owner at a refused join. It holds
+/// no secret.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_refused_line("8a88e3dd7409f1", "a join used that invite already"),
+///     "The riff daemon refused a join of the key 8a88e3dd: a join used that invite already."
+/// );
+/// ```
+pub fn join_refused_line(key: &str, why: &str) -> String {
+    format!(
+        "The riff daemon refused a join of the key {}: {why}.",
+        short_key(key)
+    )
+}
+
+/// The log line of the daemon of the owner at a join.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_admitted("8a88e3dd (brett on kadomony)"),
+///     "The riff daemon admitted a new member: 8a88e3dd (brett on kadomony)."
+/// );
+/// ```
+pub fn join_admitted(who: &str) -> String {
+    format!("The riff daemon admitted a new member: {who}.")
+}
+
+/// A link ended after the `left` record of this daemon.
+pub const PEER_LEFT: &str = "this daemon left the riff";
+
+/// `riff remove` of the user and the host of the owner.
+pub const REMOVE_NOT_THE_OWNER: &str = "the owner cannot remove itself";
+
+/// `riff remove` finds no member key to remove.
+///
+/// ```
+/// use riff::text::remove_no_key;
+///
+/// assert_eq!(
+///     remove_no_key("brett", None),
+///     "brett has no member key: riff members shows each key"
+/// );
+/// assert_eq!(
+///     remove_no_key("brett", Some("lynx")),
+///     "brett has no member key on lynx: riff members shows each key"
+/// );
+/// ```
+pub fn remove_no_key(user: &str, host: Option<&str>) -> String {
+    match host {
+        Some(host) => format!("{user} has no member key on {host}: riff members shows each key"),
+        None => format!("{user} has no member key: riff members shows each key"),
+    }
+}
+
+/// An owner step on a daemon that is not the owner of its riff
+/// (01M519Z3SGEHVMS85HZD169CAP, 01M519Z45J9RC734KBY1G8D49V).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::share_not_the_owner("riff invite", Some("mike")),
+///     "Only the owner of the riff runs riff invite. This machine is a member of the riff of mike: \
+///      ask mike."
+/// );
+/// ```
+pub fn share_not_the_owner(command: &str, owner: Option<&str>) -> String {
+    let owner = owner.unwrap_or("another person");
+    format!(
+        "Only the owner of the riff runs {command}. This machine is a member of the riff of \
+         {owner}: ask {owner}."
+    )
+}
+
+/// A member command of a riff of peers with no terminal
+/// (01M4Z60B8JEX15M1Q2435FZSDM, 01M521J6QBQFRDWRPR0NGHE7TM).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::share_no_terminal("riff invite"),
+///     "riff invite needs a terminal: a person runs it, not an agent session. Run it in a \
+///      terminal of your own."
+/// );
+/// ```
+pub fn share_no_terminal(command: &str) -> String {
+    format!(
+        "{command} needs a terminal: a person runs it, not an agent session. Run it in a terminal \
+         of your own."
+    )
+}
+
+/// `riff invite USER` with a user that riff does not take.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::invite_bad_user("a b"),
+///     "a b is not a user name of riff: use letters, digits, - _ . and ~"
+/// );
+/// ```
+pub fn invite_bad_user(user: &str) -> String {
+    format!("{user} is not a user name of riff: use letters, digits, - _ . and ~")
+}
+
+/// The time `ms` in UTC, to the minute: `2026-10-17 14:02 UTC`.
+///
+/// ```
+/// assert_eq!(riff::text::utc_minute(0), "1970-01-01 00:00 UTC");
+/// ```
+pub fn utc_minute(ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map_or_else(|| ms.to_string(), |at| at.format("%Y-%m-%d %H:%M UTC").to_string())
+}
+
+/// The answer of `riff invite USER` (01M519Z3SGEHVMS85HZD169CAP,
+/// 01M519Z3VXY4R3WDSSBQCVYTS4): the string, and that it is a secret.
+///
+/// ```
+/// let shown = riff::text::invited("brett", "riff1-abc", 86_400_000);
+/// assert_eq!(
+///     shown,
+///     "The invite of brett:\n\
+///      \n\
+///      riff1-abc\n\
+///      \n\
+///      Send it to brett by hand, for example in a chat. On the machine of brett, they run:\n\
+///      \n\
+///      riff join riff1-abc\n\
+///      \n\
+///      It works one time, until 1970-01-02 00:00 UTC. Until then it is a secret: a person who \
+///      has it can join as brett. Your daemon must be online for the join."
+/// );
+/// ```
+pub fn invited(user: &str, invite: &str, ends_ms: i64) -> String {
+    format!(
+        "The invite of {user}:\n\n{invite}\n\nSend it to {user} by hand, for example in a chat. On \
+         the machine of {user}, they run:\n\nriff join {invite}\n\nIt works one time, until {}. \
+         Until then it is a secret: a person who has it can join as {user}. Your daemon must be \
+         online for the join.",
+        utc_minute(ends_ms)
+    )
+}
+
+/// `riff join` of an invite of the riff of this daemon.
+pub const JOIN_OWN_RIFF: &str = "That invite is of the riff of this machine: send it to the \
+                                 person that you invited.";
+
+/// `riff join` while this daemon is in the riff of another person
+/// (01M519Z40SHPJ1BB2SZN9AW43F).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_in_a_riff(Some("brett")),
+///     "This machine is in the riff of brett. A daemon is in one riff at a time: run riff leave \
+///      first."
+/// );
+/// ```
+pub fn join_in_a_riff(owner: Option<&str>) -> String {
+    format!(
+        "This machine is in the riff of {}. A daemon is in one riff at a time: run riff leave \
+         first.",
+        owner.unwrap_or("another person")
+    )
+}
+
+/// `riff join` while the riff of this daemon has members
+/// (01M519Z40SHPJ1BB2SZN9AW43F).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_has_members(2),
+///     "Your riff has 2 members. A daemon is in one riff at a time: riff join refuses while \
+///      your riff has another member. riff remove takes a member out."
+/// );
+/// ```
+pub fn join_has_members(count: usize) -> String {
+    let members = if count == 1 { "member" } else { "members" };
+    format!(
+        "Your riff has {count} {members}. A daemon is in one riff at a time: riff join refuses \
+         while your riff has another member. riff remove takes a member out."
+    )
+}
+
+/// `riff join` with an invite that ended, by its own end time.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_ended(0),
+///     "That invite ended at 1970-01-01 00:00 UTC: ask the owner for a new one."
+/// );
+/// ```
+pub fn join_ended(ends_ms: i64) -> String {
+    format!(
+        "That invite ended at {}: ask the owner for a new one.",
+        utc_minute(ends_ms)
+    )
+}
+
+/// The daemon has no iroh endpoint: no join, and no riff of peers with
+/// other daemons.
+pub const SHARE_NO_LINKS: &str = "The riff daemon has no peer links: it could not bind its iroh \
+                                  endpoint. Its log says why: journalctl --user -u riff.service";
+
+/// A line of `riff join` while the daemon connects.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::join_connects("8a88e3dd7409f1"),
+///     "Your daemon connects to the daemon of the owner, 8a88e3dd."
+/// );
+/// ```
+pub fn join_connects(owner: &str) -> String {
+    format!(
+        "Your daemon connects to the daemon of the owner, {}.",
+        short_key(owner)
+    )
+}
+
+/// The answer of `riff join` (01M519Z3YA9WBH9TWQPAH6A64Z).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::joined("8a88e3dd7409f1", Some("mike"), "brett", "kadomony"),
+///     "This machine joined the riff 8a88e3dd of mike, as brett on kadomony. Its daemon syncs \
+///      with each member. riff members shows them."
+/// );
+/// ```
+pub fn joined(riff: &str, owner: Option<&str>, user: &str, host: &str) -> String {
+    let of = owner.map(|owner| format!(" of {owner}")).unwrap_or_default();
+    format!(
+        "This machine joined the riff {}{of}, as {user} on {host}. Its daemon syncs with each \
+         member. riff members shows them.",
+        short_key(riff)
+    )
+}
+
+/// `riff leave` on the daemon of the owner (01M519Z435DTR693NAK5GSB6XA).
+pub const LEAVE_OWNER: &str = "This machine is the owner of its riff, and the owner cannot leave. \
+                               riff leave takes a member out of the riff of another person.";
+
+/// The answer of `riff leave` (01M519Z435DTR693NAK5GSB6XA).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::left_riff("8a88e3dd7409f1", Some("mike"), "1f2e3d4c5b"),
+///     "This machine left the riff 8a88e3dd of mike. It has a riff of its own again: 1f2e3d4c."
+/// );
+/// ```
+pub fn left_riff(riff: &str, owner: Option<&str>, own: &str) -> String {
+    let of = owner.map(|owner| format!(" of {owner}")).unwrap_or_default();
+    format!(
+        "This machine left the riff {}{of}. It has a riff of its own again: {}.",
+        short_key(riff),
+        short_key(own)
+    )
+}
+
+/// A key that `riff remove` removed (01M519Z45J9RC734KBY1G8D49V).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::removed_key("8a88e3dd (brett on kadomony)"),
+///     "riff removed the key 8a88e3dd (brett on kadomony). Each daemon of the riff refuses it now."
+/// );
+/// ```
+pub fn removed_key(who: &str) -> String {
+    format!("riff removed the key {who}. Each daemon of the riff refuses it now.")
+}
+
+/// The state of one key in `riff members`, at the time `now_ms`.
+///
+/// ```
+/// use riff::peer::members::Shown;
+/// use riff::text::member_state;
+///
+/// let row = Shown {
+///     key: "8a88e3dd7409f1".into(), user: Some("brett".into()), host: Some("kadomony".into()),
+///     owner: false, this: false, online: false, seen_ms: Some(0), forked: false,
+///     removed: false, left: false,
+/// };
+/// assert_eq!(member_state(&row, 300_000), "last seen 5m ago");
+/// let gone = Shown { removed: true, forked: true, ..row.clone() };
+/// assert_eq!(member_state(&gone, 300_000), "last seen 5m ago, forked, removed");
+/// let here = Shown { owner: true, this: true, ..row.clone() };
+/// assert_eq!(member_state(&here, 300_000), "owner, this machine");
+/// let new = Shown { seen_ms: None, ..row };
+/// assert_eq!(member_state(&new, 300_000), "not seen yet");
+/// ```
+pub fn member_state(row: &crate::peer::members::Shown, now_ms: i64) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if row.owner {
+        parts.push("owner".into());
+    }
+    if row.this {
+        parts.push("this machine".into());
+    } else if row.online {
+        parts.push("online".into());
+    } else if let Some(seen) = row.seen_ms {
+        let secs = u64::try_from(now_ms.saturating_sub(seen) / 1000).unwrap_or_default();
+        parts.push(format!("last seen {} ago", ago(secs)));
+    } else {
+        parts.push("not seen yet".into());
+    }
+    for (mark, word) in [
+        (row.forked, "forked"),
+        (row.removed, "removed"),
+        (row.left, "left"),
+    ] {
+        if mark {
+            parts.push(word.into());
+        }
+    }
+    parts.join(", ")
+}
+
+/// `riff members` of a riff of peers (01M519Z4823WC7D3VVTFSDYBS4): one
+/// row for the owner and for each member key, at the time `now_ms`.
+///
+/// ```
+/// use riff::peer::members::Shown;
+///
+/// let owner = Shown {
+///     key: "8a88e3dd7409f1".into(), user: Some("mike".into()), host: Some("thelio".into()),
+///     owner: true, this: true, online: false, seen_ms: None, forked: false,
+///     removed: false, left: false,
+/// };
+/// let brett = Shown {
+///     key: "1f2e3d4c5b".into(), user: Some("brett".into()), host: Some("kadomony".into()),
+///     owner: false, this: false, online: true, seen_ms: None, ..owner.clone()
+/// };
+/// assert_eq!(
+///     riff::text::members_of_peers(&[owner, brett], 0),
+///     "The riff 8a88e3dd of mike:\n\
+///      USER   HOST      KEY       STATE\n\
+///      mike   thelio    8a88e3dd  owner, this machine\n\
+///      brett  kadomony  1f2e3d4c  online\n"
+/// );
+/// ```
+pub fn members_of_peers(rows: &[crate::peer::members::Shown], now_ms: i64) -> String {
+    let cells: Vec<[String; 4]> = rows
+        .iter()
+        .map(|row| {
+            [
+                row.user.clone().unwrap_or_else(|| "-".into()),
+                row.host.clone().unwrap_or_else(|| "-".into()),
+                short_key(&row.key).to_owned(),
+                member_state(row, now_ms),
+            ]
+        })
+        .collect();
+    let head = ["USER", "HOST", "KEY", "STATE"].map(str::to_owned);
+    let width = |at: usize| {
+        cells
+            .iter()
+            .chain([&head])
+            .map(|row| row[at].chars().count())
+            .max()
+            .unwrap_or(0)
+    };
+    let (user, host, key) = (width(0), width(1), width(2));
+    let owner = rows.first();
+    let mut out = format!(
+        "The riff {} of {}:\n",
+        owner.map_or("-", |row| short_key(&row.key)),
+        owner.and_then(|row| row.user.as_deref()).unwrap_or("-")
+    );
+    for row in [&head].into_iter().chain(cells.iter()) {
+        let _ = writeln!(
+            out,
+            "{:<user$}  {:<host$}  {:<key$}  {}",
+            row[0], row[1], row[2], row[3]
+        );
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
