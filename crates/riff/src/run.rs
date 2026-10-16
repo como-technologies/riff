@@ -927,7 +927,7 @@ pub(crate) fn milestone(gh: &pr::Gh, issue: u64) -> Result<String> {
 
 /// True when the issue `issue` has the label [`rollout::NO_VERIFY`], with
 /// `gh`.
-fn labelled(gh: &pr::Gh, issue: u64) -> Result<bool> {
+pub(crate) fn labelled(gh: &pr::Gh, issue: u64) -> Result<bool> {
     let found: rollout::Issue = gh.json(&[
         "issue",
         "view",
@@ -1398,6 +1398,112 @@ pub async fn run(
     {
         let _ = (api, here, server, item, image);
         bail!("{}", text::RUN_LINUX_ONLY)
+    }
+}
+
+/// `riff run ITEM --peers` (01M519Z4RWHWP3TKNP4T5GKKE9): one work item
+/// with no riff-server. See "With no riff-server" in the design. It
+/// gives the exit code of the command. On a host that is not Linux, it
+/// starts nothing.
+pub async fn run_peers(here: &Place, item: &str, image: Option<&str>) -> Result<i32> {
+    #[cfg(target_os = "linux")]
+    {
+        run_peers_with(&daemon::dir()?, here, item, image).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (here, item, image);
+        bail!("{}", text::RUN_LINUX_ONLY)
+    }
+}
+
+/// [`run_peers`] with the daemon in the folder `daemon`: the checks
+/// before the claim, then [`Ask::Run`]. The daemon does each riff step
+/// as for a job of a wave ([`crate::wave::run_one`]).
+pub async fn run_peers_with(
+    daemon: &Path,
+    here: &Place,
+    item: &str,
+    image: Option<&str>,
+) -> Result<i32> {
+    let issue = issue_of(item)?;
+    let dir = identity::working_dir()?;
+    let (main, _) = main_clone(&dir)?;
+    let image = match image {
+        Some(image) => image.to_owned(),
+        None => session_image::merged(&main, |line| println!("{line}"))?.to_string(),
+    };
+    check(daemon, &main, issue, &image).await?;
+    if here.default_thread().is_none() {
+        bail!("{}", text::RUN_NO_REPO);
+    }
+    let wave = crate::wave::Wave {
+        repo: here.repo_text(),
+        main,
+        server: String::new(),
+        host: here.host().to_owned(),
+    };
+    println!("{}", text::run_peers_asks(item));
+    let ask = Ask::Run {
+        wave,
+        work: crate::wave::Work::Build { issue },
+        image,
+    };
+    let mut signals = Signals::new()?;
+    let mut view = View::default();
+    let ended = follow_job(daemon, ask, item, &mut signals, |line| view.show(line)).await?;
+    Ok(i32::from(!(ended.code == Some(0) && !ended.failed)))
+}
+
+/// Sends the job `ask` to the daemon in the folder `daemon`, gives
+/// `show` each event of its session, and waits for the lines of the
+/// steps after the end and [`Say::Done`]. A SIGINT or a SIGTERM on
+/// `signals` asks the daemon to stop the container: the daemon still
+/// does the steps after the end. When the daemon goes away, the session
+/// runs on, and the next daemon does the steps after the end: riff says
+/// so, and the run failed.
+async fn follow_job(
+    daemon: &Path,
+    ask: Ask,
+    item: &str,
+    signals: &mut Signals,
+    mut show: impl FnMut(&str),
+) -> Result<Ended> {
+    let mut name = item.to_owned();
+    let mut client = daemon::Client::connect(daemon).await?;
+    client.ask(ask).await?;
+    let mut stopped = false;
+    let mut ended = Ended {
+        code: None,
+        failed: true,
+    };
+    loop {
+        let say = tokio::select! {
+            say = client.next() => say,
+            () = signals.recv(), if !stopped => {
+                stopped = true;
+                println!("{}", text::run_stopping(&name));
+                client.stop().await?;
+                continue;
+            }
+        };
+        match say {
+            Ok(Some(Say::Started { name: started, .. })) => name = started,
+            Ok(Some(Say::Event { line, .. })) => show(&line),
+            Ok(Some(Say::Stderr { line })) => eprintln!("{line}"),
+            Ok(Some(Say::Line { text })) => println!("{text}"),
+            Ok(Some(Say::Ended(end))) => ended = end,
+            Ok(Some(Say::Done)) => return Ok(ended),
+            Ok(Some(Say::Failed { error })) => bail!("{error}"),
+            Ok(Some(_)) => bail!("{}", text::DAEMON_GONE),
+            Ok(None) | Err(_) => {
+                println!("{}", text::run_peers_daemon_away(&name, item));
+                return Ok(Ended {
+                    code: None,
+                    failed: true,
+                });
+            }
+        }
     }
 }
 

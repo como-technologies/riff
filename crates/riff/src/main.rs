@@ -641,6 +641,11 @@ enum Command {
     /// session. At the end, it sends a verify request for the pull
     /// request of the branch, releases ITEM, and keeps the clone until
     /// the merge. Ctrl-C stops the container.
+    ///
+    /// With --peers, it needs no riff-server: the daemon does each riff
+    /// step. It claims ITEM on the forge, the session talks on the riff
+    /// of the daemon, and at the end the daemon sends the verify request
+    /// to your lead and releases ITEM.
     Run {
         /// The work item: an issue, for example issue-12.
         item: String,
@@ -649,6 +654,10 @@ enum Command {
         /// of origin pins.
         #[arg(long)]
         image: Option<String>,
+        /// Do each riff step on the riff of the daemon of this machine
+        /// and on the forge, with no riff-server (riff 3.0).
+        #[arg(long)]
+        peers: bool,
     },
     /// Plan the waves of this repository, or run one
     ///
@@ -1237,8 +1246,14 @@ enum WaveCommand {
     ///
     /// The daemon keeps the wave, also over its own restart, until riff
     /// wave stop. It needs the sign-in of riff, of gh and of claude on
-    /// this machine.
-    Run,
+    /// this machine. With --peers, it needs no sign-in of riff: each
+    /// riff step goes to the riff of the daemon and to the forge.
+    Run {
+        /// Do each riff step on the riff of the daemon of this machine
+        /// and on the forge, with no riff-server (riff 3.0).
+        #[arg(long)]
+        peers: bool,
+    },
     /// Start no new session for the wave of this repository
     ///
     /// The sessions that run go on to their end.
@@ -1960,7 +1975,7 @@ async fn main() -> Result<()> {
                 let ended = riff::waves::end(&gh, *number)?;
                 Some(text::waves_ended(&ended.title, ended.closed_issues))
             }
-            WaveCommand::Run | WaveCommand::Stop => None,
+            WaveCommand::Run { .. } | WaveCommand::Stop => None,
         };
         if let Some(line) = line {
             println!("{line}");
@@ -2066,7 +2081,16 @@ async fn main() -> Result<()> {
     riff::auto_update::remember(&here);
     // `riff run` is a session of its own, not the session that runs it
     // (01M4Z81APKC14AVNJWCGRQKNVW).
-    if let Command::Run { item, image } = &cli.command {
+    if let Command::Run {
+        item,
+        image,
+        peers: true,
+    } = &cli.command
+    {
+        let code = riff::run::run_peers(&here, item, image.as_deref()).await?;
+        std::process::exit(code);
+    }
+    if let Command::Run { item, image, .. } = &cli.command {
         let server = api.base().to_owned();
         let code = riff::run::run(api, &here, &server, item, image.as_deref()).await?;
         std::process::exit(code);
@@ -2081,7 +2105,10 @@ async fn main() -> Result<()> {
     if let Command::Wave { command } = &cli.command {
         let dir = riff::daemon::dir()?;
         match command {
-            WaveCommand::Run => riff::wave::ask_run(&dir, &here, api.base()).await?,
+            WaveCommand::Run { peers: false } => {
+                riff::wave::ask_run(&dir, &here, api.base()).await?;
+            }
+            WaveCommand::Run { peers: true } => riff::wave::ask_run(&dir, &here, "").await?,
             WaveCommand::Stop => riff::wave::ask_stop(&dir, &here).await?,
             WaveCommand::List
             | WaveCommand::Make { .. }

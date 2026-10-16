@@ -8252,6 +8252,58 @@ pub fn forge_gone_at_end(item: &str) -> String {
     )
 }
 
+/// [`crate::daemon::Ask::Run`] with a riff-server: only a job with no
+/// riff-server runs this way.
+pub const RUN_ONE_PEERS_ONLY: &str =
+    "The riff daemon runs one job for riff run --peers only: a job with no riff-server.";
+
+/// `riff run ITEM --peers`: riff asks the daemon to do the item.
+pub fn run_peers_asks(item: &str) -> String {
+    format!(
+        "riff run asks the riff daemon to do {item} with no riff-server: the claim on the forge, the session, the verify request and the release."
+    )
+}
+
+/// `riff run ITEM --peers`: the daemon went away while the session of
+/// `item` in the container `name` ran.
+pub fn run_peers_daemon_away(name: &str, item: &str) -> String {
+    format!(
+        "The riff daemon went away. The container {name} runs on. When the daemon starts again, it sends the verify request of {item} and releases it."
+    )
+}
+
+/// `riff run ITEM --peers`: another session holds `item` on the forge.
+pub fn run_held_on_forge(item: &str) -> String {
+    format!(
+        "Another session holds {} on the forge. riff run starts nothing. See the claims with git ls-remote origin 'refs/riff/claims/*'.",
+        safe(item)
+    )
+}
+
+/// `riff run ITEM --peers`: the daemon sent the verify request of the
+/// pull request `pull` to the lead.
+pub fn run_verify_sent(item: &str, pull: u64) -> String {
+    format!(
+        "riff sent the verify request of {} for PR #{pull} to your lead.",
+        safe(item)
+    )
+}
+
+/// `riff run ITEM --peers`: the lead got a note in place of a verify
+/// request.
+pub fn run_lead_noted(item: &str) -> String {
+    format!(
+        "riff sent no verify request of {}: your lead got a note with the reason.",
+        safe(item)
+    )
+}
+
+/// The daemon: a session of the riff of peers has no wake on
+/// riff-server.
+pub fn peers_no_server_wake(name: &str) -> String {
+    format!("The session in {name} has no riff-server: the riff daemon wakes it.")
+}
+
 /// `riff release ITEM --forge`: the forge has no claim of `item`.
 pub fn forge_release_none(item: &str) -> String {
     format!("The forge has no claim of {}.", safe(item))
