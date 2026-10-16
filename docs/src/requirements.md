@@ -5548,6 +5548,13 @@ then.
   records but not its key, it makes a new key and a riff of its own.
   The owner then invites the new key. Recovery of a lost key is future
   work.
+- **01M51BFYNMYHSQ62BBJES3CCWT** A keyring that is locked or does not
+  answer is not a lost key. The daemon then waits for the keyring, as
+  `riff` does (01M4385CCATXC0B8HV1XD6EFWG): it looks again each 30
+  seconds, makes no new key and no riff of its own, binds no endpoint
+  and writes no record. When the keyring answers, the daemon loads its
+  key and goes on. Only a keyring that answers with no key of the
+  daemon is a lost key (01M519Z2G77CT94Y6XPW9BCRK9).
 - **01M519Z2JMAKN0T6JZFBPSTKC8** The daemon keeps its state in the
   folder `state` in its folder: the records of each author, and the log
   and the checkpoints of `riff-state`. At each start, it loads the
@@ -5595,6 +5602,13 @@ then.
   cannot check yet: a sequence number after the next one, or an author
   that no record of the owner admits yet. The next heads give it again,
   in order.
+- **01M51BFYQVCFEWCJZERBD4S5N5** A daemon drops a record that it has
+  already: a record with the ID of a record that it keeps. It drops it
+  before the checks of 01M519Z317AT7KT7Q643NVYZD1, with no fault: it
+  logs nothing, and the connection stays. It does not apply the record
+  again, and does not pass it on again. A daemon passes no record back
+  to the daemon that sent it. So in a full mesh, a record that comes
+  over two paths is kept one time, and each connection stays.
 - **01M519Z363W5GV4MV5RDB6ECG0** A daemon refuses a record that fails a
   check. It closes the connection to the daemon that sent it, and logs
   the author, the sequence number and the check that failed, with no
@@ -5621,12 +5635,24 @@ then.
   `status` and `blocked`. The lead also gets `lead`, `hold`, `free`,
   `pause` and `resume`. The daemon refuses each other riff tool with a
   text that says why.
-- **01M519Z3J7Z0M3PNDY249Q57FH** An item is held while one lead holds
-  it, and a repository is paused while one lead pauses it. Each lead
-  frees and resumes only what its user held or paused. The owner frees
-  and resumes each. Only the owner pauses and resumes the whole riff.
-  When two daemons of one user give that user a lead in one repository,
-  the lead with the newer time counts, then the higher key.
+- **01M519Z3J7Z0M3PNDY249Q57FH** A hold and a pause are `plan`
+  records. A free names the ID of each hold record that it ends, and a
+  resume names the ID of each pause record that it ends. An item is
+  held while one hold record of it has no free that ends it. A
+  repository, or the whole riff, is paused in the same way. A free or a
+  resume ends a record only when its author is a daemon of the user of
+  that record, or the daemon of the owner. Only the owner pauses and
+  resumes the whole riff. So the holds and the pauses come from the set
+  of records, not from their order: a free that a daemon keeps before
+  its hold ends that hold when the hold comes.
+- **01M51BFYT2ZGN4W5E5R87GPVCM** A session takes the lead with a
+  `session` record that has the lead mark. The record names the ID of
+  the record that gave the old lead of its user in the repository its
+  lead mark, when its daemon knows one. The lead of a user in a
+  repository is the session that runs with a lead mark that no other
+  lead mark names. When two such sessions are left, the session of the
+  daemon with the higher key counts. So no daemon orders the leads by a
+  time (01M519Z28S7FB4T1H52642JXZ1).
 - **01M519Z3MMW5RKAR1R14PPQ4T9** A new member gets each record of the
   riff, from the first one. A prune of old records is future work.
 
@@ -5661,8 +5687,7 @@ then.
 - **01M519Z435DTR693NAK5GSB6XA** `riff leave` on a member: the daemon
   writes a `left` record, sends it to its peers, ends its peer links,
   and makes a riff of its own with the same key. The owner cannot leave.
-  The command `riff leave` of a person is not the `leave` tool of a
-  session.
+  Each session of the daemon leaves the riff with it.
 - **01M519Z45J9RC734KBY1G8D49V** `riff remove USER` writes a `removed`
   record for each key of USER, or for one key with `--host HOST`. Only
   the owner runs it, at the CLI, with a terminal. The record names the
@@ -5698,10 +5723,15 @@ then.
   session wrote the end of the session, or when it had no connection to
   that daemon for 15 minutes. A claim of another user whose daemon is
   offline holds.
-- **01M519Z4PESWFV8Y03SKTSGV4Q** `riff release ITEM` at the CLI deletes
-  a claim with the lease of its claim commit. A person deletes a claim
-  of their own user. The owner deletes each claim. It refuses a claim of
-  another user for a member.
+- **01M519Z4PESWFV8Y03SKTSGV4Q** `riff release ITEM --forge` at the CLI
+  deletes a claim with the lease of its claim commit. A person deletes a
+  claim of their own user. The owner deletes each claim. It refuses a
+  claim of another user for a member.
+- **01M51BFYW85YBEWAB20YTCJQFK** Until Wave C, `riff claim ITEM` and
+  `riff release ITEM` act on riff-server 1.x, as `riff --help` says
+  today. Only `riff release ITEM --forge` acts on a claim of riff 3.0
+  (01M519Z4PESWFV8Y03SKTSGV4Q). A person makes no claim of riff 3.0 at
+  the CLI: the daemon makes each one.
 - **01M519Z4RWHWP3TKNP4T5GKKE9** `riff run` and the waves of the daemon
   do each riff step with the daemon, and with no riff-server: the
   daemon claims the item on the forge, the session talks through the

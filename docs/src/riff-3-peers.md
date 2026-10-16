@@ -6,8 +6,8 @@ machine keeps a copy of the riff, and the daemons connect peer to
 peer.
 
 The commands on this page come with the items of Wave B. Until then,
-`riff --help` does not show them, and `riff invite`, `riff remove` and
-`riff members` act on riff-server 1.x. The
+`riff --help` does not show them, and `riff invite`, `riff remove`,
+`riff members` and `riff release` act on riff-server 1.x. The
 [requirements of Wave B](requirements.md#wave-b-the-record) hold each
 decision.
 
@@ -36,7 +36,8 @@ flowchart LR
 ```
 
 - Each machine runs one riff daemon. Each daemon has one key. The key
-  is in the OS keyring, and it never leaves the machine.
+  is in the OS keyring, and it never leaves the machine. While the
+  keyring is locked, the daemon waits for it, and makes no new key.
 - A riff belongs to its owner: the key that made it. The owner admits
   the key of each machine of each member.
 - Each change of the riff is a record, signed by the daemon that wrote
@@ -106,8 +107,8 @@ riff leave
 ```
 
 It takes this machine out of the riff, and makes a riff of your own
-again. The owner cannot leave. To take only one session out of the
-riff, use `/riff:leave` in that session.
+again. Each session of this machine leaves with it. The owner cannot
+leave.
 
 ### Remove a member
 
@@ -125,7 +126,7 @@ The claim of a machine of another user that is offline holds. You
 free a claim of your own user. The owner frees each claim:
 
 ```sh
-riff release issue-12
+riff release issue-12 --forge
 ```
 
 ## The records
@@ -187,11 +188,26 @@ sequenceDiagram
   the riff, the author is a member, the next sequence number, the hash
   of the record before it, the signature, and the writer of the type.
   It refuses a bad record, and closes that connection.
+- A daemon drops a record that it has already, with no fault, and
+  sends no record back to the daemon that sent it. So a record that
+  comes over two paths is kept one time.
 - A fork is two records of one author with the same sequence number.
   The daemon keeps the first one, keeps no next record of that author,
   and tells the lead of your user. The owner removes that key.
 - When a daemon keeps a message, it wakes each of its own sessions
   that the message selects, also for a message of another machine.
+
+## Holds, pauses and the lead
+
+Two daemons can keep the same records in two orders. The state does
+not change with the order:
+
+- A free names each hold that it ends, and a resume names each pause
+  that it ends. An item is held while one of its holds has no free.
+- A session that takes the lead names the lead mark that it replaces.
+  The lead of a user is the lead mark that no other mark names. When
+  two are left, the daemon with the higher key wins.
+- No daemon orders records by the time of their author.
 
 ## How a join works
 
@@ -238,7 +254,7 @@ flowchart TD
     E -- "ends" --> R["its daemon deletes the claim"]
     E -- "does not run after a new start of its daemon" --> R
     E -- "ended, or its daemon is offline for 15 minutes" --> L["the daemon of the lead of the same user deletes the claim"]
-    E -- "of another user, and its daemon is offline" --> H["the claim holds: riff release frees it"]
+    E -- "of another user, and its daemon is offline" --> H["the claim holds: riff release --forge frees it"]
 ```
 
 ## The way over from riff 1.x
@@ -251,3 +267,6 @@ flowchart TD
 - Until Wave C, the member commands of 1.x take `--email`:
   `riff invite --email EMAIL`, `riff remove --email EMAIL` and
   `riff members --email`.
+- Until Wave C, `riff claim` and `riff release` act on riff-server
+  1.x. Only `riff release ITEM --forge` acts on a claim of 3.0. The
+  daemon makes each claim of 3.0.
