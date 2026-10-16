@@ -28,7 +28,12 @@
 //!    rule of riff ([`crate::permissions::user_rules`]), riff names each
 //!    rule and asks one question (01M5084K09Z2S7N57315CX2R0F). `--yes`
 //!    answers yes ([`Mode`]). On a yes, riff adds the rules
-//!    ([`crate::permissions::add`]), and that check passes. riff asks also
+//!    ([`crate::permissions::add`]), and that check passes. It marks the
+//!    add, so each worker starts again at its next clear
+//!    (01M51M3ZRKQZ8KDVRGJR3XAY00). Then riff shows whether the riff
+//!    daemon keeps the rules in step with each release, and the line of
+//!    its last sync ([`crate::rule_sync`], 01M51M3ZPAEMJ64266QSJBNQ46).
+//!    riff asks also
 //!    when another check failed (01M5084K2Q3HH4BK7DJMYQD7C1). With no
 //!    terminal and no `--yes`, it asks nothing. `--check` names the rules
 //!    and asks nothing.
@@ -90,6 +95,8 @@
 //!     }),
 //!     wide: vec![],
 //!     riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
+//!     local: None,
+//!     sync: Default::default(),
 //! };
 //! assert!(checks(&facts).iter().all(|c| c.passed()));
 //!
@@ -200,6 +207,13 @@ pub struct Facts {
     /// What riff found of its own binary: static, or why it is not
     /// ([`crate::release::check_file`]).
     pub riff: Result<String, String>,
+    /// The local files of riff ([`crate::local::dir`]). After an add of
+    /// rules, riff marks it there, so each worker starts again at its
+    /// next clear (01M51M3ZRKQZ8KDVRGJR3XAY00).
+    pub local: Option<PathBuf>,
+    /// The sync of the rules by the riff daemon
+    /// (01M51M3ZPAEMJ64266QSJBNQ46).
+    pub sync: crate::rule_sync::State,
 }
 
 /// The user settings of Claude Code, and the permission rules of riff
@@ -383,6 +397,7 @@ impl Facts {
             .unwrap_or_else(|| uid.to_string());
         let uid = uid.as_raw();
         let read = |path: PathBuf| std::fs::read_to_string(path).ok();
+        let local = crate::local::dir();
         let init_dirs: Vec<PathBuf> = match std::env::var_os(INIT_VAR).filter(|v| !v.is_empty()) {
             Some(dir) => vec![PathBuf::from(dir)],
             None => INIT_DIRS.iter().map(PathBuf::from).collect(),
@@ -402,6 +417,8 @@ impl Facts {
             settings: Settings::here(),
             wide: Wide::here(dir),
             riff: riff_binary(),
+            sync: crate::rule_sync::State::here(local.as_deref()),
+            local,
         }
     }
 }
@@ -768,6 +785,11 @@ pub async fn run(
         };
         if yes {
             let added = permissions::add(&settings.path, &settings.missing)?;
+            if !added.is_empty()
+                && let Some(local) = &facts.local
+            {
+                crate::rule_sync::mark_added(local);
+            }
             println!("{}", text::init_rules_added(&settings.path, added.len()));
             for check in checks.iter_mut().filter(|c| c.name == text::INIT_RULES) {
                 *check = Check::pass(text::INIT_RULES, text::init_rules_there(&settings.path));
@@ -776,6 +798,7 @@ pub async fn run(
             println!("{}", text::init_rules_kept(&settings.path));
         }
     }
+    println!("{}", text::init_sync(&facts.sync));
     if !facts.wide.is_empty() {
         println!("{}", text::init_wide(&facts.wide));
         if mode == Mode::Ask && ask(Question::Remove)? {
@@ -873,6 +896,8 @@ mod tests {
             }),
             wide: vec![],
             riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
+            local: None,
+            sync: crate::rule_sync::State::default(),
         }
     }
 

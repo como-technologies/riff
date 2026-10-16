@@ -574,6 +574,60 @@ pub async fn install(tag: &str) -> Result<Installed> {
     Ok(Installed::Static(dir))
 }
 
+/// Checks that `bytes` are the static `riff` of the release `tag` for
+/// `target` (01M51M3ZKWQYBBPD97R0G9QAX0): their SHA-256 is the line of
+/// [`asset`] `riff` in [`SUMS`] of the release at `source`. A check
+/// build or a dev build has the version of a release, but another
+/// SHA-256. `Err` says why the bytes are not the release: no `target`,
+/// no [`SUMS`], no line, another SHA-256, or a read that failed.
+///
+/// ```
+/// use riff::release::{Source, asset, is_release, sha256};
+///
+/// let dir = tempfile::tempdir()?;
+/// let target = "x86_64-unknown-linux-musl";
+/// std::fs::create_dir(dir.path().join("v1.5.0"))?;
+/// let line = format!("{}  {}\n", sha256(b"the riff"), asset("riff", target));
+/// std::fs::write(dir.path().join("v1.5.0/SHA256SUMS"), line)?;
+/// let source = Source::Folder(dir.path().into());
+/// let check = |bytes: &'static [u8], tag: &'static str, target| {
+///     let source = source.clone();
+///     tokio::runtime::Builder::new_current_thread()
+///         .build()
+///         .unwrap()
+///         .block_on(async move { is_release(bytes, tag, &source, target).await })
+/// };
+/// assert_eq!(check(b"the riff", "v1.5.0", Some(target)), Ok(()));
+/// let dev = check(b"a dev build", "v1.5.0", Some(target)).unwrap_err();
+/// assert!(dev.ends_with("it is a check build or a dev build"), "{dev}");
+/// let none = check(b"the riff", "v1.4.0", Some(target)).unwrap_err();
+/// assert_eq!(none, "the release v1.4.0 has no SHA256SUMS");
+/// assert!(check(b"the riff", "v1.5.0", None).is_err());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub async fn is_release(
+    bytes: &[u8],
+    tag: &str,
+    source: &Source,
+    target: Option<&str>,
+) -> Result<(), String> {
+    let target = target.ok_or(crate::text::NOT_RELEASE_TARGET)?;
+    let read = |e: anyhow::Error| crate::text::not_release_read(tag, &format!("{e:#}"));
+    let sums = source
+        .get(&client().map_err(read)?, tag, SUMS)
+        .await
+        .map_err(read)?
+        .ok_or_else(|| crate::text::not_release_no_sums(tag))?;
+    let name = asset("riff", target);
+    let sum = sum_of(&String::from_utf8_lossy(&sums), &name)
+        .ok_or_else(|| crate::text::not_release_no_line(tag, &name))?;
+    let got = sha256(bytes);
+    if got != sum {
+        return Err(crate::text::not_release_sum(&got, tag, &name));
+    }
+    Ok(())
+}
+
 /// The tag of the release in `reply`, a reply of the API of GitHub for
 /// one release: its `tag_name`. An error when the reply has none, or
 /// when the tag is not a release tag `vX.Y.Z`.

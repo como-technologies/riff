@@ -39,7 +39,7 @@
 //!     participant S as riff-server
 //!     participant L as lead
 //!     P->>W: start
-//!     W->>C: start, RIFF_WORKER=1, RIFF_WORKER_WRAPPER=pid
+//!     W->>C: start, RIFF_WORKER=1, RIFF_WORKER_WRAPPER=pid, RIFF_WORKER_RULES
 //!     C->>M: start
 //!     alt claude exits
 //!         C-->>W: exit code
@@ -273,10 +273,15 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         (_, member) => (None, member),
     };
     let riff = crate::binary::this_on_disk()?;
+    // The rules that `claude` reads at its start (01M51M3ZRKQZ8KDVRGJR3XAY00).
+    let rules = local::dir()
+        .and_then(|dir| local::rules_added(&dir))
+        .unwrap_or_default();
     let mut cmd = tokio::process::Command::new(&command[0]);
     cmd.args(&command[1..])
         .env(WORKER, "1")
         .env(WRAPPER, std::process::id().to_string())
+        .env(crate::rule_sync::WORKER_RULES, rules)
         // A tmux server that a context started gives each pane the
         // variable of that context. `claude` is of no context
         // (01M3ZV0QSFVCHRSEKYK57B88VA).
