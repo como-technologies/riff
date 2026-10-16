@@ -135,9 +135,10 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
 /// the riff tools, through the `riff relay mcp` of its MCP config, and
 /// logs the answers to `bin/mcp.out` until it has one for each request.
 /// Then, for each of `bin/later` and `bin/last` that is there, it waits
-/// for the file `.go` beside it, and prints it. It ends when its stdin
-/// closes. With `bin/linger`, it does not end then, as `claude -p` does
-/// not end while a background task runs.
+/// for the file `.go` beside it, and prints it. It adds the rest of its
+/// stdin to `bin/run.rest`, and ends when its stdin closes. With
+/// `bin/linger`, it does not end then, as `claude -p` does not end while
+/// a background task runs.
 fn fake_claude(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -165,7 +166,7 @@ for stage in later last; do
     cat "$dir/$stage"
   fi
 done
-cat > /dev/null
+cat >> "$dir/run.rest"
 touch "$dir/run.closed"
 if [ -f "$dir/linger" ]; then
   while :; do sleep 0.05; done
@@ -1695,6 +1696,20 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
 
 #[tokio::test]
 async fn riff_takeover_gives_the_person_the_session_and_the_session_goes_on() {
+    take_over_a_session(&[]).await;
+}
+
+#[tokio::test]
+async fn riff_takeover_at_end_waits_for_the_end_of_the_turn_and_the_session_goes_on() {
+    take_over_a_session(&["--at-end"]).await;
+}
+
+/// `riff takeover` with the flags `flags` of a session of `riff run` that
+/// waits in its turn: the takeover interrupts the turn, or with
+/// `--at-end` it sends no interrupt. Then the session goes on with
+/// `--resume` and one new input (01M51KJ1R9K7A7RW8T8XH8VW43).
+async fn take_over_a_session(flags: &[&str]) {
+    let at_end = flags.contains(&"--at-end");
     let machine = Machine::new().await;
     machine.lead().await;
     // claude takes the start text, and waits in its turn.
@@ -1711,8 +1726,11 @@ async fn riff_takeover_gives_the_person_the_session_and_the_session_goes_on() {
     let args: Vec<&str> = args.lines().collect();
     let session = args[args.iter().position(|a| *a == "--session-id").unwrap() + 1].to_owned();
 
+    let mut args = vec!["takeover"];
+    args.extend(flags);
+    args.push(&name);
     let takeover = machine
-        .command(None, &["takeover", &name])
+        .command(None, &args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1722,12 +1740,25 @@ async fn riff_takeover_gives_the_person_the_session_and_the_session_goes_on() {
         &format!("A person takes over the session in the container {name}."),
     )
     .await;
-    // The turn ends: the hold closed the stdin of claude.
+    // The turn ends: the hold closed the stdin of claude. The fake claude
+    // does not stop at the interrupt: the test ends its turn.
     std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
 
     let taken = output_of(takeover).await;
     let shown = text(&taken.stdout);
     assert!(taken.status.success(), "{shown}{}", text(&taken.stderr));
+    let first = if at_end {
+        riff::text::takeover_waits(&name)
+    } else {
+        riff::text::takeover_interrupts(&name)
+    };
+    assert!(shown.contains(&first), "{shown}");
+    let rest = machine.read("run.rest");
+    assert_eq!(
+        rest.contains(riff::session_relay::INTERRUPT),
+        !at_end,
+        "{rest}"
+    );
     assert!(shown.contains(&riff::text::takeover_held(&name)), "{shown}");
     assert!(shown.contains(&riff::text::takeover_back(&name)), "{shown}");
     assert!(

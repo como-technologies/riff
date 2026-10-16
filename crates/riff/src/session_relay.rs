@@ -62,7 +62,7 @@
 //! | daemon | [`Say::Input`] | One line for the stdin of `claude`: a wake. |
 //! | daemon | [`Say::Close`] | Close the stdin of `claude`: it ends after its turn. |
 //! | daemon | [`Say::Ack`] | The daemon has each line up to this sequence number. |
-//! | daemon | [`Say::Hold`] | A takeover: close the stdin of `claude`, and keep the container at its end. |
+//! | daemon | [`Say::Hold`] | A takeover: interrupt the turn when it says so, close the stdin of `claude`, and keep the container at its end. |
 //! | daemon | [`Say::GoOn`] | The takeover ended: start `claude` again with `--resume`. |
 //!
 //! The sequence numbers start at 1, and go up by 1 for each line. The
@@ -82,7 +82,11 @@
 //! A person can take over a worker (01M4Z60B83ZH10HYKW7X1C0SSS,
 //! 01M501PA94CDZDH214GGFMTH5V). The
 //! daemon says [`Say::Hold`]: the relay closes the stdin of `claude`, so
-//! `claude` ends after its turn. Its end is then no exit: the relay says
+//! `claude` ends after its turn. With `interrupt`, the relay first writes
+//! [`INTERRUPT`] on the stdin of `claude`: `claude` stops its turn at
+//! once (01M51KJ1V0STB4QCN4N5SBYGSP). The hello of the relay says
+//! `interrupts`, so the daemon knows that this relay can do it. The end
+//! of `claude` is then no exit: the relay says
 //! [`Up::Held`], and the container stays. The person runs `claude
 //! --resume ID` in the container with a terminal (`podman exec`). After
 //! that, the daemon says [`Say::GoOn`] and gives one new input: the relay
@@ -97,9 +101,9 @@
 //!     participant R as riff relay
 //!     participant C as claude -p
 //!     P->>D: takeover NAME
-//!     D->>R: hold
-//!     R->>C: close stdin
-//!     C-->>R: the last events of the turn, then the end
+//!     D->>R: hold, interrupt
+//!     R->>C: the interrupt, then close stdin
+//!     C-->>R: the control response, the result of the stopped turn, then the end
 //!     R->>D: held
 //!     D-->>P: held: run the terminal now
 //!     Note over P: podman exec -it NAME claude --resume ID
@@ -182,6 +186,21 @@ pub const SECRET_VARS: [&str; 3] = ["GH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTH
 /// The name of the MCP server of the riff tools: the tools are
 /// `mcp__riff__NAME`, as in a worker of riff 1.x.
 pub const MCP_SERVER: &str = "riff";
+
+/// The stream-json line that interrupts the turn of `claude -p`, as the
+/// Agent SDK sends it (01M51KJ1V0STB4QCN4N5SBYGSP). `claude` stops the
+/// turn at once, also in the middle of a tool call. It answers with a
+/// `control_response` and ends the turn with a `result` that has an
+/// error.
+///
+/// ```
+/// let line: serde_json::Value = serde_json::from_str(riff::session_relay::INTERRUPT).unwrap();
+/// assert_eq!(line["type"], "control_request");
+/// assert_eq!(line["request"]["subtype"], "interrupt");
+/// assert!(!riff::session_relay::INTERRUPT.contains('\n'));
+/// ```
+pub const INTERRUPT: &str =
+    r#"{"type":"control_request","request_id":"riff-takeover","request":{"subtype":"interrupt"}}"#;
 
 /// What the relay sends the daemon after its hello.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -483,9 +502,15 @@ impl Link {
     }
 
     /// A takeover: `claude` ends after its turn, and its end is no exit.
-    async fn hold(&mut self) {
+    /// With `interrupt`, the relay first sends `claude` [`INTERRUPT`]:
+    /// it ends its turn at once.
+    async fn hold(&mut self, interrupt: bool) {
         if self.held.is_none() && self.exit.is_none() {
             self.hold = true;
+            if interrupt && let Some(stdin) = self.stdin.as_mut() {
+                let _ = stdin.write_all(format!("{INTERRUPT}\n").as_bytes()).await;
+                let _ = stdin.flush().await;
+            }
             self.close().await;
         }
     }
@@ -652,6 +677,7 @@ async fn connected(
         inputs: link.inputs,
         closed: link.closed,
         held: link.held.is_some(),
+        interrupts: true,
     };
     send(&mut write, &hello).await.ok()?;
     match serde_json::from_str::<Say>(&lines.next_line().await.ok()??) {
@@ -678,7 +704,7 @@ async fn connected(
                 match serde_json::from_str::<Say>(&line.ok()??) {
                     Ok(Say::Input { line }) => link.input(&line).await,
                     Ok(Say::Close) => link.close().await,
-                    Ok(Say::Hold) => link.hold().await,
+                    Ok(Say::Hold { interrupt }) => link.hold(interrupt).await,
                     Ok(Say::GoOn) => {
                         if let Some(up) = link.go_on(wait) {
                             send(&mut write, &up).await.ok()?;
@@ -1084,7 +1110,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_takeover_ends_claude_after_its_turn_and_a_go_on_starts_it_again() {
+    async fn a_takeover_interrupts_the_turn_of_claude_and_the_relay_says_held() {
+        let daemon = Daemon::new();
+        let (mut claude, child) = claude();
+        let (notes, _noted) = mpsc::unbounded_channel();
+        let socket = daemon.socket.clone();
+        let relay = tokio::spawn(async move {
+            relay(child, no_again(), &socket, Scrub::default(), WAIT, notes).await
+        });
+        let (_, mut lines, mut write) = daemon.accept().await;
+        say(&mut write, &Say::Resume { events: 0 }).await;
+        say(
+            &mut write,
+            &Say::Input {
+                line: "start".into(),
+            },
+        )
+        .await;
+        assert_eq!(claude.read().await.as_deref(), Some("start"));
+        claude
+            .print(r#"{"type":"assistant","message":{"content":[{"type":"tool_use"}]}}"#)
+            .await;
+        assert_eq!(up(&mut lines).await.seq(), 1);
+
+        // The hold with interrupt: claude gets the interrupt, then the
+        // end of its stdin.
+        say(&mut write, &Say::Hold { interrupt: true }).await;
+        assert_eq!(claude.read().await.as_deref(), Some(INTERRUPT));
+        assert_eq!(claude.read().await, None);
+        // claude stops its turn with an error, and ends with 1: that is
+        // no exit, the relay says held.
+        claude
+            .print(r#"{"type":"control_response","response":{"subtype":"success","request_id":"riff-takeover"}}"#)
+            .await;
+        claude
+            .print(r#"{"type":"result","subtype":"error_during_execution","is_error":true}"#)
+            .await;
+        claude.end(1).await;
+        assert_eq!(up(&mut lines).await.seq(), 2);
+        assert_eq!(up(&mut lines).await.seq(), 3);
+        assert_eq!(up(&mut lines).await, Up::Held);
+        drop((lines, write));
+        relay.abort();
+    }
+
+    #[tokio::test]
+    async fn a_takeover_at_the_end_ends_claude_after_its_turn_and_a_go_on_starts_it_again() {
         let mut daemon = Daemon::new();
         let (mut first, child) = claude();
         let (mut second, again) = claude();
@@ -1108,9 +1179,9 @@ mod tests {
         assert_eq!(first.read().await.as_deref(), Some("start"));
         first.print("e1").await;
         assert_eq!(up(&mut lines).await.seq(), 1);
-        // The hold closes the stdin: claude ends after its turn, and its
-        // end is no exit.
-        say(&mut write, &Say::Hold).await;
+        // The hold with no interrupt closes the stdin: claude ends after
+        // its turn, and its end is no exit.
+        say(&mut write, &Say::Hold { interrupt: false }).await;
         assert_eq!(first.read().await, None);
         first.print("e2").await;
         first.end(0).await;
@@ -1131,6 +1202,7 @@ mod tests {
                 inputs: 1,
                 closed: true,
                 held: true,
+                interrupts: true,
             }
         );
         say(&mut write, &Say::Resume { events: 2 }).await;
@@ -1184,7 +1256,8 @@ mod tests {
                 protocol: PROTOCOL,
                 inputs: 0,
                 closed: false,
-                held: false
+                held: false,
+                interrupts: true,
             }
         );
         say(&mut write, &Say::Resume { events: 0 }).await;
@@ -1231,7 +1304,8 @@ mod tests {
                 protocol: PROTOCOL,
                 inputs: 1,
                 closed: false,
-                held: false
+                held: false,
+                interrupts: true,
             }
         );
         say(&mut write, &Say::Resume { events: 1 }).await;

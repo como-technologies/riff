@@ -600,16 +600,20 @@ enum Command {
     /// last step, the limit of this host and the waves of the daemon. It
     /// draws them again each second. Up and Down select a session. Enter
     /// attaches to the lead: Ctrl-P Ctrl-Q detaches and comes back here.
-    /// t takes over the selected session, as riff takeover does. q ends
-    /// the view; the sessions go on.
+    /// t takes over the selected session, as riff takeover does: it stops
+    /// the turn at once. q ends the view; the sessions go on.
     View,
     /// Take over a session of the riff daemon in your terminal
     ///
-    /// The session stops at the end of its turn. Then claude opens here
-    /// with the history of the session, in its container. When you end
-    /// it with /exit, the session goes on with its item. riff view and
-    /// riff daemon status show the names.
+    /// riff stops the turn of the session at once, also in the middle of
+    /// a tool call. Then claude opens here with the history of the
+    /// session, in its container. When you end it with /exit, the session
+    /// goes on with its item. riff view and riff daemon status show the
+    /// names.
     Takeover {
+        /// Wait for the end of the turn of the session. Do not stop it.
+        #[arg(long)]
+        at_end: bool,
         /// The name of the container, for example riff-issue-12-1a2b3c4d.
         name: String,
     },
@@ -1593,8 +1597,8 @@ async fn main() -> Result<()> {
     if let Command::View = cli.command {
         return view_command().await;
     }
-    if let Command::Takeover { name } = &cli.command {
-        let code = riff::takeover::here(name).await?;
+    if let Command::Takeover { name, at_end } = &cli.command {
+        let code = riff::takeover::here(name, *at_end).await?;
         if code != 0 {
             std::process::exit(code);
         }
