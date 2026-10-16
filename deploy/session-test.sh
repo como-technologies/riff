@@ -2,8 +2,9 @@
 # Runs the tests of crates/riff in a container of the session image that
 # riff.toml pins, as a session of `riff run` runs them
 # (01M51117NDKF11FNZ915TTQED4): with --init (01M51117K3WXK35CE67KPRFMA8),
-# as the user of this machine, with a home of its own, and with the
-# values of `just cargo-test`.
+# as the user of this machine, with a home of its own, with the limits of
+# a session (01M4Z60B7XT7462XMV49GJTVSJ), and with the values of
+# `just cargo-test`.
 #
 #   deploy/session-test.sh [ARGS]
 #
@@ -51,7 +52,7 @@ esac
 
 mkdir -p target/session
 echo "session-test.sh: the tests of crates/riff in $IMAGE, with $ENGINE."
-exec "$ENGINE" run --rm --init "${user[@]}" \
+exec "$ENGINE" run --rm --init "${user[@]}" --cpus 4 --memory 8g \
     "${binds[@]}" -w "$ROOT" \
     -e HOME=/tmp/home \
     -e CARGO_HOME="$ROOT/target/session/cargo" \

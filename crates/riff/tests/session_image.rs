@@ -182,8 +182,9 @@ fn session_test(args: &[&str], bin: &Path, engine: Option<&str>) -> Vec<String> 
 
 /// 01M51117NDKF11FNZ915TTQED4, 01M51117K3WXK35CE67KPRFMA8: the tests of
 /// `crates/riff` run in the image that `riff.toml` pins, with `--init`,
-/// as the user of the host, with a home of their own, and with the
-/// values of `just cargo-test`. The arguments go to `cargo test`.
+/// as the user of the host, with a home of their own, with the limits of
+/// a session, and with the values of `just cargo-test`. The arguments go
+/// to `cargo test`.
 #[test]
 fn the_session_tests_run_in_the_pinned_image_with_an_init() {
     let bin = tempfile::tempdir().unwrap();
@@ -198,6 +199,8 @@ fn the_session_tests_run_in_the_pinned_image_with_an_init() {
     );
     assert!(has(["-v", &format!("{root}:{root}")]), "{args:?}");
     assert!(has(["-w", &root]), "{args:?}");
+    assert!(has(["--cpus", "4"]), "{args:?}");
+    assert!(has(["--memory", "8g"]), "{args:?}");
     assert!(has(["-e", "HOME=/tmp/home"]), "{args:?}");
     let target = format!("CARGO_TARGET_DIR={root}/target/session");
     assert!(has(["-e", &target]), "{args:?}");
@@ -235,15 +238,14 @@ fn the_session_tests_run_as_the_user_of_the_host_in_docker() {
 }
 
 /// 01M51117NDKF11FNZ915TTQED4: CI runs the session tests of each pull
-/// request and each push, with the init of podman on the runner.
+/// request and each push, with docker.
 #[test]
 fn ci_runs_the_tests_of_crates_riff_in_the_session_image() {
     let job = ci_job("session_tests");
     for part in [
         "name: Session tests\n",
         "if: github.event_name == 'push' || github.event_name == 'pull_request'\n",
-        "sudo apt-get install -y -q catatonit\n",
-        "RIFF_ENGINE: podman\n",
+        "RIFF_ENGINE: docker\n",
         "run: deploy/session-test.sh\n",
     ] {
         assert!(

@@ -372,9 +372,10 @@ Dockerfile, for example a version.
 A session runs the tests of riff in its container, not on your
 machine. So a test can pass on your machine and fail in a session.
 `just session-test` runs the tests of `crates/riff` in a container of
-the image that `riff.toml` pins, as a session runs them: with the init
-of podman, as your user, and with a home of its own. It uses podman,
-else docker. The build goes to `target/session`:
+the image that `riff.toml` pins, as a session runs them: with an init
+process, as your user, with a home of its own, and with the limits of a
+session (4 CPUs, 8 GB). It uses podman, else docker. The build goes to
+`target/session`:
 
 ```sh
 just session-test

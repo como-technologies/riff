@@ -4462,8 +4462,13 @@ share.
 - **01M51117NDKF11FNZ915TTQED4** The CI job "Session tests" runs the
   tests of `crates/riff` in a container of the session image that
   `riff.toml` pins, on each pull request and each push. The container
-  has `--init`, the user of the host and a home of its own, as a
-  session has. `just session-test` runs the same tests on a machine.
+  has `--init`, the user of the host, a home of its own and the limits
+  of a session (`--cpus 4`, `--memory 8g`), as a session has.
+  `just session-test` runs the same tests on a machine.
+- **01M511FGMFF17G2G8RV6ST9070** Before the tests, `just cargo-test`
+  builds each binary of the workspace. So a test of one crate finds the
+  binary of another crate, for example `riff-server` in a test of
+  `riff`, also in a new clone with no `target/`.
 - **01M4ZPJ091W3NYV1V0FJS9K6MS** For a release tag, the CI job "Static
   riff release" adds `riff-x86_64-unknown-linux-musl`,
   `riff-server-x86_64-unknown-linux-musl` and `SHA256SUMS` to the

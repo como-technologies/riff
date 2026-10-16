@@ -97,26 +97,18 @@ jobs:
   session_tests:
     # The tests of crates/riff in the session image that riff.toml pins,
     # as a session of riff run runs them (01M51117NDKF11FNZ915TTQED4):
-    # rootless podman, --init, the user of the runner and a home of its
-    # own.
+    # --init, the user of the runner, a home of its own and the limits of
+    # a session. docker has its own init, and gives the limits on the
+    # runner.
     name: Session tests
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      RIFF_ENGINE: docker
     steps:
       - uses: actions/checkout@v6
 
-      # podman run --init needs catatonit, the init of podman
-      # (01M51117K3WXK35CE67KPRFMA8).
-      - name: Install the init of podman
-        run: |
-          if [ ! -x /usr/libexec/podman/catatonit ]; then
-            sudo apt-get update -q
-            sudo apt-get install -y -q catatonit
-          fi
-
       - name: Session tests
-        env:
-          RIFF_ENGINE: podman
         run: deploy/session-test.sh
 
   static_release:
