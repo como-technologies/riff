@@ -7928,7 +7928,7 @@ pub fn utc_minute(ms: i64) -> String {
 /// 01M519Z3VXY4R3WDSSBQCVYTS4): the string, and that it is a secret.
 ///
 /// ```
-/// let shown = riff::text::invited("brett", "riff1-abc", 86_400_000);
+/// let shown = riff::text::invited_to_peers("brett", "riff1-abc", 86_400_000);
 /// assert_eq!(
 ///     shown,
 ///     "The invite of brett:\n\
@@ -7943,7 +7943,7 @@ pub fn utc_minute(ms: i64) -> String {
 ///      has it can join as brett. Your daemon must be online for the join."
 /// );
 /// ```
-pub fn invited(user: &str, invite: &str, ends_ms: i64) -> String {
+pub fn invited_to_peers(user: &str, invite: &str, ends_ms: i64) -> String {
     format!(
         "The invite of {user}:\n\n{invite}\n\nSend it to {user} by hand, for example in a chat. On \
          the machine of {user}, they run:\n\nriff join {invite}\n\nIt works one time, until {}. \
@@ -8032,12 +8032,12 @@ pub fn join_connects(owner: &str) -> String {
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::joined("8a88e3dd7409f1", Some("mike"), "brett", "kadomony"),
+///     riff::text::joined_peers("8a88e3dd7409f1", Some("mike"), "brett", "kadomony"),
 ///     "This machine joined the riff 8a88e3dd of mike, as brett on kadomony. Its daemon syncs \
 ///      with each member. riff members shows them."
 /// );
 /// ```
-pub fn joined(riff: &str, owner: Option<&str>, user: &str, host: &str) -> String {
+pub fn joined_peers(riff: &str, owner: Option<&str>, user: &str, host: &str) -> String {
     let of = owner.map(|owner| format!(" of {owner}")).unwrap_or_default();
     format!(
         "This machine joined the riff {}{of}, as {user} on {host}. Its daemon syncs with each \
