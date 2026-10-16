@@ -1969,7 +1969,13 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Whoami => {
             let pauses = api.pauses(&me).await.map_err(|e| format!("{e:#}"));
-            anstream::print!("{}", view::whoami(&me, pauses));
+            // The URI of the server holds the claims and the lead
+            // (01M517N7ANC06S4GTEEZHAB255).
+            let shown = match api.me(&me).await {
+                Ok(reply) => reply.session.map_or(me, |s| s.uri),
+                Err(_) => me,
+            };
+            anstream::print!("{}", view::whoami(&shown, pauses));
         }
         Command::Who { all, long } => {
             let pauses = api.pauses(&me).await?;

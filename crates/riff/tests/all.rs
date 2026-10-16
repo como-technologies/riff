@@ -51,6 +51,7 @@ mod mcp;
 mod measure;
 mod members;
 mod monitor;
+mod nested;
 mod new_machine;
 mod next;
 mod no_sign_in;
