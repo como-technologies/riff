@@ -1236,10 +1236,10 @@ The test does these steps. The messages name them:
    fails.
 6. Run the item: `riff run` does the issue. You see each event of the
    session.
-7. Check the home: the test lists your home again. A new file outside
-   the folders of riff, the folders of podman, your clone and
-   `~/.cache` fails the test. A change to a file that riff must not
-   write also fails it. See
+7. Check the home: the test lists your home again. A new file fails
+   the test, outside the paths that the test leaves out (see
+   [When another program writes in your home](#when-another-program-writes-in-your-home)).
+   A change to a file that riff must not write also fails it. See
    [What the home check compares](#what-the-home-check-compares).
 8. Find the pull request: the branch of the session has an open pull
    request.
@@ -1313,6 +1313,22 @@ program, or the file, with `--skip`, and run the test again. Give
 ```sh
 just real-session --skip ~/.mozilla --skip ~/.config/Code
 ```
+
+The test leaves out these paths with no `--skip`:
+
+| Path | Who writes there |
+|---|---|
+| `~/.config/riff`, `~/.local/share/riff`, `~/.local/state/riff`, `~/.cache/riff`, and `RIFF_HOME` | riff |
+| `~/.local/share/containers`, `~/.config/containers` | podman: the images and the volumes |
+| your clone, and the worktree of the test | the build of the test, and the fetch of `riff run` |
+| `~/.cache` | the caches of your tools |
+| `~/snap` | the snap apps, for example the Firefox snap |
+| `~/.local/state/claude/locks` | each `claude` on your machine |
+| `~/.claude`, `~/.claude.json`, `~/.claude.json.lock` | your other Claude Code sessions (see [What the home check compares](#what-the-home-check-compares)) |
+
+The test uses `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and
+`XDG_CACHE_HOME` in place of `~/.config`, `~/.local/share`,
+`~/.local/state` and `~/.cache` when you set them.
 
 ### Wait longer for the Gate
 
