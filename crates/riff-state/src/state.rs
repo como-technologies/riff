@@ -292,7 +292,7 @@ pub use snapshot::Snapshot;
 pub use the_riff::{Forget, Import, MakeRiff, Pauses};
 pub use threads::{Announce, may_read};
 pub use view::{Settings, View};
-pub use work::{MUST_CLEAR, released_for};
+pub use work::{Dropped, MUST_CLEAR, dropped, released_for};
 
 use presence::{Block, LongStep, Session, SetStatus};
 use sessions::Known;

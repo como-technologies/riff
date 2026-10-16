@@ -4497,29 +4497,39 @@ mod tests {
         registered.dedup();
         assert_eq!(registered, ["register", "claim"]);
 
-        // The release and its note: one chunk, one after another, with
-        // the lead as the cause of the two. The sender of the note is
-        // the server.
+        // The release, its note, and the direct message that wakes the
+        // live holder (01M51JBEQRWWZKKP3GWW8QX96C): one chunk, one after
+        // another, with the lead as the cause of each. The sender of the
+        // note and of the message is the server.
         let chunk = chunks.last().unwrap();
         let of_release: Vec<_> = chunk
             .iter()
             .filter(|record| record.envelope.command.as_deref() == Some("release_for"))
             .collect();
-        assert_eq!(of_release.len(), 2, "{chunk:?}");
-        let (released, note) = (of_release[0], of_release[1]);
-        assert_eq!(note.envelope.position, released.envelope.position + 1);
+        assert_eq!(of_release.len(), 4, "{chunk:?}");
+        let (released, note, told) = (of_release[0], of_release[1], of_release[3]);
+        for pair in of_release.windows(2) {
+            assert_eq!(pair[1].envelope.position, pair[0].envelope.position + 1);
+        }
         assert!(matches!(released.change, Change::Released(_)));
+        assert!(matches!(of_release[2].change, Change::JoinedThread(_)));
         let Change::Posted(posted) = &note.change else {
             panic!("a note: {note:?}");
         };
         assert_eq!(posted.message.from, owner::server_uri());
-        for record in [released, note] {
+        let Change::Posted(message) = &told.change else {
+            panic!("a message: {told:?}");
+        };
+        assert_eq!(message.message.from, owner::server_uri());
+        assert!(message.thread.is_direct());
+        assert!(message.woken.contains(mike2().who()));
+        for record in &of_release {
             assert_eq!(record.envelope.by, Some(By::Session(mike().who().clone())));
         }
         // The post that came after it is in the same chunk, after it.
         let after: Vec<_> = chunk
             .iter()
-            .filter(|record| record.envelope.position > note.envelope.position)
+            .filter(|record| record.envelope.position > told.envelope.position)
             .map(|record| record.envelope.command.as_deref().unwrap())
             .collect();
         assert_eq!(after, ["post"]);

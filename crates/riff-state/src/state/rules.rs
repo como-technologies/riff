@@ -197,6 +197,28 @@ fn posted(thread: &ThreadName, message: Message, woken: &[&SessionUri]) -> Chang
     }))
 }
 
+/// The direct message of the server that tells `holder` that `why`
+/// freed its claims `items` in the repository, with the join of the
+/// holder to that thread (01M51JBEQRWWZKKP3GWW8QX96C).
+fn told_dropped(holder: &SessionUri, why: Dropped, items: &[&str]) -> [Change; 2] {
+    let server = crate::owner::server_uri();
+    let thread = ThreadName::direct(server.who(), holder.who());
+    let freed: Vec<Freed> = items
+        .iter()
+        .map(|item| Freed {
+            thread: repo(),
+            item: (*item).into(),
+        })
+        .collect();
+    let to = format!("session={}", holder.who().session().unwrap());
+    let body = dropped(&why, &freed);
+    let message = Message {
+        at_ms: 0,
+        ..message(server, 1, &[&to], &body)
+    };
+    [joined(holder, &thread), posted(&thread, message, &[holder])]
+}
+
 /// A post at the time 5.
 fn draft(me: &SessionUri, thread: Option<&ThreadName>, to: &[&str], body: &str) -> Post {
     let to = to.iter().map(|s| s.parse().unwrap()).collect();
@@ -885,13 +907,39 @@ fn the_lead_releases_the_claim_of_a_session_of_its_user() {
         released(&ann2(), "issue-7"),
         posted(&repo(), note("ann@heron:app#api"), &[]),
     ]);
+    // A live holder also hears of it (01M51JBEQRWWZKKP3GWW8QX96C).
+    let [join, told] = told_dropped(&ann2(), Dropped::Lead(ann()), &["issue-7"]);
     given(&records)
         .live(&[ann2()])
         .when(&ann(), release_for("a2"))
         .then(&[
             released(&ann2(), "issue-7"),
             posted(&repo(), note("ann@heron:app#api"), &[]),
+            join,
+            told,
         ]);
+}
+
+/// 01M51JBEQRWWZKKP3GWW8QX96C: the release of a session is its own
+/// step, also through the command of the lead: no message.
+#[test]
+fn a_lead_that_frees_its_own_claim_gets_no_message() {
+    let mut records = team();
+    records.push(claimed(&ann(), "issue-7"));
+    let note = Message {
+        kind: Kind::Note,
+        at_ms: 0,
+        ..message(
+            crate::owner::server_uri(),
+            1,
+            &[],
+            "claims: the lead ann@heron:app (a1) released issue-7 for the session \
+             ann@heron:app (a1). issue-7 is free.",
+        )
+    };
+    given(&records)
+        .when(&ann(), release_for("a1"))
+        .then(&[released(&ann(), "issue-7"), posted(&repo(), note, &[])]);
 }
 
 #[test]
@@ -936,12 +984,16 @@ fn an_end_and_a_new_start_free_each_claim() {
     given(&records)
         .when(&ann(), End)
         .then(&[released(&ann(), "issue-7"), released(&ann(), "issue-8")]);
+    let why = Dropped::Start(StartReason::Resume);
+    let [join, told] = told_dropped(&ann(), why, &["issue-7", "issue-8"]);
     given(&records)
         .when(&ann(), Start(StartReason::Resume, false))
         .then(&[
             released(&ann(), "issue-7"),
             released(&ann(), "issue-8"),
             started(&ann(), StartReason::Resume, false),
+            join,
+            told,
         ]);
 }
 
@@ -1484,10 +1536,16 @@ fn a_start_makes_session_started_with_its_reason_and_its_worker_mark() {
         StartReason::Resume,
         StartReason::Clear,
     ] {
+        let [join, told] = told_dropped(&ann2(), Dropped::Start(reason), &["issue-7"]);
         given(&records)
             .live(&[ann()])
             .when(&ann2(), Start(reason, true))
-            .then(&[released(&ann2(), "issue-7"), started(&ann2(), reason, true)]);
+            .then(&[
+                released(&ann2(), "issue-7"),
+                started(&ann2(), reason, true),
+                join,
+                told,
+            ]);
     }
 }
 
@@ -1554,9 +1612,16 @@ fn a_claim_of_a_worker_that_goes_in_another_way_has_no_must_clear() {
     let mut records = worker_records();
     records.push(claimed(&ann2(), "issue-7"));
     let free = released(&ann2(), "issue-7");
+    let why = Dropped::Start(StartReason::Resume);
+    let [join, told] = told_dropped(&ann2(), why, &["issue-7"]);
     given(&records)
         .when(&ann2(), Start(StartReason::Resume, true))
-        .then(&[free.clone(), started(&ann2(), StartReason::Resume, true)]);
+        .then(&[
+            free.clone(),
+            started(&ann2(), StartReason::Resume, true),
+            join,
+            told,
+        ]);
     given(&records)
         .when(&ann2(), End)
         .then(std::slice::from_ref(&free));

@@ -17,8 +17,10 @@ use std::time::Instant;
 
 use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
 use riff_core::record::{Change, Claimed, Member, Released, Scope};
+use riff_core::selector::Selector;
 use riff_core::wire::{
-    Claim, ClaimReply, Kind, Lead, LeadReply, Message, Release, ReleaseFor, ReleaseReply,
+    Claim, ClaimReply, Freed, Kind, Lead, LeadReply, Message, Release, ReleaseFor, ReleaseReply,
+    StartReason,
 };
 use serde::{Deserialize, Serialize};
 
@@ -222,6 +224,38 @@ impl View<'_> {
         })
     }
 
+    /// The direct message of the server that tells `holder` that the
+    /// step `why` ended its claims `freed` (01M51JBEQRWWZKKP3GWW8QX96C).
+    /// It is a message, so it wakes the holder. A holder that is gone,
+    /// or that has no session ID, gets none: no session waits for it.
+    pub(super) fn tell_dropped(
+        &self,
+        holder: &Who,
+        freed: &[Freed],
+        why: &Dropped,
+        now: Now,
+    ) -> Vec<Change> {
+        let Some(id) = holder.session() else {
+            return Vec::new();
+        };
+        if freed.is_empty() || self.gone(holder, now.at) {
+            return Vec::new();
+        }
+        let server = crate::owner::server_uri();
+        let message = Message {
+            seq: 0,
+            from: server.clone(),
+            to: vec![Selector::session(id)],
+            body: dropped(why, freed),
+            at_ms: now.ms,
+            kind: Kind::Message,
+            sig: None,
+            payload: None,
+        };
+        let thread = ThreadName::direct(server.who(), holder);
+        self.put(server.who(), thread, message, now.at).0
+    }
+
     /// One release for each claim of `who`.
     pub(super) fn released_all(&self, who: &Who) -> Vec<Change> {
         self.riff
@@ -414,7 +448,9 @@ impl Command for Release {
 /// The command also makes the note of the server in the thread of the
 /// claim: a `posted` record after the `released` record, in the chunk
 /// of the command (01M3WRD9MGSC3FTBAANT4ZSMKY). The note names the
-/// lead, the item and the holder.
+/// lead, the item and the holder. A live holder that is not the lead
+/// also gets a direct message of the server that wakes it, after the
+/// note: see [`dropped`] (01M51JBEQRWWZKKP3GWW8QX96C).
 impl Command for ReleaseFor {
     const KIND: CommandKind = CommandKind::ReleaseFor;
     type Reply = ();
@@ -486,6 +522,14 @@ impl Command for ReleaseFor {
         };
         let (mut put, _) = view.put(server.who(), thread.clone(), note, now.at);
         changes.append(&mut put);
+        if holder != who {
+            let freed = [Freed {
+                thread: thread.clone(),
+                item: item.clone(),
+            }];
+            let why = Dropped::Lead(view.uri(who, now.at));
+            changes.extend(view.tell_dropped(holder, &freed, &why, now));
+        }
         Ok((changes, ()))
     }
 
@@ -588,6 +632,89 @@ pub fn released_for(lead: &SessionUri, item: &str, holder: &SessionUri) -> Strin
         holder.short(),
         id(holder)
     )
+}
+
+/// The step that ended the claims of a live session, when it is not the
+/// release of that session (01M51JBEQRWWZKKP3GWW8QX96C).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Dropped {
+    /// A new start of the session, with its reason
+    /// (01M3JEE1QQCFS5TMZW5N2DAD2D).
+    Start(StartReason),
+    /// The lead released the claim for the session
+    /// (01M3WG243BW7P6E1ME0DFNQF8C).
+    Lead(SessionUri),
+}
+
+/// The text of the direct message of the server to a live session
+/// whose claims `freed` the step `why` ended
+/// (01M51JBEQRWWZKKP3GWW8QX96C). It names each claim, the reason and
+/// the step to take.
+///
+/// ```
+/// use riff_core::name::SessionUri;
+/// use riff_core::wire::{Freed, StartReason};
+/// use riff_state::state::{Dropped, dropped};
+///
+/// let freed = |item: &str| Freed {
+///     thread: "como-technologies/riff".parse().unwrap(),
+///     item: item.into(),
+/// };
+/// assert_eq!(
+///     dropped(&Dropped::Start(StartReason::Clear), &[freed("issue-12")]),
+///     "claims: a new start of this session (/clear) freed your claim issue-12 in \
+///      como-technologies/riff. Another session can take it. To go on with it, claim \
+///      it again, then see \"Pick up dropped work\" in the riff skill. Else stop the \
+///      work on it."
+/// );
+/// let two = [freed("issue-12"), freed("verify-issue-7")];
+/// let text = dropped(&Dropped::Start(StartReason::Process), &two);
+/// assert!(text.starts_with(
+///     "claims: a new start of this session (a new process) freed your claims issue-12 \
+///      in como-technologies/riff, verify-issue-7 in como-technologies/riff. Another \
+///      session can take them. To go on with one,"
+/// ), "{text}");
+///
+/// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=518bd482-fcc4&lead=true".parse()?;
+/// assert_eq!(
+///     dropped(&Dropped::Lead(lead), &[freed("issue-12")]),
+///     "claims: the lead mike@pangolin:riff (518bd482) released your claim issue-12 in \
+///      como-technologies/riff. Another session can take it. Stop the work on it: push \
+///      your work as WIP, and write the state on the issue. Claim it again only when \
+///      the lead asks you to."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn dropped(why: &Dropped, freed: &[Freed]) -> String {
+    let items: Vec<String> = freed
+        .iter()
+        .map(|f| format!("{} in {}", f.item, f.thread))
+        .collect();
+    let (claims, them, one) = match freed {
+        [_] => ("claim", "it", "it"),
+        _ => ("claims", "them", "one"),
+    };
+    let items = items.join(", ");
+    match why {
+        Dropped::Start(reason) => {
+            let start = match reason {
+                StartReason::Process => "a new process",
+                StartReason::Clear => "/clear",
+                other => other.word(),
+            };
+            format!(
+                "claims: a new start of this session ({start}) freed your {claims} {items}. \
+                 Another session can take {them}. To go on with {one}, claim it again, then \
+                 see \"Pick up dropped work\" in the riff skill. Else stop the work on it."
+            )
+        }
+        Dropped::Lead(lead) => format!(
+            "claims: the lead {} released your {claims} {items}. Another session can take \
+             {them}. Stop the work on it: push your work as WIP, and write the state on the \
+             issue. Claim it again only when the lead asks you to.",
+            label(lead)
+        ),
+    }
 }
 
 /// True when `id` names the session `session`: the whole session ID, or

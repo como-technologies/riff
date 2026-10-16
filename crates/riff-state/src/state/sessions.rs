@@ -63,6 +63,7 @@ use serde::{Deserialize, Serialize};
 use super::command::{Caller, Command, CommandKind, Done, Now, Refused};
 use super::presence::Signal;
 use super::view::View;
+use super::work::Dropped;
 
 /// Each session that a record names.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -432,8 +433,14 @@ impl Command for Arrive {
 
 /// The claims that the records of a start freed.
 fn freed(made: &[Record]) -> Vec<Freed> {
-    made.iter()
-        .filter_map(|record| match &record.change {
+    freed_by(made.iter().map(|record| &record.change))
+}
+
+/// The claims that the `released` changes of `changes` free.
+fn freed_by<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Vec<Freed> {
+    changes
+        .into_iter()
+        .filter_map(|change| match change {
             Change::Released(Released {
                 session: _,
                 thread,
@@ -454,7 +461,39 @@ fn freed(made: &[Record]) -> Vec<Freed> {
 /// call (01M3X9X9M079WGFPJZHNXH9VEP). A start with a fresh context ends
 /// MustClear. The session becomes the lead when it is the first of its
 /// user in its repository and not a worker
-/// (01M3X9XA3H6YF0QCYSNB2P0CT2).
+/// (01M3X9XA3H6YF0QCYSNB2P0CT2). When the start freed a claim, a direct
+/// message of the server names each claim and the reason, and wakes
+/// the session: so a process of the session that still works hears of
+/// it (01M51JBEQRWWZKKP3GWW8QX96C).
+///
+/// ```
+/// use std::time::Instant;
+/// use riff_core::name::SessionUri;
+/// use riff_core::wire::{RiffState, StartReason};
+/// use riff_state::owner::server_uri;
+/// use riff_state::state::State;
+///
+/// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+/// let now = Instant::now();
+/// let mut state = State::default();
+/// state.register(&mike, now);
+/// state.riff(&mike, Some(RiffState::Running), now).unwrap();
+/// let thread = mike.default_thread().unwrap();
+/// state.claim(&mike, &thread, "issue-12", now).unwrap();
+///
+/// let freed = state.start(&mike, StartReason::Clear, now);
+/// assert_eq!(freed[0].item, "issue-12");
+/// // The session has a wake: a watch that starts now gets it.
+/// let wake = state.missed(mike.who()).unwrap();
+/// assert_eq!(wake.from, server_uri());
+/// let messages = state.read(&mike, &wake.thread, false, now).unwrap();
+/// assert!(messages[0].body.contains("(/clear) freed your claim issue-12"), "{}", messages[0].body);
+///
+/// // A start with no claim sends nothing.
+/// state.start(&mike, StartReason::Process, now);
+/// assert!(state.missed(mike.who()).is_none());
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
 impl Command for Start {
     const KIND: CommandKind = CommandKind::Start;
     type Reply = Started;
@@ -472,6 +511,7 @@ impl Command for Start {
         let who = caller.who();
         let place = view.place(who);
         let mut changes = view.released_all(who);
+        let freed = freed_by(&changes);
         changes.push(Change::SessionStarted(SessionStarted {
             session: view.plain(who),
             reason: self.reason,
@@ -482,6 +522,7 @@ impl Command for Start {
         {
             changes.extend(view.lead_if_first(who, &place, &thread, now.at));
         }
+        changes.extend(view.tell_dropped(who, &freed, &Dropped::Start(self.reason), now));
         Ok((changes, ()))
     }
 
