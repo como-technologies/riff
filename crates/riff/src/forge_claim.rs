@@ -38,7 +38,7 @@
 //! ```
 //!
 //! riff builds no shell string: the item is one part of one argument,
-//! and [`reference`] takes only the letters, the digits and `-`, `_`
+//! and [`reference()`] takes only the letters, the digits and `-`, `_`
 //! and `.` (01M4Z60B8KDXD190RWC7D184Q3).
 //!
 //! # Example

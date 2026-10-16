@@ -18,7 +18,7 @@
 //! | The end of a session | releases the claim of the session with the lease of its commit, then writes the end of the session |
 //! | Its start, with its riff and its sessions | releases each claim whose commit names its key and whose session does not run ([`Daemon::sweep_forges`]) |
 //! | Each minute, while a session of the daemon is the lead of its user | deletes each claim of that user that [`forge_claim::stale`] gives: its session ended, or 15 minutes with no link to its daemon ([`Daemon::tidy_forges`]) |
-//! | `riff release ITEM --forge` ([`Ask::Release`]) | deletes the claim when [`forge_claim::may_free`] lets it ([`Daemon::release_asked`]) |
+//! | `riff release ITEM --forge` ([`Ask::Release`](super::Ask::Release)) | deletes the claim when [`forge_claim::may_free`] lets it ([`Daemon::release_asked`]) |
 //!
 //! ```mermaid
 //! flowchart TD
