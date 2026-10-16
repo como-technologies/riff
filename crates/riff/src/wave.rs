@@ -682,10 +682,13 @@ fn branch_of(issue: u64) -> String {
 }
 
 impl Live {
-    /// Starts the keep-alive of the claim of the session `me`.
+    /// Starts the keep-alive of the claim of the session `me`, a session
+    /// in a container: it is live while the keep-alive comes
+    /// (01M510MG0CKDXAKF6YJ768K7E8).
     fn keep_alive(&self, api: Api, me: SessionUri, session: &str) {
-        let task =
-            tokio::spawn(async move { api::keep_alive(&api, &me, WORKER_ALIVE_EVERY).await });
+        let task = tokio::spawn(async move {
+            api::keep_alive_in_container(&api, &me, WORKER_ALIVE_EVERY).await;
+        });
         if let Some(old) = lock(&self.alive).insert(session.to_owned(), task) {
             old.abort();
         }

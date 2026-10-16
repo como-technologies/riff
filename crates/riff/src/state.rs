@@ -141,6 +141,7 @@ pub fn work(activity: &Activity) -> String {
 ///     idle_secs: 7200,
 ///     status: Some(step("tests", false)),
 ///     worker: true,
+///     container: false,
 ///     stopping: false,
 ///     claims_secs: 300,
 ///     must_clear: false,

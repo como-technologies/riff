@@ -90,7 +90,7 @@ pub struct Presence {
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
 /// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
-/// Signal::Alive { activity: None, prompt_secs: None }.set(&mut presence, mike.who(), Instant::now());
+/// Signal::Alive { activity: None, prompt_secs: None, container: false }.set(&mut presence, mike.who(), Instant::now());
 /// # let _ = &mut riff;
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -107,7 +107,7 @@ pub struct Presence {
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
 /// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
-/// Signal::Alive { activity: None, prompt_secs: None }.set(&mut riff, mike.who(), Instant::now());
+/// Signal::Alive { activity: None, prompt_secs: None, container: false }.set(&mut riff, mike.who(), Instant::now());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,10 +121,13 @@ pub enum Signal {
     /// (01M41FZNTPXQNCZ1S99HE42PYQ). A fact of work after an answer
     /// ends a block (01M41FZPT31ATXP75QW965P3JB). A prompt of the
     /// person after the block, `prompt_secs` ago, ends it too
-    /// (01M48VDWPDYRPEAXHR1MYDN1M7).
+    /// (01M48VDWPDYRPEAXHR1MYDN1M7). With `container`, the riff daemon
+    /// sends it for a session in a container: the mark stays until the
+    /// session ends (01M510MG0CKDXAKF6YJ768K7E8).
     Alive {
         activity: Option<Activity>,
         prompt_secs: Option<u64>,
+        container: bool,
     },
     /// The place of the session, from a `register`. It makes a session
     /// that the presence does not know.
@@ -216,8 +219,10 @@ impl Signal {
             Signal::Alive {
                 activity,
                 prompt_secs,
+                container,
             } => {
                 session.live(now);
+                session.container |= container;
                 if let Some(secs) = prompt_secs {
                     session.prompted(secs, now);
                 }
@@ -679,6 +684,9 @@ pub(super) struct Session {
     pub(super) alive: Option<Instant>,
     /// True after an end call, until the session comes back.
     pub(super) ended: bool,
+    /// True when the riff daemon keeps the session alive: it runs in a
+    /// container (01M510MG0CKDXAKF6YJ768K7E8).
+    pub(super) container: bool,
     pub(super) status: Option<SetStatus>,
     /// The newest fact of the hooks, and its time
     /// (01M41FZNTPXQNCZ1S99HE42PYQ).
@@ -763,6 +771,7 @@ impl Session {
             seen_before_load: None,
             alive: Some(now),
             ended: false,
+            container: false,
             status: None,
             work: None,
             blocked: None,

@@ -277,6 +277,11 @@ pub struct Alive {
     /// when the prompt hook saw one (01M48VDWPDYRPEAXHR1MYDN1M7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_secs: Option<u64>,
+    /// True when the riff daemon sends the keep-alive for a session in
+    /// a container. The session is live while it is not gone
+    /// (01M510MG0CKDXAKF6YJ768K7E8).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub container: bool,
 }
 
 /// The most characters in the text of a tool of an [`Activity`].
@@ -549,9 +554,10 @@ impl RiffOwner {
 pub struct SessionInfo {
     /// The URI now: the place and the claims are current.
     pub uri: SessionUri,
-    /// True while the session has an open watch stream. A lead is live
-    /// while it is not gone, also with no watch
-    /// (01M48VDGQ5KETKPM4G6TKTC2MB).
+    /// True while the session has an open watch stream. A lead and a
+    /// session in a container are live while they are not gone, also
+    /// with no watch (01M48VDGQ5KETKPM4G6TKTC2MB,
+    /// 01M510MG0CKDXAKF6YJ768K7E8).
     pub live: bool,
     /// The seconds since the last call of the session. 0 while it is
     /// live.
@@ -564,6 +570,11 @@ pub struct SessionInfo {
     /// (01M3NT4M159EHN5W8JRTQ417N4).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub worker: bool,
+    /// True when the riff daemon keeps the session alive: it runs in a
+    /// container. It is live while it is not gone
+    /// (01M510MG0CKDXAKF6YJ768K7E8).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub container: bool,
     /// True when the server asked this idle worker to stop
     /// (01M3Q5A0NKY1FCS0YH6N6YD3GN).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -647,7 +658,9 @@ impl SessionInfo {
 ///
 /// 1. `offline`: the session has no open watch stream. A lead is not
 ///    offline while it is not gone, also with no watch
-///    (01M48VDGQ5KETKPM4G6TKTC2MB).
+///    (01M48VDGQ5KETKPM4G6TKTC2MB). A session in a container is not
+///    offline while the keep-alive of the riff daemon comes
+///    (01M510MG0CKDXAKF6YJ768K7E8).
 /// 2. `paused`: the riff is paused, or the repository of the session is
 ///    paused (01M3XAHZBGSSJB3YX23K88W01K).
 /// 3. `blocked`: the session said that it cannot go on with no
@@ -721,7 +734,8 @@ pub enum SessionState {
 /// The facts that make the state of a session ([`SessionState::of`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
-    /// An open watch stream, or a lead that is not gone.
+    /// An open watch stream, or a lead or a session in a container
+    /// that is not gone.
     pub live: bool,
     /// The riff or the repository of the session is paused.
     pub paused: bool,

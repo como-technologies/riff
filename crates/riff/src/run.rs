@@ -1235,7 +1235,7 @@ pub async fn run_with(
     }
     let alive = {
         let (api, me) = (api.clone(), me.clone());
-        tokio::spawn(async move { api::keep_alive(&api, &me, WORKER_ALIVE_EVERY).await })
+        tokio::spawn(async move { api::keep_alive_in_container(&api, &me, WORKER_ALIVE_EVERY).await })
     };
     if let Some(line) = dropped::at_claim(&main, item).await {
         println!("{line}");

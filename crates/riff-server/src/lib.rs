@@ -2084,6 +2084,7 @@ async fn alive(
     let alive = Signal::Alive {
         activity: r.activity,
         prompt_secs: r.prompt_secs,
+        container: r.container,
     };
     Ok(Json(s.engine.signal(&caller, alive).await?))
 }
@@ -4074,6 +4075,7 @@ mod tests {
                 me: new.clone(),
                 activity: None,
                 prompt_secs: None,
+                container: false,
             }),
         )
         .await
@@ -4165,6 +4167,7 @@ mod tests {
                     me: worker.clone(),
                     activity: None,
                     prompt_secs: None,
+                    container: false,
                 }),
             )
         };
@@ -4527,6 +4530,7 @@ mod tests {
                 me: mike(),
                 activity: None,
                 prompt_secs: None,
+                container: false,
             }),
         )
         .await
@@ -5008,6 +5012,7 @@ mod tests {
                             me: mike(),
                             activity: None,
                             prompt_secs: None,
+                            container: false,
                         }),
                     )
                     .await
@@ -5061,6 +5066,7 @@ mod tests {
                     me: mike(),
                     activity: None,
                     prompt_secs: None,
+                    container: false,
                 }),
             )
             .await
@@ -5153,6 +5159,7 @@ mod tests {
                 me: mike(),
                 activity: None,
                 prompt_secs: None,
+                container: false,
             }),
         )
         .await

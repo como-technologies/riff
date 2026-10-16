@@ -99,7 +99,7 @@ use serde::Deserialize;
 use crate::host::HostStatus;
 use crate::state;
 use crate::style::{BOLD, ERROR, MUTED, WARNING, session as session_style, styled};
-use crate::text::safe;
+use crate::text::{Kind, safe};
 use crate::view;
 
 /// The time between two draws of `riff top` with no message.
@@ -468,6 +468,7 @@ pub struct Machine {
 ///         stale: false,
 ///     }),
 ///     worker: false,
+///     container: false,
 ///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,
@@ -799,11 +800,12 @@ fn groups<'a>(sessions: &[&'a SessionInfo], levels: &[Level]) -> Vec<Group<'a>> 
 }
 
 /// The counts of a row of the tree (01M42KHN33M4K13GKTX2WM6CMM): the
-/// sessions, then the busy, idle and blocked ones and the claims, each
-/// that is more than 0.
+/// sessions, then each kind ([`Kind`], 01M510MG5J92PYDWZSDQS8HMWK), then
+/// the busy, idle and blocked ones and the claims, each that is more
+/// than 0.
 ///
 /// ```text
-/// 3 sessions: 1 busy, 1 idle, 1 blocked, 2 claims
+/// 6 sessions: 3 workers, 2 containers, 1 host; 4 busy, 2 idle, 4 claims
 /// ```
 fn counts(sessions: &[&SessionInfo]) -> String {
     let many = |n: usize, word: &str| {
@@ -813,6 +815,18 @@ fn counts(sessions: &[&SessionInfo]) -> String {
             format!("{n} {word}s")
         }
     };
+    let kinds: Vec<String> = Kind::ALL
+        .into_iter()
+        .map(|kind| {
+            let n = sessions
+                .iter()
+                .filter(|s| Kind::of(s) == Some(kind))
+                .count();
+            (n, kind.word())
+        })
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, word)| many(n, word))
+        .collect();
     let count = |state: SessionState| sessions.iter().filter(|s| state::of(s) == state).count();
     let claims: usize = sessions.iter().map(|s| s.uri.claims().len()).sum();
     let mut parts: Vec<String> = [
@@ -829,10 +843,15 @@ fn counts(sessions: &[&SessionInfo]) -> String {
         parts.push(many(claims, "claim"));
     }
     let head = many(sessions.len(), "session");
-    if parts.is_empty() {
+    let groups: Vec<String> = [kinds, parts]
+        .into_iter()
+        .filter(|group| !group.is_empty())
+        .map(|group| group.join(", "))
+        .collect();
+    if groups.is_empty() {
         head
     } else {
-        format!("{head}: {}", parts.join(", "))
+        format!("{head}: {}", groups.join("; "))
     }
 }
 
@@ -902,6 +921,7 @@ impl Top<'_> {
     ///         stale: false,
     ///     }),
     ///     worker,
+    ///     container: false,
     ///     stopping: false,
     ///     claims_secs: 600,
     ///     must_clear: false,
@@ -1286,13 +1306,7 @@ impl Top<'_> {
     /// The lines of the session `s`: the first line after `pre`, each
     /// line of its detail after `more`.
     fn session(&self, pre: String, more: &str, s: &SessionInfo) -> Vec<Line> {
-        let mut tags = Vec::new();
-        if s.uri.lead() {
-            tags.push("lead");
-        }
-        if s.worker {
-            tags.push("worker");
-        }
+        let tags = crate::text::tags(s, self.owner);
         let worktree = s
             .uri
             .place()
@@ -1406,6 +1420,7 @@ mod tests {
             idle_secs: 0,
             status: None,
             worker: false,
+            container: false,
             stopping: false,
             claims_secs: 0,
             must_clear: false,
