@@ -1434,16 +1434,16 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 /// ```
 pub fn holders(sessions: &[SessionInfo], me: &SessionUri) -> Authors {
     let mut authors = Authors::new();
-    for s in sessions.iter().filter(|s| s.uri.place().repo() == me.place().repo()) {
+    for s in sessions
+        .iter()
+        .filter(|s| s.uri.place().repo() == me.place().repo())
+    {
         let Some(session) = s.uri.who().session() else {
             continue;
         };
         for claim in s.uri.claims() {
             if let Some((issue, usage::Kind::Work)) = usage::issue_of(claim) {
-                authors
-                    .entry(issue)
-                    .or_default()
-                    .insert(session.to_owned());
+                authors.entry(issue).or_default().insert(session.to_owned());
             }
         }
     }

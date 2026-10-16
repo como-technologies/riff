@@ -1780,11 +1780,11 @@ A verify request wakes only the lead of the author's user. The lead
 gives it to a session with no claim, or starts a worker for it. The
 author never gets the verify, also after a `/clear` (see "No verify for
 the author" in
-[riff starts workers by itself](#riff-starts-workers-by-itself)). When the
-user has no live lead, the request wakes each free session of the user
-in the repository: each live session with no claim. Each other session
-sees it at its next read. A verify request is free work: a session picks
-it like any other item.
+[riff starts workers by itself](#riff-starts-workers-by-itself)).
+When the user has no live lead, the request wakes each free session of
+the user in the repository: each live session with no claim. Each other
+session sees it at its next read. A verify request is free work: a
+session picks it like any other item.
 
 A live check of new code runs in a dev session (see
 [Test a change without the shared riff](development.md#test-a-change-without-the-shared-riff)).
