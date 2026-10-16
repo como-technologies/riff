@@ -724,7 +724,8 @@ impl Live {
         let folder = run::sessions_dir()?.join(format!("{item}-{}", run::short(session)));
         let clone = folder.join("clone");
         let claude = folder.join("claude");
-        run::claude_folder(&claude, &clone)?;
+        let auto = crate::permissions::Trust::of(me.place().repo(), &wave.server);
+        run::claude_folder(&claude, &clone, &auto)?;
         let (main, common) = run::main_clone(&wave.main)?;
         let start = match work {
             Work::Build { issue } => {

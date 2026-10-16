@@ -5148,6 +5148,22 @@ share.
   step is in bounds) or a change of the skill (the step is out of
   bounds). The fix is never that a person does the refused step by
   hand.
+- **01M516HETNZCBFBJNHT8BKFB1Y** riff gives each session that it starts
+  the auto mode settings of one place in its code
+  (`riff::permissions::auto_mode`): `skillOverrides` with
+  `auto-mode-setup` off, so no session shows the dialog "Teach auto
+  mode about your environment?" and no session has `/auto-mode-setup`;
+  and `autoMode.environment` with `"$defaults"` first, then the places
+  of riff work: the GitHub owner of the repository, the repository of
+  riff with its releases, `crates.io`, `ghcr.io` and the riff server of
+  the session.
+- **01M516HEX3GVTN9K2QS12A4PG3** `riff workers start` gives each worker
+  the auto mode settings in its flag settings (`--settings`). The user
+  settings file does not change. The daemon writes them into the
+  `settings.json` of the own Claude folder of each session. The Claude
+  folder of the lead stays between its starts: at each start, riff adds
+  each setting and each entry that it lacks. riff writes no `autoMode`
+  into the project settings: Claude Code does not read it there.
 
 ### riff run
 
