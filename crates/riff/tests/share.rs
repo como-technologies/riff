@@ -48,7 +48,9 @@ async fn in_terminal(mut cmd: Command) -> (ExitStatus, String) {
 /// peers" has a `sh` block of each member command of a riff of peers, and
 /// each one is real. The help of each command that needs a terminal says
 /// so, as the page does. "Join a riff again" has the invite and the join
-/// after the leave (01M5328FPJT7Q5Q1509BC5F0J7).
+/// after the leave (01M5328FPJT7Q5Q1509BC5F0J7). 01M52JPVT5DY1VJQMQCNY9Z0PC:
+/// a second machine of your own takes the invite of the user that `riff
+/// members` shows.
 #[test]
 fn share_a_riff_in_the_book_has_each_member_command() {
     let commands: Vec<String> = crate::book::commands_of_part("riff-3-peers.md", "Share a riff")
@@ -61,7 +63,9 @@ fn share_a_riff_in_the_book_has_each_member_command() {
         [
             "riff invite brett",
             "riff join riff1-...",
-            "riff invite mike",
+            "riff members",
+            "riff invite sandman",
+            "riff join riff1-...",
             "riff members",
             "riff view",
             "riff top",
@@ -81,6 +85,15 @@ fn share_a_riff_in_the_book_has_each_member_command() {
         ),
         "{part}"
     );
+    for words in [
+        "The user of the owner is `USER` of the machine of the owner: your login name \
+         there.",
+        "A new key gets the user of its invite.",
+        "So invite the user that `riff members` shows for this machine.",
+        "On the second machine, with the new string:",
+    ] {
+        assert!(part.contains(words), "{words}: {part}");
+    }
     for name in ["invite", "join", "leave", "remove"] {
         let out = isolated::Isolated::shared()
             .assert_riff()

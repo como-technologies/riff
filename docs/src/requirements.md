@@ -6090,6 +6090,11 @@ then.
 - **01M519Z3VXY4R3WDSSBQCVYTS4** An invite string is a secret until it
   is used or ends: a person who has it can join one time as USER. The
   owner sends it to the person by hand. `riff invite` says so.
+- **01M52JPVT5DY1VJQMQCNY9Z0PC** The user of the owner stays `USER` of
+  its machine (01M519Z2JMAKN0T6JZFBPSTKC8), also when the riff user of
+  the person has another name. A new key gets the user of its invite. So
+  the book says to add a second machine of a person with `riff invite`
+  of the user that `riff members` shows for that person (#846).
 - **01M519Z3YA9WBH9TWQPAH6A64Z** `riff join STRING` on the machine of a
   person: the daemon connects to the daemon of the owner by the riff ID,
   and sends the secret and its host name. The daemon of the owner checks
