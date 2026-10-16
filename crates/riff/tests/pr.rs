@@ -461,8 +461,8 @@ async fn verify_refuses_when_the_head_is_not_the_tested_commit() {
 /// A pass needs a success of the Gate of the head commit
 /// (01M49HAZ7P3JMWNCG1SWCMAXQP): the Gate is the one full test run, and
 /// the verifier does not run it again. While the Gate runs, failed or
-/// did not run, `riff verify pass` makes no comment, no status and no
-/// post. A fail needs no Gate.
+/// has not started, `riff verify pass` makes no comment, no status and
+/// no post. A fail needs no Gate.
 #[tokio::test]
 async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
     let gate = |runs: &str| {
@@ -480,7 +480,7 @@ async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
             gate(r#"[{"name":"Gate","status":"completed","conclusion":"failure"}]"#),
             "the Gate of commit 1a2b3c4 ended with failure.",
         ),
-        (gate("[]"), "the Gate of commit 1a2b3c4 did not run."),
+        (gate("[]"), "the Gate of commit 1a2b3c4 has not started."),
     ];
     for (fake, line) in cases {
         let machine = Machine::new(&fake).await;

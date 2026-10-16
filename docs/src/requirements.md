@@ -4342,7 +4342,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the reason.
 - **01M3WNN7VQJKN5MJH7JN50VF4D** `just ci-full` runs each check for
   each diff: `fmt-check`, `lint`, `test`, `doc`, `book`, `reqs` and
-  `wrap`. The Gate on GitHub runs `just ci-full`.
+  `wrap`. The Gate on GitHub runs the same checks
+  (01M513W2K3HNRWPQTQNBQPT8MZ).
 - **01M43DKYVAX0TJ2F5YYGYFSZ4G** One `just ci` or `just ci-full` runs
   at a time in a worktree. A run holds the lock file
   `target/.riff-ci.lock` with its pid and its start time, and removes
@@ -4370,6 +4371,22 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `hygiene crates` prints the arguments of `cargo test`, and one line
   that names the tests and the reason. `just check` holds the lock of
   01M43DKYVAX0TJ2F5YYGYFSZ4G.
+- **01M513W2K3HNRWPQTQNBQPT8MZ** The Gate on GitHub runs its checks as
+  jobs at the same time: `Clippy` runs `just lint`, `Tests I/N` runs
+  part I of N of the tests, and `Checks` runs `just fmt-check doc book
+  reqs wrap`. Together they run each check of `just ci-full`. The last
+  job, `Gate`, needs each of them. It runs also when one of them fails
+  or is cancelled, and it passes only when each of them passed. The
+  ruleset needs only `Gate`.
+- **01M513W2NSE303E6XAM18BW7T6** `just test-part I/N` lists each test of
+  the workspace, also each doc test, with `cargo test -- --list`. It
+  runs each test whose name has the 64-bit FNV-1a hash H with H mod N
+  = I − 1, with `cargo test -- --exact`. It prints one line with the
+  count of its tests and of all tests. A list with no test fails. The
+  N parts together run each test.
+- **01M513W2RERJES76ZXKKHCV0DP** Each job of the CI workflow runs on the
+  runner that the repository variable `RIFF_RUNNER` names. With no
+  `RIFF_RUNNER`, the runner is `ubuntu-latest`.
 - **01M4A4T67MPF0BCNX7AFZRDA8J** The dev and test profiles of the
   workspace keep only the line tables for the code of the workspace,
   and no debug info for the dependencies. A backtrace still names the
@@ -4470,6 +4487,13 @@ share.
   builds each binary of the workspace. So a test of one crate finds the
   binary of another crate, for example `riff-server` in a test of
   `riff`, also in a new clone with no `target/`.
+- **01M513W2V4G94R7F4D4Q3M2RA1** For a pull request and a push to a
+  branch, the CI job "Static riff" builds the profile `dev`, with a
+  cache of `target/static` and of the downloaded crates. The key of the
+  cache is the hash of `rust-toolchain.toml` and `Cargo.lock`. For a
+  tag, it builds the profile `release` with no cache. `build.sh` keeps
+  the downloaded crates in the volume `riff-static-cargo`, or in the
+  volume or the absolute folder that `RIFF_STATIC_CARGO` names.
 - **01M4ZPJ091W3NYV1V0FJS9K6MS** For a release tag, the CI job "Static
   riff release" adds `riff-x86_64-unknown-linux-musl`,
   `riff-server-x86_64-unknown-linux-musl` and `SHA256SUMS` to the

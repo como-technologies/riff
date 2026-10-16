@@ -329,16 +329,3 @@ fn the_text_recipe_of_the_justfile_runs_no_code_check() {
     assert!(justfile.contains("recipe=$(cargo run -q -p hygiene -- ci)"));
     assert!(justfile.contains("cargo run -q -p hygiene -- wrap docs/src"));
 }
-
-#[test]
-fn the_gate_on_github_runs_each_check() {
-    let workflow = std::fs::read_to_string(top().join(".github/workflows/ci.yml")).unwrap();
-    assert!(
-        workflow.contains("run: just ci-full\n"),
-        "the Gate runs ci-full"
-    );
-    assert!(
-        !workflow.contains("run: just ci\n"),
-        "the Gate does not run ci"
-    );
-}

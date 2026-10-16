@@ -21,13 +21,15 @@
 //! When git cannot compare with BASE, or when no file differs, the
 //! recipe is `ci-full`. `hygiene ci` prints the recipe to stdout and
 //! one line for the person to stderr: the set, and why. The Gate on
-//! GitHub runs `just ci-full` (01M3WNN7VQJKN5MJH7JN50VF4D).
+//! GitHub runs the checks of `just ci-full` as jobs at the same time
+//! (01M3WNN7VQJKN5MJH7JN50VF4D, 01M513W2K3HNRWPQTQNBQPT8MZ). See
+//! [`crate::part`].
 //!
 //! ## The check of an author: `just check`
 //!
-//! The job `Gate` of GitHub runs `just ci-full`: the one full run of
-//! each pushed commit (01M49HAZ5BZYGAR9PGC089RM3F). Before a push, an
-//! author runs `just check` (01M49HAZA5K08XW2JQ11TG87JP): the fast
+//! The Gate on GitHub runs each check of `just ci-full`: the one full
+//! run of each pushed commit (01M49HAZ5BZYGAR9PGC089RM3F). Before a
+//! push, an author runs `just check` (01M49HAZA5K08XW2JQ11TG87JP): the fast
 //! checks (`fmt-check`, `lint`, `doc`, `book`, `reqs`, `wrap`) and the
 //! tests of the crates that the diff touches. `hygiene crates [BASE]`
 //! prints the arguments of `cargo test` for these crates ([`tests`]),

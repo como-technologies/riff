@@ -115,14 +115,15 @@ pub fn pr_look_failed(number: u64, error: &str, every_secs: u64) -> String {
 /// assert!(riff::text::gate_not_passed(40, "1a2b3c4", &Gate::Ended("failure".into()))
 ///     .contains("the Gate of commit 1a2b3c4 ended with failure."));
 /// assert!(riff::text::gate_not_passed(40, "1a2b3c4", &Gate::Missing)
-///     .contains("the Gate of commit 1a2b3c4 did not run."));
+///     .contains("the Gate of commit 1a2b3c4 has not started."));
 /// ```
 pub fn gate_not_passed(number: u64, commit: &str, gate: &crate::pr::Gate) -> String {
     use crate::pr::Gate;
     let short = commit.get(..7).unwrap_or(commit);
     let state = match gate {
         Gate::Passed => "passed".to_owned(),
-        Gate::Missing => "did not run".to_owned(),
+        // The job Gate starts when its parts ended (01M513W2K3HNRWPQTQNBQPT8MZ).
+        Gate::Missing => "has not started".to_owned(),
         Gate::Running => "runs still".to_owned(),
         Gate::Ended(conclusion) => format!("ended with {conclusion}"),
     };

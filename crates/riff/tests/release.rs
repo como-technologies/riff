@@ -179,8 +179,9 @@ fn the_static_check_refuses_a_binary_with_an_interpreter() {
     assert!(!bin.path().join("podman.log").exists());
 }
 
-/// 01M4ZPJ06QYVA23N9SQ45T8WQC: CI builds and checks the static riff of
-/// each pull request and each push, with the profile of a release.
+/// 01M4ZPJ06QYVA23N9SQ45T8WQC, 01M513W2V4G94R7F4D4Q3M2RA1: CI builds
+/// and checks the static riff of each pull request and each push. A tag
+/// builds the profile release, each other run the profile dev.
 #[test]
 fn ci_builds_and_checks_the_static_riff_of_each_pull_request() {
     let job = ci_job("static");
@@ -188,8 +189,9 @@ fn ci_builds_and_checks_the_static_riff_of_each_pull_request() {
         "name: Static riff\n",
         "if: github.event_name == 'push' || github.event_name == 'pull_request'\n",
         "fetch-depth: 0\n",
-        "run: deploy/static/build.sh release\n",
-        "run: deploy/static/check.sh release\n",
+        "PROFILE: ${{ github.ref_type == 'tag' && 'release' || 'dev' }}\n",
+        "run: deploy/static/build.sh \"$PROFILE\"\n",
+        "run: deploy/static/check.sh \"$PROFILE\"\n",
     ] {
         assert!(
             job.contains(part),
@@ -197,6 +199,75 @@ fn ci_builds_and_checks_the_static_riff_of_each_pull_request() {
         );
     }
     assert!(!job.contains("contents: write"), "{job}");
+}
+
+/// 01M513W2V4G94R7F4D4Q3M2RA1: the job static keeps a cache of the build
+/// and of the downloaded crates, keyed by the toolchain and `Cargo.lock`.
+/// A tag uses no cache, so each release binary comes from a clean build.
+#[test]
+fn the_static_build_of_ci_has_a_cache_and_a_tag_uses_none() {
+    let job = ci_job("static");
+    let cache = job
+        .split_once("uses: actions/cache@")
+        .unwrap_or_else(|| panic!("the job static has no cache:\n{job}"));
+    let before = cache.0.rsplit_once("\n      - ").unwrap().1;
+    let step = cache.1.split_once("\n\n").unwrap().0;
+    assert!(
+        before.contains("if: github.ref_type != 'tag'\n"),
+        "the cache step runs for a tag:\n{before}"
+    );
+    for part in [
+        "target/static\n",
+        "target/static-cargo\n",
+        "key: static-dev-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}\n",
+        "restore-keys: static-dev-",
+    ] {
+        assert!(step.contains(part), "{part} is not in:\n{step}");
+    }
+    assert_eq!(job.matches("actions/cache").count(), 1, "{job}");
+    assert!(
+        job.contains("RIFF_STATIC_CARGO: ${{ github.workspace }}/target/static-cargo\n"),
+        "{job}"
+    );
+    // The container writes as root; the cache saves as the runner user.
+    let chown = "run: sudo chown -R \"$(id -u):$(id -g)\" target/static target/static-cargo\n";
+    let at = job.find(chown).unwrap_or_else(|| panic!("no chown:\n{job}"));
+    assert!(
+        job[..at]
+            .rsplit_once("\n      - ")
+            .unwrap()
+            .1
+            .contains("if: github.ref_type != 'tag'\n"),
+        "{job}"
+    );
+}
+
+/// 01M513W2V4G94R7F4D4Q3M2RA1: `build.sh` keeps the downloaded crates in
+/// the volume `riff-static-cargo`, or in the volume or the folder of
+/// `RIFF_STATIC_CARGO`.
+#[test]
+fn the_static_build_keeps_the_crates_where_riff_static_cargo_says() {
+    let mount = |vars: &[(&str, &Path)]| {
+        let bin = tempfile::tempdir().unwrap();
+        fake_engine(bin.path());
+        let out = script("build.sh", &["dev"], bin.path(), vars);
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        let log = fs::read_to_string(bin.path().join("podman.log")).unwrap();
+        let args: Vec<String> = log.lines().map(str::to_owned).collect();
+        let at = args
+            .iter()
+            .position(|a| a.ends_with(":/usr/local/cargo/registry"))
+            .unwrap_or_else(|| panic!("no registry in {args:?}"));
+        assert_eq!(args[at - 1], "-v", "{args:?}");
+        assert!(args.windows(2).any(|w| w == ["-e", "CARGO_INCREMENTAL"]));
+        args[at].clone()
+    };
+    assert_eq!(mount(&[]), "riff-static-cargo:/usr/local/cargo/registry");
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        mount(&[("RIFF_STATIC_CARGO", dir.path())]),
+        format!("{}:/usr/local/cargo/registry", dir.path().display())
+    );
 }
 
 /// 01M4ZPJ091W3NYV1V0FJS9K6MS: for a tag, the job static names the
