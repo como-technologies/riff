@@ -8,8 +8,7 @@
 //! (01M3X30KHKB6W11C3NBAW7KCGW to 01M3X30RA3X08JBJ2JBVCCNEH3).
 //!
 //! An idle worker that joined gets free work with a request of the lead
-//! (01M49ZK19GQP79Z8HH14PK85QQ to 01M49ZK1EG52YAKG974XH201RK). A worker
-//! with a task claim gets none (01M518P1N8R893MG9Z3VAQZR6Z).
+//! (01M49ZK19GQP79Z8HH14PK85QQ to 01M49ZK1EG52YAKG974XH201RK).
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
