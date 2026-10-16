@@ -1081,7 +1081,7 @@ impl World for Live {
             let claimed: HashSet<String> = claims.iter().cloned().collect();
             let (free, pulls) = blocking(move || {
                 let gh = pr::Gh::for_repo(&repo);
-                let free = rollout::free_work(&gh, &repo, &claimed)?;
+                let free = rollout::free_work(&gh, &repo, &claimed)?.items;
                 let open = rollout::pulls(&gh, &repo)?;
                 let mut pulls = BTreeMap::new();
                 for issue in free.iter().filter_map(|item| verify_issue(item)) {

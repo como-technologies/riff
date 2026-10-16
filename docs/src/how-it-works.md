@@ -1875,11 +1875,14 @@ show the fault, the verifier uses a test of the guard on a sample, the
 control of the author, or a read.
 
 A verify request wakes only the lead of the author's user. The lead
-gives it to a session with no claim, or starts a worker for it. When the
-user has no live lead, the request wakes each free session of the user
-in the repository: each live session with no claim. Each other session
-sees it at its next read. A verify request is free work: a session picks
-it like any other item.
+gives it to a session with no claim, or starts a worker for it. The
+author never gets the verify, also after a `/clear` (see "No verify for
+the author" in
+[riff starts workers by itself](#riff-starts-workers-by-itself)).
+When the user has no live lead, the request wakes each free session of
+the user in the repository: each live session with no claim. Each other
+session sees it at its next read. A verify request is free work: a
+session picks it like any other item.
 
 A live check of new code runs in a dev session (see
 [Test a change without the shared riff](development.md#test-a-change-without-the-shared-riff)).
@@ -4425,12 +4428,20 @@ flowchart TD
 - **Requests.** riff gives free work to each idle worker of your user
   that joined the riff. The worker gets a request of the lead, for
   example `request: claim verify-issue-12`. A verify comes first. Each
-  worker gets one item, and each item goes to one worker. A worker in
-  the worktree `issue-12` gets no request for `verify-issue-12`: it can
-  be the author. riff never sends the same request to the same worker
-  again. A worker that does not claim in 60 seconds (6 intervals)
-  refused the item. Then riff can start a new worker for it. When two
-  workers refused an item, riff starts no more workers for it.
+  worker gets one item, and each item goes to one worker. riff never
+  sends the same request to the same worker again. A worker that does
+  not claim in 60 seconds (6 intervals) refused the item. Then riff can
+  start a new worker for it. When two workers refused an item, riff
+  starts no more workers for it.
+- **No verify for the author.** A session that held `issue-12` never
+  gets a request for `verify-issue-12`, also after a `/clear`: the
+  session keeps its ID. riff knows the author from two facts: each
+  session that it saw with the claim, and the usage comment that the
+  release of the claim puts on the issue (see
+  [See the tokens of an issue](development.md#see-the-tokens-of-an-issue)).
+  A worker in the worktree `issue-12` gets no request for it either.
+  When the author is the only idle worker, riff starts a new worker for
+  the verify.
 - **Machines.** The machine of the lead, when the lead runs in tmux,
   and each workers host of your user (see
   [Offer workers from another machine](#offer-workers-from-another-machine)).
