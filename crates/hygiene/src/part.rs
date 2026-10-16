@@ -156,7 +156,7 @@ impl Part {
 /// assert!(is_doc("crates/x/src/lib.rs - ulid (line 57)"));
 /// assert!(!is_doc("cli::help"));
 /// ```
-pub fn is_doc(name: &str) -> bool {
+pub fn is_doc(name: &str) -> bool  {
     name.contains(' ')
 }
 
