@@ -828,7 +828,9 @@ struct Waits(Child);
 
 impl Waits {
     /// `program -c "read line"` in the directory `dir`: `program` is a
-    /// shell.
+    /// shell. It returns when the child has the name of `program`. The
+    /// kernel lets the parent go on in the exec before it names the
+    /// child (#826).
     fn start(program: &Path, dir: &Path) -> Waits {
         let child = Command::new(program)
             .args(["-c", "read line"])
@@ -838,7 +840,16 @@ impl Waits {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        Waits(child)
+        let waits = Waits(child);
+        let name = program.file_name().unwrap().to_string_lossy();
+        let comm = format!("/proc/{}/comm", waits.id());
+        let span = isolated::Span::start();
+        while std::fs::read_to_string(&comm).unwrap_or_default().trim() != name {
+            let limit = Duration::from_secs(10);
+            assert!(span.within(limit), "the child is not {name}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        waits
     }
 
     fn id(&self) -> u32 {
