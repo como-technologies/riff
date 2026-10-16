@@ -33,8 +33,10 @@
 //! - The clean is [`crate::worktrees::clean_here`]: the same facts as
 //!   `riff worktrees clean`.
 //! - A worktree has no live owner when no live process holds its lock,
-//!   no person locked it, and `riff who` shows no live session in it
-//!   ([`crate::worktrees::ownerless`]). riff removes only its `target`:
+//!   no person locked it, `riff who` shows no live session in it and no
+//!   live session that holds its item, and no running process has its
+//!   program or its directory in it ([`crate::worktrees::ownerless`]).
+//!   riff removes only its `target`:
 //!   the next build makes it again. The source and the branch stay
 //!   (01M41A11BB4HAD8595DNSBAZ0D).
 //! - The temp folder of a worker whose pane died with its wrapper goes
@@ -156,7 +158,7 @@ pub async fn tidy(
                 (main.clone(), dir.to_owned(), host.clone(), repo.clone());
             tokio::task::spawn_blocking(move || {
                 let trees = worktrees::ownerless(&main, &here, |tree| {
-                    worktrees::owned_by(&who, &host, &repo, tree)
+                    worktrees::owner_in(&who, &host, &repo, tree)
                 });
                 trim(&trees)
             })
