@@ -70,7 +70,7 @@
 //! - **Show** (01M3ZGZMV78G3BNVFGHAZWQQDX). `riff workers jobs` shows
 //!   the size of the pool and the tokens in use ([`state`]).
 //!
-//! ```
+//! ```standalone_crate
 //! use riff::jobserver::{state, tokens, Pool};
 //!
 //! // pangolin: 16 hardware threads and a limit of 4 workers.
@@ -862,7 +862,13 @@ mod tests {
             })
         );
         drop(two);
-        assert_eq!(state(dir.path()), None);
+        // A child that another test thread starts can hold a copy of the
+        // lock of `two` for a short time (see [`crate::local::Held`]).
+        let span = isolated::Span::start();
+        while state(dir.path()).is_some() {
+            assert!(span.within(Duration::from_secs(10)), "the pool did not end");
+            std::thread::sleep(Duration::from_millis(1));
+        }
         let three = Pool::hold(dir.path(), 5, 1).unwrap();
         assert_eq!(
             state(dir.path()),
