@@ -429,7 +429,10 @@ async fn a_link_to_the_owner_shows_and_logs_the_host_of_its_riff_record() {
 
     let short = &owner.public().to_string()[..8];
     for line in thelio.said(up) {
-        assert!(line.contains(&format!("{short} (mike on pangolin)")), "{line}");
+        assert!(
+            line.contains(&format!("{short} (mike on pangolin)")),
+            "{line}"
+        );
     }
     for line in owner.said(up) {
         assert!(line.contains("(mike on thelio)"), "{line}");
