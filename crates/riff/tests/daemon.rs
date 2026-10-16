@@ -192,6 +192,67 @@ async fn a_daemon_with_riff_releases_and_its_own_sha256_there_changes_no_rule() 
     wait_for(&log, "The riff daemon stops").await;
 }
 
+/// 01M51QFPJAABDP1V7WFY8NQR60, 01M51QFPMSG81YRDDGQQ1WJDSQ,
+/// 01M51QFPQ68JHS08TWXNNWZ0D7: the daemon of a dev build does no step of
+/// an update, also with `update.auto` on and its own SHA-256 in the
+/// `SHA256SUMS` of `RIFF_RELEASES`. The unit file of an older release
+/// stays, and the daemon logs the gate and the step of the unit. The
+/// steps of a release have their tests in `update_steps::tests`.
+#[tokio::test]
+async fn a_daemon_of_a_dev_build_does_no_step_of_an_update() {
+    let Some(target) = riff::release::TARGET else {
+        return;
+    };
+    let here = Here::new();
+    let tag = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let files = here.env.releases().join(&tag);
+    std::fs::create_dir_all(&files).unwrap();
+    let bytes = std::fs::read(here.env.riff_path()).unwrap();
+    let sum = riff::release::sha256(&bytes);
+    let name = riff::release::asset("riff", target);
+    std::fs::write(files.join("SHA256SUMS"), format!("{sum}  {name}\n")).unwrap();
+    let out = here.run(true, &["update", "--auto", "on"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    // The unit file of an older release: another RestartSec.
+    let unit = riff::service::Unit {
+        exe: std::fs::canonicalize(here.env.riff_path()).unwrap(),
+        env: vec![("PATH".into(), here.path.clone())],
+    };
+    let old = unit.text().unwrap().replace("RestartSec=2\n", "RestartSec=9\n");
+    let unit_path = here.env.home().join(".config/systemd/user/riff.service");
+    std::fs::create_dir_all(unit_path.parent().unwrap()).unwrap();
+    std::fs::write(&unit_path, &old).unwrap();
+
+    // systemd starts the daemon of the unit.
+    let mut cmd = here.env.command(here.bin.path().join("systemctl"));
+    cmd.args(["--user", "restart", "riff.service"])
+        .env("PATH", &here.path)
+        .env("FAKE_RIFF", here.env.riff_path())
+        .env_remove("RIFF_HOME");
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let log = here.bin.path().join("daemon.out");
+    let releases = here.env.releases().display().to_string();
+    let gate = format!(
+        "does no step of an update: it is not a release: {}",
+        riff::text::not_release_releases(&releases)
+    );
+    wait_for(&log, &gate).await;
+    let unit_line = format!(
+        "not in step  the unit of the daemon: {}. Fix: riff daemon install",
+        riff::text::STEP_UNIT_OLD
+    );
+    wait_for(&log, &unit_line).await;
+    assert_eq!(std::fs::read_to_string(&unit_path).unwrap(), old);
+    assert!(!here.read("systemctl.log").contains("daemon-reload"));
+
+    let pid: u32 = here.read("daemon.pid").trim().parse().unwrap();
+    term(pid);
+    wait_for(&log, "The riff daemon stops").await;
+}
+
 #[tokio::test]
 async fn riff_daemon_install_with_riff_home_installs_nothing() {
     let here = Here::new();

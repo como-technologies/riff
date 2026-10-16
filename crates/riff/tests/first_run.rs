@@ -130,9 +130,16 @@ impl Machine {
 
     /// The command of [`Machine::init`].
     fn init_command(&self, dir: &Path, args: &[&str]) -> std::process::Command {
+        let mut cmd = self.command(dir, &["init"]);
+        cmd.args(args);
+        cmd
+    }
+
+    /// `riff ARGS` in the folder `dir`, as the riff of the machine, with
+    /// the fakes.
+    fn command(&self, dir: &Path, args: &[&str]) -> std::process::Command {
         let mut cmd = self.env.riff();
-        cmd.arg("init")
-            .args(args)
+        cmd.args(args)
             .current_dir(dir)
             .env_remove("RIFF_HOME")
             .env(
@@ -452,6 +459,90 @@ async fn riff_init_check_names_each_missing_rule() {
         text_before
     );
     assert!(!machine.unit().exists());
+}
+
+/// 01M51QFPYHK0916C5ZN2B55BR0, 01M51QFPW37EXVH4AXH70MSXBT,
+/// 01M51QFPMSG81YRDDGQQ1WJDSQ: `riff update --check` shows each step of
+/// an update, in step or not, with its fix, and changes nothing. A dev
+/// build with `RIFF_RELEASES` is not a release. The step that only a
+/// person can do goes to the local file of the status line, until it is
+/// in step.
+#[tokio::test]
+async fn riff_update_check_shows_each_step_and_changes_nothing() {
+    use riff::text;
+    let machine = Machine::new();
+    std::fs::write(machine.bin.join("no-image"), "").unwrap();
+    std::fs::remove_file(machine.init.join("catatonit")).unwrap();
+    let before = r#"{"model": "opus"}"#;
+    machine.write_settings(before);
+    let check = || output(machine.command(&machine.repo, &["update", "--check"]));
+    let out = check().await;
+    let stdout = self::text(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{stdout}\n{}",
+        self::text(&out.stderr)
+    );
+    let releases = machine.env.releases().display().to_string();
+    let no_init = text::init_no_init(&riff::first_run::INIT_DIRS);
+    for line in [
+        text::steps_check_gate(&riff::update_steps::Gate::Off),
+        format!(
+            "not in step  the riff binary: {}. Fix: riff update",
+            text::not_release_releases(&releases)
+        ),
+        format!(
+            "not in step  the rules of Claude Code: {} lacks {} permission rules of riff. Fix: \
+             riff init --yes",
+            machine.settings().display(),
+            machine.user_rules().len()
+        ),
+        "not in step  the unit of the daemon: no unit of the riff daemon is installed. Fix: riff \
+         daemon install"
+            .to_owned(),
+        format!(
+            "not in step  the session image of this folder: podman does not have {IMAGE}. Fix: \
+             podman pull {IMAGE}"
+        ),
+        "in step  podman: podman version 5.7.0".to_owned(),
+        format!(
+            "needs you  the init of podman: {no_init}. Fix: {}",
+            text::INIT_FIX_INIT
+        ),
+    ] {
+        assert!(
+            stdout.lines().any(|l| l == line),
+            "{line}\nnot in\n{stdout}"
+        );
+    }
+    // It changes nothing.
+    assert_eq!(
+        std::fs::read_to_string(machine.settings()).unwrap(),
+        before
+    );
+    assert!(!machine.unit().exists());
+    assert_eq!(machine.read("systemctl.log"), "");
+    let log = machine.read("podman.log");
+    assert!(!log.contains("podman pull"), "{log}");
+    // The status line shows the step that needs the person.
+    let local = machine.env.path().join("run/riff");
+    let fix = format!("the init of podman: {}", text::INIT_FIX_INIT);
+    assert_eq!(riff::local::needs_you(&local), Some(fix));
+
+    // After the fix of the person, the step is in step, and the file goes.
+    script(
+        &machine.init.join("catatonit"),
+        "#!/bin/sh\nexec \"$@\"\n",
+    );
+    let out = check().await;
+    let stdout = self::text(&out.stdout);
+    let line = format!(
+        "in step  the init of podman: {}",
+        machine.init.join("catatonit").display()
+    );
+    assert!(stdout.lines().any(|l| l == line), "{line}\nnot in\n{stdout}");
+    assert_eq!(riff::local::needs_you(&local), None);
 }
 
 /// 01M51JCW04FAHZDQ144KDNCCPX, 01M51JCW2EKF8H8QFQYSVRSPET: `riff init`

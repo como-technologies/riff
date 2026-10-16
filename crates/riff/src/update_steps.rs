@@ -580,3 +580,293 @@ pub async fn check(runtime: &impl Runtime, daemon: &Path, here: &Path) -> i32 {
     keep_needs_you(&steps);
     i32::from(!steps.iter().all(Step::in_step))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use anyhow::bail;
+
+    use super::*;
+    use crate::rule_sync::Synced;
+    use crate::runtime::Fake;
+
+    const TARGET: &str = "x86_64-unknown-linux-musl";
+
+    /// The image that the new pin of the wave names.
+    const IMAGE: &str = "ghcr.io/o/riff-session@sha256:\
+                         0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    /// A manager of the unit file that keeps its text, and counts each
+    /// write.
+    #[derive(Default)]
+    struct Units {
+        text: Mutex<Option<String>>,
+        writes: Mutex<u32>,
+    }
+
+    impl Units {
+        fn text(&self) -> Option<String> {
+            self.text.lock().unwrap().clone()
+        }
+
+        fn writes(&self) -> u32 {
+            *self.writes.lock().unwrap()
+        }
+    }
+
+    impl ServiceManager for Units {
+        fn install(&self, _: &Unit) -> Result<PathBuf> {
+            bail!("this test installs nothing")
+        }
+
+        fn uninstall(&self) -> Result<Option<PathBuf>> {
+            bail!("this test removes nothing")
+        }
+
+        fn state(&self) -> Result<String> {
+            Ok("active".into())
+        }
+
+        fn installed(&self) -> Result<Option<Unit>> {
+            Ok(self.text().and_then(|text| Unit::parse(&text)))
+        }
+
+        fn installed_text(&self) -> Result<Option<String>> {
+            Ok(self.text())
+        }
+
+        fn rewrite(&self, unit: &Unit) -> Result<PathBuf> {
+            *self.text.lock().unwrap() = Some(unit.text()?);
+            *self.writes.lock().unwrap() += 1;
+            Ok("/home/mike/.config/systemd/user/riff.service".into())
+        }
+
+        fn try_restart(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn main_pid(&self) -> Result<Option<u32>> {
+            Ok(None)
+        }
+    }
+
+    /// The unit file of an older release: the riff and the variables of
+    /// the person, and another `RestartSec`.
+    fn old_unit() -> String {
+        let unit = Unit {
+            exe: "/home/mike/.cargo/bin/riff".into(),
+            env: vec![("PATH".into(), "/home/mike/.cargo/bin:/usr/bin".into())],
+        };
+        let text = unit.text().unwrap();
+        assert!(text.contains("RestartSec=2\n"), "{text}");
+        text.replace("RestartSec=2\n", "RestartSec=9\n")
+    }
+
+    /// The user settings: a rule of the person, and no rule of riff.
+    const SETTINGS: &str = r#"{"model": "opus", "permissions": {"allow": ["Read(~/**)"]}}"#;
+
+    /// A machine after the update by itself put a new riff in place, in
+    /// a temp folder: user settings with no rule of riff, the riff
+    /// binary, the release files of `v1.5.0` with the SHA-256 of
+    /// `release`, the unit file of an older release, a wave whose new pin
+    /// names [`IMAGE`], and a registry that has it. Its init of podman is
+    /// missing: only a person can install it.
+    struct Here {
+        dir: tempfile::TempDir,
+        source: Result<Source, String>,
+        units: Units,
+        runtime: Fake,
+    }
+
+    impl Here {
+        fn new(binary: &[u8], release: &[u8]) -> Here {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("settings.json"), SETTINGS).unwrap();
+            std::fs::write(dir.path().join("riff"), binary).unwrap();
+            let files = dir.path().join("releases/v1.5.0");
+            std::fs::create_dir_all(&files).unwrap();
+            let line = format!(
+                "{}  {}\n",
+                release::sha256(release),
+                release::asset("riff", TARGET)
+            );
+            std::fs::write(files.join(release::SUMS), line).unwrap();
+            let source = Ok(Source::Folder(dir.path().join("releases")));
+            let units = Units::default();
+            *units.text.lock().unwrap() = Some(old_unit());
+            let runtime = Fake::default().with_registry(IMAGE);
+            Here {
+                dir,
+                source,
+                units,
+                runtime,
+            }
+        }
+
+        /// The release files of the machine, named by `RIFF_RELEASES`.
+        fn by_variable(mut self) -> Here {
+            let place = self.dir.path().join("releases");
+            self.source = rule_sync::sums_source(Some(&place.display().to_string()));
+            self
+        }
+
+        fn settings(&self) -> String {
+            std::fs::read_to_string(self.dir.path().join("settings.json")).unwrap()
+        }
+
+        /// What the daemon does at its start with `update.auto` =
+        /// `auto`: the sync of the rules, then the gate and each step.
+        async fn start(&self, auto: bool) -> (Synced, Vec<Step>) {
+            let user = self.dir.path().join("settings.json");
+            let binary = self.dir.path().join("riff");
+            let facts = rule_sync::Facts {
+                auto,
+                user: &user,
+                home: None,
+                binary: &binary,
+                tag: "v1.5.0",
+                source: &self.source,
+                target: Some(TARGET),
+            };
+            let rules = rule_sync::sync(&facts).await.unwrap();
+            let gate = gate(auto, &facts.release()).await.unwrap();
+            let at = Machine {
+                user: Some(&user),
+                home: None,
+                manager: Some(&self.units),
+                runtime: &self.runtime,
+                images: vec![("o/r".into(), Ok(IMAGE.into()))],
+                checks: vec![Check {
+                    name: "the init of podman".into(),
+                    found: "no catatonit".into(),
+                    fix: Some("sudo apt install catatonit".into()),
+                }],
+            };
+            (rules, sync(&gate, &at).await)
+        }
+    }
+
+    /// 01M51QFPJAABDP1V7WFY8NQR60, 01M51QFPQ68JHS08TWXNNWZ0D7,
+    /// 01M51QFPSMDDMFPZXAEYWZYJPV, 01M51QFPW37EXVH4AXH70MSXBT: a release
+    /// with a new rule, a new unit and a new image pin brings each one in
+    /// step at the start of its daemon. The step of a person stays.
+    #[tokio::test]
+    async fn a_release_brings_the_rules_the_unit_and_the_image_in_step() {
+        let here = Here::new(b"the riff of v1.5.0", b"the riff of v1.5.0");
+        let (rules, steps) = here.start(true).await;
+        assert!(matches!(rules, Synced::Added(_)), "{rules:?}");
+        let names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                text::INIT_RULES,
+                text::STEP_UNIT,
+                "the session image of o/r",
+                "the init of podman"
+            ]
+        );
+        // The rules: the sync added them.
+        assert!(matches!(steps[0].state, State::InStep(_)), "{steps:?}");
+        let want = permissions::user_rules(None);
+        assert!(permissions::missing(&want, &[&here.settings()]).is_empty());
+        // The unit: the text of this riff, with the riff and the
+        // variables of the old file.
+        assert_eq!(
+            steps[1].state,
+            State::Done(text::step_unit_written(
+                "/home/mike/.config/systemd/user/riff.service".as_ref()
+            ))
+        );
+        let old = Unit::parse(&old_unit()).unwrap();
+        assert_eq!(here.units.text(), Some(old.text().unwrap()));
+        // The image of the new pin.
+        assert_eq!(steps[2].state, State::Done(text::step_pulled(IMAGE)));
+        assert_eq!(here.runtime.calls(), [format!("pull {IMAGE}")]);
+        // The init of podman needs a person: the daemon only tells.
+        assert!(steps[3].needs_you(), "{steps:?}");
+        assert_eq!(
+            needs_you(&steps).as_deref(),
+            Some("the init of podman: sudo apt install catatonit")
+        );
+
+        // The next start finds each step in step, and changes nothing.
+        let settings = here.settings();
+        let (rules, steps) = here.start(true).await;
+        assert_eq!(rules, Synced::InStep);
+        for step in &steps[..3] {
+            assert!(matches!(step.state, State::InStep(_)), "{step:?}");
+        }
+        assert_eq!(here.settings(), settings);
+        assert_eq!(here.units.writes(), 1);
+        assert_eq!(here.runtime.calls().len(), 1);
+    }
+
+    /// 01M51QFPMSG81YRDDGQQ1WJDSQ, 01M51QARV45MGEKC6KGWX1N5NS: a dev
+    /// build, a `SHA256SUMS` that `RIFF_RELEASES` names (also with the
+    /// SHA-256 of the binary), and `update.auto` off change nothing. Each
+    /// step says that it is not in step, with its fix.
+    #[tokio::test]
+    async fn a_dev_build_riff_releases_and_auto_off_change_nothing() {
+        let release: &[u8] = b"the riff of v1.5.0";
+        for (case, here, auto) in [
+            ("a dev build", Here::new(b"a dev build", release), true),
+            (
+                "RIFF_RELEASES",
+                Here::new(release, release).by_variable(),
+                true,
+            ),
+            ("auto off", Here::new(release, release), false),
+        ] {
+            let (rules, steps) = here.start(auto).await;
+            assert!(
+                matches!(rules, Synced::Off | Synced::NotRelease(_)),
+                "{case}: {rules:?}"
+            );
+            let fixes: Vec<&str> = steps[..3]
+                .iter()
+                .map(|step| match &step.state {
+                    State::Behind { fix, .. } => fix.as_str(),
+                    _ => panic!("{case}: {step:?}"),
+                })
+                .collect();
+            let pull = text::step_fix_image(IMAGE);
+            assert_eq!(
+                fixes,
+                [text::STEP_FIX_RULES, text::STEP_FIX_UNIT, pull.as_str()],
+                "{case}"
+            );
+            assert_eq!(here.settings(), SETTINGS, "{case}");
+            assert_eq!(here.units.text(), Some(old_unit()), "{case}");
+            assert_eq!(here.units.writes(), 0, "{case}");
+            assert!(here.runtime.calls().is_empty(), "{case}");
+        }
+    }
+
+    /// 01M51QFPQ68JHS08TWXNNWZ0D7: the unit of this riff is in step; no
+    /// unit is not in step, and riff cannot read a unit with no
+    /// `riff daemon`. None of them changes.
+    #[test]
+    fn the_unit_of_this_riff_is_in_step() {
+        let units = Units::default();
+        assert_eq!(
+            unit(&units, true).state,
+            State::Behind {
+                found: text::STEP_NO_UNIT.into(),
+                fix: text::STEP_FIX_UNIT.into()
+            }
+        );
+        let new = Unit::parse(&old_unit()).unwrap().text().unwrap();
+        *units.text.lock().unwrap() = Some(new);
+        assert_eq!(
+            unit(&units, true).state,
+            State::InStep(text::step_unit_there("/home/mike/.cargo/bin/riff".as_ref()))
+        );
+        *units.text.lock().unwrap() = Some("[Service]\nExecStart=/bin/true\n".into());
+        assert_eq!(
+            unit(&units, true).state,
+            State::Failed(text::STEP_UNIT_UNREADABLE.into())
+        );
+        assert_eq!(units.writes(), 0);
+    }
+}
