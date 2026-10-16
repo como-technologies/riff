@@ -4564,6 +4564,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   docs/src`. It fails on each line that breaks
   01M3MNT28NXA9VRST119QR8AQK (`wrap`). No test of a crate checks the
   wrap.
+- **01M51K1VMWTNZGD6PT1BYDGWM3** No Markdown file of the book or of
+  the plugin has two blank lines in a row outside a code block. `just
+  wrap` also runs `hygiene blank docs/src crates/riff/claude-plugin`.
+  It fails on each blank line after a blank line (`blank`).
 - **01M3T5MG7VVYG4A8YBM75FGSMB** `just book` runs `hygiene book docs`.
   It builds the book with mdbook, and fails on an `ERROR` line of
   mdbook (`mdbook`), on an include line that mdbook left in the text
@@ -5353,6 +5357,10 @@ share.
   the session place into the `settings.json` of the own Claude folder
   of each session. The Claude folder of the lead stays between its
   starts: at each start, riff adds each rule that it lacks.
+- **01M51K1VJ67KYHRD7DQ86DSX1X** The lead in a container plans the
+  waves with `/opt/riff/riff wave`. The session rule
+  `Bash(/opt/riff/riff wave *)` of the lead allows these steps. The
+  instructions of the riff tools of the lead name them.
 - **01M5084K79M5XJT3MP8FFVQKDX** A check that needs a new build of riff
   builds it in the one clone `~/.cache/riff/check` of the machine. One
   check at a time uses the clone. The check calls the riff of the build
@@ -5384,7 +5392,6 @@ share.
   removes them. A no, no terminal, `--yes` and `--check` keep each
   rule. riff removes only the wide rules, and keeps each other rule and
   key in its order.
-
 - **01M5084K9J566981EXZ7YJRGRR** When the auto mode check refuses a
   step, the session stops that step, writes the command and the reason
   on the issue of its item, and tells the lead. It does not try the

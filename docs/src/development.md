@@ -1110,7 +1110,8 @@ The lead gets the riff tools that talk, and the tools of a lead that
 act on riff-server: `lead`, `hold`, `free`, `pause` and `resume`. It
 gets its wakes from `/opt/riff/riff relay watch`, a background task
 that ends at each wake. The instructions of its riff tools tell it to
-run that task. To make it the lead of your user, tell it to call the
+run that task. It plans the waves with `/opt/riff/riff wave`: see
+[Waves](waves.md). To make it the lead of your user, tell it to call the
 riff tool `lead`.
 
 ### Watch the riff
@@ -1421,17 +1422,23 @@ git diff
 
 ## Check the wrap of the book
 
-Each prose line of a page in `docs/src` is at most 72 characters.
-`just ci` checks it. To run only this check:
+Each prose line of a page in `docs/src` is at most 72 characters. No
+page of the book or of the plugin has two blank lines in a row.
+`just ci` checks both. To run only these checks:
 
 ```sh
 just wrap
 ```
 
-Each error has the rule `wrap`. It names the page, the line and its
-length. The check skips a code block, a row of a table and a heading.
-It also skips a line with only one link or one code span: a wrap
-cannot make that line shorter.
+An error of the rule `wrap` names the page, the line and its length.
+The check skips a code block, a row of a table and a heading. It also
+skips a line with only one link or one code span: a wrap cannot make
+that line shorter.
+
+An error of the rule `blank` names the page and the second blank
+line. Remove that line. The check skips a code block. It reads each
+Markdown file in `docs/src` and in `crates/riff/claude-plugin` and
+their subfolders, also the skill.
 
 ## Check a pull request on GitHub
 
