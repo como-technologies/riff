@@ -5108,6 +5108,17 @@ share.
   `podman stop`, and riff then releases the item. The exit code is 0
   only when the turn ended with no error and the branch has an open
   pull request.
+- **01M5157TYDEHZHDXSC1AHCRDRN** `riff run` sends no verify request
+  when a lead holds `verify-ITEM`. It reads the holds of the repository
+  thread after the session, in the end step of the verify request, and
+  prints the hold: who, when and why. It still releases the item, and
+  the exit code does not change.
+- **01M5157V0P92EBHF4M7N9K0RGR** An issue with the label `no-verify`
+  gets no verify. Its pull request is no free work for a verify, for the
+  rollout of the lead and for the wave of the daemon. `riff run` sends
+  no verify request for it, and prints why. riff reads the labels of the
+  issue with `gh`. When `gh` cannot read them, `riff run` prints the
+  fault and goes on to the holds (01M5157TYDEHZHDXSC1AHCRDRN).
 - **01M4ZQVVGQYXTAVRB69C7YPC3Y** The verify request and the release of
   `riff run` have the budget `END_BUDGET`, 10 minutes, not
   `SHORT_BUDGET`. A fault gets a new try while the budget lasts
@@ -5313,6 +5324,12 @@ share.
   the issue as not planned, frees the hold and removes the folder of the
   session. It cleans up also after a failed step, and after SIGINT or
   SIGTERM.
+- **01M5157V34H7FWFH6S2DRQXRMP** Step 4 of the real-session test keeps
+  the verify of the scratch item from the workers, also when a worker
+  runs the test. It makes the label `no-verify` with
+  `gh label create --force`, and puts it on the scratch issue
+  (01M5157V0P92EBHF4M7N9K0RGR). The step fails when `gh` cannot. Then
+  it holds `verify-issue-N`. A failed hold is a warning.
 - **01M4ZCFGF6QN6KZEVMBNW9G4EW** The first step of the real-session
   test that fails stops it. Its message names the step by its number
   and its name, and gives the reason. The exit code is 1, or 130 after

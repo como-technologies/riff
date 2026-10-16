@@ -39,7 +39,8 @@ fn script(path: &Path, body: &str) {
 }
 
 /// A fake `gh` that logs each call to `bin/gh.log`. The branch has no
-/// pull request when `bin/no-pr` is there.
+/// pull request when `bin/no-pr` is there. The issue has the label
+/// `no-verify` when `bin/no-verify` is there.
 fn fake_gh(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -48,6 +49,9 @@ case "$*" in
   'auth token') echo GHTOKEN ;;
   'issue view 12 --json number,state,milestone')
     echo '{"number":12,"state":"OPEN","milestone":{"title":"Wave 27"}}' ;;
+  'issue view 12 --json number,labels')
+    if [ -f "$dir/no-verify" ]; then echo '{"number":12,"labels":[{"name":"no-verify"}]}'
+    else echo '{"number":12,"labels":[]}'; fi ;;
   'pr view worktree-issue-12 --json number,url,headRefOid,state')
     [ -f "$dir/no-pr" ] && exit 1
     echo '{"number":40,"url":"https://github.com/como-technologies/riff/pull/40","headRefOid":"1a2b3c4d5e6f","state":"OPEN"}' ;;
@@ -739,6 +743,78 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 
+/// A lead holds the verify of the item while the session works. When
+/// `claude` ends, `riff run` sends no verify request, and shows the hold
+/// (01M5157TYDEHZHDXSC1AHCRDRN). It still releases the item, and ends
+/// with 0.
+#[tokio::test]
+async fn riff_run_sends_no_verify_request_when_a_lead_holds_the_verify() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let hold = machine.bin.path().join("hold");
+    std::fs::write(&hold, "").unwrap();
+    let child = machine
+        .command(None, &["run", "issue-12", "--image", IMAGE])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(&machine.bin.path().join("run.stdin"), "user").await;
+    machine
+        .ok(
+            Some("lead1"),
+            &["plan", "hold", "verify-issue-12", "a scratch item"],
+        )
+        .await;
+    std::fs::remove_file(&hold).unwrap();
+
+    let out = output_of(child).await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("The pull request #40"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "riff run sends no verify request for issue-12: verify-issue-12 is held by the lead \
+             (the session mike/lead1) since "
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains(": a scratch item\n"), "{stdout}");
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert!(!thread.contains("verify request: issue-12"), "{thread}");
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// The issue has the label `no-verify`, as the scratch item of the
+/// real-session test has. `riff run` sends no verify request
+/// (01M5157V0P92EBHF4M7N9K0RGR), also with no hold: a worker that runs
+/// the test cannot hold the verify.
+#[tokio::test]
+async fn riff_run_sends_no_verify_request_for_an_issue_with_the_label_no_verify() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    std::fs::write(machine.bin.path().join("no-verify"), "").unwrap();
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("The pull request #40"), "{stdout}");
+    assert!(
+        stdout.contains(&riff::text::run_no_verify_label("issue-12", 12)),
+        "{stdout}"
+    );
+    let log = machine.read("gh.log");
+    assert!(
+        log.contains("gh issue view 12 --json number,labels"),
+        "{log}"
+    );
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert!(!thread.contains("verify request: issue-12"), "{thread}");
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
 #[tokio::test]
 async fn riff_run_goes_on_from_the_branch_of_an_earlier_session() {
     let machine = Machine::new().await;
@@ -1386,8 +1462,10 @@ async fn a_sigint_stops_the_wait_of_the_verify_request() {
     use riff::text::{RUN_END, RUN_RELEASE, RUN_VERIFY_REQUEST, run_not_sent};
 
     let machine = Machine::new().await;
+    // The verify request first reads the holds (01M5157TYDEHZHDXSC1AHCRDRN).
     let (out, took) =
-        a_signal_in_the_end_steps(&machine, "/v1/post", nix::sys::signal::Signal::SIGINT).await;
+        a_signal_in_the_end_steps(&machine, "/v1/plan/show", nix::sys::signal::Signal::SIGINT)
+            .await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(
         took < Duration::from_secs(5),

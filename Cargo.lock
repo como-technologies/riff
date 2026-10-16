@@ -2898,6 +2898,7 @@ name = "real-session"
 version = "1.4.0"
 dependencies = [
  "isolated",
+ "riff",
  "serde",
  "serde_json",
  "tempfile",

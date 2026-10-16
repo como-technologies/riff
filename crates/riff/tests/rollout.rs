@@ -524,6 +524,30 @@ async fn a_pull_request_that_waits_for_a_verify_counts_one_time() {
     );
 }
 
+/// The pull request of an issue with the label `no-verify` is no work
+/// for a verify (01M5157V0P92EBHF4M7N9K0RGR): the rollout starts no
+/// worker for it. With no label, the same pull request gets a worker.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_pull_request_of_an_issue_with_the_label_no_verify_is_no_work() {
+    let lead = lead(5).await;
+    lead.issues(
+        r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Backlog"},
+        "labels":[{"name":"no-verify"}]}]"#,
+    );
+    lead.pull(None);
+    lead.riff(RiffState::Running).await;
+    lead.looked().await;
+    assert_eq!(lead.settled().await, 0, "{}", lead.tmux_log());
+    let log = std::fs::read_to_string(lead.fake.path().join("gh.log")).unwrap();
+    assert!(
+        log.contains("--json number,body,comments,milestone,labels"),
+        "{log}"
+    );
+
+    lead.issues(r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Backlog"}}]"#);
+    lead.until_workers(1).await;
+}
+
 /// An idle worker that joined gets a request of the lead for a pull
 /// request that waits for a verify, with no step of the lead
 /// (01M49ZK19GQP79Z8HH14PK85QQ). It gets the request one time

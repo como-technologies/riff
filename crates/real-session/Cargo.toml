@@ -18,6 +18,7 @@ tokio.workspace = true
 [dev-dependencies]
 isolated = { path = "../isolated" }
 tempfile.workspace = true
+riff = { path = "../riff" }
 
 [[test]]
 name = "all"

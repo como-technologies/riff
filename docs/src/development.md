@@ -600,7 +600,10 @@ steps:
    background tasks that `claude` waits for after it. The session
    pushes the branch and opens the pull request.
 4. It finds the pull request of the branch, and sends a verify request
-   to your lead.
+   to your lead. It sends none when the issue has the label
+   `no-verify`, or when a lead holds `verify-ITEM`, and it says why
+   (see
+   [Keep the verify of an item from the workers](how-it-works.md#keep-the-verify-of-an-item-from-the-workers)).
 5. It releases the item, and ends the session.
 
 When riff-server does not answer in steps 4 and 5, for example while
@@ -996,8 +999,14 @@ The test does these steps. The messages name them:
 2. List the home: the test lists the files of your home.
 3. Make the scratch item: an issue in the backlog that adds one line
    to the book. No worker takes an item of the backlog.
-4. Hold its verify: no worker verifies the scratch item. When riff
-   cannot hold it, the test goes on.
+4. Keep its verify from the workers: the issue gets the label
+   `no-verify`, so riff offers no verify of it to a worker, and
+   `riff run` sends no verify request for it. Then the test holds
+   `verify-issue-N`. A worker cannot hold an item: when you run the
+   test in a worker, or riff cannot hold the verify for another reason,
+   the test goes on with a warning, and the label keeps the verify.
+   When `gh` cannot put the label on, this step fails. See
+   [Keep the verify of an item from the workers](how-it-works.md#keep-the-verify-of-an-item-from-the-workers).
 5. Start the daemon: the test starts `riff daemon` of your clone, and
    waits until it answers. When a riff daemon runs already, this step
    fails.

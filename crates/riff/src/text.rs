@@ -5050,6 +5050,35 @@ pub fn run_verify_request(
     )
 }
 
+/// `riff run` sends no verify request for `item`: the issue `issue` has
+/// the label [`crate::rollout::NO_VERIFY`] (01M5157V0P92EBHF4M7N9K0RGR).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::run_no_verify_label("issue-12", 12),
+///     "riff run sends no verify request for issue-12: issue #12 has the label no-verify."
+/// );
+/// ```
+pub fn run_no_verify_label(item: &str, issue: u64) -> String {
+    format!(
+        "riff run sends no verify request for {item}: issue #{issue} has the label {}.",
+        crate::rollout::NO_VERIFY
+    )
+}
+
+/// `riff run` sends no verify request for `item`: a lead holds its
+/// verify (01M5157TYDEHZHDXSC1AHCRDRN). `held` is the text of the hold.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::run_verify_held("issue-12", "verify-issue-12 is held by the lead"),
+///     "riff run sends no verify request for issue-12: verify-issue-12 is held by the lead"
+/// );
+/// ```
+pub fn run_verify_held(item: &str, held: &str) -> String {
+    format!("riff run sends no verify request for {item}: {held}")
+}
+
 /// The end steps of `riff run`, as [`run_not_sent`] names them.
 pub const RUN_VERIFY_REQUEST: &str = "the verify request";
 /// See [`RUN_VERIFY_REQUEST`].
