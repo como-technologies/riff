@@ -1273,6 +1273,7 @@ async fn top_on_each_machine_shows_the_numbers_of_both_machines() {
         ),
         disk: None,
         monitor: None,
+        more: 0,
         workers: vec![("%5".into(), "w2".into())],
     };
     let step = riff_core::wire::Status {

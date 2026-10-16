@@ -1647,6 +1647,7 @@ mod tests {
             machine: None,
             disk: None,
             monitor: None,
+            more: 0,
             workers: vec![("%3".into(), "w2".into())],
         };
         let thelio = Machine {
