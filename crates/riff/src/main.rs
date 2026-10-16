@@ -385,7 +385,9 @@ enum Command {
     /// Take this machine out of the riff of another person
     ///
     /// The riff daemon of this machine tells each member that it leaves,
-    /// and has a riff of its own again, with the same key. Each session of
+    /// and has a riff of its own again, with the same key. It waits up to
+    /// 5 seconds until a member got the news. When none got it, it says so,
+    /// and names the riff remove command for the owner. Each session of
     /// this machine leaves with it. The owner cannot leave. Run it in a
     /// terminal.
     Leave,

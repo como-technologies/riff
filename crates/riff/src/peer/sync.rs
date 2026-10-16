@@ -110,13 +110,13 @@
 //! link with [`Close::Gone`].
 //!
 //! A link sent the `left` record only when the other daemon closed it
-//! with [`Close::Gone`] ([`kept_left`]). A new connection can take the
-//! place of a link during the leave ([`Close::Replaced`]): the other
-//! daemon then drops the frames of the old link that it did not read, and
-//! the new link is not in the links until its first step. So
-//! [`Links::wait_left`] waits until a link sent the record and no link
-//! runs, or up to [`LEAVE_LIMIT`]. A moment with no link, or a link that a
-//! replace closed, does not count (01M52JF709YHYE7SG6V3SDHR74).
+//! with [`Close::Gone`]. A new connection can take the place of a link
+//! during the leave ([`Close::Replaced`]): the other daemon then drops
+//! the frames of the old link that it did not read, and the new link is
+//! not in the links until its first step. So [`Links::wait_left`] waits
+//! until a link sent the record and no link runs, or up to
+//! [`LEAVE_LIMIT`]. A moment with no link, or a link that a replace
+//! closed, does not count (01M52JF709YHYE7SG6V3SDHR74).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -620,9 +620,9 @@ impl Links {
 
     /// The count of the links that sent the `left` record of this daemon
     /// since its start: each link that ended its stream after that record,
-    /// and that the other daemon then closed with [`Close::Gone`]
-    /// ([`kept_left`]). Read it before the daemon writes its `left`
-    /// record, and give it to [`Links::wait_left`].
+    /// and that the other daemon then closed with [`Close::Gone`]. Read
+    /// it before the daemon writes its `left` record, and give it to
+    /// [`Links::wait_left`].
     pub fn left_sent(&self) -> u64 {
         self.left_sent.load(Ordering::SeqCst)
     }
