@@ -4381,6 +4381,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `riff` set the keyring store, and `isolation.rs` listens on the port
   of the riff of the machine. Each other test of `riff` that needs a
   mock keyring uses `common::mock_keyring`.
+- **01M514XARN6564BBWHWWYVCH9K** Each doc test of `riff` that sets the
+  default store of `keyring_core` is a `standalone_crate`, so it runs
+  in a process of its own. A unit test of `secrets` checks each file of
+  `crates/riff/src`.
 - **01M4A4T6C5DH311AXMM6AG54DV** A test fails when a file of `tests`
   of a crate is in no test binary: not a module of `tests/all.rs`, and
   not the path of a `[[test]]` in the `Cargo.toml` of the crate.

@@ -8,7 +8,7 @@
 //!
 //! # Example
 //!
-//! ```
+//! ```standalone_crate
 //! # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
 //! let key = riff::device::key("http://127.0.0.1:7878")?;
 //! // The same server gives the same key.
