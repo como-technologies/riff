@@ -8,7 +8,7 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     C["the checks<br/>podman, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the rules of Claude Code"] --> Q{"rules<br/>missing?"}
+//!     C["the checks<br/>podman, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the rules of Claude Code,<br/>the riff binary"] --> Q{"rules<br/>missing?"}
 //!     Q -- "one question:<br/>y, or --yes" --> W["add them to<br/>the user settings"]
 //!     Q -- "no" --> E{"each check<br/>passed?"}
 //!     W --> E
@@ -49,6 +49,7 @@
 //! | cgroup v2 | `/sys/fs/cgroup/cgroup.controllers`, and `cgroup.controllers` of `user@UID.service` | the file is there, and the controllers of the user have `cpu` and `memory` |
 //! | the session image | `riff.toml` of the repository of the current folder ([`crate::session_image::of_folder`]) | it pins an image by its digest |
 //! | the rules of Claude Code | the user settings of Claude Code: `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` ([`Settings`]) | they have each rule of [`crate::permissions::user_rules`] |
+//! | the riff binary | the ELF of the riff of this process ([`crate::release::check_file`]) | it has no interpreter, so `riff relay` starts in each session image. The fix is `riff update` (01M510NW68CTZBHHW7ZYFV7Q3X) |
 //!
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
@@ -74,6 +75,7 @@
 //!         path: "/home/mike/.claude/settings.json".into(),
 //!         missing: Rules::default(),
 //!     }),
+//!     riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
 //! };
 //! assert!(checks(&facts).iter().all(|c| c.passed()));
 //!
@@ -146,6 +148,9 @@ pub struct Facts {
     pub image: Result<String, String>,
     /// The user settings of Claude Code, or why riff cannot find them.
     pub settings: Result<Settings, String>,
+    /// What riff found of its own binary: static, or why it is not
+    /// ([`crate::release::check_file`]).
+    pub riff: Result<String, String>,
 }
 
 /// The user settings of Claude Code, and the permission rules of riff
@@ -249,7 +254,23 @@ impl Facts {
                 .map(|image| image.to_string())
                 .map_err(|e| format!("{e:#}")),
             settings: Settings::here(),
+            riff: riff_binary(),
         }
+    }
+}
+
+/// What riff finds of the riff binary of this process
+/// (01M510NW68CTZBHHW7ZYFV7Q3X): `Ok` when it is static, or when
+/// [`crate::release::DYNAMIC`] takes it, else `Err` with why it is not.
+/// The daemon of `riff init` runs this binary, and binds it into each
+/// session.
+fn riff_binary() -> Result<String, String> {
+    let path = crate::binary::this_on_disk()
+        .map_err(|_| text::init_cannot_read("the path of its own binary"))?;
+    match crate::release::check_file(&path) {
+        Ok(()) => Ok(text::init_riff_static(&path)),
+        Err(_) if crate::release::takes_dynamic() => Ok(text::init_riff_taken(&path)),
+        Err(why) => Err(text::init_riff_not_static(&path, &why)),
     }
 }
 
@@ -434,6 +455,10 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
             text::INIT_FIX_IMAGE.into(),
         ),
     };
+    let riff = match &facts.riff {
+        Ok(found) => Check::pass(text::INIT_RIFF, found.clone()),
+        Err(found) => Check::fail(text::INIT_RIFF, found.clone(), text::INIT_FIX_RIFF.into()),
+    };
     vec![
         podman,
         sub_check("uid", facts.subuid.as_deref(), facts),
@@ -441,6 +466,7 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
         cgroup_check(facts),
         image,
         rules_check(&facts.settings),
+        riff,
     ]
 }
 
@@ -638,6 +664,7 @@ mod tests {
                 path: "/home/mike/.claude/settings.json".into(),
                 missing: Rules::default(),
             }),
+            riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
         }
     }
 
@@ -677,6 +704,7 @@ mod tests {
                 &format!("pass  the session image: {IMAGE}"),
                 "pass  the rules of Claude Code: /home/mike/.claude/settings.json has each \
                  permission rule of riff",
+                "pass  the riff binary: /home/mike/.cargo/bin/riff is static",
             ]
         );
     }
@@ -778,6 +806,20 @@ mod tests {
                 "fail  the rules of Claude Code: riff cannot find the user settings of Claude \
                  Code.",
                 "CLAUDE_CONFIG_DIR",
+            ),
+            (
+                "a riff that is not static",
+                Facts {
+                    riff: Err(text::init_riff_not_static(
+                        "/home/mike/.cargo/bin/riff".as_ref(),
+                        "it needs the shared libraries of /lib64/ld-linux-x86-64.so.2: it is not \
+                         static",
+                    )),
+                    ..ready()
+                },
+                "fail  the riff binary: /home/mike/.cargo/bin/riff: it needs the shared \
+                 libraries of /lib64/ld-linux-x86-64.so.2: it is not static.",
+                "run riff update.",
             ),
         ];
         let mut fixes = Vec::new();

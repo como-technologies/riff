@@ -1470,11 +1470,13 @@ mod tests {
             });
             let memory: crate::room::Memory =
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
+            let relay = root.path().join("static-riff");
             let daemon = Daemon::open(fake.clone(), dir.clone())
                 .await
                 .unwrap()
                 .with_memory(memory)
-                .with_world(world.clone());
+                .with_world(world.clone())
+                .with_relay(crate::release::fake_riff(&relay, None));
             Limit {
                 sessions,
                 floor_gb: 8,

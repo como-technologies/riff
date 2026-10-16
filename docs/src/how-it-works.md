@@ -641,6 +641,18 @@ sequenceDiagram
   directory of the update is missing, the release does not count as
   tried, and the next `riff` command tries again.
 - riff never installs an older release by itself.
+- An older riff updates itself with cargo. So after the update, your
+  riff can be a build of the new release that is not static, and the
+  riff daemon starts no session with it. When the riff of the bin
+  folder of cargo (`~/.cargo/bin`) sees the riff run its own release,
+  and it or `riff-server` there is not static, it installs its own
+  release again in the background. `riff update` then puts the static
+  files of the release in place. This fix gets one try for each
+  release. Your lead gets one message:
+
+  ```text
+  riff on pangolin put the static riff and riff-server of v1.4.1 in place of a build that is not static.
+  ```
 
 The output of the update is in `update.log`, in the local files of
 riff: `$XDG_RUNTIME_DIR/riff`, else `~/.local/state/riff`.

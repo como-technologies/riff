@@ -24,6 +24,13 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
+/// The output of `cmd`, away from the runtime of the test.
+async fn output(mut cmd: std::process::Command) -> Output {
+    tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap()
+}
+
 fn script(path: &Path, body: &str) {
     std::fs::write(path, body).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -112,6 +119,12 @@ impl Machine {
     /// `riff init ARGS` in the folder `dir`, as the riff of the machine:
     /// no `RIFF_HOME`.
     async fn init(&self, dir: &Path, args: &[&str]) -> Output {
+        let cmd = self.init_command(dir, args);
+        output(cmd).await
+    }
+
+    /// The command of [`Machine::init`].
+    fn init_command(&self, dir: &Path, args: &[&str]) -> std::process::Command {
         let mut cmd = self.env.riff();
         cmd.arg("init")
             .args(args)
@@ -124,9 +137,7 @@ impl Machine {
             .env("FAKE_RIFF", self.env.riff_path())
             .env("RIFF_ETC", &self.etc)
             .env("RIFF_CGROUP", &self.cgroup);
-        tokio::task::spawn_blocking(move || cmd.output().unwrap())
-            .await
-            .unwrap()
+        cmd
     }
 
     fn read(&self, name: &str) -> String {
@@ -343,7 +354,7 @@ async fn riff_init_check_changes_nothing() {
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
-    assert_eq!(stdout.matches("  pass  ").count(), 6, "{stdout}");
+    assert_eq!(stdout.matches("  pass  ").count(), 7, "{stdout}");
     assert!(
         stdout.ends_with("Each check passed. riff changed nothing: --check.\n"),
         "{stdout}"
@@ -351,6 +362,54 @@ async fn riff_init_check_changes_nothing() {
     assert_eq!(machine.read("systemctl.log"), "");
     assert_eq!(machine.read("podman.log"), "podman --version\n");
     assert!(!machine.unit().exists());
+}
+
+/// 01M510NW68CTZBHHW7ZYFV7Q3X: the riff of a plain `cargo build` links
+/// the libc of the machine. `riff init` gives one failed check for it,
+/// with the fix `riff update`, and installs nothing. The test
+/// environment takes such a riff, so this test removes `RIFF_DYNAMIC`.
+#[cfg(target_env = "gnu")]
+#[tokio::test]
+async fn riff_init_with_the_riff_of_a_plain_cargo_build_fails_one_check() {
+    let machine = Machine::new();
+    let rules = machine.user_rules();
+    machine.write_settings(
+        &serde_json::json!({ "permissions": { "allow": rules.allow } }).to_string(),
+    );
+    let riff = std::fs::canonicalize(machine.env.riff_path()).unwrap();
+    for args in [&["--check"][..], &[]] {
+        let mut cmd = machine.init_command(&machine.repo, args);
+        cmd.env_remove("RIFF_DYNAMIC");
+        let out = output(cmd).await;
+        let stdout = text(&out.stdout);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {stdout}");
+        let failed: Vec<&str> = stdout
+            .lines()
+            .filter(|l| l.starts_with("  fail  "))
+            .collect();
+        assert_eq!(failed.len(), 1, "{args:?}: {stdout}");
+        let start = format!(
+            "  fail  the riff binary: {}: it needs the shared libraries of /",
+            riff.display()
+        );
+        assert!(
+            failed[0].starts_with(&start),
+            "{start}
+{}",
+            failed[0]
+        );
+        assert!(
+            failed[0].ends_with(
+                ": it is not static. Fix: run riff update. It installs the static riff and \
+                 riff-server of the release, so riff relay starts in each session image"
+            ),
+            "{}",
+            failed[0]
+        );
+        assert!(stdout.contains("\n1 check failed. "), "{stdout}");
+        assert_eq!(machine.read("systemctl.log"), "", "{args:?}");
+        assert!(!machine.unit().exists(), "{args:?}");
+    }
 }
 
 /// 01M5084K09Z2S7N57315CX2R0F: `riff init --check` names each missing

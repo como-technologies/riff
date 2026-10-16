@@ -94,6 +94,14 @@
 //! The relay gives `claude` each input, and sends the daemon each event
 //! ([`crate::session_relay`]).
 //!
+//! A session image can have an older libc than the host. So before each
+//! start, the daemon reads the ELF of that binary ([`Daemon::check_relay`]).
+//! When it is not static, for example a riff of `cargo install`, the
+//! daemon starts no container, and the error names `riff update`
+//! (01M510NW8YEVMQKD6RWJPW38N3). It reads the file at each start: after
+//! `riff update`, the path holds the static riff, and the next start
+//! works with no restart of the daemon.
+//!
 //! # The protocol
 //!
 //! JSON, one message on each line (01M4ZDTVVV56X964S28GS6K2Z2). The
@@ -1162,6 +1170,9 @@ pub struct Daemon<R> {
     since_ms: i64,
     /// The binary that the daemon binds into each session.
     relay_bin: PathBuf,
+    /// True when [`crate::release::DYNAMIC`] lets the daemon bind a
+    /// binary that is not static: a test.
+    any_relay: bool,
     /// The quiet limit of each session ([`QUIET_LIMIT`]).
     quiet: Duration,
     live: Mutex<BTreeMap<String, Arc<Owned>>>,
@@ -1241,6 +1252,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             dir,
             since_ms: now_ms(),
             relay_bin: own_binary().unwrap_or_else(|_| PathBuf::from("riff")),
+            any_relay: crate::release::takes_dynamic(),
             quiet: quiet_limit(),
             live: Mutex::new(BTreeMap::new()),
             state,
@@ -1263,6 +1275,14 @@ impl<R: Runtime + 'static> Daemon<R> {
     #[must_use]
     pub fn with_memory(mut self, memory: crate::room::Memory) -> Self {
         self.room = Room::new(self.dir.clone(), memory);
+        self
+    }
+
+    /// The daemon that binds `riff` into each session in place of its
+    /// own binary, for a test.
+    #[must_use]
+    pub fn with_relay(mut self, riff: PathBuf) -> Self {
+        self.relay_bin = riff;
         self
     }
 
@@ -1546,6 +1566,18 @@ impl<R: Runtime + 'static> Daemon<R> {
         Ok(())
     }
 
+    /// Refuses to start a session when the binary that the daemon binds
+    /// at [`RELAY_BIN`] is not static (01M510NW8YEVMQKD6RWJPW38N3). It
+    /// reads the file each time, so a `riff update` needs no restart of
+    /// the daemon. [`crate::release::DYNAMIC`] takes each binary.
+    pub fn check_relay(&self) -> Result<()> {
+        if self.any_relay {
+            return Ok(());
+        }
+        crate::release::check_file(&self.relay_bin)
+            .map_err(|why| anyhow!("{}", text::daemon_relay_not_static(&self.relay_bin, &why)))
+    }
+
     /// Refuses a spec that would show the folder of the daemon to the
     /// session: a bind of the folder, of a folder above it, or of a path
     /// in it, or a bind at [`IN_SESSION`] or at [`RELAY_BIN`]
@@ -1733,7 +1765,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             terminal,
             takeover: false,
         };
-        if let Err(e) = self.check(&spec) {
+        if let Err(e) = self.check(&spec).and_then(|()| self.check_relay()) {
             out.say(Say::Failed {
                 error: format!("{e:#}"),
             });
@@ -2598,6 +2630,12 @@ mod tests {
         JoinHandle<Result<()>>,
     );
 
+    /// A static riff beside the folder `dir` of a daemon, for its
+    /// sessions: the riff of a test is not static.
+    fn static_riff(dir: &Path) -> PathBuf {
+        crate::release::fake_riff(&dir.with_file_name("static-riff"), None)
+    }
+
     /// The riff-server of the daemon is `world` when it is given, else
     /// the riff-server of this machine.
     async fn serve_in(
@@ -2610,7 +2648,8 @@ mod tests {
         let mut daemon = Daemon::open(fake.clone(), dir.to_owned())
             .await
             .unwrap()
-            .with_quiet(quiet);
+            .with_quiet(quiet)
+            .with_relay(static_riff(dir));
         if let Some(world) = world {
             daemon = daemon.with_world(world);
         }
@@ -2874,12 +2913,13 @@ mod tests {
             std::fs::read_to_string(&log).unwrap(),
             logged.join("\n") + "\n"
         );
-        // The relay is the entrypoint: the binary of the daemon, with no
-        // write, and the command of the spec after it.
+        // The relay is the entrypoint: the riff of the daemon, with no
+        // write, and the command of the spec after it. The riff of the
+        // test daemon is a static fake.
         let spec = here.fake.spec(&name).unwrap();
         assert_eq!(spec.command, ["/opt/riff/riff", "relay", "--", "claude"]);
         assert!(spec.binds.contains(&Bind {
-            source: Source::Path(own_binary().unwrap()),
+            source: Source::Path(static_riff(&here.dir)),
             target: RELAY_BIN.into(),
             write: false,
         }));
@@ -3278,6 +3318,54 @@ mod tests {
             ));
         }
         assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
+    }
+
+    /// 01M510NW8YEVMQKD6RWJPW38N3: the daemon starts no container with a
+    /// riff that is not static, and names `riff update`. After the
+    /// update, the next start works with no restart of the daemon.
+    #[tokio::test]
+    async fn the_daemon_starts_no_container_with_a_riff_that_is_not_static() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let riff = static_riff(&here.dir);
+        crate::release::fake_riff(&riff, Some("/lib64/ld-linux-x86-64.so.2"));
+        let mut client = Client::connect(&here.dir).await.unwrap();
+        let start = here.start("riff-issue-1-aaaaaaaa", "issue-1");
+        client.ask(Ask::Start(Box::new(start))).await.unwrap();
+        match client.next().await.unwrap() {
+            Some(Say::Failed { error }) => {
+                assert!(
+                    error.starts_with(&format!(
+                        "The riff daemon starts no session with {}: it needs the shared \
+                         libraries of /lib64/ld-linux-x86-64.so.2: it is not static.",
+                        riff.display()
+                    )),
+                    "{error}"
+                );
+                assert!(error.contains("Run riff update"), "{error}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
+        assert!(here.daemon.status().await.sessions.is_empty());
+
+        // riff update puts the static riff at the same path.
+        crate::release::fake_riff(&riff, None);
+        let (_client, name) = here
+            .started(here.start("riff-issue-1-aaaaaaaa", "issue-1"))
+            .await;
+        assert_eq!(name, "riff-issue-1-aaaaaaaa");
+
+        // A daemon binds its own binary: the test binary, which is not
+        // static with glibc.
+        let root = tempfile::tempdir().unwrap();
+        let own = Daemon::open(Fake::default(), dir_in(root.path()))
+            .await
+            .unwrap();
+        assert_eq!(own.relay_bin, own_binary().unwrap());
+        if cfg!(target_env = "gnu") && !crate::release::takes_dynamic() {
+            let error = own.check_relay().unwrap_err().to_string();
+            assert!(error.contains("Run riff update"), "{error}");
+        }
     }
 
     #[tokio::test]

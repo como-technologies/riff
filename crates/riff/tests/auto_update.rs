@@ -38,11 +38,11 @@ fn this_tag() -> String {
 }
 
 /// A real riff-server of this build, with no sign-in. Each reply names
-/// the build [`newer`].
-async fn newer_server() -> String {
+/// the build `build`.
+async fn server_of(build: Build) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let value = HeaderValue::from_str(&newer().to_string()).unwrap();
+    let value = HeaderValue::from_str(&build.to_string()).unwrap();
     let router =
         riff_server::router().layer(axum::middleware::map_response(move |mut r: Response| {
             r.headers_mut().insert(HEADER, value.clone());
@@ -111,34 +111,46 @@ struct Machine {
 }
 
 impl Machine {
-    /// A machine with a fake `cargo` that exits with `cargo_status`.
+    /// A machine with a fake `cargo` that exits with `cargo_status`, and
+    /// a riff of the release [`newer`].
     async fn new(cargo_status: u8) -> Machine {
+        Machine::of(cargo_status, newer()).await
+    }
+
+    /// A machine with a fake `cargo` that exits with `cargo_status`, and
+    /// a riff of the build `build`.
+    async fn of(cargo_status: u8, build: Build) -> Machine {
         let bin = tempfile::tempdir().unwrap();
         fake_command(bin.path(), "cargo", "", cargo_status);
         fake_command(bin.path(), "riff", "Installed the riff plugin.", 0);
         fake_command(
             bin.path(),
             "riff-server",
-            &format!("riff-server {}", newer()),
+            &format!("riff-server {build}"),
             0,
         );
         Machine {
             env: Isolated::new(),
             bin,
             repo: repo(),
-            server: newer_server().await,
+            server: server_of(build).await,
         }
     }
 
     /// `riff ARGS` as the session `session` of mike on pangolin, with the
     /// fake commands first in `PATH`.
     fn riff(&self, session: &str, args: &[&str]) -> Command {
+        self.riff_at(&self.env.riff_path(), session, args)
+    }
+
+    /// [`Machine::riff`] with the riff binary at `riff`.
+    fn riff_at(&self, riff: &Path, session: &str, args: &[&str]) -> Command {
         let path = format!(
             "{}:{}",
             self.bin.path().display(),
             std::env::var("PATH").unwrap()
         );
-        let mut cmd = self.env.riff();
+        let mut cmd = self.env.command(riff);
         cmd.args(args)
             .current_dir(self.repo.path())
             .env("RIFF_SERVER", &self.server)
@@ -330,6 +342,91 @@ async fn a_failed_update_keeps_the_old_riff_and_tells_the_lead_once() {
     assert!(messages.contains(&words), "{messages}");
 }
 
+/// Puts the riff under test at `bin/riff`: a build of this release that
+/// links the libc of the machine, as `cargo install` gives.
+fn install_cargo_build(env: &Isolated, bin: &Path) -> PathBuf {
+    std::fs::create_dir_all(bin).unwrap();
+    let riff = bin.join("riff");
+    if std::fs::hard_link(env.riff_path(), &riff).is_err() {
+        std::fs::copy(env.riff_path(), &riff).unwrap();
+    }
+    riff
+}
+
+/// 01M510NWBNC20GXFRMHPW12TW9: an update with cargo of an older riff
+/// gave the bin folder of cargo a build of the release of the server
+/// that is not static. With `update.auto = true`, the riff of that
+/// folder puts the static riff and riff-server of its release in place
+/// once, and tells the lead. cargo does not run. The build of a clone,
+/// which runs from another folder, starts nothing.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn the_riff_of_the_bin_folder_puts_the_static_files_of_its_release_in_place() {
+    use crate::lifecycle::{fake_binary, put_release};
+
+    let machine = Machine::of(0, Build::this()).await;
+    assert!(machine.run("lead", &["lead"]).await.status.success());
+    machine.run("w", &["update", "--auto", "on"]).await;
+    let root = tempfile::tempdir().unwrap();
+    let bin = root.path().join("bin");
+    let riff = install_cargo_build(&machine.env, &bin);
+    let glibc = Some("/lib64/ld-linux-x86-64.so.2");
+    std::fs::write(bin.join("riff-server"), fake_binary("cargo", glibc)).unwrap();
+    let releases = tempfile::tempdir().unwrap();
+    let (new_riff, new_server) = (fake_binary("riff", None), fake_binary("riff-server", None));
+    put_release(
+        releases.path(),
+        &this_tag(),
+        &[("riff", &new_riff), ("riff-server", &new_server)],
+        None,
+    );
+    let with_files = |mut cmd: Command| {
+        cmd.env("CARGO_INSTALL_ROOT", root.path())
+            .env("RIFF_RELEASES", releases.path());
+        cmd
+    };
+
+    // The build of a clone starts nothing.
+    let out = output(with_files(machine.riff("w1", &["who"]))).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        !text(&out.stderr).contains("not static"),
+        "{}",
+        text(&out.stderr)
+    );
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(riff::local::tried(&machine.state()), None);
+
+    let out = output(with_files(machine.riff_at(&riff, "w2", &["who"]))).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let note = riff::text::auto_update_static_started(&this_tag());
+    assert!(text(&out.stderr).contains(&note), "{}", text(&out.stderr));
+    let words = riff::text::auto_updated_static("pangolin", &this_tag());
+    let done = wait_for(Duration::from_secs(20), async || {
+        machine.lead_messages("lead").await.contains(&words)
+    })
+    .await;
+    let update_log = std::fs::read_to_string(riff::local::update_log(&machine.state()));
+    assert!(done, "no message to the lead. update.log: {update_log:?}");
+
+    assert_eq!(std::fs::read(bin.join("riff")).unwrap(), new_riff);
+    assert_eq!(std::fs::read(bin.join("riff-server")).unwrap(), new_server);
+    assert_eq!(log(machine.bin.path(), "cargo"), "");
+    assert_eq!(
+        log(machine.bin.path(), "riff"),
+        "connect claude --claude claude\n"
+    );
+    assert_eq!(
+        riff::local::tried(&machine.state()),
+        Some(format!("{} static", this_tag()))
+    );
+    // One try, and one message.
+    assert!(machine.run("w3", &["who"]).await.status.success());
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let messages = machine.lead_messages("lead").await;
+    assert_eq!(messages.matches(&words).count(), 1, "{messages}");
+}
+
 /// "Update riff by itself" in the book shows the real commands and
 /// texts, and `riff update --help` has the flag.
 #[test]
@@ -345,6 +442,7 @@ fn the_book_shows_how_to_update_riff_by_itself() {
     let part = &rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)];
     let note = format!("riff: {}", riff::text::auto_update_started("v0.4.0"));
     let told = riff::text::auto_updated("pangolin", "v0.3.0", "v0.4.0");
+    let fixed = riff::text::auto_updated_static("pangolin", "v1.4.1");
     for text in [
         "```sh\nriff update --auto on\n```",
         "```sh\nriff update --auto off\n```",
@@ -352,6 +450,7 @@ fn the_book_shows_how_to_update_riff_by_itself() {
         "`update.auto`",
         note.as_str(),
         told.as_str(),
+        fixed.as_str(),
         "update.log",
     ] {
         assert!(part.contains(text), "{text:?} is not in the how-to");

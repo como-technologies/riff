@@ -3896,6 +3896,41 @@ pub fn auto_updated(host: &str, old: &str, new: &str) -> String {
     format!("riff on {host} updated itself from {old} to {new}.")
 }
 
+/// The note of a `riff` process that starts the update by itself of
+/// its own release, because the riff of the bin folder of cargo is not
+/// static (01M510NWBNC20GXFRMHPW12TW9).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::auto_update_static_started("v1.4.1"),
+///     "This riff is a build of v1.4.1 that is not static. riff installs the static riff and \
+///      riff-server of v1.4.1 now, in the background (update.auto)."
+/// );
+/// ```
+pub fn auto_update_static_started(tag: &str) -> String {
+    format!(
+        "This riff is a build of {tag} that is not static. riff installs the static riff and \
+         riff-server of {tag} now, in the background (update.auto)."
+    )
+}
+
+/// The message to the lead after the update by itself put the static
+/// files of the release `tag` in place (01M510NWBNC20GXFRMHPW12TW9).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::auto_updated_static("pangolin", "v1.4.1"),
+///     "riff on pangolin put the static riff and riff-server of v1.4.1 in place of a build \
+///      that is not static."
+/// );
+/// ```
+pub fn auto_updated_static(host: &str, tag: &str) -> String {
+    format!(
+        "riff on {host} put the static riff and riff-server of {tag} in place of a build that is \
+         not static."
+    )
+}
+
 /// The message to the lead after a failed update of riff by itself
 /// (01M3N7JJKBME6VSNTHD8VPN3K9). `tried` is true when the failure is
 /// about the release, so riff waits for the next release
@@ -5061,6 +5096,27 @@ pub fn daemon_bind_shows(source: &Path) -> String {
     )
 }
 
+/// The riff that the daemon binds into each session is not static, so
+/// the daemon starts no session (01M510NW8YEVMQKD6RWJPW38N3). `why` is
+/// the error of [`crate::release::check_file`].
+///
+/// ```
+/// let text = riff::text::daemon_relay_not_static(
+///     "/home/mike/.cargo/bin/riff".as_ref(),
+///     "it needs the shared libraries of /lib64/ld-linux-x86-64.so.2: it is not static",
+/// );
+/// assert!(text.starts_with("The riff daemon starts no session with /home/mike/.cargo/bin/riff: it needs"));
+/// assert!(text.ends_with("Run riff update: it installs the static riff and riff-server of the release."));
+/// ```
+pub fn daemon_relay_not_static(riff: &Path, why: &str) -> String {
+    format!(
+        "The riff daemon starts no session with {}: {why}. A session image can have an older \
+         libc, so riff relay must be static. Run riff update: it installs the static riff and \
+         riff-server of the release.",
+        riff.display()
+    )
+}
+
 /// An ask to follow a session that the daemon does not own.
 pub fn daemon_no_session(name: &str) -> String {
     format!("The riff daemon owns no session in the container {name}.")
@@ -5444,6 +5500,33 @@ pub const INIT_FIX_DELEGATE: &str = "let systemd give them to your user: sudo mk
 /// The fix when the repository pins no session image.
 pub const INIT_FIX_IMAGE: &str = "run riff init in a clone of a repository whose riff.toml pins \
      the session image. See \"Change the session image\" in the book";
+
+/// The name of the check of the riff binary (01M510NW68CTZBHHW7ZYFV7Q3X).
+pub const INIT_RIFF: &str = "the riff binary";
+
+/// The riff binary at `path` is static.
+pub fn init_riff_static(path: &Path) -> String {
+    format!("{} is static", path.display())
+}
+
+/// The riff binary at `path` is not static, and
+/// [`crate::release::DYNAMIC`] takes it: a test.
+pub fn init_riff_taken(path: &Path) -> String {
+    format!(
+        "{} is not static, and {}=1 takes it",
+        path.display(),
+        crate::release::DYNAMIC
+    )
+}
+
+/// The riff binary at `path` is not static: `why`.
+pub fn init_riff_not_static(path: &Path, why: &str) -> String {
+    format!("{}: {why}", path.display())
+}
+
+/// The fix of a riff binary that is not static.
+pub const INIT_FIX_RIFF: &str = "run riff update. It installs the static riff and riff-server of \
+     the release, so riff relay starts in each session image";
 
 /// The name of the check of the permission rules in the user settings
 /// of Claude Code (01M5084K09Z2S7N57315CX2R0F).
