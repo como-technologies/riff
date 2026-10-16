@@ -65,7 +65,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use riff_core::name::{SessionUri, ThreadName, Who};
+use riff_core::name::{Place, SessionUri, ThreadName, Who};
 use riff_core::record::By;
 use riff_core::selector::Selector;
 use riff_core::wire::{
@@ -77,7 +77,7 @@ use tokio::sync::Notify;
 use crate::api::{Checked as Shown, Inbox, PauseScope, Told};
 use crate::daemon_key::{Key, Public};
 use crate::peer::body::{Body, Lead, Message, Plan, Session as SessionBody};
-use crate::peer::keep::{Outcome, Peers};
+use crate::peer::keep::{Fork, Outcome, Peers};
 use crate::peer::record::Id;
 use crate::peer::state::{Applied, Kept, Mark, Run, State};
 use crate::talk::Talk;
@@ -193,15 +193,75 @@ impl Hub {
         Ok((id, applied))
     }
 
-    /// Takes a record of another daemon ([`Peers::keep`]), and wakes the
-    /// sessions that a new message selects.
-    pub fn keep(&self, bytes: Vec<u8>) -> Result<Outcome> {
-        let outcome = lock(&self.peers).keep(bytes)?;
+    /// Reads the records of the daemon with `read`: for example its heads,
+    /// or the records that another daemon lacks ([`Peers::lacks`]).
+    pub fn with_peers<T>(&self, read: impl FnOnce(&Peers) -> T) -> T {
+        read(&lock(&self.peers))
+    }
+
+    /// Takes a record that the daemon `from` sent ([`Peers::keep`]), and
+    /// wakes the sessions that a new message selects. On a new fork, it
+    /// posts a note to the lead of the user of the daemon
+    /// ([`Hub::tell_fork`]).
+    pub fn keep(&self, bytes: Vec<u8>, from: Option<Public>) -> Result<Outcome> {
+        let outcome = lock(&self.peers).keep(bytes, from)?;
         match &outcome {
             Outcome::Kept(applied) => self.wake(applied),
-            Outcome::Duplicate | Outcome::Later(_) | Outcome::Refused(_) => {}
+            Outcome::Fork(fork) => self.tell_fork(fork)?,
+            Outcome::Duplicate | Outcome::Forked | Outcome::Later(_) | Outcome::Refused(_) => {}
         }
         Ok(outcome)
+    }
+
+    /// Posts a note on the fork `fork` to the lead of the user of the
+    /// daemon (01M519Z38G3RAZPKGFA3R2CB3P, 01M51ZA02XQ31PWNBSD46MTKA6): one
+    /// note in each repository where that user has a lead. The note comes
+    /// from the daemon: the user of its key, on this host, with no
+    /// session.
+    pub fn tell_fork(&self, fork: &Fork) -> Result<()> {
+        let author = fork.first.author();
+        let notes = self.read(|state| {
+            let Some(user) = state.user_of(&self.public()) else {
+                return Ok(Vec::new());
+            };
+            let from = SessionUri::new(
+                Who::new(user, None)?,
+                Place::host_only(&crate::identity::this_host())?,
+            );
+            let (of, host) = (
+                state.user_of(&author),
+                state.members().get(&author).map(|m| m.host.as_str()),
+            );
+            let body = text::peer_fork(&author.to_string(), of, host, fork.first.seq());
+            let leads: BTreeSet<ThreadName> = state
+                .runs()
+                .filter_map(Run::thread)
+                .filter(|thread| state.lead(user, thread).is_some())
+                .collect();
+            Ok::<_, anyhow::Error>(
+                leads
+                    .into_iter()
+                    .map(|thread| {
+                        Body::Message(Box::new(Message {
+                            from: from.clone(),
+                            to: vec![Selector {
+                                user: Some(user.to_owned()),
+                                repo: Some(thread.to_string()),
+                                lead: Some(true),
+                                ..Selector::default()
+                            }],
+                            thread,
+                            kind: Kind::Note,
+                            body: body.clone(),
+                        }))
+                    })
+                    .collect::<Vec<Body>>(),
+            )
+        })?;
+        for note in notes {
+            self.write(&note)?;
+        }
+        Ok(())
     }
 
     /// Writes the `session` record of the start of the session `me` of
@@ -1241,6 +1301,86 @@ mod tests {
         let read = bodies(&s.inbox(&a, None, false, None).unwrap());
         assert_eq!(read, ["a note", "a second word", request]);
         assert_eq!(unread(&s), [(dm, 0), (repo, 0)]);
+    }
+
+    /// 01M519Z38G3RAZPKGFA3R2CB3P: a fork of a member. The daemon keeps
+    /// the first record, and no next record of that key. It keeps both
+    /// records as the proof, also after a new open, and posts a note to
+    /// the lead of its user in the repository of that lead.
+    #[test]
+    fn a_fork_keeps_the_first_record_and_the_proof_and_tells_the_lead() {
+        use crate::peer::body::Member;
+        use crate::peer::record::Record;
+
+        let dir = tempfile::tempdir().unwrap();
+        let hub = hub(dir.path(), &[]);
+        hub.start(&uri("lead", "o/r"), false, true, Vec::new())
+            .unwrap();
+        let brett = Key::from_bytes(&[2; 32]);
+        let admit = Body::Member(Member {
+            key: brett.public(),
+            user: "brett".into(),
+            host: "kadomony".into(),
+        });
+        hub.write(&admit).unwrap();
+        let riff = hub.public();
+        let thread: ThreadName = "o/r".parse().unwrap();
+        let message = |text: &str| {
+            Body::Message(Box::new(Message {
+                from: "riff://brett@kadomony/o/r?session=b1".parse().unwrap(),
+                thread: thread.clone(),
+                to: vec![],
+                kind: Kind::Message,
+                body: text.into(),
+            }))
+        };
+        let first = Record::sign(&brett, riff, 1, Id::ZERO, 1, &message("first")).unwrap();
+        let other = Record::sign(&brett, riff, 1, Id::ZERO, 2, &message("other")).unwrap();
+        let next = Record::sign(&brett, riff, 2, first.id(), 3, &message("next")).unwrap();
+
+        let kept = hub.keep(first.bytes().to_vec(), None).unwrap();
+        assert!(matches!(kept, Outcome::Kept(_)), "{kept:?}");
+        let Outcome::Fork(fork) = hub.keep(other.bytes().to_vec(), None).unwrap() else {
+            panic!("no fork");
+        };
+        assert_eq!((&fork.first, &fork.second), (&first, &other));
+        let next = hub.keep(next.bytes().to_vec(), None).unwrap();
+        assert_eq!(next, Outcome::Forked);
+        assert_eq!(
+            hub.read(|state| state.heads()[&brett.public()].0),
+            1,
+            "no next record of the forked key"
+        );
+
+        let kept: Vec<(String, Kind, Vec<Selector>)> = hub.read(|state| {
+            state
+                .messages(&thread)
+                .iter()
+                .map(|k| (k.message.body.clone(), k.message.kind, k.message.to.clone()))
+                .collect()
+        });
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        assert_eq!(kept[0].0, "first");
+        let (note, kind, to) = &kept[1];
+        assert_eq!(*kind, Kind::Note);
+        let lead = Selector {
+            user: Some("mike".into()),
+            repo: Some("o/r".into()),
+            lead: Some(true),
+            ..Selector::default()
+        };
+        assert_eq!(to, &[lead]);
+        let key = brett.public().to_string();
+        assert!(note.starts_with(&format!(
+            "The riff daemon found a fork of the key {} (brett on kadomony): two records with \
+             the sequence number 1.",
+            &key[..8]
+        )));
+
+        drop(hub);
+        let peers = Peers::open(dir.path(), riff, |_| {}).unwrap();
+        assert_eq!(peers.forks()[&brett.public()], fork);
+        assert_eq!(peers.state().heads()[&brett.public()].0, 1);
     }
 
     /// R49: a watch wakes a session one time, for the newest message that

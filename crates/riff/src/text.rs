@@ -6134,6 +6134,200 @@ pub fn daemon_bad_record(fault: &str) -> String {
     format!("The riff daemon does not apply a record of its book: it fails the check of {fault}.")
 }
 
+/// The daemon cannot bind its iroh endpoint: it has no peer links.
+pub const PEER_NO_ENDPOINT: &str = "the riff daemon cannot bind its iroh endpoint";
+
+/// A key of the riff that is not a key of an iroh endpoint.
+pub const PEER_NO_ENDPOINT_ID: &str = "the key is not a key of an iroh endpoint";
+
+/// The stream of a peer link ended.
+pub const PEER_STREAM_ENDED: &str = "the stream of the link ended";
+
+/// The start of a key, for a line for a person: its first 8 characters.
+fn short_key(key: &str) -> &str {
+    key.get(..8).unwrap_or(key)
+}
+
+/// A daemon in a line of the sync: the start of its key, and its user and
+/// its host when the records name them.
+///
+/// ```
+/// use riff::text::peer_who;
+///
+/// assert_eq!(peer_who("8a88e3dd7409f1", Some("brett"), Some("kadomony")), "8a88e3dd (brett on kadomony)");
+/// assert_eq!(peer_who("8a88e3dd7409f1", Some("mike"), None), "8a88e3dd (mike)");
+/// assert_eq!(peer_who("8a88e3dd7409f1", None, None), "8a88e3dd");
+/// ```
+pub fn peer_who(key: &str, user: Option<&str>, host: Option<&str>) -> String {
+    let key = short_key(key);
+    match (user, host) {
+        (Some(user), Some(host)) => format!("{key} ({user} on {host})"),
+        (Some(user), None) => format!("{key} ({user})"),
+        (None, _) => key.to_owned(),
+    }
+}
+
+/// A try to connect that took longer than `limit`.
+pub fn peer_no_connect_in(limit: std::time::Duration) -> String {
+    format!("no connect in {} s", limit.as_secs())
+}
+
+/// A connection with no stream of the other daemon in `limit`.
+pub fn peer_no_stream_in(limit: std::time::Duration) -> String {
+    format!("no stream in {} s", limit.as_secs())
+}
+
+/// The other daemon closed the link with the code `code` and the reason
+/// `reason`.
+pub fn peer_closed_by_the_other(code: u64, reason: &str) -> String {
+    format!("the other daemon closed it: {} (code {code})", safe(reason))
+}
+
+/// A connection of a key that is not the owner or a member
+/// (01M519Z2WAGQEX1H4EGZXWBZT6).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::peer_not_member("8a88e3dd7409f1"),
+///     "The riff daemon closed a connection of the key 8a88e3dd7409f1: it is not the owner or a \
+///      member of its riff."
+/// );
+/// ```
+pub fn peer_not_member(key: &str) -> String {
+    format!(
+        "The riff daemon closed a connection of the key {key}: it is not the owner or a member of \
+         its riff."
+    )
+}
+
+/// A peer link started.
+pub fn peer_link_up(who: &str) -> String {
+    format!("The riff daemon has a peer link to {who}.")
+}
+
+/// A peer link ended, and why.
+pub fn peer_link_down(who: &str, why: &str) -> String {
+    format!("The peer link of the riff daemon to {who} ended: {why}.")
+}
+
+/// The other daemon sent a frame that the daemon cannot read.
+pub fn peer_bad_frame(who: &str, bad: &str) -> String {
+    format!("The riff daemon closes the peer link to {who}: it cannot read {bad}.")
+}
+
+/// The daemon cannot keep a record of a peer link.
+pub fn peer_cannot_keep(error: &str) -> String {
+    format!("The riff daemon cannot keep a record, and closes the peer link: {error}")
+}
+
+/// A record of a peer link that fails a check: the author, the sequence
+/// number and the check, with no body (01M519Z363W5GV4MV5RDB6ECG0).
+///
+/// ```
+/// use riff::text::peer_refused;
+///
+/// assert_eq!(
+///     peer_refused("1b2c3d4e (mike on pangolin)", Some(("8a88e3dd7409f1".into(), 7)), "the signature"),
+///     "The riff daemon refused the record 7 of the author 8a88e3dd from 1b2c3d4e (mike on \
+///      pangolin): it fails the check of the signature. It closes the peer link."
+/// );
+/// assert_eq!(
+///     peer_refused("1b2c3d4e", None, "the size: a type 9 record of 3 bytes (the largest is 65536 bytes)"),
+///     "The riff daemon refused a record from 1b2c3d4e: it fails the check of the size: a type 9 \
+///      record of 3 bytes (the largest is 65536 bytes). It closes the peer link."
+/// );
+/// ```
+pub fn peer_refused(who: &str, named: Option<(String, u64)>, fault: &str) -> String {
+    let record = match named {
+        Some((author, seq)) => format!("the record {seq} of the author {}", short_key(&author)),
+        None => "a record".into(),
+    };
+    format!(
+        "The riff daemon refused {record} from {who}: it fails the check of {fault}. It closes \
+         the peer link."
+    )
+}
+
+/// A fork of the key `key` at the sequence number `seq`
+/// (01M519Z38G3RAZPKGFA3R2CB3P): the log line, and the note to the lead.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::peer_fork("8a88e3dd7409f1", Some("brett"), Some("kadomony"), 5),
+///     "The riff daemon found a fork of the key 8a88e3dd (brett on kadomony): two records with \
+///      the sequence number 5. It keeps the first one, and keeps no next record of that key. \
+///      The owner removes the key, and the person joins again with a new key."
+/// );
+/// ```
+pub fn peer_fork(key: &str, user: Option<&str>, host: Option<&str>, seq: u64) -> String {
+    format!(
+        "The riff daemon found a fork of the key {}: two records with the sequence number {seq}. \
+         It keeps the first one, and keeps no next record of that key. The owner removes the \
+         key, and the person joins again with a new key.",
+        peer_who(key, user, host)
+    )
+}
+
+/// The peer links of a daemon, for `riff daemon status`: `None` when the
+/// daemon has no iroh endpoint (01M51ZA0BDZNXBB7R5SB8CEGA9).
+///
+/// ```
+/// use riff::peer::sync::{LinkState, Shown};
+///
+/// let link = |key: &str, link| Shown { key: key.into(), user: Some("brett".into()), host: Some("kadomony".into()), link };
+/// let links = vec![
+///     link("8a88e3dd7409f1", LinkState::Up { since_ms: 0, direct: true }),
+///     link("1b2c3d4e5f6071", LinkState::Connects { tries: 3, next_ms: 308_000, why: "no connect in 5 s".into() }),
+///     link("4f5e6d7c8b9a01", LinkState::Waits),
+/// ];
+/// assert_eq!(
+///     riff::text::daemon_links(Some(&links), 300_000),
+///     "Its peer links:\n  8a88e3dd  brett on kadomony  up for 5m, direct\n  1b2c3d4e  brett on \
+///      kadomony  connects again in 8s, after 3 tries: no connect in 5 s\n  4f5e6d7c  brett on \
+///      kadomony  waits for that daemon to connect\n"
+/// );
+/// assert_eq!(riff::text::daemon_links(Some(&[]), 0), "Its peer links: none: its riff has no other daemon.\n");
+/// assert_eq!(riff::text::daemon_links(None, 0), "Its peer links: none: it has no iroh endpoint.\n");
+/// ```
+pub fn daemon_links(links: Option<&[crate::peer::sync::Shown]>, now_ms: i64) -> String {
+    use crate::peer::sync::LinkState;
+    let Some(links) = links else {
+        return "Its peer links: none: it has no iroh endpoint.\n".into();
+    };
+    if links.is_empty() {
+        return "Its peer links: none: its riff has no other daemon.\n".into();
+    }
+    let secs = |ms: i64| u64::try_from(ms / 1000).unwrap_or(0);
+    let mut out = String::from("Its peer links:\n");
+    for shown in links {
+        let who = match (&shown.user, &shown.host) {
+            (Some(user), Some(host)) => format!("{user} on {host}"),
+            (Some(user), None) => user.clone(),
+            (None, _) => "not a member yet".into(),
+        };
+        let state = match &shown.link {
+            LinkState::Up { since_ms, direct } => format!(
+                "up for {}, {}",
+                ago(secs(now_ms - since_ms)),
+                if *direct { "direct" } else { "on a relay" }
+            ),
+            LinkState::Connects { tries: 0, .. } => "connects now".into(),
+            LinkState::Connects {
+                tries,
+                next_ms,
+                why,
+            } => format!(
+                "connects again in {}, after {tries} tries: {}",
+                ago(secs(next_ms - now_ms)),
+                safe(why)
+            ),
+            LinkState::Waits => "waits for that daemon to connect".into(),
+        };
+        let _ = writeln!(out, "  {}  {who}  {state}", short_key(&shown.key));
+    }
+    out
+}
+
 /// The first start of a daemon made its key and a riff of its own
 /// (01M519Z2JMAKN0T6JZFBPSTKC8).
 ///
@@ -6221,6 +6415,7 @@ pub fn daemon_new_riff(
 ///     key: Some("0a1b".into()),
 ///     riff: Some("0a1b".into()),
 ///     owner: Some("mike".into()),
+///     links: Some(vec![]),
 ///     position: 3,
 ///     sessions: vec![],
 ///     limit: Some(Limit::default()),
@@ -6233,6 +6428,7 @@ pub fn daemon_new_riff(
 /// assert!(text.contains("Its key: 0a1b\n"));
 /// assert!(text.contains("Its riff: 0a1b, at position 3 of its log.\n"));
 /// assert!(text.contains("The owner of its riff: mike\n"));
+/// assert!(text.contains("Its peer links: none: its riff has no other daemon.\n"));
 /// assert!(text.contains("Sessions: none.\n"));
 /// status.sessions.push(Live {
 ///     name: "riff-issue-12-1a2b3c4d".into(),
@@ -6288,6 +6484,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     }
     if let Some(owner) = &status.owner {
         let _ = writeln!(out, "The owner of its riff: {owner}");
+    }
+    if status.riff.is_some() {
+        out.push_str(&daemon_links(status.links.as_deref(), now_ms));
     }
     if let Some(limit) = &status.limit {
         let _ = writeln!(out, "{}", daemon_limit(limit));
@@ -6867,6 +7066,7 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 ///     key: None,
 ///     riff: None,
 ///     owner: None,
+///     links: None,
 ///     position: 0,
 ///     sessions: vec![],
 ///     limit: None,

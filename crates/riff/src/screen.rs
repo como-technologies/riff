@@ -416,6 +416,7 @@ mod tests {
             key: None,
             riff: None,
             owner: None,
+            links: None,
             position: 0,
             sessions,
             limit: Some(crate::room::Limit::default()),

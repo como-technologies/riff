@@ -126,6 +126,14 @@
 //! them waits for no lock of `tokio`: a write of a record holds the lock
 //! of the records for one append and one sync of the file.
 //!
+//! With its riff, the daemon binds its iroh endpoint with its key, and
+//! runs its peer links ([`crate::peer::sync`], 01M519Z2QE6QYPJX8HVY17GR6Z):
+//! it sends its records to the other daemons of its riff, and keeps
+//! theirs. `riff daemon` takes the net of [`crate::peer::sync::NET_VAR`]
+//! ([`Daemon::with_net`]). A daemon with no net, or whose bind fails, runs
+//! its sessions with no peer links. At its stop, it closes its endpoint
+//! ([`Daemon::close_links`]). [`Status::links`] shows each link.
+//!
 //! # The relay
 //!
 //! The daemon binds its own binary at [`RELAY_BIN`] in each container,
@@ -341,7 +349,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -364,6 +372,7 @@ use crate::peer::body::Body;
 use crate::peer::keep::{Outcome, Peers};
 use crate::peer::record::Id;
 use crate::peer::state::{Applied, State as PeerState};
+use crate::peer::sync::{Links, Net};
 use crate::peer::talk::{Hub, Session as PeerTalk};
 use crate::room::{Limit, Room, Slot};
 use crate::run::{Scrub, user_line};
@@ -865,6 +874,10 @@ pub struct Status {
     /// The user of the owner of the riff of the daemon.
     #[serde(default)]
     pub owner: Option<String>,
+    /// The state of each peer link of the daemon: `None` while it has no
+    /// iroh endpoint ([`crate::peer::sync::Links::shown`]).
+    #[serde(default)]
+    pub links: Option<Vec<crate::peer::sync::Shown>>,
     /// The position of the last record of the log of the daemon.
     #[serde(default)]
     pub position: u64,
@@ -956,7 +969,7 @@ pub enum Say {
     /// The session ended.
     Ended(Ended),
     /// The state of the daemon.
-    Status(Status),
+    Status(Box<Status>),
     /// On the socket of a session: who that session is.
     Session {
         /// The riff session ID.
@@ -1450,6 +1463,12 @@ pub struct Daemon<R> {
     waves: Mutex<BTreeMap<String, Running>>,
     /// A session ended, or a job of a wave ended: the waves look again.
     changed: Notify,
+    /// The net of the peer links: `None` for no iroh endpoint
+    /// ([`Daemon::with_net`]).
+    net: Option<Net>,
+    /// The peer links of the daemon, from its riff on
+    /// ([`crate::peer::sync`]).
+    links: OnceLock<Arc<Links>>,
 }
 
 /// A wave that runs in the daemon.
@@ -1701,6 +1720,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             world: Arc::new(crate::wave::Live::default()),
             waves: Mutex::new(BTreeMap::new()),
             changed: Notify::new(),
+            net: None,
+            links: OnceLock::new(),
         })
     }
 
@@ -1765,13 +1786,29 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
         };
         let peers = open_peers(&state_dir, &key, &owner, &mut say)?;
+        // The endpoint has the key of the daemon (01M519Z2DSFGHNV5S88AYFK7PY).
+        let endpoint = match &self.net {
+            Some(net) => match Links::bind(&key, net).await {
+                Ok(endpoint) => Some(endpoint),
+                Err(e) => {
+                    eprintln!("{e:#}");
+                    None
+                }
+            },
+            None => None,
+        };
+        let hub = Arc::new(Hub::new(key, peers));
         self.riff
             .set(Riff {
                 owner,
                 state,
-                hub: Arc::new(Hub::new(key, peers)),
+                hub: hub.clone(),
             })
             .map_err(|_| anyhow!("the riff daemon has its riff already"))?;
+        if let Some(endpoint) = endpoint {
+            let links = Links::start(endpoint, hub, |line| println!("{line}"));
+            let _ = self.links.set(links);
+        }
         // A session that started while the daemon waited for its key gets
         // its record now.
         for record in self.records() {
@@ -1795,7 +1832,21 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// It fails while the daemon has no riff.
     pub fn keep(&self, bytes: Vec<u8>) -> Result<Outcome> {
         let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
-        riff.hub.keep(bytes)
+        riff.hub.keep(bytes, None)
+    }
+
+    /// The peer links of the daemon: `None` while it has no riff or no
+    /// iroh endpoint.
+    pub fn links(&self) -> Option<&Arc<Links>> {
+        self.links.get()
+    }
+
+    /// Closes the peer links and the iroh endpoint of the daemon, at its
+    /// stop.
+    pub async fn close_links(&self) {
+        if let Some(links) = self.links.get() {
+            links.close().await;
+        }
     }
 
     /// Reads the state of the riff of peers with `read`. `None` while the
@@ -1850,6 +1901,15 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// While the daemon has no riff, it waits for `line`.
     fn waits(&self, line: String) {
         *self.waits.lock().unwrap_or_else(PoisonError::into_inner) = line;
+    }
+
+    /// The daemon with peer links on the net `net`: it binds its iroh
+    /// endpoint when it has its riff ([`Daemon::open_riff`],
+    /// 01M519Z2QE6QYPJX8HVY17GR6Z).
+    #[must_use]
+    pub fn with_net(mut self, net: Net) -> Self {
+        self.net = Some(net);
+        self
     }
 
     /// The daemon with the quiet limit `quiet` in place of
@@ -1950,6 +2010,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 (Some(waits.clone()), None, None, None, 0)
             }
         };
+        let links = self.links.get().map(|links| links.shown());
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
@@ -1959,6 +2020,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             key,
             riff,
             owner,
+            links,
             position,
             sessions: self
                 .lock()
@@ -2150,7 +2212,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let (out, written) = writer(write);
         if let Some(first) = lines.next_line().await? {
             match hello(&first) {
-                Ok(Ask::Status) => out.say(Say::Status(self.status().await)),
+                Ok(Ask::Status) => out.say(Say::Status(Box::new(self.status().await))),
                 Ok(Ask::Image { image }) => self.image(&image, &out).await,
                 Ok(Ask::Start(start)) => self.start(*start, lines, &out).await,
                 Ok(Ask::Follow { name, after }) => self.follow(&name, after, lines, &out),
@@ -3112,7 +3174,7 @@ pub async fn status(dir: &Path) -> Result<Status> {
     let mut client = Client::connect(dir).await?;
     client.ask(Ask::Status).await?;
     match client.next().await? {
-        Some(Say::Status(status)) => Ok(status),
+        Some(Say::Status(status)) => Ok(*status),
         Some(Say::Failed { error }) => bail!("{error}"),
         _ => bail!("{}", text::DAEMON_GONE),
     }
@@ -3183,7 +3245,8 @@ pub async fn serve_here() -> Result<()> {
         let listener = listen(&dir).await?;
         let mut term = signal(SignalKind::terminate())?;
         let mut int = signal(SignalKind::interrupt())?;
-        let daemon = Arc::new(Daemon::new(crate::podman::Podman, dir.clone())?);
+        let daemon =
+            Arc::new(Daemon::new(crate::podman::Podman, dir.clone())?.with_net(Net::from_env()));
         // The sessions run while the daemon waits for its key
         // (01M51JW233MXB72MHHRAX4E4NF).
         let riff = daemon.clone();
@@ -3223,7 +3286,8 @@ pub async fn serve_here() -> Result<()> {
                 _ = int.recv() => {}
             }
         };
-        daemon.serve(listener, stop).await?;
+        daemon.clone().serve(listener, stop).await?;
+        daemon.close_links().await;
         let _ = std::fs::remove_file(socket(&dir));
         println!("{}", text::DAEMON_STOPS);
         Ok(())

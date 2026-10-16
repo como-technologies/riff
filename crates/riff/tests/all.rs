@@ -61,6 +61,7 @@ mod one_user;
 mod over_limit;
 mod owner;
 mod pause;
+mod peer_sync;
 mod plugin;
 mod pr;
 mod read_length;

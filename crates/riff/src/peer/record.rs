@@ -265,6 +265,14 @@ impl Record {
         self.array(self.bytes.len() - SIGNATURE)
     }
 
+    /// True when the signature checks with the key of the author: check 7.
+    /// A fork needs only this check after checks 1 to 4
+    /// (01M519Z38G3RAZPKGFA3R2CB3P).
+    pub fn signed_by_author(&self) -> bool {
+        let unsigned = &self.bytes[..self.bytes.len() - SIGNATURE];
+        self.author().verifies(&signed(unsigned), &self.signature())
+    }
+
     /// The `N` bytes at `at`.
     fn array<const N: usize>(&self, at: usize) -> [u8; N] {
         // Each record has HEADER and SIGNATURE bytes or more.
@@ -283,6 +291,32 @@ impl fmt::Debug for Record {
             .field("id", &self.id())
             .finish_non_exhaustive()
     }
+}
+
+/// The key of the author and the sequence number in the bytes `bytes`
+/// of a record, with no check. `None` when the bytes are shorter than a
+/// header and a signature. A log line names them for a record that
+/// fails a check (01M519Z363W5GV4MV5RDB6ECG0).
+///
+/// ```
+/// use riff::daemon_key::Key;
+/// use riff::peer::body::{Body, Riff};
+/// use riff::peer::record::{Id, Record, author_and_seq};
+///
+/// let key = Key::from_bytes(&[1; 32]);
+/// let body = Body::Riff(Riff { user: "mike".into() });
+/// let record = Record::sign(&key, key.public(), 1, Id::ZERO, 1, &body)?;
+/// assert_eq!(author_and_seq(record.bytes()), Some((key.public(), 1)));
+/// assert_eq!(author_and_seq(&[1, 1]), None);
+/// # Ok::<(), riff::peer::record::Fault>(())
+/// ```
+pub fn author_and_seq(bytes: &[u8]) -> Option<(Public, u64)> {
+    if bytes.len() < HEADER + SIGNATURE {
+        return None;
+    }
+    let author = Public::from_bytes(bytes[34..66].try_into().expect("32 bytes"));
+    let seq = u64::from_be_bytes(bytes[66..74].try_into().expect("8 bytes"));
+    Some((author, seq))
 }
 
 /// The message that the author signs: [`TAG`] and `unsigned`, each byte
@@ -443,8 +477,7 @@ pub fn check(bytes: Vec<u8>, context: &impl Context) -> Result<Checked, Fault> {
         return Err(Fault::Before);
     }
     // 7: the signature.
-    let unsigned = &record.bytes[..size - SIGNATURE];
-    if !author.verifies(&signed(unsigned), &record.signature()) {
+    if !record.signed_by_author() {
         return Err(Fault::Signature);
     }
     // 8: the JSON of its type.

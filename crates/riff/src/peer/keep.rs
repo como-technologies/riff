@@ -10,10 +10,12 @@
 //!   keeps it in the book, then applies it.
 //! - [`Peers::keep`] takes the bytes of a record of another daemon
 //!   ([`Outcome`]): it drops a record that it has already, with no
-//!   fault (01M51BFYQVCFEWCJZERBD4S5N5); it drops a record that can pass
-//!   later (01M519Z33N2MW43XY62NYC6RRH); it refuses a record that fails
-//!   a check (01M519Z363W5GV4MV5RDB6ECG0); else it keeps the record in
-//!   the book, then applies it.
+//!   fault (01M51BFYQVCFEWCJZERBD4S5N5); it drops a record of an author
+//!   that forked; it drops a record that can pass later
+//!   (01M519Z33N2MW43XY62NYC6RRH); it keeps the proof of a fork
+//!   (01M519Z38G3RAZPKGFA3R2CB3P); it refuses a record that fails a
+//!   check (01M519Z363W5GV4MV5RDB6ECG0); else it keeps the record in the
+//!   book, then applies it.
 //! - [`Peers::open`] reads the book, and checks and applies each record
 //!   in the order in which the daemon kept them.
 //!
@@ -21,21 +23,92 @@
 //! flowchart LR
 //!     B["the bytes"] --> D{"a record that it has?"}
 //!     D -->|yes| Dup["Duplicate: no fault"]
-//!     D -->|no| C{"check"}
+//!     D -->|no| F{"an author that forked?"}
+//!     F -->|yes| Fd["Forked: no fault"]
+//!     F -->|no| C{"check"}
 //!     C -->|"a later sequence number, an author not admitted yet"| L["Later: no fault"]
+//!     C -->|"an old sequence number, another ID, a good signature"| P["Fork: keep the proof"]
 //!     C -->|"another fault"| R["Refused"]
 //!     C -->|"each check passes"| K["the book, then the state"]
 //! ```
+//!
+//! # The records for the peer links
+//!
+//! The peer links of the daemon ([`crate::peer::sync`]) send each record
+//! to the daemons that lack it. So [`Peers`] also keeps each record of
+//! each author in memory, in sequence order: its chain.
+//!
+//! - [`Peers::heads`] gives, for each author, the last sequence number
+//!   and the ID of that record (01M519Z2YSXADT45A1R0N70WRQ,
+//!   01M51Z9ZT69AQ0V2PX8T439NA5).
+//! - [`Peers::lacks`] gives the records that a daemon with other heads
+//!   lacks, in this order: the proof of each fork
+//!   (01M51ZA001C8MZM4BTBYTXRJ8M); the record of this daemon at each head
+//!   of the other daemon that has another ID, a fork that the other daemon
+//!   does not see yet (01M51Z9ZT69AQ0V2PX8T439NA5); the records of the
+//!   owner; the records of each other author. The records of one author
+//!   come in sequence order.
+//! - [`Peers::subscribe`] gives each [`Fresh`] record: each record that
+//!   the daemon keeps, with the daemon that sent it, in the order in
+//!   which it keeps them, and the proof of each new fork.
+//!
+//! # A fork
+//!
+//! A fork is two records of one author with the same sequence number,
+//! each with a good signature (01M519Z38G3RAZPKGFA3R2CB3P). [`Peers`]
+//! keeps the first one in its book, and both in the file [`FORKS`]: the
+//! proof. It keeps no next record of that author. A new open reads the
+//! proofs again.
+//!
+//! ```
+//! use riff::daemon_key::Key;
+//! use riff::peer::body::{Body, Riff};
+//! use riff::peer::keep::{Outcome, Peers};
+//! use riff::peer::record::{Id, Record};
+//!
+//! let dir = tempfile::tempdir()?;
+//! let owner = Key::from_bytes(&[1; 32]);
+//! let riff = owner.public();
+//! let mut peers = Peers::open(dir.path(), riff, |_| {})?;
+//! peers.write(&owner, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+//! // The owner signs another first record: a fork.
+//! let other = Body::Riff(Riff { user: "ann".into() });
+//! let second = Record::sign(&owner, riff, 1, Id::ZERO, 2, &other)?;
+//! let Outcome::Fork(fork) = peers.keep(second.bytes().to_vec(), None)? else {
+//!     panic!("no fork");
+//! };
+//! assert_eq!(fork.second, second);
+//! assert_eq!(peers.state().owner(), Some("mike"));
+//! drop(peers);
+//! let peers = Peers::open(dir.path(), riff, |_| {})?;
+//! assert_eq!(peers.forks()[&riff].second, second);
+//! # Ok::<(), anyhow::Error>(())
+//! ```
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Result;
+use tokio::sync::broadcast;
 
 use crate::daemon_key::{Key, Public};
 use crate::peer::body::Body;
 use crate::peer::book::Book;
-use crate::peer::record::{Checked, Context, Fault, Id, Record, check};
+use crate::peer::record::{Checked, Context, Fault, Id, Record, author_and_seq, check};
 use crate::peer::state::{Applied, State, later};
+
+/// The name of the file of the proofs of the forks in the folder
+/// `state`: the two records of each fork, one after the other.
+pub const FORKS: &str = "forks";
+
+/// The most fresh records that wait for one slow peer link. A link that
+/// falls more behind ends, and its next connect sends what it lacks
+/// ([`crate::peer::sync`]).
+pub const FRESH: usize = 4096;
+
+/// The heads of a daemon: for each author, the last sequence number and
+/// the ID of that record (01M519Z2YSXADT45A1R0N70WRQ).
+pub type Heads = BTreeMap<Public, (u64, Id)>;
 
 /// What [`Peers::keep`] did with a record of another daemon.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,10 +117,39 @@ pub enum Outcome {
     Kept(Applied),
     /// It has the record already: it dropped it, with no fault.
     Duplicate,
+    /// The author forked before: the daemon keeps no next record of it.
+    /// It dropped the record, with no fault.
+    Forked,
     /// The record can pass later: it dropped it, with no fault.
     Later(Fault),
+    /// The record and the record of the daemon with the same author and
+    /// sequence number are a fork. The daemon keeps the proof.
+    Fork(Fork),
     /// The record failed a check.
     Refused(Fault),
+}
+
+/// The proof of a fork (01M519Z38G3RAZPKGFA3R2CB3P): two records of one
+/// author with the same sequence number, each with a good signature.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fork {
+    /// The record that the daemon kept: it is in its book.
+    pub first: Record,
+    /// The other record.
+    pub second: Record,
+}
+
+/// A record for the peer links ([`Peers::subscribe`]).
+#[derive(Clone, Debug)]
+pub enum Fresh {
+    /// A record that the daemon kept. `from` is the daemon that sent it,
+    /// `None` for a record of this daemon.
+    Kept {
+        record: Record,
+        from: Option<Public>,
+    },
+    /// The proof of a new fork.
+    Fork(Fork),
 }
 
 /// The riff of peers of a daemon: its state and its book.
@@ -55,17 +157,47 @@ pub enum Outcome {
 pub struct Peers {
     state: State,
     book: Book,
+    /// Each record that the daemon keeps, by author, in sequence order:
+    /// the record N of an author is at N - 1.
+    chains: BTreeMap<Public, Vec<Record>>,
+    /// The file of the proofs of the forks.
+    proofs: Book,
+    /// The proof of each author that forked.
+    forks: BTreeMap<Public, Fork>,
+    fresh: broadcast::Sender<Fresh>,
 }
 
 impl Peers {
     /// Opens the book in the folder `dir`, and applies each record in it
     /// to a state of the riff `riff`. It gives `say` one line for each
     /// record that fails a check: the book of a daemon holds only
-    /// records that passed.
+    /// records that passed. It reads the proofs of the forks in [`FORKS`]
+    /// too.
     pub fn open(dir: &Path, riff: Public, mut say: impl FnMut(String)) -> Result<Peers> {
         let (book, kept) = Book::open(dir)?;
-        let state = replay(riff, kept, &mut say);
-        let mut peers = Peers { state, book };
+        let (proofs, pairs) = Book::open_file(dir, FORKS)?;
+        let (state, chains) = replay(riff, kept, &mut say);
+        let mut forks = BTreeMap::new();
+        // A crash between the two records of a proof leaves one: it
+        // proves nothing.
+        for pair in pairs.chunks_exact(2) {
+            let (Some(first), Some(second)) =
+                (Record::kept(pair[0].clone()), Record::kept(pair[1].clone()))
+            else {
+                continue;
+            };
+            forks
+                .entry(first.author())
+                .or_insert(Fork { first, second });
+        }
+        let mut peers = Peers {
+            state,
+            book,
+            chains,
+            proofs,
+            forks,
+            fresh: broadcast::channel(FRESH).0,
+        };
         // A crash after the append of a `removed` record and before the
         // drop leaves the later records of its key in the book.
         let removed: Vec<(Public, u64)> = peers
@@ -86,6 +218,53 @@ impl Peers {
         &self.state
     }
 
+    /// The proof of each author that forked.
+    pub fn forks(&self) -> &BTreeMap<Public, Fork> {
+        &self.forks
+    }
+
+    /// Each [`Fresh`] record from now on, in the order in which the
+    /// daemon keeps them.
+    pub fn subscribe(&self) -> broadcast::Receiver<Fresh> {
+        self.fresh.subscribe()
+    }
+
+    /// The heads of the daemon.
+    pub fn heads(&self) -> Heads {
+        self.state.heads().clone()
+    }
+
+    /// The records that a daemon with the heads `theirs` lacks, in the
+    /// order to send them. See "The records for the peer links".
+    pub fn lacks(&self, theirs: &Heads) -> Vec<Record> {
+        let mut first = Vec::new();
+        for fork in self.forks.values() {
+            first.extend([fork.first.clone(), fork.second.clone()]);
+        }
+        let (mut owner, mut rest) = (Vec::new(), Vec::new());
+        for (author, chain) in &self.chains {
+            let (seq, id) = theirs.get(author).copied().unwrap_or((0, Id::ZERO));
+            let had = usize::try_from(seq).unwrap_or(usize::MAX);
+            if let Some(mine) = had.checked_sub(1).and_then(|at| chain.get(at))
+                && mine.id() != id
+            {
+                // A fork that the other daemon does not see yet. It keeps
+                // no next record of the author after this one.
+                first.push(mine.clone());
+                continue;
+            }
+            let lacked = chain.iter().skip(had).cloned();
+            if *author == self.state.riff() {
+                owner.extend(lacked);
+            } else {
+                rest.extend(lacked);
+            }
+        }
+        first.extend(owner);
+        first.extend(rest);
+        first
+    }
+
     /// Writes a record of `key` with the body `body` and the time
     /// `time_ms`, and applies it.
     pub fn write(&mut self, key: &Key, body: &Body, time_ms: u64) -> Result<(Id, Applied)> {
@@ -93,30 +272,71 @@ impl Peers {
         let record = Record::sign(key, self.state.riff(), seq, before, time_ms, body)?;
         let checked = check(record.bytes().to_vec(), &self.state)?;
         let id = checked.record.id();
-        Ok((id, self.apply(&checked)?))
+        Ok((id, self.apply(&checked, None)?))
     }
 
-    /// Takes the bytes of a record of another daemon. See [`Outcome`].
-    pub fn keep(&mut self, bytes: Vec<u8>) -> Result<Outcome> {
+    /// Takes the bytes of a record that the daemon `from` sent, or `None`.
+    /// See [`Outcome`].
+    pub fn keep(&mut self, bytes: Vec<u8>, from: Option<Public>) -> Result<Outcome> {
         let id = Id(*blake3::hash(&bytes).as_bytes());
         if self.state.has(&id) {
             return Ok(Outcome::Duplicate);
         }
-        match check(bytes, &self.state) {
-            Ok(checked) => Ok(Outcome::Kept(self.apply(&checked)?)),
+        let author = author_and_seq(&bytes).map(|(author, _)| author);
+        if author.is_some_and(|author| self.forks.contains_key(&author)) {
+            return Ok(Outcome::Forked);
+        }
+        match check(bytes.clone(), &self.state) {
+            Ok(checked) => Ok(Outcome::Kept(self.apply(&checked, from)?)),
+            Err(fault @ Fault::Sequence { got, next }) if got < next => self.fork(bytes, fault),
             Err(fault) if later(&fault) => Ok(Outcome::Later(fault)),
             Err(fault) => Ok(Outcome::Refused(fault)),
         }
     }
 
+    /// The record `bytes` passed checks 1 to 4. It has an old sequence
+    /// number and another ID than the record of the daemon there. With a
+    /// good signature, the two are a fork: keep the proof. Else refuse
+    /// the record with `fault`.
+    fn fork(&mut self, bytes: Vec<u8>, fault: Fault) -> Result<Outcome> {
+        let Some(second) = Record::kept(bytes).filter(Record::signed_by_author) else {
+            return Ok(Outcome::Refused(fault));
+        };
+        let author = second.author();
+        let at = usize::try_from(second.seq()).unwrap_or(usize::MAX);
+        let Some(first) = at
+            .checked_sub(1)
+            .and_then(|at| self.chains.get(&author)?.get(at))
+            .cloned()
+        else {
+            return Ok(Outcome::Refused(fault));
+        };
+        self.proofs.append(first.bytes())?;
+        self.proofs.append(second.bytes())?;
+        let fork = Fork { first, second };
+        self.forks.insert(author, fork.clone());
+        let _ = self.fresh.send(Fresh::Fork(fork.clone()));
+        Ok(Outcome::Fork(fork))
+    }
+
     /// Keeps `checked` in the book, then applies it. A `removed` record
-    /// drops each record of its key after its last number.
-    fn apply(&mut self, checked: &Checked) -> Result<Applied> {
-        self.book.append(checked.record.bytes())?;
+    /// drops each record of its key after its last number. The peer
+    /// links get the record, with the daemon `from` that sent it.
+    fn apply(&mut self, checked: &Checked, from: Option<Public>) -> Result<Applied> {
+        let record = &checked.record;
+        self.book.append(record.bytes())?;
         let applied = self.state.keep(checked);
+        self.chains
+            .entry(record.author())
+            .or_default()
+            .push(record.clone());
         if let Body::Removed(removed) = &checked.body {
             self.drop_after(removed.key, removed.last)?;
         }
+        let _ = self.fresh.send(Fresh::Kept {
+            record: record.clone(),
+            from,
+        });
         Ok(applied)
     }
 
@@ -145,25 +365,33 @@ impl Peers {
             })
             .collect();
         self.book.rewrite(&records)?;
-        self.state = replay(self.state.riff(), records, &mut |_| {});
+        (self.state, self.chains) = replay(self.state.riff(), records, &mut |_| {});
         Ok(())
     }
 }
 
-/// The state of the riff `riff` from the records `kept`, in this order.
-/// It gives `say` one line for each record that fails a check: the book
-/// of a daemon holds only records that passed.
-fn replay(riff: Public, kept: Vec<Vec<u8>>, say: &mut impl FnMut(String)) -> State {
+/// The state of the riff `riff` from the records `kept`, in this order,
+/// and the chain of each author. It gives `say` one line for each record
+/// that fails a check: the book of a daemon holds only records that
+/// passed.
+fn replay(
+    riff: Public,
+    kept: Vec<Vec<u8>>,
+    say: &mut impl FnMut(String),
+) -> (State, BTreeMap<Public, Vec<Record>>) {
     let mut state = State::new(riff);
+    let mut chains: BTreeMap<Public, Vec<Record>> = BTreeMap::new();
     for bytes in kept {
         match check(bytes, &state) {
             Ok(checked) => {
                 state.keep(&checked);
+                let record = checked.record;
+                chains.entry(record.author()).or_default().push(record);
             }
             Err(fault) => say(crate::text::daemon_bad_record(&fault.to_string())),
         }
     }
-    state
+    (state, chains)
 }
 
 #[cfg(test)]
@@ -180,6 +408,95 @@ mod tests {
             kind: Default::default(),
             body: body.into(),
         }))
+    }
+
+    /// The `member` body of `key` with the user `user`.
+    fn admit(key: &Key, user: &str) -> Body {
+        Body::Member(Member {
+            key: key.public(),
+            user: user.into(),
+            host: "h".into(),
+        })
+    }
+
+    /// 01M519Z2YSXADT45A1R0N70WRQ: the records that another daemon lacks
+    /// come in this order: the proof of each fork, the record at a head
+    /// of the other daemon that has another ID, the records of the owner,
+    /// then the records of each other author. The records of one author
+    /// come in sequence order. A fresh record names the daemon that sent
+    /// it, and a new fork is fresh too.
+    #[test]
+    fn lacks_gives_the_proofs_then_the_owner_then_each_author_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let (owner, brett, ann) = (
+            Key::from_bytes(&[1; 32]),
+            Key::from_bytes(&[2; 32]),
+            Key::from_bytes(&[3; 32]),
+        );
+        let riff = owner.public();
+        let mut peers = Peers::open(dir.path(), riff, |_| {}).unwrap();
+        let mut fresh = peers.subscribe();
+        let riff_body = Body::Riff(Riff {
+            user: "mike".into(),
+        });
+        for body in [riff_body, admit(&brett, "brett"), admit(&ann, "ann")] {
+            peers.write(&owner, &body, 1).unwrap();
+        }
+        let b1 = Record::sign(&brett, riff, 1, Id::ZERO, 2, &message("brett", "b1")).unwrap();
+        let b2 = Record::sign(&brett, riff, 2, b1.id(), 3, &message("brett", "b2")).unwrap();
+        let a1 = Record::sign(&ann, riff, 1, Id::ZERO, 4, &message("ann", "a1")).unwrap();
+        for record in [&b1, &b2, &a1] {
+            let from = Some(record.author());
+            let outcome = peers.keep(record.bytes().to_vec(), from).unwrap();
+            assert!(matches!(outcome, Outcome::Kept(_)), "{outcome:?}");
+        }
+        let mut got = Vec::new();
+        while let Ok(Fresh::Kept { record, from }) = fresh.try_recv() {
+            got.push((record.seq(), record.author(), from));
+        }
+        assert_eq!(got.len(), 6);
+        assert_eq!(got[0], (1, riff, None));
+        assert_eq!(got[3], (1, brett.public(), Some(brett.public())));
+
+        let owner_chain: Vec<u64> = (1..=3).collect();
+        let lacks = |theirs: &Heads| -> Vec<(Public, u64)> {
+            peers
+                .lacks(theirs)
+                .iter()
+                .map(|record| (record.author(), record.seq()))
+                .collect()
+        };
+        let all = lacks(&Heads::new());
+        assert_eq!(all.len(), 6);
+        assert!(all[..3].iter().map(|(_, seq)| *seq).eq(owner_chain));
+        assert!(all[..3].iter().all(|(author, _)| *author == riff));
+        let (first, second) = if brett.public() < ann.public() {
+            (brett.public(), ann.public())
+        } else {
+            (ann.public(), brett.public())
+        };
+        assert_eq!(all[3].0, first);
+        assert_eq!(all[5].0, second);
+        if first == brett.public() {
+            assert_eq!(all[3..5], [(first, 1), (first, 2)]);
+        }
+
+        // A daemon with each record of the owner and of brett lacks a1.
+        let mut theirs = peers.heads();
+        theirs.remove(&ann.public());
+        assert_eq!(lacks(&theirs), [(ann.public(), 1)]);
+        // A daemon whose record 1 of brett has another ID gets the record
+        // 1 of this daemon, and no next record of brett.
+        theirs.insert(brett.public(), (1, Id([9; 32])));
+        assert_eq!(lacks(&theirs), [(brett.public(), 1), (ann.public(), 1)]);
+
+        // A fork of ann: its proof comes first, and it is fresh.
+        let other = Record::sign(&ann, riff, 1, Id::ZERO, 5, &message("ann", "x")).unwrap();
+        let outcome = peers.keep(other.bytes().to_vec(), None).unwrap();
+        assert!(matches!(outcome, Outcome::Fork(_)), "{outcome:?}");
+        assert!(matches!(fresh.try_recv(), Ok(Fresh::Fork(fork)) if fork.second == other));
+        let proof: Vec<Record> = peers.lacks(&peers.heads()).into_iter().collect();
+        assert_eq!(proof, [a1.clone(), other.clone()]);
     }
 
     /// The owner writes its riff and a member. A record of the member is
@@ -207,21 +524,21 @@ mod tests {
         let third =
             Record::sign(&member, riff, 3, Id([9; 32]), 5, &message("brett", "three")).unwrap();
         assert!(matches!(
-            peers.keep(first.bytes().to_vec()).unwrap(),
+            peers.keep(first.bytes().to_vec(), None).unwrap(),
             Outcome::Kept(Applied::Message { number: 1, .. })
         ));
         assert_eq!(
-            peers.keep(first.bytes().to_vec()).unwrap(),
+            peers.keep(first.bytes().to_vec(), None).unwrap(),
             Outcome::Duplicate
         );
         assert_eq!(
-            peers.keep(third.bytes().to_vec()).unwrap(),
+            peers.keep(third.bytes().to_vec(), None).unwrap(),
             Outcome::Later(Fault::Sequence { got: 3, next: 2 })
         );
         let stranger = Key::from_bytes(&[3; 32]);
         let unknown = Record::sign(&stranger, riff, 1, Id::ZERO, 6, &message("eve", "hi")).unwrap();
         assert_eq!(
-            peers.keep(unknown.bytes().to_vec()).unwrap(),
+            peers.keep(unknown.bytes().to_vec(), None).unwrap(),
             Outcome::Later(Fault::Author(Author::Unknown))
         );
         let mut bad = Record::sign(&member, riff, 2, first.id(), 7, &message("brett", "two"))
@@ -230,7 +547,10 @@ mod tests {
             .to_vec();
         let last = bad.len() - 1;
         bad[last] ^= 1;
-        assert_eq!(peers.keep(bad).unwrap(), Outcome::Refused(Fault::Signature));
+        assert_eq!(
+            peers.keep(bad, None).unwrap(),
+            Outcome::Refused(Fault::Signature)
+        );
         let view = peers.state().view();
         drop(peers);
 
@@ -284,19 +604,19 @@ mod tests {
             chain.push(record);
         }
         for record in [&riff_record, &admit] {
-            first.keep(record.bytes().to_vec()).unwrap();
-            second.keep(record.bytes().to_vec()).unwrap();
+            first.keep(record.bytes().to_vec(), None).unwrap();
+            second.keep(record.bytes().to_vec(), None).unwrap();
         }
         // The first daemon keeps the chain, then the removed record.
         for record in &chain {
-            first.keep(record.bytes().to_vec()).unwrap();
+            first.keep(record.bytes().to_vec(), None).unwrap();
         }
-        first.keep(removed.bytes().to_vec()).unwrap();
+        first.keep(removed.bytes().to_vec(), None).unwrap();
         // The second daemon gets the removed record first.
-        second.keep(removed.bytes().to_vec()).unwrap();
+        second.keep(removed.bytes().to_vec(), None).unwrap();
         let outcomes: Vec<Outcome> = chain
             .iter()
-            .map(|record| second.keep(record.bytes().to_vec()).unwrap())
+            .map(|record| second.keep(record.bytes().to_vec(), None).unwrap())
             .collect();
         assert!(matches!(outcomes[0], Outcome::Kept(_)));
         assert_eq!(outcomes[1], Outcome::Refused(Fault::Author(Author::Gone)));

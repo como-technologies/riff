@@ -682,6 +682,44 @@ again each 30 seconds. `riff daemon status` shows that line. Your
 sessions run in that time. Unlock the keyring at the desktop: the
 daemon then reads its key and its riff.
 
+### See the peer links of the daemon
+
+In [riff 3.0](riff-3-peers.md), the daemons of a riff connect peer to
+peer over iroh, and send each other their records. The daemon binds its
+iroh endpoint at its start, with the key of the daemon. To see each
+connection of your daemon:
+
+```sh
+riff daemon status
+```
+
+```text
+Its peer links:
+  1b2c3d4e  mike on pangolin  up for 2h, direct
+  4f5e6d7c  brett on kadomony  connects again in 8s, after 3 tries: no connect in 5 s
+  9a8b7c6d  ann on anvil  waits for that daemon to connect
+```
+
+Each line shows the start of the key of the other daemon, its user and
+its host, and the state of the link:
+
+| State | What it means |
+|---|---|
+| `up for TIME, direct` or `on a relay` | The link runs. iroh uses a direct path, or a relay of n0. |
+| `connects again in TIME, after N tries: WHY` | Your daemon has the lower key, so it connects. The last try failed, for example because the other daemon is offline. |
+| `waits for that daemon to connect` | The other daemon has the lower key, so it connects to yours. |
+
+A riff of your own has no other daemon: the line is
+`Its peer links: none: its riff has no other daemon.` When the daemon
+cannot bind its endpoint, the line is
+`Its peer links: none: it has no iroh endpoint.`, and the log of the
+daemon says why. The log also has a line for each link that starts or
+ends, and for each record that the daemon refuses:
+
+```sh
+journalctl --user -u riff | grep "peer link"
+```
+
 ### Restart or stop the daemon
 
 ```sh
@@ -724,6 +762,18 @@ riff daemon
 ```
 
 Press Ctrl-C to stop it. Its containers run on.
+
+### Keep a daemon off the network of n0
+
+The daemon binds its iroh endpoint with the DNS and the relays of n0.
+To keep a test daemon on your machine only, set `RIFF_PEER_NET`:
+
+```sh
+RIFF_PEER_NET=local riff daemon
+```
+
+The daemon then binds on 127.0.0.1, with no relay and no DNS. It finds
+no other daemon. The tests of riff set this variable.
 
 ## Run one item in a container
 
