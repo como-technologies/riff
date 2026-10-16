@@ -819,7 +819,10 @@ async fn riff_run_sends_no_verify_request_for_an_issue_with_the_label_no_verify(
     assert!(out.status.success(), "{stdout}\n{stderr}");
     assert!(stdout.contains("The pull request #40"), "{stdout}");
     assert!(
-        stdout.contains(&riff::text::run_no_verify_label("issue-12", 12)),
+        stdout.contains(&riff::text::run_no_verify(
+            "issue-12",
+            &riff::text::no_verify_label(12)
+        )),
         "{stdout}"
     );
     let log = machine.read("gh.log");

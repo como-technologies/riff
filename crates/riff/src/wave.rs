@@ -55,7 +55,10 @@
 //! After the end ([`Live::finish`]):
 //!
 //! - A build sends a verify request for the open pull request of its
-//!   branch to the lead, as `riff run` does.
+//!   branch to the lead, as `riff run` does. When the issue has the
+//!   label [`crate::rollout::NO_VERIFY`], or a lead holds `verify-ITEM`,
+//!   the lead gets a note with the reason in place of the verify request
+//!   ([`crate::run::no_verify`], 01M51KH0H7J35PEKMHP5KQB84T).
 //! - A verify reads the result from the last turn of `claude` in
 //!   `events.jsonl`: its first line is `PASS` or `FAIL` ([`verdict`]).
 //!   The daemon reports it as `riff verify` does: the comment on the
@@ -681,6 +684,63 @@ fn branch_of(issue: u64) -> String {
     run::branch(&format!("issue-{issue}"))
 }
 
+/// The steps after the end of a build, with `gh` for the forge: the
+/// verify request for the open pull request of its branch, or a note
+/// that it has none. When the issue has the label
+/// [`rollout::NO_VERIFY`], or a lead holds `verify-ITEM`, the lead gets
+/// a note with the reason in place of the verify request, as `riff run`
+/// does ([`run::no_verify`], 01M51KH0H7J35PEKMHP5KQB84T).
+async fn after_build(
+    gh: pr::Gh,
+    api: &Api,
+    record: &Record,
+    wave: &Wave,
+    issue: u64,
+) -> Result<()> {
+    let branch = branch_of(issue);
+    let (view, at) = (gh.clone(), branch.clone());
+    let pull = blocking(move || {
+        Ok(view
+            .json::<run::Pull>(&["pr", "view", &at, "--json", "number,url,headRefOid,state"])
+            .ok()
+            .filter(|p| p.state == "OPEN"))
+    })
+    .await?;
+    let me = &record.me;
+    let to = [riff_core::selector::Selector::lead(
+        me.who().user(),
+        &wave.repo,
+    )];
+    let thread = wave.thread()?;
+    let item = &record.live.item;
+    let session = run::short(&record.live.session);
+    let (body, kind) = match &pull {
+        Some(pull) => match run::no_verify_now(api, me, &thread, gh, item, issue).await? {
+            Some(why) => (
+                text::wave_no_verify(
+                    item,
+                    pull.number,
+                    &branch,
+                    &pull.head_ref_oid,
+                    session,
+                    &why,
+                ),
+                Kind::Note,
+            ),
+            None => (
+                text::wave_verify_request(item, pull.number, &branch, &pull.head_ref_oid, session),
+                Kind::Message,
+            ),
+        },
+        None => (
+            text::wave_no_pull(item, &branch, &record.folder.join("clone")),
+            Kind::Note,
+        ),
+    };
+    api.post(me, Some(&thread), &to, &body, kind).await?;
+    Ok(())
+}
+
 impl Live {
     /// Starts the keep-alive of the claim of the session `me`, a session
     /// in a container: it is live while the keep-alive comes
@@ -793,46 +853,6 @@ impl Live {
             me: me.clone(),
             terminal: false,
         })
-    }
-
-    /// The steps after the end of a build: the verify request for the
-    /// open pull request of its branch, or a note that it has none.
-    async fn after_build(&self, api: &Api, record: &Record, wave: &Wave, issue: u64) -> Result<()> {
-        let branch = branch_of(issue);
-        let repo = wave.repo.clone();
-        let at = branch.clone();
-        let pull = blocking(move || {
-            Ok(pr::Gh::for_repo(&repo)
-                .json::<run::Pull>(&["pr", "view", &at, "--json", "number,url,headRefOid,state"])
-                .ok()
-                .filter(|p| p.state == "OPEN"))
-        })
-        .await?;
-        let me = &record.me;
-        let to = [riff_core::selector::Selector::lead(
-            me.who().user(),
-            &wave.repo,
-        )];
-        let thread = wave.thread()?;
-        let session = run::short(&record.live.session);
-        let (body, kind) = match &pull {
-            Some(pull) => (
-                text::wave_verify_request(
-                    &record.live.item,
-                    pull.number,
-                    &branch,
-                    &pull.head_ref_oid,
-                    session,
-                ),
-                Kind::Message,
-            ),
-            None => (
-                text::wave_no_pull(&record.live.item, &branch, &record.folder.join("clone")),
-                Kind::Note,
-            ),
-        };
-        api.post(me, Some(&thread), &to, &body, kind).await?;
-        Ok(())
     }
 
     /// The steps after the end of a verify: the report of its result, as
@@ -1179,7 +1199,10 @@ impl World for Live {
                 text::wave_ended(&wave.repo, &record.live.item, ended.code, ended.failed)
             );
             let done = match &job.work {
-                Work::Build { issue } => self.after_build(&api, record, wave, *issue).await,
+                Work::Build { issue } => {
+                    let gh = pr::Gh::for_repo(&wave.repo);
+                    after_build(gh, &api, record, wave, *issue).await
+                }
                 Work::Verify { pull, commit, .. } => {
                     self.after_verify(&api, record, wave, *pull, commit).await
                 }
@@ -1753,5 +1776,174 @@ mod tests {
         let text = serde_json::to_string(&job).unwrap();
         assert!(text.contains(r#""kind":"verify""#), "{text}");
         assert_eq!(serde_json::from_str::<Job>(&text).unwrap(), job);
+    }
+
+    /// The riff of a test of [`after_build`]: a riff-server in this
+    /// process, the lead `mike/lead1` of `o/r`, and the session of a
+    /// build of `issue-12` that ended.
+    struct Built {
+        api: Api,
+        wave: Wave,
+        lead: SessionUri,
+        record: Record,
+        dir: tempfile::TempDir,
+    }
+
+    impl Built {
+        async fn new() -> Self {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let server = format!("http://{}", listener.local_addr().unwrap());
+            tokio::spawn(async move {
+                axum::serve(listener, riff_server::router()).await.unwrap();
+            });
+            let api = Api::new(&server);
+            let wave = Wave {
+                repo: "o/r".into(),
+                main: "/src/r".into(),
+                server: server.clone(),
+                host: "thelio".into(),
+            };
+            let who = |session| riff_core::name::Who::new("mike", Some(session)).unwrap();
+            let lead = SessionUri::new(who("lead1"), wave.place(None).unwrap());
+            api.start(&lead, StartReason::Process, false).await.unwrap();
+            let session = "9f8e7d6c-0000-4000-8000-000000000000";
+            let me = SessionUri::new(who(session), wave.place(Some("issue-12")).unwrap());
+            api.start(&me, StartReason::Process, true).await.unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let record = Record {
+                live: crate::daemon::Live {
+                    name: "riff-issue-12".into(),
+                    session: session.into(),
+                    item: "issue-12".into(),
+                    image: IMAGE.into(),
+                    since_ms: 0,
+                    phase: Default::default(),
+                    last: String::new(),
+                },
+                folder: dir.path().to_owned(),
+                server,
+                me,
+                inputs: Vec::new(),
+                closed: true,
+                failed: false,
+                job: Some(Job {
+                    wave: wave.clone(),
+                    work: Work::Build { issue: 12 },
+                }),
+                terminal: false,
+                takeover: false,
+            };
+            Self {
+                api,
+                wave,
+                lead,
+                record,
+                dir,
+            }
+        }
+
+        /// A fake `gh`: the branch of issue 12 has the open pull request
+        /// #40, and the issue has the label `no-verify` when `labelled`.
+        fn gh(&self, labelled: bool) -> pr::Gh {
+            let labels = if labelled {
+                r#"[{"name":"no-verify"}]"#
+            } else {
+                "[]"
+            };
+            let script = format!(
+                r#"#!/bin/sh
+case "$*" in
+"pr view worktree-issue-12 --json number,url,headRefOid,state")
+    echo '{{"number":40,"url":"https://github.com/o/r/pull/40","headRefOid":"1a2b3c4d5e","state":"OPEN"}}' ;;
+"issue view 12 --json number,labels")
+    echo '{{"number":12,"labels":{labels}}}' ;;
+*)
+    echo "the fake gh has no reply for: $*" >&2
+    exit 1 ;;
+esac
+"#
+            );
+            pr::Gh::at(isolated::write_program(self.dir.path().join("gh"), script))
+        }
+
+        /// Runs [`after_build`] with `gh`, and gives each message that the
+        /// lead can read, with its kind.
+        async fn after_build(&self, gh: pr::Gh) -> Vec<(Kind, String)> {
+            after_build(gh, &self.api, &self.record, &self.wave, 12)
+                .await
+                .unwrap();
+            let thread = self.wave.thread().unwrap();
+            self.api
+                .read(&self.lead, &thread, true)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|c| (c.message.kind, c.message.body))
+                .collect()
+        }
+    }
+
+    /// With no hold and no label, the lead gets the verify request
+    /// (01M4ZV3B6Q0Y6AX0KSKC55S31R).
+    #[tokio::test]
+    async fn a_build_sends_the_verify_request_to_the_lead() {
+        let riff = Built::new().await;
+        let got = riff.after_build(riff.gh(false)).await;
+        assert_eq!(
+            got,
+            [(
+                Kind::Message,
+                text::wave_verify_request("issue-12", 40, "worktree-issue-12", "1a2b3c4", "9f8e7d6c")
+            )]
+        );
+    }
+
+    /// A lead holds the verify of the item: the lead gets a note with the
+    /// hold, and no verify request (01M51KH0H7J35PEKMHP5KQB84T).
+    #[tokio::test]
+    async fn a_build_whose_verify_is_held_posts_a_note_with_the_hold() {
+        let riff = Built::new().await;
+        let thread = riff.wave.thread().unwrap();
+        riff.api
+            .hold(&riff.lead, &thread, "verify-issue-12", "a scratch item")
+            .await
+            .unwrap();
+        let got = riff.after_build(riff.gh(false)).await;
+        assert_eq!(got.len(), 1, "{got:?}");
+        let (kind, body) = &got[0];
+        assert_eq!(*kind, Kind::Note);
+        assert!(
+            body.starts_with(
+                "issue-12: the session of the wave ended, and the item is free. The riff daemon \
+                 sends no verify request for PR #40, branch worktree-issue-12, commit 1a2b3c4 \
+                 (session 9f8e7d6c): verify-issue-12 is held by the lead (the session \
+                 mike/lead1) since "
+            ),
+            "{body}"
+        );
+        assert!(body.ends_with(": a scratch item"), "{body}");
+        assert!(!body.contains("verify request:"), "{body}");
+    }
+
+    /// The issue has the label `no-verify`: the lead gets a note with the
+    /// label, and no verify request (01M51KH0H7J35PEKMHP5KQB84T).
+    #[tokio::test]
+    async fn a_build_of_an_issue_with_the_label_no_verify_posts_a_note() {
+        let riff = Built::new().await;
+        let got = riff.after_build(riff.gh(true)).await;
+        assert_eq!(
+            got,
+            [(
+                Kind::Note,
+                text::wave_no_verify(
+                    "issue-12",
+                    40,
+                    "worktree-issue-12",
+                    "1a2b3c4",
+                    "9f8e7d6c",
+                    "issue #12 has the label no-verify."
+                )
+            )]
+        );
     }
 }

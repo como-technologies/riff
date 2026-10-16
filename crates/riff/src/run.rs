@@ -938,11 +938,12 @@ fn labelled(gh: &pr::Gh, issue: u64) -> Result<bool> {
     Ok(found.no_verify())
 }
 
-/// Why `riff run` sends no verify request for `item`, the issue `issue`,
-/// or `None` to send it: the issue has the label [`rollout::NO_VERIFY`]
+/// Why riff sends no verify request for `item`, the issue `issue`, or
+/// `None` to send it: the issue has the label [`rollout::NO_VERIFY`]
 /// (`labelled`, 01M5157V0P92EBHF4M7N9K0RGR), or a lead holds
 /// `verify-ITEM` (01M5157TYDEHZHDXSC1AHCRDRN). `holds` are the holds of
-/// the repository thread.
+/// the repository thread. `riff run` and the wave of the daemon
+/// ([`crate::wave`], 01M51KH0H7J35PEKMHP5KQB84T) use it.
 ///
 /// ```
 /// use std::collections::BTreeMap;
@@ -958,12 +959,11 @@ fn labelled(gh: &pr::Gh, issue: u64) -> Result<bool> {
 /// holds.insert("verify-issue-12".to_owned(), hold("a scratch item"));
 /// assert_eq!(
 ///     no_verify("issue-12", 12, false, &holds).unwrap(),
-///     "riff run sends no verify request for issue-12: verify-issue-12 is held by the lead since \
-///      2026-09-21T14:13:20Z: a scratch item"
+///     "verify-issue-12 is held by the lead since 2026-09-21T14:13:20Z: a scratch item"
 /// );
 /// assert_eq!(
 ///     no_verify("issue-12", 12, true, &BTreeMap::new()).unwrap(),
-///     "riff run sends no verify request for issue-12: issue #12 has the label no-verify."
+///     "issue #12 has the label no-verify."
 /// );
 /// ```
 pub fn no_verify(
@@ -973,29 +973,33 @@ pub fn no_verify(
     holds: &BTreeMap<String, HoldInfo>,
 ) -> Option<String> {
     if labelled {
-        return Some(text::run_no_verify_label(item, issue));
+        return Some(text::no_verify_label(issue));
     }
     let verify = format!("verify-{item}");
     let hold = holds.get(&verify)?;
-    let held = riff_state::state::plan::held_text(&verify, hold);
-    Some(text::run_verify_held(item, &held))
+    Some(riff_state::state::plan::held_text(&verify, hold))
 }
 
-/// [`no_verify`] now: the labels of the issue from `gh`, then the holds
+/// [`no_verify`] now: the labels of the issue with `gh`, then the holds
 /// of `thread` from riff-server, as `me`. riff asks riff-server only for
 /// an issue with no label. A fault of `gh` shows on stderr, and riff
 /// goes on to the holds.
-async fn no_verify_now(
+pub(crate) async fn no_verify_now(
     api: &Api,
     me: &SessionUri,
     thread: &ThreadName,
+    gh: pr::Gh,
     item: &str,
     issue: u64,
 ) -> Result<Option<String>> {
-    let labelled = labelled(&pr::Gh::default(), issue).unwrap_or_else(|e| {
-        eprintln!("riff: {e:#}");
-        false
-    });
+    let labelled = tokio::task::spawn_blocking(move || labelled(&gh, issue))
+        .await
+        .map_err(|e| anyhow!("{e}"))
+        .and_then(|read| read)
+        .unwrap_or_else(|e| {
+            eprintln!("riff: {e:#}");
+            false
+        });
     if labelled {
         return Ok(no_verify(item, issue, true, &BTreeMap::new()));
     }
@@ -1566,8 +1570,9 @@ async fn work(
             let to = [Selector::lead(me.who().user(), &repo)];
             let ending = api.with_budget(END_BUDGET);
             let ask = async {
-                if let Some(why) = no_verify_now(&ending, me, thread, item, issue).await? {
-                    println!("{why}");
+                let gh = pr::Gh::default();
+                if let Some(why) = no_verify_now(&ending, me, thread, gh, item, issue).await? {
+                    println!("{}", text::run_no_verify(item, &why));
                     return Ok(());
                 }
                 ending
