@@ -1712,6 +1712,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// key: the keyring refuses or answers again, and then the riff: a
     /// first start, a new key and why, or the key that it read.
     /// [`Status::waits`] shows the last line until the riff is there.
+    /// It says the line of the riff only after it has the riff and its
+    /// records, so a status after that line shows the key and the riff
+    /// (01M51WPSH4KBQMVT3XGDD45G63).
     pub async fn open_riff(
         &self,
         retry: Duration,
@@ -1726,7 +1729,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let state_dir = state_dir(&self.dir);
         let (mut state, mut store) = load_state(&state_dir).await?;
         let riff = state.read(State::riff_id).await;
-        let (key, owner) = match step(found, riff.as_deref()) {
+        let (key, owner, line) = match step(found, riff.as_deref()) {
             Step::Go(key) => {
                 let riff = key.public().to_string();
                 let owner = match made(&store).await? {
@@ -1741,14 +1744,14 @@ impl<R: Runtime + 'static> Daemon<R> {
                         made.owner
                     }
                 };
-                say(text::daemon_read_riff(&riff, &owner));
-                (key, owner)
+                let line = text::daemon_read_riff(&riff, &owner);
+                (key, owner, line)
             }
             Step::First => {
                 let owner = this_user()?;
                 let key = make_riff(&name, &state, &store, &owner).await?;
-                say(text::daemon_made_riff(&key.public().to_string(), &owner));
-                (key, owner)
+                let line = text::daemon_made_riff(&key.public().to_string(), &owner);
+                (key, owner, line)
             }
             Step::New(lost) => {
                 let owner = this_user()?;
@@ -1757,8 +1760,8 @@ impl<R: Runtime + 'static> Daemon<R> {
                 (state, store) = load_state(&state_dir).await?;
                 let key = make_riff(&name, &state, &store, &owner).await?;
                 let riff = key.public().to_string();
-                say(text::daemon_new_riff(&lost, &riff, &owner, old.as_deref()));
-                (key, owner)
+                let line = text::daemon_new_riff(&lost, &riff, &owner, old.as_deref());
+                (key, owner, line)
             }
         };
         let peers = open_peers(&state_dir, &key, &owner, &mut say)?;
@@ -1776,6 +1779,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let _ = start.await;
             }
         }
+        say(line);
         Ok(())
     }
 
@@ -4914,6 +4918,71 @@ mod tests {
         assert_eq!(after.position, before.position);
         assert_eq!(kept_key(&dir), before.key);
         assert!(lost(&dir).is_empty());
+    }
+
+    /// 01M51WPSH4KBQMVT3XGDD45G63: a client that reads the status right
+    /// after the line of the riff sees the key, the riff and the owner,
+    /// at the first start and at a restart. The records open slowly: the
+    /// line of a bad record in the book holds the open for `SLOW`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_status_right_after_the_line_of_the_riff_shows_the_riff() {
+        const SLOW: Duration = Duration::from_millis(500);
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        private_dir(&dir).unwrap();
+        let (mut book, _) = crate::peer::book::Book::open(&state_dir(&dir)).unwrap();
+        book.append(b"not a record").unwrap();
+        drop(book);
+        let bad = text::daemon_bad_record("");
+        let bad = bad.trim_end_matches('.').to_owned();
+        for start in ["the first start", "a restart"] {
+            let listener = listen(&dir).await.unwrap();
+            crate::secrets::mock_store();
+            let daemon = Arc::new(Daemon::new(Fake::default(), dir.clone()).unwrap());
+            let (stop, stopped) = oneshot::channel::<()>();
+            let served = tokio::spawn(daemon.clone().serve(listener, async {
+                let _ = stopped.await;
+            }));
+            let (said, mut lines) = tokio::sync::mpsc::unbounded_channel();
+            let opens = daemon.clone();
+            let slow = bad.clone();
+            let opened = tokio::spawn(async move {
+                let say = move |line: String| {
+                    if line.starts_with(&slow) {
+                        std::thread::sleep(SLOW);
+                    }
+                    let _ = said.send(line);
+                };
+                opens.open_riff(Duration::from_millis(10), say).await
+            });
+            let mut before = Vec::new();
+            let line = loop {
+                let line = lines.recv().await.expect("the line of the riff");
+                if line.contains(", of the owner ") {
+                    break line;
+                }
+                before.push(line);
+            };
+            let shown = status(&dir).await.unwrap();
+            let key = shown
+                .key
+                .clone()
+                .unwrap_or_else(|| panic!("{start}: {shown:?}"));
+            assert_eq!(shown.riff.as_deref(), Some(key.as_str()), "{start}");
+            let owner = shown.owner.clone().unwrap();
+            assert!(
+                line.contains(&format!("{key}, of the owner {owner}.")),
+                "{line}"
+            );
+            assert_eq!(shown.waits, None, "{start}");
+            assert!(
+                before.iter().any(|l| l.starts_with(&bad)),
+                "{start}: {before:?}"
+            );
+            opened.await.unwrap().unwrap();
+            stop.send(()).unwrap();
+            served.await.unwrap().unwrap();
+        }
     }
 
     /// The riff-server of the lead, as the test plays it: it notes each

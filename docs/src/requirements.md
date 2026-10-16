@@ -5856,6 +5856,10 @@ then.
   reads its key in the background. While it waits for its key, it runs
   its sessions, and `riff daemon status` shows the line of the wait.
   Until the records of Wave B, a session needs no key of the daemon.
+- **01M51WPSH4KBQMVT3XGDD45G63** The daemon says the line of its riff
+  (a first start, a new key, or the key that it read) only after it
+  has its riff and its records. So `riff daemon status` after that
+  line shows the key, the riff ID and the owner.
 - **01M51JW25SPDW564A3DG31D7XM** When the daemon makes a new key
   because its key and its state do not go together, it moves the old
   folder `state` to `state.lost-MS` beside it. riff never reads that
