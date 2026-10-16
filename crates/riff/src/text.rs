@@ -6724,10 +6724,43 @@ pub fn lead_starts(repo: &str, name: &str, session: &str) -> String {
 pub const LEAD_DETACH: &str =
     "Ctrl-P Ctrl-Q detaches: the lead runs on. riff view or riff lead start attaches again.";
 
-/// `riff lead start` and `riff view` after a detach, or after the end of
-/// the lead.
+/// `riff lead start` and `riff view` after a detach: the lead runs on.
 pub fn lead_detached(name: &str) -> String {
     format!("You left the terminal of the container {name}.")
+}
+
+/// `riff lead start` and `riff view` after the end of the lead
+/// (01M51PD7Q24N252V66NFEHY49N).
+///
+/// ```
+/// let line = riff::text::lead_ended("riff-lead-o-r");
+/// assert!(line.starts_with("The lead in the container riff-lead-o-r ended."));
+/// assert!(line.contains("riff lead start"));
+/// ```
+pub fn lead_ended(name: &str) -> String {
+    format!(
+        "The lead in the container {name} ended. To start it again, run riff lead start in a \
+         clone of its repository."
+    )
+}
+
+/// `riff lead start` after the end of the lead: `claude` printed a
+/// `claude --resume` line for its container.
+pub const LEAD_NO_RESUME: &str = "The command claude --resume that claude shows works only in \
+     the container of the lead. In a new lead, /resume shows the old conversations.";
+
+/// `riff lead start` and `riff view`: riff cannot make the lead draw its
+/// terminal again, for the reason `error` (01M51PD7M04HZR2PVVJA4WCBK5).
+///
+/// ```
+/// let line = riff::text::lead_no_redraw("no stty");
+/// assert!(line.ends_with("(no stty). Change the size of your terminal to see the lead."));
+/// ```
+pub fn lead_no_redraw(error: &str) -> String {
+    format!(
+        "riff cannot make the lead draw its terminal again ({error}). Change the size of your \
+         terminal to see the lead."
+    )
 }
 
 /// `riff view`: no lead runs on this machine.

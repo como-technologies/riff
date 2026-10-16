@@ -35,6 +35,7 @@
 //! | Stop | [`Runtime::stop`] | `podman stop NAME` |
 //! | Find a live session | [`Runtime::running`] | `podman container inspect --format {{.State.Running}} NAME` |
 //! | Attach a terminal | [`Runtime::attach`] | `podman attach NAME` |
+//! | Draw the terminal again at the next attach | [`Runtime::redraw`] | `podman exec NAME stty -F /dev/console rows ROWS cols COLS` |
 //! | Start with a terminal | [`Runtime::start_terminal`] | `podman run --rm -d -i -t ...` ([`crate::podman::terminal_args`]), then `podman wait NAME` |
 //! | Run a command with a terminal | [`Runtime::exec`] | `podman exec -it NAME COMMAND` |
 //!
@@ -326,6 +327,12 @@ pub trait Runtime: Send + Sync {
     /// until a detach or the end of the session.
     fn attach(&self, name: &str) -> impl Future<Output = Result<Exit>> + Send;
 
+    /// Makes the command of the session `name` draw its terminal again
+    /// at the next [`Runtime::attach`] (01M51PD7M04HZR2PVVJA4WCBK5). A
+    /// command such as `claude` draws only when the size of its terminal
+    /// changes, and an attach with the same size changes nothing.
+    fn redraw(&self, name: &str) -> impl Future<Output = Result<()>> + Send;
+
     /// Starts the session of `spec` with a terminal that the runtime
     /// holds: [`Runtime::attach`] shows it. It gives the end of the
     /// session. `values` is as for [`Runtime::start`].
@@ -389,12 +396,15 @@ struct Book {
     registry: BTreeSet<String>,
     /// The lines that each new session prints.
     events: Vec<String>,
-    /// Each pull, start, stop, attach and exec, in order.
+    /// Each pull, start, stop, redraw, attach and exec, in order.
     calls: Vec<String>,
     /// The sessions, by name.
     sessions: BTreeMap<String, Played>,
     /// True when [`Runtime::running`] fails: podman cannot say.
     no_answer: bool,
+    /// True when each attach ends the session: the person ends the
+    /// command in the terminal.
+    exit_in_attach: bool,
 }
 
 /// One session of a [`Fake`].
@@ -437,9 +447,16 @@ impl Fake {
         self
     }
 
-    /// Each pull, start, stop, attach and exec, in order: for example
-    /// `start riff-issue-12-1a2b3c4d`, `terminal riff-lead-o-r` or
-    /// `exec riff-issue-12-1a2b3c4d claude --resume ID`.
+    /// Each attach ends the session with the exit 0, as when the person
+    /// types `/exit` in the `claude` of the lead.
+    pub fn with_exit_in_attach(self) -> Self {
+        self.lock().exit_in_attach = true;
+        self
+    }
+
+    /// Each pull, start, stop, redraw, attach and exec, in order: for
+    /// example `start riff-issue-12-1a2b3c4d`, `terminal riff-lead-o-r`
+    /// or `exec riff-issue-12-1a2b3c4d claude --resume ID`.
     pub fn calls(&self) -> Vec<String> {
         self.lock().calls.clone()
     }
@@ -549,7 +566,21 @@ impl Runtime for Fake {
         let mut book = self.lock();
         book.calls.push(format!("attach {name}"));
         match book.sessions.get(name) {
-            Some(played) if played.exit.is_none() => Ok(Exit::SUCCESS),
+            Some(played) if played.exit.is_none() => {
+                if book.exit_in_attach {
+                    end(&mut book, name, Exit::SUCCESS);
+                }
+                Ok(Exit::SUCCESS)
+            }
+            _ => bail!("no session {name} runs"),
+        }
+    }
+
+    async fn redraw(&self, name: &str) -> Result<()> {
+        let mut book = self.lock();
+        book.calls.push(format!("redraw {name}"));
+        match book.sessions.get(name) {
+            Some(played) if played.exit.is_none() => Ok(()),
             _ => bail!("no session {name} runs"),
         }
     }
@@ -796,6 +827,7 @@ mod tests {
             .with_image("img")
             .with_events(["not for a terminal"]);
         let end = fake.start_terminal(&spec("lead"), &token()).await.unwrap();
+        fake.redraw("lead").await.unwrap();
         assert_eq!(fake.attach("lead").await.unwrap(), Exit::SUCCESS);
         let command = ["claude".to_owned(), "--resume".to_owned(), "s1".to_owned()];
         assert_eq!(fake.exec("lead", &command).await.unwrap(), Exit::SUCCESS);
@@ -803,17 +835,31 @@ mod tests {
         fake.stop("lead").await.unwrap();
         assert_eq!(end.wait().await.unwrap(), Exit { code: None });
         assert!(fake.exec("lead", &command).await.is_err());
+        assert!(fake.redraw("lead").await.is_err());
         assert_eq!(
             fake.calls(),
             [
                 "terminal lead",
+                "redraw lead",
                 "attach lead",
                 "exec lead claude --resume s1",
                 "terminal lead",
                 "stop lead",
                 "exec lead claude --resume s1",
+                "redraw lead",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_fake_with_an_exit_in_attach_ends_the_session_in_the_attach() {
+        let fake = Fake::default().with_image("img").with_exit_in_attach();
+        let end = fake.start_terminal(&spec("lead"), &token()).await.unwrap();
+        assert!(fake.running("lead").await.unwrap());
+        assert_eq!(fake.attach("lead").await.unwrap(), Exit::SUCCESS);
+        assert!(!fake.running("lead").await.unwrap());
+        assert_eq!(end.wait().await.unwrap(), Exit::SUCCESS);
+        assert!(fake.attach("lead").await.is_err());
     }
 
     #[test]
