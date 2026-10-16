@@ -9,7 +9,6 @@
 //! address to a file, and the test listens there in its place.
 
 use std::net::TcpListener;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
@@ -39,8 +38,7 @@ fn fake(path: &Path, log: &Path, tail: &str) {
         "#!/bin/sh\necho \"{name} $*\" >> {}\n{tail}\n",
         log.display()
     );
-    std::fs::write(path, script).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(path, script);
 }
 
 /// The installed `riff` of a home: a release.
@@ -77,8 +75,7 @@ fn dev(args: &[&str], server: &str, env: Option<&str>) -> Dev {
     }
     let installed = home.path().join(".cargo/bin/riff");
     std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
-    std::fs::write(&installed, INSTALLED).unwrap();
-    std::fs::set_permissions(&installed, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&installed, INSTALLED);
     let bin = tree.path().join("bin");
     fake(&bin.join("cargo"), &log, "");
     fake(

@@ -5,7 +5,6 @@
 
 use isolated::{Isolated, Span, in_time};
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -56,8 +55,7 @@ fn fake_claude(dir: &Path, script: &str) -> PathBuf {
         "#!/bin/sh\necho start >> '{}'\n{script}\n",
         dir.join("starts").display()
     );
-    std::fs::write(&path, body).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&path, body);
     path
 }
 

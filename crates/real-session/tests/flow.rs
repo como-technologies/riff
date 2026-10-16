@@ -28,8 +28,6 @@ use std::time::{Duration, Instant};
 
 use isolated::Isolated;
 
-use crate::SPAWN;
-
 /// The issue that the fake `gh issue create` makes.
 const ISSUE: u64 = 801;
 
@@ -139,15 +137,11 @@ impl Fake {
             ctl,
             clone,
         };
-        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
         for (name, script) in [("gh", GH), ("podman", PODMAN), ("riff", RIFF)] {
-            let path = fake.bin.join(name);
             let text = script
                 .replace("CTL", &fake.ctl.display().to_string())
                 .replace("ID8", ID8);
-            std::fs::write(&path, text).unwrap();
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            isolated::write_program(fake.bin.join(name), text);
         }
         fake
     }
@@ -177,11 +171,10 @@ impl Fake {
         cmd
     }
 
-    /// Starts the test under [`SPAWN`].
+    /// Starts the test.
     fn spawn(&self, args: &[&str], change: impl FnOnce(&mut Command)) -> Child {
         let mut cmd = self.command(args);
         change(&mut cmd);
-        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
         cmd.spawn().unwrap()
     }
 
@@ -595,12 +588,13 @@ fn a_child_that_ends_by_a_signal_counts_as_a_signal() {
 #[test]
 fn no_riff_binary_is_a_usage_error() {
     let fake = Fake::new();
-    let out = {
-        let mut cmd = fake.env.command(env!("CARGO_BIN_EXE_real-session"));
-        cmd.arg("--gate-wait").arg("1");
-        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
-        cmd.output().unwrap()
-    };
+    let out = fake
+        .env
+        .command(env!("CARGO_BIN_EXE_real-session"))
+        .arg("--gate-wait")
+        .arg("1")
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(2));
     assert!(text(&out.stderr).contains("usage: real-session --riff PATH"));
 }

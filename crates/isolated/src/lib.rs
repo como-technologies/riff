@@ -44,8 +44,13 @@
 //! A check of a time in a test uses a [`Span`]: it fails only when the
 //! logic is slow, not when the machine is busy. See [`time`].
 //!
+//! A test writes a fake program with [`write_program`]: a child process
+//! writes it, so its run cannot fail with `ETXTBSY`. See [`program`].
+//!
 //! [`offenders`] finds each test file that names a binary of riff
-//! without the helper. A test of this crate fails on each one.
+//! without the helper, and [`program_writers`] each test file that
+//! writes a program in the test process. A test of this crate fails on
+//! each one.
 //!
 //! # Example
 //!
@@ -63,8 +68,12 @@ use std::sync::LazyLock;
 
 use tempfile::TempDir;
 
+pub mod program;
 pub mod time;
 
+pub use program::{
+    copy_program, file_name, program_writers, program_writes, write_program, writes_a_program,
+};
 pub use time::{HANG, Late, PRESSURE_LIMIT, Span, in_time, stall};
 
 /// The prefixes of the variables that the helper removes: riff and the
@@ -318,6 +327,19 @@ isolate!(tokio::process::Command);
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn offenders(root: &Path) -> Vec<String> {
+    test_lines(root, |text| {
+        let lines = text.lines().enumerate();
+        lines
+            .filter(|(_, line)| names_a_binary(line))
+            .map(|(n, _)| n + 1)
+            .collect()
+    })
+}
+
+/// Each line of a test file under `root/crates/*/tests` that `lines`
+/// gives for the text of the file, as `PATH:LINE`. `lines` gives the
+/// numbers of the lines from 1. The helper crate itself does not count.
+fn test_lines(root: &Path, lines: impl Fn(&str) -> Vec<usize>) -> Vec<String> {
     let mut files = Vec::new();
     let Ok(crates) = std::fs::read_dir(root.join("crates")) else {
         return Vec::new();
@@ -338,11 +360,7 @@ pub fn offenders(root: &Path) -> Vec<String> {
             .unwrap_or(&file)
             .display()
             .to_string();
-        for (n, line) in text.lines().enumerate() {
-            if names_a_binary(line) {
-                found.push(format!("{name}:{}", n + 1));
-            }
-        }
+        found.extend(lines(&text).into_iter().map(|n| format!("{name}:{n}")));
     }
     found
 }

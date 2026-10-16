@@ -2,8 +2,9 @@
 //! helper (01M3MY2KWKBJCQ0BCNC6533RBW).
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use isolated::{Isolated, offenders};
+use isolated::{Isolated, offenders, program_writers};
 
 fn repo() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
@@ -37,6 +38,98 @@ fn the_check_fails_a_test_file_that_runs_the_binary_without_the_helper() {
         offenders(root.path()),
         ["crates/riff-server/tests/common/mod.rs:1"]
     );
+}
+
+/// 01M517P9J77TZX28QYBR9SH6WW.
+#[test]
+fn no_test_file_writes_a_program_in_the_test_process() {
+    let found = program_writers(repo());
+    assert!(
+        found.is_empty(),
+        "these lines write a program in the test process; use isolated::write_program: \
+         {found:#?}"
+    );
+}
+
+/// The check fails a write over a program that the helper made, and a
+/// write of a script, also when the write sets no mode
+/// (01M517P9J77TZX28QYBR9SH6WW).
+#[test]
+fn the_check_fails_a_new_text_of_a_program_and_a_script_with_no_mode() {
+    let root = tempfile::tempdir().unwrap();
+    let tests = root.path().join("crates/riff/tests");
+    std::fs::create_dir_all(&tests).unwrap();
+    std::fs::write(
+        tests.join("usage.rs"),
+        "impl Machine {\n\
+         \x20   fn new() -> Machine {\n\
+         \x20       let gh = bin.path().join(\"gh\");\n\
+         \x20       isolated::write_program(&gh, FAKE_GH);\n\
+         \x20   }\n\
+         }\n\
+         fn knows_pr_40(machine: &Machine) {\n\
+         \x20   let gh = machine.bin.path().join(\"gh\");\n\
+         \x20   std::fs::write(&gh, with_pr).unwrap();\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tests.join("lifecycle.rs"),
+        "let cargo = bin.path().join(\"cargo\");\n\
+         std::fs::write(\n\
+         \x20   &cargo,\n\
+         \x20   format!(\"#!/bin/sh\\necho \\\"$*\\\" >> {}/cargo.log\\n\", bin.path().display()),\n\
+         )\n\
+         .unwrap();\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tests.join("good.rs"),
+        "let gh = isolated::write_program(bin.join(\"gh\"), FAKE_GH);\n\
+         isolated::write_program(&gh, with_pr);\n\
+         std::fs::write(bin.join(\"gh.log\"), \"\").unwrap();\n",
+    )
+    .unwrap();
+    assert_eq!(
+        program_writers(root.path()),
+        [
+            "crates/riff/tests/lifecycle.rs:2",
+            "crates/riff/tests/usage.rs:9"
+        ]
+    );
+}
+
+/// A program of the helper runs at once each time, while other threads
+/// of the process start children all the time (01M517P9J77TZX28QYBR9SH6WW).
+#[test]
+fn a_program_of_the_helper_runs_while_other_threads_start_children() {
+    /// Stops the other threads also when an assert fails.
+    struct Stop<'a>(&'a AtomicBool);
+    impl Drop for Stop<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let stop = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        for _ in 0..4 {
+            s.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    std::process::Command::new("true").status().unwrap();
+                }
+            });
+        }
+        let _stop = Stop(&stop);
+        for n in 0..100 {
+            let text = format!("#!/bin/sh\necho {n}\n");
+            let program = isolated::write_program(dir.path().join(format!("p{n}")), text);
+            let out = std::process::Command::new(&program).output();
+            let out = out.unwrap_or_else(|e| panic!("run {n}: {e}"));
+            assert_eq!(out.stdout, format!("{n}\n").as_bytes());
+        }
+    });
 }
 
 #[test]

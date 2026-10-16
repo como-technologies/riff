@@ -9,7 +9,6 @@
 use crate::book;
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
@@ -53,8 +52,7 @@ exit 1
 
 fn script(dir: &Path, name: &str, text: &str) {
     let path = dir.join(name);
-    std::fs::write(&path, text).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&path, text);
 }
 
 /// A riff on a memory store, a machine with the fake `tmux` and `gh`,

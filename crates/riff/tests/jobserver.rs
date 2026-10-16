@@ -4,7 +4,6 @@
 //! threads from it.
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -13,8 +12,7 @@ use riff::jobserver::{self, Pool};
 
 fn script(path: &Path, body: &str) -> PathBuf {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, body).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(path, body);
     path.to_owned()
 }
 

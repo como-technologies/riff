@@ -91,8 +91,7 @@ impl Machine {
     fn new(host: &'static str, server: &str) -> Self {
         let fake = tempfile::tempdir().unwrap();
         let tmux = fake.path().join("tmux");
-        std::fs::write(&tmux, FAKE_TMUX).unwrap();
-        std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        isolated::write_program(&tmux, FAKE_TMUX);
         script(fake.path(), "sccache", FAKE_SCCACHE);
         Machine {
             fake,
@@ -267,8 +266,7 @@ async fn start_server() -> Api {
 /// Writes the script `name` with `body` in `dir`.
 fn script(dir: &Path, name: &str, body: &str) {
     let path = dir.join(name);
-    std::fs::write(&path, body).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&path, body);
 }
 
 /// `PATH` with `dir` first, and with no folder of the machine that has

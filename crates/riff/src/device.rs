@@ -42,16 +42,8 @@ pub fn key(server: &str) -> Result<Key> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
-
     use super::*;
-
-    fn mock_store() {
-        static MOCK: Once = Once::new();
-        MOCK.call_once(|| {
-            keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap())
-        });
-    }
+    use crate::secrets::mock_store;
 
     #[test]
     fn each_server_has_its_own_key() {

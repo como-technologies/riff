@@ -8,7 +8,6 @@
 //! fake `riff` for `riff connect` and a fake `riff-server` that log their
 //! arguments. Each test is one machine: one [`Isolated`] environment.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
@@ -79,15 +78,13 @@ fn repo() -> tempfile::TempDir {
 fn fake_command(bin: &Path, name: &str, stdout: &str, status: u8) {
     let path = bin.join(name);
     let log = bin.join(format!("{name}.log"));
-    std::fs::write(
+    isolated::write_program(
         &path,
         format!(
             "#!/bin/sh\necho \"$*\" >> {}\necho '{stdout}'\nexit {status}\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 }
 
 fn log(bin: &Path, name: &str) -> String {
@@ -348,7 +345,7 @@ fn install_cargo_build(env: &Isolated, bin: &Path) -> PathBuf {
     std::fs::create_dir_all(bin).unwrap();
     let riff = bin.join("riff");
     if std::fs::hard_link(env.riff_path(), &riff).is_err() {
-        std::fs::copy(env.riff_path(), &riff).unwrap();
+        isolated::copy_program(env.riff_path(), &riff);
     }
     riff
 }
@@ -469,16 +466,14 @@ fn the_book_shows_how_to_update_riff_by_itself() {
 /// log shows `gone` when it runs in a removed directory.
 fn fake_cargo_with_dir(bin: &Path) {
     let path = bin.join("cargo");
-    std::fs::write(
+    isolated::write_program(
         &path,
         format!(
             "#!/bin/sh\necho \"$*\" >> {log}\n(/bin/pwd -P 2>/dev/null || echo gone) > {pwd}\n",
             log = bin.join("cargo.log").display(),
             pwd = bin.join("cargo.pwd").display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 }
 
 /// The directory where the fake `cargo` of [`fake_cargo_with_dir`] ran.

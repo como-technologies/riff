@@ -8,7 +8,6 @@
 //! container engine that logs its arguments.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -44,7 +43,7 @@ pub(crate) fn ci_job(name: &str) -> String {
 /// a line to `bin/podman.log`, and `RIFF_COMMIT` to `bin/podman.env`.
 pub(crate) fn fake_engine(bin: &Path) {
     let path = bin.join("podman");
-    fs::write(
+    isolated::write_program(
         &path,
         format!(
             "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done >> {log}\n\
@@ -52,9 +51,7 @@ pub(crate) fn fake_engine(bin: &Path) {
             log = bin.join("podman.log").display(),
             env = bin.join("podman.env").display(),
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    );
 }
 
 /// Runs the script `name` of `deploy/static` with `args`, the fake
@@ -145,7 +142,7 @@ fn the_static_check_refuses_a_binary_with_an_interpreter() {
     let dir = tempfile::tempdir().unwrap();
     let riff = Isolated::shared().riff_path();
     for name in ["riff", "riff-server"] {
-        fs::copy(&riff, dir.path().join(name)).unwrap();
+        isolated::copy_program(&riff, dir.path().join(name));
     }
     let out = script(
         "check.sh",
@@ -163,7 +160,7 @@ fn the_static_check_refuses_a_binary_with_an_interpreter() {
         "{stderr}"
     );
 
-    fs::write(dir.path().join("riff"), "#!/bin/sh\n").unwrap();
+    isolated::write_program(dir.path().join("riff"), "#!/bin/sh\n");
     let out = script(
         "check.sh",
         &["release"],

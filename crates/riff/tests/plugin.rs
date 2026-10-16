@@ -2,7 +2,6 @@
 //! claude` installs it.
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -40,15 +39,13 @@ const NO_SERVER: &str = "http://127.0.0.1:1";
 fn fake_claude(dir: &Path, remove_status: u8) -> PathBuf {
     let path = dir.join("claude");
     let log = dir.join("log");
-    std::fs::write(
+    isolated::write_program(
         &path,
         format!(
             "#!/bin/sh\necho \"$*\" >> {}\n[ \"$1\" = mcp ] && exit {remove_status}\nexit 0\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     path
 }
 

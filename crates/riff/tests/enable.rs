@@ -5,7 +5,6 @@
 
 use isolated::Isolated;
 use std::io::{Read, Write};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
@@ -37,8 +36,7 @@ impl Machine {
         let script = |name: &str, body: &str| {
             let path = machine.bin().join(name);
             std::fs::create_dir_all(machine.bin()).unwrap();
-            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            isolated::write_program(&path, format!("#!/bin/sh\n{body}\n"));
         };
         let log = machine.env.path().join("claude.log");
         script(
@@ -432,8 +430,7 @@ fn riff_update_in_a_terminal_asks_nothing_and_keeps_the_choice() {
         let machine = Machine::new();
         let script = |name: &str| {
             let path = machine.bin().join(name);
-            std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            isolated::write_program(&path, "#!/bin/sh\nexit 0\n");
             path
         };
         let cargo = script("cargo");

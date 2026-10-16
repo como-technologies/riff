@@ -962,6 +962,25 @@
   program has a child process write the file. A doc test that drops a
   lock, and then checks that the lock is free, is a `standalone_crate`.
   A unit test of that kind waits for the end of the lock.
+- **01M517P9J77TZX28QYBR9SH6WW** Each integration test (a file under
+  `crates/*/tests`) writes a program, and each new text of a program,
+  with `isolated::write_program`. It copies a program with
+  `isolated::copy_program`. A child process writes the file, so the
+  test process never holds a write handle of it. A test of the crate
+  `isolated` fails on each line of such a file that writes a program in
+  the test process: a mode 755, a text that starts with `#!`, or a
+  write to the file of a program that the test file made with the
+  helper.
+- **01M517P9MTBWPN0FQRMXEJ9JG5** The unit tests of `riff` set the mock
+  keyring store in one place: `secrets::mock_store`, one time for the
+  process. A unit test fails on each other line of code of `riff` that
+  sets the store.
+- **01M517P9QE2SQ45SPV3K2SM71B** `just stress ARGS` runs `cargo test
+  ARGS` many times while busy loops keep the CPUs busy: 50 runs and 8
+  loops, or the numbers in `STRESS_RUNS` and `STRESS_LOAD`. It builds
+  the test first, keeps the output of each failed run in
+  `target/stress`, stops the loops at its end, and fails when a run
+  failed.
 - **01M3MY2KSV73WS8D902YCH2PRX** With `RIFF_HOME=DIR`, `riff` keeps its
   settings in `DIR/config.toml`, its local files in `DIR/state`, and
   each secret in a file of `DIR/secrets` that only the owner can read.

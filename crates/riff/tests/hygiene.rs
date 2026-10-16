@@ -4,7 +4,6 @@
 //! the person, and the clear to the lead (01M3MNP36TZYN3PE00AZJTJSER).
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
@@ -102,8 +101,7 @@ impl Machine {
     fn new(server: &str) -> Self {
         let fake = tempfile::tempdir().unwrap();
         let tmux = fake.path().join("tmux");
-        std::fs::write(&tmux, FAKE_TMUX).unwrap();
-        std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        isolated::write_program(&tmux, FAKE_TMUX);
         Machine {
             fake,
             run: tempfile::tempdir().unwrap(),

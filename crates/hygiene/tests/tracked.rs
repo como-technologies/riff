@@ -3,22 +3,17 @@
 //! that changes a tracked file fails (01M3W5YW0172EVF2JA8T7WW392). The
 //! theme tool is a fake on the PATH. `mdbook` is the real one.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use crate::SPAWN;
-
-/// Runs `cmd` to its end. It starts under [`SPAWN`].
+/// Runs `cmd` to its end.
 fn run(cmd: &mut Command) -> Output {
-    let child = {
-        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap()
-    };
-    child.wait_with_output().unwrap()
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap()
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -84,10 +79,7 @@ impl Repo {
 
     /// Writes the fake tool `name` with the shell `script`.
     fn tool(&self, name: &str, script: &str) {
-        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
-        let path = self.bin().join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        isolated::write_program(self.bin().join(name), format!("#!/bin/sh\n{script}\n"));
     }
 
     /// A fake `mdbook-gruvbox`. As version 1.2.0 of the real tool, its

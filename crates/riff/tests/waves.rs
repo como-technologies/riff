@@ -279,7 +279,7 @@ fn fake_gh(bin: &Path) {
     let renamed = r#"{"number":33,"title":"Wave 28: 1.x, fixes that slow the work","open_issues":2,"closed_issues":0}"#;
     let ended = r#"{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}"#;
     let path = bin.join("gh");
-    fs::write(
+    isolated::write_program(
         &path,
         format!(
             "#!/bin/sh\necho \"gh $*\" >> \"$(dirname \"$0\")/gh.log\"\ncase \"$*\" in\n\
@@ -289,10 +289,7 @@ fn fake_gh(bin: &Path) {
              'api -X PATCH '*) printf '%s' '{ended}' ;;\n\
              *) exit 1 ;;\nesac\n"
         ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    );
 }
 
 /// `riff wave ARGS` with the fake `gh` of `bin` first in `PATH`.

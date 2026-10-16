@@ -8,7 +8,6 @@
 //! GitHub does. A real `riff-server` with no sign-in holds the claims.
 
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
@@ -148,8 +147,7 @@ impl Machine {
     async fn new() -> Machine {
         let bin = tempfile::tempdir().unwrap();
         let gh = bin.path().join("gh");
-        std::fs::write(&gh, FAKE_GH).unwrap();
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        isolated::write_program(&gh, FAKE_GH);
         Machine {
             env: Isolated::new(),
             bin,
@@ -632,7 +630,7 @@ fn knows_pr_40(machine: &Machine) {
              case \"$1 $2\" in\n"
         ),
     );
-    std::fs::write(&gh, with_pr).unwrap();
+    isolated::write_program(&gh, with_pr);
 }
 
 /// A POST of the total that fails one time with an empty reply: the
@@ -811,8 +809,7 @@ async fn call(
 /// `marks`.
 fn meter(bin: &Path, marks: &Path) -> Meter {
     let gh = bin.join("gh");
-    std::fs::write(&gh, FAKE_GH).unwrap();
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&gh, FAKE_GH);
     Meter {
         dir: marks.to_owned(),
         gh: Gh::at(gh),

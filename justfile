@@ -119,6 +119,13 @@ cargo-test *ARGS:
     cargo build -q --workspace --bins
     {{test_env}} cargo test {{ARGS}}
 
+# 01M517P9QE2SQ45SPV3K2SM71B: STRESS_RUNS runs (50) with STRESS_LOAD busy
+# loops (8), in the environment of the tests. ARGS go to cargo test.
+# Run a test many times on a busy machine: just stress -p riff --test all hosts::
+stress *ARGS:
+    cargo build -q --workspace --bins
+    {{test_env}} deploy/stress.sh {{ARGS}}
+
 # Build the API docs; a broken doc link fails
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace

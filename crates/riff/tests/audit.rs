@@ -11,7 +11,6 @@
 use crate::book;
 use crate::common;
 
-use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Output};
 use std::sync::Arc;
 use std::time::Duration;
@@ -270,8 +269,7 @@ impl Machine {
     fn new() -> Machine {
         let bin = tempfile::tempdir().unwrap();
         let gh = bin.path().join("gh");
-        std::fs::write(&gh, FAKE_GH).unwrap();
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        isolated::write_program(&gh, FAKE_GH);
         let write = |name: &str, value: serde_json::Value| {
             std::fs::write(bin.path().join(name), value.to_string()).unwrap();
         };

@@ -202,14 +202,13 @@ async fn a_leave_pushes_the_work_frees_the_claims_and_a_join_comes_back() {
 /// issue (01M3Y1YP1ZA5TBRA01MKWM3VC6).
 #[tokio::test]
 async fn a_leave_reports_the_tokens_of_each_claim() {
-    use std::os::unix::fs::PermissionsExt;
     let root = tempfile::tempdir().unwrap();
     let run = tempfile::tempdir().unwrap();
     let marks = tempfile::tempdir().unwrap();
     // A fake gh: it has no comment, and keeps each body that it gets in
     // the file after `--input`.
     let gh = root.path().join("gh");
-    std::fs::write(
+    isolated::write_program(
         &gh,
         r#"#!/bin/sh
 prev=
@@ -218,9 +217,7 @@ for a; do
     prev=$a
 done
 "#,
-    )
-    .unwrap();
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let meter = riff::usage::Meter {
         dir: marks.path().to_owned(),
         gh: riff::pr::Gh::at(&gh),

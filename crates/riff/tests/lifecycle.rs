@@ -106,12 +106,6 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
-/// True when a riff-server of this machine listens on 7878. Then
-/// `riff server` shows it in a `local` line.
-fn local_answers() -> bool {
-    std::net::TcpStream::connect_timeout(&"127.0.0.1:7878".parse().unwrap(), PROBE_WAIT).is_ok()
-}
-
 /// The first line of `riff server`: the release of this build, with its
 /// commit and date short.
 fn riff_line() -> String {
@@ -144,9 +138,12 @@ async fn server_shows_the_riff_that_riff_uses_from_riff_server_as_a_table() {
     ];
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines[..4], table, "{stdout}");
-    // Then the facts of the riff, one on a line.
+    // Then the facts of the riff, one on a line. A riff of this machine
+    // on 7878 is outside the test, and its answer can come in time or
+    // not. So the test takes the answer that `riff server` saw: a second
+    // look can see another (#294).
     let after = 4 + FACTS.len();
-    if local_answers() {
+    if lines[after].starts_with("local ") {
         assert_eq!(
             lines[after], "local       http://127.0.0.1:7878",
             "{stdout}"
@@ -400,15 +397,13 @@ fn a_server_that_is_not_a_url_or_host_and_port_is_refused() {
 fn fake_command(bin: &Path, name: &str, stdout: &str, status: u8) -> PathBuf {
     let path = bin.join(name);
     let log = bin.join(format!("{name}.log"));
-    std::fs::write(
+    isolated::write_program(
         &path,
         format!(
             "#!/bin/sh\necho \"$*\" >> {}\necho '{stdout}'\nexit {status}\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     path
 }
 
@@ -487,17 +482,15 @@ async fn update_installs_sccache_on_a_machine_with_workers() {
     // The install puts sccache in place.
     let bin = tempfile::tempdir().unwrap();
     let cmd = with(bin.path());
-    let cargo = bin.path().join("cargo");
-    std::fs::write(
-        &cargo,
+    isolated::write_program(
+        bin.path().join("cargo"),
         format!(
             "#!/bin/sh\necho \"$*\" >> {}/cargo.log\n\
              case \"$*\" in *sccache*) printf '#!/bin/sh\\necho sccache 0.18.0\\n' > {0}/sccache; \
              chmod +x {0}/sccache ;; esac\n",
             bin.path().display()
         ),
-    )
-    .unwrap();
+    );
     let out = run(cmd).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(log(bin.path(), "cargo"), install(&release()) + pinned);

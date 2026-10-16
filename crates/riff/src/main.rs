@@ -3636,11 +3636,14 @@ fn use_color(color: ColorWhen) {
 /// Runs until stopped. It connects again when the stream ends (R131).
 /// Each message is a [`text::block`]. The status lines go to stderr
 /// (01M3JDCA6R894JG6SDJ2R7AFMN). On a new binary, it runs it
-/// (01M3MNVTC248YYJJQKFD9H1WY9).
+/// (01M3MNVTC248YYJJQKFD9H1WY9). The first poll reads the binary of
+/// this process before the first line goes out, so a test that waits
+/// for that line and then puts a new binary in place sees the update.
 async fn tail(api: &Api, me: &SessionUri, thread: &ThreadName, here: &Place) {
     tokio::select! {
-        () = tail_each(api, me, thread) => {}
+        biased;
         () = binary::follow_update(here) => {}
+        () = tail_each(api, me, thread) => {}
     }
 }
 

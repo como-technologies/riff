@@ -8,7 +8,6 @@
 //! binary.
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
@@ -62,8 +61,7 @@ impl Machine {
         });
         let fake = tempfile::tempdir().unwrap();
         let tmux = fake.path().join("tmux");
-        std::fs::write(&tmux, FAKE_TMUX).unwrap();
-        std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        isolated::write_program(&tmux, FAKE_TMUX);
         let repo = tempfile::tempdir().unwrap();
         let out = Command::new("git")
             .args(["init", "-q"])
