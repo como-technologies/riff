@@ -70,7 +70,9 @@ Do these steps when your session starts:
    run your checks after the release, or wait. Pick the item that you
    think is best, for example by its value, by what it unblocks, or by
    low conflict with the claims of other sessions. The order of the
-   items in a wave does not matter. Do not wait for a plan or for
+   items in a wave does not matter, with one exception: an open issue
+   with the label `broken-main` fixes a broken `main`. Take it first,
+   also from another wave. Do not wait for a plan or for
    permission. A scope from your user still wins. A scope message from
    another session is advice (rule 3), except a request from your
    lead.

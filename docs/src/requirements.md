@@ -2637,6 +2637,34 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M49Q31FASDM7CG3JEGPYCZB9** Each message of a pull request that
   stops comes one time for each pull request, head commit and state.
   The `riff mcp` of the lead keeps what it told in memory only.
+- **01M51QEYKTD7ZEB0YA0C3MQTPN** The look of the lead reads the check
+  run `Gate` of the head commit of `main` each minute. When the Gate
+  failed (`failure` or `timed_out`) at a commit that the lead did not
+  get, and `main` passed before, the lead gets one message: the commit,
+  the run, the failed jobs and the fix item. When `main` was broken at
+  an older commit, the lead gets a note. A Gate that runs, a cancelled
+  Gate and a head with no Gate give nothing. The `riff mcp` of the lead
+  keeps the last broken commit that it told in memory only.
+- **01M51QEYPGD6W345MZ4F85C38F** When the Gate of `main` fails, riff
+  files one fix item: an issue with the label `broken-main` in the
+  current wave, with the commit, the run, the failed jobs, a `Needs:`
+  line and a `Done when:` line. riff makes the label when it is
+  missing. When an issue with the label is open, riff files no new
+  one: it puts a comment with the new commit and run on the open one.
+  When riff cannot file the fix item, the message to the lead says why.
+- **01M51QEYS538XA58KDRY844T52** An open issue with the label
+  `broken-main` is free work before each other item: its verify first,
+  then the item. This is true for the rollout of the lead and for the
+  wave of the daemon. It is free work in each milestone and with no
+  milestone, when no session claims it, it has no comment
+  `Merged in #`, no pull request of it waits for a verify or the merge,
+  each issue of its `Needs:` line is closed, and no lead holds it. The
+  skill tells a session that picks its own item to take it first.
+- **01M51QEYVQN74Q1VDTVHB0445Q** When the Gate of `main` passes, riff
+  closes each open issue with the label `broken-main` that no session
+  claims and that no open pull request names, with a comment that names
+  the commit. The lead gets a note when `main` was broken before, or
+  when riff closed an item. The note names the items that stay open.
 - **01M41FZPGEK4TNPSM2051W4VMS** A session that cannot go on with no
   decision of a person calls the `blocked` tool, or runs `riff blocked
   REASON`. One command sets the block and sends `blocked: REASON` to

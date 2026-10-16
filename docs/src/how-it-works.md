@@ -2025,6 +2025,69 @@ git push --force-with-lease --force-if-includes
 
 Then send a new verify request for the new commit.
 
+### When main breaks
+
+A pull request merges when the Gate of its own head passed, also when
+`main` moved after that. So two pull requests that each pass their
+Gate can break `main` together. Then the Gate of each later pull
+request fails too. The `riff mcp` of the lead looks at the Gate of the
+head of `main` each minute:
+
+```mermaid
+flowchart TD
+    L["the look of the lead, each minute"] --> G{"the Gate of the head of main"}
+    G -- "failed, a new commit" --> F["riff files the fix item,<br/>or comments on the open one"]
+    F --> M["message to the lead: commit, run,<br/>failed jobs, fix item"]
+    M --> W["the rollout gives the fix item<br/>to a worker before each other item"]
+    G -- passed --> C["riff closes each fix item that no session<br/>claims and no pull request names"]
+    C --> N["note to the lead"]
+```
+
+- **The message.** The lead gets one message when `main` breaks: the
+  commit, the run, the failed jobs and the fix item. While `main` stays
+  broken, a failed Gate at a newer commit gives a note, and a comment
+  on the fix item.
+- **The fix item.** An issue with the label `broken-main` in the
+  current wave. riff files one only when no issue with the label is
+  open. The rollout gives it to a worker before each other item, also
+  before a verify (see
+  [riff starts workers by itself](#riff-starts-workers-by-itself)).
+  You can file a fix item by hand: give it the label `broken-main`.
+- **When main passes again.** riff closes each fix item that no session
+  claims and that no open pull request names. The lead gets a note.
+
+To see the Gate of the head of `main`:
+
+```sh
+gh api "repos/OWNER/REPO/commits/main/check-runs?check_name=Gate" \
+  --jq '.check_runs[] | .head_sha, .conclusion, .html_url'
+```
+
+To see the open fix item:
+
+```sh
+gh issue list --label broken-main
+```
+
+#### When a pull request already has the fix
+
+Hold the fix item, so that no worker writes the fix a second time.
+When the Gate of `main` passes, riff closes the item:
+
+```sh
+riff plan hold issue-901 the fix is in PR 863
+```
+
+#### When a test fails only some of the time
+
+Run the failed jobs of the run again. When they pass, the Gate of
+`main` passes, and riff closes the fix item. RUN is the number of the
+run in the message:
+
+```sh
+gh run rerun RUN --failed
+```
+
 ### Report a verify
 
 The Gate on GitHub is the one full test run of each commit. A verifier
@@ -4508,6 +4571,10 @@ flowchart TD
   [How a session works on an item](#how-a-session-works-on-an-item)).
   A held item is no free work (see
   [Keep an item from the rollout](#keep-an-item-from-the-rollout)).
+- **A fix item first.** An open issue with the label `broken-main`
+  fixes a broken `main`. It comes before each other item, its verify
+  first, also when it is not in the current wave (see
+  [When main breaks](#when-main-breaks)).
 - **Idle workers.** Workers with no claim in the repository of your
   lead. A worker that does a task with no item holds a task claim, so
   it is busy (see
