@@ -114,11 +114,11 @@
 //! |---|---|
 //! | `RIFF_HOME`, and `riff` in each XDG base folder | the folders of riff |
 //! | `containers` in `XDG_DATA_HOME` and in `XDG_CONFIG_HOME` | the images and the volumes of podman |
-//! | the main clone, and the worktree of the test | the build of the test, and the fetch of `riff run` |
+//! | the main clone, and the worktree of the test ([`Home::clones`]), except their `.git` | the build of the test, and the fetch of `riff run` |
 //! | `XDG_CACHE_HOME` | the caches of the tools of the host |
 //! | `snap` in the home | the snap apps, for example the Firefox snap (01M51MQB46AYY39YSAY18NMD8T) |
 //! | `claude/locks` in `XDG_STATE_HOME` | the locks of each `claude` on the host (01M51MQB46AYY39YSAY18NMD8T) |
-//! | `.claude/worktrees` and `.git` in each git clone, except the hooks and the config files of git ([`GIT_KEPT`]) | the worktrees and the builds of the other sessions, and the git of each session (01M51SPS50QQ9Y5C6VE26A18FZ, [`of_other_sessions`]) |
+//! | `.claude/worktrees` and `.git` in each git clone, also in the home when it is a clone, except the hooks and the config files of git ([`GIT_KEPT`]) | the worktrees and the builds of the other sessions, and the git of each session (01M51SPS50QQ9Y5C6VE26A18FZ, 01M51X6JCHZB8HJ8C8M3J1G6GZ, [`of_other_sessions`]) |
 //! | each path of `--skip` | the other programs of the person that write while the test runs |
 //!
 //! So the test also passes on a busy machine, for example while workers
@@ -139,6 +139,18 @@
 //! | `gh` in `XDG_CONFIG_HOME` | the config of `gh`: the session gets it by a bind |
 //! | [`SHELL_FILES`] in the home, `fish/config.fish` and `fish/conf.d` in `XDG_CONFIG_HOME` | the shell files |
 //! | `.claude.json`, and `settings.json` in the Claude folder | the config of Claude Code |
+//! | each file in `.git/hooks` of a clone | the hooks of git (01M51X6JA3W2CMV1S5VZEY7FC3) |
+//!
+//! A line of a git config can run code at the next git command, for
+//! example `core.hooksPath`, `core.fsmonitor` or an alias. So the check
+//! reads `config` and `config.worktree` in the `.git` of each clone of
+//! the home, also of the clones of the test, before `riff run` and after
+//! it, as keys ([`git_config`], 01M51X6JA3W2CMV1S5VZEY7FC3). A new, a
+//! changed or a removed key fails the test, and the message names the
+//! file and the key. A key of a section `[branch "NAME"]` does not
+//! count: each `git push -u` of a session writes one. `config.worktree`
+//! in `.git/worktrees/NAME`, and the git folder of each submodule in
+//! `.git/modules`, stay left out.
 //!
 //! The other sessions of the person write in the Claude folder of the
 //! person (`CLAUDE_CONFIG_DIR`, else `~/.claude`) and in `.claude.json`
@@ -158,7 +170,7 @@
 //!     C -- yes --> M{names the ID8?}
 //!     M -- yes --> F
 //!     M -- no --> N
-//!     B -- yes --> G{a file that riff must not write, with a new value?}
+//!     B -- yes --> G{a file that riff must not write, with a new value, or a git config with a new key?}
 //!     G -- no --> N
 //!     G -- yes --> J{.claude.json?}
 //!     J -- no --> F
@@ -167,7 +179,7 @@
 //!     T -- no --> N
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::Metadata;
@@ -502,15 +514,16 @@ impl Env {
 
     /// The folders that the home check leaves out: the folders of riff,
     /// the storage of podman, the cache, the snap apps, the locks of
-    /// `claude`, `clones`, and `skips` (01M4ZCFGHCS7WJ6CFYBZSX0AT5,
-    /// 01M51MQB46AYY39YSAY18NMD8T).
+    /// `claude`, and `skips` (01M4ZCFGHCS7WJ6CFYBZSX0AT5,
+    /// 01M51MQB46AYY39YSAY18NMD8T). The clones of the test are in
+    /// [`Home::clones`].
     ///
     /// ```
     /// use std::path::PathBuf;
     /// use real_session::Env;
     ///
     /// let env = Env::from_vars(|name| (name == "HOME").then(|| "/h".into()))?;
-    /// let skips = env.skips(&["/h/src/riff".into()], &["/h/.mozilla".into()]);
+    /// let skips = env.skips(&["/h/.mozilla".into()]);
     /// let skips: Vec<String> = skips.iter().map(|p| p.display().to_string()).collect();
     /// assert_eq!(
     ///     skips,
@@ -524,13 +537,12 @@ impl Env {
     ///         "/h/.cache",
     ///         "/h/snap",
     ///         "/h/.local/state/claude/locks",
-    ///         "/h/src/riff",
     ///         "/h/.mozilla",
     ///     ]
     /// );
     /// # Ok::<(), String>(())
     /// ```
-    pub fn skips(&self, clones: &[PathBuf], skips: &[PathBuf]) -> Vec<PathBuf> {
+    pub fn skips(&self, skips: &[PathBuf]) -> Vec<PathBuf> {
         let mut all: Vec<PathBuf> = [&self.config, &self.data, &self.state, &self.cache]
             .iter()
             .map(|base| base.join("riff"))
@@ -541,7 +553,6 @@ impl Env {
         all.push(self.cache.clone());
         all.push(self.home.join("snap"));
         all.push(self.state.join("claude/locks"));
-        all.extend(clones.iter().cloned());
         all.extend(skips.iter().cloned());
         all
     }
@@ -582,11 +593,12 @@ impl Env {
 
 /// The paths of a home, each one by its hash: a home can hold millions
 /// of paths. Each file that the check guards also has its state
-/// ([`Home::guarded`]).
+/// ([`Home::guarded`]), and each git config its keys ([`git_config`]).
 #[derive(Debug, Default)]
 pub struct Listing {
     paths: HashSet<u64>,
     states: HashMap<u64, u64>,
+    configs: HashMap<u64, GitConfig>,
 }
 
 impl Listing {
@@ -608,6 +620,11 @@ impl Listing {
     /// The state of `path`, when the check guards it.
     fn state(&self, path: &Path) -> Option<u64> {
         self.states.get(&key(path)).copied()
+    }
+
+    /// The keys of `path`, when it is a git config.
+    fn config(&self, path: &Path) -> Option<&GitConfig> {
+        self.configs.get(&key(path))
     }
 }
 
@@ -631,8 +648,11 @@ fn state(meta: &Metadata) -> u64 {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Changes {
     /// The files that riff must not write, with a new size, time of
-    /// change or inode.
+    /// change or inode, and the git configs with a new, a changed or a
+    /// removed key.
     pub changed: Vec<PathBuf>,
+    /// The keys that changed in each git config of `changed`.
+    pub keys: BTreeMap<PathBuf, Vec<String>>,
     /// The new paths. A new folder shows as one path.
     pub new: Vec<PathBuf>,
 }
@@ -662,6 +682,7 @@ impl Changes {
 ///     claude: root.join(".claude"),
 ///     claude_json: root.join(".claude.json"),
 ///     guarded: vec![root.join(".gitconfig")],
+///     clones: Vec::new(),
 /// };
 /// let before = home.list();
 /// assert_eq!(before.len(), 6);
@@ -689,6 +710,7 @@ impl Changes {
 ///             root.join(".cvsignore"),
 ///             root.join("new"),
 ///         ],
+///         ..Changes::default()
 ///     }
 /// );
 /// # Ok::<(), std::io::Error>(())
@@ -706,12 +728,17 @@ pub struct Home {
     /// The files that riff must not write: a change to one of them
     /// counts. A folder guards each file in it.
     pub guarded: Vec<PathBuf>,
+    /// The main clone and the worktree of the test: the check leaves
+    /// them out, except their `.git`. There, as in each other clone, the
+    /// hooks and the config files of git count (01M51X6JA3W2CMV1S5VZEY7FC3).
+    pub clones: Vec<PathBuf>,
 }
 
 impl Home {
-    /// Each path of the home, except the paths in [`Home::skips`] and
-    /// the paths of the other sessions ([`of_other_sessions`]), and the
-    /// state of each file in [`Home::guarded`].
+    /// Each path of the home, except the paths that the check leaves out
+    /// ([`Home::left_out`]), the state of each file that it guards
+    /// ([`Home::guarded`], and the hooks of git), and the keys of each
+    /// git config ([`git_config`]).
     pub fn list(&self) -> Listing {
         let mut listing = Listing::default();
         self.walk(&mut |path, meta| {
@@ -719,6 +746,11 @@ impl Home {
             listing.paths.insert(key);
             if self.guards(path, meta) {
                 listing.states.insert(key, state(meta));
+            }
+            if is_git_config(path, meta)
+                && let Some(config) = read_git_config(path)
+            {
+                listing.configs.insert(key, config);
             }
             true
         });
@@ -729,9 +761,11 @@ impl Home {
     /// that is not in `before` counts, except in the Claude folder and
     /// `.claude.json*`: there only a path that names one of `marks`
     /// counts. A new folder shows as one path. Each file of
-    /// [`Home::guarded`] with a new state counts, except a
-    /// `.claude.json` whose text names none of `marks`. The paths are
-    /// in order.
+    /// [`Home::guarded`] and each hook of git with a new state counts,
+    /// except a `.claude.json` whose text names none of `marks`. Each
+    /// git config with a new, a changed or a removed key counts, except
+    /// a key of a section `[branch "NAME"]`, with its keys in
+    /// [`Changes::keys`]. The paths are in order.
     pub fn changes(&self, before: &Listing, marks: &[String]) -> Changes {
         let names = |text: &str| {
             marks
@@ -748,6 +782,14 @@ impl Home {
                 // A new folder of another session can hold a path that
                 // names this session.
                 return !counts;
+            }
+            if let Some(old) = before.config(path) {
+                let keys = changed_keys(old, &read_git_config(path).unwrap_or_default());
+                if !keys.is_empty() {
+                    changes.changed.push(path.to_owned());
+                    changes.keys.insert(path.to_owned(), keys);
+                }
+                return true;
             }
             let changed = before
                 .state(path)
@@ -766,9 +808,30 @@ impl Home {
     }
 
     /// True when the check guards `path`: a file or a link in
-    /// [`Home::guarded`].
+    /// [`Home::guarded`], or in the folder `hooks` of a git folder `.git`
+    /// (01M51X6JA3W2CMV1S5VZEY7FC3).
     fn guards(&self, path: &Path, meta: &Metadata) -> bool {
-        !meta.is_dir() && self.guarded.iter().any(|guard| path.starts_with(guard))
+        !meta.is_dir()
+            && (self.guarded.iter().any(|guard| path.starts_with(guard))
+                || path
+                    .ancestors()
+                    .skip(1)
+                    .any(|hooks| named(hooks, "hooks") && hooks.parent().is_some_and(|git| named(git, ".git"))))
+    }
+
+    /// True when the check leaves out `path`: it is in [`Home::skips`],
+    /// it is of the other sessions ([`of_other_sessions`]), or it is in
+    /// one of [`Home::clones`] and not in its `.git`.
+    fn left_out(&self, path: &Path) -> bool {
+        self.skips.iter().any(|skip| path.starts_with(skip))
+            || self.clones.iter().any(|clone| {
+                path.strip_prefix(clone).is_ok_and(|rest| {
+                    rest.components()
+                        .next()
+                        .is_some_and(|first| first.as_os_str() != ".git")
+                })
+            })
+            || of_other_sessions(path)
     }
 
     /// True when `path` is in the Claude folder, or its name starts with
@@ -778,9 +841,9 @@ impl Home {
         path.starts_with(&self.claude) || path.as_os_str().as_encoded_bytes().starts_with(json)
     }
 
-    /// Calls `visit` for each path of the home, except the paths in
-    /// [`Home::skips`] and the paths of the other sessions
-    /// ([`of_other_sessions`]), with the metadata of the path itself. It
+    /// Calls `visit` for each path of the home, except the paths that
+    /// the check leaves out ([`Home::left_out`]), with the metadata of
+    /// the path itself. It
     /// goes into a folder when `visit` gives true, and the folder is on
     /// the file system of the home. It follows no link, and it skips a
     /// folder that it cannot read.
@@ -793,8 +856,7 @@ impl Home {
             };
             for entry in entries.flatten() {
                 let path = entry.path();
-                if self.skips.iter().any(|skip| path.starts_with(skip)) || of_other_sessions(&path)
-                {
+                if self.left_out(&path) {
                     continue;
                 }
                 // The metadata of a link, not of its target.
@@ -811,8 +873,18 @@ impl Home {
 
 /// The paths in a git folder `.git` that the home check still lists
 /// (01M51SPS50QQ9Y5C6VE26A18FZ): a new hook or a new config file runs
-/// code at the next git command.
+/// code at the next git command. The check also sees a change to a
+/// hook, and a change to the keys of a config file
+/// (01M51X6JA3W2CMV1S5VZEY7FC3).
 pub const GIT_KEPT: [&str; 3] = ["hooks", "config", "config.worktree"];
+
+/// The config files in a git folder `.git` that the home check reads as
+/// keys ([`git_config`], 01M51X6JA3W2CMV1S5VZEY7FC3).
+pub const GIT_CONFIGS: [&str; 2] = ["config", "config.worktree"];
+
+/// The keys of a git config, each with its values in order
+/// ([`git_config`]).
+pub type GitConfig = BTreeMap<String, Vec<String>>;
 
 /// True when the other sessions of the person write `path` while the
 /// test runs, so the home check leaves it out (01M51SPS50QQ9Y5C6VE26A18FZ):
@@ -822,7 +894,8 @@ pub const GIT_KEPT: [&str; 3] = ["hooks", "config", "config.worktree"];
 ///   each worktree, in the git folder of its clone;
 /// - the folder `.claude/worktrees` of a git clone (a folder with
 ///   `.git` in it): the worktrees of the other sessions, with their
-///   builds, and each new worktree.
+///   builds, and each new worktree. When the home is a clone, this is
+///   also `.claude/worktrees` in the home (01M51X6JCHZB8HJ8C8M3J1G6GZ).
 ///
 /// Each other path of a clone still counts, also a new `.git`.
 ///
@@ -834,6 +907,7 @@ pub const GIT_KEPT: [&str; 3] = ["hooks", "config", "config.worktree"];
 /// std::fs::create_dir_all(clone.join(".git"))?;
 /// assert!(of_other_sessions(&clone.join(".git/objects")));
 /// assert!(of_other_sessions(&clone.join(".git/worktrees")));
+/// assert!(of_other_sessions(&clone.join(".git/modules")));
 /// assert!(of_other_sessions(&clone.join(".claude/worktrees")));
 /// // The hooks and the config files of git still count.
 /// assert!(!of_other_sessions(&clone.join(".git/hooks")));
@@ -845,10 +919,16 @@ pub const GIT_KEPT: [&str; 3] = ["hooks", "config", "config.worktree"];
 /// assert!(!of_other_sessions(&clone.join("notes.md")));
 /// // A folder with no `.git` in it is not a clone.
 /// assert!(!of_other_sessions(&dir.path().join("src/.claude/worktrees")));
+///
+/// // A home that is a clone, for example of the dotfiles of the person:
+/// // `.claude/worktrees` in the home holds the worktrees of its sessions.
+/// let home = dir.path().join("home");
+/// std::fs::create_dir_all(home.join(".git"))?;
+/// assert!(of_other_sessions(&home.join(".claude/worktrees")));
+/// assert!(!of_other_sessions(&home.join(".claude/settings.json")));
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn of_other_sessions(path: &Path) -> bool {
-    let named = |path: &Path, name: &str| path.file_name() == Some(OsStr::new(name));
     if path.parent().is_some_and(|git| named(git, ".git")) {
         return !GIT_KEPT.iter().any(|name| named(path, name));
     }
@@ -859,6 +939,189 @@ pub fn of_other_sessions(path: &Path) -> bool {
                     .parent()
                     .is_some_and(|clone| std::fs::symlink_metadata(clone.join(".git")).is_ok())
         })
+}
+
+/// True when the name of `path` is `name`.
+fn named(path: &Path, name: &str) -> bool {
+    path.file_name() == Some(OsStr::new(name))
+}
+
+/// True when `path` is a file of [`GIT_CONFIGS`] in a git folder `.git`.
+fn is_git_config(path: &Path, meta: &Metadata) -> bool {
+    !meta.is_dir()
+        && path.parent().is_some_and(|git| named(git, ".git"))
+        && GIT_CONFIGS.iter().any(|name| named(path, name))
+}
+
+/// The keys of the git config `path`, when the check can read it.
+fn read_git_config(path: &Path) -> Option<GitConfig> {
+    let text = std::fs::read(path).ok()?;
+    Some(git_config(&String::from_utf8_lossy(&text)))
+}
+
+/// The keys of the text of a git config, each as git names it:
+/// `SECTION.KEY`, or `SECTION.SUBSECTION.KEY`, with the section and the
+/// key in lower case. Each key has its values in order, with no comment.
+/// A key with no `=` has the value `""`. The keys of a section `[branch
+/// "NAME"]` are left out: each `git push -u` of a session writes one
+/// (01M51X6JA3W2CMV1S5VZEY7FC3). The keys of `[branch]` itself stay.
+///
+/// ```
+/// use real_session::git_config;
+///
+/// let config = git_config(
+///     "[core]\n\
+///      \tbare = false\n\
+///      \thooksPath = /tmp/hooks ; a comment\n\
+///      # a comment\n\
+///      [remote \"origin\"]\n\
+///      \turl = git@github.com:o/r.git\n\
+///      [branch \"worktree-issue-1\"]\n\
+///      \tremote = origin\n\
+///      [branch.old-form]\n\
+///      \tremote = origin\n\
+///      [branch]\n\
+///      \tsort = -committerdate\n\
+///      [alias] st = \"status # not a comment\"\n\
+///      [include]\n\
+///      \tpath = a\n\
+///      \tpath = b\n\
+///      [User]\n\
+///      \tName = Ada \\\n\
+///      Lovelace\n\
+///      \tnoValue\n",
+/// );
+/// let keys: Vec<String> = config
+///     .iter()
+///     .map(|(key, values)| format!("{key}={}", values.join("|")))
+///     .collect();
+/// assert_eq!(
+///     keys,
+///     [
+///         "alias.st=\"status # not a comment\"",
+///         "branch.sort=-committerdate",
+///         "core.bare=false",
+///         "core.hookspath=/tmp/hooks",
+///         "include.path=a|b",
+///         "remote.origin.url=git@github.com:o/r.git",
+///         "user.name=Ada Lovelace",
+///         "user.novalue=",
+///     ]
+/// );
+/// ```
+pub fn git_config(text: &str) -> GitConfig {
+    let mut config = GitConfig::new();
+    let mut section = String::new();
+    let mut branch = false;
+    let mut lines = text.lines();
+    while let Some(first) = lines.next() {
+        let mut line = first.to_owned();
+        // A line that ends with an odd number of backslashes goes on in
+        // the next line.
+        while line.chars().rev().take_while(|&c| c == '\\').count() % 2 == 1 {
+            line.pop();
+            match lines.next() {
+                Some(next) => line.push_str(next),
+                None => break,
+            }
+        }
+        let mut rest = line.trim_start();
+        if let Some(header) = rest.strip_prefix('[') {
+            match section_of(header) {
+                Some((name, of_branch, after)) => {
+                    (section, branch) = (name, of_branch);
+                    rest = after;
+                }
+                // Git does not read a broken header. Its keys still count
+                // under the text of the header.
+                None => {
+                    (section, branch) = (header.to_lowercase(), false);
+                    rest = "";
+                }
+            }
+        }
+        let rest = without_comment(rest).trim();
+        if rest.is_empty() || branch {
+            continue;
+        }
+        let (key, value) = rest
+            .split_once('=')
+            .map_or((rest, ""), |(key, value)| (key.trim(), value.trim()));
+        config
+            .entry(format!("{section}.{}", key.to_lowercase()))
+            .or_default()
+            .push(value.to_owned());
+    }
+    config
+}
+
+/// The section of a header line of a git config, from the text after
+/// its `[`: the name of the section with its subsection, true for a
+/// section `[branch "NAME"]` or `[branch.NAME]`, and the text after the
+/// `]`. `None` for a broken header.
+fn section_of(header: &str) -> Option<(String, bool, &str)> {
+    let end = header.find(|c: char| c == ']' || c == '"' || c.is_whitespace())?;
+    let name = header[..end].to_lowercase();
+    let rest = header[end..].trim_start();
+    let Some(quoted) = rest.strip_prefix('"') else {
+        // The old form `[section.subsection]`.
+        let branch = name.starts_with("branch.");
+        return Some((name, branch, rest.strip_prefix(']')?));
+    };
+    let mut sub = String::new();
+    let mut chars = quoted.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => sub.extend(chars.next().map(|(_, c)| c)),
+            '"' => {
+                let after = quoted[i + 1..].strip_prefix(']')?;
+                return Some((format!("{name}.{sub}"), name == "branch", after));
+            }
+            c => sub.push(c),
+        }
+    }
+    None
+}
+
+/// The text of a line of a git config up to its comment: a `#` or a `;`
+/// that is not in quotes.
+fn without_comment(text: &str) -> &str {
+    let mut quoted = false;
+    let mut escaped = false;
+    for (i, c) in text.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => quoted = !quoted,
+            '#' | ';' if !quoted => return &text[..i],
+            _ => {}
+        }
+    }
+    text
+}
+
+/// The keys that are new, changed or removed in `after`, in order.
+///
+/// ```
+/// use real_session::{changed_keys, git_config};
+///
+/// let before = git_config("[core]\n\tbare = false\n\teditor = vi\n");
+/// let after = git_config(
+///     "[core]\n\tbare = true\n\thooksPath = /x\n[branch \"x\"]\n\tremote = origin\n",
+/// );
+/// assert_eq!(changed_keys(&before, &after), ["core.bare", "core.editor", "core.hookspath"]);
+/// assert!(changed_keys(&before, &before).is_empty());
+/// ```
+pub fn changed_keys(before: &GitConfig, after: &GitConfig) -> Vec<String> {
+    let mut keys: Vec<String> = before
+        .keys()
+        .chain(after.keys())
+        .filter(|key| before.get(*key) != after.get(*key))
+        .cloned()
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
 }
 
 /// The reason of a failed home check.
@@ -874,10 +1137,23 @@ pub fn of_other_sessions(path: &Path) -> bool {
 /// let both = Changes {
 ///     changed: vec!["/h/.gitconfig".into()],
 ///     new: vec!["/h/a".into(), "/h/b".into()],
+///     ..Changes::default()
 /// };
 /// assert!(changes_text(&both).starts_with(
 ///     "the home has 1 changed file and 2 new paths outside the folders of riff:\n  \
 ///      /h/.gitconfig (changed)\n  /h/a\n  /h/b\n"
+/// ));
+///
+/// // A git config names its keys.
+/// let config = std::path::PathBuf::from("/h/src/riff/.git/config");
+/// let keys = Changes {
+///     changed: vec![config.clone()],
+///     keys: [(config, vec!["alias.st".into(), "core.hookspath".into()])].into(),
+///     ..Changes::default()
+/// };
+/// assert!(changes_text(&keys).starts_with(
+///     "the home has 1 changed file outside the folders of riff:\n  \
+///      /h/src/riff/.git/config (changed: alias.st, core.hookspath)\n"
 /// ));
 /// let changed = Changes {
 ///     changed: vec!["/h/.bashrc".into(), "/h/.gitconfig".into()],
@@ -908,7 +1184,10 @@ pub fn changes_text(changes: &Changes) -> String {
     let lines: Vec<String> = changes
         .changed
         .iter()
-        .map(|path| format!("{} (changed)", path.display()))
+        .map(|path| match changes.keys.get(path) {
+            Some(keys) => format!("{} (changed: {})", path.display(), keys.join(", ")),
+            None => format!("{} (changed)", path.display()),
+        })
         .chain(changes.new.iter().map(|path| path.display().to_string()))
         .collect();
     for line in lines.iter().take(SHOWN) {
@@ -1163,10 +1442,11 @@ fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String
         .collect();
     let home = Home {
         root: env.home.clone(),
-        skips: env.skips(&clones, &skips),
+        skips: env.skips(&skips),
         claude: env.claude.clone(),
         claude_json: env.claude_json.clone(),
         guarded: env.guarded(),
+        clones,
     };
     let before = step(Step::List, stop, || {
         let listing = home.list();
@@ -1840,6 +2120,7 @@ mod tests {
             claude: root.join(".claude"),
             claude_json: root.join(".claude.json"),
             guarded,
+            clones: Vec::new(),
         }
     }
 
@@ -1893,9 +2174,101 @@ mod tests {
             home.changes(&before, &[]),
             Changes {
                 changed: vec![hosts],
-                new: Vec::new(),
+                ..Changes::default()
             }
         );
+    }
+
+    /// A clone with a branch section and a hook, as `git push -u` and
+    /// the person leave them.
+    fn clone_in(clone: &Path) {
+        std::fs::create_dir_all(clone.join(".git/hooks")).unwrap();
+        std::fs::write(
+            clone.join(".git/config"),
+            "[core]\n\tbare = false\n[branch \"main\"]\n\tremote = origin\n",
+        )
+        .unwrap();
+        std::fs::write(clone.join(".git/hooks/pre-push"), "#!/bin/sh\n").unwrap();
+    }
+
+    #[test]
+    fn a_new_branch_section_does_not_count_and_each_other_key_and_a_changed_hook_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        let clone = root.join("src/main");
+        clone_in(&clone);
+        let config = clone.join(".git/config");
+        let home = home_in(&root, Vec::new());
+        let before = home.list();
+
+        // A session pushes a new branch with -u, and deletes the old one.
+        std::fs::write(
+            &config,
+            "[core]\n\tbare = false\n[branch \"worktree-issue-1\"]\n\tremote = origin\n\t\
+             merge = refs/heads/worktree-issue-1\n",
+        )
+        .unwrap();
+        assert_eq!(home.changes(&before, &[]), Changes::default());
+
+        // A new key, a changed key and a new section count, by name.
+        std::fs::write(
+            &config,
+            "[core]\n\tbare = true\n\thooksPath = /tmp/h\n[alias]\n\tst = status\n",
+        )
+        .unwrap();
+        // A write to a hook that is there already counts.
+        std::fs::write(clone.join(".git/hooks/pre-push"), "#!/bin/sh\ncurl x\n").unwrap();
+        let changes = home.changes(&before, &[]);
+        assert_eq!(
+            changes.changed,
+            [config.clone(), clone.join(".git/hooks/pre-push")]
+        );
+        assert_eq!(
+            changes.keys,
+            [(
+                config.clone(),
+                vec!["alias.st".to_owned(), "core.bare".into(), "core.hookspath".into()]
+            )]
+            .into()
+        );
+        assert!(changes.new.is_empty());
+
+        // A removed key counts.
+        std::fs::write(clone.join(".git/hooks/pre-push"), "#!/bin/sh\n").unwrap();
+        std::fs::write(&config, "[branch \"main\"]\n\tremote = origin\n").unwrap();
+        assert_eq!(home.changes(&before, &[]).keys[&config], ["core.bare"]);
+    }
+
+    #[test]
+    fn a_clone_of_the_test_is_left_out_except_its_hooks_and_its_git_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        let clone = root.join("src/riff");
+        let worktree = clone.join(".claude/worktrees/issue-9");
+        clone_in(&clone);
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(worktree.join(".git"), "gitdir: x\n").unwrap();
+        let home = Home {
+            clones: vec![clone.clone(), worktree.clone()],
+            ..home_in(&root, Vec::new())
+        };
+        let before = home.list();
+
+        // The build of the test and the fetch of riff run.
+        std::fs::create_dir_all(worktree.join("target/debug")).unwrap();
+        std::fs::write(worktree.join("target/debug/riff"), "").unwrap();
+        std::fs::write(clone.join("notes.md"), "").unwrap();
+        std::fs::write(clone.join(".git/FETCH_HEAD"), "").unwrap();
+        assert_eq!(home.changes(&before, &[]), Changes::default());
+
+        // Its hooks and its git config count.
+        let config = clone.join(".git/config");
+        std::fs::write(&config, "[core]\n\tbare = false\n\tfsmonitor = x\n").unwrap();
+        std::fs::write(clone.join(".git/hooks/post-checkout"), "").unwrap();
+        let changes = home.changes(&before, &[]);
+        assert_eq!(changes.changed, [config.clone()]);
+        assert_eq!(changes.keys[&config], ["core.fsmonitor"]);
+        assert_eq!(changes.new, [clone.join(".git/hooks/post-checkout")]);
     }
 
     #[test]
