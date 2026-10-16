@@ -14,7 +14,7 @@
 //!
 //! A session token comes from a token exchange the first time that the
 //! client needs it. It has no refresh token
-//! (01M3WFVAB44T8EP4QZD4KS7DRF). Before it expires, the client does a
+//! (01M52JYGWD3ZJKNYE3HG5BJYTP). Before it expires, the client does a
 //! new exchange with the person token
 //! (01M3WFVADCDZM8XX590KAEMEYG). Each process of a session holds a
 //! token of its own, and a new token ends no other token. See
@@ -437,7 +437,7 @@ struct Auth {
 }
 
 /// A session access token. It has no refresh token
-/// (01M3WFVAB44T8EP4QZD4KS7DRF).
+/// (01M52JYGWD3ZJKNYE3HG5BJYTP).
 struct Held {
     access_token: String,
     /// Seconds since the Unix epoch.

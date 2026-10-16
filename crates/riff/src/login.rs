@@ -64,7 +64,7 @@
 //!
 //! [`session_token`] swaps the person access token for a session
 //! access token (R19). It has no refresh token
-//! (01M3WFVAB44T8EP4QZD4KS7DRF). The session token stays in the memory
+//! (01M52JYGWD3ZJKNYE3HG5BJYTP). The session token stays in the memory
 //! of the process (see [`crate::api::Api::signed_in`]); it never goes
 //! to the keyring.
 //!

@@ -1,6 +1,6 @@
 //! A refused refresh is not sent again (#348,
 //! 01M3W947QF6PFBWR28ZVXCVQHG), and the processes of one session keep
-//! their tokens (#381, 01M3WFVAB44T8EP4QZD4KS7DRF): a real
+//! their tokens (#381, 01M52JYGWD3ZJKNYE3HG5BJYTP): a real
 //! `riff-server` that counts its replies, a fake provider, and the mock
 //! keyring of `keyring-core`.
 

@@ -145,10 +145,12 @@
 //!   change of the people get their reply after the write of their
 //!   records in the log.
 //! - A refresh and a new session token get their reply before the write
-//!   (01M3TFG527M04TA7ESM970X3B8). A session token changes nothing in
-//!   the object (01M3WFVAB44T8EP4QZD4KS7DRF). So after a crash, the object can be
-//!   one generation behind, and [`token::Tokens::refresh`] takes the next
-//!   generation as good. While the last write failed, a refresh first
+//!   (01M3TFG527M04TA7ESM970X3B8). The object keeps the hash of each
+//!   live access token, so a new session token is a change of it too
+//!   (01M52JYGSNTFPQ0ZP50AD2BG89). After a crash, the object can be one
+//!   write behind: a token of that last write is not known, and its
+//!   client refreshes one time. [`token::Tokens::refresh`] takes the
+//!   next generation as good. While the last write failed, a refresh first
 //!   writes the store again, and gets 503 when that write fails too.
 //!   While the store is busy, a refresh writes nothing: it goes on
 //!   while the last good write is less than one window old, and gets
@@ -2767,8 +2769,9 @@ async fn exchange(
 }
 
 /// Swaps a person access token for a session access token (R19). The
-/// token store keeps nothing of a session token, so the swap counts no
-/// change of it (01M3WFVAB44T8EP4QZD4KS7DRF).
+/// token store keeps the hash of the session token, so the swap is a
+/// change of it: the task of each second saves it
+/// (01M52JYGSNTFPQ0ZP50AD2BG89).
 async fn for_session(
     s: &Server,
     r: &TokenRequest,
@@ -2783,7 +2786,7 @@ async fn for_session(
     }
     s.tokens_written().await?;
     s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
-    s.tokens()
+    s.tokens_change()
         .for_session(token, &proof.jkt, session, now)
         .map_err(|_| no("invalid_grant"))
 }

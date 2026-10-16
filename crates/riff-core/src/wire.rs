@@ -2354,7 +2354,7 @@ pub struct TokenRequest {
 ///
 /// The reply to a swap for a session token has an empty
 /// `refresh_token`: a session token has none
-/// (01M3WFVAB44T8EP4QZD4KS7DRF).
+/// (01M52JYGWD3ZJKNYE3HG5BJYTP).
 ///
 /// ```
 /// use riff_core::wire::TokenReply;

@@ -26,7 +26,7 @@
 //!
 //! A sign-in has one *chain* of refresh tokens: the person chain. A
 //! session token has no refresh token and no chain
-//! (01M3WFVAB44T8EP4QZD4KS7DRF). One session has many processes: `riff
+//! (01M52JYGWD3ZJKNYE3HG5BJYTP). One session has many processes: `riff
 //! mcp`, `riff watch`, each hook and each `riff` command. Each process
 //! swaps the person token for an access token of its own, and a swap
 //! ends no other token. A long process swaps again before its token
@@ -66,8 +66,9 @@
 //!   before the generation, so only the device key ends a sign-in by
 //!   reuse (R110).
 //! - An access token expires [`ACCESS_TTL`] after it is issued. The
-//!   access tokens are only in memory: the saved form has none. After a
-//!   restart, each client refreshes one time.
+//!   saved form keeps the hash of each live access token. So an access
+//!   token works after a new start and after a deploy, until it expires
+//!   (01M52JYGSNTFPQ0ZP50AD2BG89). A new start makes no client refresh.
 //! - The refresh token of the current generation gives the next
 //!   generation.
 //! - A refresh token of an older generation that comes back revokes the
@@ -134,9 +135,10 @@
 //! # Saved form
 //!
 //! [`Tokens::to_bytes`] gives the store as JSON, and [`Tokens::from_bytes`]
-//! loads it again (R124). The JSON holds only the sign-ins and the
-//! chains, with only the hashes of the refresh tokens (R81). It holds
-//! no access token (01M3TFG551C76BP4TRA32P7VC3), and no person: the
+//! loads it again (R124). The JSON holds the sign-ins, the chains and
+//! the live access tokens, with only the hash of each token (R81). Each
+//! access token keeps its sign-in, its session and the time when it
+//! expires (01M52JYGSNTFPQ0ZP50AD2BG89). It holds no person: the
 //! people are in the log. Each time in it is a
 //! wall-clock time, so the time that the server was down counts. The
 //! store keeps each time as a deadline in the future, so a new process
@@ -149,16 +151,27 @@
 //! let (now, wall) = (Instant::now(), SystemTime::now());
 //! let mut tokens = Tokens::default();
 //! let pair = tokens.sign_in("mike@comotechnologies.io", "k", now).unwrap();
+//! let session = tokens.for_session(&pair.access_token, "k", "a6cf", now).unwrap();
 //! let bytes = tokens.to_bytes(now, wall);
+//! let text = String::from_utf8_lossy(&bytes);
 //! let secret = pair.refresh_token.rsplit('.').next().unwrap();
-//! assert!(!String::from_utf8_lossy(&bytes).contains(secret));
+//! assert!(!text.contains(secret));
+//! assert!(!text.contains(&pair.access_token) && !text.contains(&session.access_token));
 //!
-//! // After a load, the refresh token works. The access token does not.
+//! // After a load, each access token works, and the refresh token too.
 //! let now = Instant::now();
 //! let mut loaded = Tokens::from_bytes(&bytes, now, SystemTime::now()).unwrap();
-//! assert_eq!(loaded.check(&pair.access_token, "k", now), Err(Refused::Unknown));
+//! assert_eq!(loaded.check(&pair.access_token, "k", now).unwrap(), "mike");
+//! let who = loaded.caller(&session.access_token, "k", now).unwrap();
+//! assert_eq!(who.to_string(), "mike/a6cf");
 //! let next = loaded.refresh(&pair.refresh_token, "k", now).unwrap();
 //! assert_eq!(loaded.check(&next.access_token, "k", now).unwrap(), "mike");
+//!
+//! // A token that expired while the server was down does not work.
+//! let later = Instant::now();
+//! let wall = SystemTime::now() + riff_server::token::ACCESS_TTL;
+//! let loaded = Tokens::from_bytes(&bytes, later, wall).unwrap();
+//! assert_eq!(loaded.check(&pair.access_token, "k", later), Err(Refused::Unknown));
 //! ```
 //!
 //! # Example
@@ -280,7 +293,8 @@ type Hash = [u8; 32];
 #[derive(Default)]
 pub struct Tokens {
     sign_ins: HashMap<u64, SignIn>,
-    /// The live access tokens. They are only in memory.
+    /// The live access tokens, by hash. The saved form keeps them
+    /// (01M52JYGSNTFPQ0ZP50AD2BG89).
     access: HashMap<Hash, Access>,
     /// The chains of refresh tokens, by chain ID.
     chains: HashMap<String, Chain>,
@@ -324,7 +338,7 @@ struct Chain {
     /// whose use gave the current one. `None` for the first generation.
     before: Option<Hash>,
     /// The hash of the access token of the current pair, to end it after
-    /// a lost reply. It is only in memory.
+    /// a lost reply.
     access: Option<Hash>,
     /// True from the load until the first refresh: the saved form can be
     /// one generation behind (01M3TFG4WE7CZQ4TCJE2NTC52E).
@@ -576,7 +590,7 @@ impl Tokens {
     ///   with [`Tokens::refresh`]: it starts the chain of its sign-in.
     ///   So no person signs in again.
     /// - A session refresh token is not in the import: a session token
-    ///   has no chain (01M3WFVAB44T8EP4QZD4KS7DRF). No access token is
+    ///   has no chain (01M52JYGWD3ZJKNYE3HG5BJYTP). No access token is
     ///   in it.
     /// - The people of the object are not here: the command `import`
     ///   writes them to the log.
@@ -724,7 +738,9 @@ impl Tokens {
     /// the same sign-in (R19). The session token works only for
     /// `session`, and only with the device key `jkt`. The reply has no
     /// refresh token, and the swap ends no other token: each process of
-    /// the session keeps its own (01M3WFVAB44T8EP4QZD4KS7DRF).
+    /// the session keeps its own (01M52JYGWD3ZJKNYE3HG5BJYTP). The saved
+    /// form keeps the hash of the session token, so the swap is a change
+    /// of the store.
     ///
     /// ```
     /// use std::time::Instant;
@@ -882,9 +898,9 @@ impl Tokens {
         keys.into_iter().map(str::to_owned).collect()
     }
 
-    /// The store as JSON, with only the hashes of the refresh tokens, and
-    /// with no access token (R81, 01M3TFG551C76BP4TRA32P7VC3). `now` and
-    /// `wall` are the same time on the two clocks.
+    /// The store as JSON, with only the hash of each refresh token and of
+    /// each live access token (R81, 01M52JYGSNTFPQ0ZP50AD2BG89). `now`
+    /// and `wall` are the same time on the two clocks.
     pub fn to_bytes(&self, now: Instant, wall: SystemTime) -> Vec<u8> {
         let clock = Clock { now, wall };
         let live = |t: Instant| (now < t).then(|| clock.save(t));
@@ -912,6 +928,20 @@ impl Tokens {
                     generation: c.generation,
                     hash: URL_SAFE_NO_PAD.encode(c.hash),
                     before: c.before.map(|h| URL_SAFE_NO_PAD.encode(h)),
+                    access: c.access.map(|h| URL_SAFE_NO_PAD.encode(h)),
+                })
+                .collect(),
+            access: self
+                .access
+                .iter()
+                .filter(|(_, a)| self.sign_ins.contains_key(&a.sign_in))
+                .filter_map(|(hash, a)| {
+                    Some(SavedAccess {
+                        hash: URL_SAFE_NO_PAD.encode(hash),
+                        sign_in: a.sign_in,
+                        session: a.session.clone(),
+                        expires: live(a.expires)?,
+                    })
                 })
                 .collect(),
             old: self
@@ -960,10 +990,20 @@ impl Tokens {
                 generation: c.generation,
                 hash: unhash(&c.hash)?,
                 before: c.before.as_deref().map(unhash).transpose()?,
-                access: None,
+                access: c.access.as_deref().map(unhash).transpose()?,
                 loaded: true,
             };
             tokens.chains.insert(c.id, chain);
+        }
+        for a in saved.access {
+            if let Some(expires) = clock.load(a.expires) {
+                let access = Access {
+                    sign_in: a.sign_in,
+                    session: a.session,
+                    expires,
+                };
+                tokens.access.insert(unhash(&a.hash)?, access);
+            }
         }
         for o in saved.old {
             tokens.old.insert(unhash(&o.hash)?, o.sign_in);
@@ -1071,14 +1111,19 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-/// The saved form: only the sign-ins and their chains. Each time is in
-/// milliseconds since the Unix epoch. A form from before the people
-/// moved to the log reads: its other fields are skipped.
+/// The saved form: the sign-ins, their chains and the live access
+/// tokens. Each time is in milliseconds since the Unix epoch. A form
+/// from before the people moved to the log reads: its other fields are
+/// skipped.
 #[derive(Serialize, Deserialize)]
 struct Saved {
     next_sign_in: u64,
     sign_ins: Vec<SavedSignIn>,
     chains: Vec<SavedChain>,
+    /// The live access tokens (01M52JYGSNTFPQ0ZP50AD2BG89). A form of an
+    /// older build has none: each of its clients refreshes one time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    access: Vec<SavedAccess>,
     /// The refresh tokens of the old server that were not used
     /// (01M3Z8MRGWWA0CNZ003D67H6R4). A form from before the import has
     /// none.
@@ -1142,6 +1187,21 @@ struct SavedChain {
     generation: u64,
     hash: String,
     before: Option<String>,
+    /// The hash of the access token of the current pair. A form of an
+    /// older build has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    access: Option<String>,
+}
+
+/// One live access token: the hash of the token, its sign-in, the
+/// session of a session token, and the time when it expires.
+#[derive(Serialize, Deserialize)]
+struct SavedAccess {
+    hash: String,
+    sign_in: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
+    expires: u64,
 }
 
 /// One time on the two clocks. It turns a deadline into a wall-clock
@@ -1589,9 +1649,20 @@ mod tests {
             tokens.refresh(&a.access_token, "k", now),
             Err(Refused::Unknown)
         );
-        // The saved form holds nothing of the session.
-        let text = String::from_utf8(tokens.to_bytes(now, SystemTime::now())).unwrap();
-        assert!(!text.contains("session"), "{text}");
+        // The saved form holds the session token only as a live access
+        // token: its hash, with no chain (01M52JYGSNTFPQ0ZP50AD2BG89).
+        let saved: serde_json::Value =
+            serde_json::from_slice(&tokens.to_bytes(now, SystemTime::now())).unwrap();
+        assert_eq!(saved["chains"].as_array().unwrap().len(), 1, "{saved}");
+        let sessions: Vec<&serde_json::Value> = saved["access"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|a| a["session"] == "a")
+            .collect();
+        assert_eq!(sessions.len(), 1, "{saved}");
+        let hash = URL_SAFE_NO_PAD.encode(hash(&a.access_token));
+        assert_eq!(sessions[0]["hash"], hash.as_str(), "{saved}");
         // A second sign-in of the person has its own chain.
         let other = tokens
             .sign_in("mike@comotechnologies.io", "k", now)
@@ -1849,17 +1920,28 @@ mod tests {
     }
 
     #[test]
-    fn refresh_tokens_work_after_a_restart_and_access_tokens_do_not() {
+    fn each_token_works_after_a_restart() {
         let (mut tokens, first, now) = signed_in();
         let second = tokens.refresh(&first.refresh_token, "k", now).unwrap();
         let session = tokens
             .for_session(&second.access_token, "k", "a", now)
             .unwrap();
         let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
-        for token in [&second.access_token, &session.access_token] {
-            assert_eq!(loaded.check(token, "k", now), Err(Refused::Unknown));
-        }
         let who = |t: &Tokens, token: &str| t.caller(token, "k", now).unwrap().to_string();
+        // The access tokens work: no client refreshes after a new start
+        // (01M52JYGSNTFPQ0ZP50AD2BG89).
+        assert_eq!(who(&loaded, &second.access_token), "mike");
+        assert_eq!(who(&loaded, &session.access_token), "mike/a");
+        assert_eq!(
+            loaded.check(&session.access_token, "thief", now),
+            Err(Refused::WrongKey)
+        );
+        // Each keeps the time when it expires.
+        let end = now + ACCESS_TTL;
+        assert_eq!(
+            loaded.check(&second.access_token, "k", end),
+            Err(Refused::Expired)
+        );
         let third = loaded.refresh(&second.refresh_token, "k", now).unwrap();
         assert_eq!(who(&loaded, &third.access_token), "mike");
         // The new person token gives the session a new token.
@@ -1871,6 +1953,41 @@ mod tests {
             loaded.check(&third.access_token, "thief", now),
             Err(Refused::WrongKey)
         );
+    }
+
+    #[test]
+    fn a_lost_reply_before_a_restart_ends_the_pair_of_that_reply() {
+        let (mut tokens, first, now) = signed_in();
+        // The reply of this refresh is lost.
+        let lost = tokens.refresh(&first.refresh_token, "k", now).unwrap();
+        let (mut loaded, now) = restart(&tokens, now, Duration::from_secs(5));
+        let again = loaded.refresh(&first.refresh_token, "k", now).unwrap();
+        assert_eq!(
+            loaded.check(&lost.access_token, "k", now),
+            Err(Refused::Unknown)
+        );
+        assert_eq!(loaded.check(&again.access_token, "k", now).unwrap(), "mike");
+    }
+
+    #[test]
+    fn a_saved_form_of_an_older_build_loads_with_no_access_token() {
+        let (tokens, first, now) = signed_in();
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&tokens.to_bytes(now, SystemTime::now())).unwrap();
+        let object = saved.as_object_mut().unwrap();
+        assert!(object.remove("access").is_some(), "{object:?}");
+        for chain in object["chains"].as_array_mut().unwrap() {
+            chain.as_object_mut().unwrap().remove("access");
+        }
+        let bytes = serde_json::to_vec(&saved).unwrap();
+        let mut loaded = Tokens::from_bytes(&bytes, now, SystemTime::now()).unwrap();
+        assert_eq!(
+            loaded.check(&first.access_token, "k", now),
+            Err(Refused::Unknown)
+        );
+        // Its client refreshes one time.
+        let next = loaded.refresh(&first.refresh_token, "k", now).unwrap();
+        assert_eq!(loaded.check(&next.access_token, "k", now).unwrap(), "mike");
     }
 
     #[test]
@@ -1904,10 +2021,11 @@ mod tests {
             let secret = token.rsplit('.').next().unwrap();
             assert!(!text.contains(secret), "{text}");
         }
-        // It holds the hash of the refresh token, and no access token.
+        // It holds the hash of the refresh token and of each live access
+        // token (01M52JYGSNTFPQ0ZP50AD2BG89).
         let saved = |token: &str| text.contains(&URL_SAFE_NO_PAD.encode(hash(token)));
         assert!(saved(&second.refresh_token), "{text}");
-        assert!(!saved(&second.access_token), "{text}");
+        assert!(saved(&first.access_token) && saved(&second.access_token), "{text}");
     }
 
     #[test]

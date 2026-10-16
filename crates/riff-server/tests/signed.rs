@@ -55,7 +55,7 @@ impl Caller {
         };
         // The refresh makes the server save the sign-in, as after a real
         // sign-in. A swap for a session token saves nothing
-        // (01M3WFVAB44T8EP4QZD4KS7DRF).
+        // (01M52JYGWD3ZJKNYE3HG5BJYTP).
         caller.refreshed(base).await
     }
 
