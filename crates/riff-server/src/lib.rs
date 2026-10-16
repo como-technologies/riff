@@ -2034,7 +2034,7 @@ impl Service {
     ///
     /// // A person with no invite and no allowed domain is refused.
     /// let refused = service.admit("bob@gmail.com", false, "k2").await.unwrap_err();
-    /// assert!(refused.ends_with("run: riff invite bob@gmail.com"), "{refused}");
+    /// assert!(refused.ends_with("run: riff invite --email bob@gmail.com"), "{refused}");
     /// // A person of an allowed domain signs in.
     /// assert!(service.admit("bob@gmail.com", true, "k2").await.is_ok());
     ///
@@ -5664,7 +5664,7 @@ mod tests {
 
         // The person is no member now, and does not sign in.
         let refused = service.admit(BOB, false, "key-of-bob").await.unwrap_err();
-        assert!(refused.contains("riff invite bob@gmail.com"), "{refused}");
+        assert!(refused.contains("riff invite --email bob@gmail.com"), "{refused}");
         // After a new invite, a new sign-in stays.
         as_person(&service, "ada", invite(BOB)).await.unwrap();
         let bob = service.admit(BOB, false, "key-of-bob").await.unwrap();

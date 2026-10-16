@@ -179,7 +179,7 @@ fn on_a_riff_with_admins_of_the_settings_only_an_admin_becomes_the_owner() {
     given(&[])
         .with_admins(&[BOB])
         .when_signs_in(ADA, false)
-        .then_refused_as(Code::NotMember, "riff invite ada@gmail.com");
+        .then_refused_as(Code::NotMember, "riff invite --email ada@gmail.com");
     // The admin of the settings is the owner.
     given(&[person_joined("ada", ADA)])
         .with_admins(&[" Bob@Gmail.com "])
@@ -194,7 +194,7 @@ fn a_person_who_is_no_member_signs_in_only_with_an_invite_or_an_allowed_domain()
         .then_refused_as(
             Code::NotMember,
             "dan@gmail.com is not a member of this riff; ask its owner to run: \
-             riff invite dan@gmail.com",
+             riff invite --email dan@gmail.com",
         );
     given(&riff_of_ada())
         .when_signs_in(DAN, true)
@@ -219,7 +219,7 @@ fn another_email_does_not_get_the_user_of_the_first() {
     // of the USER names (01M3XGP011KGXDP9D1FNMT374F).
     given(&riff_of_ada())
         .when_signs_in("ada@other.io", false)
-        .then_refused_as(Code::NotMember, "riff invite ada@other.io");
+        .then_refused_as(Code::NotMember, "riff invite --email ada@other.io");
     // `apply` keeps the first email too.
     let state = given(&riff_of_ada()).apply(&[person_joined("ada", "ada@other.io")]);
     assert_eq!(state.written.people().email_of("ada"), Some(ADA));
@@ -382,7 +382,7 @@ fn the_owner_passes_the_role_and_stays_an_admin() {
         .when_person("ada", pass(DAN))
         .then_refused_as(
             Code::NotMember,
-            "dan@gmail.com is not a member of this riff; run riff invite dan@gmail.com first",
+            "dan@gmail.com is not a member of this riff; run riff invite --email dan@gmail.com first",
         );
     given(&riff_of_ada())
         .when_person("ada", pass(ADA))
@@ -543,7 +543,7 @@ fn the_setting_names_the_owner_of_a_new_riff() {
     // The first other person is then not the owner.
     given(&[owner_set(Some(ADA))])
         .when_signs_in(BOB, false)
-        .then_refused_as(Code::NotMember, "riff invite bob@gmail.com");
+        .then_refused_as(Code::NotMember, "riff invite --email bob@gmail.com");
     given(&[owner_set(Some(ADA))])
         .when_signs_in(ADA, false)
         .then(&[person_joined("ada", ADA)]);

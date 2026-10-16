@@ -1281,9 +1281,9 @@ pub fn workers(
     table(&["PANE", "ID", "STATE", "DETAIL"], &rows)
 }
 
-/// `riff members`: the owner, the admins, the members and the allowed
-/// domains. A riff with no owner ends with the action
-/// (01M3Q63NNC6SC03BFCG80M7B4D).
+/// `riff members --email` (riff-server 1.x): the owner, the admins, the
+/// members and the allowed domains. A riff with no owner ends with the
+/// action (01M3Q63NNC6SC03BFCG80M7B4D).
 ///
 /// ```
 /// use riff_core::wire::MembersReply;

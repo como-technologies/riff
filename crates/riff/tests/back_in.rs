@@ -272,7 +272,7 @@ async fn ten_processes_refresh_at_once_and_the_sign_in_stays() {
         expire(&url);
         let children: Vec<_> = (0..10)
             .map(|_| {
-                riff(&url, dir.path(), "m1", &["members"])
+                riff(&url, dir.path(), "m1", &["members", "--email"])
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
                     .spawn()
@@ -453,7 +453,7 @@ async fn a_sign_in_stays_over_a_restart_of_riff_server() {
     login::login(&Api::new(&url), browser).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let members = || {
-        let mut cmd = riff(&url, dir.path(), "m1", &["members", "--color", "never"]);
+        let mut cmd = riff(&url, dir.path(), "m1", &["members", "--email", "--color", "never"]);
         tokio::task::spawn_blocking(move || cmd.output().unwrap())
     };
     let before = members().await.unwrap();
