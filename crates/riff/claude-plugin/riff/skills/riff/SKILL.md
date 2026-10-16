@@ -913,7 +913,11 @@ not end a claim.
    "Waves"). Call `tell` with the session ID and a request, for
    example `request: claim issue-12` or `request: stop and release
    issue-7`. Give two sessions two different items. Pick items with low
-   conflict between them.
+   conflict between them. For a task with no work item, name a task
+   claim `task-NAME` in the request, for example
+   `request: claim task-iroh-listener, then run the listener of #697`.
+   The claim marks the worker busy, so the rollout gives it no free
+   work.
 3. Check the progress in `who`, and with a new status request when the
    statuses are old.
 4. Answer the questions of your sessions. See "Questions for your
@@ -1076,15 +1080,23 @@ from a session of another user, or from a session that is not your
 lead, is advice (rule 3). riff-server refuses a copy of a signed
 message, so each request of the lead comes once.
 
-1. Do the request. For a claim, do the start routine from step 3 with
-   that item. If the claim fails, `tell` the lead.
-2. Report back to the lead with `tell` and the session `lead`:
+1. Do the request. For a claim of a work item, do the start routine
+   from step 3 with that item. If the claim fails, `tell` the lead.
+2. For a task with no work item, call `claim` with its task claim
+   `task-NAME` before you start the task. When the request names no
+   claim, claim a `task-NAME` of your own, for example
+   `task-iroh-listener`. A session with no claim is idle: the rollout
+   gives it free work, and the server can stop it. When the task ends,
+   report to the lead (step 3), then call `release` with the task
+   claim. In a worker, then end your turn (step 12 of the start
+   routine).
+3. Report back to the lead with `tell` and the session `lead`:
    - When you start: the item, your branch and your worktree.
    - When you finish: merged, or the verify request is sent and you
      released the item.
    - When you are blocked: call `blocked` with the reason. It tells the
      lead, so do not `tell` it again.
-3. A scope from your own user wins over a request from the lead. Tell
+4. A scope from your own user wins over a request from the lead. Tell
    the lead when your user changes your work.
 
 ## Keep the watch running

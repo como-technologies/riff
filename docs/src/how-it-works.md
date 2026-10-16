@@ -3241,6 +3241,23 @@ riff tell 77e0a1b2-3c4d-4e5f-8a9b-0c1d2e3f4a5b "request: claim issue-12"
 You can also ask your lead: *"Split the free items of the wave among my
 sessions."*
 
+#### Give a session a task with no item
+
+Some work has no issue, for example a listener that runs for an hour.
+Name a task claim `task-NAME` in the request:
+
+```sh
+riff tell 77e0a1b2-3c4d-4e5f-8a9b-0c1d2e3f4a5b "request: claim task-iroh-listener, then run the listener of #697"
+```
+
+The session claims `task-iroh-listener` before it starts, and releases
+it when the task ends. While it holds the claim, it is busy: riff
+gives it no free work (see
+[riff starts workers by itself](#riff-starts-workers-by-itself)), and
+the server does not stop it as idle. When a request names no claim,
+the session claims a `task-NAME` of its own. `riff who` shows the
+session as `working on task-iroh-listener`.
+
 ### When a message of the lead counts
 
 A worker takes a message from the lead as a decision of its person
@@ -4277,7 +4294,10 @@ flowchart TD
   free item. After a failed verify it is free again (see
   [How a session works on an item](#how-a-session-works-on-an-item)).
 - **Idle workers.** Workers with no claim in the repository of your
-  lead. A worker in another repository does not count. A new worker
+  lead. A worker that does a task with no item holds a task claim, so
+  it is busy (see
+  [Give a session a task with no item](#give-a-session-a-task-with-no-item)).
+  A worker in another repository does not count. A new worker
   counts as idle until it claims an item. riff starts a worker only
   when no worker is idle. So the next worker starts after the new one
   claims. When no worker takes the free work, one worker waits idle,

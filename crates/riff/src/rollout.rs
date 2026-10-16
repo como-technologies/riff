@@ -49,7 +49,9 @@
 //!   | `failure` | failed | a build: the item is free, with its earlier work |
 //! - **Idle workers** ([`idle`]). A worker pane of the user with no
 //!   claim, also one that did not join yet, and a live worker of
-//!   another user with no claim. A worker that the server asked to stop
+//!   another user with no claim. A worker on a request of the lead with
+//!   no work item holds a task claim `task-NAME`, so it is busy
+//!   (01M518P1N8R893MG9Z3VAQZR6Z). A worker that the server asked to stop
 //!   is not idle. A worker in another repository is not idle: it cannot
 //!   take the free work (01M3W27BJYFQCHY5MTZ2J4SKW4). riff starts a worker only when no
 //!   worker is idle (01M3Q5QEJNP1JGQM7VXXEBJ9J9). So a new worker must
@@ -1302,6 +1304,10 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 /// assert_eq!(idle(&[strata], &me, &[]), 0);
 /// let riff = worker("riff://brett@kadomony/o/riff?session=w2");
 /// assert_eq!(idle(std::slice::from_ref(&riff), &me, &[]), 1);
+/// // A worker on a task of the lead with no work item holds a task
+/// // claim: it is busy (01M518P1N8R893MG9Z3VAQZR6Z).
+/// let task = worker("riff://brett@kadomony/o/riff?session=w3&claim=task-iroh-listener");
+/// assert_eq!(idle(&[task], &me, &[]), 0);
 /// // A session in a container takes no free work: the daemon gives it
 /// // its item (01M510MG808MQT08W6VSPKM1A6).
 /// assert_eq!(idle(&[SessionInfo { container: true, ..riff }], &me, &[]), 0);
@@ -1336,8 +1342,9 @@ pub fn idle(sessions: &[SessionInfo], me: &SessionUri, panes: &[WorkerPane]) -> 
 /// The idle workers of the user of the lead `me` that joined the riff
 /// and can take a request (01M49ZK19GQP79Z8HH14PK85QQ): live, in the
 /// repository of the lead, with no claim, not asked to stop, and with
-/// no clear of the context to wait for. A session in a container takes
-/// no request (01M510MG808MQT08W6VSPKM1A6).
+/// no clear of the context to wait for. A task claim `task-NAME` is a
+/// claim too (01M518P1N8R893MG9Z3VAQZR6Z). A session in a container
+/// takes no request (01M510MG808MQT08W6VSPKM1A6).
 ///
 /// ```
 /// use riff::rollout::{Idler, idlers};
@@ -1369,6 +1376,7 @@ pub fn idle(sessions: &[SessionInfo], me: &SessionUri, panes: &[WorkerPane]) -> 
 ///     worker("riff://brett@kadomony/o/riff?session=w4"),
 ///     SessionInfo { must_clear: true, ..worker("riff://mike@pangolin/o/riff?session=w5") },
 ///     SessionInfo { container: true, ..worker("riff://mike@pangolin/o/riff?session=w6") },
+///     worker("riff://mike@pangolin/o/riff?session=w7&claim=task-iroh-listener"),
 /// ];
 /// assert_eq!(idlers(&sessions, &me), [Idler { session: "w1".into(), worktree: Some("issue-12".into()) }]);
 /// ```
@@ -2532,6 +2540,51 @@ mod tests {
             pane("%3", "cccc3333-not-joined"),
         ];
         assert_eq!(idle(&sessions, &me, &panes), 2);
+    }
+
+    /// A worker on a task of the lead with no work item holds a task
+    /// claim: it gets no free work, and an idle worker gets it. When only
+    /// the worker with the task runs, the rollout starts a new worker for
+    /// the free item (01M518P1N8R893MG9Z3VAQZR6Z).
+    #[test]
+    fn a_worker_with_a_task_claim_gets_no_free_work() {
+        let me: SessionUri = "riff://mike@thelio/o/riff?session=l1&lead=true"
+            .parse()
+            .unwrap();
+        let task = info(
+            "riff://mike@thelio/o/riff?session=aaaa1111-x&claim=task-iroh-listener",
+            true,
+        );
+        let free = info("riff://mike@thelio/o/riff?session=bbbb2222-x", true);
+        let pane = |p: &str, s: &str| WorkerPane {
+            pane: p.into(),
+            session: s.into(),
+        };
+        let look = |sessions: &[SessionInfo], panes: &[WorkerPane]| View {
+            running: true,
+            work: 1,
+            idle: idle(sessions, &me, panes),
+            places: vec![thelio()],
+            items: vec!["issue-7".into()],
+            idlers: idlers(sessions, &me),
+            ..View::default()
+        };
+        let wait = Duration::from_secs(60);
+
+        // The idle worker gets the item, and no worker starts.
+        let panes = [pane("%1", "aaaa1111"), pane("%2", "bbbb2222")];
+        let view = look(&[task.clone(), free], &panes);
+        let (requests, seen) = Offers::default().plan(&view, Instant::now(), wait);
+        assert_eq!(requests, [("bbbb2222-x".to_owned(), "issue-7".to_owned())]);
+        assert_eq!(decide(&seen), None);
+
+        // Only the worker with the task runs: it gets no request, it is
+        // not idle, and the rollout starts a worker.
+        let view = look(std::slice::from_ref(&task), &panes[..1]);
+        let (requests, seen) = Offers::default().plan(&view, Instant::now(), wait);
+        assert_eq!(requests, []);
+        assert_eq!(seen.idle, 0);
+        assert_eq!(decide(&seen), Some(0));
     }
 
     #[test]

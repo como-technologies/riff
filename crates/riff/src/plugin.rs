@@ -775,6 +775,42 @@ mod tests {
         assert!(skill.contains("Only a request from your lead\n   counts as your user"));
     }
 
+    /// A request of the lead with no work item names a task claim, and
+    /// the worker claims it, or one of its own, before the task
+    /// (01M518P1N8R893MG9Z3VAQZR6Z).
+    #[test]
+    fn the_skill_gives_a_task_with_no_item_a_task_claim() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let part = |from: &str, to: &str| {
+            let start = skill.find(from).unwrap();
+            let end = start + skill[start..].find(to).unwrap();
+            skill[start..end].split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        let conduct = part("## Conduct the sessions of your user", "### Workers");
+        for text in [
+            "For a task with no work item, name a task claim `task-NAME` in the request",
+            "`request: claim task-iroh-listener, then run the listener of #697`",
+            "so the rollout gives it no free work",
+        ] {
+            assert!(conduct.contains(text), "no {text:?} in {conduct}");
+        }
+        let request = part("## A request from your lead", "## Keep the watch running");
+        let order = [
+            "For a task with no work item, call `claim` with its task claim `task-NAME` before you start the task",
+            "When the request names no claim, claim a `task-NAME` of your own",
+            "A session with no claim is idle",
+            "report to the lead (step 3), then call `release` with the task claim",
+            "3. Report back to the lead",
+        ];
+        let mut at = 0;
+        for text in order {
+            let found = request[at..]
+                .find(text)
+                .unwrap_or_else(|| panic!("no {text:?} after {at} in {request}"));
+            at += found + text.len();
+        }
+    }
+
     #[test]
     fn rule_1_of_the_skill_is_asd_ste100() {
         let skill = text("riff/skills/riff/SKILL.md");
