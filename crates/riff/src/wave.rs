@@ -853,6 +853,7 @@ impl Live {
             server: wave.server.clone(),
             me: me.clone(),
             terminal: false,
+            claim: None,
         })
     }
 
@@ -1435,6 +1436,7 @@ mod tests {
                     server: "http://127.0.0.1:1".into(),
                     me,
                     terminal: false,
+                    claim: None,
                 }))
             })
         }
@@ -1856,6 +1858,7 @@ mod tests {
                 terminal: false,
                 takeover: false,
                 interrupt: false,
+                claim: None,
             };
             Self {
                 api,

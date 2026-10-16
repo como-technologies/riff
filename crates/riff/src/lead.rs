@@ -358,6 +358,7 @@ pub async fn start_with(
         server: server.to_owned(),
         me: me.clone(),
         terminal: true,
+        claim: None,
     };
     println!("{}", text::lead_starts(&repo, &name, &session));
     if let Err(e) = ask_start(dir, start).await {

@@ -391,12 +391,263 @@ pub fn found(main: &Path) -> Result<Vec<Found>> {
         .collect()
 }
 
+/// The time with no link to the daemon of a claim after which the daemon
+/// of the lead of its user deletes the claim (01M519Z4M0F2RY0VDQNB2QFAPJ):
+/// 15 minutes.
+pub const OFFLINE_MS: i64 = 15 * 60 * 1000;
+
+/// What the daemon of a lead knows of the link to the daemon of a claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Link {
+    /// True while a link to that daemon runs.
+    pub online: bool,
+    /// The last time that a link to that daemon ran, when one ran since
+    /// the start of this daemon.
+    pub seen_ms: Option<i64>,
+}
+
+/// Why the daemon of the lead deletes a claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stale {
+    /// The daemon of the session wrote the end of the session.
+    Ended,
+    /// This daemon had no link to the daemon of the session for this
+    /// many minutes.
+    Offline(i64),
+}
+
+/// Whether the daemon of the lead of `user` deletes `claim`
+/// (01M519Z4M0F2RY0VDQNB2QFAPJ, 01M4Z60B8FFRMT3DVG8H1CCZ13). `me` is the
+/// key of this daemon, `state` its riff of peers, `link` the link to the
+/// daemon of the claim, `since_ms` the start of this daemon and `now_ms`
+/// the time now.
+///
+/// | The claim | Its session | The link to its daemon | The daemon of the lead |
+/// |---|---|---|---|
+/// | of another user | each | each | keeps it: it holds |
+/// | of the user | ended: its daemon wrote the end | each | deletes it |
+/// | of the user, of this daemon | runs, or no record | — | keeps it: this daemon releases it ([`crate::daemon`]) |
+/// | of the user, of another daemon | runs, or no record | up, or down for less than 15 minutes | keeps it |
+/// | of the user, of another daemon | runs, or no record | down for 15 minutes | deletes it |
+///
+/// With no link since the start of this daemon, the time counts from
+/// that start.
+///
+/// ```
+/// use riff::daemon_key::Key;
+/// use riff::forge_claim::{Claim, Link, OFFLINE_MS, Stale, stale};
+/// use riff::peer::state::State;
+///
+/// let (me, other) = (Key::from_bytes(&[1; 32]).public(), Key::from_bytes(&[2; 32]).public());
+/// let state = State::new(me);
+/// let claim = Claim::now("issue-12", "mike", "s1", other);
+/// let down = Link { online: false, seen_ms: Some(1_000) };
+/// assert_eq!(stale(&claim, "mike", &me, &state, down, 0, 1_000 + OFFLINE_MS), Some(Stale::Offline(15)));
+/// assert_eq!(stale(&claim, "mike", &me, &state, down, 0, OFFLINE_MS), None);
+/// assert_eq!(stale(&claim, "brett", &me, &state, down, 0, 10 * OFFLINE_MS), None);
+/// let up = Link { online: true, seen_ms: None };
+/// assert_eq!(stale(&claim, "mike", &me, &state, up, 0, 10 * OFFLINE_MS), None);
+/// ```
+pub fn stale(
+    claim: &Claim,
+    user: &str,
+    me: &Public,
+    state: &crate::peer::state::State,
+    link: Link,
+    since_ms: i64,
+    now_ms: i64,
+) -> Option<Stale> {
+    if claim.user != user {
+        return None;
+    }
+    if state
+        .run(&claim.key, &claim.session)
+        .is_some_and(|run| run.body.ended)
+    {
+        return Some(Stale::Ended);
+    }
+    if claim.key == *me || link.online {
+        return None;
+    }
+    let down = now_ms - link.seen_ms.unwrap_or(since_ms);
+    (down >= OFFLINE_MS).then_some(Stale::Offline(down / 60_000))
+}
+
+/// Whether the daemon of `me`, with its riff of peers `state`, may
+/// delete the claim of the facts `claim` for `riff release ITEM --forge`
+/// (01M519Z4PESWFV8Y03SKTSGV4Q): the owner deletes each claim, and a
+/// member deletes a claim of its own user. It gives the reason of a
+/// refusal. A commit that is not a claim commit of riff has no user:
+/// only the owner deletes it.
+///
+/// ```
+/// use riff::daemon_key::Key;
+/// use riff::forge_claim::{Claim, may_free};
+/// use riff::peer::state::State;
+///
+/// let owner = Key::from_bytes(&[1; 32]).public();
+/// let state = State::new(owner);
+/// let claim = Claim::now("issue-12", "brett", "s1", owner);
+/// assert!(may_free(&state, &owner, Some(&claim)).is_ok());
+/// assert!(may_free(&state, &owner, None).is_ok());
+/// ```
+pub fn may_free(
+    state: &crate::peer::state::State,
+    me: &Public,
+    claim: Option<&Claim>,
+) -> std::result::Result<(), String> {
+    if state.riff() == *me {
+        return Ok(());
+    }
+    let mine = state.user_of(me);
+    match claim {
+        Some(claim) if mine == Some(claim.user.as_str()) => Ok(()),
+        Some(claim) => Err(text::forge_release_not_yours(
+            &claim.item,
+            &claim.user,
+            mine,
+        )),
+        None => Err(text::FORGE_RELEASE_NOT_RIFF.to_owned()),
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::path::PathBuf;
 
     use super::*;
     use crate::daemon_key::Key;
+    use crate::peer::body::{Body, Member, Riff, Session};
+    use crate::peer::record::{Id, Record, check};
+    use crate::peer::state::State;
+
+    /// The state of the riff of the owner `owner` (mike) with the member
+    /// `brett`: the records `riff` and `member`, and more records of the
+    /// owner from `more`.
+    fn riff_with(owner: &Key, brett: Public, more: &[Body]) -> State {
+        let mut state = State::new(owner.public());
+        let mut bodies = vec![
+            Body::Riff(Riff {
+                user: "mike".into(),
+            }),
+            Body::Member(Member {
+                key: brett,
+                user: "brett".into(),
+                host: "kadomony".into(),
+            }),
+        ];
+        bodies.extend(more.iter().cloned());
+        let mut before = Id::ZERO;
+        for (seq, body) in (1..).zip(bodies) {
+            let record = Record::sign(owner, owner.public(), seq, before, seq, &body).unwrap();
+            before = record.id();
+            state.keep(&check(record.bytes().to_vec(), &state).unwrap());
+        }
+        state
+    }
+
+    /// 01M519Z4PESWFV8Y03SKTSGV4Q: a member deletes a claim of its own
+    /// user, and not one of another user. The owner deletes each claim.
+    #[test]
+    fn a_member_frees_a_claim_of_its_user_and_the_owner_frees_each_claim() {
+        let owner = Key::from_bytes(&[1; 32]);
+        let brett = Key::from_bytes(&[2; 32]).public();
+        let state = riff_with(&owner, brett, &[]);
+        let of_mike = Claim::now("issue-12", "mike", "s1", owner.public());
+        let of_brett = Claim::now("issue-13", "brett", "s2", brett);
+        assert_eq!(may_free(&state, &brett, Some(&of_brett)), Ok(()));
+        let refused = may_free(&state, &brett, Some(&of_mike)).unwrap_err();
+        assert!(refused.contains("mike"), "{refused}");
+        assert!(may_free(&state, &brett, None).is_err());
+        for claim in [Some(&of_mike), Some(&of_brett), None] {
+            assert_eq!(may_free(&state, &owner.public(), claim), Ok(()));
+        }
+        // A key that is not in the riff frees nothing.
+        let stranger = Key::from_bytes(&[3; 32]).public();
+        assert!(may_free(&state, &stranger, Some(&of_brett)).is_err());
+    }
+
+    /// 01M519Z4M0F2RY0VDQNB2QFAPJ: the daemon of the lead deletes a claim
+    /// of its user after the end record of its session, and after 15
+    /// minutes with no link to its daemon, on a test clock. A claim of
+    /// another user holds.
+    #[test]
+    fn the_lead_deletes_a_claim_of_its_user_after_the_end_or_15_minutes_offline() {
+        let owner = Key::from_bytes(&[1; 32]);
+        let brett = Key::from_bytes(&[2; 32]).public();
+        let session = |id: &str, ended: bool| {
+            Body::Session(Box::new(Session {
+                session: format!("riff://mike@thelio/o/r?session={id}#issue-12")
+                    .parse()
+                    .unwrap(),
+                worker: true,
+                lead: None,
+                claims: vec!["issue-12".into()],
+                status: None,
+                ended,
+            }))
+        };
+        // The records of the owner: the session e1 ended, r1 runs.
+        let state = riff_with(
+            &owner,
+            brett,
+            &[session("e1", false), session("e1", true), session("r1", false)],
+        );
+        // `me` is the daemon of the lead. The claims are of the daemon
+        // of the owner.
+        let me = Key::from_bytes(&[4; 32]).public();
+        let of = |id: &str, user: &str, key: Public| Claim::now("issue-12", user, id, key);
+        let up = Link {
+            online: true,
+            seen_ms: None,
+        };
+        let down_at = |ms| Link {
+            online: false,
+            seen_ms: Some(ms),
+        };
+        let never = Link {
+            online: false,
+            seen_ms: None,
+        };
+        let start = 1_000_000;
+        // The end record counts at once, also while the link is up.
+        let ended = of("e1", "mike", owner.public());
+        assert_eq!(
+            stale(&ended, "mike", &me, &state, up, start, start),
+            Some(Stale::Ended)
+        );
+        // A session that runs, of a daemon with a link: it holds.
+        let runs = of("r1", "mike", owner.public());
+        assert_eq!(stale(&runs, "mike", &me, &state, up, start, start + 10 * OFFLINE_MS), None);
+        // The link ended 14 minutes ago: it holds. At 15 minutes: it goes.
+        let ended_at = start + 60_000;
+        let at = |minutes: i64| ended_at + minutes * 60_000;
+        assert_eq!(stale(&runs, "mike", &me, &state, down_at(ended_at), start, at(14)), None);
+        assert_eq!(
+            stale(&runs, "mike", &me, &state, down_at(ended_at), start, at(15)),
+            Some(Stale::Offline(15))
+        );
+        // No link since the start of this daemon: the time counts from
+        // the start.
+        assert_eq!(stale(&runs, "mike", &me, &state, never, start, start + OFFLINE_MS - 1), None);
+        assert_eq!(
+            stale(&runs, "mike", &me, &state, never, start, start + OFFLINE_MS),
+            Some(Stale::Offline(15))
+        );
+        // A session with no record yet counts as one that runs.
+        let unknown = of("u1", "mike", owner.public());
+        assert_eq!(
+            stale(&unknown, "mike", &me, &state, never, start, start + OFFLINE_MS),
+            Some(Stale::Offline(15))
+        );
+        // A claim of another user holds, also offline and ended.
+        let of_brett = of("e1", "brett", owner.public());
+        assert_eq!(stale(&of_brett, "mike", &me, &state, never, start, start + 99 * OFFLINE_MS), None);
+        // A claim of this daemon that runs, or that has no record, holds:
+        // this daemon releases it at the end of its session.
+        let mine = of("x1", "mike", me);
+        assert_eq!(stale(&mine, "mike", &me, &state, never, start, start + 99 * OFFLINE_MS), None);
+    }
 
     /// Runs `git ARGS` in `dir` with no config of the machine, and gives
     /// its stdout.

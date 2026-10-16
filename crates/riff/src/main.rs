@@ -225,6 +225,11 @@ enum Command {
     /// The lead frees the claim of another session of its user with
     /// `--session`, for example a session that is gone or that does not
     /// answer. Then the next session can claim the item.
+    ///
+    /// With `--forge`, it frees a claim of riff 3.0 on the forge: the ref
+    /// refs/riff/claims/ITEM. The riff daemon of this machine deletes it.
+    /// A person frees a claim of their own user. The owner of the riff
+    /// frees each claim.
     Release {
         /// The thread. The default is your repository thread.
         #[arg(long, short)]
@@ -233,6 +238,10 @@ enum Command {
         /// of it, as `riff who` shows it. Only the lead can name one.
         #[arg(long)]
         session: Option<String>,
+        /// Free the claim of riff 3.0 on the forge, in the repository of
+        /// this clone, and not on riff-server.
+        #[arg(long, conflicts_with_all = ["thread", "session"])]
+        forge: bool,
         /// The work item, for example issue-12.
         item: String,
     },
@@ -1958,6 +1967,13 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     }
+    if let Command::Release {
+        item, forge: true, ..
+    } = &cli.command
+    {
+        let (main, _) = riff::run::main_clone(&identity::working_dir()?)?;
+        return riff::daemon::ask_release(&riff::daemon::dir()?, &main, item).await;
+    }
     let api = Api::new(&server);
     match &cli.command {
         Command::Login => {
@@ -2224,6 +2240,7 @@ async fn main() -> Result<()> {
             thread,
             session,
             item,
+            forge: false,
         } => {
             let thread = thread_or_default(thread, &here)?;
             match session {
@@ -2386,6 +2403,7 @@ async fn main() -> Result<()> {
         | Command::Admin { .. }
         | Command::Owner { .. }
         | Command::Run { .. }
+        | Command::Release { forge: true, .. }
         | Command::Wave { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
