@@ -118,7 +118,12 @@
 //! - [`Service::load`] loads the newest checkpoint of a [`store::Store`],
 //!   and replays the log after it (R30). A timer writes a checkpoint, and
 //!   deletes the old checkpoints and the chunks that no kept checkpoint
-//!   needs (see [`checkpoint`]).
+//!   needs (see [`checkpoint`]). [`Service::shutdown`] writes a last
+//!   checkpoint (01M4264028A3KVDK10PPERHM0C). At a deploy, the old
+//!   instance writes one when it reads the lease of the new instance,
+//!   and the new instance loads it after its wait
+//!   (01M51X8MG0YQT5KBZC9H7917J3, 01M51X8P4M8PHSSJMWF1J1KQS1). So the
+//!   read cursors, which no record holds, stay.
 //! - A timer forgets each session with no sign of life for
 //!   [`state::SESSION_EXPIRY`], each [`FORGET_EVERY`].
 //!   [`Service::new`] keeps its log in memory, and saves nothing (R34).
@@ -435,6 +440,10 @@ struct Gate {
     /// True once the server shuts down: it takes no call, but it still
     /// saves (R129).
     closing: AtomicBool,
+    /// Held while the server writes the checkpoint of the hand-over
+    /// (01M51X8MG0YQT5KBZC9H7917J3). A shutdown waits for it, so a
+    /// SIGTERM does not end the write.
+    handing_over: tokio::sync::Mutex<()>,
 }
 
 /// Where a server saves its token store.
@@ -865,6 +874,38 @@ impl Server {
         }
     }
 
+    /// Stops for good, because another holder took the lease (R140).
+    /// When that holder is another instance, a deploy took the lease:
+    /// the server then writes its last checkpoint, the hand-over
+    /// (01M51X8MG0YQT5KBZC9H7917J3). The new instance loads its state
+    /// again from it after its wait (01M51X8P4M8PHSSJMWF1J1KQS1). So the
+    /// read cursors and the presence of this instance stay, and no
+    /// session gets an old message again.
+    ///
+    /// The checkpoint holds only records that this instance wrote, so it
+    /// is right with no lease too. With the ID of a tool, the server
+    /// writes none: a tool can cut the log. A server that shuts down
+    /// writes none either: its shutdown wrote its last checkpoint.
+    async fn hand_over(&self, lease: &Lease) {
+        let _writing = self.gate.handing_over.lock().await;
+        self.stop("another instance holds the lease");
+        if self.gate.closing.load(Ordering::SeqCst) {
+            return;
+        }
+        match lease.taken_by_instance().await {
+            Ok(true) => {
+                tracing::info!("writing the last checkpoint for the new instance");
+                self.last_checkpoint().await;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(
+                    "no checkpoint for the new instance: the lease read failed: {error}"
+                );
+            }
+        }
+    }
+
     /// Writes a checkpoint at a stop, also when no record came since the
     /// last one. So the memory of the presence stays: the last call and
     /// the status of each session (01M4264028A3KVDK10PPERHM0C). It does
@@ -1171,7 +1212,10 @@ impl Service {
     /// flowchart TD
     ///     L[load the sign-ins and the newest checkpoint,<br/>replay the log after it] -->|fails| X[error: no lease.<br/>The old instance serves on]
     ///     L -->|works| T[take the lease, wait]
-    ///     T --> C[apply the chunks that came since the load,<br/>list the checkpoints again,<br/>load the sign-ins again]
+    ///     T --> K[list the checkpoints again]
+    ///     K -->|a checkpoint came| R[load the state again from it,<br/>replay the log after it]
+    ///     K -->|none came| C
+    ///     R --> C[apply the chunks that came since the load,<br/>load the sign-ins again]
     ///     C --> S[serve from the next whole second]
     /// ```
     ///
@@ -1181,11 +1225,17 @@ impl Service {
     ///   old instance writes until it reads the new lease. So the new
     ///   instance then applies the chunks that came since its load, and
     ///   loads the sign-ins again.
-    /// - The old instance can also write a checkpoint in that time. So
-    ///   the new instance lists the checkpoints again. When a checkpoint
-    ///   came, it takes the position of the newest one, and writes no
-    ///   checkpoint when that one comes from a later version or does not
-    ///   read (01M3TJWJC08ZR5TWA1Y9CDE0QM).
+    /// - The old instance can also write a checkpoint in that time, and
+    ///   it writes its last one when it reads the new lease: the
+    ///   hand-over (01M51X8MG0YQT5KBZC9H7917J3). So the new instance
+    ///   lists the checkpoints again. When a checkpoint came, it takes
+    ///   the position of the newest one, and writes no checkpoint when
+    ///   that one comes from a later version or does not read
+    ///   (01M3TJWJC08ZR5TWA1Y9CDE0QM). It loads its state again from the
+    ///   newest one that reads, and replays the log after it
+    ///   (01M51X8P4M8PHSSJMWF1J1KQS1). The read cursors are only in
+    ///   memory and in the checkpoints, so the cursors of the old
+    ///   instance stay, and no session reads a message again.
     /// - It serves from the next whole second (R138, R142). It writes
     ///   each change to the log of `store`, and saves the token store
     ///   within [`Config::save_every`], while the service lives (R30).
@@ -1241,15 +1291,16 @@ impl Service {
         load_tokens(&*store).await?;
         let build = config.checkpoint.build.clone();
         let found = checkpoint::load(&*store, &build).await?;
-        let mut newest = found.checkpoint.as_ref().map(checkpoint_facts);
+        let loaded = found.checkpoint.as_ref().map(checkpoint_facts);
+        let mut newest = loaded.clone();
         let mut blocked = found.blocked;
         let snapshot = found.checkpoint.map(|c| c.state);
         let from = snapshot.as_ref().map_or(0, |s| s.position);
         let log::Replayed {
             records,
             last,
-            skipped,
-            skips,
+            mut skipped,
+            mut skips,
             ..
         } = log::replay_after(&*store, from).await?;
         let count = records.len();
@@ -1275,6 +1326,40 @@ impl Service {
         // before it (R142). See the lease module for the argument.
         tokio::time::sleep(Duration::from_millis(1000 - now_ms() % 1000)).await;
         let start = now_ms() / 1000;
+        // The old instance can also write a checkpoint until it reads
+        // the new lease, and it writes its last one when it reads it
+        // (01M51X8MG0YQT5KBZC9H7917J3). This build writes none past a
+        // checkpoint of a later version (01M3TJWJC08ZR5TWA1Y9CDE0QM).
+        let now = checkpoint::names(&*store).await?.pop();
+        if now.map(|(_, _, name)| name) != found.newest {
+            let again = checkpoint::load(&*store, &build).await?;
+            tracing::info!("a checkpoint came since the load");
+            newest = again.checkpoint.as_ref().map(checkpoint_facts);
+            blocked = again.blocked;
+            // Its read cursors and its presence are newer than the
+            // memory of the load: load the state again from it
+            // (01M51X8P4M8PHSSJMWF1J1KQS1).
+            if let Some(checkpoint) = again
+                .checkpoint
+                .filter(|c| c.state.position >= from && Some(checkpoint_facts(c)) != loaded)
+            {
+                let from = checkpoint.state.position;
+                let replayed = log::replay_after(&*store, from).await?;
+                tracing::info!(
+                    checkpoint = from,
+                    records = replayed.records.len(),
+                    "loaded the state again from the checkpoint of the old instance"
+                );
+                state = State::load(
+                    Some(checkpoint.state),
+                    replayed.records,
+                    Instant::now(),
+                    now_ms(),
+                );
+                state.continue_after(replayed.last);
+                (skipped, skips) = (replayed.skipped, replayed.skips);
+            }
+        }
         // The old instance wrote until it read the new lease.
         let since = log::replay_after(&*store, state.position()).await?;
         tracing::info!(
@@ -1296,16 +1381,6 @@ impl Service {
             Some(_) => read_old_objects(&*store).await?,
             None => None,
         };
-        // The old instance can also write a checkpoint until it reads
-        // the new lease. This build writes none past a checkpoint of a
-        // later version (01M3TJWJC08ZR5TWA1Y9CDE0QM).
-        let now = checkpoint::names(&*store).await?.pop();
-        if now.map(|(_, _, name)| name) != found.newest {
-            let again = checkpoint::load(&*store, &build).await?;
-            tracing::info!("a checkpoint came since the load");
-            newest = again.checkpoint.as_ref().map(checkpoint_facts);
-            blocked = again.blocked;
-        }
         let (tokens, version) = load_tokens(&*store).await?;
         let written = Written { version, at: None };
         let blocked = blocked.or_else(|| {
@@ -1438,6 +1513,7 @@ impl Service {
                 stopped: tokio::sync::watch::Sender::new(false),
                 lease_ended: AtomicBool::new(false),
                 closing: AtomicBool::new(false),
+                handing_over: tokio::sync::Mutex::new(()),
             },
             log,
             checkpoints: Mutex::new(checkpoints),
@@ -1690,11 +1766,14 @@ impl Service {
     }
 
     /// Stops taking calls, then saves each unsaved change (R129), and
-    /// writes a last checkpoint. The gate replies 503 from now on.
-    /// `main` calls it on SIGTERM. A server that holds the lease then
-    /// ends it, so that a tool of the log can run at once
-    /// (01M3X342ARX5Y7R9ZJDT12R9A1).
+    /// writes a last checkpoint (01M4264028A3KVDK10PPERHM0C). The gate
+    /// replies 503 from now on. `main` calls it on SIGTERM. A server that
+    /// holds the lease then ends it, so that a tool of the log can run at
+    /// once (01M3X342ARX5Y7R9ZJDT12R9A1). A server that gave the lease to
+    /// a new instance first ends the write of the hand-over
+    /// (01M51X8MG0YQT5KBZC9H7917J3).
     pub async fn shutdown(&self) -> Result<(), StoreError> {
+        let _handed_over = self.0.gate.handing_over.lock().await;
         self.0.gate.closing.store(true, Ordering::SeqCst);
         let saved = self.save().await;
         if saved.is_ok() && self.0.saved.is_some() && self.0.leased() {
@@ -1789,7 +1868,7 @@ impl Service {
                 match held {
                     Ok(true) => *server.until() = Some(asked + timing.valid_for),
                     Ok(false) => {
-                        server.stop("another instance holds the lease");
+                        server.hand_over(&lease).await;
                         break;
                     }
                     Err(error) => tracing::warn!("the lease read failed: {error}"),

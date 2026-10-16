@@ -16,7 +16,10 @@
 //!     Note over N: waits 15 s
 //!     O->>S: read the lease (every 2 s)
 //!     S-->>O: new ID
-//!     Note over O: stops for good: 503, saves nothing, exits after 60 s
+//!     Note over O: stops for good: 503, saves no record, exits after 60 s
+//!     O->>S: write the last checkpoint: the hand-over
+//!     N->>S: list the checkpoints again
+//!     Note over N: a checkpoint came: load the state again from it
 //!     N->>S: read the chunks that came since the load
 //!     Note over N: opens its port, serves from the next whole second
 //! ```
@@ -33,6 +36,13 @@
 //!   its own ID. Else it replies 503 (R139).
 //! - When a read shows another ID, the instance stops for good (R140).
 //!   A save that finds another version does the same (R141).
+//! - When that ID is of another instance, the instance then writes a
+//!   last checkpoint: the hand-over (01M51X8MG0YQT5KBZC9H7917J3). The
+//!   read cursors are only in memory and in the checkpoints, so the new
+//!   instance loads its state again from it after its wait
+//!   (01M51X8P4M8PHSSJMWF1J1KQS1). With the ID of a tool, or after a
+//!   lease that ended by its age, it writes none: a tool can cut the
+//!   log then. See [`Lease::taken_by_instance`].
 //! - Each [`Timing::renew_every`], the read is a renewal: the instance
 //!   also writes the time to the lease with [`Lease::renew`]
 //!   (01M3X34282SG0DJ6X34F90HS26). A renewal that fails counts as a read
@@ -287,7 +297,8 @@ impl Found {
     }
 }
 
-/// A new random ID.
+/// A new random ID of an instance: 32 hex digits. The ID of a tool has
+/// the name of the tool and a `-` in front ([`ToolLease::take`]).
 fn new_id() -> Result<String, StoreError> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|e| StoreError::Failed(e.to_string()))?;
@@ -302,6 +313,11 @@ fn json(id: &str, ended: bool) -> Result<Vec<u8>, StoreError> {
         ended,
     };
     serde_json::to_vec(&holder).map_err(|e| StoreError::Failed(e.to_string()))
+}
+
+/// True when `id` is the ID of an instance ([`new_id`]), not of a tool.
+fn of_instance(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// True when the lease of `store` holds `id`.
@@ -481,6 +497,37 @@ impl Lease {
     /// True when the lease holds the ID of this instance.
     pub async fn held(&self) -> Result<bool, StoreError> {
         holds(&*self.store, &self.id).await
+    }
+
+    /// True when the lease holds the ID of another instance, and that
+    /// instance did not end it: a deploy took the lease. False for the
+    /// ID of a tool, which can cut the log (01M51X8MG0YQT5KBZC9H7917J3).
+    ///
+    /// ```
+    /// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
+    /// use std::sync::Arc;
+    /// use riff_server::lease::{Lease, Timing, ToolLease};
+    /// use riff_state::store::Memory;
+    ///
+    /// let store = Arc::new(Memory::default());
+    /// let old = Lease::take(store.clone()).await?;
+    /// assert!(!old.taken_by_instance().await?, "the lease holds its own ID");
+    /// let new = Lease::take(store.clone()).await?;
+    /// assert!(old.taken_by_instance().await?);
+    ///
+    /// // The new instance shuts down, and a tool takes the lease.
+    /// new.end().await?;
+    /// assert!(!old.taken_by_instance().await?);
+    /// let _cut = ToolLease::take(&*store, "cut", &Timing::default()).await?.unwrap();
+    /// assert!(!old.taken_by_instance().await?);
+    /// # Ok(()) }
+    /// ```
+    pub async fn taken_by_instance(&self) -> Result<bool, StoreError> {
+        let Some(lease) = self.store.load(LEASE).await? else {
+            return Ok(false);
+        };
+        let holder = parse(&lease.bytes)?;
+        Ok(holder.id != self.id && !holder.ended && of_instance(&holder.id))
     }
 
     /// Writes the time now to the lease, when the lease holds the ID of

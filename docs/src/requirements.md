@@ -1991,6 +1991,20 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   no checkpoint when that one comes from a later version, or does not
   read (01M3TBZBQDF0ES4KM54FJQF6Z8). Superseded by 3.0
   (01M4Z60B7FCREZDCTVR73WWRY1).
+- **01M51X8MG0YQT5KBZC9H7917J3** When an instance reads the ID of
+  another instance in the lease, it stops as in R140. Then it writes a
+  last checkpoint at its written position: the hand-over. It does not
+  prune. It writes none when the lease holds the ID of a tool, when the
+  holder ended the lease, when its own shutdown began, or when it
+  writes no checkpoint (01M3TBZBQDF0ES4KM54FJQF6Z8). A shutdown waits
+  for the end of that write. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
+- **01M51X8P4M8PHSSJMWF1J1KQS1** After the wait for the lease, when a
+  checkpoint came since the load, the instance loads its state again
+  from the newest checkpoint that reads, and replays the log after it.
+  So the read cursors, the statuses and the last calls of the old
+  instance stay after a deploy. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3THEE31H5QVV3JAFC4ZRGFR** `riff-server` opens its port only
   after the load and the wait for the lease. Before that, each connect
   is refused. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
@@ -1999,8 +2013,9 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   replies 503. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R140** An instance that reads another ID in the lease stops for
   good. It closes each stream, replies 503 to each call and saves
-  nothing more. It exits after 60 seconds. Superseded by 3.0
-  (01M4Z60B7FCREZDCTVR73WWRY1).
+  nothing more, except the checkpoint of the hand-over
+  (01M51X8MG0YQT5KBZC9H7917J3). It exits after 60 seconds. Superseded
+  by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **R141** Each save of the token store names the version that the
   instance knows. Each write of a chunk is only when new
   (01M3T411BZQB8N4D2S0JFVESMS). When the bucket holds another version,

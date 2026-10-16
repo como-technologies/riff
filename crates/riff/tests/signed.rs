@@ -149,11 +149,16 @@ async fn a_message_that_claims_to_be_from_the_lead_without_its_signature_is_not(
             .await
             .unwrap();
     }
-    old.save().await.unwrap();
+    old.shutdown().await.unwrap();
 
     // Someone with access to the storage makes the second and the third
     // message claim to come from the lead: the second gets the URI of the
-    // lead, the third gets only the lead mark.
+    // lead, the third gets only the lead mark. The last checkpoint of the
+    // stop holds the messages too: they remove it, so that the next start
+    // replays the log.
+    for name in store.list("checkpoint/").await.unwrap() {
+        store.delete(&name).await.unwrap();
+    }
     let mut from_lead = Value::Null;
     let mut seen = 0;
     for name in store.list("log/").await.unwrap() {

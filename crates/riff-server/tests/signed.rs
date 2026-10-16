@@ -310,11 +310,16 @@ async fn a_message_changed_in_storage_is_not_verified() {
         );
     }
     assert_eq!(verified(&brett.read(&base, REPO).await, REPO), [true; 4]);
-    old.save().await.unwrap();
+    old.shutdown().await.unwrap();
 
     // Someone with access to the storage changes three messages: a new
     // body, a sender that claims to be the lead, and a lead mark that
-    // the sender did not sign.
+    // the sender did not sign. The last checkpoint of the stop holds the
+    // messages too: they remove it, so that the next start replays the
+    // log.
+    for name in store.list("checkpoint/").await.unwrap() {
+        store.delete(&name).await.unwrap();
+    }
     let mut seen = 0;
     for name in store.list("log/").await.unwrap() {
         let object = store.load(&name).await.unwrap().unwrap();

@@ -10,7 +10,6 @@ use futures::future::{BoxFuture, FutureExt};
 use isolated::in_time;
 use riff_core::dpop::Key;
 use riff_server::Service;
-use riff_server::auth::Config;
 use riff_server::lease::{Timing, holder, now_ms};
 use riff_server::tools::{Mode, cut, cut_with, verify};
 use riff_state::store::{LEASE, Loaded, Memory, Store, StoreError, Version};
@@ -230,23 +229,7 @@ async fn start_renewing(store: Arc<dyn Store>) -> (Service, String) {
         renew_every: RENEW_EVERY,
         ..common::LEASE
     };
-    start_with(store, timing).await
-}
-
-/// Starts a server on `store` with the lease times `lease`.
-async fn start_with(store: Arc<dyn Store>, lease: Timing) -> (Service, String) {
-    common::client();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let config = Config {
-        lease,
-        save_every: common::SAVE_EVERY,
-        ..Config::new(&url)
-    };
-    let service = Service::load(config, store).await.unwrap();
-    let router = service.router();
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    (service, url)
+    common::start_on_lease(store, timing).await
 }
 
 /// The lease object of `store` as JSON.
@@ -326,7 +309,7 @@ async fn an_instance_that_runs_again_after_a_cut_does_not_serve_and_writes_no_ch
         ends_after: CUT_AFTER,
         ..common::LEASE
     };
-    let (service, base) = start_with(store.clone(), timing).await;
+    let (service, base) = common::start_on_lease(store.clone(), timing).await;
     assert_eq!(served(&service, &base, json!({ "me": MIKE })).await, 200);
     service.save().await.unwrap();
     assert_eq!(served(&service, &base, json!({ "me": BRETT })).await, 200);
@@ -369,7 +352,9 @@ async fn an_instance_that_runs_again_after_a_cut_does_not_serve_and_writes_no_ch
 
 /// The clock of the tool says that the lease ended, but its instance
 /// runs: the take of the lease by the cut stops the instance, before
-/// the cut reads the log (01M3X5TP9CD4NXGPJEGP2Q4RS0).
+/// the cut reads the log (01M3X5TP9CD4NXGPJEGP2Q4RS0). The instance
+/// writes no checkpoint for the cut: it can be past the cut
+/// (01M51X8MG0YQT5KBZC9H7917J3).
 #[tokio::test]
 async fn the_take_of_the_lease_by_a_cut_stops_an_instance_that_runs() {
     let store = Memory::default();
@@ -402,6 +387,65 @@ async fn the_take_of_the_lease_by_a_cut_stops_an_instance_that_runs() {
     service.save().await.unwrap();
     assert_eq!(chunks(&store).await, after_cut, "no new chunk");
     assert!(verify(&store).await.unwrap().problems.is_empty());
+    // A shutdown waits for a write of the hand-over. The lease holds the
+    // ID of a tool, so the instance wrote no checkpoint.
+    service.shutdown().await.unwrap();
+    assert_eq!(
+        store.list("checkpoint/").await.unwrap(),
+        Vec::<String>::new()
+    );
+}
+
+/// A deploy: the old instance reads the ID of the new instance, stops,
+/// and writes its last checkpoint for it (01M51X8MG0YQT5KBZC9H7917J3).
+/// The new instance does not write over it, and its shutdown waits for
+/// the write.
+#[tokio::test]
+async fn an_instance_that_reads_a_new_instance_in_the_lease_writes_its_last_checkpoint() {
+    let store = Memory::default();
+    let (old, base) = common::start_on(Arc::new(store.clone())).await;
+    assert_eq!(status(&base, "register", json!({ "me": MIKE })).await, 200);
+    old.save().await.unwrap();
+    let last = last_position(&store).await;
+
+    // The lease of a new instance, as `Lease::take` writes it.
+    let lease = store.load(LEASE).await.unwrap().unwrap();
+    let new = json!({ "id": "0123456789abcdef0123456789abcdef", "renewed_at_ms": now_ms() });
+    let new = serde_json::to_vec(&new).unwrap();
+    store.save(LEASE, new, Some(lease.version)).await.unwrap();
+    in_time(Duration::from_secs(5), old.stopped())
+        .await
+        .unwrap();
+    old.shutdown().await.unwrap();
+    let names = riff_state::checkpoint::names(&store).await.unwrap();
+    assert_eq!(names.len(), 1, "{names:?}");
+    assert_eq!(names[0].0, last, "{names:?}");
+    assert_eq!(
+        last_position(&store).await,
+        last,
+        "no record after the stop"
+    );
+}
+
+/// An instance that shut down writes no checkpoint for a new instance:
+/// its shutdown wrote its last one (01M51X8MG0YQT5KBZC9H7917J3).
+#[tokio::test]
+async fn an_instance_that_shut_down_writes_no_checkpoint_for_a_new_instance() {
+    let store = Memory::default();
+    let (old, base) = common::start_on(Arc::new(store.clone())).await;
+    assert_eq!(status(&base, "register", json!({ "me": MIKE })).await, 200);
+    old.shutdown().await.unwrap();
+    let names = riff_state::checkpoint::names(&store).await.unwrap();
+    assert_eq!(names.len(), 1, "{names:?}");
+
+    let (_new, _base) = common::start_on(Arc::new(store.clone())).await;
+    // The old instance reads the ID of the new one, and stops. A second
+    // shutdown waits for a write of the hand-over.
+    in_time(Duration::from_secs(5), old.stopped())
+        .await
+        .unwrap();
+    old.shutdown().await.unwrap();
+    assert_eq!(riff_state::checkpoint::names(&store).await.unwrap(), names);
 }
 
 /// A deploy: the old and the new instance run at the same time for a

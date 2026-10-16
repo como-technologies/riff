@@ -3726,12 +3726,19 @@ change that a restart can lose. Each record names its cause: the
 caller and the command. See
 [Find who did what](development.md#find-who-did-what).
 
-From time to time, the server writes a checkpoint: the whole state at
-one position of the log, with the read cursors. At start, it loads the
-newest checkpoint and replays only the records after it. So a start
-stays fast while the log grows. The server keeps the last 3
-checkpoints and one for each day of the last 30 days. It deletes each
-chunk that no kept checkpoint needs.
+A checkpoint is the whole state at one position of the log, with the
+read cursors, the status and the last call of each session. At start,
+the server loads the newest checkpoint and replays only the records
+after it. So a start stays fast while the log grows. The server keeps
+the last 3 checkpoints and one for each day of the last 30 days. It
+deletes each chunk that no kept checkpoint needs.
+
+The server writes a checkpoint:
+
+- each 1,000 records, or each 60 minutes when records came;
+- on SIGTERM, after the last record;
+- at a deploy, when the old instance reads the lease of the new one
+  (see the deploy below).
 
 ```mermaid
 flowchart LR
@@ -3741,12 +3748,13 @@ flowchart LR
     Q --> W[writer: one chunk for each write]
     W --> L[(log in Cloud Storage)]
     L -->|written| R[reply, wake, tail]
-    T[each 1,000 records or 60 minutes] --> K[(checkpoint)]
+    T[each 1,000 records or 60 minutes,<br/>SIGTERM, a deploy] --> K[(checkpoint)]
     K -->|at start: load| P[replay the records after it]
     L --> P
 ```
 
-On SIGTERM, `riff-server` writes each record in the queue, then exits.
+On SIGTERM, `riff-server` writes each record in the queue and a last
+checkpoint, then exits.
 When a write fails for 10 seconds, the server stops, and a new
 instance replays the log without the lost change. The call of that
 change got an error, and `riff` tries it again. A restart loses the open
@@ -3758,10 +3766,11 @@ while they were not connected.
 
 After a restart with a bucket, each session counts as stopped. Its
 claims and its lead stay for 5 minutes. A session that connects again
-in that time keeps them. The sessions and their statuses are in
-memory. The read cursors are in the checkpoint. So `who` shows a
-session again only after it calls, a status is gone, and `riff read`
-can show a message two times. It never misses one.
+in that time keeps them. `who` shows a session again only after it
+calls. A stop and a deploy write a last checkpoint, so each read
+cursor and each status stays, and `riff read` shows no message again.
+After a crash, the start uses the checkpoint before it: then
+`riff read` can show a message two times. It never misses one.
 
 The server forgets a session after 30 days with no sign of life. It
 drops the threads, the claims, the lead and the read cursors of the
@@ -3843,9 +3852,11 @@ sequenceDiagram
         O->>S: read the lease (every 2 s)
         S-->>O: new ID
         O-->>W: close the stream
-        Note over O: replies 503, saves nothing, exits after 60 s
-        N->>S: read the chunks that came since the load
+        Note over O: replies 503, saves no record, exits after 60 s
+        O->>S: write the last checkpoint
         N->>S: list the checkpoints again
+        Note over N: loads the state again from the last checkpoint of O
+        N->>S: read the chunks that came since the load
         Note over N: opens its port
         W->>N: connect again
         N-->>W: one line, if an addressed message is unread
@@ -3859,10 +3870,19 @@ serves on.
 The claims of each session come back with the log. Each session has 5
 minutes from the load to call again. After that, its claims are free.
 
-The old instance can write a checkpoint until it reads the new lease.
-So the new instance lists the checkpoints again after its wait. At a
-rollback, the old instance runs a later release. The new instance then
-writes no checkpoint past the checkpoint of the later release, and
+The read cursors are only in the memory of the old instance and in the
+checkpoints. So when the old instance reads the new lease, it writes a
+last checkpoint for the new one. After its wait, the new instance lists
+the checkpoints again, and loads its state again from the newest one.
+So a deploy keeps each read cursor: no session gets an old message
+again. The new instance waits 15 seconds, and the old one reads the
+lease each 2 seconds, so the checkpoint comes in time. The old
+instance writes no checkpoint when a tool such as
+[`riff-server log cut`](development.md#the-tools-of-the-log) takes the
+lease.
+
+At a rollback, the old instance runs a later release. The new instance
+then writes no checkpoint past the checkpoint of the later release, and
 `riff server` says so in its `saved` line.
 
 ### The update to release 1.0.0 keeps your work

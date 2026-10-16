@@ -4,7 +4,12 @@
 use crate::common;
 
 use std::sync::Arc;
+use std::time::Duration;
 
+use isolated::in_time;
+use riff_server::lease::Timing;
+use riff_server::tools::verify;
+use riff_state::checkpoint;
 use riff_state::log::chunk_name;
 use riff_state::store::{Dir, Memory, Store, StoreError};
 use serde_json::{Value, json};
@@ -67,7 +72,7 @@ async fn the_same_state_after_a_restart(store: Arc<dyn Store>) {
     fill(&base).await;
     let before = sessions(&base).await;
     let threads = call(&base, "threads", json!({ "me": BRETT })).await;
-    old.save().await.unwrap();
+    old.shutdown().await.unwrap();
 
     let (_new, base) = common::start_on(store).await;
     assert_eq!(sessions(&base).await, before);
@@ -77,10 +82,11 @@ async fn the_same_state_after_a_restart(store: Arc<dyn Store>) {
     );
     let read = call(&base, "read", json!({ "me": BRETT, "thread": "design" })).await;
     assert_eq!(read["messages"][0]["body"], "look");
-    // The read cursors are in memory: a replay reads a message again, but
-    // never misses one.
+    // The read cursors are in the last checkpoint of the stop
+    // (01M4264028A3KVDK10PPERHM0C): Brett read REPO, so he gets no
+    // message of it again.
     let read = call(&base, "read", json!({ "me": BRETT, "thread": REPO })).await;
-    assert_eq!(read["messages"][0]["body"], "one");
+    assert_eq!(read["messages"], json!([]), "{read}");
     // The riff still runs, and Brett still holds the claim.
     let state = call(&base, "riff", json!({ "me": MIKE })).await;
     assert_eq!(state["state"], "running");
@@ -99,6 +105,59 @@ async fn a_new_server_on_the_same_directory_has_the_same_state() {
     let dir = tempfile::tempdir().unwrap();
     the_same_state_after_a_restart(Arc::new(Dir::new(dir.path()))).await;
     assert!(dir.path().join(chunk_name(1)).exists());
+}
+
+/// The lease times of a deploy in a test: the new instance waits long
+/// enough for the old one to read the new lease and to write its last
+/// checkpoint, also under load.
+const DEPLOY: Timing = Timing {
+    wait: Duration::from_secs(3),
+    ..common::LEASE
+};
+
+/// A deploy keeps each read cursor (#873). The new instance takes the
+/// lease while the old one serves. The old one reads the new lease,
+/// stops, and writes its last checkpoint (01M51X8MG0YQT5KBZC9H7917J3).
+/// After its wait, the new one loads its state again from that
+/// checkpoint (01M51X8P4M8PHSSJMWF1J1KQS1). So no session gets a
+/// message again, and none misses one.
+#[tokio::test]
+async fn a_deploy_keeps_each_read_cursor_of_the_old_instance() {
+    let store = Memory::default();
+    let (old, base) = common::start_on(Arc::new(store.clone())).await;
+    fill(&base).await;
+    let post = json!({ "me": MIKE, "thread": REPO, "body": "two" });
+    call(&base, "post", post).await;
+    let read = call(&base, "read", json!({ "me": BRETT, "thread": REPO })).await;
+    assert_eq!(read["messages"][0]["body"], "two");
+    old.save().await.unwrap();
+    // Only the memory of the old instance has the read cursors.
+    assert_eq!(checkpoint::names(&store).await.unwrap(), []);
+    let last = verify(&store).await.unwrap().last.unwrap();
+
+    let (new, base) = common::start_on_lease(Arc::new(store.clone()), DEPLOY).await;
+    in_time(Duration::from_secs(5), old.stopped())
+        .await
+        .unwrap();
+    // The old instance wrote one checkpoint, at the last position of
+    // the log, and the new one took it.
+    let names = checkpoint::names(&store).await.unwrap();
+    assert_eq!(names.len(), 1, "{names:?}");
+    assert_eq!(names[0].0, last, "{names:?}");
+    let facts = common::client()
+        .get(format!("{base}/v1/server"))
+        .send()
+        .await
+        .unwrap();
+    let facts: Value = facts.json().await.unwrap();
+    assert_eq!(facts["checkpoint"]["position"], last, "{facts}");
+    // Brett gets no message of REPO again, and still gets the message
+    // of design that he did not read.
+    let read = call(&base, "read", json!({ "me": BRETT, "thread": REPO })).await;
+    assert_eq!(read["messages"], json!([]), "{read}");
+    let read = call(&base, "read", json!({ "me": BRETT, "thread": "design" })).await;
+    assert_eq!(read["messages"][0]["body"], "look");
+    new.shutdown().await.unwrap();
 }
 
 #[tokio::test]
