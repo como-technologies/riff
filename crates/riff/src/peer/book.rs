@@ -71,6 +71,37 @@ impl Book {
         Ok((Book { path, file }, kept))
     }
 
+    /// Writes the file again with only `records`, in this order: a new
+    /// file, then a rename over the old one. A crash keeps the old file
+    /// or the new one, not a part of each.
+    pub fn rewrite(&mut self, records: &[Vec<u8>]) -> Result<()> {
+        let dir = self.path.parent().unwrap_or(Path::new("."));
+        let fail = |what: &str| format!("cannot {what} {}", self.path.display());
+        let mut new = tempfile::NamedTempFile::new_in(dir).with_context(|| fail("write"))?;
+        for bytes in records {
+            let length = u32::try_from(bytes.len()).context("a record of 4 GiB or more")?;
+            new.write_all(&length.to_be_bytes())
+                .and_then(|()| new.write_all(bytes))
+                .with_context(|| fail("write"))?;
+        }
+        new.as_file().sync_data().with_context(|| fail("sync"))?;
+        new.persist(&self.path)
+            .map_err(|e| e.error)
+            .with_context(|| fail("replace"))?;
+        self.file = OpenOptions::new()
+            .append(true)
+            .open(&self.path)
+            .with_context(|| fail("open"))?;
+        Ok(())
+    }
+
+    /// Reads each whole record of the file again.
+    pub fn records(&self) -> Result<Vec<Vec<u8>>> {
+        let all = std::fs::read(&self.path)
+            .with_context(|| format!("cannot read {}", self.path.display()))?;
+        Ok(records(&all).0)
+    }
+
     /// Appends the record `bytes`, and syncs the file.
     pub fn append(&mut self, bytes: &[u8]) -> Result<()> {
         let length = u32::try_from(bytes.len()).context("a record of 4 GiB or more")?;
@@ -124,6 +155,24 @@ mod tests {
         drop(book);
         let (_, kept) = Book::open(dir.path()).unwrap();
         assert_eq!(kept, [b"whole".to_vec(), b"next".to_vec()]);
+    }
+
+    #[test]
+    fn a_rewrite_keeps_only_the_records_that_it_gets() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut book, _) = Book::open(dir.path()).unwrap();
+        for bytes in [&b"one"[..], b"two", b"three"] {
+            book.append(bytes).unwrap();
+        }
+        book.rewrite(&[b"one".to_vec(), b"three".to_vec()]).unwrap();
+        book.append(b"four").unwrap();
+        assert_eq!(
+            book.records().unwrap(),
+            [b"one".to_vec(), b"three".to_vec(), b"four".to_vec()]
+        );
+        drop(book);
+        let (_, kept) = Book::open(dir.path()).unwrap();
+        assert_eq!(kept.len(), 3);
     }
 
     #[test]

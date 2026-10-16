@@ -190,10 +190,11 @@ sequenceDiagram
 - The heads say, for each author, the highest sequence number that a
   daemon has. Each side then sends what the other side lacks, and
   after that each new record at once.
-- A daemon checks each record before it keeps it: the size, the type,
-  the riff, the author is a member, the next sequence number, the hash
-  of the record before it, the signature, and the writer of the type.
-  It refuses a bad record, and closes that connection.
+- A daemon checks each record before it keeps it, in this order: the
+  size of its type, the version and the type, the riff, the author is
+  the owner or a member, the next sequence number, the ID of the record
+  before it, the signature, the JSON of its type, and the writer of the
+  type. It refuses a bad record, and closes that connection.
 - A daemon drops a record that it has already, with no fault, and
   sends no record back to the daemon that sent it. So a record that
   comes over two paths is kept one time.

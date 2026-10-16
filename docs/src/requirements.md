@@ -5869,6 +5869,11 @@ then.
   highest sequence number of that key that the daemon of the owner has.
   Each daemon then refuses each connection of that key, and each record
   of it after that number. The owner cannot remove itself.
+- **01M51RGNHBCY7GDSCKPE8REY6A** When a daemon keeps a `removed` record,
+  it drops each record of that key after its last number that it kept
+  before. Its book holds them no more, and its state comes again from
+  its other records. So the order of the `removed` record and those
+  records does not change the state.
 - **01M519Z4823WC7D3VVTFSDYBS4** `riff members` shows the owner and each
   member key: the user, the host, the start of the key, online or the
   time when it was last seen, and forked, removed or left.

@@ -64,15 +64,7 @@ impl Peers {
     /// records that passed.
     pub fn open(dir: &Path, riff: Public, mut say: impl FnMut(String)) -> Result<Peers> {
         let (book, kept) = Book::open(dir)?;
-        let mut state = State::new(riff);
-        for bytes in kept {
-            match check(bytes, &state) {
-                Ok(checked) => {
-                    state.keep(&checked);
-                }
-                Err(fault) => say(crate::text::daemon_bad_record(&fault.to_string())),
-            }
-        }
+        let state = replay(riff, kept, &mut say);
         Ok(Peers { state, book })
     }
 
@@ -104,11 +96,64 @@ impl Peers {
         }
     }
 
-    /// Keeps `checked` in the book, then applies it.
+    /// Keeps `checked` in the book, then applies it. A `removed` record
+    /// drops each record of its key after its last number.
     fn apply(&mut self, checked: &Checked) -> Result<Applied> {
         self.book.append(checked.record.bytes())?;
-        Ok(self.state.keep(checked))
+        let applied = self.state.keep(checked);
+        if let Body::Removed(removed) = &checked.body {
+            self.drop_after(removed.key, removed.last)?;
+        }
+        Ok(applied)
     }
+
+    /// Drops each record of `key` after the sequence number `last` that
+    /// the daemon kept, when there is one: the book holds them no more,
+    /// and the state comes again from the other records
+    /// (01M51RGNHBCY7GDSCKPE8REY6A). So a daemon that kept such a record
+    /// before the `removed` record, and a daemon that refused it after,
+    /// have the same state.
+    fn drop_after(&mut self, key: Public, last: u64) -> Result<()> {
+        if self
+            .state
+            .heads()
+            .get(&key)
+            .is_none_or(|(seq, _)| *seq <= last)
+        {
+            return Ok(());
+        }
+        let records: Vec<Vec<u8>> = self
+            .book
+            .records()?
+            .into_iter()
+            .filter(|bytes| {
+                // Each record in the book passed its check, so it has a
+                // whole header.
+                let author = Public::from_bytes(bytes[34..66].try_into().expect("32 bytes"));
+                let seq = u64::from_be_bytes(bytes[66..74].try_into().expect("8 bytes"));
+                author != key || seq <= last
+            })
+            .collect();
+        self.book.rewrite(&records)?;
+        self.state = replay(self.state.riff(), records, &mut |_| {});
+        Ok(())
+    }
+}
+
+/// The state of the riff `riff` from the records `kept`, in this order.
+/// It gives `say` one line for each record that fails a check: the book
+/// of a daemon holds only records that passed.
+fn replay(riff: Public, kept: Vec<Vec<u8>>, say: &mut impl FnMut(String)) -> State {
+    let mut state = State::new(riff);
+    for bytes in kept {
+        match check(bytes, &state) {
+            Ok(checked) => {
+                state.keep(&checked);
+            }
+            Err(fault) => say(crate::text::daemon_bad_record(&fault.to_string())),
+        }
+    }
+    state
 }
 
 #[cfg(test)]
@@ -184,6 +229,73 @@ mod tests {
         assert!(lines.is_empty(), "{lines:?}");
         assert_eq!(peers.state().view(), view);
         assert_eq!(peers.state().heads().len(), 2);
+    }
+
+    /// 01M51RGNHBCY7GDSCKPE8REY6A: a daemon that kept the records 2 and 3
+    /// of a key before the `removed` record with the last number 1 drops
+    /// them. A daemon that gets the `removed` record first refuses them.
+    /// Both have the same state, also after a new open of the book.
+    #[test]
+    fn a_removed_key_loses_its_records_after_its_last_number_in_each_order() {
+        let owner = Key::from_bytes(&[1; 32]);
+        let member = Key::from_bytes(&[2; 32]);
+        let riff = owner.public();
+        let (one, two) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let mut first = Peers::open(one.path(), riff, |_| {}).unwrap();
+        let mut second = Peers::open(two.path(), riff, |_| {}).unwrap();
+        let admit = Body::Member(Member {
+            key: member.public(),
+            user: "brett".into(),
+            host: "kadomony".into(),
+        });
+        let riff_record = Record::sign(
+            &owner,
+            riff,
+            1,
+            Id::ZERO,
+            1,
+            &Body::Riff(Riff {
+                user: "mike".into(),
+            }),
+        )
+        .unwrap();
+        let admit = Record::sign(&owner, riff, 2, riff_record.id(), 2, &admit).unwrap();
+        let removed = Body::Removed(crate::peer::body::Removed {
+            key: member.public(),
+            last: 1,
+        });
+        let removed = Record::sign(&owner, riff, 3, admit.id(), 3, &removed).unwrap();
+        let mut chain = Vec::new();
+        let mut before = Id::ZERO;
+        for (seq, text) in [(1, "one"), (2, "two"), (3, "three")] {
+            let record =
+                Record::sign(&member, riff, seq, before, 3 + seq, &message("brett", text)).unwrap();
+            before = record.id();
+            chain.push(record);
+        }
+        for record in [&riff_record, &admit] {
+            first.keep(record.bytes().to_vec()).unwrap();
+            second.keep(record.bytes().to_vec()).unwrap();
+        }
+        // The first daemon keeps the chain, then the removed record.
+        for record in &chain {
+            first.keep(record.bytes().to_vec()).unwrap();
+        }
+        first.keep(removed.bytes().to_vec()).unwrap();
+        // The second daemon gets the removed record first.
+        second.keep(removed.bytes().to_vec()).unwrap();
+        let outcomes: Vec<Outcome> = chain
+            .iter()
+            .map(|record| second.keep(record.bytes().to_vec()).unwrap())
+            .collect();
+        assert!(matches!(outcomes[0], Outcome::Kept(_)));
+        assert_eq!(outcomes[1], Outcome::Refused(Fault::Author(Author::Gone)));
+        assert_eq!(first.state().view(), second.state().view());
+        let thread = "o/r".parse().unwrap();
+        assert_eq!(first.state().messages(&thread).len(), 1);
+        drop(first);
+        let first = Peers::open(one.path(), riff, |_| {}).unwrap();
+        assert_eq!(first.state().view(), second.state().view());
     }
 
     /// A daemon writes no record that fails its own check: a member

@@ -179,10 +179,18 @@ impl Public {
     }
 }
 
-/// The 32 bytes of the text `text`: 64 hex characters.
+/// The 32 bytes of the text `text`: 64 hex characters, with no sign.
+///
+/// ```
+/// let key = riff::daemon_key::Key::from_bytes(&[1; 32]).public();
+/// let text = key.to_string();
+/// assert!(riff::daemon_key::Public::parse(&text).is_some());
+/// let signed = format!("+{}", &text[1..]);
+/// assert_eq!(riff::daemon_key::Public::parse(&signed), None);
+/// ```
 pub(crate) fn hex32(text: &str) -> Option<[u8; 32]> {
     let text = text.as_bytes();
-    if text.len() != 64 {
+    if text.len() != 64 || !text.iter().all(u8::is_ascii_hexdigit) {
         return None;
     }
     let mut bytes = [0u8; 32];
