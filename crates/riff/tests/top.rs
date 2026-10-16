@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use riff::api::Api;
 use riff_core::name::SessionUri;
-use riff_core::wire::StartReason;
+use riff_core::wire::{RiffBinary, StartReason};
 
 /// The path of each call that the server gets.
 type Calls = Arc<Mutex<Vec<String>>>;
@@ -425,6 +425,65 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
     assert!(rows(&top).iter().any(|r| r == host_line), "{top}");
 }
 
+/// A fake server with four workers on thelio: one runs an older build,
+/// one runs a riff whose file was replaced, one runs the build of the
+/// server, and one runs an older riff that names no riff in its
+/// keep-alive. Only the first two get the mark `↑`, and the line of the
+/// host counts them (01M514C142K5BM2746F1D9Y448,
+/// 01M514C16VG9PD70A8424J173B). The older riff gives no error.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_that_runs_an_old_riff_has_the_mark_and_the_host_line_counts_it() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    for (id, args) in [("a1", &["lead"][..]), ("a1", &["resume", "--riff"][..])] {
+        output(riff(&server, dir, Some(id), bin.path(), args)).await;
+    }
+    live(&server, "pangolin", "a1").await;
+    let api = Api::new(&server);
+    let binary = |build: &str, replaced| RiffBinary {
+        build: build.into(),
+        replaced,
+    };
+    let this = riff_core::build::VERSION;
+    let old = "1.3.1 aaaaaaaaaaaa 2026-10-14T10:00:00Z";
+    for (id, binary) in [
+        ("w1", Some(binary(old, false))),
+        ("w2", Some(binary(this, true))),
+        ("w3", Some(binary(this, false))),
+        ("w4", None),
+    ] {
+        let uri: SessionUri = format!("riff://mike@thelio/como-technologies/riff?session={id}")
+            .parse()
+            .unwrap();
+        api.register_as(&uri, true).await.unwrap();
+        live_at(&server, uri.clone()).await;
+        match binary {
+            Some(binary) => api.alive_as(&uri, binary).await.unwrap(),
+            // An older riff: its keep-alive names no riff.
+            None => api.alive(&uri).await.unwrap(),
+        };
+    }
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    for (id, head) in [
+        ("w1", "   ├─ w1  ↑  worker  idle"),
+        ("w2", "   ├─ w2  ↑  worker  idle"),
+        ("w3", "   ├─ w3  worker  idle"),
+        ("w4", "   └─ w4  worker  idle"),
+    ] {
+        assert_eq!(session(&top, id)[0], head, "{top}");
+    }
+    let host_line = "└─ thelio  › riff  4 sessions: 4 workers; 2 to update; 4 idle";
+    assert!(rows(&top).iter().any(|r| r == host_line), "{top}");
+    // The lead named no riff: no mark, and no count on its host.
+    assert_eq!(session(&top, "a1")[0], "│  └─ a1  lead  idle", "{top}");
+    let lead_line = "├─ pangolin  › riff  1 session: 1 lead; 1 idle";
+    assert!(rows(&top).iter().any(|r| r == lead_line), "{top}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn top_never_prints_color_to_a_pipe() {
     let (server, _) = start_server().await;
@@ -608,8 +667,10 @@ fn the_book_shows_real_top_commands() {
 /// The example table of "See what each session does" in How It Works
 /// has the form of the output: a board for each repository, the four
 /// levels of the tree, the short form, the counts, and the worktree on
-/// each session line (01M3WNHCD659FH3Z5VYYH69WWR,
-/// 01M42KHN33M4K13GKTX2WM6CMM, 01M42KHN80V49HDDZF953HXDT0).
+/// each session line, and the mark of a session that runs an old riff
+/// with its count (01M3WNHCD659FH3Z5VYYH69WWR,
+/// 01M42KHN33M4K13GKTX2WM6CMM, 01M42KHN80V49HDDZF953HXDT0,
+/// 01M514C142K5BM2746F1D9Y448, 01M514C16VG9PD70A8424J173B).
 #[test]
 fn the_book_example_has_the_four_level_tree() {
     let page = std::fs::read_to_string(
@@ -651,9 +712,9 @@ fn the_book_example_has_the_four_level_tree() {
         "\nbrett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim\n",
         "\n├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims\n",
         "\n│  └─ 9c0d1e2f  #issue-9  container  busy\n",
-        "\n└─ thelio  5 sessions: 2 leads, 1 host; 3 idle, 1 blocked, 1 claim\n",
+        "\n└─ thelio  5 sessions: 2 leads, 1 host; 1 to update; 3 idle, 1 blocked, 1 claim\n",
         "\n   ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim\n",
-        "\n   │  ├─ 6e7f8a9b  host  idle\n",
+        "\n   │  ├─ 6e7f8a9b  ↑  host  idle\n",
         "\n   └─ strata  1 session: 1 idle\n",
     ] {
         assert!(example.contains(row), "{row}: {example}");

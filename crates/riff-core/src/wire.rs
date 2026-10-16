@@ -282,6 +282,60 @@ pub struct Alive {
     /// (01M510MG0CKDXAKF6YJ768K7E8).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub container: bool,
+    /// The riff of the process that lives as long as the session:
+    /// `riff mcp`, the riff daemon, `riff run` or `riff workers host`.
+    /// Each other keep-alive sends none, and the server keeps the last
+    /// one (01M514C11BPE93PJT4221PYVHS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<RiffBinary>,
+}
+
+/// The riff that a session runs: its build, and whether its file was
+/// replaced after the start (01M514C11BPE93PJT4221PYVHS).
+///
+/// ```
+/// use riff_core::build::Build;
+/// use riff_core::wire::RiffBinary;
+///
+/// let server: Build = "1.4.0 122daab96637 2026-10-15T23:08:34Z".parse().unwrap();
+/// let binary = |build: &str, replaced| RiffBinary { build: build.into(), replaced };
+/// let old = binary("1.3.1 aaaaaaaaaaaa 2026-10-14T10:00:00Z", false);
+/// assert!(old.out_of_date(Some(&server)));
+/// // The same version from an older commit is older too.
+/// assert!(binary("1.4.0 bbbbbbbbbbbb 2026-10-15T20:00:00Z", false).out_of_date(Some(&server)));
+/// // The build of the server, or a newer one, is current.
+/// assert!(!binary(&server.to_string(), false).out_of_date(Some(&server)));
+/// assert!(!binary("1.4.1 cccccccccccc 2026-10-16T10:00:00Z", false).out_of_date(Some(&server)));
+/// // A replaced file is out of date with each build.
+/// assert!(binary(&server.to_string(), true).out_of_date(Some(&server)));
+/// assert!(binary(&server.to_string(), true).out_of_date(None));
+/// // With no build of the server, or no build that riff can read,
+/// // only a replaced file counts.
+/// assert!(!old.out_of_date(None));
+/// assert!(!binary("next", false).out_of_date(Some(&server)));
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RiffBinary {
+    /// The build of the riff ([`crate::build::VERSION`]).
+    pub build: String,
+    /// True when the file of the riff was replaced after the start of
+    /// the process: Linux names it `PATH (deleted)`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replaced: bool,
+}
+
+impl RiffBinary {
+    /// True when the session must update: its file was replaced, or its
+    /// build is older than the build of the server, `server`
+    /// (01M514C142K5BM2746F1D9Y448, 01M514C19H3WQP1FSX9RBVSC69).
+    pub fn out_of_date(&self, server: Option<&crate::build::Build>) -> bool {
+        self.replaced
+            || server.is_some_and(|server| {
+                self.build
+                    .parse::<crate::build::Build>()
+                    .is_ok_and(|build| build.older_than(server))
+            })
+    }
 }
 
 /// The most characters in the text of a tool of an [`Activity`].
@@ -575,6 +629,11 @@ pub struct SessionInfo {
     /// (01M510MG0CKDXAKF6YJ768K7E8).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub container: bool,
+    /// The riff that the session runs, from its last keep-alive that
+    /// named one. `None` when no keep-alive named one, as from an older
+    /// riff (01M514C11BPE93PJT4221PYVHS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<RiffBinary>,
     /// True when the server asked this idle worker to stop
     /// (01M3Q5A0NKY1FCS0YH6N6YD3GN).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

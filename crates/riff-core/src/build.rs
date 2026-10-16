@@ -268,6 +268,30 @@ impl Build {
     pub fn matches(&self, other: &Build) -> bool {
         self.version == other.version && self.commit == other.commit
     }
+
+    /// True when this build is older than `other`: a lower version, or
+    /// the same version from an older commit (01M514C19H3WQP1FSX9RBVSC69).
+    /// The times are UTC in one form, so their text has the order of
+    /// time. With no semantic version on a side, it is false.
+    ///
+    /// ```
+    /// use riff_core::build::Build;
+    ///
+    /// let b = |s: &str| s.parse::<Build>().unwrap();
+    /// let server = b("1.4.0 122daab96637 2026-10-15T23:08:34Z");
+    /// assert!(b("1.3.1 aaaa 2026-10-14T10:00:00Z").older_than(&server));
+    /// assert!(b("1.4.0 bbbb 2026-10-15T20:00:00Z").older_than(&server));
+    /// assert!(!server.older_than(&server));
+    /// assert!(!b("1.4.0 cccc 2026-10-16T01:00:00Z").older_than(&server));
+    /// // A higher version from an older commit is not older.
+    /// assert!(!b("1.5.0 dddd 2026-10-01T00:00:00Z").older_than(&server));
+    /// ```
+    pub fn older_than(&self, other: &Build) -> bool {
+        let (Some(mine), Some(theirs)) = (self.semver(), other.semver()) else {
+            return false;
+        };
+        (mine, &self.time) < (theirs, &other.time)
+    }
 }
 
 /// True when `riff` and `riff-server` can talk: the two versions are on

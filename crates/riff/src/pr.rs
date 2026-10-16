@@ -611,6 +611,7 @@ pub struct Reported {
 ///     status: None,
 ///     worker: true,
 ///     container: false,
+///     binary: None,
 ///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,

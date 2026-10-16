@@ -2260,6 +2260,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   0, for example `6 sessions: 3 workers, 2 containers, 1 host; 2 busy,
   2 idle, 4 claims`. A session counts once, as the first of these that
   matches. The person and repository lines count no kinds.
+- **01M514C142K5BM2746F1D9Y448** `riff top` puts the mark `↑`, in
+  yellow, after the short ID of each session that is out of date: the
+  file of its riff was replaced, or its build is older than the build
+  of the server (01M514C19H3WQP1FSX9RBVSC69). A session with no riff
+  in `who` gets no mark, and no error.
+- **01M514C16VG9PD70A8424J173B** The line of a host in `riff top`
+  counts the sessions that are out of date, after the kinds and before
+  the states: `2 to update`. A count of 0 is not shown.
 - **01M42KHN80V49HDDZF953HXDT0** `riff top` shows a board for each
   repository with a live session, and for the repository of the
   working directory when no `--user` and no `--host` is set and
@@ -2463,6 +2471,15 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `offline`. When its container stops, the daemon ends the session,
   and it is gone at once. With no keep-alive for 3 minutes, it is gone
   too.
+- **01M514C11BPE93PJT4221PYVHS** The process that lives as long as a
+  session names its riff in each keep-alive: the build, and
+  `replaced` when Linux names the file of the process
+  `PATH (deleted)`. These processes are `riff mcp`, the riff daemon
+  and `riff run` for a session in a container, and `riff workers
+  host`. Each other keep-alive, for example of `riff watch`, names no
+  riff. The server keeps the last riff that a keep-alive named, and
+  gives it in `who`. A session of an older riff names none, and `who`
+  gives none for it.
 - **01M510MG808MQT08W6VSPKM1A6** A session in a container is never an
   idle worker for the rollout of the lead: it does not count as idle,
   and it gets no request. The daemon gives it its item.
@@ -4144,6 +4161,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3MX1E1EY1M7JGNCN6FCEVQK** `riff-server` also talks with a `riff`
   of the line before its own: `0.3.x` on a `0.4` server, `1.x` on a
   `2` server. It does not talk with a `riff` of a later line.
+- **01M514C19H3WQP1FSX9RBVSC69** A build is older than another build
+  when its version is lower, or when the version is the same and the
+  time of its commit is older. A build of a higher version is not
+  older, also from an older commit.
 - **01M3MX1E3R5WESVHA8RZXFQR1J** Replaced by
   01M3N73E5JWFTYZ90JX5AVFGEP to 01M3N73EEQ4HPCPPAGCAHH3S6B.
 - **01M3N73E5JWFTYZ90JX5AVFGEP** While the major is 0, the minor has

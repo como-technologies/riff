@@ -179,6 +179,52 @@ impl Binary {
     }
 }
 
+/// The riff of this process, for the keep-alive of a process that lives
+/// as long as its session (01M514C11BPE93PJT4221PYVHS): its build, and
+/// whether its file was replaced after the start ([`replaced`]).
+///
+/// ```
+/// let riff = riff::binary::this_riff();
+/// assert_eq!(riff.build, riff_core::build::VERSION);
+/// assert!(!riff.replaced);
+/// ```
+pub fn this_riff() -> riff_core::wire::RiffBinary {
+    riff_core::wire::RiffBinary {
+        build: riff_core::build::VERSION.into(),
+        replaced: replaced(Path::new("/proc/self/exe")),
+    }
+}
+
+/// True when the link `exe`, for example `/proc/self/exe`, names a file
+/// that was replaced or removed: Linux names it `PATH (deleted)`. A link
+/// that riff cannot read is not replaced.
+///
+/// ```
+/// use std::os::fd::AsRawFd;
+/// use std::path::PathBuf;
+/// use riff::binary::replaced;
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("riff");
+/// std::fs::write(&path, "old")?;
+/// // An open file has a link in /proc, as a process has for its binary.
+/// let file = std::fs::File::open(&path)?;
+/// let link = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+/// assert!(!replaced(&link));
+/// // A new file in its place, as `riff update` does.
+/// std::fs::write(dir.path().join("new"), "new")?;
+/// std::fs::rename(dir.path().join("new"), &path)?;
+/// assert!(replaced(&link));
+/// assert!(!replaced(&dir.path().join("no link")));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn replaced(exe: &Path) -> bool {
+    std::fs::read_link(exe).is_ok_and(|path| {
+        path.to_str()
+            .is_some_and(|path| path.ends_with(" (deleted)"))
+    })
+}
+
 /// The path of the `riff` binary on disk, for a process that this one
 /// starts. After `cargo install` put a new binary in place, Linux names
 /// the binary of a process that still runs `PATH (deleted)`. That path

@@ -345,6 +345,7 @@ mod tests {
             }),
             worker: true,
             container: true,
+            binary: Some(binary()),
             stopping: true,
             claims_secs: 6,
             must_clear: true,
@@ -364,6 +365,13 @@ mod tests {
                 secs: 9,
                 failed: Some(text("502")),
             }),
+        }
+    }
+
+    fn binary() -> RiffBinary {
+        RiffBinary {
+            build: text("1.4.0 122daab96637 2026-10-15T23:08:34Z"),
+            replaced: true,
         }
     }
 
@@ -398,6 +406,7 @@ mod tests {
             activity: Some(activity()),
             prompt_secs: Some(4),
             container: true,
+            binary: Some(binary()),
         });
         c.trip(&AliveReply {
             stop: true,
