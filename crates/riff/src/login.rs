@@ -476,8 +476,7 @@ pub fn lock_path(server: &str) -> Result<PathBuf> {
 async fn refresh_lock(server: &str) -> Result<std::fs::File> {
     let path = lock_path(server)?;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .with_context(|| format!("cannot make {}", dir.display()))?;
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     }
     let file = std::fs::OpenOptions::new()
         .create(true)

@@ -360,12 +360,10 @@ async fn three_processes_with_three_tmpdirs_refresh_one_sign_in_once() {
             let mut cmd = tokio::process::Command::from(cmd);
             cmd.kill_on_drop(true).output()
         });
-        let outputs = tokio::time::timeout(
-            Duration::from_secs(60),
-            futures::future::join_all(children),
-        )
-        .await
-        .unwrap_or_else(|_| panic!("round {round}: a riff waits for a lock"));
+        let outputs =
+            tokio::time::timeout(Duration::from_secs(60), futures::future::join_all(children))
+                .await
+                .unwrap_or_else(|_| panic!("round {round}: a riff waits for a lock"));
         for out in outputs {
             let out = out.unwrap();
             assert!(out.status.success(), "round {round}: {}", text(&out.stderr));
