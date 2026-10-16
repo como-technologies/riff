@@ -895,7 +895,9 @@ impl Server {
             }
             Ok(false) => {}
             Err(error) => {
-                tracing::warn!("no checkpoint for the new instance: the lease read failed: {error}");
+                tracing::warn!(
+                    "no checkpoint for the new instance: the lease read failed: {error}"
+                );
             }
         }
     }

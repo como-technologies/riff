@@ -390,7 +390,10 @@ async fn the_take_of_the_lease_by_a_cut_stops_an_instance_that_runs() {
     // A shutdown waits for a write of the hand-over. The lease holds the
     // ID of a tool, so the instance wrote no checkpoint.
     service.shutdown().await.unwrap();
-    assert_eq!(store.list("checkpoint/").await.unwrap(), Vec::<String>::new());
+    assert_eq!(
+        store.list("checkpoint/").await.unwrap(),
+        Vec::<String>::new()
+    );
 }
 
 /// A deploy: the old instance reads the ID of the new instance, stops,
@@ -417,7 +420,11 @@ async fn an_instance_that_reads_a_new_instance_in_the_lease_writes_its_last_chec
     let names = riff_state::checkpoint::names(&store).await.unwrap();
     assert_eq!(names.len(), 1, "{names:?}");
     assert_eq!(names[0].0, last, "{names:?}");
-    assert_eq!(last_position(&store).await, last, "no record after the stop");
+    assert_eq!(
+        last_position(&store).await,
+        last,
+        "no record after the stop"
+    );
 }
 
 /// A deploy: the old and the new instance run at the same time for a
