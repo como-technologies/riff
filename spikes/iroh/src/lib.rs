@@ -5,6 +5,9 @@
 //! to run it, and gives the result.
 
 pub mod record;
+mod spike;
+
+pub use spike::main;
 
 use std::time::Duration;
 
