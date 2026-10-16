@@ -15,16 +15,16 @@ with no change of the defaults:
 
 - Each side found the other by its endpoint ID only. 40 of 40 cold
   connects worked, in about 100 ms.
-- Each connect started on the relay of n0 and went direct in about
+- Each cold connect started on the relay of n0 and went direct in about
   210 ms. A connect from an endpoint that knows the peer goes direct
   at once, in 3 to 7 ms.
 - Each side checked the record of the other: the size, the type, the
   author and the ed25519 signature. Each bad record was refused.
 - After a drop of 10 s, the connection lived on, and it worked again
   about 1.1 s after the network came back. After a drop of 60 s, the
-  connection timed out, and a new connect worked
-  SIXTY_UP after the network came back.
-- iroh adds SIZE_ADDS to the static riff (SIZE_PLAIN to SIZE_PROBE).
+  connection timed out, and a new connect worked 0.3 to 1.3 s after
+  the network came back.
+- iroh adds 7.6 MB (38 %) to the static riff: 20.0 MB to 27.6 MB.
 - `cargo audit` finds no vulnerability. It names one crate that is
   not maintained: `paste` (see "cargo audit").
 
@@ -170,11 +170,12 @@ cargo audit
 
 ## The numbers
 
-Measured on 2026-10-15 with iroh 1.3.0, from commit 9bf03d2 of the
-branch `worktree-issue-697`. thelio (192.168.1.126) and pangolin
-(192.168.1.144) are on the same Wi-Fi LAN, behind one NAT. Both
-endpoints took the home relay `use1-1.relay.n0.iroh.link`. Each time
-is from the start of the step on the side that dials.
+Measured on 2026-10-15 with iroh 1.3.0, with the program of commit
+9bf03d2 (the later commits move code, and add tests and scripts).
+thelio (192.168.1.126) and pangolin (192.168.1.144) are on the same
+Wi-Fi LAN, behind one router. Both endpoints took the home relay
+`use1-1.relay.n0.iroh.link`. Each time is from the start of the step
+on the side that dials.
 
 ### Connect
 
@@ -209,24 +210,32 @@ down 20 s after the connect.
 | Drop | Runs | The connection | Pings answered again after the link came up |
 |---|---|---|---|
 | 10 s | 3 | lives on: relay after 6 s, direct again after the up | 1.10, 1.11, 1.15 s |
-| 60 s | 2 | SIXTY_CONN | SIXTY_TIMES |
+| 60 s | 2 | times out 35.8 s after the down; a new connect after the up | 1.26, 0.29 s |
 
 A ping waits 1 s for its answer, so each time can be up to 1 s too
-long.
+long. After the timeout, `hold` tries a connect of at most 5 s, and
+waits 1 s between two tries. So the time after the up of a 60 s drop
+depends on where the up falls in that loop.
 
 ### Size
 
 | Binary | Bytes |
 |---|---|
 | `iroh-spike`, static, release profile of riff | 10 472 032 |
-| riff, static, release | SIZE_PLAIN |
-| riff with the spike linked in | SIZE_PROBE |
-| iroh adds to riff | SIZE_ADDS |
+| riff, static, release | 19 955 616 |
+| riff with the spike linked in | 27 601 024 |
+| iroh adds to riff | 7 645 408 (38 %) |
 
 iroh brings 363 crates in the lock file of the spike. The lock file of
 riff has 492. Of the crates of the spike, 103 names are not in the
 lock file of riff. Many of them are for Windows, macOS or the browser,
 and do not build on Linux.
+
+riff has tokio, rustls, ring, aws-lc and reqwest already. The new
+part is the QUIC stack of iroh (`noq`), the relay client, the DNS
+look-up, `netwatch`, the port mapper and the metrics. The spike uses
+the default features of iroh. The features `metrics` and `portmapper`
+can go off.
 
 ### cargo audit
 
@@ -260,6 +269,9 @@ and do not build on Linux.
   That holds only for a record that its author sends. A record that
   one peer passes on for another needs the check of decision 20: the
   owner signs the key of each member, and the reader checks that.
+- iroh makes riff 38 % larger. When the size counts, measure riff
+  with no `metrics` and no `portmapper` (`riff-size.sh`). The port
+  mapper helps a direct path through a router that has UPnP or NAT-PMP.
 - The ALPN of the spike is `riff/spike/iroh/0`. riff takes its own
   ALPN with a version in it, so that two major releases do not talk
   (#696).
