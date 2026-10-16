@@ -6,8 +6,6 @@ use std::process::{Command, Output, Stdio};
 
 use hygiene::part::{Part, names, summary};
 
-use crate::SPAWN;
-
 /// The list of the fake cargo: tests of two binaries, a name in two
 /// binaries, doc tests, and a benchmark.
 const LIST: &str = "a::one: test\n\
@@ -52,30 +50,21 @@ fn fake_cargo(list: &str, list_exit: i32, run_exit: i32) -> tempfile::TempDir {
          esac\n",
         d.display()
     );
-    let cargo = d.join("cargo");
-    let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
-    std::fs::write(&cargo, script).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    isolated::write_program(d.join("cargo"), script);
     dir
 }
 
 /// Runs `hygiene test-part PART` with the fake cargo of `dir` in `CARGO`.
 fn test_part(dir: &Path, part: &str) -> Output {
-    let child = {
-        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
-        Command::new(env!("CARGO_BIN_EXE_hygiene"))
-            .args(["test-part", part])
-            .env("CARGO", dir.join("cargo"))
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap()
-    };
-    child.wait_with_output().unwrap()
+    Command::new(env!("CARGO_BIN_EXE_hygiene"))
+        .args(["test-part", part])
+        .env("CARGO", dir.join("cargo"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap()
 }
 
 fn text(bytes: &[u8]) -> String {

@@ -9,8 +9,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::SPAWN;
-
 /// The parts of the Gate: the jobs that the job `gate` needs.
 const PARTS: [&str; 3] = ["lint", "test", "checks"];
 
@@ -167,18 +165,16 @@ fn gate_step(results: &str) -> (Option<i32>, String) {
         .map(|line| line.strip_prefix("          ").unwrap_or(line))
         .map(|line| format!("{line}\n"))
         .collect();
-    let child = {
-        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
-        Command::new("bash")
-            .args(["--noprofile", "--norc", "-e", "-o", "pipefail", "-c"])
-            .arg(&script)
-            .env("RESULTS", results)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap()
-    };
-    let out = child.wait_with_output().unwrap();
+    let out = Command::new("bash")
+        .args(["--noprofile", "--norc", "-e", "-o", "pipefail", "-c"])
+        .arg(&script)
+        .env("RESULTS", results)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap();
     let text =
         String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     (out.status.code(), text)
