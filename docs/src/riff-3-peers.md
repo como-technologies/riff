@@ -393,3 +393,5 @@ flowchart TD
 - Until Wave C, `riff claim` and `riff release` act on riff-server
   1.x. Only `riff release ITEM --forge` acts on a claim of 3.0. The
   daemon makes each claim of 3.0.
+- Wave C moves each repository to riff 3.0, and ends riff-server. See
+  [riff 3.0: no cloud](riff-3-no-cloud.md).
