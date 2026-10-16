@@ -316,10 +316,14 @@
 //!     E --> B
 //! ```
 //!
-//! At each start, with `update.auto` on, the daemon adds each rule of
-//! its release that the user settings of Claude Code lack
-//! ([`crate::rule_sync`], 01M51M3ZHHBE61CEG9T6ENFG18). So a new release
-//! brings its rules with no `riff init`.
+//! At each start, with `update.auto` on, the daemon of a release does
+//! each step of `riff init` that needs no person and that is not in
+//! step ([`crate::update_steps`], 01M51QFPJAABDP1V7WFY8NQR60): it adds
+//! each rule of its release that the user settings of Claude Code lack
+//! ([`crate::rule_sync`], 01M51M3ZHHBE61CEG9T6ENFG18), writes its unit
+//! again, and pulls the session image of each wave. When it wrote its
+//! unit, it starts again on it as for an old riff. So a new release
+//! needs no `riff init`.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -521,9 +525,11 @@ pub fn stale(unit: Option<&crate::service::Unit>, own: &Path, replaced: bool) ->
     replaced || unit.is_some_and(|unit| !crate::binary::same_file(&unit.exe, own))
 }
 
-/// True when this daemon runs an old riff ([`stale`]), and the unit of
-/// `manager` runs it (01M517BTP6BAGTRBYWPX9GPVE0). The daemon of a
-/// `RIFF_HOME` is never the daemon of the unit.
+/// True when this daemon runs an old riff ([`stale`]) or an old unit
+/// that its own step of the unit wrote again
+/// ([`crate::update_steps::unit_written`], 01M51QFPQ68JHS08TWXNNWZ0D7),
+/// and the unit of `manager` runs it (01M517BTP6BAGTRBYWPX9GPVE0). The
+/// daemon of a `RIFF_HOME` is never the daemon of the unit.
 fn old_here(manager: &impl crate::service::ServiceManager) -> bool {
     if crate::home::dir().is_some() {
         return false;
@@ -533,7 +539,7 @@ fn old_here(manager: &impl crate::service::ServiceManager) -> bool {
     };
     let unit = manager.installed().ok().flatten();
     let replaced = crate::binary::replaced(Path::new("/proc/self/exe"));
-    stale(unit.as_ref(), &own, replaced)
+    (stale(unit.as_ref(), &own, replaced) || crate::update_steps::unit_written())
         && manager.main_pid().ok().flatten() == Some(std::process::id())
 }
 
@@ -3030,8 +3036,12 @@ pub async fn serve_here() -> Result<()> {
         );
         daemon.recover().await;
         daemon.run_waves();
-        // The rules of Claude Code of this release (01M51M3ZHHBE61CEG9T6ENFG18).
-        tokio::spawn(crate::rule_sync::at_start());
+        // The steps of an update of this release: the rules of Claude
+        // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
+        let steps = dir.clone();
+        tokio::spawn(async move {
+            crate::update_steps::at_start(&crate::podman::Podman, &steps).await;
+        });
         // A new riff on disk (01M517BTP6BAGTRBYWPX9GPVE0).
         if let Ok(manager) = crate::service::Systemd::here() {
             let daemon = daemon.clone();

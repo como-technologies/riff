@@ -34,6 +34,7 @@
 //! | `update.log` | The same update. | Its output. |
 //! | `rules-added` | `riff init` and the riff daemon, when they add rules to the user settings of Claude Code (see [`crate::rule_sync`]). | The time of the add, in milliseconds. |
 //! | `rules-sync` | The riff daemon, at each start (see [`crate::rule_sync`]). | The line of its last sync of the rules. |
+//! | `needs-you` | The riff daemon at each start, and `riff update --check` (see [`crate::update_steps`]). | The first step of an update that only a person can do, with its fix. No file when there is none. |
 //! | `host-USER-REPO` | `riff workers host` of USER in REPO (see [`crate::host`]). | Its PID and its session ID. |
 //!
 //! The writers of `mcp-PID`, `watch-ID`, `update.lock` and
@@ -461,6 +462,40 @@ pub fn rules_sync(dir: &Path) -> Option<String> {
 pub fn set_rules_sync(dir: &Path, line: &str) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     std::fs::write(dir.join("rules-sync"), line)
+}
+
+/// The first step of an update that only a person can do, with its fix
+/// (01M51QFPW37EXVH4AXH70MSXBT, [`crate::update_steps::needs_you`]).
+/// `None` when there is none.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// assert_eq!(riff::local::needs_you(run.path()), None);
+/// riff::local::set_needs_you(run.path(), Some("podman: sudo apt install podman"))?;
+/// assert_eq!(riff::local::needs_you(run.path()).as_deref(), Some("podman: sudo apt install podman"));
+/// riff::local::set_needs_you(run.path(), None)?;
+/// assert_eq!(riff::local::needs_you(run.path()), None);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn needs_you(dir: &Path) -> Option<String> {
+    let line = std::fs::read_to_string(dir.join("needs-you")).ok()?;
+    Some(line.trim().to_owned()).filter(|l| !l.is_empty())
+}
+
+/// Records `line` as the step that needs a person. `None` removes the
+/// record.
+pub fn set_needs_you(dir: &Path, line: Option<&str>) -> io::Result<()> {
+    let path = dir.join("needs-you");
+    match line {
+        Some(line) => {
+            std::fs::create_dir_all(dir)?;
+            std::fs::write(path, line)
+        }
+        None => match std::fs::remove_file(path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        },
+    }
 }
 
 /// The directory of the mark of a leave: `$RIFF_HOME/state` (see

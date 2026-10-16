@@ -80,7 +80,8 @@ use riff_core::build::Build;
 
 use crate::permissions::{self, Rules};
 use crate::release::{self, Source};
-use crate::{lifecycle, local, settings, text};
+use crate::update_steps::{self, Gate, Release};
+use crate::{lifecycle, local, text};
 
 /// The variable with the mark of the last add of rules
 /// ([`local::rules_added`]) at the start of a worker
@@ -121,6 +122,19 @@ pub struct Facts<'a> {
     pub target: Option<&'a str>,
 }
 
+impl Facts<'_> {
+    /// The binary of the facts and the place of its release files, for
+    /// the gate ([`update_steps::gate`]).
+    pub fn release(&self) -> Release<'_> {
+        Release {
+            binary: self.binary,
+            tag: self.tag,
+            source: self.source,
+            target: self.target,
+        }
+    }
+}
+
 /// The sync of the rules (01M51M3ZHHBE61CEG9T6ENFG18). With `auto` off,
 /// it changes nothing. With no trusted place of the release files
 /// (01M51QARV45MGEKC6KGWX1N5NS), it changes nothing. Else, when the
@@ -128,19 +142,13 @@ pub struct Facts<'a> {
 /// 01M51M3ZKWQYBBPD97R0G9QAX0), it adds each
 /// rule of [`permissions::user_rules`] that the user settings lack, as
 /// [`permissions::add`] does. It keeps each other rule and key in its
-/// order, and removes no rule.
+/// order, and removes no rule. The checks before the add are the gate
+/// of each step of an update ([`update_steps::gate`]).
 pub async fn sync(facts: &Facts<'_>) -> Result<Synced> {
-    if !facts.auto {
-        return Ok(Synced::Off);
-    }
-    let source = match facts.source {
-        Ok(source) => source,
-        Err(why) => return Ok(Synced::NotRelease(why.clone())),
-    };
-    let bytes = std::fs::read(facts.binary)
-        .with_context(|| format!("cannot read {}", facts.binary.display()))?;
-    if let Err(why) = release::is_release(&bytes, facts.tag, source, facts.target).await {
-        return Ok(Synced::NotRelease(why));
+    match update_steps::gate(facts.auto, &facts.release()).await? {
+        Gate::Off => return Ok(Synced::Off),
+        Gate::NotRelease(why) => return Ok(Synced::NotRelease(why)),
+        Gate::Open(_) => {}
     }
     let added = permissions::add(facts.user, &permissions::user_rules(facts.home))?;
     Ok(if added.is_empty() {
@@ -198,15 +206,10 @@ impl State {
     /// The sync of this machine, with the local files `local`.
     pub fn here(local: Option<&Path>) -> State {
         State {
-            auto: auto_here(),
+            auto: update_steps::auto_here(),
             last: local.and_then(local::rules_sync),
         }
     }
-}
-
-/// `update.auto` of this machine. A bad settings file counts as off.
-fn auto_here() -> bool {
-    settings::path().is_ok_and(|p| settings::update_auto(&p).unwrap_or(false))
 }
 
 /// True when riff added rules after the start of a worker
@@ -259,7 +262,7 @@ async fn here(build: &str, local: Option<&Path>) -> Result<Vec<String>> {
     let source = sums_source(std::env::var(release::RELEASES).ok().as_deref());
     let tag = lifecycle::release_tag(env!("CARGO_PKG_VERSION"));
     let facts = Facts {
-        auto: auto_here(),
+        auto: update_steps::auto_here(),
         user: &user,
         home: home.as_deref(),
         // The binary that runs, also after a new riff replaced its file.

@@ -14,18 +14,19 @@
 //! | Step | In step when | Else the daemon |
 //! |---|---|---|
 //! | the rules of Claude Code | the user settings have each rule of riff ([`crate::permissions::user_rules`]) | adds the missing rules ([`crate::rule_sync`]) |
-//! | the unit of the daemon | the unit file is the text that this riff writes for its `ExecStart` and its variables | writes it again, and starts again on it when it is idle (01M51QFPQ68JHS08TWXNNWZ0D7) |
+//! | the unit of the daemon | the unit file is the text that this riff writes for its `ExecStart` and its variables ([`Unit::text`]) | writes it again, and starts again on it when it is idle (01M51QFPQ68JHS08TWXNNWZ0D7) |
 //! | the session image of each wave | podman has the image that `riff.toml` of the main clone of the wave pins | pulls it (01M51QFPSMDDMFPZXAEYWZYJPV) |
 //!
-//! The gate. The daemon changes the machine only when `update.auto` is
-//! on and its own binary is a release ([`gate`]): the SHA-256 of
+//! The gate ([`gate`]). The daemon changes the machine only when
+//! `update.auto` is on and its own binary is a release: the SHA-256 of
 //! `/proc/self/exe` is the line of `riff-TARGET` in `SHA256SUMS` of the
-//! GitHub release of its version ([`release::is_release`]). A step that
-//! changes the machine trusts only GitHub. With `RIFF_RELEASES` set, the
-//! gate stays shut, and its line says why ([`release_here`],
-//! 01M51QFPMSG81YRDDGQQ1WJDSQ). So a session cannot build a branch, name
-//! its own `SHA256SUMS`, and get the steps of that branch done. A check
-//! build or a dev build changes nothing.
+//! GitHub release of its version ([`release::is_release`]). Each step
+//! that changes the machine trusts only GitHub
+//! (01M51QFPMSG81YRDDGQQ1WJDSQ): with `RIFF_RELEASES` set, the gate stays
+//! shut, and its line says why ([`rule_sync::sums_source`]). So a
+//! session cannot build a branch, name its own `SHA256SUMS`, and get the
+//! steps of that branch done. A check build or a dev build changes
+//! nothing.
 //!
 //! A step that needs a person is never done by the daemon: the checks
 //! of the machine of `riff init`, which are podman, the init of podman,
@@ -57,40 +58,41 @@
 //! ```
 //! use riff::update_steps::{State, Step};
 //!
-//! let step = |state| Step { name: "the unit of the daemon".into(), state };
-//! assert!(step(State::InStep("riff.service".into())).in_step());
-//! assert!(step(State::Done("riff wrote riff.service".into())).in_step());
+//! let step = |state| Step { name: "the init of podman".into(), state };
+//! assert!(step(State::InStep("/usr/libexec/podman/catatonit".into())).in_step());
+//! assert!(step(State::Done("riff pulled it".into())).in_step());
 //! let person = step(State::Person { found: "no catatonit".into(), fix: "sudo apt install catatonit".into() });
 //! assert!(!person.in_step());
 //! assert_eq!(
 //!     person.line(),
-//!     "needs you  the unit of the daemon: no catatonit. Fix: sudo apt install catatonit"
+//!     "needs you  the init of podman: no catatonit. Fix: sudo apt install catatonit"
 //! );
 //! ```
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use anyhow::{Context, Result};
 use riff_core::build::Build;
 
 use crate::first_run::{self, Check};
-use crate::permissions::{self, Rules};
 use crate::release::{self, Source};
-use crate::rule_sync::{self, Synced};
+use crate::rule_sync;
 use crate::runtime::Runtime;
 use crate::service::{ServiceManager, Unit};
 use crate::session_image::Image;
-use crate::{lifecycle, local, settings, text};
+use crate::{lifecycle, local, permissions, settings, text};
 
-/// A riff binary, and where its release files are.
+/// A riff binary, and the place of its release files.
 #[derive(Debug, Clone, Copy)]
 pub struct Release<'a> {
     /// The riff binary.
     pub binary: &'a Path,
     /// The release tag of its version, for example `v1.5.0`.
     pub tag: &'a str,
-    /// The place of the release files.
-    pub source: &'a Source,
+    /// The place of the release files, or why riff trusts no place
+    /// ([`rule_sync::sums_source`]).
+    pub source: &'a Result<Source, String>,
     /// The target of the static binaries of this machine.
     pub target: Option<&'a str>,
 }
@@ -101,7 +103,8 @@ pub struct Release<'a> {
 pub enum Gate {
     /// `update.auto` is off.
     Off,
-    /// The binary is not a release. It holds why.
+    /// The binary is not a release, or riff trusts no place of its
+    /// release files. It holds why.
     NotRelease(String),
     /// `update.auto` is on, and the binary is the release of this tag.
     Open(String),
@@ -114,15 +117,22 @@ impl Gate {
     }
 }
 
-/// Checks that `release.binary` is the release `release.tag`
-/// ([`release::is_release`]). `Err` says why it is not.
-pub async fn is_release(release: &Release<'_>) -> Result<(), String> {
+/// Checks `release`: `Ok` when its place of the release files is
+/// trusted and its binary is the release of its tag
+/// ([`release::is_release`]), else why not. An error when riff cannot
+/// read the binary.
+pub async fn is_release(release: &Release<'_>) -> Result<Result<(), String>> {
+    let source = match release.source {
+        Ok(source) => source,
+        Err(why) => return Ok(Err(why.clone())),
+    };
     let bytes = std::fs::read(release.binary)
-        .map_err(|e| text::not_release_binary(release.binary, &e.to_string()))?;
-    release::is_release(&bytes, release.tag, release.source, release.target).await
+        .with_context(|| format!("cannot read {}", release.binary.display()))?;
+    Ok(release::is_release(&bytes, release.tag, source, release.target).await)
 }
 
-/// The gate of `release` for a machine with `update.auto` = `auto`.
+/// The gate of `release` on a machine with `update.auto` = `auto`
+/// (01M51QFPJAABDP1V7WFY8NQR60, 01M51QFPMSG81YRDDGQQ1WJDSQ).
 ///
 /// ```
 /// use riff::release::{asset, sha256, Source};
@@ -133,58 +143,59 @@ pub async fn is_release(release: &Release<'_>) -> Result<(), String> {
 /// std::fs::create_dir(dir.path().join("v1.5.0"))?;
 /// let line = format!("{}  {}\n", sha256(b"the riff"), asset("riff", target));
 /// std::fs::write(dir.path().join("v1.5.0/SHA256SUMS"), line)?;
-/// std::fs::write(dir.path().join("riff"), b"the riff")?;
-/// let source = Source::Folder(dir.path().into());
 /// let binary = dir.path().join("riff");
-/// let release = Release { binary: &binary, tag: "v1.5.0", source: &source, target: Some(target) };
-/// let run = |auto| {
-///     tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(gate(auto, &release))
+/// std::fs::write(&binary, b"the riff")?;
+/// let run = |auto, source: Result<Source, String>| {
+///     let release = Release { binary: &binary, tag: "v1.5.0", source: &source, target: Some(target) };
+///     let gate = gate(auto, &release);
+///     tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(gate).unwrap()
 /// };
-/// assert_eq!(run(true), Gate::Open("v1.5.0".into()));
-/// assert_eq!(run(false), Gate::Off);
+/// let folder = || Ok(Source::Folder(dir.path().into()));
+/// assert_eq!(run(true, folder()), Gate::Open("v1.5.0".into()));
+/// assert_eq!(run(false, folder()), Gate::Off);
+/// // A place that riff does not trust: the gate stays shut.
+/// assert_eq!(run(true, Err("RIFF_RELEASES is set".into())), Gate::NotRelease("RIFF_RELEASES is set".into()));
+/// // A dev build.
 /// std::fs::write(&binary, b"a dev build")?;
-/// assert!(matches!(run(true), Gate::NotRelease(why) if why.ends_with("a dev build")));
+/// assert!(matches!(run(true, folder()), Gate::NotRelease(why) if why.ends_with("a dev build")));
 /// # Ok::<(), std::io::Error>(())
 /// ```
-pub async fn gate(auto: bool, release: &Release<'_>) -> Gate {
+pub async fn gate(auto: bool, release: &Release<'_>) -> Result<Gate> {
     if !auto {
-        return Gate::Off;
+        return Ok(Gate::Off);
     }
-    match is_release(release).await {
+    Ok(match is_release(release).await? {
         Ok(()) => Gate::Open(release.tag.to_owned()),
         Err(why) => Gate::NotRelease(why),
-    }
+    })
 }
 
-/// Checks that the binary of this process is a release: its SHA-256 is
-/// in `SHA256SUMS` of the GitHub release of its version. It gives the
-/// release tag, or why the binary is not a release. With
-/// [`release::RELEASES`] set, it never reads another place: it gives
-/// [`text::NOT_RELEASE_RELEASES`] (01M51QFPMSG81YRDDGQQ1WJDSQ).
-pub async fn release_here() -> Result<String, String> {
-    if std::env::var_os(release::RELEASES).is_some() {
-        return Err(text::NOT_RELEASE_RELEASES.to_owned());
-    }
-    let tag = lifecycle::release_tag(env!("CARGO_PKG_VERSION"));
-    let release = Release {
+/// The trusted place of the release files of this process
+/// ([`rule_sync::sums_source`]): the GitHub releases, or why riff trusts
+/// no place. And the release tag of its version.
+fn source_here() -> (Result<Source, String>, String) {
+    let source = rule_sync::sums_source(std::env::var(release::RELEASES).ok().as_deref());
+    (source, lifecycle::release_tag(env!("CARGO_PKG_VERSION")))
+}
+
+/// The binary of this process with `source` and `tag` of
+/// [`source_here`].
+fn release_here<'a>(source: &'a Result<Source, String>, tag: &'a str) -> Release<'a> {
+    Release {
         // The binary that runs, also after a new riff replaced its file.
         binary: Path::new("/proc/self/exe"),
-        tag: &tag,
-        source: &Source::GitHub,
+        tag,
+        source,
         target: release::TARGET,
-    };
-    is_release(&release).await.map(|()| tag)
+    }
 }
 
 /// The gate of this machine and process.
 pub async fn gate_here() -> Gate {
-    if !auto_here() {
-        return Gate::Off;
-    }
-    match release_here().await {
-        Ok(tag) => Gate::Open(tag),
-        Err(why) => Gate::NotRelease(why),
-    }
+    let (source, tag) = source_here();
+    gate(auto_here(), &release_here(&source, &tag))
+        .await
+        .unwrap_or_else(|e| Gate::NotRelease(format!("{e:#}")))
 }
 
 /// `update.auto` of this machine. A bad settings file counts as off.
@@ -244,31 +255,37 @@ impl Step {
     }
 }
 
-/// The step of the rules of Claude Code in the user settings at `user`
-/// (01M51M3ZHHBE61CEG9T6ENFG18). With `change`, it adds the missing
-/// rules ([`rule_sync::add`]). It gives the step and the rules that it
-/// added.
-pub fn rules(user: &Path, home: Option<&Path>, change: bool) -> (Step, Rules) {
-    let name = text::INIT_RULES.to_owned();
+/// The step of the rules of Claude Code in the user settings at `user`.
+/// It changes nothing: the sync of the rules adds them
+/// ([`rule_sync`], 01M51M3ZHHBE61CEG9T6ENFG18).
+///
+/// ```
+/// use riff::update_steps::{rules, State};
+///
+/// let dir = tempfile::tempdir()?;
+/// let user = dir.path().join("settings.json");
+/// let step = rules(&user, None);
+/// assert!(matches!(&step.state, State::Behind { fix, .. } if fix == "riff init --yes"));
+/// let want = riff::permissions::user_rules(None);
+/// riff::permissions::add(&user, &want)?;
+/// assert!(rules(&user, None).in_step());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn rules(user: &Path, home: Option<&Path>) -> Step {
     let want = permissions::user_rules(home);
     let missing = first_run::Settings::of(user, &want).missing;
     let state = if missing.is_empty() {
         State::InStep(text::init_rules_there(user))
-    } else if !change {
+    } else {
         State::Behind {
             found: text::init_rules_missing(user, missing.len()),
             fix: text::STEP_FIX_RULES.to_owned(),
         }
-    } else {
-        match rule_sync::add(user, home) {
-            Ok(added) => {
-                let state = State::Done(text::step_rules_added(user, added.len()));
-                return (Step { name, state }, added);
-            }
-            Err(e) => State::Failed(format!("{e:#}")),
-        }
     };
-    (Step { name, state }, Rules::default())
+    Step {
+        name: text::INIT_RULES.to_owned(),
+        state,
+    }
 }
 
 /// The step of the unit of the daemon of `manager`
@@ -277,43 +294,36 @@ pub fn rules(user: &Path, home: Option<&Path>, change: bool) -> (Step, Rules) {
 /// the file ([`Unit::text`]). With `change`, it writes that text and
 /// reloads the manager ([`ServiceManager::rewrite`]).
 pub fn unit(manager: &impl ServiceManager, change: bool) -> Step {
-    let name = text::STEP_UNIT.to_owned();
     let behind = |found: &str| State::Behind {
         found: found.to_owned(),
         fix: text::STEP_FIX_UNIT.to_owned(),
     };
-    let old = match manager.installed_text() {
-        Ok(Some(old)) => old,
-        Ok(None) => {
-            let state = behind(text::STEP_NO_UNIT);
-            return Step { name, state };
-        }
-        Err(e) => {
-            let state = State::Failed(format!("{e:#}"));
-            return Step { name, state };
-        }
-    };
-    let Some(unit) = Unit::parse(&old) else {
-        let state = State::Failed(text::STEP_UNIT_UNREADABLE.to_owned());
-        return Step { name, state };
-    };
-    let state = match unit.text() {
+    let state = match manager.installed_text() {
+        Ok(None) => behind(text::STEP_NO_UNIT),
         Err(e) => State::Failed(format!("{e:#}")),
-        Ok(new) if new == old => State::InStep(text::step_unit_there(&unit.exe)),
-        Ok(_) if !change => behind(text::STEP_UNIT_OLD),
-        Ok(_) => match manager.rewrite(&unit) {
-            Ok(path) => State::Done(text::step_unit_written(&path)),
-            Err(e) => State::Failed(format!("{e:#}")),
+        Ok(Some(old)) => match Unit::parse(&old) {
+            None => State::Failed(text::STEP_UNIT_UNREADABLE.to_owned()),
+            Some(unit) => match unit.text() {
+                Err(e) => State::Failed(format!("{e:#}")),
+                Ok(new) if new == old => State::InStep(text::step_unit_there(&unit.exe)),
+                Ok(_) if !change => behind(text::STEP_UNIT_OLD),
+                Ok(_) => match manager.rewrite(&unit) {
+                    Ok(path) => State::Done(text::step_unit_written(&path)),
+                    Err(e) => State::Failed(format!("{e:#}")),
+                },
+            },
         },
     };
-    Step { name, state }
+    Step {
+        name: text::STEP_UNIT.to_owned(),
+        state,
+    }
 }
 
 /// The step of the session image `image` of the repository `repo`
 /// (01M51QFPSMDDMFPZXAEYWZYJPV). It is in step when `runtime` has the
 /// image. With `change`, it pulls it.
 pub async fn image(runtime: &impl Runtime, repo: &str, image: &str, change: bool) -> Step {
-    let name = text::step_image(repo);
     let state = match runtime.has_image(image).await {
         Ok(true) => State::InStep(image.to_owned()),
         Ok(false) if !change => State::Behind {
@@ -326,7 +336,10 @@ pub async fn image(runtime: &impl Runtime, repo: &str, image: &str, change: bool
         },
         Err(e) => State::Failed(format!("{e:#}")),
     };
-    Step { name, state }
+    Step {
+        name: text::step_image(repo),
+        state,
+    }
 }
 
 /// The steps of the checks of the machine (01M51QFPW37EXVH4AXH70MSXBT):
@@ -398,55 +411,21 @@ pub struct Machine<'a, M, R> {
     pub checks: Vec<Check>,
 }
 
-/// What [`sync`] did.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Synced {
-    /// Each step, in order.
-    pub steps: Vec<Step>,
-    /// The rules that the step of the rules added.
-    pub added: Rules,
-    /// True when the step of the unit wrote the unit file.
-    pub unit_written: bool,
-}
-
-impl Synced {
-    /// The line of the first step that needs a person, if any.
-    pub fn needs_you(&self) -> Option<String> {
-        needs_you(&self.steps)
-    }
-}
-
-/// The line of the first step of `steps` that needs a person, with the
-/// count of the others (01M51QFPW37EXVH4AXH70MSXBT).
-pub fn needs_you(steps: &[Step]) -> Option<String> {
-    let mut person = steps.iter().filter(|s| s.needs_you());
-    let first = person.next()?;
-    Some(text::needs_you(first, person.count()))
-}
-
-/// Each step on `machine` ([`rules`], [`unit`], [`image`], [`machine`]),
-/// in order. Only with an open `gate` does a step change the machine
-/// (01M51QFPJAABDP1V7WFY8NQR60).
-pub async fn sync<M: ServiceManager, R: Runtime>(gate: &Gate, at: &Machine<'_, M, R>) -> Synced {
+/// Each step on `at`, in order: [`rules`], [`unit`], [`image`] and
+/// [`machine`]. Only with an open `gate` do the unit and the images
+/// change (01M51QFPJAABDP1V7WFY8NQR60). The sync of the rules runs before
+/// it ([`rule_sync::sync`]).
+pub async fn sync<M: ServiceManager, R: Runtime>(gate: &Gate, at: &Machine<'_, M, R>) -> Vec<Step> {
     let change = gate.open();
-    let mut steps = Vec::new();
-    let mut added = Rules::default();
-    match at.user {
-        Some(user) => {
-            let (step, rules) = rules(user, at.home, change);
-            steps.push(step);
-            added = rules;
-        }
-        None => steps.push(Step {
+    let mut steps = vec![match at.user {
+        Some(user) => rules(user, at.home),
+        None => Step {
             name: text::INIT_RULES.to_owned(),
             state: State::Failed(text::INIT_NO_SETTINGS.to_owned()),
-        }),
-    }
-    let mut unit_written = false;
+        },
+    }];
     if let Some(manager) = at.manager {
-        let step = unit(manager, change);
-        unit_written = matches!(step.state, State::Done(_));
-        steps.push(step);
+        steps.push(unit(manager, change));
     }
     for (repo, found) in &at.images {
         steps.push(match found {
@@ -458,43 +437,43 @@ pub async fn sync<M: ServiceManager, R: Runtime>(gate: &Gate, at: &Machine<'_, M
         });
     }
     steps.extend(machine(&at.checks));
-    Synced {
-        steps,
-        added,
-        unit_written,
-    }
+    steps
 }
 
-/// True after the step of the unit of this daemon wrote the unit file:
-/// the daemon starts again on it when it is idle
+/// The line of the first step of `steps` that needs a person, with the
+/// count of the others (01M51QFPW37EXVH4AXH70MSXBT).
+///
+/// ```
+/// use riff::update_steps::{needs_you, State, Step};
+///
+/// let person = |name: &str| Step {
+///     name: name.into(),
+///     state: State::Person { found: "missing".into(), fix: "sudo apt install it".into() },
+/// };
+/// assert_eq!(needs_you(&[]), None);
+/// assert_eq!(needs_you(&[person("podman")]).unwrap(), "podman: sudo apt install it");
+/// assert_eq!(
+///     needs_you(&[person("podman"), person("cgroup v2")]).unwrap(),
+///     "podman: sudo apt install it (and 1 more step: riff update --check)"
+/// );
+/// ```
+pub fn needs_you(steps: &[Step]) -> Option<String> {
+    let mut person = steps.iter().filter(|s| s.needs_you());
+    let first = person.next()?;
+    let State::Person { fix, .. } = &first.state else {
+        return None;
+    };
+    Some(text::needs_you(&first.name, fix, person.count()))
+}
+
+/// True after the step of the unit of this daemon wrote the unit file
 /// (01M51QFPQ68JHS08TWXNNWZ0D7).
 static UNIT_WRITTEN: AtomicBool = AtomicBool::new(false);
 
 /// True when the sync of this daemon wrote its unit file, so the daemon
-/// starts again on the new unit ([`crate::daemon`]).
+/// starts again on the new unit when it is idle ([`crate::daemon`]).
 pub fn unit_written() -> bool {
     UNIT_WRITTEN.load(Ordering::Relaxed)
-}
-
-/// The machine of this process: its user settings, its unit with
-/// `manager`, the images of the waves of the daemon in the folder
-/// `daemon`, and the checks of the machine.
-fn machine_here<'a, M, R>(
-    user: Option<&'a Path>,
-    home: Option<&'a Path>,
-    manager: Option<&'a M>,
-    runtime: &'a R,
-    images: Vec<(String, Result<String, String>)>,
-) -> Machine<'a, M, R> {
-    let facts = first_run::Facts::here(&lifecycle::run_dir());
-    Machine {
-        user,
-        home,
-        manager,
-        runtime,
-        images,
-        checks: first_run::machine_checks(&facts),
-    }
 }
 
 /// The home of the person, for `{HOME}` in a rule.
@@ -504,129 +483,100 @@ fn home_here() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// The sync at each start of the riff daemon in the folder `daemon` of
-/// this machine, with `runtime` (01M51QFPJAABDP1V7WFY8NQR60). It logs
-/// its gate, each rule that it adds and each step. It keeps the line of
-/// the rules for `riff init` (01M51M3ZPAEMJ64266QSJBNQ46) and the step
-/// that needs a person ([`local::needs_you`]). After an add of rules, it
-/// marks the add ([`rule_sync::mark_added`]). It never fails the daemon.
-pub async fn at_start(runtime: &impl Runtime, daemon: &Path) {
-    let build = Build::this().to_string();
-    let gate = gate_here().await;
-    println!("{}", text::steps_gate(&build, &gate));
+/// The service manager of the unit of the daemon of this machine. None
+/// with `RIFF_HOME`: that daemon is never the daemon of the unit.
+fn manager_here() -> Option<crate::service::Systemd> {
+    crate::service::Systemd::here()
+        .ok()
+        .filter(|_| crate::home::dir().is_none())
+}
+
+/// The steps on this machine with `runtime` and the session `images`,
+/// behind `gate`.
+async fn sync_here(gate: &Gate, runtime: &impl Runtime, images: Vec<(String, Result<String, String>)>) -> Vec<Step> {
     let user = crate::plugin::user_settings();
     let home = home_here();
-    let manager = crate::service::Systemd::here()
-        .ok()
-        .filter(|_| crate::home::dir().is_none());
-    let at = machine_here(
-        user.as_deref(),
-        home.as_deref(),
-        manager.as_ref(),
+    let manager = manager_here();
+    let facts = first_run::Facts::here(&lifecycle::run_dir());
+    let at = Machine {
+        user: user.as_deref(),
+        home: home.as_deref(),
+        manager: manager.as_ref(),
         runtime,
-        wave_images(daemon),
-    );
-    let synced = sync(&gate, &at).await;
-    if let Some(user) = &user {
-        for (kind, list) in [("allow", &synced.added.allow), ("deny", &synced.added.deny)] {
-            for rule in list {
-                println!("{}", text::sync_added_rule(&build, user, kind, rule));
-            }
-        }
-    }
-    for step in &synced.steps {
-        println!("{}", step.line());
-    }
-    if synced.unit_written {
-        UNIT_WRITTEN.store(true, Ordering::Relaxed);
-    }
-    let Some(dir) = local::dir() else {
-        return;
+        images,
+        checks: first_run::machine_checks(&facts),
     };
-    if !synced.added.is_empty() {
-        rule_sync::mark_added(&dir);
-    }
-    let rules = rules_line(&build, user.as_deref(), &gate, &synced);
-    if let Err(e) = local::set_rules_sync(&dir, &rules) {
-        eprintln!("riff: cannot keep the line of the sync of the rules: {e:#}");
-    }
-    if let Err(e) = local::set_needs_you(&dir, synced.needs_you().as_deref()) {
+    sync(gate, &at).await
+}
+
+/// Keeps the step of `steps` that needs a person in the local files,
+/// for the status line ([`local::set_needs_you`]).
+fn keep_needs_you(steps: &[Step]) {
+    if let Some(dir) = local::dir()
+        && let Err(e) = local::set_needs_you(&dir, needs_you(steps).as_deref())
+    {
         eprintln!("riff: cannot keep the step that needs you: {e:#}");
     }
 }
 
-/// The line of the sync of the rules for `riff init`
-/// (01M51M3ZPAEMJ64266QSJBNQ46), from the gate and the step of the rules.
-fn rules_line(build: &str, user: Option<&Path>, gate: &Gate, synced: &Synced) -> String {
-    let Some(user) = user else {
-        return text::rules_sync_failed(build, text::INIT_NO_SETTINGS);
-    };
-    let state = synced
-        .steps
+/// The steps at each start of the riff daemon in the folder `daemon` of
+/// this machine, with `runtime` (01M51QFPJAABDP1V7WFY8NQR60). First the
+/// sync of the rules ([`rule_sync::at_start`]), then the gate and each
+/// step. It logs the gate and each step, and keeps the step that needs
+/// a person. After a write of the unit, the daemon starts again when it
+/// is idle ([`unit_written`]). It never fails the daemon.
+pub async fn at_start(runtime: &impl Runtime, daemon: &Path) {
+    rule_sync::at_start().await;
+    let gate = gate_here().await;
+    println!("{}", text::steps_gate(&Build::this().to_string(), &gate));
+    let steps = sync_here(&gate, runtime, wave_images(daemon)).await;
+    for step in &steps {
+        println!("{}", step.line());
+    }
+    if steps
         .iter()
-        .find(|s| s.name == text::INIT_RULES)
-        .map(|s| &s.state);
-    let rules = match (gate, state) {
-        (Gate::Off, _) => Synced::Off,
-        (Gate::NotRelease(why), _) => Synced::NotRelease(why.clone()),
-        (Gate::Open(_), Some(State::Failed(why))) => return text::rules_sync_failed(build, why),
-        (Gate::Open(_), _) if synced.added.is_empty() => Synced::InStep,
-        (Gate::Open(_), _) => Synced::Added(synced.added.clone()),
-    };
-    text::rules_synced(build, user, &rules)
+        .any(|s| s.name == text::STEP_UNIT && matches!(s.state, State::Done(_)))
+    {
+        UNIT_WRITTEN.store(true, Ordering::Relaxed);
+    }
+    keep_needs_you(&steps);
 }
 
 /// `riff update --check` (01M51QFPYHK0916C5ZN2B55BR0): it looks at each
 /// step on this machine and changes nothing, with the daemon in the
-/// folder `daemon` and the current folder `here`. It prints the gate and
-/// one line for each step, and keeps the step that needs a person for
-/// the status line. It gives the exit code: 1 when a step is not in
-/// step.
+/// folder `daemon`, the current folder `here` and `runtime`. It prints
+/// the gate and one line for each step, and keeps the step that needs a
+/// person for the status line. It gives the exit code: 1 when a step is
+/// not in step.
 pub async fn check(runtime: &impl Runtime, daemon: &Path, here: &Path) -> i32 {
-    let auto = auto_here();
-    let release = release_here().await;
-    println!("{}", text::steps_check_gate(auto, &release));
+    let gate = gate_here().await;
+    println!("{}", text::steps_check_gate(&gate));
+    let (source, tag) = source_here();
+    let release = is_release(&release_here(&source, &tag))
+        .await
+        .unwrap_or_else(|e| Err(format!("{e:#}")));
     let binary = Step {
         name: text::STEP_BINARY.to_owned(),
-        state: match &release {
-            Ok(tag) => State::InStep(text::step_binary_release(tag)),
+        state: match release {
+            Ok(()) => State::InStep(text::step_binary_release(&tag)),
             Err(why) => State::Behind {
-                found: why.clone(),
+                found: why,
                 fix: text::STEP_FIX_BINARY.to_owned(),
             },
         },
     };
-    let user = crate::plugin::user_settings();
-    let home = home_here();
-    let manager = crate::service::Systemd::here()
-        .ok()
-        .filter(|_| crate::home::dir().is_none());
     let mut images = wave_images(daemon);
     if let Ok(found) = crate::session_image::of_folder(here) {
-        let repo = crate::enable::Repo::of(here)
-            .map(|r| r.to_string())
-            .unwrap_or_else(|| here.display().to_string());
         let found = found.to_string();
         if !images.iter().any(|(_, i)| i.as_ref() == Ok(&found)) {
-            images.push((repo, Ok(found)));
+            images.push((text::STEP_HERE.to_owned(), Ok(found)));
         }
     }
-    let at = machine_here(
-        user.as_deref(),
-        home.as_deref(),
-        manager.as_ref(),
-        runtime,
-        images,
-    );
     let mut steps = vec![binary];
-    steps.extend(sync(&Gate::Off, &at).await.steps);
+    steps.extend(sync_here(&Gate::Off, runtime, images).await);
     for step in &steps {
         println!("{}", step.line());
     }
-    if let Some(dir) = local::dir()
-        && let Err(e) = local::set_needs_you(&dir, needs_you(&steps).as_deref())
-    {
-        eprintln!("riff: cannot keep the step that needs you: {e:#}");
-    }
+    keep_needs_you(&steps);
     i32::from(!steps.iter().all(Step::in_step))
 }
