@@ -5460,6 +5460,45 @@ share.
   each setting and each entry that it lacks. riff writes no `autoMode`
   into the project settings: Claude Code does not read it there.
 
+### The steps of an update
+
+- **01M51QFPJAABDP1V7WFY8NQR60** The opt-in to the update by itself
+  (`update.auto = true`) is the consent of the person for each step of
+  an update. At each start, the riff daemon of a release does each step
+  of `riff init` that needs no person and that is not in step: it adds
+  the missing rules of Claude Code (01M51M3ZHHBE61CEG9T6ENFG18), writes
+  its unit again (01M51QFPQ68JHS08TWXNNWZ0D7), and pulls the session
+  image of each wave (01M51QFPSMDDMFPZXAEYWZYJPV). It logs one line for
+  the gate and one line for each step. With `update.auto = false`, or a
+  binary that is not a release, it changes nothing.
+- **01M51QFPMSG81YRDDGQQ1WJDSQ** Each step of an update that changes
+  the machine trusts `SHA256SUMS` only from the GitHub releases, as
+  01M51QARV45MGEKC6KGWX1N5NS says for the rules. With `RIFF_RELEASES`
+  set, the riff daemon does no step, and its line names the variable.
+- **01M51QFPQ68JHS08TWXNNWZ0D7** The unit of the riff daemon is in step
+  when its file is the text that this riff writes for the `ExecStart`
+  and the variables of the file. Else the daemon writes that text,
+  runs `systemctl --user daemon-reload`, and starts again on the new
+  unit when it is idle, as for a new riff (01M517BTP6BAGTRBYWPX9GPVE0).
+- **01M51QFPSMDDMFPZXAEYWZYJPV** The session image of a wave is in step
+  when podman has the image that `riff.toml` of the main clone of the
+  wave pins. Else the daemon pulls it.
+- **01M51QFPW37EXVH4AXH70MSXBT** The riff daemon never does a step that
+  needs a person: the checks of the machine of `riff init` (podman, the
+  init of podman, `/etc/subuid`, `/etc/subgid` and cgroup v2). It keeps
+  the first such step that is not in step, with its fix, in the local
+  files of riff. The status line of each session shows it as a tag
+  `needs you: STEP: FIX`, until a later look finds it in step.
+- **01M51QFPYHK0916C5ZN2B55BR0** `riff update --check` shows what the
+  riff daemon of this riff does at its next start, and one line for
+  each step of an update: the riff binary, the rules of Claude Code,
+  the unit of the daemon, the session image of each wave and of the
+  repository of the current folder, and the checks of the machine.
+  Each line says `in step`, `not in step`, `needs you` or `failed`,
+  with the fix. It changes nothing, except the step that needs a
+  person for the status line. It exits with 1 when a step is not in
+  step.
+
 ### riff run
 
 - **01M4Z81APKC14AVNJWCGRQKNVW** `riff run ITEM` does one work item in

@@ -638,9 +638,8 @@ sequenceDiagram
   try.
 - Each riff process starts again on the new `riff` when it is idle.
   See [Which processes start again](#which-processes-start-again).
-- The riff daemon adds the new permission rules of Claude Code of the
-  release to your user settings. See
-  [Keep the rules in step with each release](start-a-riff.md#keep-the-rules-in-step-with-each-release).
+- The riff daemon of the release does each step of `riff init` that
+  needs no person. See [Each step of an update](#each-step-of-an-update).
 - The update stops no session, and a running test goes on. Your
   sign-in and the device key stay.
 - Your lead gets one direct message: the host, the old release and
@@ -669,6 +668,75 @@ sequenceDiagram
 The output of the update is in `update.log`, in the local files of
 riff: `$XDG_RUNTIME_DIR/riff`, else `~/.local/state/riff`.
 
+#### Each step of an update
+
+`riff init` does more than the binary: it adds the rules of Claude
+Code, installs the unit of the riff daemon, and pulls the session
+image. A release can change each of them. Your yes to the update by
+itself is your yes to each step. So the riff daemon of the new release
+does each step that needs no person, at its start:
+
+```mermaid
+flowchart TD
+    B["the update by itself installs the new riff"] --> D["the riff daemon starts again on it"]
+    D --> G{"update.auto on, and its riff<br/>is a release on GitHub?"}
+    G -- "no" --> N["it changes nothing"]
+    G -- "yes" --> R["1. the rules of Claude Code"]
+    R --> U["2. the unit of the daemon"]
+    U --> I["3. the session image of each wave"]
+    I --> P["4. the checks of the machine:<br/>it only tells you"]
+    N --> P
+```
+
+| Step | In step when | The riff daemon |
+|---|---|---|
+| 1. The rules of Claude Code | your user settings have each rule of riff | adds the missing rules (see [Keep the rules in step with each release](start-a-riff.md#keep-the-rules-in-step-with-each-release)) |
+| 2. The unit of the daemon | `riff.service` is the text that the new riff writes for it, with your riff and your variables | writes it again, and starts again on it when it runs no session |
+| 3. The session image of each wave | podman has the image that `riff.toml` of the main clone pins | pulls it |
+| 4. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
+
+- Only a release does a step: a `riff` whose SHA-256 is in
+  `SHA256SUMS` of the GitHub release of its version. A check build or
+  a dev build changes nothing. With `RIFF_RELEASES` set, the daemon
+  changes nothing.
+- The daemon logs one line for its gate and one line for each step.
+  See them with `journalctl --user -u riff.service`.
+- A step that needs you shows in the status line of each session, with
+  its fix, until it is in step:
+
+  ```text
+  riff a6cf2205 lead needs you: the init of podman: install catatonit, the init of podman, for example: sudo apt install catatonit
+  ```
+
+#### See each step of an update
+
+See each step on this machine, in step or not, with its fix. The
+command changes nothing:
+
+```sh
+riff update --check
+```
+
+```text
+update.auto is on, and this riff is the release v1.6.0: at its next start, the riff daemon does each step that is not in step and needs no person
+in step  the riff binary: it is the release v1.6.0
+in step  the rules of Claude Code: /home/mike/.claude/settings.json has each permission rule of riff
+not in step  the unit of the daemon: the unit file is not the text that this riff writes for it. Fix: riff daemon install
+in step  the session image of como-technologies/riff: ghcr.io/como-technologies/riff-session@sha256:…
+in step  podman: podman version 5.7.0
+needs you  the init of podman: podman has no init: no catatonit in /usr/local/libexec/podman, /usr/local/lib/podman, /usr/libexec/podman, /usr/lib/podman, so no session can start. Fix: install catatonit, the init of podman, for example: sudo apt install catatonit
+in step  /etc/subuid: 65536 IDs for mike
+in step  /etc/subgid: 65536 IDs for mike
+in step  cgroup v2: user@1000.service has cpu and memory
+```
+
+- Each line starts with `in step`, `not in step`, `needs you` or
+  `failed`. A line that is not in step names its fix.
+- It also shows the image of the repository of the current folder.
+- It exits with 1 when a step is not in step.
+- After you do the fix of a step that needs you, run it again. The tag
+  in the status line goes when the step is in step.
+
 #### Which processes start again
 
 After an update, by you or by itself, each riff process of the
@@ -682,7 +750,7 @@ idle, so no work stops:
 | `riff mcp` | checks the new `riff`, then runs it in its place | when no tool call runs |
 | `riff workers host` | runs the new `riff` in its place, with the same session | between two requests of the lead |
 | A worker | ends, and riff starts a new worker on the new `riff` | after its item, in place of its clear |
-| The riff daemon | starts again on the `riff` on `PATH` | when it runs no session, else after its last session |
+| The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session, else after its last session |
 
 You still start `riff-server` again yourself. `riff update` tells you
 when it runs the old build.

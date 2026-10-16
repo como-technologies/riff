@@ -162,6 +162,14 @@ A riff of another version can refuse `riff` (see
 [Builds](how-it-works.md#builds)). When you joined a riff, see
 [Update riff](join-a-riff.md#update-riff) of Join a Riff.
 
+With the update by itself on, riff installs each release with no
+command. The riff daemon of the release then does each step of
+`riff init` that needs no person: the rules, its unit and the session
+images. It tells you each step that needs you. See
+[Each step of an update](how-it-works.md#each-step-of-an-update), and
+[See each step of an update](how-it-works.md#see-each-step-of-an-update)
+for `riff update --check`.
+
 ## Get ready for riff 3.0
 
 riff 3.0 runs each work item in a container of its own on your
