@@ -1422,6 +1422,7 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
+///     machine: None,
 /// };
 /// let me = "riff://mike@pangolin/o/riff?session=l1&lead=true".parse().unwrap();
 /// let sessions = [
