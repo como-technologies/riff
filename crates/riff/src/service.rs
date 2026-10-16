@@ -29,6 +29,16 @@
 //! the same `podman`, and `XDG_DATA_HOME` when it is set, so the daemon
 //! and `riff` use one folder ([`crate::daemon::dir`]).
 //!
+//! After an update of riff, the daemon runs the new riff
+//! ([`crate::daemon::after_update`], [`crate::daemon::Daemon::restart_when_old`]).
+//! These steps read the unit file again ([`Unit::parse`]):
+//!
+//! | Step | Command |
+//! |---|---|
+//! | Write the unit with another riff, and read it again | `systemctl --user daemon-reload` |
+//! | Start it again when it runs, and do not wait | `systemctl --user --no-block try-restart riff.service` |
+//! | The process of the daemon | `systemctl --user show --property=MainPID --value riff.service` |
+//!
 //! ```
 //! use riff::service::Unit;
 //!
@@ -87,11 +97,71 @@ fn quoted(text: &str, dollar: bool) -> Result<String> {
     Ok(out)
 }
 
+/// The text in double quotes at the start of `text`, with the escapes
+/// of [`quoted`] undone, and the rest of `text`. `None` when `text` has
+/// no such text.
+fn unquoted(text: &str, dollar: bool) -> Option<(String, &str)> {
+    let rest = text.strip_prefix('"')?;
+    let mut out = String::new();
+    let mut chars = rest.char_indices();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '"' => return Some((out, &rest[at + 1..])),
+            '\\' => out.push(chars.next()?.1),
+            // A doubled sign: `%%`, and `$$` in an `ExecStart`.
+            '%' | '$' if c == '%' || dollar => {
+                if chars.next()?.1 != c {
+                    return None;
+                }
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    None
+}
+
 impl Unit {
-    /// The unit of this riff: the path of this binary, its `PATH`, and
-    /// its `XDG_DATA_HOME` when it is set.
+    /// The unit in `text`, the text of a unit file that [`Unit::text`]
+    /// wrote: its `ExecStart` and its `Environment` lines. `None` when it
+    /// has no `ExecStart` of `riff daemon`.
+    ///
+    /// ```
+    /// use riff::service::Unit;
+    ///
+    /// let unit = Unit {
+    ///     exe: "/opt/my $riff/riff".into(),
+    ///     env: vec![("PATH".into(), "/a b:/c\"d\\e%f$g".into())],
+    /// };
+    /// assert_eq!(Unit::parse(&unit.text()?), Some(unit));
+    /// assert_eq!(Unit::parse("[Service]\nExecStart=/opt/riff daemon\n"), None);
+    /// assert_eq!(Unit::parse("[Service]\nExecStart=\"/opt/riff\" relay\n"), None);
+    /// assert_eq!(Unit::parse("[Unit]\nDescription=mine\n"), None);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn parse(text: &str) -> Option<Unit> {
+        let (mut exe, mut env) = (None, Vec::new());
+        for line in text.lines() {
+            if let Some(value) = line.strip_prefix("ExecStart=") {
+                let (path, rest) = unquoted(value, true)?;
+                if rest.trim() != "daemon" {
+                    return None;
+                }
+                exe = Some(PathBuf::from(path));
+            } else if let Some(value) = line.strip_prefix("Environment=") {
+                let (pair, _) = unquoted(value, false)?;
+                let (name, value) = pair.split_once('=')?;
+                env.push((name.to_owned(), value.to_owned()));
+            }
+        }
+        Some(Unit { exe: exe?, env })
+    }
+
+    /// The unit of this riff: the path of this binary on disk
+    /// ([`crate::binary::this_on_disk`]), its `PATH`, and its
+    /// `XDG_DATA_HOME` when it is set.
     pub fn of_this() -> Result<Unit> {
-        let exe = std::env::current_exe().context("cannot find the path of this riff")?;
+        let exe = crate::binary::this_on_disk().context("cannot find the path of this riff")?;
         let env = ["PATH", "XDG_DATA_HOME"]
             .into_iter()
             .filter_map(|name| {
@@ -159,6 +229,23 @@ pub trait ServiceManager {
 
     /// The state of the unit, for example `active` or `inactive`.
     fn state(&self) -> Result<String>;
+
+    /// The unit in the unit file, or `None` when no unit file is there.
+    /// An error for a unit file that riff did not write.
+    fn installed(&self) -> Result<Option<Unit>>;
+
+    /// Writes `unit`, and reloads the manager. It does not start the
+    /// unit again (01M517BTDRKDXD3X84P6AEAF7P). Gives the path of the
+    /// unit file.
+    fn rewrite(&self, unit: &Unit) -> Result<PathBuf>;
+
+    /// Asks the manager to start the unit again when it runs. It does
+    /// not wait for the new start (01M517BTJ9EV4ZGPYRB6HXJJC9).
+    fn try_restart(&self) -> Result<()>;
+
+    /// The process ID of the daemon that the unit runs, or `None` when
+    /// it runs none.
+    fn main_pid(&self) -> Result<Option<u32>>;
 }
 
 /// systemd, for the user units of the person.
@@ -238,12 +325,41 @@ fn write_file(path: &Path, text: &str) -> Result<()> {
 
 impl ServiceManager for Systemd {
     fn install(&self, unit: &Unit) -> Result<PathBuf> {
-        let path = self.unit_path();
-        write_file(&path, &unit.text()?)?;
-        systemctl(&["daemon-reload"], true)?;
+        let path = self.rewrite(unit)?;
         systemctl(&["enable", UNIT], true)?;
         systemctl(&["restart", UNIT], true)?;
         Ok(path)
+    }
+
+    fn installed(&self) -> Result<Option<Unit>> {
+        let path = self.unit_path();
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+        };
+        if text.lines().next() != Some(MARK) {
+            bail!("{}", text::unit_not_of_riff(&path));
+        }
+        Unit::parse(&text)
+            .map(Some)
+            .with_context(|| text::unit_unreadable(&path))
+    }
+
+    fn rewrite(&self, unit: &Unit) -> Result<PathBuf> {
+        let path = self.unit_path();
+        write_file(&path, &unit.text()?)?;
+        systemctl(&["daemon-reload"], true)?;
+        Ok(path)
+    }
+
+    fn try_restart(&self) -> Result<()> {
+        systemctl(&["--no-block", "try-restart", UNIT], true).map(drop)
+    }
+
+    fn main_pid(&self) -> Result<Option<u32>> {
+        let pid = systemctl(&["show", "--property=MainPID", "--value", UNIT], true)?;
+        Ok(pid.parse().ok().filter(|pid| *pid != 0))
     }
 
     fn uninstall(&self) -> Result<Option<PathBuf>> {
@@ -332,5 +448,31 @@ mod tests {
         let e = systemd.uninstall().unwrap_err().to_string();
         assert!(e.starts_with("riff did not write the unit "), "{e}");
         assert!(systemd.unit_path().exists());
+    }
+
+    /// The unit that riff wrote comes back from its file, with no
+    /// systemctl (01M517BTDRKDXD3X84P6AEAF7P).
+    #[test]
+    fn the_installed_unit_is_the_unit_that_riff_wrote() {
+        let root = tempfile::tempdir().unwrap();
+        let systemd = Systemd {
+            dir: root.path().join("systemd/user"),
+        };
+        assert_eq!(systemd.installed().unwrap(), None);
+
+        let unit = Unit {
+            exe: "/home/mike/.cache/riff/check/target/static/release/riff".into(),
+            env: vec![("PATH".into(), "/home/mike/.cargo/bin:/usr/bin".into())],
+        };
+        write_file(&systemd.unit_path(), &unit.text().unwrap()).unwrap();
+        assert_eq!(systemd.installed().unwrap(), Some(unit));
+
+        write_file(&systemd.unit_path(), "[Unit]\nDescription=mine\n").unwrap();
+        let e = systemd.installed().unwrap_err().to_string();
+        assert!(e.starts_with("riff did not write the unit "), "{e}");
+
+        write_file(&systemd.unit_path(), &format!("{MARK}\n[Service]\n")).unwrap();
+        let e = systemd.installed().unwrap_err().to_string();
+        assert!(e.starts_with("riff cannot read the unit "), "{e}");
     }
 }

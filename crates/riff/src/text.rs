@@ -4258,6 +4258,24 @@ pub fn worker_over_limit(host: &str, pane: &str, limit: u16, runs: usize) -> Str
     )
 }
 
+/// The note to the lead when the worker in `pane` on `host` ends after
+/// its item, because its `riff workers run` runs an old riff
+/// (01M517BT9WBQ4R79Z9KVY9SG1B).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::worker_old_riff("pangolin", "%3"),
+///     "workers: the worker in the pane %3 on pangolin runs an old riff. It ends after its \
+///      item, in place of a clear. riff starts a new worker on the new riff for the free work."
+/// );
+/// ```
+pub fn worker_old_riff(host: &str, pane: &str) -> String {
+    format!(
+        "workers: the worker in the pane {pane} on {host} runs an old riff. It ends after its \
+         item, in place of a clear. riff starts a new worker on the new riff for the free work."
+    )
+}
+
 /// The note to the lead after riff stopped the old context of the
 /// worker in `pane`, just before its clear
 /// (01M3ZV0TJDQ6JCM7XG0036MSV1).
@@ -5366,6 +5384,7 @@ pub fn daemon_no_state(dir: &Path) -> String {
 ///     limit: Some(Limit::default()),
 ///     waiting: vec![],
 ///     waves: vec![],
+///     jobs: 0,
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -5527,6 +5546,84 @@ pub fn unit_not_of_riff(path: &Path) -> String {
          disable --now {}",
         path.display(),
         crate::service::UNIT
+    )
+}
+
+/// `riff update` wrote the unit `path` again: it ran the riff `old`, and
+/// runs the riff `new` on `PATH` now (01M517BTDRKDXD3X84P6AEAF7P).
+///
+/// ```
+/// use std::path::Path;
+/// assert_eq!(
+///     riff::text::daemon_unit_moved(
+///         Path::new("/home/mike/.config/systemd/user/riff.service"),
+///         Path::new("/home/mike/.cache/riff/check/target/static/release/riff"),
+///         Path::new("/home/mike/.cargo/bin/riff"),
+///     ),
+///     "riff wrote the unit /home/mike/.config/systemd/user/riff.service again: it ran \
+///      /home/mike/.cache/riff/check/target/static/release/riff, and runs \
+///      /home/mike/.cargo/bin/riff now."
+/// );
+/// ```
+pub fn daemon_unit_moved(path: &Path, old: &Path, new: &Path) -> String {
+    format!(
+        "riff wrote the unit {} again: it ran {}, and runs {} now.",
+        path.display(),
+        old.display(),
+        new.display()
+    )
+}
+
+/// `riff update` started the idle daemon again on the new riff
+/// (01M517BTJ9EV4ZGPYRB6HXJJC9).
+pub const DAEMON_STARTS_AGAIN: &str =
+    "The riff daemon runs no session. It starts again on the new riff now.";
+
+/// `riff update` found the daemon on an old riff with `busy` sessions,
+/// starts that wait or jobs (01M517BTJ9EV4ZGPYRB6HXJJC9).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_starts_again_later(2),
+///     "The riff daemon runs 2 sessions or jobs. It starts again on the new riff after its \
+///      last session."
+/// );
+/// assert!(riff::text::daemon_starts_again_later(1).starts_with("The riff daemon runs 1 session or job."));
+/// ```
+pub fn daemon_starts_again_later(busy: usize) -> String {
+    let what = if busy == 1 {
+        "session or job"
+    } else {
+        "sessions or jobs"
+    };
+    format!(
+        "The riff daemon runs {busy} {what}. It starts again on the new riff after its last \
+         session."
+    )
+}
+
+/// The line of the log of the daemon when it asks systemd for its new
+/// start on a new riff (01M517BTP6BAGTRBYWPX9GPVE0).
+pub const DAEMON_NEW_RIFF: &str =
+    "riff daemon: a new riff is on disk, and no session runs. The daemon starts again on it.";
+
+/// `riff update` could not do its step for the riff daemon.
+pub fn daemon_update_failed(error: &str) -> String {
+    format!("riff: the riff daemon may run the old riff: {error}. Run: riff daemon install")
+}
+
+/// The daemon could not ask systemd for its new start.
+pub fn daemon_no_restart(error: &str) -> String {
+    format!("cannot start again on the new riff: {error}. Run: riff daemon install")
+}
+
+/// riff wrote the unit `path`, but finds no `ExecStart` of `riff daemon`
+/// in it now.
+pub fn unit_unreadable(path: &Path) -> String {
+    format!(
+        "riff cannot read the unit {}: it has no ExecStart of riff daemon. Install it again: riff \
+         daemon install",
+        path.display()
     )
 }
 
@@ -5811,6 +5908,7 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 ///     limit: None,
 ///     waiting: vec![],
 ///     waves: vec![],
+///     jobs: 0,
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");

@@ -990,6 +990,26 @@ mod tests {
             self.0.lock().unwrap().push("state".into());
             Ok("inactive".into())
         }
+
+        fn installed(&self) -> Result<Option<Unit>> {
+            self.0.lock().unwrap().push("installed".into());
+            Ok(None)
+        }
+
+        fn rewrite(&self, _unit: &Unit) -> Result<PathBuf> {
+            self.0.lock().unwrap().push("rewrite".into());
+            anyhow::bail!("this test writes nothing")
+        }
+
+        fn try_restart(&self) -> Result<()> {
+            self.0.lock().unwrap().push("try-restart".into());
+            Ok(())
+        }
+
+        fn main_pid(&self) -> Result<Option<u32>> {
+            self.0.lock().unwrap().push("main-pid".into());
+            Ok(None)
+        }
     }
 
     fn unit() -> Unit {

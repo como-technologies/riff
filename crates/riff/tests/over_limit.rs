@@ -1,6 +1,8 @@
 //! A lower limit of workers takes effect: when more workers run than the
 //! limit of the machine, a worker that ends its item ends, in place of
 //! the clear (01M402VFGAJQM1QW8B42NKMJM4, 01M402VFKXEJARG7CM60TDCMKW).
+//! A worker whose `riff workers run` runs an old riff ends the same way
+//! (01M517BT9WBQ4R79Z9KVY9SG1B).
 //! A fake `tmux` on `PATH` lists the worker panes from a file, and
 //! `kill-pane` takes a pane out of it. Each test runs the real `riff`
 //! binary.
@@ -170,9 +172,19 @@ impl Machine {
 
     /// The turn of the worker `wN` ends: its Stop hook.
     fn stop_hook(&self, n: u16) {
+        self.stop_hook_of(n, None);
+    }
+
+    /// The Stop hook of the worker `wN`, whose `riff workers run` is the
+    /// process `wrapper`.
+    fn stop_hook_of(&self, n: u16, wrapper: Option<u32>) {
         let id = self.id(n);
-        let mut hook = self
-            .riff(&id, &format!("%{n}"), true, &["hook", "stop"])
+        let mut cmd = self.riff(&id, &format!("%{n}"), true, &["hook", "stop"]);
+        match wrapper {
+            Some(pid) => cmd.env("RIFF_WORKER_WRAPPER", pid.to_string()),
+            None => cmd.env_remove("RIFF_WORKER_WRAPPER"),
+        };
+        let mut hook = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -250,6 +262,66 @@ async fn a_worker_with_a_claim_does_not_end() {
     tokio::time::sleep(Duration::from_millis(2500)).await;
     assert!(!m.log().contains("kill-pane"), "{}", m.log());
     assert_eq!(m.panes(), ["%3", "%4"]);
+}
+
+/// A wrapper of a worker: a copy of `sh` in `dir` that waits. With
+/// `old`, a new file takes the place of the copy after the start, as
+/// `riff update` does: Linux then names its binary `riff (deleted)`. A
+/// child `sh` makes the copy, so no write handle of this test process
+/// keeps the file busy.
+fn wrapper(dir: &std::path::Path, old: bool) -> std::process::Child {
+    let riff = dir.join("riff");
+    let child = Command::new("sh")
+        .args(["-c", r#"cp "$(command -v sh)" "$1" && exec "$1" -c 'sleep 60'"#, "sh"])
+        .arg(&riff)
+        .env_remove("RIFF_SESSION")
+        .stdin(Stdio::null())
+        .spawn()
+        .unwrap();
+    let exe = std::path::PathBuf::from(format!("/proc/{}/exe", child.id()));
+    let span = isolated::Span::start();
+    while std::fs::read_link(&exe).ok().as_deref() != Some(riff.as_path()) {
+        assert!(span.within(Duration::from_secs(10)), "the wrapper runs no copy");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if old {
+        std::fs::write(dir.join("new"), "the new riff").unwrap();
+        std::fs::rename(dir.join("new"), &riff).unwrap();
+        assert!(riff::binary::runs_replaced(child.id()));
+    }
+    child
+}
+
+/// The wrapper of the worker w3 runs an old riff, the one of w4 the riff
+/// on disk. While w3 holds its item, its turn ends with no end. After
+/// its release, w3 ends in place of its clear, and the lead gets a
+/// note. w4 gets its clear (01M517BT9WBQ4R79Z9KVY9SG1B).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_that_runs_an_old_riff_ends_at_its_clear_and_not_before() {
+    let m = Machine::new(4, 2).await;
+    let (old_dir, new_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut old = wrapper(old_dir.path(), true);
+    let mut new = wrapper(new_dir.path(), false);
+
+    m.stop_hook_of(3, Some(old.id()));
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert!(!m.log().contains("kill-pane"), "{}", m.log());
+
+    m.release(3).await;
+    m.stop_hook_of(3, Some(old.id()));
+    assert!(m.ended(3).await, "{}", m.log());
+    m.release(4).await;
+    m.stop_hook_of(4, Some(new.id()));
+    assert!(!m.ended(4).await, "{}", m.log());
+    assert_eq!(m.panes(), ["%4"]);
+    let history = m.history();
+    let note = "workers: the worker in the pane %3 on pangolin runs an old riff. It ends after \
+                its item, in place of a clear.";
+    assert!(history.contains(note), "{history}");
+    for child in [&mut old, &mut new] {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 /// Two workers end their items at one time, and only one is over the
