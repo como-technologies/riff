@@ -18,6 +18,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Once};
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use common::{CLIENT, FakeProvider, browser};
 use futures::future::BoxFuture;
 use isolated::Isolated;
@@ -30,6 +32,7 @@ use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
 use riff_state::store::{Loaded, Memory, SIGN_INS, Store, StoreError, Version};
+use sha2::Digest;
 
 /// The environment of each `riff` of this test. The secrets of this
 /// test process go to its secret files too.
@@ -291,6 +294,90 @@ async fn ten_processes_refresh_at_once_and_the_sign_in_stays() {
             assert!(out.status.success(), "round {round}: {}", text(&out.stderr));
         }
     }
+}
+
+/// How long the token endpoint of [`slow_refresh`] waits before each
+/// refresh: long enough that each `riff` of one round asks in that time.
+const SLOW: Duration = Duration::from_millis(800);
+
+/// Counts each refresh of the pair in `refreshes`, and holds it for
+/// [`SLOW`] before the server answers. Each other request goes on at
+/// once.
+async fn slow_refresh(
+    axum::extract::State(refreshes): axum::extract::State<Arc<AtomicUsize>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let (parts, body) = request.into_parts();
+    let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+    let refresh = parts.uri.path() == "/v1/token"
+        && String::from_utf8_lossy(&bytes)
+            .split('&')
+            .any(|pair| pair == "grant_type=refresh_token");
+    if refresh {
+        refreshes.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(SLOW).await;
+    }
+    next.run(axum::extract::Request::from_parts(parts, bytes.into()))
+        .await
+}
+
+/// Three `riff` processes of one machine, each with a `TMPDIR` of its
+/// own as a worker has, refresh one sign-in at the same time. They find
+/// one refresh lock, so the server gets one refresh in each round, and
+/// the sign-in stays live in each process (R107,
+/// 01M52JMEKD4P2ZT659CBNPN9CC). An old lock file in a `TMPDIR`, held by
+/// a `riff` of an older build, does not stop them.
+#[tokio::test(flavor = "multi_thread")]
+async fn three_processes_with_three_tmpdirs_refresh_one_sign_in_once() {
+    env();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let service = Service::new(config(&url).await);
+    let refreshes = Arc::new(AtomicUsize::new(0));
+    let router = service.router().layer(axum::middleware::from_fn_with_state(
+        refreshes.clone(),
+        slow_refresh,
+    ));
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    login::login(&Api::new(&url), browser).await.unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let tmps: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    // The lock file of an older build of riff in the TMPDIR of the first
+    // process, with the name that build gives it, held all through the
+    // test.
+    let owner = std::env::var("USER").unwrap_or_default();
+    let hash = sha2::Sha256::digest(format!("{owner} {url}").as_bytes());
+    let name = format!("riff-sign-in-{}.lock", URL_SAFE_NO_PAD.encode(&hash[..12]));
+    let old = std::fs::File::create(tmps[0].path().join(name)).unwrap();
+    old.lock().unwrap();
+    for round in 1..=3 {
+        expire(&url);
+        let children = tmps.iter().enumerate().map(|(i, tmp)| {
+            let mut cmd = riff(&url, dir.path(), &format!("m{i}"), &["members", "--email"]);
+            cmd.env("TMPDIR", tmp.path());
+            let mut cmd = tokio::process::Command::from(cmd);
+            cmd.kill_on_drop(true).output()
+        });
+        let outputs = tokio::time::timeout(
+            Duration::from_secs(60),
+            futures::future::join_all(children),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("round {round}: a riff waits for a lock"));
+        for out in outputs {
+            let out = out.unwrap();
+            assert!(out.status.success(), "round {round}: {}", text(&out.stderr));
+        }
+        assert_eq!(refreshes.load(Ordering::SeqCst), round, "round {round}");
+        assert!(!stored(&url).ended(), "round {round}");
+    }
+    // The kept pair is the live pair of the server: a refresh with it
+    // works.
+    expire(&url);
+    login::access_token(&Api::new(&url)).await.unwrap();
+    assert_eq!(refreshes.load(Ordering::SeqCst), 4);
 }
 
 /// Waits up to `limit` until `test` is true.
