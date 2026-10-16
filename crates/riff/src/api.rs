@@ -117,10 +117,10 @@ use riff_core::wire::{
     ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
     Members, MembersReply, Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause,
     PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release, ReleaseFor,
-    ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffQuery, RiffReply, RiffState,
-    ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetIdle, SetStatus, SetStep, SignInConfig,
-    Start, StartReason, Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads, TokenError,
-    TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
+    ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery, RiffReply,
+    RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetIdle, SetStatus, SetStep,
+    SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads,
+    TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -1082,14 +1082,25 @@ impl Api {
         self.call(&register).await
     }
 
-    /// A keep-alive: the session still runs (R204).
+    /// A keep-alive: the session still runs (R204). It names no riff:
+    /// a short process, or `riff watch`, which runs each new riff at
+    /// once, sends it (01M514C11BPE93PJT4221PYVHS).
     pub async fn alive(&self, me: &SessionUri) -> Result<AliveReply> {
-        self.alive_with(me, None, None).await
+        let alive = Alive {
+            me: me.clone(),
+            activity: None,
+            prompt_secs: None,
+            container: false,
+            binary: None,
+        };
+        self.call(&alive).await
     }
 
-    /// A keep-alive with the newest fact of the hooks of the session
-    /// (01M41FZNTPXQNCZ1S99HE42PYQ), and the seconds since the last
-    /// prompt of its person (01M48VDWPDYRPEAXHR1MYDN1M7).
+    /// The keep-alive of `riff mcp`, which lives as long as its session:
+    /// with the newest fact of the hooks of the session
+    /// (01M41FZNTPXQNCZ1S99HE42PYQ), the seconds since the last prompt
+    /// of its person (01M48VDWPDYRPEAXHR1MYDN1M7), and the riff of this
+    /// process (01M514C11BPE93PJT4221PYVHS).
     pub async fn alive_with(
         &self,
         me: &SessionUri,
@@ -1101,19 +1112,37 @@ impl Api {
             activity,
             prompt_secs,
             container: false,
+            binary: Some(crate::binary::this_riff()),
         };
         self.call(&alive).await
     }
 
     /// A keep-alive of the riff daemon for `me`, a session in a
     /// container. The server shows `me` as live while it is not gone,
-    /// also with no watch (01M510MG0CKDXAKF6YJ768K7E8).
+    /// also with no watch (01M510MG0CKDXAKF6YJ768K7E8). It names the
+    /// riff of this process: the session runs it in its container
+    /// (01M514C11BPE93PJT4221PYVHS).
     pub async fn alive_in_container(&self, me: &SessionUri) -> Result<AliveReply> {
         let alive = Alive {
             me: me.clone(),
             activity: None,
             prompt_secs: None,
             container: true,
+            binary: Some(crate::binary::this_riff()),
+        };
+        self.call(&alive).await
+    }
+
+    /// A keep-alive that names `binary` as the riff of `me`
+    /// (01M514C11BPE93PJT4221PYVHS): `riff workers host` names its own
+    /// riff ([`crate::binary::this_riff`]).
+    pub async fn alive_as(&self, me: &SessionUri, binary: RiffBinary) -> Result<AliveReply> {
+        let alive = Alive {
+            me: me.clone(),
+            activity: None,
+            prompt_secs: None,
+            container: false,
+            binary: Some(binary),
         };
         self.call(&alive).await
     }
@@ -2334,6 +2363,19 @@ pub async fn keep_alive_in_container(api: &Api, me: &SessionUri, every: Duration
         tick.tick().await;
         // A hung request must not stop the next keep-alive.
         let _ = tokio::time::timeout(every, api.alive_in_container(me)).await;
+    }
+}
+
+/// [`keep_alive`] of `riff workers host`: each keep-alive names the
+/// riff of this process ([`Api::alive_as`], 01M514C11BPE93PJT4221PYVHS).
+pub async fn keep_alive_of_host(api: &Api, me: &SessionUri, every: Duration) {
+    let mut tick = tokio::time::interval(every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        // A hung request must not stop the next keep-alive.
+        let alive = api.alive_as(me, crate::binary::this_riff());
+        let _ = tokio::time::timeout(every, alive).await;
     }
 }
 

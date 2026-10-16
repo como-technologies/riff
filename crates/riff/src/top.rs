@@ -40,6 +40,14 @@
 //! counts each kind (01M510MG5J92PYDWZSDQS8HMWK). The owner is a person:
 //! the tag `owner` is on the row of the person.
 //!
+//! A session that runs an old riff gets the mark [`OUT_OF_DATE`] after
+//! its short ID, and the line of its host counts it
+//! (01M514C142K5BM2746F1D9Y448, 01M514C16VG9PD70A8424J173B). The
+//! process that lives as long as the session names its riff in each
+//! keep-alive: `riff mcp`, the riff daemon, `riff run` or `riff workers
+//! host` (01M514C11BPE93PJT4221PYVHS). [`out_of_date`] compares it with
+//! the build of the server.
+//!
 //! ```mermaid
 //! flowchart TD
 //!     P["mike: 2 sessions"] --> H1["pangolin › riff: 1 session"]
@@ -110,6 +118,34 @@ pub const REFRESH: Duration = Duration::from_secs(3);
 
 /// How long `riff top` keeps the issues of `gh`.
 pub const ISSUES_TTL: Duration = Duration::from_secs(60);
+
+/// The mark of a session that runs an old riff
+/// (01M514C142K5BM2746F1D9Y448).
+pub const OUT_OF_DATE: &str = "↑";
+
+/// True when the session `s` runs an old riff: the file of its riff was
+/// replaced, or its build is older than `server`, the build of the
+/// server (01M514C142K5BM2746F1D9Y448). A session whose keep-alive named
+/// no riff, as from an older riff, is not out of date.
+///
+/// ```
+/// use riff_core::build::Build;
+/// use riff_core::wire::{RiffBinary, SessionInfo};
+///
+/// let json = r#"{"uri":"riff://mike@thelio/o/r?session=w1","live":true}"#;
+/// let mut s: SessionInfo = serde_json::from_str(json).unwrap();
+/// let server: Build = "1.4.0 122daab96637 2026-10-15T23:08:34Z".parse().unwrap();
+/// assert!(!riff::top::out_of_date(&s, Some(&server)));
+/// s.binary = Some(RiffBinary { build: "1.3.1 aaaa 2026-10-14T10:00:00Z".into(), replaced: false });
+/// assert!(riff::top::out_of_date(&s, Some(&server)));
+/// s.binary = Some(RiffBinary { build: server.to_string(), replaced: false });
+/// assert!(!riff::top::out_of_date(&s, Some(&server)));
+/// s.binary = Some(RiffBinary { build: server.to_string(), replaced: true });
+/// assert!(riff::top::out_of_date(&s, Some(&server)));
+/// ```
+pub fn out_of_date(s: &SessionInfo, server: Option<&Build>) -> bool {
+    s.binary.as_ref().is_some_and(|b| b.out_of_date(server))
+}
 
 /// The open issues of the repository: the title of each, and the
 /// current wave.
@@ -472,6 +508,7 @@ pub struct Machine {
 ///     }),
 ///     worker: false,
 ///     container: false,
+///     binary: None,
 ///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,
@@ -805,13 +842,15 @@ fn groups<'a>(sessions: &[&'a SessionInfo], levels: &[Level]) -> Vec<Group<'a>> 
 /// The counts of a row of the tree (01M42KHN33M4K13GKTX2WM6CMM): the
 /// sessions, then the busy, idle and blocked ones and the claims, each
 /// that is more than 0. With `kinds`, the line of a host, each kind
-/// ([`SessionKind`]) comes before the states (01M510MG5J92PYDWZSDQS8HMWK).
+/// ([`SessionKind`]) comes before the states (01M510MG5J92PYDWZSDQS8HMWK),
+/// and the sessions that are [`out_of_date`] with `server` come after
+/// the kinds (01M514C16VG9PD70A8424J173B).
 ///
 /// ```text
 /// 3 sessions: 1 busy, 1 idle, 1 blocked, 2 claims
-/// 6 sessions: 3 workers, 2 containers, 1 host; 4 busy, 2 idle, 4 claims
+/// 6 sessions: 3 workers, 2 containers, 1 host; 2 out of date; 4 busy, 2 idle, 4 claims
 /// ```
-fn counts(sessions: &[&SessionInfo], kinds: bool) -> String {
+fn counts(sessions: &[&SessionInfo], kinds: bool, server: Option<&Build>) -> String {
     let many = |n: usize, word: &str| {
         if n == 1 {
             format!("1 {word}")
@@ -847,8 +886,17 @@ fn counts(sessions: &[&SessionInfo], kinds: bool) -> String {
     if claims > 0 {
         parts.push(many(claims, "claim"));
     }
+    let old = sessions
+        .iter()
+        .filter(|_| kinds)
+        .filter(|s| out_of_date(s, server))
+        .count();
+    let old: Vec<String> = (old > 0)
+        .then(|| format!("{old} out of date"))
+        .into_iter()
+        .collect();
     let head = many(sessions.len(), "session");
-    let groups: Vec<String> = [kinds, parts]
+    let groups: Vec<String> = [kinds, old, parts]
         .into_iter()
         .filter(|group| !group.is_empty())
         .map(|group| group.join(", "))
@@ -884,7 +932,8 @@ impl Top<'_> {
     ///   has the counts of its sessions: the sessions, then the busy,
     ///   idle and blocked ones and the claims. A line with a host also
     ///   counts each kind of session ([`SessionKind`]) before the
-    ///   states. A row with one row
+    ///   states, and the sessions that are [`out_of_date`] after the
+    ///   kinds. A row with one row
     ///   under it stays on one line with it, after a `›`: so a small
     ///   riff stays short.
     /// - A person line: the USER in bold color, the role tag `owner` or
@@ -894,7 +943,8 @@ impl Top<'_> {
     /// - A repository line: its short name when the repositories of the
     ///   sessions have one owner, else `OWNER/REPO`
     ///   (01M3WNHCD659FH3Z5VYYH69WWR).
-    /// - A session: the first line has the short session ID, its
+    /// - A session: the first line has the short session ID, the mark
+    ///   [`OUT_OF_DATE`] when it is [`out_of_date`], its
     ///   worktree `#WORKTREE`, the [`crate::text::tags`], and the
     ///   state word that the server derives
     ///   (01M3QB6CJ1XCQG5B1BVR8AF3B4). Under it comes one line for each
@@ -929,6 +979,7 @@ impl Top<'_> {
     ///     }),
     ///     worker,
     ///     container: false,
+    ///     binary: None,
     ///     stopping: false,
     ///     claims_secs: 600,
     ///     must_clear: false,
@@ -1167,7 +1218,7 @@ impl Top<'_> {
         }
         if !group.sessions.is_empty() {
             let host = chain.iter().any(|r| r.level == Level::Host);
-            parts.push((counts(&group.sessions, host), MUTED));
+            parts.push((counts(&group.sessions, host, self.server), MUTED));
         }
         lines.push(Line::new(pre, parts));
         // The numbers of the machine of each host on the line
@@ -1321,10 +1372,16 @@ impl Top<'_> {
             .worktree()
             .map(|w| format!("#{}", safe(w)))
             .unwrap_or_default();
+        let old = if out_of_date(s, self.server) {
+            OUT_OF_DATE.to_owned()
+        } else {
+            String::new()
+        };
         let head = Line::new(
             pre,
             vec![
                 (short(s), session_style(&s.uri)),
+                (old, WARNING),
                 (worktree, anstyle::Style::new()),
                 (tags.join(" "), MUTED),
                 (state::of(s).word().to_owned(), state::style(state::of(s))),
@@ -1429,6 +1486,7 @@ mod tests {
             status: None,
             worker: false,
             container: false,
+            binary: None,
             stopping: false,
             claims_secs: 0,
             must_clear: false,

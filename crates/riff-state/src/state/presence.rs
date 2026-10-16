@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use riff_core::name::{Place, ThreadName, Who};
 use riff_core::record::{Change, Record, Scope};
-use riff_core::wire::{Activity, AliveReply, ItemFact, Kind, Status, StepChange};
+use riff_core::wire::{Activity, AliveReply, ItemFact, Kind, RiffBinary, Status, StepChange};
 use serde::{Deserialize, Serialize};
 
 use super::riff::Riff;
@@ -90,7 +90,7 @@ pub struct Presence {
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
 /// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
-/// Signal::Alive { activity: None, prompt_secs: None, container: false }.set(&mut presence, mike.who(), Instant::now());
+/// Signal::Alive { activity: None, prompt_secs: None, container: false, binary: None }.set(&mut presence, mike.who(), Instant::now());
 /// # let _ = &mut riff;
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -107,7 +107,7 @@ pub struct Presence {
 /// let (mut presence, mut riff) = (Presence::default(), Riff::default());
 /// let place = Signal::Place { place: mike.place().clone() };
 /// place.set(&mut presence, mike.who(), Instant::now());
-/// Signal::Alive { activity: None, prompt_secs: None, container: false }.set(&mut riff, mike.who(), Instant::now());
+/// Signal::Alive { activity: None, prompt_secs: None, container: false, binary: None }.set(&mut riff, mike.who(), Instant::now());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,11 +123,14 @@ pub enum Signal {
     /// person after the block, `prompt_secs` ago, ends it too
     /// (01M48VDWPDYRPEAXHR1MYDN1M7). With `container`, the riff daemon
     /// sends it for a session in a container: the mark stays until the
-    /// session ends (01M510MG0CKDXAKF6YJ768K7E8).
+    /// session ends (01M510MG0CKDXAKF6YJ768K7E8). A `binary` replaces
+    /// the riff of the session; none keeps it
+    /// (01M514C11BPE93PJT4221PYVHS).
     Alive {
         activity: Option<Activity>,
         prompt_secs: Option<u64>,
         container: bool,
+        binary: Option<RiffBinary>,
     },
     /// The place of the session, from a `register`. It makes a session
     /// that the presence does not know.
@@ -220,9 +223,13 @@ impl Signal {
                 activity,
                 prompt_secs,
                 container,
+                binary,
             } => {
                 session.live(now);
                 session.container |= container;
+                if binary.is_some() {
+                    session.binary = binary;
+                }
                 if let Some(secs) = prompt_secs {
                     session.prompted(secs, now);
                 }
@@ -687,6 +694,9 @@ pub(super) struct Session {
     /// True when the riff daemon keeps the session alive: it runs in a
     /// container (01M510MG0CKDXAKF6YJ768K7E8).
     pub(super) container: bool,
+    /// The riff of the session, from its last keep-alive that named
+    /// one (01M514C11BPE93PJT4221PYVHS).
+    pub(super) binary: Option<RiffBinary>,
     pub(super) status: Option<SetStatus>,
     /// The newest fact of the hooks, and its time
     /// (01M41FZNTPXQNCZ1S99HE42PYQ).
@@ -772,6 +782,7 @@ impl Session {
             alive: Some(now),
             ended: false,
             container: false,
+            binary: None,
             status: None,
             work: None,
             blocked: None,

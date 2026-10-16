@@ -693,6 +693,12 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     // The monitor of the machine (01M421QPKWPX00X24F8V6DT8Z3).
     let monitor = tokio::spawn(crate::monitor::run(host.api.clone(), host.me.clone()));
     let _monitor = AbortOnDrop(monitor);
+    // The riff of the host, for riff top (01M514C11BPE93PJT4221PYVHS).
+    let (api, me) = (host.api.clone(), host.me.clone());
+    let alive = tokio::spawn(async move {
+        crate::api::keep_alive_of_host(&api, &me, riff_core::wire::ALIVE_EVERY).await;
+    });
+    let _alive = AbortOnDrop(alive);
     // The OS keyring (01M4385CEWGCP31DP5PAMPXZ97).
     let mut keyring = secrets::Gate::default();
     // The compile cache of the workers: the install runs while the host

@@ -1413,6 +1413,7 @@ impl State {
             activity: None,
             prompt_secs: None,
             container: false,
+            binary: None,
         };
         self.signal(me.who(), alive, now)
     }
@@ -1471,6 +1472,7 @@ impl State {
             activity: None,
             prompt_secs: None,
             container: true,
+            binary: None,
         };
         self.signal(me.who(), alive, now)
     }
@@ -1486,6 +1488,7 @@ impl State {
             activity: Some(activity),
             prompt_secs: None,
             container: false,
+            binary: None,
         };
         self.signal(me.who(), alive, now)
     }
@@ -1712,6 +1715,7 @@ impl State {
             status,
             worker: sessions.worker(who),
             container: session.container,
+            binary: session.binary.clone(),
             stopping: session.stopping,
             claims_secs: now
                 .saturating_duration_since(session.claims_changed)
@@ -2967,7 +2971,7 @@ mod tests {
     use super::*;
     use riff_core::name::Place;
     use riff_core::record::Forgotten;
-    use riff_core::wire::{Kind, PullFact, PullState};
+    use riff_core::wire::{Kind, PullFact, PullState, RiffBinary};
     use std::collections::BTreeSet;
 
     fn uri(text: &str) -> SessionUri {
@@ -3042,6 +3046,42 @@ mod tests {
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].thread, repo());
         assert_eq!(threads[0].members.len(), 3);
+    }
+
+    /// The riff of a session comes from the keep-alive that names one,
+    /// of `riff mcp`. A keep-alive that names none, of `riff watch`,
+    /// keeps it (01M514C11BPE93PJT4221PYVHS).
+    #[test]
+    fn a_keep_alive_with_no_binary_keeps_the_riff_of_the_session() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let alive = |binary| Signal::Alive {
+            activity: None,
+            prompt_secs: None,
+            container: false,
+            binary,
+        };
+        let shown = |state: &State| {
+            let sessions = state.who(now, 0, false);
+            let docs = sessions.into_iter().find(|s| s.uri.who() == docs().who());
+            docs.unwrap().binary
+        };
+        assert_eq!(shown(&state), None);
+        let old = RiffBinary {
+            build: "1.3.1 aaaa 2026-10-14T10:00:00Z".into(),
+            replaced: true,
+        };
+        state.signal(docs().who(), alive(Some(old.clone())), now);
+        assert_eq!(shown(&state), Some(old.clone()));
+        state.alive(&docs(), now);
+        state.signal(docs().who(), alive(None), now);
+        assert_eq!(shown(&state), Some(old));
+        let new = RiffBinary {
+            build: "1.4.0 bbbb 2026-10-15T23:08:34Z".into(),
+            replaced: false,
+        };
+        state.signal(docs().who(), alive(Some(new.clone())), now);
+        assert_eq!(shown(&state), Some(new));
     }
 
     #[test]
