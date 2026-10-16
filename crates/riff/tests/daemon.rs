@@ -519,6 +519,12 @@ async fn riff_daemon_status_shows_the_key_the_riff_and_the_owner() {
         status.contains(&format!("The owner of its riff: {user}\n")),
         "{status}"
     );
+    // 01M519Z2QE6QYPJX8HVY17GR6Z: the daemon binds its iroh endpoint at
+    // its start. A riff of its own has no other daemon to link to.
+    assert!(
+        status.contains("Its peer links: none: its riff has no other daemon.\n"),
+        "{status}"
+    );
     assert!(here.key_file().exists());
     let said = here.output("first.out");
     assert!(

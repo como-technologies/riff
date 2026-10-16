@@ -6269,7 +6269,7 @@ pub fn peer_fork(key: &str, user: Option<&str>, host: Option<&str>, seq: u64) ->
 }
 
 /// The peer links of a daemon, for `riff daemon status`: `None` when the
-/// daemon has no iroh endpoint.
+/// daemon has no iroh endpoint (01M51ZA0BDZNXBB7R5SB8CEGA9).
 ///
 /// ```
 /// use riff::peer::sync::{LinkState, Shown};

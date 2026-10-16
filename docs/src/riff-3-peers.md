@@ -186,23 +186,34 @@ sequenceDiagram
 ```
 
 - Each daemon keeps one connection to each other daemon of the riff
-  that is online. When a connection ends, it connects again.
+  that is online: the owner, and each member that is not removed and
+  did not leave. Of two daemons, the one with the lower key connects.
+  When a connection ends, it connects again after a wait: 1 second,
+  then 2, 4 and so on, up to 60 seconds.
 - The heads say, for each author, the highest sequence number that a
-  daemon has. Each side then sends what the other side lacks, and
-  after that each new record at once.
+  daemon has, and the ID of that record. Each side then sends what the
+  other side lacks: the records of the owner first. After that, each
+  side sends each new record at once.
+- A daemon sends its heads again each minute, and at once when it gets
+  a record after a gap. So a record that one side dropped comes again.
 - A daemon checks each record before it keeps it, in this order: the
   size of its type, the version and the type, the riff, the author is
   the owner or a member, the next sequence number, the ID of the record
   before it, the signature, the JSON of its type, and the writer of the
-  type. It refuses a bad record, and closes that connection.
+  type. It refuses a bad record, and closes that connection. Its log
+  names the author, the sequence number and the check, with no body.
 - A daemon drops a record that it has already, with no fault, and
   sends no record back to the daemon that sent it. So a record that
   comes over two paths is kept one time.
 - A fork is two records of one author with the same sequence number.
   The daemon keeps the first one, keeps no next record of that author,
-  and tells the lead of your user. The owner removes that key.
+  and keeps both records as the proof. It sends the proof to each
+  daemon that it connects to, and posts a note to the lead of your user.
+  The owner removes that key.
 - When a daemon keeps a message, it wakes each of its own sessions
   that the message selects, also for a message of another machine.
+- `riff daemon status` shows each connection of your daemon (see
+  [See the peer links of the daemon](development.md#see-the-peer-links-of-the-daemon)).
 
 ## Holds, pauses and the lead
 

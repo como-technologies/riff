@@ -214,9 +214,10 @@ impl Hub {
     }
 
     /// Posts a note on the fork `fork` to the lead of the user of the
-    /// daemon (01M519Z38G3RAZPKGFA3R2CB3P): one note in each repository
-    /// where that user has a lead. The note comes from the daemon: the
-    /// user of its key, on this host, with no session.
+    /// daemon (01M519Z38G3RAZPKGFA3R2CB3P, 01M51ZA02XQ31PWNBSD46MTKA6): one
+    /// note in each repository where that user has a lead. The note comes
+    /// from the daemon: the user of its key, on this host, with no
+    /// session.
     pub fn tell_fork(&self, fork: &Fork) -> Result<()> {
         let author = fork.first.author();
         let notes = self.read(|state| {

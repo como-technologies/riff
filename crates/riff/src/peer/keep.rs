@@ -39,13 +39,15 @@
 //! each author in memory, in sequence order: its chain.
 //!
 //! - [`Peers::heads`] gives, for each author, the last sequence number
-//!   and the ID of that record (01M519Z2YSXADT45A1R0N70WRQ).
+//!   and the ID of that record (01M519Z2YSXADT45A1R0N70WRQ,
+//!   01M51Z9ZT69AQ0V2PX8T439NA5).
 //! - [`Peers::lacks`] gives the records that a daemon with other heads
-//!   lacks, in this order: the proof of each fork; the record of this
-//!   daemon at each head of the other daemon that has another ID, a fork
-//!   that the other daemon does not see yet; the records of the owner;
-//!   the records of each other author. The records of one author come in
-//!   sequence order.
+//!   lacks, in this order: the proof of each fork
+//!   (01M51ZA001C8MZM4BTBYTXRJ8M); the record of this daemon at each head
+//!   of the other daemon that has another ID, a fork that the other daemon
+//!   does not see yet (01M51Z9ZT69AQ0V2PX8T439NA5); the records of the
+//!   owner; the records of each other author. The records of one author
+//!   come in sequence order.
 //! - [`Peers::subscribe`] gives each [`Fresh`] record: each record that
 //!   the daemon keeps, with the daemon that sent it, in the order in
 //!   which it keeps them, and the proof of each new fork.

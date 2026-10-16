@@ -5978,6 +5978,47 @@ then.
   time (01M519Z28S7FB4T1H52642JXZ1).
 - **01M519Z3MMW5RKAR1R14PPQ4T9** A new member gets each record of the
   riff, from the first one. A prune of old records is future work.
+- **01M51Z9ZT69AQ0V2PX8T439NA5** The heads of a daemon name, for each
+  author, the last sequence number and the ID of that record. When the
+  heads of the other side name a record that a daemon has with another
+  ID, the daemon sends its own record with that number first, and no
+  next record of that author. So the other side sees the fork
+  (01M519Z38G3RAZPKGFA3R2CB3P).
+- **01M51Z9ZX4P0HEH53YFJ6XAWST** A daemon sends its heads on a link at
+  the connect, at once when it drops a record that it cannot check yet
+  (at most one time in each second), and again each 60 seconds. At the
+  heads of the other side, it sends each record that the other side
+  lacks.
+- **01M51ZA001C8MZM4BTBYTXRJ8M** A daemon sends the proof of each fork
+  that it keeps first at each heads of the other side, and the proof of
+  a new fork to each link at once. A daemon that knows the fork drops
+  both records with no fault. So each daemon of the riff learns the
+  fork.
+- **01M51ZA02XQ31PWNBSD46MTKA6** The note of a fork goes to the lead of
+  the user of the key of the daemon, in each repository where that user
+  has a lead. It is a `message` record of the kind note, from the user
+  of the key on the host of the daemon, with no session. With no lead,
+  the log line of the daemon is the only report.
+- **01M51ZA05RTRE9TSMBP20AS20H** A daemon takes a connection of each
+  key that may link, also of a higher key, for example at a join. Its
+  own connect to that key waits while that link runs. A new connection
+  of a key takes the place of the old link of that key.
+- **01M51ZA08MGF20MPHATHE81B44** A link that ends for a fault of a side
+  does not start the wait of 01M519Z2SV9XSQA4N59N10JAQC again at 1
+  second: a key that is not a member, a refused record, a frame that the
+  daemon cannot read, or a record that it cannot keep. Each other end
+  does. A link that falls more than 4096 new records behind ends. Its
+  next connect sends what the other side lacks.
+- **01M51ZA0BDZNXBB7R5SB8CEGA9** `riff daemon status` shows each peer
+  link of the daemon: the start of the key, its user and its host, and
+  its state. The state is up since a time, on a direct path or on a
+  relay; connects again after a number of tries, and why; or waits for
+  the other daemon to connect. A daemon that cannot bind its endpoint
+  logs why, runs its sessions, and shows no peer links.
+- **01M51ZA0E79V2FPBMQ6F1MYZJ5** With `RIFF_PEER_NET=local`, the daemon
+  binds its iroh endpoint on 127.0.0.1, with no relay and no DNS. It
+  finds a daemon only by an address that it gets. Each test of riff sets
+  it, so no test reaches n0.
 
 ### Wave B: the members
 

@@ -16,7 +16,11 @@
 //! loop connects again. Each try has a limit of [`CONNECT_LIMIT`]. The
 //! wait between two tries starts at [`FIRST_WAIT`] and doubles up to
 //! [`LAST_WAIT`]. A link that ends with a fault, for example a refused
-//! record, does not start the wait again from [`FIRST_WAIT`].
+//! record, does not start the wait again from [`FIRST_WAIT`]
+//! (01M51ZA08MGF20MPHATHE81B44). A daemon also takes a connection of a
+//! higher key, for example at a join: its own dial loop to that key waits
+//! while that link runs, and a new connection of a key takes the place of
+//! its old link (01M51ZA05RTRE9TSMBP20AS20H).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -42,12 +46,14 @@
 //!
 //! - Its heads ([`Frame::Heads`]): at the connect, at once when it drops
 //!   a record that it cannot check yet (at most one time in
-//!   [`LATER_HEADS`]), and each [`HEADS_AGAIN`].
+//!   [`LATER_HEADS`]), and each [`HEADS_AGAIN`]
+//!   (01M51Z9ZX4P0HEH53YFJ6XAWST).
 //! - At heads of the other side, each record that the other side lacks
 //!   ([`crate::peer::keep::Peers::lacks`]).
 //! - Each new record that the daemon keeps, at once: its own, and each
 //!   record of another daemon, but not to the daemon that sent it
-//!   (01M51BFYQVCFEWCJZERBD4S5N5). And the proof of each new fork.
+//!   (01M51BFYQVCFEWCJZERBD4S5N5). And the proof of each new fork
+//!   (01M51ZA001C8MZM4BTBYTXRJ8M).
 //!
 //! A writer task sends the frames, and a reader task takes the frames of
 //! the other side. So two daemons that send many records at one time do
@@ -57,8 +63,8 @@
 //! and at a bad frame ([`Close::BadFrame`]), with a log line that names
 //! the author, the sequence number and the check, with no body. A link
 //! whose writer falls more than [`crate::peer::keep::FRESH`] records
-//! behind ends ([`Close::Behind`]): its next connect sends what the
-//! other side lacks.
+//! behind ends ([`Close::Behind`], 01M51ZA08MGF20MPHATHE81B44): its next
+//! connect sends what the other side lacks.
 //!
 //! ```mermaid
 //! flowchart LR
@@ -76,7 +82,7 @@
 //! links changes with each `riff`, `member`, `removed` and `left` record,
 //! and at least each [`PLAN_AGAIN`]. A link of a key that may link no
 //! more closes ([`Close::Gone`]). [`Links::shown`] gives the state of
-//! each link for `riff daemon status`.
+//! each link for `riff daemon status` (01M51ZA0BDZNXBB7R5SB8CEGA9).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -130,7 +136,7 @@ pub const PLAN_AGAIN: Duration = Duration::from_secs(30);
 
 /// The variable that picks the net of the daemon: `local` gives
 /// [`Net::Local`], with no address. The tests of riff set it, so that no
-/// test reaches n0.
+/// test reaches n0 (01M51ZA0E79V2FPBMQ6F1MYZJ5).
 pub const NET_VAR: &str = "RIFF_PEER_NET";
 
 /// How a daemon finds the other daemons.
@@ -316,6 +322,56 @@ pub enum LinkState {
 }
 
 /// The peer links of a daemon. See the design of the module.
+///
+/// The owner and one member on this machine: the member gets each
+/// record of the owner.
+///
+/// ```
+/// use std::sync::Arc;
+/// use std::time::Duration;
+///
+/// use iroh::address_lookup::memory::MemoryLookup;
+/// use riff::daemon_key::{Key, Public};
+/// use riff::peer::body::{Body, Member, Riff};
+/// use riff::peer::keep::Peers;
+/// use riff::peer::sync::{Links, Net};
+/// use riff::peer::talk::Hub;
+///
+/// /// The daemon of the key `byte` in the riff `riff`, on 127.0.0.1.
+/// async fn daemon(byte: u8, riff: Public, lookup: &MemoryLookup)
+///     -> anyhow::Result<(Arc<Hub>, Arc<Links>, tempfile::TempDir)> {
+///     let dir = tempfile::tempdir()?;
+///     let key = Key::from_bytes(&[byte; 32]);
+///     let peers = Peers::open(dir.path(), riff, |_| {})?;
+///     let endpoint = Links::bind(&key, &Net::Local(lookup.clone())).await?;
+///     let hub = Arc::new(Hub::new(key, peers));
+///     Ok((hub.clone(), Links::start(endpoint, hub, |_| {}), dir))
+/// }
+///
+/// tokio::runtime::Runtime::new()?.block_on(async {
+///     let riff = Key::from_bytes(&[1; 32]).public();
+///     let (seen_by_owner, seen_by_member) = (MemoryLookup::new(), MemoryLookup::new());
+///     let (owner, owner_links, _a) = daemon(1, riff, &seen_by_owner).await?;
+///     owner.write(&Body::Riff(Riff { user: "mike".into() }))?;
+///     let key = Key::from_bytes(&[2; 32]).public();
+///     let host = "kadomony".into();
+///     owner.write(&Body::Member(Member { key, user: "brett".into(), host }))?;
+///
+///     let (member, member_links, _b) = daemon(2, riff, &seen_by_member).await?;
+///     seen_by_member.set_endpoint_info(owner_links.endpoint().addr());
+///     seen_by_owner.set_endpoint_info(member_links.endpoint().addr());
+///     tokio::time::timeout(Duration::from_secs(30), async {
+///         while member.read(|state| state.user_of(&key).is_none()) {
+///             tokio::time::sleep(Duration::from_millis(50)).await;
+///         }
+///     })
+///     .await?;
+///     assert_eq!(member.read(|state| state.owner().map(str::to_owned)), Some("mike".into()));
+///     assert_eq!(member_links.linked().into_iter().collect::<Vec<_>>(), [riff]);
+///     Ok::<(), anyhow::Error>(())
+/// })?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 pub struct Links {
     endpoint: Endpoint,
     hub: Arc<Hub>,
