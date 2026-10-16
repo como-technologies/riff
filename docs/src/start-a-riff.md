@@ -166,10 +166,11 @@ A riff of another version can refuse `riff` (see
 
 riff 3.0 runs each work item in a container of its own on your
 machine. It is new: see [riff 3.0](riff-3.md). riff 1.3 still runs the
-riff. To try riff 3.0, install podman. On Ubuntu:
+riff. To try riff 3.0, install podman and catatonit, the init of
+podman. riff starts each container with it. On Ubuntu:
 
 ```sh
-sudo apt install podman
+sudo apt install podman catatonit
 ```
 
 Then run this in your clone of the project:
@@ -191,6 +192,7 @@ flowchart LR
 | Check | It must be true |
 |---|---|
 | podman | `podman --version` runs. |
+| The init of podman | `catatonit` is in a folder of podman, for example `/usr/libexec/podman`. Each session runs it as its first process. |
 | `/etc/subuid`, `/etc/subgid` | Each gives you 65536 IDs or more. The fix adds a free range: it starts after the end of each range in the file, and at 100000 or more. |
 | cgroup v2 | Your user gets `cpu` and `memory`. |
 | The session image | `riff.toml` of the project pins it. |

@@ -2,8 +2,10 @@
 //! (01M4Z7SP3KSKJYKNRP1MQ70C4Q), the workflow "Session image" builds it
 //! from `deploy/session/` (01M4Z7SP7Y19BQ8QTV1T6AE8SR), its Dockerfile
 //! has the toolchain of `rust-toolchain.toml`
-//! (01M4Z7SP5TGJ3DMWFGE5SN68N1), and `riff image` prints it
-//! (01M4Z7SPC20RWG218EWPEGYZTF).
+//! (01M4Z7SP5TGJ3DMWFGE5SN68N1), `riff image` prints it
+//! (01M4Z7SPC20RWG218EWPEGYZTF), and the tests of `crates/riff` run in it
+//! with `deploy/session-test.sh` and the CI job "Session tests"
+//! (01M51117NDKF11FNZ915TTQED4).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,6 +13,8 @@ use std::process::{Command, Output};
 
 use isolated::Isolated;
 use riff::session_image::{FILE, Image};
+
+use crate::release::{ci_job, fake_engine};
 
 /// The root of this repository.
 fn top() -> PathBuf {
@@ -157,4 +161,105 @@ fn riff_image_names_a_missing_config() {
     let error = String::from_utf8(out.stderr).unwrap();
     assert!(error.contains("cannot read the riff config"), "{error}");
     assert!(error.contains(FILE), "{error}");
+}
+
+/// Runs `deploy/session-test.sh` with `args`, the fake engines of `bin`
+/// first in `PATH`, and the engine `engine` when it is set. The engine
+/// logs its arguments to `bin/podman.log`, one on each line.
+fn session_test(args: &[&str], bin: &Path, engine: Option<&str>) -> Vec<String> {
+    let env = Isolated::new();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let mut cmd = env.command(top().join("deploy/session-test.sh"));
+    cmd.args(args).env("PATH", path).env_remove("RIFF_ENGINE");
+    if let Some(engine) = engine {
+        cmd.env("RIFF_ENGINE", engine);
+    }
+    let out = cmd.output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let log = fs::read_to_string(bin.join("podman.log")).unwrap();
+    log.lines().map(str::to_owned).collect()
+}
+
+/// 01M51117NDKF11FNZ915TTQED4, 01M51117K3WXK35CE67KPRFMA8: the tests of
+/// `crates/riff` run in the image that `riff.toml` pins, with `--init`,
+/// as the user of the host, with a home of their own, with the limits of
+/// a session, and with the values of `just cargo-test`. The arguments go
+/// to `cargo test`.
+#[test]
+fn the_session_tests_run_in_the_pinned_image_with_an_init() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_engine(bin.path());
+    let args = session_test(&["run::riff_lead_start"], bin.path(), None);
+    let has = |pair: [&str; 2]| args.windows(2).any(|w| w == pair);
+    let root = top().canonicalize().unwrap().display().to_string();
+    assert_eq!(
+        args[..4],
+        ["run", "--rm", "--init", "--userns=keep-id"],
+        "{args:?}"
+    );
+    assert!(has(["-v", &format!("{root}:{root}")]), "{args:?}");
+    assert!(has(["-w", &root]), "{args:?}");
+    assert!(has(["--cpus", "4"]), "{args:?}");
+    assert!(has(["--memory", "8g"]), "{args:?}");
+    assert!(has(["-e", "HOME=/tmp/home"]), "{args:?}");
+    let id = Command::new("id").arg("-un").output().unwrap();
+    let user = String::from_utf8(id.stdout).unwrap().trim().to_owned();
+    assert!(has(["-e", &format!("USER={user}")]), "{args:?}");
+    assert!(has(["-e", &format!("LOGNAME={user}")]), "{args:?}");
+    let target = format!("CARGO_TARGET_DIR={root}/target/session");
+    assert!(has(["-e", &target]), "{args:?}");
+    let image = Image::of_repository(&top()).unwrap().to_string();
+    assert!(args.contains(&image), "{args:?}");
+    let script = "mkdir -p \"$HOME\" && exec just cargo-test -p riff \"$@\"";
+    assert!(has(["-c", script]), "{args:?}");
+    assert_eq!(
+        args[args.len() - 2..],
+        ["bash", "run::riff_lead_start"],
+        "{args:?}"
+    );
+}
+
+/// 01M51117NDKF11FNZ915TTQED4: docker has no `--userns=keep-id`, so the
+/// tests run there as the user and the group of the host.
+#[test]
+fn the_session_tests_run_as_the_user_of_the_host_in_docker() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_engine(bin.path());
+    fs::copy(bin.path().join("podman"), bin.path().join("docker")).unwrap();
+    let args = session_test(&[], bin.path(), Some("docker"));
+    let id = |flag: &str| {
+        let out = Command::new("id").arg(flag).output().unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    };
+    let user = format!("{}:{}", id("-u"), id("-g"));
+    assert_eq!(
+        args[..5],
+        ["run", "--rm", "--init", "--user", &user],
+        "{args:?}"
+    );
+    assert!(!args.iter().any(|a| a.starts_with("--userns")), "{args:?}");
+    assert_eq!(args.last().map(String::as_str), Some("bash"), "{args:?}");
+}
+
+/// 01M51117NDKF11FNZ915TTQED4: CI runs the session tests of each pull
+/// request and each push, with docker.
+#[test]
+fn ci_runs_the_tests_of_crates_riff_in_the_session_image() {
+    let job = ci_job("session_tests");
+    for part in [
+        "name: Session tests\n",
+        "if: github.event_name == 'push' || github.event_name == 'pull_request'\n",
+        "RIFF_ENGINE: docker\n",
+        "run: deploy/session-test.sh\n",
+    ] {
+        assert!(
+            job.contains(part),
+            "{part} is not in the job session_tests:\n{job}"
+        );
+    }
+    let justfile = read("justfile");
+    assert!(
+        justfile.contains("\nsession-test *ARGS:\n    deploy/session-test.sh {{ARGS}}\n"),
+        "{justfile}"
+    );
 }

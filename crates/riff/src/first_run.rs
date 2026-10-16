@@ -8,7 +8,7 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     C["the checks<br/>podman, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the rules of Claude Code,<br/>the riff binary"] --> Q{"rules<br/>missing?"}
+//!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the rules of Claude Code,<br/>the riff binary"] --> Q{"rules<br/>missing?"}
 //!     Q -- "one question:<br/>y, or --yes" --> W["add them to<br/>the user settings"]
 //!     Q -- "no" --> E{"each check<br/>passed?"}
 //!     W --> E
@@ -44,6 +44,7 @@
 //! | Check | riff reads | Pass |
 //! |---|---|---|
 //! | podman | `podman --version`, and the user ID | it runs, and riff does not run as root: so podman runs rootless |
+//! | the init of podman | `catatonit` in the helper folders of podman ([`INIT_DIRS`]) | it is there: `podman run --init` of each session needs it (01M511JYPZ8H73DCJ7867YSFGH) |
 //! | `/etc/subuid` | the lines of the person, by name or by user ID | [`MIN_IDS`] IDs or more, added over the lines |
 //! | `/etc/subgid` | the same | the same |
 //! | cgroup v2 | `/sys/fs/cgroup/cgroup.controllers`, and `cgroup.controllers` of `user@UID.service` | the file is there, and the controllers of the user have `cpu` and `memory` |
@@ -64,6 +65,7 @@
 //!
 //! let mut facts = Facts {
 //!     podman: Ok("podman version 5.7.0".into()),
+//!     init: Some("/usr/libexec/podman/catatonit".into()),
 //!     user: "mike".into(),
 //!     uid: 1000,
 //!     subuid: Some("mike:100000:65536\n".into()),
@@ -88,10 +90,23 @@
 //! assert_eq!(failed.len(), 1);
 //! assert!(failed[0].starts_with("fail  cgroup v2: user@1000.service has no cpu. Fix: "), "{}", failed[0]);
 //! assert!(failed[0].contains("Delegate=cpu cpuset io memory pids"), "{}", failed[0]);
+//!
+//! // No init of podman: no session can start (01M511JYPZ8H73DCJ7867YSFGH).
+//! facts.user_cgroup = Some("cpu memory pids\n".into());
+//! facts.init = None;
+//! let failed: Vec<String> = checks(&facts)
+//!     .iter()
+//!     .filter(|c| !c.passed())
+//!     .map(|c| c.line())
+//!     .collect();
+//! assert_eq!(failed.len(), 1);
+//! assert!(failed[0].starts_with("fail  the init of podman: "), "{}", failed[0]);
+//! assert!(failed[0].ends_with("Fix: install catatonit, the init of podman, for example: sudo apt install catatonit"), "{}", failed[0]);
 //! ```
 //!
 //! For tests, [`ETC_VAR`] names a folder that riff reads in place of
-//! `/etc`, and [`CGROUP_VAR`] a folder in place of `/sys/fs/cgroup`.
+//! `/etc`, [`CGROUP_VAR`] a folder in place of `/sys/fs/cgroup`, and
+//! [`INIT_VAR`] a folder in place of the folders of [`INIT_DIRS`].
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -121,6 +136,23 @@ pub const ETC_VAR: &str = "RIFF_ETC";
 /// `/sys/fs/cgroup`, for tests.
 pub const CGROUP_VAR: &str = "RIFF_CGROUP";
 
+/// The variable that names a folder to look in for `catatonit` in
+/// place of [`INIT_DIRS`], for tests.
+pub const INIT_VAR: &str = "RIFF_PODMAN_INIT";
+
+/// The init of podman: `podman run --init` runs it as PID 1
+/// (01M51117K3WXK35CE67KPRFMA8).
+pub const INIT: &str = "catatonit";
+
+/// The helper folders where podman looks for [`INIT`]: the defaults of
+/// `helper_binaries_dir` of `containers.conf`.
+pub const INIT_DIRS: [&str; 4] = [
+    "/usr/local/libexec/podman",
+    "/usr/local/lib/podman",
+    "/usr/libexec/podman",
+    "/usr/lib/podman",
+];
+
 /// The time that riff waits for a new daemon to answer.
 pub const WAIT: Duration = Duration::from_secs(10);
 
@@ -130,6 +162,8 @@ pub struct Facts {
     /// The first line of `podman --version`, or why riff cannot run
     /// podman.
     pub podman: Result<String, String>,
+    /// The init of podman ([`INIT`]) that riff found, or `None`.
+    pub init: Option<PathBuf>,
     /// The login name of the person.
     pub user: String,
     /// The user ID of the person.
@@ -210,6 +244,28 @@ fn dir_of(var: &str, default: &str) -> PathBuf {
         .map_or_else(|| PathBuf::from(default), PathBuf::from)
 }
 
+/// The first [`INIT`] in the folders `dirs` that is a file that runs.
+///
+/// ```
+/// use std::os::unix::fs::PermissionsExt;
+///
+/// let (a, b) = (tempfile::tempdir()?, tempfile::tempdir()?);
+/// let dirs = [a.path().to_owned(), b.path().to_owned()];
+/// assert_eq!(riff::first_run::find_init(&dirs), None);
+/// let init = b.path().join("catatonit");
+/// std::fs::write(&init, "")?;
+/// assert_eq!(riff::first_run::find_init(&dirs), None, "it does not run");
+/// std::fs::set_permissions(&init, std::fs::Permissions::from_mode(0o755))?;
+/// assert_eq!(riff::first_run::find_init(&dirs), Some(init));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn find_init(dirs: &[PathBuf]) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    dirs.iter().map(|dir| dir.join(INIT)).find(|path| {
+        std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    })
+}
+
 /// The first line of `podman --version`, or why it did not run.
 fn podman_version() -> Result<String, String> {
     let out = std::process::Command::new("podman")
@@ -242,8 +298,13 @@ impl Facts {
             .unwrap_or_else(|| uid.to_string());
         let uid = uid.as_raw();
         let read = |path: PathBuf| std::fs::read_to_string(path).ok();
+        let init_dirs: Vec<PathBuf> = match std::env::var_os(INIT_VAR).filter(|v| !v.is_empty()) {
+            Some(dir) => vec![PathBuf::from(dir)],
+            None => INIT_DIRS.iter().map(PathBuf::from).collect(),
+        };
         Facts {
             podman: podman_version(),
+            init: find_init(&init_dirs),
             user,
             uid,
             subuid: read(etc.join("subuid")),
@@ -447,6 +508,14 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
         Ok(version) => Check::pass("podman", version.clone()),
         Err(why) => Check::fail("podman", why.clone(), text::INIT_FIX_PODMAN.into()),
     };
+    let init = match &facts.init {
+        Some(path) => Check::pass("the init of podman", path.display().to_string()),
+        None => Check::fail(
+            "the init of podman",
+            text::init_no_init(&INIT_DIRS),
+            text::INIT_FIX_INIT.into(),
+        ),
+    };
     let image = match &facts.image {
         Ok(image) => Check::pass("the session image", image.clone()),
         Err(why) => Check::fail(
@@ -461,6 +530,7 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
     };
     vec![
         podman,
+        init,
         sub_check("uid", facts.subuid.as_deref(), facts),
         sub_check("gid", facts.subgid.as_deref(), facts),
         cgroup_check(facts),
@@ -653,6 +723,7 @@ mod tests {
     fn ready() -> Facts {
         Facts {
             podman: Ok("podman version 5.7.0".into()),
+            init: Some("/usr/libexec/podman/catatonit".into()),
             user: "mike".into(),
             uid: 1000,
             subuid: Some("mike:100000:65536\n".into()),
@@ -698,6 +769,7 @@ mod tests {
             lines,
             [
                 "pass  podman: podman version 5.7.0",
+                "pass  the init of podman: /usr/libexec/podman/catatonit",
                 "pass  /etc/subuid: 65536 IDs for mike",
                 "pass  /etc/subgid: 65536 IDs for mike",
                 "pass  cgroup v2: user@1000.service has cpu and memory",
@@ -720,6 +792,17 @@ mod tests {
                 },
                 "fail  podman: riff cannot start podman.",
                 "sudo apt install podman",
+            ),
+            (
+                "init",
+                Facts {
+                    init: None,
+                    ..ready()
+                },
+                "fail  the init of podman: podman has no init: no catatonit in \
+                 /usr/local/libexec/podman, /usr/local/lib/podman, /usr/libexec/podman, \
+                 /usr/lib/podman, so no session can start.",
+                "sudo apt install catatonit",
             ),
             (
                 "root",

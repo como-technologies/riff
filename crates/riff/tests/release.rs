@@ -29,7 +29,7 @@ fn read(path: &str) -> String {
 }
 
 /// The job `name` of the CI workflow, up to the next job.
-fn ci_job(name: &str) -> String {
+pub(crate) fn ci_job(name: &str) -> String {
     let text = read(".github/workflows/ci.yml");
     let jobs = text.split_once("\njobs:").unwrap().1;
     let job = jobs.split_once(&format!("\n  {name}:\n")).unwrap().1;
@@ -42,7 +42,7 @@ fn ci_job(name: &str) -> String {
 
 /// A fake container engine `podman` in `bin`: it logs each argument on
 /// a line to `bin/podman.log`, and `RIFF_COMMIT` to `bin/podman.env`.
-fn fake_engine(bin: &Path) {
+pub(crate) fn fake_engine(bin: &Path) {
     let path = bin.join("podman");
     fs::write(
         &path,

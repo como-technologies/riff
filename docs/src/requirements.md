@@ -4459,6 +4459,17 @@ share.
   ELF has an interpreter, or when `riff --version` does not run in the
   session image that `riff.toml` pins, with `riff` bound at
   `/opt/riff/riff` with no write.
+- **01M51117NDKF11FNZ915TTQED4** The CI job "Session tests" runs the
+  tests of `crates/riff` in a container of the session image that
+  `riff.toml` pins, on each pull request and each push. The container
+  has `--init`, the user of the host with `USER` and `LOGNAME`, a home
+  of its own and the limits of a session (`--cpus 4`, `--memory 8g`),
+  as a session has.
+  `just session-test` runs the same tests on a machine.
+- **01M511FGMFF17G2G8RV6ST9070** Before the tests, `just cargo-test`
+  builds each binary of the workspace. So a test of one crate finds the
+  binary of another crate, for example `riff-server` in a test of
+  `riff`, also in a new clone with no `target/`.
 - **01M4ZPJ091W3NYV1V0FJS9K6MS** For a release tag, the CI job "Static
   riff release" adds `riff-x86_64-unknown-linux-musl`,
   `riff-server-x86_64-unknown-linux-musl` and `SHA256SUMS` to the
@@ -4575,6 +4586,10 @@ share.
 - **01M4Z60B7XT7462XMV49GJTVSJ** Each container gets `--memory` and
   `--cpus`. The defaults are `--memory 8g` and `--cpus 4`. `podman stop`
   ends a session and each of its processes.
+- **01M51117K3WXK35CE67KPRFMA8** Each container of a session starts
+  with `podman run --init`. The init of podman (catatonit) is PID 1. It
+  reaps each orphan process of the session, and it passes each signal
+  to the command of the session. The init must be on the host.
 - **01M4Z60B7Y4XD6TJCYEYJT2R4S** The daemon keeps one limit for the
   host, in addition to the limits of each container: the number of live
   sessions, and a floor of free memory. It starts no session while the
@@ -4958,6 +4973,11 @@ share.
   binary of its own process: its ELF has no interpreter. A riff of
   `cargo install` or `just install` links the libc of the machine, so
   this check fails, and its fix is `riff update`.
+- **01M511JYPZ8H73DCJ7867YSFGH** After the check of podman, `riff init`
+  checks the init of podman: `catatonit` in a helper folder of podman
+  (`/usr/local/libexec/podman`, `/usr/local/lib/podman`,
+  `/usr/libexec/podman` or `/usr/lib/podman`). Each session needs it
+  (01M51117K3WXK35CE67KPRFMA8). The fix installs `catatonit`.
 - **01M501K21EK8F8N9NPR4565FVP** The fix of `/etc/subuid` or
   `/etc/subgid` adds a free range of 65536 IDs: it starts at the first
   ID after the end of each range in the file, and at 100000 or more.

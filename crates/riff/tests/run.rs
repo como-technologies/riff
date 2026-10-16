@@ -64,10 +64,17 @@ esac
 /// the bind at `/run/riff`. With `-d` (a terminal), it runs it in the
 /// background, and `wait` waits for its end. `stop` logs, and ends the
 /// `run`. `container inspect` says `true` while the `run` runs. `attach`
-/// and `exec` log, and end at once.
+/// and `exec` log, and end at once. A zombie counts as ended. The `run`
+/// with `-d` exits, so PID 1 becomes the parent of the relay. When PID 1
+/// does not reap orphans, the relay stays a zombie after its end (#791).
 fn fake_podman(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
+# True while the process $1 runs. A zombie has ended.
+alive() {
+  kill -0 "$1" 2>/dev/null || return 1
+  [ "$(sed 's/^.*) \(.\).*/\1/' "/proc/$1/stat" 2>/dev/null)" != Z ]
+}
 case "$1" in
   image) [ -f "$dir/no-image" ] && exit 1; exit 0 ;;
   pull) echo "podman $*" >> "$dir/podman.log"; [ -f "$dir/no-pull" ] && exit 125
@@ -76,10 +83,10 @@ case "$1" in
   attach|exec) echo "podman $*" >> "$dir/podman.log"; exit 0 ;;
   wait)
     pid=$(cat "$dir/run.pid")
-    while kill -0 "$pid" 2>/dev/null; do sleep 0.05; done
+    while alive "$pid"; do sleep 0.05; done
     echo 0; exit 0 ;;
   container)
-    if [ -f "$dir/run.pid" ] && kill -0 "$(cat "$dir/run.pid")" 2>/dev/null; then
+    if [ -f "$dir/run.pid" ] && alive "$(cat "$dir/run.pid")"; then
       echo true
     else
       echo false
@@ -541,6 +548,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "--name",
         &format!("riff-issue-12-{short}"),
         "--userns=keep-id",
+        "--init",
         "--memory",
         "8g",
         "--cpus",

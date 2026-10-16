@@ -94,6 +94,23 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  session_tests:
+    # The tests of crates/riff in the session image that riff.toml pins,
+    # as a session of riff run runs them (01M51117NDKF11FNZ915TTQED4):
+    # --init, the user of the runner, a home of its own and the limits of
+    # a session. docker has its own init, and gives the limits on the
+    # runner.
+    name: Session tests
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      RIFF_ENGINE: docker
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Session tests
+        run: deploy/session-test.sh
+
   static_release:
     # For a release tag, the static binaries and SHA256SUMS go to the
     # GitHub release of the tag (01M4ZPJ091W3NYV1V0FJS9K6MS). The admin

@@ -98,8 +98,11 @@ test *ARGS:
 
 # cargo test ARGS for test and check, in the environment of the tests.
 # 01M49NP2907J4SH4S6MAY09VXE: .cargo/config.toml sets the TMPDIR.
+# 01M511FGMFF17G2G8RV6ST9070: first each binary of the workspace, so a test
+# of one crate finds the binary of another, also in a new clone.
 [private]
 cargo-test *ARGS:
+    cargo build -q --workspace --bins
     RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus cargo test {{ARGS}}
 
 # Build the API docs; a broken doc link fails
@@ -175,6 +178,13 @@ dev *ARGS:
 static PROFILE="release":
     deploy/static/build.sh {{PROFILE}}
     deploy/static/check.sh {{PROFILE}}
+
+# The tests of crates/riff in the session image of riff.toml, as a session
+# runs them (01M51117NDKF11FNZ915TTQED4). It needs podman or docker. ARGS
+# go to cargo test.
+# Run the tests of crates/riff in a container of the session image
+session-test *ARGS:
+    deploy/session-test.sh {{ARGS}}
 
 # The real-session test of a release (01M4ZCFGCY301G2ARFMRXV7XDR): the
 # static riff of this tree (01M4ZPJ0FXTC78Z8GG2QA65167) runs one scratch
