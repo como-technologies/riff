@@ -1720,7 +1720,9 @@ mod tests {
         let early = format!("gh -R o/r issue edit 884 --body-file {scratchpad}/new-884.md");
         assert!(joins_a_step(&early));
         assert!(!allowed(&early));
-        assert!(!joins_a_step("git diff --cached --quiet || git commit -q -m \"WIP: STEP\""));
+        assert!(!joins_a_step(
+            "git diff --cached --quiet || git commit -q -m \"WIP: STEP\""
+        ));
     }
 
     /// 01M51V0Q5E7MNPWP9T7TSJFT5W: no code line of the skill joins a
