@@ -42,10 +42,9 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use riff_core::name::{Place, SessionUri};
 use riff_core::wire::StartReason;
-use serde_json::{Map, Value, json};
 
 use crate::api::Api;
 use crate::daemon::{self, Ask, Say, Status};
