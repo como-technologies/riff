@@ -36,7 +36,10 @@
 //!     S --> L["the join connection goes on as the peer link: each record of the riff"]
 //!     V["riff leave"] --> E["the end record of each session, then the left record"]
 //!     E --> W["each link sends the left record, and ends"]
-//!     W --> O["Hub::switch to state: the riff of its own; no file joined"]
+//!     W --> G{"a link sent it, and no link runs?"}
+//!     G -->|"yes, or after 5 s"| O["Hub::switch to state: the riff of its own; no file joined"]
+//!     G -->|"no link sent it in 5 s"| N["a second line: the owner can remove the key"]
+//!     N --> O
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -217,17 +220,22 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// `riff leave` on a member (01M519Z435DTR693NAK5GSB6XA): the end
     /// record of each session of the daemon on the riff of peers, the
-    /// `left` record, the end of each link after it sent that record, and
-    /// then the riff of its own with the same key. The owner cannot
-    /// leave. It gives the line of the leave.
-    pub async fn leave(&self) -> Result<String> {
+    /// `left` record, and then the riff of its own with the same key. It
+    /// switches only after a link sent the `left` record and no link
+    /// runs, or after [`LEAVE_LIMIT`] (01M52JF709YHYE7SG6V3SDHR74). The
+    /// owner cannot leave. It gives the line of the leave, and a second
+    /// line when no link sent the record.
+    pub async fn leave(&self) -> Result<Vec<String>> {
         let hub = self.hub()?;
         let me = hub.public();
         let (riff, owner, member) = hub.read(|state| {
             (
                 state.riff(),
                 state.owner().map(str::to_owned),
-                state.members().contains_key(&me),
+                state
+                    .members()
+                    .get(&me)
+                    .map(|member| (member.user.clone(), member.host.clone())),
             )
         });
         if riff == me {
@@ -236,19 +244,31 @@ impl<R: Runtime + 'static> Daemon<R> {
         for record in self.records().iter().filter(|record| record.on_peers()) {
             hub.end(&record.live.session)?;
         }
-        // A daemon whose member record did not come yet writes no record.
-        if member {
-            hub.write(&Body::Left(Left {}))?;
-            if let Some(links) = self.links.get() {
-                links.wait_no_links(LEAVE_LIMIT).await;
-            }
-        }
-        self.switch(me)?;
-        Ok(text::left_riff(
+        let mut lines = vec![text::left_riff(
             &riff.to_string(),
             owner.as_deref(),
             &me.to_string(),
-        ))
+        )];
+        // A daemon whose member record did not come yet writes no record.
+        if let Some((user, host)) = member {
+            let links = self.links.get();
+            let before = links.map_or(0, |links| links.left_sent());
+            hub.write(&Body::Left(Left {}))?;
+            let sent = match links {
+                Some(links) => links.wait_left(before, LEAVE_LIMIT).await,
+                None => false,
+            };
+            if !sent {
+                lines.push(text::left_not_sent(
+                    LEAVE_LIMIT,
+                    owner.as_deref(),
+                    &user,
+                    &host,
+                ));
+            }
+        }
+        self.switch(me)?;
+        Ok(lines)
     }
 
     /// `riff remove USER [--host HOST]` (01M519Z45J9RC734KBY1G8D49V): a
@@ -350,14 +370,16 @@ mod tests {
     use std::time::Duration;
 
     use iroh::address_lookup::memory::MemoryLookup;
+    use tokio::sync::broadcast::error::RecvError;
     use tokio::sync::oneshot;
     use tokio::task::JoinHandle;
 
     use super::super::{Ask, dir_in, listen};
     use super::*;
     use crate::daemon_key::Key;
-    use crate::peer::body::Message;
+    use crate::peer::body::{Message, Type};
     use crate::peer::invite::{Secret, Text};
+    use crate::peer::keep::{Fresh, Peers};
     use crate::peer::record::{Context as _, Standing};
     use crate::peer::sync::Net;
     use crate::runtime::Fake;
@@ -693,6 +715,83 @@ mod tests {
             Some(n.user())
         );
         assert!(n.invite("ann").await.is_ok());
+    }
+
+    /// 01M52JF709YHYE7SG6V3SDHR74 (#917): a new connection of the owner
+    /// takes the place of the link of the member at the same time as riff
+    /// leave. The member takes the new link only after it wrote its `left`
+    /// record, so it has no link for a moment. The leave still waits until
+    /// a link sent the record, and the owner keeps it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn riff_leave_sends_the_left_record_when_a_new_connection_replaces_the_link() {
+        let (o, n, _t) = three().await;
+        n.join(&o.invite("brett").await.unwrap().0).await.unwrap();
+        let (me, owner) = (n.key(), o.key());
+        let o_links = o.daemon.links().unwrap().clone();
+        let n_links = n.daemon.links().unwrap().clone();
+        until("the link of the new member", || {
+            o_links.online(&me) && n_links.online(&owner)
+        })
+        .await;
+
+        // The member holds each new link. A new connection of the owner
+        // takes the place of the link, so the member has no link.
+        let held = n_links.hold_new_links().await;
+        o_links.connect_again(me);
+        until("the end of the old link on the member", || {
+            !n_links.online(&owner)
+        })
+        .await;
+
+        // The member takes the new link after it wrote its left record.
+        let mut fresh = n.hub().with_peers(Peers::subscribe);
+        let release = async move {
+            loop {
+                match fresh.recv().await {
+                    Ok(Fresh::Kept { record, from: None }) if record.of() == Type::Left => break,
+                    Err(RecvError::Closed) => panic!("no left record"),
+                    _ => {}
+                }
+            }
+            drop(held);
+        };
+        let (lines, ()) = tokio::join!(n.ask(Ask::Leave), release);
+        assert!(o.hub().read(|state| state.members()[&me].left));
+        let left = text::left_riff(&owner.to_string(), Some(&o.user()), &me.to_string());
+        assert_eq!(lines.unwrap(), [left]);
+        assert_eq!(n.riff().await, me.to_string());
+    }
+
+    /// 01M52JF709YHYE7SG6V3SDHR74: when no daemon of the riff gets the
+    /// `left` record in 5 seconds, for example when the owner is offline,
+    /// riff leave still gives the daemon a riff of its own. Its second line
+    /// names the riff remove command for the owner.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn riff_leave_says_so_when_no_daemon_got_the_left_record() {
+        let (o, n, _t) = three().await;
+        n.join(&o.invite("brett").await.unwrap().0).await.unwrap();
+        let (me, owner) = (n.key(), o.key());
+        let n_links = n.daemon.links().unwrap().clone();
+        until("the link to the owner", || n_links.online(&owner)).await;
+        o.daemon.close_links().await;
+        until("the end of the link to the owner", || {
+            !n_links.online(&owner)
+        })
+        .await;
+
+        let started = tokio::time::Instant::now();
+        let lines = n.ask(Ask::Leave).await.unwrap();
+        assert!(started.elapsed() >= LEAVE_LIMIT);
+        let host = crate::identity::this_host();
+        let user = o.user();
+        assert_eq!(
+            lines,
+            [
+                text::left_riff(&owner.to_string(), Some(&user), &me.to_string()),
+                text::left_not_sent(LEAVE_LIMIT, Some(&user), "brett", &host),
+            ]
+        );
+        assert_eq!(n.riff().await, me.to_string());
     }
 
     /// 01M519Z45J9RC734KBY1G8D49V: riff remove brett removes each key of

@@ -7843,6 +7843,25 @@ pub fn join_admitted(who: &str) -> String {
 /// A link ended after the `left` record of this daemon.
 pub const PEER_LEFT: &str = "this daemon left the riff";
 
+/// A link ended after the `left` record of the other daemon.
+pub const PEER_OTHER_LEFT: &str = "the other daemon left the riff";
+
+/// A link ended after the `left` record of this daemon, but the other
+/// daemon did not close it in `limit` (01M52JF709YHYE7SG6V3SDHR74).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::peer_left_no_close(std::time::Duration::from_secs(5)),
+///     "this daemon left the riff, and the other daemon did not close the link in 5 s"
+/// );
+/// ```
+pub fn peer_left_no_close(limit: std::time::Duration) -> String {
+    format!(
+        "{PEER_LEFT}, and the other daemon did not close the link in {} s",
+        limit.as_secs()
+    )
+}
+
 /// `riff remove` of the user and the host of the owner.
 pub const REMOVE_NOT_THE_OWNER: &str = "the owner cannot remove itself";
 
@@ -8070,6 +8089,40 @@ pub fn left_riff(riff: &str, owner: Option<&str>, own: &str) -> String {
         "This machine left the riff {}{of}. It has a riff of its own again: {}.",
         short_key(riff),
         short_key(own)
+    )
+}
+
+/// The second line of `riff leave` when no daemon of the riff got the
+/// `left` record in `limit` (01M52JF709YHYE7SG6V3SDHR74): the riff can
+/// still show this machine as a member of `user` on `host`, and the owner
+/// can remove it.
+///
+/// ```
+/// use std::time::Duration;
+///
+/// assert_eq!(
+///     riff::text::left_not_sent(Duration::from_secs(5), Some("mike"), "brett", "kadomony"),
+///     "No daemon of the riff got the left record of this machine in 5 s, so the riff can still \
+///      show this machine as a member. Ask mike to remove it: riff remove brett --host kadomony"
+/// );
+/// assert!(
+///     riff::text::left_not_sent(Duration::from_secs(5), None, "brett", "kadomony")
+///         .contains("Ask the owner to remove it: ")
+/// );
+/// ```
+pub fn left_not_sent(
+    limit: std::time::Duration,
+    owner: Option<&str>,
+    user: &str,
+    host: &str,
+) -> String {
+    format!(
+        "No daemon of the riff got the left record of this machine in {} s, so the riff can still \
+         show this machine as a member. Ask {} to remove it: riff remove {} --host {}",
+        limit.as_secs(),
+        safe(owner.unwrap_or("the owner")),
+        safe(user),
+        safe(host)
     )
 }
 
