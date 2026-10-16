@@ -3531,6 +3531,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   limit L, …` with the pane and the short session ID of each worker.
   With no tmux, or a limit of 0, it refuses to start. Superseded by 3.0
   (01M4Z60B7FCREZDCTVR73WWRY1).
+- **01M517W4NP2WKSRCK52ZBVWBD3** The status of a workers host has at
+  most 400 characters (R183) at each size. When the line with the first
+  8 characters of each session ID is too long, it has the first 4. When
+  that line is too long too, it lists the workers that fit and ends
+  with `N more`: the count of the workers that it does not list. Each
+  count of the workers of a host counts them too. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3N7AKB3KXS2XYK0309C4M18** `riff workers start N --host HOST` and
   `riff workers stop --host HOST` send the workers host on HOST a
   signed direct message: `workers start N` or `workers stop`. The host
@@ -3813,6 +3820,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3ZGZMV78G3BNVFGHAZWQQDX** `riff workers jobs` shows the size of
   the pool and the tokens in use, or that no worker runs. Superseded by
   3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
+- **01M517W4JKFA0E2YJC5BQQ3ZWS** A read of the pool (its state, or a
+  take of tokens) looks for a holder under the lock that keeps the
+  start and the end of a hold in order. So a read while the first
+  worker of a machine makes the pool never makes that worker join the
+  old pipe, which has no tokens. Superseded by 3.0
+  (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M3WFYZTX05CGDP2NQF9B356K** `riff workers run` starts its worker
   with a nice value: the setting `workers.nice`, 0 to 19. The default
   is 10. 0 means no nice. `riff workers nice` shows it and sets it.

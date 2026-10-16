@@ -2649,7 +2649,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 /// // The session of `riff workers host` says so in its status.
 /// let mut host = row("riff://mike@thelio/o/r?session=h1", false, false);
 /// let status = HostStatus {
-///     limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, workers: vec![],
+///     limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, more: 0, workers: vec![],
 /// };
 /// let status = Status { step: status.line() };
 /// host.status = Some(StatusInfo { status, age_secs: 1, stale: false });

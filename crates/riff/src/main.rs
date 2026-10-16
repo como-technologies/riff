@@ -3039,7 +3039,7 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
             view::host_heading(
                 host,
                 status.limit,
-                status.workers.len(),
+                status.runs(),
                 status.machine.as_ref(),
                 status.floor,
                 status.deaths

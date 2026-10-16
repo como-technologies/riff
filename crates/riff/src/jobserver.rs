@@ -36,7 +36,9 @@
 //!   while its worker lives. The first one makes the pipe and writes the
 //!   tokens. The others join it. A pipe loses its bytes when no process
 //!   holds it open, so the pool ends with the last worker of the machine.
-//!   Two lock files keep the start and the end in order.
+//!   Two lock files keep the start and the end in order. A read of the
+//!   pool looks for a holder under the same order
+//!   (01M517W4JKFA0E2YJC5BQQ3ZWS).
 //! - **Workers that run.** Each `riff workers run` puts a lock file in
 //!   [`WORKERS`] while its worker lives ([`Member`]). The pool keeps the
 //!   number of workers that its size counts. When more workers run, each
@@ -238,8 +240,15 @@ fn open_fifo(path: &Path, nonblock: bool) -> io::Result<File> {
     Ok(file)
 }
 
-/// True when a process holds the pool in `dir`.
+/// True when a process holds the pool in `dir`. The probe holds the
+/// lock of [`HOLD`] for a moment, so it runs under [`INIT`], as
+/// [`Pool::hold`] and the drop of a [`Pool`] do. Else a first
+/// [`Pool::hold`] in that moment finds the lock held, and joins the old
+/// pipe, which has no tokens (01M517W4JKFA0E2YJC5BQQ3ZWS).
 fn held(dir: &Path) -> bool {
+    let Ok(_init) = lock(&dir.join(INIT), FlockArg::LockExclusive) else {
+        return false;
+    };
     let Ok(file) = open_lock(&dir.join(HOLD)) else {
         return false;
     };
@@ -885,12 +894,12 @@ mod tests {
 
     /// A read of the state while the first worker of a machine makes
     /// the pool never makes that worker join the old pipe, which has no
-    /// tokens.
+    /// tokens (01M517W4JKFA0E2YJC5BQQ3ZWS).
     #[test]
     fn reads_of_the_state_while_workers_join_never_leave_an_empty_pool() {
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-        for round in 0..300 {
+        for round in 0..2000 {
             let dir = tempfile::tempdir().unwrap();
             // An old pool leaves its pipe and its size.
             drop(Pool::hold(dir.path(), 2, 1).unwrap());

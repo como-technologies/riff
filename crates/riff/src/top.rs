@@ -496,7 +496,7 @@ pub struct Machine {
 /// use riff::top::{Machine, machines};
 /// use riff_core::wire::{SessionInfo, Status, StatusInfo};
 ///
-/// let status = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, workers: vec![] };
+/// let status = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, more: 0, workers: vec![] };
 /// let host = SessionInfo {
 ///     uri: "riff://mike@thelio/o/r?session=h1".parse().unwrap(),
 ///     live: true,
@@ -577,6 +577,7 @@ pub fn machines(sessions: &[SessionInfo], here: Option<Machine>) -> Vec<Machine>
 ///     machine: Some(Machine { cores: 16, mhz: 3000, now_mhz: 2990, mem_gb: 31, avail_gb: 20, load: 13.2 }),
 ///     disk: None,
 ///     monitor: Some(Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs, kill: None }),
+///     more: 0,
 ///     workers: vec![("%3".into(), "1a2b3c4d".into()); 3],
 /// };
 /// assert_eq!(
@@ -645,7 +646,7 @@ pub fn numbers(status: &HostStatus) -> Vec<(String, anstyle::Style)> {
             style(m.low(status.floor)),
         ));
     }
-    let runs = status.workers.len();
+    let runs = status.runs();
     parts.push((
         format!("workers {runs}/{}", status.limit),
         style(runs > usize::from(status.limit)),
@@ -666,7 +667,7 @@ pub fn numbers(status: &HostStatus) -> Vec<(String, anstyle::Style)> {
 /// let kill = Kill { at: 1727980000, by: "systemd-oomd".into(), what: String::new() };
 /// let jobs = Jobs::Fixed(2);
 /// let monitor = Numbers { on: true, load5: 1.0, limit: 12.0, physical: 8, jobs, kill: Some(kill) };
-/// let status = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: Some(monitor), workers: vec![] };
+/// let status = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: Some(monitor), more: 0, workers: vec![] };
 /// assert_eq!(
 ///     riff::top::kill_line(&status).unwrap().0,
 ///     format!("last kill {} by systemd-oomd", riff::text::clock(1727980000)),

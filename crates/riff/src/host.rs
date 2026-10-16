@@ -184,7 +184,7 @@ use anyhow::{Result, bail};
 use futures::StreamExt;
 use riff_core::name::SessionUri;
 use riff_core::selector::Selector;
-use riff_core::wire::{Kind, SessionInfo, Status};
+use riff_core::wire::{Kind, STATUS_CHARS, SessionInfo, Status};
 
 use crate::api::{Api, Checked, Reconnect, follow};
 use crate::binary::{Follow, with_last};
@@ -199,6 +199,13 @@ use crate::{identity, local, secrets, settings, text, worker};
 
 /// The start of the status of a host.
 pub const MARK: &str = "workers host";
+
+/// The characters of the session ID of a worker in the status of a host.
+pub const LONG_ID: usize = 8;
+
+/// The characters of the session ID of a worker in the status of a host
+/// that has no room for [`LONG_ID`] (01M517W4NP2WKSRCK52ZBVWBD3).
+pub const SHORT_ID: usize = 4;
 
 /// How often a host sets its status again, so that it shows the workers
 /// that ended.
@@ -219,7 +226,7 @@ pub const END_WAIT: Duration = Duration::from_secs(1);
 /// use riff::machine::Machine;
 /// use riff::monitor::{Jobs, Numbers};
 ///
-/// let none = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, workers: vec![] };
+/// let none = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, more: 0, workers: vec![] };
 /// assert_eq!(none.line(), "workers host: limit 2, floor 4GB, no workers");
 /// let two = HostStatus {
 ///     limit: 3,
@@ -228,6 +235,7 @@ pub const END_WAIT: Duration = Duration::from_secs(1);
 ///     machine: Some(Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
 ///     disk: None,
 ///     monitor: None,
+///     more: 0,
 ///     workers: vec![("%3".into(), "1a2b3c4d".into()), ("%4".into(), "5e6f7a8b".into())],
 /// };
 /// assert_eq!(
@@ -286,6 +294,24 @@ pub const END_WAIT: Duration = Duration::from_secs(1);
 /// let only_deaths = HostStatus { deaths: 1, ..none.clone() };
 /// assert_eq!(only_deaths.line(), "workers host: limit 2, floor 4GB, deaths 1, no workers");
 /// assert_eq!(HostStatus::parse(&only_deaths.line()), Some(only_deaths));
+///
+/// // At most 400 characters at each size (01M517W4NP2WKSRCK52ZBVWBD3).
+/// // With no room for 8 characters of each session ID, the line has 4.
+/// // With no room for 4, it lists the first workers and counts the
+/// // others.
+/// let line = |n: u16| {
+///     let workers = (0..n).map(|i| (format!("%{}", 100 + i), format!("{i:04}abcd"))).collect();
+///     HostStatus { limit: 30, workers, ..with_disk.clone() }.line()
+/// };
+/// assert!(line(10).ends_with("workers: %100 0000abcd, %101 0001abcd, %102 0002abcd, %103 0003abcd, \
+///     %104 0004abcd, %105 0005abcd, %106 0006abcd, %107 0007abcd, %108 0008abcd, %109 0009abcd"));
+/// assert!(line(20).ends_with("workers: %100 0000, %101 0001, %102 0002, %103 0003, %104 0004, \
+///     %105 0005, %106 0006, %107 0007, %108 0008, %109 0009, %110 0010, %111 0011, %112 0012, \
+///     %113 0013, %114 0014, %115 0015, %116 0016, %117 0017, %118 0018, %119 0019"));
+/// let thirty = line(30);
+/// assert!(thirty.len() <= 400 && thirty.ends_with(", %122 0022, 7 more"), "{thirty}");
+/// let parsed = HostStatus::parse(&thirty).unwrap();
+/// assert_eq!((parsed.workers.len(), parsed.more, parsed.runs()), (23, 7, 30));
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostStatus {
@@ -305,8 +331,12 @@ pub struct HostStatus {
     /// from a host that does not tell them.
     pub monitor: Option<Numbers>,
     /// The pane and the first 8 characters of the session ID of each
-    /// worker.
+    /// worker that the status lists: the first 4 when the line has no
+    /// room for 8 (01M517W4NP2WKSRCK52ZBVWBD3).
     pub workers: Vec<(String, String)>,
+    /// The workers that the status does not list, as the line has no
+    /// room for them (01M517W4NP2WKSRCK52ZBVWBD3).
+    pub more: usize,
 }
 
 impl HostStatus {
@@ -321,9 +351,16 @@ impl HostStatus {
             monitor: None,
             workers: panes
                 .iter()
-                .map(|w| (w.pane.clone(), w.session.chars().take(8).collect()))
+                .map(|w| (w.pane.clone(), w.session.chars().take(LONG_ID).collect()))
                 .collect(),
+            more: 0,
         }
+    }
+
+    /// The workers of the host: the listed ones and the
+    /// [`more`](Self::more).
+    pub fn runs(&self) -> usize {
+        self.workers.len() + self.more
     }
 
     /// The status of this machine with `panes`: the settings, the
@@ -345,7 +382,11 @@ impl HostStatus {
         Ok(status)
     }
 
-    /// The status line. It fits in a status for 10 workers.
+    /// The status line. It has at most [`STATUS_CHARS`] characters at
+    /// each size (01M517W4NP2WKSRCK52ZBVWBD3). When the workers do not
+    /// fit, each gets the first [`SHORT_ID`] characters of its session
+    /// ID. When they still do not fit, the line lists the first ones and
+    /// ends with the count of the others: `N more`.
     pub fn line(&self) -> String {
         let machine = self.machine.map(|m| format!("{m}, ")).unwrap_or_default();
         let disk = self.disk.map(|d| format!("{d}, ")).unwrap_or_default();
@@ -358,20 +399,31 @@ impl HostStatus {
             0 => String::new(),
             n => format!("deaths {n}, "),
         };
-        let machine = format!("floor {}GB, {deaths}{machine}{disk}{monitor}", self.floor);
-        if self.workers.is_empty() {
-            return format!("{MARK}: limit {}, {machine}no workers", self.limit);
+        let head = format!(
+            "{MARK}: limit {}, floor {}GB, {deaths}{machine}{disk}{monitor}",
+            self.limit, self.floor
+        );
+        if self.runs() == 0 {
+            return format!("{head}no workers");
         }
-        let workers: Vec<String> = self
-            .workers
-            .iter()
-            .map(|(pane, short)| format!("{pane} {short}"))
-            .collect();
-        format!(
-            "{MARK}: limit {}, {machine}workers: {}",
-            self.limit,
-            workers.join(", ")
-        )
+        let line = |listed: usize, id: usize| {
+            let mut workers: Vec<String> = self.workers[..listed]
+                .iter()
+                .map(|(pane, short)| format!("{pane} {}", short.chars().take(id).collect::<String>()))
+                .collect();
+            let more = self.runs() - listed;
+            if more > 0 {
+                workers.push(format!("{more} more"));
+            }
+            format!("{head}workers: {}", workers.join(", "))
+        };
+        let fits = |line: &String| line.chars().count() <= STATUS_CHARS;
+        let all = self.workers.len();
+        std::iter::once((all, LONG_ID))
+            .chain((0..=all).rev().map(|listed| (listed, SHORT_ID)))
+            .map(|(listed, id)| line(listed, id))
+            .find(fits)
+            .unwrap_or_else(|| line(0, SHORT_ID))
     }
 
     /// The host status in a status step, or `None` for another status.
@@ -436,11 +488,17 @@ impl HostStatus {
                 disk,
                 monitor,
                 workers: Vec::new(),
+                more: 0,
             });
         }
-        let workers = rest
-            .strip_prefix("workers: ")?
-            .split(", ")
+        let mut listed: Vec<&str> = rest.strip_prefix("workers: ")?.split(", ").collect();
+        let mut more = 0;
+        if let Some(count) = listed.last().and_then(|w| w.strip_suffix(" more")) {
+            more = count.parse().ok()?;
+            listed.pop();
+        }
+        let workers = listed
+            .into_iter()
             .map(|w| {
                 w.split_once(' ')
                     .map(|(pane, short)| (pane.to_owned(), short.to_owned()))
@@ -454,6 +512,7 @@ impl HostStatus {
             disk,
             monitor,
             workers,
+            more,
         })
     }
 }
