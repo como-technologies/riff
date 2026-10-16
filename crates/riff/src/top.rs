@@ -1142,6 +1142,8 @@ impl Top<'_> {
     ///     "ann  admin  offline  seen 1h ago",
     ///     "mike  owner  online  5 sessions: 2 busy, 1 idle, 1 blocked, 3 claims",
     ///     "├─ pangolin  2 sessions: 1 lead, 1 worker; 1 busy, 1 blocked, 2 claims",
+    ///     // A host with a live worker and no numbers of its machine.
+    ///     "│  │  no numbers",
     ///     "│  ├─ r  1 session: 1 blocked, 1 claim",
     ///     "│  │  └─ dddd4444  #verify-13  worker  blocked",
     ///     "│  │       waits for the lead (25m ago)",
@@ -1152,6 +1154,7 @@ impl Top<'_> {
     ///     "│          working on #14",
     ///     "│          2m ago: plan",
     ///     "└─ thelio  › r  3 sessions: 1 lead, 1 worker; 1 busy, 1 idle, 1 claim",
+    ///     "   │  no numbers",
     ///     "   ├─ aaaa1111  lead  idle",
     ///     "   │    monitoring work for 10m",
     ///     "   │    2m ago: plan",
@@ -1591,6 +1594,16 @@ mod tests {
     /// The text of `riff top` for `sessions` with `issues` and `show`,
     /// with no styles.
     fn shown(sessions: &[SessionInfo], issues: &BTreeMap<String, Issues>, show: &Show) -> String {
+        shown_with(sessions, issues, show, &[])
+    }
+
+    /// [`shown`] with the numbers of `machines`.
+    fn shown_with(
+        sessions: &[SessionInfo],
+        issues: &BTreeMap<String, Issues>,
+        show: &Show,
+        machines: &[Machine],
+    ) -> String {
         let owner = RiffOwner::NoSignIn;
         let running = riff_core::wire::RiffState::Running.into();
         let top = Top {
@@ -1604,9 +1617,59 @@ mod tests {
             show,
             width: 100,
             fault: None,
-            machines: &[],
+            machines,
         };
         anstream::adapter::strip_str(&top.view()).to_string()
+    }
+
+    /// A host with a live worker and no numbers shows `no numbers`. A
+    /// host with numbers shows them. A host with no live worker shows
+    /// neither (01M515KSZHC9Y2XQSS73PZ27R0).
+    #[test]
+    fn a_host_with_a_live_worker_and_no_numbers_shows_no_numbers() {
+        let worker = |uri: &str| SessionInfo {
+            worker: true,
+            ..info(uri, SessionState::Idle)
+        };
+        let sessions = [
+            worker("riff://mike@pangolin/o/riff?session=w1"),
+            worker("riff://mike@thelio/o/riff?session=w2"),
+            info("riff://mike@kadomony/o/riff?session=m1", SessionState::Idle),
+            SessionInfo {
+                live: false,
+                ..worker("riff://mike@heron/o/riff?session=w3")
+            },
+        ];
+        let status = HostStatus {
+            limit: 2,
+            floor: 4,
+            deaths: 0,
+            machine: None,
+            disk: None,
+            monitor: None,
+            workers: vec![("%3".into(), "w2".into())],
+        };
+        let thelio = Machine {
+            user: "mike".into(),
+            host: "thelio".into(),
+            status,
+        };
+        let text = shown_with(
+            &sessions,
+            &BTreeMap::new(),
+            &Show::default(),
+            std::slice::from_ref(&thelio),
+        );
+        let rows = tree(&text);
+        let under = |host: &str| {
+            let at = rows.iter().position(|r| r.contains(host)).unwrap();
+            rows[at + 1].clone()
+        };
+        assert_eq!(under("pangolin"), "│  │  no numbers", "{text}");
+        assert_eq!(under("thelio"), "   │  workers 1/2", "{text}");
+        assert!(under("kadomony").contains("m1"), "{text}");
+        assert!(under("heron").contains("w3"), "{text}");
+        assert_eq!(text.matches(text::NO_NUMBERS).count(), 1, "{text}");
     }
 
     /// The lines of the tree: the last part of the text.
