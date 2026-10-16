@@ -27,7 +27,10 @@
 //! The unit runs `riff daemon` with the absolute path of this riff. It
 //! gets the `PATH` of the shell that installs it, so the daemon finds
 //! the same `podman`, and `XDG_DATA_HOME` when it is set, so the daemon
-//! and `riff` use one folder ([`crate::daemon::dir`]).
+//! and `riff` use one folder ([`crate::daemon::dir`]). It also gets
+//! `CLAUDE_CONFIG_DIR` when it is set, so the daemon keeps the rules in
+//! the same user settings of Claude Code as `riff init`
+//! ([`crate::rule_sync`], 01M51M3ZTV61C9BMFT3J1M06NF).
 //!
 //! After an update of riff, the daemon runs the new riff
 //! ([`crate::daemon::after_update`], [`crate::daemon::Daemon::restart_when_old`]).
@@ -159,10 +162,11 @@ impl Unit {
 
     /// The unit of this riff: the path of this binary on disk
     /// ([`crate::binary::this_on_disk`]), its `PATH`, and its
-    /// `XDG_DATA_HOME` when it is set.
+    /// `XDG_DATA_HOME` and `CLAUDE_CONFIG_DIR` when they are set
+    /// (01M51M3ZTV61C9BMFT3J1M06NF).
     pub fn of_this() -> Result<Unit> {
         let exe = crate::binary::this_on_disk().context("cannot find the path of this riff")?;
-        let env = ["PATH", "XDG_DATA_HOME"]
+        let env = ["PATH", "XDG_DATA_HOME", "CLAUDE_CONFIG_DIR"]
             .into_iter()
             .filter_map(|name| {
                 std::env::var(name)

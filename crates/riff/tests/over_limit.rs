@@ -2,7 +2,8 @@
 //! limit of the machine, a worker that ends its item ends, in place of
 //! the clear (01M402VFGAJQM1QW8B42NKMJM4, 01M402VFKXEJARG7CM60TDCMKW).
 //! A worker whose `riff workers run` runs an old riff ends the same way
-//! (01M517BT9WBQ4R79Z9KVY9SG1B).
+//! (01M517BT9WBQ4R79Z9KVY9SG1B), and a worker that started before riff
+//! added rules of Claude Code (01M51M3ZRKQZ8KDVRGJR3XAY00).
 //! A fake `tmux` on `PATH` lists the worker panes from a file, and
 //! `kill-pane` takes a pane out of it. Each test runs the real `riff`
 //! binary.
@@ -176,11 +177,22 @@ impl Machine {
     /// The Stop hook of the worker `wN`, whose `riff workers run` is the
     /// process `wrapper`.
     fn stop_hook_of(&self, n: u16, wrapper: Option<u32>) {
+        self.stop_hook_with(n, wrapper, None);
+    }
+
+    /// The Stop hook of the worker `wN`, whose `riff workers run` is the
+    /// process `wrapper`, and gave it the mark `rules` of the rules of
+    /// Claude Code.
+    fn stop_hook_with(&self, n: u16, wrapper: Option<u32>, rules: Option<&str>) {
         let id = self.id(n);
         let mut cmd = self.riff(&id, &format!("%{n}"), true, &["hook", "stop"]);
         match wrapper {
             Some(pid) => cmd.env("RIFF_WORKER_WRAPPER", pid.to_string()),
             None => cmd.env_remove("RIFF_WORKER_WRAPPER"),
+        };
+        match rules {
+            Some(mark) => cmd.env("RIFF_WORKER_RULES", mark),
+            None => cmd.env_remove("RIFF_WORKER_RULES"),
         };
         let mut hook = cmd
             .stdin(Stdio::piped())
@@ -327,6 +339,32 @@ async fn a_worker_that_runs_an_old_riff_ends_at_its_clear_and_not_before() {
         let _ = child.kill();
         let _ = child.wait();
     }
+}
+
+/// riff added rules of Claude Code after the start of the worker w3,
+/// and before the start of w4. While w3 holds its item, its turn ends
+/// with no end. After its release, w3 ends in place of its clear, and the
+/// lead gets a note. w4 gets its clear (01M51M3ZRKQZ8KDVRGJR3XAY00).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_that_started_before_new_rules_ends_at_its_clear_and_not_before() {
+    let m = Machine::new(4, 2).await;
+    let mark = riff::local::set_rules_added(&m.run.path().join("state")).unwrap();
+
+    m.stop_hook_with(3, None, Some(""));
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert!(!m.log().contains("kill-pane"), "{}", m.log());
+
+    m.release(3).await;
+    m.stop_hook_with(3, None, Some(""));
+    assert!(m.ended(3).await, "{}", m.log());
+    m.release(4).await;
+    m.stop_hook_with(4, None, Some(&mark));
+    assert!(!m.ended(4).await, "{}", m.log());
+    assert_eq!(m.panes(), ["%4"]);
+    let history = m.history();
+    let note = "workers: the worker in the pane %3 on pangolin started before riff added rules \
+                of Claude Code. It ends after its item, in place of a clear.";
+    assert!(history.contains(note), "{history}");
 }
 
 /// Two workers end their items at one time, and only one is over the

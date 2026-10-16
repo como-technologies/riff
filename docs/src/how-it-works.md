@@ -638,6 +638,9 @@ sequenceDiagram
   try.
 - Each riff process starts again on the new `riff` when it is idle.
   See [Which processes start again](#which-processes-start-again).
+- The riff daemon adds the new permission rules of Claude Code of the
+  release to your user settings. See
+  [Keep the rules in step with each release](start-a-riff.md#keep-the-rules-in-step-with-each-release).
 - The update stops no session, and a running test goes on. Your
   sign-in and the device key stay.
 - Your lead gets one direct message: the host, the old release and
@@ -689,6 +692,16 @@ A worker ends after its item when its `riff workers run` runs the old
 
 ```text
 workers: the worker in the pane %3 on pangolin runs an old riff. It ends after its item, in place of a clear. riff starts a new worker on the new riff for the free work.
+```
+
+Claude Code reads its permission rules only when it starts. So a worker
+also ends after its item when riff added rules to your user settings
+of Claude Code after its start: `riff init`, or the riff daemon (see
+[Keep the rules in step with each release](start-a-riff.md#keep-the-rules-in-step-with-each-release)).
+riff starts a new worker with the new rules. The lead gets a note:
+
+```text
+workers: the worker in the pane %3 on pangolin started before riff added rules of Claude Code. It ends after its item, in place of a clear. riff starts a new worker with the new rules for the free work.
 ```
 
 The unit of the riff daemon can run another `riff` than the `riff` on

@@ -134,6 +134,64 @@ async fn riff_daemon_install_writes_the_unit_and_starts_the_daemon() {
     wait_for(&here.bin.path().join("daemon.out"), "The riff daemon stops").await;
 }
 
+/// 01M51QARV45MGEKC6KGWX1N5NS, 01M51M3ZKWQYBBPD97R0G9QAX0,
+/// 01M51M3ZPAEMJ64266QSJBNQ46, 01M51M3ZTV61C9BMFT3J1M06NF: a daemon with
+/// `RIFF_RELEASES` and its own SHA-256 in `SHA256SUMS` there changes no
+/// rule, also with `update.auto` on. Its line names the variable, and it
+/// keeps that line. The unit keeps `CLAUDE_CONFIG_DIR`. The add of the
+/// rules has its tests in `rule_sync::tests`.
+#[tokio::test]
+async fn a_daemon_with_riff_releases_and_its_own_sha256_there_changes_no_rule() {
+    let Some(target) = riff::release::TARGET else {
+        return;
+    };
+    let here = Here::new();
+    // RIFF_RELEASES of the test environment names this folder. Its
+    // SHA256SUMS has the SHA-256 of this riff, a dev build.
+    let tag = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let files = here.env.releases().join(&tag);
+    std::fs::create_dir_all(&files).unwrap();
+    let bytes = std::fs::read(here.env.riff_path()).unwrap();
+    let sum = riff::release::sha256(&bytes);
+    let name = riff::release::asset("riff", target);
+    std::fs::write(files.join("SHA256SUMS"), format!("{sum}  {name}\n")).unwrap();
+    // The user settings of the person: a rule and a key of their own.
+    let claude = here.env.home().join("claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    let settings = claude.join("settings.json");
+    let before = r#"{"model": "opus", "permissions": {"allow": ["Read(~/**)"]}}"#;
+    std::fs::write(&settings, before).unwrap();
+    let out = here.run(true, &["update", "--auto", "on"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+
+    let mut cmd = here.command(true, &["daemon", "install"]);
+    cmd.env("CLAUDE_CONFIG_DIR", &claude);
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let unit_path = here.env.home().join(".config/systemd/user/riff.service");
+    let unit = std::fs::read_to_string(&unit_path).unwrap();
+    let line = format!("Environment=\"CLAUDE_CONFIG_DIR={}\"", claude.display());
+    assert!(unit.lines().any(|l| l == line), "{line}\nnot in\n{unit}");
+
+    let log = here.bin.path().join("daemon.out");
+    let why = riff::text::not_release_releases(&here.env.releases().display().to_string());
+    wait_for(&log, &why).await;
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), before);
+    let logged = std::fs::read_to_string(&log).unwrap();
+    assert!(!logged.contains("the sync of the rules"), "{logged}");
+    let local = here.env.path().join("run/riff");
+    assert_eq!(riff::local::rules_added(&local), None);
+    let last = riff::local::rules_sync(&local).unwrap();
+    assert!(last.contains("changed no rule"), "{last}");
+    assert!(last.ends_with(&why), "{last}");
+
+    let pid: u32 = here.read("daemon.pid").trim().parse().unwrap();
+    term(pid);
+    wait_for(&log, "The riff daemon stops").await;
+}
+
 #[tokio::test]
 async fn riff_daemon_install_with_riff_home_installs_nothing() {
     let here = Here::new();

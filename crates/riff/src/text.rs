@@ -3789,6 +3789,148 @@ pub fn cargo_builds(tag: &str) -> String {
     format!("The release {tag} has no static riff for this machine, so cargo builds it.")
 }
 
+/// Why a riff is not a release: the releases have no static riff for
+/// this machine (01M51M3ZKWQYBBPD97R0G9QAX0).
+pub const NOT_RELEASE_TARGET: &str = "the releases have no static riff for this machine";
+
+/// Why a riff is not a release: the release `tag` has no `SHA256SUMS`
+/// (01M51M3ZKWQYBBPD97R0G9QAX0).
+///
+/// ```
+/// assert_eq!(riff::text::not_release_no_sums("v1.5.0"), "the release v1.5.0 has no SHA256SUMS");
+/// ```
+pub fn not_release_no_sums(tag: &str) -> String {
+    format!("the release {tag} has no {}", crate::release::SUMS)
+}
+
+/// Why a riff is not a release: `SHA256SUMS` of `tag` has no line for
+/// `name` (01M51M3ZKWQYBBPD97R0G9QAX0).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::not_release_no_line("v1.5.0", "riff-x"),
+///     "SHA256SUMS of v1.5.0 has no line for riff-x"
+/// );
+/// ```
+pub fn not_release_no_line(tag: &str, name: &str) -> String {
+    format!("{} of {tag} has no line for {name}", crate::release::SUMS)
+}
+
+/// Why a riff is not a release: its SHA-256 `got` is not the SHA-256 of
+/// `name` in `SHA256SUMS` of `tag`. It is a check build or a dev build
+/// (01M51M3ZKWQYBBPD97R0G9QAX0).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::not_release_sum("ab12", "v1.5.0", "riff-x"),
+///     "its SHA-256 ab12 is not the one of riff-x in SHA256SUMS of v1.5.0: it is a check build \
+///      or a dev build"
+/// );
+/// ```
+pub fn not_release_sum(got: &str, tag: &str, name: &str) -> String {
+    format!(
+        "its SHA-256 {got} is not the one of {name} in {} of {tag}: it is a check build or a \
+         dev build",
+        crate::release::SUMS
+    )
+}
+
+/// Why a riff is not a release: riff cannot read `SHA256SUMS` of `tag`
+/// (01M51M3ZKWQYBBPD97R0G9QAX0).
+pub fn not_release_read(tag: &str, error: &str) -> String {
+    format!(
+        "riff cannot read {} of {tag}: {error}",
+        crate::release::SUMS
+    )
+}
+
+/// Why a riff is not a release for the sync of the rules: the variable
+/// `RIFF_RELEASES` names the place `place` of the release files, and the
+/// sync reads `SHA256SUMS` only from the GitHub release
+/// (01M51QARV45MGEKC6KGWX1N5NS).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::not_release_releases("/srv/riff"),
+///     "RIFF_RELEASES is set to /srv/riff, and the sync reads SHA256SUMS only from the GitHub \
+///      release"
+/// );
+/// ```
+pub fn not_release_releases(place: &str) -> String {
+    format!(
+        "{} is set to {place}, and the sync reads {} only from the GitHub release",
+        crate::release::RELEASES,
+        crate::release::SUMS
+    )
+}
+
+/// The log line of the riff daemon `build` for each `rule` that its
+/// sync added to the user settings at `path` (01M51M3ZPAEMJ64266QSJBNQ46).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::sync_added_rule("1.5.0 (abc)", "/h/s.json".as_ref(), "allow", "Bash(gh pr view *)"),
+///     "the sync of the rules of riff 1.5.0 (abc) added the allow rule Bash(gh pr view *) to /h/s.json"
+/// );
+/// ```
+pub fn sync_added_rule(build: &str, path: &Path, kind: &str, rule: &str) -> String {
+    format!(
+        "the sync of the rules of riff {build} added the {kind} rule {rule} to {}",
+        path.display()
+    )
+}
+
+/// The line of a sync of the rules by the riff daemon `build`, with the
+/// user settings at `path` (01M51M3ZPAEMJ64266QSJBNQ46). The daemon
+/// logs it, and `riff init` shows it.
+///
+/// ```
+/// use riff::permissions::Rules;
+/// use riff::rule_sync::Synced;
+///
+/// let path = std::path::Path::new("/h/s.json");
+/// let line = |s: &Synced| riff::text::rules_synced("1.5.0 (abc)", path, s);
+/// assert_eq!(
+///     line(&Synced::Off),
+///     "riff 1.5.0 (abc) changed no rule: update.auto is off"
+/// );
+/// assert_eq!(
+///     line(&Synced::NotRelease("it is a dev build".into())),
+///     "riff 1.5.0 (abc) changed no rule: it is not a release: it is a dev build"
+/// );
+/// assert_eq!(line(&Synced::InStep), "riff 1.5.0 (abc) found each rule in /h/s.json");
+/// let added = Rules { allow: vec!["A".into(), "B".into()], deny: vec![] };
+/// assert_eq!(
+///     line(&Synced::Added(added)),
+///     "riff 1.5.0 (abc) added 2 rules to /h/s.json. Each worker starts again at its next clear."
+/// );
+/// ```
+pub fn rules_synced(build: &str, path: &Path, synced: &crate::rule_sync::Synced) -> String {
+    use crate::rule_sync::Synced;
+    match synced {
+        Synced::Off => format!("riff {build} changed no rule: update.auto is off"),
+        Synced::NotRelease(why) => {
+            format!("riff {build} changed no rule: it is not a release: {why}")
+        }
+        Synced::InStep => format!("riff {build} found each rule in {}", path.display()),
+        Synced::Added(rules) => {
+            let count = rules.len();
+            let s = if count == 1 { "" } else { "s" };
+            format!(
+                "riff {build} added {count} rule{s} to {}. Each worker starts again at its next \
+                 clear.",
+                path.display()
+            )
+        }
+    }
+}
+
+/// The line of a sync of the rules by the riff daemon `build` that
+/// failed with `error` (01M51M3ZPAEMJ64266QSJBNQ46).
+pub fn rules_sync_failed(build: &str, error: &str) -> String {
+    format!("riff {build} cannot sync the rules: {error}")
+}
+
 /// The refusal of `riff workers host` outside tmux
 /// (01M3N7AK8TVYV8S0WR3RP0TN8X).
 pub const HOST_NEEDS_TMUX: &str = "riff workers host needs tmux: it starts the workers in its \
@@ -4328,6 +4470,26 @@ pub fn worker_old_riff(host: &str, pane: &str) -> String {
     format!(
         "workers: the worker in the pane {pane} on {host} runs an old riff. It ends after its \
          item, in place of a clear. riff starts a new worker on the new riff for the free work."
+    )
+}
+
+/// The note to the lead when the worker in `pane` on `host` ends in
+/// place of its clear, because riff added rules to the user settings of
+/// Claude Code after its start (01M51M3ZRKQZ8KDVRGJR3XAY00).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::worker_new_rules("pangolin", "%3"),
+///     "workers: the worker in the pane %3 on pangolin started before riff added rules of \
+///      Claude Code. It ends after its item, in place of a clear. riff starts a new worker \
+///      with the new rules for the free work."
+/// );
+/// ```
+pub fn worker_new_rules(host: &str, pane: &str) -> String {
+    format!(
+        "workers: the worker in the pane {pane} on {host} started before riff added rules of \
+         Claude Code. It ends after its item, in place of a clear. riff starts a new worker \
+         with the new rules for the free work."
     )
 }
 
@@ -6084,6 +6246,41 @@ pub fn init_rules_added(path: &Path, count: usize) -> String {
     format!(
         "riff added {count} permission rule{s} to {}. Start Claude Code again to use them.",
         path.display()
+    )
+}
+
+/// The line of `riff init` about the sync of the rules by the riff
+/// daemon (01M51M3ZPAEMJ64266QSJBNQ46).
+///
+/// ```
+/// use riff::rule_sync::State;
+///
+/// let off = riff::text::init_sync(&State::default());
+/// assert_eq!(
+///     off,
+///     "The sync of the rules is off: update.auto is off. To keep the rules in step with each \
+///      release, run: riff update --auto on"
+/// );
+/// let on = riff::text::init_sync(&State { auto: true, last: None });
+/// assert!(on.starts_with("The sync of the rules is on: at each start, the riff daemon of a \
+///     release adds each rule that is missing."), "{on}");
+/// assert!(on.ends_with("It syncs at its next start."), "{on}");
+/// let last = riff::text::init_sync(&State { auto: true, last: Some("riff 1.5.0 found each rule in /h/s.json".into()) });
+/// assert!(last.ends_with("Its last sync: riff 1.5.0 found each rule in /h/s.json."), "{last}");
+/// ```
+pub fn init_sync(sync: &crate::rule_sync::State) -> String {
+    if !sync.auto {
+        return "The sync of the rules is off: update.auto is off. To keep the rules in step \
+                with each release, run: riff update --auto on"
+            .to_owned();
+    }
+    let last = match &sync.last {
+        Some(line) => format!("Its last sync: {}.", line.trim_end_matches('.')),
+        None => "It syncs at its next start.".to_owned(),
+    };
+    format!(
+        "The sync of the rules is on: at each start, the riff daemon of a release adds each \
+         rule that is missing. {last}"
     )
 }
 

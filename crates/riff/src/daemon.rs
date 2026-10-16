@@ -315,6 +315,11 @@
 //!     L --> E["the end of a session or a job, each minute"]
 //!     E --> B
 //! ```
+//!
+//! At each start, with `update.auto` on, the daemon adds each rule of
+//! its release that the user settings of Claude Code lack
+//! ([`crate::rule_sync`], 01M51M3ZHHBE61CEG9T6ENFG18). So a new release
+//! brings its rules with no `riff init`.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -3025,6 +3030,8 @@ pub async fn serve_here() -> Result<()> {
         );
         daemon.recover().await;
         daemon.run_waves();
+        // The rules of Claude Code of this release (01M51M3ZHHBE61CEG9T6ENFG18).
+        tokio::spawn(crate::rule_sync::at_start());
         // A new riff on disk (01M517BTP6BAGTRBYWPX9GPVE0).
         if let Ok(manager) = crate::service::Systemd::here() {
             let daemon = daemon.clone();

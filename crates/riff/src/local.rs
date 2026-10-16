@@ -32,6 +32,8 @@
 //! | `update.lock` | The update of riff by itself (see [`crate::auto_update`]). | Nothing. Only the lock counts. |
 //! | `update-tried` | The same update. | The release tag that it tried last. |
 //! | `update.log` | The same update. | Its output. |
+//! | `rules-added` | `riff init` and the riff daemon, when they add rules to the user settings of Claude Code (see [`crate::rule_sync`]). | The time of the add, in milliseconds. |
+//! | `rules-sync` | The riff daemon, at each start (see [`crate::rule_sync`]). | The line of its last sync of the rules. |
 //! | `host-USER-REPO` | `riff workers host` of USER in REPO (see [`crate::host`]). | Its PID and its session ID. |
 //!
 //! The writers of `mcp-PID`, `watch-ID`, `update.lock` and
@@ -409,6 +411,56 @@ pub fn set_tried(dir: &Path, tag: &str) -> io::Result<()> {
 /// The log of the update of riff by itself.
 pub fn update_log(dir: &Path) -> PathBuf {
     dir.join("update.log")
+}
+
+/// The mark of the last add of rules to the user settings of Claude
+/// Code (01M51M3ZRKQZ8KDVRGJR3XAY00): the time of the add in
+/// milliseconds, as text. `None` when riff added no rule.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// assert_eq!(riff::local::rules_added(run.path()), None);
+/// let mark = riff::local::set_rules_added(run.path())?;
+/// assert_eq!(riff::local::rules_added(run.path()), Some(mark));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn rules_added(dir: &Path) -> Option<String> {
+    let mark = std::fs::read_to_string(dir.join("rules-added")).ok()?;
+    Some(mark.trim().to_owned()).filter(|m| !m.is_empty())
+}
+
+/// Records that riff added rules to the user settings of Claude Code
+/// now, and gives the mark ([`rules_added`]).
+pub fn set_rules_added(dir: &Path) -> io::Result<String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    std::fs::create_dir_all(dir)?;
+    let mark = now.to_string();
+    std::fs::write(dir.join("rules-added"), &mark)?;
+    Ok(mark)
+}
+
+/// The line of the last sync of the rules by the riff daemon
+/// (01M51M3ZPAEMJ64266QSJBNQ46). `None` before the first sync.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// assert_eq!(riff::local::rules_sync(run.path()), None);
+/// riff::local::set_rules_sync(run.path(), "in step")?;
+/// assert_eq!(riff::local::rules_sync(run.path()).as_deref(), Some("in step"));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn rules_sync(dir: &Path) -> Option<String> {
+    let line = std::fs::read_to_string(dir.join("rules-sync")).ok()?;
+    Some(line.trim().to_owned()).filter(|l| !l.is_empty())
+}
+
+/// Records `line` as the line of the last sync of the rules.
+pub fn set_rules_sync(dir: &Path, line: &str) -> io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join("rules-sync"), line)
 }
 
 /// The directory of the mark of a leave: `$RIFF_HOME/state` (see

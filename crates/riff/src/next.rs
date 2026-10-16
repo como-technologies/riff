@@ -139,6 +139,11 @@
 //! The rollout starts a new worker on the new riff for the free work
 //! ([`crate::rollout`]). A worker that holds a claim gets no ask to
 //! clear, so riff never ends a busy worker.
+//!
+//! Claude Code reads its rules only at its start. So a worker also ends
+//! in place of its clear when riff added rules to the user settings of
+//! Claude Code after its start (01M51M3ZRKQZ8KDVRGJR3XAY00): the mark of
+//! the add is not the mark of its start ([`crate::rule_sync::new_rules`]).
 
 use std::path::Path;
 use std::time::Duration;
@@ -356,7 +361,15 @@ pub async fn check(
         Ok(false) => {}
         Err(e) => eprintln!("riff: cannot count the workers of this machine: {e:#}"),
     }
-    match end_old_riff(api, me, pane, crate::worker::wrapper()).await {
+    let new_rules = crate::rule_sync::new_rules(
+        std::env::var(crate::rule_sync::WORKER_RULES)
+            .ok()
+            .as_deref(),
+        local::dir()
+            .and_then(|dir| local::rules_added(&dir))
+            .as_deref(),
+    );
+    match end_old(api, me, pane, crate::worker::wrapper(), new_rules).await {
         Ok(true) => return Ok(false),
         Ok(false) => {}
         Err(e) => eprintln!("riff: cannot end the worker that runs an old riff: {e:#}"),
@@ -457,20 +470,27 @@ async fn end_over_limit(api: &Api, me: &SessionUri, pane: &str) -> Result<bool> 
 
 /// Ends the worker `me` in `pane` when its wrapper `wrapper`
 /// (`riff workers run`) runs a binary that a new one replaced
-/// (01M517BT9WBQ4R79Z9KVY9SG1B). It posts a note to the lead, and ends
+/// (01M517BT9WBQ4R79Z9KVY9SG1B), or when riff added rules to the user
+/// settings of Claude Code after its start: `new_rules`
+/// (01M51M3ZRKQZ8KDVRGJR3XAY00). It posts a note to the lead, and ends
 /// the worker with [`crate::worker::stop`]. True when it ended the
 /// worker.
-async fn end_old_riff(
+async fn end_old(
     api: &Api,
     me: &SessionUri,
     pane: &str,
     wrapper: Option<u32>,
+    new_rules: bool,
 ) -> Result<bool> {
-    if !wrapper.is_some_and(crate::binary::runs_replaced) {
+    let host = me.place().host();
+    let note = if wrapper.is_some_and(crate::binary::runs_replaced) {
+        crate::text::worker_old_riff(host, pane)
+    } else if new_rules {
+        crate::text::worker_new_rules(host, pane)
+    } else {
         return Ok(false);
-    }
+    };
     let to = Selector::lead(me.who().user(), &me.place().repo_text());
-    let note = crate::text::worker_old_riff(me.place().host(), pane);
     eprintln!("riff: {note}");
     if let Err(e) = api.post(me, None, &[to], &note, Kind::Note).await {
         eprintln!("riff: cannot post the note to the lead: {e:#}");
