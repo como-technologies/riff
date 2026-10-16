@@ -207,8 +207,11 @@ impl Image {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
-    let head = git(main, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
-        .map_err(|_| anyhow!("{}", text::image_no_origin_head(main)))?;
+    let head = git(
+        main,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .map_err(|_| anyhow!("{}", text::image_no_origin_head(main)))?;
     let branch = head.strip_prefix("origin/").unwrap_or(&head);
     if let Err(e) = git(main, &["fetch", "--quiet", "origin", branch]) {
         say(&text::image_no_fetch(&head, &format!("{e:#}")));
@@ -233,7 +236,7 @@ pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
 }
 
 /// Runs `git ARGS` in `dir` with no prompt, and gives its stdout. An
-/// error names the command and its stderr.
+/// error names the command and its stderr, in one line.
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
     let out = Command::new("git")
         .arg("-C")
@@ -244,11 +247,13 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
         .output()
         .context("cannot run git")?;
     if !out.status.success() {
-        bail!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let lines: Vec<&str> = stderr
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        bail!("git {}: {}", args.join(" "), lines.join(" "));
     }
     let out = String::from_utf8(out.stdout).context("the output of git is not UTF-8")?;
     Ok(out.trim_end().to_owned())
@@ -340,12 +345,192 @@ impl fmt::Display for Image {
     }
 }
 
+/// A main clone for a test, with `config` as [`FILE`] on `origin/main`:
+/// the folder of the test, the main clone and the bare origin.
+#[cfg(test)]
+pub(crate) fn test_clone(
+    config: &str,
+) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, main) = (dir.path().join("origin.git"), dir.path().join("main"));
+    test_git(
+        dir.path(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().unwrap(),
+        ],
+    );
+    test_git(
+        dir.path(),
+        &["init", "-q", "-b", "main", main.to_str().unwrap()],
+    );
+    std::fs::write(main.join(FILE), config).unwrap();
+    test_git(&main, &["add", FILE]);
+    test_git(&main, &["commit", "-q", "-m", "pin"]);
+    test_git(
+        &main,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    test_git(&main, &["push", "-q", "origin", "main"]);
+    test_git(&main, &["remote", "set-head", "origin", "main"]);
+    (dir, main, origin)
+}
+
+/// Runs `git ARGS` in `dir` for a test, with no config of the person.
+#[cfg(test)]
+pub(crate) fn test_git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .stdout(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn digest() -> String {
         format!("sha256:{}", "0123456789abcdef".repeat(4))
+    }
+
+    /// A riff config that pins the image of the digest digit `n`.
+    fn config(n: &str) -> String {
+        format!("[session]\nimage = \"{}\"\n", pin(n))
+    }
+
+    fn pin(n: &str) -> String {
+        format!("ghcr.io/o/i@sha256:{}", n.repeat(64))
+    }
+
+    fn merged_lines(main: &Path) -> (Result<Image>, Vec<String>) {
+        let mut lines = Vec::new();
+        let image = merged(main, |line| lines.push(line.to_owned()));
+        (image, lines)
+    }
+
+    /// 01M51STPHXSSZMHF9T7Z85097R: a pin that is merged after the last
+    /// fetch of the clone counts: riff fetches the default branch first.
+    #[test]
+    fn the_merged_pin_is_the_one_on_origin_after_a_fetch() {
+        let (dir, main, origin) = test_clone(&config("0"));
+        let other = dir.path().join("other");
+        test_git(
+            dir.path(),
+            &[
+                "clone",
+                "-q",
+                origin.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(other.join(FILE), config("1")).unwrap();
+        test_git(&other, &["commit", "-q", "-am", "a new pin"]);
+        test_git(&other, &["push", "-q", "origin", "main"]);
+
+        let (image, lines) = merged_lines(&main);
+        assert_eq!(image.unwrap().to_string(), pin("1"));
+        // The working tree still has the old pin: one line says so.
+        assert_eq!(
+            lines,
+            [text::image_local_differs(
+                &main.join(FILE),
+                &pin("0"),
+                &pin("1"),
+                "origin/main"
+            )]
+        );
+    }
+
+    /// 01M51STPPWYFKQ1ESCNA6V3WV2: with no origin to fetch from, riff
+    /// says so and reads the branch that the clone has.
+    #[test]
+    fn a_failed_fetch_reads_the_branch_that_the_clone_has() {
+        let (_dir, main, origin) = test_clone(&config("0"));
+        std::fs::remove_dir_all(&origin).unwrap();
+        let (image, lines) = merged_lines(&main);
+        assert_eq!(image.unwrap().to_string(), pin("0"));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("riff cannot fetch origin/main: "),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            lines[0].ends_with("riff uses riff.toml of origin/main as the clone has it."),
+            "{}",
+            lines[0]
+        );
+    }
+
+    /// 01M51STPPWYFKQ1ESCNA6V3WV2: a clone with no `origin/HEAD` has no
+    /// merged pin. The error gives the fix.
+    #[test]
+    fn a_clone_with_no_origin_head_has_no_merged_pin() {
+        let (_dir, main, _origin) = test_clone(&config("0"));
+        test_git(&main, &["remote", "set-head", "origin", "--delete"]);
+        let error = format!("{:#}", merged_lines(&main).0.unwrap_err());
+        assert_eq!(error, text::image_no_origin_head(&main));
+        assert!(error.ends_with("remote set-head origin --auto"), "{error}");
+    }
+
+    /// 01M51STPMEM62Z8B26YM2CH6QH: a working tree with no riff config or
+    /// with a tag gives one line with why, and the merged pin.
+    #[test]
+    fn a_working_tree_with_no_good_pin_gives_one_line_with_why() {
+        let (_dir, main, _origin) = test_clone(&config("0"));
+        std::fs::remove_file(main.join(FILE)).unwrap();
+        let (image, lines) = merged_lines(&main);
+        assert_eq!(image.unwrap().to_string(), pin("0"));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("cannot read the riff config "),
+            "{}",
+            lines[0]
+        );
+        let tail = format!("riff uses the merged pin {} of origin/main.", pin("0"));
+        assert!(lines[0].ends_with(&tail), "{}", lines[0]);
+
+        std::fs::write(
+            main.join(FILE),
+            "[session]\nimage = \"ghcr.io/o/i:latest\"\n",
+        )
+        .unwrap();
+        let (image, lines) = merged_lines(&main);
+        assert_eq!(image.unwrap().to_string(), pin("0"));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("names a tag"), "{}", lines[0]);
+        assert!(lines[0].ends_with(&tail), "{}", lines[0]);
+    }
+
+    /// The merged config pins a tag: riff refuses it, and names the
+    /// branch. The working tree does not help.
+    #[test]
+    fn a_merged_pin_with_a_tag_is_an_error() {
+        let (_dir, main, _origin) = test_clone("[session]\nimage = \"ghcr.io/o/i:latest\"\n");
+        std::fs::write(main.join(FILE), config("0")).unwrap();
+        let error = format!("{:#}", merged_lines(&main).0.unwrap_err());
+        assert!(
+            error.starts_with("the session image of riff.toml of origin/main: "),
+            "{error}"
+        );
+        assert!(error.contains("names a tag"), "{error}");
     }
 
     fn refused(text: &str, why: &str) {

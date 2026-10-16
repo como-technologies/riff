@@ -1602,6 +1602,23 @@ mod tests {
         );
     }
 
+    /// 01M51STPHXSSZMHF9T7Z85097R: the wave of the daemon takes the
+    /// merged pin of its main clone, not the pin of its working tree.
+    #[tokio::test]
+    async fn the_wave_takes_the_merged_pin_of_its_main_clone() {
+        let pin = |n: &str| format!("ghcr.io/o/i@sha256:{}", n.repeat(64));
+        let config = |n: &str| format!("[session]\nimage = \"{}\"\n", pin(n));
+        let (_dir, main, _origin) = session_image::test_clone(&config("0"));
+        std::fs::write(main.join(session_image::FILE), config("1")).unwrap();
+        let wave = Wave {
+            repo: "acme/app".into(),
+            main,
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        assert_eq!(Live::default().image(&wave).await.unwrap(), pin("0"));
+    }
+
     #[tokio::test]
     async fn the_wave_starts_nothing_while_the_free_memory_is_below_the_floor() {
         let free = Arc::new(AtomicU64::new(2));

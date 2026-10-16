@@ -872,6 +872,102 @@ async fn riff_run_goes_on_from_the_branch_of_an_earlier_session() {
     );
 }
 
+/// 01M51STPHXSSZMHF9T7Z85097R, 01M51STPMEM62Z8B26YM2CH6QH,
+/// 01M51SVXQK037E20R7WAY66532: the main clone pins another image in its
+/// working tree, and origin has the merged pin. `riff wave run`, the
+/// image step of `riff update --check`, `riff run` and `riff lead start`
+/// each use the merged pin, and say in one line that the local pin
+/// differs. Only the image of this folder in `riff update --check` reads
+/// the working tree. A tag in the working tree stops nothing.
+#[tokio::test]
+async fn only_the_merged_pin_counts_and_a_local_pin_gives_one_line() {
+    let mut machine = Machine::new().await;
+    let local = format!(
+        "ghcr.io/como-technologies/riff-session@sha256:{}",
+        "f".repeat(64)
+    );
+    let config = machine.main.join("riff.toml");
+    std::fs::write(&config, format!("[session]\nimage = \"{local}\"\n")).unwrap();
+    let differs = riff::text::image_local_differs(&config, &local, PINNED, "origin/main");
+    let says = |out: &str, line: &str| {
+        assert!(out.lines().any(|l| l == line), "{line}\nnot in\n{out}");
+        assert_eq!(out.matches(line).count(), 1, "{out}");
+    };
+
+    // riff wave run: the riff is paused, so the wave starts nothing.
+    let out = machine.ok(None, &["wave", "run"]).await;
+    says(&out, &differs);
+
+    // The update step of the wave: the merged pin. Only the image of this
+    // folder is the pin of the working tree.
+    std::fs::write(machine.bin.path().join("no-image"), "").unwrap();
+    let out = machine.run(None, &["update", "--check"]).await;
+    let stdout = text(&out.stdout);
+    says(&stdout, &format!("como-technologies/riff: {differs}"));
+    for line in [
+        format!(
+            "not in step  the session image of como-technologies/riff: podman does not have \
+             {PINNED}. Fix: podman pull {PINNED}"
+        ),
+        format!(
+            "not in step  the session image of this folder: podman does not have {local}. Fix: \
+             podman pull {local}"
+        ),
+    ] {
+        says(&stdout, &line);
+    }
+    // The update step at the start of the daemon: the same line in its
+    // log.
+    machine.stop_daemon().await;
+    machine.start_daemon().await;
+    wait_for(
+        &machine.bin.path().join("daemon.out"),
+        &format!("como-technologies/riff: {differs}"),
+    )
+    .await;
+    machine.ok(None, &["wave", "stop"]).await;
+
+    // riff run pulls and runs the merged pin.
+    machine.lead().await;
+    let out = machine.run(None, &["run", "issue-12"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    says(&stdout, &differs);
+    assert_eq!(
+        machine.read("podman.log"),
+        format!("podman pull {PINNED}\n")
+    );
+    let args = machine.read("run.args");
+    assert!(args.lines().any(|a| a == PINNED), "{args}");
+    assert!(!args.contains(&local), "{args}");
+
+    // A tag in the working tree: riff says why, and runs the merged pin.
+    std::fs::write(&config, format!("[session]\nimage = \"{IMAGE}\"\n")).unwrap();
+    std::fs::write(machine.bin.path().join("hold"), "").unwrap();
+    std::fs::write(machine.bin.path().join("no-image"), "").unwrap();
+    let out = machine.ok(None, &["lead", "start"]).await;
+    let line = out
+        .lines()
+        .find(|l| l.contains("names a tag"))
+        .unwrap_or_else(|| panic!("no line of the tag in\n{out}"));
+    assert!(
+        line.ends_with(&format!(
+            "riff uses the merged pin {PINNED} of origin/main."
+        )),
+        "{line}"
+    );
+    assert!(out.contains(&riff::text::run_pulling(PINNED)), "{out}");
+    let args = machine.read("run.args");
+    assert!(args.lines().any(|a| a == PINNED), "{args}");
+    let name = "riff-lead-como-technologies-riff";
+    std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
+    let started = Instant::now();
+    while machine.ok(None, &["daemon", "status"]).await.contains(name) {
+        assert!(started.elapsed() < isolated::HANG, "the lead did not end");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 #[tokio::test]
 async fn a_failed_check_takes_no_claim_and_starts_no_container() {
     let machine = Machine::new().await;
@@ -898,19 +994,6 @@ async fn a_failed_check_takes_no_claim_and_starts_no_container() {
     assert_eq!(machine.read("podman.log"), format!("podman pull {IMAGE}\n"));
     std::fs::remove_file(&no_image).unwrap();
     std::fs::remove_file(&no_pull).unwrap();
-
-    // riff.toml names a tag: riff takes no image from it.
-    let config = machine.main.join("riff.toml");
-    let pinned = std::fs::read_to_string(&config).unwrap();
-    std::fs::write(&config, format!("[session]\nimage = \"{IMAGE}\"\n")).unwrap();
-    let out = machine.run(None, &["run", "issue-12"]).await;
-    assert!(!out.status.success());
-    assert!(
-        text(&out.stderr).contains("names a tag"),
-        "{}",
-        text(&out.stderr)
-    );
-    std::fs::write(&config, pinned).unwrap();
 
     Machine::sign_in(&machine.env.home(), 30);
     let out = machine
