@@ -34,7 +34,7 @@
 //! let dir = tempfile::tempdir()?;
 //! let key = Key::from_bytes(&[1; 32]);
 //! let mut peers = Peers::open(dir.path(), key.public(), |_| {})?;
-//! peers.write(&key, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+//! peers.write(&key, &Body::Riff(Riff { user: "mike".into(), host: None }), 1)?;
 //! let hub = Arc::new(Hub::new(key, peers));
 //!
 //! let sides: [Box<dyn Talk>; 2] = [

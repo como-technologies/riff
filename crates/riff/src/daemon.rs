@@ -1614,8 +1614,8 @@ async fn keep_made(store: &Dir, made: &Made) -> Result<()> {
 
 /// Opens the records of the riff of the daemon of `key` in `state_dir`
 /// ([`Peers::open`]). A riff of its own with no record gets its first
-/// record: `riff`, with the user of the owner `owner`
-/// (01M519Z2JMAKN0T6JZFBPSTKC8).
+/// record: `riff`, with the user of the owner `owner` and the host of
+/// this machine (01M519Z2JMAKN0T6JZFBPSTKC8, 01M521J6T2PWA9JREDXJK6DZ0V).
 fn open_peers(
     state_dir: &Path,
     key: &Key,
@@ -1626,6 +1626,7 @@ fn open_peers(
     if peers.state().owner().is_none() && peers.state().riff() == key.public() {
         let riff = Body::Riff(crate::peer::body::Riff {
             user: owner.to_owned(),
+            host: Some(crate::identity::this_host()),
         });
         peers.write(key, &riff, u64::try_from(now_ms()).unwrap_or_default())?;
     }

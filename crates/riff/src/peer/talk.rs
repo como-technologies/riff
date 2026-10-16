@@ -110,7 +110,7 @@ pub const PAGE: usize = 50;
 /// let dir = tempfile::tempdir()?;
 /// let key = Key::from_bytes(&[1; 32]);
 /// let mut peers = Peers::open(dir.path(), key.public(), |_| {})?;
-/// peers.write(&key, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+/// peers.write(&key, &Body::Riff(Riff { user: "mike".into(), host: None }), 1)?;
 /// let hub = Arc::new(Hub::new(key, peers));
 /// let a: SessionUri = "riff://mike@h/o/r?session=a".parse()?;
 /// let b: SessionUri = "riff://mike@h/o/r?session=b".parse()?;
@@ -468,7 +468,7 @@ fn blocking<T: Send + 'static>(
 /// let dir = tempfile::tempdir()?;
 /// let key = Key::from_bytes(&[1; 32]);
 /// let mut peers = Peers::open(dir.path(), key.public(), |_| {})?;
-/// peers.write(&key, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+/// peers.write(&key, &Body::Riff(Riff { user: "mike".into(), host: None }), 1)?;
 /// let hub = Arc::new(Hub::new(key, peers));
 /// let a: SessionUri = "riff://mike@h/o/r?session=a".parse()?;
 /// let b: SessionUri = "riff://mike@h/o/r?session=b".parse()?;
@@ -1379,6 +1379,7 @@ mod tests {
         let mut peers = Peers::open(dir, key.public(), |_| {}).unwrap();
         let riff = Body::Riff(Riff {
             user: "mike".into(),
+            host: None,
         });
         peers.write(&key, &riff, 1).unwrap();
         let hub = Arc::new(Hub::new(key, peers));

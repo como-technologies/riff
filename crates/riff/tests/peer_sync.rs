@@ -118,6 +118,7 @@ impl Daemon {
         let owner = Daemon::start(byte, key(byte).public(), tempfile::tempdir().unwrap()).await;
         let riff = Body::Riff(Riff {
             user: "mike".into(),
+            host: None,
         });
         owner.hub.write(&riff).unwrap();
         for (member, user, host) in members {

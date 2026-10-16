@@ -70,9 +70,9 @@
 //! let owner = Key::from_bytes(&[1; 32]);
 //! let riff = owner.public();
 //! let mut peers = Peers::open(dir.path(), riff, |_| {})?;
-//! peers.write(&owner, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+//! peers.write(&owner, &Body::Riff(Riff { user: "mike".into(), host: None }), 1)?;
 //! // The owner signs another first record: a fork.
-//! let other = Body::Riff(Riff { user: "ann".into() });
+//! let other = Body::Riff(Riff { user: "ann".into(), host: None });
 //! let second = Record::sign(&owner, riff, 1, Id::ZERO, 2, &other)?;
 //! let Outcome::Fork(fork) = peers.keep(second.bytes().to_vec(), None)? else {
 //!     panic!("no fork");
@@ -438,6 +438,7 @@ mod tests {
         let mut fresh = peers.subscribe();
         let riff_body = Body::Riff(Riff {
             user: "mike".into(),
+            host: None,
         });
         for body in [riff_body, admit(&brett, "brett"), admit(&ann, "ann")] {
             peers.write(&owner, &body, 1).unwrap();
@@ -511,6 +512,7 @@ mod tests {
         let mut peers = Peers::open(dir.path(), riff, |_| {}).unwrap();
         let body = Body::Riff(Riff {
             user: "mike".into(),
+            host: None,
         });
         peers.write(&owner, &body, 1).unwrap();
         let admit = Body::Member(Member {
@@ -586,6 +588,7 @@ mod tests {
             1,
             &Body::Riff(Riff {
                 user: "mike".into(),
+                host: None,
             }),
         )
         .unwrap();

@@ -359,7 +359,7 @@ pub enum LinkState {
 ///     let riff = Key::from_bytes(&[1; 32]).public();
 ///     let (seen_by_owner, seen_by_member) = (MemoryLookup::new(), MemoryLookup::new());
 ///     let (owner, owner_links, _a) = daemon(1, riff, &seen_by_owner).await?;
-///     owner.write(&Body::Riff(Riff { user: "mike".into() }))?;
+///     owner.write(&Body::Riff(Riff { user: "mike".into(), host: None }))?;
 ///     let key = Key::from_bytes(&[2; 32]).public();
 ///     let host = "kadomony".into();
 ///     owner.write(&Body::Member(Member { key, user: "brett".into(), host }))?;
