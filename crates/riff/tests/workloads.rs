@@ -820,6 +820,84 @@ async fn worktrees_clean_removes_a_worktree_with_no_work_of_its_own() {
     );
 }
 
+/// 01M51JCQ7V7SHTY1ANF0WSTBDF (#849): a session in another clone rebased
+/// the branches of two worktrees, and their pull requests merged at the
+/// new heads. The clone of the worktrees does not have those heads.
+/// `riff worktrees clean` removes the worktree at the old head: each of
+/// its commits is in the merge. It keeps the worktree with one more
+/// commit, and names that commit.
+#[tokio::test(flavor = "multi_thread")]
+async fn worktrees_clean_removes_the_worktree_of_a_rebased_pull_request() {
+    let r = Riff::new().await;
+    let main = r.main();
+    git(&main, &["remote", "set-head", "origin", "--auto"]);
+    let commit = |dir: &Path, name: &str| {
+        std::fs::write(dir.join(name), name).unwrap();
+        git(dir, &["add", name]);
+        git(dir, &["commit", "-q", "-m", name]);
+    };
+    let rebased = worktree(&r, "issue-805");
+    let extra = worktree(&r, "issue-822");
+    for tree in [&rebased, &extra] {
+        commit(tree, "one");
+        commit(tree, "two");
+        git(tree, &["push", "-q", "origin", "HEAD"]);
+    }
+
+    // The other machine: the default branch moves on, and a session
+    // rebases each branch on it.
+    git(r.root.path(), &["clone", "-q", "origin.git", "other"]);
+    let other = r.root.path().join("other");
+    commit(&other, "moves");
+    git(&other, &["push", "-q", "origin", "HEAD"]);
+    for (branch, number) in [("worktree-issue-805", 817), ("worktree-issue-822", 835)] {
+        git(&other, &["checkout", "-q", branch]);
+        git(&other, &["rebase", "-q", "main"]);
+        let pull = format!("HEAD:refs/pull/{number}/head");
+        git(&other, &["push", "-q", "origin", &pull]);
+        let head = git(&other, &["rev-parse", "HEAD"]).trim().to_owned();
+        std::fs::write(
+            r.fake.path().join(format!("pr-{branch}.json")),
+            format!(r#"{{"number":{number},"state":"MERGED","headRefOid":"{head}"}}"#),
+        )
+        .unwrap();
+    }
+    commit(&extra, "not-in-the-merge");
+    let short = git(&extra, &["rev-parse", "--short", "HEAD"]);
+
+    let out = r.riff(&main, &["worktrees", "clean"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let printed = stdout(&out);
+    let line = |path: &Path| {
+        let start = format!("{}: ", path.display());
+        printed
+            .lines()
+            .find_map(|l| l.strip_prefix(&start).map(str::to_owned))
+            .unwrap_or_else(|| panic!("no line for {}: {printed}", path.display()))
+    };
+    assert_eq!(
+        line(&rebased),
+        "removed with its branch worktree-issue-805: each of its commits is in the merged pull \
+         request #817"
+    );
+    assert_eq!(
+        line(&extra),
+        format!(
+            "kept: its commit {} is not in the merged pull request #835",
+            short.trim()
+        )
+    );
+
+    let list = git(&main, &["worktree", "list", "--porcelain"]);
+    assert!(!list.contains("issue-805"), "{list}");
+    assert!(list.contains("issue-822"), "{list}");
+    assert!(
+        git(&main, &["branch", "--list", "worktree-issue-805"])
+            .trim()
+            .is_empty()
+    );
+}
+
 /// A process that waits on its stdin, stopped on drop: also when a
 /// test fails.
 struct Waits(Child);

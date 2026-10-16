@@ -4781,6 +4781,8 @@ riff worktrees clean
 | work that is not committed, and no live owner | commits it as WIP, pushes its branch, and posts a note to the lead |
 | clean, and its `HEAD` is on the default branch of `origin`: no commit of its own | removes it and its branch |
 | clean, and a merged pull request has its `HEAD` as head, also when the branch is gone | removes it and its branch |
+| clean, its pull request merged with another head, and each of its commits is in the merge | removes it and its branch |
+| clean, its pull request merged with another head, and a commit is not in the merge | keeps it, and names the commit |
 | clean, detached, and its commit is on `origin` | removes it |
 | each other case | keeps it |
 
@@ -4789,6 +4791,8 @@ It prints one line for each worktree, with what it did and why:
 ```text
 /home/mike/src/riff/.claude/worktrees/issue-12: unlocked: the process of its lock is gone; removed with its branch worktree-issue-12: its pull request #40 is merged
 /home/mike/src/riff/.claude/worktrees/verify-issue-14-a6cf: removed: its commit is the head of the merged pull request #41
+/home/mike/src/riff/.claude/worktrees/issue-805: removed with its branch worktree-issue-805: each of its commits is in the merged pull request #817
+/home/mike/src/riff/.claude/worktrees/issue-822: kept: its commit 1a2b3c4 is not in the merged pull request #835
 /home/mike/src/riff/.claude/worktrees/issue-13: kept: a live session works in it
 /home/mike/src/riff/.claude/worktrees/issue-756: kept: a live session holds its item issue-756
 /home/mike/src/riff/.claude/worktrees/live-712: kept: the running process 4242 (riff) uses it
@@ -4801,6 +4805,15 @@ reads each running process of your user in `/proc`. A program that a
 new build deleted still counts. When a process keeps a worktree that
 you do not use, stop that process. The next clean removes the
 worktree.
+
+A session on another machine can rebase the branch of an item and
+push it. The pull request then merges with another head, and the
+worktree of the first author stays at the old head. riff compares the
+commits of that worktree with the merge by their patches, as
+`git cherry` does. A commit of the default branch is in the merge
+too. When the clone does not have the head of the pull request, riff
+fetches it from `origin`. When riff keeps such a worktree, the commit
+that it names is work that only this worktree has.
 
 `riff workers start` and the start of `riff workers host` run it too.
 A workers host and the `riff mcp` of the lead also run it each 10
