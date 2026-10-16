@@ -648,7 +648,11 @@ mod tests {
             };
             let doc = doc.trim_start();
             if let Some(tag) = doc.strip_prefix("```") {
-                fence = if fence.is_some() { None } else { Some((at + 1, tag)) };
+                fence = if fence.is_some() {
+                    None
+                } else {
+                    Some((at + 1, tag))
+                };
             } else if let Some((start, tag)) = fence
                 && doc.starts_with("drop(")
                 && tag != "standalone_crate"
