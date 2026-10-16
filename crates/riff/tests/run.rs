@@ -503,6 +503,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     let machine = Machine::new().await;
     machine.lead().await;
     let home = machine.env.home();
+    std::fs::write(home.join(".claude.json"), r#"{"theme":"dark"}"#).unwrap();
     let before = listing(&home);
 
     // With no --image: the image that riff.toml pins. podman does not
@@ -711,10 +712,14 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     );
     let alternates = std::fs::read_to_string(clone.join(".git/objects/info/alternates")).unwrap();
     assert_eq!(alternates.trim(), o);
-    let trust: Value =
+    // The first-run answers of claude, so a takeover asks no question
+    // (01M51JACH6TQP318ZFG6NQ9GRM).
+    let answers: Value =
         serde_json::from_str(&std::fs::read_to_string(folder.join("claude/.claude.json")).unwrap())
             .unwrap();
-    assert_eq!(trust["projects"][&c]["hasTrustDialogAccepted"], true);
+    assert_eq!(answers["hasCompletedOnboarding"], true);
+    assert_eq!(answers["theme"], "dark");
+    assert_eq!(answers["projects"][&c]["hasTrustDialogAccepted"], true);
     // claude adds no attribution line, so the trailers end the PR body
     // (01M4ZD48DHAKJ1EHX6QHYAQ7ZM).
     let settings: Value = serde_json::from_str(

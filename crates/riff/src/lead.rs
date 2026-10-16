@@ -29,7 +29,7 @@
 //! | The container | `riff-lead-OWNER-REPO` ([`name_of`]): one lead for each repository | 01M4Z60B81RTZT71PN5HV0GZHX, 01M501P9MXNAP5QXNVBVF5JJFN |
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
 //! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z |
-//! | The Claude folder | the first-run answers of `claude` ([`claude_folder`]) | 01M501P9SDGVWG3MTVCW5BDRQQ |
+//! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM |
 //! | The command | `claude --session-id ID --permission-mode auto START` ([`spec`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4 |
 //! | The riff tools | [`crate::mcp::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
 //! | The wakes | `/opt/riff/riff relay watch` in a background task | 01M501PA04NP79RJQEDP4D7YTM |
@@ -42,10 +42,9 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use riff_core::name::{Place, SessionUri};
 use riff_core::wire::StartReason;
-use serde_json::{Map, Value, json};
 
 use crate::api::Api;
 use crate::daemon::{self, Ask, Say, Status};
@@ -94,98 +93,6 @@ fn plain(repo: &str) -> String {
 /// ```
 pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
     data.join("leads").join(plain(repo))
-}
-
-/// Writes the first-run answers of `claude` into the Claude folder `dir`
-/// of the lead (01M501P9SDGVWG3MTVCW5BDRQQ): the onboarding, the theme,
-/// and the trust of `clone`. The theme is the `theme` of the
-/// `.claude.json` of the person at `person`, else `auto`. A key that is
-/// there stays, so the answers of the person stay. It writes the
-/// `settings.json` of a session ([`run::settings`] with `auto`) when it
-/// is not there. When it is there, it adds each rule of
-/// [`crate::permissions::session_rules`] that it lacks
-/// (01M5084K4YQCZF20XA0P2485SG), and the auto mode settings of `auto`
-/// that it lacks ([`crate::permissions::with_auto_mode`],
-/// 01M516HEX3GVTN9K2QS12A4PG3).
-///
-/// ```
-/// use riff::permissions::Trust;
-///
-/// let dir = tempfile::tempdir()?;
-/// let claude = dir.path().join("claude");
-/// let person = dir.path().join("person.json");
-/// std::fs::write(&person, r#"{"theme":"dark"}"#)?;
-/// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878") };
-/// riff::lead::claude_folder(&claude, "/data/clone".as_ref(), Some(&person), &auto)?;
-/// let read = |name: &str| -> serde_json::Value {
-///     serde_json::from_slice(&std::fs::read(claude.join(name)).unwrap()).unwrap()
-/// };
-/// let json = read(".claude.json");
-/// assert_eq!(json["hasCompletedOnboarding"], true);
-/// assert_eq!(json["theme"], "dark");
-/// assert_eq!(json["projects"]["/data/clone"]["hasTrustDialogAccepted"], true);
-/// assert_eq!(read("settings.json"), riff::run::settings(&auto));
-///
-/// // A folder of an earlier start gets the missing rules and auto mode
-/// // settings, and keeps its keys.
-/// std::fs::write(claude.join("settings.json"), r#"{"includeCoAuthoredBy":false,"model":"opus"}"#)?;
-/// riff::lead::claude_folder(&claude, "/data/clone".as_ref(), Some(&person), &auto)?;
-/// let settings = read("settings.json");
-/// assert_eq!(settings["model"], "opus");
-/// assert_eq!(settings["permissions"], riff::run::settings(&auto)["permissions"]);
-/// assert_eq!(settings["skillOverrides"], riff::run::settings(&auto)["skillOverrides"]);
-/// assert_eq!(settings["autoMode"], riff::run::settings(&auto)["autoMode"]);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn claude_folder(
-    dir: &Path,
-    clone: &Path,
-    person: Option<&Path>,
-    auto: &crate::permissions::Trust,
-) -> Result<()> {
-    let read =
-        |path: &Path| -> Option<Value> { serde_json::from_slice(&std::fs::read(path).ok()?).ok() };
-    std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
-    let file = dir.join(".claude.json");
-    let mut root = match read(&file) {
-        Some(Value::Object(map)) => map,
-        _ => Map::new(),
-    };
-    root.entry("hasCompletedOnboarding").or_insert(json!(true));
-    let theme = person
-        .and_then(read)
-        .and_then(|p| p.get("theme").cloned())
-        .unwrap_or_else(|| json!("auto"));
-    root.entry("theme").or_insert(theme);
-    let projects = root
-        .entry("projects")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .context("`projects` in the Claude config is not an object")?;
-    let project = projects
-        .entry(clone.to_string_lossy().into_owned())
-        .or_insert_with(|| json!({}));
-    if let Some(project) = project.as_object_mut() {
-        project
-            .entry("hasTrustDialogAccepted")
-            .or_insert(json!(true));
-    }
-    let tmp = dir.join(".claude.json.riff");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(&Value::Object(root))?)
-        .with_context(|| format!("cannot write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &file).with_context(|| format!("cannot write {}", file.display()))?;
-    let settings = dir.join("settings.json");
-    if settings.exists() {
-        crate::permissions::add(&settings, &crate::permissions::session_rules())?;
-        crate::permissions::add_auto_mode(&settings, auto)?;
-    } else {
-        std::fs::write(
-            &settings,
-            serde_json::to_string_pretty(&run::settings(auto))?,
-        )
-        .with_context(|| format!("cannot write {}", settings.display()))?;
-    }
-    Ok(())
 }
 
 /// The [`SessionSpec`] of the lead of `repo`: the spec of a worker
@@ -355,11 +262,10 @@ pub async fn start_with(
     if let Fresh::Kept(why) = fresh_clone(&main, &clone)? {
         println!("{}", text::lead_clone_kept(&clone, &why));
     }
-    let person = host.home.join(".claude.json");
-    claude_folder(
+    run::claude_folder(
         &claude,
         &clone,
-        Some(&person),
+        &host.home.join(".claude.json"),
         &crate::permissions::Trust::of(here.repo(), server),
     )?;
 
