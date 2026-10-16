@@ -884,10 +884,14 @@ impl Server {
     ///
     /// The checkpoint holds only records that this instance wrote, so it
     /// is right with no lease too. With the ID of a tool, the server
-    /// writes none: a tool can cut the log.
+    /// writes none: a tool can cut the log. A server that shuts down
+    /// writes none either: its shutdown wrote its last checkpoint.
     async fn hand_over(&self, lease: &Lease) {
         let _writing = self.gate.handing_over.lock().await;
         self.stop("another instance holds the lease");
+        if self.gate.closing.load(Ordering::SeqCst) {
+            return;
+        }
         match lease.taken_by_instance().await {
             Ok(true) => {
                 tracing::info!("writing the last checkpoint for the new instance");
@@ -1295,8 +1299,8 @@ impl Service {
         let log::Replayed {
             records,
             last,
-            skipped,
-            skips,
+            mut skipped,
+            mut skips,
             ..
         } = log::replay_after(&*store, from).await?;
         let count = records.len();
@@ -1327,7 +1331,6 @@ impl Service {
         // (01M51X8MG0YQT5KBZC9H7917J3). This build writes none past a
         // checkpoint of a later version (01M3TJWJC08ZR5TWA1Y9CDE0QM).
         let now = checkpoint::names(&*store).await?.pop();
-        let (mut skipped, mut skips) = (skipped, skips);
         if now.map(|(_, _, name)| name) != found.newest {
             let again = checkpoint::load(&*store, &build).await?;
             tracing::info!("a checkpoint came since the load");

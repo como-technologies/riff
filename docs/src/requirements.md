@@ -1995,9 +1995,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   another instance in the lease, it stops as in R140. Then it writes a
   last checkpoint at its written position: the hand-over. It does not
   prune. It writes none when the lease holds the ID of a tool, when the
-  holder ended the lease, or when it writes no checkpoint
-  (01M3TBZBQDF0ES4KM54FJQF6Z8). A shutdown waits for the end of that
-  write. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
+  holder ended the lease, when its own shutdown began, or when it
+  writes no checkpoint (01M3TBZBQDF0ES4KM54FJQF6Z8). A shutdown waits
+  for the end of that write. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M51X8P4M8PHSSJMWF1J1KQS1** After the wait for the lease, when a
   checkpoint came since the load, the instance loads its state again
   from the newest checkpoint that reads, and replays the log after it.

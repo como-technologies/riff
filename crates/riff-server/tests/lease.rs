@@ -427,6 +427,27 @@ async fn an_instance_that_reads_a_new_instance_in_the_lease_writes_its_last_chec
     );
 }
 
+/// An instance that shut down writes no checkpoint for a new instance:
+/// its shutdown wrote its last one (01M51X8MG0YQT5KBZC9H7917J3).
+#[tokio::test]
+async fn an_instance_that_shut_down_writes_no_checkpoint_for_a_new_instance() {
+    let store = Memory::default();
+    let (old, base) = common::start_on(Arc::new(store.clone())).await;
+    assert_eq!(status(&base, "register", json!({ "me": MIKE })).await, 200);
+    old.shutdown().await.unwrap();
+    let names = riff_state::checkpoint::names(&store).await.unwrap();
+    assert_eq!(names.len(), 1, "{names:?}");
+
+    let (_new, _base) = common::start_on(Arc::new(store.clone())).await;
+    // The old instance reads the ID of the new one, and stops. A second
+    // shutdown waits for a write of the hand-over.
+    in_time(Duration::from_secs(5), old.stopped())
+        .await
+        .unwrap();
+    old.shutdown().await.unwrap();
+    assert_eq!(riff_state::checkpoint::names(&store).await.unwrap(), names);
+}
+
 /// A deploy: the old and the new instance run at the same time for a
 /// short time. The lease is live all the time, so a cut refuses. The
 /// old instance does not write the time over the lease of the new one,
