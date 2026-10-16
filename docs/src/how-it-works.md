@@ -2450,6 +2450,40 @@ riff plan free issue-12
 issue-12 in como-technologies/riff is free of its hold: a worker can claim it.
 ```
 
+### Keep the verify of an item from the workers
+
+A hold of `verify-issue-12` stops the claim of the verify by a worker,
+and `riff run` sends no verify request for the item. Only a lead, the
+owner or an admin can hold it:
+
+```sh
+riff plan hold verify-issue-12 a scratch item
+```
+
+A worker cannot hold an item. The label `no-verify` on the issue works
+for each session: riff offers no verify of the pull request of the
+issue to a worker, and `riff run` sends no verify request for it. The
+first command makes the label, or updates it:
+
+```sh
+gh label create no-verify --description "riff offers no verify of this item" --force
+gh issue edit 12 --add-label no-verify
+```
+
+`riff run` says why it sends no verify request:
+
+```text
+riff run sends no verify request for issue-12: issue #12 has the label no-verify.
+```
+
+With no verify, the pull request does not merge. To let riff offer the
+verify again, remove the label, or free the hold:
+
+```sh
+gh issue edit 12 --remove-label no-verify
+riff plan free verify-issue-12
+```
+
 ## Pause the riff
 
 riff has two pauses:
