@@ -44,6 +44,24 @@
 //! The files are in [`dir`]. A reader looks for `mcp-PID` of each
 //! process above it, nearest first, up to [`MAX_DEPTH`] processes.
 //!
+//! # An agent inside a session
+//!
+//! A Bash command of a session can start a second agent, for example
+//! `claude -p`. That agent finds the record of the session above it,
+//! so it would act as the session: its start hook would free the
+//! claims of the session, and its end hook would end the session. So
+//! an agent with a live record above its own process is no session
+//! of the riff ([`outer`], 01M517N75C0Z5BAFQAWRN3YTYB). Its hooks
+//! and its `riff mcp` act for no session.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     C[Claude Code, PID 42] --> M[riff mcp] -- "holds" --> F[(mcp-42)]
+//!     C --> B[shell] --> N[claude -p, PID 77]
+//!     N --> H[riff hook session-start]
+//!     H -- "PID 42 is above PID 77: no start" --> F
+//! ```
+//!
 //! ```standalone_crate
 //! let run = tempfile::tempdir()?;
 //! let agent = std::process::id();
@@ -252,6 +270,35 @@ pub fn recorded(dir: &Path, agent: u32) -> Option<String> {
 /// The session recorded for the nearest process above this one.
 pub fn recorded_above(dir: &Path) -> Option<String> {
     ancestors().find_map(|pid| recorded(dir, pid))
+}
+
+/// The session of a live `riff mcp` of a process above the agent
+/// process `agent`. Then `agent` runs inside that session, and it is
+/// no session of the riff (01M517N75C0Z5BAFQAWRN3YTYB). The record of
+/// `agent` itself does not count.
+///
+/// ```standalone_crate
+/// let run = tempfile::tempdir()?;
+/// let me = std::process::id();
+/// let mut child = std::process::Command::new("sleep").arg("30").spawn()?;
+/// assert_eq!(riff::local::outer(run.path(), child.id()), None);
+///
+/// // A live record of the agent itself: not inside a session.
+/// let own = riff::local::record(run.path(), child.id(), "n7")?.expect("free");
+/// assert_eq!(riff::local::outer(run.path(), child.id()), None);
+/// drop(own);
+///
+/// // A live record of a process above the agent: inside that session.
+/// let outer = riff::local::record(run.path(), me, "a6cf")?.expect("free");
+/// assert_eq!(riff::local::outer(run.path(), child.id()).as_deref(), Some("a6cf"));
+/// assert_eq!(riff::local::outer(run.path(), me), None);
+/// drop(outer);
+/// child.kill()?;
+/// child.wait()?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn outer(dir: &Path, agent: u32) -> Option<String> {
+    up_from(parent_of(agent)).find_map(|pid| recorded(dir, pid))
 }
 
 /// Takes the watch lock of `session`. `None` when another watch holds it
@@ -504,11 +551,15 @@ fn locked(file: &File) -> bool {
 /// The processes above this one, nearest first. It stops before the
 /// first process of the system.
 fn ancestors() -> impl Iterator<Item = u32> {
-    std::iter::successors(Some(std::os::unix::process::parent_id()), |&pid| {
-        parent_of(pid)
-    })
-    .take_while(|&pid| pid > 1)
-    .take(MAX_DEPTH)
+    up_from(Some(std::os::unix::process::parent_id()))
+}
+
+/// The process `first` and the processes above it, nearest first. It
+/// stops before the first process of the system.
+fn up_from(first: Option<u32>) -> impl Iterator<Item = u32> {
+    std::iter::successors(first, |&pid| parent_of(pid))
+        .take_while(|&pid| pid > 1)
+        .take(MAX_DEPTH)
 }
 
 /// The parent of `pid`: from `/proc` on Linux, from `ps` elsewhere.
