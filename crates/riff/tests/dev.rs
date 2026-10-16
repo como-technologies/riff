@@ -11,6 +11,7 @@
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::book;
@@ -49,7 +50,13 @@ const INSTALLED: &str = "#!/bin/sh\necho riff 0.1.0 release\n";
 const LISTENS: &str = "echo \"$RIFF_LISTEN\" > listen\nexec sleep 30";
 
 /// One `just dev` at a time: each looks for a free port from 7900 on.
-static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// A test that takes a port from 7900 itself holds it too.
+static ONE: Mutex<()> = Mutex::new(());
+
+/// Wait for the turn of this test at the ports from 7900.
+fn one() -> MutexGuard<'static, ()> {
+    ONE.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The result of one `just dev`.
 struct Dev {
@@ -63,9 +70,16 @@ struct Dev {
 /// `riff-server`, and `env` the `.env` of the tree, if any. The home
 /// has an installed `riff`.
 fn dev(args: &[&str], server: &str, env: Option<&str>) -> Dev {
-    let _one = ONE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    dev_in_turn(&one(), args, server, env)
+}
+
+/// `dev` for a test that holds its turn at the ports already.
+fn dev_in_turn(
+    _one: &MutexGuard<'static, ()>,
+    args: &[&str],
+    server: &str,
+    env: Option<&str>,
+) -> Dev {
     let tree = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     let log = tree.path().join("log");
@@ -135,9 +149,10 @@ fn dev(args: &[&str], server: &str, env: Option<&str>) -> Dev {
     }
 }
 
-/// Listen at `addr` in place of the fake server. Another process can
-/// take the port after `just dev` picks it. Then that process listens
-/// there, `just dev` sees it and goes on, and the test does not listen.
+/// Listen at `addr` in place of the fake server, or as the thief.
+/// Another process can take the port after `just dev` picks it. Then
+/// that process listens there, `just dev` sees it and goes on, and the
+/// test does not listen.
 fn listen_in_place(addr: &str) -> Option<TcpListener> {
     match TcpListener::bind(addr) {
         Ok(listener) => Some(listener),
@@ -217,10 +232,12 @@ fn dev_gives_riff_a_home_in_the_tree() {
     );
 }
 
-/// Another process takes the port after `just dev` picks it, before
-/// the test listens there. `just dev` still runs Claude Code.
-#[test]
-fn dev_runs_when_another_process_takes_the_picked_port() {
+/// One `just dev` with a thief: the thief takes the port after `just
+/// dev` picks it, before the fake server listens. It gives the port,
+/// and the listener of the thief. The listener is `None` when a third
+/// process on the machine took the port first, for example the dev
+/// tests of another worktree.
+fn dev_with_a_thief() -> (Dev, String, Option<TcpListener>) {
     let sync = tempfile::tempdir().unwrap();
     let (picked, stolen) = (sync.path().join("picked"), sync.path().join("stolen"));
     let server = format!(
@@ -235,7 +252,7 @@ fn dev_runs_when_another_process_takes_the_picked_port() {
             if let Ok(addr) = std::fs::read_to_string(&picked)
                 && !addr.trim().is_empty()
             {
-                let listener = TcpListener::bind(addr.trim()).unwrap();
+                let listener = listen_in_place(addr.trim());
                 std::fs::write(&stolen, "").unwrap();
                 return (addr.trim().to_owned(), listener);
             }
@@ -244,15 +261,33 @@ fn dev_runs_when_another_process_takes_the_picked_port() {
         }
     });
     let dev = dev(&[], &server, None);
-    let (addr, _listener) = thief.join().unwrap();
-    assert!(dev.out.status.success(), "{:?}", dev.out);
-    assert_eq!(listen_of(&dev.log), addr);
+    let (addr, listener) = thief.join().unwrap();
+    (dev, addr, listener)
+}
+
+/// Another process takes the port after `just dev` picks it, before
+/// the test listens there. `just dev` still runs Claude Code. When a
+/// third process took the port before the thief of the test, that
+/// process is the other process. The test runs again, until its own
+/// thief takes the port.
+#[test]
+fn dev_runs_when_another_process_takes_the_picked_port() {
+    for _ in 0..20 {
+        let (dev, addr, thief) = dev_with_a_thief();
+        assert!(dev.out.status.success(), "{:?}", dev.out);
+        assert_eq!(listen_of(&dev.log), addr);
+        if thief.is_some() {
+            return;
+        }
+    }
+    panic!("a third process took the picked port each time, before the thief of the test");
 }
 
 #[test]
 fn dev_skips_a_port_that_listens() {
+    let one = one();
     let taken = TcpListener::bind("127.0.0.1:7900");
-    let dev = dev(&[], LISTENS, None);
+    let dev = dev_in_turn(&one, &[], LISTENS, None);
     assert!(dev.out.status.success(), "{:?}", dev.out);
     if taken.is_ok() {
         assert_ne!(listen_of(&dev.log), "127.0.0.1:7900");
