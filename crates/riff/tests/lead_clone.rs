@@ -126,7 +126,10 @@ fn a_clone_that_git_cannot_fast_forward_stays_as_it_is_with_the_error_of_git() {
     };
     let start = riff::text::lead_clone_no_forward("");
     assert!(why.starts_with(start.trim_end_matches(')')), "{why}");
-    assert!(why.contains("git merge -q --ff-only @{upstream}: "), "{why}");
+    assert!(
+        why.contains("git merge -q --ff-only @{upstream}: "),
+        "{why}"
+    );
     assert_eq!(git(&clone, &["rev-parse", "HEAD"]), old);
     assert_eq!(std::fs::read_to_string(clone.join("b")).unwrap(), "mine");
 }

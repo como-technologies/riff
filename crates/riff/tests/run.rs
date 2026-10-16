@@ -1727,7 +1727,10 @@ async fn riff_lead_start_keeps_a_clone_that_git_cannot_fast_forward_and_starts_t
     let kept = riff::text::lead_clone_kept(&clone, &riff::text::lead_clone_no_forward(""));
     let (kept, _) = kept.split_once(')').unwrap();
     assert!(out.contains(kept), "{out}");
-    assert!(out.contains("git merge -q --ff-only @{upstream}: "), "{out}");
+    assert!(
+        out.contains("git merge -q --ff-only @{upstream}: "),
+        "{out}"
+    );
     assert!(
         out.contains(&format!(
             "The lead of como-technologies/riff starts in the container {name}"
