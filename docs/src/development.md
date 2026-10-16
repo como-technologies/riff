@@ -605,15 +605,15 @@ binary. When it is not static, the daemon starts no container, and
 its error names `riff update`. See
 [Get the static riff](start-a-riff.md#get-the-static-riff).
 
-The daemon also keeps the state of riff on your machine: the riff of
-your machine, and later the claims, the messages and the plan of its
-sessions. It uses the state machine of riff-server, the crate
-`riff-state`. The log and the checkpoints of the state are in
-`~/.local/share/riff/daemon/state`. The first start of the daemon
-makes its key and the riff (see
+The daemon also keeps the state of riff on your machine, in
+`~/.local/share/riff/daemon/state`: the records of its riff of peers
+in the file `records`, and the log and the checkpoints of `riff-state`
+for the ID of the riff. The messages, the status, the lead marks, the
+holds and the pauses of its sessions are records (see
+[riff 3.0: peers](riff-3-peers.md#the-records)). The first start of the
+daemon makes its key and the riff (see
 [See the key of the daemon](#see-the-key-of-the-daemon)). Each next
-start loads the newest checkpoint and the log after it, so the state
-stays.
+start reads the records again, so the state stays.
 
 ### Install the daemon
 

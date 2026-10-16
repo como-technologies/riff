@@ -373,6 +373,11 @@ impl State {
         self.runs.values().filter(|run| !run.body.ended)
     }
 
+    /// Each session, also each one that ended.
+    pub fn runs_all(&self) -> impl Iterator<Item = &Run> {
+        self.runs.values()
+    }
+
     /// The session `session` of `author`, also one that ended.
     pub fn run(&self, author: &Public, session: &str) -> Option<&Run> {
         self.runs.get(&(*author, session.to_owned()))

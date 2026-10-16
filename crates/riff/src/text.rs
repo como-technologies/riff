@@ -6108,6 +6108,18 @@ pub fn daemon_keyring_back() -> String {
     "The OS keyring answers again: the riff daemon reads its key.".into()
 }
 
+/// A step of a lead of a session of the riff daemon that is not the
+/// lead (01M519Z3FTAZ20DQKDTW09M6NS).
+pub const PEER_NOT_LEAD: &str =
+    "only the lead of your user in your repository, or the daemon of the owner, can do this";
+
+/// A tool of a session that the riff of the daemon does not know: it
+/// ended, or the daemon had no riff at its start.
+pub const PEER_NO_SESSION: &str = "the riff of the daemon has no record of this session that runs";
+
+/// A tool that needs the repository of the session.
+pub const PEER_NO_REPOSITORY: &str = "this session is not in a git repository";
+
 /// A record of the book of the daemon failed its check at a start: the
 /// daemon does not apply it. The line names the check, with no body
 /// (01M519Z363W5GV4MV5RDB6ECG0).
