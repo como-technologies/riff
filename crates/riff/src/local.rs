@@ -44,7 +44,7 @@
 //! The files are in [`dir`]. A reader looks for `mcp-PID` of each
 //! process above it, nearest first, up to [`MAX_DEPTH`] processes.
 //!
-//! ```
+//! ```standalone_crate
 //! let run = tempfile::tempdir()?;
 //! let agent = std::process::id();
 //! let mcp = riff::local::record(run.path(), agent, "a6cf")?.expect("free");
@@ -69,6 +69,12 @@ pub const MAX_DEPTH: usize = 8;
 /// that another thread starts gets a copy of the open file, and holds the
 /// lock until it runs its program. So the lock can outlive the drop for a
 /// short time.
+///
+/// Through a cargo test runner, rustdoc runs the merged doc tests as
+/// threads of one process. So each doc test that drops a lock and then
+/// checks that the lock is free is a `standalone_crate`: it runs in a
+/// process of its own, with no other thread. A unit test waits for the
+/// end of the lock (01M513N34NJ2G3TK3EH91M10FJ).
 #[derive(Debug)]
 pub struct Held(File);
 
@@ -141,7 +147,7 @@ pub fn record(dir: &Path, agent: u32, session: &str) -> io::Result<Option<Held>>
 /// not of an earlier process with the same PID. False when no
 /// `riff mcp` ever ran for it, and on a system with no `/proc`.
 ///
-/// ```
+/// ```standalone_crate
 /// let run = tempfile::tempdir()?;
 /// let agent = std::process::id();
 /// assert!(!riff::local::mcp_gone(run.path(), agent));
@@ -205,7 +211,7 @@ pub fn start_in_stat(stat: &str) -> Option<u64> {
 /// record for it. `Some(None)` when it has, but names no build: a riff
 /// older than this record.
 ///
-/// ```
+/// ```standalone_crate
 /// use riff_core::build::Build;
 ///
 /// let run = tempfile::tempdir()?;
@@ -256,7 +262,7 @@ pub fn watch(dir: &Path, session: &str) -> io::Result<Option<Held>> {
 
 /// True while a watch holds the lock of `session`.
 ///
-/// ```
+/// ```standalone_crate
 /// let run = tempfile::tempdir()?;
 /// assert!(!riff::local::watching(run.path(), "a6cf"));
 /// let watch = riff::local::watch(run.path(), "a6cf")?.expect("free");
@@ -277,7 +283,7 @@ fn watch_file(dir: &Path, session: &str) -> PathBuf {
 /// Takes the update lock of this machine
 /// (01M3N7JJH0SXXQYYBAHWPCNQGX). `None` when another update holds it.
 ///
-/// ```
+/// ```standalone_crate
 /// let run = tempfile::tempdir()?;
 /// assert!(!riff::local::updating(run.path()));
 /// let update = riff::local::update(run.path())?.expect("free");
@@ -301,7 +307,7 @@ pub fn updating(dir: &Path) -> bool {
 /// (01M3NBV44GKAX6WS391PN6R72W). `Err` when another host holds it,
 /// with the PID and the session of that host.
 ///
-/// ```
+/// ```standalone_crate
 /// let run = tempfile::tempdir()?;
 /// let first = riff::local::host(run.path(), "mike", "como/riff", 42, "h1")?.expect("free");
 /// assert_eq!(
@@ -434,7 +440,7 @@ fn left_file(dir: &Path, session: &str) -> PathBuf {
 /// so that only one check acts at a time (01M3Q88G1K7N2EMPBA07X069A7).
 /// `None` when another check holds it.
 ///
-/// ```
+/// ```standalone_crate
 /// let run = tempfile::tempdir()?;
 /// let held = riff::local::compact_lock(run.path(), "o/r")?;
 /// assert!(held.is_some());
@@ -451,7 +457,7 @@ pub fn compact_lock(dir: &Path, repo: &str) -> io::Result<Option<Held>> {
 /// runs at a time (01M421QQ1K7EFDV2PVPTSTE5FK). `None` when another
 /// monitor holds it.
 ///
-/// ```
+/// ```standalone_crate
 /// let run = tempfile::tempdir()?;
 /// let held = riff::local::monitor_lock(run.path())?;
 /// assert!(held.is_some());
@@ -626,5 +632,34 @@ mod tests {
         let run = tempfile::tempdir().unwrap();
         let _held = watch(run.path(), "../x").unwrap().unwrap();
         assert!(run.path().join("watch-..-x").exists());
+    }
+
+    /// Each value that a doc test of this file drops is a lock. So each
+    /// doc test here with a `drop(` is a `standalone_crate` (see
+    /// [`Held`], 01M513N34NJ2G3TK3EH91M10FJ).
+    #[test]
+    fn each_doc_test_that_drops_a_lock_is_a_crate_of_its_own() {
+        let mut fence: Option<(usize, &str)> = None;
+        let mut shared = Vec::new();
+        for (at, line) in include_str!("local.rs").lines().enumerate() {
+            let line = line.trim_start();
+            let Some(doc) = line.strip_prefix("///").or(line.strip_prefix("//!")) else {
+                continue;
+            };
+            let doc = doc.trim_start();
+            if let Some(tag) = doc.strip_prefix("```") {
+                fence = if fence.is_some() {
+                    None
+                } else {
+                    Some((at + 1, tag))
+                };
+            } else if let Some((start, tag)) = fence
+                && doc.starts_with("drop(")
+                && tag != "standalone_crate"
+            {
+                shared.push(start);
+            }
+        }
+        assert!(shared.is_empty(), "the doc tests at the lines {shared:?}");
     }
 }

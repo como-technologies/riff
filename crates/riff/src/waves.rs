@@ -161,7 +161,6 @@ pub fn end(gh: &Gh, number: u64) -> Result<Milestone> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
     /// The open milestones of the fake `gh`: a done wave, a wave with
@@ -173,6 +172,12 @@ mod tests {
     /// A fake `gh` in `dir`. It writes each call to `dir/calls`, one line
     /// each. It answers the list with [`OPEN`], and a POST or a PATCH
     /// with a milestone.
+    ///
+    /// A child `sh` writes the file, so this process never holds a write
+    /// fd of it. A child that another test thread starts gets a copy of
+    /// each open file until it runs its program. With a copy of a write
+    /// fd, the run of the fake fails with `ETXTBSY`
+    /// (01M513N34NJ2G3TK3EH91M10FJ).
     fn fake_gh(dir: &Path) -> Gh {
         let path = dir.join("gh");
         let script = format!(
@@ -183,8 +188,13 @@ mod tests {
              *) exit 1 ;;\nesac\n",
             OPEN.replace('\n', "")
         );
-        std::fs::write(&path, script).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = std::process::Command::new("sh")
+            .args(["-c", "printf '%s' \"$1\" > \"$0\" && chmod 755 \"$0\""])
+            .arg(&path)
+            .arg(script)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
         Gh::at(path)
     }
 

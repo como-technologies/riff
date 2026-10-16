@@ -930,6 +930,10 @@
   a hang: each check of a `Span` fails after 60 s. Each test that
   checks a time with a limit under 60 s uses a `Span` or
   `isolated::in_time`.
+- **01M513N34NJ2G3TK3EH91M10FJ** A unit test of `riff` that runs a fake
+  program has a child process write the file. A doc test that drops a
+  lock, and then checks that the lock is free, is a `standalone_crate`.
+  A unit test of that kind waits for the end of the lock.
 - **01M3MY2KSV73WS8D902YCH2PRX** With `RIFF_HOME=DIR`, `riff` keeps its
   settings in `DIR/config.toml`, its local files in `DIR/state`, and
   each secret in a file of `DIR/secrets` that only the owner can read.
