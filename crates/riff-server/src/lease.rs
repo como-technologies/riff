@@ -11,31 +11,36 @@
 //!     participant S as store
 //!     participant N as new instance
 //!     N->>S: load the state
-//!     Note over N: a load that fails: exit, no lease
+//!     Note over N: a load that fails: exit, no lease, no port
+//!     Note over N: opens its port: 503 until it serves
 //!     N->>S: write the lease (new ID)
 //!     Note over N: waits 15 s
 //!     O->>S: read the lease (every 2 s)
 //!     S-->>O: new ID
-//!     Note over O: stops for good: 503, saves no record, exits after 60 s
+//!     Note over O: stops for good: closes its port, saves no record
 //!     O->>S: write the last checkpoint: the hand-over
+//!     Note over O: exits
 //!     N->>S: list the checkpoints again
 //!     Note over N: a checkpoint came: load the state again from it
 //!     N->>S: read the chunks that came since the load
-//!     Note over N: opens its port, serves from the next whole second
+//!     Note over N: serves from the next whole second
 //! ```
 //!
 //! # Rules
 //!
-//! - At start, an instance loads the state first
-//!   (01M3THEE08ZKV8WGHDSVWV69ZE). Then it writes a new random ID to the
+//! - At start, an instance loads the state first, then opens its port
+//!   (01M52JYGHHK5X0XS39VFT3ZGGM). Then it writes a new random ID to the
 //!   lease with [`Lease::take`]. It waits [`Timing::wait`], applies the
 //!   chunks that came since the load, and starts to serve (R138). See
 //!   [`crate::Service::load`].
 //! - It reads the lease each [`Timing::read_every`]. It serves only for
 //!   [`Timing::valid_for`] after the start of the last read that showed
 //!   its own ID. Else it replies 503 (R139).
-//! - When a read shows another ID, the instance stops for good (R140).
-//!   A save that finds another version does the same (R141).
+//! - When a read shows another ID, the instance stops for good
+//!   (01M52JYGPX5ETP3HKR0S0Y0YCR). A save that finds another version
+//!   does the same (R141). It closes its port at once, so Cloud Run
+//!   sends each call to the new instance, and it exits after the
+//!   hand-over (see [`crate::listen::serve`]).
 //! - When that ID is of another instance, the instance then writes a
 //!   last checkpoint: the hand-over (01M51X8MG0YQT5KBZC9H7917J3). The
 //!   read cursors are only in memory and in the checkpoints, so the new
@@ -150,8 +155,9 @@ pub struct Timing {
     /// How long a read that shows the own ID lets the instance serve
     /// (R139).
     pub valid_for: Duration,
-    /// How long a stopped instance still replies 503 before it exits
-    /// (R140).
+    /// How long a stopped instance waits at most for the end of the
+    /// hand-over and of the calls in flight, with its port closed,
+    /// before it exits (01M52JYGPX5ETP3HKR0S0Y0YCR).
     pub exit_after: Duration,
     /// The time between two writes of the time to the lease
     /// (01M3X34282SG0DJ6X34F90HS26).
@@ -167,7 +173,7 @@ impl Default for Timing {
             wait: Duration::from_secs(15),
             read_every: Duration::from_secs(2),
             valid_for: Duration::from_secs(5),
-            exit_after: Duration::from_secs(60),
+            exit_after: Duration::from_secs(10),
             renew_every: Duration::from_secs(30),
             ends_after: Duration::from_secs(90),
         }
@@ -671,7 +677,7 @@ mod tests {
         assert_eq!(t.wait, Duration::from_secs(15));
         assert_eq!(t.read_every, Duration::from_secs(2));
         assert_eq!(t.valid_for, Duration::from_secs(5));
-        assert_eq!(t.exit_after, Duration::from_secs(60));
+        assert_eq!(t.exit_after, Duration::from_secs(10));
         // The argument in the module docs.
         let skew = Duration::from_secs(riff_core::dpop::MAX_SKEW);
         assert!(t.valid_for + skew <= t.wait);

@@ -166,6 +166,23 @@ pub fn server_on_dir(dir: &Path, listen: &str, log: &tempfile::NamedTempFile) ->
         .unwrap()
 }
 
+/// Waits until the real `riff-server` on `listen` serves. Its port
+/// opens after its load, and each call gets 503 until the end of its
+/// wait for the lease (01M52JYGM7WH565B7PCVBEJC17).
+pub async fn wait_until_it_serves(listen: &str) {
+    let url = format!("http://{listen}{}", riff_server::auth::SERVER_METADATA_PATH);
+    let span = isolated::Span::start();
+    loop {
+        if let Ok(reply) = client().get(&url).send().await
+            && reply.status() == 200
+        {
+            return;
+        }
+        assert!(span.within(Duration::from_secs(60)), "it does not serve");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// Loads a server from `store` with the [`LEASE`] times, and does not
 /// serve it.
 pub async fn load_on(store: Arc<dyn Store>) -> Result<Service, StoreError> {
