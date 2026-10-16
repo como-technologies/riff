@@ -111,7 +111,12 @@ async fn the_hooks_of_an_agent_inside_a_session_keep_its_claims() {
     let run = tempfile::tempdir().unwrap();
     api.register(&uri(ID)).await.unwrap();
     api.set_riff(&uri(ID), RiffState::Running).await.unwrap();
-    assert!(api.claim(&uri(ID), &repo(), "issue-814").await.unwrap().granted);
+    assert!(
+        api.claim(&uri(ID), &repo(), "issue-814")
+            .await
+            .unwrap()
+            .granted
+    );
     let me = std::process::id();
     let record = riff::local::record(&files(run.path()), me, ID)
         .unwrap()

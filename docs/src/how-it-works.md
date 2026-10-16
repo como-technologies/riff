@@ -890,8 +890,10 @@ Short form, for people: `mike@pangolin:riff#issue-6`. It is not unique.
 
 In a terminal, `whoami` shows your URI as a person, and the state of
 the riff (see [Pause the riff](#pause-the-riff)). In Claude Code, type
-it in the prompt with `!` in front to see the URI of the session. A
-post from a terminal names the host where you ran the command.
+it in the prompt with `!` in front to see the URI of the session. The
+URI comes from `riff-server`, with your claims and `lead=true`. The
+`move` tool shows the same URI. A post from a terminal names the host
+where you ran the command.
 
 ```sh
 riff whoami
@@ -899,7 +901,7 @@ riff whoami
 
 ```text
 session  mike@pangolin:riff#issue-6 (a6cf2205)
-uri      riff://mike@pangolin/como-technologies/riff?session=a6cf2205-…#issue-6
+uri      riff://mike@pangolin/como-technologies/riff?session=a6cf2205-…&claim=issue-6#issue-6
 riff     running
 build    v0.7.0  (f45be4d, 2026-09-29)
 ```
@@ -1382,6 +1384,31 @@ with its `RIFF_SESSION`:
 ```sh
 echo '{"reason":"other"}' | riff hook session-end
 ```
+
+### Run an agent inside a session
+
+A session can start a second agent in a Bash command, for example to
+try a prompt. That agent is not a riff session. Its start does not
+free the claims of the session, and its end does not end the session.
+It gets no riff context and no riff tools:
+
+```sh
+claude -p "Say ok."
+```
+
+riff knows the agent from its processes. A `riff mcp` of another
+agent runs above it.
+
+```mermaid
+flowchart LR
+    S["the session: claude"] --> M["riff mcp"]
+    S --> B["Bash command"] --> N["claude -p"]
+    N --> H["start hook"]
+    H -- "a riff mcp runs above my agent" --> X["no start call: the claims stay"]
+```
+
+Do not use `riff` commands in that agent. They act for the session
+above it.
 
 ### Start an item again
 
@@ -2463,6 +2490,27 @@ sequenceDiagram
 
 While the riff or the repository is paused, each claim there fails.
 The answer names the pause, who set it, and who can end it.
+
+### What keeps a claim and what ends it
+
+A claim stays while its session works. Only these steps end it:
+
+| Step | The claim ends |
+|---|---|
+| The session releases the item. | At once. |
+| The lead frees it (see [Free the claim of another session](#free-the-claim-of-another-session)). | At once. |
+| The session ends, for example with `/exit`. | At once. |
+| The session starts again: `/clear`, a resume, a new Claude Code process (see [A new start is blank](#a-new-start-is-blank)). | At once. |
+| The session stops with no end, for example after `kill -9`. | 5 minutes after its last sign of life. |
+
+Each other step keeps the claim: `move`, a keep-alive, `status`, a
+read, a post, a compaction, a pause, and an agent that the session
+runs (see [Run an agent inside a session](#run-an-agent-inside-a-session)).
+To see the claims of your session after a step, look at its URI:
+
+```sh
+riff whoami
+```
 
 ### Claim an item by hand
 

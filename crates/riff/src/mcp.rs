@@ -815,9 +815,7 @@ pub async fn serve_nested(outer: &str) -> Result<()> {
 }
 
 async fn serve_no_tools(instructions: String) -> Result<()> {
-    let service = Off(instructions)
-        .serve(rmcp::transport::stdio())
-        .await?;
+    let service = Off(instructions).serve(rmcp::transport::stdio()).await?;
     service.waiting().await?;
     Ok(())
 }
