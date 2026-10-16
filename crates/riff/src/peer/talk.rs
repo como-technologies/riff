@@ -1302,6 +1302,86 @@ mod tests {
         assert_eq!(unread(&s), [(dm, 0), (repo, 0)]);
     }
 
+    /// 01M519Z38G3RAZPKGFA3R2CB3P: a fork of a member. The daemon keeps
+    /// the first record, and no next record of that key. It keeps both
+    /// records as the proof, also after a new open, and posts a note to
+    /// the lead of its user in the repository of that lead.
+    #[test]
+    fn a_fork_keeps_the_first_record_and_the_proof_and_tells_the_lead() {
+        use crate::peer::body::Member;
+        use crate::peer::record::Record;
+
+        let dir = tempfile::tempdir().unwrap();
+        let hub = hub(dir.path(), &[]);
+        hub.start(&uri("lead", "o/r"), false, true, Vec::new())
+            .unwrap();
+        let brett = Key::from_bytes(&[2; 32]);
+        let admit = Body::Member(Member {
+            key: brett.public(),
+            user: "brett".into(),
+            host: "kadomony".into(),
+        });
+        hub.write(&admit).unwrap();
+        let riff = hub.public();
+        let thread: ThreadName = "o/r".parse().unwrap();
+        let message = |text: &str| {
+            Body::Message(Box::new(Message {
+                from: "riff://brett@kadomony/o/r?session=b1".parse().unwrap(),
+                thread: thread.clone(),
+                to: vec![],
+                kind: Kind::Message,
+                body: text.into(),
+            }))
+        };
+        let first = Record::sign(&brett, riff, 1, Id::ZERO, 1, &message("first")).unwrap();
+        let other = Record::sign(&brett, riff, 1, Id::ZERO, 2, &message("other")).unwrap();
+        let next = Record::sign(&brett, riff, 2, first.id(), 3, &message("next")).unwrap();
+
+        let kept = hub.keep(first.bytes().to_vec(), None).unwrap();
+        assert!(matches!(kept, Outcome::Kept(_)), "{kept:?}");
+        let Outcome::Fork(fork) = hub.keep(other.bytes().to_vec(), None).unwrap() else {
+            panic!("no fork");
+        };
+        assert_eq!((&fork.first, &fork.second), (&first, &other));
+        let next = hub.keep(next.bytes().to_vec(), None).unwrap();
+        assert_eq!(next, Outcome::Forked);
+        assert_eq!(
+            hub.read(|state| state.heads()[&brett.public()].0),
+            1,
+            "no next record of the forked key"
+        );
+
+        let kept: Vec<(String, Kind, Vec<Selector>)> = hub.read(|state| {
+            state
+                .messages(&thread)
+                .iter()
+                .map(|k| (k.message.body.clone(), k.message.kind, k.message.to.clone()))
+                .collect()
+        });
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        assert_eq!(kept[0].0, "first");
+        let (note, kind, to) = &kept[1];
+        assert_eq!(*kind, Kind::Note);
+        let lead = Selector {
+            user: Some("mike".into()),
+            repo: Some("o/r".into()),
+            lead: Some(true),
+            ..Selector::default()
+        };
+        assert_eq!(to, &[lead]);
+        let key = brett.public().to_string();
+        assert!(note.starts_with(&format!(
+            "The riff daemon found a fork of the key {} (brett on kadomony): two records with \
+             the sequence number 1.",
+            &key[..8]
+        )));
+
+        drop(hub);
+        let peers = Peers::open(dir.path(), riff, |_| {}).unwrap();
+        assert_eq!(peers.forks()[&brett.public()], fork);
+        assert_eq!(peers.state().heads()[&brett.public()].0, 1);
+    }
+
     /// R49: a watch wakes a session one time, for the newest message that
     /// woke it and that it did not read. After a read, a watch waits for
     /// a new message. A note and an own post wake no session.

@@ -139,7 +139,7 @@ pub async fn read(stream: &mut (impl AsyncRead + Unpin)) -> Result<Option<Frame>
         RECORD => LARGEST,
         other => return Err(Bad::Kind(other)),
     };
-    if length > most || (kind == HEADS && length % HEAD != 0) {
+    if length > most || (kind == HEADS && !length.is_multiple_of(HEAD)) {
         return Err(Bad::Length { kind, length });
     }
     let mut payload = vec![0; length];

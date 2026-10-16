@@ -961,7 +961,7 @@ pub enum Say {
     /// The session ended.
     Ended(Ended),
     /// The state of the daemon.
-    Status(Status),
+    Status(Box<Status>),
     /// On the socket of a session: who that session is.
     Session {
         /// The riff session ID.
@@ -2204,7 +2204,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let (out, written) = writer(write);
         if let Some(first) = lines.next_line().await? {
             match hello(&first) {
-                Ok(Ask::Status) => out.say(Say::Status(self.status().await)),
+                Ok(Ask::Status) => out.say(Say::Status(Box::new(self.status().await))),
                 Ok(Ask::Image { image }) => self.image(&image, &out).await,
                 Ok(Ask::Start(start)) => self.start(*start, lines, &out).await,
                 Ok(Ask::Follow { name, after }) => self.follow(&name, after, lines, &out),
@@ -3166,7 +3166,7 @@ pub async fn status(dir: &Path) -> Result<Status> {
     let mut client = Client::connect(dir).await?;
     client.ask(Ask::Status).await?;
     match client.next().await? {
-        Some(Say::Status(status)) => Ok(status),
+        Some(Say::Status(status)) => Ok(*status),
         Some(Say::Failed { error }) => bail!("{error}"),
         _ => bail!("{}", text::DAEMON_GONE),
     }

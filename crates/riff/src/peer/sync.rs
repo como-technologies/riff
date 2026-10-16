@@ -80,6 +80,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -208,7 +209,7 @@ impl fmt::Display for Close {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Close::NotMember => "not a member",
-            Close::Refused => "a refused record",
+            Close::Refused => "a record that fails a check",
             Close::BadFrame => "a bad frame",
             Close::Replaced => "a new connection",
             Close::Gone => "a key that was removed or left",
@@ -324,6 +325,8 @@ pub struct Links {
     tasks: Mutex<Vec<JoinHandle<()>>>,
     /// A link ended.
     ended: Notify,
+    /// The records that a link got and the daemon had already.
+    duplicates: AtomicU64,
     say: Box<dyn Fn(String) + Send + Sync>,
 }
 
@@ -364,8 +367,11 @@ fn keys_of(state: &State, me: &Public) -> BTreeSet<Public> {
     keys
 }
 
+/// The user and the host of a key, when the records name them.
+type Names = (Option<String>, Option<String>);
+
 /// The user and the host of `key`, when the records name them.
-fn names_of(state: &State, key: &Public) -> (Option<String>, Option<String>) {
+fn names_of(state: &State, key: &Public) -> Names {
     (
         state.user_of(key).map(str::to_owned),
         state.members().get(key).map(|member| member.host.clone()),
@@ -408,6 +414,7 @@ impl Links {
             tries: Mutex::new(BTreeMap::new()),
             tasks: Mutex::new(Vec::new()),
             ended: Notify::new(),
+            duplicates: AtomicU64::new(0),
             say: Box::new(say),
         });
         let accept = tokio::spawn(sync.clone().accept_all());
@@ -421,6 +428,12 @@ impl Links {
         &self.endpoint
     }
 
+    /// The records that a link got and the daemon had already: each
+    /// drops with no fault (01M51BFYQVCFEWCJZERBD4S5N5).
+    pub fn duplicates(&self) -> u64 {
+        self.duplicates.load(Ordering::Relaxed)
+    }
+
     /// The key of each daemon that has a link now.
     pub fn linked(&self) -> BTreeSet<Public> {
         lock(&self.links).keys().copied().collect()
@@ -429,7 +442,7 @@ impl Links {
     /// The state of the link to each other daemon of the riff.
     pub fn shown(&self) -> Vec<Shown> {
         let me = self.hub.public();
-        let keys: Vec<(Public, (Option<String>, Option<String>))> = self.hub.read(|state| {
+        let keys: Vec<(Public, Names)> = self.hub.read(|state| {
             keys_of(state, &me)
                 .into_iter()
                 .map(|key| (key, names_of(state, &key)))
@@ -696,9 +709,8 @@ impl Links {
                 Ok(None) => return End::lost(conn, text::PEER_STREAM_ENDED.into()),
                 Err(wire::Bad::Read(e)) => return End::lost(conn, e.to_string()),
                 Err(bad) => {
-                    let line = text::peer_bad_frame(&self.who(&remote), &bad.to_string());
-                    (self.say)(line.clone());
-                    return End::Closed(Close::BadFrame, line);
+                    (self.say)(text::peer_bad_frame(&self.who(&remote), &bad.to_string()));
+                    return End::Closed(Close::BadFrame, Close::BadFrame.to_string());
                 }
             };
             let bytes = match frame {
@@ -729,11 +741,13 @@ impl Links {
                         fork.first.seq(),
                     ));
                 }
-                Ok(Outcome::Kept(_) | Outcome::Duplicate | Outcome::Forked) => {}
+                Ok(Outcome::Duplicate) => {
+                    self.duplicates.fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(Outcome::Kept(_) | Outcome::Forked) => {}
                 Err(e) => {
-                    let line = text::peer_cannot_keep(&format!("{e:#}"));
-                    (self.say)(line.clone());
-                    return End::Closed(Close::Disk, line);
+                    (self.say)(text::peer_cannot_keep(&format!("{e:#}")));
+                    return End::Closed(Close::Disk, Close::Disk.to_string());
                 }
             }
         }
@@ -748,8 +762,8 @@ impl Links {
             named.map(|(author, seq)| (author.to_string(), seq)),
             &fault.to_string(),
         );
-        (self.say)(line.clone());
-        End::Closed(Close::Refused, line)
+        (self.say)(line);
+        End::Closed(Close::Refused, Close::Refused.to_string())
     }
 }
 

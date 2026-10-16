@@ -408,6 +408,95 @@ mod tests {
         }))
     }
 
+    /// The `member` body of `key` with the user `user`.
+    fn admit(key: &Key, user: &str) -> Body {
+        Body::Member(Member {
+            key: key.public(),
+            user: user.into(),
+            host: "h".into(),
+        })
+    }
+
+    /// 01M519Z2YSXADT45A1R0N70WRQ: the records that another daemon lacks
+    /// come in this order: the proof of each fork, the record at a head
+    /// of the other daemon that has another ID, the records of the owner,
+    /// then the records of each other author. The records of one author
+    /// come in sequence order. A fresh record names the daemon that sent
+    /// it, and a new fork is fresh too.
+    #[test]
+    fn lacks_gives_the_proofs_then_the_owner_then_each_author_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let (owner, brett, ann) = (
+            Key::from_bytes(&[1; 32]),
+            Key::from_bytes(&[2; 32]),
+            Key::from_bytes(&[3; 32]),
+        );
+        let riff = owner.public();
+        let mut peers = Peers::open(dir.path(), riff, |_| {}).unwrap();
+        let mut fresh = peers.subscribe();
+        let riff_body = Body::Riff(Riff {
+            user: "mike".into(),
+        });
+        for body in [riff_body, admit(&brett, "brett"), admit(&ann, "ann")] {
+            peers.write(&owner, &body, 1).unwrap();
+        }
+        let b1 = Record::sign(&brett, riff, 1, Id::ZERO, 2, &message("brett", "b1")).unwrap();
+        let b2 = Record::sign(&brett, riff, 2, b1.id(), 3, &message("brett", "b2")).unwrap();
+        let a1 = Record::sign(&ann, riff, 1, Id::ZERO, 4, &message("ann", "a1")).unwrap();
+        for record in [&b1, &b2, &a1] {
+            let from = Some(record.author());
+            let outcome = peers.keep(record.bytes().to_vec(), from).unwrap();
+            assert!(matches!(outcome, Outcome::Kept(_)), "{outcome:?}");
+        }
+        let mut got = Vec::new();
+        while let Ok(Fresh::Kept { record, from }) = fresh.try_recv() {
+            got.push((record.seq(), record.author(), from));
+        }
+        assert_eq!(got.len(), 6);
+        assert_eq!(got[0], (1, riff, None));
+        assert_eq!(got[3], (1, brett.public(), Some(brett.public())));
+
+        let owner_chain: Vec<u64> = (1..=3).collect();
+        let lacks = |theirs: &Heads| -> Vec<(Public, u64)> {
+            peers
+                .lacks(theirs)
+                .iter()
+                .map(|record| (record.author(), record.seq()))
+                .collect()
+        };
+        let all = lacks(&Heads::new());
+        assert_eq!(all.len(), 6);
+        assert!(all[..3].iter().map(|(_, seq)| *seq).eq(owner_chain));
+        assert!(all[..3].iter().all(|(author, _)| *author == riff));
+        let (first, second) = if brett.public() < ann.public() {
+            (brett.public(), ann.public())
+        } else {
+            (ann.public(), brett.public())
+        };
+        assert_eq!(all[3].0, first);
+        assert_eq!(all[5].0, second);
+        if first == brett.public() {
+            assert_eq!(all[3..5], [(first, 1), (first, 2)]);
+        }
+
+        // A daemon with each record of the owner and of brett lacks a1.
+        let mut theirs = peers.heads();
+        theirs.remove(&ann.public());
+        assert_eq!(lacks(&theirs), [(ann.public(), 1)]);
+        // A daemon whose record 1 of brett has another ID gets the record
+        // 1 of this daemon, and no next record of brett.
+        theirs.insert(brett.public(), (1, Id([9; 32])));
+        assert_eq!(lacks(&theirs), [(brett.public(), 1), (ann.public(), 1)]);
+
+        // A fork of ann: its proof comes first, and it is fresh.
+        let other = Record::sign(&ann, riff, 1, Id::ZERO, 5, &message("ann", "x")).unwrap();
+        let outcome = peers.keep(other.bytes().to_vec(), None).unwrap();
+        assert!(matches!(outcome, Outcome::Fork(_)), "{outcome:?}");
+        assert!(matches!(fresh.try_recv(), Ok(Fresh::Fork(fork)) if fork.second == other));
+        let proof: Vec<Record> = peers.lacks(&peers.heads()).into_iter().collect();
+        assert_eq!(proof, [a1.clone(), other.clone()]);
+    }
+
     /// The owner writes its riff and a member. A record of the member is
     /// kept one time, a later one waits, and a bad one is refused. Each
     /// kept record is in the book after a new open.
