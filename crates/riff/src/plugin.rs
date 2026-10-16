@@ -536,6 +536,28 @@ mod tests {
         ));
     }
 
+    /// 01M51JBET7R9QTT15BXDPM5QG7: the skill says what a session does
+    /// with the message of the server that ends its claim.
+    #[test]
+    fn the_skill_says_what_a_session_does_when_riff_ends_its_claim() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let start = skill.find("### When riff ends your claim").unwrap();
+        let end = start + 1 + skill[start + 1..].find("\n## ").unwrap();
+        let part = flat(&skill[start..end]);
+        for words in [
+            "a new start of your session (a new Claude Code process, a resume or `/clear`), \
+             and a release of the lead for you. Then a direct message of `riff@server` wakes \
+             you.",
+            "Your own release sends no message.",
+            "A new start freed the claim: when you still work on the item, claim it again",
+            "The lead released the claim: stop the work on the item.",
+            "Claim the item again only when the lead asks you to.",
+        ] {
+            assert!(part.contains(words), "{words}\nis not in\n{part}");
+        }
+    }
+
     /// 01M5084K79M5XJT3MP8FFVQKDX: a check calls the riff of a new build
     /// by its path in the one folder of the check, and runs its
     /// `riff init` with `--yes`.
