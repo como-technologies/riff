@@ -116,6 +116,8 @@
 //! | `containers` in `XDG_DATA_HOME` and in `XDG_CONFIG_HOME` | the images and the volumes of podman |
 //! | the main clone, and the worktree of the test | the build of the test, and the fetch of `riff run` |
 //! | `XDG_CACHE_HOME` | the caches of the tools of the host |
+//! | `snap` in the home | the snap apps, for example the Firefox snap (01M51MQB46AYY39YSAY18NMD8T) |
+//! | `claude/locks` in `XDG_STATE_HOME` | the locks of each `claude` on the host (01M51MQB46AYY39YSAY18NMD8T) |
 //! | each path of `--skip` | the other programs of the person that write while the test runs |
 //!
 //! The check also sees a change to a file that is there already, in the
@@ -493,8 +495,9 @@ impl Env {
     }
 
     /// The folders that the home check leaves out: the folders of riff,
-    /// the storage of podman, the cache, `clones`, and `skips`
-    /// (01M4ZCFGHCS7WJ6CFYBZSX0AT5).
+    /// the storage of podman, the cache, the snap apps, the locks of
+    /// `claude`, `clones`, and `skips` (01M4ZCFGHCS7WJ6CFYBZSX0AT5,
+    /// 01M51MQB46AYY39YSAY18NMD8T).
     ///
     /// ```
     /// use std::path::PathBuf;
@@ -513,6 +516,8 @@ impl Env {
     ///         "/h/.local/share/containers",
     ///         "/h/.config/containers",
     ///         "/h/.cache",
+    ///         "/h/snap",
+    ///         "/h/.local/state/claude/locks",
     ///         "/h/src/riff",
     ///         "/h/.mozilla",
     ///     ]
@@ -528,6 +533,8 @@ impl Env {
         all.push(self.data.join("containers"));
         all.push(self.config.join("containers"));
         all.push(self.cache.clone());
+        all.push(self.home.join("snap"));
+        all.push(self.state.join("claude/locks"));
         all.extend(clones.iter().cloned());
         all.extend(skips.iter().cloned());
         all

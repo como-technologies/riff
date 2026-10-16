@@ -20,6 +20,8 @@
 //! | `run-signaled` | `riff run` ends by SIGTERM, and the test gets no signal |
 //! | `stray` | `riff run` writes paths in the home, and changes files that other programs write |
 //! | `gitconfig` | `riff run` appends to `~/.gitconfig` |
+//! | `others` | `riff run` writes in `~/snap`, in the locks of `claude` and in `~/.claude.json.lock` |
+//! | `elsewhere` | `riff run` writes a new folder in `~/.config` |
 //! | `no-pull` | `gh pr view` finds no pull request |
 //! | `no-gate` | the head commit has no check run |
 
@@ -112,6 +114,12 @@ run)
     echo pwd >> "$HOME/.bash_history"
   fi
   if [ -f "$c/gitconfig" ]; then printf '[alias]\n\tst = status\n' >> "$HOME/.gitconfig"; fi
+  if [ -f "$c/others" ]; then
+    mkdir -p "$HOME/snap/firefox/common/.mozilla" "$XDG_STATE_HOME/claude/locks"
+    touch "$HOME/snap/firefox/common/.mozilla/storage" "$XDG_STATE_HOME/claude/locks/2.1.301.lock"
+    touch "$HOME/.claude.json.lock"
+  fi
+  if [ -f "$c/elsewhere" ]; then mkdir -p "$HOME/.config/tool"; touch "$HOME/.config/tool/x"; fi
   if [ -f "$c/run-waits" ]; then touch "$c/running"; sleep 30; fi
   if [ -f "$c/run-signaled" ]; then kill -TERM $$; fi
   if [ -f "$c/run-fails" ]; then exit 1; fi ;;
@@ -125,7 +133,9 @@ impl Fake {
         let bin = env.path().join("bin");
         let ctl = env.path().join("ctl");
         let clone = env.home().join("src/riff");
-        for dir in [&bin, &ctl, &clone, &env.home().join(".claude/projects")] {
+        // A host with claude has its state folder before the test.
+        let claude_state = env.home().join(".local/state/claude");
+        for dir in [&bin, &ctl, &clone, &env.home().join(".claude/projects"), &claude_state] {
             std::fs::create_dir_all(dir).unwrap();
         }
         // The files of the person that are there before the test.
@@ -438,6 +448,37 @@ fn a_change_to_the_gitconfig_fails_the_check_of_the_home() {
     assert!(stderr.contains(&shown), "{shown}\n{stderr}");
     let log = fake.log();
     assert!(find(&log, "gh pr diff").is_none(), "{log:#?}");
+    assert_clean(&fake);
+}
+
+/// The snap apps, the locks of a `claude` on the host and the lock of
+/// `.claude.json` write while the test runs. With no `--skip`, a new
+/// file there does not fail the home check, and a new file in another
+/// place does (01M51MQB46AYY39YSAY18NMD8T).
+#[test]
+fn the_snap_apps_and_the_locks_of_claude_do_not_count_and_another_place_does() {
+    let fake = Fake::new();
+    fake.set("others");
+    let out = fake.run(&[]);
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+
+    let fake = Fake::new();
+    fake.set("others");
+    fake.set("elsewhere");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    let shown = format!(
+        "real-session: FAIL at step 7 of 10, check the home: the home has 1 new path outside \
+         the folders of riff:\n  {}\nWhen another program",
+        fake.env.home().join(".config/tool").display()
+    );
+    assert!(stderr.contains(&shown), "{shown}\n{stderr}");
     assert_clean(&fake);
 }
 
