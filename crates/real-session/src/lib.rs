@@ -1031,7 +1031,13 @@ fn keep_verify(riff: &Path, issue: u64, stop: &AtomicBool) -> Result<bool, Strin
     )?;
     output(
         "gh",
-        &["issue", "edit", &issue.to_string(), "--add-label", NO_VERIFY],
+        &[
+            "issue",
+            "edit",
+            &issue.to_string(),
+            "--add-label",
+            NO_VERIFY,
+        ],
         stop,
     )?;
     println!("  issue #{issue} has the label {NO_VERIFY}");

@@ -847,8 +847,13 @@ pub(crate) fn milestone(gh: &pr::Gh, issue: u64) -> Result<String> {
 /// True when the issue `issue` has the label [`rollout::NO_VERIFY`], with
 /// `gh`.
 fn labelled(gh: &pr::Gh, issue: u64) -> Result<bool> {
-    let found: rollout::Issue =
-        gh.json(&["issue", "view", &issue.to_string(), "--json", "number,labels"])?;
+    let found: rollout::Issue = gh.json(&[
+        "issue",
+        "view",
+        &issue.to_string(),
+        "--json",
+        "number,labels",
+    ])?;
     Ok(found.no_verify())
 }
 

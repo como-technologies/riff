@@ -806,7 +806,10 @@ async fn riff_run_sends_no_verify_request_for_an_issue_with_the_label_no_verify(
         "{stdout}"
     );
     let log = machine.read("gh.log");
-    assert!(log.contains("gh issue view 12 --json number,labels"), "{log}");
+    assert!(
+        log.contains("gh issue view 12 --json number,labels"),
+        "{log}"
+    );
     let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
     assert!(!thread.contains("verify request: issue-12"), "{thread}");
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
@@ -1460,12 +1463,9 @@ async fn a_sigint_stops_the_wait_of_the_verify_request() {
 
     let machine = Machine::new().await;
     // The verify request first reads the holds (01M5157TYDEHZHDXSC1AHCRDRN).
-    let (out, took) = a_signal_in_the_end_steps(
-        &machine,
-        "/v1/plan/show",
-        nix::sys::signal::Signal::SIGINT,
-    )
-    .await;
+    let (out, took) =
+        a_signal_in_the_end_steps(&machine, "/v1/plan/show", nix::sys::signal::Signal::SIGINT)
+            .await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(
         took < Duration::from_secs(5),

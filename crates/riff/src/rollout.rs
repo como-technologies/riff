@@ -1463,9 +1463,8 @@ pub fn free_work_of(
     pulls: &[Pull],
     claims: &HashSet<String>,
 ) -> Vec<String> {
-    let items = current_wave(open).map_or_else(Vec::new, |wave| {
-        free_items(issues, wave, claims, pulls)
-    });
+    let items =
+        current_wave(open).map_or_else(Vec::new, |wave| free_items(issues, wave, claims, pulls));
     let kept: HashSet<u64> = issues
         .iter()
         .filter(|i| i.no_verify())
