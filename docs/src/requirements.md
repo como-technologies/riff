@@ -2181,8 +2181,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3NT4M159EHN5W8JRTQ417N4** A session has a role: `lead`, `worker`,
   or none. A worker (`RIFF_WORKER=1`) says so in each register call, and
   the server keeps it and gives it in `who`. `riff who`, the MCP `who`
-  tool and `riff top` tag a session only with its role, `lead` or
-  `worker`, the same on each machine. No session gets the tag `owner`.
+  tool and `riff top` tag a session with its role, `lead` or `worker`,
+  and with its kind (01M510MG2YSETB2CCAS8XDHPZ0), the same on each
+  machine. No session gets the tag `owner`.
+- **01M510MG2YSETB2CCAS8XDHPZ0** `riff who`, the MCP `who` tool and
+  `riff top` tag a session in a container `container`, in place of
+  `worker`. The lead in a container has `lead container`. The session
+  of `riff workers host` has the tag `host`: its status is the status
+  of a host.
 - **01M3NT4M3A4E3K5S2NM7MS6PQD** The reply to `who` lists each member of
   the riff with a USER, also when away: the USER, the role (`owner`,
   `admin` or `member`), whether a session of the person is live, and
@@ -2231,6 +2237,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   idle and blocked sessions and the claims, each that is more than 0.
   A line with only one line under it, other than a session, takes that
   line after a `›`, so a small riff stays short.
+- **01M510MG5J92PYDWZSDQS8HMWK** The line of a host in `riff top` also
+  counts each kind of session, after the sessions and before the
+  states: leads, containers, workers and hosts, each that is more than
+  0, for example `6 sessions: 3 workers, 2 containers, 1 host; 2 busy,
+  2 idle, 4 claims`. A session counts once, as the first of these that
+  matches. The person and repository lines count no kinds.
 - **01M42KHN80V49HDDZF953HXDT0** `riff top` shows a board for each
   repository with a live session, and for the repository of the
   working directory when no `--user` and no `--host` is set and
@@ -2414,7 +2426,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   that riff derives: a claim, a release, a pause, an idle worker, its
   work, or a wait for a verify, a merge or a need.
 - **01M41FZQVEF8S2W9RCM4V87C3D** The first state that matches wins:
-  `offline` (no open watch stream, and not a lead that is not gone),
+  `offline` (no open watch stream, and not a lead or a session in a
+  container that is not gone, 01M510MG0CKDXAKF6YJ768K7E8),
   `paused` (the riff or the repository of the session is paused),
   `blocked` (a block that holds, not a lead), `must_clear`
   (01M3X9XC99KY4RQY36A7CYWY11), `waiting` (each claim of the session
@@ -2425,6 +2438,17 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   command line shows in `riff who` and `riff top` with its state and
   its status, not as `offline`. A `riff status` call and a `riff step`
   call are signs of life.
+- **01M510MG0CKDXAKF6YJ768K7E8** The riff daemon and `riff run` send
+  the keep-alive of a session in a container with the mark
+  `container`. The server keeps the mark until the session ends. A
+  session with the mark is live while it is not gone, also with no
+  open watch stream: it shows its state from its facts, not
+  `offline`. When its container stops, the daemon ends the session,
+  and it is gone at once. With no keep-alive for 3 minutes, it is gone
+  too.
+- **01M510MG808MQT08W6VSPKM1A6** A session in a container is never an
+  idle worker for the rollout of the lead: it does not count as idle,
+  and it gets no request. The daemon gives it its item.
 - **01M48VDGTD40P8RBZMS0XB5M9N** A session shows a long step with
   `riff step start NAME`, `riff step done` and `riff step fail
   REASON`. A new start replaces the old step. `riff who` and `riff

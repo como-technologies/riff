@@ -644,13 +644,16 @@ fn the_book_example_has_the_four_level_tree() {
     }
     assert_eq!(
         worktrees,
-        ["#issue-88", "#issue-7", "#issue-8"],
+        ["#issue-88", "#issue-7", "#issue-9", "#issue-8"],
         "{example}"
     );
     for row in [
-        "\nbrett  online  › kadomony  › strata  1 session: 1 busy, 1 claim\n",
-        "\n├─ pangolin  › riff  2 sessions: 1 busy, 1 idle, 1 claim\n",
-        "\n   ├─ riff  3 sessions: 1 idle, 1 blocked, 1 claim\n",
+        "\nbrett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim\n",
+        "\n├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims\n",
+        "\n│  └─ 9c0d1e2f  #issue-9  container  busy\n",
+        "\n└─ thelio  5 sessions: 2 leads, 1 host; 3 idle, 1 blocked, 1 claim\n",
+        "\n   ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim\n",
+        "\n   │  ├─ 6e7f8a9b  host  idle\n",
         "\n   └─ strata  1 session: 1 idle\n",
     ] {
         assert!(example.contains(row), "{row}: {example}");

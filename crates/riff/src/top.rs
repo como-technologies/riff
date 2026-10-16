@@ -32,10 +32,13 @@
 //! under it stays on one line with it, so a small riff stays short. Each
 //! row above the sessions has the counts of its sessions. `--user`,
 //! `--host` and `--repo` show a part ([`Show`],
-//! 01M42KHNCBMBCT3TFBYWE339H5). A session gets only the tag of its
-//! role, `lead` or `worker`, from the server, so each machine shows the
-//! same (01M3NT4M159EHN5W8JRTQ417N4). The owner is a person: the tag
-//! `owner` is on the row of the person.
+//! 01M42KHNCBMBCT3TFBYWE339H5). A session gets the tags of
+//! [`crate::text::tags`]: its role, `lead` or `worker`, and its kind,
+//! `container` or `host` (01M3NT4M159EHN5W8JRTQ417N4,
+//! 01M510MG2YSETB2CCAS8XDHPZ0). The role and the container mark come
+//! from the server, so each machine shows the same. The line of a host
+//! counts each kind (01M510MG5J92PYDWZSDQS8HMWK). The owner is a person:
+//! the tag `owner` is on the row of the person.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -879,7 +882,9 @@ impl Top<'_> {
     ///   With [`By::Repo`] the repository comes first: repository,
     ///   person, host, session. Each person, host and repository line
     ///   has the counts of its sessions: the sessions, then the busy,
-    ///   idle and blocked ones and the claims. A row with one row
+    ///   idle and blocked ones and the claims. A line with a host also
+    ///   counts each kind of session ([`SessionKind`]) before the
+    ///   states. A row with one row
     ///   under it stays on one line with it, after a `›`: so a small
     ///   riff stays short.
     /// - A person line: the USER in bold color, the role tag `owner` or
@@ -890,7 +895,7 @@ impl Top<'_> {
     ///   sessions have one owner, else `OWNER/REPO`
     ///   (01M3WNHCD659FH3Z5VYYH69WWR).
     /// - A session: the first line has the short session ID, its
-    ///   worktree `#WORKTREE`, the role tag `lead` or `worker`, and the
+    ///   worktree `#WORKTREE`, the [`crate::text::tags`], and the
     ///   state word that the server derives
     ///   (01M3QB6CJ1XCQG5B1BVR8AF3B4). Under it comes one line for each
     ///   fact of the [`state::detail`]. A session with no detail takes
