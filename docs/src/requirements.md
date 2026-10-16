@@ -6294,8 +6294,9 @@ with "Superseded by Wave C (ID)." holds until then.
 - **01M51R8FXQFXWHRD374577HZ3H** Wave C removes riff-server and each
   part that exists only for it: the crate and the binary `riff-server`;
   `riff cloud`; the jobs `Deploy` and `Stage` of CI; the files
-  `deploy/cloud`, `deploy/alert.json` and `deploy/lifecycle.json`, and
-  the `Dockerfile` of riff-server; the sign-in of a person with OpenID
+  `deploy/alert.json` and `deploy/lifecycle.json`, the `Dockerfile` of
+  riff-server, and at the end the settings files `deploy/cloud`
+  (01M51TD2ZCA717T5BWB72QTBTK); the sign-in of a person with OpenID
   Connect and its OAuth client; the design pages of riff-server
   (`design-storage.md`, `design-engine.md`, `design-link.md` and
   `design-plan.md`); and, in the Google Cloud project `como-riff`, the
@@ -6425,6 +6426,15 @@ with "Superseded by Wave C (ID)." holds until then.
 
 ### Wave C: the end of riff-server
 
+- **01M51TD2ZCA717T5BWB72QTBTK** The owner runs each `riff cloud` step
+  of Wave C with the riff of the bridge release, in a clone of
+  `como-technologies/riff`: the stop, the go-back and the delete of the
+  cloud parts. `riff cloud` reads the settings file of each instance
+  from `deploy/cloud` of that clone (R144). So `deploy/cloud` stays on
+  `main` until the end: the item that removes riff-server keeps it.
+  After `riff cloud delete NAME --all` of each instance, the live check
+  of the end removes `deploy/cloud` from `main`, before the release of
+  riff 3.0.0.
 - **01M51R8H8W8ZBEBXFKWTK7ZB14** The owner stops riff-server with
   `riff cloud delete shared`: the service goes, and the bucket and each
   other part stay. The owner stops it only when each repository of
@@ -6432,8 +6442,9 @@ with "Superseded by Wave C (ID)." holds until then.
 - **01M51R8HBB98JQ6QG6RFZWBY74** For 7 days after the stop, each cloud
   part stays: the go-back window. In that time, the owner brings
   riff-server back with its state with `riff cloud deploy shared TAG`,
-  where TAG is the tag of the bridge release. Then `riff move --back`
-  in a clone moves a repository back.
+  where TAG is the tag of the bridge release, and the email of the
+  owner is in `RIFF_OWNER` (01M3JN3ASSV9SA0QZKXXJ0RTEV). Then
+  `riff move --back` in a clone moves a repository back.
 - **01M51R8HDY6BVG735NDKDM39Y5** `riff cloud delete NAME --all` deletes
   each part of the instance NAME: the service and its domain mapping,
   the alert and its channel, the service accounts, the secret, the
@@ -6490,7 +6501,9 @@ with "Superseded by Wave C (ID)." holds until then.
   user place of riff 1.x. It keeps each other entry and key in its
   order, and says what it removed. The setting `update.auto` is the
   consent of the person for this step (#855). So no hook of riff 1.x
-  runs after the update.
+  runs after the update. The riff 1.x that runs the update does this
+  step. riff 3 writes nothing in the Claude config of the person
+  (01M4Z60B85X62PNYSVJWKXEWH3).
 - **01M51R8J200TMFS4ANDN9ZE6TB** riff 3.0.0 releases at the end of Wave
   C, as the release that GitHub marks Latest. Each machine with
   `update.auto` on takes it by itself (01M51R8HTE7X1Q5NKZAS16E9PD). On

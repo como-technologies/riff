@@ -94,7 +94,8 @@ print it:
 riff image
 ```
 
-Put that line in `riff.toml` of your repository, and commit the file:
+Put that image in the key `image` of `riff.toml` of your repository,
+and commit the file:
 
 ```toml
 [session]
@@ -171,8 +172,12 @@ holds of the daemon stay.
 
 ## The end of riff-server
 
-These steps are for the owner. `riff cloud` runs the `gcloud` of the
-machine: sign in to Google Cloud first.
+These steps are for the owner. Do each step with the riff of the
+bridge release, in a clone of `como-technologies/riff`. `riff cloud`
+reads the settings of each instance from `deploy/cloud` of that clone.
+So `deploy/cloud` stays on `main` until you delete the cloud parts,
+also after riff-server goes from the code. `riff cloud` runs the
+`gcloud` of the machine: sign in to Google Cloud first.
 
 ### Stop riff-server
 
@@ -189,10 +194,11 @@ days: the go-back window.
 ### Bring riff-server back
 
 In the go-back window, deploy the bridge release again. riff-server
-comes back with its state:
+comes back with its state. The deploy needs the email of the owner of
+the riff in `RIFF_OWNER`:
 
 ```sh
-riff cloud deploy shared vX.Y.Z
+RIFF_OWNER=YOUR_EMAIL riff cloud deploy shared vX.Y.Z
 ```
 
 Then move each repository back with `riff move --back`.
@@ -223,6 +229,9 @@ The Google Cloud project stays. To delete the project too, add
 ```sh
 riff cloud delete shared --all --project
 ```
+
+When each instance is deleted, remove `deploy/cloud` from `main` in a
+pull request, before the release of riff 3.0.0.
 
 ### Delete the GitHub App of riff 2.0
 
@@ -258,5 +267,5 @@ prerelease, so `riff update` never installs it again.
 |---|---|
 | The bridge release | `riff update --tag` with the release before it |
 | The move of a repository | `riff move --back` in a clone of the repository |
-| The stop of riff-server | `riff cloud deploy shared TAG` in the go-back window, then `riff move --back` |
+| The stop of riff-server | [Bring riff-server back](#bring-riff-server-back) in the go-back window, then `riff move --back` |
 | The end | No way back to riff 1.x. A fault of riff 3.0 gets a fix in a release of riff 3 |
