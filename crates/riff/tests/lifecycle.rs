@@ -106,12 +106,6 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
-/// True when a riff-server of this machine listens on 7878. Then
-/// `riff server` shows it in a `local` line.
-fn local_answers() -> bool {
-    std::net::TcpStream::connect_timeout(&"127.0.0.1:7878".parse().unwrap(), PROBE_WAIT).is_ok()
-}
-
 /// The first line of `riff server`: the release of this build, with its
 /// commit and date short.
 fn riff_line() -> String {
@@ -144,9 +138,12 @@ async fn server_shows_the_riff_that_riff_uses_from_riff_server_as_a_table() {
     ];
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines[..4], table, "{stdout}");
-    // Then the facts of the riff, one on a line.
+    // Then the facts of the riff, one on a line. A riff of this machine
+    // on 7878 is outside the test, and its answer can come in time or
+    // not. So the test takes the answer that `riff server` saw: a second
+    // look can see another (#294).
     let after = 4 + FACTS.len();
-    if local_answers() {
+    if lines[after].starts_with("local ") {
         assert_eq!(
             lines[after], "local       http://127.0.0.1:7878",
             "{stdout}"

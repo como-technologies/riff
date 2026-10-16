@@ -7,5 +7,6 @@ mod ci_lock;
 mod cli;
 mod gate;
 mod part;
+mod stress;
 mod test_files;
 mod tracked;

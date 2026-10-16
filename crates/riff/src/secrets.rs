@@ -25,8 +25,12 @@
 //! `standalone_crate`: it runs in a process of its own, as the example
 //! below does. The unit test
 //! `each_doc_test_that_sets_the_store_is_a_crate_of_its_own` checks
-//! each file of `crates/riff/src` (01M514XARN6564BBWHWWYVCH9K). A unit
-//! test sets the mock store once for each process, with a `Once`.
+//! each file of `crates/riff/src` (01M514XARN6564BBWHWWYVCH9K). Each
+//! unit test that uses the keyring calls `mock_store` of this module
+//! first. It sets the mock store one time for the process, so no unit
+//! test replaces the store that another test wrote to. The unit test
+//! `the_unit_tests_set_the_store_in_one_place` checks it
+//! (01M517P9MTBWPN0FQRMXEJ9JG5).
 //!
 //! Each keyring error is an error, also when riff cannot open the
 //! keyring. [`has_keyring`] tells the caller which case it is.
@@ -407,18 +411,22 @@ fn file_locked(error: anyhow::Error) -> anyhow::Error {
     }
 }
 
+/// Sets the mock store of `keyring_core` for the unit tests of riff, one
+/// time for the process (01M517P9MTBWPN0FQRMXEJ9JG5). Each unit test
+/// that uses the keyring calls it first.
+#[cfg(test)]
+pub(crate) fn mock_store() {
+    static MOCK: std::sync::Once = std::sync::Once::new();
+    MOCK.call_once(|| {
+        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap())
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::Once;
-
     use keyring_core::mock;
 
     use super::*;
-
-    fn mock_store() {
-        static MOCK: Once = Once::new();
-        MOCK.call_once(|| keyring_core::set_default_store(mock::Store::new().unwrap()));
-    }
 
     #[test]
     fn set_replaces_the_value() {
@@ -587,6 +595,58 @@ mod tests {
             shared.is_empty(),
             "make these doc tests standalone_crate: {shared:?}"
         );
+    }
+
+    /// The lines of code in `text` that set the default store of
+    /// `keyring_core`, from 1. A comment, a doc line and a line of a
+    /// string do not count.
+    fn store_setters(text: &str) -> Vec<usize> {
+        // In two parts, so that this line is no setter.
+        let call = concat!("set_default_store", "(");
+        let code = |line: &str| {
+            let line = line.trim_start();
+            !line.starts_with("//") && !line.starts_with('"')
+        };
+        text.lines()
+            .enumerate()
+            .filter(|(_, line)| code(line) && line.contains(call))
+            .map(|(at, _)| at + 1)
+            .collect()
+    }
+
+    /// 01M517P9MTBWPN0FQRMXEJ9JG5: only [`mock_store`] sets the store
+    /// in the code of riff. Two setters, for example a `Once` in each of
+    /// two test modules, replace the store that a test of the other wrote
+    /// to, and that test finds no entry.
+    #[test]
+    fn the_unit_tests_set_the_store_in_one_place() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rust_files(&src, &mut files);
+        let mut setters = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).unwrap();
+            for line in store_setters(&text) {
+                let name = file.strip_prefix(&src).unwrap().display();
+                setters.push(format!("{name}:{line}"));
+            }
+        }
+        assert_eq!(setters.len(), 1, "call secrets::mock_store: {setters:?}");
+        assert!(setters[0].starts_with("secrets.rs:"), "{setters:?}");
+    }
+
+    #[test]
+    fn the_check_finds_each_setter_of_the_store_in_code() {
+        let text = concat!(
+            "//! # keyring_core::set_default_store(a);\n",
+            "    fn mock() {\n",
+            "        MOCK.call_once(|| keyring_core::set_default_store(b));\n",
+            "    }\n",
+            "    // keyring_core::set_default_store(c);\n",
+            "    \"keyring_core::set_default_store(d);\",\n",
+            "    keyring_core::set_default_store(\n",
+        );
+        assert_eq!(store_setters(text), [3, 7]);
     }
 
     #[test]
