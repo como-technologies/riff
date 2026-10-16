@@ -47,7 +47,8 @@ async fn in_terminal(mut cmd: Command) -> (ExitStatus, String) {
 /// 01M519Z57K3SPRN8Z517VZ62BB: "Share a riff" of the book page "riff 3.0:
 /// peers" has a `sh` block of each member command of a riff of peers, and
 /// each one is real. The help of each command that needs a terminal says
-/// so, as the page does.
+/// so, as the page does. "Join a riff again" has the invite and the join
+/// after the leave (01M5328FPJT7Q5Q1509BC5F0J7).
 #[test]
 fn share_a_riff_in_the_book_has_each_member_command() {
     let commands: Vec<String> = crate::book::commands_of_part("riff-3-peers.md", "Share a riff")
@@ -65,6 +66,8 @@ fn share_a_riff_in_the_book_has_each_member_command() {
             "riff view",
             "riff top",
             "riff leave",
+            "riff invite brett",
+            "riff join riff1-...",
             "riff remove brett",
             "riff remove brett --host kadomony",
         ]
@@ -86,6 +89,19 @@ fn share_a_riff_in_the_book_has_each_member_command() {
             .unwrap();
         let help = String::from_utf8_lossy(&out.stdout).replace('\n', " ");
         assert!(help.contains("in a terminal"), "riff help {name}: {help}");
+        // The help and the book say the same of a join again.
+        let again =
+            "A machine that left a riff joins it again with a new invite string of the owner.";
+        let words = match name {
+            "join" => Some(again),
+            "leave" => Some("To join that riff again, ask the owner for a new invite string"),
+            "remove" => Some("A removed machine cannot join again, also with a new invite."),
+            _ => None,
+        };
+        if let Some(words) = words {
+            assert!(help.contains(words), "riff help {name}: {help}");
+        }
+        assert!(part.contains(again), "{part}");
     }
 }
 

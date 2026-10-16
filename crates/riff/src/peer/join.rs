@@ -143,20 +143,20 @@ pub fn admit(hub: &Hub, invites: &Invites, key: Public, ask: &Ask, now_ms: u64) 
 /// does not know, the number of its `left` record for a key that left),
 /// or why the daemon of the owner refuses it (01M5328FS8XGVW3X6N94F65FA8).
 fn known(state: &State, key: &Public) -> Result<Option<u64>, String> {
-    let short = key.to_string();
+    let hex = key.to_string();
     if *key == state.riff() {
-        return Err(text::join_owner_key(&short));
+        return Err(text::join_owner_key(&hex));
     }
     let Some(member) = state.members().get(key) else {
         return Ok(None);
     };
     if member.removed {
-        return Err(text::join_removed_key(&short));
+        return Err(text::join_removed_key(&hex));
     }
     member
         .left_at()
         .map(Some)
-        .ok_or_else(|| text::join_member_key(&short))
+        .ok_or_else(|| text::join_member_key(&hex))
 }
 
 /// The time now, in milliseconds since the epoch.
