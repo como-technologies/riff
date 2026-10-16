@@ -106,7 +106,8 @@
 //!
 //! The lead in a container ([`crate::lead`]) also gets the tools of a
 //! lead that act only on riff-server: [`LEAD_TOOLS`]. Its instructions
-//! are [`text::MCP_LEAD`]: they say how the lead gets its wakes.
+//! are [`text::MCP_LEAD`]: they say how the lead gets its wakes, and
+//! the steps of the waves.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

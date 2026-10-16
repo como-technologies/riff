@@ -62,8 +62,10 @@
 //! each command that has the fixed text after it, in each argument. The
 //! steps of the waves of the lead are `riff wave` commands
 //! ([`crate::waves`]), so `Bash(riff *)` covers them, and no rule names a
-//! path of the API of the forge. The tests check each allow rule, and a
-//! list of commands that no allow rule may match.
+//! path of the API of the forge. The lead in a container calls its riff
+//! by the path `/opt/riff/riff`, so a session rule of the lead covers its
+//! `wave` commands (01M51K1VJ67KYHRD7DQ86DSX1X). The tests check each
+//! allow rule, and a list of commands that no allow rule may match.
 //!
 //! | Rule | Kind | Roles | Places | The step |
 //! |---|---|---|---|---|
@@ -74,6 +76,7 @@
 //! | `Bash(~/.cache/riff/check/target/static/release/riff *)` | allow | worker | user | the riff of a new build in a check (01M5084K79M5XJT3MP8FFVQKDX) |
 //! | `Bash({HOME}/.cache/riff/check/target/static/release/riff *)` | allow | worker | user | the same riff, by its full path |
 //! | `Bash(/opt/riff/riff relay watch)` | allow | lead | session | the wakes of the lead in a container |
+//! | `Bash(/opt/riff/riff wave *)` | allow | lead | session | the steps of the waves of the lead in a container |
 //! | `Bash(gh pr create *)` | allow | worker | project, user, session | open the pull request |
 //! | `Bash(gh pr merge --auto --squash *)` | allow | worker | project, user, session | turn on auto-merge |
 //! | `Bash(gh pr comment *)` | allow | worker, verifier | project, user | write a comment on a pull request |
@@ -323,6 +326,7 @@ pub const TABLE: &[Row] = {
             &[User],
         ),
         allow("Bash(/opt/riff/riff relay watch)", &[Lead], &[Session]),
+        allow("Bash(/opt/riff/riff wave *)", &[Lead], &[Session]),
         allow("Bash(gh pr create *)", &[Worker], &[Project, User, Session]),
         allow(
             "Bash(gh pr merge --auto --squash *)",
@@ -424,6 +428,8 @@ pub const OUT_OF_BOUNDS: &[&str] = &[
     "git push origin main",
     "riffx who",
     "/opt/riff/riff relay mcp",
+    "/opt/riff/riff waves x",
+    "/opt/riff/riff daemon install",
     "sh -c 'riff who'",
 ];
 
@@ -1699,6 +1705,13 @@ mod tests {
                 .collect();
             let steps = text_steps(&text);
             assert!(!steps.is_empty(), "{text}");
+            // The lead in a container plans the waves (01M51K1VJ67KYHRD7DQ86DSX1X).
+            if role == Role::Lead {
+                for wave in ["list", "make", "rename", "end"] {
+                    let step = format!("/opt/riff/riff wave {wave}");
+                    assert!(steps.contains(&step), "{steps:#?}");
+                }
+            }
             for step in &steps {
                 assert!(
                     rules.iter().any(|r| matches(r, step)),

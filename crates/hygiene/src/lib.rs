@@ -1,7 +1,7 @@
 //! Issue hygiene of this repository: the form of a pull request, and of
 //! a commit on `main`. The module [`book`] checks the book, [`wrap`]
-//! checks the wrap of its pages, and [`ci`] picks the checks that
-//! `just ci` runs.
+//! checks the wrap of its pages, [`blank`] finds two blank lines in a
+//! row, and [`ci`] picks the checks that `just ci` runs.
 //!
 //! # Design
 //!
@@ -63,6 +63,7 @@ use std::fmt;
 
 use serde::Deserialize;
 
+pub mod blank;
 pub mod book;
 pub mod ci;
 pub mod part;

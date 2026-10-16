@@ -61,9 +61,11 @@ check:
 # Run only the checks for text: the book, the requirement IDs, the wrap
 ci-text: book reqs wrap
 
-# Check that each prose line of the book is at most 72 characters
+# 01M51K1VMWTNZGD6PT1BYDGWM3: the book and the plugin, with its skill.
+# Check the wrap of the book, and that no page has two blank lines in a row
 wrap:
     @cargo run -q -p hygiene -- wrap docs/src
+    @cargo run -q -p hygiene -- blank docs/src crates/riff/claude-plugin
 
 # Check the requirement IDs: no duplicate, and each cited ID exists
 reqs:

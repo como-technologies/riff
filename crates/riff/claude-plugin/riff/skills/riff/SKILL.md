@@ -354,7 +354,6 @@ example `$R daemon install`, matches no rule. When the check runs
 `riff init` of the build, add `--yes`. With no terminal, `riff init`
 asks no question, and fails when a rule of Claude Code is missing.
 
-
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The verifier names it in the result.
 Link the issue so that the merge leaves it open. After the merge, add a

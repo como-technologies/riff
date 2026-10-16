@@ -248,9 +248,17 @@ lead plans the waves with `riff wave`: see [Waves](waves.md).
 
 These rules deny nothing. The deny rules of a project come from
 `riff setup`. The riff daemon gives each of its sessions the rules of
-its steps. When the auto mode check still refuses a step of riff, the
-session writes the step on its issue and tells your lead. The fix is a
-new rule in the code of riff, not a step that you type.
+its steps. The lead in a container calls its riff by the path
+`/opt/riff/riff`, so it gets these rules of its own:
+
+| Rules | Allow |
+|---|---|
+| `Bash(/opt/riff/riff relay watch)` | the wakes of the lead |
+| `Bash(/opt/riff/riff wave *)` | the steps of the waves of the lead |
+
+When the auto mode check still refuses a step of riff, the session
+writes the step on its issue and tells your lead. The fix is a new
+rule in the code of riff, not a step that you type.
 
 Run `riff init` in a terminal of your own. Claude Code refuses
 `riff init` from a session, also when you approve it: a session must

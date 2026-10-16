@@ -1,7 +1,9 @@
 //! `hygiene pr N` checks pull request N with `gh`. `hygiene commit [REV]`
 //! checks the message of a commit with `git`. `hygiene book [DIR]` builds
 //! the book in DIR with `mdbook` and checks it. `hygiene wrap [DIR]`
-//! checks the wrap of each Markdown file in DIR. `hygiene ci [BASE]`
+//! checks the wrap of each Markdown file in DIR. `hygiene blank PATH...`
+//! finds two blank lines in a row in each Markdown file in each PATH and
+//! its subfolders. `hygiene ci [BASE]`
 //! prints the recipe that `just ci` runs. `hygiene crates [BASE]` prints
 //! the arguments of `cargo test` that `just check` runs. `hygiene
 //! test-part I/N` runs part I of N of the tests. See the library docs.
@@ -14,8 +16,8 @@ use hygiene::{Issue, PullRequest};
 use serde::de::DeserializeOwned;
 
 const USAGE: &str = "usage: hygiene pr NUMBER | hygiene commit [REV] | hygiene book [DIR] \
-                     | hygiene wrap [DIR] | hygiene ci [BASE] | hygiene crates [BASE] \
-                     | hygiene test-part I/N";
+                     | hygiene wrap [DIR] | hygiene blank PATH... | hygiene ci [BASE] \
+                     | hygiene crates [BASE] | hygiene test-part I/N";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -27,6 +29,7 @@ fn main() -> ExitCode {
         ["book", dir] => book(dir),
         ["wrap"] => wrap("docs/src"),
         ["wrap", dir] => wrap(dir),
+        ["blank", ref paths @ ..] if !paths.is_empty() => blank(paths),
         ["ci"] => ci("origin/main"),
         ["ci", base] => ci(base),
         ["crates"] => crates("origin/main"),
@@ -155,6 +158,43 @@ fn wrap(dir: &str) -> ExitCode {
         }
     }
     report(&format!("the wrap of the pages in {dir}"), &errors, WRAP)
+}
+
+/// Finds two blank lines in a row in each `.md` file in each of
+/// `paths` and its subfolders.
+fn blank(paths: &[&str]) -> ExitCode {
+    let mut pages = Vec::new();
+    for path in paths {
+        if let Err(e) = markdown(Path::new(path), &mut pages) {
+            return tool_error(&format!("{path}: {e}"));
+        }
+    }
+    pages.sort();
+    let mut errors = Vec::new();
+    for page in pages {
+        match std::fs::read_to_string(&page) {
+            Ok(text) => errors.extend(hygiene::blank::check(&page.display().to_string(), &text)),
+            Err(e) => return tool_error(&format!("{}: {e}", page.display())),
+        }
+    }
+    report(
+        &format!("the blank lines of the pages in {}", paths.join(", ")),
+        &errors,
+        BLANK,
+    )
+}
+
+/// Adds each `.md` file in `dir` and its subfolders to `pages`.
+fn markdown(dir: &Path, pages: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            markdown(&path, pages)?;
+        } else if path.extension().is_some_and(|x| x == "md") {
+            pages.push(path);
+        }
+    }
+    Ok(())
 }
 
 /// Prints the recipe that `just ci` runs for the diff from the merge
@@ -413,6 +453,9 @@ const BOOK: &str = "rule(s) of the book check. See \"Check the book\" in the boo
 
 /// The end of the report of a broken rule of the wrap check.
 const WRAP: &str = "rule(s) of the wrap check. See \"Check the wrap of the book\" in the book.";
+
+/// The end of the report of a broken rule of the blank check.
+const BLANK: &str = "rule(s) of the blank check. See \"Check the wrap of the book\" in the book.";
 
 /// Prints each error, and then how many rules `what` breaks and where to
 /// read about them (`rules`). Exit status 1 when there is one.

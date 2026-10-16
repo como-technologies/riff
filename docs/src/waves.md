@@ -177,7 +177,6 @@ riff wave end 6
 The lead does these steps for you when it plans the waves. They are
 `riff` commands, so the permission rule `Bash(riff *)` covers them.
 
-
 ### See the open items of a wave
 
 ```sh

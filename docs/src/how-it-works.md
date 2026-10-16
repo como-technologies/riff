@@ -3822,7 +3822,6 @@ flowchart LR
     L -- "riff workers start 3" --> W1 & W2 & W3
 ```
 
-
 ### How long a command waits for the server
 
 Each call of `riff` to the server has a budget: the longest time from
