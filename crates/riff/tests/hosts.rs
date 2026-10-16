@@ -803,7 +803,8 @@ async fn the_lead_counts_the_workers_that_the_status_of_a_host_does_not_list() {
     let host = out.lines().find(|l| l.starts_with("c  ")).unwrap();
     assert!(host.contains("limit 30  runs 30"), "{out}");
     assert!(
-        out.contains("\n%100 ") && out.contains(" more workers: the status of the host has no room"),
+        out.contains("\n%100 ")
+            && out.contains(" more workers: the status of the host has no room"),
         "{out}"
     );
 }

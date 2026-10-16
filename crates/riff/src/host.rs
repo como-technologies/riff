@@ -409,7 +409,9 @@ impl HostStatus {
         let line = |listed: usize, id: usize| {
             let mut workers: Vec<String> = self.workers[..listed]
                 .iter()
-                .map(|(pane, short)| format!("{pane} {}", short.chars().take(id).collect::<String>()))
+                .map(|(pane, short)| {
+                    format!("{pane} {}", short.chars().take(id).collect::<String>())
+                })
                 .collect();
             let more = self.runs() - listed;
             if more > 0 {
