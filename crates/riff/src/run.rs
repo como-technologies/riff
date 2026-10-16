@@ -1490,7 +1490,7 @@ pub async fn run_peers_with(
     let mut signals = Signals::new()?;
     let mut view = View::default();
     let ended = follow_job(daemon, ask, item, &mut signals, |line| view.show(line)).await?;
-    Ok(i32::from(!(ended.code == Some(0) && !ended.failed)))
+    Ok(i32::from(ended.code != Some(0) || ended.failed))
 }
 
 /// Sends the job `ask` to the daemon in the folder `daemon`, gives

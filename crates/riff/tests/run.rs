@@ -2065,7 +2065,7 @@ async fn riff_run_and_a_wave_with_peers_do_one_item_with_no_riff_server() {
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0].kind, riff_core::wire::Kind::Message);
     let lead = riff_core::selector::Selector::lead("mike", "como-technologies/riff");
-    assert_eq!(sent[0].to, [lead.clone()]);
+    assert_eq!(sent[0].to, std::slice::from_ref(&lead));
     // No step reached a riff-server: riff run needs none.
     assert!(!machine.read("daemon.out").contains(NO_SERVER));
     assert!(!stderr.contains(NO_SERVER), "{stderr}");
