@@ -263,7 +263,10 @@
 //! takeover. A restart of the daemon keeps the takeover: a new `riff
 //! takeover NAME` gets [`Say::Held`] at once. The daemon refuses a
 //! takeover of a session with a terminal, and of a relay of a protocol
-//! before 4.
+//! before 4. A takeover works only for a session of this machine: for
+//! the session ID of a session of another daemon of the riff of peers,
+//! or the start of it, the refusal names the host of that session
+//! (`Daemon::elsewhere`, 01M522MRYR89SY6WRV720806RA).
 //!
 //! [`Up::Held`]: crate::session_relay::Up::Held
 //!

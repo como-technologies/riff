@@ -34,7 +34,8 @@
 //! runs the loop with the terminal of the person.
 //!
 //! - The SESSION column is as wide as the longest name, so each name
-//!   shows in full (01M51PD7T7451SR11W7JA7QW3X).
+//!   shows in full (01M51PD7T7451SR11W7JA7QW3X). The STATE column is at
+//!   least 20 wide, and as wide as its longest state.
 //! - Enter attaches to the lead ([`crate::lead::attach`]): the selected
 //!   row when it is a lead, else the first lead. The view gives the
 //!   terminal to `podman attach`, and takes it back after Ctrl-P Ctrl-Q
