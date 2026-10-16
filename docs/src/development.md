@@ -763,6 +763,18 @@ riff daemon
 
 Press Ctrl-C to stop it. Its containers run on.
 
+### Keep a daemon off the network of n0
+
+The daemon binds its iroh endpoint with the DNS and the relays of n0.
+To keep a test daemon on your machine only, set `RIFF_PEER_NET`:
+
+```sh
+RIFF_PEER_NET=local riff daemon
+```
+
+The daemon then binds on 127.0.0.1, with no relay and no DNS. It finds
+no other daemon. The tests of riff set this variable.
+
 ## Run one item in a container
 
 `riff run ITEM` does one work item in a rootless podman container. It

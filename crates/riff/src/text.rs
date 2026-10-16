@@ -6415,6 +6415,7 @@ pub fn daemon_new_riff(
 ///     key: Some("0a1b".into()),
 ///     riff: Some("0a1b".into()),
 ///     owner: Some("mike".into()),
+///     links: Some(vec![]),
 ///     position: 3,
 ///     sessions: vec![],
 ///     limit: Some(Limit::default()),
@@ -6427,6 +6428,7 @@ pub fn daemon_new_riff(
 /// assert!(text.contains("Its key: 0a1b\n"));
 /// assert!(text.contains("Its riff: 0a1b, at position 3 of its log.\n"));
 /// assert!(text.contains("The owner of its riff: mike\n"));
+/// assert!(text.contains("Its peer links: none: its riff has no other daemon.\n"));
 /// assert!(text.contains("Sessions: none.\n"));
 /// status.sessions.push(Live {
 ///     name: "riff-issue-12-1a2b3c4d".into(),
@@ -7064,6 +7066,7 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 ///     key: None,
 ///     riff: None,
 ///     owner: None,
+///     links: None,
 ///     position: 0,
 ///     sessions: vec![],
 ///     limit: None,
