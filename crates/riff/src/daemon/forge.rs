@@ -344,3 +344,203 @@ pub(super) fn release_at_end(record: &Record) {
         Err(e) => eprintln!("riff daemon: {}: {e:#}", record.live.name),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::tests::{Here, IMAGE, me, until};
+    use crate::daemon::{Ask, Client, Say, ask_release};
+    use crate::daemon_key::Key;
+    use crate::forge_claim::tests::clone_of;
+    use crate::runtime::Fake;
+
+    async fn here() -> Here {
+        Here::new(Fake::default().with_image(IMAGE)).await
+    }
+
+    /// The items of the claims on the forge of `main`.
+    fn items(main: &Path) -> BTreeSet<String> {
+        forge_claim::list(main).unwrap().into_keys().collect()
+    }
+
+    /// The set of the items `items`.
+    fn set(items: &[&str]) -> BTreeSet<String> {
+        items.iter().map(|item| (*item).to_owned()).collect()
+    }
+
+    /// The user of the key of the daemon of `here`: the owner of its own
+    /// riff.
+    fn user_of(here: &Here) -> String {
+        here.daemon
+            .peers(|state| state.owner().map(str::to_owned))
+            .flatten()
+            .unwrap()
+    }
+
+    /// Done when 1 of #844: two daemons claim one item at one time, and
+    /// one wins. The other reads it as held. A release with a wrong lease
+    /// fails, and the release of the daemon at the end of the session
+    /// deletes the ref with the lease (01M4Z60B8EB7A44A41CWWP7G8K,
+    /// 01M519Z4HK333JWVXAWQHCGK6M).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn two_daemons_claim_one_item_at_one_time_and_one_wins() {
+        let (a, b) = (here().await, here().await);
+        let root = tempfile::tempdir().unwrap();
+        let mains = [clone_of(root.path(), "a"), clone_of(root.path(), "b")];
+        let (me_a, me_b) = (me("wa"), me("wb"));
+        let (won_a, won_b) = tokio::join!(
+            a.daemon.claim_forge(&mains[0], "issue-12", &me_a),
+            b.daemon.claim_forge(&mains[1], "issue-12", &me_b),
+        );
+        let (winner, name, won, lost_at) = match (won_a.unwrap(), won_b.unwrap()) {
+            (Some(won), None) => (&a, "wa", won, &mains[1]),
+            (None, Some(won)) => (&b, "wb", won, &mains[0]),
+            other => panic!("one daemon wins: {other:?}"),
+        };
+        // The other daemon reads the claim of the winner.
+        let found = forge_claim::found(lost_at).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].commit, won.commit);
+        let claim = found[0].claim.clone().unwrap();
+        assert_eq!(Some(claim.key), winner.daemon.peers(|s| s.riff()));
+        assert_eq!(claim.user, user_of(winner));
+        assert_eq!(claim.session, format!("{name}-session"));
+        // A release with a wrong lease fails, and changes nothing.
+        let wrong = forge_claim::commit(lost_at, &claim).unwrap();
+        assert_eq!(
+            forge_claim::release(lost_at, "issue-12", &wrong).unwrap(),
+            Freed::NotAt
+        );
+        assert_eq!(items(lost_at), set(&["issue-12"]));
+
+        // The session of the winner holds the claim. At its end, its
+        // daemon deletes the ref with the lease.
+        let mut start = winner.start(name, "issue-12");
+        start.server = String::new();
+        start.claim = Some(won);
+        let (_client, name) = winner.started(start).await;
+        assert_eq!(items(lost_at), set(&["issue-12"]));
+        winner.fake.stop(&name).await.unwrap();
+        let main = lost_at.clone();
+        until(move || items(&main).is_empty()).await;
+    }
+
+    /// 01M519Z4HK333JWVXAWQHCGK6M: at its start, a daemon deletes each
+    /// claim whose commit names its key and whose session does not run.
+    /// The claim of a session that runs, and a claim of another daemon,
+    /// stay.
+    #[tokio::test]
+    async fn at_its_start_a_daemon_deletes_each_claim_of_its_key_whose_session_does_not_run() {
+        let (a, b) = (here().await, here().await);
+        let root = tempfile::tempdir().unwrap();
+        let (main, other) = (clone_of(root.path(), "a"), clone_of(root.path(), "b"));
+        let gone = a.daemon.claim_forge(&main, "issue-12", &me("gone")).await;
+        assert!(gone.unwrap().is_some());
+        let runs = a.daemon.claim_forge(&main, "issue-13", &me("runs")).await;
+        let mut start = a.start("runs", "issue-13");
+        start.server = String::new();
+        start.claim = runs.unwrap();
+        let (_client, _) = a.started(start).await;
+        let of_b = b.daemon.claim_forge(&other, "issue-14", &me("of-b")).await;
+        assert!(of_b.unwrap().is_some());
+        assert_eq!(
+            read_forges(&a.dir).unwrap(),
+            BTreeMap::from([("como-technologies/riff".to_owned(), main.clone())])
+        );
+
+        let lines = a.daemon.sweep_forges().await;
+        assert_eq!(lines, [text::forge_swept("issue-12", "gone-session")]);
+        assert_eq!(items(&main), set(&["issue-13", "issue-14"]));
+        assert!(a.daemon.sweep_forges().await.is_empty());
+    }
+
+    /// Done when 3 of #844 (01M519Z4M0F2RY0VDQNB2QFAPJ): the daemon of the
+    /// lead deletes a claim of a session of its user after the end
+    /// record, and after 15 minutes with no link to its daemon, on a test
+    /// clock. A claim of another user holds, and so does a claim of a
+    /// session of this daemon that runs.
+    #[tokio::test]
+    async fn the_daemon_of_the_lead_deletes_the_claims_of_its_user_that_ended_or_are_offline() {
+        let a = here().await;
+        let root = tempfile::tempdir().unwrap();
+        let main = clone_of(root.path(), "a");
+        let user = user_of(&a);
+        let hub = a.daemon.riff.get().unwrap().hub.clone();
+        let lead: SessionUri = "riff://mike@thelio/como-technologies/riff?session=lead1"
+            .parse()
+            .unwrap();
+        hub.start(&lead, false, true, Vec::new()).unwrap();
+        // A session of this daemon that ended, and one that runs.
+        hub.start(&me("e1"), true, false, vec!["issue-1".into()])
+            .unwrap();
+        let ended = a.daemon.claim_forge(&main, "issue-1", &me("e1")).await;
+        assert!(ended.unwrap().is_some());
+        hub.end("e1-session").unwrap();
+        hub.start(&me("r1"), true, false, vec!["issue-4".into()])
+            .unwrap();
+        let runs = a.daemon.claim_forge(&main, "issue-4", &me("r1")).await;
+        assert!(runs.unwrap().is_some());
+        // The claims of the daemon of another key: of the user of the
+        // lead, and of another user.
+        let other = Key::from_bytes(&[9; 32]).public();
+        let take = |item: &str, user: &str| {
+            let claim = Claim::now(item, user, "x1", other);
+            let took = forge_claim::take(&main, &claim).unwrap();
+            assert!(matches!(took, Took::Won(_)), "{took:?}");
+        };
+        take("issue-2", &user);
+        take("issue-3", "brett");
+
+        let since = a.daemon.since_ms;
+        let minutes = |m: i64| since + m * 60_000;
+        let mut seen = Seen::default();
+        let lines = a.daemon.tidy_forges(&mut seen, minutes(14)).await;
+        let ended = forge_claim::Stale::Ended;
+        assert_eq!(lines, [text::forge_lead_freed("issue-1", "e1-session", ended)]);
+        assert_eq!(items(&main), set(&["issue-2", "issue-3", "issue-4"]));
+        let lines = a.daemon.tidy_forges(&mut seen, minutes(15)).await;
+        let offline = forge_claim::Stale::Offline(15);
+        assert_eq!(lines, [text::forge_lead_freed("issue-2", "x1", offline)]);
+        assert_eq!(items(&main), set(&["issue-3", "issue-4"]));
+        // With no lead, the daemon deletes no claim.
+        take("issue-5", &user);
+        hub.end("lead1").unwrap();
+        assert!(a.daemon.tidy_forges(&mut seen, minutes(99)).await.is_empty());
+        assert_eq!(items(&main), set(&["issue-3", "issue-4", "issue-5"]));
+    }
+
+    /// Done when 4 of #844 (01M519Z4PESWFV8Y03SKTSGV4Q): `riff release
+    /// ITEM --forge` asks the daemon. The owner frees a claim of its own
+    /// user and of another user. The rule of a member is in the tests of
+    /// [`crate::forge_claim`].
+    #[tokio::test]
+    async fn riff_release_forge_asks_the_daemon_and_the_owner_frees_each_claim() {
+        let a = here().await;
+        let root = tempfile::tempdir().unwrap();
+        let main = clone_of(root.path(), "a");
+        let user = user_of(&a);
+        let other = Key::from_bytes(&[9; 32]).public();
+        for (item, user) in [("issue-5", user.as_str()), ("issue-6", "brett")] {
+            forge_claim::take(&main, &Claim::now(item, user, "x1", other)).unwrap();
+        }
+        ask_release(&a.dir, &main, "issue-5").await.unwrap();
+        assert_eq!(items(&main), set(&["issue-6"]));
+        ask_release(&a.dir, &main, "issue-6").await.unwrap();
+        assert!(items(&main).is_empty());
+        let error = ask_release(&a.dir, &main, "issue-7").await.unwrap_err();
+        assert_eq!(error.to_string(), text::forge_release_none("issue-7"));
+        let error = ask_release(&a.dir, &main, "../x").await.unwrap_err();
+        assert_eq!(error.to_string(), text::forge_claim_bad_item("../x"));
+        // The line of the daemon names the item and the user.
+        forge_claim::take(&main, &Claim::now("issue-8", "brett", "x2", other)).unwrap();
+        let mut client = Client::connect(&a.dir).await.unwrap();
+        let ask = Ask::Release {
+            main: main.clone(),
+            item: "issue-8".into(),
+        };
+        client.ask(ask).await.unwrap();
+        let line = text::forge_released("issue-8", Some("brett"));
+        assert_eq!(client.next().await.unwrap(), Some(Say::Line { text: line }));
+        assert_eq!(client.next().await.unwrap(), Some(Say::Done));
+    }
+}

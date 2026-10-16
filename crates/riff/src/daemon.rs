@@ -3617,7 +3617,7 @@ mod tests {
     use crate::service::{ServiceManager, Unit};
     use tokio::sync::oneshot;
 
-    const IMAGE: &str = "localhost/riff-session:latest";
+    pub(super) const IMAGE: &str = "localhost/riff-session:latest";
 
     /// The events of one turn of a fake `claude`, with a token in a
     /// tool result.
@@ -3627,7 +3627,7 @@ mod tests {
         r#"{"type":"result","subtype":"success","is_error":false,"num_turns":1}"#,
     ];
 
-    fn me(name: &str) -> SessionUri {
+    pub(super) fn me(name: &str) -> SessionUri {
         format!("riff://mike@thelio/como-technologies/riff?session={name}-session#issue-1")
             .parse()
             .unwrap()
@@ -3653,13 +3653,13 @@ mod tests {
 
     /// A daemon on `fake` in a temp folder, with a session folder for
     /// each session.
-    struct Here {
-        root: tempfile::TempDir,
-        dir: PathBuf,
-        fake: Fake,
+    pub(super) struct Here {
+        pub(super) root: tempfile::TempDir,
+        pub(super) dir: PathBuf,
+        pub(super) fake: Fake,
         quiet: Duration,
         world: Option<Arc<dyn World>>,
-        daemon: Arc<Daemon<Fake>>,
+        pub(super) daemon: Arc<Daemon<Fake>>,
         stop: Option<oneshot::Sender<()>>,
         served: JoinHandle<Result<()>>,
     }
@@ -3705,7 +3705,7 @@ mod tests {
     }
 
     impl Here {
-        async fn new(fake: Fake) -> Here {
+        pub(super) async fn new(fake: Fake) -> Here {
             Here::with_quiet(fake, QUIET_LIMIT).await
         }
 
@@ -3743,7 +3743,7 @@ mod tests {
         }
 
         /// The [`Start`] of the session `name` of `item`.
-        fn start(&self, name: &str, item: &str) -> Start {
+        pub(super) fn start(&self, name: &str, item: &str) -> Start {
             let folder = self.root.path().join("sessions").join(name);
             let clone = folder.join("clone");
             std::fs::create_dir_all(&clone).unwrap();
@@ -3764,7 +3764,7 @@ mod tests {
 
         /// Asks the daemon to start `start`. Gives the client after the
         /// line `Started`.
-        async fn started(&self, start: Start) -> (Client, String) {
+        pub(super) async fn started(&self, start: Start) -> (Client, String) {
             let mut client = Client::connect(&self.dir).await.unwrap();
             client.ask(Ask::Start(Box::new(start))).await.unwrap();
             match client.next().await.unwrap() {
@@ -3776,7 +3776,7 @@ mod tests {
             }
         }
 
-        async fn stop(&mut self) {
+        pub(super) async fn stop(&mut self) {
             let _ = self.stop.take().unwrap().send(());
             (&mut self.served).await.unwrap().unwrap();
         }
@@ -5376,7 +5376,7 @@ mod tests {
     }
 
     /// Waits until `done` is true, for at most 5 s.
-    async fn until(mut done: impl FnMut() -> bool) {
+    pub(super) async fn until(mut done: impl FnMut() -> bool) {
         for _ in 0..500 {
             if done() {
                 return;
