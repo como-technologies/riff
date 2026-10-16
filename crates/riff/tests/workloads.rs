@@ -830,7 +830,7 @@ impl Waits {
     /// `program -c "read line"` in the directory `dir`: `program` is a
     /// shell. It returns when the child has the name of `program`. The
     /// kernel lets the parent go on in the exec before it names the
-    /// child (#826).
+    /// child (#826, 01M41A0M2XWCWTWGF7T9DR03W0).
     fn start(program: &Path, dir: &Path) -> Waits {
         let child = Command::new(program)
             .args(["-c", "read line"])

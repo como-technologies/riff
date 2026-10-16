@@ -816,7 +816,7 @@ mod tests {
         /// It returns when the child has the name of `program`. The
         /// kernel lets the parent go on in the exec before it names the
         /// child, so a read at once can find the name of the test thread
-        /// (#826).
+        /// (#826, 01M41A0M2XWCWTWGF7T9DR03W0).
         fn start(program: &Path, dir: &Path) -> Waits {
             let child = Command::new(program)
                 .args(["-c", "read line"])
