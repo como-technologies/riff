@@ -272,7 +272,11 @@ async fn a_worker_with_a_claim_does_not_end() {
 fn wrapper(dir: &std::path::Path, old: bool) -> std::process::Child {
     let riff = dir.join("riff");
     let child = Command::new("sh")
-        .args(["-c", r#"cp "$(command -v sh)" "$1" && exec "$1" -c 'sleep 60'"#, "sh"])
+        .args([
+            "-c",
+            r#"cp "$(command -v sh)" "$1" && exec "$1" -c 'sleep 60'"#,
+            "sh",
+        ])
         .arg(&riff)
         .env_remove("RIFF_SESSION")
         .stdin(Stdio::null())
@@ -281,7 +285,10 @@ fn wrapper(dir: &std::path::Path, old: bool) -> std::process::Child {
     let exe = std::path::PathBuf::from(format!("/proc/{}/exe", child.id()));
     let span = isolated::Span::start();
     while std::fs::read_link(&exe).ok().as_deref() != Some(riff.as_path()) {
-        assert!(span.within(Duration::from_secs(10)), "the wrapper runs no copy");
+        assert!(
+            span.within(Duration::from_secs(10)),
+            "the wrapper runs no copy"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
     if old {

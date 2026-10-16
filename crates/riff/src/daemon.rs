@@ -1543,7 +1543,10 @@ impl<R: Runtime + 'static> Daemon<R> {
             if self.status().await.busy() == 0 && old() {
                 println!("{}", text::DAEMON_NEW_RIFF);
                 if let Err(e) = restart() {
-                    eprintln!("riff daemon: {}", text::daemon_no_restart(&format!("{e:#}")));
+                    eprintln!(
+                        "riff daemon: {}",
+                        text::daemon_no_restart(&format!("{e:#}"))
+                    );
                 }
                 return;
             }
@@ -4602,7 +4605,10 @@ mod tests {
         assert_eq!(units.calls(), ["rewrite", "try-restart"]);
         let unit = units.installed().unwrap().unwrap();
         assert_eq!(unit.exe, riff);
-        assert_eq!(unit.env, Units::of(&check).installed().unwrap().unwrap().env);
+        assert_eq!(
+            unit.env,
+            Units::of(&check).installed().unwrap().unwrap().env
+        );
     }
 
     /// While the daemon runs a session, `riff update` writes the unit and
@@ -4659,7 +4665,12 @@ mod tests {
         let here = Here::new(Fake::default()).await;
         let own = own_binary().unwrap();
         let units = Arc::new(Units::of(&own));
-        assert!(after_update(&*units, &own, &here.dir).await.unwrap().is_empty());
+        assert!(
+            after_update(&*units, &own, &here.dir)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert!(units.calls().is_empty());
         let watch = {
             let (daemon, units) = (here.daemon.clone(), units.clone());
@@ -4676,7 +4687,12 @@ mod tests {
         assert!(units.calls().is_empty());
 
         let none = Units::default();
-        assert!(after_update(&none, &own, &here.dir).await.unwrap().is_empty());
+        assert!(
+            after_update(&none, &own, &here.dir)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert!(none.calls().is_empty());
 
         let (check, riff) = check_and_new(&here);

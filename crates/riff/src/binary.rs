@@ -284,7 +284,8 @@ pub fn on_path_in(name: &str, path: Option<OsString>) -> Option<PathBuf> {
         .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(name))
         .find(|file| {
-            std::fs::metadata(file).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            std::fs::metadata(file)
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
         })
 }
 
