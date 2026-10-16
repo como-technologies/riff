@@ -1071,7 +1071,7 @@ impl World for Live {
                 .filter(|s| s.uri.place().repo_text() == wave.repo)
                 .flat_map(|s| s.uri.claims().iter().cloned())
                 .collect();
-            let holds = api
+            let holds: BTreeSet<String> = api
                 .plan_show(&person, &thread)
                 .await?
                 .holds
@@ -1079,9 +1079,10 @@ impl World for Live {
                 .collect();
             let repo = wave.repo.clone();
             let claimed: HashSet<String> = claims.iter().cloned().collect();
+            let held: HashSet<String> = holds.iter().cloned().collect();
             let (free, pulls) = blocking(move || {
                 let gh = pr::Gh::for_repo(&repo);
-                let free = rollout::free_work(&gh, &repo, &claimed)?.items;
+                let free = rollout::free_work(&gh, &repo, &claimed, &held)?.items;
                 let open = rollout::pulls(&gh, &repo)?;
                 let mut pulls = BTreeMap::new();
                 for issue in free.iter().filter_map(|item| verify_issue(item)) {

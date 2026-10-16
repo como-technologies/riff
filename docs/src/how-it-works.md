@@ -4459,6 +4459,8 @@ flowchart TD
   pull request waits for a verify or for the merge, the item is no
   free item. After a failed verify it is free again (see
   [How a session works on an item](#how-a-session-works-on-an-item)).
+  A held item is no free work (see
+  [Keep an item from the rollout](#keep-an-item-from-the-rollout)).
 - **Idle workers.** Workers with no claim in the repository of your
   lead. A worker that does a task with no item holds a task claim, so
   it is busy (see
@@ -4496,6 +4498,23 @@ flowchart TD
 Each start gives the lead a note with the host, the pane and the
 session. A note does not wake the lead. Your lead can also give an
 idle worker a free item with a request. The server stops idle workers.
+
+#### Keep an item from the rollout
+
+Hold the item. riff starts no worker for a held item, and gives it to
+no idle worker. A hold names one item: hold `verify-issue-12` to keep
+the verify too (see [Hold an item](#hold-an-item)).
+
+```sh
+riff plan hold issue-12 waits for the word of Mike
+```
+
+The rollout reads the holds at each look. Free the item, and the next
+look gives it to a worker:
+
+```sh
+riff plan free issue-12
+```
 
 #### Which machine gets a worker
 

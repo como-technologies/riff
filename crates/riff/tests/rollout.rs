@@ -9,7 +9,8 @@
 //!
 //! An idle worker that joined gets free work with a request of the lead
 //! (01M49ZK19GQP79Z8HH14PK85QQ to 01M49ZK1EG52YAKG974XH201RK). The author
-//! of an item never gets its verify (01M51533BJSD0RB7BFQR9CAFYW).
+//! of an item never gets its verify (01M51533BJSD0RB7BFQR9CAFYW). A held
+//! item is no free work (01M51A55Q2MDZT38JDCEJ1QECP).
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
@@ -626,6 +627,36 @@ async fn a_worker_with_a_task_claim_gets_no_free_work() {
     let read = riff::text::inbox(&inbox, &task);
     assert!(!read.contains("request: claim"), "{read}");
     assert_eq!(lead.settled().await, 1, "{}", lead.tmux_log());
+}
+
+/// A held item is no free work (01M51A55Q2MDZT38JDCEJ1QECP): the
+/// rollout starts no worker for it, and an idle worker gets no request
+/// for it. The lead frees it: the next look gives the idle worker the
+/// request.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_held_item_gets_no_worker_until_the_lead_frees_it() {
+    let lead = lead(5).await;
+    lead.issues(ONE_ITEM);
+    let thread = lead.me.default_thread().unwrap();
+    lead.api
+        .hold(&lead.me, &thread, "issue-1", "waits for the word of Mike")
+        .await
+        .unwrap();
+    // A live worker of the user that joined, with no claim.
+    let idle = SessionUri::new(
+        Who::new("mike", Some("t1")).unwrap(),
+        lead.me.place().clone(),
+    );
+    lead.api.register_as(&idle, true).await.unwrap();
+    let _idle = lead.api.watch(&idle).await.unwrap();
+    lead.riff(RiffState::Running).await;
+    lead.looked().await;
+    assert_eq!(lead.settled().await, 0, "{}", lead.tmux_log());
+    let read = unread(&lead, &idle).await;
+    assert!(!read.contains("request: claim"), "{read}");
+
+    lead.api.free(&lead.me, &thread, "issue-1").await.unwrap();
+    reads(&lead.api, &idle, "request: claim issue-1").await;
 }
 
 /// The worker does not claim in 6 intervals: it refused the item, and
