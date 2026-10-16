@@ -11,6 +11,7 @@ mod again;
 mod audit;
 mod auto_update;
 mod behind;
+mod broken_main;
 mod build;
 mod chat;
 mod claim;

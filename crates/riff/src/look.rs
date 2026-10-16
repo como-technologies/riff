@@ -979,3 +979,114 @@ fn read_settings(path: Option<&Path>) -> (Duration, bool) {
         .unwrap_or(true);
     (Duration::from_secs(minutes * 60), notify)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rollout::Label;
+
+    /// A fake `gh` in a new folder: it logs each call to `gh.log` there
+    /// on one line, then runs `script`.
+    fn fake(script: &str) -> (tempfile::TempDir, Gh) {
+        let dir = tempfile::tempdir().unwrap();
+        let text = format!(
+            "#!/bin/sh\nlog=\"$(dirname \"$0\")/gh.log\"\nprintf '%s' \"$*\" | tr '\\n' ' ' >> \"$log\"\n\
+             printf '\\n' >> \"$log\"\n{script}\n"
+        );
+        let gh = Gh::at(isolated::write_program(dir.path().join("gh"), text));
+        (dir, gh)
+    }
+
+    /// The calls of the fake `gh` in `dir` that start with `call`.
+    fn calls(dir: &tempfile::TempDir, call: &str) -> Vec<String> {
+        std::fs::read_to_string(dir.path().join("gh.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.starts_with(call))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn fix(number: u64) -> Issue {
+        Issue {
+            number,
+            labels: vec![Label {
+                name: BROKEN_MAIN.into(),
+            }],
+            ..Issue::default()
+        }
+    }
+
+    fn main(gate: Gate) -> MainGate {
+        MainGate {
+            commit: "5103311abc".into(),
+            gate,
+            run: None,
+        }
+    }
+
+    /// riff cannot file the fix item: the lead still gets the message
+    /// that main is broken, with the reason (01M51QEYKTD7ZEB0YA0C3MQTPN).
+    #[test]
+    fn a_fix_item_that_riff_cannot_file_still_gives_the_message() {
+        let (dir, gh) =
+            fake("case \"$1 $2\" in \"label create\") echo 'HTTP 403' >&2; exit 1 ;; esac");
+        let news = MainNews::Broken {
+            main: main(Gate::Ended("failure".into())),
+            first: true,
+        };
+        let (body, wake) = main_steps(&gh, "o/r", &[], &[], &HashSet::new(), &news)
+            .unwrap()
+            .unwrap();
+        assert!(wake);
+        assert!(
+            body.starts_with("main is broken: the Gate failed at commit 5103311.")
+                && body.contains("riff could not file the fix item: ")
+                && body.contains("HTTP 403")
+                && body.ends_with("File an issue with the label broken-main."),
+            "{body}"
+        );
+        assert!(calls(&dir, "issue create").is_empty());
+    }
+
+    /// When main passes, riff closes only the free fix items: a fix item
+    /// that a session claims, or that an open pull request names, stays
+    /// open (01M51QEYVQN74Q1VDTVHB0445Q). With no broken main before and
+    /// nothing to close, the lead gets no post.
+    #[test]
+    fn a_pass_closes_only_the_free_fix_items() {
+        let (dir, gh) = fake("exit 0");
+        let issues = [fix(7), fix(8), fix(9)];
+        let pulls = [Pull {
+            number: 40,
+            branch: "worktree-issue-8".into(),
+            ..Pull::default()
+        }];
+        let claims: HashSet<String> = ["issue-9".to_owned()].into();
+        let news = MainNews::Passed {
+            main: main(Gate::Passed),
+            again: true,
+        };
+        let (body, wake) = main_steps(&gh, "o/r", &issues, &pulls, &claims, &news)
+            .unwrap()
+            .unwrap();
+        assert!(!wake);
+        assert_eq!(
+            body,
+            "main passes again: the Gate passed at commit 5103311. riff closed the fix item #7. \
+             The fix items #8, #9 stay open: a session claims each, or a pull request names it."
+        );
+        let closes = calls(&dir, "issue close");
+        assert_eq!(closes.len(), 1, "{closes:?}");
+        assert!(closes[0].starts_with("issue close 7 --repo o/r --comment "), "{closes:?}");
+
+        let (dir, gh) = fake("exit 0");
+        let news = MainNews::Passed {
+            main: main(Gate::Passed),
+            again: false,
+        };
+        let steps = main_steps(&gh, "o/r", &[], &[], &HashSet::new(), &news).unwrap();
+        assert_eq!(steps, None);
+        assert!(calls(&dir, "").is_empty());
+    }
+}
