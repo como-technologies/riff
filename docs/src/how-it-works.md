@@ -2505,7 +2505,8 @@ A claim stays while its session works. Only these steps end it:
 
 Each other step keeps the claim: `move`, a keep-alive, `status`, a
 read, a post, a compaction, a pause, and an agent that the session
-runs (see [Run an agent inside a session](#run-an-agent-inside-a-session)).
+runs (see
+[Run an agent inside a session](#run-an-agent-inside-a-session)).
 To see the claims of your session after a step, look at its URI:
 
 ```sh
