@@ -1068,10 +1068,10 @@ page [riff 3.0](riff-3.md).
 
 The riff tools of a session of the daemon act on the riff-server of
 the session, as in riff 1.x. Each session of `riff run`, of a wave and
-of `riff lead start` has your riff-server, but a session of
-`riff run --peers` and of `riff wave run --peers`. So the lead of your
-user sees each post of the session, and `riff relay watch` of the
-session wakes on a message of riff-server.
+of `riff lead start` has your riff-server. A session of
+`riff run --peers` or of `riff wave run --peers` has none. So the lead
+of your user sees each post of a session with your riff-server, and
+`riff relay watch` of that session wakes on a message of riff-server.
 
 A session with no riff-server talks on the riff of peers of the
 daemon, with no riff-server: each post, status, lead mark, hold and
