@@ -591,7 +591,11 @@ pub(crate) mod tests {
         let state = riff_with(
             &owner,
             brett,
-            &[session("e1", false), session("e1", true), session("r1", false)],
+            &[
+                session("e1", false),
+                session("e1", true),
+                session("r1", false),
+            ],
         );
         // `me` is the daemon of the lead. The claims are of the daemon
         // of the owner.
@@ -618,18 +622,43 @@ pub(crate) mod tests {
         );
         // A session that runs, of a daemon with a link: it holds.
         let runs = of("r1", "mike", owner.public());
-        assert_eq!(stale(&runs, "mike", &me, &state, up, start, start + 10 * OFFLINE_MS), None);
+        assert_eq!(
+            stale(
+                &runs,
+                "mike",
+                &me,
+                &state,
+                up,
+                start,
+                start + 10 * OFFLINE_MS
+            ),
+            None
+        );
         // The link ended 14 minutes ago: it holds. At 15 minutes: it goes.
         let ended_at = start + 60_000;
         let at = |minutes: i64| ended_at + minutes * 60_000;
-        assert_eq!(stale(&runs, "mike", &me, &state, down_at(ended_at), start, at(14)), None);
+        assert_eq!(
+            stale(&runs, "mike", &me, &state, down_at(ended_at), start, at(14)),
+            None
+        );
         assert_eq!(
             stale(&runs, "mike", &me, &state, down_at(ended_at), start, at(15)),
             Some(Stale::Offline(15))
         );
         // No link since the start of this daemon: the time counts from
         // the start.
-        assert_eq!(stale(&runs, "mike", &me, &state, never, start, start + OFFLINE_MS - 1), None);
+        assert_eq!(
+            stale(
+                &runs,
+                "mike",
+                &me,
+                &state,
+                never,
+                start,
+                start + OFFLINE_MS - 1
+            ),
+            None
+        );
         assert_eq!(
             stale(&runs, "mike", &me, &state, never, start, start + OFFLINE_MS),
             Some(Stale::Offline(15))
@@ -637,16 +666,46 @@ pub(crate) mod tests {
         // A session with no record yet counts as one that runs.
         let unknown = of("u1", "mike", owner.public());
         assert_eq!(
-            stale(&unknown, "mike", &me, &state, never, start, start + OFFLINE_MS),
+            stale(
+                &unknown,
+                "mike",
+                &me,
+                &state,
+                never,
+                start,
+                start + OFFLINE_MS
+            ),
             Some(Stale::Offline(15))
         );
         // A claim of another user holds, also offline and ended.
         let of_brett = of("e1", "brett", owner.public());
-        assert_eq!(stale(&of_brett, "mike", &me, &state, never, start, start + 99 * OFFLINE_MS), None);
+        assert_eq!(
+            stale(
+                &of_brett,
+                "mike",
+                &me,
+                &state,
+                never,
+                start,
+                start + 99 * OFFLINE_MS
+            ),
+            None
+        );
         // A claim of this daemon that runs, or that has no record, holds:
         // this daemon releases it at the end of its session.
         let mine = of("x1", "mike", me);
-        assert_eq!(stale(&mine, "mike", &me, &state, never, start, start + 99 * OFFLINE_MS), None);
+        assert_eq!(
+            stale(
+                &mine,
+                "mike",
+                &me,
+                &state,
+                never,
+                start,
+                start + 99 * OFFLINE_MS
+            ),
+            None
+        );
     }
 
     /// Runs `git ARGS` in `dir` with no config of the machine, and gives
@@ -672,7 +731,10 @@ pub(crate) mod tests {
         run(root, &["clone", "-q", "forge.git", name]);
         let clone = root.join(name);
         run(&clone, &["config", "user.name", name]);
-        run(&clone, &["config", "user.email", &format!("{name}@example.com")]);
+        run(
+            &clone,
+            &["config", "user.email", &format!("{name}@example.com")],
+        );
         clone
     }
 
@@ -707,7 +769,13 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(
             names,
-            ["Riff-Item", "Riff-User", "Riff-Session", "Riff-Key", "Riff-Time"]
+            [
+                "Riff-Item",
+                "Riff-User",
+                "Riff-Session",
+                "Riff-Key",
+                "Riff-Time"
+            ]
         );
         assert!(trailers.contains(&format!("Riff-Key: {}", made.key)));
         assert!(chrono::DateTime::parse_from_rfc3339(&made.time).is_ok());
@@ -739,7 +807,10 @@ pub(crate) mod tests {
         // Brett lacks the commit of Mike: riff fetches it.
         let found = found(&brett).unwrap();
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].claim.as_ref().map(|c| c.user.as_str()), Some("mike"));
+        assert_eq!(
+            found[0].claim.as_ref().map(|c| c.user.as_str()),
+            Some("mike")
+        );
         let other = commit(&brett, &claim("issue-12", "brett", 2)).unwrap();
         assert_eq!(release(&brett, "issue-12", &other).unwrap(), Freed::NotAt);
         assert_eq!(list(&mike).unwrap().len(), 1);

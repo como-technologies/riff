@@ -66,7 +66,9 @@ pub struct Forge {
 }
 
 /// Runs `work` on a thread for blocking work: git.
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
     tokio::task::spawn_blocking(work)
         .await
         .map_err(|e| anyhow!("{e}"))?
@@ -157,10 +159,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     ) -> Result<Option<Forge>> {
         let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
         let peer = riff.hub.peer(me);
-        let session = me
-            .who()
-            .session()
-            .context("a claim needs a session ID")?;
+        let session = me.who().session().context("a claim needs a session ID")?;
         let claim = Claim::now(item, peer.who().user(), session, riff.hub.public());
         // The daemon knows the main clone before the push: a claim after
         // a crash goes at the next start.
@@ -207,7 +206,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             return Vec::new();
         };
         let me = riff.hub.public();
-        let running: BTreeSet<String> = self.records().into_iter().map(|r| r.live.session).collect();
+        let running: BTreeSet<String> =
+            self.records().into_iter().map(|r| r.live.session).collect();
         let start_s = self.since_ms.div_euclid(1000);
         let mut lines = Vec::new();
         for (repo, main) in self.forges() {
@@ -280,8 +280,15 @@ impl<R: Runtime + 'static> Daemon<R> {
                     .filter_map(|found| {
                         let claim = found.claim?;
                         let link = seen.link(&claim.key, &linked);
-                        let why =
-                            forge_claim::stale(&claim, &user, &me, state, link, self.since_ms, now_ms)?;
+                        let why = forge_claim::stale(
+                            &claim,
+                            &user,
+                            &me,
+                            state,
+                            link,
+                            self.since_ms,
+                            now_ms,
+                        )?;
                         Some((found.item, found.commit, claim.session, why))
                     })
                     .collect()
@@ -542,7 +549,10 @@ mod tests {
         let mut seen = Seen::default();
         let lines = a.daemon.tidy_forges(&mut seen, minutes(14)).await;
         let ended = forge_claim::Stale::Ended;
-        assert_eq!(lines, [text::forge_lead_freed("issue-1", "e1-session", ended)]);
+        assert_eq!(
+            lines,
+            [text::forge_lead_freed("issue-1", "e1-session", ended)]
+        );
         assert_eq!(items(&main), set(&["issue-2", "issue-3", "issue-4"]));
         let lines = a.daemon.tidy_forges(&mut seen, minutes(15)).await;
         let offline = forge_claim::Stale::Offline(15);
@@ -551,7 +561,12 @@ mod tests {
         // With no lead, the daemon deletes no claim.
         take("issue-5", &user);
         hub.end("lead1").unwrap();
-        assert!(a.daemon.tidy_forges(&mut seen, minutes(99)).await.is_empty());
+        assert!(
+            a.daemon
+                .tidy_forges(&mut seen, minutes(99))
+                .await
+                .is_empty()
+        );
         assert_eq!(items(&main), set(&["issue-3", "issue-4", "issue-5"]));
     }
 

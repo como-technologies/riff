@@ -1967,24 +1967,35 @@ async fn riff_release_forge_frees_a_claim_on_the_forge_through_the_daemon() {
     let log = machine.bin.path().join("daemon.out");
     wait_for(&log, "riff of its own").await;
     git(&machine.main, &["config", "user.name", "Brett"]);
-    git(&machine.main, &["config", "user.email", "brett@example.com"]);
+    git(
+        &machine.main,
+        &["config", "user.email", "brett@example.com"],
+    );
     let other = riff::daemon_key::Key::from_bytes(&[9; 32]).public();
     let claim = riff::forge_claim::Claim::now("issue-12", "brett", "s1", other);
     let took = riff::forge_claim::take(&machine.main, &claim).unwrap();
     assert!(matches!(took, riff::forge_claim::Took::Won(_)), "{took:?}");
-    let claims = git(&machine.main, &["ls-remote", "origin", "refs/riff/claims/*"]);
+    let claims = git(
+        &machine.main,
+        &["ls-remote", "origin", "refs/riff/claims/*"],
+    );
     assert!(claims.ends_with("refs/riff/claims/issue-12"), "{claims}");
 
-    let freed = machine
-        .ok(None, &["release", "issue-12", "--forge"])
-        .await;
+    let freed = machine.ok(None, &["release", "issue-12", "--forge"]).await;
     assert_eq!(
         freed.trim(),
         riff::text::forge_released("issue-12", Some("brett"))
     );
-    let claims = git(&machine.main, &["ls-remote", "origin", "refs/riff/claims/*"]);
+    let claims = git(
+        &machine.main,
+        &["ls-remote", "origin", "refs/riff/claims/*"],
+    );
     assert_eq!(claims, "");
-    assert!(machine.read("daemon.out").contains(&freed.trim().to_owned()));
+    assert!(
+        machine
+            .read("daemon.out")
+            .contains(&freed.trim().to_owned())
+    );
 
     // A second release finds no claim.
     let out = machine.run(None, &["release", "issue-12", "--forge"]).await;
