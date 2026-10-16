@@ -208,6 +208,7 @@ pub fn names(list: &str) -> Vec<String> {
 /// assert_eq!(summary(part, &plan, &names), "just test-part 2/2 runs 1 of 2 tests");
 /// ```
 pub fn summary(part: Part, plan: &Plan<'_>, names: &[String]) -> String {
+    let part = part.clone();
     let all = names.iter().filter(|n| !is_doc(n)).count();
     let line = format!(
         "just test-part {part} runs {} of {all} tests",
