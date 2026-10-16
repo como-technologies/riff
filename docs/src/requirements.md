@@ -2540,7 +2540,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   grey, `paused` yellow. A `blocked` session comes first in `riff top`
   (01M41FZR4XRP55M409YBCPTHPH). A person is
   `online` when a session of the person is live, else `offline` with
-  `seen` and the time since the last call.
+  `seen` and the time since the last call. Superseded in part by
+  01M522MRW21RHGF2B6F0VCP0BD.
+- **01M522MRW21RHGF2B6F0VCP0BD** The detail of an `offline` session is
+  `seen` with the time, then its claims, then its last step with its
+  age: `seen 5m ago`, `working on #15`, `10m ago: docs`. So a session of
+  a daemon that is offline shows its item and its status
+  (01M519Z554SC3EAT69Q3M6JDAP).
 - **01M3W8AYDFPZNZ898WAJS7JEZA** `riff mcp` sets the step of the lead
   from each `tell`, `post`, `pause`, `resume` and `lead` call of the
   lead that `riff-server` accepts: `told SESSION` with the short
@@ -6145,6 +6151,16 @@ then.
   state and the status. The sessions of a daemon that is offline show
   as offline, with the time when the daemon was last seen. A takeover
   works only for a session of this machine.
+- **01M522MRYR89SY6WRV720806RA** A daemon of the riff is online while
+  this daemon has a peer link to it. Else it was last seen at the later
+  of two times: the end of its last link since the start of this
+  daemon, and the time of the author of its last record. `riff view` and
+  `riff top` take the sessions of the riff of peers from the status of
+  the daemon of this machine. `riff top` adds them to the sessions of
+  riff-server. With no daemon, it shows the sessions of riff-server
+  only. A takeover of a session of another daemon, in `riff view` or
+  with `riff takeover` and its session ID, refuses with a text that
+  names the host of that session.
 - **01M519Z57K3SPRN8Z517VZ62BB** The book page "riff 3.0: peers" (#803)
   has the picture of a riff of peers, the steps to share a riff, and a
   mermaid diagram of the sync, of a join and of a claim. Each item of

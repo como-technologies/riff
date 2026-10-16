@@ -83,6 +83,13 @@
 //! and at least each [`PLAN_AGAIN`]. A link of a key that may link no
 //! more closes ([`Close::Gone`]). [`Links::shown`] gives the state of
 //! each link for `riff daemon status` (01M51ZA0BDZNXBB7R5SB8CEGA9).
+//!
+//! A daemon of the riff is online while a link to it runs
+//! ([`Links::online`], 01M522MRYR89SY6WRV720806RA). Else it was last seen
+//! at the later of the end of its last link ([`Links::seen`]) and the
+//! time of its last record ([`State::last_ms`]). `riff view` and
+//! `riff top` show the sessions of a daemon that is offline with that
+//! time (01M519Z554SC3EAT69Q3M6JDAP).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

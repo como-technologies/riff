@@ -1260,7 +1260,9 @@ riff view
 The view shows each session of the daemon of this machine: its
 container, its item, its state, its age and its last step. It also
 shows the daemon, the limit of the host, each start that waits for
-room, and each wave. It draws them again each second.
+room, and each wave. It draws them again each second. The sessions of
+the other machines of your riff come after them (see
+[See the sessions of other machines](#see-the-sessions-of-other-machines)).
 
 | Key | Does |
 |---|---|
@@ -1287,6 +1289,41 @@ The states of a session:
 
 `riff daemon status` shows the same state and last step of each
 session.
+
+### See the sessions of other machines
+
+```sh
+riff view
+```
+
+When the daemon of this machine is in a riff with other machines (see
+[riff 3.0: peers](riff-3-peers.md)), the view also shows each session
+of each other daemon of the riff. These rows come after the sessions of
+this machine:
+
+```text
+  SESSION                                 ITEM             STATE                AGE  LAST
+> riff-lead-o-r                           lead             lead                 2h
+  riff-issue-12-1a2b3c4d                  issue-12         works                5m   > Bash: just check
+  brett@kadomony:riff#issue-14 (77e0aaaa) issue-14         busy                      tests
+  mike@pangolin:riff#issue-15 (5b1e2a90)  issue-15         offline, seen 5m ago      docs
+```
+
+| Column | Shows for a session of another machine |
+|---|---|
+| SESSION | The user, the host, the repository, the worktree and the short session ID. |
+| ITEM | The claims of the session, or `lead`. |
+| STATE | `busy`, `idle` or `paused`. When the daemon of that machine is offline: `offline`, and the time when your daemon last saw it. |
+| LAST | The status of the session. |
+
+A daemon is online while your daemon has a peer link to it (see
+[See the peer links of the daemon](#see-the-peer-links-of-the-daemon)).
+Else your daemon last saw it at the end of its last link, or at the
+time of its last record when that is later.
+
+You can take over only a session of this machine. `t` on a row of
+another machine does not take it over: the note under the rows names
+the host of the session.
 
 ### Take over a session
 
@@ -1315,6 +1352,10 @@ When you press Ctrl-C before `claude` opens, the session goes on when
 example when your terminal closes, riff gives the session back at once.
 When the daemon restarts during a takeover, the session waits for you:
 run `riff takeover NAME` again, and type `/exit`.
+
+A takeover works only for a session of this machine. When you give
+`riff takeover` the session ID of a session of another machine, or the
+start of it, riff says on which host that session runs.
 
 ### Take over a session at the end of its turn
 

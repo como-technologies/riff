@@ -9,6 +9,15 @@
 //! (01M3NB589WMPRSAR43BSG9SP41). It draws the table again every
 //! [`REFRESH`] and after each message of the thread.
 //!
+//! Each look also asks the riff daemon of this machine for its status
+//! ([`riff_sessions`]), and adds each session of its riff of peers to the
+//! sessions of riff-server ([`with_riff_sessions`],
+//! 01M519Z554SC3EAT69Q3M6JDAP, 01M522MRYR89SY6WRV720806RA): the sessions
+//! of each daemon of the riff. A session of a daemon that is offline
+//! shows `offline`, with the time when that daemon was last seen, its
+//! claims and its last step (01M522MRW21RHGF2B6F0VCP0BD). With no daemon,
+//! `riff top` shows the sessions of riff-server only.
+//!
 //! The titles of the issues and the current wave come from one
 //! `gh issue list` of the open issues ([`Issues`]) of each repository
 //! with a live session, and of the working directory ([`board_repos`],
@@ -62,9 +71,11 @@
 //!     participant T as riff top
 //!     participant G as gh
 //!     participant S as riff-server
+//!     participant D as riff daemon of this machine
 //!     T->>G: issue list, pr list of each repository (each ISSUES_TTL)
 //!     loop each REFRESH, and each message of the thread
 //!         T->>S: riff, who
+//!         T->>D: status: the sessions of the riff of peers
 //!         T->>T: draw the table in place
 //!     end
 //! ```
@@ -1208,6 +1219,7 @@ impl Top<'_> {
     ///     "   │    2m ago: tests",
     ///     "   └─ cccc3333  offline",
     ///     "        seen 5m ago",
+    ///     "        2m ago: merge",
     /// ], "{text}");
     ///
     /// // `--by repo`: the repository comes first.
