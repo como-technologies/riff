@@ -254,6 +254,7 @@ fn each_riff_command_of_the_page_is_real() {
             r#"riff tell lead "New item: issue-70""#,
             "riff wave list",
             r#"riff wave make "Wave 6: Cloud""#,
+            r#"riff wave rename 6 "Cloud and sign-in""#,
             "riff wave end 6",
         ]
     );
@@ -270,10 +271,12 @@ fn each_riff_command_of_the_page_is_real() {
 
 /// A fake `gh` in `bin`: it logs each call to `bin/gh.log`, answers the
 /// list of the open milestones with two waves and the backlog, and
-/// answers a POST and a PATCH with a milestone.
+/// answers a POST, a PATCH of a title and another PATCH with a
+/// milestone.
 fn fake_gh(bin: &Path) {
     let open = r#"[{"number":10,"title":"Backlog","open_issues":61,"closed_issues":4},{"number":33,"title":"Wave 28","open_issues":2,"closed_issues":0},{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}]"#;
     let made = r#"{"number":34,"title":"Wave 29","open_issues":0,"closed_issues":0}"#;
+    let renamed = r#"{"number":33,"title":"Wave 28: 1.x, fixes that slow the work","open_issues":2,"closed_issues":0}"#;
     let ended = r#"{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}"#;
     let path = bin.join("gh");
     fs::write(
@@ -282,6 +285,7 @@ fn fake_gh(bin: &Path) {
             "#!/bin/sh\necho \"gh $*\" >> \"$(dirname \"$0\")/gh.log\"\ncase \"$*\" in\n\
              'api repos/{{owner}}/{{repo}}/milestones?state=open&per_page=100') printf '%s' '{open}' ;;\n\
              'api -X POST '*) printf '%s' '{made}' ;;\n\
+             'api -X PATCH '*'-f title='*) printf '%s' '{renamed}' ;;\n\
              'api -X PATCH '*) printf '%s' '{ended}' ;;\n\
              *) exit 1 ;;\nesac\n"
         ),
@@ -345,6 +349,51 @@ fn riff_wave_lists_makes_and_ends_the_waves_with_gh() {
         [
             "gh api -X POST repos/{owner}/{repo}/milestones -f title=Wave 29",
             "gh api -X PATCH repos/{owner}/{repo}/milestones/32 -f state=closed",
+        ]
+    );
+}
+
+/// 01M518A0BEQBX9RH9H0CEFYF9Q: `riff wave rename N NAME` gives the open
+/// wave N a new name in one step, and keeps its number.
+#[test]
+fn riff_wave_rename_gives_the_wave_a_new_name_and_keeps_its_number() {
+    let env = Isolated::new();
+    let bin = tempfile::tempdir().unwrap();
+    fake_gh(bin.path());
+    let text = |out: &std::process::Output| {
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        stdout + &String::from_utf8_lossy(&out.stderr)
+    };
+
+    let renamed = riff_wave(
+        &env,
+        bin.path(),
+        &[
+            "rename", "28", "1.x,", "fixes", "that", "slow", "the", "work",
+        ],
+    );
+    assert!(renamed.status.success(), "{}", text(&renamed));
+    assert_eq!(
+        text(&renamed),
+        "Renamed the wave Wave 28 to Wave 28: 1.x, fixes that slow the work. Each pull request \
+         names it `Milestone: Wave 28`, so no pull request changes.\n"
+    );
+
+    let none = riff_wave(&env, bin.path(), &["rename", "26", "Old"]);
+    assert_eq!(none.status.code(), Some(1), "{}", text(&none));
+    assert!(text(&none).contains("No open wave has the number 26."));
+
+    let blank = riff_wave(&env, bin.path(), &["rename", "28", " "]);
+    assert_eq!(blank.status.code(), Some(1), "{}", text(&blank));
+    assert!(text(&blank).contains("riff wave rename needs a name"));
+
+    let log = fs::read_to_string(bin.path().join("gh.log")).unwrap();
+    let writes: Vec<&str> = log.lines().filter(|l| l.contains(" -X ")).collect();
+    assert_eq!(
+        writes,
+        [
+            "gh api -X PATCH repos/{owner}/{repo}/milestones/33 -f title=Wave 28: 1.x, fixes that \
+          slow the work"
         ]
     );
 }

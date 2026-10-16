@@ -1,5 +1,5 @@
 //! The steps of the lead on the waves of a repository: see the open
-//! waves, make a wave, and end a wave.
+//! waves, make a wave, rename a wave, and end a wave.
 //!
 //! # Design
 //!
@@ -18,10 +18,15 @@
 //! |---|---|
 //! | `riff wave list` (01M509TJRBE2J7HYKKHRJ1ZFR0) | `api repos/{owner}/{repo}/milestones?state=open&per_page=100` |
 //! | `riff wave make TITLE` (01M509TJTV7TC32EKXW0TEQ5NZ) | the list, then `api -X POST repos/{owner}/{repo}/milestones -f title=TITLE` |
+//! | `riff wave rename N NAME` (01M518A0BEQBX9RH9H0CEFYF9Q) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f title=TITLE` |
 //! | `riff wave end N` (01M509TJXE04CTG5D1K751WXJY) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f state=closed` |
 //!
 //! - `riff wave make` makes only a wave: its title is `Wave N`, with an
 //!   optional `: NAME`. It refuses a number that an open wave has.
+//! - `riff wave rename N NAME` gives the open wave N the title
+//!   `Wave N: NAME`. The number stays: it is the wave. The trailer
+//!   `Milestone: Wave N` of a pull request names the wave by its number,
+//!   so a rename breaks no pull request ([`hygiene::names_milestone`]).
 //! - `riff wave end N` takes the number of the wave, not of the
 //!   milestone. It refuses a wave with an open item: a wave ends only
 //!   when each of its items is closed (R216, R224). On GitHub an open
@@ -31,6 +36,7 @@
 //! flowchart LR
 //!     L["the lead"] -- "riff wave list" --> G["gh api: the open milestones"]
 //!     L -- "riff wave make 'Wave 6'" --> P["POST: a new milestone"]
+//!     L -- "riff wave rename 6 Cloud" --> T["PATCH: title Wave 6: Cloud"]
 //!     L -- "riff wave end 6" --> C{"open items?"}
 //!     C -- "none" --> X["PATCH: state closed"]
 //!     C -- "some" --> R["refuse"]
@@ -55,29 +61,7 @@ pub struct Milestone {
     pub closed_issues: u64,
 }
 
-/// The number N of the wave title `title`: `Wave N`, or `Wave N: NAME`
-/// with a name that is not blank. `None` for each other title.
-///
-/// ```
-/// use riff::waves::wave_number;
-///
-/// assert_eq!(wave_number("Wave 6"), Some(6));
-/// assert_eq!(wave_number("Wave 27: 3.0 Wave A"), Some(27));
-/// assert_eq!(wave_number("Backlog"), None);
-/// assert_eq!(wave_number("Wave 2x"), None);
-/// assert_eq!(wave_number("Wave 6:"), None);
-/// assert_eq!(wave_number("Wave -1"), None);
-/// ```
-pub fn wave_number(title: &str) -> Option<u64> {
-    let rest = title.strip_prefix("Wave ")?;
-    let (number, name) = match rest.split_once(':') {
-        Some((number, name)) => (number, Some(name)),
-        None => (rest, None),
-    };
-    let digits = !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit());
-    let named = name.is_none_or(|n| n.starts_with(' ') && !n.trim().is_empty());
-    (digits && named).then(|| number.parse().ok()).flatten()
-}
+pub use hygiene::wave_number;
 
 /// `milestones` in the order of `riff wave list`: the waves in number
 /// order, then each other milestone by its title.
@@ -135,6 +119,32 @@ pub fn make(gh: &Gh, title: &str) -> Result<Milestone> {
     ])
 }
 
+/// Gives the open wave with the number `number` the title
+/// `Wave N: NAME` (01M518A0BEQBX9RH9H0CEFYF9Q). It refuses a blank name,
+/// and a number that no open wave has. It returns the wave before and
+/// after the rename.
+pub fn rename(gh: &Gh, number: u64, name: &str) -> Result<(Milestone, Milestone)> {
+    let title = format!("Wave {number}: {}", name.trim());
+    if wave_number(&title) != Some(number) {
+        bail!(text::waves_bad_name(name));
+    }
+    let Some(wave) = open(gh)?
+        .into_iter()
+        .find(|m| wave_number(&m.title) == Some(number))
+    else {
+        bail!(text::waves_not_open(number));
+    };
+    let renamed = gh.json(&[
+        "api",
+        "-X",
+        "PATCH",
+        &format!("repos/{{owner}}/{{repo}}/milestones/{}", wave.number),
+        "-f",
+        &format!("title={title}"),
+    ])?;
+    Ok((wave, renamed))
+}
+
 /// Ends the open wave with the number `number` (01M509TJXE04CTG5D1K751WXJY).
 /// It refuses when no open wave has the number, and when the wave has an
 /// open item.
@@ -170,8 +180,8 @@ mod tests {
         {"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}]"#;
 
     /// A fake `gh` in `dir`. It writes each call to `dir/calls`, one line
-    /// each. It answers the list with [`OPEN`], and a POST or a PATCH
-    /// with a milestone.
+    /// each. It answers the list with [`OPEN`], and a POST, a PATCH of a
+    /// title or another PATCH with a milestone.
     ///
     /// A child `sh` writes the file, so this process never holds a write
     /// fd of it. A child that another test thread starts gets a copy of
@@ -184,6 +194,7 @@ mod tests {
             "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/calls\"\ncase \"$*\" in\n\
              'api repos/{{owner}}/{{repo}}/milestones?state=open&per_page=100') printf '%s' '{}' ;;\n\
              'api -X POST '*) printf '%s' '{{\"number\":34,\"title\":\"Wave 29\",\"open_issues\":0,\"closed_issues\":0}}' ;;\n\
+             'api -X PATCH '*'-f title='*) printf '%s' '{{\"number\":33,\"title\":\"Wave 28: Fixes\",\"open_issues\":2,\"closed_issues\":0}}' ;;\n\
              'api -X PATCH '*) printf '%s' '{{\"number\":32,\"title\":\"Wave 27: Cloud\",\"open_issues\":0,\"closed_issues\":9}}' ;;\n\
              *) exit 1 ;;\nesac\n",
             OPEN.replace('\n', "")
@@ -278,21 +289,33 @@ mod tests {
     }
 
     #[test]
-    fn a_wave_title_has_a_number_and_an_optional_name() {
-        for (title, number) in [
-            ("Wave 1", Some(1)),
-            ("Wave 27: 3.0 Wave A, local sessions", Some(27)),
-            ("Wave 007", Some(7)),
-            ("Wave", None),
-            ("Wave ", None),
-            ("wave 3", None),
-            ("Wave 3 ", None),
-            ("Wave 3:x", None),
-            ("Wave 3:  ", None),
-            ("Wave 99999999999999999999999", None),
-            ("Backlog", None),
-        ] {
-            assert_eq!(wave_number(title), number, "{title}");
-        }
+    fn rename_patches_the_title_of_the_milestone_by_its_own_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let (old, new) = rename(&fake_gh(dir.path()), 28, " Fixes ").unwrap();
+        assert_eq!(old.title, "Wave 28");
+        assert_eq!(new.title, "Wave 28: Fixes");
+        assert_eq!(
+            calls(dir.path()),
+            [
+                LIST,
+                "api -X PATCH repos/{owner}/{repo}/milestones/33 -f title=Wave 28: Fixes"
+            ]
+        );
+    }
+
+    #[test]
+    fn rename_refuses_a_blank_name_and_calls_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = rename(&fake_gh(dir.path()), 28, "  ").unwrap_err();
+        assert_eq!(error.to_string(), text::waves_bad_name("  "));
+        assert!(calls(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn rename_refuses_a_number_that_no_open_wave_has() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = rename(&fake_gh(dir.path()), 26, "Old").unwrap_err();
+        assert_eq!(error.to_string(), text::waves_not_open(26));
+        assert_eq!(calls(dir.path()), [LIST]);
     }
 }

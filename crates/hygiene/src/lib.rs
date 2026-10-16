@@ -23,7 +23,11 @@
 //!   the issue. The last pull request of an issue has `Closes #N`, so its
 //!   merge closes the issue. Each other one has `Refs #N`.
 //! - The trailers `Issue:` and `Milestone:` end the body. They name the
-//!   issue and the wave in the same form in each commit.
+//!   issue and the wave in the same form in each commit. The trailer
+//!   `Milestone:` names a wave by its number: `Wave 3`, with no name
+//!   ([`milestone_value`]). The check compares only the number, so a
+//!   rename of a wave breaks no pull request ([`names_milestone`],
+//!   01M518A04JWYJE5FA1VR309SAA).
 //!
 //! `hygiene pr N` reads pull request N and its issue with `gh`, and runs
 //! [`check_pr`]. `hygiene commit [REV]` reads the message of a commit
@@ -35,7 +39,7 @@
 //! | `keyword` | Another closing keyword of GitHub before an issue number, for example `Fixes #12`. It closes an issue with no check. |
 //! | `title` | A title of a pull request that ends with `(#N)`. GitHub adds the number of the pull request. |
 //! | `issue-trailer` | No `Issue: #N` trailer, more than one, or one that names another issue than the link line. |
-//! | `milestone-trailer` | No `Milestone:` trailer, more than one, or one that names another milestone than the pull request. |
+//! | `milestone-trailer` | No `Milestone:` trailer, more than one, or one that names another wave than the pull request. |
 //! | `milestone` | A pull request or an issue with no milestone, or two different milestones. |
 //! | `issue-open` | An issue that is closed. |
 //! | `commit-title` | A commit title that does not end with `(#PR)`, or that names the issue in place of the pull request. |
@@ -118,6 +122,65 @@ impl Issue {
 fn milestone_of(title: &str) -> Milestone {
     Milestone {
         title: title.to_owned(),
+    }
+}
+
+/// The number N of the wave title `title`: `Wave N`, or `Wave N: NAME`
+/// with a name that is not blank. `None` for each other title.
+///
+/// ```
+/// use hygiene::wave_number;
+///
+/// assert_eq!(wave_number("Wave 6"), Some(6));
+/// assert_eq!(wave_number("Wave 27: 3.0 Wave A"), Some(27));
+/// assert_eq!(wave_number("Backlog"), None);
+/// assert_eq!(wave_number("Wave 2x"), None);
+/// assert_eq!(wave_number("Wave 6:"), None);
+/// assert_eq!(wave_number("Wave -1"), None);
+/// ```
+pub fn wave_number(title: &str) -> Option<u64> {
+    let rest = title.strip_prefix("Wave ")?;
+    let (number, name) = match rest.split_once(':') {
+        Some((number, name)) => (number, Some(name)),
+        None => (rest, None),
+    };
+    let digits = !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit());
+    let named = name.is_none_or(|n| n.starts_with(' ') && !n.trim().is_empty());
+    (digits && named).then(|| number.parse().ok()).flatten()
+}
+
+/// The value of the trailer `Milestone:` for the milestone `title`: the
+/// wave by its number, `Wave N` with no name, or the whole title of a
+/// milestone that is not a wave (01M518A07QF1YACBYT91M0DD1R).
+///
+/// ```
+/// assert_eq!(hygiene::milestone_value("Wave 28: 1.x, fixes that slow the work"), "Wave 28");
+/// assert_eq!(hygiene::milestone_value("Wave 3"), "Wave 3");
+/// assert_eq!(hygiene::milestone_value("Backlog"), "Backlog");
+/// ```
+pub fn milestone_value(title: &str) -> String {
+    wave_number(title).map_or_else(|| title.to_owned(), |n| format!("Wave {n}"))
+}
+
+/// True when the trailer `Milestone: value` names the milestone `title`.
+/// Two waves match by their number, so the name of a wave can change.
+/// Each other milestone matches by its whole title
+/// (01M518A04JWYJE5FA1VR309SAA).
+///
+/// ```
+/// use hygiene::names_milestone;
+///
+/// let renamed = "Wave 28: 1.x, fixes that slow the work";
+/// assert!(names_milestone("Wave 28", renamed));
+/// assert!(names_milestone("Wave 28: after 1.4.0", renamed), "the title before the rename");
+/// assert!(!names_milestone("Wave 27: after 1.4.0", renamed), "another wave");
+/// assert!(names_milestone("Backlog", "Backlog"));
+/// assert!(!names_milestone("Wave 28", "Backlog"));
+/// ```
+pub fn names_milestone(value: &str, title: &str) -> bool {
+    match (wave_number(value), wave_number(title)) {
+        (Some(named), Some(own)) => named == own,
+        _ => value == title,
     }
 }
 
@@ -440,7 +503,7 @@ pub fn check_pr(pr: &PullRequest, issue: Option<&Issue>) -> Vec<Error> {
     let wave = milestone_trailer(&trailers, &mut errors);
     let pr_milestone = pr.milestone.as_ref().map(|m| m.title.as_str());
     if let (Some(wave), Some(own)) = (wave, pr_milestone)
-        && wave != own
+        && !names_milestone(wave, own)
     {
         errors.push(Error::new(
             "milestone-trailer",
@@ -672,6 +735,57 @@ mod tests {
                 "`Milestone: Wave 4` is not the milestone of the pull request (Wave 3)"
             )]
         );
+    }
+
+    /// 01M518A04JWYJE5FA1VR309SAA: the lead renamed `Wave 28: after
+    /// 1.4.0` while a pull request had its old title in the trailer.
+    #[test]
+    fn a_trailer_of_the_old_title_passes_after_a_rename_of_the_wave() {
+        let renamed = Some("Wave 28: 1.x, fixes that slow the work");
+        let body = GOOD.replace("Wave 3", "Wave 28: after 1.4.0");
+        assert_eq!(check_pr(&pr(&body, renamed), Some(&open(renamed))), []);
+        let number = GOOD.replace("Wave 3", "Wave 28");
+        assert_eq!(check_pr(&pr(&number, renamed), Some(&open(renamed))), []);
+
+        let other = GOOD.replace("Wave 3", "Wave 27: after 1.4.0");
+        assert_eq!(
+            check_pr(&pr(&other, renamed), Some(&open(renamed))),
+            [Error::new(
+                "milestone-trailer",
+                "`Milestone: Wave 27: after 1.4.0` is not the milestone of the pull request \
+                 (Wave 28: 1.x, fixes that slow the work)"
+            )]
+        );
+    }
+
+    #[test]
+    fn a_milestone_that_is_not_a_wave_needs_its_whole_title() {
+        let body = GOOD.replace("Wave 3", "Backlog");
+        assert!(check_pr(&pr(&body, Some("Backlog")), Some(&open(Some("Backlog")))).is_empty());
+        let body = GOOD.replace("Wave 3", "Backlog 2");
+        assert_eq!(
+            rules(&pr(&body, Some("Backlog")), &open(Some("Backlog"))),
+            ["milestone-trailer"]
+        );
+    }
+
+    #[test]
+    fn a_wave_title_has_a_number_and_an_optional_name() {
+        for (title, number) in [
+            ("Wave 1", Some(1)),
+            ("Wave 27: 3.0 Wave A, local sessions", Some(27)),
+            ("Wave 007", Some(7)),
+            ("Wave", None),
+            ("Wave ", None),
+            ("wave 3", None),
+            ("Wave 3 ", None),
+            ("Wave 3:x", None),
+            ("Wave 3:  ", None),
+            ("Wave 99999999999999999999999", None),
+            ("Backlog", None),
+        ] {
+            assert_eq!(wave_number(title), number, "{title}");
+        }
     }
 
     #[test]
