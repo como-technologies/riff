@@ -99,9 +99,10 @@
 //! ([`crate::daemon`]). The daemon runs on the host, outside the
 //! container. So that session gets only the tools of
 //! [`CONTAINER_TOOLS`]: they only talk, and act on no folder of the host
-//! and no claim (01M4ZV3B6T2KB09WJ59F07HXET). They act on the riff of
-//! peers of the daemon, with no riff-server ([`crate::peer::talk`],
-//! 01M519Z3FTAZ20DQKDTW09M6NS): [`Tools::with_talk`]. `riff run` does the
+//! and no claim (01M4ZV3B6T2KB09WJ59F07HXET). They act on the
+//! riff-server of the session. A session with no riff-server talks on
+//! the riff of peers of the daemon ([`crate::peer::talk`],
+//! 01M51VZG27DXSRHBT8M14S7B9A): [`Tools::with_talk`]. `riff run` does the
 //! claim, the release and the verify request. The tools do not list each
 //! other tool, and refuse a call of it with [`text::not_in_a_container`].
 //! The instructions of the server are [`text::MCP_CONTAINER`].

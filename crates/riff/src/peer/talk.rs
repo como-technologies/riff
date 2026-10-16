@@ -32,21 +32,27 @@
 //! When the daemon keeps a message, also of another daemon, it wakes
 //! each session of its own that the `to` selectors of the message match,
 //! but the sender. A note wakes no session. `riff relay watch` in a
-//! session waits for its next wake ([`Hub::wait`]). A wake waits in a
-//! queue until the session takes it, so a wake between two watches is
-//! not lost.
+//! session waits for its next wake ([`Hub::wait`]). The hub keeps each
+//! wake of a session until the session reads its message. So a watch
+//! that starts after a wake wakes the session one time, for the newest
+//! message that woke it and that it did not read, as riff-server does
+//! (R49). Only `read` moves the read cursor: a post of the session does
+//! not.
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant A as session A
 //!     participant D as the daemon: Hub
 //!     participant B as session B
-//!     B->>D: riff relay watch: wait
-//!     A->>D: post, to B
-//!     D->>D: write the message record, keep it
-//!     D-->>B: the wake line
+//!     A->>D: post 5, to B
+//!     A->>D: post 6, to B
+//!     D->>D: keep the wakes of 5 and 6 for B
+//!     B->>D: riff relay watch
+//!     D-->>B: the wake line of 6, at once
 //!     B->>D: read
-//!     D-->>B: the message, and the cursor moves
+//!     D-->>B: 5 and 6, and the cursor of B moves to 6
+//!     B->>D: riff relay watch
+//!     D->>D: no wake after the cursor: wait
 //! ```
 //!
 //! A write of a record syncs a file. So each call of a tool runs on a
@@ -55,7 +61,7 @@
 //! The read cursors live in the memory of the daemon. After a new start
 //! of the daemon, each message is unread again.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -89,9 +95,9 @@ pub const PAGE: usize = 50;
 pub struct Hub {
     key: Key,
     peers: Mutex<Peers>,
-    /// The wakes that wait for each session of the daemon, by its
-    /// session ID.
-    wakes: Mutex<BTreeMap<String, VecDeque<Wake>>>,
+    /// The wakes of each session of the daemon that it did not read, by
+    /// its session ID, in the order that the daemon kept their messages.
+    wakes: Mutex<BTreeMap<String, Vec<Wake>>>,
     woke: Notify,
     /// The last number that each session read in each thread.
     reads: Mutex<BTreeMap<(String, ThreadName), u64>>,
@@ -196,8 +202,9 @@ impl Hub {
     }
 
     /// Writes the `session` record of the end of the session `id` of the
-    /// daemon, when it runs.
+    /// daemon, when it runs. The hub forgets the wakes of the session.
     pub fn end(&self, id: &str) -> Result<()> {
+        lock(&self.wakes).remove(id);
         self.change(id, |body| body.ended = true).map(|_| ())
     }
 
@@ -224,17 +231,33 @@ impl Hub {
     }
 
     /// Waits for the next wake of the session `id` of the daemon, and
-    /// gives its line ([`text::wake_line`]).
+    /// gives its line ([`text::wake_line`]). When a message woke the
+    /// session and the session did not read it, the line comes at once:
+    /// the line of the newest such message (R49).
     pub async fn wait(&self, id: &str) -> String {
         loop {
             let woke = self.woke.notified();
             tokio::pin!(woke);
             woke.as_mut().enable();
-            if let Some(wake) = lock(&self.wakes).get_mut(id).and_then(VecDeque::pop_front) {
+            if let Some(wake) = self.missed(id) {
                 return text::wake_line(&wake);
             }
             woke.await;
         }
+    }
+
+    /// The newest message that woke the session `id` and that it did not
+    /// read. The hub forgets each wake of a message that the session
+    /// read.
+    fn missed(&self, id: &str) -> Option<Wake> {
+        let mut wakes = lock(&self.wakes);
+        let kept = wakes.get_mut(id)?;
+        let reads = lock(&self.reads);
+        kept.retain(|wake| {
+            let read = reads.get(&(id.to_owned(), wake.thread.clone()));
+            wake.seq > read.copied().unwrap_or_default()
+        });
+        kept.last().cloned()
     }
 
     /// Wakes each session of the daemon that the message of `applied`
@@ -261,7 +284,7 @@ impl Hub {
         }
         let mut wakes = lock(&self.wakes);
         for (id, wake) in woken {
-            wakes.entry(id).or_default().push_back(wake);
+            wakes.entry(id).or_default().push(wake);
         }
         drop(wakes);
         self.woke.notify_waiters();
@@ -539,7 +562,6 @@ impl Session {
                 .collect();
             (woken, unmatched)
         });
-        self.moved(me, &thread, seq);
         Ok(Posted {
             thread,
             seq,
@@ -773,7 +795,13 @@ impl Session {
             PauseScope::Here => Some(me.default_thread().context(text::PEER_NO_REPOSITORY)?),
             PauseScope::Repository(thread) => Some(thread.clone()),
         };
-        let before = self.pauses(me).state;
+        // As in riff-server, a change is a change of the pause of the
+        // scope, not of the state of `me`.
+        let held = |s: &Session| {
+            s.hub
+                .read(|state| state.pauses().any(|pause| pause.thread == thread))
+        };
+        let before = held(self);
         match to {
             RiffState::Paused => {
                 let pause = Plan::Pause {
@@ -795,20 +823,37 @@ impl Session {
             }
         }
         let mut reply = self.pauses(me);
-        reply.changed = reply.state != before;
-        let mut posted = Vec::new();
-        // The news wakes each session that the change stops or starts.
-        if reply.changed
-            && let Some(target) = thread.clone().or_else(|| me.default_thread())
-        {
-            let news = text::riff_news(thread.as_ref(), to);
-            let selector = Selector {
-                repo: thread.as_ref().map(ToString::to_string),
-                user: thread.is_none().then(|| me.who().user().to_owned()),
-                ..Selector::default()
-            };
-            posted.push(self.post(me, Some(&target), &[selector], &news, Kind::Message)?);
+        reply.changed = held(self) != before;
+        if !reply.changed {
+            return Ok((reply, Vec::new()));
         }
+        // The news wakes each session that the change stops or starts, as
+        // riff-server does (01M3JCG3YD7C2Y3V0QJPF082YH): the sessions of
+        // the repository, or for the whole riff the sessions of each
+        // repository that no pause of its own stops.
+        let repos = match &thread {
+            Some(_) if reply.riff.is_some() => Vec::new(),
+            Some(thread) => vec![thread.clone()],
+            None => self.hub.read(|state| {
+                let repos: BTreeSet<ThreadName> = state
+                    .runs()
+                    .filter_map(|run| run.body.session.default_thread())
+                    .filter(|repo| reply.repository(repo).is_none())
+                    .collect();
+                repos.into_iter().collect()
+            }),
+        };
+        let news = text::riff_news(thread.as_ref(), to);
+        let posted = repos
+            .into_iter()
+            .map(|repo| {
+                let to = Selector {
+                    repo: Some(repo.to_string()),
+                    ..Selector::default()
+                };
+                self.post(me, Some(&repo), &[to], &news, Kind::Message)
+            })
+            .collect::<Result<Vec<Posted>>>()?;
         Ok((reply, posted))
     }
 }
@@ -980,5 +1025,170 @@ impl Talk for Session {
     ) -> BoxFuture<'a, Result<(RiffReply, Vec<Posted>)>> {
         let scope = scope.clone();
         self.on(me, move |s, me| s.set_pause(me, &scope, state))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::peer::body::Riff;
+
+    /// A session of mike on the host h in the repository `repo`.
+    fn uri(id: &str, repo: &str) -> SessionUri {
+        format!("riff://mike@h/{repo}?session={id}").parse().unwrap()
+    }
+
+    /// The hub of a riff of its own of mike, with the workers `sessions`
+    /// of the daemon: each one a session ID and its repository.
+    fn hub(dir: &Path, sessions: &[(&str, &str)]) -> Arc<Hub> {
+        let key = Key::from_bytes(&[1; 32]);
+        let mut peers = Peers::open(dir, key.public(), |_| {}).unwrap();
+        let riff = Body::Riff(Riff {
+            user: "mike".into(),
+        });
+        peers.write(&key, &riff, 1).unwrap();
+        let hub = Arc::new(Hub::new(key, peers));
+        for (id, repo) in sessions {
+            hub.start(&uri(id, repo), true, false, Vec::new()).unwrap();
+        }
+        hub
+    }
+
+    /// The bodies of the messages of `pages`, sorted.
+    fn bodies(pages: &[Inbox]) -> Vec<String> {
+        let mut bodies: Vec<String> = pages
+            .iter()
+            .flat_map(|page| &page.messages)
+            .map(|shown| shown.message.body.clone())
+            .collect();
+        bodies.sort();
+        bodies
+    }
+
+    /// The wake line of the session `id`, or `None` when no wake comes
+    /// soon.
+    async fn wake(hub: &Hub, id: &str) -> Option<String> {
+        tokio::time::timeout(Duration::from_millis(200), hub.wait(id))
+            .await
+            .ok()
+    }
+
+    /// R79: a post of a session does not move its read cursor. So a
+    /// message of another session that came before the post, and that
+    /// the session did not read, stays unread: in its thread, and in a
+    /// direct thread.
+    #[test]
+    fn a_post_keeps_the_unread_messages_of_others_unread() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Session::new(hub(dir.path(), &[("a", "o/r"), ("b", "o/r")]));
+        let (a, b) = (uri("a", "o/r"), uri("b", "o/r"));
+        let repo: ThreadName = "o/r".parse().unwrap();
+        let (to_a, to_b) = ([Selector::session("a")], [Selector::session("b")]);
+        s.post(&b, Some(&repo), &to_a, "a note to a", Kind::Note)
+            .unwrap();
+        s.post(&a, Some(&repo), &[], "started", Kind::Note).unwrap();
+        s.post(&b, None, &to_a, "a direct word", Kind::Message)
+            .unwrap();
+        s.post(&a, None, &to_b, "my word", Kind::Message).unwrap();
+
+        let unread: usize = s.threads(&a).iter().map(|t| t.unread).sum();
+        assert_eq!(unread, 2);
+        let read = bodies(&s.inbox(&a, None, false, None).unwrap());
+        assert_eq!(read, ["a direct word", "a note to a"]);
+        assert!(bodies(&s.inbox(&a, None, false, None).unwrap()).is_empty());
+    }
+
+    /// R49: a watch wakes a session one time, for the newest message that
+    /// woke it and that it did not read. After a read, a watch waits for
+    /// a new message. A note and an own post wake no session.
+    #[tokio::test]
+    async fn a_watch_wakes_once_for_the_newest_unread_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = hub(dir.path(), &[("a", "o/r"), ("b", "o/r")]);
+        let s = Session::new(hub.clone());
+        let (a, b) = (uri("a", "o/r"), uri("b", "o/r"));
+        let repo: ThreadName = "o/r".parse().unwrap();
+        let to_a = [Selector::session("a")];
+        s.post(&b, Some(&repo), &to_a, "one", Kind::Message)
+            .unwrap();
+        let two = s
+            .post(&b, Some(&repo), &to_a, "two", Kind::Message)
+            .unwrap();
+        s.post(&b, Some(&repo), &to_a, "a note", Kind::Note)
+            .unwrap();
+
+        // Two wakes wait: the watch gives the newest, and gives it again
+        // until a read.
+        let line = format!("(message {})", two.seq);
+        assert!(wake(&hub, "a").await.unwrap().contains(&line));
+        assert!(wake(&hub, "a").await.unwrap().contains(&line));
+        assert_eq!(bodies(&s.inbox(&a, None, false, None).unwrap()).len(), 3);
+        assert_eq!(wake(&hub, "a").await, None);
+        assert_eq!(wake(&hub, "b").await, None);
+
+        // A watch that waits wakes on the next message.
+        let waits = tokio::spawn({
+            let hub = hub.clone();
+            async move { hub.wait("a").await }
+        });
+        tokio::task::yield_now().await;
+        let three = s
+            .post(&b, Some(&repo), &to_a, "three", Kind::Message)
+            .unwrap();
+        let line = tokio::time::timeout(Duration::from_secs(5), waits)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(line.contains(&format!("(message {})", three.seq)), "{line}");
+
+        // The end of a session drops its wakes.
+        hub.end("a").unwrap();
+        assert_eq!(wake(&hub, "a").await, None);
+    }
+
+    /// 01M3JCG3YD7C2Y3V0QJPF082YH: a pause of the whole riff wakes each
+    /// session that it stops. It posts the news to each repository of a
+    /// session that runs, but not to a repository that a pause of its
+    /// own stops. A pause of a repository in a paused riff posts nothing.
+    #[test]
+    fn a_pause_of_the_riff_tells_each_repository_that_it_stops() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = [("a", "o/r"), ("b", "o/r"), ("c", "o/s"), ("d", "o/u")];
+        let s = Session::new(hub(dir.path(), &sessions));
+        let a = uri("a", "o/r");
+        let threads = |posted: &[Posted]| -> Vec<String> {
+            posted.iter().map(|p| p.thread.to_string()).collect()
+        };
+        let woken = |posted: &[Posted]| -> Vec<String> {
+            posted
+                .iter()
+                .flat_map(|p| &p.woken)
+                .filter_map(|uri| uri.who().session().map(str::to_owned))
+                .collect()
+        };
+
+        let os = PauseScope::Repository("o/s".parse().unwrap());
+        let (_, posted) = s.set_pause(&a, &os, RiffState::Paused).unwrap();
+        assert_eq!(woken(&posted), ["c"]);
+
+        let (reply, posted) = s
+            .set_pause(&a, &PauseScope::Riff, RiffState::Paused)
+            .unwrap();
+        assert!(reply.changed);
+        assert_eq!(threads(&posted), ["o/r", "o/u"]);
+        assert_eq!(woken(&posted), ["b", "d"]);
+
+        let (_, posted) = s
+            .set_pause(&a, &PauseScope::Here, RiffState::Paused)
+            .unwrap();
+        assert!(posted.is_empty());
+
+        let (_, posted) = s
+            .set_pause(&a, &PauseScope::Riff, RiffState::Running)
+            .unwrap();
+        assert_eq!(threads(&posted), ["o/u"]);
     }
 }

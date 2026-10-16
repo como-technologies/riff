@@ -70,9 +70,9 @@
 //!   the daemon".
 //! - Each change of `riff-state` goes through [`Daemon::state`]: one
 //!   command at a time, with its records in the log before its reply
-//!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session act on the
-//!   riff of peers, not on it (01M51QQGYDR9NZ702NFEQR512W,
-//!   [`Daemon::tools_of`]).
+//!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session with no
+//!   riff-server act on the riff of peers, not on it
+//!   (01M51QQGYDR9NZ702NFEQR512W, [`Daemon::tools_of`]).
 //! - At the stop, [`Daemon::serve`] writes a checkpoint. A start after a
 //!   crash replays the log after the last checkpoint.
 //! - `riff daemon status` shows the public key of the daemon, the ID of
@@ -178,8 +178,8 @@
 //! |---|---|
 //! | [`SessionAsk::Hello`] | says [`Say::Session`]: the session ID, the item and the name of the container |
 //! | [`SessionAsk::Relay`] | relays the session ([`crate::session_relay`]) |
-//! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk, on the riff of peers of the daemon ([`Daemon::tools_of`]) |
-//! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session: from the riff of peers ([`crate::peer::talk::Hub::wait`]), or from riff-server ([`World::wake`]) while the daemon has no riff |
+//! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk: on its riff-server, or on the riff of peers of the daemon for a session with no riff-server ([`Daemon::tools_of`]) |
+//! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session: from riff-server ([`World::wake`]), or from the riff of peers ([`crate::peer::talk::Hub::wait`]) for a session with no riff-server |
 //!
 //! # A session
 //!
@@ -733,7 +733,9 @@ pub struct Start {
     pub values: Vec<(String, String)>,
     /// The secrets that no event shows ([`Scrub`]).
     pub secrets: Vec<String>,
-    /// The riff-server of the session: its riff tools act there.
+    /// The riff-server of the session: its riff tools act there. Empty
+    /// for a session with no riff-server: its riff tools act on the riff
+    /// of peers of the daemon (01M51VZG27DXSRHBT8M14S7B9A).
     pub server: String,
     /// The URI of the session.
     pub me: SessionUri,
@@ -1076,7 +1078,8 @@ pub struct Record {
     pub live: Live,
     /// The folder of the session: `events.jsonl` is there.
     pub folder: PathBuf,
-    /// The riff-server of the session: its riff tools act there.
+    /// The riff-server of the session: its riff tools act there. Empty
+    /// for a session with no riff-server ([`Record::on_peers`]).
     pub server: String,
     /// The URI of the session.
     pub me: SessionUri,
@@ -1103,6 +1106,14 @@ pub struct Record {
     /// (01M51KJ1R9K7A7RW8T8XH8VW43).
     #[serde(default)]
     pub interrupt: bool,
+}
+
+impl Record {
+    /// True when the session has no riff-server: its riff tools act on
+    /// the riff of peers of the daemon (01M51VZG27DXSRHBT8M14S7B9A).
+    pub fn on_peers(&self) -> bool {
+        self.server.is_empty()
+    }
 }
 
 /// What a link of a session tells the task that waits for its end.
@@ -1790,12 +1801,16 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Writes the `session` record of the start of the session of
-    /// `record`, when the daemon has its riff and the riff has no record
-    /// of the session that runs. A worker claims its item. The lead
-    /// takes the lead (01M519Z3FTAZ20DQKDTW09M6NS).
+    /// `record`, when the session has no riff-server, the daemon has its
+    /// riff and the riff has no record of the session that runs. A
+    /// worker claims its item. The lead takes the lead
+    /// (01M519Z3FTAZ20DQKDTW09M6NS, 01M51VZG27DXSRHBT8M14S7B9A).
     /// The write syncs a file, so it runs on a thread for blocking work:
     /// await the handle when the record must be there.
     fn peer_start(&self, record: &Record) -> Option<JoinHandle<()>> {
+        if !record.on_peers() {
+            return None;
+        }
         let hub = self.riff.get()?.hub.clone();
         let claims = if record.terminal {
             Vec::new()
@@ -1811,9 +1826,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Writes the `session` record of the end of the session of `record`,
-    /// when the daemon has its riff.
+    /// when the session has no riff-server and the daemon has its riff.
     fn peer_end(&self, record: &Record) {
-        let Some(riff) = self.riff.get() else {
+        let Some(riff) = self.riff.get().filter(|_| record.on_peers()) else {
             return;
         };
         let (hub, id, name) = (
@@ -1865,8 +1880,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The state of riff on this machine, when the daemon has its riff.
-    /// The riff tools of a session act on riff-server 1.x until peer to
-    /// peer (Wave B).
+    /// The riff tools of a session do not act on it
+    /// ([`Daemon::tools_of`]).
     pub fn state(&self) -> Option<&Local> {
         self.riff.get().map(|riff| &riff.state)
     }
@@ -2696,16 +2711,18 @@ impl<R: Runtime + 'static> Daemon<R> {
             Ok(SessionAsk::Watch { .. }) => {
                 let (out, written) = writer(write);
                 let record = owned.lock().record.clone();
-                // With its riff, the daemon wakes its sessions itself
-                // (01M519Z3DB3MVP0FK3FBC9KSGD).
-                let wake: crate::wave::BoxFuture<'_, Result<String>> = match self.riff.get() {
-                    Some(riff) => {
-                        let hub = riff.hub.clone();
-                        let id = record.live.session.clone();
-                        Box::pin(async move { Ok(hub.wait(&id).await) })
-                    }
-                    None => self.world.wake(&record),
-                };
+                // The daemon wakes a session with no riff-server itself
+                // (01M519Z3DB3MVP0FK3FBC9KSGD, 01M51VZG27DXSRHBT8M14S7B9A).
+                let wake: crate::wave::BoxFuture<'_, Result<String>> =
+                    match (record.on_peers(), self.riff.get()) {
+                        (true, Some(riff)) => {
+                            let hub = riff.hub.clone();
+                            let id = record.live.session.clone();
+                            Box::pin(async move { Ok(hub.wait(&id).await) })
+                        }
+                        (true, None) => Box::pin(async { bail!("{}", text::DAEMON_NO_RIFF_YET) }),
+                        (false, _) => self.world.wake(&record),
+                    };
                 // The wait ends when the relay leaves.
                 let gone = async { while let Ok(Some(_)) = lines.next_line().await {} };
                 tokio::select! {
@@ -2748,22 +2765,30 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
     }
 
-    /// The riff tools of the session of `record`. With its riff, the
-    /// daemon serves the tools that talk on the riff of peers, with no
-    /// riff-server ([`crate::peer::talk`], 01M519Z3FTAZ20DQKDTW09M6NS).
-    /// While it has no riff, they act on the riff-server of the session,
-    /// with the sign-in of the person on this machine
-    /// (01M4ZHSZV46RF3XDXDTQXWGXRG). That session is the worker session
-    /// of `riff run` or of a wave, which holds the claim of the item. The
-    /// session gets only the tools that talk, and act on no folder of
-    /// the host and no claim ([`crate::mcp::CONTAINER_TOOLS`],
-    /// 01M4ZV3B6T2KB09WJ59F07HXET).
+    /// The riff tools of the session of `record`. They act on the
+    /// riff-server of the session, as in riff 1.x, with the sign-in of
+    /// the person on this machine (01M4ZHSZV46RF3XDXDTQXWGXRG,
+    /// 01M51VZG27DXSRHBT8M14S7B9A). That session is the worker session
+    /// of `riff run` or of a wave, which holds the claim of the item. A
+    /// session with no riff-server talks on the riff of peers of the
+    /// daemon ([`crate::peer::talk`], 01M519Z3FTAZ20DQKDTW09M6NS): it
+    /// fails while the daemon has no riff. The session gets only the
+    /// tools that talk, and act on no folder of the host and no claim
+    /// ([`crate::mcp::CONTAINER_TOOLS`], 01M4ZV3B6T2KB09WJ59F07HXET).
     pub fn tools_of(&self, record: &Record) -> Result<crate::mcp::Tools> {
-        let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
-        let mut tools = crate::mcp::Tools::new(api, record.me.clone()).as_worker(!record.terminal);
-        if let Some(riff) = self.riff.get() {
-            tools = tools.with_talk(Arc::new(PeerTalk::new(riff.hub.clone())));
+        let tools = if record.on_peers() {
+            let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
+            // Each tool of the session talks, so no call reaches the
+            // riff-server of this client.
+            let api = crate::api::Api::new(&record.server);
+            crate::mcp::Tools::new(api, record.me.clone())
+                .with_talk(Arc::new(PeerTalk::new(riff.hub.clone())))
+        } else {
+            let api =
+                crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
+            crate::mcp::Tools::new(api, record.me.clone())
         }
+        .as_worker(!record.terminal);
         Ok(if record.terminal {
             tools.in_lead_container()
         } else {
@@ -5029,17 +5054,6 @@ mod tests {
         (client, name, relay)
     }
 
-    /// The body of a message from `from` to `to`.
-    fn message(from: &str, to: Vec<riff_core::selector::Selector>, body: &str) -> Body {
-        Body::Message(Box::new(crate::peer::body::Message {
-            from: from.parse().unwrap(),
-            thread: "como-technologies/riff".parse().unwrap(),
-            to,
-            kind: riff_core::wire::Kind::Message,
-            body: body.into(),
-        }))
-    }
-
     /// `riff relay watch` of the session `name`: the line of its next
     /// wake.
     fn wake_of(dir: &Path, name: &str) -> JoinHandle<String> {
@@ -5148,12 +5162,12 @@ mod tests {
         }
     }
 
-    /// 01M519Z3FTAZ20DQKDTW09M6NS, 01M519Z3DB3MVP0FK3FBC9KSGD: a session of
-    /// the fake runtime posts, reads, tells and sets its status through
-    /// the daemon, with no riff-server: no riff-server answers at the
-    /// address of the sessions. A second session wakes on a message to it.
-    /// A worker gets only the tools that talk. The lead also gets `lead`,
-    /// `hold`, `free`, `pause` and `resume`.
+    /// 01M519Z3FTAZ20DQKDTW09M6NS, 01M519Z3DB3MVP0FK3FBC9KSGD,
+    /// 01M51VZG27DXSRHBT8M14S7B9A: a session of the fake runtime with no
+    /// riff-server posts, reads, tells and sets its status through the
+    /// daemon. A second session wakes on a message to it. A worker gets
+    /// only the tools that talk. The lead also gets `lead`, `hold`,
+    /// `free`, `pause` and `resume`.
     #[tokio::test]
     async fn the_tools_of_a_session_talk_through_the_daemon_with_no_riff_server() {
         use serde_json::json;
@@ -5161,14 +5175,20 @@ mod tests {
         let world: Arc<dyn World> = Arc::new(Server::default());
         let here =
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let start = |name: &str, item: &str| Start {
+            server: String::new(),
+            ..here.start(name, item)
+        };
         let (_a, a) = here
-            .started(here.start("riff-issue-1-aaaaaaaa", "issue-1"))
+            .started(start("riff-issue-1-aaaaaaaa", "issue-1"))
             .await;
         let (_b, b) = here
-            .started(here.start("riff-issue-2-bbbbbbbb", "issue-2"))
+            .started(start("riff-issue-2-bbbbbbbb", "issue-2"))
             .await;
-        let mut lead = here.start("riff-lead-o-r", "lead");
-        lead.terminal = true;
+        let lead = Start {
+            terminal: true,
+            ..start("riff-lead-o-r", "lead")
+        };
         let (_l, l) = here.started(lead).await;
         until(|| here.daemon.peers(|peers| peers.runs().count()) == Some(3)).await;
         let (mut ta, mut tb, mut tl) = (
@@ -5284,22 +5304,11 @@ mod tests {
                 .unwrap();
         assert!(record.terminal && record.inputs.is_empty());
 
-        // riff relay watch gets the next wake of the session, from the riff
-        // of the daemon: a message of another session to the lead
-        // (01M519Z3DB3MVP0FK3FBC9KSGD).
-        until(|| here.daemon.peers(|peers| peers.runs().count()) == Some(1)).await;
-        let watch = wake_of(&here.dir, &name);
-        let owner = here.daemon.status().await.owner.unwrap();
-        let from = format!("riff://{owner}@h/como-technologies/riff?session=other");
-        let to = riff_core::selector::Selector::session("riff-lead-o-r-session");
-        here.daemon
-            .write(&message(&from, vec![to], "a question"))
-            .unwrap();
-        let line = watch.await.unwrap();
-        assert!(
-            line.contains("wrote to you in como-technologies/riff"),
-            "{line}"
-        );
+        // The lead has a riff-server: riff relay watch gets the next wake
+        // of the session there, and the riff of peers of the daemon has no
+        // record of it (01M51VZG27DXSRHBT8M14S7B9A).
+        assert_eq!(wake_of(&here.dir, &name).await.unwrap(), "a wake of lead");
+        assert_eq!(here.daemon.peers(|peers| peers.runs_all().count()), Some(0));
 
         // A takeover of the lead is refused: a person attaches to it.
         let (_, refused) = take_over(&here.dir, &name).await;
