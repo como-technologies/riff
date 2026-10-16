@@ -643,14 +643,14 @@ async fn the_author_gets_no_request_for_its_verify_also_after_a_clear() {
     // A look sees the claim of A.
     lead.looked().await;
 
-    // A waits for its clear: it takes no request, and it counts as idle.
     let reply = lead.api.release(&a, &thread, "issue-1").await.unwrap();
     assert!(reply.must_clear, "{reply:?}");
     lead.pull(None);
-    lead.looked().await;
-    assert_eq!(lead.workers(), 1, "{}", lead.tmux_log());
-    // After its clear, A is the only idle worker when the verify waits.
     lead.api.start(&a, StartReason::Clear, true).await.unwrap();
+    // After its clear, A is the only worker that joined and has no
+    // claim, and the verify waits. A worker B can run already, but it
+    // did not join: it gets no request.
+    lead.looked().await;
     let b = lead.join_idle(2).await;
     let _b = lead.api.watch(&b).await.unwrap();
     reads(&lead.api, &b, "request: claim verify-issue-1").await;
