@@ -22,10 +22,12 @@
 //! | `gitconfig` | `riff run` appends to `~/.gitconfig` |
 //! | `others` | `riff run` writes in `~/snap`, in the locks of `claude` and in `~/.claude.json.lock` |
 //! | `elsewhere` | `riff run` writes a new folder in `~/.config` |
+//! | `workers` | `riff run` builds and commits in a worktree of the other clone ([`Fake::other_clone`]), and makes a new worktree there |
+//! | `in-clone` | `riff run` writes a new file in the other clone, outside its worktrees |
 //! | `no-pull` | `gh pr view` finds no pull request |
 //! | `no-gate` | the head commit has no check run |
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -120,6 +122,15 @@ run)
     touch "$HOME/.claude.json.lock"
   fi
   if [ -f "$c/elsewhere" ]; then mkdir -p "$HOME/.config/tool"; touch "$HOME/.config/tool/x"; fi
+  m="$HOME/src/main"
+  if [ -f "$c/workers" ]; then
+    w="$m/.claude/worktrees/issue-1"
+    mkdir -p "$w/target/debug" "$m/.claude/worktrees/issue-2/target"
+    touch "$w/target/debug/riff" "$w/new.rs" "$m/.claude/worktrees/issue-2/target/x"
+    git -C "$w" add new.rs
+    git -C "$w" -c user.name=W -c user.email=w@example.com commit -q -m "WIP: a worker"
+  fi
+  if [ -f "$c/in-clone" ]; then touch "$m/notes.md"; fi
   if [ -f "$c/run-waits" ]; then touch "$c/running"; sleep 30; fi
   if [ -f "$c/run-signaled" ]; then kill -TERM $$; fi
   if [ -f "$c/run-fails" ]; then exit 1; fi ;;
@@ -180,6 +191,48 @@ impl Fake {
         std::fs::write(self.ctl.join(name), "").unwrap();
     }
 
+    /// Makes another clone of the person, `~/src/main`, with one commit
+    /// and the worktree `.claude/worktrees/issue-1` of another session, as
+    /// the main clone of a busy machine when the test runs from another
+    /// clone. It gives the clone.
+    fn other_clone(&self) -> PathBuf {
+        let clone = self.env.home().join("src/main");
+        std::fs::create_dir_all(&clone).unwrap();
+        std::fs::write(clone.join("README.md"), "main\n").unwrap();
+        for args in [
+            &["init", "-q"][..],
+            &["add", "README.md"],
+            &[
+                "-c",
+                "user.name=W",
+                "-c",
+                "user.email=w@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "first",
+            ],
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "worktree-issue-1",
+                ".claude/worktrees/issue-1",
+            ],
+        ] {
+            let git = Command::new("git")
+                .args(args)
+                .current_dir(&clone)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()
+                .unwrap();
+            assert!(git.success(), "git {args:?}");
+        }
+        clone
+    }
+
     /// The command of the test in the clone, with the fakes first on the
     /// `PATH`.
     fn command(&self, args: &[&str]) -> Command {
@@ -231,6 +284,16 @@ impl Fake {
 
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// The number of commits of the branch `branch` of `clone`.
+fn commits(clone: &Path, branch: &str) -> String {
+    let out = Command::new("git")
+        .args(["rev-list", "--count", branch])
+        .current_dir(clone)
+        .output()
+        .unwrap();
+    text(&out.stdout).trim().to_owned()
 }
 
 /// The index of the first call that starts with `start`.
@@ -483,6 +546,46 @@ fn the_snap_apps_and_the_locks_of_claude_do_not_count_and_another_place_does() {
         "real-session: FAIL at step 7 of 10, check the home: the home has 1 new path outside \
          the folders of riff:\n  {}\nWhen another program",
         fake.env.home().join(".config/tool").display()
+    );
+    assert!(stderr.contains(&shown), "{shown}\n{stderr}");
+    assert_clean(&fake);
+}
+
+/// Workers build and commit in the worktrees of another clone of the
+/// person while the test runs, and make a new worktree there. With no
+/// `--skip`, this does not fail the home check, and a new file in that
+/// clone outside its worktrees does (01M51SPS50QQ9Y5C6VE26A18FZ).
+#[test]
+fn the_worktrees_of_other_sessions_do_not_count_and_the_rest_of_their_clone_does() {
+    let fake = Fake::new();
+    let clone = fake.other_clone();
+    fake.set("workers");
+    let out = fake.run(&[]);
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    // The commit of the worker wrote in the git folder of the clone.
+    assert_eq!(commits(&clone, "worktree-issue-1"), "2");
+    assert!(
+        clone
+            .join(".claude/worktrees/issue-1/target/debug/riff")
+            .exists()
+    );
+
+    let fake = Fake::new();
+    let clone = fake.other_clone();
+    fake.set("workers");
+    fake.set("in-clone");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    let shown = format!(
+        "real-session: FAIL at step 7 of 10, check the home: the home has 1 new path outside \
+         the folders of riff:\n  {}\nWhen another program",
+        clone.join("notes.md").display()
     );
     assert!(stderr.contains(&shown), "{shown}\n{stderr}");
     assert_clean(&fake);
