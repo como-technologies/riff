@@ -24,6 +24,7 @@
 //! | `elsewhere` | `riff run` writes a new folder in `~/.config` |
 //! | `workers` | `riff run` builds and commits in a worktree of the other clone ([`Fake::other_clone`]), and makes a new worktree there |
 //! | `in-clone` | `riff run` writes a new file in the other clone, outside its worktrees |
+//! | `hook` | `riff run` writes a new hook in the git folder of the other clone |
 //! | `no-pull` | `gh pr view` finds no pull request |
 //! | `no-gate` | the head commit has no check run |
 
@@ -125,12 +126,14 @@ run)
   m="$HOME/src/main"
   if [ -f "$c/workers" ]; then
     w="$m/.claude/worktrees/issue-1"
+    git -C "$m" worktree add -q -b worktree-issue-2 .claude/worktrees/issue-2
     mkdir -p "$w/target/debug" "$m/.claude/worktrees/issue-2/target"
     touch "$w/target/debug/riff" "$w/new.rs" "$m/.claude/worktrees/issue-2/target/x"
     git -C "$w" add new.rs
     git -C "$w" -c user.name=W -c user.email=w@example.com commit -q -m "WIP: a worker"
   fi
   if [ -f "$c/in-clone" ]; then touch "$m/notes.md"; fi
+  if [ -f "$c/hook" ]; then touch "$m/.git/hooks/pre-commit"; fi
   if [ -f "$c/run-waits" ]; then touch "$c/running"; sleep 30; fi
   if [ -f "$c/run-signaled" ]; then kill -TERM $$; fi
   if [ -f "$c/run-fails" ]; then exit 1; fi ;;
@@ -230,6 +233,8 @@ impl Fake {
                 .unwrap();
             assert!(git.success(), "git {args:?}");
         }
+        // Git makes the folder of the hooks only from its templates.
+        std::fs::create_dir_all(clone.join(".git/hooks")).unwrap();
         clone
     }
 
@@ -553,8 +558,9 @@ fn the_snap_apps_and_the_locks_of_claude_do_not_count_and_another_place_does() {
 
 /// Workers build and commit in the worktrees of another clone of the
 /// person while the test runs, and make a new worktree there. With no
-/// `--skip`, this does not fail the home check, and a new file in that
-/// clone outside its worktrees does (01M51SPS50QQ9Y5C6VE26A18FZ).
+/// `--skip`, this does not fail the home check. A new file in that clone
+/// outside its worktrees fails it, and so does a new hook in its git
+/// folder (01M51SPS50QQ9Y5C6VE26A18FZ).
 #[test]
 fn the_worktrees_of_other_sessions_do_not_count_and_the_rest_of_their_clone_does() {
     let fake = Fake::new();
@@ -567,8 +573,10 @@ fn the_worktrees_of_other_sessions_do_not_count_and_the_rest_of_their_clone_does
         text(&out.stdout),
         text(&out.stderr)
     );
-    // The commit of the worker wrote in the git folder of the clone.
+    // The commit and the new worktree wrote in the git folder of the
+    // clone.
     assert_eq!(commits(&clone, "worktree-issue-1"), "2");
+    assert!(clone.join(".git/worktrees/issue-2").is_dir());
     assert!(
         clone
             .join(".claude/worktrees/issue-1/target/debug/riff")
@@ -586,6 +594,21 @@ fn the_worktrees_of_other_sessions_do_not_count_and_the_rest_of_their_clone_does
         "real-session: FAIL at step 7 of 10, check the home: the home has 1 new path outside \
          the folders of riff:\n  {}\nWhen another program",
         clone.join("notes.md").display()
+    );
+    assert!(stderr.contains(&shown), "{shown}\n{stderr}");
+    assert_clean(&fake);
+
+    let fake = Fake::new();
+    let clone = fake.other_clone();
+    fake.set("workers");
+    fake.set("hook");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    let shown = format!(
+        "real-session: FAIL at step 7 of 10, check the home: the home has 1 new path outside \
+         the folders of riff:\n  {}\nWhen another program",
+        clone.join(".git/hooks/pre-commit").display()
     );
     assert!(stderr.contains(&shown), "{shown}\n{stderr}");
     assert_clean(&fake);

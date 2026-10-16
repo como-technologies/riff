@@ -118,12 +118,13 @@
 //! | `XDG_CACHE_HOME` | the caches of the tools of the host |
 //! | `snap` in the home | the snap apps, for example the Firefox snap (01M51MQB46AYY39YSAY18NMD8T) |
 //! | `claude/locks` in `XDG_STATE_HOME` | the locks of each `claude` on the host (01M51MQB46AYY39YSAY18NMD8T) |
-//! | `.claude/worktrees` and `.git` in each git clone | the worktrees and the builds of the other sessions, and the git of each session (01M51SPS50QQ9Y5C6VE26A18FZ, [`of_other_sessions`]) |
+//! | `.claude/worktrees` and `.git` in each git clone, except the hooks and the config files of git ([`GIT_KEPT`]) | the worktrees and the builds of the other sessions, and the git of each session (01M51SPS50QQ9Y5C6VE26A18FZ, [`of_other_sessions`]) |
 //! | each path of `--skip` | the other programs of the person that write while the test runs |
 //!
 //! So the test also passes on a busy machine, for example while workers
 //! build and commit in the worktrees of another clone of the person.
-//! A new path in the rest of that clone still counts.
+//! A new path in the rest of that clone still counts, for example a new
+//! hook in `.git/hooks`.
 //!
 //! The check also sees a change to a file that is there already, in the
 //! files that riff must not write (01M51K051FR0WN71NJXNA86XWY,
@@ -808,16 +809,22 @@ impl Home {
     }
 }
 
+/// The paths in a git folder `.git` that the home check still lists
+/// (01M51SPS50QQ9Y5C6VE26A18FZ): a new hook or a new config file runs
+/// code at the next git command.
+pub const GIT_KEPT: [&str; 3] = ["hooks", "config", "config.worktree"];
+
 /// True when the other sessions of the person write `path` while the
 /// test runs, so the home check leaves it out (01M51SPS50QQ9Y5C6VE26A18FZ):
 ///
-/// - each git folder `.git`: the git of each session writes its
-///   objects, refs and logs in the git folder of its clone;
+/// - each path in a git folder `.git`, except [`GIT_KEPT`]: the git of
+///   each session writes its objects, refs and logs, and the folder of
+///   each worktree, in the git folder of its clone;
 /// - the folder `.claude/worktrees` of a git clone (a folder with
 ///   `.git` in it): the worktrees of the other sessions, with their
 ///   builds, and each new worktree.
 ///
-/// Each other path of a clone still counts.
+/// Each other path of a clone still counts, also a new `.git`.
 ///
 /// ```
 /// use real_session::of_other_sessions;
@@ -825,8 +832,14 @@ impl Home {
 /// let dir = tempfile::tempdir()?;
 /// let clone = dir.path().join("src/riff");
 /// std::fs::create_dir_all(clone.join(".git"))?;
-/// assert!(of_other_sessions(&clone.join(".git")));
+/// assert!(of_other_sessions(&clone.join(".git/objects")));
+/// assert!(of_other_sessions(&clone.join(".git/worktrees")));
 /// assert!(of_other_sessions(&clone.join(".claude/worktrees")));
+/// // The hooks and the config files of git still count.
+/// assert!(!of_other_sessions(&clone.join(".git/hooks")));
+/// assert!(!of_other_sessions(&clone.join(".git/config")));
+/// assert!(!of_other_sessions(&clone.join(".git/config.worktree")));
+/// assert!(!of_other_sessions(&clone.join(".git")));
 /// assert!(!of_other_sessions(&clone.join(".claude/worktrees/issue-1")));
 /// assert!(!of_other_sessions(&clone.join(".claude/settings.json")));
 /// assert!(!of_other_sessions(&clone.join("notes.md")));
@@ -836,8 +849,8 @@ impl Home {
 /// ```
 pub fn of_other_sessions(path: &Path) -> bool {
     let named = |path: &Path, name: &str| path.file_name() == Some(OsStr::new(name));
-    if named(path, ".git") {
-        return true;
+    if path.parent().is_some_and(|git| named(git, ".git")) {
+        return !GIT_KEPT.iter().any(|name| named(path, name));
     }
     named(path, "worktrees")
         && path.parent().is_some_and(|claude| {
@@ -1779,6 +1792,8 @@ mod tests {
         let clone = root.join("src/riff");
         let worktree = clone.join(".claude/worktrees/issue-1");
         std::fs::create_dir_all(clone.join(".git/objects/ab")).unwrap();
+        std::fs::create_dir_all(clone.join(".git/hooks")).unwrap();
+        std::fs::write(clone.join(".git/config"), "[core]\n").unwrap();
         std::fs::create_dir_all(&worktree).unwrap();
         // A folder `.claude/worktrees` in a folder that is not a clone.
         let not_clone = root.join("notes/.claude/worktrees");
@@ -1793,18 +1808,24 @@ mod tests {
         std::fs::write(worktree.join("new.rs"), "").unwrap();
         std::fs::create_dir_all(clone.join(".claude/worktrees/issue-2")).unwrap();
         std::fs::write(clone.join(".git/objects/ab/cdef"), "").unwrap();
+        std::fs::create_dir_all(clone.join(".git/worktrees/issue-2")).unwrap();
+        std::fs::write(clone.join(".git/worktrees/issue-2/HEAD"), "").unwrap();
         assert_eq!(home.changes(&before, &[]), Changes::default());
 
-        // A new path in the rest of the clone, and in the folder that is
-        // not a clone, counts.
+        // A new path in the rest of the clone, a new hook and config file
+        // of git, and a new path in the folder that is not a clone count.
         std::fs::write(clone.join("notes.md"), "").unwrap();
         std::fs::write(clone.join(".claude/settings.json"), "{}").unwrap();
+        std::fs::write(clone.join(".git/hooks/pre-commit"), "").unwrap();
+        std::fs::write(clone.join(".git/config.worktree"), "").unwrap();
         std::fs::write(not_clone.join("x"), "").unwrap();
         assert_eq!(
             home.changes(&before, &[]).new,
             [
                 not_clone.join("x"),
                 clone.join(".claude/settings.json"),
+                clone.join(".git/config.worktree"),
+                clone.join(".git/hooks/pre-commit"),
                 clone.join("notes.md"),
             ]
         );
