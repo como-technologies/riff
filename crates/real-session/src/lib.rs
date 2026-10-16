@@ -147,7 +147,10 @@ pub const BOOK_FILE: &str = "docs/src/riff-3.md";
 pub const GATE: &str = "Gate";
 
 /// The longest wait for the Gate, when `--gate-wait` does not give one.
-pub const GATE_WAIT: Duration = Duration::from_secs(600);
+/// The job Gate starts when each part of the Gate ended
+/// (01M513W2K3HNRWPQTQNBQPT8MZ), so the wait holds the time of the
+/// parts.
+pub const GATE_WAIT: Duration = Duration::from_secs(1800);
 
 /// The time between two looks at the Gate.
 pub const POLL: Duration = Duration::from_secs(10);

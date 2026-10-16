@@ -1,3 +1,7 @@
+# 01M3MY2KWKBJCQ0BCNC6533RBW: no test reaches the shared riff, the local riff or the OS keyring.
+# The environment of each test run: a RIFF_SERVER where nothing listens and a D-Bus that fails each call.
+test_env := "RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus"
+
 # Default: list available recipes
 default:
     @just --list
@@ -21,9 +25,10 @@ ci:
     recipe=$(cargo run -q -p hygiene -- ci)
     {{just_executable()}} "$recipe"
 
-# The Gate on GitHub runs this recipe (01M3WNN7VQJKN5MJH7JN50VF4D).
-# crate-audit is not part of the gate: CI runs it as a separate job (and
-# weekly), so a new advisory cannot hide a code failure.
+# The Gate on GitHub runs the same checks as jobs at the same time
+# (01M3WNN7VQJKN5MJH7JN50VF4D, 01M513W2K3HNRWPQTQNBQPT8MZ). crate-audit is
+# not part of the gate: CI runs it as a separate job (and weekly), so a new
+# advisory cannot hide a code failure.
 # Run all CI checks
 ci-full:
     #!/usr/bin/env bash
@@ -91,10 +96,19 @@ lint:
 build:
     cargo build --workspace
 
-# 01M3MY2KWKBJCQ0BCNC6533RBW: no test reaches the shared riff, the local riff or the OS keyring.
 # Run all tests, with a RIFF_SERVER where nothing listens and a D-Bus that fails each call
 test *ARGS:
     {{just_executable()}} cargo-test --workspace {{ARGS}}
+
+# The Gate runs the tests in parts, each part in a job of its own, in the
+# session image (01M513W2NSE303E6XAM18BW7T6, 01M515Z3Y7GSFNTJGXJD727MQK).
+# hygiene test-part lists each test and runs the tests whose name falls in
+# part I of N. It runs as a built binary, not with cargo run, so its cargo
+# test gets no variable of cargo run. The session image has its own target.
+# Run part I of N of the tests, for example: just test-part 2/4
+test-part PART:
+    cargo build -q -p hygiene
+    {{test_env}} "${CARGO_TARGET_DIR:-target}/debug/hygiene" test-part {{PART}}
 
 # cargo test ARGS for test and check, in the environment of the tests.
 # 01M49NP2907J4SH4S6MAY09VXE: .cargo/config.toml sets the TMPDIR.
@@ -103,7 +117,7 @@ test *ARGS:
 [private]
 cargo-test *ARGS:
     cargo build -q --workspace --bins
-    RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus cargo test {{ARGS}}
+    {{test_env}} cargo test {{ARGS}}
 
 # Build the API docs; a broken doc link fails
 doc:
@@ -181,7 +195,8 @@ static PROFILE="release":
 
 # The tests of crates/riff in the session image of riff.toml, as a session
 # runs them (01M51117NDKF11FNZ915TTQED4). It needs podman or docker. ARGS
-# go to cargo test.
+# go to cargo test. --part I/N runs part I of N of the tests of the
+# workspace in place of them, as the Gate does (01M515Z3Y7GSFNTJGXJD727MQK).
 # Run the tests of crates/riff in a container of the session image
 session-test *ARGS:
     deploy/session-test.sh {{ARGS}}

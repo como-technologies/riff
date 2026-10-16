@@ -32,11 +32,17 @@ permissions:
   contents: read
 
 jobs:
-  gate:
-    # The whole local gate in one job: fmt, clippy, tests and the book.
-    name: Gate
+  # The Gate runs its checks as jobs at the same time
+  # (01M513W2K3HNRWPQTQNBQPT8MZ): Clippy, the tests in parts in the
+  # session image, and the other checks. Together they run each check of
+  # just ci-full (01M3WNN7VQJKN5MJH7JN50VF4D). The last job, Gate, needs
+  # each of them.
+  # Each job runs on the runner of the repository variable RIFF_RUNNER,
+  # with the default ubuntu-latest (01M513W2RERJES76ZXKKHCV0DP).
+  lint:
+    name: Clippy
     if: github.event_name != 'schedule' && github.ref_type != 'tag'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -47,34 +53,122 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
+          tool: just
+
+      - run: just lint
+
+  test:
+    # Each part runs the tests whose name falls in it, so the parts
+    # together run each test (01M513W2NSE303E6XAM18BW7T6). They run in a
+    # container of the session image that riff.toml pins, as a session
+    # runs them: --init, the user of the runner, a home of its own and the
+    # limits of a session (01M515Z3Y7GSFNTJGXJD727MQK,
+    # 01M51117NDKF11FNZ915TTQED4). The image has its own toolchain, so the
+    # cache holds target/session.
+    name: Tests ${{ matrix.part }}
+    if: github.event_name != 'schedule' && github.ref_type != 'tag'
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ["1/4", "2/4", "3/4", "4/4"]
+    env:
+      RIFF_ENGINE: docker
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: target/session
+          key: session-${{ hashFiles('riff.toml', 'rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: session-
+
+      - run: deploy/session-test.sh --part ${{ matrix.part }}
+
+  checks:
+    name: Checks
+    if: github.event_name != 'schedule' && github.ref_type != 'tag'
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
           tool: just,mdbook,mdbook-gruvbox,mdbook-mermaid
 
-      - name: CI gate
-        # Each check, for each diff (01M3WNN7VQJKN5MJH7JN50VF4D).
-        run: just ci-full
+      - run: just fmt-check doc book reqs wrap
+
+  gate:
+    # A skipped required check counts as a pass on GitHub. So the Gate
+    # runs also when a part fails or is cancelled, and fails then.
+    name: Gate
+    needs: [lint, test, checks]
+    if: always() && github.event_name != 'schedule' && github.ref_type != 'tag'
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Each part passed
+        env:
+          RESULTS: lint=${{ needs.lint.result }} test=${{ needs.test.result }} checks=${{ needs.checks.result }}
+        run: |
+          echo "The parts of the Gate: $RESULTS"
+          for result in $RESULTS; do
+            if [ "${result#*=}" != success ]; then
+              echo "::error::The part ${result%%=*} of the Gate ended with ${result#*=}."
+              exit 1
+            fi
+          done
 
   static:
     # The static riff and riff-server of each pull request and each push
     # (01M4ZPJ04D9MJHNPAV0WN1KCES): a build in rust:CHANNEL-alpine, then
     # the check: no interpreter in each ELF, and riff --version runs in the
-    # session image of riff.toml (01M4ZPJ06QYVA23N9SQ45T8WQC). For a tag,
-    # it keeps the binaries for the job Static riff release.
+    # session image of riff.toml (01M4ZPJ06QYVA23N9SQ45T8WQC). A pull
+    # request and a push build the profile dev with a cache of the build
+    # and of the downloaded crates. A tag builds the profile release with
+    # no cache, so each release binary comes from a clean build
+    # (01M513W2V4G94R7F4D4Q3M2RA1). For a tag, it keeps the binaries for
+    # the job Static riff release.
     name: Static riff
     if: github.event_name == 'push' || github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     env:
       RIFF_ENGINE: docker
+      RIFF_STATIC_CARGO: ${{ github.workspace }}/target/static-cargo
+      CARGO_INCREMENTAL: 0
+      PROFILE: ${{ github.ref_type == 'tag' && 'release' || 'dev' }}
     steps:
       # build-id.sh reads the last commit that changed the code.
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
+      - name: Cache the build
+        if: github.ref_type != 'tag'
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/static
+            target/static-cargo
+          key: static-dev-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: static-dev-
+
       - name: Build
-        run: deploy/static/build.sh release
+        run: deploy/static/build.sh "$PROFILE"
 
       - name: Check
-        run: deploy/static/check.sh release
+        run: deploy/static/check.sh "$PROFILE"
+
+      # The container writes as root. The cache saves the files at the
+      # end of the job as the runner user.
+      - name: Give the files of the build to the runner user
+        if: github.ref_type != 'tag'
+        run: sudo chown -R "$(id -u):$(id -g)" target/static target/static-cargo
 
       - name: Name the files of the release
         if: github.ref_type == 'tag'
@@ -94,23 +188,6 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  session_tests:
-    # The tests of crates/riff in the session image that riff.toml pins,
-    # as a session of riff run runs them (01M51117NDKF11FNZ915TTQED4):
-    # --init, the user of the runner, a home of its own and the limits of
-    # a session. docker has its own init, and gives the limits on the
-    # runner.
-    name: Session tests
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    env:
-      RIFF_ENGINE: docker
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Session tests
-        run: deploy/session-test.sh
-
   static_release:
     # For a release tag, the static binaries and SHA256SUMS go to the
     # GitHub release of the tag (01M4ZPJ091W3NYV1V0FJS9K6MS). The admin
@@ -119,7 +196,7 @@ jobs:
     name: Static riff release
     needs: [static]
     if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: write
     env:
@@ -151,7 +228,7 @@ jobs:
     # crates (01M3N73AW2J3TVSZWFJ88A91PG).
     name: Release check
     if: github.ref_type == 'tag'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -180,7 +257,7 @@ jobs:
       !cancelled() && vars.CLOUD_DEPLOY == 'true' && (
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.release.result == 'success' && needs.static_release.result == 'success') ||
       (github.event_name == 'workflow_dispatch' && inputs.tag != '' && github.ref == 'refs/heads/main' && needs.gate.result == 'success'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     environment: production
     permissions:
       contents: read
@@ -256,7 +333,7 @@ jobs:
     if: >-
       vars.STAGE_DEPLOY == 'true' && github.event_name == 'push' &&
       github.ref == 'refs/heads/main' && needs.gate.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     environment: stage
     permissions:
       contents: read
@@ -320,7 +397,7 @@ jobs:
     # A separate job, so a new advisory cannot hide a code failure (and the
     # reverse). The weekly schedule runs only this job.
     name: Crate audit
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v6
 

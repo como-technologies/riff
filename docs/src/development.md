@@ -123,9 +123,93 @@ just ci-full
 ```
 
 It runs `fmt-check`, `lint`, `test`, `doc`, `book`, `reqs` and `wrap`.
-The Gate on GitHub runs the same command. Tests read the pages of the
+The Gate on GitHub runs the same checks (see
+[How the Gate runs](#how-the-gate-runs)). Tests read the pages of the
 book. So a change of only text that passes `just ci` can still fail a
 test in the Gate.
+
+## How the Gate runs
+
+The Gate on GitHub runs the checks of `just ci-full` as jobs at the
+same time. Each job has a runner of its own:
+
+| Job | Runs |
+|---|---|
+| `Clippy` | `just lint` |
+| `Tests 1/4` to `Tests 4/4` | `just test-part 1/4` to `just test-part 4/4`, in the session image |
+| `Checks` | `just fmt-check doc book reqs wrap` |
+| `Gate` | Starts when each other job ended. It passes only when each of them passed. |
+
+The tests run in a container of the session image, as a session runs
+them (see
+[Run the tests in the session image](#run-the-tests-in-the-session-image)).
+
+```mermaid
+flowchart LR
+    P["a push or a<br/>pull request"] --> C["Clippy"]
+    P --> T["Tests 1/4 … 4/4<br/>in the session image"]
+    P --> K["Checks: fmt, doc,<br/>book, reqs, wrap"]
+    C --> G{"Gate: did each<br/>job pass?"}
+    T --> G
+    K --> G
+    G -- yes --> S["Gate passes"]
+    G -- no --> F["Gate fails"]
+```
+
+The rules of `main` need only the check `Gate`. So a fail of each job
+fails the Gate. While the other jobs run, `gh pr checks` shows no
+`Gate`.
+
+### Run one part of the tests
+
+The Gate runs the tests in 4 parts. Each part lists each test of the
+workspace. It runs only the tests whose name falls in its part. The
+hash of the name gives the part. Part 1 also runs each doc test. So
+the 4 parts together run each test, and a new test moves no other
+test.
+
+To run one part on your machine, for example a part that failed on
+GitHub:
+
+```sh
+just test-part 2/4
+```
+
+It first prints one line:
+
+```text
+just test-part 2/4 runs 571 of 2280 tests
+```
+
+To run the part in the session image, as the Gate runs it:
+
+```sh
+just session-test --part 2/4
+```
+
+### Choose the runner of CI
+
+Each job of CI runs on the runner that the repository variable
+`RIFF_RUNNER` names. With no variable, the runner is `ubuntu-latest`:
+it has 4 cores for a public repository. To use a larger runner, set
+the variable to the label of that runner. LABEL is the label, for
+example the name of a larger runner of your organization:
+
+```sh
+gh variable set RIFF_RUNNER --body LABEL
+```
+
+The next run uses it. To see the variable:
+
+```sh
+gh variable list
+```
+
+To use `ubuntu-latest` again:
+
+```sh
+gh variable delete RIFF_RUNNER
+```
 
 ## Run one test many times
 
@@ -267,7 +351,11 @@ flowchart LR
 ```
 
 The CI job `Static riff` builds and checks the static binaries of each
-pull request. For a release tag, it adds them to the release (see
+pull request and each push, with the profile `dev`. It keeps a cache
+of the build and of the downloaded crates, so it compiles only the
+crates of riff again. For a release tag, it builds the profile
+`release` with no cache, so each release binary comes from a clean
+build. Then it adds them to the release (see
 [Make a release](#make-a-release)).
 
 ### Build the static riff
@@ -288,6 +376,18 @@ with no optimization, so the build is faster. Its binaries are in
 
 ```sh
 just static dev
+```
+
+### Keep the crates of the static build in a folder
+
+The static build keeps the crates that it downloads in the volume
+`riff-static-cargo` of podman or docker. To keep them in a folder of
+your own, give its absolute path in `RIFF_STATIC_CARGO`. Podman needs
+the folder to exist:
+
+```sh
+mkdir -p ~/.cache/riff-static-cargo
+RIFF_STATIC_CARGO=$HOME/.cache/riff-static-cargo just static dev
 ```
 
 To see that a binary is static, look for the interpreter. A static
@@ -387,8 +487,11 @@ To run one test, give its name:
 just session-test run::riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it
 ```
 
-The CI job `Session tests` runs the same tests for each pull request.
-When you pin a new digest, it runs them in the new image.
+The jobs `Tests 1/4` to `Tests 4/4` of the Gate run each test of the
+workspace in the session image, for each pull request (see
+[How the Gate runs](#how-the-gate-runs)). When you pin a new digest,
+they run the tests in the new image. To run one part of them, see
+[Run one part of the tests](#run-one-part-of-the-tests).
 
 ## Start the riff daemon
 
@@ -1018,7 +1121,9 @@ The test does these steps. The messages name them:
 8. Find the pull request: the branch of the session has an open pull
    request.
 9. Check the change: the pull request adds the line to the book.
-10. Wait for the Gate: the Gate of the pull request starts.
+10. Wait for the Gate: the job `Gate` of the pull request starts. It
+    starts when each part of the Gate ended (see
+    [How the Gate runs](#how-the-gate-runs)).
 
 The first step that fails stops the test. Its message names the step
 and the reason. Then the test cleans up: it stops its daemon, closes
@@ -1055,10 +1160,11 @@ new file that names the session of the test counts.
 
 ### Wait longer for the Gate
 
-The test waits 600 seconds for the Gate to start. To wait longer:
+The test waits 1800 seconds for the job `Gate` to start. To wait
+longer:
 
 ```sh
-just real-session --gate-wait 1200
+just real-session --gate-wait 3600
 ```
 
 ## Add a requirement

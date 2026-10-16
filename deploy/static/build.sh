@@ -10,6 +10,9 @@
 # It runs podman, else docker, or the engine in RIFF_ENGINE. The binaries
 # go to target/static/release or target/static/debug. The named volume
 # riff-static-cargo keeps the downloaded crates for the next build.
+# RIFF_STATIC_CARGO names another volume, or the absolute path of a folder
+# in its place, for example a folder that CI keeps in its cache
+# (01M513W2V4G94R7F4D4Q3M2RA1).
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/../.."
 
@@ -49,9 +52,9 @@ done < <(deploy/build-id.sh)
 # has the channel of rust-toolchain.toml, so rustup downloads nothing.
 "$ENGINE" run --rm \
     -v "$PWD:/src" -w /src \
-    -v riff-static-cargo:/usr/local/cargo/registry \
+    -v "${RIFF_STATIC_CARGO:-riff-static-cargo}:/usr/local/cargo/registry" \
     -e CARGO_TARGET_DIR=/src/target/static \
-    -e CARGO_BUILD_JOBS \
+    -e CARGO_BUILD_JOBS -e CARGO_INCREMENTAL \
     -e RIFF_COMMIT -e RIFF_COMMIT_TIME \
     "$IMAGE" \
     sh -euc '

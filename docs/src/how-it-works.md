@@ -1904,8 +1904,8 @@ for example after a new push of the author, riff reports nothing and
 says why. Test the new head, or tell the author.
 
 A pass needs a success of the Gate of the head commit. While the Gate
-runs, failed, or did not run, `riff verify pass` reports nothing and
-prints one line:
+runs, failed, or has not started, `riff verify pass` reports nothing
+and prints one line:
 
 ```text
 riff verify pass: the Gate of commit 1a2b3c4 runs still. A pass needs a Gate success: see gh pr checks 40. Nothing is reported.
