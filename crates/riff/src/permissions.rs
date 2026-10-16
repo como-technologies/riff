@@ -554,6 +554,8 @@ impl<'a> Trust<'a> {
     /// The facts of a session in `repo` that talks to the riff server
     /// `server`. A repository with no `origin` remote has the owner
     /// `local` ([`crate::identity::place`]): it has no owner on GitHub.
+    /// An empty `server` is a session with no riff-server: the riff of
+    /// peers of the daemon (01M519Z4RWHWP3TKNP4T5GKKE9).
     ///
     /// ```
     /// use riff::permissions::Trust;
@@ -565,6 +567,7 @@ impl<'a> Trust<'a> {
     /// assert_eq!(Trust::of(&Repo::None, "http://h:7878").owner, None);
     /// let local = Repo::Git { owner: "local".into(), name: "app".into() };
     /// assert_eq!(Trust::of(&local, "http://h:7878").owner, None);
+    /// assert_eq!(Trust::of(&repo, "").server, None);
     /// ```
     pub fn of(repo: &'a Repo, server: &'a str) -> Self {
         let owner = match repo {
@@ -573,7 +576,7 @@ impl<'a> Trust<'a> {
         };
         Trust {
             owner,
-            server: Some(server),
+            server: (!server.is_empty()).then_some(server),
         }
     }
 }

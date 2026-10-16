@@ -39,7 +39,9 @@ fn script(path: &Path, body: &str) {
 /// A fake `gh` that logs each call to `bin/gh.log`. The branch has no
 /// pull request when `bin/no-pr` is there. The issue has the label
 /// `no-verify` when `bin/no-verify` is there. `pr view` waits while
-/// `bin/pr-hold` is there.
+/// `bin/pr-hold` is there. For the look of a wave, the open milestone is
+/// Wave 27, no pull request is open, and issue 12 is the open issue of
+/// Wave 27 while `bin/wave-issue` is there.
 fn fake_gh(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -55,6 +57,13 @@ case "$*" in
     while [ -f "$dir/pr-hold" ]; do sleep 0.05; done
     [ -f "$dir/no-pr" ] && exit 1
     echo '{"number":40,"url":"https://github.com/como-technologies/riff/pull/40","headRefOid":"1a2b3c4d5e6f","state":"OPEN"}' ;;
+  'api repos/como-technologies/riff/milestones?state=open&per_page=100')
+    echo '[{"title":"Wave 27"}]' ;;
+  'pr list --repo como-technologies/riff '*) echo '[]' ;;
+  'issue list --repo como-technologies/riff '*)
+    if [ -f "$dir/wave-issue" ]; then
+      echo '[{"number":12,"body":"","comments":[],"milestone":{"title":"Wave 27"},"labels":[]}]'
+    else echo '[]'; fi ;;
   *) exit 1 ;;
 esac
 "#;
@@ -336,6 +345,18 @@ impl Machine {
 
     /// A machine whose daemon has the quiet limit `quiet`.
     async fn with_quiet(quiet: Option<Duration>) -> Machine {
+        Machine::with_server(quiet, server().await).await
+    }
+
+    /// A machine with no riff-server: `RIFF_SERVER` names a port where
+    /// nothing listens.
+    async fn with_no_server() -> Machine {
+        Machine::with_server(None, NO_SERVER.into()).await
+    }
+
+    /// A machine whose daemon has the quiet limit `quiet`, with the
+    /// riff-server `server`.
+    async fn with_server(quiet: Option<Duration>, server: String) -> Machine {
         let env = Isolated::new();
         let bin = tempfile::tempdir().unwrap();
         fake_gh(bin.path());
@@ -387,7 +408,7 @@ impl Machine {
             bin,
             _origin: origin,
             main,
-            server: server().await,
+            server,
             daemon: None,
             quiet,
         };
@@ -1954,6 +1975,130 @@ async fn take_over_a_session(flags: &[&str]) {
         "{}",
         machine.read("run.stdin")
     );
+}
+
+/// The riff-server of a machine with no riff-server: a port where
+/// nothing listens.
+const NO_SERVER: &str = "http://127.0.0.1:9";
+
+/// The claims on the forge of the main clone `main`: each line of
+/// `git ls-remote`.
+fn claims_of(main: &Path) -> String {
+    git(main, &["ls-remote", "origin", "refs/riff/claims/*"])
+}
+
+/// The verify requests of issue 12 in the repository thread, in the
+/// records of the daemon of `machine`. The riff is the one of the line of
+/// its first start in its log. riff reads a copy of the file of the
+/// records, so the daemon can write on.
+fn verify_requests(machine: &Machine) -> Vec<riff::peer::body::Message> {
+    let log = machine.read("daemon.out");
+    let line = log
+        .lines()
+        .find(|l| l.contains("a riff of its own: "))
+        .unwrap_or_else(|| panic!("no line of the riff in\n{log}"));
+    let riff = line.split("a riff of its own: ").nth(1).unwrap();
+    let riff = riff.split(',').next().unwrap();
+    let riff = riff::daemon_key::Public::parse(riff).unwrap();
+    let copy = tempfile::tempdir().unwrap();
+    let records = machine.env.riff_home().join("daemon/state/records");
+    std::fs::copy(records, copy.path().join("records")).unwrap();
+    let peers = riff::peer::keep::Peers::open(copy.path(), riff, |_| {}).unwrap();
+    let thread = "como-technologies/riff".parse().unwrap();
+    peers
+        .state()
+        .messages(&thread)
+        .iter()
+        .map(|kept| kept.message.clone())
+        .filter(|m| m.body.starts_with("verify request: issue-12, PR #40"))
+        .collect()
+}
+
+/// Done when 5 of #844 (01M519Z4RWHWP3TKNP4T5GKKE9): `riff run --peers`
+/// and a wave of the daemon with `--peers` each do one item with the fake
+/// runtime and no riff-server. The daemon claims the item on the bare
+/// forge, sends the verify request to the lead as a `message` record,
+/// and then releases the item.
+#[tokio::test]
+async fn riff_run_and_a_wave_with_peers_do_one_item_with_no_riff_server() {
+    let machine = Machine::with_no_server().await;
+    let log = machine.bin.path().join("daemon.out");
+    wait_for(&log, "a riff of its own").await;
+    git(&machine.main, &["config", "user.name", "Mike"]);
+    git(&machine.main, &["config", "user.email", "mike@example.com"]);
+    let hold = machine.bin.path().join("hold");
+
+    // riff run --peers: the claim holds while the session runs.
+    std::fs::write(&hold, "").unwrap();
+    let child = machine
+        .command(None, &["run", "issue-12", "--peers", "--image", IMAGE])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(&machine.bin.path().join("run.stdin"), "user").await;
+    let claims = claims_of(&machine.main);
+    assert!(claims.ends_with("refs/riff/claims/issue-12"), "{claims}");
+    let commit = claims.split('\t').next().unwrap();
+    let message = git(&machine.main, &["show", "-s", "--format=%B", commit]);
+    assert!(message.starts_with("riff claim issue-12"), "{message}");
+    assert!(message.contains("Riff-User: mike"), "{message}");
+    std::fs::remove_file(&hold).unwrap();
+    let out = output_of(child).await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains(&riff::text::run_peers_asks("issue-12")),
+        "{stdout}"
+    );
+    assert!(stdout.contains("The pull request #40"), "{stdout}");
+    assert!(
+        stdout.contains(&riff::text::run_verify_sent("issue-12", 40)),
+        "{stdout}"
+    );
+    assert!(stdout.contains("released issue-12 on the forge"), "{stdout}");
+    assert_eq!(claims_of(&machine.main), "");
+    let sent = verify_requests(&machine);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].kind, riff_core::wire::Kind::Message);
+    let lead = riff_core::selector::Selector::lead("mike", "como-technologies/riff");
+    assert_eq!(sent[0].to, [lead.clone()]);
+    // No step reached a riff-server: riff run needs none.
+    assert!(!machine.read("daemon.out").contains(NO_SERVER));
+    assert!(!stderr.contains(NO_SERVER), "{stderr}");
+
+    // A wave with --peers takes issue 12 from the look of gh, and does it
+    // the same way.
+    let wave_issue = machine.bin.path().join("wave-issue");
+    std::fs::write(&wave_issue, "").unwrap();
+    std::fs::write(&hold, "").unwrap();
+    machine.ok(None, &["wave", "run", "--peers"]).await;
+    let started = Instant::now();
+    while !claims_of(&machine.main).ends_with("refs/riff/claims/issue-12") {
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "the wave claimed nothing:\n{}",
+            machine.read("daemon.out")
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // The next look finds no free work.
+    std::fs::remove_file(&wave_issue).unwrap();
+    std::fs::remove_file(&hold).unwrap();
+    let started = Instant::now();
+    while verify_requests(&machine).len() < 2 || !claims_of(&machine.main).is_empty() {
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "the job of the wave did not end:\n{}",
+            machine.read("daemon.out")
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let sent = verify_requests(&machine);
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert_eq!(sent[1].to, [lead]);
+    machine.ok(None, &["wave", "stop"]).await;
+    assert!(!machine.read("daemon.out").contains(NO_SERVER));
 }
 
 /// 01M519Z4PESWFV8Y03SKTSGV4Q, 01M51BFYW85YBEWAB20YTCJQFK: `riff release
