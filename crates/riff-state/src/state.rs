@@ -2842,14 +2842,19 @@ impl State {
         // A read of all after a seq past the cursor skips the unread
         // messages up to that seq: it keeps the cursor
         // (01M51TKZSYR7PH629S29JX00ZD).
-        let skips = t.messages.iter().any(|m| {
-            (cursor + 1..=from).contains(&m.message.seq) && m.message.from.who() != who
-        });
-        let read = t.messages.back().filter(|_| !skips).map(|last| Signal::Read {
-            thread: thread.clone(),
-            seq: next.unwrap_or(last.message.seq),
-            all,
-        });
+        let skips = t
+            .messages
+            .iter()
+            .any(|m| (cursor + 1..=from).contains(&m.message.seq) && m.message.from.who() != who);
+        let read = t
+            .messages
+            .back()
+            .filter(|_| !skips)
+            .map(|last| Signal::Read {
+                thread: thread.clone(),
+                seq: next.unwrap_or(last.message.seq),
+                all,
+            });
         Ok((Page { messages, next }, read))
     }
 
@@ -4935,7 +4940,9 @@ mod tests {
         let post = Post::new(&the_lead, None, vec![Selector::session("w1")], request);
         let dm = state.post(post, now, 0).unwrap().tailed.thread;
 
-        let page = state.read_page(&w1, &dm, true, Some(50), PAGE, now).unwrap();
+        let page = state
+            .read_page(&w1, &dm, true, Some(50), PAGE, now)
+            .unwrap();
         assert!(page.messages.is_empty(), "{:?}", page.messages);
         assert_eq!(state.unread_requests(w1.who()), [request]);
         let mut at = now;

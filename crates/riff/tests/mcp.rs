@@ -319,9 +319,14 @@ async fn a_tell_to_a_new_worker_stays_unread_until_a_read_shows_it() {
             .unwrap();
     }
     let direct = "direct with mike@pangolin:riff#api (a1)";
-    let more = format!("More messages follow. Read this thread again. With all, set after to {PAGE}.");
+    let more =
+        format!("More messages follow. Read this thread again. With all, set after to {PAGE}.");
 
-    let w1 = connect(&api, "riff://mike@pangolin/como-technologies/riff?session=w1").await;
+    let w1 = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=w1",
+    )
+    .await;
     let tell = serde_json::json!({ "session": "w1", "body": "request: claim issue-7" });
     call(&lead, "tell", tell).await;
     let (first, _) = call(&w1, "read", serde_json::json!({ "all": true })).await;
@@ -331,14 +336,21 @@ async fn a_tell_to_a_new_worker_stays_unread_until_a_read_shows_it() {
         "{first}"
     );
 
-    let w2 = connect(&api, "riff://mike@pangolin/como-technologies/riff?session=w2").await;
+    let w2 = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=w2",
+    )
+    .await;
     let (first, _) = call(&w2, "read", serde_json::json!({ "all": true })).await;
     assert!(first.contains(&more) && !first.contains(direct), "{first}");
     let tell = serde_json::json!({ "session": "w2", "body": "request: claim issue-12" });
     call(&lead, "tell", tell).await;
     let next = serde_json::json!({ "all": true, "after": PAGE });
     let (second, _) = call(&w2, "read", next).await;
-    assert!(second.contains(&format!("history {}", PAGE + 10)), "{second}");
+    assert!(
+        second.contains(&format!("history {}", PAGE + 10)),
+        "{second}"
+    );
     let (threads, _) = call(&w2, "threads", serde_json::json!({})).await;
     assert!(
         threads.contains(&format!("{direct}: 2 members, 1 unread")),
