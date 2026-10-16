@@ -605,7 +605,7 @@ impl RiffOwner {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionInfo {
     /// The URI now: the place and the claims are current.
     pub uri: SessionUri,

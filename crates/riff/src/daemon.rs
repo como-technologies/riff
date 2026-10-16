@@ -355,6 +355,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::build::Build;
 use riff_core::name::SessionUri;
+use riff_core::wire::SessionInfo;
 use riff_state::checkpoint;
 use riff_state::local::Local;
 use riff_state::state::{Caller, MakeRiff, State};
@@ -883,6 +884,13 @@ pub struct Status {
     pub position: u64,
     /// Its sessions, by name.
     pub sessions: Vec<Live>,
+    /// Each session that runs in the riff of peers of the daemon: of each
+    /// daemon of the riff, also of this one, with the user, the host, the
+    /// claims, the state and the status ([`crate::peer::talk::shown`],
+    /// 01M519Z554SC3EAT69Q3M6JDAP). A session of a daemon that is offline
+    /// is not live. Empty while the daemon has no riff.
+    #[serde(default)]
+    pub riff_sessions: Vec<SessionInfo>,
     /// The limit of the host ([`crate::room`]).
     #[serde(default)]
     pub limit: Option<Limit>,
@@ -2011,6 +2019,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
         };
         let links = self.links.get().map(|links| links.shown());
+        let riff_sessions = self.riff_sessions();
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
@@ -2027,6 +2036,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .values()
                 .map(|owned| owned.lock().live())
                 .collect(),
+            riff_sessions,
             limit: Some(self.room.limit()),
             waiting: self.room.waiting(),
             waves: self.waves_shown(),
@@ -2042,6 +2052,27 @@ impl<R: Runtime + 'static> Daemon<R> {
                 })
                 .sum(),
         }
+    }
+
+    /// Each session that runs in the riff of peers: a session of a
+    /// daemon with no link to this one is offline
+    /// ([`crate::peer::talk::shown`], 01M519Z554SC3EAT69Q3M6JDAP). The
+    /// links lock no lock of the riff, so a read of the links in a read
+    /// of the riff waits for nothing.
+    fn riff_sessions(&self) -> Vec<SessionInfo> {
+        let Some(riff) = self.riff.get() else {
+            return Vec::new();
+        };
+        let (me, links, now) = (riff.hub.public(), self.links.get(), crate::run::now_ms());
+        riff.hub.read(|state| {
+            crate::peer::talk::shown(
+                state,
+                &me,
+                |key| links.is_some_and(|links| links.online(key)),
+                |key| links.and_then(|links| links.seen(key)),
+                now,
+            )
+        })
     }
 
     /// Asks for a new start of the daemon with `restart` when it runs an

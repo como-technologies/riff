@@ -1052,6 +1052,166 @@ fn info(state: &State, run: &Run) -> SessionInfo {
     }
 }
 
+/// Each session that runs in the riff of `state`, as `riff view` and
+/// `riff top` show it (01M519Z554SC3EAT69Q3M6JDAP): the URI with the
+/// user, the host, the lead mark and the claims
+/// (01M519Z4F7Z87BXQYT7F8EABCN), the state and the status.
+///
+/// A session of the daemon `me`, or of a daemon that is `online`, is
+/// live. Each other session is offline: its `idle_secs` count from the
+/// time when its daemon was last seen, the later of `seen` (the end of
+/// its last link, [`crate::peer::sync::Links::seen`]) and the time of
+/// its last record ([`State::last_ms`]). The age of the status is the
+/// age of the last record of the session. A session in a repository that
+/// the riff of peers pauses is `paused`. The times are of the authors,
+/// and `now_ms` is the time now.
+///
+/// ```
+/// use riff::daemon_key::Key;
+/// use riff::peer::body::{Body, Member, Riff, Session};
+/// use riff::peer::record::{Id, Record, check};
+/// use riff::peer::state::State;
+/// use riff::peer::talk::shown;
+/// use riff_core::wire::SessionState;
+///
+/// let (owner, brett) = (Key::from_bytes(&[1; 32]), Key::from_bytes(&[2; 32]));
+/// let mut state = State::new(owner.public());
+/// let mut keep = |key: &Key, seq, before, time, body: &Body| {
+///     let record = Record::sign(key, owner.public(), seq, before, time, body).unwrap();
+///     state.keep(&check(record.bytes().to_vec(), &state).unwrap());
+///     record.id()
+/// };
+/// let riff = keep(&owner, 1, Id::ZERO, 1_000, &Body::Riff(Riff { user: "mike".into() }));
+/// let host = "kadomony".to_owned();
+/// let member = Member { key: brett.public(), user: "brett".into(), host };
+/// keep(&owner, 2, riff, 2_000, &Body::Member(member));
+/// let session = Session {
+///     session: "riff://brett@kadomony/o/r?session=77e0aaaa".parse().unwrap(),
+///     worker: true,
+///     lead: None,
+///     claims: vec!["issue-14".into()],
+///     status: Some("tests".into()),
+///     ended: false,
+/// };
+/// keep(&brett, 1, Id::ZERO, 60_000, &Body::Session(Box::new(session)));
+///
+/// // The daemon of brett has a link: online.
+/// let online = shown(&state, &owner.public(), |_| true, |_| None, 180_000);
+/// assert_eq!(online[0].uri.to_string(), "riff://brett@kadomony/o/r?session=77e0aaaa&claim=issue-14");
+/// assert_eq!(online[0].state, Some(SessionState::Busy));
+/// assert_eq!(online[0].status.as_ref().unwrap().age_secs, 120);
+/// // No link: offline, seen at its last record, or at the end of its
+/// // last link when that is later.
+/// let offline = shown(&state, &owner.public(), |_| false, |_| None, 180_000);
+/// assert_eq!((offline[0].live, offline[0].idle_secs), (false, 120));
+/// assert_eq!(offline[0].state, Some(SessionState::Offline));
+/// let ended = shown(&state, &owner.public(), |_| false, |_| Some(120_000), 180_000);
+/// assert_eq!(ended[0].idle_secs, 60);
+/// ```
+pub fn shown(
+    state: &State,
+    me: &Public,
+    online: impl Fn(&Public) -> bool,
+    seen: impl Fn(&Public) -> Option<i64>,
+    now_ms: i64,
+) -> Vec<SessionInfo> {
+    let ago = |ms: i64| u64::try_from(now_ms.saturating_sub(ms) / 1000).unwrap_or(0);
+    let time = |ms: u64| i64::try_from(ms).unwrap_or(i64::MAX);
+    state
+        .runs()
+        .map(|run| {
+            let mut s = info(state, run);
+            if let Some(status) = &mut s.status {
+                status.age_secs = ago(time(run.time_ms));
+            }
+            s.live = run.author == *me || online(&run.author);
+            if !s.live {
+                let last = seen(&run.author).max(state.last_ms(&run.author).map(time));
+                s.idle_secs = last.map_or(0, ago);
+            }
+            let paused = run
+                .thread()
+                .is_some_and(|thread| state.pauses_of(&thread).next().is_some());
+            s.fill_state(if paused {
+                RiffState::Paused
+            } else {
+                RiffState::Running
+            });
+            s
+        })
+        .collect()
+}
+
+/// The sessions of a riff of three daemons at the time `now_ms`, as
+/// [`shown`] gives them to this daemon, for the tests of `riff view` and
+/// `riff top`. This daemon is mike on thelio, the owner: its lead runs
+/// with the status `plan`. brett on kadomony is online: its worker holds
+/// issue-14, with the status `tests` from 2 minutes ago. mike on
+/// pangolin is offline: its link ended 5 minutes ago, and its worker
+/// holds issue-15, with the status `docs` from 10 minutes ago.
+#[cfg(test)]
+pub(crate) fn three_daemons(now_ms: i64) -> Vec<SessionInfo> {
+    use crate::peer::body::{Member, Riff};
+    use crate::peer::record::{Record, check};
+
+    let keys = [1, 2, 3].map(|byte| Key::from_bytes(&[byte; 32]));
+    let riff = keys[0].public();
+    let mut state = State::new(riff);
+    let mut heads: BTreeMap<Public, (u64, Id)> = BTreeMap::new();
+    let mut write = |key: &Key, time: i64, body: Body| {
+        let (seq, before) = heads
+            .get(&key.public())
+            .map_or((1, Id::ZERO), |h| (h.0 + 1, h.1));
+        let time = u64::try_from(time).unwrap();
+        let record = Record::sign(key, riff, seq, before, time, &body).unwrap();
+        heads.insert(key.public(), (seq, record.id()));
+        state.keep(&check(record.bytes().to_vec(), &state).unwrap());
+    };
+    let member = |key: &Key, user: &str, host: &str| {
+        Body::Member(Member {
+            key: key.public(),
+            user: user.into(),
+            host: host.into(),
+        })
+    };
+    let session = |uri: &str, lead: bool, claim: Option<&str>, status: &str| {
+        Body::Session(Box::new(SessionBody {
+            session: uri.parse().unwrap(),
+            worker: !lead,
+            lead: lead.then_some(Lead { replaces: None }),
+            claims: claim.into_iter().map(str::to_owned).collect(),
+            status: Some(status.into()),
+            ended: false,
+        }))
+    };
+    let riff_body = Body::Riff(Riff {
+        user: "mike".into(),
+    });
+    write(&keys[0], 1_000, riff_body);
+    write(&keys[0], 2_000, member(&keys[1], "brett", "kadomony"));
+    write(&keys[0], 3_000, member(&keys[2], "mike", "pangolin"));
+    let lead = "riff://mike@thelio/o/riff?session=1a2b3c4d-1";
+    write(
+        &keys[0],
+        now_ms - 3_600_000,
+        session(lead, true, None, "plan"),
+    );
+    let brett = "riff://brett@kadomony/o/riff?session=77e0aaaa-1#issue-14";
+    let brett = session(brett, false, Some("issue-14"), "tests");
+    write(&keys[1], now_ms - 120_000, brett);
+    let pangolin = "riff://mike@pangolin/o/riff?session=5b1e2a90-1#issue-15";
+    let pangolin = session(pangolin, false, Some("issue-15"), "docs");
+    write(&keys[2], now_ms - 600_000, pangolin);
+    let (online, offline) = (keys[1].public(), keys[2].public());
+    shown(
+        &state,
+        &riff,
+        |key| *key == online,
+        |key| (*key == offline).then_some(now_ms - 300_000),
+        now_ms,
+    )
+}
+
 /// The sessions that posted in `thread`.
 fn members(state: &State, thread: &ThreadName) -> Vec<SessionUri> {
     let mut members: Vec<SessionUri> = Vec::new();
