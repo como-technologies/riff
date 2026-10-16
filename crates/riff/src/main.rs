@@ -571,7 +571,7 @@ enum Command {
         #[arg(long)]
         image: Option<String>,
     },
-    /// See, make, rename and end the waves of this repository, or run one
+    /// Plan the waves of this repository, or run one
     ///
     /// The lead plans the waves with riff wave list, riff wave make, riff
     /// wave rename and riff wave end. They use the gh of this machine, on
