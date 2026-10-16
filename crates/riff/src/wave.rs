@@ -28,9 +28,10 @@
 //! # The pick
 //!
 //! [`pick`] takes the first item of the free work of
-//! [`crate::rollout::free_work`]: the pull requests that wait for a
-//! verify first, then the free items of the current wave. It never
-//! starts:
+//! [`crate::rollout::free_work`]: a fix item of a broken `main` first
+//! ([`crate::rollout::BROKEN_MAIN`], 01M51QEYS538XA58KDRY844T52), then
+//! the pull requests that wait for a verify, then the free items of the
+//! current wave. It never starts:
 //!
 //! - an item while the riff or the repository is paused;
 //! - a held item (01M4ZV3B6M7PZRJ39XTXBZP3ZH);

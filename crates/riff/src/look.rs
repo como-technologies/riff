@@ -63,20 +63,57 @@
 //! state (01M49Q31FASDM7CG3JEGPYCZB9). The `riff mcp` of the lead keeps
 //! what it told in memory. So after a new start of it, a state can come
 //! one more time, and the wait of 30 minutes starts again.
+//!
+//! # When main breaks
+//!
+//! A pull request merges when the Gate of its own head passed, also
+//! when `main` moved after that. So two pull requests that each pass
+//! their Gate can break `main` together. The same look reads the check
+//! run Gate of the head of `main` ([`MainWatch`],
+//! 01M51QEYKTD7ZEB0YA0C3MQTPN):
+//!
+//! ```mermaid
+//! flowchart TD
+//!     L["each look"] --> G{"the Gate of the head of main"}
+//!     G -- "runs, or no run" --> N["nothing"]
+//!     G -- failed --> T{"the lead got this commit?"}
+//!     T -- yes --> N
+//!     T -- "no: main passed before" --> F["the fix item: file it,<br/>or comment on the open one"]
+//!     F --> M["message to the lead: commit, run,<br/>failed jobs, fix item"]
+//!     T -- "no: main was broken at an older commit" --> C["comment on the fix item,<br/>note to the lead"]
+//!     G -- passed --> X["close each fix item that no session claims<br/>and no open pull request names"]
+//!     X --> P["note to the lead"]
+//! ```
+//!
+//! - **The fix item** ([`file_fix_item`], 01M51QEYPGD6W345MZ4F85C38F).
+//!   An issue with the label [`BROKEN_MAIN`] in the current wave. riff
+//!   files one only when no issue with the label is open. The rollout
+//!   gives it to a worker before each other item
+//!   ([`crate::rollout::free_work_of`], 01M51QEYS538XA58KDRY844T52).
+//! - **When main passes again** (01M51QEYVQN74Q1VDTVHB0445Q). riff closes
+//!   each free fix item: the fix came in another pull request, or a run
+//!   of the failed jobs again passed. A fix item that a session claims,
+//!   or that an open pull request names, stays open.
+//!
+//! The `riff mcp` of the lead keeps the last broken commit that it told
+//! in memory, as for the pull requests. When `main` is still broken at a
+//! new start of it, the lead gets the message again, and the open fix
+//! item gets a comment.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use riff_core::name::{SessionUri, Who};
 use riff_core::selector::Selector;
 use riff_core::wire::{ItemFact, Kind, PullFact, PullState, Unanswered};
+use serde::Deserialize;
 
 use crate::api::Api;
-use crate::pr::Gh;
-use crate::rollout::{Issue, Pull, Verify, claims, needs};
+use crate::pr::{CheckRun, GATE, Gate, Gh, gate_state};
+use crate::rollout::{BROKEN_MAIN, Issue, Milestone, Pull, Verify, claims, current_wave, needs};
 use crate::text;
 
 /// The time between two looks.
@@ -157,7 +194,8 @@ pub fn item_facts(issues: &[Issue], pulls: &[Pull]) -> Vec<ItemFact> {
     facts.into_values().collect()
 }
 
-/// Reads the open issues and the open pull requests of `repo` with `gh`.
+/// Reads the open issues, with their labels, and the open pull requests
+/// of `repo` with `gh`.
 pub fn read_forge(gh: &Gh, repo: &str) -> Result<(Vec<Issue>, Vec<Pull>)> {
     let pulls = crate::rollout::pulls(gh, repo)?;
     let issues: Vec<Issue> = gh.json(&[
@@ -170,7 +208,7 @@ pub fn read_forge(gh: &Gh, repo: &str) -> Result<(Vec<Issue>, Vec<Pull>)> {
         "--limit",
         "1000",
         "--json",
-        "number,body,comments",
+        "number,body,comments,labels",
     ])?;
     Ok((issues, pulls))
 }
@@ -348,24 +386,413 @@ impl PullWatch {
     }
 }
 
+/// The default branch whose Gate the look watches
+/// (01M51QEYKTD7ZEB0YA0C3MQTPN).
+pub const MAIN: &str = "main";
+
+/// The Gate of the head commit of [`MAIN`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainGate {
+    /// The head commit of `main`.
+    pub commit: String,
+    /// The state of its Gate.
+    pub gate: Gate,
+    /// The page of the run of the Gate, for example
+    /// `https://github.com/o/r/actions/runs/38861280871`.
+    pub run: Option<String>,
+}
+
+impl MainGate {
+    /// The Gate of a commit from its check runs `runs`: `None` when the
+    /// commit has no run of the Gate. The run is the run that did not
+    /// pass, or the first one.
+    ///
+    /// ```
+    /// use riff::look::MainGate;
+    /// use riff::pr::{CheckRun, Gate};
+    ///
+    /// let run = |conclusion: &str, id: u64| CheckRun {
+    ///     status: "completed".into(),
+    ///     conclusion: Some(conclusion.into()),
+    ///     head_sha: "5103311abc".into(),
+    ///     html_url: Some(format!("https://github.com/o/r/actions/runs/{id}/job/7")),
+    /// };
+    /// let main = MainGate::of(&[run("success", 1), run("failure", 2)]).unwrap();
+    /// assert_eq!(main.commit, "5103311abc");
+    /// assert_eq!(main.gate, Gate::Ended("failure".into()));
+    /// assert_eq!(main.run.as_deref(), Some("https://github.com/o/r/actions/runs/2"));
+    /// assert!(main.broken());
+    /// assert_eq!(MainGate::of(&[]), None);
+    /// ```
+    pub fn of(runs: &[CheckRun]) -> Option<Self> {
+        let first = runs.first()?;
+        let shown = runs
+            .iter()
+            .find(|r| r.conclusion.as_deref().is_some_and(|c| c != "success"))
+            .unwrap_or(first);
+        Some(Self {
+            commit: first.head_sha.clone(),
+            gate: gate_state(runs),
+            run: shown.html_url.as_deref().and_then(run_of).map(str::to_owned),
+        })
+    }
+
+    /// True when the Gate failed: it ended with `failure` or
+    /// `timed_out`. A cancelled Gate says nothing about the code.
+    pub fn broken(&self) -> bool {
+        matches!(&self.gate, Gate::Ended(c) if c == "failure" || c == "timed_out")
+    }
+}
+
+/// The page of the run of the page of a job.
+///
+/// ```
+/// use riff::look::run_of;
+///
+/// assert_eq!(
+///     run_of("https://github.com/o/r/actions/runs/38861280871/job/1"),
+///     Some("https://github.com/o/r/actions/runs/38861280871")
+/// );
+/// assert_eq!(run_of("https://github.com/o/r/runs/2"), None);
+/// ```
+pub fn run_of(job: &str) -> Option<&str> {
+    let (run, _) = job.split_once("/job/")?;
+    run.contains("/actions/runs/").then_some(run)
+}
+
+/// Reads the Gate of the head of [`MAIN`] in `repo` with `gh`. `None`
+/// when the head has no run of the Gate yet.
+pub fn read_main(gh: &Gh, repo: &str) -> Result<Option<MainGate>> {
+    let path = format!("repos/{repo}/commits/{MAIN}/check-runs?check_name={GATE}");
+    let runs: Vec<CheckRun> = gh.json(&["api", &path, "--jq", ".check_runs"])?;
+    Ok(MainGate::of(&runs))
+}
+
+/// A job of a run, as `gh api repos/R/actions/runs/N/jobs` gives it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Job {
+    #[serde(deserialize_with = "crate::text::forge_de")]
+    pub name: String,
+    /// `success`, `failure`, `cancelled` and so on, when it is completed.
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+    pub conclusion: Option<String>,
+}
+
+/// The names of the jobs that did not pass, with no Gate: the Gate only
+/// sums the other jobs.
+///
+/// ```
+/// use riff::look::{Job, failed_jobs};
+///
+/// let job = |name: &str, conclusion: &str| Job { name: name.into(), conclusion: Some(conclusion.into()) };
+/// let jobs = [
+///     job("Clippy", "failure"),
+///     job("Tests 1/4", "timed_out"),
+///     job("Checks", "success"),
+///     job("Static riff", "skipped"),
+///     job("Gate", "failure"),
+/// ];
+/// assert_eq!(failed_jobs(&jobs), ["Clippy", "Tests 1/4"]);
+/// ```
+pub fn failed_jobs(jobs: &[Job]) -> Vec<String> {
+    jobs.iter()
+        .filter(|j| j.name != GATE)
+        .filter(|j| {
+            matches!(
+                j.conclusion.as_deref(),
+                Some("failure" | "timed_out" | "cancelled")
+            )
+        })
+        .map(|j| j.name.clone())
+        .collect()
+}
+
+/// Reads the failed jobs of the run `run` in `repo` with `gh`
+/// ([`failed_jobs`]).
+pub fn read_failed_jobs(gh: &Gh, repo: &str, run: &str) -> Result<Vec<String>> {
+    let id = run
+        .rsplit('/')
+        .next()
+        .filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+        .ok_or_else(|| anyhow!("no run number in {run}"))?;
+    let path = format!("repos/{repo}/actions/runs/{id}/jobs?per_page=100");
+    let jobs: Vec<Job> = gh.json(&["api", &path, "--jq", ".jobs"])?;
+    Ok(failed_jobs(&jobs))
+}
+
+/// What the Gate of `main` tells at one look ([`MainWatch::news`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MainNews {
+    /// The Gate of `main` failed at a commit that the lead did not get.
+    /// `first` is true when `main` passed before: the lead gets a
+    /// message. Else `main` was broken at an older commit: a note.
+    Broken { main: MainGate, first: bool },
+    /// The Gate of `main` passed. `again` is true when the lead got a
+    /// broken `main` before.
+    Passed { main: MainGate, again: bool },
+}
+
+/// The last broken commit of `main` that the lead got
+/// (01M51QEYKTD7ZEB0YA0C3MQTPN). The `riff mcp` of the lead keeps it in
+/// memory.
+#[derive(Debug, Clone, Default)]
+pub struct MainWatch {
+    told: Option<String>,
+}
+
+impl MainWatch {
+    /// The news of `main` at one look. A Gate that runs, a head with no
+    /// Gate and a cancelled Gate give none. A failed Gate gives news one
+    /// time for each commit. A passed Gate gives news at each look: the
+    /// look closes the free fix items then.
+    ///
+    /// ```
+    /// use riff::look::{MainGate, MainNews, MainWatch};
+    /// use riff::pr::Gate;
+    ///
+    /// let main = |commit: &str, gate: Gate| MainGate { commit: commit.into(), gate, run: None };
+    /// let failed = |commit: &str| main(commit, Gate::Ended("failure".into()));
+    /// let mut watch = MainWatch::default();
+    ///
+    /// assert_eq!(
+    ///     watch.news(&failed("a")),
+    ///     Some(MainNews::Broken { main: failed("a"), first: true })
+    /// );
+    /// assert_eq!(watch.news(&failed("a")), None);
+    /// assert_eq!(watch.news(&main("b", Gate::Running)), None);
+    /// assert_eq!(watch.news(&main("b", Gate::Ended("cancelled".into()))), None);
+    /// // Still broken at a newer commit: a note.
+    /// assert_eq!(
+    ///     watch.news(&failed("b")),
+    ///     Some(MainNews::Broken { main: failed("b"), first: false })
+    /// );
+    /// let passed = main("c", Gate::Passed);
+    /// assert_eq!(watch.news(&passed), Some(MainNews::Passed { main: passed.clone(), again: true }));
+    /// assert_eq!(watch.news(&passed), Some(MainNews::Passed { main: passed.clone(), again: false }));
+    /// ```
+    pub fn news(&mut self, main: &MainGate) -> Option<MainNews> {
+        if main.broken() {
+            if self.told.as_deref() == Some(main.commit.as_str()) {
+                return None;
+            }
+            let first = self.told.replace(main.commit.clone()).is_none();
+            return Some(MainNews::Broken {
+                main: main.clone(),
+                first,
+            });
+        }
+        (main.gate == Gate::Passed).then(|| MainNews::Passed {
+            main: main.clone(),
+            again: self.told.take().is_some(),
+        })
+    }
+}
+
+/// The open fix items of `issues`: each issue with the label
+/// [`BROKEN_MAIN`].
+fn fix_items_of(issues: &[Issue]) -> Vec<u64> {
+    issues
+        .iter()
+        .filter(|i| i.broken_main())
+        .map(|i| i.number)
+        .collect()
+}
+
+/// Files the fix item of the failed Gate of `main` in `repo` with `gh`
+/// (01M51QEYPGD6W345MZ4F85C38F): it makes the label [`BROKEN_MAIN`] when
+/// it is missing, and puts the issue in the current wave. It gives the
+/// number of the new issue.
+pub fn file_fix_item(gh: &Gh, repo: &str, main: &MainGate, jobs: &[String]) -> Result<u64> {
+    gh.run(
+        &[
+            "label",
+            "create",
+            BROKEN_MAIN,
+            "--repo",
+            repo,
+            "--color",
+            "B60205",
+            "--description",
+            text::BROKEN_MAIN_LABEL,
+            "--force",
+        ],
+        None,
+    )?;
+    let open: Vec<Milestone> = gh.json(&[
+        "api",
+        &format!("repos/{repo}/milestones?state=open&per_page=100"),
+    ])?;
+    let title = text::fix_item_title(&main.commit);
+    let body = text::fix_item_body(&main.commit, main.run.as_deref(), jobs);
+    let mut args = vec![
+        "issue",
+        "create",
+        "--repo",
+        repo,
+        "--title",
+        &title,
+        "--body",
+        &body,
+        "--label",
+        BROKEN_MAIN,
+    ];
+    if let Some(wave) = current_wave(&open) {
+        args.extend(["--milestone", wave]);
+    }
+    let url = text::forge(gh.run(&args, None)?.trim());
+    url.rsplit('/')
+        .next()
+        .and_then(|n| n.parse::<u64>().ok())
+        .ok_or_else(|| anyhow!("gh issue create printed no issue URL: {url}"))
+}
+
+/// Does the steps of the forge for `news` in `repo` with `gh`, and gives
+/// the post to the lead, with true for a message that wakes it
+/// (01M51QEYKTD7ZEB0YA0C3MQTPN to 01M51QEYVQN74Q1VDTVHB0445Q):
+///
+/// - A broken `main`: the failed jobs, and the fix item. An open fix
+///   item gets a comment. Else riff files one. A step that fails goes
+///   into the post: the lead must know that `main` is broken.
+/// - A passed Gate: riff closes each fix item that no session claims
+///   (`claims`) and that no open pull request names (`pulls`). The post
+///   comes when `main` was broken, or when riff closed an item.
+pub fn main_steps(
+    gh: &Gh,
+    repo: &str,
+    issues: &[Issue],
+    pulls: &[Pull],
+    claims: &HashSet<String>,
+    news: &MainNews,
+) -> Result<Option<(String, bool)>> {
+    match news {
+        MainNews::Broken { main, first } => {
+            let jobs = match &main.run {
+                Some(run) => read_failed_jobs(gh, repo, run).unwrap_or_default(),
+                None => Vec::new(),
+            };
+            let fix = match fix_items_of(issues).first() {
+                Some(&n) => {
+                    let comment =
+                        text::fix_item_comment(&main.commit, main.run.as_deref(), &jobs);
+                    gh.run(
+                        &[
+                            "issue",
+                            "comment",
+                            &n.to_string(),
+                            "--repo",
+                            repo,
+                            "--body",
+                            &comment,
+                        ],
+                        None,
+                    )
+                    .map(|_| n)
+                }
+                None => file_fix_item(gh, repo, main, &jobs),
+            };
+            let fix = fix.map_err(|e| text::forge(&format!("{e:#}")));
+            let body = text::main_broken(&main.commit, main.run.as_deref(), &jobs, &fix, *first);
+            Ok(Some((body, *first)))
+        }
+        MainNews::Passed { main, again } => {
+            let named: HashSet<u64> = pulls.iter().filter_map(Pull::issue).collect();
+            let (free, kept): (Vec<u64>, Vec<u64>) =
+                fix_items_of(issues).into_iter().partition(|n| {
+                    !claims.contains(&format!("issue-{n}")) && !named.contains(n)
+                });
+            let comment = text::fix_item_closed(&main.commit, main.run.as_deref());
+            for n in &free {
+                gh.run(
+                    &[
+                        "issue",
+                        "close",
+                        &n.to_string(),
+                        "--repo",
+                        repo,
+                        "--comment",
+                        &comment,
+                    ],
+                    None,
+                )?;
+            }
+            if !*again && free.is_empty() {
+                return Ok(None);
+            }
+            let body = text::main_passes(&main.commit, main.run.as_deref(), &free, &kept, *again);
+            Ok(Some((body, false)))
+        }
+    }
+}
+
+/// One look at the Gate of `main` of the lead `me`, with the open
+/// `issues` and `pulls` and the `claims` of this look: it reads the
+/// Gate, does the steps of the forge ([`main_steps`]) and posts to the
+/// lead. When the post does not go out, `watch` forgets the news, and
+/// the next look does it again.
+pub async fn look_at_main(
+    api: &Api,
+    me: &SessionUri,
+    gh: &Arc<Gh>,
+    forge: (Vec<Issue>, Vec<Pull>),
+    claims: HashSet<String>,
+    watch: &mut MainWatch,
+) -> Result<()> {
+    let repo = me.place().repo_text();
+    let main = {
+        let (gh, repo) = (gh.clone(), repo.clone());
+        tokio::task::spawn_blocking(move || read_main(&gh, &repo)).await??
+    };
+    let Some(main) = main else {
+        return Ok(());
+    };
+    let before = watch.clone();
+    let Some(news) = watch.news(&main) else {
+        return Ok(());
+    };
+    let gh = gh.clone();
+    let steps = tokio::task::spawn_blocking(move || {
+        let (issues, pulls) = forge;
+        main_steps(&gh, &repo, &issues, &pulls, &claims, &news)
+    })
+    .await?;
+    let posted = match steps {
+        Ok(Some((body, wake))) => {
+            let kind = if wake { Kind::Message } else { Kind::Note };
+            post_as_person(api, me, None, &body, kind).await
+        }
+        Ok(None) => Ok(()),
+        Err(e) => Err(e),
+    };
+    if posted.is_err() {
+        *watch = before;
+    }
+    posted
+}
+
 /// Posts `news` as a message, as the person of the lead `me`: to the
-/// session that holds its item, or to the lead. The lead does not see its
-/// own posts, so the person posts it.
+/// session that holds its item, or to the lead.
 async fn tell_news(api: &Api, me: &SessionUri, news: &PullNews) -> Result<()> {
+    post_as_person(api, me, news.to.as_deref(), &news.body, Kind::Message).await
+}
+
+/// Posts `body` of `kind`, as the person of the lead `me`: to the
+/// session that holds the item `to`, or to the lead when `to` is `None`.
+/// The lead does not see its own posts, so the person posts it.
+async fn post_as_person(
+    api: &Api,
+    me: &SessionUri,
+    to: Option<&str>,
+    body: &str,
+    kind: Kind,
+) -> Result<()> {
     let person = SessionUri::new(Who::new(me.who().user(), None)?, me.place().clone());
-    let to: Selector = match (&news.to, me.who().session()) {
+    let to: Selector = match (to, me.who().session()) {
         (Some(item), _) => format!("claim={item},repo={}", me.place().repo_text()).parse()?,
         (None, Some(session)) => format!("session={session}").parse()?,
         (None, None) => anyhow::bail!("the lead has no session"),
     };
-    api.post(
-        &person,
-        me.default_thread().as_ref(),
-        &[to],
-        &news.body,
-        Kind::Message,
-    )
-    .await?;
+    api.post(&person, me.default_thread().as_ref(), &[to], body, kind)
+        .await?;
     Ok(())
 }
 
@@ -448,7 +875,8 @@ pub fn notification(block: &Unanswered) -> (String, String) {
 /// can read them, and looks at the blocks with the wake time `wake`. It
 /// shows each block that is unanswered now with `notify`, when it has
 /// one. Then it sends the messages of `watch` for the pull requests that
-/// stop ([`PullWatch::news`]). It gives the blocks that are unanswered
+/// stop ([`PullWatch::news`]), and looks at the Gate of `main` with
+/// `main` ([`look_at_main`]). It gives the blocks that are unanswered
 /// now.
 pub async fn once(
     api: &Api,
@@ -457,15 +885,18 @@ pub async fn once(
     wake: Duration,
     notify: Option<&Notifier>,
     watch: &mut PullWatch,
+    main: &mut MainWatch,
 ) -> Result<Vec<Unanswered>> {
-    let (gh, repo) = (gh.clone(), me.place().repo_text());
-    let forge = tokio::task::spawn_blocking(move || read_forge(&gh, &repo)).await?;
+    let forge = {
+        let (gh, repo) = (gh.clone(), me.place().repo_text());
+        tokio::task::spawn_blocking(move || read_forge(&gh, &repo)).await?
+    };
     // A forge that does not answer stops no look at the blocks.
-    let pulls = match forge {
+    let forge = match forge {
         Ok((issues, pulls)) => {
             api.item_facts(me, item_facts(&issues, &pulls), true)
                 .await?;
-            Some(pulls)
+            Some((issues, pulls))
         }
         Err(_) => None,
     };
@@ -475,7 +906,7 @@ pub async fn once(
             notifier.show(block);
         }
     }
-    if let Some(pulls) = pulls {
+    if let Some((issues, pulls)) = forge {
         let claims = claims(&api.who(me, false).await?);
         for news in watch.news(&pulls, &claims, Instant::now()) {
             if let Err(e) = tell_news(api, me, &news).await {
@@ -483,6 +914,7 @@ pub async fn once(
                 return Err(e);
             }
         }
+        look_at_main(api, me, gh, (issues, pulls), claims, main).await?;
     }
     Ok(unanswered)
 }
@@ -492,6 +924,7 @@ pub async fn once(
 pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf>) {
     let (gh, notifier) = (Arc::new(Gh::default()), Notifier::default());
     let mut watch = PullWatch::default();
+    let mut main = MainWatch::default();
     let mut last_error = None;
     loop {
         tokio::time::sleep(LOOK_EVERY).await;
@@ -506,7 +939,7 @@ pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf
             let (wake, notify) = read_settings(settings.as_deref());
             // A machine with no desktop gets no notification.
             let notify = (notify && notifier.here()).then_some(&notifier);
-            once(&api, &me, &gh, wake, notify, &mut watch).await?;
+            once(&api, &me, &gh, wake, notify, &mut watch, &mut main).await?;
             Ok(())
         };
         match step.await {

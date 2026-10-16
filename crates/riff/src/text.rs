@@ -994,6 +994,230 @@ pub fn pull_no_verify(number: u64, item: &str, head: &str, wait: std::time::Dura
     )
 }
 
+/// The description of the label of a fix item
+/// ([`crate::rollout::BROKEN_MAIN`], 01M51QEYPGD6W345MZ4F85C38F).
+pub const BROKEN_MAIN_LABEL: &str = "main is broken: the rollout of riff gives this item first";
+
+/// The first 7 characters of a commit.
+fn short(commit: &str) -> String {
+    commit.chars().take(7).collect()
+}
+
+/// The run of a Gate in a sentence: ` (RUN)`, or nothing.
+fn in_run(run: Option<&str>) -> String {
+    run.map_or_else(String::new, |run| format!(" ({run})"))
+}
+
+/// The failed jobs of a run in a sentence.
+fn jobs_of(jobs: &[String]) -> String {
+    match jobs {
+        [] => "see the run".to_owned(),
+        jobs => jobs.join(", "),
+    }
+}
+
+/// The fix items `items` in a sentence: `fix item #9` or
+/// `fix items #9, #10`.
+fn fix_items(items: &[u64]) -> String {
+    let numbers: Vec<String> = items.iter().map(|n| format!("#{n}")).collect();
+    match items {
+        [_] => format!("fix item {}", numbers[0]),
+        _ => format!("fix items {}", numbers.join(", ")),
+    }
+}
+
+/// The title of the fix item of a failed Gate of `main` at `commit`
+/// (01M51QEYPGD6W345MZ4F85C38F).
+///
+/// ```
+/// assert_eq!(riff::text::fix_item_title("5103311abc"), "main is broken at 5103311: the Gate failed");
+/// ```
+pub fn fix_item_title(commit: &str) -> String {
+    format!("main is broken at {}: the Gate failed", short(commit))
+}
+
+/// The body of the fix item of a failed Gate of `main` at `commit`
+/// (01M51QEYPGD6W345MZ4F85C38F): the run, the failed jobs, a `Needs:`
+/// line and a `Done when:` line.
+///
+/// ```
+/// let body = riff::text::fix_item_body(
+///     "5103311abc",
+///     Some("https://github.com/o/r/actions/runs/7"),
+///     &["Clippy".into(), "Tests 1/4".into()],
+/// );
+/// assert!(body.starts_with("riff filed this fix item: the Gate of `main` failed at commit 5103311.\n"));
+/// assert!(body.contains("- Run: https://github.com/o/r/actions/runs/7\n- Failed jobs: Clippy, Tests 1/4\n"));
+/// assert!(body.contains("\nNeeds: nothing\n"));
+/// assert!(body.ends_with(
+///     "Done when: the Gate of the pull request passes, with each job that failed at 5103311.\n"
+/// ));
+/// ```
+pub fn fix_item_body(commit: &str, run: Option<&str>, jobs: &[String]) -> String {
+    let commit = short(commit);
+    format!(
+        "riff filed this fix item: the Gate of `main` failed at commit {commit}.\n\n\
+         - Run: {}\n\
+         - Failed jobs: {}\n\n\
+         Fix `main` in one pull request. Read the log of each failed job, and find the cause. \
+         The rollout gives this item to a worker before each other item. When the Gate of `main` \
+         passes before a session claims this item, riff closes it. See \"When main breaks\" in \
+         how-it-works.md.\n\n\
+         Needs: nothing\n\n\
+         Done when: the Gate of the pull request passes, with each job that failed at {commit}.\n",
+        run.unwrap_or("no link"),
+        jobs_of(jobs),
+    )
+}
+
+/// The comment on an open fix item for a failed Gate of `main` at a new
+/// `commit` (01M51QEYPGD6W345MZ4F85C38F).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::fix_item_comment("c0ffee123", Some("https://e.test/runs/8"), &["Checks".into()]),
+///     "The Gate of `main` failed again, at commit c0ffee1.\n\n- Run: https://e.test/runs/8\n- \
+///      Failed jobs: Checks\n"
+/// );
+/// ```
+pub fn fix_item_comment(commit: &str, run: Option<&str>, jobs: &[String]) -> String {
+    format!(
+        "The Gate of `main` failed again, at commit {}.\n\n- Run: {}\n- Failed jobs: {}\n",
+        short(commit),
+        run.unwrap_or("no link"),
+        jobs_of(jobs),
+    )
+}
+
+/// The comment of riff when it closes a free fix item: the Gate of
+/// `main` passed at `commit` (01M51QEYVQN74Q1VDTVHB0445Q).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::fix_item_closed("c0ffee123", Some("https://e.test/runs/9")),
+///     "The Gate of `main` passed at commit c0ffee1 (https://e.test/runs/9). riff closes this \
+///      fix item: no session claims it, and no pull request names it."
+/// );
+/// ```
+pub fn fix_item_closed(commit: &str, run: Option<&str>) -> String {
+    format!(
+        "The Gate of `main` passed at commit {}{}. riff closes this fix item: no session claims \
+         it, and no pull request names it.",
+        short(commit),
+        in_run(run),
+    )
+}
+
+/// The post to the lead for a failed Gate of `main` at `commit`
+/// (01M51QEYKTD7ZEB0YA0C3MQTPN). `fix` is the fix item, or why riff
+/// could not file it or comment on it. `first` is true when `main` passed
+/// before: a message. Else `main` was broken at an older commit: a note.
+///
+/// ```
+/// use riff::text::main_broken;
+///
+/// let run = Some("https://github.com/o/r/actions/runs/38861280871");
+/// let jobs = ["Clippy".to_owned(), "Tests 1/4".to_owned()];
+/// assert_eq!(
+///     main_broken("5103311abc", run, &jobs, &Ok(901), true),
+///     "main is broken: the Gate failed at commit 5103311 \
+///      (https://github.com/o/r/actions/runs/38861280871). Failed jobs: Clippy, Tests 1/4. The \
+///      fix item is #901: the rollout gives it to a worker before each other item. When a pull \
+///      request already has the fix, hold #901."
+/// );
+/// assert_eq!(
+///     main_broken("c0ffee123", None, &[], &Ok(901), false),
+///     "main is still broken: the Gate failed at commit c0ffee1 too. Failed jobs: see the run. \
+///      The fix item #901 has a comment with this run."
+/// );
+/// assert_eq!(
+///     main_broken("5103311abc", None, &[], &Err("HTTP 403".into()), true),
+///     "main is broken: the Gate failed at commit 5103311. Failed jobs: see the run. riff could \
+///      not file the fix item: HTTP 403. File an issue with the label broken-main."
+/// );
+/// ```
+pub fn main_broken(
+    commit: &str,
+    run: Option<&str>,
+    jobs: &[String],
+    fix: &Result<u64, String>,
+    first: bool,
+) -> String {
+    let (commit, run, jobs) = (short(commit), in_run(run), jobs_of(jobs));
+    let head = if first {
+        format!("main is broken: the Gate failed at commit {commit}{run}. Failed jobs: {jobs}.")
+    } else {
+        format!(
+            "main is still broken: the Gate failed at commit {commit}{run} too. Failed jobs: \
+             {jobs}."
+        )
+    };
+    let fix = match (fix, first) {
+        (Ok(n), true) => format!(
+            "The fix item is #{n}: the rollout gives it to a worker before each other item. When \
+             a pull request already has the fix, hold #{n}."
+        ),
+        (Ok(n), false) => format!("The fix item #{n} has a comment with this run."),
+        (Err(e), _) => format!(
+            "riff could not file the fix item: {e}. File an issue with the label {}.",
+            crate::rollout::BROKEN_MAIN
+        ),
+    };
+    format!("{head} {fix}")
+}
+
+/// The note to the lead when the Gate of `main` passes at `commit`
+/// (01M51QEYVQN74Q1VDTVHB0445Q): `again` is true after a broken `main`.
+/// riff closed the fix items `closed`. The fix items `kept` stay open.
+///
+/// ```
+/// use riff::text::main_passes;
+///
+/// assert_eq!(
+///     main_passes("c0ffee123", Some("https://e.test/runs/9"), &[901], &[], true),
+///     "main passes again: the Gate passed at commit c0ffee1 (https://e.test/runs/9). riff \
+///      closed the fix item #901."
+/// );
+/// assert_eq!(
+///     main_passes("c0ffee123", None, &[], &[901, 902], true),
+///     "main passes again: the Gate passed at commit c0ffee1. The fix items #901, #902 stay \
+///      open: a session claims each, or a pull request names it."
+/// );
+/// assert_eq!(
+///     main_passes("c0ffee123", None, &[903], &[], false),
+///     "The Gate of main passed at commit c0ffee1. riff closed the fix item #903."
+/// );
+/// ```
+pub fn main_passes(
+    commit: &str,
+    run: Option<&str>,
+    closed: &[u64],
+    kept: &[u64],
+    again: bool,
+) -> String {
+    let (commit, run) = (short(commit), in_run(run));
+    let mut line = if again {
+        format!("main passes again: the Gate passed at commit {commit}{run}.")
+    } else {
+        format!("The Gate of main passed at commit {commit}{run}.")
+    };
+    if !closed.is_empty() {
+        line.push_str(&format!(" riff closed the {}.", fix_items(closed)));
+    }
+    match kept {
+        [] => {}
+        [_] => line.push_str(&format!(
+            " The {} stays open: a session claims it, or a pull request names it.",
+            fix_items(kept)
+        )),
+        _ => line.push_str(&format!(
+            " The {} stay open: a session claims each, or a pull request names it.",
+            fix_items(kept)
+        )),
+    }
+    line
+}
+
 /// The instructions of the riff tools of a session.
 pub const MCP_TOOLS: &str = "riff connects your session with the agent sessions of other people. Your \
 session URI shows who you are (user and session ID), where you work (host, repo, worktree), what \

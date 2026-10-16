@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use isolated::Isolated;
 use riff::api::Api;
-use riff::look::{self, Notifier, PullWatch};
+use riff::look::{self, MainWatch, Notifier, PullWatch};
 use riff::pr::Gh;
 use riff::top::Top;
 use riff_core::name::{SessionUri, ThreadName};
@@ -169,6 +169,7 @@ async fn the_facts_of_the_forge_make_waiting() {
         Duration::from_secs(600),
         None,
         &mut PullWatch::default(),
+        &mut MainWatch::default(),
     )
     .await
     .unwrap();
@@ -185,6 +186,7 @@ async fn the_facts_of_the_forge_make_waiting() {
         Duration::from_secs(600),
         None,
         &mut PullWatch::default(),
+        &mut MainWatch::default(),
     )
     .await
     .unwrap();
@@ -227,6 +229,7 @@ async fn a_need_with_a_merged_in_comment_is_met() {
         Duration::from_secs(600),
         None,
         &mut PullWatch::default(),
+        &mut MainWatch::default(),
     )
     .await
     .unwrap();
@@ -248,6 +251,7 @@ async fn a_need_with_a_merged_in_comment_is_met() {
         Duration::from_secs(600),
         None,
         &mut PullWatch::default(),
+        &mut MainWatch::default(),
     )
     .await
     .unwrap();
@@ -286,9 +290,17 @@ fn forge(dir: &Path, name: &str, pulls: &str) -> Arc<Gh> {
 
 /// One look of the lead with `gh` and `watch`.
 async fn look_at(api: &Api, lead: &SessionUri, gh: &Arc<Gh>, watch: &mut PullWatch) {
-    look::once(api, lead, gh, Duration::from_secs(600), None, watch)
-        .await
-        .unwrap();
+    look::once(
+        api,
+        lead,
+        gh,
+        Duration::from_secs(600),
+        None,
+        watch,
+        &mut MainWatch::default(),
+    )
+    .await
+    .unwrap();
 }
 
 /// A pull request with auto-merge on and a conflict tells the session
@@ -428,8 +440,8 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     let notifier = Notifier { program: notify };
     let wake = Duration::from_secs(1);
     let look = || async {
-        let mut watch = PullWatch::default();
-        look::once(&api, &lead, &gh, wake, Some(&notifier), &mut watch).await
+        let (mut watch, mut main) = (PullWatch::default(), MainWatch::default());
+        look::once(&api, &lead, &gh, wake, Some(&notifier), &mut watch, &mut main).await
     };
     let bodies = |inbox: Vec<riff::api::Inbox>| -> Vec<String> {
         inbox
