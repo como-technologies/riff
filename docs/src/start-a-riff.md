@@ -181,7 +181,7 @@ riff init
 
 ```mermaid
 flowchart LR
-    C["check this machine"] --> R["ask to add the<br/>missing permission rules"]
+    C["check this machine"] --> R["ask to add the<br/>missing permission rules,<br/>and to remove wide rules"]
     R -- "each check passes" --> D["install and start<br/>the riff daemon"]
     R -- "a check fails" --> F["print the fix"]
     D --> I["get the session image<br/>of the project"]
@@ -252,6 +252,11 @@ its steps. When the auto mode check still refuses a step of riff, the
 session writes the step on its issue and tells your lead. The fix is a
 new rule in the code of riff, not a step that you type.
 
+Run `riff init` in a terminal of your own. Claude Code refuses
+`riff init` from a session, also when you approve it: a session must
+not change its own permissions. The auto mode check gives the reason
+`[Self-Modification]` or `[Unauthorized Persistence]`.
+
 #### The rules of gh on GitHub
 
 | Rules | Allow |
@@ -259,12 +264,38 @@ new rule in the code of riff, not a step that you type.
 | `Bash(gh pr create *)`, `Bash(gh pr merge --auto --squash *)`, `Bash(gh pr comment *)`, `Bash(gh pr view *)`, `Bash(gh pr checks *)` | the steps of a pull request |
 | `Bash(gh issue view *)`, `Bash(gh issue list *)`, `Bash(gh issue create *)`, `Bash(gh issue comment *)`, `Bash(gh issue edit *)` | the steps of an issue |
 
+#### Remove a wide rule
+
+riff adds rules, and removes none with no yes. A rule that you added
+by hand can be much wider than its step. `riff init` reads the allow
+rules of your user settings, and of the project settings and the local
+settings of the repository of the current folder. It names each rule
+that is wider than the steps of riff, with its file, and asks one
+question. Answer `y` to remove them:
+
+```sh
+riff init
+```
+
+riff removes only the wide rules. It keeps each other rule and each
+other key. A wide rule fails no check. `riff init --yes` and
+`riff init --check` remove no rule. A rule of the Bash tool is wide
+when:
+
+- it has no pattern: `Bash` allows each command;
+- or it has a `*` that is not at its end after a space, for example
+  `Bash(gh pr merge * --auto --squash)`;
+- or it allows a command that no step of riff needs, for example
+  `Bash(git push *)` allows a push to the default branch.
+
+The old form `Bash(cargo test:*)` is the same as `Bash(cargo test *)`.
+A rule of another tool, for example `Read`, is never wide.
 
 ### Check this machine only
 
 This command changes nothing and asks nothing. It prints the fix of
-each check that fails and each missing permission rule. It exits with
-status 1 when a check fails:
+each check that fails, each missing permission rule and each wide
+rule. It exits with status 1 when a check fails:
 
 ```sh
 riff init --check

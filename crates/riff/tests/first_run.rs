@@ -454,6 +454,66 @@ async fn riff_init_check_names_each_missing_rule() {
     assert!(!machine.unit().exists());
 }
 
+/// 01M51JCW04FAHZDQ144KDNCCPX, 01M51JCW2EKF8H8QFQYSVRSPET: `riff init`
+/// names each wide allow rule of the user settings and of the local
+/// settings of the repository, with its file. A wide rule fails no
+/// check. `--check`, `--yes` and a run with no terminal ask nothing and
+/// remove nothing.
+#[tokio::test]
+async fn riff_init_names_each_wide_rule_and_removes_none_with_no_yes() {
+    let machine = Machine::new();
+    let mut rules = machine.user_rules();
+    rules
+        .allow
+        .push("Bash(gh pr merge * --auto --squash)".into());
+    machine.write_settings(
+        &serde_json::json!({ "permissions": { "allow": rules.allow } }).to_string(),
+    );
+    let local = machine.repo.join(".claude/settings.local.json");
+    std::fs::create_dir_all(local.parent().unwrap()).unwrap();
+    std::fs::write(
+        &local,
+        r#"{"permissions": {"allow": ["Bash(git push *)", "Bash(cargo test:*)"]}}"#,
+    )
+    .unwrap();
+    let before = |path: &Path| std::fs::read_to_string(path).unwrap();
+    let (user_text, local_text) = (before(&machine.settings()), before(&local));
+    let local = std::fs::canonicalize(&machine.repo)
+        .unwrap()
+        .join(".claude/settings.local.json");
+    let report = format!(
+        "These allow rules of Claude Code are wider than the steps of riff. Each one also \
+         allows commands that no step of riff needs:\n  {}:\n    allow Bash(gh pr merge * \
+         --auto --squash)\n  {}:\n    allow Bash(git push *)\nriff removed no rule. To remove \
+         them, run riff init in a terminal, and answer y.\n",
+        machine.settings().display(),
+        local.display()
+    );
+
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(stdout.contains(&report), "{report}\nnot in\n{stdout}");
+    assert!(
+        stdout.ends_with("Each check passed. riff changed nothing: --check.\n"),
+        "{stdout}"
+    );
+
+    // podman fails, so riff stops before the daemon.
+    std::fs::write(machine.bin.join("no-podman"), "").unwrap();
+    for args in [&["--yes"][..], &[]] {
+        let out = machine.init(&machine.repo, args).await;
+        let stdout = text(&out.stdout);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {stdout}");
+        assert!(stdout.contains(&report), "{args:?}: {stdout}");
+        assert!(!stdout.contains("[y/N]"), "{args:?}: {stdout}");
+        assert!(stdout.contains("\n1 check failed. "), "{args:?}: {stdout}");
+    }
+    assert_eq!(before(&machine.settings()), user_text);
+    assert_eq!(before(&local), local_text);
+    assert!(!machine.unit().exists());
+}
+
 #[test]
 fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
     let commands = commands_of("start-a-riff.md");
@@ -461,7 +521,10 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
         .into_iter()
         .filter(|c| c.starts_with("riff init"))
         .collect();
-    assert_eq!(init, ["riff init", "riff init --yes", "riff init --check"]);
+    assert_eq!(
+        init,
+        ["riff init", "riff init --yes", "riff init", "riff init --check"]
+    );
     each_is_real(&init);
 }
 
