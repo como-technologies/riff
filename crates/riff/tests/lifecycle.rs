@@ -616,48 +616,61 @@ async fn server_takes_a_bare_ipv6_address_and_one_with_brackets() {
     }
 }
 
+/// The releases of `list` in the folder `dir`, each a folder `TAG` with
+/// no file, and the file `latest` with the reply of the API of GitHub
+/// for the release that `list` marks Latest. So cargo builds each one.
+fn put_releases(dir: &Path, list: &[(&str, bool)]) {
+    for (tag, latest) in list {
+        std::fs::create_dir_all(dir.join(tag)).unwrap();
+        if *latest {
+            let reply = format!(r#"{{"tag_name": "{tag}", "prerelease": false}}"#);
+            std::fs::write(dir.join(riff::release::LATEST), reply).unwrap();
+        }
+    }
+}
+
 /// 01M3MRMAVVKJ5WS8GWCJHWH0R4: with no `--tag`, `riff update` installs
-/// the release that the riff runs, also when the repository has a newer
-/// tag. riff asks only the riff: a fake `git` that names a newer tag
-/// never runs.
+/// the release that the riff runs, also when GitHub marks a newer
+/// release Latest.
 #[tokio::test]
-async fn update_installs_the_release_of_the_server_not_a_newer_tag() {
+async fn update_installs_the_release_of_the_server_not_the_latest() {
+    let releases = tempfile::tempdir().unwrap();
+    put_releases(releases.path(), &[("v0.2.0", false), ("v0.3.0", true)]);
     let bin = tempfile::tempdir().unwrap();
-    fake_command(bin.path(), "git", "0000 refs/tags/v0.3.0", 0);
     let url = fake(Build {
         version: "0.2.0".into(),
         ..Build::this()
     })
     .await;
-    let out = run(update(bin.path(), 0, &url)).await;
+    let mut cmd = update(bin.path(), 0, &url);
+    cmd.env("RIFF_RELEASES", releases.path());
+    let out = run(cmd).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(log(bin.path(), "cargo"), install("v0.2.0"));
-    assert_eq!(log(bin.path(), "git"), "");
-    assert!(!text(&out.stdout).contains("newest release"));
+    assert!(!text(&out.stdout).contains("Latest release"));
 }
 
-/// 01M3N73Y9DMVMCV0PJE1R8YCFH: when the riff answers with a build
-/// header that riff cannot read, or with none, `riff update` installs
-/// the newest release tag and says so in one line.
+/// 01M3N73Y9DMVMCV0PJE1R8YCFH, 01M510MPR1S0EQNRK2195XTXG5: when the riff
+/// answers with a build header that riff cannot read, or with none,
+/// `riff update` installs the release that GitHub marks Latest, not a
+/// higher tag, and says so in one line.
 #[tokio::test]
-async fn update_installs_the_newest_release_when_it_cannot_read_the_build_of_the_riff() {
+async fn update_installs_the_latest_release_when_it_cannot_read_the_build_of_the_riff() {
+    let releases = tempfile::tempdir().unwrap();
+    put_releases(releases.path(), &[("v0.4.0", false), ("v0.3.0", true)]);
     for header in [Some("v2;0.3.0;e58e345".to_owned()), None] {
         let bin = tempfile::tempdir().unwrap();
-        fake_command(
-            bin.path(),
-            "git",
-            "a1\trefs/tags/v0.2.0\nb2\trefs/tags/v0.3.0",
-            0,
-        );
         let url = fake_header(header.clone()).await;
-        let out = run(update(bin.path(), 0, &url)).await;
+        let mut cmd = update(bin.path(), 0, &url);
+        cmd.env("RIFF_RELEASES", releases.path());
+        let out = run(cmd).await;
         assert!(out.status.success(), "{header:?}: {}", text(&out.stderr));
         assert_eq!(log(bin.path(), "cargo"), install("v0.3.0"), "{header:?}");
         let stdout = text(&out.stdout);
         assert!(
             stdout.contains(&format!(
                 "riff cannot read the build of the riff at {url}, \
-                 so riff installs the newest release, v0.3.0.\n"
+                 so riff installs the Latest release, v0.3.0.\n"
             )),
             "{header:?}: {stdout}"
         );
@@ -706,44 +719,58 @@ async fn update_with_no_riff_and_no_tag_names_the_flag() {
     assert_eq!(log(bin.path(), "cargo"), "");
 }
 
-/// 01M3MRMAVVKJ5WS8GWCJHWH0R4: when riff uses the riff of this machine,
-/// `riff update` installs the newest release tag of the repository. It
-/// compares the numbers, and skips a tag that is not a release.
+/// 01M510MPR1S0EQNRK2195XTXG5: when riff uses the riff of this machine,
+/// `riff update` installs the release that GitHub marks Latest, not the
+/// highest tag. Of `v2.0.1` (not Latest) and `v1.4.0` (Latest), it
+/// installs `v1.4.0`, from a web server and from a folder. It runs no
+/// git.
 #[tokio::test]
-async fn update_with_the_riff_of_this_machine_installs_the_newest_release() {
-    let bin = tempfile::tempdir().unwrap();
-    fake_command(
-        bin.path(),
-        "git",
-        "a1\trefs/tags/v0.9.3\nb2\trefs/tags/v0.10.0\nc3\trefs/tags/v1.0.0-rc1",
-        0,
-    );
-    let out = run(update(bin.path(), 0, "http://127.0.0.1:7878")).await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    assert_eq!(
-        log(bin.path(), "git"),
-        format!(
-            "ls-remote --tags --refs {} v*\n",
-            env!("CARGO_PKG_REPOSITORY")
-        )
-    );
-    assert_eq!(log(bin.path(), "cargo"), install("v0.10.0"));
+async fn update_with_the_riff_of_this_machine_installs_the_latest_release() {
+    let releases = tempfile::tempdir().unwrap();
+    put_releases(releases.path(), &[("v2.0.1", false), ("v1.4.0", true)]);
+    let web = release_server(releases.path()).await;
+    for place in [web.as_str(), releases.path().to_str().unwrap()] {
+        let bin = tempfile::tempdir().unwrap();
+        fake_command(bin.path(), "git", "a1\trefs/tags/v2.0.1", 0);
+        let mut cmd = update(bin.path(), 0, "http://127.0.0.1:7878");
+        cmd.env("RIFF_RELEASES", place);
+        let out = run(cmd).await;
+        assert!(out.status.success(), "{place}: {}", text(&out.stderr));
+        assert_eq!(log(bin.path(), "cargo"), install("v1.4.0"), "{place}");
+        assert_eq!(log(bin.path(), "git"), "", "{place}");
+    }
 }
 
-/// With no release tag in the repository, `riff update` installs
-/// nothing and names the flag.
+/// 01M510MPR1S0EQNRK2195XTXG5: with no Latest release, or a reply with
+/// no release tag, `riff update` installs nothing and names the flag.
 #[tokio::test]
-async fn update_with_no_release_tag_names_the_flag() {
-    let bin = tempfile::tempdir().unwrap();
-    fake_command(bin.path(), "git", "", 0);
-    let out = run(update(bin.path(), 0, "http://localhost:7878")).await;
-    assert!(!out.status.success());
-    let stderr = text(&out.stderr);
-    assert!(
-        stderr.contains("has no release tag. Name one: riff update --tag vX.Y.Z"),
-        "{stderr}"
-    );
-    assert_eq!(log(bin.path(), "cargo"), "");
+async fn update_with_no_latest_release_names_the_flag() {
+    let releases = tempfile::tempdir().unwrap();
+    let latest = releases.path().join(riff::release::LATEST);
+    for reply in [None, Some(r#"{"tag_name": "main"}"#), Some("<html>")] {
+        if let Some(reply) = reply {
+            std::fs::write(&latest, reply).unwrap();
+        }
+        let bin = tempfile::tempdir().unwrap();
+        let mut cmd = update(bin.path(), 0, "http://localhost:7878");
+        cmd.env("RIFF_RELEASES", releases.path());
+        let out = run(cmd).await;
+        assert!(!out.status.success(), "{reply:?}");
+        let stderr = text(&out.stderr);
+        assert!(
+            stderr.contains(&format!("{} names no Latest release", latest.display()))
+                || stderr.contains(&format!(
+                    "cannot find the Latest release at {}",
+                    latest.display()
+                )),
+            "{reply:?}: {stderr}"
+        );
+        assert!(
+            stderr.contains("Name one: riff update --tag vX.Y.Z"),
+            "{reply:?}: {stderr}"
+        );
+        assert_eq!(log(bin.path(), "cargo"), "", "{reply:?}");
+    }
 }
 
 /// A fake binary of a release: a 64-bit ELF of x86-64 with one program
@@ -786,18 +813,24 @@ pub fn put_release(dir: &Path, tag: &str, files: &[(&str, &[u8])], sums: Option<
 }
 
 /// A web server of the release files in the folder `dir`, at
-/// `/TAG/NAME`, with a 404 for each file that is not there.
+/// `/TAG/NAME`, with a 404 for each file that is not there. As the API
+/// of GitHub, it refuses a request with no `User-Agent` with a 403.
 async fn release_server(dir: &Path) -> String {
     let dir = dir.to_owned();
-    let router = axum::Router::new().fallback(move |uri: axum::http::Uri| {
-        let path = dir.join(uri.path().trim_start_matches('/'));
-        async move {
-            match std::fs::read(path) {
-                Ok(bytes) => (axum::http::StatusCode::OK, bytes),
-                Err(_) => (axum::http::StatusCode::NOT_FOUND, Vec::new()),
+    let router = axum::Router::new().fallback(
+        move |uri: axum::http::Uri, headers: axum::http::HeaderMap| {
+            let path = dir.join(uri.path().trim_start_matches('/'));
+            async move {
+                if !headers.contains_key(axum::http::header::USER_AGENT) {
+                    return (axum::http::StatusCode::FORBIDDEN, Vec::new());
+                }
+                match std::fs::read(path) {
+                    Ok(bytes) => (axum::http::StatusCode::OK, bytes),
+                    Err(_) => (axum::http::StatusCode::NOT_FOUND, Vec::new()),
+                }
             }
-        }
-    });
+        },
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });

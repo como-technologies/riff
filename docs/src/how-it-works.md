@@ -530,7 +530,7 @@ flowchart TD
     U[riff update] --> T{"--tag vX.Y.Z?"}
     T -- yes --> I[install that release]
     T -- no --> L{"riff uses the riff<br/>of this machine?"}
-    L -- yes --> N[install the newest release tag]
+    L -- yes --> N[install the release that<br/>GitHub marks Latest]
     L -- no --> B{"riff can read<br/>the build of the riff?"}
     B -- yes --> S[install the release that the riff runs]
     B -- no --> N
@@ -539,12 +539,22 @@ flowchart TD
 So a new tag does not break your machine before the shared server
 runs it. `riff server` shows the release of `riff` and of each riff.
 
+When the riff names no release, `riff update` installs the release
+that GitHub marks "Latest": the release of the line that the shared
+riff runs. It is not always the highest tag. A release of a retired
+line, for example `v2.0.1`, is a prerelease, and GitHub never marks it
+Latest. See the Latest release:
+
+```sh
+gh release view --repo como-technologies/riff
+```
+
 An old riff cannot always read the build of a newer riff, for example
 after a change of the build header. Then `riff update` installs the
-newest release tag and prints this line:
+Latest release and prints this line:
 
 ```text
-riff cannot read the build of the riff at https://riff.example.com, so riff installs the newest release, v0.3.0.
+riff cannot read the build of the riff at https://riff.example.com, so riff installs the Latest release, v0.3.0.
 ```
 
 ### Install one release

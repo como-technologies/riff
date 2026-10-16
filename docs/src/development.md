@@ -2650,6 +2650,28 @@ use `--latest=false`.
 
 The tag deploys the patch as each release tag does.
 
+### Retire a release line
+
+`riff update` installs the release that GitHub marks Latest, not the
+highest tag (see [Releases](how-it-works.md#releases)). GitHub never
+marks a prerelease Latest. So when a line is retired, make each of its
+GitHub releases a prerelease. Put a first line in its notes that says
+that the line is retired, and names the issue. For example, for
+`v2.0.1` of the line 2.x, retired in #706:
+
+```sh
+gh release view v2.0.1 --repo como-technologies/riff --json body --jq .body > old.md
+printf '**Retired.** The line 2.x is retired (#706). Do not install this release.\n\n' | cat - old.md > notes.md
+gh release edit v2.0.1 --repo como-technologies/riff --prerelease --notes-file notes.md
+```
+
+Check that the release of the line that the shared riff runs is the
+Latest, and that each release of the retired line is a prerelease:
+
+```sh
+gh release list --repo como-technologies/riff
+```
+
 ### Deploy the shared server at the end of a wave
 
 The release tag deploys itself. When you push the tag `vX.Y.Z` (see

@@ -142,7 +142,8 @@ riff update
 It installs the release that your riff runs. That is not always the
 newest release (see [Releases](how-it-works.md#releases)):
 
-- The riff of this machine: it installs the newest release.
+- The riff of this machine: it installs the release that GitHub marks
+  Latest.
 - A shared riff: it installs the release of the shared server. After
   a new release, update when the shared riff runs it. Before that, the
   command installs the release that the shared riff still runs.

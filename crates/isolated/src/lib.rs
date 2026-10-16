@@ -13,7 +13,7 @@
 //! | Each `RIFF_…` and `CLAUDE_…` variable, `TMUX`, `TMUX_PANE` | removed |
 //! | `GH_TOKEN`, `GITHUB_TOKEN` | removed: the `gh` of the machine has no sign-in in a test, so no test reaches the forge |
 //! | `RIFF_SERVER` | [`DEAD_SERVER`]: nothing listens there |
-//! | `RIFF_RELEASES` | an empty dir of its own: no release has static binaries, so `riff update` reaches no GitHub, and runs the fake `cargo` of a test (01M4ZPJ0DJ9FTYNPTBBVJCTB37) |
+//! | `RIFF_RELEASES` | an empty dir of its own: no release is Latest and no release has static binaries, so `riff update` reaches no GitHub, and runs the fake `cargo` of a test (01M4ZPJ0DJ9FTYNPTBBVJCTB37, 01M510MPR1S0EQNRK2195XTXG5) |
 //! | `RIFF_MACHINE` | [`MACHINE`]: the numbers of a machine with free memory and no load, so no test depends on the machine that runs it (01M3WFZ08D8VT9KD6HXY09NHSE) |
 //! | `RIFF_ON` | `1`: riff is on in each directory, so a test of a hook needs no repository with `riff enable`. A test of the state removes it (01M3XY2SWEK0N8MC3MY4TMYTD3) |
 //! | `RIFF_DYNAMIC` | `1`: `riff init` and the daemon take the riff under test, which is not static, because a fake `podman` runs `riff relay` on the host. A test of the check removes it (01M510NWEFSN0NWQH8KQ6FA7DC) |

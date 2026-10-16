@@ -35,16 +35,19 @@
 //! the head of `main`. With no `--tag`, it installs the release that the
 //! riff of `riff` runs, from the version of its build. So a newer tag
 //! that nobody deployed yet does not break a machine. When `riff` uses
-//! the riff of this machine, it installs the newest release tag, and
-//! the person starts that riff again (01M3MRMAVVKJ5WS8GWCJHWH0R4). When
-//! the riff of `riff` answers with no build that this riff can read,
-//! for example after a change of the build header, it also installs
-//! the newest release tag, and says so (01M3N73Y9DMVMCV0PJE1R8YCFH):
+//! the riff of this machine, it installs the release that GitHub marks
+//! "Latest", and the person starts that riff again
+//! (01M3MRMAVVKJ5WS8GWCJHWH0R4, 01M510MPR1S0EQNRK2195XTXG5). When the
+//! riff of `riff` answers with no build that this riff can read, for
+//! example after a change of the build header, it also installs the
+//! Latest release, and says so (01M3N73Y9DMVMCV0PJE1R8YCFH). The Latest
+//! release is not always the highest tag: a release of a retired line is
+//! never Latest ([`release::latest`](crate::release::latest)):
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant U as riff update
-//!     participant G as git ls-remote
+//!     participant G as the API of GitHub
 //!     participant F as the riff of riff
 //!     participant C as cargo
 //!     participant R as the new riff
@@ -52,15 +55,15 @@
 //!     alt --tag vX.Y.Z
 //!         Note over U: that release
 //!     else riff uses the riff of this machine
-//!         U->>G: the tags v*
-//!         G-->>U: the newest release vX.Y.Z
+//!         U->>G: the release that GitHub marks Latest
+//!         G-->>U: its tag vX.Y.Z
 //!     else riff uses another riff
 //!         U->>F: probe
 //!         alt a build that riff can read
 //!             F-->>U: its build, with the version X.Y.Z
 //!         else no build, or another form
-//!             U->>G: the tags v*
-//!             G-->>U: the newest release vX.Y.Z
+//!             U->>G: the release that GitHub marks Latest
+//!             G-->>U: its tag vX.Y.Z
 //!         end
 //!     end
 //!     U->>C: install --locked --git REPOSITORY --tag vX.Y.Z riff riff-server
@@ -253,58 +256,6 @@ pub fn parse_tag(tag: &str) -> Result<String, String> {
     }
 }
 
-/// The newest release tag in `ls_remote`, the output of
-/// `git ls-remote --tags --refs`. It skips each tag that is not a
-/// release tag, and compares the numbers, not the text.
-///
-/// ```
-/// use riff::lifecycle::newest_tag;
-///
-/// let out = "a1\trefs/tags/v0.9.3\nb2\trefs/tags/v0.10.0\nc3\trefs/tags/v1.0.0-rc1\n";
-/// assert_eq!(newest_tag(out).as_deref(), Some("v0.10.0"));
-/// assert_eq!(newest_tag(""), None);
-/// ```
-pub fn newest_tag(ls_remote: &str) -> Option<String> {
-    ls_remote
-        .lines()
-        .filter_map(|line| line.split_once("refs/tags/").map(|(_, tag)| tag.trim()))
-        .filter_map(|tag| parse_tag(tag).ok())
-        .max_by_key(|tag| {
-            tag[1..]
-                .split('.')
-                .map(|n| n.parse::<u64>().unwrap_or_default())
-                .collect::<Vec<_>>()
-        })
-}
-
-/// The newest release tag of the repository, from `git ls-remote`
-/// (01M3MRMAVVKJ5WS8GWCJHWH0R4).
-pub fn newest_release() -> Result<String> {
-    let out = Command::new("git")
-        .args([
-            "ls-remote",
-            "--tags",
-            "--refs",
-            env!("CARGO_PKG_REPOSITORY"),
-            "v*",
-        ])
-        .current_dir(run_dir())
-        .output()
-        .context("cannot run git ls-remote")?;
-    if !out.status.success() {
-        bail!(
-            "git ls-remote failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    newest_tag(&String::from_utf8_lossy(&out.stdout)).with_context(|| {
-        format!(
-            "{} has no release tag. Name one: riff update --tag vX.Y.Z",
-            env!("CARGO_PKG_REPOSITORY")
-        )
-    })
-}
-
 /// The release that the riff at `server` runs: the release tag of the
 /// version of its build (01M3MRMAVVKJ5WS8GWCJHWH0R4). `None` when it
 /// answers with no build that riff can read, for example the header of
@@ -402,12 +353,13 @@ pub fn version_build(line: &str) -> Option<Build> {
 }
 
 /// Updates riff on this machine (01M3K0Q892KWM76R9DJC1P37JA): installs
-/// the binaries of a release with `cargo`: `tag`, else the newest
-/// release ([`newest_release`]) when `server` is `local`, the riff of
-/// this machine, else the release that `server` runs
-/// ([`server_release`]). When that riff names no build that riff can
-/// read, it prints [`text::newest_instead`](crate::text::newest_instead)
-/// and installs the newest release. Then it updates the plugin with the new
+/// the binaries of a release with `cargo`: `tag`, else the release that
+/// GitHub marks "Latest" ([`release::latest`](crate::release::latest))
+/// when `server` is `local`, the riff of this machine, else the release
+/// that `server` runs ([`server_release`]). When that riff names no
+/// build that riff can read, it prints
+/// [`text::latest_instead`](crate::text::latest_instead) and installs
+/// the Latest release. Then it updates the plugin with the new
 /// `riff connect claude --claude CLAUDE`, which gets no terminal and so
 /// asks nothing. On a machine with a limit of workers it installs
 /// the pinned `sccache` ([`crate::sccache::ensure`]). Then it looks for
@@ -424,12 +376,12 @@ pub async fn update(
 ) -> Result<String> {
     let tag = match tag {
         Some(tag) => tag.to_owned(),
-        None if same_riff(server, local) => newest_release()?,
+        None if same_riff(server, local) => crate::release::latest().await?,
         None => match server_release(server).await? {
             Some(tag) => tag,
             None => {
-                let tag = newest_release()?;
-                println!("{}", crate::text::newest_instead(server, &tag));
+                let tag = crate::release::latest().await?;
+                println!("{}", crate::text::latest_instead(server, &tag));
                 tag
             }
         },

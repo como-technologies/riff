@@ -469,9 +469,9 @@ enum Command {
     /// the static binaries of the GitHub release, checks them, and puts
     /// them in the bin folder of cargo. On another machine, or for a
     /// release with no static binaries, cargo builds them. It installs
-    /// the release that the riff runs, or the newest release when riff
-    /// uses the riff of this machine or cannot read the build of the
-    /// riff.
+    /// the release that the riff runs, or the release that GitHub marks
+    /// Latest when riff uses the riff of this machine or cannot read the
+    /// build of the riff.
     /// When the riff of this machine runs the old build, it tells you to
     /// start riff-server again.
     Update {

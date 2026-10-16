@@ -173,9 +173,10 @@ fn a_person_updates_riff_with_riff_update() {
 }
 
 /// "Update riff" of "Start a Riff" says which release `riff update`
-/// installs (01M3MRMAVVKJ5WS8GWCJHWH0R4): the newest release only for
-/// the riff of this machine, and the release of the shared server for
-/// a shared riff.
+/// installs (01M3MRMAVVKJ5WS8GWCJHWH0R4): the release that GitHub marks
+/// Latest only for the riff of this machine
+/// (01M510MPR1S0EQNRK2195XTXG5), and the release of the shared server
+/// for a shared riff.
 #[test]
 fn update_riff_says_that_it_installs_the_release_of_the_riff() {
     let text = part(PAGE, "Update riff")
@@ -185,7 +186,7 @@ fn update_riff_says_that_it_installs_the_release_of_the_riff() {
     for words in [
         "It installs the release that your riff runs.",
         "That is not always the newest release (see [Releases](how-it-works.md#releases))",
-        "The riff of this machine: it installs the newest release.",
+        "The riff of this machine: it installs the release that GitHub marks Latest.",
         "A shared riff: it installs the release of the shared server.",
         "After a new release, update when the shared riff runs it.",
     ] {
