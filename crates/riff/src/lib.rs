@@ -79,6 +79,7 @@ pub mod chat;
 pub mod cloud;
 pub mod compact;
 pub mod daemon;
+pub mod daemon_key;
 pub mod deaths;
 pub mod device;
 pub mod disk;
