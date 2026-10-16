@@ -172,14 +172,16 @@ fn connect_writes_the_skill_with_the_verify_flow() {
     let remove = at("call `ExitWorktree` with action `remove` and `discard_changes` set to true.");
     assert!(enter < name && name < checkout && checkout < release && release < remove);
 
-    // A control runs at the base commit, never by an edit, and the
-    // verifier goes back to the commit before it reports
+    // A control runs at the base commit, never by an edit of the code,
+    // and the verifier goes back to the commit before it reports
     // (01M5174ASF376JDNBQ4423TTAR).
-    let no_edit = at("Never edit a file to take the fix out");
+    let no_edit = at("Never edit the code for a control, also not for a moment");
     let base = at("git checkout --detach BASE");
     let back = at("```sh git checkout --detach COMMIT ```");
+    let sample = at("A test of the guard on a sample");
     let report = at("riff verify pass 40 --file result.md");
-    assert!(checkout < no_edit && no_edit < base && base < back && back < report);
+    assert!(checkout < no_edit && no_edit < base && base < back);
+    assert!(back < sample && sample < report);
 
     // The work of a worker ends at the verify request
     // (01M3Z9N6AK6W9KCA1MN72X78B6), and the verifier does the steps

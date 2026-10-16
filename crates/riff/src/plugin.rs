@@ -52,10 +52,10 @@
 //! assert!(dir.path().join("riff/.mcp.json").is_file());
 //! assert!(dir.path().join("riff/skills/riff/SKILL.md").is_file());
 //!
-//! // A verifier runs a control at the base commit, never by an edit
+//! // A verifier never edits the code for a control
 //! // (01M5174ASF376JDNBQ4423TTAR).
 //! let skill = std::fs::read_to_string(dir.path().join("riff/skills/riff/SKILL.md"))?;
-//! assert!(skill.contains("Run a control only at the base commit"));
+//! assert!(skill.contains("Never edit the code for a control"));
 //! # Ok::<(), std::io::Error>(())
 //! ```
 
@@ -631,13 +631,17 @@ mod tests {
         }
     }
 
-    /// 01M5174ASF376JDNBQ4423TTAR: a verifier runs a control at the base
-    /// commit of the pull request, goes back to the commit before it
-    /// reports, and never edits a file to take the fix out.
+    /// 01M5174ASF376JDNBQ4423TTAR: a verifier never edits the code for a
+    /// control, also not for a moment. It runs the control at the base
+    /// commit and goes back to the commit before it reports, or uses a
+    /// test of the guard on a sample, the control of the author or a
+    /// read.
     #[test]
     fn the_skill_says_how_a_verifier_runs_a_control() {
         let skill = text("riff/skills/riff/SKILL.md");
-        let start = skill.find("### Verify the work of another session").unwrap();
+        let start = skill
+            .find("### Verify the work of another session")
+            .unwrap();
         let end = start + skill[start..].find("### Pull requests on GitHub").unwrap();
         let part = &skill[start..end];
         let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -646,18 +650,26 @@ mod tests {
                 .unwrap_or_else(|| panic!("no {text:?} in {part}"))
         };
         let no_change = at("Do not change the code.");
-        let base = at("Run a control only at the base commit of the pull request");
-        let no_edit = at("Never edit a file to take the fix out, also not for a moment");
+        let control = at("A control shows that a test finds a fault");
+        let guard = at("or a guard test with a fault in the code.");
+        let no_edit = at(
+            "Never edit the code for a control, also not for a moment and also \
+                          when you put it back",
+        );
+        let base = at("- The base commit of the pull request");
         let to_base = at("git checkout --detach BASE");
         let back = at("```sh git checkout --detach COMMIT ```");
-        let author = at("use the control of the author on the issue, or check by a read.");
+        let sample = at("- A test of the guard on a sample");
+        let author = at("- The control of the author on the issue, or a read.");
+        let which = at("Say in the result which way you used.");
         let report = at("6. Write the result to a file:");
-        assert!(no_change < base && base < no_edit && no_edit < to_base);
-        assert!(to_base < back && back < author && author < report);
+        assert!(no_change < control && control < guard && guard < no_edit);
+        assert!(no_edit < base && base < to_base && to_base < back);
+        assert!(back < sample && sample < author && author < which && which < report);
         for words in [
             "no `sed -i`, no `git revert`, no `git checkout BASE -- FILE`",
             "git merge-base COMMIT origin/main",
-            "Say so in the result.",
+            "The base commit cannot show the fault when the test is new",
         ] {
             at(words);
         }

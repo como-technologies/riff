@@ -1766,12 +1766,12 @@ context and costs tokens. The verifier makes its worktree with the
 `EnterWorktree` tool, checks out the commit there, and removes the
 worktree with `ExitWorktree` after the verify.
 
-The verifier changes no code. A control is a run of a test with no fix,
-to show the fault that the work fixes. The verifier runs it at the base
-commit of the pull request, then checks out the commit again. It never
-edits a file to take the fix out. When the base commit cannot show the
-fault, the verifier uses the control of the author, or checks by a
-read.
+The verifier changes no code, also not for a moment. A control shows
+that a test finds a fault: a test with no fix, or a guard test with a
+fault in the code. The verifier runs it at the base commit of the pull
+request, then checks out the commit again. When the base commit cannot
+show the fault, the verifier uses a test of the guard on a sample, the
+control of the author, or a read.
 
 A verify request wakes only the lead of the author's user. The lead
 gives it to a session with no claim, or starts a worker for it. When the
