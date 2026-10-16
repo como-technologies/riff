@@ -102,12 +102,18 @@ your daemon.
 
 ### Add a second machine of your own
 
-On the machine of the owner, invite your own user. Then run
-`riff join` with the new string on the second machine:
+The user of the owner is `USER` of the machine of the owner. It can be
+another name than your riff user, for example `sandman` and not
+`mike`. A new key gets the user of its invite. So invite the user that
+`riff members` shows for this machine. Else your two machines are two
+users. On the machine of the owner:
 
 ```sh
-riff invite mike
+riff members
+riff invite sandman
 ```
+
+Then run `riff join` with the new string on the second machine.
 
 ### See the members
 
