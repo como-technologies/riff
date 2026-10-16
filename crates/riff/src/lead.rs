@@ -101,17 +101,22 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// and the trust of `clone`. The theme is the `theme` of the
 /// `.claude.json` of the person at `person`, else `auto`. A key that is
 /// there stays, so the answers of the person stay. It writes the
-/// `settings.json` of a session ([`run::settings`]) when it is not there.
-/// When it is there, it adds each rule of
+/// `settings.json` of a session ([`run::settings`] with `auto`) when it
+/// is not there. When it is there, it adds each rule of
 /// [`crate::permissions::session_rules`] that it lacks
-/// (01M5084K4YQCZF20XA0P2485SG).
+/// (01M5084K4YQCZF20XA0P2485SG), and the auto mode settings of `auto`
+/// that it lacks ([`crate::permissions::with_auto_mode`],
+/// 01M516HEX3GVTN9K2QS12A4PG3).
 ///
 /// ```
+/// use riff::permissions::Trust;
+///
 /// let dir = tempfile::tempdir()?;
 /// let claude = dir.path().join("claude");
 /// let person = dir.path().join("person.json");
 /// std::fs::write(&person, r#"{"theme":"dark"}"#)?;
-/// riff::lead::claude_folder(&claude, "/data/clone".as_ref(), Some(&person))?;
+/// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878") };
+/// riff::lead::claude_folder(&claude, "/data/clone".as_ref(), Some(&person), &auto)?;
 /// let read = |name: &str| -> serde_json::Value {
 ///     serde_json::from_slice(&std::fs::read(claude.join(name)).unwrap()).unwrap()
 /// };
@@ -119,17 +124,25 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// assert_eq!(json["hasCompletedOnboarding"], true);
 /// assert_eq!(json["theme"], "dark");
 /// assert_eq!(json["projects"]["/data/clone"]["hasTrustDialogAccepted"], true);
-/// assert_eq!(read("settings.json"), riff::run::settings());
+/// assert_eq!(read("settings.json"), riff::run::settings(&auto));
 ///
-/// // A folder of an earlier start gets the missing rules, and keeps its keys.
+/// // A folder of an earlier start gets the missing rules and auto mode
+/// // settings, and keeps its keys.
 /// std::fs::write(claude.join("settings.json"), r#"{"includeCoAuthoredBy":false,"model":"opus"}"#)?;
-/// riff::lead::claude_folder(&claude, "/data/clone".as_ref(), Some(&person))?;
+/// riff::lead::claude_folder(&claude, "/data/clone".as_ref(), Some(&person), &auto)?;
 /// let settings = read("settings.json");
 /// assert_eq!(settings["model"], "opus");
-/// assert_eq!(settings["permissions"], riff::run::settings()["permissions"]);
+/// assert_eq!(settings["permissions"], riff::run::settings(&auto)["permissions"]);
+/// assert_eq!(settings["skillOverrides"], riff::run::settings(&auto)["skillOverrides"]);
+/// assert_eq!(settings["autoMode"], riff::run::settings(&auto)["autoMode"]);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn claude_folder(dir: &Path, clone: &Path, person: Option<&Path>) -> Result<()> {
+pub fn claude_folder(
+    dir: &Path,
+    clone: &Path,
+    person: Option<&Path>,
+    auto: &crate::permissions::Trust,
+) -> Result<()> {
     let read =
         |path: &Path| -> Option<Value> { serde_json::from_slice(&std::fs::read(path).ok()?).ok() };
     std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
@@ -164,8 +177,9 @@ pub fn claude_folder(dir: &Path, clone: &Path, person: Option<&Path>) -> Result<
     let settings = dir.join("settings.json");
     if settings.exists() {
         crate::permissions::add(&settings, &crate::permissions::session_rules())?;
+        crate::permissions::add_auto_mode(&settings, auto)?;
     } else {
-        std::fs::write(&settings, serde_json::to_string_pretty(&run::settings())?)
+        std::fs::write(&settings, serde_json::to_string_pretty(&run::settings(auto))?)
             .with_context(|| format!("cannot write {}", settings.display()))?;
     }
     Ok(())
@@ -339,7 +353,12 @@ pub async fn start_with(
         println!("{}", text::lead_clone_kept(&clone, &why));
     }
     let person = host.home.join(".claude.json");
-    claude_folder(&claude, &clone, Some(&person))?;
+    claude_folder(
+        &claude,
+        &clone,
+        Some(&person),
+        &crate::permissions::Trust::of(here.repo(), server),
+    )?;
 
     let session = terminal::new_session_id();
     let place = Place::new(here.host(), here.repo().clone(), None)?;

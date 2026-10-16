@@ -98,13 +98,51 @@
 //! the table (the step is in bounds), or a change of the skill (it is
 //! not). It is never a step that a person types by hand
 //! (01M5084K9J566981EXZ7YJRGRR).
+//!
+//! # Auto mode
+//!
+//! When auto mode blocks several steps and the settings have no
+//! `autoMode.environment` entries, Claude Code shows the dialog "Teach
+//! auto mode about your environment?" at the end of a turn. No person
+//! answers it in a worker, and a wake that riff types into the pane can
+//! pick a choice. So riff gives each session that it starts the settings
+//! of [`auto_mode`] (01M516HETNZCBFBJNHT8BKFB1Y):
+//!
+//! - `skillOverrides` turns off `/auto-mode-setup`, and with it the
+//!   dialog.
+//! - `autoMode.environment` keeps the entries of Claude Code
+//!   (`"$defaults"`), and adds the places of riff work ([`environment`]).
+//!   So auto mode blocks fewer normal steps.
+//!
+//! Claude Code reads `autoMode` only from the user settings, the managed
+//! settings and `--settings`, not from the project settings. So riff
+//! gives the settings in these places (01M516HEX3GVTN9K2QS12A4PG3):
+//!
+//! ```mermaid
+//! flowchart LR
+//!     A["auto_mode<br/>owner, server"] -- "riff workers start" --> W["--settings of<br/>each worker"]
+//!     A -- "the daemon" --> S["settings.json of<br/>each session"]
+//!     A -- "riff lead start" --> L["settings.json of<br/>the lead: missing entries"]
+//! ```
+//!
+//! ```
+//! use riff::permissions::{Trust, auto_mode};
+//!
+//! let trust = Trust { owner: Some("acme"), server: Some("https://riff.acme.dev") };
+//! let settings = auto_mode(&trust);
+//! assert_eq!(settings["skillOverrides"]["auto-mode-setup"], "off");
+//! let environment = settings["autoMode"]["environment"].as_array().unwrap();
+//! assert_eq!(environment[0], "$defaults");
+//! assert!(environment.iter().any(|e| e.as_str().unwrap().contains("github.com/acme ")));
+//! ```
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
-use serde_json::{Map, Value};
+use riff_core::name::Repo;
+use serde_json::{Map, Value, json};
 
 /// A set of permission rules of Claude Code.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -409,6 +447,184 @@ pub fn session_rules() -> Rules {
     rules_of(Place::Session, &Facts::default())
 }
 
+/// The skill of Claude Code that offers the dialog "Teach auto mode
+/// about your environment?".
+pub const AUTO_MODE_SETUP: &str = "auto-mode-setup";
+
+/// The facts that the auto mode settings of a session take.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Trust<'a> {
+    /// The owner of the repository on GitHub, for example
+    /// `como-technologies`.
+    pub owner: Option<&'a str>,
+    /// The riff server of the session.
+    pub server: Option<&'a str>,
+}
+
+impl<'a> Trust<'a> {
+    /// The facts of a session in `repo` that talks to the riff server
+    /// `server`. A repository with no `origin` remote has the owner
+    /// `local` ([`crate::identity::place`]): it has no owner on GitHub.
+    ///
+    /// ```
+    /// use riff::permissions::Trust;
+    /// use riff_core::name::Repo;
+    ///
+    /// let repo = Repo::Git { owner: "acme".into(), name: "app".into() };
+    /// let trust = Trust::of(&repo, "http://h:7878");
+    /// assert_eq!(trust, Trust { owner: Some("acme"), server: Some("http://h:7878") });
+    /// assert_eq!(Trust::of(&Repo::None, "http://h:7878").owner, None);
+    /// let local = Repo::Git { owner: "local".into(), name: "app".into() };
+    /// assert_eq!(Trust::of(&local, "http://h:7878").owner, None);
+    /// ```
+    pub fn of(repo: &'a Repo, server: &'a str) -> Self {
+        let owner = match repo {
+            Repo::Git { owner, .. } if owner != "local" => Some(owner.as_str()),
+            _ => None,
+        };
+        Trust {
+            owner,
+            server: Some(server),
+        }
+    }
+}
+
+/// The entries of `autoMode.environment` of a session
+/// (01M516HETNZCBFBJNHT8BKFB1Y): first `"$defaults"`, so the entries of
+/// Claude Code stay; then the places of riff work. The owner of the
+/// repository on GitHub, the releases of riff, the crates of Rust, the
+/// session images and the riff server. An entry that needs a fact that
+/// `trust` does not have is not there.
+///
+/// ```
+/// use riff::permissions::{Trust, environment};
+///
+/// let all = environment(&Trust { owner: Some("acme"), server: Some("http://h:7878") });
+/// assert_eq!(all[0], "$defaults");
+/// assert!(all.iter().any(|e| e.starts_with("Source control: github.com/acme ")));
+/// assert!(all.iter().any(|e| e.contains("github.com/como-technologies/riff")));
+/// assert!(all.iter().any(|e| e.contains("crates.io")));
+/// assert!(all.iter().any(|e| e.contains("ghcr.io")));
+/// assert!(all.iter().any(|e| e.contains("http://h:7878")));
+///
+/// let few = environment(&Trust::default());
+/// assert_eq!(few.len(), all.len() - 2);
+/// assert!(!few.iter().any(|e| e.contains("github.com/acme")));
+/// ```
+pub fn environment(trust: &Trust) -> Vec<String> {
+    let riff = env!("CARGO_PKG_REPOSITORY").trim_start_matches("https://");
+    let mut out = vec!["$defaults".to_owned()];
+    if let Some(owner) = trust.owner {
+        out.push(format!(
+            "Source control: github.com/{owner} and each repository under it, with \
+             its issues, pull requests, checks and releases. The sessions of riff \
+             read and write them with git and gh."
+        ));
+    }
+    out.push(format!(
+        "Source control: {riff}, the repository of riff. riff update downloads \
+         the releases of riff from it."
+    ));
+    out.push(
+        "Trusted internal domains: crates.io, index.crates.io and static.crates.io. \
+         cargo gets the crates of Rust from them."
+            .to_owned(),
+    );
+    out.push(
+        "Trusted internal domains: ghcr.io. podman pulls the session image of riff \
+         from it."
+            .to_owned(),
+    );
+    if let Some(server) = trust.server {
+        out.push(format!(
+            "Key internal services: the riff server at {server}. Each riff command \
+             and each riff tool talks to it."
+        ));
+    }
+    out
+}
+
+/// The auto mode settings that riff gives each session that it starts
+/// (01M516HETNZCBFBJNHT8BKFB1Y): `/auto-mode-setup` off, so no session
+/// shows the dialog "Teach auto mode about your environment?", and
+/// `autoMode.environment` with the entries of [`environment`].
+///
+/// ```
+/// use riff::permissions::{Trust, auto_mode, environment};
+///
+/// let trust = Trust { owner: Some("acme"), server: None };
+/// let settings = auto_mode(&trust);
+/// assert_eq!(settings["skillOverrides"], serde_json::json!({"auto-mode-setup": "off"}));
+/// assert_eq!(settings["autoMode"]["environment"], serde_json::json!(environment(&trust)));
+/// assert_eq!(settings.as_object().unwrap().len(), 2);
+/// ```
+pub fn auto_mode(trust: &Trust) -> Value {
+    json!({
+        "skillOverrides": { AUTO_MODE_SETUP: "off" },
+        "autoMode": { "environment": environment(trust) },
+    })
+}
+
+/// The settings text with the auto mode settings of `trust`, or `None`
+/// when it has them all: `/auto-mode-setup` off, and each entry of
+/// [`environment`] that `autoMode.environment` lacks, at its end. It
+/// keeps each other key and each other entry in its order. It fails when
+/// the text is not a JSON object, or when a key has the wrong type.
+///
+/// ```
+/// use riff::permissions::{Trust, auto_mode, with_auto_mode};
+///
+/// let trust = Trust { owner: Some("acme"), server: None };
+/// let text = r#"{"model": "opus", "autoMode": {"environment": ["Mine"]}}"#;
+/// let out = with_auto_mode(text, &trust)?.unwrap();
+/// let value: serde_json::Value = serde_json::from_str(&out)?;
+/// assert_eq!(value["model"], "opus");
+/// assert_eq!(value["skillOverrides"]["auto-mode-setup"], "off");
+/// let environment = value["autoMode"]["environment"].as_array().unwrap();
+/// assert_eq!(environment[0], "Mine");
+/// assert_eq!(environment.len(), 1 + auto_mode(&trust)["autoMode"]["environment"].as_array().unwrap().len());
+/// assert_eq!(with_auto_mode(&out, &trust)?, None);
+/// assert!(with_auto_mode(r#"{"autoMode": []}"#, &trust).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn with_auto_mode(text: &str, trust: &Trust) -> Result<Option<String>> {
+    let mut value: Value = serde_json::from_str(text).context("the settings are not valid JSON")?;
+    let object = value
+        .as_object_mut()
+        .context("the settings are not a JSON object")?;
+    let mut changed = false;
+    let skills = object
+        .entry("skillOverrides")
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .context("`skillOverrides` is not a JSON object")?;
+    if skills.get(AUTO_MODE_SETUP) != Some(&json!("off")) {
+        skills.insert(AUTO_MODE_SETUP.to_owned(), json!("off"));
+        changed = true;
+    }
+    let have = object
+        .entry("autoMode")
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .context("`autoMode` is not a JSON object")?
+        .entry("environment")
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .context("`autoMode.environment` is not a JSON array")?;
+    for entry in environment(trust) {
+        if !have.iter().any(|e| e == entry.as_str()) {
+            have.push(Value::String(entry));
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let mut out = serde_json::to_string_pretty(&value)?;
+    out.push('\n');
+    Ok(Some(out))
+}
+
 /// True when the rule `rule` of Claude Code matches the Bash command
 /// `command`. It is the model of the match of Claude Code that the tests
 /// use: a rule `Bash(PATTERN)` matches the whole command, and each `*` in
@@ -632,6 +848,33 @@ pub fn add(path: &Path, rules: &Rules) -> Result<Rules> {
     };
     write(path, &new)?;
     Ok(added)
+}
+
+/// Adds the auto mode settings of `trust` that the settings file at
+/// `path` lacks ([`with_auto_mode`]). It makes the file when it is not
+/// there, and writes it only when it changes. True when it changed.
+///
+/// ```
+/// use riff::permissions::{Trust, add_auto_mode};
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("settings.json");
+/// assert!(add_auto_mode(&path, &Trust::default())?);
+/// assert!(!add_auto_mode(&path, &Trust::default())?);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn add_auto_mode(path: &Path, trust: &Trust) -> Result<bool> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => "{}".to_owned(),
+        Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
+    };
+    let Some(new) = with_auto_mode(&text, trust).with_context(|| path.display().to_string())?
+    else {
+        return Ok(false);
+    };
+    write(path, &new)?;
+    Ok(true)
 }
 
 /// Writes `text` into the settings file at `path`. It writes a new file

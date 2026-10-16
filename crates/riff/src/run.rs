@@ -143,7 +143,7 @@
 //! | Path | Holds |
 //! |---|---|
 //! | `clone/` | The clone of the session: `git clone --reference MAIN`. It stays until the merge. |
-//! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the trust of the clone ([`trust`]), and no attribution line of `claude` ([`settings`]). |
+//! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the trust of the clone ([`trust`]), no attribution line of `claude`, and the auto mode settings ([`settings`]). |
 //! | `events.jsonl` | Each event of `claude`, with no secret ([`Scrub`]). The daemon writes it. |
 //!
 //! # The spec of the container
@@ -470,42 +470,59 @@ pub fn trust(clone: &Path) -> Value {
 /// session place of the permission table, so the auto mode check does
 /// not refuse a step of the start text
 /// ([`crate::permissions::session_rules`], 01M5084K4YQCZF20XA0P2485SG).
-/// It is a setting of riff for its sessions, not a copy of a setting of
-/// the person.
+/// It has the auto mode settings of `auto`: no `/auto-mode-setup`, and
+/// the places of riff work ([`crate::permissions::auto_mode`],
+/// 01M516HEX3GVTN9K2QS12A4PG3). It is a setting of riff for its
+/// sessions, not a copy of a setting of the person.
 ///
 /// ```
-/// let settings = riff::run::settings();
+/// use riff::permissions::{Trust, auto_mode};
+///
+/// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878") };
+/// let settings = riff::run::settings(&auto);
 /// assert_eq!(settings["includeCoAuthoredBy"], false);
 /// let allow = settings["permissions"]["allow"].as_array().unwrap();
 /// assert!(allow.iter().any(|r| r == "Bash(gh issue view *)"));
 /// assert_eq!(allow.len(), riff::permissions::session_rules().allow.len());
+/// assert_eq!(settings["skillOverrides"], auto_mode(&auto)["skillOverrides"]);
+/// assert_eq!(settings["autoMode"], auto_mode(&auto)["autoMode"]);
 /// ```
-pub fn settings() -> Value {
-    json!({
+pub fn settings(auto: &crate::permissions::Trust) -> Value {
+    let mut settings = json!({
         "includeCoAuthoredBy": false,
         "permissions": { "allow": crate::permissions::session_rules().allow },
-    })
+    });
+    if let (Some(settings), Value::Object(auto)) = (
+        settings.as_object_mut(),
+        crate::permissions::auto_mode(auto),
+    ) {
+        settings.extend(auto);
+    }
+    settings
 }
 
 /// Makes the own Claude folder `dir` of a session, with the
 /// `.claude.json` of [`trust`] for `clone` and the `settings.json` of
-/// [`settings`].
+/// [`settings`] with `auto`.
 ///
 /// ```
+/// use riff::permissions::Trust;
+///
 /// let dir = std::env::temp_dir().join(format!("riff-doc-claude-{}", std::process::id()));
-/// riff::run::claude_folder(&dir, "/data/clone".as_ref()).unwrap();
+/// let auto = Trust { owner: Some("acme"), server: None };
+/// riff::run::claude_folder(&dir, "/data/clone".as_ref(), &auto).unwrap();
 /// let read = |name| -> serde_json::Value {
 ///     serde_json::from_str(&std::fs::read_to_string(dir.join(name)).unwrap()).unwrap()
 /// };
 /// assert_eq!(read(".claude.json"), riff::run::trust("/data/clone".as_ref()));
-/// assert_eq!(read("settings.json"), riff::run::settings());
+/// assert_eq!(read("settings.json"), riff::run::settings(&auto));
 /// std::fs::remove_dir_all(&dir).unwrap();
 /// ```
-pub fn claude_folder(dir: &Path, clone: &Path) -> Result<()> {
+pub fn claude_folder(dir: &Path, clone: &Path, auto: &crate::permissions::Trust) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     for (name, value) in [
         (".claude.json", trust(clone)),
-        ("settings.json", settings()),
+        ("settings.json", settings(auto)),
     ] {
         let path = dir.join(name);
         std::fs::write(&path, serde_json::to_string_pretty(&value)?)
@@ -1382,7 +1399,8 @@ async fn work(
     let folder = sessions_dir()?.join(format!("{item}-{}", short(session)));
     let clone = folder.join("clone");
     let claude = folder.join("claude");
-    claude_folder(&claude, &clone)?;
+    let auto = crate::permissions::Trust::of(me.place().repo(), server);
+    claude_folder(&claude, &clone, &auto)?;
     let branch = branch(item);
     let earlier = make_clone(main, &clone, &branch)?;
     let home = &checked.home;
@@ -1572,14 +1590,18 @@ mod tests {
     }
 
     #[test]
-    fn the_claude_folder_of_the_spec_turns_off_the_attribution_line() {
+    fn the_claude_folder_of_the_spec_turns_off_the_attribution_line_and_the_auto_mode_dialog() {
         let root = tempfile::tempdir().unwrap();
         let facts = Facts {
             claude: root.path().join("claude"),
             clone: root.path().join("clone"),
             ..facts()
         };
-        claude_folder(&facts.claude, &facts.clone).unwrap();
+        let auto = crate::permissions::Trust {
+            owner: Some("acme"),
+            server: Some("http://h:7878"),
+        };
+        claude_folder(&facts.claude, &facts.clone, &auto).unwrap();
 
         // claude in the container reads this folder as its config folder.
         let spec = spec(&facts);
@@ -1595,8 +1617,16 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(facts.claude.join(name)).unwrap())
                 .unwrap()
         };
-        assert_eq!(read("settings.json"), settings());
+        assert_eq!(read("settings.json"), settings(&auto));
         assert_eq!(read("settings.json")["includeCoAuthoredBy"], false);
+        // No dialog of auto mode, and the places of riff work.
+        assert_eq!(
+            read("settings.json")["skillOverrides"]["auto-mode-setup"],
+            "off"
+        );
+        let environment = read("settings.json")["autoMode"]["environment"].clone();
+        assert_eq!(environment[0], "$defaults");
+        assert!(environment.to_string().contains("github.com/acme "));
         let clone = facts.clone.display().to_string();
         assert_eq!(
             read(".claude.json")["projects"][&clone]["hasTrustDialogAccepted"],

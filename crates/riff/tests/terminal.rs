@@ -200,11 +200,12 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     // Each pane runs claude through the wrapper (01M493YZVZGA7TSRJH6F67VN0H).
     // `RIFF_ON=1` of the test environment turned riff on for the
     // command, so each worker gets it (01M3XY2SWEK0N8MC3MY4TMYTD3).
+    let flags = flags(&[]);
     let env = |id: &str| {
         format!(
             "-e RIFF_SERVER=http://riff.test:7878 -e RIFF_WORKER=1 -e RIFF_SESSION={id} \
              -e RIFF_ON=1 '{}' workers run 'claude' '--strict-mcp-config' '--mcp-config' '{}' '--settings' \
-             '{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}}}}' 'Join the riff.'",
+             '{flags}' 'Join the riff.'",
             Isolated::shared().riff_path().display(),
             m.mcp_file().display(),
         )
@@ -231,17 +232,32 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
         ]
     );
     // A worker has no Remote Control (01M3JD394YFA3TQRE3E72ZER4Z), also
-    // when the user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), and
-    // no recap (01M3MN0D429T4Q80DYBE9S9XR7).
+    // when the user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), no
+    // recap (01M3MN0D429T4Q80DYBE9S9XR7), and the auto mode settings
+    // (01M516HEX3GVTN9K2QS12A4PG3).
     assert!(!log.contains("remote-control"), "{log}");
+    assert!(
+        flags.starts_with(
+            r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"skillOverrides":{"auto-mode-setup":"off"},"autoMode":{"environment":["$defaults","#
+        ),
+        "{flags}"
+    );
+    assert!(flags.contains("http://riff.test:7878"), "{flags}");
     assert_eq!(
-        log.matches(
-            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}'"#
-        )
-        .count(),
+        log.matches(&format!("'--settings' '{flags}'")).count(),
         3,
         "{log}"
     );
+}
+
+/// The flag settings of a worker of [`repository`], with the server of
+/// the tests. The repository has no `origin`, so it has no owner.
+fn flags(lsp: &[String]) -> String {
+    let trust = riff::permissions::Trust {
+        owner: None,
+        server: Some("http://riff.test:7878"),
+    };
+    terminal::worker_settings(lsp, &trust)
 }
 
 /// A worker gets its settings on the command line. The user settings
@@ -309,10 +325,13 @@ fn a_worker_starts_with_each_plugin_with_a_language_server_off() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
+    let flags = flags(&["rust-analyzer-lsp@official".into()]);
     assert!(
-        m.log().contains(
-            r#"'--settings' '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@official":false}}'"#
-        ),
+        flags.contains(r#""enabledPlugins":{"rust-analyzer-lsp@official":false}"#),
+        "{flags}"
+    );
+    assert!(
+        m.log().contains(&format!("'--settings' '{flags}'")),
         "{}",
         m.log()
     );

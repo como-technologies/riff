@@ -45,7 +45,10 @@
 //! `remoteControlAtStartup` (01M3JV0ZNGKDFMRR9ACT0480V9). They also turn
 //! off the recap of Claude Code, because no person reads a worker pane
 //! (01M3MN0D429T4Q80DYBE9S9XR7), and each plugin with a language server
-//! ([`crate::worker_lsp`], 01M3ZJ1FAF7EJXP9CSET8ZY1K3). The user settings
+//! ([`crate::worker_lsp`], 01M3ZJ1FAF7EJXP9CSET8ZY1K3). They turn off
+//! the dialog "Teach auto mode about your environment?", and give auto
+//! mode the places of riff work ([`crate::permissions::auto_mode`],
+//! 01M516HEX3GVTN9K2QS12A4PG3). The user settings
 //! file does not change. The clear of a
 //! worker ([`crate::next`]) keeps the same process, so each next item has the same settings.
 //!
@@ -101,20 +104,30 @@ pub const JOIN: &str = "Join the riff.";
 /// user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), no recap
 /// (01M3MN0D429T4Q80DYBE9S9XR7), and each plugin of `lsp` off: the
 /// plugins with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3). A rule
-/// denies `riff cloud` (01M4262DY8NN30SC4REYX2G9DV).
+/// denies `riff cloud` (01M4262DY8NN30SC4REYX2G9DV). The auto mode
+/// settings of `trust` turn off `/auto-mode-setup` and give auto mode the
+/// places of riff work ([`crate::permissions::auto_mode`],
+/// 01M516HEX3GVTN9K2QS12A4PG3).
 ///
 /// ```
+/// use riff::permissions::{Trust, auto_mode};
 /// use riff::terminal::worker_settings;
-/// assert_eq!(
-///     worker_settings(&[]),
-///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}}"#,
+///
+/// let trust = Trust { owner: Some("acme"), server: Some("http://h:7878") };
+/// let auto = auto_mode(&trust);
+/// let start = r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}"#;
+/// let off = r#""enabledPlugins":{"rust-analyzer-lsp@claude-plugins-official":false}"#;
+/// let tail = format!(
+///     r#""skillOverrides":{},"autoMode":{}}}"#,
+///     auto["skillOverrides"], auto["autoMode"],
 /// );
+/// assert_eq!(worker_settings(&[], &trust), format!("{start},{tail}"));
 /// assert_eq!(
-///     worker_settings(&["rust-analyzer-lsp@claude-plugins-official".into()]),
-///     r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"enabledPlugins":{"rust-analyzer-lsp@claude-plugins-official":false}}"#,
+///     worker_settings(&["rust-analyzer-lsp@claude-plugins-official".into()], &trust),
+///     format!("{start},{off},{tail}"),
 /// );
 /// ```
-pub fn worker_settings(lsp: &[String]) -> String {
+pub fn worker_settings(lsp: &[String], trust: &crate::permissions::Trust) -> String {
     let mut settings = serde_json::json!({
         "remoteControlAtStartup": false,
         "awaySummaryEnabled": false,
@@ -124,6 +137,12 @@ pub fn worker_settings(lsp: &[String]) -> String {
         let off: serde_json::Map<String, serde_json::Value> =
             lsp.iter().map(|p| (p.clone(), false.into())).collect();
         settings["enabledPlugins"] = off.into();
+    }
+    if let (Some(settings), serde_json::Value::Object(auto)) = (
+        settings.as_object_mut(),
+        crate::permissions::auto_mode(trust),
+    ) {
+        settings.extend(auto);
     }
     settings.to_string()
 }
