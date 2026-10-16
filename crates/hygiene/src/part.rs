@@ -283,4 +283,9 @@ mod tests {
                     : test\nx: benchmark\nRunning a line of cargo\n";
         assert_eq!(names(list), ["a::one", "b::two"]);
     }
+
+    #[test]
+    fn a_broken_test_of_the_draft_for_798() {
+        assert_eq!(std::env::args().count(), 0, "a broken test for #798");
+    }
 }
