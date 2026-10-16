@@ -4459,6 +4459,11 @@ share.
   ELF has an interpreter, or when `riff --version` does not run in the
   session image that `riff.toml` pins, with `riff` bound at
   `/opt/riff/riff` with no write.
+- **01M51117NDKF11FNZ915TTQED4** The CI job "Session tests" runs the
+  tests of `crates/riff` in a container of the session image that
+  `riff.toml` pins, on each pull request and each push. The container
+  has `--init`, the user of the host and a home of its own, as a
+  session has. `just session-test` runs the same tests on a machine.
 - **01M4ZPJ091W3NYV1V0FJS9K6MS** For a release tag, the CI job "Static
   riff release" adds `riff-x86_64-unknown-linux-musl`,
   `riff-server-x86_64-unknown-linux-musl` and `SHA256SUMS` to the
@@ -4575,6 +4580,10 @@ share.
 - **01M4Z60B7XT7462XMV49GJTVSJ** Each container gets `--memory` and
   `--cpus`. The defaults are `--memory 8g` and `--cpus 4`. `podman stop`
   ends a session and each of its processes.
+- **01M51117K3WXK35CE67KPRFMA8** Each container of a session starts
+  with `podman run --init`. The init of podman (catatonit) is PID 1. It
+  reaps each orphan process of the session, and it passes each signal
+  to the command of the session. The init must be on the host.
 - **01M4Z60B7Y4XD6TJCYEYJT2R4S** The daemon keeps one limit for the
   host, in addition to the limits of each container: the number of live
   sessions, and a floor of free memory. It starts no session while the

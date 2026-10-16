@@ -13,6 +13,7 @@
 //! | (each spec) | `--sig-proxy=false` |
 //! | `name` | `--name NAME` |
 //! | The user | `--userns=keep-id` |
+//! | (each spec) | `--init`: the init of podman is PID 1, and reaps each orphan process (01M51117K3WXK35CE67KPRFMA8) |
 //! | `memory`, `cpus` | `--memory 8g`, `--cpus 4` |
 //! | `home` | `--mount type=tmpfs,destination=HOME,tmpfs-mode=0700,U=true` |
 //! | A [`Bind`] | `-v SOURCE:TARGET`, with `:ro` when it has no write |
@@ -93,7 +94,7 @@ pub struct Podman;
 /// assert_eq!(
 ///     args.join(" "),
 ///     "run --rm -i --sig-proxy=false --name riff-issue-12-1a2b3c4d --userns=keep-id \
-///      --memory 8g --cpus 4 \
+///      --init --memory 8g --cpus 4 \
 ///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
 ///      -v /data/clone:/data/clone -v riff-cargo:/home/mike/.cargo \
 ///      -v /home/mike/.gitconfig:/home/mike/.gitconfig:ro \
@@ -134,7 +135,7 @@ pub fn run_args(spec: &SessionSpec) -> Result<Vec<OsString>> {
 ///     .collect();
 /// assert_eq!(
 ///     args.join(" "),
-///     "run --rm -d -i -t --name riff-lead-o-r --userns=keep-id --memory 8g --cpus 4 \
+///     "run --rm -d -i -t --name riff-lead-o-r --userns=keep-id --init --memory 8g --cpus 4 \
 ///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
 ///      -w /data/clone img claude"
 /// );
@@ -150,6 +151,7 @@ fn args_of(spec: &SessionSpec, first: &[&str]) -> Result<Vec<OsString>> {
     args.push("--name".into());
     args.push(spec.name.clone().into());
     args.push("--userns=keep-id".into());
+    args.push("--init".into());
     args.push("--memory".into());
     args.push(spec.memory.clone().into());
     args.push("--cpus".into());

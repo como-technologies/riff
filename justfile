@@ -176,6 +176,13 @@ static PROFILE="release":
     deploy/static/build.sh {{PROFILE}}
     deploy/static/check.sh {{PROFILE}}
 
+# The tests of crates/riff in the session image of riff.toml, as a session
+# runs them (01M51117NDKF11FNZ915TTQED4). It needs podman or docker. ARGS
+# go to cargo test.
+# Run the tests of crates/riff in a container of the session image
+session-test *ARGS:
+    deploy/session-test.sh {{ARGS}}
+
 # The real-session test of a release (01M4ZCFGCY301G2ARFMRXV7XDR): the
 # static riff of this tree (01M4ZPJ0FXTC78Z8GG2QA65167) runs one scratch
 # item with riff run, the session image of riff.toml and a real claude. It

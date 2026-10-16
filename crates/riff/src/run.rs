@@ -140,6 +140,7 @@
 //! | Part | Value | Requirement |
 //! |---|---|---|
 //! | The user | `--userns=keep-id` | 01M4Z60B7QDWEFQ96H448RE9N2 |
+//! | The init | `--init`: PID 1 reaps each orphan process | 01M51117K3WXK35CE67KPRFMA8 |
 //! | The home | a tmpfs at the path of `HOME`, `HOME`, `USER`, `LOGNAME` | 01M4Z60B7SHAMXXFK15BE3KZSP, 01M4Z60B7S8V9KKZPNBCQ6M99N |
 //! | The clone | with write, at the same path, the working folder | 01M4Z60B7PTJMB37578K8FV22Q |
 //! | The objects of the main clone | no write, at the same path | 01M4Z60B7PQ07HRJBXS1TA73PX |
