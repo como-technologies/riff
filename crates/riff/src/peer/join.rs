@@ -242,7 +242,8 @@ mod tests {
         let new = Key::from_bytes(&[3; 32]).public();
         let heads = || hub.with_peers(crate::peer::keep::Peers::heads);
         let before = heads();
-        let refused = |key: Public, ask: &Ask| match admit(&hub, &invites, key, ask, 2_000).unwrap() {
+        let refused = |key: Public, ask: &Ask| match admit(&hub, &invites, key, ask, 2_000).unwrap()
+        {
             Answer::Refused { why } => why,
             Answer::Joined => panic!("joined"),
         };
@@ -256,7 +257,10 @@ mod tests {
             refused(member, &good),
             text::join_known_key(&member.to_string())
         );
-        assert_eq!(refused(new, &ask(invite.secret(), "a b")), text::JOIN_BAD_HOST);
+        assert_eq!(
+            refused(new, &ask(invite.secret(), "a b")),
+            text::JOIN_BAD_HOST
+        );
         let wrong = Secret::from_bytes([8; 32]);
         assert_eq!(refused(new, &ask(&wrong, "kadomony")), text::INVITE_UNKNOWN);
         let not_hex = Ask {

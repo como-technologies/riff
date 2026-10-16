@@ -5664,7 +5664,10 @@ mod tests {
 
         // The person is no member now, and does not sign in.
         let refused = service.admit(BOB, false, "key-of-bob").await.unwrap_err();
-        assert!(refused.contains("riff invite --email bob@gmail.com"), "{refused}");
+        assert!(
+            refused.contains("riff invite --email bob@gmail.com"),
+            "{refused}"
+        );
         // After a new invite, a new sign-in stays.
         as_person(&service, "ada", invite(BOB)).await.unwrap();
         let bob = service.admit(BOB, false, "key-of-bob").await.unwrap();

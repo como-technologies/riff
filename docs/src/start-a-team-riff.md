@@ -220,11 +220,11 @@ members of the riff, run `riff members --email`.
 The riff posts each change of the members to the thread of each
 repository of the riff, as a note: `riff invite --email`,
 `riff remove --email`, `riff admin add`, `riff admin remove` and each
-step of the owner role (see [Take the owner role](#take-the-owner-role)).
-The note names the user that made the change, the email and the
-change. It wakes no session. The command prints the threads that got
-the note. A note that the riff posts by itself comes from
-`riff@server`.
+step of the owner role (see
+[Take the owner role](#take-the-owner-role)). The note names the user
+that made the change, the email and the change. It wakes no session.
+The command prints the threads that got the note. A note that the riff
+posts by itself comes from `riff@server`.
 
 To see the notes as they come, run this in the directory of a
 repository:

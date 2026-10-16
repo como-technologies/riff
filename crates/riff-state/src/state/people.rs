@@ -854,7 +854,9 @@ impl Command for PassOwner {
         if !people.members.contains(&email) && !view.is_admin(&email) {
             return Err(Refused::new(
                 Code::NotMember,
-                format!("{email} is not a member of this riff; run riff invite --email {email} first"),
+                format!(
+                    "{email} is not a member of this riff; run riff invite --email {email} first"
+                ),
             ));
         }
         let mut changes = view.keeps(old);

@@ -91,7 +91,8 @@ impl Secret {
     /// A new random secret.
     pub fn random() -> Result<Secret> {
         let mut bytes = Zeroizing::new([0; 32]);
-        getrandom::fill(bytes.as_mut()).map_err(|e| anyhow::anyhow!("cannot make a secret: {e}"))?;
+        getrandom::fill(bytes.as_mut())
+            .map_err(|e| anyhow::anyhow!("cannot make a secret: {e}"))?;
         Ok(Secret(bytes))
     }
 
@@ -435,7 +436,10 @@ mod tests {
         assert_eq!(first.ends_ms, now + life);
 
         let file = std::fs::read(invites.path()).unwrap();
-        let mode = std::fs::metadata(invites.path()).unwrap().permissions().mode();
+        let mode = std::fs::metadata(invites.path())
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600);
         for invite in [&first, &second] {
             let hex = invite.secret().hex();

@@ -971,7 +971,11 @@ mod tests {
             ),
             (1, member.clone(), None),
             (2, member, Some("only the owner admits a member")),
-            (1, admit(1, "mike"), Some("the owner is no member of its riff")),
+            (
+                1,
+                admit(1, "mike"),
+                Some("the owner is no member of its riff"),
+            ),
             (
                 1,
                 admit(2, "eve"),

@@ -2069,10 +2069,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     pub async fn status(&self) -> Status {
         let (waits, key, riff, owner, position) = match self.riff.get() {
             Some(riff) => {
-                let position = riff
-                    .state
-                    .read(|state| state.written_position())
-                    .await;
+                let position = riff.state.read(|state| state.written_position()).await;
                 let key = riff.hub.public().to_string();
                 // The riff of peers that the daemon is in: the riff of its
                 // own, or the riff that it joined (01M521J6WZT2KR5ZQE9DZ9A5AC).

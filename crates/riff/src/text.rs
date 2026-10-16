@@ -7921,8 +7921,10 @@ pub fn invite_bad_user(user: &str) -> String {
 /// assert_eq!(riff::text::utc_minute(0), "1970-01-01 00:00 UTC");
 /// ```
 pub fn utc_minute(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .map_or_else(|| ms.to_string(), |at| at.format("%Y-%m-%d %H:%M UTC").to_string())
+    chrono::DateTime::from_timestamp_millis(ms).map_or_else(
+        || ms.to_string(),
+        |at| at.format("%Y-%m-%d %H:%M UTC").to_string(),
+    )
 }
 
 /// The answer of `riff invite USER` (01M519Z3SGEHVMS85HZD169CAP,
@@ -8039,7 +8041,9 @@ pub fn join_connects(owner: &str) -> String {
 /// );
 /// ```
 pub fn joined_peers(riff: &str, owner: Option<&str>, user: &str, host: &str) -> String {
-    let of = owner.map(|owner| format!(" of {owner}")).unwrap_or_default();
+    let of = owner
+        .map(|owner| format!(" of {owner}"))
+        .unwrap_or_default();
     format!(
         "This machine joined the riff {}{of}, as {user} on {host}. Its daemon syncs with each \
          member. riff members shows them.",
@@ -8060,7 +8064,9 @@ pub const LEAVE_OWNER: &str = "This machine is the owner of its riff, and the ow
 /// );
 /// ```
 pub fn left_riff(riff: &str, owner: Option<&str>, own: &str) -> String {
-    let of = owner.map(|owner| format!(" of {owner}")).unwrap_or_default();
+    let of = owner
+        .map(|owner| format!(" of {owner}"))
+        .unwrap_or_default();
     format!(
         "This machine left the riff {}{of}. It has a riff of its own again: {}.",
         short_key(riff),

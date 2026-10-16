@@ -136,10 +136,7 @@ async fn riff_invite_in_a_terminal_prints_the_string_and_riff_members_shows_the_
         shown.contains(&format!("\nriff join {string}\n")),
         "{shown}"
     );
-    assert!(
-        shown.contains("It works one time, until "),
-        "{shown}"
-    );
+    assert!(shown.contains("It works one time, until "), "{shown}");
     let file = std::fs::read(here.daemon_dir().join(FILE)).unwrap();
     let secret = invite.secret();
     assert!(!file.windows(32).any(|w| w == secret.bytes()));

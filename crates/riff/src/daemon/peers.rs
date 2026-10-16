@@ -280,7 +280,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     pub fn members(&self) -> Result<Vec<Shown>> {
         let hub = self.hub()?;
         let me = hub.public();
-        let forked: BTreeSet<Public> = hub.with_peers(|peers| peers.forks().keys().copied().collect());
+        let forked: BTreeSet<Public> =
+            hub.with_peers(|peers| peers.forks().keys().copied().collect());
         let keys: Vec<Public> = hub.read(|state| {
             std::iter::once(state.riff())
                 .chain(state.members().keys().copied())
@@ -454,7 +455,11 @@ mod tests {
 
         /// The riff of `riff daemon status`.
         async fn riff(&self) -> String {
-            crate::daemon::status(&self.dir).await.unwrap().riff.unwrap()
+            crate::daemon::status(&self.dir)
+                .await
+                .unwrap()
+                .riff
+                .unwrap()
         }
 
         /// The heads of the records of the daemon.
@@ -548,7 +553,10 @@ mod tests {
             let member = &state.members()[&me];
             (member.user.clone(), member.host.clone())
         });
-        assert_eq!((user.as_str(), member_host.as_str()), ("brett", host.as_str()));
+        assert_eq!(
+            (user.as_str(), member_host.as_str()),
+            ("brett", host.as_str())
+        );
         assert_eq!(
             n.hub().read(|state| state.owner().map(str::to_owned)),
             Some(o.user())
@@ -671,7 +679,12 @@ mod tests {
             }
         );
         until("the end of the link", || !links.online(&me)).await;
-        assert!(!links.shown().iter().any(|shown| shown.key == me.to_string()));
+        assert!(
+            !links
+                .shown()
+                .iter()
+                .any(|shown| shown.key == me.to_string())
+        );
 
         assert_eq!(n.riff().await, me.to_string());
         assert_eq!(joined(&state_dir(&n.dir)).unwrap(), None);

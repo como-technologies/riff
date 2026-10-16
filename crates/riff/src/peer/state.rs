@@ -253,7 +253,6 @@ impl State {
         self.owner_host.as_deref()
     }
 
-
     /// Each member key.
     pub fn members(&self) -> &BTreeMap<Public, Member> {
         &self.members

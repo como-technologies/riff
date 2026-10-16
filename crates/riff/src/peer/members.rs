@@ -200,7 +200,9 @@ mod tests {
                 kind: Default::default(),
                 body: "hi".into(),
             }));
-            peers.write(&key(byte), &body, 10 * u64::from(byte)).unwrap();
+            peers
+                .write(&key(byte), &body, 10 * u64::from(byte))
+                .unwrap();
         }
         peers.write(&key(5), &Body::Left(Left {}), 50).unwrap();
         peers

@@ -461,7 +461,10 @@ async fn a_join_goes_on_as_the_peer_link_and_no_line_holds_the_secret() {
     owner.links.take_joins(invites.clone());
     let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
     let invite = invites.make(owner.public(), "brett", now).unwrap();
-    owner.hub.write(&message("mike", "before the join")).unwrap();
+    owner
+        .hub
+        .write(&message("mike", "before the join"))
+        .unwrap();
     // The new daemon, as after its switch to the riff of the owner: no
     // record yet.
     let new = Daemon::start(2, owner.public(), tempfile::tempdir().unwrap()).await;
