@@ -2768,6 +2768,7 @@ mod tests {
     use super::*;
     use crate::run::HIDDEN;
     use crate::runtime::{Exit, Fake};
+    use crate::service::{ServiceManager, Unit};
     use tokio::sync::oneshot;
 
     const IMAGE: &str = "localhost/riff-session:latest";
@@ -4515,14 +4516,14 @@ mod tests {
     /// A service manager with its unit in memory. It logs each change.
     #[derive(Default)]
     struct Units {
-        unit: Mutex<Option<crate::service::Unit>>,
+        unit: Mutex<Option<Unit>>,
         calls: Mutex<Vec<&'static str>>,
     }
 
     impl Units {
         /// A unit that runs `exe`, with a `PATH`.
         fn of(exe: &Path) -> Units {
-            let unit = crate::service::Unit {
+            let unit = Unit {
                 exe: exe.to_owned(),
                 env: vec![("PATH".into(), "/home/mike/.cargo/bin:/usr/bin".into())],
             };
@@ -4541,8 +4542,8 @@ mod tests {
         }
     }
 
-    impl crate::service::ServiceManager for Units {
-        fn install(&self, _: &crate::service::Unit) -> Result<PathBuf> {
+    impl ServiceManager for Units {
+        fn install(&self, _: &Unit) -> Result<PathBuf> {
             bail!("this test installs nothing")
         }
 
@@ -4554,11 +4555,11 @@ mod tests {
             Ok("active".into())
         }
 
-        fn installed(&self) -> Result<Option<crate::service::Unit>> {
+        fn installed(&self) -> Result<Option<Unit>> {
             Ok(self.unit.lock().unwrap().clone())
         }
 
-        fn rewrite(&self, unit: &crate::service::Unit) -> Result<PathBuf> {
+        fn rewrite(&self, unit: &Unit) -> Result<PathBuf> {
             self.calls.lock().unwrap().push("rewrite");
             *self.unit.lock().unwrap() = Some(unit.clone());
             Ok(UNIT_FILE.into())
@@ -4631,7 +4632,7 @@ mod tests {
             tokio::spawn(async move {
                 let own = own_binary().unwrap();
                 let old = || stale(units.installed().unwrap().as_ref(), &own, false);
-                let restart = || crate::service::ServiceManager::try_restart(&*units);
+                let restart = || units.try_restart();
                 daemon.restart_when_old(old, restart).await;
             })
         };
@@ -4665,7 +4666,7 @@ mod tests {
             tokio::spawn(async move {
                 let own = own_binary().unwrap();
                 let old = || stale(units.installed().unwrap().as_ref(), &own, false);
-                let restart = || crate::service::ServiceManager::try_restart(&*units);
+                let restart = || units.try_restart();
                 daemon.restart_when_old(old, restart).await;
             })
         };

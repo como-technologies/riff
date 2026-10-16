@@ -4295,6 +4295,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3Q55KMQSSJVQEN86XFB8PSG** Each process that `riff` starts, for
   example a worker pane, runs the `riff` binary on disk. It never runs
   the path of a binary that a new one replaced.
+- **01M517BT9WBQ4R79Z9KVY9SG1B** When the `riff workers run` of a
+  worker runs a binary that a new one replaced, the worker ends in
+  place of its next clear (01M3XV0562D3H3P22CJDBPAZBH), as
+  `riff workers stop PANE` does. The lead gets a note with the pane and
+  the host. riff never ends a worker that holds a claim. The rollout
+  starts a new worker on the new riff for the free work.
 - **01M3JEE7WT04BKX377VW5GDSPY** `riff --version`,
   `riff-server --version`, `riff whoami`, `riff who` and the whoami
   tool show the build.
@@ -4785,6 +4791,24 @@ share.
   `--sig-proxy=false`, so a signal to it does not go to the container.
   The daemon stops a container only when `riff run` asks, or at the
   quiet limit (01M4ZSZX77AJDGWNQMGBPV2QXG).
+- **01M517BTDRKDXD3X84P6AEAF7P** `riff update` reads the unit
+  `riff.service` that riff wrote. When its `ExecStart` runs another
+  riff than the `riff` on `PATH`, riff writes the unit again with that
+  riff and the same variables, and runs `systemctl --user
+  daemon-reload`. With no unit file, or with `RIFF_HOME` set, it
+  changes nothing. A failed step fails no update.
+- **01M517BTJ9EV4ZGPYRB6HXJJC9** The daemon runs an old riff when its
+  binary was replaced, or when its unit names another riff. Then
+  `riff update` runs `systemctl --user --no-block try-restart
+  riff.service` only when the daemon owns no session, no start waits
+  for room, and no job of a wave runs. Else it says that the daemon
+  starts again after its last session. A daemon that does not answer
+  stays as it is.
+- **01M517BTP6BAGTRBYWPX9GPVE0** The daemon that the unit runs looks
+  for an old riff at the end of each session and of each job, and each
+  minute. When it runs an old riff and owns no session, no start
+  waits and no job runs, it asks systemd one time to start the unit
+  again. A failed ask is one line in its log.
 - **01M4ZHW2083VFTQJ772ZJ27XAC** The daemon keeps its state in the
   folder `state` in its folder: the log and the checkpoints of
   `riff-state`. At each start, it loads the newest checkpoint that it
