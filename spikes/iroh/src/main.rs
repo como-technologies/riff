@@ -5,7 +5,7 @@
 //!   of its own.
 //! - `dial` connects to a listener by its endpoint ID only, sends a
 //!   record, checks the answer, and measures the connect.
-//! - `hold` keeps one connection, sends a ping each second, and can
+//! - `hold` keeps one connection, sends a ping each 250 ms, and can
 //!   drop the link of its network namespace to measure a reconnect.
 
 use std::{
@@ -15,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, ExitCode},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -30,7 +30,7 @@ use iroh_spike::{
     record::{self, Kind, Record},
     spread,
 };
-use tokio::time::{MissedTickBehavior, sleep, timeout};
+use tokio::time::{MissedTickBehavior, sleep, sleep_until, timeout};
 
 const ALPN: &[u8] = b"riff/spike/iroh/0";
 
@@ -41,7 +41,11 @@ const CONNECT_WAIT: Duration = Duration::from_secs(20);
 /// The wait for a direct path after the start of a connect.
 const DIRECT_WAIT: Duration = Duration::from_secs(10);
 /// The wait for the answer to one ping.
-const PING_WAIT: Duration = Duration::from_secs(2);
+const PING_WAIT: Duration = Duration::from_secs(1);
+/// The wait for one connect of `hold` after its connection closed.
+const REDIAL_WAIT: Duration = Duration::from_secs(5);
+/// The time between two pings of `hold`.
+const PING_EVERY: Duration = Duration::from_millis(250);
 
 type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 
@@ -56,7 +60,7 @@ listen      Print the endpoint ID, then answer each dial until Ctrl-C.
 dial        Connect N times (default 5). Each connect has a new endpoint,
             or one endpoint with --warm. --relay-only uses no IP path.
 hold        Keep one connection for N seconds (default 120), with a
-            ping each second. --drop-after and --drop-for take the link
+            ping each 250 ms. --drop-after and --drop-for take the link
             down and up again. Run it in a namespace of its own: see
             drop.sh.";
 
@@ -242,12 +246,17 @@ async fn serve(incoming: Incoming, key: SecretKey, seq: Arc<AtomicU64>) -> Resul
     )?;
     send.write_all(&answer).await?;
     send.finish()?;
+    // Each ping has a task of its own: a dialer drops a ping that it
+    // waited for too long, and the next pings go on.
     while let Ok((mut send, mut recv)) = conn.accept_bi().await {
-        let ping = recv.read_to_end(8).await?;
-        send.write_all(&ping).await?;
-        send.finish()?;
+        tokio::spawn(async move {
+            let ping = recv.read_to_end(8).await?;
+            send.write_all(&ping).await?;
+            send.finish()?;
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+        });
     }
-    println!("{who}: closed");
+    println!("{who}: closed: {}", conn.closed().await);
     Ok(())
 }
 
@@ -272,8 +281,16 @@ impl Selected {
 
     fn describe(path: &Option<Selected>) -> String {
         match path {
-            Some(p) if p.direct => format!("direct {} (rtt {})", p.addr, ms(p.rtt)),
-            Some(p) => format!("relay {} (rtt {})", p.addr, ms(p.rtt)),
+            Some(p) => format!("{} (rtt {})", Selected::name(path), ms(p.rtt)),
+            None => Selected::name(path),
+        }
+    }
+
+    /// The kind and the address of a path, with no time.
+    fn name(path: &Option<Selected>) -> String {
+        match path {
+            Some(p) if p.direct => format!("direct {}", p.addr),
+            Some(p) => format!("relay {}", p.addr),
             None => "no path".into(),
         }
     }
@@ -307,18 +324,27 @@ async fn attempt(endpoint: &Endpoint, up: Duration, peer: EndpointId, seq: u64) 
         .map_err(|_| format!("no connect in {} s", CONNECT_WAIT.as_secs()))??;
     let connect = start.elapsed();
     let first_direct = Selected::of(&conn).is_some_and(|p| p.direct);
+    // Look for the first direct path while the records go.
+    let watch = {
+        let conn = conn.clone();
+        tokio::spawn(async move {
+            while start.elapsed() < DIRECT_WAIT {
+                if Selected::of(&conn).is_some_and(|p| p.direct) {
+                    return Some(start.elapsed());
+                }
+                sleep(Duration::from_millis(5)).await;
+            }
+            None
+        })
+    };
     let sent = Instant::now();
     let answer = exchange(&conn, endpoint.secret_key(), seq).await?;
     let exchange = sent.elapsed();
     println!("  the answer passed each check: {}", answer.body);
-    let mut direct = None;
-    while start.elapsed() < DIRECT_WAIT {
-        if Selected::of(&conn).is_some_and(|p| p.direct) {
-            direct = Some(start.elapsed());
-            break;
-        }
-        sleep(Duration::from_millis(10)).await;
-    }
+    let direct = match first_direct {
+        true => Some(connect),
+        false => watch.await?,
+    };
     let path = Selected::of(&conn);
     conn.close(0u32.into(), b"done");
     Ok(Attempt {
@@ -407,21 +433,22 @@ async fn dial(peer: EndpointId, options: Options) -> Result<()> {
 }
 
 /// Connects and swaps records, again and again until it works or the
-/// time ends.
+/// time ends. Each try waits `wait` at most.
 async fn connect(
     endpoint: &Endpoint,
     peer: EndpointId,
     seq: u64,
+    wait: Duration,
     end: Instant,
 ) -> Option<Connection> {
     while Instant::now() < end {
-        match timeout(CONNECT_WAIT, endpoint.connect(peer, ALPN)).await {
+        match timeout(wait, endpoint.connect(peer, ALPN)).await {
             Ok(Ok(conn)) => match exchange(&conn, endpoint.secret_key(), seq).await {
                 Ok(_) => return Some(conn),
                 Err(why) => println!("{}: the records failed: {why}", stamp()),
             },
             Ok(Err(why)) => println!("{}: no connect: {why}", stamp()),
-            Err(_) => println!("{}: no connect in {} s", stamp(), CONNECT_WAIT.as_secs()),
+            Err(_) => println!("{}: no connect in {}", stamp(), ms(wait)),
         }
         sleep(Duration::from_secs(1)).await;
     }
@@ -439,9 +466,16 @@ async fn ping(conn: &Connection, n: u64) -> Result<()> {
     }
 }
 
+/// `drop.sh` sets this variable. `hold` takes a link down only with
+/// it, so that it never takes down the link of a host.
+const OWN_NETNS: &str = "IROH_SPIKE_OWN_NETNS";
+
 async fn hold(peer: EndpointId, options: Options) -> Result<()> {
-    let mut link = match options.drop_after {
-        Some(_) => Some(Link::find()?),
+    let link = match options.drop_after.zip(options.drop_for) {
+        Some(_) if std::env::var_os(OWN_NETNS).is_none() => {
+            return Err("--drop-after takes a link down: run it with drop.sh".into());
+        }
+        Some(times) => Some((Link::find()?, times)),
         None => None,
     };
     let (endpoint, up) = bind(SecretKey::generate(), false).await?;
@@ -449,51 +483,46 @@ async fn hold(peer: EndpointId, options: Options) -> Result<()> {
     let start = Instant::now();
     let end = start + Duration::from_secs(options.seconds);
     let mut seq = 1;
-    let mut conn = connect(&endpoint, peer, seq, end)
+    let mut conn = connect(&endpoint, peer, seq, CONNECT_WAIT, end)
         .await
         .ok_or("no connect before the end")?;
     println!("{}: connected in {}", stamp(), ms(start.elapsed()));
-    let drop_at = options.drop_after.map(|s| start + Duration::from_secs(s));
-    let up_at = options
-        .drop_after
-        .zip(options.drop_for)
-        .map(|(after, down)| start + Duration::from_secs(after + down));
-    let mut link_up_since = None;
-    let mut path = Selected::describe(&Selected::of(&conn));
-    println!("{}: path {path}", stamp());
+    // The link goes down and up in a task of its own, so that a
+    // connect that waits does not stop it.
+    let link_up = Arc::new(Mutex::new(None::<Instant>));
+    let link_task = link.map(|(mut link, (after, down))| {
+        let link_up = link_up.clone();
+        tokio::spawn(async move {
+            sleep_until((start + Duration::from_secs(after)).into()).await;
+            link.take_down()?;
+            println!("{}: the link is down", stamp());
+            sleep_until((start + Duration::from_secs(after + down)).into()).await;
+            link.bring_up()?;
+            *link_up.lock().expect("the lock") = Some(Instant::now());
+            println!("{}: the link is up", stamp());
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+        })
+    });
+    let first = Selected::of(&conn);
+    let mut path = Selected::name(&first);
+    println!("{}: path {}", stamp(), Selected::describe(&first));
     let mut lost: Option<Instant> = None;
     let mut gaps = Vec::new();
     let mut after_up = Vec::new();
     let (mut sent, mut answered) = (0, 0);
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    let mut tick = tokio::time::interval(PING_EVERY);
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     while Instant::now() < end {
         tick.tick().await;
-        if let (Some(link), Some(at)) = (&mut link, drop_at)
-            && link_up_since.is_none()
-            && !link.down
-            && Instant::now() >= at
-        {
-            link.take_down()?;
-            println!("{}: the link is down", stamp());
-        }
-        if let (Some(link), Some(at)) = (&mut link, up_at)
-            && link.down
-            && Instant::now() >= at
-        {
-            link.bring_up()?;
-            link_up_since = Some(Instant::now());
-            println!("{}: the link is up", stamp());
-        }
-        let now = Selected::describe(&Selected::of(&conn));
-        if now != path {
-            println!("{}: path {now}", stamp());
-            path = now;
+        let now = Selected::of(&conn);
+        if Selected::name(&now) != path {
+            path = Selected::name(&now);
+            println!("{}: path {}", stamp(), Selected::describe(&now));
         }
         if let Some(why) = conn.close_reason() {
             println!("{}: the connection closed: {why}", stamp());
             seq += 1;
-            let Some(again) = connect(&endpoint, peer, seq, end).await else {
+            let Some(again) = connect(&endpoint, peer, seq, REDIAL_WAIT, end).await else {
                 break;
             };
             conn = again;
@@ -507,7 +536,7 @@ async fn hold(peer: EndpointId, options: Options) -> Result<()> {
                 answered += 1;
                 lost = None;
                 gaps.push(since.elapsed());
-                let after = link_up_since.map(|t| t.elapsed());
+                let after = link_up.lock().expect("the lock").map(|t| t.elapsed());
                 after_up.extend(after);
                 println!(
                     "{}: ping {sent} answered again, {} after the first lost ping{}",
@@ -527,13 +556,17 @@ async fn hold(peer: EndpointId, options: Options) -> Result<()> {
             (false, Some(_)) => {}
         }
     }
-    if let Some(link) = &mut link
-        && link.down
-    {
-        link.bring_up()?;
+    if let Some(task) = link_task {
+        if !task.is_finished() {
+            println!("{}: the end came before the link came up", stamp());
+        }
+        task.abort();
+        if let Ok(Err(why)) = task.await {
+            println!("the link failed: {why}");
+        }
     }
     conn.close(0u32.into(), b"done");
-    endpoint.close().await;
+    let _ = timeout(Duration::from_secs(3), endpoint.close()).await;
     println!(
         "summary: {answered} of {sent} pings answered, {} gaps",
         gaps.len()
@@ -564,47 +597,46 @@ async fn hold(peer: EndpointId, options: Options) -> Result<()> {
 /// its own allows it: see `drop.sh`.
 struct Link {
     dev: String,
-    /// Each default route, as the words of `ip route show`.
+    /// Each route of the link, as the words of `ip route show`. A link
+    /// that goes down loses its routes, and an address with
+    /// `noprefixroute` gets no route back at the next up.
     routes: Vec<(&'static str, Vec<String>)>,
-    down: bool,
 }
+
+/// The flags of `ip route show` that `ip route replace` does not take.
+const STATE_FLAGS: &[&str] = &[
+    "linkdown",
+    "dead",
+    "offload",
+    "trap",
+    "rt_offload",
+    "rt_trap",
+];
 
 impl Link {
     fn find() -> Result<Link> {
+        let dev = ip(&["-o", "route", "show", "default"])?
+            .lines()
+            .find_map(|line| route_dev(line).map(str::to_owned))
+            .ok_or("no default route")?;
         let mut routes = Vec::new();
         for family in ["-4", "-6"] {
-            let out = ip(&[family, "-o", "route", "show", "default"])?;
-            for line in out.lines() {
-                routes.push((
-                    family,
-                    line.split_whitespace()
-                        .map(str::to_owned)
-                        .collect::<Vec<_>>(),
-                ));
+            for line in ip(&[family, "-o", "route", "show", "dev", &dev])?.lines() {
+                routes.push((family, route_words(line, &dev)));
             }
         }
-        let dev = routes
-            .iter()
-            .find_map(|(_, words)| {
-                let at = words.iter().position(|w| w == "dev")?;
-                words.get(at + 1).cloned()
-            })
-            .ok_or("no default route")?;
+        // The default routes go last: each needs the route to its gateway.
+        routes.sort_by_key(|(_, words)| words.first().is_some_and(|w| w == "default"));
         // Keep the IPv6 addresses when the link goes down.
         let keep = format!("/proc/sys/net/ipv6/conf/{dev}/keep_addr_on_down");
         if let Err(why) = fs::write(&keep, "1") {
             println!("cannot write {keep}: {why}");
         }
-        Ok(Link {
-            dev,
-            routes,
-            down: false,
-        })
+        Ok(Link { dev, routes })
     }
 
     fn take_down(&mut self) -> Result<()> {
         ip(&["link", "set", "dev", &self.dev, "down"])?;
-        self.down = true;
         Ok(())
     }
 
@@ -615,9 +647,29 @@ impl Link {
             args.extend(words.iter().map(String::as_str));
             ip(&args)?;
         }
-        self.down = false;
         Ok(())
     }
+}
+
+/// The device of a line of `ip route show`.
+fn route_dev(line: &str) -> Option<&str> {
+    let mut words = line.split_whitespace();
+    words.find(|w| *w == "dev")?;
+    words.next()
+}
+
+/// The words of a line of `ip -o route show dev DEV` for
+/// `ip route replace`: with the device, with no state flag.
+fn route_words(line: &str, dev: &str) -> Vec<String> {
+    let mut words: Vec<String> = line
+        .split_whitespace()
+        .filter(|w| !STATE_FLAGS.contains(w))
+        .map(str::to_owned)
+        .collect();
+    if !words.iter().any(|w| w == "dev") {
+        words.extend(["dev".to_owned(), dev.to_owned()]);
+    }
+    words
 }
 
 fn ip(args: &[&str]) -> Result<String> {
@@ -702,6 +754,19 @@ mod tests {
         assert!(fault(&format!("hold {id} --drop-after 5")).contains("together"));
         assert!(fault("listen --nope").contains("unknown flag"));
         assert!(fault("talk").contains("unknown command"));
+    }
+
+    #[test]
+    fn a_route_line_gives_the_words_of_a_replace() {
+        let line = "default via 192.168.1.1 proto dhcp metric 600 linkdown";
+        assert_eq!(
+            route_words(line, "wlp10s0"),
+            words("default via 192.168.1.1 proto dhcp metric 600 dev wlp10s0")
+        );
+        let line = "default via 192.168.1.1 dev wlp10s0 proto dhcp metric 600";
+        assert_eq!(route_dev(line), Some("wlp10s0"));
+        assert_eq!(route_words(line, "wlp10s0"), words(line));
+        assert_eq!(route_dev("192.168.1.0/24 proto kernel"), None);
     }
 
     #[test]
