@@ -1893,7 +1893,13 @@ esac
             got,
             [(
                 Kind::Message,
-                text::wave_verify_request("issue-12", 40, "worktree-issue-12", "1a2b3c4", "9f8e7d6c")
+                text::wave_verify_request(
+                    "issue-12",
+                    40,
+                    "worktree-issue-12",
+                    "1a2b3c4",
+                    "9f8e7d6c"
+                )
             )]
         );
     }
