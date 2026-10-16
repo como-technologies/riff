@@ -3979,6 +3979,19 @@ pub fn host_asked(host: &str, request: &crate::host::Request) -> String {
     )
 }
 
+/// The line of `riff workers` under the workers of a host whose status
+/// has no room to list `more` of them (01M517W4NP2WKSRCK52ZBVWBD3).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_more_workers(7),
+///     "7 more workers: the status of the host has no room to list them.\n"
+/// );
+/// ```
+pub fn host_more_workers(more: usize) -> String {
+    format!("{more} more workers: the status of the host has no room to list them.\n")
+}
+
 /// The error when no workers host of the user runs on `host`.
 ///
 /// ```
