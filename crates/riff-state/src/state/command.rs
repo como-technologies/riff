@@ -925,17 +925,28 @@ mod tests {
         for row in &TABLE {
             let kind = row.kind;
             assert_eq!(kind.of_people(), row.people, "{kind}: of the people");
-            assert_eq!(kind.registers_first(), row.registers, "{kind}: registers first");
+            assert_eq!(
+                kind.registers_first(),
+                row.registers,
+                "{kind}: registers first"
+            );
             for &class in row.classes {
                 let worker = caller(class).with_worker(true).with_role(Role::Owner);
                 let result = permits(kind, &worker, Role::Member);
-                assert_eq!(result.is_ok(), row.worker, "{kind} by a worker {class:?}: {result:?}");
+                assert_eq!(
+                    result.is_ok(),
+                    row.worker,
+                    "{kind} by a worker {class:?}: {result:?}"
+                );
                 if let Err(refused) = result {
                     assert_eq!(refused.code, Code::NotAllowed);
                     assert!(refused.reason.starts_with("a worker cannot "), "{refused}");
                 }
                 let not_worker = caller(class).with_role(Role::Owner);
-                assert!(permits(kind, &not_worker, Role::Member).is_ok(), "{kind} by {class:?}");
+                assert!(
+                    permits(kind, &not_worker, Role::Member).is_ok(),
+                    "{kind} by {class:?}"
+                );
             }
         }
     }
@@ -950,10 +961,22 @@ mod tests {
             reason(CommandKind::Lead),
             "a worker cannot be the lead. Make another session the lead."
         );
-        assert_eq!(reason(CommandKind::Hold), "a worker cannot hold an item. Tell the lead.");
-        assert_eq!(reason(CommandKind::Free), "a worker cannot free an item. Tell the lead.");
-        assert_eq!(reason(CommandKind::Plan), "a worker cannot send plan. Tell the lead.");
-        assert_eq!(reason(CommandKind::PlanOff), "a worker cannot send plan_off. Tell the lead.");
+        assert_eq!(
+            reason(CommandKind::Hold),
+            "a worker cannot hold an item. Tell the lead."
+        );
+        assert_eq!(
+            reason(CommandKind::Free),
+            "a worker cannot free an item. Tell the lead."
+        );
+        assert_eq!(
+            reason(CommandKind::Plan),
+            "a worker cannot send plan. Tell the lead."
+        );
+        assert_eq!(
+            reason(CommandKind::PlanOff),
+            "a worker cannot send plan_off. Tell the lead."
+        );
     }
 
     /// The role that each command of the people needs, in the table of
