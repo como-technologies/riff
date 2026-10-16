@@ -4479,6 +4479,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `riff workers stop PANE` does. The lead gets a note with the pane and
   the host. riff never ends a worker that holds a claim. The rollout
   starts a new worker on the new riff for the free work.
+- **01M51M3ZRKQZ8KDVRGJR3XAY00** When `riff init` or the riff daemon
+  adds rules to the user settings of Claude Code, it marks the add in
+  the local files of riff. `riff workers run` gives `claude` the mark of
+  its start. A worker whose mark is not the last mark ends in place of
+  its next clear, as in 01M517BT9WBQ4R79Z9KVY9SG1B. The lead gets a
+  note with the pane and the host.
 - **01M3JEE7WT04BKX377VW5GDSPY** `riff --version`,
   `riff-server --version`, `riff whoami`, `riff who` and the whoami
   tool show the build.
@@ -5392,6 +5398,26 @@ share.
   removes them. A no, no terminal, `--yes` and `--check` keep each
   rule. riff removes only the wide rules, and keeps each other rule and
   key in its order.
+- **01M51M3ZHHBE61CEG9T6ENFG18** With `update.auto = true`, at each
+  start the riff daemon adds each rule of the user place that the user
+  settings of Claude Code lack, when its own binary is a release. It
+  writes as `riff init` does, keeps each other rule and key in its
+  order, and removes no rule. With `update.auto = false`, it changes
+  nothing. `riff update --auto` is the only switch, and it asks no other
+  question.
+- **01M51M3ZKWQYBBPD97R0G9QAX0** A binary is a release when its
+  SHA-256 is the line of `riff-TARGET` in `SHA256SUMS` of the release of
+  its version tag. With each other binary, for example a check build or
+  a dev build, and when riff cannot read `SHA256SUMS`, the riff daemon
+  changes no settings of Claude Code.
+- **01M51M3ZPAEMJ64266QSJBNQ46** The riff daemon logs each rule that
+  its sync adds, and one line of the result. It keeps that line in the
+  local files of riff. `riff init` and `riff init --check` show whether
+  the sync is on, and that line.
+- **01M51M3ZTV61C9BMFT3J1M06NF** The unit of the riff daemon gets
+  `CLAUDE_CONFIG_DIR` when it is set at the install, so the daemon and
+  `riff init` change the same user settings of Claude Code.
+
 - **01M5084K9J566981EXZ7YJRGRR** When the auto mode check refuses a
   step, the session stops that step, writes the command and the reason
   on the issue of its item, and tells the lead. It does not try the

@@ -485,8 +485,9 @@ enum Command {
         tag: Option<String>,
         /// Turn the update by itself on or off for this machine, and
         /// install nothing now. When it is on, riff installs each new
-        /// release that the riff runs, in the background. With no value,
-        /// show the setting.
+        /// release that the riff runs, in the background, and the riff
+        /// daemon adds the new permission rules of Claude Code of each
+        /// release. With no value, show the setting.
         #[arg(long, value_enum, conflicts_with_all = ["tag", "background"])]
         auto: Option<Option<Switch>>,
         /// Run as the update by itself: take the update lock of this

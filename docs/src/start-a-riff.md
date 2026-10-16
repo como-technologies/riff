@@ -299,11 +299,67 @@ when:
 The old form `Bash(cargo test:*)` is the same as `Bash(cargo test *)`.
 A rule of another tool, for example `Read`, is never wide.
 
+#### Keep the rules in step with each release
+
+A new release of riff can add a rule. Turn on the update by itself
+(see [Update riff by itself](how-it-works.md#update-riff-by-itself)),
+and the riff daemon adds the new rules for you:
+
+```sh
+riff update --auto on
+```
+
+```mermaid
+flowchart LR
+    S["the riff daemon starts"] --> A{"update.auto on?"}
+    A -- "yes" --> R{"its riff is a release?"}
+    R -- "yes" --> W["add each missing rule<br/>to your user settings"]
+    A -- "no" --> N["no change"]
+    R -- "no" --> N
+```
+
+- At each start, the riff daemon adds each rule of its release that
+  your user settings lack. It writes the same file as `riff init`. It
+  removes no rule, and keeps each other rule and key.
+- The daemon starts again on each new release, so each release gets
+  its rules. Your yes to the update by itself is your yes to these
+  rules: the owner approves each release.
+- Only a release changes your settings: a `riff` whose SHA-256 is in
+  `SHA256SUMS` of the GitHub release of its version. A check build or
+  a dev build changes nothing. So a session cannot build a branch with
+  a wide rule and get that rule into your settings.
+- Claude Code reads its rules only when it starts. Each worker starts
+  again after its item (see
+  [Which processes start again](how-it-works.md#which-processes-start-again)).
+  Start your other sessions of Claude Code again yourself.
+- `riff update --auto off` turns it off.
+
+`riff init` and `riff init --check` show whether the sync is on, and
+the last sync of the daemon:
+
+```text
+The sync of the rules is on: at each start, the riff daemon of a release adds each rule that is missing. Its last sync: riff 1.6.0 0a1b2c3 2026-10-20T10:00:00Z added 1 rule to /home/mike/.claude/settings.json. Each worker starts again at its next clear.
+```
+
+The daemon logs each rule that it adds:
+
+```sh
+journalctl --user -u riff.service | grep "the sync of the rules"
+```
+
+When you set `CLAUDE_CONFIG_DIR` after the install of the daemon,
+install it again, so that it writes the same settings file:
+
+```sh
+riff daemon install
+```
+
 ### Check this machine only
 
 This command changes nothing and asks nothing. It prints the fix of
-each check that fails, each missing permission rule and each wide
-rule. It exits with status 1 when a check fails:
+each check that fails, each missing permission rule, each wide rule,
+and whether the riff daemon keeps the rules in step. It exits with
+status 1 when a check fails:
 
 ```sh
 riff init --check
