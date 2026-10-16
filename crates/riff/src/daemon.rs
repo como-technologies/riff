@@ -68,11 +68,11 @@
 //! - [`Daemon::open_riff`] reads the key of the daemon, then loads the
 //!   state: the newest checkpoint, and the log after it. See "The key of
 //!   the daemon".
-//! - Each change goes through [`Daemon::state`]: one command at a time,
-//!   with its records in the log before its reply
-//!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session act on it
-//!   with peer to peer. Until then, they act on the riff-server of the
-//!   session ([`Daemon::tools_of`]).
+//! - Each change of `riff-state` goes through [`Daemon::state`]: one
+//!   command at a time, with its records in the log before its reply
+//!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session act on the
+//!   riff of peers, not on it (01M51QQGYDR9NZ702NFEQR512W,
+//!   [`Daemon::tools_of`]).
 //! - At the stop, [`Daemon::serve`] writes a checkpoint. A start after a
 //!   crash replays the log after the last checkpoint.
 //! - `riff daemon status` shows the public key of the daemon, the ID of
@@ -178,8 +178,8 @@
 //! |---|---|
 //! | [`SessionAsk::Hello`] | says [`Say::Session`]: the session ID, the item and the name of the container |
 //! | [`SessionAsk::Relay`] | relays the session ([`crate::session_relay`]) |
-//! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk ([`Daemon::tools_of`]) |
-//! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session ([`World::wake`]) |
+//! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk, on the riff of peers of the daemon ([`Daemon::tools_of`]) |
+//! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session: from the riff of peers ([`crate::peer::talk::Hub::wait`]), or from riff-server ([`World::wake`]) while the daemon has no riff |
 //!
 //! # A session
 //!
@@ -2748,13 +2748,16 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
     }
 
-    /// The riff tools of the session of `record`: they act on its
-    /// riff-server as that session, with the sign-in of the person on
-    /// this machine (01M4ZHSZV46RF3XDXDTQXWGXRG). That session is the
-    /// worker session of `riff run` or of a wave, which holds the claim
-    /// of the item. The session gets only the tools that act on
-    /// riff-server, and on no folder of the host and no claim
-    /// ([`crate::mcp::CONTAINER_TOOLS`], 01M4ZV3B6T2KB09WJ59F07HXET).
+    /// The riff tools of the session of `record`. With its riff, the
+    /// daemon serves the tools that talk on the riff of peers, with no
+    /// riff-server ([`crate::peer::talk`], 01M519Z3FTAZ20DQKDTW09M6NS).
+    /// While it has no riff, they act on the riff-server of the session,
+    /// with the sign-in of the person on this machine
+    /// (01M4ZHSZV46RF3XDXDTQXWGXRG). That session is the worker session
+    /// of `riff run` or of a wave, which holds the claim of the item. The
+    /// session gets only the tools that talk, and act on no folder of
+    /// the host and no claim ([`crate::mcp::CONTAINER_TOOLS`],
+    /// 01M4ZV3B6T2KB09WJ59F07HXET).
     pub fn tools_of(&self, record: &Record) -> Result<crate::mcp::Tools> {
         let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
         let mut tools = crate::mcp::Tools::new(api, record.me.clone()).as_worker(!record.terminal);

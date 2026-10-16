@@ -98,14 +98,16 @@
 //! The daemon serves the tools of a session of `riff run`
 //! ([`crate::daemon`]). The daemon runs on the host, outside the
 //! container. So that session gets only the tools of
-//! [`CONTAINER_TOOLS`]: they act on riff-server, and on no folder of the
-//! host and no claim (01M4ZV3B6T2KB09WJ59F07HXET). `riff run` does the
+//! [`CONTAINER_TOOLS`]: they only talk, and act on no folder of the host
+//! and no claim (01M4ZV3B6T2KB09WJ59F07HXET). They act on the riff of
+//! peers of the daemon, with no riff-server ([`crate::peer::talk`],
+//! 01M519Z3FTAZ20DQKDTW09M6NS): [`Tools::with_talk`]. `riff run` does the
 //! claim, the release and the verify request. The tools do not list each
 //! other tool, and refuse a call of it with [`text::not_in_a_container`].
 //! The instructions of the server are [`text::MCP_CONTAINER`].
 //!
 //! The lead in a container ([`crate::lead`]) also gets the tools of a
-//! lead that act only on riff-server: [`LEAD_TOOLS`]. Its instructions
+//! lead that only talk: [`LEAD_TOOLS`]. Its instructions
 //! are [`text::MCP_LEAD`]: they say how the lead gets its wakes, and
 //! the steps of the waves.
 
@@ -172,14 +174,13 @@ enum Reach {
 }
 
 /// The tools of a session in a container (01M4ZV3B6T2KB09WJ59F07HXET).
-/// Each acts on riff-server, and on no folder of the host and no claim.
+/// Each only talks, and acts on no folder of the host and no claim.
 pub const CONTAINER_TOOLS: [&str; 8] = [
     "blocked", "post", "read", "status", "tell", "threads", "who", "whoami",
 ];
 
 /// The tools of the lead in a container: the tools of
-/// [`CONTAINER_TOOLS`], and the tools of a lead that act only on
-/// riff-server.
+/// [`CONTAINER_TOOLS`], and the tools of a lead that only talk.
 pub const LEAD_TOOLS: [&str; 13] = [
     "blocked", "free", "hold", "lead", "pause", "post", "read", "resume", "status", "tell",
     "threads", "who", "whoami",

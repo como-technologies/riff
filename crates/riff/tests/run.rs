@@ -1342,6 +1342,7 @@ async fn a_session_uses_the_riff_tools_through_the_relay() {
         r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"leave","arguments":{}}}"#.to_owned(),
         format!(r#"{{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{{"name":"move","arguments":{{"path":"{host}"}}}}}}"#),
         r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"whoami","arguments":{}}}"#.to_owned(),
+        r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"read","arguments":{"all":true}}}"#.to_owned(),
     ];
     std::fs::write(machine.bin.path().join("tools"), calls.join("\n") + "\n").unwrap();
 
@@ -1353,7 +1354,8 @@ async fn a_session_uses_the_riff_tools_through_the_relay() {
     let args: Vec<&str> = args.lines().collect();
     let session = args[args.iter().position(|a| *a == "--session-id").unwrap() + 1];
 
-    // The tools act as the session of riff run, which holds the item.
+    // The tools act as the session of riff run, which holds the item, on
+    // the riff of peers of the daemon (01M519Z3FTAZ20DQKDTW09M6NS).
     let answers: Vec<Value> = machine
         .read("mcp.out")
         .lines()
@@ -1376,8 +1378,11 @@ async fn a_session_uses_the_riff_tools_through_the_relay() {
     assert!(whoami.contains(&format!("session={session}")), "{whoami}");
     assert!(whoami.contains("claim=issue-12"), "{whoami}");
     assert_ne!(answer(2)["result"]["isError"], true, "{answers:?}");
+    // The post is a record of the daemon: the session reads it, and the
+    // lead on riff-server 1.x does not see it (01M519Z4XPS0AE026ZC3CPATP5).
+    assert!(text(8).contains("hello from the container"), "{}", text(8));
     let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
-    assert!(thread.contains("hello from the container"), "{thread}");
+    assert!(!thread.contains("hello from the container"), "{thread}");
 
     for (id, tool) in [(3, "claim"), (4, "release"), (5, "leave"), (6, "move")] {
         assert_eq!(answer(id)["result"]["isError"], true, "{answers:?}");
