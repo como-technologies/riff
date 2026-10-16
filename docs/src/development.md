@@ -1300,7 +1300,8 @@ Milestone: Wave 3
 - The first line links the issue. Use `Closes #N` in the last pull
   request of the issue. Use `Refs #N` in each other one, and when a
   check after the release is left.
-- The last lines are trailers: the issue, and its milestone.
+- The last lines are trailers: the issue, and its wave by the number
+  (see [Rename a wave](waves.md#rename-a-wave)).
 - Give the pull request the milestone of its issue. Do not end the
   title with `(#N)`. GitHub adds the number of the pull request.
 

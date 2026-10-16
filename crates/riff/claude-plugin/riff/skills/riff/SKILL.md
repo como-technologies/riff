@@ -206,6 +206,7 @@ This is the only part of the skill that is special to one forge.
 | See the open items of a wave | `gh issue list --milestone "Wave 2"` |
 | See the open items with no wave | `gh issue list --search no:milestone` |
 | Make a wave | `riff wave make "Wave 6"` |
+| Rename a wave, and keep its number | `riff wave rename 6 "Cloud"` |
 | Put an item in a wave | `gh issue edit 12 --milestone "Wave 3"` |
 | Move an item to the backlog | `gh issue edit 12 --milestone Backlog` |
 | See the items in the backlog | `gh issue list --milestone Backlog` |
@@ -479,8 +480,8 @@ one forge.
 - The body of a pull request has one line `Closes #N` (the last pull
   request of the issue) or `Refs #N` (each other one, and one with a
   check after the release left). It ends with the trailers `Issue: #N`
-  and `Milestone: M`, where M is the milestone of the issue. Do not end
-  the title with `(#N)`.
+  and `Milestone: Wave W`, where W is the number of the wave of the
+  issue, with no name. Do not end the title with `(#N)`.
 
 ```text
 Closes #12

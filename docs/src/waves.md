@@ -150,6 +150,21 @@ number. riff refuses a number that an open wave has:
 riff wave make "Wave 6: Cloud"
 ```
 
+### Rename a wave
+
+Give the number of the wave and its new name. The number stays: it is
+the wave. This command gives the milestone the title
+`Wave 6: Cloud and sign-in`:
+
+```sh
+riff wave rename 6 "Cloud and sign-in"
+```
+
+A pull request names its wave by the number only, in the trailer
+`Milestone: Wave 6`. The check `Hygiene` compares only the number. So
+a rename breaks no pull request, also one with the old title in its
+trailer.
+
 ### End a wave
 
 Give the number of the wave. riff closes its milestone. It refuses a

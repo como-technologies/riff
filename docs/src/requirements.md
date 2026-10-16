@@ -542,6 +542,11 @@
 - **01M509TJTV7TC32EKXW0TEQ5NZ** `riff wave make TITLE` makes a
   milestone. The title is `Wave N`, or `Wave N: NAME`. riff refuses
   each other title, and a number that an open wave has.
+- **01M518A0BEQBX9RH9H0CEFYF9Q** `riff wave rename N NAME` gives the
+  open milestone of the wave with the number N the title
+  `Wave N: NAME`. The number stays. riff refuses a blank name, and a
+  number that no open wave has. Then it changes nothing. The skill and
+  the page "Waves" give it as the step to rename a wave.
 - **01M509TJXE04CTG5D1K751WXJY** `riff wave end N` closes the open
   milestone of the wave with the number N. riff refuses when no open
   wave has the number, and when the milestone has an open issue or an
@@ -579,7 +584,13 @@
 - **01M3JDRSYEGKYVNGF49SJMACEB** The body of a pull request ends with
   the trailers `Issue: #N` and `Milestone: M`, each one time. N is the
   issue of the link line (`issue-trailer`). M is the milestone of the
-  pull request (`milestone-trailer`).
+  pull request (`milestone-trailer`). Superseded in part by
+  01M518A04JWYJE5FA1VR309SAA.
+- **01M518A04JWYJE5FA1VR309SAA** The trailer `Milestone: M` names the
+  milestone of the pull request when both are waves with the same
+  number: `Wave N`, with a name or with none. A milestone that is not a
+  wave needs its whole title. So a rename of a wave breaks no pull
+  request (`milestone-trailer`).
 - **01M3JDRT0SHF2J3NXNGZFWYH6W** A pull request and its issue have the
   same milestone (`milestone`). The issue is open (`issue-open`).
 - **01M3JDRT31M12MJ1K592RAJQ78** `just hygiene commit [REV]` checks the
@@ -648,7 +659,13 @@
   `--file`, and the trailers `Issue: #N` and `Milestone: M` of the
   issue. It refuses a pull request that breaks the hygiene check, and
   opens nothing then. After the create, it runs
-  `gh pr merge N --auto --squash` at once.
+  `gh pr merge N --auto --squash` at once. Superseded in part by
+  01M518A07QF1YACBYT91M0DD1R.
+- **01M518A07QF1YACBYT91M0DD1R** `riff pr open` writes the trailer
+  `Milestone: Wave N` for a wave: its number, with no name. For a
+  milestone that is not a wave, it writes the whole title. A trailer
+  `Milestone:` of `--file` with the same wave number is the one of the
+  pull request.
 - **01M3W2627GYXR8CFW76KB6CB9W** `riff pr open` adds the link line and
   each of the trailers `Issue:` and `Milestone:` only when the text of
   `--file` does not have it. When that text has a link line, or a

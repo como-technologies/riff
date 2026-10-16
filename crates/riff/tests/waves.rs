@@ -368,7 +368,9 @@ fn riff_wave_rename_gives_the_wave_a_new_name_and_keeps_its_number() {
     let renamed = riff_wave(
         &env,
         bin.path(),
-        &["rename", "28", "1.x,", "fixes", "that", "slow", "the", "work"],
+        &[
+            "rename", "28", "1.x,", "fixes", "that", "slow", "the", "work",
+        ],
     );
     assert!(renamed.status.success(), "{}", text(&renamed));
     assert_eq!(
@@ -389,7 +391,9 @@ fn riff_wave_rename_gives_the_wave_a_new_name_and_keeps_its_number() {
     let writes: Vec<&str> = log.lines().filter(|l| l.contains(" -X ")).collect();
     assert_eq!(
         writes,
-        ["gh api -X PATCH repos/{owner}/{repo}/milestones/33 -f title=Wave 28: 1.x, fixes that \
-          slow the work"]
+        [
+            "gh api -X PATCH repos/{owner}/{repo}/milestones/33 -f title=Wave 28: 1.x, fixes that \
+          slow the work"
+        ]
     );
 }

@@ -127,7 +127,10 @@ fn a_trailer_of_the_old_title_passes_after_a_rename_of_the_wave() {
     assert!(out.status.success(), "{}", text(&out.stderr));
 
     let other = GOOD.replace("Wave 3", "Wave 27: after 1.4.0");
-    let gh = fake_gh(&pr_json(&other, renamed), &[issue_json(77, "OPEN", renamed)]);
+    let gh = fake_gh(
+        &pr_json(&other, renamed),
+        &[issue_json(77, "OPEN", renamed)],
+    );
     let out = hygiene(&["pr", "90"], Some(gh.path()), None);
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
