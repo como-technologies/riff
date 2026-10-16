@@ -5652,9 +5652,10 @@ then.
 - **01M51JW20CSAECFRZTJ95P6F3E** Each error of the keyring is a wait of
   the daemon, also a keyring that riff cannot open. The daemon says the
   error in one line, and looks again each 30 seconds.
-- **01M51JW233MXB72MHHRAX4E4NF** While the daemon waits for its key,
-  it answers `riff daemon status` with the line of the wait, and
-  refuses each other ask with that line.
+- **01M51JW233MXB72MHHRAX4E4NF** The daemon serves at its start, and
+  reads its key in the background. While it waits for its key, it runs
+  its sessions, and `riff daemon status` shows the line of the wait.
+  Until the records of Wave B, a session needs no key of the daemon.
 - **01M51JW25SPDW564A3DG31D7XM** When the daemon makes a new key
   because its key and its state do not go together, it moves the old
   folder `state` to `state.lost-MS` beside it. riff never reads that

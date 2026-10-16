@@ -640,8 +640,9 @@ riff does not read it.
 
 While the OS keyring is locked, or does not answer, the daemon waits
 for it. It makes no new key. It says one line in its log, and looks
-again each 30 seconds. `riff daemon status` shows that line. Unlock
-the keyring at the desktop: the daemon then reads its key and goes on.
+again each 30 seconds. `riff daemon status` shows that line. Your
+sessions run in that time. Unlock the keyring at the desktop: the
+daemon then reads its key and its riff.
 
 ### Restart or stop the daemon
 

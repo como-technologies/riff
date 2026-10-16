@@ -64,9 +64,9 @@
 //! (01M4Z60B8AFV68ZSAFA540G73C, 01M4ZHW1Y1X21ZPV053D0CXWMC): a
 //! [`Local`] in [`state_dir`] (01M519Z2JMAKN0T6JZFBPSTKC8).
 //!
-//! - [`Daemon::open`] reads the key of the daemon, then loads the state:
-//!   the newest checkpoint, and the log after it. See "The key of the
-//!   daemon".
+//! - [`Daemon::open_riff`] reads the key of the daemon, then loads the
+//!   state: the newest checkpoint, and the log after it. See "The key of
+//!   the daemon".
 //! - Each change goes through [`Daemon::state`]: one command at a time,
 //!   with its records in the log before its reply
 //!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session act on it
@@ -95,7 +95,7 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     O["Daemon::open"] --> W["daemon_key::wait: the key of the keyring<br/>(it waits while the keyring refuses)"]
+//!     O["Daemon::open_riff"] --> W["daemon_key::wait: the key of the keyring<br/>(it waits while the keyring refuses)"]
 //!     W --> L["Local::open: the newest checkpoint,<br/>then the log after it"]
 //!     L --> S{"step: the key and the riff of the state"}
 //!     S -->|"the riff is the public key"| G["go on with the key and the riff"]
@@ -108,10 +108,11 @@
 //! a new key again, and says why.
 //!
 //! While the daemon waits for its keyring, it makes no key and no riff
-//! (01M51BFYNMYHSQ62BBJES3CCWT). `riff daemon` already listens: it
-//! answers [`Ask::Status`] with [`Status::opening`], which says what the
-//! daemon waits for, and refuses each other ask with the same line
-//! (01M51JW233MXB72MHHRAX4E4NF).
+//! (01M51BFYNMYHSQ62BBJES3CCWT). `riff daemon` opens its riff in a task of
+//! its own ([`Daemon::open_riff`]), and serves at once: its sessions need no
+//! key until the records of Wave B. Until the riff is there,
+//! [`Status::waits`] says what the daemon waits for, and [`Daemon::state`]
+//! is `None` (01M51JW233MXB72MHHRAX4E4NF).
 //!
 //! # The relay
 //!
@@ -807,8 +808,8 @@ pub struct Status {
     pub since_ms: i64,
     /// The folder of the daemon.
     pub dir: PathBuf,
-    /// What the daemon waits for before it serves, while it opens: its
-    /// key in the OS keyring, or its state (01M51JW233MXB72MHHRAX4E4NF).
+    /// What the daemon waits for while it has no riff: its key in the OS
+    /// keyring, or its state (01M51JW233MXB72MHHRAX4E4NF).
     #[serde(default)]
     pub waits: Option<String>,
     /// The public key of the daemon (01M519Z2N2PMZJ0CYAPV0A47BZ).
@@ -857,34 +858,6 @@ impl Status {
     /// ```
     pub fn busy(&self) -> usize {
         self.sessions.len() + self.waiting.len() + self.jobs
-    }
-
-    /// The state of the daemon of the process `pid` in the folder `dir`
-    /// while it opens: it waits for `waits`, and has no key, no riff and
-    /// no session yet (01M51JW233MXB72MHHRAX4E4NF).
-    ///
-    /// ```
-    /// let status = riff::daemon::Status::opening(7, "/d".into(), 0, "its key".into());
-    /// assert_eq!(status.waits.as_deref(), Some("its key"));
-    /// assert_eq!((status.key, status.riff, status.busy()), (None, None, 0));
-    /// ```
-    pub fn opening(pid: u32, dir: PathBuf, since_ms: i64, waits: String) -> Status {
-        Status {
-            pid,
-            build: Build::this().to_string(),
-            since_ms,
-            dir,
-            waits: Some(waits),
-            key: None,
-            riff: None,
-            owner: None,
-            position: 0,
-            sessions: Vec::new(),
-            limit: None,
-            waiting: Vec::new(),
-            waves: Vec::new(),
-            jobs: 0,
-        }
     }
 }
 
@@ -1390,11 +1363,11 @@ pub struct Daemon<R> {
     /// The quiet limit of each session ([`QUIET_LIMIT`]).
     quiet: Duration,
     live: Mutex<BTreeMap<String, Arc<Owned>>>,
-    /// The key of the daemon ([`crate::daemon_key`]).
-    key: Key,
-    /// The user of the owner of its riff.
-    owner: String,
-    state: Local,
+    /// The riff of the daemon, when the keyring gave its key
+    /// ([`Daemon::open_riff`]).
+    riff: tokio::sync::OnceCell<Riff>,
+    /// While the riff is not there: what the daemon waits for.
+    waits: Mutex<String>,
     /// The limit of the host, and the starts that wait for room.
     room: Arc<Room>,
     /// The forge and the riff of the waves ([`crate::wave::Live`]).
@@ -1415,6 +1388,14 @@ struct Running {
     taken: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// What it did last.
     word: Arc<Mutex<String>>,
+}
+
+/// The riff of a daemon: its key ([`crate::daemon_key`]), the user of
+/// the owner, and the state of riff on the machine.
+struct Riff {
+    key: Key,
+    owner: String,
+    state: Local,
 }
 
 /// The object of the riff of the daemon in its state: the riff ID and
@@ -1580,11 +1561,9 @@ pub async fn listen(dir: &Path) -> Result<UnixListener> {
 }
 
 impl<R: Runtime + 'static> Daemon<R> {
-    /// A daemon with no session, on `runtime`, with its folder `dir`. It
-    /// binds its own binary into each session ([`own_binary`]). It reads
-    /// its key, and loads its state from [`state_dir`]: the newest
-    /// checkpoint, and the log after it. At its first start, it makes its
-    /// key and a riff of its own ([`step`]). Only one daemon may open a
+    /// A daemon with no session, on `runtime`, with its folder `dir`,
+    /// and with its riff ([`Daemon::open_riff`]). It binds its own binary
+    /// into each session ([`own_binary`]). Only one daemon may open a
     /// folder: call [`listen`] first. Its quiet limit is [`QUIET_LIMIT`],
     /// or the value of [`QUIET_VAR`]. It says each line of its key on
     /// the standard output.
@@ -1593,20 +1572,62 @@ impl<R: Runtime + 'static> Daemon<R> {
         Self::open_with(runtime, dir, crate::secrets::retry(), say).await
     }
 
-    /// [`Daemon::open`] that looks at a keyring that refuses each `retry`
-    /// (01M51BFYNMYHSQ62BBJES3CCWT), and gives `say` each line of its key:
-    /// the keyring refuses or answers again, a first start, a new key and
-    /// why.
+    /// [`Daemon::open`] that gives [`Daemon::open_riff`] the time `retry`
+    /// and the lines `say`.
     pub async fn open_with(
         runtime: R,
         dir: PathBuf,
         retry: Duration,
-        mut say: impl FnMut(String) + Send,
+        say: impl FnMut(String) + Send,
     ) -> Result<Self> {
+        let daemon = Self::new(runtime, dir)?;
+        daemon.open_riff(retry, say).await?;
+        Ok(daemon)
+    }
+
+    /// A daemon with no session and no riff yet, on `runtime`, with its
+    /// folder `dir`. It runs sessions before it has its riff
+    /// (01M51JW233MXB72MHHRAX4E4NF).
+    pub fn new(runtime: R, dir: PathBuf) -> Result<Self> {
         private_dir(&dir)?;
-        let name = crate::daemon_key::secret_name(&dir);
+        let room = Room::new(dir.clone(), Arc::new(crate::room::free_memory));
+        Ok(Daemon {
+            runtime,
+            dir,
+            since_ms: now_ms(),
+            relay_bin: own_binary().unwrap_or_else(|_| PathBuf::from("riff")),
+            any_relay: crate::release::takes_dynamic(),
+            quiet: quiet_limit(),
+            live: Mutex::new(BTreeMap::new()),
+            riff: tokio::sync::OnceCell::new(),
+            waits: Mutex::new(text::DAEMON_OPENS.into()),
+            room,
+            world: Arc::new(crate::wave::Live::default()),
+            waves: Mutex::new(BTreeMap::new()),
+            changed: Notify::new(),
+        })
+    }
+
+    /// Reads the key of the daemon, and loads its state from
+    /// [`state_dir`]: the newest checkpoint, and the log after it. At the
+    /// first start, it makes the key and a riff of its own ([`step`]).
+    /// While the keyring refuses, it looks again each `retry`
+    /// (01M51BFYNMYHSQ62BBJES3CCWT). It gives `say` each line of its
+    /// key: the keyring refuses or answers again, and then the riff: a
+    /// first start, a new key and why, or the key that it read.
+    /// [`Status::waits`] shows the last line until the riff is there.
+    pub async fn open_riff(
+        &self,
+        retry: Duration,
+        mut say: impl FnMut(String) + Send,
+    ) -> Result<()> {
+        let mut say = |line: String| {
+            self.waits(line.clone());
+            say(line);
+        };
+        let name = crate::daemon_key::secret_name(&self.dir);
         let found = crate::daemon_key::wait(&name, retry, &mut say).await?;
-        let state_dir = state_dir(&dir);
+        let state_dir = state_dir(&self.dir);
         let (mut state, mut store) = load_state(&state_dir).await?;
         let riff = state.read(State::riff_id).await;
         let (key, owner) = match step(found, riff.as_deref()) {
@@ -1617,13 +1638,14 @@ impl<R: Runtime + 'static> Daemon<R> {
                     // A crash after the riff and before its object.
                     _ => {
                         let made = Made {
-                            riff,
+                            riff: riff.clone(),
                             owner: this_user()?,
                         };
                         keep_made(&store, &made).await?;
                         made.owner
                     }
                 };
+                say(text::daemon_read_riff(&riff, &owner));
                 (key, owner)
             }
             Step::First => {
@@ -1643,23 +1665,14 @@ impl<R: Runtime + 'static> Daemon<R> {
                 (key, owner)
             }
         };
-        let room = Room::new(dir.clone(), Arc::new(crate::room::free_memory));
-        Ok(Daemon {
-            runtime,
-            dir,
-            since_ms: now_ms(),
-            relay_bin: own_binary().unwrap_or_else(|_| PathBuf::from("riff")),
-            any_relay: crate::release::takes_dynamic(),
-            quiet: quiet_limit(),
-            live: Mutex::new(BTreeMap::new()),
-            key,
-            owner,
-            state,
-            room,
-            world: Arc::new(crate::wave::Live::default()),
-            waves: Mutex::new(BTreeMap::new()),
-            changed: Notify::new(),
-        })
+        self.riff
+            .set(Riff { key, owner, state })
+            .map_err(|_| anyhow!("the riff daemon has its riff already"))
+    }
+
+    /// While the daemon has no riff, it waits for `line`.
+    fn waits(&self, line: String) {
+        *self.waits.lock().unwrap_or_else(PoisonError::into_inner) = line;
     }
 
     /// The daemon with the quiet limit `quiet` in place of
@@ -1693,10 +1706,11 @@ impl<R: Runtime + 'static> Daemon<R> {
         self
     }
 
-    /// The state of riff on this machine. The riff tools of a session
-    /// act on riff-server 1.x until peer to peer (Wave B).
-    pub fn state(&self) -> &Local {
-        &self.state
+    /// The state of riff on this machine, when the daemon has its riff.
+    /// The riff tools of a session act on riff-server 1.x until peer to
+    /// peer (Wave B).
+    pub fn state(&self) -> Option<&Local> {
+        self.riff.get().map(|riff| &riff.state)
     }
 
     /// The folder of the daemon.
@@ -1745,19 +1759,29 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// The state of the daemon.
     pub async fn status(&self) -> Status {
-        let (riff, position) = self
-            .state
-            .read(|state| (state.riff_id(), state.written_position()))
-            .await;
+        let (waits, key, riff, owner, position) = match self.riff.get() {
+            Some(riff) => {
+                let (id, position) = riff
+                    .state
+                    .read(|state| (state.riff_id(), state.written_position()))
+                    .await;
+                let key = riff.key.public().to_string();
+                (None, Some(key), id, Some(riff.owner.clone()), position)
+            }
+            None => {
+                let waits = self.waits.lock().unwrap_or_else(PoisonError::into_inner);
+                (Some(waits.clone()), None, None, None, 0)
+            }
+        };
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
             since_ms: self.since_ms,
             dir: self.dir.clone(),
-            waits: None,
-            key: Some(self.key.public().to_string()),
+            waits,
+            key,
             riff,
-            owner: Some(self.owner.clone()),
+            owner,
             position,
             sessions: self
                 .lock()
@@ -1915,7 +1939,9 @@ impl<R: Runtime + 'static> Daemon<R> {
         loop {
             tokio::select! {
                 () = &mut stop => {
-                    if let Err(e) = self.state.checkpoint().await {
+                    if let Some(state) = self.state()
+                        && let Err(e) = state.checkpoint().await
+                    {
                         eprintln!("riff daemon: {e}");
                     }
                     return Ok(());
@@ -2911,70 +2937,6 @@ pub async fn show_events(dir: &Path, name: &str) -> Result<i32> {
     }
 }
 
-/// A daemon that opens: it waits for its key, or loads its state. It
-/// answers each connection with what it waits for
-/// (01M51JW233MXB72MHHRAX4E4NF).
-#[cfg(target_os = "linux")]
-struct Opening {
-    dir: PathBuf,
-    since_ms: i64,
-    /// The last line of the key of the daemon.
-    waits: Mutex<String>,
-}
-
-#[cfg(target_os = "linux")]
-impl Opening {
-    fn new(dir: PathBuf) -> Opening {
-        Opening {
-            dir,
-            since_ms: now_ms(),
-            waits: Mutex::new(text::DAEMON_OPENS.into()),
-        }
-    }
-
-    /// The daemon said `line` of its key.
-    fn waits(&self, line: String) {
-        *self.waits.lock().unwrap_or_else(PoisonError::into_inner) = line;
-    }
-
-    /// Answers each connection on `listener`: [`Ask::Status`] with
-    /// [`Status::opening`], each other ask with a failure that says what
-    /// the daemon waits for. It does not end.
-    async fn answer(self: &Arc<Self>, listener: &UnixListener) {
-        loop {
-            let Ok((conn, _)) = listener.accept().await else {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
-            };
-            let opening = self.clone();
-            tokio::spawn(async move {
-                let (read, write) = conn.into_split();
-                let mut lines = BufReader::new(read).lines();
-                let (out, written) = writer(write);
-                if let Ok(Some(first)) = lines.next_line().await {
-                    let waits = opening
-                        .waits
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .clone();
-                    out.say(match hello(&first) {
-                        Ok(Ask::Status) => Say::Status(Status::opening(
-                            std::process::id(),
-                            opening.dir.clone(),
-                            opening.since_ms,
-                            waits,
-                        )),
-                        Ok(_) => Say::Failed { error: waits },
-                        Err(error) => Say::Failed { error },
-                    });
-                }
-                drop(out);
-                let _ = written.await;
-            });
-        }
-    }
-}
-
 /// `riff daemon`: runs the daemon of this machine until a SIGTERM or a
 /// SIGINT. It takes up each session that runs ([`Daemon::recover`]).
 /// The stop stops no session (01M4ZDTVH57VE77YT20G65A4BQ).
@@ -2986,34 +2948,18 @@ pub async fn serve_here() -> Result<()> {
         let listener = listen(&dir).await?;
         let mut term = signal(SignalKind::terminate())?;
         let mut int = signal(SignalKind::interrupt())?;
-        // While it opens, the daemon answers with what it waits for
+        let daemon = Arc::new(Daemon::new(crate::podman::Podman, dir.clone())?);
+        // The sessions run while the daemon waits for its key
         // (01M51JW233MXB72MHHRAX4E4NF).
-        let opening = Arc::new(Opening::new(dir.clone()));
-        let say = {
-            let opening = opening.clone();
-            move |line: String| {
-                println!("{line}");
-                opening.waits(line);
+        let riff = daemon.clone();
+        tokio::spawn(async move {
+            let say = |line: String| println!("{line}");
+            if let Err(e) = riff.open_riff(crate::secrets::retry(), say).await {
+                let line = text::daemon_no_riff(&format!("{e:#}"));
+                eprintln!("{line}");
+                riff.waits(line);
             }
-        };
-        let open = Daemon::open_with(
-            crate::podman::Podman,
-            dir.clone(),
-            crate::secrets::retry(),
-            say,
-        );
-        let opened = tokio::select! {
-            opened = open => Some(opened?),
-            () = opening.answer(&listener) => None,
-            _ = term.recv() => None,
-            _ = int.recv() => None,
-        };
-        let Some(daemon) = opened else {
-            let _ = std::fs::remove_file(socket(&dir));
-            println!("{}", text::DAEMON_STOPS);
-            return Ok(());
-        };
-        let daemon = Arc::new(daemon);
+        });
         let status = daemon.status().await;
         println!(
             "{}",
@@ -4352,7 +4298,7 @@ mod tests {
         use riff_state::state::Role;
         let (session, person) = mike();
         let admin = Caller::of(&person).with_role(Role::Admin);
-        let state = daemon.state();
+        let state = daemon.state().unwrap();
         state.run(&admin, &Resume::whole(person)).await.unwrap();
         let claim = Claim {
             thread: session.default_thread().unwrap(),
@@ -4367,6 +4313,7 @@ mod tests {
         let (session, _) = mike();
         daemon
             .state()
+            .unwrap()
             .read(|state| {
                 state
                     .uri(session.who(), std::time::Instant::now())
@@ -4501,14 +4448,14 @@ mod tests {
             kept,
             Made {
                 riff: key.clone(),
-                owner
+                owner: owner.clone()
             }
         );
         drop(daemon);
 
         let (daemon, lines) = open_key(&dir).await;
         let again = daemon.status().await;
-        assert!(lines.is_empty(), "{lines:?}");
+        assert_eq!(lines, [text::daemon_read_riff(&key, &owner)]);
         assert_eq!(
             (&again.key, &again.riff, &again.owner),
             (&first.key, &first.riff, &first.owner)
@@ -4521,7 +4468,7 @@ mod tests {
         // writes the object again, with the same key and riff.
         std::fs::remove_file(state_dir(&dir).join(RIFF)).unwrap();
         let (daemon, lines) = open_key(&dir).await;
-        assert!(lines.is_empty(), "{lines:?}");
+        assert_eq!(lines, [text::daemon_read_riff(&key, &owner)]);
         let status = daemon.status().await;
         assert_eq!((status.key, status.owner), (first.key, first.owner));
         assert_eq!(made(&store).await.unwrap().unwrap(), kept);
@@ -4626,7 +4573,7 @@ mod tests {
         ))));
         let (daemon, lines) = open_key(&dir).await;
         let after = daemon.status().await;
-        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines.len(), 3, "{lines:?}");
         assert!(
             lines[0].starts_with("The riff daemon waits for its key"),
             "{lines:?}"
@@ -4637,6 +4584,9 @@ mod tests {
         );
         assert!(lines[0].contains("It makes no new key"), "{lines:?}");
         assert_eq!(lines[1], text::daemon_keyring_back());
+        let riff = before.riff.clone().unwrap();
+        let owner = before.owner.clone().unwrap();
+        assert_eq!(lines[2], text::daemon_read_riff(&riff, &owner));
         assert_eq!((after.key, after.riff), (before.key.clone(), before.riff));
         assert_eq!(after.position, before.position);
         assert_eq!(kept_key(&dir), before.key);

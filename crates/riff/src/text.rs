@@ -5421,9 +5421,36 @@ pub fn daemon_no_state(dir: &Path) -> String {
     )
 }
 
-/// What a daemon waits for while it opens, before its key says a line
-/// (01M51JW233MXB72MHHRAX4E4NF).
-pub const DAEMON_OPENS: &str = "The riff daemon starts: it reads its key and its state.";
+/// What a daemon waits for while it reads its key and its state, before
+/// its key says a line (01M51JW233MXB72MHHRAX4E4NF).
+pub const DAEMON_OPENS: &str = "The riff daemon reads its key and its state.";
+
+/// The daemon cannot read its key or load its state: `error`. Its
+/// sessions run on, and it has no riff.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_no_riff("set USER"),
+///     "The riff daemon has no riff: set USER. Its sessions run on. Start it again after the fix."
+/// );
+/// ```
+pub fn daemon_no_riff(error: &str) -> String {
+    format!(
+        "The riff daemon has no riff: {error}. Its sessions run on. Start it again after the fix."
+    )
+}
+
+/// A start of a daemon read its key, and loaded its riff.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_read_riff("8a88", "mike"),
+///     "The riff daemon read its key and its riff: 8a88, of the owner mike."
+/// );
+/// ```
+pub fn daemon_read_riff(riff: &str, owner: &str) -> String {
+    format!("The riff daemon read its key and its riff: {riff}, of the owner {owner}.")
+}
 
 /// A daemon with no `USER`: it needs the user of the owner of its riff.
 pub const DAEMON_NO_USER: &str =
@@ -5576,8 +5603,10 @@ pub fn daemon_new_riff(
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
 ///
 /// // A daemon that waits for its keyring (01M51JW233MXB72MHHRAX4E4NF).
-/// let opening = Status::opening(42, "/d".into(), 0, "It waits.".into());
-/// let text = riff::text::daemon_status(&opening, 300_000);
+/// let waits: Status = serde_json::from_value(serde_json::json!({
+///     "pid": 42, "build": "b", "since_ms": 0, "dir": "/d", "sessions": [], "waits": "It waits.",
+/// })).unwrap();
+/// let text = riff::text::daemon_status(&waits, 300_000);
 /// assert!(text.contains("Its folder: /d\nIt waits.\nIts riff: none yet.\n"), "{text}");
 /// assert!(!text.contains("Its key") && !text.contains("owner"), "{text}");
 /// ```
@@ -5648,16 +5677,16 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     out
 }
 
-/// One line: the daemon answers, and what it waits for while it opens
-/// (01M51JW233MXB72MHHRAX4E4NF).
+/// One line: the daemon answers, and what it waits for while it has no
+/// riff (01M51JW233MXB72MHHRAX4E4NF).
 ///
 /// ```
-/// use riff::daemon::Status;
-///
-/// let opening = Status::opening(7, "/d".into(), 0, "It waits.".into());
-/// let line = riff::text::daemon_runs(&opening);
-/// assert!(line.starts_with("The riff daemon runs: pid 7, build "), "{line}");
-/// assert!(line.ends_with(", 0 sessions. It waits."), "{line}");
+/// let waits: riff::daemon::Status = serde_json::from_value(serde_json::json!({
+///     "pid": 7, "build": "b", "since_ms": 0, "dir": "/d", "sessions": [], "waits": "It waits.",
+/// }))?;
+/// let line = riff::text::daemon_runs(&waits);
+/// assert_eq!(line, "The riff daemon runs: pid 7, build b, 0 sessions. It waits.");
+/// # Ok::<(), serde_json::Error>(())
 /// ```
 pub fn daemon_runs(status: &crate::daemon::Status) -> String {
     let mut line = format!(

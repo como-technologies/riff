@@ -293,7 +293,7 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
 
 impl Here {
     /// Starts `riff daemon` of the `RIFF_HOME`, writes its output to
-    /// `name`, and waits until it listens.
+    /// `name`, and waits until it listens and has its riff.
     async fn daemon(&self, name: &str) -> std::process::Child {
         let log = self.bin.path().join(name);
         let out = std::fs::File::create(&log).unwrap();
@@ -304,6 +304,7 @@ impl Here {
             .spawn()
             .unwrap();
         wait_for(&log, "The riff daemon listens on").await;
+        wait_for(&log, RIFF_LINE).await;
         child
     }
 
@@ -341,6 +342,10 @@ impl Here {
         std::fs::read_to_string(self.bin.path().join(name)).unwrap()
     }
 }
+
+/// A part of each line of a daemon that has its riff: it made it, made
+/// a new one, or read it.
+const RIFF_LINE: &str = ", of the owner ";
 
 /// Stops `child` with a SIGTERM, and waits for its end.
 async fn stop(mut child: std::process::Child) {
@@ -409,7 +414,12 @@ async fn riff_daemon_status_shows_the_key_the_riff_and_the_owner() {
             .await
             .starts_with(&format!("Its riff: {key}, "))
     );
-    assert!(!here.output("second.out").contains("made"));
+    let said = here.output("second.out");
+    assert!(
+        said.contains(&riff::text::daemon_read_riff(&key, &user)),
+        "{said}"
+    );
+    assert!(!said.contains("made"), "{said}");
     stop(second).await;
 }
 
@@ -541,11 +551,13 @@ async fn a_locked_keyring_makes_the_daemon_wait_and_say_why() {
     );
     assert!(status.contains("Its riff: none yet."), "{status}");
     assert!(!status.contains("Its key"), "{status}");
+    // The daemon serves while it waits: its sessions need no key.
+    wait_for(&log, "The riff daemon listens on").await;
     // A second look gives no new line.
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
     std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o700)).unwrap();
-    wait_for(&log, "The riff daemon listens on").await;
+    wait_for(&log, "The riff daemon read its key and its riff").await;
     assert_eq!(here.status_line("Its key: ").await, key);
     assert_eq!(here.riff_line().await, riff);
     stop(child).await;
