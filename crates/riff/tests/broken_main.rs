@@ -46,6 +46,10 @@ case "$1 $2" in
     fi ;;
   "label create") ;;
   "issue create")
+    while [ $# -gt 0 ]; do
+      [ "$1" = "--body-file" ] && cp "$2" "$dir/body"
+      shift
+    done
     touch "$dir/created"
     echo "https://github.com/como-technologies/riff/issues/901" ;;
   "issue comment") ;;
@@ -195,9 +199,15 @@ async fn a_failed_gate_of_main_tells_the_lead_once_and_the_rollout_gives_the_fix
     assert!(
         created[0].contains("--title main is broken at 5103311: the Gate failed")
             && created[0].contains("--label broken-main")
-            && created[0].contains("--milestone Wave 1")
-            && created[0].contains(RUN),
+            && created[0].contains("--milestone Wave 1"),
         "{created:?}"
+    );
+    let body = std::fs::read_to_string(dir.path().join("body")).unwrap();
+    assert!(
+        body.contains(&format!("- Run: {RUN}\n- Failed jobs: Clippy, Tests 1/4\n"))
+            && body.contains("\nNeeds: nothing\n")
+            && body.contains("\nDone when: "),
+        "{body}"
     );
 
     // The same Gate at the next look: no message, and no second fix item.

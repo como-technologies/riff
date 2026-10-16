@@ -101,6 +101,7 @@
 //! item gets a comment.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -433,7 +434,11 @@ impl MainGate {
         Some(Self {
             commit: first.head_sha.clone(),
             gate: gate_state(runs),
-            run: shown.html_url.as_deref().and_then(run_of).map(str::to_owned),
+            run: shown
+                .html_url
+                .as_deref()
+                .and_then(run_of)
+                .map(str::to_owned),
         })
     }
 
@@ -598,12 +603,58 @@ fn fix_items_of(issues: &[Issue]) -> Vec<u64> {
         .collect()
 }
 
+/// The open fix item of `repo`, read now with `gh`: the lead of another
+/// person can file one after the look read the issues.
+fn open_fix_item(gh: &Gh, repo: &str) -> Result<Option<u64>> {
+    let open: Vec<Issue> = gh.json(&[
+        "issue",
+        "list",
+        "--repo",
+        repo,
+        "--label",
+        BROKEN_MAIN,
+        "--state",
+        "open",
+        "--json",
+        "number,labels",
+    ])?;
+    Ok(fix_items_of(&open).first().copied())
+}
+
+/// Puts the commit, the run and the failed jobs of a failed Gate of
+/// `main` on the open fix item `number` (01M51QEYPGD6W345MZ4F85C38F).
+fn comment_fix_item(
+    gh: &Gh,
+    repo: &str,
+    number: u64,
+    main: &MainGate,
+    jobs: &[String],
+) -> Result<u64> {
+    let comment = text::fix_item_comment(&main.commit, main.run.as_deref(), jobs);
+    let number_text = number.to_string();
+    gh.run(
+        &[
+            "issue",
+            "comment",
+            &number_text,
+            "--repo",
+            repo,
+            "--body",
+            &comment,
+        ],
+        None,
+    )?;
+    Ok(number)
+}
+
 /// Files the fix item of the failed Gate of `main` in `repo` with `gh`
 /// (01M51QEYPGD6W345MZ4F85C38F): it makes the label [`BROKEN_MAIN`] when
 /// it is missing, and puts the issue in the current wave. It gives the
 /// number of the new issue.
 pub fn file_fix_item(gh: &Gh, repo: &str, main: &MainGate, jobs: &[String]) -> Result<u64> {
-    gh.run(
+    // A label that is there needs no change: `issue create` fails only
+    // when the label is missing.
+    let _ = gh.run(
         &[
             "label",
             "create",
@@ -617,13 +668,17 @@ pub fn file_fix_item(gh: &Gh, repo: &str, main: &MainGate, jobs: &[String]) -> R
             "--force",
         ],
         None,
-    )?;
+    );
     let open: Vec<Milestone> = gh.json(&[
         "api",
         &format!("repos/{repo}/milestones?state=open&per_page=100"),
     ])?;
     let title = text::fix_item_title(&main.commit);
-    let body = text::fix_item_body(&main.commit, main.run.as_deref(), jobs);
+    // The body goes in a file: an error of gh names its arguments, and a
+    // short line keeps the reason in the post to the lead.
+    let mut body = tempfile::NamedTempFile::new()?;
+    body.write_all(text::fix_item_body(&main.commit, main.run.as_deref(), jobs).as_bytes())?;
+    let body_path = body.path().to_string_lossy().into_owned();
     let mut args = vec![
         "issue",
         "create",
@@ -631,8 +686,8 @@ pub fn file_fix_item(gh: &Gh, repo: &str, main: &MainGate, jobs: &[String]) -> R
         repo,
         "--title",
         &title,
-        "--body",
-        &body,
+        "--body-file",
+        &body_path,
         "--label",
         BROKEN_MAIN,
     ];
@@ -651,8 +706,9 @@ pub fn file_fix_item(gh: &Gh, repo: &str, main: &MainGate, jobs: &[String]) -> R
 /// (01M51QEYKTD7ZEB0YA0C3MQTPN to 01M51QEYVQN74Q1VDTVHB0445Q):
 ///
 /// - A broken `main`: the failed jobs, and the fix item. An open fix
-///   item gets a comment. Else riff files one. A step that fails goes
-///   into the post: the lead must know that `main` is broken.
+///   item gets a comment. Else riff reads the label again, and files a
+///   fix item only when it finds none. A step that fails goes into the
+///   post: the lead must know that `main` is broken.
 /// - A passed Gate: riff closes each fix item that no session claims
 ///   (`claims`) and that no open pull request names (`pulls`). The post
 ///   comes when `main` was broken, or when riff closed an item.
@@ -671,24 +727,11 @@ pub fn main_steps(
                 None => Vec::new(),
             };
             let fix = match fix_items_of(issues).first() {
-                Some(&n) => {
-                    let comment =
-                        text::fix_item_comment(&main.commit, main.run.as_deref(), &jobs);
-                    gh.run(
-                        &[
-                            "issue",
-                            "comment",
-                            &n.to_string(),
-                            "--repo",
-                            repo,
-                            "--body",
-                            &comment,
-                        ],
-                        None,
-                    )
-                    .map(|_| n)
-                }
-                None => file_fix_item(gh, repo, main, &jobs),
+                Some(&n) => comment_fix_item(gh, repo, n, main, &jobs),
+                None => open_fix_item(gh, repo).and_then(|open| match open {
+                    Some(n) => comment_fix_item(gh, repo, n, main, &jobs),
+                    None => file_fix_item(gh, repo, main, &jobs),
+                }),
             };
             let fix = fix.map_err(|e| text::forge(&format!("{e:#}")));
             let body = text::main_broken(&main.commit, main.run.as_deref(), &jobs, &fix, *first);
@@ -696,10 +739,9 @@ pub fn main_steps(
         }
         MainNews::Passed { main, again } => {
             let named: HashSet<u64> = pulls.iter().filter_map(Pull::issue).collect();
-            let (free, kept): (Vec<u64>, Vec<u64>) =
-                fix_items_of(issues).into_iter().partition(|n| {
-                    !claims.contains(&format!("issue-{n}")) && !named.contains(n)
-                });
+            let (free, kept): (Vec<u64>, Vec<u64>) = fix_items_of(issues)
+                .into_iter()
+                .partition(|n| !claims.contains(&format!("issue-{n}")) && !named.contains(n));
             let comment = text::fix_item_closed(&main.commit, main.run.as_deref());
             for n in &free {
                 gh.run(
@@ -1029,8 +1071,13 @@ mod tests {
     /// that main is broken, with the reason (01M51QEYKTD7ZEB0YA0C3MQTPN).
     #[test]
     fn a_fix_item_that_riff_cannot_file_still_gives_the_message() {
-        let (dir, gh) =
-            fake("case \"$1 $2\" in \"label create\") echo 'HTTP 403' >&2; exit 1 ;; esac");
+        let (dir, gh) = fake(
+            "case \"$1 $2\" in\n\
+             \"label create\") echo 'no right' >&2; exit 1 ;;\n\
+             \"issue create\") echo 'HTTP 403' >&2; exit 1 ;;\n\
+             *) echo '[]' ;;\n\
+             esac",
+        );
         let news = MainNews::Broken {
             main: main(Gate::Ended("failure".into())),
             first: true,
@@ -1046,6 +1093,29 @@ mod tests {
                 && body.ends_with("File an issue with the label broken-main."),
             "{body}"
         );
+        // A label that riff cannot make does not stop the try.
+        assert_eq!(calls(&dir, "issue create").len(), 1);
+    }
+
+    /// The lead of another person filed a fix item after the look read
+    /// the issues: riff reads the label again, and puts a comment on that
+    /// item. It files no second one (01M51QEYPGD6W345MZ4F85C38F).
+    #[test]
+    fn a_fix_item_of_another_lead_gets_a_comment_and_no_second_item() {
+        let (dir, gh) = fake(
+            "case \"$*\" in\n\
+             *'--label broken-main'*) echo '[{\"number\":902,\"labels\":[{\"name\":\"broken-main\"}]}]' ;;\n\
+             esac",
+        );
+        let news = MainNews::Broken {
+            main: main(Gate::Ended("failure".into())),
+            first: true,
+        };
+        let (body, _) = main_steps(&gh, "o/r", &[], &[], &HashSet::new(), &news)
+            .unwrap()
+            .unwrap();
+        assert!(body.contains("The fix item is #902"), "{body}");
+        assert_eq!(calls(&dir, "issue comment 902").len(), 1);
         assert!(calls(&dir, "issue create").is_empty());
     }
 
@@ -1078,7 +1148,10 @@ mod tests {
         );
         let closes = calls(&dir, "issue close");
         assert_eq!(closes.len(), 1, "{closes:?}");
-        assert!(closes[0].starts_with("issue close 7 --repo o/r --comment "), "{closes:?}");
+        assert!(
+            closes[0].starts_with("issue close 7 --repo o/r --comment "),
+            "{closes:?}"
+        );
 
         let (dir, gh) = fake("exit 0");
         let news = MainNews::Passed {

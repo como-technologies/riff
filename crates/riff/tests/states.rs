@@ -441,7 +441,16 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     let wake = Duration::from_secs(1);
     let look = || async {
         let (mut watch, mut main) = (PullWatch::default(), MainWatch::default());
-        look::once(&api, &lead, &gh, wake, Some(&notifier), &mut watch, &mut main).await
+        look::once(
+            &api,
+            &lead,
+            &gh,
+            wake,
+            Some(&notifier),
+            &mut watch,
+            &mut main,
+        )
+        .await
     };
     let bodies = |inbox: Vec<riff::api::Inbox>| -> Vec<String> {
         inbox
