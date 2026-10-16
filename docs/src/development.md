@@ -932,6 +932,11 @@ name: a hold of `issue-12` stops the build, and a hold of
 riff plan hold issue-12 waits for the word of Mike
 ```
 
+A hold of `verify-issue-12`, or the label `no-verify` on the issue,
+also stops the verify request after the build: the lead gets a note
+with the reason (see
+[Keep the verify of an item from the workers](how-it-works.md#keep-the-verify-of-an-item-from-the-workers)).
+
 ### Set the limit of the host
 
 Each container has `--memory 8g` and `--cpus 4`. These do not limit

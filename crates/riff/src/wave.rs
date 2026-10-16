@@ -1926,24 +1926,26 @@ esac
     }
 
     /// The issue has the label `no-verify`: the lead gets a note with the
-    /// label, and no verify request (01M51KH0H7J35PEKMHP5KQB84T).
+    /// label, and no verify request (01M51KH0H7J35PEKMHP5KQB84T). The book
+    /// shows the same note.
     #[tokio::test]
     async fn a_build_of_an_issue_with_the_label_no_verify_posts_a_note() {
         let riff = Built::new().await;
         let got = riff.after_build(riff.gh(true)).await;
-        assert_eq!(
-            got,
-            [(
-                Kind::Note,
-                text::wave_no_verify(
-                    "issue-12",
-                    40,
-                    "worktree-issue-12",
-                    "1a2b3c4",
-                    "9f8e7d6c",
-                    "issue #12 has the label no-verify."
-                )
-            )]
+        let note = text::wave_no_verify(
+            "issue-12",
+            40,
+            "worktree-issue-12",
+            "1a2b3c4",
+            "9f8e7d6c",
+            &text::no_verify_label(12),
         );
+        assert_eq!(got, [(Kind::Note, note.clone())]);
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/how-it-works.md"
+        ))
+        .unwrap();
+        assert!(book.contains(&format!("\n{note}\n")), "{note}");
     }
 }

@@ -5120,7 +5120,8 @@ share.
   host steps of `riff run` itself: the checks, a new worker session,
   the claim, the keep-alive, the clone and the start. After the end of
   a build, it sends a verify request for the open pull request of the
-  branch to the lead, then releases the item and ends the session. The
+  branch to the lead (but see 01M51KH0H7J35PEKMHP5KQB84T), then
+  releases the item and ends the session. The
   record of the session holds the job of the wave, with no secret. So a
   new daemon goes on with the keep-alive, and does the steps after the
   end. When the session ended while no daemon ran, the new daemon does
@@ -5413,6 +5414,11 @@ share.
   no verify request for it, and prints why. riff reads the labels of the
   issue with `gh`. When `gh` cannot read them, `riff run` prints the
   fault and goes on to the holds (01M5157TYDEHZHDXSC1AHCRDRN).
+- **01M51KH0H7J35PEKMHP5KQB84T** After the end of a build, the wave of
+  the daemon does the check of `riff run`: when a lead holds
+  `verify-ITEM`, or the issue has the label `no-verify`, the lead gets
+  a note with the reason in place of the verify request
+  (01M5157TYDEHZHDXSC1AHCRDRN, 01M5157V0P92EBHF4M7N9K0RGR).
 - **01M4ZQVVGQYXTAVRB69C7YPC3Y** The verify request and the release of
   `riff run` have the budget `END_BUDGET`, 10 minutes, not
   `SHORT_BUDGET`. A fault gets a new try while the budget lasts
