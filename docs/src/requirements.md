@@ -6145,8 +6145,8 @@ then.
   moment with no link does not end the wait. A link that starts during
   the leave sends the `left` record with the records that the other
   daemon lacks, and then ends its stream. When no link sent the record
-  in 5 seconds, `riff leave` says so, and names the `riff remove` command
-  that the owner runs.
+  in 5 seconds, `riff leave` says so, and names the `riff remove`
+  command that the owner runs.
 - **01M521J72EC8Z5HAKA1Q9P5Z24** `riff members` shows a key that has no
   link as last seen at the later of two times: the end of its last link
   since the start of the daemon, and the time of its last record.
