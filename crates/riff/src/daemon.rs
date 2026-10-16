@@ -1551,8 +1551,9 @@ fn put_aside(state_dir: &Path) -> Result<Option<PathBuf>> {
 async fn make_riff(name: &str, state: &Local, store: &Dir, owner: &str) -> Result<Key> {
     let key = Key::generate();
     let name = name.to_owned();
-    let key = tokio::task::spawn_blocking(move || crate::daemon_key::keep(&name, &key).map(|()| key))
-        .await??;
+    let key =
+        tokio::task::spawn_blocking(move || crate::daemon_key::keep(&name, &key).map(|()| key))
+            .await??;
     let riff = key.public().to_string();
     let make = MakeRiff {
         riff_id: riff.clone(),
@@ -1615,7 +1616,14 @@ impl<R: Runtime + 'static> Daemon<R> {
                     Some(made) if made.riff == riff => made.owner,
                     _ => {
                         let owner = this_user()?;
-                        keep_made(&store, &Made { riff, owner: owner.clone() }).await?;
+                        keep_made(
+                            &store,
+                            &Made {
+                                riff,
+                                owner: owner.clone(),
+                            },
+                        )
+                        .await?;
                         owner
                     }
                 };
@@ -2991,7 +2999,12 @@ pub async fn serve_here() -> Result<()> {
                 opening.waits(line);
             }
         };
-        let open = Daemon::open_with(crate::podman::Podman, dir.clone(), crate::secrets::retry(), say);
+        let open = Daemon::open_with(
+            crate::podman::Podman,
+            dir.clone(),
+            crate::secrets::retry(),
+            say,
+        );
         let opened = tokio::select! {
             opened = open => Some(opened?),
             () = opening.answer(&listener) => None,
@@ -4437,9 +4450,14 @@ mod tests {
         crate::secrets::mock_store();
         let mut lines = Vec::new();
         let say = |line| lines.push(line);
-        let daemon = Daemon::open_with(Fake::default(), dir.to_owned(), Duration::from_millis(10), say)
-            .await
-            .unwrap();
+        let daemon = Daemon::open_with(
+            Fake::default(),
+            dir.to_owned(),
+            Duration::from_millis(10),
+            say,
+        )
+        .await
+        .unwrap();
         (daemon, lines)
     }
 
@@ -4482,13 +4500,22 @@ mod tests {
         assert_eq!(lines, [text::daemon_made_riff(&key, &owner)]);
         let store = Dir::new(state_dir(&dir));
         let made = made(&store).await.unwrap().unwrap();
-        assert_eq!(made, Made { riff: key.clone(), owner });
+        assert_eq!(
+            made,
+            Made {
+                riff: key.clone(),
+                owner
+            }
+        );
         drop(daemon);
 
         let (daemon, lines) = open_key(&dir).await;
         let again = daemon.status().await;
         assert!(lines.is_empty(), "{lines:?}");
-        assert_eq!((again.key, again.riff, again.owner), (first.key, first.riff, first.owner));
+        assert_eq!(
+            (again.key, again.riff, again.owner),
+            (first.key, first.riff, first.owner)
+        );
         assert_eq!(again.position, first.position);
         assert!(lost(&dir).is_empty());
     }
@@ -4512,7 +4539,10 @@ mod tests {
         let status = daemon.status().await;
         let riff = status.riff.clone().unwrap();
         let owner = status.owner.clone().unwrap();
-        assert_eq!(lines, [text::daemon_new_riff(&Lost::NoState, &riff, &owner, None)]);
+        assert_eq!(
+            lines,
+            [text::daemon_new_riff(&Lost::NoState, &riff, &owner, None)]
+        );
         assert!(lost(&dir).is_empty());
         riffs.push(riff);
         drop(daemon);
@@ -4526,7 +4556,12 @@ mod tests {
         assert!(old[0].join("log").exists(), "{old:?}");
         assert_eq!(
             lines,
-            [text::daemon_new_riff(&Lost::NoKey, &riff, &owner, Some(&old[0]))]
+            [text::daemon_new_riff(
+                &Lost::NoKey,
+                &riff,
+                &owner,
+                Some(&old[0])
+            )]
         );
         riffs.push(riff);
         drop(daemon);
@@ -4585,8 +4620,14 @@ mod tests {
         let (daemon, lines) = open_key(&dir).await;
         let after = daemon.status().await;
         assert_eq!(lines.len(), 2, "{lines:?}");
-        assert!(lines[0].starts_with("The riff daemon waits for its key"), "{lines:?}");
-        assert!(lines[0].contains("is locked or does not answer"), "{lines:?}");
+        assert!(
+            lines[0].starts_with("The riff daemon waits for its key"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[0].contains("is locked or does not answer"),
+            "{lines:?}"
+        );
         assert!(lines[0].contains("It makes no new key"), "{lines:?}");
         assert_eq!(lines[1], text::daemon_keyring_back());
         assert_eq!((after.key, after.riff), (before.key.clone(), before.riff));

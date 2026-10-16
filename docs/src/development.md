@@ -615,7 +615,8 @@ The daemon has one key: an ed25519 key. The first start of the daemon
 makes the key, and keeps it in the OS keyring. The key never leaves
 your machine. Its public key is the ID of the daemon. In Wave B of
 riff 3.0, it is the ID of the daemon for the other daemons, and it
-signs each change of the daemon (see [riff 3.0: peers](riff-3-peers.md)).
+signs each change of the daemon (see
+[riff 3.0: peers](riff-3-peers.md)).
 
 The first start also makes a riff of your own. The ID of the riff is
 the public key of the daemon, and you (`USER`) are its owner. To see

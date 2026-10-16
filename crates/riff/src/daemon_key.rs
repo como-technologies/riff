@@ -203,7 +203,9 @@ pub async fn wait(name: &str, retry: Duration, mut say: impl FnMut(String)) -> R
         let owned = name.to_owned();
         let found = tokio::task::spawn_blocking(move || read(&owned)).await?;
         let line = match &found {
-            Ok(_) => gate.look(Instant::now(), false).map(|_| text::daemon_keyring_back()),
+            Ok(_) => gate
+                .look(Instant::now(), false)
+                .map(|_| text::daemon_keyring_back()),
             Err(e) => gate
                 .look(Instant::now(), true)
                 .filter(|said| *said == Said::Locked)

@@ -5508,7 +5508,9 @@ pub fn daemon_new_riff(
         Lost::NotAKey => {
             "the OS keyring holds a value for the key of the daemon that is not a key".into()
         }
-        Lost::OtherKey { riff } => format!("the riff {riff} of its state is not the riff of its key"),
+        Lost::OtherKey { riff } => {
+            format!("the riff {riff} of its state is not the riff of its key")
+        }
     };
     let mut text = format!(
         "The riff daemon made a new key and a riff of its own: {riff}, of the owner {owner}. \

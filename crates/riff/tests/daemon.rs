@@ -400,8 +400,15 @@ async fn riff_daemon_status_shows_the_key_the_riff_and_the_owner() {
     stop(first).await;
 
     let second = here.daemon("second.out").await;
-    assert_eq!(here.status_line("Its key: ").await, format!("Its key: {key}"));
-    assert!(here.riff_line().await.starts_with(&format!("Its riff: {key}, ")));
+    assert_eq!(
+        here.status_line("Its key: ").await,
+        format!("Its key: {key}")
+    );
+    assert!(
+        here.riff_line()
+            .await
+            .starts_with(&format!("Its riff: {key}, "))
+    );
     assert!(!here.output("second.out").contains("made"));
     stop(second).await;
 }
