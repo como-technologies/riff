@@ -1842,7 +1842,10 @@ worker has its `TMPDIR` in your home. So `.cargo/config.toml` sets
 `TMPDIR` to `/var/tmp` for each cargo run in the repository, also a
 plain `cargo test`. A unit test or a
 doc test that needs a dir outside each git repository uses
-`isolated::outside_git()`, not `tempfile::tempdir()`.
+`isolated::outside_git()`, not `tempfile::tempdir()`. A unit test that
+runs a fake program has a child process write the file, so that the
+run cannot fail with `ETXTBSY`. A doc test that drops a lock, and then
+checks that the lock is free, is a `standalone_crate`.
 
 Use a dev session for a live check of new code, for example a new
 plugin command, hook or skill text. It needs no release and no update
