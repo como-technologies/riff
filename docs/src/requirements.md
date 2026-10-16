@@ -5396,6 +5396,13 @@ share.
   sends no more end step, names each step that it did not send, and
   ends with the exit code 1. riff-server frees the claim when the
   session stops, as for each other session.
+- **01M51JG5Y47184401EWT4HVEG0** `riff run` listens for SIGINT and
+  SIGTERM with one set of signal streams, from the start of the session
+  to its last end step. A signal after the end of the session and
+  before the first end step, for example while `gh` finds the pull
+  request, stops `riff run` before that step
+  (01M4ZYFJFTX9ZEX7QT4QH7E9T6). A second signal while the container
+  stops does the same.
 - **01M4ZBGK7SFEXE1AGH6Z0YQHJP** On a host that is not Linux,
   `riff run` starts nothing, and says that it needs Linux.
 - **01M4Z81B3A324KKE8M8Z71TM4M** Before the claim, `riff run` checks

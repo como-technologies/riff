@@ -122,6 +122,13 @@
 //! riff-server frees the claim when the session stops, as for each other
 //! session.
 //!
+//! One set of signal streams listens from the start of the session to
+//! the last end step (01M51JG5Y47184401EWT4HVEG0). A stream keeps a
+//! signal that comes while riff waits for none, for example while `gh`
+//! finds the pull request, so that signal stops the first end step. A
+//! new stream would not see it. A second signal while the container
+//! stops also stays for the end steps.
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant P as the person
@@ -1165,26 +1172,32 @@ const DAEMON_RETRY: Duration = Duration::from_millis(250);
 
 /// SIGINT and SIGTERM: the signals that stop `riff run`.
 struct Signals {
-    term: tokio::signal::unix::Signal,
-    int: tokio::signal::unix::Signal,
+    streams: [tokio::signal::unix::Signal; 2],
 }
 
 impl Signals {
-    /// Listens for the signals. From here on, a signal does not end
-    /// riff: tokio keeps its handler to the end of the process, so riff
-    /// must act on each signal itself.
+    /// Listens for SIGTERM and SIGINT.
     fn new() -> std::io::Result<Signals> {
+        Signals::of(SignalKind::terminate(), SignalKind::interrupt())
+    }
+
+    /// Listens for the signals `first` and `second`. From here on, such
+    /// a signal does not end riff: tokio keeps its handler to the end of
+    /// the process, so riff must act on each signal itself. The streams
+    /// keep a signal that comes while riff waits for none, for example
+    /// while `gh` runs, for the next [`Signals::recv`].
+    fn of(first: SignalKind, second: SignalKind) -> std::io::Result<Signals> {
         Ok(Signals {
-            term: signal(SignalKind::terminate())?,
-            int: signal(SignalKind::interrupt())?,
+            streams: [signal(first)?, signal(second)?],
         })
     }
 
-    /// Waits for the next SIGINT or SIGTERM.
+    /// Waits for the next signal.
     async fn recv(&mut self) {
+        let [first, second] = &mut self.streams;
         tokio::select! {
-            _ = self.term.recv() => {}
-            _ = self.int.recv() => {}
+            _ = first.recv() => {}
+            _ = second.recv() => {}
         }
     }
 }
@@ -1192,37 +1205,49 @@ impl Signals {
 /// The end steps of `riff run`: the verify request, the release and the
 /// end of the session (01M4ZYFJFTX9ZEX7QT4QH7E9T6). A SIGINT or a SIGTERM
 /// stops the wait of the step that runs, and riff sends no step after
-/// it. riff listens for the signals from the first step on; before it,
-/// [`follow`] acts on them.
+/// it. One set of signal streams listens from the start of the session
+/// to the last end step ([`EndSteps::signals`]): [`follow`] acts on a
+/// signal while the session runs, and a signal after the end of the
+/// session stops the next end step (01M51JG5Y47184401EWT4HVEG0).
 #[derive(Default)]
 struct EndSteps {
+    /// The streams of the signals, from the start of the session on.
     signals: Option<Signals>,
     /// The steps that riff did not send, after a signal.
     not_sent: Vec<&'static str>,
 }
 
 impl EndSteps {
+    /// The streams of the signals. The first call makes them.
+    fn signals(&mut self) -> std::io::Result<&mut Signals> {
+        let signals = match self.signals.take() {
+            Some(signals) => signals,
+            None => Signals::new()?,
+        };
+        Ok(self.signals.insert(signals))
+    }
+
     /// Runs `call`, the end step `step`, until it ends or a signal comes.
     /// It gives the result of the call, or `None` when a signal stopped
-    /// it or an earlier step.
+    /// it or an earlier step. A signal that came before the step stops
+    /// it too.
     async fn send<T>(
         &mut self,
         step: &'static str,
         call: impl Future<Output = Result<T>>,
     ) -> Option<Result<T>> {
         if self.not_sent.is_empty() {
-            if self.signals.is_none() {
-                self.signals = Signals::new().ok();
-            }
+            let signals = self.signals().ok();
             let stop = async {
-                match &mut self.signals {
+                match signals {
                     Some(signals) => signals.recv().await,
                     None => std::future::pending().await,
                 }
             };
             tokio::select! {
-                done = call => return Some(done),
+                biased;
                 () = stop => {}
+                done = call => return Some(done),
             }
         }
         self.not_sent.push(step);
@@ -1231,8 +1256,9 @@ impl EndSteps {
 }
 
 /// Asks the daemon in the folder `daemon` to run the session of
-/// `start`, shows its events, and waits for its end ([`follow`]).
-async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
+/// `start`, shows its events, and waits for its end ([`follow`]). The
+/// streams of `signals` listen from here on.
+async fn run_session(daemon: &Path, start: daemon::Start, signals: &mut Signals) -> Result<Ended> {
     let name = start.spec.name.clone();
     let mut view = View::default();
     follow(
@@ -1240,6 +1266,7 @@ async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
         Ask::Start(Box::new(start)),
         &name,
         DAEMON_WAIT,
+        signals,
         |line| view.show(line),
     )
     .await
@@ -1247,22 +1274,22 @@ async fn run_session(daemon: &Path, start: daemon::Start) -> Result<Ended> {
 
 /// Sends `ask` to the daemon in the folder `daemon`, gives `show` each
 /// event of the session `name`, and waits for its end. A SIGINT or a
-/// SIGTERM asks the daemon to stop the container. When the daemon goes
-/// away, the session runs on ([`crate::session_relay`]): riff tries the
-/// daemon again for up to `wait`, and follows the session again after
-/// the last event that it showed. So it shows each event one time, and
-/// loses none (01M4ZKX0F25S284R0N7KZVTHNA). When no daemon comes back,
-/// the session failed for `riff run`.
+/// SIGTERM on `signals` asks the daemon to stop the container. A
+/// signal after that one stays on `signals` for the end steps
+/// ([`EndSteps`]). When the daemon goes away, the session runs on
+/// ([`crate::session_relay`]): riff tries the daemon again for up to
+/// `wait`, and follows the session again after the last event that it
+/// showed. So it shows each event one time, and loses none
+/// (01M4ZKX0F25S284R0N7KZVTHNA). When no daemon comes back, the session
+/// failed for `riff run`.
 async fn follow(
     daemon: &Path,
     ask: Ask,
     name: &str,
     wait: Duration,
+    signals: &mut Signals,
     mut show: impl FnMut(&str),
 ) -> Result<Ended> {
-    // The handlers come first: a signal before them ends riff with no
-    // release.
-    let mut signals = Signals::new()?;
     let mut name = name.to_owned();
     let mut client = daemon::Client::connect(daemon).await?;
     client.ask(ask).await?;
@@ -1292,7 +1319,7 @@ async fn follow(
             Ok(Some(_)) => bail!("{}", text::DAEMON_GONE),
             Ok(None) | Err(_) => {
                 println!("{}", text::run_daemon_away(&name));
-                let Some(again) = connect_again(daemon, wait, &mut signals).await else {
+                let Some(again) = connect_again(daemon, wait, signals).await else {
                     println!("{}", text::run_daemon_gone(&name));
                     return Ok(Ended {
                         code: None,
@@ -1495,6 +1522,9 @@ async fn work(
         .chain(checked.sign_in.secrets.iter().cloned())
         .collect();
     let values = vec![("GH_TOKEN".to_owned(), checked.gh_token.clone())];
+    // The handlers come first: a signal before them ends riff with no
+    // release. The same streams serve the end steps.
+    let signals = steps.signals()?;
     let ended = run_session(
         daemon,
         daemon::Start {
@@ -1509,6 +1539,7 @@ async fn work(
             me: me.clone(),
             terminal: false,
         },
+        signals,
     )
     .await?;
 
@@ -1616,6 +1647,26 @@ mod tests {
             steps.not_sent,
             [text::RUN_VERIFY_REQUEST, text::RUN_RELEASE, text::RUN_END]
         );
+    }
+
+    /// The end steps use the streams of the session. They keep a signal
+    /// that came before an end step, while riff waited for no signal, and
+    /// that signal stops the step (#770, 01M51JG5Y47184401EWT4HVEG0).
+    #[tokio::test]
+    async fn a_signal_before_an_end_step_stops_it() {
+        // Two signals that riff does not use, so that no other test of
+        // this process sees them.
+        let signals = Signals::of(SignalKind::user_defined1(), SignalKind::user_defined2());
+        let mut steps = EndSteps {
+            signals: Some(signals.unwrap()),
+            not_sent: Vec::new(),
+        };
+        nix::sys::signal::raise(nix::sys::signal::Signal::SIGUSR2).unwrap();
+        let verify = std::future::pending::<Result<()>>();
+        let sent = steps.send(text::RUN_VERIFY_REQUEST, verify);
+        let sent = tokio::time::timeout(Duration::from_secs(30), sent).await;
+        assert!(matches!(sent, Ok(None)), "the signal stops the step");
+        assert_eq!(steps.not_sent, [text::RUN_VERIFY_REQUEST]);
     }
 
     #[test]

@@ -772,6 +772,10 @@ Press Ctrl-C. riff asks the daemon to stop the container with
 `podman stop`, and releases the item. The branch keeps the work that
 the session pushed.
 
+A second Ctrl-C while the container stops also stops the end steps:
+riff sends no verify request and no release, as in
+[What riff run does](#what-riff-run-does).
+
 ### When a session stays up after its result
 
 `claude -p` does not end while one of its background tasks runs, for

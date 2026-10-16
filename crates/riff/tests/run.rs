@@ -38,7 +38,8 @@ fn script(path: &Path, body: &str) {
 
 /// A fake `gh` that logs each call to `bin/gh.log`. The branch has no
 /// pull request when `bin/no-pr` is there. The issue has the label
-/// `no-verify` when `bin/no-verify` is there.
+/// `no-verify` when `bin/no-verify` is there. `pr view` waits while
+/// `bin/pr-hold` is there.
 fn fake_gh(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -51,6 +52,7 @@ case "$*" in
     if [ -f "$dir/no-verify" ]; then echo '{"number":12,"labels":[{"name":"no-verify"}]}'
     else echo '{"number":12,"labels":[]}'; fi ;;
   'pr view worktree-issue-12 --json number,url,headRefOid,state')
+    while [ -f "$dir/pr-hold" ]; do sleep 0.05; done
     [ -f "$dir/no-pr" ] && exit 1
     echo '{"number":40,"url":"https://github.com/como-technologies/riff/pull/40","headRefOid":"1a2b3c4d5e6f","state":"OPEN"}' ;;
   *) exit 1 ;;
@@ -1513,6 +1515,44 @@ async fn a_sigterm_stops_the_wait_of_the_release() {
     assert!(stdout.contains("No open pull request"), "{stdout}");
     let not_sent = run_not_sent("issue-12", &[RUN_RELEASE, RUN_END]);
     assert!(stdout.contains(&not_sent), "{stdout}");
+    still_held(&machine).await;
+}
+
+/// A SIGTERM after the end of the session, while `gh pr view` finds the
+/// pull request, stops `riff run` before its first end step (#770,
+/// 01M51JG5Y47184401EWT4HVEG0). riff waits for no signal then, so only
+/// the streams of the session keep it.
+#[tokio::test]
+async fn a_sigterm_while_riff_finds_the_pull_request_stops_it_before_the_end_steps() {
+    use riff::text::{RUN_END, RUN_RELEASE, RUN_VERIFY_REQUEST, run_not_sent};
+
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let hold = machine.bin.path().join("pr-hold");
+    std::fs::write(&hold, "").unwrap();
+    let child = machine
+        .command(None, &["run", "issue-12", "--image", IMAGE])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(
+        &machine.bin.path().join("gh.log"),
+        "gh pr view worktree-issue-12",
+    )
+    .await;
+    let pid = nix::unistd::Pid::from_raw(child.id() as i32);
+    nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM).unwrap();
+    std::fs::remove_file(&hold).unwrap();
+
+    let out = output_of(child).await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
+    assert!(stdout.contains("The pull request #40"), "{stdout}");
+    let not_sent = run_not_sent("issue-12", &[RUN_VERIFY_REQUEST, RUN_RELEASE, RUN_END]);
+    assert!(stdout.contains(&not_sent), "{stdout}");
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert!(!thread.contains("verify request: issue-12"), "{thread}");
     still_held(&machine).await;
 }
 
