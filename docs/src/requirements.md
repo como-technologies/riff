@@ -985,6 +985,9 @@
   settings in `DIR/config.toml`, its local files in `DIR/state`, and
   each secret in a file of `DIR/secrets` that only the owner can read.
   It never opens the OS keyring. Only the tests and `just dev` set it.
+- **01M51KE2HCRCM69EG1KHZAHH7A** With `RIFF_HOME`, the file of a secret
+  is the name of the secret in hex. When that is longer than 255 bytes,
+  the file is `sha256-` and the SHA-256 of the name in hex.
 - **01M3K0QM89E2XM1NWSPT4KXSTC** `just dev` loads `.env` at the root of
   its tree, when the file exists, into the environment of `riff` and
   `riff-server`, for example `RIFF_OIDC_CLIENT_ID` and
