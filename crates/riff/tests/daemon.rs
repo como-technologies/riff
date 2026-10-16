@@ -466,7 +466,8 @@ impl Here {
 }
 
 /// A part of each line of a daemon that has its riff: it made it, made
-/// a new one, or read it.
+/// a new one, or read it. The daemon says it after it has the riff, so
+/// a status after it shows the riff (01M51WPSH4KBQMVT3XGDD45G63).
 const RIFF_LINE: &str = ", of the owner ";
 
 /// Stops `child` with a SIGTERM, and waits for its end.
