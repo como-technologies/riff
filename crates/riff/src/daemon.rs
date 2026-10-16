@@ -2913,12 +2913,13 @@ mod tests {
             std::fs::read_to_string(&log).unwrap(),
             logged.join("\n") + "\n"
         );
-        // The relay is the entrypoint: the binary of the daemon, with no
-        // write, and the command of the spec after it.
+        // The relay is the entrypoint: the riff of the daemon, with no
+        // write, and the command of the spec after it. The riff of the
+        // test daemon is a static fake.
         let spec = here.fake.spec(&name).unwrap();
         assert_eq!(spec.command, ["/opt/riff/riff", "relay", "--", "claude"]);
         assert!(spec.binds.contains(&Bind {
-            source: Source::Path(own_binary().unwrap()),
+            source: Source::Path(static_riff(&here.dir)),
             target: RELAY_BIN.into(),
             write: false,
         }));
@@ -3353,6 +3354,18 @@ mod tests {
             .started(here.start("riff-issue-1-aaaaaaaa", "issue-1"))
             .await;
         assert_eq!(name, "riff-issue-1-aaaaaaaa");
+
+        // A daemon binds its own binary: the test binary, which is not
+        // static with glibc.
+        let root = tempfile::tempdir().unwrap();
+        let own = Daemon::open(Fake::default(), dir_in(root.path()))
+            .await
+            .unwrap();
+        assert_eq!(own.relay_bin, own_binary().unwrap());
+        if cfg!(target_env = "gnu") && !crate::release::takes_dynamic() {
+            let error = own.check_relay().unwrap_err().to_string();
+            assert!(error.contains("Run riff update"), "{error}");
+        }
     }
 
     #[tokio::test]
