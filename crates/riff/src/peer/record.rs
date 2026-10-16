@@ -460,30 +460,45 @@ fn writer(
         Standing::Member { user, .. } => Some(user.as_str()),
         Standing::Unknown => None,
     };
-    let author = record.author();
+    let refuse = |no: bool, why: &'static str| if no { Err(why) } else { Ok(()) };
+    // Each type has its arm, with no wildcard: a new type needs its own
+    // writer rule.
     match body {
-        Body::Riff(_) if !owner || record.seq() != 1 => {
-            Err("only the first record of the owner makes the riff")
+        Body::Riff(_) => refuse(
+            !owner || record.seq() != 1,
+            "only the first record of the owner makes the riff",
+        ),
+        Body::Member(_) => refuse(!owner, "only the owner admits a member"),
+        Body::Removed(removed) => {
+            refuse(!owner, "only the owner removes a member")?;
+            refuse(
+                removed.key == context.riff(),
+                "the owner cannot remove itself",
+            )
         }
-        Body::Member(_) if !owner => Err("only the owner admits a member"),
-        Body::Removed(_) if !owner => Err("only the owner removes a member"),
-        Body::Removed(removed) if removed.key == context.riff() => {
-            Err("the owner cannot remove itself")
+        Body::Left(_) => refuse(owner, "the owner cannot leave"),
+        Body::Session(session) => refuse(
+            Some(session.session.who().user()) != user,
+            "a session record of another user than the user of its key",
+        ),
+        Body::Message(message) => refuse(
+            Some(message.from.who().user()) != user,
+            "a message of another user than the user of its key",
+        ),
+        Body::Plan(plan) => {
+            let whole_riff = match plan {
+                Plan::Pause { thread } => thread.is_none(),
+                Plan::Hold { .. } | Plan::Free { .. } | Plan::Resume { .. } | Plan::Other => false,
+            };
+            refuse(whole_riff && !owner, "only the owner pauses the whole riff")?;
+            refuse(
+                !owner && !context.leads(&record.author(), plan.thread()),
+                "only a daemon of a lead, or the daemon of the owner, writes a plan",
+            )
         }
-        Body::Left(_) if owner => Err("the owner cannot leave"),
-        Body::Session(session) if Some(session.session.who().user()) != user => {
-            Err("a session record of another user than the user of its key")
-        }
-        Body::Message(message) if Some(message.from.who().user()) != user => {
-            Err("a message of another user than the user of its key")
-        }
-        Body::Plan(Plan::Pause { thread: None }) if !owner => {
-            Err("only the owner pauses the whole riff")
-        }
-        Body::Plan(plan) if !owner && !context.leads(&author, plan.thread()) => {
-            Err("only a daemon of a lead, or the daemon of the owner, writes a plan")
-        }
-        _ => Ok(()),
+        // A type that the reader does not know has no writer check
+        // (01M519Z26AP5NZSFHWRQ2QCV9D).
+        Body::Other => Ok(()),
     }
 }
 
