@@ -6307,10 +6307,11 @@ with "Superseded by Wave C (ID)." holds until then.
   `riff login`, `riff logout`, `riff server`, the flag `--server` and
   `RIFF_SERVER`, the device key, `riff claim`, the riff-server form of
   `riff release`, the member commands with `--email`, `riff admin`,
-  `riff owner`, `riff step`, `riff audit`, and the shell forms of the
-  session tools: `riff who`, `riff whoami`, `riff read`, `riff post`,
-  `riff tell`, `riff status`, `riff blocked`, and `riff lead` with no
-  subcommand. The pages `start-a-team-riff.md` and `join-a-riff.md` go.
+  `riff owner`, `riff step`, `riff audit`, `riff move` of the bridge
+  release, and the shell forms of the session tools: `riff who`,
+  `riff whoami`, `riff read`, `riff post`, `riff tell`, `riff status`,
+  `riff blocked`, and `riff lead` with no subcommand. The pages
+  `start-a-team-riff.md` and `join-a-riff.md` go.
 - **01M51R8G2RZAVZN1432EGZSW0X** Wave C removes the parts of riff 1.x
   for a session on the host, with their tests and their book text: the
   plugin of Claude Code with its skill and its hooks, `riff connect`,
