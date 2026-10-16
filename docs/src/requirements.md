@@ -3761,6 +3761,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   time collects tokens. A runner waits at most 10 minutes, then runs
   with the tokens that it has. Superseded by 3.0
   (01M4Z60B7XT7462XMV49GJTVSJ).
+- **01M515PDCD1RRBKJPZHKKZWMY3** The `TRIPLE` of the test runner of a
+  worker is the `host` of `rustc -vV`, or of `$RUSTC -vV` when `RUSTC`
+  is set, not the target of the riff build. When riff cannot run it or
+  reads no `host`, the triple is the target of the riff build.
+  Superseded by 3.0 (01M4Z60B7XT7462XMV49GJTVSJ).
 - **01M49XNPMXD3SF6JHBYV9DN59M** The first worker of a machine reads
   the memory pressure of the machine (`some avg10` of
   `/proc/pressure/memory`) each 5 seconds. While it is above 10 %, the
@@ -4084,16 +4089,24 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M421QPX01BB15GJXHFYRETTX** `riff workers` shows for each machine
   whether the monitor is on, and its last numbers. A workers host
   tells them in its status: the 5-minute load, its limit, the physical
-  cores, the jobs of each worker and the last kill.
+  cores, the pool or the jobs (01M515PDFZZXQ9ZCQE7SQ6KB8G) and the last
+  kill.
+- **01M515PDFZZXQ9ZCQE7SQ6KB8G** The monitor numbers show the pool of
+  build jobs as `pool SIZE (USED in use)`: when a worker holds the
+  pool, its size and the tokens that are not in the pool; when no
+  worker runs and the settings give a pool, the size of the pool of
+  the next worker and 0. Else they show the fixed share of each worker
+  as `jobs N`. `riff top` shows `pool SIZE` with no tokens in use.
 - **01M421QPZ9E01PQ62PDBH378SJ** `riff top` shows one line under each
   host that runs workers: the load average of 1 and 5 minutes against
   the physical cores, the cap of the clock and the clock now, the
   available memory against the floor, the workers against the limit,
-  and the jobs of each worker. A number over its limit has the warning
-  style. The line fits in 80 columns. A second line shows the time and
-  the cause of the last kill. The numbers of a host come from its
-  status. The numbers of the machine of `riff top` come from that
-  machine, when its limit of workers is more than 0.
+  and the pool or the jobs (01M515PDFZZXQ9ZCQE7SQ6KB8G). A number over
+  its limit has the warning style. The line fits in 80 columns. A
+  second line shows the time and the cause of the last kill. The
+  numbers of a host come from its status. The numbers of the machine
+  of `riff top` come from that machine, when its limit of workers is
+  more than 0.
 - **01M421QQ1K7EFDV2PVPTSTE5FK** One monitor runs on a machine at a
   time: it holds the lock `monitor.lock` of the local directory.
 - **01M3ZVS08G1PES6N2MRM9N3PH4** The skill names `riff workers reap`
