@@ -28,7 +28,7 @@
 //!     T->>R: riff run issue-N --image IMAGE
 //!     R->>D: run the session in a container
 //!     R->>G: the session pushes, and opens the pull request
-//!     T->>T: list the home again: no new path
+//!     T->>T: list the home again: no new path, no changed file
 //!     T->>G: the pull request adds the line, and its Gate starts
 //!     T->>D: SIGTERM
 //!     T->>G: close the pull request and the issue, delete the branch, cancel its runs
@@ -46,7 +46,7 @@
 //! | 4. keep its verify from the workers | the issue has the label [`NO_VERIFY`]; a failed hold is a warning |
 //! | 5. start the daemon | no riff daemon answers before, and `riff daemon` of the tree answers in [`DAEMON_WAIT`] (see below) |
 //! | 6. run the item | `riff run issue-N --image IMAGE` ends with 0 |
-//! | 7. check the home | the home has no new path (see below) |
+//! | 7. check the home | the home has no new path and no changed file that riff must not write (see below) |
 //! | 8. find the pull request | the branch `worktree-issue-N` has an open pull request |
 //! | 9. check the change | its diff adds the line of the item to [`BOOK_FILE`] |
 //! | 10. wait for the Gate | the head commit has a check run [`GATE`] in [`GATE_WAIT`] |
@@ -116,17 +116,54 @@
 //! | `containers` in `XDG_DATA_HOME` and in `XDG_CONFIG_HOME` | the images and the volumes of podman |
 //! | the main clone, and the worktree of the test | the build of the test, and the fetch of `riff run` |
 //! | `XDG_CACHE_HOME` | the caches of the tools of the host |
-//! | each folder of `--skip` | the other programs of the person that write while the test runs |
+//! | each path of `--skip` | the other programs of the person that write while the test runs |
+//!
+//! The check also sees a change to a file that is there already, in the
+//! files that riff must not write (01M51K051FR0WN71NJXNA86XWY,
+//! [`Env::guarded`]). It keeps the size, the time of change and the
+//! inode of each of these files ([`Listing`]). A file with a new value
+//! fails the test. The other programs of the person change their own
+//! files while the test runs, so a change of another file does not count.
+//!
+//! | Files | Why |
+//! |---|---|
+//! | `~/.gitconfig`, `git` in `XDG_CONFIG_HOME` | the git config |
+//! | `gh` in `XDG_CONFIG_HOME` | the config of `gh`: the session gets it by a bind |
+//! | [`SHELL_FILES`] in the home, `fish/config.fish` and `fish/conf.d` in `XDG_CONFIG_HOME` | the shell files |
+//! | `.claude.json`, and `settings.json` in the Claude folder | the config of Claude Code |
 //!
 //! The other sessions of the person write in the Claude folder of the
-//! person (`CLAUDE_CONFIG_DIR`, else `~/.claude`) while the test runs.
-//! So in that folder, only a new path that names the session counts: its
-//! `ID8`, from the name of its folder `issue-N-ID8` ([`session_folders`]).
+//! person (`CLAUDE_CONFIG_DIR`, else `~/.claude`) and in `.claude.json`
+//! and its lock beside it, while the test runs
+//! (01M51K053WS0KK3E376V6DH6GR). So there, only a new path that names
+//! the session counts: its `ID8`, from the name of its folder
+//! `issue-N-ID8` ([`session_folders`]). A changed `.claude.json` counts
+//! only when its text names the `ID8`.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     P[a path after riff run] --> S{in a skip?}
+//!     S -- yes --> N[does not count]
+//!     S -- no --> B{in the listing before?}
+//!     B -- no --> C{in the Claude folder or .claude.json*?}
+//!     C -- no --> F[fails the test]
+//!     C -- yes --> M{names the ID8?}
+//!     M -- yes --> F
+//!     M -- no --> N
+//!     B -- yes --> G{a file that riff must not write, with a new value?}
+//!     G -- no --> N
+//!     G -- yes --> J{.claude.json?}
+//!     J -- no --> F
+//!     J -- yes --> T{its text names the ID8?}
+//!     T -- yes --> F
+//!     T -- no --> N
+//! ```
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -159,8 +196,23 @@ pub const POLL: Duration = Duration::from_secs(10);
 /// after SIGTERM.
 pub const DAEMON_WAIT: Duration = Duration::from_secs(10);
 
-/// The most new paths that a failed home check shows.
+/// The most paths that a failed home check shows.
 pub const SHOWN: usize = 20;
+
+/// The shell files in the home that the home check guards
+/// ([`Env::guarded`]).
+pub const SHELL_FILES: [&str; 10] = [
+    ".profile",
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".bash_logout",
+    ".zshenv",
+    ".zprofile",
+    ".zshrc",
+    ".zlogin",
+    ".zlogout",
+];
 
 /// The reason of the hold of `verify-issue-N`.
 pub const HOLD_REASON: &str = "the real-session test makes and closes this item: no verify";
@@ -183,7 +235,7 @@ pub const NO_VERIFY_COLOR: &str = "ededed";
 pub const CLOSE_TEXT: &str = "The real-session test closes its scratch item.";
 
 /// The usage line of the command.
-pub const USAGE: &str = "usage: real-session --riff PATH [--skip DIR]... [--gate-wait SECONDS]";
+pub const USAGE: &str = "usage: real-session --riff PATH [--skip PATH]... [--gate-wait SECONDS]";
 
 /// One step of the test, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,7 +339,7 @@ impl fmt::Display for Failure {
 pub struct Options {
     /// The riff binary of the tree.
     pub riff: PathBuf,
-    /// The folders that the home check also leaves out.
+    /// The paths that the home check also leaves out.
     pub skips: Vec<PathBuf>,
     /// The longest wait for the Gate.
     pub gate_wait: Duration,
@@ -361,6 +413,9 @@ pub struct Env {
     /// The Claude folder of the person: `CLAUDE_CONFIG_DIR`, else
     /// `~/.claude`.
     pub claude: PathBuf,
+    /// The config file of Claude Code: `.claude.json` in
+    /// `CLAUDE_CONFIG_DIR`, else `~/.claude.json`.
+    pub claude_json: PathBuf,
 }
 
 impl Env {
@@ -380,13 +435,25 @@ impl Env {
     /// assert_eq!(env.data, Path::new("/h/.local/share"));
     /// assert_eq!(env.cache, Path::new("/c"));
     /// assert_eq!(env.claude, Path::new("/h/.claude"));
+    /// assert_eq!(env.claude_json, Path::new("/h/.claude.json"));
     /// assert!(Env::from_vars(|_| None).is_err());
+    ///
+    /// let env = Env::from_vars(|name| match name {
+    ///     "HOME" => Some("/h".into()),
+    ///     "CLAUDE_CONFIG_DIR" => Some("/h/cc".into()),
+    ///     _ => None,
+    /// })?;
+    /// assert_eq!(env.claude_json, Path::new("/h/cc/.claude.json"));
     /// # Ok::<(), String>(())
     /// ```
     pub fn from_vars(var: impl Fn(&str) -> Option<OsString>) -> Result<Env, String> {
         let set = |name: &str| var(name).filter(|v| !v.is_empty()).map(PathBuf::from);
         let home = set("HOME").ok_or("set HOME")?;
         let base = |name: &str, default: &str| set(name).unwrap_or_else(|| home.join(default));
+        let claude_json = match set("CLAUDE_CONFIG_DIR") {
+            Some(dir) => dir.join(".claude.json"),
+            None => home.join(".claude.json"),
+        };
         Ok(Env {
             riff_home: set("RIFF_HOME"),
             config: base("XDG_CONFIG_HOME", ".config"),
@@ -394,6 +461,7 @@ impl Env {
             state: base("XDG_STATE_HOME", ".local/state"),
             cache: base("XDG_CACHE_HOME", ".cache"),
             claude: base("CLAUDE_CONFIG_DIR", ".claude"),
+            claude_json,
             home,
         })
     }
@@ -464,13 +532,48 @@ impl Env {
         all.extend(skips.iter().cloned());
         all
     }
+
+    /// The files that riff must not write (01M4Z60B85X62PNYSVJWKXEWH3):
+    /// the home check sees a change to them (01M51K051FR0WN71NJXNA86XWY).
+    /// A folder guards each file in it.
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// use real_session::{Env, SHELL_FILES};
+    ///
+    /// let env = Env::from_vars(|name| (name == "HOME").then(|| "/h".into()))?;
+    /// let guarded = env.guarded();
+    /// for path in ["/h/.gitconfig", "/h/.config/git", "/h/.config/gh", "/h/.bashrc", "/h/.zshrc"] {
+    ///     assert!(guarded.contains(&PathBuf::from(path)), "{path}");
+    /// }
+    /// assert!(guarded.contains(&PathBuf::from("/h/.config/fish/config.fish")));
+    /// assert!(guarded.contains(&PathBuf::from("/h/.claude.json")));
+    /// assert!(guarded.contains(&PathBuf::from("/h/.claude/settings.json")));
+    /// assert_eq!(guarded.len(), SHELL_FILES.len() + 7);
+    /// # Ok::<(), String>(())
+    /// ```
+    pub fn guarded(&self) -> Vec<PathBuf> {
+        let mut all = vec![
+            self.home.join(".gitconfig"),
+            self.config.join("git"),
+            self.config.join("gh"),
+        ];
+        all.extend(SHELL_FILES.iter().map(|name| self.home.join(name)));
+        all.push(self.config.join("fish/config.fish"));
+        all.push(self.config.join("fish/conf.d"));
+        all.push(self.claude_json.clone());
+        all.push(self.claude.join("settings.json"));
+        all
+    }
 }
 
 /// The paths of a home, each one by its hash: a home can hold millions
-/// of paths.
+/// of paths. Each file that the check guards also has its state
+/// ([`Home::guarded`]).
 #[derive(Debug, Default)]
 pub struct Listing {
     paths: HashSet<u64>,
+    states: HashMap<u64, u64>,
 }
 
 impl Listing {
@@ -488,6 +591,11 @@ impl Listing {
     pub fn contains(&self, path: &Path) -> bool {
         self.paths.contains(&key(path))
     }
+
+    /// The state of `path`, when the check guards it.
+    fn state(&self, path: &Path) -> Option<u64> {
+        self.states.get(&key(path)).copied()
+    }
 }
 
 /// The hash of a path in a [`Listing`].
@@ -497,39 +605,78 @@ fn key(path: &Path) -> u64 {
     hasher.finish()
 }
 
-/// The home check (01M4ZCFGHCS7WJ6CFYBZSX0AT5).
+/// The state of a file in a [`Listing`]: the hash of its size, its time
+/// of change and its inode. A write changes the size or the time. A new
+/// file in place of the old one changes the inode.
+fn state(meta: &Metadata) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    (meta.len(), meta.mtime(), meta.mtime_nsec(), meta.ino()).hash(&mut hasher);
+    hasher.finish()
+}
+
+/// What changed in the home and counts: the result of the home check.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Changes {
+    /// The files that riff must not write, with a new size, time of
+    /// change or inode.
+    pub changed: Vec<PathBuf>,
+    /// The new paths. A new folder shows as one path.
+    pub new: Vec<PathBuf>,
+}
+
+impl Changes {
+    /// True when nothing counts.
+    pub fn is_empty(&self) -> bool {
+        self.changed.is_empty() && self.new.is_empty()
+    }
+}
+
+/// The home check (01M4ZCFGHCS7WJ6CFYBZSX0AT5,
+/// 01M51K051FR0WN71NJXNA86XWY, 01M51K053WS0KK3E376V6DH6GR).
 ///
 /// ```
-/// use real_session::Home;
+/// use real_session::{Changes, Home};
 ///
 /// let dir = tempfile::tempdir()?;
 /// let root = dir.path().to_owned();
 /// std::fs::create_dir_all(root.join(".claude/projects"))?;
 /// std::fs::create_dir_all(root.join(".local/share/riff"))?;
+/// std::fs::write(root.join(".gitconfig"), "[user]\n")?;
+/// std::fs::write(root.join(".bash_history"), "ls\n")?;
 /// let home = Home {
 ///     root: root.clone(),
 ///     skips: vec![root.join(".local/share/riff")],
 ///     claude: root.join(".claude"),
+///     claude_json: root.join(".claude.json"),
+///     guarded: vec![root.join(".gitconfig")],
 /// };
 /// let before = home.list();
-/// assert_eq!(before.len(), 4);
+/// assert_eq!(before.len(), 6);
 ///
-/// // A new file, and a new folder with a file in it: they count.
+/// // A new file, a new folder with a file in it, and a change to a file
+/// // that riff must not write: they count.
 /// std::fs::write(root.join(".cvsignore"), "")?;
 /// std::fs::create_dir_all(root.join("new/deep"))?;
-/// // A file of riff, and a file of another Claude session: they do not.
+/// std::fs::write(root.join(".gitconfig"), "[user]\n\tname = x\n")?;
+/// // A file of riff, a file of another Claude session, the lock of
+/// // .claude.json, and a change to another file: they do not.
 /// std::fs::write(root.join(".local/share/riff/state"), "")?;
 /// std::fs::write(root.join(".claude/projects/other.jsonl"), "")?;
+/// std::fs::write(root.join(".claude.json.lock"), "")?;
+/// std::fs::write(root.join(".bash_history"), "ls\npwd\n")?;
 /// // A folder in the Claude folder that names the session counts.
 /// std::fs::create_dir_all(root.join(".claude/projects/-s-issue-12-1a2b3c4d-clone"))?;
 ///
 /// assert_eq!(
-///     home.new_paths(&before, &["1a2b3c4d".into()]),
-///     [
-///         root.join(".claude/projects/-s-issue-12-1a2b3c4d-clone"),
-///         root.join(".cvsignore"),
-///         root.join("new"),
-///     ]
+///     home.changes(&before, &["1a2b3c4d".into()]),
+///     Changes {
+///         changed: vec![root.join(".gitconfig")],
+///         new: vec![
+///             root.join(".claude/projects/-s-issue-12-1a2b3c4d-clone"),
+///             root.join(".cvsignore"),
+///             root.join("new"),
+///         ],
+///     }
 /// );
 /// # Ok::<(), std::io::Error>(())
 /// ```
@@ -537,53 +684,92 @@ fn key(path: &Path) -> u64 {
 pub struct Home {
     /// The home.
     pub root: PathBuf,
-    /// The folders that the check leaves out.
+    /// The paths that the check leaves out.
     pub skips: Vec<PathBuf>,
     /// The Claude folder of the person.
     pub claude: PathBuf,
+    /// The config file of Claude Code: `.claude.json`.
+    pub claude_json: PathBuf,
+    /// The files that riff must not write: a change to one of them
+    /// counts. A folder guards each file in it.
+    pub guarded: Vec<PathBuf>,
 }
 
 impl Home {
-    /// Each path of the home, except the paths in [`Home::skips`].
+    /// Each path of the home, except the paths in [`Home::skips`], and
+    /// the state of each file in [`Home::guarded`].
     pub fn list(&self) -> Listing {
         let mut listing = Listing::default();
-        self.walk(&mut |path| {
-            listing.paths.insert(key(path));
+        self.walk(&mut |path, meta| {
+            let key = key(path);
+            listing.paths.insert(key);
+            if self.guards(path, meta) {
+                listing.states.insert(key, state(meta));
+            }
             true
         });
         listing
     }
 
-    /// Each path of the home that is not in `before`, and that counts:
-    /// in the Claude folder, only a path that names one of `marks`. A
-    /// new folder shows as one path. The paths are in order.
-    pub fn new_paths(&self, before: &Listing, marks: &[String]) -> Vec<PathBuf> {
-        let mut found = Vec::new();
-        self.walk(&mut |path| {
-            if before.contains(path) {
-                return true;
+    /// What changed in the home since `before`, and counts. Each path
+    /// that is not in `before` counts, except in the Claude folder and
+    /// `.claude.json*`: there only a path that names one of `marks`
+    /// counts. A new folder shows as one path. Each file of
+    /// [`Home::guarded`] with a new state counts, except a
+    /// `.claude.json` whose text names none of `marks`. The paths are
+    /// in order.
+    pub fn changes(&self, before: &Listing, marks: &[String]) -> Changes {
+        let names = |text: &str| {
+            marks
+                .iter()
+                .any(|mark| !mark.is_empty() && text.contains(mark.as_str()))
+        };
+        let mut changes = Changes::default();
+        self.walk(&mut |path, meta| {
+            if !before.contains(path) {
+                let counts = !self.of_claude(path) || names(&path.to_string_lossy());
+                if counts {
+                    changes.new.push(path.to_owned());
+                }
+                // A new folder of another session can hold a path that
+                // names this session.
+                return !counts;
             }
-            let text = path.to_string_lossy();
-            let counts = !path.starts_with(&self.claude)
-                || marks
-                    .iter()
-                    .any(|mark| !mark.is_empty() && text.contains(mark.as_str()));
-            if counts {
-                found.push(path.to_owned());
+            let changed = before
+                .state(path)
+                .is_some_and(|old| self.guards(path, meta) && old != state(meta));
+            if changed
+                && (path != self.claude_json
+                    || std::fs::read(path).is_ok_and(|text| names(&String::from_utf8_lossy(&text))))
+            {
+                changes.changed.push(path.to_owned());
             }
-            // A new folder of another session can hold a path that names
-            // this session.
-            !counts
+            true
         });
-        found.sort();
-        found
+        changes.changed.sort();
+        changes.new.sort();
+        changes
+    }
+
+    /// True when the check guards `path`: a file or a link in
+    /// [`Home::guarded`].
+    fn guards(&self, path: &Path, meta: &Metadata) -> bool {
+        !meta.is_dir() && self.guarded.iter().any(|guard| path.starts_with(guard))
+    }
+
+    /// True when `path` is in the Claude folder, or its name starts with
+    /// `.claude.json` beside it, for example its lock.
+    fn of_claude(&self, path: &Path) -> bool {
+        let json = self.claude_json.as_os_str().as_encoded_bytes();
+        path.starts_with(&self.claude) || path.as_os_str().as_encoded_bytes().starts_with(json)
     }
 
     /// Calls `visit` for each path of the home, except the paths in
-    /// [`Home::skips`]. It goes into a folder when `visit` gives true,
-    /// and the folder is on the file system of the home. It follows no
-    /// link, and it skips a folder that it cannot read.
-    fn walk(&self, visit: &mut dyn FnMut(&Path) -> bool) {
+    /// [`Home::skips`], with the metadata of the path itself. It goes
+    /// into a folder when `visit` gives true, and the folder is on the
+    /// file system of the home. It follows no link, and it skips a
+    /// folder that it cannot read.
+    fn walk(&self, visit: &mut dyn FnMut(&Path, &Metadata) -> bool) {
         let device = std::fs::symlink_metadata(&self.root).map(|m| m.dev()).ok();
         let mut folders = vec![self.root.clone()];
         while let Some(folder) = folders.pop() {
@@ -595,9 +781,11 @@ impl Home {
                 if self.skips.iter().any(|skip| path.starts_with(skip)) {
                     continue;
                 }
-                let go_in = visit(&path);
-                let folder = entry.file_type().is_ok_and(|t| t.is_dir());
-                if go_in && folder && entry.metadata().is_ok_and(|m| Some(m.dev()) == device) {
+                // The metadata of a link, not of its target.
+                let Ok(meta) = entry.metadata() else {
+                    continue;
+                };
+                if visit(&path, &meta) && meta.is_dir() && Some(meta.dev()) == device {
                     folders.push(path);
                 }
             }
@@ -608,27 +796,62 @@ impl Home {
 /// The reason of a failed home check.
 ///
 /// ```
-/// let text = real_session::new_paths_text(&["/h/.cvsignore".into()]);
-/// assert!(text.starts_with("the home has 1 new path outside the folders of riff:\n  /h/.cvsignore\n"));
+/// use real_session::{Changes, changes_text};
 ///
-/// let many: Vec<std::path::PathBuf> = (0..22).map(|i| format!("/h/f{i}").into()).collect();
-/// assert!(real_session::new_paths_text(&many).contains("\n  /h/f19\n  and 2 more\n"));
+/// let new = Changes { new: vec!["/h/.cvsignore".into()], ..Changes::default() };
+/// assert!(changes_text(&new).starts_with(
+///     "the home has 1 new path outside the folders of riff:\n  /h/.cvsignore\n"
+/// ));
+///
+/// let both = Changes {
+///     changed: vec!["/h/.gitconfig".into()],
+///     new: vec!["/h/a".into(), "/h/b".into()],
+/// };
+/// assert!(changes_text(&both).starts_with(
+///     "the home has 1 changed file and 2 new paths outside the folders of riff:\n  \
+///      /h/.gitconfig (changed)\n  /h/a\n  /h/b\n"
+/// ));
+/// let changed = Changes {
+///     changed: vec!["/h/.bashrc".into(), "/h/.gitconfig".into()],
+///     ..Changes::default()
+/// };
+/// assert!(changes_text(&changed).starts_with("the home has 2 changed files outside"));
+/// assert!(changes_text(&changed).ends_with("--skip PATH, and run the test again."));
+///
+/// let many = Changes {
+///     new: (0..22).map(|i| format!("/h/f{i}").into()).collect(),
+///     ..Changes::default()
+/// };
+/// assert!(changes_text(&many).contains("\n  /h/f19\n  and 2 more\n"));
 /// ```
-pub fn new_paths_text(paths: &[PathBuf]) -> String {
-    let noun = if paths.len() == 1 { "path" } else { "paths" };
-    let mut text = format!(
-        "the home has {} new {noun} outside the folders of riff:\n",
-        paths.len()
-    );
-    for path in paths.iter().take(SHOWN) {
-        text.push_str(&format!("  {}\n", path.display()));
+pub fn changes_text(changes: &Changes) -> String {
+    let count = |n: usize, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
+    let mut parts = Vec::new();
+    if !changes.changed.is_empty() {
+        parts.push(count(changes.changed.len(), "changed file"));
     }
-    if paths.len() > SHOWN {
-        text.push_str(&format!("  and {} more\n", paths.len() - SHOWN));
+    if !changes.new.is_empty() {
+        parts.push(count(changes.new.len(), "new path"));
+    }
+    let mut text = format!(
+        "the home has {} outside the folders of riff:\n",
+        parts.join(" and ")
+    );
+    let lines: Vec<String> = changes
+        .changed
+        .iter()
+        .map(|path| format!("{} (changed)", path.display()))
+        .chain(changes.new.iter().map(|path| path.display().to_string()))
+        .collect();
+    for line in lines.iter().take(SHOWN) {
+        text.push_str(&format!("  {line}\n"));
+    }
+    if lines.len() > SHOWN {
+        text.push_str(&format!("  and {} more\n", lines.len() - SHOWN));
     }
     text.push_str(
-        "When another program wrote a path, leave out its folder with --skip DIR, \
-         and run the test again.",
+        "When another program wrote a path, leave out the path or its folder with \
+         --skip PATH, and run the test again.",
     );
     text
 }
@@ -874,6 +1097,8 @@ fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String
         root: env.home.clone(),
         skips: env.skips(&clones, &skips),
         claude: env.claude.clone(),
+        claude_json: env.claude_json.clone(),
+        guarded: env.guarded(),
     };
     let before = step(Step::List, stop, || {
         let listing = home.list();
@@ -901,7 +1126,7 @@ fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String
         wait_for_gate(&pull, options.gate_wait, stop)
     })?;
     Ok(format!(
-        "issue #{issue}, pull request #{} ({}), the Gate is {gate}, no new path in the home",
+        "issue #{issue}, pull request #{} ({}), the Gate is {gate}, no change in the home",
         pull.number, pull.url
     ))
 }
@@ -1169,18 +1394,19 @@ fn run_item(riff: &Path, item: &str, image: &str, stop: &AtomicBool) -> Result<(
     }
 }
 
-/// Step 7: the home has no new path.
+/// Step 7: the home has no new path and no changed file that riff
+/// must not write.
 fn check_home(home: &Home, before: &Listing, env: &Env, issue: u64) -> Result<(), String> {
     let marks: Vec<String> = session_folders(&env.sessions(), issue)
         .into_iter()
         .map(|(id8, _)| id8)
         .collect();
-    let new = home.new_paths(before, &marks);
-    if new.is_empty() {
-        println!("  no new path");
+    let changes = home.changes(before, &marks);
+    if changes.is_empty() {
+        println!("  no new path, no changed file");
         Ok(())
     } else {
-        Err(new_paths_text(&new))
+        Err(changes_text(&changes))
     }
 }
 
@@ -1477,22 +1703,89 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_owned();
         std::fs::create_dir_all(root.join(".claude")).unwrap();
-        let home = Home {
-            root: root.clone(),
-            skips: Vec::new(),
-            claude: root.join(".claude"),
-        };
+        let home = home_in(&root, Vec::new());
         let before = home.list();
         let todos = root.join(".claude/todos");
         std::fs::create_dir_all(&todos).unwrap();
         std::fs::write(todos.join("other-agent.json"), "").unwrap();
         std::fs::write(todos.join("1a2b3c4d-agent.json"), "").unwrap();
         assert_eq!(
-            home.new_paths(&before, &["1a2b3c4d".into()]),
+            home.changes(&before, &["1a2b3c4d".into()]).new,
             [todos.join("1a2b3c4d-agent.json")]
         );
         // No mark: nothing in the Claude folder counts.
-        assert!(home.new_paths(&before, &[String::new()]).is_empty());
+        assert!(home.changes(&before, &[String::new()]).is_empty());
+    }
+
+    /// A [`Home`] in `root` with the Claude folder `.claude`, its
+    /// `.claude.json` beside it, and `guarded`.
+    fn home_in(root: &Path, guarded: Vec<PathBuf>) -> Home {
+        Home {
+            root: root.to_owned(),
+            skips: Vec::new(),
+            claude: root.join(".claude"),
+            claude_json: root.join(".claude.json"),
+            guarded,
+        }
+    }
+
+    #[test]
+    fn a_changed_claude_json_counts_only_when_its_text_names_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        let json = root.join(".claude.json");
+        std::fs::write(&json, r#"{"numStartups":1}"#).unwrap();
+        let home = home_in(&root, vec![json.clone()]);
+        let before = home.list();
+        // Another session of the person writes it, and its lock.
+        std::fs::write(&json, r#"{"numStartups":2}"#).unwrap();
+        std::fs::write(root.join(".claude.json.lock"), "").unwrap();
+        let marks = ["1a2b3c4d".to_owned()];
+        assert_eq!(home.changes(&before, &marks), Changes::default());
+        // A project of the session in it counts.
+        std::fs::write(
+            &json,
+            r#"{"projects":{"/s/issue-12-1a2b3c4d/clone":{}}}"#,
+        )
+        .unwrap();
+        assert_eq!(home.changes(&before, &marks).changed, [json]);
+    }
+
+    #[test]
+    fn a_guarded_folder_guards_each_file_in_it_and_a_new_inode_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_owned();
+        let gh = root.join(".config/gh");
+        std::fs::create_dir_all(&gh).unwrap();
+        let hosts = gh.join("hosts.yml");
+        std::fs::write(&hosts, "github.com:\n").unwrap();
+        let other = root.join(".config/other.yml");
+        std::fs::write(&other, "a\n").unwrap();
+        let home = home_in(&root, vec![gh.clone()]);
+        let before = home.list();
+        assert_eq!(home.changes(&before, &[]), Changes::default());
+
+        // The same size and time of change, in a new file: a write by a
+        // rename.
+        let time = std::fs::metadata(&hosts).unwrap().modified().unwrap();
+        let temp = gh.join("hosts.yml.new");
+        std::fs::write(&temp, "gitlab.com:\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&temp)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+        std::fs::rename(&temp, &hosts).unwrap();
+        // A file that the check does not guard can change.
+        std::fs::write(&other, "b\n").unwrap();
+        assert_eq!(
+            home.changes(&before, &[]),
+            Changes {
+                changed: vec![hosts],
+                new: Vec::new(),
+            }
+        );
     }
 
     #[test]

@@ -18,7 +18,8 @@
 //! | `run-fails` | `riff run` ends with 1 |
 //! | `run-waits` | `riff run` waits for a signal |
 //! | `run-signaled` | `riff run` ends by SIGTERM, and the test gets no signal |
-//! | `stray` | `riff run` writes paths in the home |
+//! | `stray` | `riff run` writes paths in the home, and changes files that other programs write |
+//! | `gitconfig` | `riff run` appends to `~/.gitconfig` |
 //! | `no-pull` | `gh pr view` finds no pull request |
 //! | `no-gate` | the head commit has no check run |
 
@@ -106,7 +107,11 @@ run)
     touch "$HOME/.cvsignore"
     mkdir -p "$HOME/.claude/projects/-x-$2-ID8-clone" "$HOME/.cache/tool" "$XDG_STATE_HOME/riff"
     touch "$HOME/.claude/projects/other.jsonl" "$HOME/.cache/tool/x" "$XDG_STATE_HOME/riff/x"
+    echo '{"numStartups":2}' > "$HOME/.claude.json"
+    touch "$HOME/.claude.json.lock"
+    echo pwd >> "$HOME/.bash_history"
   fi
+  if [ -f "$c/gitconfig" ]; then printf '[alias]\n\tst = status\n' >> "$HOME/.gitconfig"; fi
   if [ -f "$c/run-waits" ]; then touch "$c/running"; sleep 30; fi
   if [ -f "$c/run-signaled" ]; then kill -TERM $$; fi
   if [ -f "$c/run-fails" ]; then exit 1; fi ;;
@@ -122,6 +127,14 @@ impl Fake {
         let clone = env.home().join("src/riff");
         for dir in [&bin, &ctl, &clone, &env.home().join(".claude/projects")] {
             std::fs::create_dir_all(dir).unwrap();
+        }
+        // The files of the person that are there before the test.
+        for (name, text) in [
+            (".gitconfig", "[user]\n\tname = Ada\n"),
+            (".claude.json", "{\"numStartups\":1}\n"),
+            (".bash_history", "ls\n"),
+        ] {
+            std::fs::write(env.home().join(name), text).unwrap();
         }
         let git = Command::new("git")
             .args(["init", "-q"])
@@ -232,7 +245,7 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
     assert!(
         stdout.contains(
             "real-session: PASS: issue #801, pull request #900 (https://github.com/o/r/pull/900), \
-             the Gate is queued, no new path in the home"
+             the Gate is queued, no change in the home"
         ),
         "{stdout}"
     );
@@ -394,11 +407,37 @@ fn a_new_path_in_the_home_fails_the_check_of_the_home() {
     assert!(!stderr.contains("other.jsonl"), "{stderr}");
     assert!(!stderr.contains(".cache"), "{stderr}");
     assert!(!stderr.contains(".local/state"), "{stderr}");
+    // Nor do a change of .claude.json that does not name the session, its
+    // lock, and a change of a file that the check does not guard.
+    assert!(!stderr.contains(".claude.json"), "{stderr}");
+    assert!(!stderr.contains(".bash_history"), "{stderr}");
+    assert!(!stderr.contains("(changed)"), "{stderr}");
     let log = fake.log();
     assert!(
         find(&log, "gh pr close 900 --delete-branch").is_some(),
         "{log:#?}"
     );
+    assert_clean(&fake);
+}
+
+/// A write into a file that is there already, and that riff must not
+/// write, fails the home check (01M51K051FR0WN71NJXNA86XWY).
+#[test]
+fn a_change_to_the_gitconfig_fails_the_check_of_the_home() {
+    let fake = Fake::new();
+    fake.set("gitconfig");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    let shown = format!(
+        "real-session: FAIL at step 7 of 10, check the home: the home has 1 changed file \
+         outside the folders of riff:\n  {} (changed)\nWhen another program wrote a path, \
+         leave out the path or its folder with --skip PATH, and run the test again.\n",
+        fake.env.home().join(".gitconfig").display()
+    );
+    assert!(stderr.contains(&shown), "{shown}\n{stderr}");
+    let log = fake.log();
+    assert!(find(&log, "gh pr diff").is_none(), "{log:#?}");
     assert_clean(&fake);
 }
 
