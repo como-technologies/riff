@@ -33,7 +33,8 @@
 //!   `Needs:` issues are all closed. A pull request waits for a verify
 //!   when its branch names an issue, it is not a draft, its head has no
 //!   status `riff/verify`, and no session claims `verify-issue-N` for
-//!   it.
+//!   it. The pull request of an issue with the label [`NO_VERIFY`] is no
+//!   work (01M5157V0P92EBHF4M7N9K0RGR).
 //! - **One count for an item** ([`Verify`], [`in_verify`],
 //!   01M3Z9N5HHHS1E17NFGMVBKZ0K). The author of a pull request releases
 //!   its item at the verify request. So an open issue with no claim can
@@ -806,9 +807,15 @@ pub fn current_wave(open: &[Milestone]) -> Option<&str> {
         .map(|(_, title)| title)
 }
 
+/// The label of an issue that gets no verify: riff offers no verify of
+/// its pull request, and `riff run` sends no verify request for it
+/// (01M5157V0P92EBHF4M7N9K0RGR). The scratch item of the real-session
+/// test has it.
+pub const NO_VERIFY: &str = "no-verify";
+
 /// An open issue, as `gh issue list --json
-/// number,body,comments,milestone` gives it.
-#[derive(Debug, Clone, Deserialize)]
+/// number,body,comments,milestone,labels` gives it.
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Issue {
     pub number: u64,
     #[serde(default)]
@@ -817,6 +824,15 @@ pub struct Issue {
     pub comments: Vec<Comment>,
     #[serde(default)]
     pub milestone: Option<Milestone>,
+    #[serde(default)]
+    pub labels: Vec<Label>,
+}
+
+/// A label of an issue.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Label {
+    #[serde(deserialize_with = "crate::text::forge_de")]
+    pub name: String,
 }
 
 /// A comment of an issue.
@@ -832,6 +848,12 @@ impl Issue {
         self.comments
             .iter()
             .any(|c| c.body.trim_start().starts_with("Merged in #"))
+    }
+
+    /// True when the issue has the label [`NO_VERIFY`]
+    /// (01M5157V0P92EBHF4M7N9K0RGR).
+    pub fn no_verify(&self) -> bool {
+        self.labels.iter().any(|l| l.name == NO_VERIFY)
     }
 }
 
@@ -872,6 +894,7 @@ pub fn needs(body: &str) -> Vec<u64> {
 ///     body: body.into(),
 ///     comments: if merged { vec![Comment { body: "Merged in #9 (abc)".into() }] } else { vec![] },
 ///     milestone: Some(Milestone { title: wave.into() }),
+///     labels: vec![],
 /// };
 /// let open = [
 ///     issue(1, "Wave 2", "", false),
@@ -1380,41 +1403,80 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
     ])
 }
 
-/// The free work of the repository `repo` (`OWNER/REPO`), with `gh`,
-/// by name: the pull requests that wait for a verify
-/// (`verify-issue-N`), then the free items of the current wave
-/// (`issue-N`). An item counts one time: as a build or as a verify
-/// (01M3Z9N5HHHS1E17NFGMVBKZ0K).
+/// The free work of the repository `repo` (`OWNER/REPO`), with `gh`:
+/// [`free_work_of`] with its open milestones, its open issues and its
+/// open pull requests.
 pub fn free_work(gh: &Gh, repo: &str, claims: &HashSet<String>) -> Result<Vec<String>> {
     let open: Vec<Milestone> = gh.json(&[
         "api",
         &format!("repos/{repo}/milestones?state=open&per_page=100"),
     ])?;
     let pulls = pulls(gh, repo)?;
-    let items = match current_wave(&open) {
-        Some(wave) => {
-            let issues: Vec<Issue> = gh.json(&[
-                "issue",
-                "list",
-                "--repo",
-                repo,
-                "--state",
-                "open",
-                "--limit",
-                "1000",
-                "--json",
-                "number,body,comments,milestone",
-            ])?;
-            free_items(&issues, wave, claims, &pulls)
-        }
-        None => Vec::new(),
-    };
-    let verifies = waiting_verifies(&pulls, claims);
-    Ok(verifies
+    let issues: Vec<Issue> = gh.json(&[
+        "issue",
+        "list",
+        "--repo",
+        repo,
+        "--state",
+        "open",
+        "--limit",
+        "1000",
+        "--json",
+        "number,body,comments,milestone,labels",
+    ])?;
+    Ok(free_work_of(&open, &issues, &pulls, claims))
+}
+
+/// The free work, by name: the pull requests that wait for a verify
+/// (`verify-issue-N`), then the free items of the current wave
+/// (`issue-N`). An item counts one time: as a build or as a verify
+/// (01M3Z9N5HHHS1E17NFGMVBKZ0K). The pull request of an issue with the
+/// label [`NO_VERIFY`] is no work (01M5157V0P92EBHF4M7N9K0RGR).
+///
+/// ```
+/// use std::collections::HashSet;
+/// use riff::rollout::{Issue, Label, Milestone, Pull, free_work_of};
+///
+/// let issue = |number, wave: &str, labels: &[&str]| Issue {
+///     number,
+///     milestone: Some(Milestone { title: wave.into() }),
+///     labels: labels.iter().map(|l| Label { name: l.to_string() }).collect(),
+///     ..Issue::default()
+/// };
+/// let pull = |number, issue: u64| Pull {
+///     number,
+///     branch: format!("worktree-issue-{issue}"),
+///     ..Pull::default()
+/// };
+/// let open = [Milestone { title: "Wave 2".into() }];
+/// let issues = [issue(1, "Wave 2", &[]), issue(2, "Backlog", &[]), issue(3, "Backlog", &["no-verify"])];
+/// // Each pull request waits for a verify: the one of 3 is no work.
+/// let pulls = [pull(40, 2), pull(41, 3)];
+/// assert_eq!(
+///     free_work_of(&open, &issues, &pulls, &HashSet::new()),
+///     ["verify-issue-2", "issue-1"]
+/// );
+/// ```
+pub fn free_work_of(
+    open: &[Milestone],
+    issues: &[Issue],
+    pulls: &[Pull],
+    claims: &HashSet<String>,
+) -> Vec<String> {
+    let items = current_wave(open).map_or_else(Vec::new, |wave| {
+        free_items(issues, wave, claims, pulls)
+    });
+    let kept: HashSet<u64> = issues
         .iter()
+        .filter(|i| i.no_verify())
+        .map(|i| i.number)
+        .collect();
+    waiting_verifies(pulls, claims)
+        .iter()
+        .filter(|n| !kept.contains(n))
         .map(|n| format!("verify-issue-{n}"))
         .chain(items.iter().map(|n| format!("issue-{n}")))
-        .collect())
+        .collect()
 }
 
 /// The real world of the rollout: the riff, `gh`, and tmux.

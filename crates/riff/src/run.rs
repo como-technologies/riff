@@ -53,6 +53,22 @@
 //! session. A SIGINT or a SIGTERM asks the daemon to stop the container
 //! first (01M4Z81B1913NF6HBZ5G38B3Q9).
 //!
+//! riff sends no verify request when the issue has the label
+//! [`rollout::NO_VERIFY`], or when a lead holds `verify-ITEM`. It shows
+//! why ([`no_verify`], 01M5157V0P92EBHF4M7N9K0RGR,
+//! 01M5157TYDEHZHDXSC1AHCRDRN). It reads the label and the holds after
+//! the session: a hold that the lead makes while the session works
+//! counts.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     P[an open pull request] --> L{the label no-verify?}
+//!     L -->|yes| N[no verify request: riff shows why]
+//!     L -->|no| H{a hold of verify-ITEM?}
+//!     H -->|yes| N
+//!     H -->|no| V[the verify request to the lead]
+//! ```
+//!
 //! `claude` does not end while one of its background tasks runs. After
 //! a result, `riff run` shows each task that `claude` waits for
 //! ([`View`], 01M4ZSZX9H59T04QSJ01V4F9TE). The start text tells the
@@ -154,15 +170,16 @@
 //! | The socket of the session | the daemon adds it: its folder at `/run/riff` with write, and `RIFF_SOCKET` | 01M4ZDTVSP0T1YENKAWGKA114D |
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use riff_core::name::{Place, SessionUri};
+use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{Kind, StartReason, WORKER_ALIVE_EVERY};
+use riff_core::wire::{HoldInfo, Kind, StartReason, WORKER_ALIVE_EVERY};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::signal::unix::{SignalKind, signal};
@@ -827,6 +844,79 @@ pub(crate) fn milestone(gh: &pr::Gh, issue: u64) -> Result<String> {
     Ok(milestone)
 }
 
+/// True when the issue `issue` has the label [`rollout::NO_VERIFY`], with
+/// `gh`.
+fn labelled(gh: &pr::Gh, issue: u64) -> Result<bool> {
+    let found: rollout::Issue =
+        gh.json(&["issue", "view", &issue.to_string(), "--json", "number,labels"])?;
+    Ok(found.no_verify())
+}
+
+/// Why `riff run` sends no verify request for `item`, the issue `issue`,
+/// or `None` to send it: the issue has the label [`rollout::NO_VERIFY`]
+/// (`labelled`, 01M5157V0P92EBHF4M7N9K0RGR), or a lead holds
+/// `verify-ITEM` (01M5157TYDEHZHDXSC1AHCRDRN). `holds` are the holds of
+/// the repository thread.
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use riff::run::no_verify;
+/// use riff_core::wire::HoldInfo;
+///
+/// let hold = |reason: &str| HoldInfo { reason: reason.into(), by: None, at_ms: 1_790_000_000_000 };
+/// let mut holds = BTreeMap::new();
+/// assert_eq!(no_verify("issue-12", 12, false, &holds), None);
+/// // A hold of the item itself does not stop the verify request.
+/// holds.insert("issue-12".to_owned(), hold("later"));
+/// assert_eq!(no_verify("issue-12", 12, false, &holds), None);
+/// holds.insert("verify-issue-12".to_owned(), hold("a scratch item"));
+/// assert_eq!(
+///     no_verify("issue-12", 12, false, &holds).unwrap(),
+///     "riff run sends no verify request for issue-12: verify-issue-12 is held by the lead since \
+///      2026-09-21T14:13:20Z: a scratch item"
+/// );
+/// assert_eq!(
+///     no_verify("issue-12", 12, true, &BTreeMap::new()).unwrap(),
+///     "riff run sends no verify request for issue-12: issue #12 has the label no-verify."
+/// );
+/// ```
+pub fn no_verify(
+    item: &str,
+    issue: u64,
+    labelled: bool,
+    holds: &BTreeMap<String, HoldInfo>,
+) -> Option<String> {
+    if labelled {
+        return Some(text::run_no_verify_label(item, issue));
+    }
+    let verify = format!("verify-{item}");
+    let hold = holds.get(&verify)?;
+    let held = riff_state::state::plan::held_text(&verify, hold);
+    Some(text::run_verify_held(item, &held))
+}
+
+/// [`no_verify`] now: the labels of the issue from `gh`, then the holds
+/// of `thread` from riff-server, as `me`. riff asks riff-server only for
+/// an issue with no label. A fault of `gh` shows on stderr, and riff
+/// goes on to the holds.
+async fn no_verify_now(
+    api: &Api,
+    me: &SessionUri,
+    thread: &ThreadName,
+    item: &str,
+    issue: u64,
+) -> Result<Option<String>> {
+    let labelled = labelled(&pr::Gh::default(), issue).unwrap_or_else(|e| {
+        eprintln!("riff: {e:#}");
+        false
+    });
+    if labelled {
+        return Ok(no_verify(item, issue, true, &BTreeMap::new()));
+    }
+    let holds = api.plan_show(me, thread).await?.holds;
+    Ok(no_verify(item, issue, false, &holds))
+}
+
 /// Checks each fact that a session needs, before the claim. The daemon
 /// in the folder `daemon` pulls the image when this machine does not
 /// have it (01M4Z81B5A456HDKW7G0WFGCY6).
@@ -1274,7 +1364,7 @@ async fn work(
     server: &str,
     api: &Api,
     me: &SessionUri,
-    thread: &riff_core::name::ThreadName,
+    thread: &ThreadName,
     main: &Path,
     common: &Path,
     checked: &Checked,
@@ -1364,8 +1454,17 @@ async fn work(
             );
             let to = [Selector::lead(me.who().user(), &repo)];
             let ending = api.with_budget(END_BUDGET);
-            let post = ending.post(me, Some(thread), &to, &body, Kind::Message);
-            if let Some(Err(e)) = steps.send(text::RUN_VERIFY_REQUEST, post).await {
+            let ask = async {
+                if let Some(why) = no_verify_now(&ending, me, thread, item, issue).await? {
+                    println!("{why}");
+                    return Ok(());
+                }
+                ending
+                    .post(me, Some(thread), &to, &body, Kind::Message)
+                    .await
+                    .map(drop)
+            };
+            if let Some(Err(e)) = steps.send(text::RUN_VERIFY_REQUEST, ask).await {
                 eprintln!("riff: {e:#}");
             }
         }
