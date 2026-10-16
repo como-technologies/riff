@@ -583,7 +583,10 @@ mod tests {
                 shared.push(format!("{}:{line}", file.display()));
             }
         }
-        assert!(shared.is_empty(), "make these doc tests standalone_crate: {shared:?}");
+        assert!(
+            shared.is_empty(),
+            "make these doc tests standalone_crate: {shared:?}"
+        );
     }
 
     #[test]
