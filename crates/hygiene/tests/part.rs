@@ -24,7 +24,17 @@ const LIST: &str = "a::one: test\n\
 const TESTS: [&str; 5] = ["a::one", "a::two", "b::four", "b::three", "shared::name"];
 
 /// The run of the doc tests.
-const DOC: [&str; 3] = ["test", "--workspace", "--doc"];
+const DOC: [&str; 4] = ["test", "--workspace", "--doc", "--no-fail-fast"];
+
+/// The start of the run of the tests that are not doc tests.
+const TESTS_RUN: [&str; 6] = [
+    "test",
+    "--workspace",
+    "--tests",
+    "--no-fail-fast",
+    "--",
+    "--exact",
+];
 
 /// A directory with a fake `cargo`. For `--list` it prints `list` to
 /// stdout and a build line to stderr, and exits with `list-exit`. Else
@@ -110,12 +120,9 @@ fn the_parts_together_run_each_test_one_time() {
         }
         assert_eq!(each.len(), 1, "{each:?}");
         let args = &each[0];
-        assert_eq!(
-            args[..5],
-            ["test", "--workspace", "--tests", "--", "--exact"]
-        );
-        assert_eq!(args[5..], plan.tests);
-        ran.extend(args[5..].iter().cloned());
+        assert_eq!(args[..6], TESTS_RUN);
+        assert_eq!(args[6..], plan.tests);
+        ran.extend(args[6..].iter().cloned());
     }
     ran.sort();
     assert_eq!(ran, TESTS);
@@ -153,7 +160,8 @@ fn a_failed_test_fails_the_part_and_the_doc_tests_still_run() {
     );
     let each = runs(dir.path());
     assert_eq!(each.len(), 2, "{each:?}");
-    assert_eq!(each[0][5..], TESTS);
+    assert_eq!(each[0][..6], TESTS_RUN);
+    assert_eq!(each[0][6..], TESTS);
     assert_eq!(each[1], DOC);
 }
 

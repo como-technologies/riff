@@ -100,14 +100,15 @@ build:
 test *ARGS:
     {{just_executable()}} cargo-test --workspace {{ARGS}}
 
-# The Gate runs the tests in parts, each part in a job of its own
-# (01M513W2NSE303E6XAM18BW7T6). hygiene test-part lists each test and runs
-# the tests whose name falls in part I of N. It runs as a built binary, not
-# with cargo run, so its cargo test gets no variable of cargo run.
+# The Gate runs the tests in parts, each part in a job of its own, in the
+# session image (01M513W2NSE303E6XAM18BW7T6, 01M515Z3Y7GSFNTJGXJD727MQK).
+# hygiene test-part lists each test and runs the tests whose name falls in
+# part I of N. It runs as a built binary, not with cargo run, so its cargo
+# test gets no variable of cargo run. The session image has its own target.
 # Run part I of N of the tests, for example: just test-part 2/4
 test-part PART:
     cargo build -q -p hygiene
-    {{test_env}} target/debug/hygiene test-part {{PART}}
+    {{test_env}} "${CARGO_TARGET_DIR:-target}/debug/hygiene" test-part {{PART}}
 
 # cargo test ARGS for test and check, in the environment of the tests.
 # 01M49NP2907J4SH4S6MAY09VXE: .cargo/config.toml sets the TMPDIR.
@@ -194,7 +195,8 @@ static PROFILE="release":
 
 # The tests of crates/riff in the session image of riff.toml, as a session
 # runs them (01M51117NDKF11FNZ915TTQED4). It needs podman or docker. ARGS
-# go to cargo test.
+# go to cargo test. --part I/N runs part I of N of the tests of the
+# workspace in place of them, as the Gate does (01M515Z3Y7GSFNTJGXJD727MQK).
 # Run the tests of crates/riff in a container of the session image
 session-test *ARGS:
     deploy/session-test.sh {{ARGS}}

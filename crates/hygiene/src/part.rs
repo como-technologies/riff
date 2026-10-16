@@ -11,9 +11,13 @@
 //!    binary and lists the name of each test, also of each doc test.
 //! 2. [`names`] reads the names, and [`Part::plan`] keeps each name of a
 //!    test that is not a doc test whose [`fnv1a`] hash modulo N is I − 1.
-//! 3. `cargo test --workspace --tests -- --exact NAME...` runs these
-//!    tests.
-//! 4. Part 1 also runs each doc test: `cargo test --workspace --doc`.
+//! 3. `cargo test --workspace --tests --no-fail-fast -- --exact NAME...`
+//!    runs these tests.
+//! 4. Part 1 also runs each doc test: `cargo test --workspace --doc
+//!    --no-fail-fast`.
+//!
+//! With `--no-fail-fast`, a failed test binary does not stop the others,
+//! so the log of a part shows each failed test.
 //!
 //! A doc test has a name with spaces ([`is_doc`]), for example
 //! `crates/x/src/lib.rs - ulid (line 57)`. rustdoc splits each filter at

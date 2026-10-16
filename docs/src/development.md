@@ -136,14 +136,18 @@ same time. Each job has a runner of its own:
 | Job | Runs |
 |---|---|
 | `Clippy` | `just lint` |
-| `Tests 1/4` to `Tests 4/4` | `just test-part 1/4` to `just test-part 4/4` |
+| `Tests 1/4` to `Tests 4/4` | `just test-part 1/4` to `just test-part 4/4`, in the session image |
 | `Checks` | `just fmt-check doc book reqs wrap` |
 | `Gate` | Starts when each other job ended. It passes only when each of them passed. |
+
+The tests run in a container of the session image, as a session runs
+them (see
+[Run the tests in the session image](#run-the-tests-in-the-session-image)).
 
 ```mermaid
 flowchart LR
     P["a push or a<br/>pull request"] --> C["Clippy"]
-    P --> T["Tests 1/4 … 4/4"]
+    P --> T["Tests 1/4 … 4/4<br/>in the session image"]
     P --> K["Checks: fmt, doc,<br/>book, reqs, wrap"]
     C --> G{"Gate: did each<br/>job pass?"}
     T --> G
@@ -175,6 +179,12 @@ It first prints one line:
 
 ```text
 just test-part 2/4 runs 571 of 2280 tests
+```
+
+To run the part in the session image, as the Gate runs it:
+
+```sh
+just session-test --part 2/4
 ```
 
 ### Choose the runner of CI
@@ -477,8 +487,11 @@ To run one test, give its name:
 just session-test run::riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it
 ```
 
-The CI job `Session tests` runs the same tests for each pull request.
-When you pin a new digest, it runs them in the new image.
+The jobs `Tests 1/4` to `Tests 4/4` of the Gate run each test of the
+workspace in the session image, for each pull request (see
+[How the Gate runs](#how-the-gate-runs)). When you pin a new digest,
+they run the tests in the new image. To run one part of them, see
+[Run one part of the tests](#run-one-part-of-the-tests).
 
 ## Start the riff daemon
 
