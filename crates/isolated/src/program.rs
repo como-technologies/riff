@@ -252,10 +252,14 @@ pub fn file_name<'a>(text: &'a str, at: usize, path: &'a str) -> Option<&'a str>
         return None;
     }
     let before = &text[..at];
-    let start = [format!("let {name} "), format!("let {name}:"), format!("let mut {name} ")]
-        .iter()
-        .filter_map(|lets| before.rfind(lets.as_str()))
-        .max()?;
+    let start = [
+        format!("let {name} "),
+        format!("let {name}:"),
+        format!("let mut {name} "),
+    ]
+    .iter()
+    .filter_map(|lets| before.rfind(lets.as_str()))
+    .max()?;
     joined(before[start..].split(';').next()?)
 }
 

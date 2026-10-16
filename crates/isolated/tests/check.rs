@@ -92,7 +92,10 @@ fn the_check_fails_a_new_text_of_a_program_and_a_script_with_no_mode() {
     .unwrap();
     assert_eq!(
         program_writers(root.path()),
-        ["crates/riff/tests/lifecycle.rs:2", "crates/riff/tests/usage.rs:9"]
+        [
+            "crates/riff/tests/lifecycle.rs:2",
+            "crates/riff/tests/usage.rs:9"
+        ]
     );
 }
 

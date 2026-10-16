@@ -329,7 +329,10 @@ isolate!(tokio::process::Command);
 pub fn offenders(root: &Path) -> Vec<String> {
     test_lines(root, |text| {
         let lines = text.lines().enumerate();
-        lines.filter(|(_, line)| names_a_binary(line)).map(|(n, _)| n + 1).collect()
+        lines
+            .filter(|(_, line)| names_a_binary(line))
+            .map(|(n, _)| n + 1)
+            .collect()
     })
 }
 
