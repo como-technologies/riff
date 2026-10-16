@@ -2675,6 +2675,12 @@ understands (ASD-STE100), for example:
 Level: minor. Old and new sessions work together, but they act differently: a new session asks for a verify in a new way.
 ```
 
+The body also has the link line and the trailers of each pull request
+(see [Check a pull request on GitHub](#check-a-pull-request-on-github)).
+The trailer `Issue: #N` names the release issue. So the rollout gives
+no worker the release issue while the pull request waits (see
+[See the item of a pull request](how-it-works.md#see-the-item-of-a-pull-request)).
+
 Give it the label `release`. The release notes leave out the pull
 requests with this label:
 
