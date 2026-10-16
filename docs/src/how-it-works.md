@@ -2806,6 +2806,9 @@ set a status from a terminal:
 riff status write the tests
 ```
 
+A status is one line of at most 400 characters. riff refuses a longer
+one with `the step has more than 400 characters`.
+
 ### The state of the lead
 
 The lead has no claims. riff makes its state from what it does:
@@ -4856,6 +4859,18 @@ thelio  limit 3  runs 0: room for 3 workers, the rollout starts them for free wo
 pangolin  limit 2  runs 1: room for 1 worker, the rollout starts it for free work  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 0.40  score 24.0
 PANE  ID        STATE  DETAIL
 %3    2a880834  idle   ready for work for 1m
+```
+
+The status of a host also has at most 400 characters. A host with
+many workers makes its status fit. First it gives each worker only
+the first 4 characters of its session ID. When the line is still too
+long, it lists the first workers and ends with the count of the
+others, for example `…, %122 0022, 7 more`. The lead counts each
+worker. `riff workers` lists the workers that the status names, and
+then says how many it does not list:
+
+```text
+7 more workers: the status of the host has no room to list them.
 ```
 
 ### Set the workers that a host keeps

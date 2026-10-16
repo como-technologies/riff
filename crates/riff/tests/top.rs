@@ -377,6 +377,7 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
         machine: None,
         disk: None,
         monitor: None,
+        more: 0,
         workers: vec![],
     };
     let step = riff_core::wire::Status { step: host.line() };

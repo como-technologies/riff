@@ -1602,7 +1602,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 host: info.uri.place().host().to_owned(),
                 session: info.uri.who().session().map(str::to_owned),
                 limit: status.limit,
-                workers: status.workers.len(),
+                workers: status.runs(),
                 floor: status.floor,
                 deaths: status.deaths,
                 machine: status.machine,

@@ -3039,7 +3039,7 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
             view::host_heading(
                 host,
                 status.limit,
-                status.workers.len(),
+                status.runs(),
                 status.machine.as_ref(),
                 status.floor,
                 status.deaths
@@ -3048,6 +3048,9 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
         anstream::print!("{}", view::disk_line(status.disk.as_ref()));
         anstream::print!("{}", view::monitor_line(status.monitor.as_ref(), None));
         anstream::print!("{}", view::workers(&panes, &sessions, long));
+        if status.more > 0 {
+            anstream::print!("{}", text::host_more_workers(status.more));
+        }
     }
     Ok(())
 }

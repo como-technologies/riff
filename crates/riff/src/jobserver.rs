@@ -36,7 +36,9 @@
 //!   while its worker lives. The first one makes the pipe and writes the
 //!   tokens. The others join it. A pipe loses its bytes when no process
 //!   holds it open, so the pool ends with the last worker of the machine.
-//!   Two lock files keep the start and the end in order.
+//!   Two lock files keep the start and the end in order. A read of the
+//!   pool looks for a holder under the same order
+//!   (01M517W4JKFA0E2YJC5BQQ3ZWS).
 //! - **Workers that run.** Each `riff workers run` puts a lock file in
 //!   [`WORKERS`] while its worker lives ([`Member`]). The pool keeps the
 //!   number of workers that its size counts. When more workers run, each
@@ -238,8 +240,15 @@ fn open_fifo(path: &Path, nonblock: bool) -> io::Result<File> {
     Ok(file)
 }
 
-/// True when a process holds the pool in `dir`.
+/// True when a process holds the pool in `dir`. The probe holds the
+/// lock of [`HOLD`] for a moment, so it runs under [`INIT`], as
+/// [`Pool::hold`] and the drop of a [`Pool`] do. Else a first
+/// [`Pool::hold`] in that moment finds the lock held, and joins the old
+/// pipe, which has no tokens (01M517W4JKFA0E2YJC5BQQ3ZWS).
 fn held(dir: &Path) -> bool {
+    let Ok(_init) = lock(&dir.join(INIT), FlockArg::LockExclusive) else {
+        return false;
+    };
     let Ok(file) = open_lock(&dir.join(HOLD)) else {
         return false;
     };
@@ -881,6 +890,47 @@ mod tests {
             "a new pool"
         );
         drop(three);
+    }
+
+    /// A read of the state while the first worker of a machine makes
+    /// the pool never makes that worker join the old pipe, which has no
+    /// tokens (01M517W4JKFA0E2YJC5BQQ3ZWS).
+    #[test]
+    fn reads_of_the_state_while_workers_join_never_leave_an_empty_pool() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        for round in 0..2000 {
+            let dir = tempfile::tempdir().unwrap();
+            // An old pool leaves its pipe and its size.
+            drop(Pool::hold(dir.path(), 2, 1).unwrap());
+            let span = isolated::Span::start();
+            while state(dir.path()).is_some() {
+                assert!(span.within(Duration::from_secs(10)), "the pool did not end");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let (stop, reads) = (AtomicBool::new(false), AtomicUsize::new(0));
+            let pools = std::thread::scope(|s| {
+                s.spawn(|| {
+                    while !stop.load(Ordering::Relaxed) {
+                        let _ = state(dir.path());
+                        reads.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+                while reads.load(Ordering::Relaxed) == 0 {
+                    std::thread::yield_now();
+                }
+                let first = Pool::hold(dir.path(), 4, 1).unwrap();
+                let second = Pool::hold(dir.path(), 4, 1).unwrap();
+                stop.store(true, Ordering::Relaxed);
+                (first, second)
+            });
+            assert_eq!(
+                state(dir.path()).map(|s| (s.size, s.free)),
+                Some((4, 4)),
+                "round {round}: the workers joined the old pipe"
+            );
+            drop(pools);
+        }
     }
 
     #[test]

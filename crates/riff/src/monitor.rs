@@ -819,6 +819,7 @@ mod tests {
                     what: String::new(),
                 }),
             }),
+            more: 0,
             workers: vec![],
         };
         assert_eq!(
@@ -829,14 +830,17 @@ mod tests {
         );
     }
 
-    /// The status of a host with 10 workers and each number fits in a
-    /// status (R183).
+    /// The status of a host fits in a status at each size, with
+    /// 3-digit panes, a pool of 3 digits, a kill and deaths (R183,
+    /// 01M517W4NP2WKSRCK52ZBVWBD3). A parse of the line gives each
+    /// worker: the listed ones in order, with the start of their session
+    /// ID, and the count of the others.
     #[test]
-    fn a_status_of_10_workers_fits() {
-        let status = crate::host::HostStatus {
-            limit: 10,
+    fn a_status_of_each_size_fits() {
+        let full = |workers: u16| crate::host::HostStatus {
+            limit: workers,
             floor: 16,
-            deaths: 0,
+            deaths: 12,
             machine: Machine::parse(
                 "cpu 128x5883MHz (now 5800MHz), mem 1024GB, 1000GB available, load 133.20",
             ),
@@ -860,15 +864,42 @@ mod tests {
                     what: String::new(),
                 }),
             }),
-            workers: (10..20)
-                .map(|n| (format!("%{n}"), "1a2b3c4d".to_owned()))
+            more: 0,
+            workers: (0..workers)
+                .map(|n| (format!("%{}", 100 + n), format!("{n:04x}c4d5")))
                 .collect(),
         };
-        let line = status.line();
-        assert!(
-            line.chars().count() <= riff_core::wire::STATUS_CHARS,
-            "{} characters: {line}",
-            line.chars().count()
+        let mut forms = std::collections::BTreeSet::new();
+        for workers in 0..=200 {
+            let status = full(workers);
+            let line = status.line();
+            assert!(
+                line.chars().count() <= riff_core::wire::STATUS_CHARS,
+                "{} characters: {line}",
+                line.chars().count()
+            );
+            let parsed = crate::host::HostStatus::parse(&line).expect(&line);
+            assert_eq!(parsed.runs(), usize::from(workers), "{line}");
+            assert_eq!(parsed.monitor, status.monitor, "{line}");
+            for ((pane, short), (want_pane, want_short)) in
+                parsed.workers.iter().zip(&status.workers)
+            {
+                assert_eq!(pane, want_pane, "{line}");
+                assert!(want_short.starts_with(short.as_str()), "{line}");
+            }
+            let id = parsed.workers.first().map_or(0, |(_, short)| short.len());
+            forms.insert((id, parsed.more > 0));
+        }
+        // Each form shows: no workers, the long IDs, the short IDs, and
+        // the short IDs with a count.
+        assert_eq!(
+            forms.into_iter().collect::<Vec<_>>(),
+            [
+                (0, false),
+                (crate::host::SHORT_ID, false),
+                (crate::host::SHORT_ID, true),
+                (crate::host::LONG_ID, false)
+            ]
         );
     }
 

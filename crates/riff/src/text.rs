@@ -2649,7 +2649,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 /// // The session of `riff workers host` says so in its status.
 /// let mut host = row("riff://mike@thelio/o/r?session=h1", false, false);
 /// let status = HostStatus {
-///     limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, workers: vec![],
+///     limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, more: 0, workers: vec![],
 /// };
 /// let status = Status { step: status.line() };
 /// host.status = Some(StatusInfo { status, age_secs: 1, stale: false });
@@ -3977,6 +3977,19 @@ pub fn host_asked(host: &str, request: &crate::host::Request) -> String {
     format!(
         "Asked the workers host on {host}: {request}. Its reply comes as a note at your next read."
     )
+}
+
+/// The line of `riff workers` under the workers of a host whose status
+/// has no room to list `more` of them (01M517W4NP2WKSRCK52ZBVWBD3).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_more_workers(7),
+///     "7 more workers: the status of the host has no room to list them.\n"
+/// );
+/// ```
+pub fn host_more_workers(more: usize) -> String {
+    format!("{more} more workers: the status of the host has no room to list them.\n")
 }
 
 /// The error when no workers host of the user runs on `host`.
