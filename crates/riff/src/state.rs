@@ -9,7 +9,7 @@
 //!
 //! | State | Color | Detail |
 //! |---|---|---|
-//! | `offline` | grey | `seen 2h ago` |
+//! | `offline` | grey | `seen 2h ago`, then the claims and the last step (01M522MRW21RHGF2B6F0VCP0BD) |
 //! | `paused` | yellow | the claims, and the step it stopped at |
 //! | `blocked` | red | the reason with its age, `the lead gave no answer` when it gave none (01M41FZQCHWY1YVGAZ60ZHJK21), then the claims |
 //! | `must clear` | yellow | `must clear its context before its next claim` (01M3X9XC99KY4RQY36A7CYWY11) |
@@ -160,6 +160,13 @@ pub fn work(activity: &Activity) -> String {
 /// );
 /// s.state = Some(SessionState::Paused);
 /// assert_eq!(plain(&s), ["working on #12 Show the wave", "reviewing #9", "stopped at: tests"]);
+/// // Offline: the time since it was seen, then its item and its last
+/// // step (01M522MRW21RHGF2B6F0VCP0BD).
+/// s.state = Some(SessionState::Offline);
+/// assert_eq!(
+///     plain(&s),
+///     ["seen 2h ago", "working on #12 Show the wave", "reviewing #9", "2m ago: tests"]
+/// );
 ///
 /// // A wait from facts: no status call.
 /// s.waits = Some(Waits::Verify { pull: 418 });
@@ -200,7 +207,7 @@ pub fn work(activity: &Activity) -> String {
 /// s.uri = "riff://mike@thelio/o/r?session=w1&lead=true".parse()?;
 /// assert_eq!(plain(&s), ["monitoring work for 5m", "2m ago: plan the wave"]);
 /// s.state = Some(SessionState::Offline);
-/// assert_eq!(plain(&s), ["seen 2h ago"]);
+/// assert_eq!(plain(&s), ["seen 2h ago", "2m ago: plan the wave"]);
 ///
 /// // A worker that released its last claim, 12 minutes after its last
 /// // fresh start.
@@ -217,7 +224,7 @@ pub fn work(activity: &Activity) -> String {
 ///     ["ready for work for 5m", "2m ago: plan the wave", "fresh start 12m ago"]
 /// );
 /// s.state = Some(SessionState::Offline);
-/// assert_eq!(plain(&s), ["seen 2h ago"]);
+/// assert_eq!(plain(&s), ["seen 2h ago", "2m ago: plan the wave"]);
 /// s.state = Some(SessionState::Idle);
 /// s.worker = false;
 /// assert_eq!(plain(&s), ["ready for work for 5m", "2m ago: plan the wave"]);
@@ -265,7 +272,13 @@ pub fn detail(
     };
     let mut lines = Vec::new();
     match of(s) {
-        SessionState::Offline => lines.push((format!("seen {} ago", ago(s.idle_secs)), MUTED)),
+        // The item and the last step of a session that is gone, for
+        // example of a daemon that is offline (01M522MRW21RHGF2B6F0VCP0BD).
+        SessionState::Offline => {
+            lines.push((format!("seen {} ago", ago(s.idle_secs)), MUTED));
+            lines.extend(claims());
+            lines.extend(s.status.as_ref().map(step));
+        }
         SessionState::Paused => {
             lines.extend(claims());
             if let Some(info) = &s.status {

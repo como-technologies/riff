@@ -217,10 +217,11 @@ async fn a_lead_on_the_command_line_shows_with_its_status() {
         row(&server, dir, "a1").await,
         "mike@pangolin:riff (a1) idle lead monitoring work for Ns Ns ago: plan the wave"
     );
-    // A session that is not the lead needs a watch.
+    // A session that is not the lead needs a watch. Offline, it still
+    // shows its last step (01M522MRW21RHGF2B6F0VCP0BD).
     assert_eq!(
         row(&server, dir, "b2").await,
-        "mike@pangolin:riff (b2) offline seen Ns ago"
+        "mike@pangolin:riff (b2) offline seen Ns ago Ns ago: tests"
     );
 }
 

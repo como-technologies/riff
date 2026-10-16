@@ -98,6 +98,23 @@ It shows the owner and each member key: the user, the host, the start
 of the key, online or the time when it was last seen, and forked,
 removed or left.
 
+### See the sessions of each machine
+
+```sh
+riff view
+riff top
+```
+
+Both show each session of each machine of the riff: the user, the
+host, the item, the state and the status. They read these sessions
+from the records that your daemon keeps. A session
+of a machine whose daemon is offline shows `offline`, with the time
+when your daemon last saw that daemon. You can take over only a session
+of your own machine. See
+[See the sessions of other machines](development.md#see-the-sessions-of-other-machines)
+and
+[See the sessions of the riff of peers](how-it-works.md#see-the-sessions-of-the-riff-of-peers).
+
 ### Leave a riff
 
 On the machine of a member:

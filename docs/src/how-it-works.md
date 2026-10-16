@@ -1286,7 +1286,9 @@ flowchart LR
     G --> B1["board of como-technologies/riff"]
     G --> B2["board of como-technologies/strata"]
     T -->|each 3 seconds| S["riff-server: who"]
+    T -->|each 3 seconds| D["riff daemon of this machine:<br/>the sessions of the riff of peers"]
     S --> Tree["person › host › repository › session"]
+    D --> Tree
 ```
 
 The tree grows down, not across. No line is wider than your terminal,
@@ -1301,6 +1303,38 @@ board.
 `riff top` only reads. It posts nothing and wakes no session.
 
 The lead can keep it in a tmux pane beside `riff tail`.
+
+### See the sessions of the riff of peers
+
+```sh
+riff top
+```
+
+In each look, `riff top` also asks the riff daemon of this machine for
+the sessions of its riff of peers (see
+[riff 3.0: peers](riff-3-peers.md)), and adds them to the tree: the
+sessions of each machine of the riff, with the user, the host, the
+claims, the state and the status. A
+session of a machine whose daemon is offline shows `offline`, the time
+when your daemon last saw that daemon, its claims and its last status:
+
+```text
+mike  online  2 sessions: 1 idle, 1 claim
+├─ pangolin  › riff  1 session: 1 container; 1 claim
+│  └─ 5b1e2a90  #issue-15  container  offline
+│       seen 5m ago
+│       working on #15
+│       10m ago: docs
+└─ thelio  › riff  1 session: 1 lead; 1 idle
+   └─ 1a2b3c4d  lead container  idle
+        monitoring work for 1h
+        1h ago: plan
+```
+
+A daemon is online while your daemon has a peer link to it. Else your
+daemon last saw it at the end of its last link, or at the time of its
+last record when that is later. When no daemon runs on this machine,
+`riff top` shows the sessions of riff-server only.
 
 ### Update a session that runs an old riff
 
@@ -3134,7 +3168,7 @@ matches wins:
 
 | State | Color | When | Detail |
 |---|---|---|---|
-| `offline` | grey | the session has no open watch. A lead is not offline while it calls. A session in a container is not offline while the riff daemon keeps it alive | `seen 2h ago` |
+| `offline` | grey | the session has no open watch. A lead is not offline while it calls. A session in a container is not offline while the riff daemon keeps it alive. A session of the riff of peers is offline while its daemon is offline | `seen 2h ago`, then the claims and the last step |
 | `paused` | yellow | the riff or the repository of the session is paused | the claims, and `stopped at:` the step |
 | `blocked` | red | the session said `blocked`, and the block holds. Not the lead | the reason with its age, `the lead gave no answer` when the lead gave none, then the claims |
 | `must clear` | yellow | a worker released its last claim | `must clear its context before its next claim` |

@@ -6418,6 +6418,7 @@ pub fn daemon_new_riff(
 ///     links: Some(vec![]),
 ///     position: 3,
 ///     sessions: vec![],
+///     riff_sessions: vec![],
 ///     limit: Some(Limit::default()),
 ///     waiting: vec![],
 ///     waves: vec![],
@@ -7069,6 +7070,7 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 ///     links: None,
 ///     position: 0,
 ///     sessions: vec![],
+///     riff_sessions: vec![],
 ///     limit: None,
 ///     waiting: vec![],
 ///     waves: vec![],
@@ -7706,6 +7708,35 @@ pub fn view_wave(wave: &crate::daemon::WaveShown) -> String {
 /// `riff view`: the session has no takeover.
 pub fn view_no_takeover(name: &str) -> String {
     format!("The session in {name} is the lead: Enter attaches to it.")
+}
+
+/// `riff view`: the state of a session of a daemon that is offline,
+/// with the time since that daemon was last seen
+/// (01M519Z554SC3EAT69Q3M6JDAP).
+///
+/// ```
+/// assert_eq!(riff::text::view_offline(300), "offline, seen 5m ago");
+/// ```
+pub fn view_offline(secs: u64) -> String {
+    format!("offline, seen {} ago", ago(secs))
+}
+
+/// `riff view` and `riff takeover`: a takeover of a session of another
+/// machine (01M519Z554SC3EAT69Q3M6JDAP).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::takeover_other_host("brett@kadomony:riff (77e0aaaa)", "kadomony"),
+///     "The session brett@kadomony:riff (77e0aaaa) runs on the host kadomony. A takeover works \
+///      only for a session of this machine."
+/// );
+/// ```
+pub fn takeover_other_host(name: &str, host: &str) -> String {
+    format!(
+        "The session {} runs on the host {}. A takeover works only for a session of this machine.",
+        safe(name),
+        safe(host)
+    )
 }
 
 #[cfg(test)]

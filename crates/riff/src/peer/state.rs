@@ -20,7 +20,7 @@
 //! |---|---|---|
 //! | The owner | the `riff` record | The riff ID is the key of the owner. The record gives its user. |
 //! | The members | `member`, `removed` and `left` | A member key has a user and a host. A `removed` record gives the last sequence number that the key may write. A `left` record is the last record of its key. |
-//! | The heads | each record | The last sequence number and the ID of each author: [`Context::next`]. |
+//! | The heads | each record | The last sequence number and the ID of each author: [`Context::next`]. The time of its author of the last record of each author: [`State::last_ms`]. |
 //! | The sessions | `session` | The last record of each session of each author counts (01M51Q0JZR00GHDQSGGSAQR4HG). A session runs until its record says that it ended. |
 //! | The leads | the lead marks of `session` | See "The lead". |
 //! | The holds and the pauses | `plan` | See "Holds and pauses". |
@@ -115,6 +115,11 @@ pub struct Run {
     /// The ID of the record that gave the session its lead mark, while
     /// the session has a lead mark.
     pub mark: Option<Id>,
+    /// The time of the author of the last record: the time of the status.
+    pub time_ms: u64,
+    /// The time of the author of the record that gave the session its
+    /// claims now: the first record, or the last one that changed them.
+    pub claims_ms: u64,
 }
 
 impl Run {
@@ -194,6 +199,8 @@ pub struct State {
     owner: Option<String>,
     members: BTreeMap<Public, Member>,
     heads: BTreeMap<Public, (u64, Id)>,
+    /// The time of its author of the last record of each author.
+    times: BTreeMap<Public, u64>,
     /// The ID of each record that the state kept.
     ids: BTreeSet<Id>,
     runs: BTreeMap<(Public, String), Run>,
@@ -215,6 +222,7 @@ impl State {
             owner: None,
             members: BTreeMap::new(),
             heads: BTreeMap::new(),
+            times: BTreeMap::new(),
             ids: BTreeSet::new(),
             runs: BTreeMap::new(),
             named: BTreeSet::new(),
@@ -246,6 +254,16 @@ impl State {
         &self.heads
     }
 
+    /// The time of its author of the last record of `key` that the state
+    /// kept, in milliseconds since the epoch. `None` for a key with no
+    /// record. A daemon that has no link to `key` shows it as last seen
+    /// at the later of this time and [`crate::peer::sync::Links::seen`]
+    /// (01M519Z554SC3EAT69Q3M6JDAP). riff shows the time, and never
+    /// orders records by it (01M519Z28S7FB4T1H52642JXZ1).
+    pub fn last_ms(&self, key: &Public) -> Option<u64> {
+        self.times.get(key).copied()
+    }
+
     /// True when the state kept the record `id`.
     pub fn has(&self, id: &Id) -> bool {
         self.ids.contains(id)
@@ -265,6 +283,7 @@ impl State {
         let record = &checked.record;
         let (author, seq, id) = (record.author(), record.seq(), record.id());
         self.heads.insert(author, (seq, id));
+        self.times.insert(author, record.time_ms());
         self.ids.insert(id);
         let user = self.user_of(&author).unwrap_or_default().to_owned();
         match &checked.body {
@@ -292,7 +311,7 @@ impl State {
                     member.until = Some(member.until.map_or(seq, |u| u.min(seq)));
                 }
             }
-            Body::Session(session) => self.session(author, id, session),
+            Body::Session(session) => self.session(author, id, record.time_ms(), session),
             Body::Message(message) => {
                 self.numbered += 1;
                 let thread = message.thread.clone();
@@ -346,8 +365,9 @@ impl State {
         Applied::Changed
     }
 
-    /// Applies the `session` record `id` of `author`.
-    fn session(&mut self, author: Public, id: Id, session: &Session) {
+    /// Applies the `session` record `id` of `author`, from the time
+    /// `time_ms` of its author.
+    fn session(&mut self, author: Public, id: Id, time_ms: u64, session: &Session) {
         let Some(name) = session.session.who().session() else {
             return;
         };
@@ -355,14 +375,22 @@ impl State {
             self.named.insert(replaces);
         }
         let key = (author, name.to_owned());
-        let old = self.runs.get(&key).and_then(|run| run.mark);
-        let mark = session.lead.as_ref().map(|_| old.unwrap_or(id));
+        let old = self.runs.get(&key);
+        let mark = session
+            .lead
+            .as_ref()
+            .map(|_| old.and_then(|run| run.mark).unwrap_or(id));
+        let claims_ms = old
+            .filter(|run| run.body.claims == session.claims)
+            .map_or(time_ms, |run| run.claims_ms);
         self.runs.insert(
             key,
             Run {
                 author,
                 body: session.clone(),
                 mark,
+                time_ms,
+                claims_ms,
             },
         );
     }
@@ -951,6 +979,44 @@ mod tests {
         let state = keep_all(riff, &records);
         assert_eq!(state.runs().count(), 0);
         assert!(state.lead("mike", &"o/r".parse().unwrap()).is_none());
+    }
+
+    /// 01M519Z554SC3EAT69Q3M6JDAP: the state keeps the time of the author
+    /// of the last record of each key, and of the last record of each
+    /// session.
+    #[test]
+    fn the_state_keeps_the_time_of_the_last_record_of_each_key() {
+        let mut d = Daemons::new();
+        let riff = d.public(0);
+        let mut records = d.start();
+        records.push(d.write(1, session(PANGOLIN, None)));
+        records.push(d.write(1, message(PANGOLIN, "later")));
+        let state = keep_all(riff, &records);
+        // The times of the test are 1, 2, 3 for the owner, then 4 and 5.
+        assert_eq!(state.last_ms(&d.public(0)), Some(3));
+        assert_eq!(state.last_ms(&d.public(1)), Some(5));
+        assert_eq!(state.last_ms(&d.public(2)), None);
+        let run = state.run(&d.public(1), "p1").unwrap();
+        assert_eq!((run.time_ms, run.claims_ms), (4, 4));
+
+        // A new status at 6 keeps the time of the claims. A claim at 7
+        // moves it.
+        let mut status = session(PANGOLIN, None);
+        if let Body::Session(s) = &mut status {
+            s.status = Some("tests".into());
+        }
+        records.push(d.write(1, status.clone()));
+        let state = keep_all(riff, &records);
+        let run = state.run(&d.public(1), "p1").unwrap();
+        assert_eq!((run.time_ms, run.claims_ms), (6, 4));
+        if let Body::Session(s) = &mut status {
+            s.claims = vec!["issue-12".into()];
+        }
+        records.push(d.write(1, status));
+        let state = keep_all(riff, &records);
+        let run = state.run(&d.public(1), "p1").unwrap();
+        assert_eq!((run.time_ms, run.claims_ms), (7, 7));
+        assert_eq!(state.last_ms(&d.public(1)), Some(7));
     }
 
     #[test]

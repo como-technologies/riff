@@ -607,11 +607,15 @@ enum Command {
     /// Show the sessions of the riff daemon of this machine
     ///
     /// It shows each session with its item, its state, its age and its
-    /// last step, the limit of this host and the waves of the daemon. It
-    /// draws them again each second. Up and Down select a session. Enter
-    /// attaches to the lead: Ctrl-P Ctrl-Q detaches and comes back here.
-    /// t takes over the selected session, as riff takeover does: it stops
-    /// the turn at once. q ends the view; the sessions go on.
+    /// last step, the limit of this host and the waves of the daemon.
+    /// Then it shows each session of the other machines of the riff of
+    /// the daemon: its user and its host, its claims, its state and its
+    /// status. A session of a machine that is offline shows offline, with
+    /// the time when the daemon last saw that machine. It draws them
+    /// again each second. Up and Down select a session. Enter attaches to
+    /// the lead: Ctrl-P Ctrl-Q detaches and comes back here. t takes over
+    /// the selected session of this machine, as riff takeover does: it
+    /// stops the turn at once. q ends the view; the sessions go on.
     View,
     /// Take over a session of the riff daemon in your terminal
     ///
@@ -3800,6 +3804,12 @@ async fn draw_top(
             let pauses = api.pauses(me).await?;
             let mut who = api.roster(me, false).await?;
             riff::state::fill(&mut who.sessions, pauses.state);
+            // Each session of each daemon of the riff of peers
+            // (01M519Z554SC3EAT69Q3M6JDAP).
+            if let Ok(dir) = riff::daemon::dir() {
+                let riff = riff::top::riff_sessions(&dir).await;
+                riff::top::with_riff_sessions(&mut who.sessions, riff);
+            }
             anyhow::Ok((pauses, who))
         };
         // Each call of a look has the budget of a short command

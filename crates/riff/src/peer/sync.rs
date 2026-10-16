@@ -83,6 +83,13 @@
 //! and at least each [`PLAN_AGAIN`]. A link of a key that may link no
 //! more closes ([`Close::Gone`]). [`Links::shown`] gives the state of
 //! each link for `riff daemon status` (01M51ZA0BDZNXBB7R5SB8CEGA9).
+//!
+//! A daemon of the riff is online while a link to it runs
+//! ([`Links::online`], 01M522MRYR89SY6WRV720806RA). Else it was last seen
+//! at the later of the end of its last link ([`Links::seen`]) and the
+//! time of its last record ([`State::last_ms`]). `riff view` and
+//! `riff top` show the sessions of a daemon that is offline with that
+//! time (01M519Z554SC3EAT69Q3M6JDAP).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -376,6 +383,9 @@ pub struct Links {
     endpoint: Endpoint,
     hub: Arc<Hub>,
     links: Mutex<BTreeMap<Public, Link>>,
+    /// The end of the last link of each key, since the start of the
+    /// daemon: [`Links::seen`].
+    seen: Mutex<BTreeMap<Public, i64>>,
     dials: Mutex<BTreeMap<Public, JoinHandle<()>>>,
     tries: Mutex<BTreeMap<Public, Tries>>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
@@ -466,6 +476,7 @@ impl Links {
             endpoint,
             hub,
             links: Mutex::new(BTreeMap::new()),
+            seen: Mutex::new(BTreeMap::new()),
             dials: Mutex::new(BTreeMap::new()),
             tries: Mutex::new(BTreeMap::new()),
             tasks: Mutex::new(Vec::new()),
@@ -493,6 +504,22 @@ impl Links {
     /// The key of each daemon that has a link now.
     pub fn linked(&self) -> BTreeSet<Public> {
         lock(&self.links).keys().copied().collect()
+    }
+
+    /// True while a link to the daemon of `key` runs: the daemon is
+    /// online (01M519Z554SC3EAT69Q3M6JDAP).
+    pub fn online(&self, key: &Public) -> bool {
+        lock(&self.links).contains_key(key)
+    }
+
+    /// The end of the last link to the daemon of `key`, in milliseconds
+    /// since the epoch: the time when this daemon last saw it. `None`
+    /// when no link to it ended since the start of this daemon. While a
+    /// link runs, it gives the end of the link before it. A daemon that
+    /// started again knows the time of the last record of the key too
+    /// ([`State::last_ms`]): the later of the two counts.
+    pub fn seen(&self, key: &Public) -> Option<i64> {
+        lock(&self.seen).get(key).copied()
     }
 
     /// The state of the link to each other daemon of the riff.
@@ -709,6 +736,7 @@ impl Links {
                 links.remove(&remote);
             }
         }
+        lock(&self.seen).insert(remote, now_ms());
         (self.say)(text::peer_link_down(&who, &end.to_string()));
         self.ended.notify_waiters();
         end
