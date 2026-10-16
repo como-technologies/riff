@@ -12,7 +12,7 @@
 //! | Tool | Record | What else |
 //! |---|---|---|
 //! | `whoami`, `who`, `threads` | none | a read of the state |
-//! | `read` | none | the read cursor of the session moves to the end of the page |
+//! | `read` | none | the read cursor of the session moves to the end of the page, but a page that skips an unread message keeps it (01M51TKZSYR7PH629S29JX00ZD) |
 //! | `post`, `tell` | `message` | each session of this daemon that a selector matches wakes |
 //! | `status` | `session` | the status of the session |
 //! | `blocked` | `session` and `message` | the status `blocked: REASON`, and the message to the lead of the user |
@@ -388,6 +388,47 @@ fn blocking<T: Send + 'static>(
 
 /// The [`Talk`] of one session of the daemon. See the design of the
 /// module.
+///
+/// A read of all after a later number skips the unread messages before
+/// it, so it keeps the cursor. The next unread read shows each message
+/// (01M51TKZSYR7PH629S29JX00ZD):
+///
+/// ```
+/// use std::sync::Arc;
+///
+/// use riff::daemon_key::Key;
+/// use riff::peer::body::{Body, Riff};
+/// use riff::peer::keep::Peers;
+/// use riff::peer::talk::{Hub, Session};
+/// use riff::talk::Talk;
+/// use riff_core::name::SessionUri;
+/// use riff_core::selector::Selector;
+/// use riff_core::wire::Kind;
+///
+/// let dir = tempfile::tempdir()?;
+/// let key = Key::from_bytes(&[1; 32]);
+/// let mut peers = Peers::open(dir.path(), key.public(), |_| {})?;
+/// peers.write(&key, &Body::Riff(Riff { user: "mike".into() }), 1)?;
+/// let hub = Arc::new(Hub::new(key, peers));
+/// let a: SessionUri = "riff://mike@h/o/r?session=a".parse()?;
+/// let b: SessionUri = "riff://mike@h/o/r?session=b".parse()?;
+/// hub.start(&a, true, false, Vec::new())?;
+/// hub.start(&b, true, false, Vec::new())?;
+///
+/// let talk = Session::new(hub);
+/// tokio::runtime::Runtime::new()?.block_on(async {
+///     let to_a = [Selector::session("a")];
+///     talk.post(&b, None, &to_a, "one", Kind::Message).await?;
+///     let two = talk.post(&b, None, &to_a, "two", Kind::Message).await?;
+///     talk.post(&b, None, &to_a, "three", Kind::Message).await?;
+///     let pages = talk.inbox_page(&a, None, true, Some(two.seq)).await?;
+///     assert_eq!(pages[0].messages[0].message.body, "three");
+///     let pages = talk.inbox_page(&a, None, false, None).await?;
+///     assert_eq!(pages[0].messages.len(), 3);
+///     Ok::<(), anyhow::Error>(())
+/// })?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct Session {
     hub: Arc<Hub>,
@@ -506,8 +547,29 @@ impl Session {
             .collect()
     }
 
+    /// With `all`, whether a read after `after` skips a message of
+    /// another session that `me` did not read (01M51TKZSYR7PH629S29JX00ZD).
+    fn skips(
+        &self,
+        state: &State,
+        me: &SessionUri,
+        thread: &ThreadName,
+        all: bool,
+        after: Option<u64>,
+    ) -> bool {
+        let Some(from) = after.filter(|_| all) else {
+            return false;
+        };
+        let cursor = self.cursor(me, thread);
+        state.messages(thread).iter().any(|kept| {
+            (cursor + 1..=from).contains(&kept.number) && kept.message.from.who() != me.who()
+        })
+    }
+
     /// One page of each thread of `me`, or of `thread`. The cursor of
-    /// each thread moves to the end of its page.
+    /// each thread moves to the end of its page. A page that skips an
+    /// unread message keeps the cursor, so the next unread read shows
+    /// the message ([`Session::skips`], 01M51TKZSYR7PH629S29JX00ZD).
     fn inbox(
         &self,
         me: &SessionUri,
@@ -520,7 +582,7 @@ impl Session {
         {
             bail!("no thread named {thread}");
         }
-        let pages: Vec<Inbox> = self.hub.read(|state| {
+        let pages: Vec<(Inbox, bool)> = self.hub.read(|state| {
             let threads = match thread {
                 Some(thread) => vec![thread.clone()],
                 None => self.threads_of(state, me),
@@ -538,21 +600,26 @@ impl Session {
                             verified: true,
                         })
                         .collect();
-                    (!messages.is_empty()).then(|| Inbox {
+                    if messages.is_empty() {
+                        return None;
+                    }
+                    let skips = self.skips(state, me, &thread, all, after);
+                    let page = Inbox {
                         members: members(state, &thread),
                         thread,
                         messages,
                         next,
-                    })
+                    };
+                    Some((page, skips))
                 })
                 .collect()
         });
-        for page in &pages {
-            if let Some(last) = page.messages.last() {
+        for (page, skips) in &pages {
+            if !skips && let Some(last) = page.messages.last() {
                 self.moved(me, &page.thread, last.message.seq);
             }
         }
-        Ok(pages)
+        Ok(pages.into_iter().map(|(page, _)| page).collect())
     }
 
     /// Posts a message of `me`: `thread`, or with `None` a direct message
@@ -1141,6 +1208,39 @@ mod tests {
         let read = bodies(&s.inbox(&a, None, false, None).unwrap());
         assert_eq!(read, ["a direct word", "a note to a"]);
         assert!(bodies(&s.inbox(&a, None, false, None).unwrap()).is_empty());
+    }
+
+    /// 01M51TKZSYR7PH629S29JX00ZD: a tell to a before its first read,
+    /// then a read of all after a later number. The read shows the
+    /// second tell and skips the first, so it keeps the cursor: the first
+    /// tell stays unread until a read shows it.
+    #[test]
+    fn a_read_of_all_after_a_later_number_keeps_a_tell_unread() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Session::new(hub(dir.path(), &[("a", "o/r"), ("b", "o/r")]));
+        let (a, b) = (uri("a", "o/r"), uri("b", "o/r"));
+        let repo: ThreadName = "o/r".parse().unwrap();
+        let to_a = [Selector::session("a")];
+        let request = "request: claim issue-12";
+        let dm = s.post(&b, None, &to_a, request, Kind::Message).unwrap();
+        let later = s.post(&b, Some(&repo), &[], "a note", Kind::Note).unwrap();
+        s.post(&b, None, &to_a, "a second word", Kind::Message)
+            .unwrap();
+        let unread = |s: &Session| -> Vec<(String, usize)> {
+            s.threads(&a)
+                .into_iter()
+                .map(|t| (t.thread.to_string(), t.unread))
+                .collect()
+        };
+        let (dm, repo) = (dm.thread.to_string(), repo.to_string());
+
+        let read = bodies(&s.inbox(&a, None, true, Some(later.seq)).unwrap());
+        assert_eq!(read, ["a second word"]);
+        assert_eq!(unread(&s), [(dm.clone(), 2), (repo.clone(), 1)]);
+
+        let read = bodies(&s.inbox(&a, None, false, None).unwrap());
+        assert_eq!(read, ["a note", "a second word", request]);
+        assert_eq!(unread(&s), [(dm, 0), (repo, 0)]);
     }
 
     /// R49: a watch wakes a session one time, for the newest message that
