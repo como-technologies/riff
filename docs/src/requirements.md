@@ -4128,10 +4128,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   its `HEAD`, and its branch while the branch points at that `HEAD`. It
   removes a clean worktree whose pull request merged with another head
   when each of its commits is in the merge
-  (01M51JCQ7V7SHTY1ANF0WSTBDF). It removes a clean detached worktree whose commit is on a branch of
-  `origin`. It keeps each other worktree. It prints one line for each
-  worktree with what it did and why. It keeps each worktree outside
-  `.claude/worktrees`. Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
+  (01M51JCQ7V7SHTY1ANF0WSTBDF). It removes a clean detached worktree
+  whose commit is on a branch of `origin`. It keeps each other
+  worktree. It prints one line for each worktree with what it did and
+  why. It keeps each worktree outside `.claude/worktrees`. Superseded
+  by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
 - **01M41XFFXEQPEPDVM4HNT69FVP** `riff worktrees clean` removes a clean
   worktree with no live owner whose `HEAD` is on the default branch of
   `origin`, with or with no pull request, and its branch. It also
