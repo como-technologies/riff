@@ -2560,13 +2560,19 @@ mod tests {
             pane: p.into(),
             session: s.into(),
         };
-        let look = |sessions: &[SessionInfo], panes: &[WorkerPane]| View {
+        let base = View {
             running: true,
             work: 1,
-            idle: idle(sessions, &me, panes),
             places: vec![thelio()],
             items: vec!["issue-7".into()],
+            ..View::default()
+        };
+        // The idle workers of one look, as `Live::look` finds them from
+        // the sessions and the panes.
+        let look = |sessions: &[SessionInfo], panes: &[WorkerPane]| View {
+            idle: idle(sessions, &me, panes),
             idlers: idlers(sessions, &me),
+            ..base.clone()
         };
         let wait = Duration::from_secs(60);
 
