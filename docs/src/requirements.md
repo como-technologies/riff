@@ -4218,9 +4218,22 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   and the pool or the jobs (01M515PDFZZXQ9ZCQE7SQ6KB8G). A number over
   its limit has the warning style. The line fits in 80 columns. A
   second line shows the time and the cause of the last kill. The
-  numbers of a host come from its status. The numbers of the machine
-  of `riff top` come from that machine, when its limit of workers is
-  more than 0.
+  sources of the numbers are in 01M515KST9Z0B4B1D4HJV3Y2CM.
+- **01M515KST9Z0B4B1D4HJV3Y2CM** `riff top` on each machine shows the
+  numbers of each machine that runs workers. The first source of a
+  machine wins: the status of its live workers host; for the machine
+  of `riff top`, that machine, when its limit of workers is more than
+  0; the numbers that a live session of the machine sent in the last 3
+  minutes.
+- **01M515KSWVGCBS76AWZV74TJQ3** The `riff mcp` of the lead sends the
+  numbers of its machine to riff-server after each look of its monitor,
+  also with the monitor off, while its session is the lead and the
+  limit of workers of the machine is more than 0. The numbers are the
+  text of the status of a workers host. `POST /v1/machine` is a
+  signal: the server keeps the last numbers of each session in memory,
+  and `who` shows them with their age.
+- **01M515KSZHC9Y2XQSS73PZ27R0** In `riff top`, a host with a live
+  worker and no numbers shows the line `no numbers`.
 - **01M421QQ1K7EFDV2PVPTSTE5FK** One monitor runs on a machine at a
   time: it holds the lock `monitor.lock` of the local directory.
 - **01M3ZVS08G1PES6N2MRM9N3PH4** The skill names `riff workers reap`

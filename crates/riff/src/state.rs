@@ -152,6 +152,7 @@ pub fn work(activity: &Activity) -> String {
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
+///     machine: None,
 /// };
 /// assert_eq!(
 ///     plain(&s),

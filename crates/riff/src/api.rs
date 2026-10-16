@@ -111,6 +111,7 @@ use riff_core::build::{self, Build, Mismatch};
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
+use riff_core::wire::SetMachine;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
     DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
@@ -1399,6 +1400,18 @@ impl Api {
             me: me.clone(),
             status: status.clone(),
         };
+        self.call(&request).await
+    }
+
+    /// Sends the numbers of the machine of `me`: the text of the status
+    /// of a workers host (01M515KSWVGCBS76AWZV74TJQ3). New numbers
+    /// replace the old ones.
+    pub async fn machine(&self, me: &SessionUri, numbers: &str) -> Result<()> {
+        let request = SetMachine {
+            me: me.clone(),
+            numbers: numbers.to_owned(),
+        };
+        request.check().map_err(anyhow::Error::msg)?;
         self.call(&request).await
     }
 

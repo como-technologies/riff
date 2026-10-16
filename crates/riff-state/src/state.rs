@@ -260,6 +260,7 @@ use riff_core::wire::{
     SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
     Waits, Wake,
 };
+use riff_core::wire::{MachineInfo, SetMachine};
 
 /// A blocked session that the look of the lead found, with its reason
 /// ([`State::look_blocks`]).
@@ -1729,6 +1730,13 @@ impl State {
             waits,
             blocked,
             step,
+            machine: session
+                .machine
+                .as_ref()
+                .map(|(numbers, set_ms)| MachineInfo {
+                    numbers: numbers.clone(),
+                    age_secs: now_ms.saturating_sub(*set_ms) / 1000,
+                }),
         }
     }
 
@@ -1838,6 +1846,55 @@ impl State {
             at_ms,
         };
         self.signal(&who, step, now);
+        Ok(())
+    }
+
+    /// Keeps the numbers of the machine of `me`, sent at `at_ms`
+    /// (01M515KSWVGCBS76AWZV74TJQ3). See [`SetMachine::check`] for the
+    /// reason that it refuses.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_state::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&mike, now);
+    /// assert!(state.who(now, 0, false)[0].machine.is_none());
+    /// let numbers = "workers host: limit 2, floor 4GB, no workers";
+    /// state.set_machine(&mike, numbers.into(), now, 1_000).unwrap();
+    /// let machine = state.who(now, 31_000, false)[0].machine.clone().unwrap();
+    /// assert_eq!((machine.numbers.as_str(), machine.age_secs), (numbers, 30));
+    ///
+    /// // New numbers replace the old ones. The numbers make no record.
+    /// state.take_queue();
+    /// state.set_machine(&mike, "workers host: limit 3, floor 4GB, no workers".into(), now, 40_000).unwrap();
+    /// assert!(state.take_queue().is_empty());
+    /// let machine = state.who(now, 40_000, false)[0].machine.clone().unwrap();
+    /// assert_eq!((machine.numbers.as_str(), machine.age_secs), ("workers host: limit 3, floor 4GB, no workers", 0));
+    /// assert!(state.set_machine(&mike, "two\nlines".into(), now, 0).is_err());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn set_machine(
+        &mut self,
+        me: &SessionUri,
+        numbers: String,
+        now: Instant,
+        at_ms: u64,
+    ) -> Result<(), String> {
+        let set = SetMachine {
+            me: me.clone(),
+            numbers,
+        };
+        set.check()?;
+        let who = self.arrive(me, now);
+        let machine = Signal::Machine {
+            numbers: set.numbers,
+            at_ms,
+        };
+        self.signal(&who, machine, now);
         Ok(())
     }
 

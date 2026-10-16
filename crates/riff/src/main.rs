@@ -3707,17 +3707,10 @@ async fn top(
 
 /// The loop of [`top`].
 /// The numbers of the machine of `riff top`, when it runs workers: its
-/// limit of workers is more than 0 (01M421QPZ9E01PQ62PDBH378SJ).
+/// limit of workers is more than 0 (01M515KST9Z0B4B1D4HJV3Y2CM).
 fn machine_here(me: &SessionUri) -> Option<riff::top::Machine> {
-    let limit = settings::workers_limit(&settings::path().ok()?).ok()?;
-    if limit == 0 {
-        return None;
-    }
-    let panes = Tmux::machine().worker_panes().unwrap_or_default();
-    let main = identity::working_dir()
-        .ok()
-        .and_then(|dir| identity::main_worktree(&dir));
-    let status = riff::host::HostStatus::here(main.as_deref(), &panes).ok()?;
+    let dir = identity::working_dir().ok();
+    let status = riff::host::HostStatus::of_this_machine(dir.as_deref())?;
     Some(riff::top::Machine {
         user: me.who().user().to_owned(),
         host: me.place().host().to_owned(),

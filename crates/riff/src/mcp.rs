@@ -1097,17 +1097,25 @@ impl Tools {
 
     /// Runs the monitor of this machine for as long as the tools run,
     /// while this session is the lead (01M421QPKWPX00X24F8V6DT8Z3). See
-    /// [`crate::monitor`].
+    /// [`crate::monitor`]. After each look, also with the monitor off,
+    /// it sends the numbers of this machine to the server when its limit
+    /// of workers is more than 0 ([`HostStatus::of_this_machine`],
+    /// 01M515KSWVGCBS76AWZV74TJQ3). So `riff top` on each machine shows
+    /// them, also with no `riff workers host` here.
+    ///
+    /// [`HostStatus::of_this_machine`]: crate::host::HostStatus::of_this_machine
     pub fn monitor(&self) -> tokio::task::JoinHandle<()> {
         let tools = self.clone();
         tokio::spawn(async move {
             let mut monitor = crate::monitor::Monitor::new();
             loop {
                 tokio::time::sleep(crate::monitor::Monitor::every()).await;
-                let on = crate::settings::path()
-                    .and_then(|path| crate::settings::monitor(&path))
-                    .is_ok_and(|m| m.on);
-                if !on || tools.left() {
+                let Ok(path) = crate::settings::path() else {
+                    continue;
+                };
+                let on = crate::settings::monitor(&path).is_ok_and(|m| m.on);
+                let runs = crate::settings::workers_limit(&path).is_ok_and(|limit| limit > 0);
+                if !(on || runs) || tools.left() {
                     continue;
                 }
                 let me = tools.me();
@@ -1120,11 +1128,28 @@ impl Tools {
                 if !lead {
                     continue;
                 }
-                if let Err(e) = monitor.look(&tools.api, &me).await {
+                if on && let Err(e) = monitor.look(&tools.api, &me).await {
                     eprintln!("riff: the monitor cannot look: {e:#}");
+                }
+                if runs {
+                    tools.send_numbers(&me).await;
                 }
             }
         })
+    }
+
+    /// Sends the numbers of this machine as `me`
+    /// (01M515KSWVGCBS76AWZV74TJQ3). It reads them off the runtime: a
+    /// read of tmux and of the disk can block.
+    async fn send_numbers(&self, me: &SessionUri) {
+        let dir = self.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let read = move || crate::host::HostStatus::of_this_machine(Some(&dir));
+        let Ok(Some(numbers)) = tokio::task::spawn_blocking(read).await else {
+            return;
+        };
+        if let Err(e) = self.api.machine(me, &numbers.line()).await {
+            eprintln!("riff: cannot send the numbers of this machine: {e:#}");
+        }
     }
 
     /// Tells the server that the session ended (R205). It waits at most

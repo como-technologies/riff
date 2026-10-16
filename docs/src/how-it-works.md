@@ -1190,9 +1190,8 @@ The table of each state, its color and its detail is in
   line shows the time and the cause of the last kill that the monitor
   saw. See
   [Watch the health of a machine](#watch-the-health-of-a-machine).
-  The numbers of a host come from its `riff workers host`. The
-  numbers of the machine where you run `riff top` come from that
-  machine, when its limit of workers is more than 0.
+  `riff top` on each machine shows the same numbers. See
+  [The numbers of each machine](#the-numbers-of-each-machine).
 - Each board has the issues of its own repository, and a session shows
   the title of an issue of its own repository. riff reads them with
   `gh` each minute, for each repository with a live session. A
@@ -1290,6 +1289,50 @@ step for the session:
 
 - Your own session: run `/mcp` in the session, and reconnect the
   server `riff`. Or start the session again.
+
+### The numbers of each machine
+
+Each machine that runs workers tells riff-server its numbers. So
+`riff top` on each machine shows the numbers of each machine. The
+numbers of a machine come from the first of these:
+
+1. The `riff workers host` of the machine. It tells them in its status.
+2. The machine where you run `riff top`, when its limit of workers is
+   more than 0.
+3. The `riff mcp` of your lead. Your lead starts the workers of its own
+   machine with no `riff workers host`. So its `riff mcp` sends the
+   numbers of that machine to riff-server each `monitor.every` seconds
+   (15 by default), also with the monitor off. It sends them while its
+   session is the lead and the limit of workers of the machine is more
+   than 0. riff-server keeps the last numbers of each session.
+   `riff top` does not use numbers that are older than 3 minutes.
+
+```mermaid
+flowchart LR
+    H["riff workers host on thelio"] -->|its status| S[riff-server]
+    L["riff mcp of the lead on pangolin"] -->|"the numbers, each monitor.every"| S
+    S -->|who| T1["riff top on thelio"]
+    S -->|who| T2["riff top on pangolin"]
+```
+
+A host with a live worker and no numbers shows the line
+`no numbers` under it:
+
+```text
+└─ pangolin  › riff  2 sessions: 1 lead, 1 worker; 1 busy, 1 idle, 1 claim
+   │  no numbers
+```
+
+Then the machine tells no numbers. When its lead runs a riff of the
+release before, update riff on that machine:
+
+```sh
+riff update
+```
+
+When the lead moved to another machine while the workers run, start
+a workers host on the machine of the workers. See
+[Offer workers from another machine](#offer-workers-from-another-machine).
 
 ### When riff cannot reach the server
 

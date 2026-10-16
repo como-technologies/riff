@@ -84,6 +84,10 @@ where
     format!("riff: no good look since {}: {fault}", last.format(form))
 }
 
+/// The line of `riff top` under a host with a live worker and no
+/// numbers of its machine (01M515KSZHC9Y2XQSS73PZ27R0).
+pub const NO_NUMBERS: &str = "no numbers";
+
 /// The line of `riff pr wait` when a look of `gh` fails after a good
 /// look (01M3Z8GG5EGEYAVEXG0HS46ACT).
 ///
@@ -2670,6 +2674,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
+///     machine: None,
 /// };
 /// let lead = row("riff://mike@thelio/o/r?session=a1&lead=true", false, true);
 /// assert_eq!(SessionKind::of(&lead), Some(SessionKind::Lead));
@@ -2769,6 +2774,7 @@ fn is_host(s: &SessionInfo) -> bool {
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
+///     machine: None,
 /// };
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
 /// assert_eq!(tags(&row("riff://mike@thelio/o/r?session=a1&lead=true", false), &owner), ["lead"]);
@@ -2839,6 +2845,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         waits: None,
 ///         blocked: None,
 ///         step: None,
+///         machine: None,
 ///     },
 ///     SessionInfo {
 ///         uri: brett,
@@ -2857,6 +2864,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         waits: None,
 ///         blocked: None,
 ///         step: None,
+///         machine: None,
 ///     },
 /// ];
 /// // The owner is a person: the sessions of brett get no tag `owner`.
@@ -2919,6 +2927,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
+///     machine: None,
 /// };
 /// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
 /// info.uri = info.uri.with_lead(true);

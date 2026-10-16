@@ -629,6 +629,7 @@ pub fn whoami(me: &SessionUri, state: Result<RiffReply, String>) -> String {
 ///         waits: None,
 ///         blocked: None,
 ///         step: None,
+///         machine: None,
 ///     },
 ///     SessionInfo {
 ///         uri: brett,
@@ -647,6 +648,7 @@ pub fn whoami(me: &SessionUri, state: Result<RiffReply, String>) -> String {
 ///         waits: None,
 ///         blocked: Some(blocked),
 ///         step: None,
+///         machine: None,
 ///     },
 /// ];
 /// let owner = RiffOwner::Owner { user: "mike".into(), email: "mike@x.io".into() };
@@ -773,6 +775,7 @@ fn state_cell(s: &SessionInfo) -> String {
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
+///     machine: None,
 /// };
 /// let plain = anstream::adapter::strip_str(&riff::view::detail_cell(&s)).to_string();
 /// assert_eq!(plain, "working on #12  2h ago: tests");
@@ -1230,6 +1233,7 @@ pub fn workers_monitor(
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
+///     machine: None,
 /// };
 /// let out = riff::view::workers(&panes, &[info.clone()], false);
 /// let plain = anstream::adapter::strip_str(&out).to_string();

@@ -69,6 +69,34 @@
 //!     end
 //! ```
 //!
+//! # The numbers of each machine
+//!
+//! Under the row of each host that runs workers comes a line of the
+//! numbers of its machine ([`numbers`], 01M421QPZ9E01PQ62PDBH378SJ).
+//! `riff top` on each machine shows the same numbers. They come from
+//! `who` ([`machines`], 01M515KST9Z0B4B1D4HJV3Y2CM):
+//!
+//! - A `riff workers host` tells them in its status
+//!   ([`crate::host::HostStatus`]).
+//! - The `riff mcp` of the lead sends the numbers of its machine after
+//!   each look of its monitor, also with the monitor off, when the
+//!   limit of workers of the machine is more than 0
+//!   (01M515KSWVGCBS76AWZV74TJQ3). The lead starts the workers of its
+//!   machine with no `riff workers host`. The server keeps the last
+//!   numbers of each session, and `who` shows them with their age.
+//! - The machine of `riff top` reads its own numbers.
+//!
+//! A host with a live worker and no numbers, for example from a riff of
+//! the release before, shows `no numbers` (01M515KSZHC9Y2XQSS73PZ27R0).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     H["riff workers host on thelio"] -->|status| S[riff-server]
+//!     L["riff mcp of the lead on pangolin"] -->|"machine, each monitor.every"| S
+//!     S -->|who| T1["riff top on thelio"]
+//!     S -->|who| T2["riff top on pangolin"]
+//! ```
+//!
 //! # A look that fails
 //!
 //! A look is the two calls `riff` and `who`. A laptop sleeps, and the
@@ -110,7 +138,7 @@ use serde::Deserialize;
 use crate::host::HostStatus;
 use crate::state;
 use crate::style::{BOLD, ERROR, MUTED, WARNING, session as session_style, styled};
-use crate::text::{SessionKind, safe};
+use crate::text::{self, SessionKind, safe};
 use crate::view;
 
 /// The time between two draws of `riff top` with no message.
@@ -474,7 +502,9 @@ pub struct Top<'a> {
     /// (01M3Z8FXE2DY34ZP75WJE1S8HR).
     pub fault: Option<&'a str>,
     /// The machines that run workers ([`machines`]): their numbers go
-    /// under the row of their host (01M421QPZ9E01PQ62PDBH378SJ).
+    /// under the row of their host (01M421QPZ9E01PQ62PDBH378SJ). A host
+    /// with a live worker and no numbers gets the line `no numbers`
+    /// (01M515KSZHC9Y2XQSS73PZ27R0).
     pub machines: &'a [Machine],
 }
 
@@ -486,15 +516,25 @@ pub struct Machine {
     pub status: HostStatus,
 }
 
-/// The machines that run workers: each live workers host in
-/// `sessions`, with the numbers of its status, and `here`, the machine
-/// of `riff top`, when no host tells its numbers
-/// (01M421QPZ9E01PQ62PDBH378SJ).
+/// The oldest numbers that a session sent that [`machines`] takes
+/// (01M515KST9Z0B4B1D4HJV3Y2CM). Older numbers count as none: the
+/// session stopped sending them.
+pub const NUMBERS_TTL: Duration = Duration::from_secs(180);
+
+/// The machines that run workers, with their numbers
+/// (01M515KST9Z0B4B1D4HJV3Y2CM). Each machine is a user and a host. Its
+/// first source of these wins:
+///
+/// 1. the status of a live workers host of the machine in `sessions`;
+/// 2. `here`, the machine of `riff top`;
+/// 3. the numbers that a live session of the machine sent in the last
+///    [`NUMBERS_TTL`]: the lead sends the numbers of its machine
+///    (01M515KSWVGCBS76AWZV74TJQ3).
 ///
 /// ```
 /// use riff::host::HostStatus;
 /// use riff::top::{Machine, machines};
-/// use riff_core::wire::{SessionInfo, Status, StatusInfo};
+/// use riff_core::wire::{MachineInfo, SessionInfo, Status, StatusInfo};
 ///
 /// let status = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, more: 0, workers: vec![] };
 /// let host = SessionInfo {
@@ -518,6 +558,7 @@ pub struct Machine {
 ///     waits: None,
 ///     blocked: None,
 ///     step: None,
+///     machine: None,
 /// };
 /// let here = Machine { user: "mike".into(), host: "pangolin".into(), status: status.clone() };
 /// let found = machines(std::slice::from_ref(&host), Some(here.clone()));
@@ -525,28 +566,47 @@ pub struct Machine {
 /// assert_eq!((found[0].user.as_str(), found[0].host.as_str()), ("mike", "thelio"));
 /// assert_eq!(found[1], here);
 /// // A workers host on the machine of riff top wins over the local numbers.
-/// let there = Machine { host: "thelio".into(), ..here };
-/// assert_eq!(machines(&[host], Some(there)).len(), 1);
+/// let there = Machine { host: "thelio".into(), ..here.clone() };
+/// assert_eq!(machines(std::slice::from_ref(&host), Some(there)).len(), 1);
+///
+/// // The lead on kadomony sent the numbers of its machine.
+/// let sent = HostStatus { limit: 3, ..status.clone() };
+/// let lead = SessionInfo {
+///     uri: "riff://mike@kadomony/o/r?session=l1&lead=true".parse().unwrap(),
+///     status: None,
+///     machine: Some(MachineInfo { numbers: sent.line(), age_secs: 10 }),
+///     ..host.clone()
+/// };
+/// let found = machines(&[host.clone(), lead.clone()], None);
+/// assert_eq!(found[1], Machine { user: "mike".into(), host: "kadomony".into(), status: sent });
+/// // Numbers older than NUMBERS_TTL count as none.
+/// let old = MachineInfo { numbers: status.line(), age_secs: 181 };
+/// let lead = SessionInfo { machine: Some(old), ..lead };
+/// assert_eq!(machines(&[host, lead], None).len(), 1);
 /// ```
 pub fn machines(sessions: &[SessionInfo], here: Option<Machine>) -> Vec<Machine> {
-    let mut found: Vec<Machine> = sessions
-        .iter()
-        .filter(|s| s.live)
-        .filter_map(|s| {
-            let status = HostStatus::parse(&s.status.as_ref()?.status.step)?;
-            Some(Machine {
-                user: s.uri.who().user().to_owned(),
-                host: s.uri.place().host().to_owned(),
-                status,
-            })
+    let of = |s: &SessionInfo, numbers: &str| {
+        Some(Machine {
+            user: s.uri.who().user().to_owned(),
+            host: s.uri.place().host().to_owned(),
+            status: HostStatus::parse(numbers)?,
         })
-        .collect();
-    if let Some(here) = here
-        && !found
+    };
+    let live = || sessions.iter().filter(|s| s.live);
+    let hosts = live().filter_map(|s| of(s, &s.status.as_ref()?.status.step));
+    let sent = live().filter_map(|s| {
+        let machine = s.machine.as_ref()?;
+        (machine.age_secs <= NUMBERS_TTL.as_secs()).then_some(())?;
+        of(s, &machine.numbers)
+    });
+    let mut found: Vec<Machine> = Vec::new();
+    for machine in hosts.chain(here).chain(sent) {
+        if !found
             .iter()
-            .any(|m| m.user == here.user && m.host == here.host)
-    {
-        found.push(here);
+            .any(|m| m.user == machine.user && m.host == machine.host)
+        {
+            found.push(machine);
+        }
     }
     found
 }
@@ -1013,6 +1073,7 @@ impl Top<'_> {
     ///         unanswered: true,
     ///     }),
     ///     step: None,
+    ///     machine: None,
     /// };
     /// let sessions = [
     ///     info("riff://mike@thelio/o/r?session=aaaa1111&lead=true", "plan", None, false, SessionState::Idle),
@@ -1081,6 +1142,8 @@ impl Top<'_> {
     ///     "ann  admin  offline  seen 1h ago",
     ///     "mike  owner  online  5 sessions: 2 busy, 1 idle, 1 blocked, 3 claims",
     ///     "├─ pangolin  2 sessions: 1 lead, 1 worker; 1 busy, 1 blocked, 2 claims",
+    ///     // A host with a live worker and no numbers of its machine.
+    ///     "│  │  no numbers",
     ///     "│  ├─ r  1 session: 1 blocked, 1 claim",
     ///     "│  │  └─ dddd4444  #verify-13  worker  blocked",
     ///     "│  │       waits for the lead (25m ago)",
@@ -1091,6 +1154,7 @@ impl Top<'_> {
     ///     "│          working on #14",
     ///     "│          2m ago: plan",
     ///     "└─ thelio  › r  3 sessions: 1 lead, 1 worker; 1 busy, 1 idle, 1 claim",
+    ///     "   │  no numbers",
     ///     "   ├─ aaaa1111  lead  idle",
     ///     "   │    monitoring work for 10m",
     ///     "   │    2m ago: plan",
@@ -1253,11 +1317,20 @@ impl Top<'_> {
                 .machines
                 .iter()
                 .find(|m| Some(m.user.as_str()) == user && m.host == row.key);
-            if let Some(m) = machine {
-                lines.push(Line::new(more.clone(), numbers(&m.status)));
-                if let Some(kill) = kill_line(&m.status) {
-                    lines.push(Line::new(more.clone(), vec![kill]));
+            match machine {
+                Some(m) => {
+                    lines.push(Line::new(more.clone(), numbers(&m.status)));
+                    if let Some(kill) = kill_line(&m.status) {
+                        lines.push(Line::new(more.clone(), vec![kill]));
+                    }
                 }
+                // A machine with workers that tells no numbers
+                // (01M515KSZHC9Y2XQSS73PZ27R0).
+                None if row.sessions.iter().any(|s| s.live && s.worker) => {
+                    let none = (text::NO_NUMBERS.to_owned(), MUTED);
+                    lines.push(Line::new(more.clone(), vec![none]));
+                }
+                None => {}
             }
         }
         if end.kids.is_empty() {
@@ -1514,12 +1587,23 @@ mod tests {
             waits: None,
             blocked: None,
             step: None,
+            machine: None,
         }
     }
 
     /// The text of `riff top` for `sessions` with `issues` and `show`,
     /// with no styles.
     fn shown(sessions: &[SessionInfo], issues: &BTreeMap<String, Issues>, show: &Show) -> String {
+        shown_with(sessions, issues, show, &[])
+    }
+
+    /// [`shown`] with the numbers of `machines`.
+    fn shown_with(
+        sessions: &[SessionInfo],
+        issues: &BTreeMap<String, Issues>,
+        show: &Show,
+        machines: &[Machine],
+    ) -> String {
         let owner = RiffOwner::NoSignIn;
         let running = riff_core::wire::RiffState::Running.into();
         let top = Top {
@@ -1533,9 +1617,60 @@ mod tests {
             show,
             width: 100,
             fault: None,
-            machines: &[],
+            machines,
         };
         anstream::adapter::strip_str(&top.view()).to_string()
+    }
+
+    /// A host with a live worker and no numbers shows `no numbers`. A
+    /// host with numbers shows them. A host with no live worker shows
+    /// neither (01M515KSZHC9Y2XQSS73PZ27R0).
+    #[test]
+    fn a_host_with_a_live_worker_and_no_numbers_shows_no_numbers() {
+        let worker = |uri: &str| SessionInfo {
+            worker: true,
+            ..info(uri, SessionState::Idle)
+        };
+        let sessions = [
+            worker("riff://mike@pangolin/o/riff?session=w1"),
+            worker("riff://mike@thelio/o/riff?session=w2"),
+            info("riff://mike@kadomony/o/riff?session=m1", SessionState::Idle),
+            SessionInfo {
+                live: false,
+                ..worker("riff://mike@heron/o/riff?session=w3")
+            },
+        ];
+        let status = HostStatus {
+            limit: 2,
+            floor: 4,
+            deaths: 0,
+            machine: None,
+            disk: None,
+            monitor: None,
+            more: 0,
+            workers: vec![("%3".into(), "w2".into())],
+        };
+        let thelio = Machine {
+            user: "mike".into(),
+            host: "thelio".into(),
+            status,
+        };
+        let text = shown_with(
+            &sessions,
+            &BTreeMap::new(),
+            &Show::default(),
+            std::slice::from_ref(&thelio),
+        );
+        let rows = tree(&text);
+        let under = |host: &str| {
+            let at = rows.iter().position(|r| r.contains(host)).unwrap();
+            rows[at + 1].clone()
+        };
+        assert_eq!(under("pangolin"), "│  │  no numbers", "{text}");
+        assert_eq!(under("thelio"), "   │  workers 1/2", "{text}");
+        assert!(under("kadomony").contains("m1"), "{text}");
+        assert!(under("heron").contains("w3"), "{text}");
+        assert_eq!(text.matches(text::NO_NUMBERS).count(), 1, "{text}");
     }
 
     /// The lines of the tree: the last part of the text.
