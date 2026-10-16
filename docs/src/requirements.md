@@ -6167,7 +6167,8 @@ then.
   of `--skip`.
   In the Claude folder of the person, only a new path that names the
   `ID8` of the session counts. Superseded in part by
-  01M51K051FR0WN71NJXNA86XWY and 01M51K053WS0KK3E376V6DH6GR.
+  01M51K051FR0WN71NJXNA86XWY, 01M51K053WS0KK3E376V6DH6GR and
+  01M51X6JA3W2CMV1S5VZEY7FC3.
 - **01M51K051FR0WN71NJXNA86XWY** The home check of the real-session
   test also sees a change to a file that is there already, but only in
   the files that riff must not write (01M4Z60B85X62PNYSVJWKXEWH3):
@@ -6180,6 +6181,7 @@ then.
   the inode of each of these files. A file with a new value fails the
   test, and the message names it. A change of another file of the home
   does not count. Each path of `--skip` is left out, also a file.
+  Superseded in part by 01M51X6JA3W2CMV1S5VZEY7FC3.
 - **01M51K053WS0KK3E376V6DH6GR** In the home check, the Claude folder of
   the person and each file whose name starts with `.claude.json` beside
   it, for example its lock, count as the Claude folder: only a new path
@@ -6198,6 +6200,19 @@ then.
   their worktrees, and make new worktrees, while the test runs. A new
   path in the rest of each clone still counts, also a new hook and a
   new config file of git.
+- **01M51X6JA3W2CMV1S5VZEY7FC3** The home check of the real-session
+  test also reads `config` and `config.worktree` in the folder `.git`
+  of each git clone of the home, before and after `riff run`. This
+  includes the main clone and the worktree of the test: the check
+  leaves out the rest of them. A new, a changed or a removed key fails
+  the test, and the message names the file and each key. A key of a
+  section `[branch "NAME"]` does not count. A change to a file in
+  `.git/hooks` fails the test too. `config.worktree` in
+  `.git/worktrees/NAME`, and the git folder of each submodule in
+  `.git/modules`, stay left out.
+- **01M51X6JCHZB8HJ8C8M3J1G6GZ** When the home is itself a git clone,
+  the home check of the real-session test leaves out
+  `.claude/worktrees` in the home, as in each other clone.
 - **01M4ZFPYNGFF49WWHR8EBWSTNG** Before `riff run`, the real-session
   test starts `riff daemon` of the tree in a process group of its own,
   and waits up to 10 seconds until `riff daemon status` answers. When a

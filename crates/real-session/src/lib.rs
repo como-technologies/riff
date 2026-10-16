@@ -973,7 +973,7 @@ fn read_git_config(path: &Path) -> Option<GitConfig> {
 ///     "[core]\n\
 ///      \tbare = false\n\
 ///      \thooksPath = /tmp/hooks ; a comment\n\
-///      # a comment\n\
+///      \t# a comment\n\
 ///      [remote \"origin\"]\n\
 ///      \turl = git@github.com:o/r.git\n\
 ///      [branch \"worktree-issue-1\"]\n\
