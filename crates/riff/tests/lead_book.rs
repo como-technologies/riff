@@ -220,7 +220,9 @@ fn start_the_lead_shows_the_lines_of_the_end_of_the_lead() {
         .find("\n### Start the lead\n")
         .expect("development.md has \"### Start the lead\"");
     let rest = &page[start + 1..];
-    let part = rest[4..].find("\n### ").map_or(rest, |end| &rest[..end + 4]);
+    let part = rest[4..]
+        .find("\n### ")
+        .map_or(rest, |end| &rest[..end + 4]);
     for line in [
         riff::text::lead_ended("riff-lead-OWNER-REPO"),
         riff::text::LEAD_NO_RESUME.to_owned(),

@@ -589,10 +589,7 @@ mod tests {
         use crate::lead::Left;
         let mut screen = two();
         screen.attached("riff-lead-o-r", &Ok(Left::Ended));
-        assert_eq!(
-            drawn(&screen, 110, 8)[6],
-            text::lead_ended("riff-lead-o-r")
-        );
+        assert_eq!(drawn(&screen, 110, 8)[6], text::lead_ended("riff-lead-o-r"));
         screen.attached("riff-lead-o-r", &Ok(Left::Detached));
         assert_eq!(
             drawn(&screen, 110, 8)[6],

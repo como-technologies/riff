@@ -33,8 +33,8 @@
 //! Ctrl-Q. Before it, `podman exec NAME stty` sets the terminal of the
 //! container to another size ([`redraw_args`]). The attach sets the size
 //! of the person again, so `claude` draws its screen
-//! (01M51PD7M04HZR2PVVJA4WCBK5). A takeover runs `podman exec -it NAME COMMAND` with the
-//! terminal of the person (01M4Z60B81RTZT71PN5HV0GZHX,
+//! (01M51PD7M04HZR2PVVJA4WCBK5). A takeover runs `podman exec -it NAME
+//! COMMAND` with the terminal of the person (01M4Z60B81RTZT71PN5HV0GZHX,
 //! 01M4Z60B83ZH10HYKW7X1C0SSS).
 //!
 //! conmon, the monitor of podman, holds the container. A stop of the
