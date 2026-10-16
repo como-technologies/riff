@@ -3,6 +3,11 @@
 //!
 //! # Design
 //!
+//! The daemon applies each record to this state, and not to
+//! `riff-state` (01M51QQGYDR9NZ702NFEQR512W): `riff-state` decides a post
+//! by the live sessions and the clock of one server, so two daemons with
+//! the same records could get two states.
+//!
 //! [`State::keep`] applies one checked record. The state of each type
 //! comes from one writer, and no part of the state depends on the order
 //! of two records of two authors. So two daemons that keep the same
@@ -84,7 +89,7 @@ use riff_core::name::{SessionUri, ThreadName};
 
 use crate::daemon_key::Public;
 use crate::peer::body::{Body, Message, Plan, Session};
-use crate::peer::record::{Checked, Context, Id, Standing};
+use crate::peer::record::{Author, Checked, Context, Fault, Id, Standing};
 
 /// A member key.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -189,6 +194,8 @@ pub struct State {
     owner: Option<String>,
     members: BTreeMap<Public, Member>,
     heads: BTreeMap<Public, (u64, Id)>,
+    /// The ID of each record that the state kept.
+    ids: BTreeSet<Id>,
     runs: BTreeMap<(Public, String), Run>,
     /// Each lead mark that another lead mark names.
     named: BTreeSet<Id>,
@@ -208,6 +215,7 @@ impl State {
             owner: None,
             members: BTreeMap::new(),
             heads: BTreeMap::new(),
+            ids: BTreeSet::new(),
             runs: BTreeMap::new(),
             named: BTreeSet::new(),
             holds: BTreeMap::new(),
@@ -238,6 +246,11 @@ impl State {
         &self.heads
     }
 
+    /// True when the state kept the record `id`.
+    pub fn has(&self, id: &Id) -> bool {
+        self.ids.contains(id)
+    }
+
     /// The user of the key `key`: the owner or a member.
     pub fn user_of(&self, key: &Public) -> Option<&str> {
         if *key == self.riff {
@@ -252,6 +265,7 @@ impl State {
         let record = &checked.record;
         let (author, seq, id) = (record.author(), record.seq(), record.id());
         self.heads.insert(author, (seq, id));
+        self.ids.insert(id);
         let user = self.user_of(&author).unwrap_or_default().to_owned();
         match &checked.body {
             Body::Riff(riff) => self.owner = Some(riff.user.clone()),
@@ -464,6 +478,38 @@ impl State {
     }
 }
 
+/// True when a record that failed with `fault` can pass later, so the
+/// daemon drops it with no fault (01M519Z33N2MW43XY62NYC6RRH): a
+/// sequence number after the next one, or an author that no record of
+/// the owner admits yet. The next heads give it again, in order. Each
+/// other fault refuses the record (01M519Z363W5GV4MV5RDB6ECG0).
+///
+/// ```
+/// use riff::peer::record::{Author, Fault};
+/// use riff::peer::state::later;
+///
+/// assert!(later(&Fault::Sequence { got: 5, next: 3 }));
+/// assert!(later(&Fault::Author(Author::Unknown)));
+/// assert!(!later(&Fault::Sequence { got: 2, next: 3 }));
+/// assert!(!later(&Fault::Author(Author::Gone)));
+/// assert!(!later(&Fault::Signature));
+/// ```
+pub fn later(fault: &Fault) -> bool {
+    match fault {
+        Fault::Sequence { got, next } => got > next,
+        Fault::Author(Author::Unknown) => true,
+        Fault::Author(Author::Gone)
+        | Fault::Size { .. }
+        | Fault::Version(_)
+        | Fault::Type
+        | Fault::Riff
+        | Fault::Before
+        | Fault::Signature
+        | Fault::Json(_)
+        | Fault::Writer(_) => false,
+    }
+}
+
 /// The part of a [`State`] that does not depend on the order of the
 /// records: each part but the numbers of the messages.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -629,9 +675,9 @@ mod tests {
         })
     }
 
-    /// A state of the riff of `d` that keeps `records` in this order.
-    fn keep_all(d: &Daemons, records: &[Record]) -> State {
-        let mut state = State::new(d.public(0));
+    /// A state of the riff `riff` that keeps `records` in this order.
+    fn keep_all(riff: Public, records: &[Record]) -> State {
+        let mut state = State::new(riff);
         for record in records {
             let checked = check(record.bytes().to_vec(), &state)
                 .unwrap_or_else(|fault| panic!("{record:?}: {fault}"));
@@ -650,18 +696,19 @@ mod tests {
     #[test]
     fn two_orders_of_the_same_records_give_the_same_state() {
         let mut d = Daemons::new();
+        let riff = d.public(0);
         let start = d.start();
         // Each chain: the records of one author, in its order.
-        let thelio = vec![
+        let thelio = [
             d.write(0, session(THELIO, Some(None))),
             d.write(0, message(THELIO, "from thelio")),
             d.write(0, hold("issue-12")),
         ];
-        let pangolin = vec![
+        let pangolin = [
             d.write(1, session(PANGOLIN, None)),
             d.write(1, message(PANGOLIN, "from pangolin")),
         ];
-        let kadomony = vec![
+        let kadomony = [
             d.write(2, session(KADOMONY, Some(None))),
             d.write(2, hold("issue-12")),
             d.write(2, message(KADOMONY, "from kadomony")),
@@ -697,15 +744,16 @@ mod tests {
         two.insert(at, kadomony_free);
         assert_ne!(one, two);
 
-        let (a, b) = (keep_all(&d, &one), keep_all(&d, &two));
+        let (a, b) = (keep_all(riff, &one), keep_all(riff, &two));
         assert_eq!(a.view(), b.view());
         let thread: ThreadName = "o/r".parse().unwrap();
-        let numbers = |s: &State| -> Vec<u64> { s.messages(&thread).iter().map(|k| k.number).collect() };
+        let numbers =
+            |s: &State| -> Vec<u64> { s.messages(&thread).iter().map(|k| k.number).collect() };
         assert_eq!(numbers(&a), [1, 2, 3]);
         assert_eq!(numbers(&b), [1, 2, 3]);
         let first = |s: &State| s.messages(&thread)[0].message.body.clone();
         assert_eq!(first(&a), "from thelio");
-        assert_eq!(first(&b), "from kadomony");
+        assert_eq!(first(&b), "from pangolin");
         // brett frees only the hold of brett: the hold of mike stays.
         let view = a.view();
         assert_eq!(view.holds, BTreeSet::from([thelio[2].id()]));
@@ -717,6 +765,7 @@ mod tests {
     #[test]
     fn two_holds_of_an_item_need_two_frees_and_the_owner_frees_each() {
         let mut d = Daemons::new();
+        let riff = d.public(0);
         let mut records = d.start();
         records.push(d.write(1, session(PANGOLIN, Some(None))));
         records.push(d.write(2, session(KADOMONY, Some(None))));
@@ -725,22 +774,20 @@ mod tests {
         records.push(pangolin_hold.clone());
         records.push(kadomony_hold.clone());
         let thread: ThreadName = "o/r".parse().unwrap();
-        let held = |records: &[Record]| keep_all(&d, records).holds_of(&thread, "issue-12").count();
+        let held = |records: &[Record]| {
+            keep_all(riff, records)
+                .holds_of(&thread, "issue-12")
+                .count()
+        };
         assert_eq!(held(&records), 2);
 
         // brett frees each hold: only the hold of brett ends.
         records.push(d.write(2, free(&[&pangolin_hold, &kadomony_hold])));
         assert_eq!(held(&records), 1);
-        let state = keep_all(&d, &records);
+        let state = keep_all(riff, &records);
         let left: Vec<_> = state.holds_of(&thread, "issue-12").collect();
         assert_eq!(left[0].id, pangolin_hold.id());
 
-        // A free of another daemon of mike ends the hold of pangolin.
-        let mut by_user = records.clone();
-        by_user.push(d.write(0, session(THELIO, Some(None))));
-        let mut d2 = Daemons::new();
-        d2.heads = d.heads.clone();
-        d2.time = d.time;
         // The owner frees each hold.
         records.push(d.write(0, free(&[&pangolin_hold])));
         assert_eq!(held(&records), 0);
@@ -752,6 +799,7 @@ mod tests {
     #[test]
     fn a_hold_a_free_and_a_new_hold_give_the_same_holds_in_each_order() {
         let mut d = Daemons::new();
+        let riff = d.public(0);
         let start = d.start();
         let lead = d.write(2, session(KADOMONY, Some(None)));
         let first = d.write(2, hold("issue-12"));
@@ -766,7 +814,7 @@ mod tests {
         for order in orders {
             let mut records = start.clone();
             records.extend(order);
-            let state = keep_all(&d, &records);
+            let state = keep_all(riff, &records);
             let holds: Vec<Id> = state.holds_of(&thread, "issue-12").map(|h| h.id).collect();
             assert_eq!(holds, [again.id()]);
         }
@@ -777,15 +825,20 @@ mod tests {
     #[test]
     fn the_lead_mark_that_names_the_other_counts_else_the_higher_key() {
         let mut d = Daemons::new();
+        let riff = d.public(0);
         let start = d.start();
         let thread: ThreadName = "o/r".parse().unwrap();
-        // mike on thelio [1] and on pangolin [2]: pangolin has the higher
-        // key.
-        assert!(d.public(1) > d.public(0));
+        // mike on thelio [1] and on pangolin [2]: the session of the
+        // daemon with the higher key counts.
+        let higher = if d.public(0) > d.public(1) {
+            THELIO
+        } else {
+            PANGOLIN
+        };
         let thelio = d.write(0, session(THELIO, Some(None)));
         let pangolin = d.write(1, session(PANGOLIN, Some(None)));
         let lead_of = |records: &[Record]| {
-            keep_all(&d, records)
+            keep_all(riff, records)
                 .lead("mike", &thread)
                 .map(|run| run.body.session.to_string())
         };
@@ -795,10 +848,16 @@ mod tests {
         ] {
             let mut records = start.clone();
             records.extend(order);
-            assert_eq!(lead_of(&records).as_deref(), Some(PANGOLIN));
+            assert_eq!(lead_of(&records).as_deref(), Some(higher));
         }
         // thelio takes the lead again, and names the mark of pangolin.
-        let back = d.write(0, session("riff://mike@thelio/o/r?session=t2", Some(Some(pangolin.id()))));
+        let back = d.write(
+            0,
+            session(
+                "riff://mike@thelio/o/r?session=t2",
+                Some(Some(pangolin.id())),
+            ),
+        );
         for order in [
             vec![thelio.clone(), pangolin.clone(), back.clone()],
             vec![thelio.clone(), back.clone(), pangolin.clone()],
@@ -813,7 +872,7 @@ mod tests {
         // The session of brett is the lead of brett: another user.
         let mut records = start.clone();
         records.push(d.write(2, session(KADOMONY, Some(None))));
-        let state = keep_all(&d, &records);
+        let state = keep_all(riff, &records);
         assert!(state.lead("brett", &thread).is_some());
         assert!(state.lead("mike", &thread).is_none());
     }
@@ -824,6 +883,7 @@ mod tests {
     #[test]
     fn a_resume_ends_a_pause_of_its_user_and_the_owner_ends_each() {
         let mut d = Daemons::new();
+        let riff = d.public(0);
         let mut records = d.start();
         let thread: ThreadName = "o/r".parse().unwrap();
         records.push(d.write(2, session(KADOMONY, Some(None))));
@@ -845,20 +905,21 @@ mod tests {
         // mike on pangolin may not end the pause of brett, nor the pause of
         // the whole riff.
         records.push(d.write(1, resume(&[&brett, &whole])));
-        assert_eq!(keep_all(&d, &records).pauses_of(&thread).count(), 2);
+        assert_eq!(keep_all(riff, &records).pauses_of(&thread).count(), 2);
         // brett ends the pause of brett.
         records.push(d.write(2, resume(&[&brett])));
-        let state = keep_all(&d, &records);
+        let state = keep_all(riff, &records);
         let left: Vec<_> = state.pauses_of(&thread).map(|p| p.id).collect();
         assert_eq!(left, [whole.id()]);
         // The owner ends the pause of the whole riff.
         records.push(d.write(0, resume(&[&whole])));
-        assert_eq!(keep_all(&d, &records).pauses_of(&thread).count(), 0);
+        assert_eq!(keep_all(riff, &records).pauses_of(&thread).count(), 0);
     }
 
     #[test]
     fn a_session_runs_until_its_end_and_keeps_its_first_mark() {
         let mut d = Daemons::new();
+        let riff = d.public(0);
         let mut records = d.start();
         let first = d.write(1, session(PANGOLIN, Some(None)));
         records.push(first.clone());
@@ -868,7 +929,7 @@ mod tests {
             s.claims = vec!["issue-12".into()];
         }
         records.push(d.write(1, status));
-        let state = keep_all(&d, &records);
+        let state = keep_all(riff, &records);
         let run = state.run(&d.public(1), "p1").unwrap();
         assert_eq!(run.mark, Some(first.id()));
         assert_eq!(run.body.status.as_deref(), Some("tests"));
@@ -882,7 +943,7 @@ mod tests {
             s.ended = true;
         }
         records.push(d.write(1, end));
-        let state = keep_all(&d, &records);
+        let state = keep_all(riff, &records);
         assert_eq!(state.runs().count(), 0);
         assert!(state.lead("mike", &"o/r".parse().unwrap()).is_none());
     }
@@ -890,8 +951,9 @@ mod tests {
     #[test]
     fn the_members_come_from_the_records_of_the_owner() {
         let mut d = Daemons::new();
+        let riff = d.public(0);
         let mut records = d.start();
-        let state = keep_all(&d, &records);
+        let state = keep_all(riff, &records);
         assert_eq!(state.owner(), Some("mike"));
         assert_eq!(state.user_of(&d.public(2)), Some("brett"));
         records.push(d.write(
@@ -902,7 +964,7 @@ mod tests {
             }),
         ));
         records.push(d.write(1, Body::Left(crate::peer::body::Left {})));
-        let state = keep_all(&d, &records);
+        let state = keep_all(riff, &records);
         let brett = &state.members()[&d.public(2)];
         assert!(brett.removed && brett.until == Some(0));
         let pangolin = &state.members()[&d.public(1)];

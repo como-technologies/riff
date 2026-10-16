@@ -5423,6 +5423,11 @@ pub fn daemon_no_state(dir: &Path) -> String {
 /// its key says a line (01M51JW233MXB72MHHRAX4E4NF).
 pub const DAEMON_OPENS: &str = "The riff daemon reads its key and its state.";
 
+/// A step of the riff of peers while the daemon has no riff: it waits
+/// for its key (01M51JW233MXB72MHHRAX4E4NF).
+pub const DAEMON_NO_RIFF_YET: &str =
+    "The riff daemon has no riff yet: it waits for its key. See riff daemon status.";
+
 /// The daemon cannot read its key or load its state: `error`. Its
 /// sessions run on, and it has no riff.
 ///
@@ -5479,6 +5484,20 @@ pub fn daemon_keyring_waits(error: &str, retry: std::time::Duration) -> String {
 /// The keyring of the daemon answers again after a refusal.
 pub fn daemon_keyring_back() -> String {
     "The OS keyring answers again: the riff daemon reads its key.".into()
+}
+
+/// A record of the book of the daemon failed its check at a start: the
+/// daemon does not apply it. The line names the check, with no body
+/// (01M519Z363W5GV4MV5RDB6ECG0).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_bad_record("the signature"),
+///     "The riff daemon does not apply a record of its book: it fails the check of the signature."
+/// );
+/// ```
+pub fn daemon_bad_record(fault: &str) -> String {
+    format!("The riff daemon does not apply a record of its book: it fails the check of {fault}.")
 }
 
 /// The first start of a daemon made its key and a riff of its own

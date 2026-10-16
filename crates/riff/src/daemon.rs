@@ -40,6 +40,7 @@
 //! | `sessions/NAME/riff.sock` | The socket of that session. |
 //! | `live/NAME.json` | The [`Record`] of the session `NAME`, with no secret. |
 //! | `state/` | The log and the checkpoints of the state of the daemon ([`state_dir`]), and its riff (`riff.json`, [`RIFF`]). |
+//! | `state/records` | The records of the riff of peers, in the order in which the daemon kept them ([`crate::peer::book`]). |
 //! | `state.lost-MS/` | The old state of a lost key, from the time `MS` ([`Lost`]). riff never reads it. |
 //! | `limit.json` | The limit of the host ([`crate::room`]), when `riff daemon limit` set it. |
 //! | `waves.json` | The waves that the daemon runs ([`crate::wave`]). |
@@ -113,6 +114,17 @@
 //! key until the records of Wave B. Until the riff is there,
 //! [`Status::waits`] says what the daemon waits for, and [`Daemon::state`]
 //! is `None` (01M51JW233MXB72MHHRAX4E4NF).
+//!
+//! # The riff of peers
+//!
+//! With its riff, the daemon opens the records of its riff of peers
+//! ([`crate::peer`]): the file `state/records` and the state that they
+//! give. The first record of a riff of its own is `riff`, with the user of
+//! the owner (01M519Z2JMAKN0T6JZFBPSTKC8). [`Daemon::write`] signs a new
+//! record of the daemon, keeps it and applies it. [`Daemon::keep`] takes a
+//! record of another daemon. [`Daemon::peers`] reads the state. Each of
+//! them waits for no lock of `tokio`: a write of a record holds the lock
+//! of the records for one append and one sync of the file.
 //!
 //! # The relay
 //!
@@ -339,6 +351,10 @@ use tokio::sync::{Notify, mpsc};
 use tokio::task::{JoinHandle, JoinSet};
 
 use crate::daemon_key::{Found, Key};
+use crate::peer::body::Body;
+use crate::peer::keep::{Outcome, Peers};
+use crate::peer::record::Id;
+use crate::peer::state::{Applied, State as PeerState};
 use crate::room::{Limit, Room, Slot};
 use crate::run::{Scrub, user_line};
 use crate::runtime::{Bind, End, Env, Runtime, SessionSpec, Source};
@@ -1431,6 +1447,9 @@ struct Riff {
     key: Key,
     owner: String,
     state: Local,
+    /// The records of the riff of peers, and their state
+    /// ([`crate::peer`]).
+    peers: Mutex<Peers>,
 }
 
 /// The object of the riff of the daemon in its state: the riff ID and
@@ -1539,6 +1558,26 @@ async fn keep_made(store: &Dir, made: &Made) -> Result<()> {
     let known = store.load(RIFF).await?.map(|loaded| loaded.version);
     store.save(RIFF, serde_json::to_vec(made)?, known).await?;
     Ok(())
+}
+
+/// Opens the records of the riff of the daemon of `key` in `state_dir`
+/// ([`Peers::open`]). A riff of its own with no record gets its first
+/// record: `riff`, with the user of the owner `owner`
+/// (01M519Z2JMAKN0T6JZFBPSTKC8).
+fn open_peers(
+    state_dir: &Path,
+    key: &Key,
+    owner: &str,
+    say: &mut impl FnMut(String),
+) -> Result<Peers> {
+    let mut peers = Peers::open(state_dir, key.public(), say)?;
+    if peers.state().owner().is_none() && peers.state().riff() == key.public() {
+        let riff = Body::Riff(crate::peer::body::Riff {
+            user: owner.to_owned(),
+        });
+        peers.write(key, &riff, u64::try_from(now_ms()).unwrap_or_default())?;
+    }
+    Ok(peers)
 }
 
 /// Moves the folder `state_dir` of an old key to `state.lost-MS` beside
@@ -1700,9 +1739,40 @@ impl<R: Runtime + 'static> Daemon<R> {
                 (key, owner)
             }
         };
+        let peers = open_peers(&state_dir, &key, &owner, &mut say)?;
         self.riff
-            .set(Riff { key, owner, state })
+            .set(Riff {
+                key,
+                owner,
+                state,
+                peers: Mutex::new(peers),
+            })
             .map_err(|_| anyhow!("the riff daemon has its riff already"))
+    }
+
+    /// Writes a record of the daemon with the body `body`: signed by its
+    /// key, kept in its book, and applied to its riff of peers
+    /// ([`Peers::write`]). It fails while the daemon has no riff.
+    pub fn write(&self, body: &Body) -> Result<(Id, Applied)> {
+        let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
+        let mut peers = riff.peers.lock().unwrap_or_else(PoisonError::into_inner);
+        peers.write(&riff.key, body, u64::try_from(now_ms()).unwrap_or_default())
+    }
+
+    /// Takes the bytes of a record of another daemon ([`Peers::keep`]).
+    /// It fails while the daemon has no riff.
+    pub fn keep(&self, bytes: Vec<u8>) -> Result<Outcome> {
+        let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
+        let mut peers = riff.peers.lock().unwrap_or_else(PoisonError::into_inner);
+        peers.keep(bytes)
+    }
+
+    /// Reads the state of the riff of peers with `read`. `None` while the
+    /// daemon has no riff.
+    pub fn peers<T>(&self, read: impl FnOnce(&PeerState) -> T) -> Option<T> {
+        let riff = self.riff.get()?;
+        let peers = riff.peers.lock().unwrap_or_else(PoisonError::into_inner);
+        Some(read(peers.state()))
     }
 
     /// While the daemon has no riff, it waits for `line`.
@@ -4640,6 +4710,60 @@ mod tests {
         each.dedup();
         assert_eq!(each.len(), riffs.len(), "{riffs:?}");
         assert_eq!(lost(&dir).len(), 3);
+    }
+
+    /// 01M519Z2JMAKN0T6JZFBPSTKC8: the first record of the riff of the
+    /// daemon is `riff`, with the user of the owner. Each record of the
+    /// daemon, and each record of another daemon that it keeps, is in
+    /// its book after a restart.
+    #[tokio::test]
+    async fn the_daemon_keeps_its_records_across_a_restart() {
+        use crate::peer::body::{Member, Message};
+        use crate::peer::record::Record;
+
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let (daemon, _) = open_key(&dir).await;
+        let status = daemon.status().await;
+        let owner = status.owner.clone().unwrap();
+        let key = daemon.riff.get().unwrap().key.public();
+        let first = daemon
+            .peers(|peers| (peers.owner().map(str::to_owned), peers.heads().clone()))
+            .unwrap();
+        assert_eq!(first.0.as_deref(), Some(owner.as_str()));
+        assert_eq!(first.1[&key].0, 1);
+        assert!(state_dir(&dir).join(crate::peer::book::FILE).exists());
+
+        let member = Key::from_bytes(&[7; 32]);
+        daemon
+            .write(&Body::Member(Member {
+                key: member.public(),
+                user: "brett".into(),
+                host: "kadomony".into(),
+            }))
+            .unwrap();
+        let hello = Body::Message(Box::new(Message {
+            from: "riff://brett@kadomony/o/r?session=k1".parse().unwrap(),
+            thread: "o/r".parse().unwrap(),
+            to: vec![],
+            kind: Default::default(),
+            body: "hello".into(),
+        }));
+        let record = Record::sign(&member, key, 1, Id::ZERO, 9, &hello).unwrap();
+        assert!(matches!(
+            daemon.keep(record.bytes().to_vec()).unwrap(),
+            Outcome::Kept(Applied::Message { number: 1, .. })
+        ));
+        let view = daemon.peers(PeerState::view).unwrap();
+        drop(daemon);
+
+        let (daemon, lines) = open_key(&dir).await;
+        assert_eq!(lines, [text::daemon_read_riff(&key.to_string(), &owner)]);
+        assert_eq!(daemon.peers(PeerState::view), Some(view));
+        assert_eq!(
+            daemon.keep(record.bytes().to_vec()).unwrap(),
+            Outcome::Duplicate
+        );
     }
 
     /// 01M51BFYNMYHSQ62BBJES3CCWT: a locked keyring (the mock refuses one

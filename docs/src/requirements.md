@@ -5814,6 +5814,12 @@ then.
   resumes the whole riff. So the holds and the pauses come from the set
   of records, not from their order: a free that a daemon keeps before
   its hold ends that hold when the hold comes.
+- **01M51QQGYDR9NZ702NFEQR512W** The daemon applies each record to the
+  state of its riff of peers, and not to `riff-state`. That state comes
+  only from the set of records, with no clock and no presence of one
+  machine. `riff-state` decides a post by the live sessions and the
+  clock of one server, so two daemons with the same records could get
+  two states.
 - **01M51BFYT2ZGN4W5E5R87GPVCM** A session takes the lead with a
   `session` record that has the lead mark. The record names the ID of
   the record that gave the old lead of its user in the repository its

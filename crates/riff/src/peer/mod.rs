@@ -13,7 +13,12 @@
 //! |---|---|
 //! | The bytes, the signature, the ID, the chain and the checks of a record | [`record`] |
 //! | The JSON body of each type of record, its writer and its largest size | [`body`] |
+//! | The state of the riff: what the set of records gives | [`state`] |
+//! | The file of the records that a daemon keeps | [`book`] |
+//! | The state and the book together: write and keep a record | [`keep`] |
 
 pub mod body;
+pub mod book;
+pub mod keep;
 pub mod record;
 pub mod state;
