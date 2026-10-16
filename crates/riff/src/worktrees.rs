@@ -450,7 +450,13 @@ fn pr_of(gh: &Gh, main: &Path, branch: &str, head: &str) -> Pr {
 /// MERGED...HEAD`, with no commit of the default branch of `origin`.
 /// When the clone does not have `merged`, riff fetches
 /// `refs/pull/NUMBER/head` of `origin`, with no ref and no `FETCH_HEAD`.
+/// riff gives git only a `merged` of hex digits, so it is never an
+/// option.
 fn outside(main: &Path, head: &str, number: u64, merged: &str) -> Outside {
+    if merged.is_empty() || !merged.chars().all(|c| c.is_ascii_hexdigit()) {
+        let merged = crate::text::safe(merged);
+        return Outside::Unknown(format!("the head {merged:?} is not a commit ID"));
+    }
     let commit = format!("{merged}^{{commit}}");
     if git(main, &["cat-file", "-e", &commit]).is_err() {
         let pull = format!("refs/pull/{number}/head");
@@ -1137,5 +1143,9 @@ mod tests {
             panic!("origin has no pull request 10");
         };
         assert!(why.starts_with("git fetch failed: "), "{why}");
+        assert_eq!(
+            outside(&main, &old, 9, "--output=x"),
+            Outside::Unknown(r#"the head "--output=x" is not a commit ID"#.into())
+        );
     }
 }
