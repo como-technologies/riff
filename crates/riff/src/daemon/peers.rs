@@ -756,9 +756,9 @@ mod tests {
             drop(held);
         };
         let (lines, ()) = tokio::join!(n.ask(Ask::Leave), release);
+        assert!(o.hub().read(|state| state.members()[&me].left));
         let left = text::left_riff(&owner.to_string(), Some(&o.user()), &me.to_string());
         assert_eq!(lines.unwrap(), [left]);
-        assert!(o.hub().read(|state| state.members()[&me].left));
         assert_eq!(n.riff().await, me.to_string());
     }
 
