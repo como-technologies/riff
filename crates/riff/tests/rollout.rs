@@ -8,7 +8,8 @@
 //! (01M3X30KHKB6W11C3NBAW7KCGW to 01M3X30RA3X08JBJ2JBVCCNEH3).
 //!
 //! An idle worker that joined gets free work with a request of the lead
-//! (01M49ZK19GQP79Z8HH14PK85QQ to 01M49ZK1EG52YAKG974XH201RK).
+//! (01M49ZK19GQP79Z8HH14PK85QQ to 01M49ZK1EG52YAKG974XH201RK). The author
+//! of an item never gets its verify (01M51533BJSD0RB7BFQR9CAFYW).
 
 use isolated::Isolated;
 use std::os::unix::fs::PermissionsExt;
@@ -19,7 +20,7 @@ use std::time::{Duration, Instant};
 use riff::api::{Api, PauseScope};
 use riff::identity;
 use riff_core::name::{Place, SessionUri, Who};
-use riff_core::wire::{RiffState, Status};
+use riff_core::wire::{RiffState, StartReason, Status};
 
 /// `list-panes -a` lists the worker panes from the file `workers`.
 /// While the file `gate` exists, the call number N of `list-panes -a`
@@ -616,6 +617,85 @@ async fn a_worker_that_does_not_claim_does_not_block_a_new_worker() {
     // The second worker refuses too.
     tokio::time::sleep(Duration::from_secs(8)).await;
     assert_eq!(lead.settled().await, 2, "{}", lead.tmux_log());
+}
+
+/// The unread text of `who`, with no wait.
+async fn unread(lead: &Lead, who: &SessionUri) -> String {
+    let inbox = lead.api.inbox(who, None, false).await.unwrap();
+    riff::text::inbox(&inbox, who)
+}
+
+/// The worker A holds issue-1, asks for a verify and releases the item.
+/// riff clears its context: A keeps its session ID, and it is idle. The
+/// rollout never gives the verify to A. A has no item to take, so the
+/// rollout starts the worker B, and B gets the request
+/// (01M51533BJSD0RB7BFQR9CAFYW).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_author_gets_no_request_for_its_verify_also_after_a_clear() {
+    let lead = lead(5).await;
+    lead.issues(ONE_ITEM);
+    lead.riff(RiffState::Running).await;
+    let a = lead.join_idle(1).await;
+    let _a = lead.api.watch(&a).await.unwrap();
+    let thread = lead.me.default_thread().unwrap();
+    let reply = lead.api.claim(&a, &thread, "issue-1").await.unwrap();
+    assert!(reply.granted, "{reply:?}");
+    // A look sees the claim of A.
+    lead.looked().await;
+
+    // A waits for its clear: it takes no request, and it counts as idle.
+    let reply = lead.api.release(&a, &thread, "issue-1").await.unwrap();
+    assert!(reply.must_clear, "{reply:?}");
+    lead.pull(None);
+    lead.looked().await;
+    assert_eq!(lead.workers(), 1, "{}", lead.tmux_log());
+    // After its clear, A is the only idle worker when the verify waits.
+    lead.api.start(&a, StartReason::Clear, true).await.unwrap();
+    let b = lead.join_idle(2).await;
+    let _b = lead.api.watch(&b).await.unwrap();
+    reads(&lead.api, &b, "request: claim verify-issue-1").await;
+    lead.looked().await;
+    let read = unread(&lead, &a).await;
+    assert!(!read.contains("request: claim verify-issue-1"), "{read}");
+}
+
+/// A usage comment on the issue names the author of issue-1: the first
+/// characters of the session ID of A. The rollout never saw the claim of
+/// A, as after a new start of the lead. A gets no request for the
+/// verify, and the new worker B gets it (01M51533BJSD0RB7BFQR9CAFYW).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_author_of_a_usage_comment_gets_no_request_for_its_verify() {
+    let lead = lead(5).await;
+    lead.issues(ONE_ITEM);
+    lead.pull(None);
+    lead.riff(RiffState::Running).await;
+    lead.until_workers(1).await;
+    let (_, a) = lead.worker(1);
+    let claim = riff::usage::Claim {
+        thread: "o/r".into(),
+        item: "issue-1".into(),
+        from_ms: 1,
+        to_ms: Some(2),
+        models: Default::default(),
+    };
+    let (_, report) = riff::usage::Report::of(&claim, a.who().session().unwrap()).unwrap();
+    let issues = serde_json::json!([{
+        "number": 1,
+        "body": "",
+        "comments": [{"body": report.comment()}],
+        "milestone": {"title": "Wave 1"},
+    }]);
+    lead.issues(&issues.to_string());
+    lead.looked().await;
+
+    let a = lead.join_idle(1).await;
+    let _a = lead.api.watch(&a).await.unwrap();
+    let b = lead.join_idle(2).await;
+    let _b = lead.api.watch(&b).await.unwrap();
+    reads(&lead.api, &b, "request: claim verify-issue-1").await;
+    lead.looked().await;
+    let read = unread(&lead, &a).await;
+    assert!(!read.contains("request: claim verify-issue-1"), "{read}");
 }
 
 /// The rollout starts no worker where riff is off in the main clone

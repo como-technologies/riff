@@ -3727,6 +3727,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   free work for the start of a worker. So the rollout starts at most one
   more worker for a refused item, and no loop of starts and stops.
   Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+- **01M51533BJSD0RB7BFQR9CAFYW** The rollout never sends
+  `request: claim verify-issue-N` to a session that held `issue-N`,
+  also after a `/clear` of that session. The author is each session
+  that a look of the rollout saw with the claim, and each session of a
+  usage comment of the work claim on the issue N. When the author is
+  the only idle worker, it has no item to take, and the rollout can
+  start a new worker for the verify. Superseded by 3.0
+  (01M4Z60B7NW4GHKGCYZZDG26R6).
 - **01M3X30KHKB6W11C3NBAW7KCGW** The lead gets one message for each
   change of a worker setting: the setting, the old value, the new
   value and the host. The settings are the limit of the machine of the
