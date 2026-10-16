@@ -610,6 +610,7 @@ pub struct Reported {
 ///     idle_secs: 0,
 ///     status: None,
 ///     worker: true,
+///     container: false,
 ///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,

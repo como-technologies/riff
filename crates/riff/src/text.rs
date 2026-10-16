@@ -2609,13 +2609,113 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
     }
 }
 
-/// The tags of a row of `riff who`: the role of a session, `lead` or
-/// `worker` (01M3NT4M159EHN5W8JRTQ417N4), or `owner` on the row of the
-/// owner as a person, with no session (01M3Q63NK0AHM25MB258B0K8XP).
+/// The kind of a session in `riff who` and `riff top`
+/// (01M510MG2YSETB2CCAS8XDHPZ0): the first that matches of the lead, a
+/// session in a container, a worker in tmux, and the session of
+/// `riff workers host`. Each other session has no kind.
+///
+/// ```
+/// use riff::host::HostStatus;
+/// use riff::text::SessionKind;
+/// use riff_core::wire::{SessionInfo, Status, StatusInfo};
+///
+/// let row = |uri: &str, worker: bool, container: bool| SessionInfo {
+///     uri: uri.parse().unwrap(),
+///     live: true,
+///     idle_secs: 0,
+///     status: None,
+///     worker,
+///     container,
+///     stopping: false,
+///     claims_secs: 0,
+///     must_clear: false,
+///     fresh_secs: None,
+///     state: None,
+///     work: None,
+///     waits: None,
+///     blocked: None,
+///     step: None,
+/// };
+/// let lead = row("riff://mike@thelio/o/r?session=a1&lead=true", false, true);
+/// assert_eq!(SessionKind::of(&lead), Some(SessionKind::Lead));
+/// let boxed = row("riff://mike@thelio/o/r?session=c1", true, true);
+/// assert_eq!(SessionKind::of(&boxed), Some(SessionKind::Container));
+/// let worker = row("riff://mike@thelio/o/r?session=w1", true, false);
+/// assert_eq!(SessionKind::of(&worker), Some(SessionKind::Worker));
+/// assert_eq!(SessionKind::of(&row("riff://mike@thelio/o/r?session=b2", false, false)), None);
+///
+/// // The session of `riff workers host` says so in its status.
+/// let mut host = row("riff://mike@thelio/o/r?session=h1", false, false);
+/// let status = HostStatus {
+///     limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, workers: vec![],
+/// };
+/// let status = Status { step: status.line() };
+/// host.status = Some(StatusInfo { status, age_secs: 1, stale: false });
+/// assert_eq!(SessionKind::of(&host), Some(SessionKind::Host));
+/// assert_eq!(SessionKind::Host.word(), "host");
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SessionKind {
+    Lead,
+    Container,
+    Worker,
+    Host,
+}
+
+impl SessionKind {
+    /// Each kind, in the order of the counts of `riff top`.
+    pub const ALL: [SessionKind; 4] = [
+        SessionKind::Lead,
+        SessionKind::Container,
+        SessionKind::Worker,
+        SessionKind::Host,
+    ];
+
+    /// The kind of `s`, or `None`.
+    pub fn of(s: &SessionInfo) -> Option<SessionKind> {
+        if s.uri.lead() {
+            Some(SessionKind::Lead)
+        } else if s.container {
+            Some(SessionKind::Container)
+        } else if s.worker {
+            Some(SessionKind::Worker)
+        } else if is_host(s) {
+            Some(SessionKind::Host)
+        } else {
+            None
+        }
+    }
+
+    /// The word of the kind: the same as its tag.
+    pub fn word(self) -> &'static str {
+        match self {
+            SessionKind::Lead => "lead",
+            SessionKind::Container => "container",
+            SessionKind::Worker => "worker",
+            SessionKind::Host => "host",
+        }
+    }
+}
+
+/// True when `s` is the session of `riff workers host`: its status is
+/// the status of a host ([`crate::host::HostStatus`]).
+fn is_host(s: &SessionInfo) -> bool {
+    s.status
+        .as_ref()
+        .is_some_and(|st| crate::host::HostStatus::parse(&st.status.step).is_some())
+}
+
+/// The tags of a row of `riff who` and `riff top`: the role of a
+/// session, `lead` or `worker` (01M3NT4M159EHN5W8JRTQ417N4), `container`
+/// in place of `worker` for a session in a container, and `host` for
+/// the session of `riff workers host` (01M510MG2YSETB2CCAS8XDHPZ0). The
+/// lead in a container has `lead container`. The tag `owner` is on the
+/// row of the owner as a person, with no session
+/// (01M3Q63NK0AHM25MB258B0K8XP).
 ///
 /// ```
 /// use riff::text::tags;
-/// use riff_core::wire::{RiffOwner, SessionInfo};
+/// use riff_core::wire::{RiffOwner, SessionInfo, Status, StatusInfo};
 ///
 /// let row = |uri: &str, worker: bool| SessionInfo {
 ///     uri: uri.parse().unwrap(),
@@ -2623,6 +2723,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     idle_secs: 0,
 ///     status: None,
 ///     worker,
+///     container: false,
 ///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,
@@ -2639,6 +2740,18 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 /// assert!(tags(&row("riff://mike@thelio/o/r?session=b2", false), &owner).is_empty());
 /// assert_eq!(tags(&row("riff://mike@thelio", false), &owner), ["owner"]);
 /// assert!(tags(&row("riff://ann@heron", false), &owner).is_empty());
+///
+/// // A session in a container, and the lead in a container.
+/// let boxed = SessionInfo { container: true, ..row("riff://mike@thelio/o/r?session=c1", true) };
+/// assert_eq!(tags(&boxed, &owner), ["container"]);
+/// let lead = row("riff://mike@thelio/o/r?session=l1&lead=true", false);
+/// assert_eq!(tags(&SessionInfo { container: true, ..lead }, &owner), ["lead", "container"]);
+///
+/// // The session of `riff workers host`.
+/// let mut host = row("riff://mike@thelio/o/r?session=h1", false);
+/// let step = "workers host: limit 10, floor 4GB, no workers".into();
+/// host.status = Some(StatusInfo { status: Status { step }, age_secs: 1, stale: false });
+/// assert_eq!(tags(&host, &owner), ["host"]);
 /// ```
 pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
     let mut tags = Vec::new();
@@ -2646,10 +2759,15 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
         tags.push("owner");
     }
     if s.uri.lead() {
-        tags.push("lead");
+        tags.push(SessionKind::Lead.word());
     }
-    if s.worker {
-        tags.push("worker");
+    if s.container {
+        tags.push(SessionKind::Container.word());
+    } else if s.worker {
+        tags.push(SessionKind::Worker.word());
+    }
+    if is_host(s) {
+        tags.push(SessionKind::Host.word());
     }
     tags
 }
@@ -2674,6 +2792,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         idle_secs: 0,
 ///         status: None,
 ///         worker: false,
+///         container: false,
 ///         stopping: false,
 ///         claims_secs: 0,
 ///         must_clear: false,
@@ -2690,6 +2809,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         idle_secs: 0,
 ///         status: Some(StatusInfo { status, age_secs: 240, stale: true }),
 ///         worker: true,
+///         container: false,
 ///         stopping: false,
 ///         claims_secs: 60,
 ///         must_clear: false,
@@ -2750,6 +2870,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     idle_secs: 0,
 ///     status: None,
 ///     worker: false,
+///     container: false,
 ///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,

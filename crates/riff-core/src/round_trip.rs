@@ -344,6 +344,7 @@ mod tests {
                 stale: true,
             }),
             worker: true,
+            container: true,
             stopping: true,
             claims_secs: 6,
             must_clear: true,
@@ -396,6 +397,7 @@ mod tests {
             me: me(),
             activity: Some(activity()),
             prompt_secs: Some(4),
+            container: true,
         });
         c.trip(&AliveReply {
             stop: true,

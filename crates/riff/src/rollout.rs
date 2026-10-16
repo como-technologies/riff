@@ -1262,6 +1262,7 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 ///     idle_secs: 0,
 ///     status: None,
 ///     worker: true,
+///     container: false,
 ///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,
@@ -1276,15 +1277,20 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 /// let strata = worker("riff://brett@kadomony/o/strata?session=w1");
 /// assert_eq!(idle(&[strata], &me, &[]), 0);
 /// let riff = worker("riff://brett@kadomony/o/riff?session=w2");
-/// assert_eq!(idle(&[riff], &me, &[]), 1);
+/// assert_eq!(idle(std::slice::from_ref(&riff), &me, &[]), 1);
+/// // A session in a container takes no free work: the daemon gives it
+/// // its item (01M510MG808MQT08W6VSPKM1A6).
+/// assert_eq!(idle(&[SessionInfo { container: true, ..riff }], &me, &[]), 0);
 /// ```
 pub fn idle(sessions: &[SessionInfo], me: &SessionUri, panes: &[WorkerPane]) -> usize {
     let (user, repo) = (me.who().user(), me.place().repo());
     // A worker that holds a claim is busy. A worker that the server
     // asked to stop goes away. A worker in another repository cannot
-    // take the free work.
-    let away =
-        |s: &SessionInfo| !s.uri.claims().is_empty() || s.stopping || s.uri.place().repo() != repo;
+    // take the free work. Nor can a session in a container: the daemon
+    // gives it its item (01M510MG808MQT08W6VSPKM1A6).
+    let away = |s: &SessionInfo| {
+        !s.uri.claims().is_empty() || s.stopping || s.container || s.uri.place().repo() != repo
+    };
     let of = |pane: &WorkerPane, s: &SessionInfo| {
         s.uri
             .who()
@@ -1306,7 +1312,8 @@ pub fn idle(sessions: &[SessionInfo], me: &SessionUri, panes: &[WorkerPane]) -> 
 /// The idle workers of the user of the lead `me` that joined the riff
 /// and can take a request (01M49ZK19GQP79Z8HH14PK85QQ): live, in the
 /// repository of the lead, with no claim, not asked to stop, and with
-/// no clear of the context to wait for.
+/// no clear of the context to wait for. A session in a container takes
+/// no request (01M510MG808MQT08W6VSPKM1A6).
 ///
 /// ```
 /// use riff::rollout::{Idler, idlers};
@@ -1318,6 +1325,7 @@ pub fn idle(sessions: &[SessionInfo], me: &SessionUri, panes: &[WorkerPane]) -> 
 ///     idle_secs: 0,
 ///     status: None,
 ///     worker: true,
+///     container: false,
 ///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,
@@ -1335,13 +1343,14 @@ pub fn idle(sessions: &[SessionInfo], me: &SessionUri, panes: &[WorkerPane]) -> 
 ///     worker("riff://mike@pangolin/o/strata?session=w3"),
 ///     worker("riff://brett@kadomony/o/riff?session=w4"),
 ///     SessionInfo { must_clear: true, ..worker("riff://mike@pangolin/o/riff?session=w5") },
+///     SessionInfo { container: true, ..worker("riff://mike@pangolin/o/riff?session=w6") },
 /// ];
 /// assert_eq!(idlers(&sessions, &me), [Idler { session: "w1".into(), worktree: Some("issue-12".into()) }]);
 /// ```
 pub fn idlers(sessions: &[SessionInfo], me: &SessionUri) -> Vec<Idler> {
     sessions
         .iter()
-        .filter(|s| s.worker && s.live && !s.stopping && !s.must_clear)
+        .filter(|s| s.worker && s.live && !s.stopping && !s.must_clear && !s.container)
         .filter(|s| s.uri.who().user() == me.who().user())
         .filter(|s| s.uri.place().repo() == me.place().repo())
         .filter(|s| s.uri.claims().is_empty())
@@ -2362,6 +2371,7 @@ mod tests {
             idle_secs: 0,
             status: None,
             worker,
+            container: false,
             stopping: false,
             claims_secs: 0,
             must_clear: false,

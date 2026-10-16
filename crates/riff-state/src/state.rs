@@ -1412,6 +1412,65 @@ impl State {
         let alive = Signal::Alive {
             activity: None,
             prompt_secs: None,
+            container: false,
+        };
+        self.signal(me.who(), alive, now)
+    }
+
+    /// A keep-alive of `me` at `now` from the riff daemon: `me` runs in
+    /// a container (01M510MG0CKDXAKF6YJ768K7E8). Such a session is live
+    /// with no watch, while it is not gone. When its container stops,
+    /// the daemon ends it, and it is gone at once.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::{RiffState, SessionState};
+    /// use riff_state::state::{GONE, State};
+    ///
+    /// let lead: SessionUri = "riff://mike@thelio/como-technologies/riff?session=l1".parse()?;
+    /// let box1: SessionUri = "riff://mike@thelio/como-technologies/riff?session=c1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&lead, now);
+    /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
+    /// state.worker(&box1, true, now);
+    /// let shown = |state: &State, at: Instant| {
+    ///     state.who(at, 0, false).into_iter().find(|s| s.uri.who() == box1.who())
+    /// };
+    ///
+    /// // With no watch, a worker is offline.
+    /// let s = shown(&state, now).unwrap();
+    /// assert!(!s.live && !s.container);
+    /// assert_eq!(s.state, Some(SessionState::Offline));
+    ///
+    /// // The keep-alive of the daemon makes it live.
+    /// state.alive_in_container(&box1, now);
+    /// let s = shown(&state, now).unwrap();
+    /// assert!(s.live && s.container && s.worker);
+    /// assert_eq!(s.state, Some(SessionState::Idle));
+    ///
+    /// // A keep-alive with no mark keeps the mark.
+    /// state.alive(&box1, now);
+    /// assert!(shown(&state, now).unwrap().container);
+    ///
+    /// // With no keep-alive for 3 minutes, it is gone.
+    /// assert!(shown(&state, now + GONE).is_none());
+    ///
+    /// // The end of its container ends it: it is gone at once.
+    /// state.alive_in_container(&box1, now);
+    /// state.end(&box1, now);
+    /// assert!(shown(&state, now).is_none());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn alive_in_container(&mut self, me: &SessionUri, now: Instant) -> AliveReply {
+        if !self.knows(me.who()) {
+            self.arrive(me, now);
+        }
+        let alive = Signal::Alive {
+            activity: None,
+            prompt_secs: None,
+            container: true,
         };
         self.signal(me.who(), alive, now)
     }
@@ -1426,6 +1485,7 @@ impl State {
         let alive = Signal::Alive {
             activity: Some(activity),
             prompt_secs: None,
+            container: false,
         };
         self.signal(me.who(), alive, now)
     }
@@ -1564,8 +1624,11 @@ impl State {
     fn info(&self, who: &Who, session: &Session, now: Instant, now_ms: u64) -> SessionInfo {
         let uri = self.uri(who, now);
         // A lead that calls only the command line has no watch
-        // (01M48VDGQ5KETKPM4G6TKTC2MB).
-        let live = session.watching(now) || (uri.lead() && !session.gone(now));
+        // (01M48VDGQ5KETKPM4G6TKTC2MB). Nor has a session in a
+        // container: the riff daemon keeps it alive
+        // (01M510MG0CKDXAKF6YJ768K7E8).
+        let live =
+            session.watching(now) || ((uri.lead() || session.container) && !session.gone(now));
         let repository = session.place.default_thread();
         let status = session.status.as_ref().map(|s| {
             let SetStatus {
@@ -1648,6 +1711,7 @@ impl State {
             idle_secs: now_ms.saturating_sub(session.seen_ms(now, now_ms)) / 1000,
             status,
             worker: sessions.worker(who),
+            container: session.container,
             stopping: session.stopping,
             claims_secs: now
                 .saturating_duration_since(session.claims_changed)

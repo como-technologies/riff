@@ -1100,6 +1100,20 @@ impl Api {
             me: me.clone(),
             activity,
             prompt_secs,
+            container: false,
+        };
+        self.call(&alive).await
+    }
+
+    /// A keep-alive of the riff daemon for `me`, a session in a
+    /// container. The server shows `me` as live while it is not gone,
+    /// also with no watch (01M510MG0CKDXAKF6YJ768K7E8).
+    pub async fn alive_in_container(&self, me: &SessionUri) -> Result<AliveReply> {
+        let alive = Alive {
+            me: me.clone(),
+            activity: None,
+            prompt_secs: None,
+            container: true,
         };
         self.call(&alive).await
     }
@@ -2306,6 +2320,20 @@ pub async fn keep_alive(api: &Api, me: &SessionUri, every: Duration) {
         tick.tick().await;
         // A hung request must not stop the next keep-alive.
         let _ = tokio::time::timeout(every, api.alive(me)).await;
+    }
+}
+
+/// [`keep_alive`] of the riff daemon and `riff run` for `me`, a session
+/// in a container ([`Api::alive_in_container`]). The first keep-alive
+/// goes at once, so the session is live from its start
+/// (01M510MG0CKDXAKF6YJ768K7E8).
+pub async fn keep_alive_in_container(api: &Api, me: &SessionUri, every: Duration) {
+    let mut tick = tokio::time::interval(every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        // A hung request must not stop the next keep-alive.
+        let _ = tokio::time::timeout(every, api.alive_in_container(me)).await;
     }
 }
 

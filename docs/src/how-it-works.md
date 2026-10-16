@@ -931,8 +931,17 @@ brett@heron:riff (77e0)            blocked            which of two designs? (1m 
 
 - `lead`: the lead of its user in the repository (see
   [The lead](#the-lead)).
-- `worker`: a worker that `riff workers start` started. The worker
-  tells the server, so each machine shows the same tag.
+- `worker`: a worker that `riff workers start` started in tmux. The
+  worker tells the server, so each machine shows the same tag.
+- `container`: a session that the riff daemon runs in a container,
+  for example for `riff run` or `riff wave run`. It has no watch.
+  The daemon keeps it alive, so it shows its state, not `offline`.
+  When its container stops, it is gone. The daemon gives it its item,
+  so it takes no request from the lead. The lead in a container has
+  `lead container`.
+- `host`: the session of `riff workers host` on a machine. It starts
+  and stops the workers of that machine. Its status has the numbers
+  of the machine.
 
 The owner is a person, not a session. So no session has the tag
 `owner`. Only a line with no session, a person on the command line of
@@ -1005,28 +1014,28 @@ build  v1.0.0  (10df8a4, 2026-10-04)
 blocked  3a3f8d5d issue-8, 32m, the lead gave no answer: which of two designs?
 
 Wave 3 (como-technologies/riff)
-  free: #9
-  claimed: #7 #8
+  free: #10
+  claimed: #7 #8 #9
 
 Wave 5 (como-technologies/strata)
   claimed: #88
 
 ann  admin  offline  seen 1h ago
-brett  online  › kadomony  › strata  1 session: 1 busy, 1 claim
+brett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim
 └─ 7a8b9c0d  #issue-88  worker  busy
      working on #88 Split the store
-mike  owner  online  6 sessions: 1 busy, 3 idle, 1 blocked, 2 claims
-├─ pangolin  › riff  2 sessions: 1 busy, 1 idle, 1 claim
+mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
+├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims
 │  │  load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  jobs 2
 │  │  last kill 14:03:12 by systemd-oomd
 │  ├─ 5b1e2a90  #issue-7  worker  busy
 │  │    working on #7 Fix the help
 │  │    runs Bash: run just ci for 12m
 │  │    20m ago: tests
-│  └─ 9c0d1e2f  worker  idle
-│       ready for work for 6m
-└─ thelio  4 sessions: 2 idle, 1 blocked, 1 claim
-   ├─ riff  3 sessions: 1 idle, 1 blocked, 1 claim
+│  └─ 9c0d1e2f  #issue-9  container  busy
+│       working on #9 Mark the hosts
+└─ thelio  5 sessions: 2 leads, 1 host; 3 idle, 1 blocked, 1 claim
+   ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim
    │  ├─ 3a3f8d5d  #issue-8  blocked
    │  │    which of two designs? (32m ago)
    │  │    the lead gave no answer
@@ -1034,6 +1043,9 @@ mike  owner  online  6 sessions: 1 busy, 3 idle, 1 blocked, 2 claims
    │  ├─ 4e54d4e5  lead  idle
    │  │    monitoring work for 2h
    │  │    5m ago: plan the next wave
+   │  ├─ 6e7f8a9b  host  idle
+   │  │    ready for work for 3h
+   │  │    1m ago: workers host: limit 2, floor 4GB, no workers
    │  └─ 8f1c2d3e  offline
    │       seen 4m ago
    └─ strata  1 session: 1 idle
@@ -1051,6 +1063,11 @@ mike  owner  online  6 sessions: 1 busy, 3 idle, 1 blocked, 2 claims
 - A person, host or repository line ends with its counts: the
   sessions, then the `busy`, `idle` and `blocked` sessions and the
   claims. A count of 0 is not shown.
+- A host line also counts each kind of session, before the states:
+  `leads`, `containers`, `workers` and `hosts`. A session counts
+  once, as the first kind that matches. A session with none of these
+  tags has no kind. In the example, thelio has 5 sessions: 2 leads, 1
+  host, and 2 sessions with no kind.
 - A line with only one line under it takes that line, after a `›`. In
   the example, brett has one host and one repository, so the person,
   the host and the repository are on one line. So a small riff stays
@@ -1060,9 +1077,9 @@ mike  owner  online  6 sessions: 1 busy, 3 idle, 1 blocked, 2 claims
   `como-technologies/riff`.
 - A session: the first line has the short session ID, the worktree of
   the session (`#issue-7` in the worktree `issue-7`, nothing in the
-  main worktree), the tag `lead` or `worker`, and the state of the
-  session in its color. Under it comes one line for each fact of the
-  detail of the state. See
+  main worktree), its tags (`lead`, `worker`, `container` or
+  `host`), and the state of the session in its color. Under it comes
+  one line for each fact of the detail of the state. See
   [The state of a session](#the-state-of-a-session). A lead is the
   lead of the repository on the line above it.
 
@@ -2617,7 +2634,7 @@ matches wins:
 
 | State | Color | When | Detail |
 |---|---|---|---|
-| `offline` | grey | the session has no open watch. A lead is not offline while it calls | `seen 2h ago` |
+| `offline` | grey | the session has no open watch. A lead is not offline while it calls. A session in a container is not offline while the riff daemon keeps it alive | `seen 2h ago` |
 | `paused` | yellow | the riff or the repository of the session is paused | the claims, and `stopped at:` the step |
 | `blocked` | red | the session said `blocked`, and the block holds. Not the lead | the reason with its age, `the lead gave no answer` when the lead gave none, then the claims |
 | `must clear` | yellow | a worker released its last claim | `must clear its context before its next claim` |
