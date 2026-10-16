@@ -166,10 +166,11 @@ A riff of another version can refuse `riff` (see
 
 riff 3.0 runs each work item in a container of its own on your
 machine. It is new: see [riff 3.0](riff-3.md). riff 1.3 still runs the
-riff. To try riff 3.0, install podman. On Ubuntu:
+riff. To try riff 3.0, install podman and catatonit, the init of
+podman. riff starts each container with it. On Ubuntu:
 
 ```sh
-sudo apt install podman
+sudo apt install podman catatonit
 ```
 
 Then run this in your clone of the project:

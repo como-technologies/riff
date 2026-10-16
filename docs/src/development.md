@@ -367,6 +367,28 @@ The workflow builds the image of a folder one time only. To build it
 again, for example for new Debian packages, change a line of the
 Dockerfile, for example a version.
 
+### Run the tests in the session image
+
+A session runs the tests of riff in its container, not on your
+machine. So a test can pass on your machine and fail in a session.
+`just session-test` runs the tests of `crates/riff` in a container of
+the image that `riff.toml` pins, as a session runs them: with the init
+of podman, as your user, and with a home of its own. It uses podman,
+else docker. The build goes to `target/session`:
+
+```sh
+just session-test
+```
+
+To run one test, give its name:
+
+```sh
+just session-test run::riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it
+```
+
+The CI job `Session tests` runs the same tests for each pull request.
+When you pin a new digest, it runs them in the new image.
+
 ## Start the riff daemon
 
 The riff daemon owns the containers of `riff run` on your machine. It
