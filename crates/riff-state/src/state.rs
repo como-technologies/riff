@@ -105,7 +105,9 @@
 //!   takes any thread by name, except a direct thread of others
 //!   ([`may_read`]).
 //! - `read` returns one page of the messages after the cursor, then moves
-//!   the cursor to the end of the page ([`State::read_page`]).
+//!   the cursor to the end of the page ([`State::read_page`]). A read
+//!   that skips an unread message keeps the cursor
+//!   (01M51TKZSYR7PH629S29JX00ZD).
 //! - A thread keeps its last [`KEEP_MESSAGES`] messages
 //!   (01M3TBZBT7MME9BG1RWX5SZAZ6).
 //! - [`State::forget_expired`] forgets each session with no sign of life
@@ -2765,6 +2767,31 @@ impl State {
     /// assert_eq!(page.messages[0].seq, 2);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
+    ///
+    /// A read moves the cursor only over the messages that it shows. A
+    /// read of all after a seq past the cursor skips unread messages, so
+    /// it keeps the cursor, and the next unread read shows them
+    /// (01M51TKZSYR7PH629S29JX00ZD):
+    ///
+    /// ```
+    /// # use std::time::Instant;
+    /// # use riff_core::name::SessionUri;
+    /// # use riff_core::wire::Post;
+    /// # use riff_state::state::State;
+    /// # let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse()?;
+    /// # let bob: SessionUri = "riff://bob@kite/acme/app?session=b1".parse()?;
+    /// # let now = Instant::now();
+    /// # let mut state = State::default();
+    /// # let thread = ann.default_thread().unwrap();
+    /// for body in ["one", "two", "three"] {
+    ///     state.post(Post::new(&ann, Some(thread.clone()), vec![], body), now, 0).unwrap();
+    /// }
+    /// let page = state.read_page(&bob, &thread, true, Some(2), 50, now).unwrap();
+    /// assert_eq!(page.messages[0].body, "three");
+    /// let page = state.read_page(&bob, &thread, false, None, 50, now).unwrap();
+    /// assert_eq!(page.messages.len(), 3);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
     pub fn read_page(
         &mut self,
         me: &SessionUri,
@@ -2799,11 +2826,8 @@ impl State {
         }
         let threads = &self.written.threads().by_name;
         let t = threads.get(thread).ok_or_else(not_found)?;
-        let from = if all {
-            after.unwrap_or(0)
-        } else {
-            self.presence.cursor(who, thread)
-        };
+        let cursor = self.presence.cursor(who, thread);
+        let from = if all { after.unwrap_or(0) } else { cursor };
         let mut shown = t
             .messages
             .iter()
@@ -2815,7 +2839,13 @@ impl State {
         } else {
             None
         };
-        let read = t.messages.back().map(|last| Signal::Read {
+        // A read of all after a seq past the cursor skips the unread
+        // messages up to that seq: it keeps the cursor
+        // (01M51TKZSYR7PH629S29JX00ZD).
+        let skips = t.messages.iter().any(|m| {
+            (cursor + 1..=from).contains(&m.message.seq) && m.message.from.who() != who
+        });
+        let read = t.messages.back().filter(|_| !skips).map(|last| Signal::Read {
             thread: thread.clone(),
             seq: next.unwrap_or(last.message.seq),
             all,
@@ -4876,6 +4906,49 @@ mod tests {
         }
 
         state.read(&w1, &dm, false, at).unwrap();
+        w2_calls(&mut state, at);
+        at += Duration::from_secs(70);
+        assert_eq!(stopped(&mut state, at), ["w1"]);
+    }
+
+    /// 01M51TKZSYR7PH629S29JX00ZD: a request of the lead that comes
+    /// between two pages of the start read of a worker. The next page is
+    /// a read of all after a seq of the repository thread, so it shows no
+    /// message of the direct thread. It keeps the cursor: the request
+    /// stays unread, and the server does not ask the worker to stop. The
+    /// next unread read shows the request, and ends the hold.
+    #[test]
+    fn a_read_of_all_after_a_later_seq_keeps_a_request_unread() {
+        let now = Instant::now();
+        let mut state = State::default();
+        running(&mut state).unwrap();
+        let the_lead = lead(api());
+        state.register(&the_lead, now);
+        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
+        let w2 = idle_worker(&mut state, "pangolin", "w2", now);
+        let w2_calls = |state: &mut State, at: Instant| {
+            let at = at + Duration::from_secs(1);
+            state.watch_ended(w2.who(), at);
+            state.watch_started(&w2, at);
+        };
+        let request = "request: claim issue-12";
+        let post = Post::new(&the_lead, None, vec![Selector::session("w1")], request);
+        let dm = state.post(post, now, 0).unwrap().tailed.thread;
+
+        let page = state.read_page(&w1, &dm, true, Some(50), PAGE, now).unwrap();
+        assert!(page.messages.is_empty(), "{:?}", page.messages);
+        assert_eq!(state.unread_requests(w1.who()), [request]);
+        let mut at = now;
+        for _ in 0..3 {
+            w2_calls(&mut state, at);
+            at += Duration::from_secs(300);
+            assert!(stopped(&mut state, at).is_empty(), "w1 has a request");
+        }
+
+        let page = state.read_page(&w1, &dm, false, None, PAGE, at).unwrap();
+        let bodies: Vec<_> = page.messages.iter().map(|m| m.body.as_str()).collect();
+        assert_eq!(bodies, [request]);
+        assert!(state.unread_requests(w1.who()).is_empty());
         w2_calls(&mut state, at);
         at += Duration::from_secs(70);
         assert_eq!(stopped(&mut state, at), ["w1"]);
