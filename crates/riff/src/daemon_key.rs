@@ -233,8 +233,13 @@ mod tests {
         mock_store();
         for text in ["", "not a key", &"0".repeat(63), &"g".repeat(64)] {
             secrets::set("daemon-key /unit/not-a-key", text).unwrap();
-            let found = read("daemon-key /unit/not-a-key").unwrap();
-            assert!(matches!(found, Found::NotAKey), "{text:?}: {found:?}");
+            // The name of the variant only: no key goes to the message.
+            let found = match read("daemon-key /unit/not-a-key").unwrap() {
+                Found::Key(_) => "a key",
+                Found::None => "no key",
+                Found::NotAKey => "not a key",
+            };
+            assert_eq!(found, "not a key", "{text:?}");
         }
     }
 
@@ -271,7 +276,7 @@ mod tests {
             .await
             .unwrap();
         let Found::Key(again) = found else {
-            panic!("{found:?}")
+            panic!("the wait gave no key")
         };
         assert_eq!(again.public(), key.public());
         assert_eq!(lines.len(), 2, "{lines:?}");
