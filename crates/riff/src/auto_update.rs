@@ -163,8 +163,8 @@ fn needs_static() -> bool {
 /// `server`, a newer release than this riff, and this machine has
 /// `update.auto = true` (01M3N7JJEKZMN1E5NJQRK2QYVB). When `server` is
 /// the build of this riff, it starts the update of that release only
-/// when this riff must be static and is not ([`needs_static`],
-/// 01M510NWBNC20GXFRMHPW12TW9). It does nothing when an update runs,
+/// when this riff must be static and is not
+/// ([`release::needs_static`], 01M510NWBNC20GXFRMHPW12TW9). It does nothing when an update runs,
 /// when the release was tried ([`mark`]), or when this process started
 /// it already. The check of each reply calls it.
 pub fn begin(url: &str, server: &Build) {

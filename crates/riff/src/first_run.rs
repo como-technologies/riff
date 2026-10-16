@@ -149,7 +149,7 @@ pub struct Facts {
     /// The user settings of Claude Code, or why riff cannot find them.
     pub settings: Result<Settings, String>,
     /// What riff found of its own binary: static, or why it is not
-    /// ([`riff_binary`]).
+    /// ([`crate::release::check_file`]).
     pub riff: Result<String, String>,
 }
 
