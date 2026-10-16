@@ -726,10 +726,64 @@ fn stamp() -> String {
 
 #[cfg(test)]
 mod tests {
+    use iroh::endpoint::{ConnectionError, VarInt};
+
     use super::*;
 
     fn words(line: &str) -> Vec<String> {
         line.split_whitespace().map(str::to_owned).collect()
+    }
+
+    /// Sends these bytes as the first stream of a new connection, and
+    /// gives the code that the listener closed the connection with.
+    async fn refused(dialer: &Endpoint, to: iroh::EndpointAddr, bytes: &[u8]) -> VarInt {
+        let conn = dialer.connect(to, ALPN).await.unwrap();
+        let (mut send, mut recv) = conn.open_bi().await.unwrap();
+        send.write_all(bytes).await.unwrap();
+        send.finish().unwrap();
+        assert!(recv.read_to_end(record::MAX).await.is_err());
+        match conn.closed().await {
+            ConnectionError::ApplicationClosed(close) => close.error_code,
+            other => panic!("not closed by the listener: {other}"),
+        }
+    }
+
+    /// Two endpoints on this machine, with no relay and no discovery:
+    /// the listener checks each record before it answers.
+    #[tokio::test]
+    async fn the_listener_answers_a_good_record_and_refuses_each_bad_one() {
+        let key = SecretKey::generate();
+        let listener = Endpoint::builder(presets::Minimal)
+            .secret_key(key.clone())
+            .alpns(vec![ALPN.to_vec()])
+            .bind()
+            .await
+            .unwrap();
+        let to = listener.addr();
+        let accepting = listener.clone();
+        tokio::spawn(async move {
+            let seq = Arc::new(AtomicU64::new(1));
+            while let Some(incoming) = accepting.accept().await {
+                tokio::spawn(serve(incoming, key.clone(), seq.clone()));
+            }
+        });
+        let dialer = Endpoint::builder(presets::Minimal).bind().await.unwrap();
+
+        let conn = dialer.connect(to.clone(), ALPN).await.unwrap();
+        let answer = exchange(&conn, dialer.secret_key(), 1).await.unwrap();
+        assert_eq!(answer.author, listener.id());
+        assert_eq!(answer.kind, Kind::Status);
+        assert!(answer.body.ends_with("accepted seq 1"), "{}", answer.body);
+        ping(&conn, 7).await.unwrap();
+
+        let other = SecretKey::generate();
+        let not_mine = record::sign(&other, Kind::Message, 2, "not mine").unwrap();
+        assert_eq!(refused(&dialer, to.clone(), &not_mine).await, 1u32.into());
+        let too_big = vec![1; record::MAX + 1];
+        assert_eq!(refused(&dialer, to.clone(), &too_big).await, 1u32.into());
+        let mut unknown = record::sign(dialer.secret_key(), Kind::Message, 3, "hi").unwrap();
+        unknown[0] = 9;
+        assert_eq!(refused(&dialer, to, &unknown).await, 1u32.into());
     }
 
     #[test]
