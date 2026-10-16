@@ -62,6 +62,8 @@ fn share_a_riff_in_the_book_has_each_member_command() {
             "riff join riff1-...",
             "riff invite mike",
             "riff members",
+            "riff view",
+            "riff top",
             "riff leave",
             "riff remove brett",
             "riff remove brett --host kadomony",

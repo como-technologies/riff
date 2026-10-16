@@ -1096,7 +1096,8 @@ fn info(state: &State, run: &Run) -> SessionInfo {
 ///     state.keep(&check(record.bytes().to_vec(), &state).unwrap());
 ///     record.id()
 /// };
-/// let riff = keep(&owner, 1, Id::ZERO, 1_000, &Body::Riff(Riff { user: "mike".into() }));
+/// let riff = Body::Riff(Riff { user: "mike".into(), host: None });
+/// let riff = keep(&owner, 1, Id::ZERO, 1_000, &riff);
 /// let host = "kadomony".to_owned();
 /// let member = Member { key: brett.public(), user: "brett".into(), host };
 /// keep(&owner, 2, riff, 2_000, &Body::Member(member));
@@ -1202,6 +1203,7 @@ pub(crate) fn three_daemons(now_ms: i64) -> Vec<SessionInfo> {
     };
     let riff_body = Body::Riff(Riff {
         user: "mike".into(),
+        host: None,
     });
     write(&keys[0], 1_000, riff_body);
     write(&keys[0], 2_000, member(&keys[1], "brett", "kadomony"));
