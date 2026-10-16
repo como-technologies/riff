@@ -99,6 +99,40 @@
 //! not). It is never a step that a person types by hand
 //! (01M5084K9J566981EXZ7YJRGRR).
 //!
+//! # Wide rules
+//!
+//! riff adds rules, and never removes one with no yes. A person can also
+//! add an allow rule by hand, and that rule can be much wider than its
+//! step. So `riff init` reads the allow rules of the user settings, the
+//! project settings and the local settings
+//! ([`crate::first_run::Wide`]). A rule is [`wide`] when it is a rule of
+//! the Bash tool, and (01M51JCW04FAHZDQ144KDNCCPX):
+//!
+//! - it has no pattern: `Bash` allows each command;
+//! - or it has a `*` that is not at its end after a space;
+//! - or it matches a command of [`OUT_OF_BOUNDS`], for example
+//!   `Bash(gh api *)` or `Bash(git push *)`.
+//!
+//! The old end `:*` of a pattern is ` *`. A rule of another tool is
+//! never wide. riff removes the wide rules only after a yes to the
+//! question of `riff init` ([`remove`], 01M51JCW2EKF8H8QFQYSVRSPET).
+//!
+//! ```
+//! use riff::permissions::{Facts, remove, wide_rules};
+//!
+//! let dir = tempfile::tempdir()?;
+//! let path = dir.path().join("settings.json");
+//! let text = r#"{"permissions": {"allow": ["Bash(riff *)", "Bash(gh pr merge * --auto --squash)"]}}"#;
+//! std::fs::write(&path, text)?;
+//! let wide = wide_rules(text, &Facts::default());
+//! assert_eq!(wide.allow, ["Bash(gh pr merge * --auto --squash)"]);
+//! assert_eq!(remove(&path, &wide)?, wide);
+//! let after = std::fs::read_to_string(&path)?;
+//! assert!(wide_rules(&after, &Facts::default()).is_empty());
+//! assert!(after.contains("\"Bash(riff *)\""));
+//! # Ok::<(), anyhow::Error>(())
+//! ```
+//!
 //! # Auto mode
 //!
 //! When auto mode blocks several steps and the settings have no
@@ -332,6 +366,20 @@ pub struct Facts<'a> {
     pub branch: Option<&'a str>,
 }
 
+/// The text `text` with the facts `facts` in place of `{HOME}` and
+/// `{BRANCH}`, or `None` when it needs a fact that `facts` does not have.
+fn fill(text: &str, facts: &Facts) -> Option<String> {
+    let home = facts.home.map(|h| h.display().to_string());
+    let values = [("{HOME}", home.as_deref()), ("{BRANCH}", facts.branch)];
+    let mut text = text.to_owned();
+    for (key, value) in values {
+        if text.contains(key) {
+            text = text.replace(key, value?);
+        }
+    }
+    Some(text)
+}
+
 impl Row {
     /// The rule with the facts `facts`, or `None` when it needs a fact
     /// that `facts` does not have.
@@ -348,16 +396,41 @@ impl Row {
     /// );
     /// ```
     pub fn rule_of(&self, facts: &Facts) -> Option<String> {
-        let home = facts.home.map(|h| h.display().to_string());
-        let values = [("{HOME}", home.as_deref()), ("{BRANCH}", facts.branch)];
-        let mut rule = self.rule.to_owned();
-        for (key, value) in values {
-            if rule.contains(key) {
-                rule = rule.replace(key, value?);
-            }
-        }
-        Some(rule)
+        fill(self.rule, facts)
     }
+}
+
+/// The commands that no allow rule may match: no step of a role needs
+/// them (01M509TJNREVNYR9MNN4P9P4RA). `{HOME}` takes the home of the
+/// person ([`Facts`]). An allow rule that matches one of them is
+/// [`wide`].
+pub const OUT_OF_BOUNDS: &[&str] = &[
+    "~/.cache/riff/check/other x/riff y",
+    "~/.cache/riff/checks/x/target/static/release/riff daemon install",
+    "{HOME}/.cache/riff/check/target/static/release/riffx daemon install",
+    "{HOME}/.cache/riff/check/../../../../bin/sh -c x riff y",
+    "gh api repos/o/r/milestones --jq .",
+    "gh api repos/o/r/issues -f title=x/milestones y",
+    "gh api -X PATCH repos/o/r -f description=x/milestones/y",
+    "gh api -X PATCH repos/o/r/milestones/3 -f state=closed",
+    "gh api -X POST repos/o/r/statuses/abc -f state=success",
+    "gh api -X PUT repos/o/r/rulesets/1 -f enforcement=disabled",
+    "gh pr merge 40 --squash",
+    "gh pr merge 40 --admin --auto --squash",
+    "gh pr merge --admin 40",
+    "gh workflow run CI --ref main -f tag=v1.2.3",
+    "gh repo delete o/r --yes",
+    "gh issue delete 12 --yes",
+    "git push origin main",
+    "riffx who",
+    "/opt/riff/riff relay mcp",
+    "sh -c 'riff who'",
+];
+
+/// The commands of [`OUT_OF_BOUNDS`] with the facts `facts`. It leaves
+/// out a command that needs a fact that `facts` does not have.
+fn out_of_bounds(facts: &Facts) -> Vec<String> {
+    OUT_OF_BOUNDS.iter().filter_map(|c| fill(c, facts)).collect()
 }
 
 /// The rules of [`TABLE`] for the place `place`, with the facts `facts`.
@@ -625,11 +698,26 @@ pub fn with_auto_mode(text: &str, trust: &Trust) -> Result<Option<String>> {
     Ok(Some(out))
 }
 
+/// The pattern of the rule `rule` of the Bash tool: `*` for `Bash`, else
+/// the text in `Bash(PATTERN)`, with the old end `:*` read as ` *`.
+/// `None` for a rule of another tool.
+fn bash_pattern(rule: &str) -> Option<String> {
+    if rule == "Bash" {
+        return Some("*".to_owned());
+    }
+    let pattern = rule.strip_prefix("Bash(")?.strip_suffix(')')?;
+    Some(match pattern.strip_suffix(":*") {
+        Some(prefix) => format!("{prefix} *"),
+        None => pattern.to_owned(),
+    })
+}
+
 /// True when the rule `rule` of Claude Code matches the Bash command
 /// `command`. It is the model of the match of Claude Code that the tests
 /// use: a rule `Bash(PATTERN)` matches the whole command, and each `*` in
-/// PATTERN matches each text, also no text. Each other rule matches no
-/// command.
+/// PATTERN matches each text, also no text. The rule `Bash` matches each
+/// command. The old end `:*` of a pattern is ` *`. Each other rule
+/// matches no command.
 ///
 /// ```
 /// use riff::permissions::matches;
@@ -641,10 +729,12 @@ pub fn with_auto_mode(text: &str, trust: &Trust) -> Result<Option<String>> {
 /// assert!(matches("Bash(git push * main)", "git push origin main"));
 /// assert!(matches("Bash(gh pr merge *--admin*)", "gh pr merge --admin"));
 /// assert!(!matches("Bash(gh issue view *)", "gh issue list"));
+/// assert!(matches("Bash", "rm -rf build"));
+/// assert!(matches("Bash(cargo test:*)", "cargo test -p riff"));
 /// assert!(!matches("mcp__riff", "mcp__riff"));
 /// ```
 pub fn matches(rule: &str, command: &str) -> bool {
-    let Some(pattern) = rule.strip_prefix("Bash(").and_then(|r| r.strip_suffix(')')) else {
+    let Some(pattern) = bash_pattern(rule) else {
         return false;
     };
     let (pattern, text) = (pattern.as_bytes(), command.as_bytes());
@@ -667,6 +757,42 @@ pub fn matches(rule: &str, command: &str) -> bool {
         }
     }
     pattern[p..].iter().all(|&c| c == b'*')
+}
+
+/// True when the pattern `pattern` of a Bash rule names its program and
+/// its words, with its only `*` at its end, after a space.
+fn star_only_at_the_end(pattern: &str) -> bool {
+    match pattern.matches('*').count() {
+        0 => true,
+        1 => pattern.ends_with(" *") && pattern.len() > 2,
+        _ => false,
+    }
+}
+
+/// True when the allow rule `rule` is wider than the steps of riff
+/// (01M51JCW04FAHZDQ144KDNCCPX): a rule of the Bash tool with no
+/// pattern, with a `*` that is not at its end after a space, or that
+/// matches a command of [`OUT_OF_BOUNDS`]. The old end `:*` of a pattern
+/// is ` *`. A rule of another tool is never wide.
+///
+/// ```
+/// use riff::permissions::{Facts, wide};
+///
+/// let facts = Facts::default();
+/// assert!(!wide("Bash(gh pr view *)", &facts));
+/// assert!(!wide("Bash(cargo test:*)", &facts));
+/// assert!(!wide("mcp__riff", &facts));
+/// assert!(wide("Bash", &facts));
+/// assert!(wide("Bash(gh pr merge * --auto --squash)", &facts));
+/// assert!(wide("Bash(gh api repos/o/r/statuses/*)", &facts));
+/// assert!(wide("Bash(gh api *)", &facts));
+/// assert!(wide("Bash(git:*)", &facts));
+/// ```
+pub fn wide(rule: &str, facts: &Facts) -> bool {
+    let Some(pattern) = bash_pattern(rule) else {
+        return false;
+    };
+    !star_only_at_the_end(&pattern) || out_of_bounds(facts).iter().any(|c| matches(rule, c))
 }
 
 /// The rules of `rules` that none of the settings texts in `texts` has.
@@ -702,6 +828,34 @@ pub fn missing(rules: &Rules, texts: &[&str]) -> Rules {
     Rules {
         allow: left("allow", &rules.allow),
         deny: left("deny", &rules.deny),
+    }
+}
+
+/// The allow rules of the settings text `text` that are [`wide`], in
+/// their order. A text that is not JSON has none.
+///
+/// ```
+/// use riff::permissions::{Facts, wide_rules};
+///
+/// let text = r#"{"permissions": {"allow": ["Bash(riff *)", "Bash(gh api *)"], "deny": ["Bash"]}}"#;
+/// assert_eq!(wide_rules(text, &Facts::default()).allow, ["Bash(gh api *)"]);
+/// assert!(wide_rules(text, &Facts::default()).deny.is_empty());
+/// assert!(wide_rules("not json", &Facts::default()).is_empty());
+/// ```
+pub fn wide_rules(text: &str, facts: &Facts) -> Rules {
+    let value: Value = serde_json::from_str(text).unwrap_or_default();
+    let mut allow: Vec<String> = Vec::new();
+    for rule in value["permissions"]["allow"].as_array().into_iter().flatten() {
+        if let Some(rule) = rule.as_str()
+            && wide(rule, facts)
+            && !allow.iter().any(|r| r == rule)
+        {
+            allow.push(rule.to_owned());
+        }
+    }
+    Rules {
+        allow,
+        deny: Vec::new(),
     }
 }
 
@@ -750,6 +904,57 @@ pub fn with_rules(text: &str, rules: &Rules) -> Result<Option<String>> {
                 changed = true;
             }
         }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let mut out = serde_json::to_string_pretty(&value)?;
+    out.push('\n');
+    Ok(Some(out))
+}
+
+/// The settings text with no rule of `rules`, or `None` when it has none
+/// of them (01M51JCW2EKF8H8QFQYSVRSPET). It keeps each other key and
+/// each other rule in its order. It fails when the text is not a JSON
+/// object, or when `permissions`, `allow` or `deny` has the wrong type.
+///
+/// ```
+/// use riff::permissions::{Rules, without_rules};
+///
+/// let rules = Rules { allow: vec!["Bash(gh api *)".into()], deny: vec![] };
+/// let text = r#"{"model": "opus", "permissions": {"allow": ["X", "Bash(gh api *)", "Y"]}}"#;
+/// let out = without_rules(text, &rules)?.unwrap();
+/// let value: serde_json::Value = serde_json::from_str(&out)?;
+/// assert_eq!(value["permissions"]["allow"], serde_json::json!(["X", "Y"]));
+/// assert_eq!(value["model"], "opus");
+/// assert_eq!(without_rules(&out, &rules)?, None);
+/// assert_eq!(without_rules("{}", &rules)?, None);
+/// assert!(without_rules("[1]", &rules).is_err());
+/// assert!(without_rules(r#"{"permissions": {"allow": "X"}}"#, &rules).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn without_rules(text: &str, rules: &Rules) -> Result<Option<String>> {
+    let mut value: Value = serde_json::from_str(text).context("the settings are not valid JSON")?;
+    let object = value
+        .as_object_mut()
+        .context("the settings are not a JSON object")?;
+    let Some(permissions) = object.get_mut("permissions") else {
+        return Ok(None);
+    };
+    let permissions = permissions
+        .as_object_mut()
+        .context("`permissions` is not a JSON object")?;
+    let mut changed = false;
+    for (list, drop) in [("allow", &rules.allow), ("deny", &rules.deny)] {
+        let Some(have) = permissions.get_mut(list) else {
+            continue;
+        };
+        let have = have
+            .as_array_mut()
+            .with_context(|| format!("`permissions.{list}` is not a JSON array"))?;
+        let before = have.len();
+        have.retain(|r| !drop.iter().any(|d| r == d.as_str()));
+        changed |= have.len() != before;
     }
     if !changed {
         return Ok(None);
@@ -848,6 +1053,46 @@ pub fn add(path: &Path, rules: &Rules) -> Result<Rules> {
     };
     write(path, &new)?;
     Ok(added)
+}
+
+/// Removes each rule of `rules` from the settings file at `path`
+/// ([`without_rules`], 01M51JCW2EKF8H8QFQYSVRSPET). It writes the file
+/// only when it changes. It returns the rules that it removed. A file
+/// that is not there has no rule.
+///
+/// ```
+/// use riff::permissions::{Rules, add, remove};
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("settings.json");
+/// let rules = Rules { allow: vec!["Bash(gh api *)".into()], deny: vec![] };
+/// assert!(remove(&path, &rules)?.is_empty());
+/// assert!(!path.exists());
+/// add(&path, &rules)?;
+/// assert_eq!(remove(&path, &rules)?, rules);
+/// assert!(remove(&path, &rules)?.is_empty());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn remove(path: &Path, rules: &Rules) -> Result<Rules> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Rules::default()),
+        Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
+    };
+    let left = missing(rules, &[&text]);
+    let had = |want: &[String], left: &[String]| -> Vec<String> {
+        want.iter().filter(|r| !left.contains(r)).cloned().collect()
+    };
+    let removed = Rules {
+        allow: had(&rules.allow, &left.allow),
+        deny: had(&rules.deny, &left.deny),
+    };
+    let Some(new) = without_rules(&text, rules).with_context(|| path.display().to_string())?
+    else {
+        return Ok(Rules::default());
+    };
+    write(path, &new)?;
+    Ok(removed)
 }
 
 /// Adds the auto mode settings of `trust` that the settings file at
@@ -1079,28 +1324,26 @@ mod tests {
         );
     }
 
-    /// True when the allow rule `rule` names its program and its words,
-    /// with its only `*` at its end, after a space. A rule that is not a
-    /// `Bash` rule names a tool: it has no `*`.
-    fn star_only_at_the_end(rule: &str) -> bool {
-        let pattern = rule
-            .strip_prefix("Bash(")
-            .and_then(|r| r.strip_suffix(')'))
-            .unwrap_or(rule);
-        match pattern.matches('*').count() {
-            0 => true,
-            1 => pattern.ends_with(" *") && pattern.len() > 2,
-            _ => false,
+    /// The facts of the tests: the home of mike, and the branch `main`.
+    fn mike() -> Facts<'static> {
+        Facts {
+            home: Some(Path::new("/home/mike")),
+            branch: Some("main"),
         }
     }
 
-    /// 01M509TJNREVNYR9MNN4P9P4RA.
+    /// 01M509TJNREVNYR9MNN4P9P4RA, 01M51JCW04FAHZDQ144KDNCCPX.
     #[test]
     fn each_allow_rule_has_its_only_star_at_its_end_after_a_space() {
+        let facts = mike();
         for row in TABLE.iter().filter(|r| r.kind == Kind::Allow) {
-            assert!(star_only_at_the_end(row.rule), "{row:?}");
+            let rule = row.rule_of(&facts).unwrap();
+            assert!(!wide(&rule, &facts), "{row:?}");
+            // A rule of another tool names the tool: it has no `*`.
+            assert!(rule.starts_with("Bash(") || !rule.contains('*'), "{row:?}");
         }
-        // The four rules of the failed verify of #776 are too wide.
+        // The four rules of the failed verify of #776 are too wide, and
+        // so is a rule of the Bash tool with no pattern.
         for rule in [
             "Bash(~/.cache/riff/checks/*/riff *)",
             "Bash(gh api repos/*/milestones *)",
@@ -1109,8 +1352,23 @@ mod tests {
             "Bash(gh api repos/o/r/statuses/*)",
             "Bash(gh pr view*)",
             "Bash(*)",
+            "Bash",
+            "Bash( *)",
+            "Bash(gh pr view:*:*)",
         ] {
-            assert!(!star_only_at_the_end(rule), "{rule}");
+            assert!(wide(rule, &facts), "{rule}");
+        }
+        // A rule that names its program and its words, in the new form or
+        // the old form, and a rule of another tool.
+        for rule in [
+            "Bash(cargo test *)",
+            "Bash(cargo test:*)",
+            "Bash(npm run build)",
+            "mcp__github",
+            "Read(~/**)",
+            "WebFetch(domain:docs.rs)",
+        ] {
+            assert!(!wide(rule, &facts), "{rule}");
         }
     }
 
@@ -1118,53 +1376,104 @@ mod tests {
     /// command that no step of a role needs.
     #[test]
     fn no_allow_rule_matches_a_command_out_of_bounds() {
-        let facts = Facts {
-            home: Some(Path::new("/home/mike")),
-            branch: Some("main"),
-        };
-        let out_of_bounds = [
-            "~/.cache/riff/check/other x/riff y",
-            "~/.cache/riff/checks/x/target/static/release/riff daemon install",
-            "/home/mike/.cache/riff/check/target/static/release/riffx daemon install",
-            "/home/mike/.cache/riff/check/../../../../bin/sh -c x riff y",
-            "gh api repos/o/r/milestones --jq .",
-            "gh api repos/o/r/issues -f title=x/milestones y",
-            "gh api -X PATCH repos/o/r -f description=x/milestones/y",
-            "gh api -X PATCH repos/o/r/milestones/3 -f state=closed",
-            "gh api -X POST repos/o/r/statuses/abc -f state=success",
-            "gh api -X PUT repos/o/r/rulesets/1 -f enforcement=disabled",
-            "gh pr merge 40 --squash",
-            "gh pr merge 40 --admin --auto --squash",
-            "gh pr merge --admin 40",
-            "gh workflow run CI --ref main -f tag=v1.2.3",
-            "gh repo delete o/r --yes",
-            "gh issue delete 12 --yes",
-            "git push origin main",
-            "riffx who",
-            "/opt/riff/riff relay mcp",
-            "sh -c 'riff who'",
-        ];
+        let facts = mike();
+        let commands = out_of_bounds(&facts);
+        assert_eq!(commands.len(), OUT_OF_BOUNDS.len());
+        assert!(
+            commands.contains(&"/home/mike/.cache/riff/check/target/static/release/riffx daemon install".into())
+        );
         for place in [Place::Project, Place::User, Place::Session] {
             let allow = rules_of(place, &facts).allow;
-            for command in out_of_bounds {
+            for command in &commands {
                 let rule = allow.iter().find(|r| matches(r, command));
                 assert_eq!(rule, None, "{} allows `{command}`", place.as_str());
             }
         }
+        // With no home, the commands that need it are not there.
+        let few = out_of_bounds(&Facts::default());
+        assert_eq!(few.len(), OUT_OF_BOUNDS.len() - 2);
+        assert!(!few.iter().any(|c| c.contains("{HOME}")));
+    }
+
+    /// 01M51JCW04FAHZDQ144KDNCCPX: a rule that matches a command out of
+    /// bounds is wide, also with its only `*` at its end.
+    #[test]
+    fn a_rule_of_a_whole_command_group_is_wide() {
+        let facts = mike();
+        for rule in [
+            "Bash(gh api *)",
+            "Bash(gh pr *)",
+            "Bash(gh pr merge *)",
+            "Bash(git push *)",
+            "Bash(git *)",
+            "Bash(gh:*)",
+            "Bash(sh -c *)",
+            "Bash(/home/mike/.cache/riff/check/target/static/release/riffx *)",
+        ] {
+            assert!(wide(rule, &facts), "{rule}");
+        }
     }
 
     /// The project settings of this repository have each project rule,
-    /// and each of their allow rules has its only `*` at its end
-    /// (01M3Q53RNDJBDHVDFHJ9HCX9S1, 01M509TJNREVNYR9MNN4P9P4RA).
+    /// and none of their allow rules is wide (01M3Q53RNDJBDHVDFHJ9HCX9S1,
+    /// 01M509TJNREVNYR9MNN4P9P4RA).
     #[test]
     fn the_project_settings_of_riff_have_the_rules_and_no_wide_rule() {
         let text = include_str!("../../../.claude/settings.json");
         assert_eq!(missing(&rules("main"), &[text]), Rules::default());
+        assert_eq!(wide_rules(text, &mike()), Rules::default());
         let value: Value = serde_json::from_str(text).unwrap();
-        for rule in value["permissions"]["allow"].as_array().unwrap() {
-            let rule = rule.as_str().unwrap();
-            assert!(star_only_at_the_end(rule), "{rule}");
-        }
+        assert!(value["permissions"]["allow"].as_array().unwrap().len() > 5);
+    }
+
+    /// 01M51JCW2EKF8H8QFQYSVRSPET: a remove of the wide rules keeps each
+    /// other rule and key in its order, the deny rules, a link and the
+    /// mode of the file.
+    #[test]
+    fn a_remove_keeps_each_other_rule_and_key() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("dotfiles/settings.json");
+        std::fs::create_dir(dir.path().join("dotfiles")).unwrap();
+        std::fs::write(
+            &target,
+            r#"{"model": "opus", "permissions": {"deny": ["Bash(gh api *)"],
+                "allow": ["Bash(riff *)", "Bash(gh api *)", "Bash(git push *)", "X"]},
+                "statusLine": {"type": "command"}}"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let link = dir.path().join("settings.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let wide = wide_rules(&std::fs::read_to_string(&link).unwrap(), &mike());
+        assert_eq!(wide.allow, ["Bash(gh api *)", "Bash(git push *)"]);
+        assert_eq!(remove(&link, &wide).unwrap(), wide);
+
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        let text = std::fs::read_to_string(&target).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["permissions"]["allow"], json!(["Bash(riff *)", "X"]));
+        assert_eq!(value["permissions"]["deny"], json!(["Bash(gh api *)"]));
+        let keys: Vec<&String> = value.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["model", "permissions", "statusLine"]);
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640);
+        assert!(remove(&link, &wide).unwrap().is_empty());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), text);
+    }
+
+    #[test]
+    fn a_remove_leaves_settings_that_are_not_an_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "[1]").unwrap();
+        let rules = Rules {
+            allow: vec!["Bash".into()],
+            deny: vec![],
+        };
+        assert!(remove(&path, &rules).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[1]");
     }
 
     #[test]

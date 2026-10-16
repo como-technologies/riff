@@ -10,8 +10,11 @@
 //! flowchart LR
 //!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the rules of Claude Code,<br/>the riff binary"] --> Q{"rules<br/>missing?"}
 //!     Q -- "one question:<br/>y, or --yes" --> W["add them to<br/>the user settings"]
-//!     Q -- "no" --> E{"each check<br/>passed?"}
-//!     W --> E
+//!     Q -- "no" --> X{"wide<br/>rules?"}
+//!     W --> X
+//!     X -- "one question:<br/>y in a terminal" --> V["remove them"]
+//!     X -- "no" --> E{"each check<br/>passed?"}
+//!     V --> E
 //!     E -- "no" --> F["a fix line for each,<br/>exit 1"]
 //!     E -- "yes" --> D["the daemon<br/>riff.service"]
 //!     D --> I["the session image<br/>the daemon pulls it"]
@@ -29,13 +32,21 @@
 //!    when another check failed (01M5084K2Q3HH4BK7DJMYQD7C1). With no
 //!    terminal and no `--yes`, it asks nothing. `--check` names the rules
 //!    and asks nothing.
-//! 3. When a check still fails, riff installs nothing, pulls nothing, and
+//! 3. The wide rules ([`Wide`]). When the user settings, the project
+//!    settings or the local settings of Claude Code have an allow rule
+//!    that is wider than the steps of riff ([`crate::permissions::wide`]),
+//!    riff names each rule with its file (01M51JCW04FAHZDQ144KDNCCPX).
+//!    Then it asks one question ([`Question::Remove`]). Only a `y` in a
+//!    terminal removes them ([`crate::permissions::remove`],
+//!    01M51JCW2EKF8H8QFQYSVRSPET). `--yes` and `--check` ask nothing and
+//!    remove nothing. A wide rule fails no check.
+//! 4. When a check still fails, riff installs nothing, pulls nothing, and
 //!    exits with 1. `--check` stops here (01M4ZJN6WR0JJ891R9JMQNPKGD).
-//! 4. The daemon. When a riff daemon answers, riff keeps it: it does
+//! 5. The daemon. When a riff daemon answers, riff keeps it: it does
 //!    not start it again. When no daemon answers, riff installs it as
 //!    `riff daemon install` does ([`crate::daemon::install`],
 //!    01M4ZJN6Z1DGD43CKZ19QPN2NK).
-//! 5. The image. riff asks the daemon for the session image that
+//! 6. The image. riff asks the daemon for the session image that
 //!    `riff.toml` pins. The daemon pulls it when podman does not have
 //!    it (01M4ZJN718EF1PC9YY9GFD0EJ2).
 //!
@@ -77,6 +88,7 @@
 //!         path: "/home/mike/.claude/settings.json".into(),
 //!         missing: Rules::default(),
 //!     }),
+//!     wide: vec![],
 //!     riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
 //! };
 //! assert!(checks(&facts).iter().all(|c| c.passed()));
@@ -182,6 +194,9 @@ pub struct Facts {
     pub image: Result<String, String>,
     /// The user settings of Claude Code, or why riff cannot find them.
     pub settings: Result<Settings, String>,
+    /// The settings files of Claude Code with allow rules that are wider
+    /// than the steps of riff.
+    pub wide: Vec<Wide>,
     /// What riff found of its own binary: static, or why it is not
     /// ([`crate::release::check_file`]).
     pub riff: Result<String, String>,
@@ -227,13 +242,83 @@ impl Settings {
     fn here() -> Result<Settings, String> {
         let path =
             crate::plugin::user_settings().ok_or_else(|| text::INIT_NO_SETTINGS.to_owned())?;
-        let home = std::env::var_os("HOME")
-            .filter(|h| !h.is_empty())
-            .map(PathBuf::from);
         Ok(Settings::of(
             &path,
-            &permissions::user_rules(home.as_deref()),
+            &permissions::user_rules(home().as_deref()),
         ))
+    }
+}
+
+/// The home of the person who runs riff.
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+}
+
+/// A settings file of Claude Code, and its allow rules that are wider
+/// than the steps of riff (01M51JCW04FAHZDQ144KDNCCPX).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wide {
+    /// The file.
+    pub path: PathBuf,
+    /// Its wide allow rules ([`permissions::wide`]).
+    pub rules: Rules,
+}
+
+impl Wide {
+    /// The settings files of `paths` that have wide allow rules, for the
+    /// person with the home `home`, in the order of `paths`. riff reads a
+    /// file once, also when two paths name it. A file that is not there,
+    /// or that is not JSON, has none.
+    ///
+    /// ```
+    /// use riff::first_run::Wide;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let (user, local) = (dir.path().join("user.json"), dir.path().join("local.json"));
+    /// std::fs::write(&user, r#"{"permissions": {"allow": ["Bash(riff *)", "Bash(git push *)"]}}"#)?;
+    /// let wide = Wide::of(&[user.clone(), user.clone(), local], None);
+    /// assert_eq!(wide.len(), 1);
+    /// assert_eq!(wide[0].path, user);
+    /// assert_eq!(wide[0].rules.allow, ["Bash(git push *)"]);
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn of(paths: &[PathBuf], home: Option<&Path>) -> Vec<Wide> {
+        let facts = permissions::Facts {
+            home,
+            ..permissions::Facts::default()
+        };
+        let mut seen: Vec<PathBuf> = Vec::new();
+        let mut out = Vec::new();
+        for path in paths {
+            let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            if seen.contains(&real) {
+                continue;
+            }
+            seen.push(real);
+            let text = std::fs::read_to_string(path).unwrap_or_default();
+            let rules = permissions::wide_rules(&text, &facts);
+            if !rules.is_empty() {
+                out.push(Wide {
+                    path: path.clone(),
+                    rules,
+                });
+            }
+        }
+        out
+    }
+
+    /// The settings of the person who runs riff in the folder `dir`: the
+    /// user settings, then the project settings and the local settings of
+    /// the repository of `dir`.
+    fn here(dir: &Path) -> Vec<Wide> {
+        let project = permissions::Project::of(dir);
+        let paths: Vec<PathBuf> = crate::plugin::user_settings()
+            .into_iter()
+            .chain([project.settings(), project.local_settings()])
+            .collect();
+        Wide::of(&paths, home().as_deref())
     }
 }
 
@@ -315,6 +400,7 @@ impl Facts {
                 .map(|image| image.to_string())
                 .map_err(|e| format!("{e:#}")),
             settings: Settings::here(),
+            wide: Wide::here(dir),
             riff: riff_binary(),
         }
     }
@@ -572,40 +658,77 @@ pub enum Mode {
     Yes,
 }
 
-/// Asks the one question of `riff init` about the rules for the user
-/// settings at `path`, when `terminal` is true
-/// (01M5084K09Z2S7N57315CX2R0F). It writes the question to `out`, and
-/// reads one line of `input`: `y` or `yes` is a yes. Each other answer,
-/// the end of the input, and no terminal are a no.
+/// A question of `riff init`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Question<'a> {
+    /// Add the missing rules of riff to the user settings at this path
+    /// (01M5084K09Z2S7N57315CX2R0F).
+    Add(&'a Path),
+    /// Remove the wide allow rules (01M51JCW2EKF8H8QFQYSVRSPET).
+    Remove,
+}
+
+impl Question<'_> {
+    /// The question for people, with its `[y/N]`.
+    pub fn text(&self) -> String {
+        match self {
+            Question::Add(path) => text::init_ask_rules(path),
+            Question::Remove => text::INIT_ASK_WIDE.to_owned(),
+        }
+    }
+
+    /// The line when riff has no terminal to ask in, if any.
+    fn no_terminal(&self) -> Option<&'static str> {
+        match self {
+            Question::Add(_) => Some(text::INIT_NO_TERMINAL),
+            Question::Remove => None,
+        }
+    }
+}
+
+/// Asks the question `question` of `riff init`, when `terminal` is true
+/// (01M5084K09Z2S7N57315CX2R0F, 01M51JCW2EKF8H8QFQYSVRSPET). It writes
+/// the question to `out`, and reads one line of `input`: `y` or `yes` is
+/// a yes. Each other answer, the end of the input, and no terminal are a
+/// no.
 ///
 /// ```
-/// use riff::first_run::ask;
+/// use riff::first_run::{Question, ask};
 ///
-/// let path = std::path::Path::new("/h/s.json");
+/// let add = Question::Add(std::path::Path::new("/h/s.json"));
 /// let mut out = Vec::new();
-/// assert!(ask(path, true, &mut &b"y\n"[..], &mut out)?);
-/// assert!(ask(path, true, &mut &b"Yes\n"[..], &mut out)?);
-/// assert!(!ask(path, true, &mut &b"\n"[..], &mut out)?);
-/// assert!(!ask(path, true, &mut &b""[..], &mut out)?);
+/// assert!(ask(add, true, &mut &b"y\n"[..], &mut out)?);
+/// assert!(ask(add, true, &mut &b"Yes\n"[..], &mut out)?);
+/// assert!(!ask(add, true, &mut &b"\n"[..], &mut out)?);
+/// assert!(!ask(add, true, &mut &b""[..], &mut out)?);
 /// assert_eq!(String::from_utf8(out)?, "Add them to /h/s.json? [y/N] ".repeat(4));
+///
+/// let mut out = Vec::new();
+/// assert!(!ask(Question::Remove, true, &mut &b"n\n"[..], &mut out)?);
+/// assert!(String::from_utf8(out)?.starts_with("Remove them?"));
 ///
 /// // No terminal: no question, and no.
 /// let mut out = Vec::new();
-/// assert!(!ask(path, false, &mut &b"y\n"[..], &mut out)?);
+/// assert!(!ask(add, false, &mut &b"y\n"[..], &mut out)?);
 /// assert!(String::from_utf8(out)?.contains("riff init --yes"));
+/// let mut out = Vec::new();
+/// assert!(!ask(Question::Remove, false, &mut &b"y\n"[..], &mut out)?);
+/// assert!(out.is_empty());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn ask(
-    path: &Path,
+    question: Question,
     terminal: bool,
     input: &mut impl BufRead,
     out: &mut impl Write,
 ) -> Result<bool> {
     if !terminal {
-        writeln!(out, "{}", text::INIT_NO_TERMINAL)?;
+        if let Some(line) = question.no_terminal() {
+            writeln!(out, "{line}")?;
+        }
         return Ok(false);
     }
-    write!(out, "{}", text::init_ask_rules(path))?;
+    write!(out, "{}", question.text())?;
     out.flush()?;
     let mut answer = String::new();
     input.read_line(&mut answer)?;
@@ -615,13 +738,15 @@ pub fn ask(
 /// The first run on `facts`, with the daemon in the folder `dir`. It
 /// prints each step, and gives the exit code: 1 when a check failed.
 /// When rules are missing, it names them, and in [`Mode::Ask`] asks
-/// `ask` with the path of the user settings. With [`Mode::Check`], it
-/// stops after the checks. When no daemon answers, it installs `unit`
-/// with `manager`, and waits up to `wait` for the daemon.
+/// `ask` the question [`Question::Add`]. When settings have wide rules,
+/// it names them, and in [`Mode::Ask`] asks [`Question::Remove`]. With
+/// [`Mode::Check`], it stops after the checks. When no daemon answers,
+/// it installs `unit` with `manager`, and waits up to `wait` for the
+/// daemon.
 pub async fn run(
     facts: &Facts,
     mode: Mode,
-    ask: impl FnOnce(&Path) -> Result<bool>,
+    mut ask: impl FnMut(Question) -> Result<bool>,
     dir: &Path,
     manager: &impl ServiceManager,
     unit: &Unit,
@@ -638,7 +763,7 @@ pub async fn run(
         println!("{}", text::init_rules(&settings.path, &settings.missing));
         let yes = match mode {
             Mode::Check => false,
-            Mode::Ask => ask(&settings.path)?,
+            Mode::Ask => ask(Question::Add(&settings.path))?,
             Mode::Yes => true,
         };
         if yes {
@@ -649,6 +774,17 @@ pub async fn run(
             }
         } else if mode == Mode::Ask {
             println!("{}", text::init_rules_kept(&settings.path));
+        }
+    }
+    if !facts.wide.is_empty() {
+        println!("{}", text::init_wide(&facts.wide));
+        if mode == Mode::Ask && ask(Question::Remove)? {
+            for wide in &facts.wide {
+                let removed = permissions::remove(&wide.path, &wide.rules)?;
+                println!("{}", text::init_wide_removed(&wide.path, removed.len()));
+            }
+        } else {
+            println!("{}", text::INIT_WIDE_KEPT);
         }
     }
     let failed = checks.iter().filter(|c| !c.passed()).count();
@@ -689,10 +825,10 @@ pub async fn init(mode: Mode) -> Result<i32> {
         let facts = Facts::here(&here);
         let manager = crate::service::Systemd::here()?;
         let unit = Unit::of_this()?;
-        let question = |path: &Path| {
+        let question = |question: Question| {
             let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
             ask(
-                path,
+                question,
                 terminal,
                 &mut std::io::stdin().lock(),
                 &mut std::io::stdout(),
@@ -735,6 +871,7 @@ mod tests {
                 path: "/home/mike/.claude/settings.json".into(),
                 missing: Rules::default(),
             }),
+            wide: vec![],
             riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
         }
     }
@@ -754,8 +891,8 @@ mod tests {
     }
 
     /// The question of a run that must ask nothing.
-    fn no_question(path: &Path) -> Result<bool> {
-        panic!("riff asked about {}", path.display())
+    fn no_question(question: Question) -> Result<bool> {
+        panic!("riff asked: {}", question.text())
     }
 
     fn failed(facts: &Facts) -> Vec<Check> {
@@ -1090,7 +1227,10 @@ mod tests {
         assert_eq!(failed(&facts).len(), 2);
         let manager = Manager::default();
         let mut asked = None;
-        let question = |p: &Path| {
+        let question = |q: Question| {
+            let Question::Add(p) = q else {
+                panic!("riff asked: {}", q.text())
+            };
             asked = Some(p.to_owned());
             Ok(true)
         };
@@ -1238,6 +1378,230 @@ mod tests {
 
         let _ = stop.send(());
         served.await.unwrap().unwrap();
+    }
+
+    /// The user settings and the local settings of a test with wide
+    /// rules, in `root`: never the real config.
+    struct WideFiles {
+        user: PathBuf,
+        local: PathBuf,
+        user_text: String,
+        local_text: String,
+    }
+
+    impl WideFiles {
+        fn new(root: &Path) -> WideFiles {
+            let user = settings_in(&root.join("home"), None);
+            let local = root.join("repo/.claude/settings.local.json");
+            let user_text = r#"{"model": "opus", "permissions": {"allow": ["Bash(riff *)",
+                "Bash(gh pr merge * --auto --squash)", "Bash(cargo test:*)"],
+                "deny": ["Bash(git push * main)"]}, "statusLine": {"type": "command"}}"#;
+            let local_text = r#"{"permissions": {"allow": ["Bash(git push *)", "Read(~/**)"]}}"#;
+            for (path, text) in [(&user, user_text), (&local, local_text)] {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, text).unwrap();
+            }
+            WideFiles {
+                user,
+                local,
+                user_text: user_text.into(),
+                local_text: local_text.into(),
+            }
+        }
+
+        /// The settings files with wide rules: the user settings, the
+        /// project settings (not there) and the local settings.
+        fn wide(&self, root: &Path) -> Vec<Wide> {
+            let project = root.join("repo/.claude/settings.json");
+            Wide::of(
+                &[self.user.clone(), project, self.local.clone()],
+                Some("/home/mike".as_ref()),
+            )
+        }
+
+        /// True when no file changed.
+        fn kept(&self) -> bool {
+            std::fs::read_to_string(&self.user).unwrap() == self.user_text
+                && std::fs::read_to_string(&self.local).unwrap() == self.local_text
+        }
+
+        fn value(path: &Path) -> serde_json::Value {
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+        }
+    }
+
+    /// 01M51JCW04FAHZDQ144KDNCCPX: riff finds each wide rule in its file,
+    /// reads a file once, and a wide rule fails no check.
+    #[test]
+    fn riff_finds_the_wide_rules_of_each_file_and_fails_no_check() {
+        let root = tempfile::tempdir().unwrap();
+        let files = WideFiles::new(root.path());
+        let wide = files.wide(root.path());
+        assert_eq!(
+            wide,
+            [
+                Wide {
+                    path: files.user.clone(),
+                    rules: Rules {
+                        allow: vec!["Bash(gh pr merge * --auto --squash)".into()],
+                        deny: vec![],
+                    },
+                },
+                Wide {
+                    path: files.local.clone(),
+                    rules: Rules {
+                        allow: vec!["Bash(git push *)".into()],
+                        deny: vec![],
+                    },
+                },
+            ]
+        );
+        // The project settings are the user settings: in the home.
+        let link = root.path().join("home/link.json");
+        std::os::unix::fs::symlink(&files.user, &link).unwrap();
+        assert_eq!(
+            Wide::of(&[files.user.clone(), link], None),
+            wide[..1].to_vec()
+        );
+        let facts = Facts {
+            wide,
+            ..ready()
+        };
+        assert!(failed(&facts).is_empty());
+        let text = text::init_wide(&facts.wide);
+        assert!(
+            text.contains(&format!(
+                "\n  {}:\n    allow Bash(gh pr merge * --auto --squash)\n  {}:\n    allow Bash(git \
+                 push *)",
+                files.user.display(),
+                files.local.display()
+            )),
+            "{text}"
+        );
+    }
+
+    /// 01M51JCW2EKF8H8QFQYSVRSPET: a yes removes each wide rule, and keeps
+    /// each other rule and key in its order.
+    #[tokio::test]
+    async fn a_yes_removes_each_wide_rule_and_keeps_each_other_key() {
+        let root = tempfile::tempdir().unwrap();
+        let files = WideFiles::new(root.path());
+        // podman fails, so the run stops before the daemon.
+        let facts = Facts {
+            podman: Err(text::INIT_NO_PODMAN.into()),
+            wide: files.wide(root.path()),
+            ..ready()
+        };
+        let mut asked = Vec::new();
+        let question = |q: Question| {
+            asked.push(q.text());
+            Ok(true)
+        };
+        let manager = Manager::default();
+        let dir = dir_in(root.path());
+        let code = run(&facts, Mode::Ask, question, &dir, &manager, &unit(), WAIT)
+            .await
+            .unwrap();
+        assert_eq!(code, 1);
+        assert_eq!(asked, [text::INIT_ASK_WIDE]);
+
+        let user = WideFiles::value(&files.user);
+        let keys: Vec<&String> = user.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["model", "permissions", "statusLine"]);
+        assert_eq!(
+            user["permissions"]["allow"],
+            serde_json::json!(["Bash(riff *)", "Bash(cargo test:*)"])
+        );
+        assert_eq!(
+            user["permissions"]["deny"],
+            serde_json::json!(["Bash(git push * main)"])
+        );
+        let local = WideFiles::value(&files.local);
+        assert_eq!(
+            local["permissions"]["allow"],
+            serde_json::json!(["Read(~/**)"])
+        );
+        assert!(files.wide(root.path()).is_empty());
+        assert!(!root.path().join("repo/.claude/settings.json").exists());
+        assert!(manager.0.lock().unwrap().is_empty());
+    }
+
+    /// 01M51JCW2EKF8H8QFQYSVRSPET: a no keeps each rule.
+    #[tokio::test]
+    async fn a_no_keeps_each_wide_rule() {
+        let root = tempfile::tempdir().unwrap();
+        let files = WideFiles::new(root.path());
+        let facts = Facts {
+            podman: Err(text::INIT_NO_PODMAN.into()),
+            wide: files.wide(root.path()),
+            ..ready()
+        };
+        let mut asked = 0;
+        let question = |q: Question| {
+            assert_eq!(q, Question::Remove);
+            asked += 1;
+            Ok(false)
+        };
+        let dir = dir_in(root.path());
+        let code = run(
+            &facts,
+            Mode::Ask,
+            question,
+            &dir,
+            &Manager::default(),
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, 1);
+        assert_eq!(asked, 1);
+        assert!(files.kept());
+    }
+
+    /// 01M51JCW04FAHZDQ144KDNCCPX, 01M51JCW2EKF8H8QFQYSVRSPET: `--check`
+    /// and `--yes` name the wide rules, ask nothing and remove nothing.
+    #[tokio::test]
+    async fn check_and_yes_remove_no_wide_rule() {
+        let root = tempfile::tempdir().unwrap();
+        let files = WideFiles::new(root.path());
+        let wide = files.wide(root.path());
+        let dir = dir_in(root.path());
+        let manager = Manager::default();
+        let facts = Facts {
+            wide: wide.clone(),
+            ..ready()
+        };
+        let code = run(
+            &facts,
+            Mode::Check,
+            no_question,
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, 0, "a wide rule fails no check");
+        let facts = Facts {
+            podman: Err(text::INIT_NO_PODMAN.into()),
+            ..facts
+        };
+        let code = run(
+            &facts,
+            Mode::Yes,
+            no_question,
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, 1);
+        assert!(files.kept());
+        assert!(manager.0.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

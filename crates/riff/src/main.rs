@@ -542,18 +542,21 @@ enum Command {
     /// that riff.toml of the repository of this folder pins the session
     /// image. It checks that your user settings of Claude Code have the
     /// permission rules of riff. When rules are missing, it names them and
-    /// asks one question before it adds them. It prints the fix of each
-    /// check that fails, and stops. When each check passes, it installs and
-    /// starts the riff daemon, as riff daemon install does, and the daemon
-    /// pulls the session image. A daemon that answers stays: riff init does
-    /// not start it again.
+    /// asks one question before it adds them. It names each allow rule of
+    /// your user, project and local settings of Claude Code that is wider
+    /// than the steps of riff, and asks one question before it removes
+    /// them. It prints the fix of each check that fails, and stops. When
+    /// each check passes, it installs and starts the riff daemon, as riff
+    /// daemon install does, and the daemon pulls the session image. A
+    /// daemon that answers stays: riff init does not start it again.
     Init {
-        /// Change nothing. Print the fix of each check that fails, and each
-        /// missing permission rule. Exit with status 1 when a check fails.
+        /// Change nothing. Print the fix of each check that fails, each
+        /// missing permission rule and each wide allow rule. Exit with
+        /// status 1 when a check fails.
         #[arg(long, conflicts_with = "yes")]
         check: bool,
         /// Add the missing permission rules to your user settings of Claude
-        /// Code with no question.
+        /// Code with no question. It removes no wide rule.
         #[arg(long)]
         yes: bool,
     },
