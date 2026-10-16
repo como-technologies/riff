@@ -118,7 +118,12 @@
 //! - [`Service::load`] loads the newest checkpoint of a [`store::Store`],
 //!   and replays the log after it (R30). A timer writes a checkpoint, and
 //!   deletes the old checkpoints and the chunks that no kept checkpoint
-//!   needs (see [`checkpoint`]).
+//!   needs (see [`checkpoint`]). [`Service::shutdown`] writes a last
+//!   checkpoint (01M4264028A3KVDK10PPERHM0C). At a deploy, the old
+//!   instance writes one when it reads the lease of the new instance,
+//!   and the new instance loads it after its wait
+//!   (01M51X8MG0YQT5KBZC9H7917J3, 01M51X8P4M8PHSSJMWF1J1KQS1). So the
+//!   read cursors, which no record holds, stay.
 //! - A timer forgets each session with no sign of life for
 //!   [`state::SESSION_EXPIRY`], each [`FORGET_EVERY`].
 //!   [`Service::new`] keeps its log in memory, and saves nothing (R34).
