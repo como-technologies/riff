@@ -54,14 +54,14 @@ impl Caller {
             me,
         };
         // The refresh makes the server save the sign-in, as after a real
-        // sign-in. A swap for a session token saves nothing
-        // (01M3WFVAB44T8EP4QZD4KS7DRF).
+        // sign-in. The swap for a session token is a change of the token
+        // store too (01M52JYGSNTFPQ0ZP50AD2BG89).
         caller.refreshed(base).await
     }
 
-    /// Gets a new access token, as `riff` does after a restart of the
-    /// server: it refreshes the person pair, and a session swaps the new
-    /// person token for a session token (01M3WFVADCDZM8XX590KAEMEYG).
+    /// Gets a new access token, as `riff` does before its token expires:
+    /// it refreshes the person pair, and a session swaps the new person
+    /// token for a session token (01M3WFVADCDZM8XX590KAEMEYG).
     async fn refreshed(mut self, base: &str) -> Caller {
         let form = format!("grant_type=refresh_token&refresh_token={}", self.refresh);
         let reply = common::refresh(base, &self.key, &form).await;

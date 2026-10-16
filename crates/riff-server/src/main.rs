@@ -1,13 +1,12 @@
 //! The central service that sessions connect to.
 
-use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use clap::{Args, Parser, Subcommand};
 use riff_server::auth::Config;
 use riff_server::gcs::Gcs;
-use riff_server::listen::{self, Port};
+use riff_server::listen::{self, Port, Start};
 use riff_server::oidc::{self, DEFAULT_DOMAIN, Provider, SignInError};
 use riff_server::{Service, logline, tools};
 use riff_state::store::{Dir, Store};
@@ -301,7 +300,7 @@ async fn run(cli: Cli) -> Result<(), Stop> {
 async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
     // Catch SIGTERM before the server says that it listens.
     let mut terminate = signal(SignalKind::terminate())?;
-    // The port opens only after the load (01M3THEE31H5QVV3JAFC4ZRGFR).
+    // The port opens only after the load (01M52JYGHHK5X0XS39VFT3ZGGM).
     let port = Port::reserve(cli.listen)?;
     let public_url = cli
         .public_url
@@ -345,9 +344,9 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
         }
         (None, None) => None,
     };
-    let service = match store {
-        Some(store) => match Service::load(config, store).await {
-            Ok(service) => service,
+    let start = match store {
+        Some(store) => match Service::prepare(config, store).await {
+            Ok(loaded) => Start::AfterLease(Box::new(loaded)),
             Err(e) => {
                 // The text names the object and the fix
                 // (01M3MMXYS1V8CA89D2XHKPR6C4).
@@ -357,53 +356,26 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
         },
         None => {
             tracing::warn!("no RIFF_BUCKET and no RIFF_DIR: the log is in memory only");
-            Service::new(config)
+            Start::Now(Service::new(config))
         }
     };
-    // The owner of the settings is a record of the start: wait for its
-    // write, so that the check below reads it.
-    service
-        .save()
-        .await
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-    let owned = service.owned();
-    listen::check(cli.listen, trusted, cli.insecure, owned)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-    let listener = port.open()?;
-    tracing::info!("riff-server listens on {}", listener.local_addr()?);
-    let stop = async {
+    // The owner is in the state: check the address again before the
+    // port opens, and after the first save.
+    if let Start::AfterLease(loaded) = &start {
+        listen::check(cli.listen, trusted, cli.insecure, loaded.owned())
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    }
+    let stop = async move {
         tokio::select! {
             _ = terminate.recv() => {}
             _ = tokio::signal::ctrl_c() => {}
         }
     };
-    tokio::select! {
-        result = axum::serve(listener, service.router()).into_future() => result,
-        () = stop => {
-            // Take no more calls, save each unsaved change, then exit (R129).
-            tracing::info!("stopping: saving the state");
-            service.shutdown().await.map_err(std::io::Error::other)
-        }
-        () = async {
-            service.stopped().await;
-            if !service.lease_ended() {
-                tokio::time::sleep(service.config().lease.exit_after).await;
-            }
-        } => {
-            if service.lease_ended() {
-                // A tool can have changed the log. Exit with an error,
-                // so that a new instance loads the state from the store
-                // (01M3X5TPBMF81TDVZ7Q4NVXBQX).
-                return Err(std::io::Error::other(
-                    "the lease of this instance ended by its age: its state in memory can \
-                     be old",
-                ));
-            }
-            // Another instance serves now (R140).
-            tracing::info!("exiting: another instance serves");
-            Ok(())
-        }
-    }
+    let (listen, insecure) = (cli.listen, cli.insecure);
+    listen::serve(port, start, stop, |service| {
+        listen::check(listen, trusted, insecure, service.owned()).map(|_| ())
+    })
+    .await
 }
 
 /// Stops the process when the provider refuses the OAuth client

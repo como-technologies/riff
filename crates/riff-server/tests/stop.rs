@@ -78,12 +78,8 @@ async fn sigterm_writes_a_checkpoint_that_the_next_start_loads_with_each_read_cu
     let listen = common::free_address();
     let output = tempfile::NamedTempFile::new().unwrap();
     let mut server = common::Server(common::server_on_dir(dir.path(), &listen, &output));
-    // The port opens after the wait for the lease.
-    let span = isolated::Span::start();
-    while tokio::net::TcpStream::connect(&listen).await.is_err() {
-        assert!(span.within(Duration::from_secs(60)), "no open port");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    // The server serves after the wait for the lease.
+    common::wait_until_it_serves(&listen).await;
     let base = format!("http://{listen}");
     call(&base, "register", json!({ "me": MIKE })).await;
     call(&base, "register", json!({ "me": BRETT })).await;

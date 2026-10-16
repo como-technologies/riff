@@ -62,7 +62,7 @@ async fn start_on(store: Arc<dyn Store>) -> (Service, Api) {
         // The access token counts as expired, so the first call
         // refreshes the pair. The server then saves the sign-in, as
         // after a real sign-in: a swap for a session token saves nothing
-        // (01M3WFVAB44T8EP4QZD4KS7DRF).
+        // (01M52JYGWD3ZJKNYE3HG5BJYTP).
         expires_at: 0,
         riff_id: None,
     };

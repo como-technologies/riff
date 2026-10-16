@@ -1,5 +1,5 @@
-//! The start order: load, then the lease, then the port
-//! (01M3THEE08ZKV8WGHDSVWV69ZE, 01M3THEE31H5QVV3JAFC4ZRGFR).
+//! The start order: load, then the port, then the lease
+//! (01M52JYGHHK5X0XS39VFT3ZGGM, 01M52JYGM7WH565B7PCVBEJC17).
 
 use crate::common;
 
@@ -176,47 +176,72 @@ async fn open(listen: &str) -> bool {
     tokio::net::TcpStream::connect(listen).await.is_ok()
 }
 
-/// The real `riff-server` with the real lease wait of 15 seconds.
+/// The real `riff-server` with the real lease wait of 15 seconds. Its
+/// port opens after the load and before the lease, and each call gets
+/// 503 until it serves (01M52JYGHHK5X0XS39VFT3ZGGM,
+/// 01M52JYGM7WH565B7PCVBEJC17).
 #[tokio::test]
-async fn the_port_opens_only_after_the_load() {
+async fn the_port_opens_after_the_load_and_gives_503_until_the_server_serves() {
     let dir = tempfile::tempdir().unwrap();
     let listen = common::free_address();
     let log = tempfile::NamedTempFile::new().unwrap();
     let _server = common::Server(common::server_on_dir(dir.path(), &listen, &log));
 
-    // The lease is there: the load is done. The port is still closed.
+    // The port opens before the lease is there.
     let lease = dir.path().join(LEASE);
     let span = isolated::Span::start();
-    while !lease.exists() {
-        assert!(span.within(Duration::from_secs(10)), "no lease");
-        assert!(!open(&listen).await, "the port is open before the lease");
+    loop {
+        let leased = lease.exists();
+        if open(&listen).await {
+            break;
+        }
+        assert!(!leased, "a lease and no open port");
+        assert!(span.within(Duration::from_secs(10)), "no open port");
         sleep(Duration::from_millis(20)).await;
     }
-    assert!(!open(&listen).await, "the port is open during the wait");
+    let opened = isolated::Span::start();
 
-    // After the wait, the port opens, and the server serves.
-    while !open(&listen).await {
-        assert!(span.within(Duration::from_secs(40)), "no open port");
+    // During the wait for the lease, each call gets 503 of riff-server.
+    let base = format!("http://{listen}");
+    let register = || {
+        common::client()
+            .post(format!("{base}/v1/register"))
+            .json(&json!({ "me": MIKE }))
+            .send()
+    };
+    let reply = register().await.unwrap();
+    assert_eq!(reply.status(), 503);
+    assert!(reply.headers().contains_key("riff-build"), "{reply:?}");
+    assert_eq!(reply.text().await.unwrap(), riff_server::listen::STARTING);
+
+    // After the wait, the server serves.
+    while register().await.unwrap().status() == 503 {
+        assert!(span.within(Duration::from_secs(40)), "it does not serve");
         sleep(Duration::from_millis(100)).await;
     }
-    call(
-        &format!("http://{listen}"),
-        "register",
-        json!({ "me": MIKE }),
-    )
-    .await;
+    // The real wait is 15 seconds, and the port opened before the take.
+    let waited = opened.wall();
+    assert!(
+        waited >= Duration::from_secs(14),
+        "it served after {waited:?}"
+    );
+    call(&base, "register", json!({ "me": MIKE })).await;
     let log = fs::read_to_string(log.path()).unwrap();
     let at = |text: &str| {
         log.find(text)
             .unwrap_or_else(|| panic!("no {text} in {log}"))
     };
-    assert!(at("loaded the checkpoint") < at("took the lease"), "{log}");
+    assert!(
+        at("loaded the checkpoint") < at("riff-server listens on"),
+        "{log}"
+    );
+    assert!(at("riff-server listens on") < at("took the lease"), "{log}");
     assert!(
         at("took the lease") < at("applied the records that came since the load"),
         "{log}"
     );
     assert!(
-        at("applied the records that came since the load") < at("riff-server listens on"),
+        at("applied the records that came since the load") < at("riff-server serves"),
         "{log}"
     );
 }

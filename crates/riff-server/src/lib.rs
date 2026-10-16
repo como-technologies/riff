@@ -145,25 +145,30 @@
 //!   change of the people get their reply after the write of their
 //!   records in the log.
 //! - A refresh and a new session token get their reply before the write
-//!   (01M3TFG527M04TA7ESM970X3B8). A session token changes nothing in
-//!   the object (01M3WFVAB44T8EP4QZD4KS7DRF). So after a crash, the object can be
-//!   one generation behind, and [`token::Tokens::refresh`] takes the next
-//!   generation as good. While the last write failed, a refresh first
+//!   (01M3TFG527M04TA7ESM970X3B8). The object keeps the hash of each
+//!   live access token, so a new session token is a change of it too
+//!   (01M52JYGSNTFPQ0ZP50AD2BG89). After a crash, the object can be one
+//!   write behind: a token of that last write is not known, and its
+//!   client refreshes one time. [`token::Tokens::refresh`] takes the
+//!   next generation as good. While the last write failed, a refresh first
 //!   writes the store again, and gets 503 when that write fails too.
 //!   While the store is busy, a refresh writes nothing: it goes on
 //!   while the last good write is less than one window old, and gets
 //!   503 after that (01M3ZZQCEKEYK9CE8MGPM80Z2P).
-//! - A server with a store loads first, then takes the [`lease`], and
-//!   keeps reading it (see [`Service::load`]). `main` opens the port
-//!   only after that ([`listen::Port`]). A gate replies 503 to each call
-//!   while the server does not serve (R139). The server saves only while
-//!   it holds the lease (R155).
+//! - A server with a store loads first ([`Service::prepare`]), opens
+//!   its port, then takes the [`lease`], and keeps reading it
+//!   ([`Loaded::serve`]). Until it serves, each call gets 503
+//!   (01M52JYGHHK5X0XS39VFT3ZGGM, 01M52JYGM7WH565B7PCVBEJC17, see
+//!   [`listen::serve`]). A gate replies 503 to each call while the
+//!   server does not serve (R139). The server saves only while it holds
+//!   the lease (R155).
 //! - A server that reads another ID in the lease, or whose save finds
 //!   another version, or whose chunk has the name of another chunk, stops
-//!   for good (R140, R141): each stream closes, each call gets 503, and
-//!   it saves nothing more.
-//!   [`Service::stopped`] tells `main`, which exits after
-//!   [`lease::Timing::exit_after`].
+//!   for good (01M52JYGPX5ETP3HKR0S0Y0YCR, R141): each stream closes,
+//!   each call gets 503, and it saves nothing more.
+//!   [`Service::stopped`] tells [`listen::serve`]: it closes the port at
+//!   once, and exits after the hand-over, at most
+//!   [`lease::Timing::exit_after`] later.
 //! - A server refuses each proof issued before it started to serve
 //!   (R142).
 //! - `GET /v1/server` gives the facts of the instance, for `riff server`
@@ -428,11 +433,33 @@ impl FromRef<Shared> for Engine {
     }
 }
 
+/// The state of a server with a store, loaded with no lease: the result
+/// of [`Service::prepare`]. [`Loaded::serve`] takes the lease and gives
+/// the [`Service`].
+pub struct Loaded {
+    config: Config,
+    store: Arc<dyn Store>,
+    http: reqwest::Client,
+    facts: Facts,
+    old: Option<Old>,
+    build: String,
+    /// The name of the newest checkpoint at the load, also when it does
+    /// not read (01M3TJWJC08ZR5TWA1Y9CDE0QM).
+    newest_name: Option<String>,
+    loaded: Option<CheckpointFacts>,
+    newest: Option<CheckpointFacts>,
+    blocked: Option<String>,
+    from: u64,
+    state: State,
+    skipped: Option<u64>,
+    skips: u64,
+}
+
 /// When a server serves. A server with no lease serves until it stops.
 struct Gate {
     /// With a lease: the server serves until this time (R139).
     until: Mutex<Option<Instant>>,
-    /// True once the server stopped for good (R140).
+    /// True once the server stopped for good (01M52JYGPX5ETP3HKR0S0Y0YCR).
     stopped: tokio::sync::watch::Sender<bool>,
     /// True once the server stopped because its lease ended by its age
     /// (01M3X5TPBMF81TDVZ7Q4NVXBQX).
@@ -756,7 +783,7 @@ impl Server {
     }
 
     /// True while the server holds the lease and has not stopped, so it
-    /// may save (R139, R140).
+    /// may save (R139, 01M52JYGPX5ETP3HKR0S0Y0YCR).
     fn leased(&self) -> bool {
         !self.is_stopped() && self.until().is_none_or(|until| Instant::now() < until)
     }
@@ -771,7 +798,7 @@ impl Server {
         *self.gate.stopped.borrow()
     }
 
-    /// Stops for good (R140). Each command that waits for the writer
+    /// Stops for good (01M52JYGPX5ETP3HKR0S0Y0YCR). Each command that waits for the writer
     /// fails.
     fn stop(&self, why: &str) {
         if !self.gate.stopped.send_replace(true) {
@@ -874,7 +901,7 @@ impl Server {
         }
     }
 
-    /// Stops for good, because another holder took the lease (R140).
+    /// Stops for good, because another holder took the lease (01M52JYGPX5ETP3HKR0S0Y0YCR).
     /// When that holder is another instance, a deploy took the lease:
     /// the server then writes its last checkpoint, the hand-over
     /// (01M51X8MG0YQT5KBZC9H7917J3). The new instance loads its state
@@ -1206,12 +1233,13 @@ impl Service {
     }
 
     /// A server with the state that `store` holds
-    /// (01M3THEE08ZKV8WGHDSVWV69ZE).
+    /// (01M52JYGHHK5X0XS39VFT3ZGGM).
     ///
     /// ```mermaid
     /// flowchart TD
     ///     L[load the sign-ins and the newest checkpoint,<br/>replay the log after it] -->|fails| X[error: no lease.<br/>The old instance serves on]
-    ///     L -->|works| T[take the lease, wait]
+    ///     L -->|works| P[the port opens: 503 until it serves]
+    ///     P --> T[take the lease, wait]
     ///     T --> K[list the checkpoints again]
     ///     K -->|a checkpoint came| R[load the state again from it,<br/>replay the log after it]
     ///     K -->|none came| C
@@ -1219,9 +1247,12 @@ impl Service {
     ///     C --> S[serve from the next whole second]
     /// ```
     ///
-    /// - It loads first, with no lease. So a build that cannot load
-    ///   changes nothing in the store, and the old instance serves on.
-    /// - Then it takes the lease and waits [`lease::Timing::wait`]. The
+    /// - It loads first, with no lease ([`Service::prepare`]). So a build
+    ///   that cannot load changes nothing in the store, and the old
+    ///   instance serves on. `main` opens the port after the load
+    ///   ([`listen::serve`]).
+    /// - Then it takes the lease and waits [`lease::Timing::wait`]
+    ///   ([`Loaded::serve`]). The
     ///   old instance writes until it reads the new lease. So the new
     ///   instance then applies the chunks that came since its load, and
     ///   loads the sign-ins again.
@@ -1243,8 +1274,8 @@ impl Service {
     ///   or when the log does not read (see [`log::replay`]).
     /// - A store with the objects of a riff-server from before the log,
     ///   and no log, gets the import of go-live before the load ends
-    ///   (01M3Z8MRDZEKTXSKZTDTDSCZ3W, see [`import`]). So the port opens
-    ///   only after the import. The old instance wrote its objects until
+    ///   (01M3Z8MRDZEKTXSKZTDTDSCZ3W, see [`import`]). So the server
+    ///   serves only after the import. The old instance wrote its objects until
     ///   it read the new lease, so the load reads them again after the
     ///   wait, and imports from that read (01M3ZCDNQY2G9ET537B6SBYCBB). When the log
     ///   is there after the wait, another instance made the import: this
@@ -1280,6 +1311,36 @@ impl Service {
     /// # Ok(()) }
     /// ```
     pub async fn load(config: Config, store: Arc<dyn Store>) -> Result<Self, StoreError> {
+        Service::prepare(config, store).await?.serve().await
+    }
+
+    /// The first step of [`Service::load`]: it loads the state of
+    /// `store`, with no lease. [`Loaded::serve`] does the rest. Between
+    /// the two steps, `main` opens the port (01M52JYGHHK5X0XS39VFT3ZGGM).
+    /// An error here leaves the store as it is, and the old instance
+    /// serves on.
+    ///
+    /// ```
+    /// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
+    /// use std::sync::Arc;
+    /// use std::time::Duration;
+    /// use riff_server::Service;
+    /// use riff_server::auth::Config;
+    /// use riff_state::store::{LEASE, Memory, Store};
+    ///
+    /// let mut config = Config::default();
+    /// config.lease.wait = Duration::from_millis(10);
+    /// let store = Memory::default();
+    /// let loaded = Service::prepare(config, Arc::new(store.clone())).await?;
+    /// // The load takes no lease.
+    /// assert!(store.load(LEASE).await?.is_none());
+    /// assert!(!loaded.owned());
+    /// let service = loaded.serve().await?;
+    /// assert!(store.load(LEASE).await?.is_some());
+    /// # drop(service);
+    /// # Ok(()) }
+    /// ```
+    pub async fn prepare(config: Config, store: Arc<dyn Store>) -> Result<Loaded, StoreError> {
         // The build of the HTTP client blocks. Build it now, so that it
         // does not use up the serve time after the lease read (R139).
         let http = oidc::client(oidc::FETCH_TIMEOUT);
@@ -1292,15 +1353,15 @@ impl Service {
         let build = config.checkpoint.build.clone();
         let found = checkpoint::load(&*store, &build).await?;
         let loaded = found.checkpoint.as_ref().map(checkpoint_facts);
-        let mut newest = loaded.clone();
-        let mut blocked = found.blocked;
+        let newest = loaded.clone();
+        let blocked = found.blocked;
         let snapshot = found.checkpoint.map(|c| c.state);
         let from = snapshot.as_ref().map_or(0, |s| s.position);
         let log::Replayed {
             records,
             last,
-            mut skipped,
-            mut skips,
+            skipped,
+            skips,
             ..
         } = log::replay_after(&*store, from).await?;
         let count = records.len();
@@ -1314,119 +1375,22 @@ impl Service {
             "loaded the checkpoint and replayed the log after it in {:?}",
             facts.replay
         );
-        let taken = Instant::now();
-        let lease = Lease::take(store.clone()).await?;
-        tracing::info!(
-            "took the lease as {}; waiting {:?} for the old instance",
-            lease.id(),
-            config.lease.wait
-        );
-        tokio::time::sleep(config.lease.wait).await;
-        // Serve from the next whole second, and refuse each proof issued
-        // before it (R142). See the lease module for the argument.
-        tokio::time::sleep(Duration::from_millis(1000 - now_ms() % 1000)).await;
-        let start = now_ms() / 1000;
-        // The old instance can also write a checkpoint until it reads
-        // the new lease, and it writes its last one when it reads it
-        // (01M51X8MG0YQT5KBZC9H7917J3). This build writes none past a
-        // checkpoint of a later version (01M3TJWJC08ZR5TWA1Y9CDE0QM).
-        let now = checkpoint::names(&*store).await?.pop();
-        if now.map(|(_, _, name)| name) != found.newest {
-            let again = checkpoint::load(&*store, &build).await?;
-            tracing::info!("a checkpoint came since the load");
-            newest = again.checkpoint.as_ref().map(checkpoint_facts);
-            blocked = again.blocked;
-            // Its read cursors and its presence are newer than the
-            // memory of the load: load the state again from it
-            // (01M51X8P4M8PHSSJMWF1J1KQS1).
-            if let Some(checkpoint) = again
-                .checkpoint
-                .filter(|c| c.state.position >= from && Some(checkpoint_facts(c)) != loaded)
-            {
-                let from = checkpoint.state.position;
-                let replayed = log::replay_after(&*store, from).await?;
-                tracing::info!(
-                    checkpoint = from,
-                    records = replayed.records.len(),
-                    "loaded the state again from the checkpoint of the old instance"
-                );
-                state = State::load(
-                    Some(checkpoint.state),
-                    replayed.records,
-                    Instant::now(),
-                    now_ms(),
-                );
-                state.continue_after(replayed.last);
-                (skipped, skips) = (replayed.skipped, replayed.skips);
-            }
-        }
-        // The old instance wrote until it read the new lease.
-        let since = log::replay_after(&*store, state.position()).await?;
-        tracing::info!(
-            records = since.records.len(),
-            position = since.last,
-            "applied the records that came since the load"
-        );
-        state.catch_up(since.records);
-        state.continue_after(since.last);
-        let skipped = skipped.or(since.skipped);
-        facts.skipped = skips + since.skips;
-        facts.chunks = since.chunks;
-        // An old instance from before the log wrote its objects until it
-        // read the new lease. So the import reads them again
-        // (01M3ZCDNQY2G9ET537B6SBYCBB). When another instance made the
-        // import in that time, the log is there, and this read gives
-        // none: this instance does not import.
-        let old = match old {
-            Some(_) => read_old_objects(&*store).await?,
-            None => None,
-        };
-        let (tokens, version) = load_tokens(&*store).await?;
-        let written = Written { version, at: None };
-        let blocked = blocked.or_else(|| {
-            skipped.map(|position| format!("this build skipped the record at position {position}"))
-        });
-        let checkpoints = Checkpoints::new(blocked, newest);
-        let asked = Instant::now();
-        if !lease.held().await? {
-            return Err(StoreError::Conflict(store::LEASE.into()));
-        }
-        let lease = Arc::new(lease);
-        let saved = Saved {
-            store: store.clone(),
-            lease: lease.clone(),
-            written: tokio::sync::Mutex::new(written),
-        };
-        let until = asked + config.lease.valid_for;
-        let service = Service::build(
+        Ok(Loaded {
             config,
-            state,
-            tokens,
-            http,
-            Some(saved),
             store,
-            Some(until),
-            start,
-            checkpoints,
+            http,
             facts,
-            old.is_some(),
-        );
-        // Save the token store once: the load can drop sign-ins
-        // (01M3XA87A9GGFA89RQXWSKY0V6), and a store that does not save
-        // shows at the start. While that save failed, a refresh gets 503
-        // (R150).
-        drop(service.0.tokens_change());
-        if let Err(error) = service.0.save_tokens_since(0).await {
-            service
-                .0
-                .error(format!("the token store was not saved: {error}"));
-        }
-        service.keep_lease(lease, taken);
-        service.save_each_second();
-        if let Some(old) = old {
-            service.0.import(&old).await?;
-        }
-        Ok(service)
+            old,
+            build,
+            newest_name: found.newest,
+            loaded,
+            newest,
+            blocked,
+            from,
+            state,
+            skipped,
+            skips,
+        })
     }
 
     /// `log` is the store of the log. `until` is the end of the first
@@ -1744,7 +1708,7 @@ impl Service {
     /// Waits until each record in the queue is written, then saves the
     /// token store when it changed. A server with no store saves no
     /// token store. A server that does not hold the lease now, or that
-    /// stopped, saves nothing (R140, R155). A save that finds another
+    /// stopped, saves nothing (01M52JYGPX5ETP3HKR0S0Y0YCR, R155). A save that finds another
     /// version stops the server for good (R141).
     pub async fn save(&self) -> Result<(), StoreError> {
         if !self.0.leased() {
@@ -1791,9 +1755,18 @@ impl Service {
         saved
     }
 
-    /// Ends when the server stops for good (R140, R141).
+    /// Ends when the server stops for good (01M52JYGPX5ETP3HKR0S0Y0YCR, R141).
     pub async fn stopped(&self) {
         self.0.stopping().await;
+    }
+
+    /// Ends when the server wrote the checkpoint of the hand-over, or at
+    /// once when it writes none (01M51X8MG0YQT5KBZC9H7917J3). The write
+    /// starts before the stop, so after [`Service::stopped`] this waits
+    /// for its end. A stopped instance exits only after it
+    /// (01M52JYGPX5ETP3HKR0S0Y0YCR).
+    pub async fn handed_over(&self) {
+        drop(self.0.gate.handing_over.lock().await);
     }
 
     /// True when the server stopped because its last write of the time
@@ -2106,6 +2079,156 @@ impl Service {
     /// The number of proof IDs that this server keeps (R114).
     pub fn proofs_kept(&self) -> usize {
         self.0.replay().len()
+    }
+}
+
+impl Loaded {
+    /// True when the loaded state has an owner, or when the settings
+    /// name the owner of a riff that has none: the start names it. The
+    /// check of the listen address reads it before the port opens
+    /// ([`listen::check`]).
+    pub fn owned(&self) -> bool {
+        self.state.owned() || (self.config.owner.is_some() && !self.config.trusted())
+    }
+
+    /// The settings of the server.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// The second step of [`Service::load`]: it takes the lease, waits
+    /// for the old instance, loads what came in that time, and gives the
+    /// server that serves. See [`Service::load`].
+    pub async fn serve(self) -> Result<Service, StoreError> {
+        let Loaded {
+            config,
+            store,
+            http,
+            mut facts,
+            old,
+            build,
+            newest_name,
+            loaded,
+            mut newest,
+            mut blocked,
+            from,
+            mut state,
+            mut skipped,
+            mut skips,
+        } = self;
+        let taken = Instant::now();
+        let lease = Lease::take(store.clone()).await?;
+        tracing::info!(
+            "took the lease as {}; waiting {:?} for the old instance",
+            lease.id(),
+            config.lease.wait
+        );
+        tokio::time::sleep(config.lease.wait).await;
+        // Serve from the next whole second, and refuse each proof issued
+        // before it (R142). See the lease module for the argument.
+        tokio::time::sleep(Duration::from_millis(1000 - now_ms() % 1000)).await;
+        let start = now_ms() / 1000;
+        // The old instance can also write a checkpoint until it reads
+        // the new lease, and it writes its last one when it reads it
+        // (01M51X8MG0YQT5KBZC9H7917J3). This build writes none past a
+        // checkpoint of a later version (01M3TJWJC08ZR5TWA1Y9CDE0QM).
+        let now = checkpoint::names(&*store).await?.pop();
+        if now.map(|(_, _, name)| name) != newest_name {
+            let again = checkpoint::load(&*store, &build).await?;
+            tracing::info!("a checkpoint came since the load");
+            newest = again.checkpoint.as_ref().map(checkpoint_facts);
+            blocked = again.blocked;
+            // Its read cursors and its presence are newer than the
+            // memory of the load: load the state again from it
+            // (01M51X8P4M8PHSSJMWF1J1KQS1).
+            if let Some(checkpoint) = again
+                .checkpoint
+                .filter(|c| c.state.position >= from && Some(checkpoint_facts(c)) != loaded)
+            {
+                let from = checkpoint.state.position;
+                let replayed = log::replay_after(&*store, from).await?;
+                tracing::info!(
+                    checkpoint = from,
+                    records = replayed.records.len(),
+                    "loaded the state again from the checkpoint of the old instance"
+                );
+                state = State::load(
+                    Some(checkpoint.state),
+                    replayed.records,
+                    Instant::now(),
+                    now_ms(),
+                );
+                state.continue_after(replayed.last);
+                (skipped, skips) = (replayed.skipped, replayed.skips);
+            }
+        }
+        // The old instance wrote until it read the new lease.
+        let since = log::replay_after(&*store, state.position()).await?;
+        tracing::info!(
+            records = since.records.len(),
+            position = since.last,
+            "applied the records that came since the load"
+        );
+        state.catch_up(since.records);
+        state.continue_after(since.last);
+        let skipped = skipped.or(since.skipped);
+        facts.skipped = skips + since.skips;
+        facts.chunks = since.chunks;
+        // An old instance from before the log wrote its objects until it
+        // read the new lease. So the import reads them again
+        // (01M3ZCDNQY2G9ET537B6SBYCBB). When another instance made the
+        // import in that time, the log is there, and this read gives
+        // none: this instance does not import.
+        let old = match old {
+            Some(_) => read_old_objects(&*store).await?,
+            None => None,
+        };
+        let (tokens, version) = load_tokens(&*store).await?;
+        let written = Written { version, at: None };
+        let blocked = blocked.or_else(|| {
+            skipped.map(|position| format!("this build skipped the record at position {position}"))
+        });
+        let checkpoints = Checkpoints::new(blocked, newest);
+        let asked = Instant::now();
+        if !lease.held().await? {
+            return Err(StoreError::Conflict(store::LEASE.into()));
+        }
+        let lease = Arc::new(lease);
+        let saved = Saved {
+            store: store.clone(),
+            lease: lease.clone(),
+            written: tokio::sync::Mutex::new(written),
+        };
+        let until = asked + config.lease.valid_for;
+        let service = Service::build(
+            config,
+            state,
+            tokens,
+            http,
+            Some(saved),
+            store,
+            Some(until),
+            start,
+            checkpoints,
+            facts,
+            old.is_some(),
+        );
+        // Save the token store once: the load can drop sign-ins
+        // (01M3XA87A9GGFA89RQXWSKY0V6), and a store that does not save
+        // shows at the start. While that save failed, a refresh gets 503
+        // (R150).
+        drop(service.0.tokens_change());
+        if let Err(error) = service.0.save_tokens_since(0).await {
+            service
+                .0
+                .error(format!("the token store was not saved: {error}"));
+        }
+        service.keep_lease(lease, taken);
+        service.save_each_second();
+        if let Some(old) = old {
+            service.0.import(&old).await?;
+        }
+        Ok(service)
     }
 }
 
@@ -2677,7 +2800,7 @@ async fn stamp_build(request: Request, next: Next) -> Response {
 }
 
 /// Replies 503 to each call while the server does not serve (R139,
-/// R140).
+/// 01M52JYGPX5ETP3HKR0S0Y0YCR).
 async fn gate(AxumState(s): AxumState<Shared>, request: Request, next: Next) -> Response {
     if s.serving() {
         return next.run(request).await;
@@ -2767,8 +2890,9 @@ async fn exchange(
 }
 
 /// Swaps a person access token for a session access token (R19). The
-/// token store keeps nothing of a session token, so the swap counts no
-/// change of it (01M3WFVAB44T8EP4QZD4KS7DRF).
+/// token store keeps the hash of the session token, so the swap is a
+/// change of it: the task of each second saves it
+/// (01M52JYGSNTFPQ0ZP50AD2BG89).
 async fn for_session(
     s: &Server,
     r: &TokenRequest,
@@ -2783,7 +2907,7 @@ async fn for_session(
     }
     s.tokens_written().await?;
     s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
-    s.tokens()
+    s.tokens_change()
         .for_session(token, &proof.jkt, session, now)
         .map_err(|_| no("invalid_grant"))
 }

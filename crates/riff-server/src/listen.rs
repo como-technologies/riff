@@ -38,27 +38,61 @@
 //!
 //! # The port
 //!
-//! `riff-server` opens its port only after the load and the wait for
-//! the lease (01M3THEE31H5QVV3JAFC4ZRGFR). Cloud Run sends calls to a
-//! new revision only when its port is open. So a build that cannot load
-//! gets no call, and the old revision serves on. A [`Port`] holds the
-//! address from the start, and takes no connection until [`Port::open`].
+//! A [`Port`] holds the address from the start, and takes no connection
+//! until [`Port::open`]. [`serve`] runs the server on it:
+//!
+//! - A server with a store opens its port after the load, and before it
+//!   takes the lease (01M52JYGHHK5X0XS39VFT3ZGGM). A build that cannot
+//!   load opens no port and takes no lease, so the old instance serves
+//!   on.
+//! - Until the server serves, each call gets 503 (01M52JYGM7WH565B7PCVBEJC17).
+//!   `riff` tries it again (R132). So at an instance change, Cloud Run
+//!   always has an open port to send the calls to: the old instance
+//!   serves until the new one takes the lease, and the new one then
+//!   serves after its wait.
+//! - A server that stops for good, because another instance took the
+//!   lease, closes its port at once. It takes no new call, so Cloud Run
+//!   sends each call to the new instance. It exits when the checkpoint
+//!   of the hand-over is written, at most [`crate::lease::Timing::exit_after`]
+//!   after the stop (01M52JYGPX5ETP3HKR0S0Y0YCR).
+//! - A server with no store serves at once: its port opens when it
+//!   serves.
 //!
 //! ```mermaid
 //! sequenceDiagram
-//!     participant M as main
-//!     participant P as Port
-//!     participant S as Service
-//!     M->>P: reserve (bind, do not listen)
-//!     M->>S: load, take the lease, wait
-//!     Note over P: each connect is refused
-//!     M->>P: open (listen)
-//!     Note over P: takes connections
+//!     participant C as Cloud Run
+//!     participant O as old instance
+//!     participant N as new instance
+//!     participant S as store
+//!     N->>S: load, with no lease
+//!     Note over N: opens its port: 503 until it serves
+//!     N->>S: write the lease (new ID), wait 15 s
+//!     O->>S: read the lease: new ID
+//!     Note over O: stops: closes its port
+//!     C->>N: each call
+//!     N-->>C: 503, riff tries again
+//!     O->>S: write the checkpoint of the hand-over
+//!     Note over O: exits
+//!     N->>S: load the checkpoint and the chunks of the wait
+//!     Note over N: serves
+//!     C->>N: each call
+//!     N-->>C: the reply
 //! ```
 
+use std::future::{Future, IntoFuture};
 use std::net::SocketAddr;
+use std::sync::{Arc, OnceLock};
 
+use axum::Router;
+use axum::extract::Request;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use riff_core::build::{self, Build};
+use riff_state::store::StoreError;
 use tokio::net::{TcpListener, TcpSocket};
+use tower::ServiceExt;
+
+use crate::{Loaded, Service};
 
 /// The connections that wait for the server at one time.
 const BACKLOG: u32 = 1024;
@@ -165,6 +199,177 @@ pub fn check(
          of your own OIDC app. Or add --insecure (RIFF_INSECURE) to let each machine that can \
          reach it read, post and answer as any person."
     ))
+}
+
+/// How a server starts in [`serve`].
+pub enum Start {
+    /// A server with no store: it serves at once.
+    Now(Service),
+    /// A server with a store, loaded with no lease: it opens its port,
+    /// then takes the lease (01M52JYGHHK5X0XS39VFT3ZGGM).
+    AfterLease(Box<Loaded>),
+}
+
+/// The text of the 503 of a server that does not serve yet
+/// (01M52JYGM7WH565B7PCVBEJC17).
+pub const STARTING: &str = "riff-server starts: it serves in a few seconds. Try again.";
+
+/// The reply to each call while the server does not serve yet: 503,
+/// with the build of this server. So `riff` sees a 503 of riff-server,
+/// and tries the call again.
+fn starting() -> Response {
+    let mut reply = (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "1")],
+        STARTING,
+    )
+        .into_response();
+    if let Ok(value) = header::HeaderValue::from_str(&Build::this().to_string()) {
+        reply.headers_mut().insert(build::HEADER, value);
+    }
+    reply
+}
+
+/// Runs a server on `port` until it stops (see "The port" above).
+///
+/// - `start` gives the server. With [`Start::AfterLease`], the port
+///   opens first, and each call gets 503 until the server serves.
+/// - `check` runs after the first save of the server, before it serves.
+///   An error stops the start: `main` checks the listen address there.
+/// - At the end of `shutdown`, the server stops taking calls, saves and
+///   ends its lease (R129).
+/// - When the server stops for good (R141, 01M52JYGPX5ETP3HKR0S0Y0YCR),
+///   it closes the port at once, and returns when the hand-over is
+///   written, at most [`crate::lease::Timing::exit_after`] later. When
+///   its lease ended by its age, it returns an error at once
+///   (01M3X5TPBMF81TDVZ7Q4NVXBQX).
+/// - When the start fails after the port opened, it closes the port, and
+///   returns the error.
+///
+/// ```
+/// # #[tokio::main] async fn main() -> std::io::Result<()> {
+/// use riff_server::Service;
+/// use riff_server::listen::{Port, Start, serve};
+///
+/// let port = Port::reserve("127.0.0.1:0".parse().unwrap())?;
+/// let url = format!("http://{}/.well-known/oauth-authorization-server", port.addr());
+/// let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+/// let server = tokio::spawn(serve(port, Start::Now(Service::default()), async {
+///     let _ = stopped.await;
+/// }, |_| Ok(())));
+/// # let span = std::time::Instant::now();
+/// let reply = loop {
+///     if let Ok(reply) = reqwest::get(&url).await {
+///         break reply;
+///     }
+/// #   assert!(span.elapsed().as_secs() < 30);
+///     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+/// };
+/// assert_eq!(reply.status(), 200);
+/// stop.send(()).unwrap();
+/// server.await.unwrap()?;
+/// # Ok(()) }
+/// ```
+pub async fn serve<D, C>(port: Port, start: Start, shutdown: D, check: C) -> std::io::Result<()>
+where
+    D: Future<Output = ()>,
+    C: FnOnce(&Service) -> Result<(), String>,
+{
+    let routes: Arc<OnceLock<Router>> = Arc::default();
+    let front = {
+        let routes = routes.clone();
+        Router::new().fallback(move |request: Request| {
+            let routes = routes.clone();
+            async move {
+                match routes.get() {
+                    Some(router) => match router.clone().oneshot(request).await {
+                        Ok(reply) => reply,
+                        Err(never) => match never {},
+                    },
+                    None => starting(),
+                }
+            }
+        })
+    };
+    let (close, closed) = tokio::sync::watch::channel(false);
+    let open = |port: Port| -> std::io::Result<tokio::task::JoinHandle<std::io::Result<()>>> {
+        let listener = port.open()?;
+        tracing::info!("riff-server listens on {}", listener.local_addr()?);
+        let mut closed = closed.clone();
+        let serving = axum::serve(listener, front.clone()).with_graceful_shutdown(async move {
+            let _ = closed.wait_for(|closed| *closed).await;
+        });
+        Ok(tokio::spawn(serving.into_future()))
+    };
+    let failed = |error: StoreError| std::io::Error::other(error.to_string());
+    let (service, mut serving) = match start {
+        Start::Now(service) => {
+            service.save().await.map_err(failed)?;
+            check(&service)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+            let _ = routes.set(service.router());
+            (service, open(port)?)
+        }
+        Start::AfterLease(loaded) => {
+            let serving = open(port)?;
+            let started = async {
+                let service = loaded.serve().await.map_err(failed)?;
+                // The owner of the settings is a record of the start:
+                // wait for its write, so that the check reads it.
+                service.save().await.map_err(failed)?;
+                check(&service)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+                Ok::<_, std::io::Error>(service)
+            };
+            match started.await {
+                Ok(service) => {
+                    let _ = routes.set(service.router());
+                    (service, serving)
+                }
+                Err(error) => {
+                    let _ = close.send(true);
+                    return Err(error);
+                }
+            }
+        }
+    };
+    tracing::info!("riff-server serves");
+    tokio::select! {
+        result = &mut serving => result.map_err(std::io::Error::other)?,
+        () = shutdown => {
+            // Take no more calls, save each unsaved change, then exit (R129).
+            let _ = close.send(true);
+            tracing::info!("stopping: saving the state");
+            service.shutdown().await.map_err(std::io::Error::other)
+        }
+        () = service.stopped() => {
+            // Take no new call: Cloud Run sends each call to the new
+            // instance (01M52JYGPX5ETP3HKR0S0Y0YCR).
+            let _ = close.send(true);
+            if service.lease_ended() {
+                // A tool can have changed the log. Exit with an error,
+                // so that a new instance loads the state from the store
+                // (01M3X5TPBMF81TDVZ7Q4NVXBQX).
+                return Err(std::io::Error::other(
+                    "the lease of this instance ended by its age: its state in memory can \
+                     be old",
+                ));
+            }
+            tracing::info!("another instance serves: the port is closed");
+            let exit_after = service.config().lease.exit_after;
+            let ended = async {
+                service.handed_over().await;
+                let _ = serving.await;
+            };
+            if tokio::time::timeout(exit_after, ended).await.is_err() {
+                tracing::warn!(
+                    "exiting after {exit_after:?} with no end of the hand-over or of each call"
+                );
+            }
+            tracing::info!("exiting: another instance serves");
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 //! A token for each session (R19, R104, R105,
-//! 01M3WFVAB44T8EP4QZD4KS7DRF, 01M3WFVADCDZM8XX590KAEMEYG), over HTTP.
+//! 01M52JYGWD3ZJKNYE3HG5BJYTP, 01M3WFVADCDZM8XX590KAEMEYG), over HTTP.
 
 use crate::common;
 
@@ -119,7 +119,7 @@ async fn only_a_person_token_gives_a_session_token() {
     assert_eq!(stolen.status(), 400);
 }
 
-/// A session token has no refresh token (01M3WFVAB44T8EP4QZD4KS7DRF):
+/// A session token has no refresh token (01M52JYGWD3ZJKNYE3HG5BJYTP):
 /// the reply has an empty one, and the server refuses it.
 #[tokio::test]
 async fn a_session_token_has_no_refresh_token() {

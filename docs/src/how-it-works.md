@@ -3813,8 +3813,10 @@ session, and each direct thread whose two sessions are gone.
 A sign-in stays valid after a restart with a bucket. The server saves
 the sign-ins and their chains in the object `signins.json`, with only a
 hash of each refresh token. It writes the object at most one time each
-second. The access tokens are only in memory: after a restart, `riff`
-refreshes one time by itself.
+second. The object also keeps a hash of each live access token. So
+after a restart or a deploy, `riff` uses its access token as before,
+and does not refresh. Only a token from the last second before a crash
+is lost: then `riff` refreshes one time by itself.
 
 The people are not in that object. Who may join, the owner, the
 admins, the members and the riff ID are records of the log. So they
@@ -3866,9 +3868,11 @@ sequenceDiagram
 ```
 
 During a deploy, Cloud Run starts the new instance before it stops the
-old one. A lease in Cloud Storage makes sure that only one instance
-serves. The new instance loads the state first. It takes the lease and
-opens its port only when the load works:
+old one. Cloud Run can also change the instance with no deploy, for
+example when it moves the instance to another machine. A lease in
+Cloud Storage makes sure that only one instance serves. The new
+instance loads the state first. It opens its port and takes the lease
+only when the load works:
 
 ```mermaid
 sequenceDiagram
@@ -3878,28 +3882,42 @@ sequenceDiagram
     participant W as riff watch
     N->>S: load the sign-ins, the checkpoint and the log
     alt the load fails
-        Note over N: exits: no lease, no open port
+        Note over N: exits: no open port, no lease
         Note over O: serves on
     else the load works
+        Note over N: opens its port: 503 until it serves
         N->>S: write the lease (new ID)
         Note over N: waits 15 s
         O->>S: read the lease (every 2 s)
         S-->>O: new ID
         O-->>W: close the stream
-        Note over O: replies 503, saves no record, exits after 60 s
+        Note over O: closes its port, saves no record
         O->>S: write the last checkpoint
+        Note over O: exits
         N->>S: list the checkpoints again
         Note over N: loads the state again from the last checkpoint of O
         N->>S: read the chunks that came since the load
-        Note over N: opens its port
+        Note over N: serves
         W->>N: connect again
         N-->>W: one line, if an addressed message is unread
     end
 ```
 
-A new build that cannot read the state never serves. Cloud Run sends
-calls to a new instance only when its port is open, so the old instance
-serves on.
+A new build that cannot read the state never serves. It opens no port,
+so Cloud Run sends no call to it, and the old instance serves on.
+
+At an instance change, `riff` sees this:
+
+- The old instance serves until it reads the new lease. Then it closes
+  its port at once, so Cloud Run sends each call to the new instance.
+  The old instance exits when its last checkpoint is written, at most
+  10 seconds later.
+- The new instance replies 503 until it serves, about 15 seconds after
+  it took the lease. `riff` tries each call again, and shows
+  `(waits for riff-server…)` (see
+  [Wait while the server starts](#wait-while-the-server-starts)).
+- Your access token still works on the new instance: `riff` does not
+  refresh, and does not sign in again.
 
 The claims of each session come back with the log. Each session has 5
 minutes from the load to call again. After that, its claims are free.
@@ -3971,14 +3989,15 @@ line:
 `riff chat` shows the line above its prompt. `riff top` keeps its table,
 and shows the line below it.
 
-A server on one machine with `--dir` opens its port only after the
-gap. Before that, each connect is refused. A `riff` that got a reply
-from the server before waits in the same way: `riff mcp`,
-`riff watch`, `riff chat` and `riff top` go on after a restart. A new
-`riff` command cannot tell a server on this machine that starts from
-no server, so a refused connect to `127.0.0.1` or `localhost` ends it
-at once. Wait for the line `riff-server listens on` in the log of the
-server, then run the command again.
+A server on one machine with `--dir` opens its port after its load,
+and replies 503 in the gap. Before the end of the load, each connect is
+refused. A `riff` that got a reply from the server before waits in the
+same way: `riff mcp`, `riff watch`, `riff chat` and `riff top` go on
+after a restart. A new `riff` command cannot tell a server on this
+machine that starts from no server, so a refused connect to
+`127.0.0.1` or `localhost` ends it at once. Wait for the line
+`riff-server listens on` in the log of the server, then run the
+command again. The line `riff-server serves` comes after the gap.
 
 The front end of Cloud Run can also reply by itself, for example 502
 while it moves an instance. Such a reply has no `riff-build` header.
