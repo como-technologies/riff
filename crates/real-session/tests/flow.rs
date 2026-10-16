@@ -25,6 +25,9 @@
 //! | `workers` | `riff run` builds and commits in a worktree of the other clone ([`Fake::other_clone`]), and makes a new worktree there |
 //! | `in-clone` | `riff run` writes a new file in the other clone, outside its worktrees |
 //! | `hook` | `riff run` writes a new hook in the git folder of the other clone |
+//! | `branch` | `riff run` adds a section `[branch "x"]` to the git config of the other clone and of the clone of the test, as `git push -u` does, and builds in the clone of the test |
+//! | `hooks-path` | `riff run` sets `core.hooksPath` in the git config of the other clone and of the clone of the test |
+//! | `hook-changed` | `riff run` writes to the hook `pre-push` of the other clone, which is there already |
 //! | `no-pull` | `gh pr view` finds no pull request |
 //! | `no-gate` | the head commit has no check run |
 
@@ -134,6 +137,19 @@ run)
   fi
   if [ -f "$c/in-clone" ]; then touch "$m/notes.md"; fi
   if [ -f "$c/hook" ]; then touch "$m/.git/hooks/pre-commit"; fi
+  t="$HOME/src/riff"
+  if [ -f "$c/branch" ]; then
+    for r in "$m" "$t"; do
+      git -C "$r" config branch.x.remote origin
+      git -C "$r" config branch.x.merge refs/heads/x
+    done
+    mkdir -p "$t/target/debug"
+    touch "$t/target/debug/riff"
+  fi
+  if [ -f "$c/hooks-path" ]; then
+    for r in "$m" "$t"; do git -C "$r" config core.hooksPath /tmp/hooks; done
+  fi
+  if [ -f "$c/hook-changed" ]; then echo 'curl x' >> "$m/.git/hooks/pre-push"; fi
   if [ -f "$c/run-waits" ]; then touch "$c/running"; sleep 30; fi
   if [ -f "$c/run-signaled" ]; then kill -TERM $$; fi
   if [ -f "$c/run-fails" ]; then exit 1; fi ;;
@@ -194,10 +210,10 @@ impl Fake {
         std::fs::write(self.ctl.join(name), "").unwrap();
     }
 
-    /// Makes another clone of the person, `~/src/main`, with one commit
-    /// and the worktree `.claude/worktrees/issue-1` of another session, as
-    /// the main clone of a busy machine when the test runs from another
-    /// clone. It gives the clone.
+    /// Makes another clone of the person, `~/src/main`, with one commit,
+    /// the worktree `.claude/worktrees/issue-1` of another session and
+    /// the hook `pre-push`, as the main clone of a busy machine when the
+    /// test runs from another clone. It gives the clone.
     fn other_clone(&self) -> PathBuf {
         let clone = self.env.home().join("src/main");
         std::fs::create_dir_all(&clone).unwrap();
@@ -235,6 +251,7 @@ impl Fake {
         }
         // Git makes the folder of the hooks only from its templates.
         std::fs::create_dir_all(clone.join(".git/hooks")).unwrap();
+        isolated::write_program(clone.join(".git/hooks/pre-push"), "#!/bin/sh\n");
         clone
     }
 
@@ -609,6 +626,62 @@ fn the_worktrees_of_other_sessions_do_not_count_and_the_rest_of_their_clone_does
         "real-session: FAIL at step 7 of 10, check the home: the home has 1 new path outside \
          the folders of riff:\n  {}\nWhen another program",
         clone.join(".git/hooks/pre-commit").display()
+    );
+    assert!(stderr.contains(&shown), "{shown}\n{stderr}");
+    assert_clean(&fake);
+}
+
+/// Each `git push -u` of a session writes a section `[branch "NAME"]` in
+/// the git config of its clone. With no `--skip`, this does not fail the
+/// home check, and nor does the build of the test in its own clone. A new
+/// `core.hooksPath` in the git config of a clone fails it, also in the
+/// clone of the test, and the message names the file and the key. A
+/// write to a hook that is there already fails it too
+/// (01M51X6JA3W2CMV1S5VZEY7FC3).
+#[test]
+fn a_new_branch_section_does_not_count_and_a_new_hooks_path_does() {
+    let fake = Fake::new();
+    let clone = fake.other_clone();
+    fake.set("branch");
+    let out = fake.run(&[]);
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    for repo in [&clone, &fake.clone] {
+        let config = std::fs::read_to_string(repo.join(".git/config")).unwrap();
+        assert!(config.contains("[branch \"x\"]"), "{config}");
+    }
+
+    let fake = Fake::new();
+    let clone = fake.other_clone();
+    fake.set("branch");
+    fake.set("hooks-path");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    let shown = format!(
+        "real-session: FAIL at step 7 of 10, check the home: the home has 2 changed files \
+         outside the folders of riff:\n  {} (changed: core.hookspath)\n  {} (changed: \
+         core.hookspath)\nWhen another program",
+        clone.join(".git/config").display(),
+        fake.clone.join(".git/config").display()
+    );
+    assert!(stderr.contains(&shown), "{shown}\n{stderr}");
+    assert_clean(&fake);
+
+    let fake = Fake::new();
+    let clone = fake.other_clone();
+    fake.set("hook-changed");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    let shown = format!(
+        "real-session: FAIL at step 7 of 10, check the home: the home has 1 changed file \
+         outside the folders of riff:\n  {} (changed)\nWhen another program",
+        clone.join(".git/hooks/pre-push").display()
     );
     assert!(stderr.contains(&shown), "{shown}\n{stderr}");
     assert_clean(&fake);
