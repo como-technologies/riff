@@ -906,11 +906,9 @@ impl Live {
 }
 
 /// The line for the start text of a build when the verify of the pull
-/// request of its branch failed: where the result is.
+/// request of its issue failed: where the result is.
 fn failed_verify(pulls: &[rollout::Pull], issue: u64) -> Option<String> {
-    let pull = pulls
-        .iter()
-        .find(|p| rollout::branch_issue(&p.branch) == Some(issue))?;
+    let pull = pulls.iter().find(|p| p.issue() == Some(issue))?;
     (pull.verify() == Some(rollout::Verify::Failed)).then(|| {
         let url = pull
             .verify_status()
@@ -1086,10 +1084,7 @@ impl World for Live {
                 let open = rollout::pulls(&gh, &repo)?;
                 let mut pulls = BTreeMap::new();
                 for issue in free.iter().filter_map(|item| verify_issue(item)) {
-                    let Some(pull) = open
-                        .iter()
-                        .find(|p| rollout::branch_issue(&p.branch) == Some(issue))
-                    else {
+                    let Some(pull) = open.iter().find(|p| p.issue() == Some(issue)) else {
                         continue;
                     };
                     let gate = pr::gate_of(&gh, &repo, &pull.head)?;

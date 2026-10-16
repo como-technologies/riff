@@ -146,6 +146,7 @@
   The pull request is open, is not a draft, and its branch names the
   issue. With no status, it waits for a verify. With `success`, it
   waits for the merge. With `failure` or `error`, the verify failed.
+  Superseded in part by 01M51BF5S2YKB8JG10DF6YVT42.
 - **01M3Z9N6SPWPSSCBEVDCKBESSV** The answer to a granted claim of
   `issue-N` names the open pull request of the item and the state of
   its verify (01M3Z9MY0CDBB1G749XBVMVV8X), from `riff claim` and from
@@ -560,7 +561,8 @@
   request that waits for a verify has a branch that names an issue
   (`worktree-issue-12`, `worktree-issue-12-book`), is open, not a draft,
   has no status `riff/verify` on its head, and no session claims
-  `verify-issue-N` for it. Both count as free work.
+  `verify-issue-N` for it. Both count as free work. Superseded in part
+  by 01M51BF5S2YKB8JG10DF6YVT42.
 - **01M3Z9N5HHHS1E17NFGMVBKZ0K** An item counts one time as free work.
   An open issue with no claim whose pull request waits for a verify or
   for the merge (01M3Z9MY0CDBB1G749XBVMVV8X) is no free item: it is
@@ -3783,6 +3785,15 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `verify-issue-N`. Each look reads the holds of the repository thread
   again, so a free of the item makes it free work at the next look.
   Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+- **01M51BF5S2YKB8JG10DF6YVT42** The trailer `Issue: #N` of a pull
+  request names its issue, as for `riff verify`. With no trailer, its
+  branch names the issue (`worktree-issue-12`). The free work of the
+  rollout and of `riff wave run`, the line of a claim and the look of
+  the lead find the pull request of an item so. A pull request on a
+  branch that names no issue, for example a release branch, counts for
+  the issue of its trailer: while it waits for a verify or for the
+  merge, the item is no free item (01M3Z9N5HHHS1E17NFGMVBKZ0K). After a
+  failed verify, the item is free.
 - **01M3X30KHKB6W11C3NBAW7KCGW** The lead gets one message for each
   change of a worker setting: the setting, the old value, the new
   value and the host. The settings are the limit of the machine of the

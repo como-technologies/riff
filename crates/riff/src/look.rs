@@ -76,7 +76,7 @@ use riff_core::wire::{ItemFact, Kind, PullFact, PullState, Unanswered};
 
 use crate::api::Api;
 use crate::pr::Gh;
-use crate::rollout::{Issue, Pull, Verify, branch_issue, claims, needs};
+use crate::rollout::{Issue, Pull, Verify, claims, needs};
 use crate::text;
 
 /// The time between two looks.
@@ -133,7 +133,7 @@ pub fn item_facts(issues: &[Issue], pulls: &[Pull]) -> Vec<ItemFact> {
         needs: Vec::new(),
     };
     for pull in pulls {
-        let (Some(n), Some(verify)) = (branch_issue(&pull.branch), pull.verify()) else {
+        let (Some(n), Some(verify)) = (pull.issue(), pull.verify()) else {
             continue;
         };
         let state = match verify {
@@ -308,7 +308,7 @@ impl PullWatch {
             .retain(|(n, head), _| heads.contains(&(*n, head.as_str())));
         let mut news = Vec::new();
         for pull in pulls {
-            let Some(issue) = branch_issue(&pull.branch) else {
+            let Some(issue) = pull.issue() else {
                 continue;
             };
             let item = format!("issue-{issue}");

@@ -4454,10 +4454,12 @@ flowchart TD
   requests that wait for a verify. A free item is an open issue of the
   current wave (see [Waves](waves.md)). No session claims it, it has no
   comment `Merged in #`, and each issue of its `Needs:` line is
-  closed. A pull request counts only when its branch names an issue,
-  for example `worktree-issue-12`. An item counts one time: while its
-  pull request waits for a verify or for the merge, the item is no
-  free item. After a failed verify it is free again (see
+  closed. A pull request counts for the issue that it names (see
+  [See the item of a pull request](#see-the-item-of-a-pull-request)).
+  An item counts one time: while its pull request waits for a verify
+  or for the merge, the item is no free item. This is also true for a
+  release pull request. After a failed verify the item is free again
+  (see
   [How a session works on an item](#how-a-session-works-on-an-item)).
   A held item is no free work (see
   [Keep an item from the rollout](#keep-an-item-from-the-rollout)).
@@ -4515,6 +4517,22 @@ look gives it to a worker:
 ```sh
 riff plan free issue-12
 ```
+
+#### See the item of a pull request
+
+The trailer `Issue: #N` of a pull request names its item, as for
+`riff verify`. When the body has no trailer, the branch names the
+item, for example `worktree-issue-12`. So a release pull request on
+the branch `release-v1.5.0` counts for its release issue. Look at the
+last lines of the body:
+
+```sh
+gh pr view 40 --json headRefName,body --jq '.headRefName, .body' | tail -n 3
+```
+
+While the pull request waits for a verify, the rollout gives
+`verify-issue-N`, not `issue-N`. While it waits for the merge, the
+rollout gives neither.
 
 #### Which machine gets a worker
 

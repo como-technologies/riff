@@ -31,10 +31,17 @@
 //!   `Wave N` with the lowest N. A free item is an open issue of it that
 //!   no session claims, that has no comment `Merged in #`, and whose
 //!   `Needs:` issues are all closed. A pull request waits for a verify
-//!   when its branch names an issue, it is not a draft, its head has no
-//!   status `riff/verify`, and no session claims `verify-issue-N` for
-//!   it. The pull request of an issue with the label [`NO_VERIFY`] is no
-//!   work (01M5157V0P92EBHF4M7N9K0RGR).
+//!   when it names an issue ([`Pull::issue`]), it is not a draft, its
+//!   head has no status `riff/verify`, and no session claims
+//!   `verify-issue-N` for it. The pull request of an issue with the
+//!   label [`NO_VERIFY`] is no work (01M5157V0P92EBHF4M7N9K0RGR).
+//! - **The issue of a pull request** ([`Pull::issue`],
+//!   01M51BF5S2YKB8JG10DF6YVT42). Its trailer `Issue: #N` names it, as
+//!   for `riff verify`. With no trailer, its branch names it
+//!   (`worktree-issue-N`). So a pull request on a branch that names no
+//!   issue, for example the release branch `release-v1.5.0`, still
+//!   counts for its item: the rollout gives no build of it while the
+//!   pull request waits for a verify or for the merge.
 //! - **No held item** ([`free_work_of`], 01M51A55Q2MDZT38JDCEJ1QECP). A
 //!   held item is no free work: `issue-N` and `verify-issue-N`, each by
 //!   its own hold. The rollout starts no worker for it and sends no
@@ -1014,8 +1021,8 @@ pub fn needs(body: &str) -> Vec<u64> {
 /// open need blocks the item, also a need outside the wave, and also a
 /// need that is merged but not closed.
 ///
-/// An item whose pull request waits for a verify or for the merge is
-/// not free: it is work for a verify, not for a build
+/// An item whose pull request ([`Pull::issue`]) waits for a verify or
+/// for the merge is not free: it is work for a verify, not for a build
 /// (01M3Z9N5HHHS1E17NFGMVBKZ0K). An item whose verify failed is free,
 /// with its earlier work.
 ///
@@ -1057,6 +1064,13 @@ pub fn needs(body: &str) -> Vec<u64> {
 /// assert_eq!(free_items(&open, "Wave 2", &claims, &pulls), [4]);
 /// let pulls = [pull(40, 1, Some("SUCCESS"))];
 /// assert_eq!(free_items(&open, "Wave 2", &claims, &pulls), [4]);
+///
+/// // The branch of a release names no issue: its trailer `Issue: #1`
+/// // names the item (01M51BF5S2YKB8JG10DF6YVT42).
+/// let release = |state| Pull { branch: "release-v1.5.0".into(), trailer: Some(1), ..pull(42, 1, state) };
+/// assert_eq!(free_items(&open, "Wave 2", &claims, &[release(None)]), [4]);
+/// assert_eq!(free_items(&open, "Wave 2", &claims, &[release(Some("SUCCESS"))]), [4]);
+/// assert_eq!(free_items(&open, "Wave 2", &claims, &[release(Some("FAILURE"))]), [1, 4]);
 /// ```
 pub fn free_items(
     open: &[Issue],
@@ -1090,22 +1104,23 @@ pub fn free_items(
 ///     pull("worktree-issue-14", vec![Check::verify("FAILURE")]),
 ///     Pull { draft: true, ..pull("worktree-issue-15", vec![]) },
 ///     pull("release-v0.8.0", vec![]),
+///     Pull { trailer: Some(16), ..pull("release-v0.9.0", vec![Check::verify("SUCCESS")]) },
 /// ];
 /// let mut issues: Vec<u64> = in_verify(&pulls).into_iter().collect();
 /// issues.sort_unstable();
-/// assert_eq!(issues, [12, 13]);
+/// assert_eq!(issues, [12, 13, 16]);
 /// ```
 pub fn in_verify(pulls: &[Pull]) -> HashSet<u64> {
     pulls
         .iter()
         .filter(|p| matches!(p.verify(), Some(Verify::Asked | Verify::Passed)))
-        .filter_map(|p| branch_issue(&p.branch))
+        .filter_map(Pull::issue)
         .collect()
 }
 
 /// The fields of `gh pr list --json` that [`Pull`] reads.
 pub const PULL_FIELDS: &str =
-    "number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,autoMergeRequest";
+    "number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,autoMergeRequest,body";
 
 /// An open pull request, as `gh pr list --json` with [`PULL_FIELDS`]
 /// gives it.
@@ -1132,11 +1147,22 @@ pub struct Pull {
     /// True when auto-merge is on.
     #[serde(rename = "autoMergeRequest", default, deserialize_with = "present")]
     pub auto_merge: bool,
+    /// The issue of the trailer `Issue: #N` of the body, when it has
+    /// one. riff keeps only the number, not the text of the body.
+    #[serde(rename = "body", default, deserialize_with = "trailer")]
+    pub trailer: Option<u64>,
 }
 
 /// True for a value that is not `null`.
 fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
     Ok(Option::<serde::de::IgnoredAny>::deserialize(d)?.is_some())
+}
+
+/// The issue of the trailer `Issue: #N` of a body ([`crate::pr::trailer_issue`]).
+fn trailer<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    Ok(Option::<String>::deserialize(d)?
+        .as_deref()
+        .and_then(crate::pr::trailer_issue))
 }
 
 /// A status or a check of the head of a pull request. Only a status has
@@ -1184,9 +1210,32 @@ pub enum Verify {
 }
 
 impl Pull {
+    /// The issue of this pull request (01M51BF5S2YKB8JG10DF6YVT42): its
+    /// trailer `Issue: #N`, as for `riff verify`. With no trailer, the
+    /// issue of its branch ([`branch_issue`]).
+    ///
+    /// ```
+    /// use riff::rollout::Pull;
+    ///
+    /// let pull = |branch: &str, body: &str| -> Pull {
+    ///     serde_json::from_value(serde_json::json!({"number": 40, "headRefName": branch, "body": body}))
+    ///         .unwrap()
+    /// };
+    /// let release = "Refs #668\n\nLevel: major.\n\nIssue: #668\nMilestone: Wave 23\n";
+    /// assert_eq!(pull("release-2.0.0", release).issue(), Some(668));
+    /// assert_eq!(pull("worktree-issue-12", "").issue(), Some(12));
+    /// assert_eq!(pull("worktree-issue-12", "Closes #12\n\nIssue: #13\n").issue(), Some(13));
+    /// assert_eq!(pull("release-2.0.0", "Refs #668\n").issue(), None);
+    /// assert_eq!(pull("main", "").issue(), None);
+    /// ```
+    pub fn issue(&self) -> Option<u64> {
+        self.trailer.or_else(|| branch_issue(&self.branch))
+    }
+
     /// The state of the verify of this pull request. `None` for a
-    /// draft, and for a branch that names no issue: a pull request
-    /// that a person opened by hand is no work.
+    /// draft, and for a pull request that names no issue
+    /// ([`Pull::issue`]): a pull request that a person opened by hand is
+    /// no work.
     ///
     /// ```
     /// use riff::rollout::{Check, Pull, Verify};
@@ -1204,7 +1253,7 @@ impl Pull {
         if self.draft {
             return None;
         }
-        branch_issue(&self.branch)?;
+        self.issue()?;
         Some(match self.verify_status() {
             None => Verify::Asked,
             Some(check) => match check.state.as_deref() {
@@ -1267,10 +1316,10 @@ pub fn branch_issue(branch: &str) -> Option<u64> {
 }
 
 /// The issues of the pull requests that wait for a verify
-/// ([`Verify::Asked`]): the branch names an issue, not a draft, no status `riff/verify` on the
-/// head, and no session claims `verify-issue-N` for the issue of the
-/// branch. A pull request that a person opened by hand names no issue,
-/// so it is no work.
+/// ([`Verify::Asked`]): the pull request names an issue
+/// ([`Pull::issue`]), it is not a draft, its head has no status
+/// `riff/verify`, and no session claims `verify-issue-N` for its issue.
+/// A pull request that names no issue is no work.
 ///
 /// ```
 /// use std::collections::HashSet;
@@ -1289,15 +1338,17 @@ pub fn branch_issue(branch: &str) -> Option<u64> {
 ///     Pull { draft: true, ..pull(43, "worktree-issue-15", None) },
 ///     pull(44, "release-v0.8.0", None),
 ///     pull(45, "worktree-issue-16", Some("FAILURE")),
+///     // A release branch: its trailer `Issue: #17` names the issue.
+///     Pull { trailer: Some(17), ..pull(46, "release-v0.9.0", None) },
 /// ];
 /// let claims: HashSet<String> = ["verify-issue-14".to_owned()].into();
-/// assert_eq!(waiting_verifies(&pulls, &claims), [12]);
+/// assert_eq!(waiting_verifies(&pulls, &claims), [12, 17]);
 /// ```
 pub fn waiting_verifies(pulls: &[Pull], claims: &HashSet<String>) -> Vec<u64> {
     pulls
         .iter()
         .filter(|p| p.verify() == Some(Verify::Asked))
-        .filter_map(|p| branch_issue(&p.branch))
+        .filter_map(Pull::issue)
         .filter(|n| !claims.contains(&format!("verify-issue-{n}")))
         .collect()
 }
@@ -1348,7 +1399,7 @@ pub fn claim_line(item: &str, pulls: &[Pull]) -> Option<String> {
     let issue: u64 = item.strip_prefix("issue-")?.parse().ok()?;
     let (pull, state) = pulls
         .iter()
-        .filter(|p| branch_issue(&p.branch) == Some(issue))
+        .filter(|p| p.issue() == Some(issue))
         .find_map(|p| Some((p, p.verify()?)))?;
     let number = pull.number;
     let commit: String = pull.head.chars().take(7).collect();
@@ -2925,47 +2976,63 @@ mod tests {
     /// The author released the item at its verify request. The item is
     /// work for a verify, and it counts one time
     /// (01M3Z9N5HHHS1E17NFGMVBKZ0K). After a fail it is a build again.
+    /// The same is true for a pull request whose branch names no issue:
+    /// its trailer `Issue: #12` names the item
+    /// (01M51BF5S2YKB8JG10DF6YVT42).
     #[test]
     fn an_item_with_an_open_pull_request_and_no_claim_counts_one_time() {
         let issues: Vec<Issue> = serde_json::from_str(
             r#"[{"number":12,"body":"","comments":[],"milestone":{"title":"Wave 3"}}]"#,
         )
         .unwrap();
-        let pulls = |status: &str| -> Vec<Pull> {
-            serde_json::from_str(&format!(
-                r#"[{{"number":40,"headRefName":"worktree-issue-12","headRefOid":"1a2b3c4d","isDraft":false,
-                     "statusCheckRollup":[{{"__typename":"CheckRun","name":"Gate","conclusion":"SUCCESS"}}{status}]}}]"#
-            ))
-            .unwrap()
-        };
-        let status = |state: &str| {
-            format!(
-                r#",{{"__typename":"StatusContext","context":"riff/verify","state":"{state}","targetUrl":"https://c"}}"#
-            )
-        };
-        let work = |pulls: &[Pull], claims: &[&str]| {
-            let claims: HashSet<String> = claims.iter().map(|c| (*c).to_owned()).collect();
-            (
-                free_items(&issues, "Wave 3", &claims, pulls),
-                waiting_verifies(pulls, &claims),
-            )
-        };
-        // Asked: one verify, no build.
-        let asked = pulls("");
-        assert_eq!(work(&asked, &[]), (vec![], vec![12]));
-        // A verifier holds it: no work.
-        assert_eq!(work(&asked, &["verify-issue-12"]), (vec![], vec![]));
-        // Passed: the merge waits, no work.
-        assert_eq!(work(&pulls(&status("SUCCESS")), &[]), (vec![], vec![]));
-        // Failed: the item is free for a build, and no verify waits.
-        let failed = pulls(&status("FAILURE"));
-        assert_eq!(work(&failed, &[]), (vec![12], vec![]));
-        assert_eq!(
-            failed[0].verify_status().unwrap().url.as_deref(),
-            Some("https://c")
-        );
-        // The next session holds it: no work.
-        assert_eq!(work(&failed, &["issue-12"]), (vec![], vec![]));
+        let heads = [
+            r#""headRefName":"worktree-issue-12""#,
+            r#""headRefName":"release-v1.5.0","body":"Refs #12\n\nLevel: minor.\n\nIssue: #12\nMilestone: Wave 3\n""#,
+        ];
+        for head in heads {
+            let pulls = |status: &str| -> Vec<Pull> {
+                serde_json::from_str(&format!(
+                    r#"[{{"number":40,{head},"headRefOid":"1a2b3c4d","isDraft":false,
+                         "statusCheckRollup":[{{"__typename":"CheckRun","name":"Gate","conclusion":"SUCCESS"}}{status}]}}]"#
+                ))
+                .unwrap()
+            };
+            let status = |state: &str| {
+                format!(
+                    r#",{{"__typename":"StatusContext","context":"riff/verify","state":"{state}","targetUrl":"https://c"}}"#
+                )
+            };
+            let work = |pulls: &[Pull], claims: &[&str]| {
+                let claims: HashSet<String> = claims.iter().map(|c| (*c).to_owned()).collect();
+                (
+                    free_items(&issues, "Wave 3", &claims, pulls),
+                    waiting_verifies(pulls, &claims),
+                )
+            };
+            // Asked: one verify, no build.
+            let asked = pulls("");
+            assert_eq!(work(&asked, &[]), (vec![], vec![12]), "{head}");
+            // A verifier holds it: no work.
+            assert_eq!(work(&asked, &["verify-issue-12"]), (vec![], vec![]));
+            // Passed: the merge waits, no work.
+            let passed = pulls(&status("SUCCESS"));
+            assert_eq!(work(&passed, &[]), (vec![], vec![]), "{head}");
+            // Failed: the item is free for a build, and no verify waits.
+            let failed = pulls(&status("FAILURE"));
+            assert_eq!(work(&failed, &[]), (vec![12], vec![]), "{head}");
+            assert_eq!(
+                failed[0].verify_status().unwrap().url.as_deref(),
+                Some("https://c")
+            );
+            // The next session holds it: no work.
+            assert_eq!(work(&failed, &["issue-12"]), (vec![], vec![]));
+            // The claim of the item names the pull request.
+            assert!(
+                claim_line("issue-12", &passed)
+                    .unwrap()
+                    .contains("Release issue-12")
+            );
+        }
     }
 
     /// A held item is no free work (01M51A55Q2MDZT38JDCEJ1QECP): the
