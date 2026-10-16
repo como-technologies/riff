@@ -2567,7 +2567,6 @@ mod tests {
             places: vec![thelio()],
             items: vec!["issue-7".into()],
             idlers: idlers(sessions, &me),
-            ..View::default()
         };
         let wait = Duration::from_secs(60);
 
