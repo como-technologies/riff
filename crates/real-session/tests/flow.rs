@@ -11,6 +11,8 @@
 //! | File | The fake |
 //! |---|---|
 //! | `rootful` | `podman info` says `false` |
+//! | `no-label` | `gh issue edit` fails |
+//! | `hold-fails` | `riff plan hold` fails, as for a worker |
 //! | `daemon-runs` | `riff daemon status` answers |
 //! | `daemon-fails` | `riff daemon` ends with 1 at once |
 //! | `run-fails` | `riff run` ends with 1 |
@@ -54,6 +56,9 @@ case "$1 $2" in
     shift
   done
   echo "https://github.com/o/r/issues/801" ;;
+'label create') exit 0 ;;
+'issue edit')
+  if [ -f "$c/no-label" ]; then echo "could not add the label" >&2; exit 1; fi ;;
 'issue close') exit 0 ;;
 'pr view')
   if [ -f "$c/no-pull" ]; then echo "no pull requests found for branch \"$3\"" >&2; exit 1; fi
@@ -84,7 +89,10 @@ c='CTL'
 echo "riff $*" >> "$c/log"
 case "$1" in
 image) echo "ghcr.io/o/riff-session@sha256:00ff" ;;
-plan) exit 0 ;;
+plan)
+  if [ "$2" = hold ] && [ -f "$c/hold-fails" ]; then
+    echo "riff: a worker cannot hold an item. Tell the lead." >&2; exit 1
+  fi ;;
 daemon)
   if [ "$2" = status ]; then [ -f "$c/daemon-runs" ]; exit; fi
   if [ -f "$c/daemon-fails" ]; then echo "riff: the fake daemon cannot listen" >&2; exit 1; fi
@@ -250,6 +258,9 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
         "gh auth status",
         "riff image",
         "gh issue create --title Real-session test ",
+        "gh label create no-verify --description riff offers no verify of this item --color \
+         ededed --force",
+        "gh issue edit 801 --add-label no-verify",
         "riff plan hold verify-issue-801 the real-session test makes and closes this item",
         "riff daemon status",
         "riff daemon",
@@ -277,6 +288,66 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
         "{log:#?}"
     );
     assert_clean(&fake);
+}
+
+/// A worker runs the test: its hold of the verify fails
+/// (01M43GSGGY0QMB5D5EH92M6ZFP). The label `no-verify` still keeps the
+/// verify of the scratch item from the workers, so step 4 passes with a
+/// warning, and the test goes on (01M5157V34H7FWFH6S2DRQXRMP). With no
+/// hold, the clean-up frees nothing.
+#[test]
+fn a_worker_that_cannot_hold_keeps_the_verify_with_the_label() {
+    let fake = Fake::new();
+    fake.set("hold-fails");
+    let out = fake.run(&[]);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains("step 4 of 10: keep its verify from the workers"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("  issue #801 has the label no-verify\n"),
+        "{stdout}"
+    );
+    for part in [
+        "  warning: riff did not hold verify-issue-801, and the label no-verify keeps its verify \
+         from the workers: ",
+        "/riff plan hold verify-issue-801 the real-session test makes and closes this item: no \
+         verify ended with exit status: 1: riff: a worker cannot hold an item. Tell the lead.\n",
+    ] {
+        assert!(stdout.contains(part), "{part}\n{stdout}");
+    }
+    let log = fake.log();
+    let label = find(&log, "gh issue edit 801 --add-label no-verify");
+    let run = find(&log, "riff run issue-801");
+    assert!(label.is_some() && label < run, "{log:#?}");
+    assert!(find(&log, "riff plan free").is_none(), "{log:#?}");
+}
+
+/// When `gh` cannot put the label on the issue, step 4 fails: no
+/// `riff run` starts, and the test cleans up.
+#[test]
+fn no_label_fails_step_4_and_runs_no_item() {
+    let fake = Fake::new();
+    fake.set("no-label");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(
+            "real-session: FAIL at step 4 of 10, keep its verify from the workers: gh issue edit \
+             801 --add-label no-verify ended with exit status: 1: could not add the label"
+        ),
+        "{stderr}"
+    );
+    let log = fake.log();
+    assert!(find(&log, "riff plan hold").is_none(), "{log:#?}");
+    assert!(find(&log, "riff run").is_none(), "{log:#?}");
+    assert!(
+        find(&log, "gh issue close 801 --reason not planned").is_some(),
+        "{log:#?}"
+    );
 }
 
 #[test]

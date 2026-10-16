@@ -22,6 +22,7 @@
 //!     participant R as riff run (the tree)
 //!     T->>T: check the host, list the home
 //!     T->>G: a scratch issue in the milestone Backlog
+//!     T->>G: the label no-verify on the issue
 //!     T->>S: hold verify-issue-N
 //!     T->>D: riff daemon, in a process group of its own
 //!     T->>R: riff run issue-N --image IMAGE
@@ -42,7 +43,7 @@
 //! | 1. check the host | podman runs rootless, `gh` has a sign-in, and `riff image` names the image of the tree |
 //! | 2. list the home | always |
 //! | 3. make the scratch item | `gh issue create` prints the URL of an issue |
-//! | 4. hold its verify | always: a failed hold is a warning |
+//! | 4. keep its verify from the workers | the issue has the label [`NO_VERIFY`]; a failed hold is a warning |
 //! | 5. start the daemon | no riff daemon answers before, and `riff daemon` of the tree answers in [`DAEMON_WAIT`] (see below) |
 //! | 6. run the item | `riff run issue-N --image IMAGE` ends with 0 |
 //! | 7. check the home | the home has no new path (see below) |
@@ -64,12 +65,25 @@
 //!
 //! The issue is in the milestone [`MILESTONE`], so the rollout of the
 //! lead gives it to no worker. It adds one line to the book
-//! ([`scratch_line`], [`issue_body`]). `riff run` sends a verify request
-//! to the lead when the session ends. So the test holds
-//! `verify-issue-N`: a worker that gets the request gets the reason of
-//! the hold, not the work. Only a lead, the owner or an admin can hold
-//! an item. When the hold fails, the test goes on with a warning: only
-//! the work of a worker is at risk.
+//! ([`scratch_line`], [`issue_body`]). Step 4 keeps its verify from the
+//! workers (01M5157V34H7FWFH6S2DRQXRMP), also when a worker runs the
+//! test:
+//!
+//! - The issue gets the label [`NO_VERIFY`]. riff offers no verify of
+//!   its pull request, and `riff run` sends no verify request for it
+//!   (01M5157V0P92EBHF4M7N9K0RGR). The step fails when `gh` cannot put
+//!   the label on.
+//! - Then the test holds `verify-issue-N`, so a claim of the verify by a
+//!   worker fails. Only a lead, the owner or an admin can hold an item,
+//!   not a worker. When the hold fails, the test goes on with a
+//!   warning: the label keeps the verify.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     L[the label no-verify] --> O[the rollout and the wave offer no verify]
+//!     L --> R[riff run sends no verify request]
+//!     H[the hold of verify-issue-N] --> C[a claim of a worker fails]
+//! ```
 //!
 //! # The daemon
 //!
@@ -148,6 +162,20 @@ pub const SHOWN: usize = 20;
 /// The reason of the hold of `verify-issue-N`.
 pub const HOLD_REASON: &str = "the real-session test makes and closes this item: no verify";
 
+/// The label of the scratch issue: riff offers no verify of an issue
+/// with it (01M5157V0P92EBHF4M7N9K0RGR).
+///
+/// ```
+/// assert_eq!(real_session::NO_VERIFY, riff::rollout::NO_VERIFY);
+/// ```
+pub const NO_VERIFY: &str = "no-verify";
+
+/// The description of the label [`NO_VERIFY`] on GitHub.
+pub const NO_VERIFY_TEXT: &str = "riff offers no verify of this item";
+
+/// The color of the label [`NO_VERIFY`] on GitHub.
+pub const NO_VERIFY_COLOR: &str = "ededed";
+
 /// The comment of the test when it closes the pull request and the issue.
 pub const CLOSE_TEXT: &str = "The real-session test closes its scratch item.";
 
@@ -160,7 +188,7 @@ pub enum Step {
     Host,
     List,
     Item,
-    Hold,
+    Keep,
     Daemon,
     Run,
     Home,
@@ -175,7 +203,7 @@ impl Step {
         Step::Host,
         Step::List,
         Step::Item,
-        Step::Hold,
+        Step::Keep,
         Step::Daemon,
         Step::Run,
         Step::Home,
@@ -190,7 +218,7 @@ impl Step {
             Step::Host => "check the host",
             Step::List => "list the home",
             Step::Item => "make the scratch item",
-            Step::Hold => "hold its verify",
+            Step::Keep => "keep its verify from the workers",
             Step::Daemon => "start the daemon",
             Step::Run => "run the item",
             Step::Home => "check the home",
@@ -855,7 +883,7 @@ fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String
     let line = scratch_line(stamp);
     let issue = step(Step::Item, stop, || make_item(stamp, &line, stop))?;
     made.issue = Some(issue);
-    made.held = step(Step::Hold, stop, || Ok(hold(&options.riff, issue, stop)))?;
+    made.held = step(Step::Keep, stop, || keep_verify(&options.riff, issue, stop))?;
     step(Step::Daemon, stop, || {
         start_daemon(&options.riff, stop, &mut made.daemon)
     })?;
@@ -982,7 +1010,36 @@ fn make_item(stamp: u64, line: &str, stop: &AtomicBool) -> Result<u64, String> {
     Ok(issue)
 }
 
-/// Step 4: holds `verify-issue-N`. True when it did.
+/// Step 4: keeps the verify of the scratch item from the workers
+/// (01M5157V34H7FWFH6S2DRQXRMP). The issue gets the label [`NO_VERIFY`]:
+/// `gh label create --force` makes the label or updates it. Then the
+/// test holds `verify-issue-N`. True when it holds it.
+fn keep_verify(riff: &Path, issue: u64, stop: &AtomicBool) -> Result<bool, String> {
+    output(
+        "gh",
+        &[
+            "label",
+            "create",
+            NO_VERIFY,
+            "--description",
+            NO_VERIFY_TEXT,
+            "--color",
+            NO_VERIFY_COLOR,
+            "--force",
+        ],
+        stop,
+    )?;
+    output(
+        "gh",
+        &["issue", "edit", &issue.to_string(), "--add-label", NO_VERIFY],
+        stop,
+    )?;
+    println!("  issue #{issue} has the label {NO_VERIFY}");
+    Ok(hold(riff, issue, stop))
+}
+
+/// Holds `verify-issue-N`. True when it did. A failed hold is a warning:
+/// the label [`NO_VERIFY`] keeps the verify.
 fn hold(riff: &Path, issue: u64, stop: &AtomicBool) -> bool {
     let item = format!("verify-issue-{issue}");
     match output(riff, &["plan", "hold", &item, HOLD_REASON], stop) {
@@ -991,7 +1048,10 @@ fn hold(riff: &Path, issue: u64, stop: &AtomicBool) -> bool {
             true
         }
         Err(e) => {
-            println!("  warning: riff did not hold {item}, so a worker can take its verify: {e}");
+            println!(
+                "  warning: riff did not hold {item}, and the label {NO_VERIFY} keeps its \
+                 verify from the workers: {e}"
+            );
             false
         }
     }
