@@ -5,7 +5,6 @@
 //! call to a log. Each test runs the real `riff` binary.
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::Arc;
@@ -52,8 +51,7 @@ impl Worker {
     fn new(server: &str) -> Self {
         let fake = tempfile::tempdir().unwrap();
         let tmux = fake.path().join("tmux");
-        std::fs::write(&tmux, FAKE_TMUX).unwrap();
-        std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        isolated::write_program(&tmux, FAKE_TMUX);
         let repo = tempfile::tempdir().unwrap();
         let out = Command::new("git")
             .args(["init", "-q"])

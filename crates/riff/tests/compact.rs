@@ -3,7 +3,6 @@
 //! `gh` on `PATH` gives a done wave with its release out.
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
@@ -44,8 +43,7 @@ impl Lead {
     fn new(server: &str) -> Self {
         let fake = tempfile::tempdir().unwrap();
         let gh = fake.path().join("gh");
-        std::fs::write(&gh, FAKE_GH).unwrap();
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        isolated::write_program(&gh, FAKE_GH);
         let repo = tempfile::tempdir().unwrap();
         for args in [
             &["init", "-q"][..],
@@ -313,8 +311,7 @@ impl Lead {
     /// input line of Claude Code.
     fn in_tmux(&self, input: &str) {
         let tmux = self.fake.path().join("tmux");
-        std::fs::write(&tmux, FAKE_TMUX).unwrap();
-        std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+        isolated::write_program(&tmux, FAKE_TMUX);
         let screen = format!("Wave 13 is done.\n\n────────\n❯ {input}\n────────\n  riff l1\n");
         std::fs::write(self.fake.path().join("screen"), screen).unwrap();
     }

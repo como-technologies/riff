@@ -7,7 +7,6 @@
 //! stdin, and answers from a `case` of the test. A real `riff-server`
 //! with no sign-in holds the claims and the posts.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -20,16 +19,14 @@ use crate::book;
 /// `case "$*" in`.
 fn fake_gh(bin: &Path, cases: &str) {
     let path = bin.join("gh");
-    std::fs::write(
+    isolated::write_program(
         &path,
         format!(
             "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"gh $*\" >> \"$dir/gh.log\"\n\
              case \"$*\" in *'--body-file -'*) cat > \"$dir/body\"; cat \"$dir/body\" >> \"$dir/gh.log\" ;; esac\n\
              case \"$*\" in\n{cases}\nesac\nexit 0\n"
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
 }
 
 fn log(bin: &Path) -> String {

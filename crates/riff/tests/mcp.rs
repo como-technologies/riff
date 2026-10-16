@@ -596,12 +596,10 @@ async fn a_new_riff_that_fails_its_check_leaves_the_tools_in_place() {
     let riff = Isolated::shared().riff_path();
     install(&riff, &binary);
     let broken = dir.path().join("broken");
-    std::fs::write(
+    isolated::write_program(
         &broken,
         "#!/bin/sh\necho 'riff: cannot read the sign-in of this machine' >&2\nexit 1\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&broken, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    );
     let stderr = dir.path().join("stderr");
     let mut cmd = tokio::process::Command::from(Isolated::shared().command(&binary));
     let mut child = cmd

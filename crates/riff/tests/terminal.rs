@@ -5,7 +5,6 @@
 //! the panes and windows in files.
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -46,8 +45,7 @@ exit 0
 fn fake_tmux() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let tmux = dir.path().join("tmux");
-    std::fs::write(&tmux, FAKE_TMUX).unwrap();
-    std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&tmux, FAKE_TMUX);
     dir
 }
 

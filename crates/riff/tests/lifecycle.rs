@@ -400,15 +400,13 @@ fn a_server_that_is_not_a_url_or_host_and_port_is_refused() {
 fn fake_command(bin: &Path, name: &str, stdout: &str, status: u8) -> PathBuf {
     let path = bin.join(name);
     let log = bin.join(format!("{name}.log"));
-    std::fs::write(
+    isolated::write_program(
         &path,
         format!(
             "#!/bin/sh\necho \"$*\" >> {}\necho '{stdout}'\nexit {status}\n",
             log.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     path
 }
 

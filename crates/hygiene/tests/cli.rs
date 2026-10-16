@@ -4,18 +4,14 @@
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use crate::SPAWN;
-
-/// Runs `cmd` to its end. It starts under [`SPAWN`].
+/// Runs `cmd` to its end.
 fn run(cmd: &mut Command) -> Output {
-    let child = {
-        let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
-        cmd.stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap()
-    };
-    child.wait_with_output().unwrap()
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap()
 }
 
 const GOOD: &str = "Closes #77\n\nPause the riff.\n\nIssue: #77\nMilestone: Wave 3\n";
@@ -39,13 +35,7 @@ fn fake_gh(pr: &serde_json::Value, issues: &[serde_json::Value]) -> tempfile::Te
         dir.path().display()
     );
     let gh = dir.path().join("gh");
-    let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
-    std::fs::write(&gh, script).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    isolated::write_program(&gh, script);
     dir
 }
 

@@ -8,7 +8,7 @@
 //! the `riff daemon` of this build, as systemd does. The repository is a
 //! real git repository with a `riff.toml`.
 
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -33,8 +33,7 @@ async fn output(mut cmd: std::process::Command) -> Output {
 }
 
 fn script(path: &Path, body: &str) {
-    std::fs::write(path, body).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(path, body);
 }
 
 /// A fake `podman` that logs each call to `bin/podman.log`. With the

@@ -10,7 +10,6 @@ use crate::book;
 
 use isolated::Isolated;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Output;
 
@@ -97,8 +96,7 @@ fn each_riff_command_of_the_page_is_real_and_none_signs_in() {
 /// does when there is no old entry.
 fn fake_claude(dir: &Path) -> std::path::PathBuf {
     let path = dir.join("claude");
-    fs::write(&path, "#!/bin/sh\n[ \"$1\" = mcp ] && exit 1\nexit 0\n").unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&path, "#!/bin/sh\n[ \"$1\" = mcp ] && exit 1\nexit 0\n");
     path
 }
 

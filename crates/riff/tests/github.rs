@@ -6,7 +6,6 @@
 //! the older release lines (01M4YJ6KGBPTCSVMFQCDKACZPV). A fake `gh` on
 //! `PATH` writes each call and its input to a log.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -142,8 +141,7 @@ exit 0
 fn setup(ruleset: Option<&str>) -> (String, String) {
     let dir = tempfile::tempdir().unwrap();
     let gh = dir.path().join("gh");
-    std::fs::write(&gh, FAKE_GH).unwrap();
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&gh, FAKE_GH);
     if let Some(id) = ruleset {
         std::fs::write(dir.path().join("ruleset-main"), format!("{id}\n")).unwrap();
         std::fs::write(dir.path().join("ruleset-releases"), "8\n").unwrap();

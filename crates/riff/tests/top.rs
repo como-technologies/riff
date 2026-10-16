@@ -3,7 +3,6 @@
 //! (01M3NB589WMPRSAR43BSG9SP41).
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -75,8 +74,7 @@ fn bin(gh: bool) -> tempfile::TempDir {
 
 fn script(dir: &Path, name: &str, body: &str) {
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&path, format!("#!/bin/sh\n{body}\n"));
 }
 
 /// `riff ARGS` in `dir` through a pipe, as the agent session `session`

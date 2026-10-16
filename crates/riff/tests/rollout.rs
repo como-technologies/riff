@@ -13,7 +13,6 @@
 //! item is no free work (01M51A55Q2MDZT38JDCEJ1QECP).
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -278,8 +277,7 @@ async fn reads(api: &Api, me: &SessionUri, needle: &str) -> String {
 
 fn script(dir: &Path, name: &str, text: &str) {
     let path = dir.join(name);
-    std::fs::write(&path, text).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&path, text);
 }
 
 /// A repository with a commit and an origin on GitHub.

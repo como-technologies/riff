@@ -10,7 +10,6 @@
 use isolated::Isolated;
 use std::io::Read;
 use std::net::SocketAddr;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -172,8 +171,7 @@ fn bin() -> tempfile::TempDir {
     let git = String::from_utf8(Command::new("which").arg("git").output().unwrap().stdout).unwrap();
     std::os::unix::fs::symlink(git.trim(), dir.path().join("git")).unwrap();
     let tmux = dir.path().join("tmux");
-    std::fs::write(&tmux, "#!/bin/sh\n").unwrap();
-    std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&tmux, "#!/bin/sh\n");
     dir
 }
 
@@ -393,8 +391,7 @@ echo $((n + 1)) > "$0.calls"
 [ "$n" -eq 0 ] || exit 1
 echo '[{"number": 7, "title": "Keep the board", "milestone": {"title": "Wave 3"}}]'
 "#;
-    std::fs::write(&gh, script).unwrap();
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&gh, script);
 }
 
 /// A network fault stops `gh` too. The kept table keeps its board: a

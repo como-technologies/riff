@@ -6,7 +6,6 @@
 use crate::book;
 
 use isolated::Isolated;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -66,8 +65,7 @@ exec "$@"
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
-    std::fs::write(&path, body).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&path, body);
     path
 }
 

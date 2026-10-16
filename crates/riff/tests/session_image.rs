@@ -264,7 +264,7 @@ fn the_session_tests_run_one_part_of_the_tests_of_the_workspace() {
 fn the_session_tests_run_as_the_user_of_the_host_in_docker() {
     let bin = tempfile::tempdir().unwrap();
     fake_engine(bin.path());
-    fs::copy(bin.path().join("podman"), bin.path().join("docker")).unwrap();
+    isolated::copy_program(bin.path().join("podman"), bin.path().join("docker"));
     let args = session_test(&[], bin.path(), Some("docker"));
     let id = |flag: &str| {
         let out = Command::new("id").arg(flag).output().unwrap();

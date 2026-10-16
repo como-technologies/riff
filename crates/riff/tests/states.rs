@@ -62,10 +62,8 @@ fn riff_cmd(server: &str, dir: &Path, session: &str) -> assert_cmd::Command {
 
 /// A script `name` in `dir` that runs `body`.
 fn script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(&path, format!("#!/bin/sh\n{body}\n"));
     path
 }
 

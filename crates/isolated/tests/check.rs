@@ -2,8 +2,9 @@
 //! helper (01M3MY2KWKBJCQ0BCNC6533RBW).
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use isolated::{Isolated, offenders};
+use isolated::{Isolated, offenders, program_writers};
 
 fn repo() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
@@ -37,6 +38,50 @@ fn the_check_fails_a_test_file_that_runs_the_binary_without_the_helper() {
         offenders(root.path()),
         ["crates/riff-server/tests/common/mod.rs:1"]
     );
+}
+
+/// 01M517P9J77TZX28QYBR9SH6WW.
+#[test]
+fn no_test_file_writes_a_program_in_the_test_process() {
+    let found = program_writers(repo());
+    assert!(
+        found.is_empty(),
+        "these lines write a program in the test process; use isolated::write_program: \
+         {found:#?}"
+    );
+}
+
+/// A program of the helper runs at once each time, while other threads
+/// of the process start children all the time (01M517P9J77TZX28QYBR9SH6WW).
+#[test]
+fn a_program_of_the_helper_runs_while_other_threads_start_children() {
+    /// Stops the other threads also when an assert fails.
+    struct Stop<'a>(&'a AtomicBool);
+    impl Drop for Stop<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let stop = AtomicBool::new(false);
+    std::thread::scope(|s| {
+        for _ in 0..4 {
+            s.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    std::process::Command::new("true").status().unwrap();
+                }
+            });
+        }
+        let _stop = Stop(&stop);
+        for n in 0..100 {
+            let text = format!("#!/bin/sh\necho {n}\n");
+            let program = isolated::write_program(dir.path().join(format!("p{n}")), text);
+            let out = std::process::Command::new(&program).output();
+            let out = out.unwrap_or_else(|e| panic!("run {n}: {e}"));
+            assert_eq!(out.stdout, format!("{n}\n").as_bytes());
+        }
+    });
 }
 
 #[test]

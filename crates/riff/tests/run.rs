@@ -12,7 +12,6 @@
 //! on disk.
 
 use std::collections::BTreeSet;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,8 +33,7 @@ const PINNED: &str = "ghcr.io/como-technologies/riff-session@sha256:\
 
 /// Writes the program `path` with `body`.
 fn script(path: &Path, body: &str) {
-    std::fs::write(path, body).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    isolated::write_program(path, body);
 }
 
 /// A fake `gh` that logs each call to `bin/gh.log`. The branch has no

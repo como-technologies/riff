@@ -44,8 +44,13 @@
 //! A check of a time in a test uses a [`Span`]: it fails only when the
 //! logic is slow, not when the machine is busy. See [`time`].
 //!
+//! A test writes a fake program with [`write_program`]: a child process
+//! writes it, so its run cannot fail with `ETXTBSY`. See [`program`].
+//!
 //! [`offenders`] finds each test file that names a binary of riff
-//! without the helper. A test of this crate fails on each one.
+//! without the helper, and [`program_writers`] each test file that
+//! writes a program in the test process. A test of this crate fails on
+//! each one.
 //!
 //! # Example
 //!
@@ -63,8 +68,10 @@ use std::sync::LazyLock;
 
 use tempfile::TempDir;
 
+pub mod program;
 pub mod time;
 
+pub use program::{copy_program, program_writers, write_program, writes_a_program};
 pub use time::{HANG, Late, PRESSURE_LIMIT, Span, in_time, stall};
 
 /// The prefixes of the variables that the helper removes: riff and the
@@ -318,6 +325,13 @@ isolate!(tokio::process::Command);
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn offenders(root: &Path) -> Vec<String> {
+    test_lines(root, names_a_binary)
+}
+
+/// Each line of a test file under `root/crates/*/tests` for which
+/// `matches` is true, as `PATH:LINE`. The helper crate itself does not
+/// count.
+fn test_lines(root: &Path, matches: fn(&str) -> bool) -> Vec<String> {
     let mut files = Vec::new();
     let Ok(crates) = std::fs::read_dir(root.join("crates")) else {
         return Vec::new();
@@ -339,7 +353,7 @@ pub fn offenders(root: &Path) -> Vec<String> {
             .display()
             .to_string();
         for (n, line) in text.lines().enumerate() {
-            if names_a_binary(line) {
+            if matches(line) {
                 found.push(format!("{name}:{}", n + 1));
             }
         }
