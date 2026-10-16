@@ -1261,8 +1261,9 @@ riff update
 Each riff process then starts again on the new riff when it is idle.
 See [Which processes start again](#which-processes-start-again) and
 [When the builds differ](#when-the-builds-differ). The mark goes in a
-minute. A worker and the riff daemon keep the mark until their work
-ends. When the mark stays, do the step for the session:
+minute. A session in a container keeps the mark until the riff daemon
+starts again, after its last session. When the mark stays, do the
+step for the session:
 
 - A worker with no claim: stop it. riff starts a new worker on the
   new riff. Give the short ID that `riff top` shows:

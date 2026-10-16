@@ -5609,7 +5609,7 @@ pub const DAEMON_NEW_RIFF: &str =
 
 /// `riff update` could not do its step for the riff daemon.
 pub fn daemon_update_failed(error: &str) -> String {
-    format!("riff: the riff daemon may run the old riff: {error}. Run: riff daemon install")
+    format!("riff: the riff daemon can still run the old riff: {error}")
 }
 
 /// The daemon could not ask systemd for its new start.
