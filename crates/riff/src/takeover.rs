@@ -118,9 +118,15 @@ pub async fn takeover(
 pub async fn here(name: &str, at_end: bool) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
-        takeover(&daemon::dir()?, &crate::podman::Podman, name, at_end, |line| {
-            println!("{line}");
-        })
+        takeover(
+            &daemon::dir()?,
+            &crate::podman::Podman,
+            name,
+            at_end,
+            |line| {
+                println!("{line}");
+            },
+        )
         .await
     }
     #[cfg(not(target_os = "linux"))]

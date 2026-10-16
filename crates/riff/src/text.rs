@@ -6518,8 +6518,7 @@ pub fn view_waiting(names: &[String]) -> String {
 }
 
 /// `riff view`: the keys, at the bottom of the view.
-pub const VIEW_KEYS: &str =
-    "Up/Down select   Enter attach to the lead   t take over now   q quit";
+pub const VIEW_KEYS: &str = "Up/Down select   Enter attach to the lead   t take over now   q quit";
 
 /// `riff view`: the riff daemon does not answer.
 pub fn view_no_daemon(error: &str) -> String {
