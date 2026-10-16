@@ -448,13 +448,51 @@ so riff refuses a tag. The image of this repository comes from
 flowchart LR
     D["deploy/session/Dockerfile"] -- "each change" --> W["workflow Session image"]
     W -- "push tree-ID" --> G[("ghcr.io/como-technologies/riff-session")]
-    G -- "its digest" --> T["riff.toml"]
+    G -- "its digest" --> T["riff.toml of your branch"]
+    T -- "the merge" --> M["riff.toml on origin/main"]
+    M -- "the merged pin" --> S["each session"]
 ```
 
-To see the image that your clone pins:
+To see the image that your working tree pins:
 
 ```sh
 riff image
+```
+
+### Only a merged pin counts
+
+The sessions use only the merged pin: the image that `riff.toml` pins
+on the default branch of `origin`. riff fetches that branch first. The
+waves of the daemon, `riff wave run`, `riff run`, `riff lead start`
+and the update steps of the daemon use the merged pin. An edit of
+`riff.toml` that is not merged changes no session, also an edit in the
+main clone. When `riff.toml` of the main clone pins another image, riff
+tells you in one line, and uses the merged pin:
+
+```text
+/home/mike/src/riff/riff.toml pins ghcr.io/como-technologies/riff-session@sha256:ff…, but the merged pin of origin/main is ghcr.io/como-technologies/riff-session@sha256:01…. riff uses the merged pin.
+```
+
+To see the merged pin:
+
+```sh
+git fetch origin
+git show origin/HEAD:riff.toml
+```
+
+`riff image`, `riff init` and the image of this folder in
+`riff update --check` read your working tree. To try the pin of your
+branch in one session before the merge, give it to `riff run`:
+
+```sh
+riff run issue-12 --image "$(riff image)"
+```
+
+When the main clone has no `origin/HEAD`, riff cannot find the merged
+pin, and stops. Set `origin/HEAD` in the main clone:
+
+```sh
+git remote set-head origin --auto
 ```
 
 ### Edit and build the image

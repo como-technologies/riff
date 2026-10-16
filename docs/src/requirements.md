@@ -4841,6 +4841,24 @@ share.
   pin go in one pull request.
 - **01M4Z7SPC20RWG218EWPEGYZTF** `riff image` prints the session image
   that the riff config of the repository of the current folder pins.
+- **01M51STPHXSSZMHF9T7Z85097R** The merged pin of a main clone is the
+  session image that `riff.toml` pins on the default branch of
+  `origin`, the branch of `origin/HEAD`. riff fetches that branch
+  first. The wave of the daemon, `riff wave run`, `riff run`,
+  `riff lead start` and the image step of an update use only the
+  merged pin. So an edit of `riff.toml` that is not merged never
+  chooses the image that riff pulls and runs.
+- **01M51STPMEM62Z8B26YM2CH6QH** When `riff.toml` in the working tree of
+  the main clone pins another image, or no good image, riff says so in
+  one line, and uses the merged pin.
+- **01M51STPPWYFKQ1ESCNA6V3WV2** When the fetch of the default branch
+  fails, riff says so in one line, and reads the branch that the clone
+  has. A main clone with no `origin/HEAD` has no merged pin: riff stops,
+  and gives the fix `git remote set-head origin --auto`.
+- **01M51SVXQK037E20R7WAY66532** `riff image`, `riff init` and the image
+  of this folder in `riff update --check` read `riff.toml` of the
+  working tree. So a person can try the pin of a branch before its
+  merge.
 - **01M4Z7SPE5Q02RQWW5VZBEK2G3** The package `riff-session` on ghcr.io
   is public, as the repository is. So podman pulls the image with no
   sign-in.
@@ -5509,8 +5527,8 @@ share.
   runs `systemctl --user daemon-reload`, and starts again on the new
   unit when it is idle, as for a new riff (01M517BTP6BAGTRBYWPX9GPVE0).
 - **01M51QFPSMDDMFPZXAEYWZYJPV** The session image of a wave is in step
-  when podman has the image that `riff.toml` of the main clone of the
-  wave pins. Else the daemon pulls it.
+  when podman has the merged pin of the main clone of the wave
+  (01M51STPHXSSZMHF9T7Z85097R). Else the daemon pulls it.
 - **01M51QFPW37EXVH4AXH70MSXBT** The riff daemon never does a step that
   needs a person: the checks of the machine of `riff init` (podman, the
   init of podman, `/etc/subuid`, `/etc/subgid` and cgroup v2). It keeps
@@ -5600,8 +5618,8 @@ share.
   podman and the image, the sign-in of `gh`, the sign-in of `claude`
   (01M4Z60B869HWDTZMSYPVYACD8), `HOME`, `USER`, and the wave of the
   issue. A failed check takes no claim.
-- **01M4Z81B5A456HDKW7G0WFGCY6** `riff run` takes the session image
-  that `riff.toml` of the main clone pins (01M4Z7SP3KSKJYKNRP1MQ70C4Q).
+- **01M4Z81B5A456HDKW7G0WFGCY6** `riff run` takes the merged pin of the
+  main clone (01M4Z7SP3KSKJYKNRP1MQ70C4Q, 01M51STPHXSSZMHF9T7Z85097R).
   `--image` gives another image, for example a local build. When podman
   does not have the image, `riff run` pulls it before the claim. When
   podman cannot pull it, riff takes no claim.

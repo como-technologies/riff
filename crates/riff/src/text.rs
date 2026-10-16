@@ -5574,6 +5574,37 @@ pub fn run_pulling(image: &str) -> String {
     format!("The riff daemon pulls the image {image}.")
 }
 
+/// The main clone `main` has no `origin/HEAD`, so riff cannot find the
+/// merged pin of the session image (01M51STPPWYFKQ1ESCNA6V3WV2).
+pub fn image_no_origin_head(main: &Path) -> String {
+    format!(
+        "The clone {0} has no origin/HEAD, so riff cannot find the merged riff.toml. Fix: git -C \
+         {0} remote set-head origin --auto",
+        main.display()
+    )
+}
+
+/// riff cannot fetch the default branch `head` for the merged pin, so it
+/// reads the branch that the clone has (01M51STPPWYFKQ1ESCNA6V3WV2).
+pub fn image_no_fetch(head: &str, error: &str) -> String {
+    format!("riff cannot fetch {head}: {error}. riff uses riff.toml of {head} as the clone has it.")
+}
+
+/// The working tree pins `local` in `path`, not the merged pin `merged`
+/// of `head` (01M51STPMEM62Z8B26YM2CH6QH).
+pub fn image_local_differs(path: &Path, local: &str, merged: &str, head: &str) -> String {
+    format!(
+        "{} pins {local}, but the merged pin of {head} is {merged}. riff uses the merged pin.",
+        path.display()
+    )
+}
+
+/// The working tree pins no good image, for the reason `why`
+/// (01M51STPMEM62Z8B26YM2CH6QH).
+pub fn image_local_bad(why: &str, merged: &str, head: &str) -> String {
+    format!("{why}. riff uses the merged pin {merged} of {head}.")
+}
+
 /// The image is not on this machine, and podman cannot pull it.
 pub fn run_no_image(image: &str) -> String {
     format!(

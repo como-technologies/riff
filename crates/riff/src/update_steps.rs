@@ -15,7 +15,7 @@
 //! |---|---|---|
 //! | the rules of Claude Code | the user settings have each rule of riff ([`crate::permissions::user_rules`]) | adds the missing rules ([`crate::rule_sync`]) |
 //! | the unit of the daemon | the unit file is the text that this riff writes for its `ExecStart` and its variables ([`Unit::text`]) | writes it again, and starts again on it when it is idle (01M51QFPQ68JHS08TWXNNWZ0D7) |
-//! | the session image of each wave | podman has the image that `riff.toml` of the main clone of the wave pins | pulls it (01M51QFPSMDDMFPZXAEYWZYJPV) |
+//! | the session image of each wave | podman has the merged pin of the main clone of the wave: the image that `riff.toml` on the default branch of `origin` pins ([`session_image::merged`]) | pulls it (01M51QFPSMDDMFPZXAEYWZYJPV) |
 //!
 //! The gate ([`gate`]). The daemon changes the machine only when
 //! `update.auto` is on and its own binary is a release: the SHA-256 of
@@ -50,8 +50,9 @@
 //!
 //! `riff update --check` ([`check`]) looks at each step and changes
 //! nothing (01M51QFPYHK0916C5ZN2B55BR0): the binary, the rules, the unit,
-//! the session image of each wave and of the repository of the current
-//! folder, and the checks of the machine. It prints one line for each
+//! the session image of each wave, the image that the working tree of
+//! the current folder pins ([`session_image::of_folder`],
+//! 01M51SVXQK037E20R7WAY66532), and the checks of the machine. It prints one line for each
 //! step, keeps the step that needs a person for the status line, and
 //! exits with 1 when a step is not in step.
 //!
@@ -80,8 +81,7 @@ use crate::release::{self, Source};
 use crate::rule_sync;
 use crate::runtime::Runtime;
 use crate::service::{ServiceManager, Unit};
-use crate::session_image::Image;
-use crate::{lifecycle, local, permissions, settings, text};
+use crate::{lifecycle, local, permissions, session_image, settings, text};
 
 /// A riff binary, and the place of its release files.
 #[derive(Debug, Clone, Copy)]
@@ -375,21 +375,33 @@ pub fn machine(checks: &[Check]) -> Vec<Step> {
 }
 
 /// The session image of each wave of the daemon in the folder `dir`
-/// ([`crate::wave::read_waves`]): the repository, and the image that
-/// `riff.toml` of its main clone pins, or why riff has none.
-pub fn wave_images(dir: &Path) -> Vec<(String, Result<String, String>)> {
+/// ([`crate::wave::read_waves`]): the repository, and the merged pin of
+/// its main clone ([`session_image::merged`],
+/// 01M51STPHXSSZMHF9T7Z85097R), or why riff has none. It gives `say`
+/// each line of the merged pin, after the name of the repository.
+pub fn wave_images(dir: &Path, mut say: impl FnMut(&str)) -> Vec<(String, Result<String, String>)> {
     let Ok(waves) = crate::wave::read_waves(dir) else {
         return Vec::new();
     };
     waves
         .into_values()
         .map(|wave| {
-            let image = Image::of_repository(&wave.main)
+            let repo = wave.repo;
+            let image = session_image::merged(&wave.main, |line| say(&format!("{repo}: {line}")))
                 .map(|image| image.to_string())
                 .map_err(|e| format!("{e:#}"));
-            (wave.repo, image)
+            (repo, image)
         })
         .collect()
+}
+
+/// [`wave_images`] on a thread that may block, as git fetches. It
+/// prints each line.
+async fn wave_images_here(dir: &Path) -> Vec<(String, Result<String, String>)> {
+    let dir = dir.to_owned();
+    tokio::task::spawn_blocking(move || wave_images(&dir, |line| println!("{line}")))
+        .await
+        .unwrap_or_default()
 }
 
 /// What the steps look at on a machine.
@@ -533,7 +545,7 @@ pub async fn at_start(runtime: &impl Runtime, daemon: &Path) {
     rule_sync::at_start().await;
     let gate = gate_here().await;
     println!("{}", text::steps_gate(&Build::this().to_string(), &gate));
-    let steps = sync_here(&gate, runtime, wave_images(daemon)).await;
+    let steps = sync_here(&gate, runtime, wave_images_here(daemon).await).await;
     for step in &steps {
         println!("{}", step.line());
     }
@@ -569,7 +581,7 @@ pub async fn check(runtime: &impl Runtime, daemon: &Path, here: &Path) -> i32 {
             },
         },
     };
-    let mut images = wave_images(daemon);
+    let mut images = wave_images_here(daemon).await;
     if let Ok(found) = crate::session_image::of_folder(here) {
         let found = found.to_string();
         if !images.iter().any(|(_, i)| i.as_ref() == Ok(&found)) {

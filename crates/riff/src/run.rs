@@ -43,9 +43,10 @@
 //! the sign-in of `claude`, `HOME` and `USER`, and the milestone of the
 //! issue. A failed check takes no claim (01M4Z81B3A324KKE8M8Z71TM4M).
 //!
-//! The image is the one that `riff.toml` of the main clone pins by its
-//! digest ([`Image::of_repository`]), or the one of `--image`, for
-//! example a local build. When podman does not have the image, the
+//! The image is the merged pin: the one that `riff.toml` on the default
+//! branch of `origin` pins by its digest ([`session_image::merged`],
+//! 01M51STPHXSSZMHF9T7Z85097R), or the one of `--image`, for example a
+//! local build. When podman does not have the image, the
 //! daemon pulls it before the claim (01M4Z81B5A456HDKW7G0WFGCY6).
 //!
 //! When `claude` ends, riff finds the open pull request of the branch,
@@ -194,8 +195,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use crate::api::{self, Api};
 use crate::daemon::{self, Ask, Ended, Say};
 use crate::runtime::{Bind, Env, SessionSpec, Source};
-use crate::session_image::Image;
-use crate::{dropped, home, identity, pr, rollout, terminal, text};
+use crate::{dropped, home, identity, pr, rollout, session_image, terminal, text};
 
 /// The memory limit of each container (01M4Z60B7XT7462XMV49GJTVSJ).
 pub const MEMORY: &str = "8g";
@@ -1415,7 +1415,7 @@ pub async fn run_with(
     let (main, common) = main_clone(&dir)?;
     let image = match image {
         Some(image) => image.to_owned(),
-        None => Image::of_repository(&main)?.to_string(),
+        None => session_image::merged(&main, |line| println!("{line}"))?.to_string(),
     };
     let image = image.as_str();
     let checked = check(daemon, &main, issue, image).await?;
