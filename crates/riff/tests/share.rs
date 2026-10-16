@@ -44,6 +44,49 @@ async fn in_terminal(mut cmd: Command) -> (ExitStatus, String) {
     .unwrap()
 }
 
+/// 01M519Z57K3SPRN8Z517VZ62BB: "Share a riff" of the book page "riff 3.0:
+/// peers" has a `sh` block of each member command of a riff of peers, and
+/// each one is real. The help of each command that needs a terminal says
+/// so, as the page does.
+#[test]
+fn share_a_riff_in_the_book_has_each_member_command() {
+    let commands: Vec<String> = crate::book::commands_of_part("riff-3-peers.md", "Share a riff")
+        .into_iter()
+        // `riff release ITEM --forge` comes with the claims of Wave B.
+        .filter(|command| !command.starts_with("riff release"))
+        .collect();
+    assert_eq!(
+        commands,
+        [
+            "riff invite brett",
+            "riff join riff1-...",
+            "riff invite mike",
+            "riff members",
+            "riff leave",
+            "riff remove brett",
+            "riff remove brett --host kadomony",
+        ]
+    );
+    crate::book::each_is_real(&commands);
+    let part = crate::book::part("riff-3-peers.md", "Share a riff").replace('\n', " ");
+    assert!(
+        part.contains(
+            "Run `riff invite`, `riff join`, `riff leave` and `riff remove` in a terminal of your \
+             own."
+        ),
+        "{part}"
+    );
+    for name in ["invite", "join", "leave", "remove"] {
+        let out = isolated::Isolated::shared()
+            .assert_riff()
+            .args(["help", name])
+            .output()
+            .unwrap();
+        let help = String::from_utf8_lossy(&out.stdout).replace('\n', " ");
+        assert!(help.contains("in a terminal"), "riff help {name}: {help}");
+    }
+}
+
 /// 01M4Z60B8JEX15M1Q2435FZSDM, 01M521J6QBQFRDWRPR0NGHE7TM: each member
 /// command that changes the riff refuses with no terminal: an agent
 /// session runs a command with no terminal. It asks no daemon.

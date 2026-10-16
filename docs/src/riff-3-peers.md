@@ -5,9 +5,11 @@ people share one riff, and no server holds it. The daemon of each
 machine keeps a copy of the riff, and the daemons connect peer to
 peer.
 
-The commands on this page come with the items of Wave B. Until then,
-`riff --help` does not show them, and `riff invite`, `riff remove`,
-`riff members` and `riff release` act on riff-server 1.x. The
+The commands on this page come with the items of Wave B. `riff invite`,
+`riff join`, `riff leave`, `riff remove` and `riff members` act on the
+riff of the riff daemon of your machine. With `--email`, the member
+commands act on riff-server 1.x (see
+[The way over from riff 1.x](#the-way-over-from-riff-1x)). The
 [requirements of Wave B](requirements.md#wave-b-the-record) hold each
 decision.
 
@@ -53,6 +55,11 @@ flowchart LR
 The first start of the daemon makes a riff of your own. You are its
 owner. These steps add other people and other machines to it.
 
+Run `riff invite`, `riff join`, `riff leave` and `riff remove` in a
+terminal of your own. Each one refuses with no terminal, so an agent
+session cannot admit a member, remove one, or move your daemon to
+another riff.
+
 ### Invite a person
 
 On the machine of the owner:
@@ -61,10 +68,12 @@ On the machine of the owner:
 riff invite brett
 ```
 
-It prints one invite string that starts with `riff1-`. Send the
-string to the person by hand, for example in a chat. The string works
-one time, for 24 hours. Until then, it is a secret: a person who has
-it can join as `brett`.
+It prints one invite string that starts with `riff1-`, and the line
+that the person runs. Send the string to the person by hand, for
+example in a chat. The string works one time, for 24 hours. Until
+then, it is a secret: a person who has it can join as `brett`. Your
+daemon keeps only a hash of it, in the file `invites.json` of its
+folder.
 
 ### Join a riff
 
@@ -74,10 +83,16 @@ On the machine of the person, with the string of the owner:
 riff join riff1-...
 ```
 
-The daemon of the owner must be online. Your daemon gets each record
-of the riff, then it connects to each other member. A daemon is in
-one riff at a time: `riff join` refuses while your own riff has
-another member.
+The daemon of the owner must be online. Your daemon connects to it,
+and the daemon of the owner adds the key of your daemon as a member.
+Then your daemon gets each record of the riff, and connects to each
+other member. A failed join changes nothing, and says why: for
+example, the invite ended, or a join used it already.
+
+A daemon is in one riff at a time. `riff join` refuses while your own
+riff has another member, and while your daemon is in the riff of
+another person. The records of your own riff stay in the folder of
+your daemon.
 
 ### Add a second machine of your own
 
@@ -95,8 +110,16 @@ riff members
 ```
 
 It shows the owner and each member key: the user, the host, the start
-of the key, online or the time when it was last seen, and forked,
-removed or left.
+of the key, and the state: this machine, online, or the time when it
+was last seen, and forked, removed or left. It needs no terminal.
+
+```text
+The riff 8a88e3dd of mike:
+USER   HOST      KEY       STATE
+mike   thelio    8a88e3dd  owner, this machine
+brett  kadomony  1f2e3d4c  online
+mike   pangolin  9c0b7a61  last seen 5m ago
+```
 
 ### See the sessions of each machine
 
@@ -123,9 +146,11 @@ On the machine of a member:
 riff leave
 ```
 
-It takes this machine out of the riff, and makes a riff of your own
-again. Each session of this machine leaves with it. The owner cannot
-leave.
+Your daemon sends a `left` record to each member, and waits up to 5
+seconds for each one to get it. Then this machine has a riff of your
+own again, with the same key. Each session of this machine leaves
+with it. The owner cannot leave. A daemon that left cannot join that
+riff again: the riff refuses its key.
 
 ### Remove a member
 
@@ -136,6 +161,10 @@ the user. The second removes one machine:
 riff remove brett
 riff remove brett --host kadomony
 ```
+
+Each daemon of the riff then refuses the key of each machine that you
+removed: its connections, and each of its records after its last one.
+The owner cannot remove itself.
 
 ### Free the claim of a machine that is gone
 
@@ -173,7 +202,7 @@ with the same records have the same riff.
 
 | Type | Byte | Writer | What it holds | Largest record |
 |---|---|---|---|---|
-| `riff` | 1 | The owner, in its first record | The user of the owner | 1 KiB |
+| `riff` | 1 | The owner, in its first record | The user and the host of the owner | 1 KiB |
 | `member` | 2 | The owner | A member key, its user and its host | 1 KiB |
 | `removed` | 3 | The owner | A member key, and its last sequence number | 1 KiB |
 | `left` | 4 | A member | The leave of its own key | 1 KiB |
@@ -256,11 +285,25 @@ sequenceDiagram
     O-->>M: riff1-... (one time, 24 hours)
     M->>B: the string, by hand
     B->>N: riff join riff1-...
-    N->>O: connect to the riff ID; the secret and the host
-    O->>O: check the invite; write the member record
+    N->>O: connect to the riff ID, ALPN riff/3/join; the secret and the host
+    O->>O: check: the owner, the key, the host, the invite
+    O->>O: write the member record
+    O-->>N: joined
+    Note over N,O: the connection goes on as the peer link
     O-->>N: the records of the riff
     N->>N: connect to each member, and sync
 ```
+
+The daemon of the owner checks, in this order, that it is the owner of
+its riff, that the riff does not know the key of the new daemon yet,
+that the host is a name that riff takes, and that the invite is known,
+not used and not ended. The first check that fails refuses the join,
+and nothing changes.
+
+A daemon keeps the riff that it joined in the file `state/joined` of
+its folder, and its records in `state/riffs/RIFF`. A new start of the
+daemon opens that riff. `riff daemon status` shows the riff that the
+daemon is in, and the user of its owner.
 
 ## How a claim works
 

@@ -6091,6 +6091,52 @@ then.
   riff-server 1.x stay with the flag `--email`:
   `riff invite --email EMAIL`, `riff remove --email EMAIL` and
   `riff members --email`.
+- **01M521J6CEJB24QFN17077KG9S** An invite string is `riff1-` and the
+  base32 (RFC 4648, lower case, no padding) of these bytes: the riff ID
+  (32 bytes), the secret (32 bytes), the end time in milliseconds since
+  the Unix epoch (8 bytes, big-endian), and the user in UTF-8.
+- **01M521J6F5QH9MW4GVY0H2JD8N** The daemon of the owner keeps each
+  invite in the file `invites.json` of its folder, with the mode 0600:
+  the BLAKE3 hash of the secret, the user, the end time, and whether a
+  join used it. A join marks the invite used before the daemon writes
+  the `member` record. When that write fails, the daemon gives the
+  invite back.
+- **01M521J6HX5BN0FNDBSKZDVQE7** A join is a connection to the daemon of
+  the owner with the ALPN `riff/3/join`. The new daemon sends the secret
+  and its host on one stream. The daemon of the owner checks, in this
+  order, that it is the owner, the key, the host and the invite, and
+  answers with the join or why not. After a join, the connection goes
+  on as the peer link of the two daemons.
+- **01M521J6MKSBAA2QP6ZFHYT9ZQ** A key has one `member` record. The
+  daemon of the owner refuses a join of a key that its riff knows: the
+  owner, a member, a removed key, or a key that left. The writer check
+  of a `member` record refuses the key of the owner and a key that the
+  riff knows. So the user of a key does not depend on the order of the
+  records.
+- **01M521J6QBQFRDWRPR0NGHE7TM** `riff join` and `riff leave` need a
+  terminal too, as `riff invite` and `riff remove` do. An agent session
+  has no terminal, so it cannot move the daemon of the machine to
+  another riff.
+- **01M521J6T2PWA9JREDXJK6DZ0V** The `riff` record also holds the host
+  of the daemon of the owner. A `riff` record with no host shows no
+  host.
+- **01M521J6WZT2KR5ZQE9DZ9A5AC** The file `state/joined` of a daemon
+  holds the riff ID of the riff that it joined. With no such file, the
+  daemon is in its riff of its own. The records of its riff of its own
+  are in `state/records`, and the records of a joined riff are in
+  `state/riffs/RIFF/records`. Each start of the daemon opens the riff of
+  that file. `riff daemon status` shows the riff that the daemon is in,
+  and the user of its owner.
+- **01M521J6ZRNWBSPK7WB23TVY59** At a join and at a leave, each session
+  of the daemon on the riff of peers writes its end record in the old
+  riff, and its start record in the new riff. At a leave, those end
+  records come before the `left` record. Each peer link sends the `left`
+  record, ends its stream, and waits up to 5 seconds for the other
+  daemon to close the connection. Then the daemon is in its riff of its
+  own again.
+- **01M521J72EC8Z5HAKA1Q9P5Z24** `riff members` shows a key that has no
+  link as last seen at the later of two times: the end of its last link
+  since the start of the daemon, and the time of its last record.
 
 ### Wave B: the claims
 

@@ -3833,7 +3833,7 @@ sequenceDiagram
     participant E as riff-server
     participant L as log
     participant S as signins.json
-    A->>E: riff remove bob@gmail.com
+    A->>E: riff remove --email bob@gmail.com
     E->>L: member_removed, position 8
     Note over E: stop before the end of the sign-ins
     Note over S: holds the sign-in of bob, from position 5
