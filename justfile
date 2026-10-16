@@ -211,7 +211,7 @@ session-test *ARGS:
 # The real-session test of a release (01M4ZCFGCY301G2ARFMRXV7XDR): the
 # static riff of this tree (01M4ZPJ0FXTC78Z8GG2QA65167) runs one scratch
 # item with riff run, the session image of riff.toml and a real claude. It
-# needs podman. ARGS: --skip DIR, --gate-wait SECONDS.
+# needs podman. ARGS: --skip PATH, --gate-wait SECONDS.
 # Run the real-session test on this host: one scratch item to a pull request
 real-session *ARGS:
     just static dev

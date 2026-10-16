@@ -5897,7 +5897,7 @@ then.
   issue in the backlog that adds one line to the book, and holds
   `verify-issue-N`. The `riff` of the tree runs the issue with
   `riff run` and the image that `riff image` of the tree names. The test
-  passes when `riff run` ends with 0, the home has no new path
+  passes when `riff run` ends with 0, the home check passes
   (01M4ZCFGHCS7WJ6CFYBZSX0AT5), the branch of the item has an open pull
   request that adds the line, and the check run `Gate` of its head
   starts in 10 minutes. Then the test closes the pull request, deletes
@@ -5929,7 +5929,25 @@ then.
   clone and the worktree of the test, `XDG_CACHE_HOME`, and each folder
   of `--skip`.
   In the Claude folder of the person, only a new path that names the
-  `ID8` of the session counts.
+  `ID8` of the session counts. Superseded in part by
+  01M51K051FR0WN71NJXNA86XWY and 01M51K053WS0KK3E376V6DH6GR.
+- **01M51K051FR0WN71NJXNA86XWY** The home check of the real-session
+  test also sees a change to a file that is there already, but only in
+  the files that riff must not write (01M4Z60B85X62PNYSVJWKXEWH3):
+  `~/.gitconfig`, `git` and `gh` in `XDG_CONFIG_HOME`, the shell files
+  (`.profile`, `.bashrc`, `.bash_profile`, `.bash_login`,
+  `.bash_logout`, `.zshenv`, `.zprofile`, `.zshrc`, `.zlogin`,
+  `.zlogout`, and `fish/config.fish` and `fish/conf.d` in
+  `XDG_CONFIG_HOME`), `.claude.json`, and `settings.json` in the Claude
+  folder. Before `riff run`, it keeps the size, the time of change and
+  the inode of each of these files. A file with a new value fails the
+  test, and the message names it. A change of another file of the home
+  does not count. Each path of `--skip` is left out, also a file.
+- **01M51K053WS0KK3E376V6DH6GR** In the home check, the Claude folder of
+  the person and each file whose name starts with `.claude.json` beside
+  it, for example its lock, count as the Claude folder: only a new path
+  that names the `ID8` of the session counts. A changed `.claude.json`
+  counts only when its text names the `ID8`.
 - **01M4ZFPYNGFF49WWHR8EBWSTNG** Before `riff run`, the real-session
   test starts `riff daemon` of the tree in a process group of its own,
   and waits up to 10 seconds until `riff daemon status` answers. When a

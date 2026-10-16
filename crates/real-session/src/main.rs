@@ -1,4 +1,4 @@
-//! `real-session --riff PATH [--skip DIR]... [--gate-wait SECONDS]`: the
+//! `real-session --riff PATH [--skip PATH]... [--gate-wait SECONDS]`: the
 //! real-session test of a release. `just real-session` runs it. See the
 //! library docs.
 

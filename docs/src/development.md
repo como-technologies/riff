@@ -1168,7 +1168,9 @@ The test does these steps. The messages name them:
    session.
 7. Check the home: the test lists your home again. A new file outside
    the folders of riff, the folders of podman, your clone and
-   `~/.cache` fails the test.
+   `~/.cache` fails the test. A change to a file that riff must not
+   write also fails it. See
+   [What the home check compares](#what-the-home-check-compares).
 8. Find the pull request: the branch of the session has an open pull
    request.
 9. Check the change: the pull request adds the line to the book.
@@ -1195,19 +1197,52 @@ just real-session
 systemctl --user start riff
 ```
 
+### What the home check compares
+
+riff writes nothing in your home outside its own folders. The home
+check makes sure. Before `riff run`, the test keeps two things:
+
+- the path of each file and folder of your home;
+- the size, the time of change and the inode of each file that riff
+  must not write.
+
+After `riff run`, the test compares your home with them:
+
+| Change | Result |
+|---|---|
+| A new path, outside the folders that the test leaves out | fails the test |
+| A change to a file that riff must not write | fails the test |
+| A change to each other file | does not count |
+
+The files that riff must not write:
+
+| Files | What they are |
+|---|---|
+| `~/.gitconfig`, `~/.config/git` | your git config |
+| `~/.config/gh` | the config of `gh` |
+| `~/.profile`, `~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.bash_logout`, `~/.zshenv`, `~/.zprofile`, `~/.zshrc`, `~/.zlogin`, `~/.zlogout`, `~/.config/fish/config.fish`, `~/.config/fish/conf.d` | your shell files |
+| `~/.claude.json`, `~/.claude/settings.json` | the config of Claude Code |
+
+Your other Claude Code sessions write in `~/.claude`, `~/.claude.json`
+and `~/.claude.json.lock`. There, only a new file that names the
+session of the test counts, and a change to `~/.claude.json` counts
+only when its text names that session. With `CLAUDE_CONFIG_DIR`, the
+test uses that folder and the `.claude.json` in it.
+
+A failed check names each path. A changed file shows `(changed)`.
+
 ### When another program writes in your home
 
 The home check fails when another program writes a new file in your
-home while the test runs, for example a browser. The message lists
-each new file. Leave out the folder of that program with `--skip`, and
-run the test again. Give `--skip` one time for each folder:
+home while the test runs, for example a browser. It also fails when
+you change a file that riff must not write, for example your
+`~/.bashrc`. The message lists each path. Leave out the folder of that
+program, or the file, with `--skip`, and run the test again. Give
+`--skip` one time for each path:
 
 ```sh
 just real-session --skip ~/.mozilla --skip ~/.config/Code
 ```
-
-Your other Claude Code sessions write in `~/.claude`. There, only a
-new file that names the session of the test counts.
 
 ### Wait longer for the Gate
 
