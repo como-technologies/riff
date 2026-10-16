@@ -30,8 +30,11 @@
 //! -i -t` ([`terminal_args`]): conmon holds its terminal, and `podman
 //! run` ends when the container runs. `podman wait NAME` gives its end.
 //! `podman attach NAME` shows the terminal to a person, until Ctrl-P
-//! Ctrl-Q. A takeover runs `podman exec -it NAME COMMAND` with the
-//! terminal of the person (01M4Z60B81RTZT71PN5HV0GZHX,
+//! Ctrl-Q. Before it, `podman exec NAME stty` sets the terminal of the
+//! container to another size ([`redraw_args`]). The attach sets the size
+//! of the person again, so `claude` draws its screen
+//! (01M51PD7M04HZR2PVVJA4WCBK5). A takeover runs `podman exec -it NAME
+//! COMMAND` with the terminal of the person (01M4Z60B81RTZT71PN5HV0GZHX,
 //! 01M4Z60B83ZH10HYKW7X1C0SSS).
 //!
 //! conmon, the monitor of podman, holds the container. A stop of the
@@ -143,6 +146,39 @@ pub fn run_args(spec: &SessionSpec) -> Result<Vec<OsString>> {
 /// ```
 pub fn terminal_args(spec: &SessionSpec) -> Result<Vec<OsString>> {
     args_of(spec, &["run", "--rm", "-d", "-i", "-t"])
+}
+
+/// The arguments of `podman` that set the terminal of the container
+/// `name` to a size that is not `rows` and `cols`, the size of the
+/// terminal of the person: one row less, or one more for a terminal of
+/// one row. The next attach sets the size of the person, so the command
+/// draws again (01M51PD7M04HZR2PVVJA4WCBK5). `/dev/console` is the
+/// terminal that conmon holds.
+///
+/// ```
+/// use riff::podman::redraw_args;
+///
+/// assert_eq!(
+///     redraw_args("riff-lead-o-r", 30, 100).join(" "),
+///     "exec riff-lead-o-r stty -F /dev/console rows 29 cols 100"
+/// );
+/// assert_eq!(redraw_args("n", 1, 80)[6], "2");
+/// ```
+pub fn redraw_args(name: &str, rows: u16, cols: u16) -> Vec<String> {
+    let rows = if rows > 1 { rows - 1 } else { rows + 1 };
+    [
+        "exec",
+        name,
+        "stty",
+        "-F",
+        "/dev/console",
+        "rows",
+        &rows.to_string(),
+        "cols",
+        &cols.to_string(),
+    ]
+    .map(str::to_owned)
+    .to_vec()
 }
 
 /// The arguments of `podman` for `spec`, after the arguments `first`.
@@ -299,6 +335,35 @@ impl Runtime for Podman {
             .await
             .with_context(|| text::no_program(PODMAN))?;
         Ok(status.into())
+    }
+
+    /// Sets the terminal of the container to the size of the terminal of
+    /// this process with one row less (one more for a terminal of one
+    /// row). `podman attach` then sets the size of this terminal, and the
+    /// kernel tells the command with SIGWINCH: it draws again. A plain
+    /// SIGWINCH does not do it: `claude` draws only when the size changes
+    /// (01M51PD7M04HZR2PVVJA4WCBK5). With no terminal here, it does
+    /// nothing: `podman attach` then sets no size.
+    async fn redraw(&self, name: &str) -> Result<()> {
+        use std::io::IsTerminal;
+        if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+            return Ok(());
+        }
+        let size = ratatui::crossterm::terminal::window_size()
+            .context("cannot read the size of this terminal")?;
+        let out = podman()
+            .args(redraw_args(name, size.rows, size.columns))
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .with_context(|| text::no_program(PODMAN))?;
+        if !out.status.success() {
+            bail!(
+                "podman exec {name} stty: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(())
     }
 
     /// Only the `podman` child gets the values of the host. The end is

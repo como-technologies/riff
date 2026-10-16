@@ -20,6 +20,7 @@
 //!     P->>D: start SPEC with a terminal
 //!     D->>C: podman run -d -i -t: riff relay --terminal -- claude
 //!     D-->>P: done: the container runs
+//!     P->>C: podman exec stty: another size, so claude draws again
 //!     P->>C: podman attach (Ctrl-P Ctrl-Q detaches)
 //!     D->>S: keep the session of the lead alive
 //! ```
@@ -33,6 +34,8 @@
 //! | The command | `claude --session-id ID --permission-mode auto START` ([`spec`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4 |
 //! | The riff tools | [`crate::mcp::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
 //! | The wakes | `/opt/riff/riff relay watch` in a background task | 01M501PA04NP79RJQEDP4D7YTM |
+//! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
+//! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which | 01M51PD7Q24N252V66NFEHY49N |
 //!
 //! The clone and the Claude folder stay between the starts of the lead:
 //! the lead keeps the history of its conversations, and a dialog of
@@ -217,12 +220,61 @@ pub fn fresh_clone(main: &Path, clone: &Path) -> Result<Fresh> {
     Ok(Fresh::Forward)
 }
 
+/// How an attach to the lead ended (01M51PD7Q24N252V66NFEHY49N).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Left {
+    /// The person detached with Ctrl-P Ctrl-Q: the lead runs on.
+    Detached,
+    /// The lead ended, for example after `/exit`: its container does
+    /// not run.
+    Ended,
+}
+
+impl Left {
+    /// The line for the person after the attach to the lead `name`.
+    ///
+    /// ```
+    /// use riff::lead::Left;
+    ///
+    /// assert_eq!(Left::Detached.line("n"), riff::text::lead_detached("n"));
+    /// assert_eq!(Left::Ended.line("n"), riff::text::lead_ended("n"));
+    /// ```
+    pub fn line(self, name: &str) -> String {
+        match self {
+            Left::Detached => text::lead_detached(name),
+            Left::Ended => text::lead_ended(name),
+        }
+    }
+}
+
 /// Attaches the terminal of this process to the lead `name` with
-/// `runtime`, until a detach or the end of the lead.
-pub async fn attach(runtime: &impl Runtime, name: &str) -> Result<()> {
+/// `runtime`, until a detach or the end of the lead. First it asks the
+/// runtime to make the lead draw its terminal again
+/// (01M51PD7M04HZR2PVVJA4WCBK5). When that fails, it prints why, and
+/// attaches. After the attach, a lead whose container does not run
+/// ended (01M51PD7Q24N252V66NFEHY49N). When the runtime cannot say, it
+/// counts as a detach.
+pub async fn attach(runtime: &impl Runtime, name: &str) -> Result<Left> {
     println!("{}", text::LEAD_DETACH);
+    if let Err(e) = runtime.redraw(name).await {
+        println!("{}", text::lead_no_redraw(&format!("{e:#}")));
+    }
     runtime.attach(name).await?;
-    println!("{}", text::lead_detached(name));
+    Ok(match runtime.running(name).await {
+        Ok(false) => Left::Ended,
+        Ok(true) | Err(_) => Left::Detached,
+    })
+}
+
+/// [`attach`], then the line of [`Left::line`]. After the end of the
+/// lead, it also says that the `claude --resume` line of `claude` does
+/// not work on the host.
+async fn attach_here(runtime: &impl Runtime, name: &str) -> Result<()> {
+    let left = attach(runtime, name).await?;
+    println!("{}", left.line(name));
+    if left == Left::Ended {
+        println!("{}", text::LEAD_NO_RESUME);
+    }
     Ok(())
 }
 
@@ -254,7 +306,7 @@ pub async fn start_with(
     let name = name_of(&repo);
     if runs(&daemon::status(dir).await?, &name) {
         println!("{}", text::lead_runs(&repo, &name));
-        return attach(runtime, &name).await;
+        return attach_here(runtime, &name).await;
     }
     let work = identity::working_dir()?;
     let (main, common) = run::main_clone(&work)?;
@@ -312,7 +364,7 @@ pub async fn start_with(
         let _ = api.end(&me).await;
         return Err(e);
     }
-    attach(runtime, &name).await
+    attach_here(runtime, &name).await
 }
 
 /// Asks the daemon in the folder `dir` to start the session of `start`
@@ -328,5 +380,75 @@ async fn ask_start(dir: &Path, start: daemon::Start) -> Result<()> {
             Some(Say::Ended(_)) | None => bail!("{}", text::DAEMON_GONE),
             Some(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::{End, Exit, Fake};
+
+    const NAME: &str = "riff-lead-como-technologies-riff";
+
+    /// The fake runs the lead `NAME` with a terminal.
+    async fn lead(fake: &Fake) -> End {
+        let spec = SessionSpec {
+            name: NAME.into(),
+            image: "img".into(),
+            home: "/home/mike".into(),
+            workdir: "/d/clone".into(),
+            binds: vec![],
+            env: vec![],
+            memory: "8g".into(),
+            cpus: 4,
+            command: vec!["claude".into()],
+        };
+        fake.start_terminal(&spec, &[]).await.unwrap()
+    }
+
+    /// 01M51PD7M04HZR2PVVJA4WCBK5, 01M51PD7Q24N252V66NFEHY49N
+    #[tokio::test]
+    async fn an_attach_to_a_lead_that_runs_redraws_it_and_a_detach_says_that_it_runs_on() {
+        let fake = Fake::default().with_image("img");
+        let _end = lead(&fake).await;
+        let left = attach(&fake, NAME).await.unwrap();
+        assert_eq!(left, Left::Detached);
+        assert_eq!(left.line(NAME), text::lead_detached(NAME));
+        // The redraw comes before the attach, so the attach changes the
+        // size of the terminal.
+        assert_eq!(
+            fake.calls(),
+            [
+                format!("terminal {NAME}"),
+                format!("redraw {NAME}"),
+                format!("attach {NAME}"),
+            ]
+        );
+        assert!(fake.running(NAME).await.unwrap());
+    }
+
+    /// 01M51PD7Q24N252V66NFEHY49N
+    #[tokio::test]
+    async fn the_end_of_the_lead_in_the_attach_says_that_the_lead_ended() {
+        let fake = Fake::default().with_image("img").with_exit_in_attach();
+        let end = lead(&fake).await;
+        let left = attach(&fake, NAME).await.unwrap();
+        assert_eq!(left, Left::Ended);
+        assert_eq!(left.line(NAME), text::lead_ended(NAME));
+        assert_ne!(text::lead_ended(NAME), text::lead_detached(NAME));
+        assert_eq!(end.wait().await.unwrap(), Exit::SUCCESS);
+    }
+
+    #[tokio::test]
+    async fn a_lead_that_the_runtime_cannot_see_after_the_attach_counts_as_a_detach() {
+        let fake = Fake::default().with_image("img").with_no_answer();
+        let _end = lead(&fake).await;
+        assert_eq!(attach(&fake, NAME).await.unwrap(), Left::Detached);
+    }
+
+    #[tokio::test]
+    async fn an_attach_to_a_lead_that_does_not_run_fails() {
+        let fake = Fake::default().with_image("img");
+        assert!(attach(&fake, NAME).await.is_err());
     }
 }

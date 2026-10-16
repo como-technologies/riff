@@ -68,7 +68,9 @@ esac
 /// the bind at `/run/riff`. With `-d` (a terminal), it runs it in the
 /// background, and `wait` waits for its end. `stop` logs, and ends the
 /// `run`. `container inspect` says `true` while the `run` runs. `attach`
-/// and `exec` log, and end at once. A zombie counts as ended. The `run`
+/// and `exec` log, and end at once. With `bin/exit-in-attach`, `attach`
+/// first ends the `run`, as `/exit` in the lead does. A zombie counts as
+/// ended. The `run`
 /// with `-d` exits, so PID 1 becomes the parent of the relay. When PID 1
 /// does not reap orphans, the relay stays a zombie after its end (#791).
 fn fake_podman(bin: &Path) {
@@ -84,7 +86,13 @@ case "$1" in
   pull) echo "podman $*" >> "$dir/podman.log"; [ -f "$dir/no-pull" ] && exit 125
     rm -f "$dir/no-image"; exit 0 ;;
   stop) echo "podman $*" >> "$dir/podman.log"; kill "$(cat "$dir/run.pid")"; exit 0 ;;
-  attach|exec) echo "podman $*" >> "$dir/podman.log"; exit 0 ;;
+  attach|exec) echo "podman $*" >> "$dir/podman.log"
+    # The person types /exit in the lead: its container ends.
+    if [ "$1" = attach ] && [ -f "$dir/exit-in-attach" ]; then
+      kill "$(cat "$dir/run.pid")"
+      while alive "$(cat "$dir/run.pid")"; do sleep 0.05; done
+    fi
+    exit 0 ;;
   wait)
     pid=$(cat "$dir/run.pid")
     while alive "$pid"; do sleep 0.05; done
@@ -1687,9 +1695,36 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
         machine.read("podman.log").matches("podman attach").count(),
         2
     );
+    // 01M51PD7Q24N252V66NFEHY49N: the lead runs on after the attach.
+    for out in [&out, &again] {
+        assert!(out.contains(&riff::text::lead_detached(name)), "{out}");
+        assert!(!out.contains(&riff::text::lead_ended(name)), "{out}");
+    }
 
     // The person ends the lead: the daemon ends its session.
     std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
+    let started = Instant::now();
+    while machine.ok(None, &["daemon", "status"]).await.contains(name) {
+        assert!(started.elapsed() < isolated::HANG, "the lead did not end");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// 01M51PD7Q24N252V66NFEHY49N: the person types `/exit` in the lead, so
+/// its container ends in the attach. `riff lead start` says that the
+/// lead ended, not that the person left its terminal.
+#[tokio::test]
+async fn riff_lead_start_says_that_the_lead_ended_when_it_ends_in_the_attach() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    std::fs::write(machine.bin.path().join("hold"), "").unwrap();
+    std::fs::write(machine.bin.path().join("exit-in-attach"), "").unwrap();
+    let name = "riff-lead-como-technologies-riff";
+    let out = machine.ok(None, &["lead", "start"]).await;
+    assert!(out.contains(&riff::text::lead_ended(name)), "{out}");
+    assert!(out.contains(riff::text::LEAD_NO_RESUME), "{out}");
+    assert!(!out.contains(&riff::text::lead_detached(name)), "{out}");
+    // The daemon ends the session of the lead.
     let started = Instant::now();
     while machine.ok(None, &["daemon", "status"]).await.contains(name) {
         assert!(started.elapsed() < isolated::HANG, "the lead did not end");

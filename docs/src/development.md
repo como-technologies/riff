@@ -1078,9 +1078,22 @@ riff lead start
 
 The daemon starts the lead of the repository in the container
 `riff-lead-OWNER-REPO`, and riff attaches your terminal to it. When the
-lead runs already, riff only attaches. To leave the terminal of the
-lead, press Ctrl-P, then Ctrl-Q. The lead runs on. To end the lead,
-type `/exit` in it.
+lead runs already, riff only attaches. At each attach, `claude` draws
+its screen at once: riff first gives the terminal of the container
+another size, and the attach gives it the size of your terminal again.
+When riff cannot change the size, it says why. Then change the size of
+your terminal to see the lead.
+
+To leave the terminal of the lead, press Ctrl-P, then Ctrl-Q. The lead
+runs on, and riff says that you left the terminal of the container.
+
+To end the lead, type `/exit` in it. The container of the lead ends,
+and riff prints:
+
+```text
+The lead in the container riff-lead-OWNER-REPO ended. Start it again in a clone: riff lead start
+The command claude --resume that claude shows works only in the container of the lead. In a new lead, /resume shows the old conversations.
+```
 
 The lead has a folder of its own: `leads/OWNER-REPO` in the data folder
 of riff, with a clone of the repository and a Claude folder. Both stay
@@ -1128,12 +1141,15 @@ room, and each wave. It draws them again each second.
 | Key | Does |
 |---|---|
 | Up, Down (or k, j) | Select a session. |
-| Enter | Attach to the lead. Ctrl-P Ctrl-Q comes back to the view. |
+| Enter | Attach to the lead. Ctrl-P Ctrl-Q, or the end of the lead, comes back to the view. |
 | t | Stop the turn of the selected session, and take it over (see [Take over a session](#take-over-a-session)). |
 | q, Esc, Ctrl-C | End the view. The sessions go on. |
 
-After a takeover, the note under the rows says that the session goes
-on with its item, or that it ended before the takeover.
+After an attach, the note under the rows says that you left the
+terminal of the lead, or that the lead ended. After a takeover, the
+note says that the session goes on with its item, or that it ended
+before the takeover. The SESSION column shows the full name of each
+container.
 
 The states of a session:
 

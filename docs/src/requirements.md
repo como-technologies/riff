@@ -5174,6 +5174,19 @@ share.
   attaches the terminal of the person to it. When the lead runs
   already, it only attaches. Ctrl-P Ctrl-Q detaches, and the lead runs
   on. `riff lead` with no subcommand stays the command of riff 1.x.
+- **01M51PD7M04HZR2PVVJA4WCBK5** Before each attach to the lead, from
+  `riff lead start` and from `riff view`, riff sets the terminal of the
+  container to a size that is not the size of the terminal of the
+  person. The attach then sets the size of the person, so `claude`
+  draws its screen at once. When riff cannot set the size, it says why,
+  and attaches.
+- **01M51PD7Q24N252V66NFEHY49N** After an attach to the lead, riff
+  tells a detach from the end of the lead: the lead ended when its
+  container does not run. After a detach, `riff lead start` and `riff
+  view` say that the person left the terminal. After the end, they say
+  that the lead ended and how to start it again. `riff lead start` also
+  says that the `claude --resume` line of `claude` works only in the
+  container.
 - **01M501P9Q51AYN9GBPWKVHA229** The folder of the lead is
   `leads/OWNER-REPO` in the data folder of riff. At the first start,
   riff makes `clone/` with `git clone --reference MAIN`, on the default
@@ -5233,6 +5246,8 @@ share.
   takes over the selected session. `q`, Esc and Ctrl-C end the view;
   the sessions go on. Its tests draw it on the `TestBackend` of
   ratatui.
+- **01M51PD7T7451SR11W7JA7QW3X** The SESSION column of `riff view` is
+  as wide as the longest name of a session, so each name shows in full.
 - **01M50RRQBZ8ASPT25DYPX78HP9** After a takeover from `riff view`,
   the note under the rows says that the session goes on, or that it
   ended before the takeover. The view reads the keys of the person in
