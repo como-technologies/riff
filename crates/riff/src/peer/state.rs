@@ -1291,4 +1291,134 @@ mod tests {
             }
         );
     }
+
+    const LYNX: &str = "riff://ann@lynx/o/r?session=l1";
+
+    /// The records of a join again of kadomony [3]: its session as brett,
+    /// its `left` record 2, the new `member` record of the owner for ann
+    /// on lynx, and its first record as ann. That record names the new
+    /// `member` record as the record before it.
+    struct Again {
+        start: Vec<Record>,
+        before: Record,
+        left: Record,
+        again: Record,
+        after: Record,
+    }
+
+    fn again(d: &mut Daemons) -> Again {
+        let start = d.start();
+        let before = d.write(2, session(KADOMONY, None));
+        let left = d.write(2, Body::Left(crate::peer::body::Left {}));
+        let again = d.write(
+            0,
+            Body::Member(MemberBody {
+                key: d.public(2),
+                user: "ann".into(),
+                host: "lynx".into(),
+                after: Some(2),
+            }),
+        );
+        // The first record of the join again names the member record.
+        d.heads.insert(d.public(2), (2, again.id()));
+        let after = d.write(2, session(LYNX, None));
+        Again {
+            start,
+            before,
+            left,
+            again,
+            after,
+        }
+    }
+
+    /// 01M5328FVZJGCY9VPQFERM7P81: the first `member` record of a key, its
+    /// `left` record and a new `member` record give the same joins, the
+    /// same user and the same state of the key in each order. Each record
+    /// of the key counts with the user of its join.
+    #[test]
+    fn a_join_again_gives_the_same_user_and_state_in_each_order() {
+        let mut d = Daemons::new();
+        let riff = d.public(0);
+        let a = again(&mut d);
+        let orders = [
+            [&a.before, &a.left, &a.again, &a.after],
+            [&a.before, &a.again, &a.left, &a.after],
+            [&a.again, &a.before, &a.left, &a.after],
+        ];
+        let mut views = Vec::new();
+        for order in orders {
+            let mut records = a.start.clone();
+            records.extend(order.into_iter().cloned());
+            let state = keep_all(riff, &records);
+            let member = &state.members()[&d.public(2)];
+            assert_eq!((member.user.as_str(), member.host.as_str()), ("ann", "lynx"));
+            assert!(!member.left && !member.removed && member.until.is_none());
+            assert_eq!(member.joins.len(), 2);
+            assert_eq!(member.lefts, BTreeSet::from([2]));
+            assert_eq!(state.user_at(&d.public(2), 1), Some("brett"));
+            assert_eq!(state.user_at(&d.public(2), 3), Some("ann"));
+            let users: BTreeSet<&str> = state
+                .runs()
+                .map(|run| run.body.session.who().user())
+                .collect();
+            assert_eq!(users, BTreeSet::from(["ann", "brett"]));
+            views.push(state.view());
+        }
+        assert_eq!(views[0], views[1]);
+        assert_eq!(views[0], views[2]);
+
+        // A record of the key in the join again with the user of its old
+        // join is refused.
+        let mut records = a.start.clone();
+        records.extend([a.before, a.left, a.again]);
+        let state = keep_all(riff, &records);
+        let old_user = Record::sign(
+            &d.keys[2],
+            riff,
+            3,
+            records.last().unwrap().id(),
+            9,
+            &session(KADOMONY, None),
+        )
+        .unwrap();
+        assert_eq!(
+            check(old_user.bytes().to_vec(), &state).unwrap_err(),
+            Fault::Writer("a session record of another user than the user of its key")
+        );
+    }
+
+    /// 01M5328FPJT7Q5Q1509BC5F0J7: a record that the key signed after its
+    /// `left` record and before the new `member` record is refused before
+    /// that record, and after it. The first record of the join again
+    /// passes.
+    #[test]
+    fn a_record_between_the_leave_and_the_join_again_stays_refused() {
+        let mut d = Daemons::new();
+        let riff = d.public(0);
+        let a = again(&mut d);
+        let between = Record::sign(
+            &d.keys[2],
+            riff,
+            3,
+            a.left.id(),
+            8,
+            &session(KADOMONY, None),
+        )
+        .unwrap();
+        let mut records = a.start.clone();
+        records.extend([a.before.clone(), a.left.clone()]);
+        let state = keep_all(riff, &records);
+        assert_eq!(
+            check(between.bytes().to_vec(), &state).unwrap_err(),
+            Fault::Author(Author::Gone)
+        );
+        records.push(a.again.clone());
+        let state = keep_all(riff, &records);
+        assert_eq!(
+            check(between.bytes().to_vec(), &state).unwrap_err(),
+            Fault::Before
+        );
+        assert_eq!(state.next(&d.public(2)), (3, a.again.id()));
+        check(a.after.bytes().to_vec(), &state).unwrap();
+    }
 }
