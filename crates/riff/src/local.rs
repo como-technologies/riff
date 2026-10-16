@@ -633,4 +633,29 @@ mod tests {
         let _held = watch(run.path(), "../x").unwrap().unwrap();
         assert!(run.path().join("watch-..-x").exists());
     }
+
+    /// Each value that a doc test of this file drops is a lock. So each
+    /// doc test here with a `drop(` is a `standalone_crate` (see
+    /// [`Held`], 01M513N34NJ2G3TK3EH91M10FJ).
+    #[test]
+    fn each_doc_test_that_drops_a_lock_is_a_crate_of_its_own() {
+        let mut fence: Option<(usize, &str)> = None;
+        let mut shared = Vec::new();
+        for (at, line) in include_str!("local.rs").lines().enumerate() {
+            let line = line.trim_start();
+            let Some(doc) = line.strip_prefix("///").or(line.strip_prefix("//!")) else {
+                continue;
+            };
+            let doc = doc.trim_start();
+            if let Some(tag) = doc.strip_prefix("```") {
+                fence = if fence.is_some() { None } else { Some((at + 1, tag)) };
+            } else if let Some((start, tag)) = fence
+                && doc.starts_with("drop(")
+                && tag != "standalone_crate"
+            {
+                shared.push(start);
+            }
+        }
+        assert!(shared.is_empty(), "the doc tests at the lines {shared:?}");
+    }
 }
