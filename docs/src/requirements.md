@@ -5666,8 +5666,17 @@ then.
   member, for its own key, 1 KiB. `session`: the daemon of the session,
   for its start, its place, its lead mark, its claims, its status and
   its end, 4 KiB. `message`: the daemon of the session that posts, for
-  a message, a note or a status request, 64 KiB. `plan`: the daemon of
-  a lead, for a hold, a free, a pause and a resume, 4 KiB.
+  a message, a note or a status request, 64 KiB. `plan`: a daemon of a
+  lead, or the daemon of the owner, for a hold, a free, a pause and a
+  resume, 4 KiB.
+- **01M51Q0JX87PPFGPABFPVWWW0E** The byte of each type of record:
+  `riff` 1, `member` 2, `removed` 3, `left` 4, `session` 5, `message` 6
+  and `plan` 7. The byte 0 is no type: a reader refuses it. Each other
+  byte is a type that a reader does not know.
+- **01M51Q0JZR00GHDQSGGSAQR4HG** A `session` record holds the whole
+  state of its session: its place, its lead mark, its claims, its
+  status and its end. Its daemon writes a new record at each change.
+  The last record of the session in the chain of its author counts.
 - **01M519Z26AP5NZSFHWRQ2QCV9D** A reader skips a field of a body that
   it does not know. It keeps and passes on a record of a type that it
   does not know, after the checks of the bytes, the chain and the
