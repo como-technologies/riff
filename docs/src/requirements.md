@@ -6178,18 +6178,18 @@ then.
 - **01M5232XDH1B3BGX7FXT0A2BRE** The daemon keeps the main clone of each
   repository where it made a claim in the file `forges.json` of its
   folder, by repository. It writes the main clone there before the push
-  of the claim. The release at its start (01M519Z4HK333JWVXAWQHCGK6M) and
-  the step of the lead (01M519Z4M0F2RY0VDQNB2QFAPJ) read the claims on
-  the forge of each main clone of that file and of each wave of the
-  daemon. The release at its start deletes only a claim with a
-  `Riff-Time` before the second of its start: a claim of this run of the
-  daemon stays, for example the claim of a job of a wave before its
-  session runs.
-- **01M5232XGM1GYENFCWBQ5TFYBN** The daemon of a lead looks at the claims
-  of its user each minute. A claim of a session with no `session` record
-  counts as a claim of a session that runs. When the daemon of the lead
-  had no link to the daemon of the claim since its own start, the 15
-  minutes count from that start.
+  of the claim. The release at its start
+  (01M519Z4HK333JWVXAWQHCGK6M) and the step of the lead
+  (01M519Z4M0F2RY0VDQNB2QFAPJ) read the claims on the forge of each main
+  clone of that file and of each wave of the daemon. The release at its
+  start deletes only a claim with a `Riff-Time` before the second of its
+  start: a claim of this run of the daemon stays, for example the claim
+  of a job of a wave before its session runs.
+- **01M5232XGM1GYENFCWBQ5TFYBN** The daemon of a lead looks at the
+  claims of its user each minute. A claim of a session with no `session`
+  record counts as a claim of a session that runs. When the daemon of
+  the lead had no link to the daemon of the claim since its own start,
+  the 15 minutes count from that start.
 - **01M5232XKPG96CTQ7HSAM4726S** `riff release ITEM --forge` asks the
   daemon of the machine to delete the claim on the forge of the main
   clone of the working folder. The daemon decides with its riff of
