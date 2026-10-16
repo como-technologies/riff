@@ -417,9 +417,7 @@ fn file_locked(error: anyhow::Error) -> anyhow::Error {
 #[cfg(test)]
 pub(crate) fn mock_store() {
     static MOCK: std::sync::Once = std::sync::Once::new();
-    MOCK.call_once(|| {
-        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap())
-    });
+    MOCK.call_once(|| keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap()));
 }
 
 #[cfg(test)]

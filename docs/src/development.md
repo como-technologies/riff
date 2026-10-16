@@ -213,25 +213,54 @@ gh variable delete RIFF_RUNNER
 
 ## Run one test many times
 
-A test that fails only on a busy machine waits for a fixed time
-somewhere. To find it, run that test by its name in a loop while other
-runs keep the machine busy. This example runs one test of
-`crates/riff/tests/hosts.rs` 20 times, and stops at the first fail:
-
-```sh
-for i in $(seq 20); do
-  cargo test -q -p riff --test all \
-    hosts::a_host_ends_the_session_of_a_killed_worker_and_tells_the_lead || break
-done
-```
+A test that fails only on a busy machine has a race: it waits for a
+fixed time, or it races with another test thread. To find it, run that
+test by its name many times on a busy machine.
 
 A test waits for the fact that it checks, for example a message or a
 line in a log, with a generous time limit.
+
+### Run a test on a busy machine
+
+`just stress` builds the test, starts 8 busy loops, and runs the test
+50 times. The words after `stress` go to `cargo test`. This example
+runs one test of `crates/riff/tests/hosts.rs`:
+
+```sh
+just stress -p riff --test all hosts::the_host_reads_no_input
+```
+
+Each run prints one line: `pass`, or `FAIL` with the file that holds
+its output, in `target/stress`. The last line counts the runs that
+passed. The command fails when a run failed. It stops the busy loops at
+its end, also on Ctrl-C.
+
+To change the number of runs or of busy loops:
+
+```sh
+STRESS_RUNS=20 STRESS_LOAD=16 just stress -p riff --lib device::
+```
+
+A busy loop takes one core. On a machine that other people or workers
+share, keep the load low, and stop the command when you have the fail.
 
 ## Write a test
 
 A test runs `riff` and `riff-server` only through the crate
 `isolated`. It waits for the fact that it checks.
+
+### Write a fake program
+
+A test that runs a fake program, for example a fake `gh` or `tmux`,
+writes it with `isolated::write_program`. A child process writes the
+file. So no child of another test thread holds the file open to
+write, and the run cannot fail with `ETXTBSY` ("Text file busy"). To
+copy a program, use `isolated::copy_program`. A test fails on each
+test file that writes a program in the test process.
+
+```rust,ignore
+let gh = isolated::write_program(bin.join("gh"), "#!/bin/sh\necho '[]'\n");
+```
 
 ### Time a step in a test
 
@@ -1985,10 +2014,11 @@ worker has its `TMPDIR` in your home. So `.cargo/config.toml` sets
 `TMPDIR` to `/var/tmp` for each cargo run in the repository, also a
 plain `cargo test`. A unit test or a
 doc test that needs a dir outside each git repository uses
-`isolated::outside_git()`, not `tempfile::tempdir()`. A unit test that
-runs a fake program has a child process write the file, so that the
-run cannot fail with `ETXTBSY`. A doc test that drops a lock, and then
-checks that the lock is free, is a `standalone_crate`.
+`isolated::outside_git()`, not `tempfile::tempdir()`. A test writes
+a fake program as "Write a fake program" says. A unit test that uses
+the keyring calls `secrets::mock_store()` first.
+A doc test that drops a lock, and then checks that the lock is free, is
+a `standalone_crate`.
 
 Use a dev session for a live check of new code, for example a new
 plugin command, hook or skill text. It needs no release and no update
