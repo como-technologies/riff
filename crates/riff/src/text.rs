@@ -977,11 +977,14 @@ pub fn rollout_wave(host: &str, repo: &str) -> String {
 ///     "thelio: the rollout cannot run the wave of o/r on the riff daemon: no riff daemon \
 ///      listens. The rollout tries again at its next look."
 /// );
+/// // A reason that ends with a full stop gets no second one.
+/// assert!(riff::text::rollout_no_wave("a", "o/r", "Start it.").contains("Start it. The"));
 /// ```
 pub fn rollout_no_wave(host: &str, repo: &str, why: &str) -> String {
     format!(
-        "{host}: the rollout cannot run the wave of {repo} on the riff daemon: {why}. The \
-         rollout tries again at its next look."
+        "{host}: the rollout cannot run the wave of {repo} on the riff daemon: {}. The \
+         rollout tries again at its next look.",
+        why.trim_end_matches('.')
     )
 }
 
@@ -7787,15 +7790,16 @@ pub fn takeover_session_ended(name: &str) -> String {
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::lead_no_wave("o/r", "no pin"),
+///     riff::text::lead_no_wave("o/r", "no pin."),
 ///     "The riff daemon does not run the wave of o/r: no pin. The lead starts. To run the \
 ///      wave: riff wave run"
 /// );
 /// ```
 pub fn lead_no_wave(repo: &str, why: &str) -> String {
     format!(
-        "The riff daemon does not run the wave of {repo}: {why}. The lead starts. To run the \
-         wave: riff wave run"
+        "The riff daemon does not run the wave of {repo}: {}. The lead starts. To run the \
+         wave: riff wave run",
+        why.trim_end_matches('.')
     )
 }
 

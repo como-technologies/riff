@@ -781,9 +781,8 @@ async fn idle_worker(lead: &Lead) -> SessionUri {
 
 /// A release pull request counts for the issue of its trailer
 /// (01M51BF5S2YKB8JG10DF6YVT42). While it waits for the merge, the item
-/// is no build (01M3Z9N5HHHS1E17NFGMVBKZ0K): the rollout starts no
-/// worker, and the idle worker gets no request. After a failed verify,
-/// the item is a build again.
+/// is no build (01M3Z9N5HHHS1E17NFGMVBKZ0K): the idle worker gets no
+/// request. After a failed verify, the item is a build again.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_release_pull_request_that_waits_for_the_merge_gives_no_build() {
     let lead = lead(5).await;
@@ -816,10 +815,9 @@ async fn a_release_pull_request_that_waits_for_a_verify_gives_the_verify() {
     assert!(!read.contains("request: claim issue-1"), "{read}");
 }
 
-/// A held item is no free work (01M51A55Q2MDZT38JDCEJ1QECP): the
-/// rollout starts no worker for it, and an idle worker gets no request
-/// for it. The lead frees it: the next look gives the idle worker the
-/// request.
+/// A held item is no free work (01M51A55Q2MDZT38JDCEJ1QECP): an idle
+/// worker gets no request for it. The lead frees it: the next look
+/// gives the idle worker the request.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_held_item_gets_no_worker_until_the_lead_frees_it() {
     let lead = lead(5).await;

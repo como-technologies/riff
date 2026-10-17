@@ -4384,7 +4384,8 @@ sequenceDiagram
 ```
 
 The rollout starts no worker in tmux: a higher limit only gives room
-for the workers that a person starts (see [Start workers](#start-workers)).
+for the workers that a person starts (see
+[Start workers](#start-workers)).
 The rollout runs the free work in containers: see
 [riff starts the work by itself](#riff-starts-the-work-by-itself).
 

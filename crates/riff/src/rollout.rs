@@ -2048,7 +2048,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         };
         // The free work matters to an idle worker, to the ask of the
         // wave, and to a person who can start a worker on a machine with
-        // room while no wave runs ([`effect`]). Else: no call of gh.
+        // room while no wave runs (see `effect`). Else: no call of gh.
         let matters = match &wave {
             WaveState::None => true,
             WaveState::Runs => false,

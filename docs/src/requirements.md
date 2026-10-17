@@ -3912,7 +3912,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   join yet, and a live worker of another user. A worker that the
   server asked to stop is not idle. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
-  Superseded by the re-cut (01M53NGVE839TRH7XB7CDPQNZE, 01M5515CA4CZ6KV4ZD6Y0744Z7).
+  Superseded by the re-cut (01M53NGVE839TRH7XB7CDPQNZE,
+  01M5515CA4CZ6KV4ZD6Y0744Z7).
 - **01M3W27BJYFQCHY5MTZ2J4SKW4** An idle worker counts for the rollout
   only when it is in the repository of the lead. A worker in another
   repository does not count, also a worker of the user of the lead. A
