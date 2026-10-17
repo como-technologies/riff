@@ -4,7 +4,7 @@ This page is the design of riff 3.0. riff 3.0 is isolation by
 default: the riff daemon of each machine runs each work item in its
 own container. riff-server stays the server of the riff: the claims,
 the messages, the chat, the sign-in and the update of each machine.
-The waves stay milestones on GitHub. The
+The waves stay on GitHub. The
 [requirements of the re-cut](requirements.md#the-re-cut-isolation-by-default)
 hold each decision of the plan (#953).
 
@@ -116,7 +116,7 @@ item.
 
 ```mermaid
 flowchart LR
-    W30["Wave 30:<br/>this design and fixes"] --> R18["1.8.0:<br/>the last minor of 1.x"]
+    W30["Wave 30:<br/>this design and fixes"] --> R18["1.8.0, or 1.7.1:<br/>the last release of 1.x"]
     R18 --> W31["Wave 31:<br/>the build items of the re-cut"]
     W31 --> R3["3.0.0: its tag<br/>deploys riff-server"]
     R3 --> U["each machine takes 3.0.0<br/>from riff-server"]

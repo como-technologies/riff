@@ -4993,7 +4993,7 @@ requirements of this part when they merge.
   (01M4Z60B7NW4GHKGCYZZDG26R6). riff-server stays the server of the
   riff: the claims, the messages, the threads, the chat, the sign-in,
   the pauses, the holds and the update of each machine. The waves stay
-  milestones on the forge.
+  on the forge (R223).
 - **01M53NGVB7SZJW7X8SYS3B0ZHG** In riff 3, riff-server, `riff cloud`,
   the sign-in and the tokens stay. A requirement of one of these parts
   that ends with "Superseded by 3.0 (ID)", where ID is
