@@ -5040,7 +5040,7 @@ requirements of this part when they merge.
   workers in tmux. Each rule of the table of the permission rules that
   only a worker in tmux needs goes.
 - **01M53NGVTE186GE5E48E68N0BY** The last minor release of riff 1.x ends
-  Wave 30: 1.8.0, or 1.7.1 for fixes only. riff 3.0.0 releases when
+  Wave 30: 1.8.0. riff 3.0.0 releases when
   each build item of the re-cut merged. Its tag deploys it to
   riff-server, as each release. Each machine with `update.auto` on
   then takes it from riff-server by itself
