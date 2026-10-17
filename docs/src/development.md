@@ -2099,6 +2099,26 @@ To see the locked memory of GNOME Keyring, run the command below. At
 grep VmLck /proc/"$(pidof gnome-keyring-daemon)"/status
 ```
 
+### See the kind of each keyring session
+
+On Linux, riff opens each session of the Secret Service as a plain
+session, as `gh` does. A DH session costs GNOME Keyring about 0.6 kB
+of locked memory, and the keyring keeps it also after the session
+closes. A plain session costs none.
+
+With a plain session, each secret goes over your D-Bus session bus
+with no encryption. A process that watches all of that bus sees the
+secrets of riff and of `gh`. Only your own processes and root can
+watch it, and they can also read the secrets from the keyring itself.
+
+To see the kind of each new session, watch the calls `OpenSession`.
+The line after each call is the kind: `plain`, or
+`dh-ietf1024-sha256-aes128-cbc-pkcs7` for a DH session:
+
+```sh
+dbus-monitor --session "type='method_call',interface='org.freedesktop.Secret.Service',member='OpenSession'" | grep -A1 OpenSession
+```
+
 ### When riff says the riff has no sign-in
 
 A riff can start again with no sign-in, for example after
