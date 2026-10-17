@@ -2481,7 +2481,17 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   of riff-server for 10 seconds, for each session and each server. In
   that time, it asks riff-server nothing: no call, so no swap for a
   session token. It makes its tags at each run, from the local files
-  and the build of the kept answer.
+  and the build of the kept answer. The time is now 90 seconds
+  (01M547VMQ5PCJ1GGC4M0GDCT31).
+- **01M547VMMDPB4DXBMWVERF60C4** The `riff mcp` of a session keeps the
+  answer of riff-server for the status line of the session: at a
+  keep-alive, at most each 30 seconds, and after each call of the tools
+  `claim`, `release`, `lead`, `blocked` and `join`. It uses the token
+  that it holds, so `riff statusline` shows the line with no call to
+  riff-server and no call to the OS keyring.
+- **01M547VMQ5PCJ1GGC4M0GDCT31** `riff statusline` keeps a good answer
+  for 90 seconds: longer than the 60 seconds of the keep-alive of `riff
+  mcp` (R204).
 - **01M3JFFJEW8BSRBZ9JQPKT0S8Z** `riff connect claude` adds the riff
   status line to the user settings of Claude Code
   (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)

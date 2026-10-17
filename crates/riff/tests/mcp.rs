@@ -98,6 +98,69 @@ async fn the_book_lists_each_tool() {
     assert_eq!(listed, tools);
 }
 
+/// The kept answer for the status line of the session `a1` at `api`
+/// in `dir`, once it holds `want`.
+async fn kept_line(api: &Api, dir: &Path, want: impl Fn(&str) -> bool) -> String {
+    let span = Span::start();
+    loop {
+        let now = riff::activity::now_ms();
+        let keep = Duration::from_secs(90);
+        if let Some(kept) = riff::local::kept_statusline(dir, "a1", api.base(), now, keep)
+            && want(&kept.line)
+        {
+            return kept.line;
+        }
+        assert!(span.within(Duration::from_secs(20)), "no kept line");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// 01M547VMMDPB4DXBMWVERF60C4: the tools keep the answer for the status
+/// line after a claim and a release, and at a keep-alive.
+#[tokio::test]
+async fn the_tools_keep_the_answer_for_the_status_line() {
+    let api = start_server().await;
+    let state = tempfile::tempdir().unwrap();
+    let me: SessionUri = MIKE.parse().unwrap();
+    api.register(&me).await.unwrap();
+    api.set_riff(&me, riff_core::wire::RiffState::Running)
+        .await
+        .unwrap();
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let tools = Tools::new(api.clone(), me).with_statusline(Some(state.path().to_owned()));
+    let alive = tools.clone();
+    tokio::spawn(async move {
+        tools
+            .serve(server_io)
+            .await
+            .unwrap()
+            .waiting()
+            .await
+            .unwrap();
+    });
+    let client = ().serve(client_io).await.unwrap();
+
+    let (text, failed) = call(&client, "claim", serde_json::json!({"item": "issue-7"})).await;
+    assert!(!failed, "{text}");
+    let line = kept_line(&api, state.path(), |l| l.contains("issue-7")).await;
+    assert_eq!(line, "riff a1 lead issue-7");
+    let (text, failed) = call(&client, "release", serde_json::json!({"item": "issue-7"})).await;
+    assert!(!failed, "{text}");
+    assert_eq!(
+        kept_line(&api, state.path(), |l| !l.contains("issue-7")).await,
+        "riff a1 lead"
+    );
+
+    // The keep-alive keeps an answer too.
+    std::fs::remove_dir_all(state.path()).unwrap();
+    let task = alive.keep_alive_every(Duration::from_millis(20));
+    assert_eq!(
+        kept_line(&api, state.path(), |_| true).await,
+        "riff a1 lead"
+    );
+    task.abort();
+}
+
 #[tokio::test]
 async fn the_tools_carry_a_conversation() {
     let api = start_server().await;
