@@ -1789,7 +1789,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   01M3N73AW2J3TVSZWFJ88A91PG.
 - **01M3N73AW2J3TVSZWFJ88A91PG** A release is a git tag `vX.Y.Z`. X.Y.Z
   is the version of the crates in `Cargo.toml` and `Cargo.lock`. The
-  rules 01M3N73E5JWFTYZ90JX5AVFGEP to 01M3N73EEQ4HPCPPAGCAHH3S6B pick
+  rules 01M3N73E5JWFTYZ90JX5AVFGEP to 01M53N7KN4QKZ70W2GNQ3VQWQ9 pick
   the level of the release. CI fails a pushed tag `v*` whose version
   is not the version of the crates.
 - **01M3MRMAVVKJ5WS8GWCJHWH0R4** `riff update` installs a release, not
@@ -4464,12 +4464,19 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3N73ECKSDSH6820AKW9J8F7** The major release `1.0.0` promises
   that the wire and the behavior stay stable. After it, a major
   breaks, a minor adds and a patch fixes. A change of behavior that
-  can break a pipeline or a policy is a major.
+  can break a pipeline or a policy is a major. Superseded in part by
+  01M53N7KN4QKZ70W2GNQ3VQWQ9: on the line 1.x, a minor.
 - **01M3N73EEQ4HPCPPAGCAHH3S6B** The test for each release: can a
   session on the old version and a session on the new version, in the
   same riff, act differently or fail to understand each other? Yes: a
   minor, and a major after 1.0. No: a patch. A wave release is a patch
-  unless the wave has a minor change.
+  unless the wave has a minor change. Superseded in part by
+  01M53N7KN4QKZ70W2GNQ3VQWQ9: on the line 1.x, a minor in place of a
+  major.
+- **01M53N7KN4QKZ70W2GNQ3VQWQ9** On the line 1.x, a release that the
+  test of 01M3N73EEQ4HPCPPAGCAHH3S6B makes a major is a minor. The
+  next major is `3.0.0` (01M4Z60B8N9W9TBE7KKDJQAN2C). A release of only
+  fixes, where the old and the new builds act the same, is a patch.
 - **01M3N73EGY4NQDQQP8Y185E9VZ** The pull request of a release states
   the level and the reason in one line. The release notes list the
   commands that each person runs, for example

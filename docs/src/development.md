@@ -3123,6 +3123,7 @@ the workers first. Set the new version in `Cargo.toml` and in the
 `plugin.json` of the plugin, and update `Cargo.lock`. Pick the level
 with
 [The test for each release](how-it-works.md#the-test-for-each-release).
+On the line 1.x, a release that the test makes a major is a minor.
 When `main` already has the new version, keep it. This example makes
 `v0.2.0`:
 
