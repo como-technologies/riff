@@ -554,7 +554,8 @@ impl TokenWrites {
 struct Written {
     /// The version of the object that the server knows (R141).
     version: Option<Version>,
-    /// The start of the last write (R127).
+    /// The end of the last write: the window counts from it (R127,
+    /// 01M53T8X5KH59R3P8H2D22WE32).
     at: Option<tokio::time::Instant>,
 }
 
@@ -709,35 +710,43 @@ impl Server {
 
     async fn save_tokens(&self, saved: &Saved, written: &mut Written) -> Result<(), StoreError> {
         // At most one write each window: `save_every`, or more while
-        // the store is busy (R127, 01M3ZZQ9TRG9385GRQGM79RCXX). Each call
-        // that waits for the lock finds its change in this write.
+        // the store is busy (R127, 01M3ZZQ9TRG9385GRQGM79RCXX). The
+        // window counts from the end of the last write, so a slow write
+        // does not bring two writes closer at the store
+        // (01M53T8X5KH59R3P8H2D22WE32). Each call that waits for the
+        // lock finds its change in this write. A stop ends the wait, so
+        // the hand-over gets the lock at once (01M53T8XCTVEXGJVF9GSYVAT7Y).
         if let Some(at) = written.at {
             let window = self.token_writes().window;
-            tokio::time::sleep_until(at + window).await;
+            tokio::select! {
+                () = tokio::time::sleep_until(at + window) => {}
+                () = self.stopping() => {}
+            }
         }
+        if !self.leased() {
+            return Err(StoreError::Failed("the server does not serve now".into()));
+        }
+        let result = self.write_tokens(saved, written).await;
+        if let Err(error @ StoreError::Conflict(_)) = &result {
+            self.stop(&error.to_string());
+        }
+        result
+    }
+
+    /// Writes the token store now, with the version that the server
+    /// knows (R141), and keeps the result for the next window.
+    async fn write_tokens(&self, saved: &Saved, written: &mut Written) -> Result<(), StoreError> {
         let (bytes, changes) = {
             let tokens = self.tokens();
             let changes = self.tokens_changes.load(Ordering::SeqCst);
             (tokens.to_bytes(Instant::now(), SystemTime::now()), changes)
         };
-        if !self.leased() {
-            return Err(StoreError::Failed("the server does not serve now".into()));
-        }
         let started = tokio::time::Instant::now();
-        written.at = Some(started);
         let result = saved.store.save(SIGN_INS, bytes, written.version).await;
+        written.at = Some(tokio::time::Instant::now());
         self.token_writes()
             .after(&result, started, self.config.save_every);
-        let version = match result {
-            Ok(version) => version,
-            Err(error) => {
-                if let StoreError::Conflict(_) = error {
-                    self.stop(&error.to_string());
-                }
-                return Err(error);
-            }
-        };
-        written.version = Some(version);
+        written.version = Some(result?);
         self.tokens_saved.fetch_max(changes, Ordering::SeqCst);
         Ok(())
     }
@@ -913,6 +922,11 @@ impl Server {
     /// is right with no lease too. With the ID of a tool, the server
     /// writes none: a tool can cut the log. A server that shuts down
     /// writes none either: its shutdown wrote its last checkpoint.
+    ///
+    /// Before the checkpoint, it writes the token store when it changed
+    /// since the last write (01M53T8XCTVEXGJVF9GSYVAT7Y). So a token that
+    /// this instance gave in its last window works on the new instance,
+    /// which loads the sign-ins again after its wait.
     async fn hand_over(&self, lease: &Lease) {
         let _writing = self.gate.handing_over.lock().await;
         self.stop("another instance holds the lease");
@@ -921,6 +935,7 @@ impl Server {
         }
         match lease.taken_by_instance().await {
             Ok(true) => {
+                self.hand_over_tokens().await;
                 tracing::info!("writing the last checkpoint for the new instance");
                 self.last_checkpoint().await;
             }
@@ -930,6 +945,37 @@ impl Server {
                     "no checkpoint for the new instance: the lease read failed: {error}"
                 );
             }
+        }
+    }
+
+    /// The last write of the token store, at the hand-over
+    /// (01M53T8XCTVEXGJVF9GSYVAT7Y). It writes only when a change is not
+    /// saved, with the version that this instance knows (R141): when the
+    /// new instance wrote first, the write fails and changes nothing. It
+    /// does not wait for the window. Its time limit is half the wait of
+    /// the lease, so it ends before the new instance loads the sign-ins
+    /// again.
+    async fn hand_over_tokens(&self) {
+        let Some(saved) = &self.saved else {
+            return;
+        };
+        let limit = self.config.lease.wait / 2;
+        let write = async {
+            let mut written = saved.written.lock().await;
+            if !self.tokens_unsaved(0) {
+                return Ok(false);
+            }
+            self.write_tokens(saved, &mut written).await.map(|()| true)
+        };
+        match tokio::time::timeout(limit, write).await {
+            Ok(Ok(true)) => tracing::info!("saved the token store for the new instance"),
+            Ok(Ok(false)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!("the token store was not saved for the new instance: {error}");
+            }
+            Err(_) => tracing::warn!(
+                "the token store was not saved for the new instance: no reply in {limit:?}"
+            ),
         }
     }
 
