@@ -168,7 +168,7 @@ async fn at_a_deploy_a_second_old_instance_does_not_take_the_lease_of_the_new_re
         "riff-server-00025-2s5",
     ));
     common::wait_until_it_serves(&old_listen).await;
-    assert_eq!(lease_of(dir.path())["revision"], 25);
+    let first = lease_of(dir.path());
 
     // The deploy: an instance of the new revision starts.
     let new_listen = common::free_address();
@@ -181,7 +181,7 @@ async fn at_a_deploy_a_second_old_instance_does_not_take_the_lease_of_the_new_re
     let span = Span::start();
     let id = loop {
         let lease = lease_of(dir.path());
-        if lease["revision"] == 26 {
+        if lease["id"] != first["id"] {
             break lease["id"].clone();
         }
         assert!(span.within(Duration::from_secs(30)), "no new lease");
@@ -239,8 +239,11 @@ async fn at_a_deploy_a_second_old_instance_does_not_take_the_lease_of_the_new_re
         "it served {:?} after its take",
         taken.wall()
     );
-    assert_eq!(lease_of(dir.path())["id"], id);
     assert!(new.0.try_wait().unwrap().is_none(), "{}", text(&logs[1]));
     let got = front(&[new_listen.as_str()], 0).await.unwrap();
     assert_eq!(got.status, 200);
+    // Each lease names the revision of its instance.
+    assert_eq!(first["revision"], 25);
+    let lease = lease_of(dir.path());
+    assert_eq!((&lease["id"], &lease["revision"]), (&id, &json!(26)));
 }
