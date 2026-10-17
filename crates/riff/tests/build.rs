@@ -45,9 +45,11 @@ fn older() -> Build {
         .unwrap_or_else(|| "0.8.0".parse().unwrap()))
 }
 
-/// A server two lines after this riff: it refuses this riff.
+/// A server three lines after this riff: it refuses this riff. Two
+/// lines after the line 1 is the line 3, which talks with the line 1
+/// (01M55FCZNNZGKM4EKAXZQFTDWR).
 fn much_newer() -> Build {
-    at(this().line_after().line_after())
+    at(this().line_after().line_after().line_after())
 }
 
 /// A layer that names `build` in each reply, or no build.
@@ -313,6 +315,23 @@ async fn a_server_of_the_next_line_works_with_the_update_note() {
         next.line_after().line(),
         this().line()
     );
+    works_and_notes_once(theirs, &note).await;
+}
+
+/// 01M55FCZNNZGKM4EKAXZQFTDWR: a server of the other line of the
+/// bridge talks with this riff. The note names the older side.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_of_the_other_line_of_the_bridge_works_with_the_note() {
+    let (version, step) = match this().major {
+        1 => (
+            "3.0.0",
+            "riff-server 4 will refuse riff 1. Run riff update soon.",
+        ),
+        3 => ("1.8.2", "Update riff-server when you can."),
+        major => panic!("riff {major}.x is on no line of the bridge"),
+    };
+    let theirs = at(version.parse().unwrap());
+    let note = format!("riff-server runs build {theirs}; this riff runs build {VERSION}. {step}");
     works_and_notes_once(theirs, &note).await;
 }
 
