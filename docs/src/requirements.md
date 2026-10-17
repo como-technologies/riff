@@ -7028,11 +7028,12 @@ that builds it merges.
   `--format text` (the default) or `--format json`. serde makes the JSON
   from the types of the data. It has the same facts as the text.
 - **01M54216BCJQTQFKK5SD1PRJK9** When the TUI ships, `riff top` prints
-  one look of the sessions and ends, as `riff top --once` does in riff
-  1.x. The live view is the sessions tab of the TUI. The TUI design
-  picks a plain alias of `riff top`, or none.
+  one look of the sessions and ends, as `riff top --once` does. The
+  live view is the sessions tab of the TUI. The TUI design picks a
+  plain alias of `riff top`, or none.
 - **01M54216E2GY49GFV5SNPWTBEB** `riff` with no command starts the TUI
-  in a terminal. `riff --help` stays the help of the CLI, and says that
+  in a terminal. With no terminal, it prints the help of the CLI.
+  `riff --help` stays the help of the CLI, and says that
   `riff` with no command starts the TUI. `riff COMMAND` stays the CLI.
   When the TUI design finds that a bare `riff` makes the CLI awkward,
   the TUI is `riff ui`.
@@ -7069,17 +7070,11 @@ that builds it merges.
   balancer with a URL map), so a deploy of the UI does not restart
   riff-server. The web design compares it with a riff-server that serves
   the web app itself, and picks one.
-- **01M5421741495SMKQ8XCC36D3K** One command manages the devices of each
-  UI: `riff device list` lists each signed-in device (the machines, the
-  phones, the browsers and the desktop apps), `riff device add [NAME]`
-  pairs a new device with a QR code and then its Google sign-in with the
-  same account, and `riff device remove NAME` ends the sign-in of that
-  one device.
-- **01M542176RKRERVA0AFAY23REX** The scope of a device (the chat only,
-  or each tool) is set when the device is added. Each child design
-  names the default scope of its kind of device.
-- **01M542179DFVKMFQ008TV9DM8C** The devices tab of the TUI shows each
-  device with its kind, its name, its scope and its last use. It adds a
+- **01M542179DFVKMFQ008TV9DM8C** Each UI that signs in is a device of
+  the person, with the device commands of the phone design (#951):
+  `riff device list`, `riff device add` and `riff device remove`. The
+  devices tab of the TUI shows each device with its kind, its name, its
+  scope and its last use. It adds a
   device, and draws the QR code with `tui-qrcode`. It removes a device.
   Each graphical UI has a devices view that lists and removes devices,
   and adds a device where it can show a QR code.
@@ -7087,20 +7082,15 @@ that builds it merges.
   the phone app, the web UI and the desktop GUI. After riff 3.1, the TUI
   and the phone app can be built at the same time: the TUI does not
   block the phone app.
-- **01M54217ET3G7R4ZJ33CQRE5P9** Wave 30 and Wave 31 ship riff 3.0
-  (#953) and make it stable, with patch releases of 3.0 as needed.
-  riff 3.1 comes after a stable 3.0. It moves the core library out of
+- **01M54217ET3G7R4ZJ33CQRE5P9** riff 3.0 (#953) comes first, with the
+  patch releases that make it stable. riff 3.1 comes after a stable
+  3.0. It moves the core library out of
   the CLI in small steps. Each step keeps each test and changes no
   command. The UIs come after riff 3.1.
 - **01M54217HF6JK1KYK4Q11551KR** Each UI has a child design issue that
-  links #982: the TUI (#TUI), the phone app (#951), the web UI (#WEB)
-  and the desktop GUI (#DESKTOP). The build items of a UI come from its
+  links #982: the TUI (#994), the phone app (#951), the web UI (#995)
+  and the desktop GUI (#996). The build items of a UI come from its
   child design, after Mike signs it off.
-- **01M54217M4V2H8B1HRDZZ67JMG** The book page "Design: the UIs of riff"
-  (#982) has the rules, a mermaid diagram of the crates with the UIs
-  over them, a mermaid diagram of the tabs of the TUI, and the order of
-  the UIs. Each child design links it. Each UI that ships adds its
-  how-to to the book.
 
 ## Open
 

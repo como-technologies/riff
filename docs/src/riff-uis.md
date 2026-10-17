@@ -11,10 +11,10 @@ hold each decision.
 | UI | How a person starts it | Toolkit | Child design |
 |---|---|---|---|
 | The CLI | `riff COMMAND` | clap | This page |
-| The TUI | `riff` with no command, in a terminal | ratatui | #TUI |
+| The TUI | `riff` with no command, in a terminal | ratatui | #994 |
 | The phone app | The app on an Android phone | Slint | #951 |
-| The web UI | A browser | Slint, built to WebAssembly | #WEB |
-| The desktop GUI | An app on the desktop | Slint | #DESKTOP |
+| The web UI | A browser | Slint, built to WebAssembly | #995 |
+| The desktop GUI | An app on the desktop | Slint | #996 |
 
 ## The rules for each UI
 
@@ -98,10 +98,11 @@ the MCP server) and hooks.
 
 ## The TUI
 
-`riff` with no command starts the TUI in a terminal. `riff --help`
-stays the help of the CLI, and says that `riff` with no command starts
-the TUI. `riff COMMAND` stays the CLI. If a bare `riff` makes the CLI
-awkward, the TUI is `riff ui`. The TUI design (#TUI) decides.
+`riff` with no command starts the TUI in a terminal. With no terminal,
+it prints the help of the CLI. `riff --help` stays the help of the
+CLI, and says that `riff` with no command starts the TUI.
+`riff COMMAND` stays the CLI. If a bare `riff` makes the CLI
+awkward, the TUI is `riff ui`. The TUI design (#994) decides.
 
 The TUI is a ratatui app with a tab for each area. Each action of the
 TUI calls the same code as its CLI command.
@@ -126,7 +127,7 @@ checks that Slint does its platform today.
 ## The web UI
 
 The web UI runs on Google Cloud Run. This is the start, for the web
-design (#WEB) to check:
+design (#995) to check:
 
 - A Cloud Run service of its own serves the web app. So a deploy of the
   UI does not restart riff-server.
@@ -146,8 +147,9 @@ itself, and picks one.
 
 ## The devices
 
-One command manages the devices of each UI. A device is a machine, a
-phone, a browser or a desktop app with a sign-in of its own.
+Each UI that signs in is a device of the person: a machine, a phone, a
+browser or a desktop app with a sign-in of its own. The phone design
+(#951) has the commands of the devices, and builds them first:
 
 | Command | Does |
 |---|---|
@@ -155,9 +157,9 @@ phone, a browser or a desktop app with a sign-in of its own.
 | `riff device add [NAME]` | Pairs a new device with a QR code. Then the device signs in with Google, with the same account. |
 | `riff device remove NAME` | Ends the sign-in of that one device. |
 
-- You set the scope of a device when you add it: the chat only, or each
-  tool. Each child design names the default scope of its kind of
-  device.
+- The kind of a device sets its scope when you add it: the chat only,
+  or each tool. Each child design names its kind and the default scope
+  of that kind.
 - The TUI has a devices tab. It shows each device with its kind, its
   name, its scope and its last use. It adds a device, and draws the QR
   code with [tui-qrcode](https://crates.io/crates/tui-qrcode). It
@@ -165,21 +167,19 @@ phone, a browser or a desktop app with a sign-in of its own.
 - Each graphical UI has a devices view that lists and removes devices.
   It adds a device where it can show a QR code.
 
-The phone design (#951) builds the three commands first.
-
 ## The order
 
 ```mermaid
 flowchart LR
-    A["Wave 30 and Wave 31:<br/>riff 3.0, isolation (#953),<br/>patches until it is stable"] --> B["riff 3.1:<br/>the core library riff-client,<br/>in small steps"]
+    A["riff 3.0: isolation (#953),<br/>patches until it is stable"] --> B["riff 3.1:<br/>the core library riff-client,<br/>in small steps"]
     B --> TUI["the TUI"]
     B --> PH["the phone app"]
     PH --> WEB["the web UI"]
     WEB --> DT["the desktop GUI"]
 ```
 
-1. Wave 30 and Wave 31 ship riff 3.0 (isolation, #953) and make it
-   stable. Patch releases of 3.0 come as needed.
+1. riff 3.0 (isolation, #953) ships first, with the patch releases
+   that make it stable.
 2. riff 3.1 moves the core library out of the CLI, in small steps. Each
    step keeps each test and changes no command. Then riff 3.1 gets
    stable.
@@ -195,8 +195,7 @@ after riff 3.0 is stable.
 
 | Item | What | Needs |
 |---|---|---|
-| #B1 | The crate `riff-client`, its platform traits, and its build for Linux, Android and WebAssembly | None |
-| #B2 | The sign-in and the tokens move to `riff-client` | #B1 |
-| #B3 | The API calls and the watch stream move to `riff-client` | #B2 |
-| #B4 | The models of the views move to `riff-client`: the sessions, the threads, the waves, the machines | #B3 |
-| #B5 | `--format json` for each command that prints data | #B4 |
+| #997 | The crate `riff-client` and its platform traits. The client of riff-server moves into it: the sign-in, the tokens, the API calls and the watch stream. | None |
+| #998 | The models of the views move to `riff-client`: the sessions, the threads, the waves, the machines. | #997 |
+| #999 | `riff-client` builds for Android and for WebAssembly, and the Gate checks both. | #997, #998 |
+| #1000 | `--format json` for each command that prints data. | #998 |
