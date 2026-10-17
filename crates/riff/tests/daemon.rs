@@ -453,7 +453,10 @@ fn session_folder(sessions: &Path, name: &str) -> PathBuf {
     let clone = sessions.join(name).join("clone");
     std::fs::create_dir_all(&clone).unwrap();
     git(&clone, &["init", "-q"]);
-    git(&clone, &["remote", "add", "origin", "https://github.com/o/r.git"]);
+    git(
+        &clone,
+        &["remote", "add", "origin", "https://github.com/o/r.git"],
+    );
     sessions.join(name)
 }
 
@@ -481,9 +484,8 @@ async fn riff_daemon_sweep_removes_the_folders_whose_work_is_over_and_says_why()
 
     let out = here.run(false, &["daemon", "sweep"]).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
-    let removed = |folder: &Path, why: &str| {
-        format!("riff removed the folder {}: {why}.", folder.display())
-    };
+    let removed =
+        |folder: &Path, why: &str| format!("riff removed the folder {}: {why}.", folder.display());
     assert_eq!(
         text(&out.stdout),
         [
@@ -511,7 +513,10 @@ async fn riff_daemon_sweep_removes_the_folders_whose_work_is_over_and_says_why()
     let out = here.run(false, &["daemon", "sweep"]).await;
     assert_eq!(
         text(&out.stdout),
-        format!("{}\n", removed(&runs, "the pull request #46 closed with no merge"))
+        format!(
+            "{}\n",
+            removed(&runs, "the pull request #46 closed with no merge")
+        )
     );
     assert!(!runs.exists() && !riff::daemon::sweep::lock_of(&runs).exists());
     let out = here.run(false, &["daemon", "sweep"]).await;

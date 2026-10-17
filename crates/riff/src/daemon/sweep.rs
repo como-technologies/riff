@@ -225,7 +225,8 @@ pub fn fate_on(gh: &pr::Gh, issue: u64) -> Result<Fate> {
         "100",
     ])?;
     Fate::of(issue, &pulls, || {
-        let issue: IssueState = gh.json(&["issue", "view", &issue.to_string(), "--json", "state"])?;
+        let issue: IssueState =
+            gh.json(&["issue", "view", &issue.to_string(), "--json", "state"])?;
         Ok(issue.state == "CLOSED")
     })
 }
@@ -233,7 +234,8 @@ pub fn fate_on(gh: &pr::Gh, issue: u64) -> Result<Fate> {
 /// Adds the comment `Merged in #PULL (COMMIT)` to the issue `issue` with
 /// `gh`, when no comment of the issue starts with `Merged in #PULL`.
 pub fn merged_in_on(gh: &pr::Gh, issue: u64, pull: u64, commit: &str) -> Result<()> {
-    let comments: Comments = gh.json(&["issue", "view", &issue.to_string(), "--json", "comments"])?;
+    let comments: Comments =
+        gh.json(&["issue", "view", &issue.to_string(), "--json", "comments"])?;
     let said = format!("Merged in #{pull}");
     if !comments
         .comments
@@ -487,9 +489,12 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// True when the session of the folder `folder` of `item` runs: see
-    /// the design.
+    /// the design. A record names its folder by the path of the host of
+    /// `riff run`, so the name `ITEM-ID8` of the folder counts, not its
+    /// path.
     fn runs(&self, folder: &Path, item: &str) -> bool {
-        self.records().iter().any(|r| r.folder == folder)
+        let name = folder.file_name();
+        self.records().iter().any(|r| r.folder.file_name() == name)
             || self.folders.starting().contains_key(item)
             || held(folder)
     }
@@ -565,10 +570,14 @@ mod tests {
         .await;
         let gone_merged = folder(&here, "issue-1-00000001");
         let gone_closed = folder(&here, "verify-issue-2-00000002");
-        // A session that runs: the daemon has its record.
-        let start = here.start("issue-3-00000003", "issue-3");
+        // A session that runs: the daemon has its record. Its host names
+        // the folder by another path: a link to the session folders.
+        let mut start = here.start("issue-3-00000003", "issue-3");
         origin(&start.folder.join("clone"), "https://github.com/o/r.git");
         let runs = start.folder.clone();
+        let link = here.root.path().join("link");
+        std::os::unix::fs::symlink(here.daemon.sessions_dir(), &link).unwrap();
+        start.folder = link.join("issue-3-00000003");
         let (_client, _) = here.started(start).await;
         let open = folder(&here, "issue-4-00000004");
         let gone_issue = folder(&here, "issue-5-00000005");
@@ -593,11 +602,17 @@ mod tests {
             lines,
             [
                 text::swept(&gone_merged, "the pull request #41 merged"),
-                text::swept(&gone_issue, "the issue #5 is closed, and its branch has no pull request"),
+                text::swept(
+                    &gone_issue,
+                    "the issue #5 is closed, and its branch has no pull request"
+                ),
                 text::swept(&gone_closed, "the pull request #42 closed with no merge"),
             ]
         );
-        assert_eq!(server.comments(), [("o/r".to_owned(), 1, 41, "c41".to_owned())]);
+        assert_eq!(
+            server.comments(),
+            [("o/r".to_owned(), 1, 41, "c41".to_owned())]
+        );
 
         // The lock and the job end: the next sweep removes their folders.
         drop((lock, job));
@@ -610,7 +625,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_sweep_of_one_repository_keeps_the_folders_of_another() {
-        let (here, _) = here(&[(1, Fate::Closed { pull: 41 }), (2, Fate::Closed { pull: 42 })]).await;
+        let (here, _) = here(&[
+            (1, Fate::Closed { pull: 41 }),
+            (2, Fate::Closed { pull: 42 }),
+        ])
+        .await;
         let mine = folder(&here, "issue-1-00000001");
         let theirs = here.daemon.sessions_dir().join("issue-2-00000002");
         std::fs::create_dir_all(theirs.join("clone")).unwrap();
@@ -626,7 +645,10 @@ mod tests {
         let lines = here.daemon.sweep(None).await;
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(!theirs.exists());
-        assert!(no_origin.exists(), "no origin: riff does not know its repository");
+        assert!(
+            no_origin.exists(),
+            "no origin: riff does not know its repository"
+        );
     }
 
     #[tokio::test]
@@ -646,7 +668,13 @@ mod tests {
         ask_done(&here.dir, Ask::Sweep, |line| said.push(line.to_owned()))
             .await
             .unwrap();
-        assert_eq!(said, [text::swept(&closed, "the pull request #41 closed with no merge")]);
+        assert_eq!(
+            said,
+            [text::swept(
+                &closed,
+                "the pull request #41 closed with no merge"
+            )]
+        );
         assert!(open.exists());
 
         let mut said = Vec::new();
