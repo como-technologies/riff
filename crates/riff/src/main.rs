@@ -767,6 +767,24 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
+    /// Retire a release line on GitHub
+    ///
+    /// Each GitHub release of the line becomes a prerelease, and the first
+    /// line of its notes says that the line is retired and names the issue.
+    /// GitHub never marks a prerelease Latest, so riff update never
+    /// installs it. riff keeps the release that GitHub marks Latest, and
+    /// each draft. It uses the gh of this machine, in the repository of
+    /// this folder. It prints what it changed. A second run changes nothing.
+    /// A person in a terminal or the lead runs it: it refuses in a worker
+    /// and in an agent session that is not the lead.
+    Retire {
+        /// The line, for example 1.x or 1.
+        #[arg(value_parser = riff::retire::parse_line)]
+        line: u64,
+        /// The issue that retires the line, for example 961.
+        #[arg(long)]
+        issue: u64,
+    },
     /// Print the session image of this repository
     ///
     /// It reads the key image in the table [session] of riff.toml, at the
@@ -2022,6 +2040,18 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     }
+    if let Command::Retire { line, issue } = &cli.command {
+        // The check comes before each call of gh
+        // (01M553AWMXYAG7CJGW7M30XDZ8).
+        if let Some(why) = lead_only(&server, &text::RETIRE).await {
+            eprintln!("{why}");
+            std::process::exit(1);
+        }
+        let gh = pr::Gh::default().with_one_token();
+        let done = riff::retire::retire(&gh, *line, *issue)?;
+        println!("{}", text::retire_done(*line, &done));
+        return Ok(());
+    }
     if let Command::Release {
         item, forge: true, ..
     } = &cli.command
@@ -2471,6 +2501,7 @@ async fn main() -> Result<()> {
         | Command::Owner { .. }
         | Command::Run { .. }
         | Command::Release { forge: true, .. }
+        | Command::Retire { .. }
         | Command::Wave { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
@@ -2760,7 +2791,7 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
         eprintln!("{why}");
         std::process::exit(1);
     }
-    if let Some(why) = start_refusal(server).await {
+    if let Some(why) = lead_only(server, &text::START_WORKERS).await {
         eprintln!("{why}");
         std::process::exit(1);
     }
@@ -3011,12 +3042,13 @@ async fn riff_paused(url: &str, here: &std::path::Path) -> Option<bool> {
     Some(state == RiffState::Paused)
 }
 
-/// Why this process may not start workers, or `None` when it may
-/// (01M3JPQT79FE47518Z8DFFQYYG). A person in a plain terminal may. A
-/// worker may not. An agent session may only when it is the lead.
-async fn start_refusal(server: &str) -> Option<String> {
+/// Why this process may not run the command of `refusals`, or `None`
+/// when it may (01M3JPQT79FE47518Z8DFFQYYG, 01M553AWMXYAG7CJGW7M30XDZ8).
+/// A person in a plain terminal may. A worker may not. An agent session
+/// may only when it is the lead.
+async fn lead_only(server: &str, refusals: &text::LeadOnly) -> Option<String> {
     if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
-        return Some(text::WORKER_STARTS_NO_WORKER.into());
+        return Some(refusals.worker.into());
     }
     let id = identity::session_id()?;
     let lead = async {
@@ -3032,8 +3064,8 @@ async fn start_refusal(server: &str) -> Option<String> {
     };
     match lead.await {
         Ok(true) => None,
-        Ok(false) => Some(text::NOT_THE_LEAD_STARTS_NO_WORKER.into()),
-        Err(_) => Some(text::LEAD_UNKNOWN_STARTS_NO_WORKER.into()),
+        Ok(false) => Some(refusals.not_the_lead.into()),
+        Err(_) => Some(refusals.lead_unknown.into()),
     }
 }
 
@@ -3328,7 +3360,7 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
 /// from an agent session, and a start only from the lead.
 async fn ask_host(host: &str, request: riff::host::Request, server: &str) -> Result<()> {
     if matches!(request, riff::host::Request::Start(_))
-        && let Some(why) = start_refusal(server).await
+        && let Some(why) = lead_only(server, &text::START_WORKERS).await
     {
         eprintln!("{why}");
         std::process::exit(1);

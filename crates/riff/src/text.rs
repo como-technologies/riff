@@ -1584,6 +1584,90 @@ pub fn waves_open_items(title: &str, open: u64) -> String {
     )
 }
 
+/// The answer to `riff retire` (01M550XYBAW5QYXEMQ49Z34M4N): one line for
+/// each release of the line, then the count of the releases that riff
+/// retired.
+///
+/// ```
+/// use riff::retire::Done;
+///
+/// let done = [
+///     Done::Latest("v1.8.1".into()),
+///     Done::Draft("v1.9.0".into()),
+///     Done::Retired("v1.8.0".into()),
+///     Done::Already("v1.7.0".into()),
+/// ];
+/// assert_eq!(
+///     riff::text::retire_done(1, &done),
+///     "v1.8.1: GitHub marks it Latest, so riff kept it. Make a release of another line the \
+///      Latest, then run riff retire again.\n\
+///      v1.9.0: a draft. riff kept it.\n\
+///      v1.8.0: retired. It is a prerelease now, and its notes start with **Retired.**\n\
+///      v1.7.0: retired already. riff changed nothing.\n\
+///      riff retired 1 release of the line 1.x."
+/// );
+/// let again = [Done::Already("v1.8.0".into())];
+/// assert!(riff::text::retire_done(1, &again).ends_with("\nriff retired no release of the line 1.x."));
+/// ```
+pub fn retire_done(line: u64, done: &[crate::retire::Done]) -> String {
+    use crate::retire::Done;
+    let mut out = String::new();
+    for one in done {
+        let text = match one {
+            Done::Retired(tag) => format!(
+                "{tag}: retired. It is a prerelease now, and its notes start with {}",
+                crate::retire::MARK
+            ),
+            Done::Already(tag) => format!("{tag}: retired already. riff changed nothing."),
+            Done::Latest(tag) => format!(
+                "{tag}: GitHub marks it Latest, so riff kept it. Make a release of another line \
+                 the Latest, then run riff retire again."
+            ),
+            Done::Draft(tag) => format!("{tag}: a draft. riff kept it."),
+        };
+        out.push_str(&text);
+        out.push('\n');
+    }
+    let retired = done
+        .iter()
+        .filter(|d| matches!(d, Done::Retired(_)))
+        .count();
+    let count = match retired {
+        0 => "no release".to_owned(),
+        1 => "1 release".to_owned(),
+        n => format!("{n} releases"),
+    };
+    out.push_str(&format!("riff retired {count} of the line {line}.x."));
+    out
+}
+
+/// The refusal of `riff retire` for a line that no GitHub release has.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::retire_no_release(7),
+///     "No GitHub release has a tag of the line 7.x, for example v7.0.0. riff changed nothing."
+/// );
+/// ```
+pub fn retire_no_release(line: u64) -> String {
+    format!(
+        "No GitHub release has a tag of the line {line}.x, for example v{line}.0.0. riff changed \
+         nothing."
+    )
+}
+
+/// The refusal of `riff retire` for a line that is not `N.x` or `N`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::retire_bad_line("1.8"),
+///     "\"1.8\" is not a release line. Give the major version, for example 1.x or 1."
+/// );
+/// ```
+pub fn retire_bad_line(arg: &str) -> String {
+    format!("{arg:?} is not a release line. Give the major version, for example 1.x or 1.")
+}
+
 /// The error of `riff workers start` outside tmux
 /// (01M3JD3973J7A9BG8G9EP9TVDP).
 pub const NO_TMUX: &str = "riff: riff workers start needs tmux. It started nothing. Run it in \
@@ -1924,20 +2008,44 @@ fn workers_count(n: usize) -> String {
 pub const NO_WORKER_LIMIT: &str = "riff: the limit of workers on this machine is 0, so riff \
 workers start started nothing. Your user sets the limit, for example: riff workers limit 2";
 
-/// The refusal of `riff workers start` in a worker
-/// (01M3JPQT79FE47518Z8DFFQYYG).
-pub const WORKER_STARTS_NO_WORKER: &str =
-    "riff: a worker never starts workers. riff workers start started nothing.";
+/// The refusals of a command that only a person in a plain terminal or
+/// the lead of its user runs (01M3JPQT79FE47518Z8DFFQYYG,
+/// 01M553AWMXYAG7CJGW7M30XDZ8).
+pub struct LeadOnly {
+    /// In a worker.
+    pub worker: &'static str,
+    /// In an agent session that is not the lead.
+    pub not_the_lead: &'static str,
+    /// In an agent session when riff cannot ask riff-server for the lead.
+    pub lead_unknown: &'static str,
+}
 
-/// The refusal of `riff workers start` in an agent session that is not
-/// the lead (01M3JPQT79FE47518Z8DFFQYYG).
-pub const NOT_THE_LEAD_STARTS_NO_WORKER: &str = "riff: only the lead of your user starts \
-workers. This session is not the lead, so riff workers start started nothing.";
+/// The refusals of `riff workers start` (01M3JPQT79FE47518Z8DFFQYYG).
+pub const START_WORKERS: LeadOnly = LeadOnly {
+    worker: "riff: a worker never starts workers. riff workers start started nothing.",
+    not_the_lead: "riff: only the lead of your user starts workers. This session is not the \
+lead, so riff workers start started nothing.",
+    lead_unknown: "riff: cannot check that this session is the lead, so riff workers start \
+started nothing. Check the riff with riff whoami.",
+};
 
-/// The refusal of `riff workers start` in an agent session when riff
-/// cannot ask riff-server for the lead (01M3JPQT79FE47518Z8DFFQYYG).
-pub const LEAD_UNKNOWN_STARTS_NO_WORKER: &str = "riff: cannot check that this session is the \
-lead, so riff workers start started nothing. Check the riff with riff whoami.";
+/// The refusals of `riff retire` (01M553AWMXYAG7CJGW7M30XDZ8).
+///
+/// ```
+/// use riff::text::RETIRE;
+///
+/// for refusal in [RETIRE.worker, RETIRE.not_the_lead, RETIRE.lead_unknown] {
+///     assert!(refusal.starts_with("riff: "), "{refusal}");
+///     assert!(refusal.contains("riff retire changed nothing."), "{refusal}");
+/// }
+/// ```
+pub const RETIRE: LeadOnly = LeadOnly {
+    worker: "riff: a worker never retires a release line. riff retire changed nothing.",
+    not_the_lead: "riff: only the lead of your user retires a release line. This session is \
+not the lead, so riff retire changed nothing.",
+    lead_unknown: "riff: cannot check that this session is the lead, so riff retire changed \
+nothing. Check the riff with riff whoami.",
+};
 
 /// The refusal of `riff workers start` when `run` workers fill the
 /// `limit` (01M3JPQT57PJCRBQYJNDVESS04).

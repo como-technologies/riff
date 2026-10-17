@@ -68,6 +68,7 @@ mod pr;
 mod read_length;
 mod release;
 mod restart;
+mod retire;
 mod rollout;
 mod run;
 mod secrets;
