@@ -33,6 +33,13 @@
 //!   lease with [`Lease::take`]. It waits [`Timing::wait`], applies the
 //!   chunks that came since the load, and starts to serve (R138). See
 //!   [`crate::Service::load`].
+//! - The lease also holds the [`Revision`] of its instance: the order of
+//!   the deploys (01M53NHJXGK1PN2A9F7NSX0B4G). An instance of an older
+//!   revision does not take a live lease of a newer revision. It replies
+//!   503, reads the lease each [`Timing::read_every`], and takes the
+//!   lease only when that lease ended. See [`Lease::take_as`] and "A
+//!   second old instance" below. With no revision on one side, the
+//!   newest instance takes the lease.
 //! - It reads the lease each [`Timing::read_every`]. It serves only for
 //!   [`Timing::valid_for`] after the start of the last read that showed
 //!   its own ID. Else it replies 503 (R139).
@@ -72,6 +79,33 @@
 //!
 //! So no proof works on both instances, and the two never serve at the
 //! same time.
+//!
+//! # A second old instance
+//!
+//! At a deploy, the old instance closes its port when it reads the new
+//! lease. Cloud Run sends the calls to the old revision until the new
+//! revision is ready. So Cloud Run can start a second instance of the
+//! old revision, while the new instance waits. The second old instance
+//! reads a lease of a newer revision, and does not take it. So the wait
+//! of the new instance does not start again, and the second old instance
+//! exits at its SIGTERM.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant O as old instance, revision 25
+//!     participant S as store
+//!     participant N as new instance, revision 26
+//!     participant P as second old instance, revision 25
+//!     N->>S: write the lease (revision 26)
+//!     Note over N: waits 15 s
+//!     O->>S: read the lease: another ID
+//!     Note over O: closes its port, hands over, exits
+//!     Note over P: Cloud Run starts it: no old port is open
+//!     P->>S: read the lease: revision 26 is newer
+//!     Note over P: does not take it: 503, reads it each 2 s
+//!     Note over N: serves
+//!     Note over P: SIGTERM: exits
+//! ```
 //!
 //! # A live lease
 //!
@@ -196,6 +230,53 @@ impl Timing {
     }
 }
 
+/// The order of the deploy of an instance: the number of its Cloud Run
+/// revision (01M53NHJXGK1PN2A9F7NSX0B4G). Cloud Run names each revision
+/// `SERVICE-NUMBER-SUFFIX`, and the number grows with each deploy, also
+/// with the deploy of an older release. Cloud Run gives the name to the
+/// instance in `K_REVISION`.
+///
+/// ```
+/// use riff_server::lease::Revision;
+///
+/// let old = Revision::parse("riff-server-00025-2s5").unwrap();
+/// let new = Revision::parse("riff-server-00026-899").unwrap();
+/// assert!(old < new);
+/// assert_eq!(new.to_string(), "26");
+/// // A name with no number gives no revision.
+/// for name in ["riff-server", "riff-server-v1", "00026-899", "riff-+26-899", ""] {
+///     assert_eq!(Revision::parse(name), None, "{name}");
+/// }
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Revision(u64);
+
+impl Revision {
+    /// The revision of the Cloud Run revision `name`, or `None` when the
+    /// name has no number.
+    pub fn parse(name: &str) -> Option<Revision> {
+        let mut parts = name.rsplit('-');
+        parts.next().filter(|suffix| !suffix.is_empty())?;
+        let number = parts.next().filter(|n| n.bytes().all(|b| b.is_ascii_digit()))?;
+        // The name of the service comes before the number.
+        parts.next().filter(|service| !service.is_empty())?;
+        number.parse().ok().map(Revision)
+    }
+}
+
+impl std::fmt::Display for Revision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// True when the revision `holder` comes after the revision `mine`. With
+/// no revision on one side, neither comes first.
+fn newer(holder: Option<Revision>, mine: Option<Revision>) -> bool {
+    matches!((holder, mine), (Some(holder), Some(mine)) if holder > mine)
+}
+
 /// The JSON of the lease object.
 #[derive(Serialize, Deserialize)]
 struct Holder {
@@ -207,6 +288,10 @@ struct Holder {
     /// True when the holder ended the lease at its shutdown.
     #[serde(default)]
     ended: bool,
+    /// The revision of the holder. A tool, an instance outside Cloud Run
+    /// and an older build write none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    revision: Option<Revision>,
 }
 
 fn parse(bytes: &[u8]) -> Result<Holder, StoreError> {
@@ -228,6 +313,8 @@ pub struct Held {
     /// The time of its last write of the lease, in milliseconds since
     /// the Unix epoch. 0 for a lease of an older build, with no time.
     pub renewed_at_ms: u64,
+    /// The revision of the instance, when it has one.
+    pub revision: Option<Revision>,
 }
 
 /// The instance that holds the lease of `store` at the time `now_ms`.
@@ -287,18 +374,30 @@ impl Found {
             });
         };
         let holder = parse(&lease.bytes)?;
-        let age = u128::from(now_ms.saturating_sub(holder.renewed_at_ms));
-        // A lease with no time never ends by its age: an instance of an
-        // older build can still write the store.
-        let fresh = holder.renewed_at_ms == 0 || age < timing.ends_after.as_millis();
-        let live = !holder.ended && fresh;
+        let by_age = !holder.ended && !holder.fresh(now_ms, timing);
         Ok(Found {
             version: Some(lease.version),
-            held: live.then_some(Held {
-                id: holder.id,
-                renewed_at_ms: holder.renewed_at_ms,
-            }),
-            by_age: !holder.ended && !fresh,
+            held: holder.live(now_ms, timing),
+            by_age,
+        })
+    }
+}
+
+impl Holder {
+    /// True while the time of the lease is less than
+    /// [`Timing::ends_after`] old. A lease with no time never ends by
+    /// its age: an instance of an older build can still write the store.
+    fn fresh(&self, now_ms: u64, timing: &Timing) -> bool {
+        let age = u128::from(now_ms.saturating_sub(self.renewed_at_ms));
+        self.renewed_at_ms == 0 || age < timing.ends_after.as_millis()
+    }
+
+    /// The holder of a live lease: not ended, and fresh.
+    fn live(self, now_ms: u64, timing: &Timing) -> Option<Held> {
+        (!self.ended && self.fresh(now_ms, timing)).then_some(Held {
+            id: self.id,
+            renewed_at_ms: self.renewed_at_ms,
+            revision: self.revision,
         })
     }
 }
@@ -311,12 +410,14 @@ fn new_id() -> Result<String, StoreError> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// The bytes of the lease of the holder `id`, with the time now.
-fn json(id: &str, ended: bool) -> Result<Vec<u8>, StoreError> {
+/// The bytes of the lease of the holder `id` of the revision
+/// `revision`, with the time now.
+fn json(id: &str, revision: Option<Revision>, ended: bool) -> Result<Vec<u8>, StoreError> {
     let holder = Holder {
         id: id.to_owned(),
         renewed_at_ms: now_ms(),
         ended,
+        revision,
     };
     serde_json::to_vec(&holder).map_err(|e| StoreError::Failed(e.to_string()))
 }
@@ -334,11 +435,16 @@ async fn holds(store: &dyn Store, id: &str) -> Result<bool, StoreError> {
     Ok(parse(&lease.bytes)?.id == id)
 }
 
-/// Writes the lease of the holder `id` again, when the lease holds
-/// `id`. Each write names the version that it read, so it never writes
-/// over the lease of another holder. False when the lease holds another
-/// ID.
-async fn write(store: &dyn Store, id: &str, ended: bool) -> Result<bool, StoreError> {
+/// Writes the lease of the holder `id` of the revision `revision` again,
+/// when the lease holds `id`. Each write names the version that it read,
+/// so it never writes over the lease of another holder. False when the
+/// lease holds another ID.
+async fn write(
+    store: &dyn Store,
+    id: &str,
+    revision: Option<Revision>,
+    ended: bool,
+) -> Result<bool, StoreError> {
     loop {
         let Some(lease) = store.load(LEASE).await? else {
             return Ok(false);
@@ -347,7 +453,7 @@ async fn write(store: &dyn Store, id: &str, ended: bool) -> Result<bool, StoreEr
             return Ok(false);
         }
         let known = Some(lease.version);
-        match store.save(LEASE, json(id, ended)?, known).await {
+        match store.save(LEASE, json(id, revision, ended)?, known).await {
             Ok(_) => return Ok(true),
             // Another holder wrote the lease since the load. Read it
             // again.
@@ -423,7 +529,7 @@ impl<'a> ToolLease<'a> {
             return Ok(Err(Busy::Held(held)));
         }
         let id = format!("{name}-{}", new_id()?);
-        match store.save(LEASE, json(&id, false)?, found.version).await {
+        match store.save(LEASE, json(&id, None, false)?, found.version).await {
             Ok(_) => {}
             Err(StoreError::Conflict(_)) => return Ok(Err(Busy::Taken)),
             Err(error) => return Err(error),
@@ -440,7 +546,7 @@ impl<'a> ToolLease<'a> {
     /// Ends the lease of the tool. False when the lease holds another
     /// ID: an instance took it while the tool ran.
     pub async fn end(self) -> Result<bool, StoreError> {
-        write(self.store, &self.id, true).await
+        write(self.store, &self.id, None, true).await
     }
 
     /// The ID of the tool.
@@ -474,26 +580,100 @@ impl<'a> ToolLease<'a> {
 pub struct Lease {
     store: Arc<dyn Store>,
     id: String,
+    /// The revision of this instance.
+    revision: Option<Revision>,
     /// True once this instance ended the lease.
     ended: AtomicBool,
 }
 
 impl Lease {
     /// Writes a new random ID to the lease, over the ID of any other
-    /// instance (R138).
+    /// instance (R138). The lease holds no revision: see
+    /// [`Lease::take_as`].
     pub async fn take(store: Arc<dyn Store>) -> Result<Lease, StoreError> {
-        let lease = Lease {
+        let lease = Lease::new(store, None)?;
+        // With no revision, no holder comes first.
+        lease.write_unless_newer(&Timing::default()).await?;
+        Ok(lease)
+    }
+
+    /// Writes a new random ID of an instance of the revision `revision`
+    /// to the lease (R138), unless a live lease holds a newer revision
+    /// (01M53NHJXGK1PN2A9F7NSX0B4G). Then it writes nothing, and gives
+    /// that holder. A lease that ended, by its holder or by its age, and
+    /// a lease with no revision, are no holder that comes first.
+    ///
+    /// ```
+    /// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
+    /// use std::sync::Arc;
+    /// use riff_server::lease::{Lease, Revision, Timing};
+    /// use riff_state::store::Memory;
+    ///
+    /// let store = Arc::new(Memory::default());
+    /// let timing = Timing::default();
+    /// let old = Revision::parse("riff-server-00025-2s5");
+    /// let new = Revision::parse("riff-server-00026-899");
+    ///
+    /// let first = Lease::take_as(store.clone(), old, &timing).await?.unwrap();
+    /// // A deploy: the new revision takes the lease.
+    /// let deploy = Lease::take_as(store.clone(), new, &timing).await?.unwrap();
+    /// assert!(!first.held().await?);
+    /// // A second instance of the old revision does not take it.
+    /// let held = Lease::take_as(store.clone(), old, &timing).await?.unwrap_err();
+    /// assert_eq!((held.id.as_str(), held.revision), (deploy.id(), new));
+    /// assert!(deploy.held().await?);
+    /// // A second instance of the same revision takes it: the newest serves.
+    /// let again = Lease::take_as(store.clone(), new, &timing).await?.unwrap();
+    /// assert!(!deploy.held().await?);
+    ///
+    /// // After the end of the lease, the old revision takes it.
+    /// again.end().await?;
+    /// let back = Lease::take_as(store.clone(), old, &timing).await?.unwrap();
+    /// assert!(back.held().await?);
+    /// # Ok(()) }
+    /// ```
+    pub async fn take_as(
+        store: Arc<dyn Store>,
+        revision: Option<Revision>,
+        timing: &Timing,
+    ) -> Result<Result<Lease, Held>, StoreError> {
+        let lease = Lease::new(store, revision)?;
+        Ok(match lease.write_unless_newer(timing).await? {
+            None => Ok(lease),
+            Some(newer) => Err(newer),
+        })
+    }
+
+    fn new(store: Arc<dyn Store>, revision: Option<Revision>) -> Result<Lease, StoreError> {
+        Ok(Lease {
             store,
             id: new_id()?,
+            revision,
             ended: AtomicBool::new(false),
-        };
+        })
+    }
+
+    /// Writes the ID of this instance to the lease, over the ID of each
+    /// other holder, unless a live lease holds a newer revision. Gives
+    /// that holder, and then writes nothing.
+    async fn write_unless_newer(&self, timing: &Timing) -> Result<Option<Held>, StoreError> {
         loop {
-            let known = lease.store.load(LEASE).await?.map(|lease| lease.version);
-            let bytes = json(&lease.id, false)?;
-            match lease.store.save(LEASE, bytes, known).await {
-                Ok(_) => return Ok(lease),
-                // Another instance wrote the lease since the load. Write
-                // over it: the newest instance serves.
+            let found = self.store.load(LEASE).await?;
+            let known = found.as_ref().map(|lease| lease.version);
+            // A lease that does not read has no holder that comes first:
+            // write over it.
+            let newer = found
+                .and_then(|lease| parse(&lease.bytes).ok())
+                .and_then(|holder| holder.live(now_ms(), timing))
+                .filter(|held| newer(held.revision, self.revision));
+            if newer.is_some() {
+                return Ok(newer);
+            }
+            let bytes = json(&self.id, self.revision, false)?;
+            match self.store.save(LEASE, bytes, known).await {
+                Ok(_) => return Ok(None),
+                // Another instance wrote the lease since the load. Read it
+                // again: write over it, unless it comes first.
                 Err(StoreError::Conflict(_)) => continue,
                 Err(error) => return Err(error),
             }
@@ -543,7 +723,7 @@ impl Lease {
         if self.ended.load(Ordering::SeqCst) {
             return self.held().await;
         }
-        write(&*self.store, &self.id, false).await
+        write(&*self.store, &self.id, self.revision, false).await
     }
 
     /// Ends the lease, when it holds the ID of this instance
@@ -551,7 +731,9 @@ impl Lease {
     /// writes nothing more.
     pub async fn end(&self) -> Result<(), StoreError> {
         self.ended.store(true, Ordering::SeqCst);
-        write(&*self.store, &self.id, true).await.map(|_| ())
+        write(&*self.store, &self.id, self.revision, true)
+            .await
+            .map(|_| ())
     }
 
     /// The ID of this instance.
@@ -571,6 +753,7 @@ mod tests {
         Lease {
             store: Arc::new(store.clone()),
             id: id.into(),
+            revision: None,
             ended: AtomicBool::new(false),
         }
     }

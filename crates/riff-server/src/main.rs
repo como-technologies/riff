@@ -6,6 +6,7 @@ use std::sync::Arc;
 use clap::{Args, Parser, Subcommand};
 use riff_server::auth::Config;
 use riff_server::gcs::Gcs;
+use riff_server::lease::Revision;
 use riff_server::listen::{self, Port, Start};
 use riff_server::oidc::{self, DEFAULT_DOMAIN, Provider, SignInError};
 use riff_server::{Service, logline, tools};
@@ -310,6 +311,15 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
     config.require_sign_in = cli.require_sign_in || cli.client_id.is_some();
     config.admins = cli.admins;
     config.owner = cli.owner;
+    // Cloud Run names the revision of the instance: the order of the
+    // deploys (01M53NHJXGK1PN2A9F7NSX0B4G).
+    if let Ok(name) = std::env::var("K_REVISION") {
+        config.revision = Revision::parse(&name);
+        match config.revision {
+            Some(revision) => tracing::info!("the revision {name}: the deploy {revision}"),
+            None => tracing::warn!("the revision {name} has no number: the lease holds none"),
+        }
+    }
     config.owner_role = riff_state::owner::Timing::from_minutes(
         cli.owner_take_minutes,
         cli.owner_ping_minutes,
