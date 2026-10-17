@@ -7075,18 +7075,18 @@ that builds it merges.
   pairs a new device with a QR code and then its Google sign-in with the
   same account, and `riff device remove NAME` ends the sign-in of that
   one device.
-- **01M542176RKRERVA0AFAY23REX** The scope of a device (the chat only, or
-  each tool) is set when the device is added. Each child design names
-  the default scope of its kind of device.
+- **01M542176RKRERVA0AFAY23REX** The scope of a device (the chat only,
+  or each tool) is set when the device is added. Each child design
+  names the default scope of its kind of device.
 - **01M542179DFVKMFQ008TV9DM8C** The devices tab of the TUI shows each
   device with its kind, its name, its scope and its last use. It adds a
   device, and draws the QR code with `tui-qrcode`. It removes a device.
   Each graphical UI has a devices view that lists and removes devices,
   and adds a device where it can show a QR code.
-- **01M54217C256KCGWSVAVPHEQQB** The UIs come in this order: the TUI, the
-  phone app, the web UI and the desktop GUI. After riff 3.1, the TUI and
-  the phone app can be built at the same time: the TUI does not block
-  the phone app.
+- **01M54217C256KCGWSVAVPHEQQB** The UIs come in this order: the TUI,
+  the phone app, the web UI and the desktop GUI. After riff 3.1, the TUI
+  and the phone app can be built at the same time: the TUI does not
+  block the phone app.
 - **01M54217ET3G7R4ZJ33CQRE5P9** Wave 30 and Wave 31 ship riff 3.0
   (#953) and make it stable, with patch releases of 3.0 as needed.
   riff 3.1 comes after a stable 3.0. It moves the core library out of
