@@ -3429,14 +3429,15 @@ flowchart TD
    line and `yes, signed in as USER` on the `sign-in` line, the riff
    ID is the one of before.
 6. The whole riff is paused after the import. The owner or an admin
-   resumes it. riff then starts the workers by itself:
+   resumes it. riff then gives the free work to the idle workers, and
+   asks the riff daemon to run the wave for the rest (see
+   [riff starts the work by itself](how-it-works.md#riff-starts-the-work-by-itself)):
 
    ```sh
    riff resume --riff
    ```
 
-   When the rollout is off (`riff workers interval` shows 0), start
-   the workers with a count:
+   To run workers in tmux, start them with a count:
 
    ```sh
    riff workers start 2

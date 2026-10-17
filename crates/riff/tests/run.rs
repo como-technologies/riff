@@ -2051,7 +2051,10 @@ async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
     .await;
 
     let who = machine.ok(None, &["who", "--long"]).await;
-    assert!(!who.contains("#issue-12"), "the session of the job lives: {who}");
+    assert!(
+        !who.contains("#issue-12"),
+        "the session of the job lives: {who}"
+    );
     assert!(!bin.join("run.args").exists(), "a container started");
     let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
     assert!(
