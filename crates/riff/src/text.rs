@@ -6641,9 +6641,10 @@ pub fn daemon_unit_state(state: &str) -> String {
     )
 }
 
-/// `riff daemon install` or `riff init` with `RIFF_HOME` set.
+/// `riff daemon install` or `riff init` with `RIFF_HOME` or `RIFF_DATA`
+/// set.
 pub const DAEMON_INSTALL_RIFF_HOME: &str = "riff installs no daemon of this machine while \
-     RIFF_HOME is set. Run the daemon of this RIFF_HOME in a terminal: riff daemon";
+     RIFF_HOME or RIFF_DATA is set. Run the daemon of this folder in a terminal: riff daemon";
 
 /// `riff daemon install` wrote the unit `path`.
 pub fn daemon_installed(path: &Path) -> String {
@@ -6653,9 +6654,9 @@ pub fn daemon_installed(path: &Path) -> String {
     )
 }
 
-/// `riff daemon uninstall` with `RIFF_HOME` set.
+/// `riff daemon uninstall` with `RIFF_HOME` or `RIFF_DATA` set.
 pub const DAEMON_UNINSTALL_RIFF_HOME: &str = "riff removes no daemon of this machine while \
-     RIFF_HOME is set. Stop the daemon of this RIFF_HOME in its terminal: Ctrl-C";
+     RIFF_HOME or RIFF_DATA is set. Stop the daemon of this folder in its terminal: Ctrl-C";
 
 /// `riff daemon uninstall` stopped the daemon and deleted the unit `path`.
 ///

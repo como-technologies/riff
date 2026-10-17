@@ -3,17 +3,22 @@
 //! 01M4ZCFGF6QN6KZEVMBNW9G4EW, 01M4ZCFGHCS7WJ6CFYBZSX0AT5).
 //!
 //! Each fake writes its call to the file `log` of its control folder.
-//! The fake `riff daemon` makes the file `daemon-runs` there, and runs
-//! until SIGTERM. Then it writes `TERM riff daemon` to the log, and
-//! removes the file. The fake `riff run` fails when no daemon runs. A
-//! file in that folder changes what a fake does:
+//! The fake `riff` also writes its `RIFF_DATA` to the file `data` there,
+//! or `none`. The fake `riff daemon` with `RIFF_DATA` makes the file
+//! `daemon-runs` there, and runs until SIGTERM. Then it writes
+//! `TERM riff daemon` to the log, and removes the file. With no
+//! `RIFF_DATA`, it fails: the daemon of the machine is not the daemon of
+//! the test. The fake `riff run` fails when no daemon of the test runs,
+//! and makes its session folder in `RIFF_DATA`. A file in that folder
+//! changes what a fake does:
 //!
 //! | File | The fake |
 //! |---|---|
 //! | `rootful` | `podman info` says `false` |
 //! | `no-label` | `gh issue edit` fails |
 //! | `hold-fails` | `riff plan hold` fails, as for a worker |
-//! | `daemon-runs` | `riff daemon status` answers |
+//! | `daemon-runs` | `riff daemon status` with `RIFF_DATA` answers: a daemon of the test runs |
+//! | `machine-daemon` | `riff daemon status` with no `RIFF_DATA` answers: the daemon of the machine runs |
 //! | `daemon-fails` | `riff daemon` ends with 1 at once |
 //! | `run-fails` | `riff run` ends with 1 |
 //! | `run-waits` | `riff run` waits for a signal |
@@ -94,6 +99,7 @@ if [ -f "$c/rootful" ]; then echo false; else echo true; fi
 const RIFF: &str = r#"#!/bin/sh
 c='CTL'
 echo "riff $*" >> "$c/log"
+echo "${RIFF_DATA:-none}" >> "$c/data"
 case "$1" in
 image) echo "ghcr.io/o/riff-session@sha256:00ff" ;;
 plan)
@@ -101,14 +107,20 @@ plan)
     echo "riff: a worker cannot hold an item. Tell the lead." >&2; exit 1
   fi ;;
 daemon)
-  if [ "$2" = status ]; then [ -f "$c/daemon-runs" ]; exit; fi
+  if [ "$2" = status ]; then
+    if [ -n "$RIFF_DATA" ]; then [ -f "$c/daemon-runs" ]; else [ -f "$c/machine-daemon" ]; fi
+    exit
+  fi
+  if [ -z "$RIFF_DATA" ]; then echo "riff: the fake daemon of the machine runs already" >&2; exit 1; fi
   if [ -f "$c/daemon-fails" ]; then echo "riff: the fake daemon cannot listen" >&2; exit 1; fi
   trap 'echo "TERM riff daemon" >> "$c/log"; rm -f "$c/daemon-runs"; exit 0' TERM
   touch "$c/daemon-runs"
   while :; do sleep 0.05; done ;;
 run)
-  if [ ! -f "$c/daemon-runs" ]; then echo "riff: no riff daemon answers" >&2; exit 1; fi
-  d="$XDG_DATA_HOME/riff/sessions/$2-ID8"
+  if [ -z "$RIFF_DATA" ] || [ ! -f "$c/daemon-runs" ]; then
+    echo "riff: no riff daemon of the test answers" >&2; exit 1
+  fi
+  d="$RIFF_DATA/sessions/$2-ID8"
   mkdir -p "$d/clone" "$d/claude"
   echo work > "$d/clone/f"
   if [ -f "$c/stray" ]; then
@@ -296,11 +308,25 @@ impl Fake {
             .collect()
     }
 
+    /// The `RIFF_DATA` of each call of the fake `riff`, in order, or
+    /// `none`.
+    fn data(&self) -> Vec<String> {
+        std::fs::read_to_string(self.ctl.join("data"))
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+
+    /// The data folder of the test.
+    fn test_data(&self) -> PathBuf {
+        self.env.home().join(".local/share/riff/real-session")
+    }
+
     /// The folder of the fake session.
     fn session(&self) -> PathBuf {
-        self.env
-            .home()
-            .join(format!(".local/share/riff/sessions/issue-{ISSUE}-{ID8}"))
+        self.test_data()
+            .join(format!("sessions/issue-{ISSUE}-{ID8}"))
     }
 }
 
@@ -736,19 +762,54 @@ fn a_gate_that_does_not_start_fails_the_test() {
     assert_clean(&fake);
 }
 
+/// The daemon of the machine runs, for example `riff.service`. The test
+/// runs its own daemon beside it, and passes. It never stops the daemon
+/// of the machine, and never talks to it: each `riff` of the test has the
+/// data folder of the test as `RIFF_DATA` (01M53YP9DATAD95EZEZ6R75WEF).
 #[test]
-fn a_daemon_that_runs_already_fails_the_step_and_the_test_does_not_stop_it() {
+fn the_test_passes_beside_the_daemon_of_the_machine_and_leaves_it_running() {
     let fake = Fake::new();
-    // The daemon of the person, for example riff.service.
+    fake.set("machine-daemon");
+    let out = fake.run(&[]);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains("real-session: PASS: issue #801"),
+        "{stdout}"
+    );
+    let data = fake.test_data().display().to_string();
+    let started = stdout
+        .lines()
+        .find(|line| line.starts_with("  riff daemon, pid "))
+        .unwrap_or_default();
+    assert!(started.ends_with(&format!(", in {data}")), "{stdout}");
+    assert!(fake.ctl.join("machine-daemon").exists());
+    let log = fake.log();
+    let calls = log.iter().filter(|line| line.starts_with("riff ")).count();
+    let values = fake.data();
+    assert_eq!(values.len(), calls, "{values:#?}\n{log:#?}");
+    assert!(values.iter().all(|value| *value == data), "{values:#?}");
+    assert_clean(&fake);
+}
+
+/// A daemon of the test answers before the start: another test runs, or
+/// a test that a second signal stopped left its daemon. Step 5 fails,
+/// and the test does not stop that daemon. The message names no step
+/// for the daemon of the machine.
+#[test]
+fn a_daemon_of_the_test_that_runs_already_fails_the_step_and_the_test_does_not_stop_it() {
+    let fake = Fake::new();
     fake.set("daemon-runs");
     let out = fake.run(&[]);
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     assert!(
-        stderr.contains("FAIL at step 5 of 10, start the daemon: a riff daemon runs already:"),
+        stderr.contains(
+            "FAIL at step 5 of 10, start the daemon: a riff daemon of the test runs already:"
+        ),
         "{stderr}"
     );
-    assert!(stderr.contains("systemctl --user stop riff"), "{stderr}");
+    assert!(!stderr.contains("systemctl"), "{stderr}");
     let log = fake.log();
     assert!(!log.iter().any(|l| l == "riff daemon"), "{log:#?}");
     assert!(find(&log, "riff run").is_none(), "{log:#?}");

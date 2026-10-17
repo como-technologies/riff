@@ -24,8 +24,8 @@
 //!     T->>G: a scratch issue in the milestone Backlog
 //!     T->>G: the label no-verify on the issue
 //!     T->>S: hold verify-issue-N
-//!     T->>D: riff daemon, in a process group of its own
-//!     T->>R: riff run issue-N --image IMAGE
+//!     T->>D: riff daemon with RIFF_DATA, in a process group of its own
+//!     T->>R: riff run issue-N --image IMAGE, with RIFF_DATA
 //!     R->>D: run the session in a container
 //!     R->>G: the session pushes, and opens the pull request
 //!     T->>T: list the home again: no new path, no changed file
@@ -44,7 +44,7 @@
 //! | 2. list the home | always |
 //! | 3. make the scratch item | `gh issue create` prints the URL of an issue |
 //! | 4. keep its verify from the workers | the issue has the label [`NO_VERIFY`]; a failed hold is a warning |
-//! | 5. start the daemon | no riff daemon answers before, and `riff daemon` of the tree answers in [`DAEMON_WAIT`] (see below) |
+//! | 5. start the daemon | no daemon of the test answers before, and `riff daemon` of the tree answers in [`DAEMON_WAIT`] (see below) |
 //! | 6. run the item | `riff run issue-N --image IMAGE` ends with 0 |
 //! | 7. check the home | the home has no new path and no changed file that riff must not write (see below) |
 //! | 8. find the pull request | the branch `worktree-issue-N` has an open pull request |
@@ -87,12 +87,31 @@
 //!
 //! # The daemon
 //!
-//! `riff run` asks the riff daemon to run the session (#716). So the
-//! test starts `riff daemon` of the tree, with the variables of the
-//! test, and waits until `riff daemon status` of the tree answers
-//! (01M4ZFPYNGFF49WWHR8EBWSTNG). When a riff daemon answers before the
-//! start, for example the unit `riff.service` of an installed riff, the
-//! step fails: the test does not stop a daemon of the person.
+//! `riff run` asks the riff daemon to run the session (#716). The
+//! daemon of the machine, for example the unit `riff.service` of an
+//! installed riff, runs on with its peer links: the test never stops,
+//! starts or changes it, and does not talk to it
+//! (01M53YP9DATAD95EZEZ6R75WEF). The test runs a daemon of its own
+//! beside it. Each `riff` that the test runs ([`Riff`]) gets `RIFF_DATA`
+//! ([`DATA_VAR`]): the data folder of the test ([`Env::test_data`]), in
+//! the folders of riff. So the daemon of the test has its own socket, its
+//! own session folders, and its own key and riff
+//! (01M53YP97S9BDMFBN0X5G444MY, 01M51JW1XRZWC3Q7G32V0X0D89). It keeps
+//! them in that folder for the next run.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     T["real-session"] -- "RIFF_DATA" --> R["riff run"]
+//!     T -- "RIFF_DATA" --> D["the daemon of the test<br/>DATA/daemon/riff.sock"]
+//!     R --> D
+//!     M["the daemon of the machine<br/>riff/daemon/riff.sock"]
+//! ```
+//!
+//! The test starts `riff daemon` of the tree, and waits until `riff
+//! daemon status` of the tree answers (01M4ZFPYNGFF49WWHR8EBWSTNG). When
+//! a daemon of the test answers before the start, the step fails: another
+//! real-session test runs, or a test that a second signal stopped left
+//! its daemon.
 //!
 //! The daemon runs in a process group of its own. So Ctrl-C reaches the
 //! test and `riff run`, not the daemon: `riff run` then asks the daemon
@@ -112,7 +131,7 @@
 //!
 //! | Folder | Why |
 //! |---|---|
-//! | `RIFF_HOME`, and `riff` in each XDG base folder | the folders of riff |
+//! | `RIFF_HOME`, and `riff` in each XDG base folder | the folders of riff, with the data folder of the test |
 //! | `containers` in `XDG_DATA_HOME` and in `XDG_CONFIG_HOME` | the images and the volumes of podman |
 //! | the main clone, and the worktree of the test ([`Home::clones`]), except their `.git` | the build of the test, and the fetch of `riff run` |
 //! | `XDG_CACHE_HOME` | the caches of the tools of the host |
@@ -250,6 +269,17 @@ pub const NO_VERIFY_TEXT: &str = "riff offers no verify of this item";
 
 /// The color of the label [`NO_VERIFY`] on GitHub.
 pub const NO_VERIFY_COLOR: &str = "ededed";
+
+/// The variable that gives each `riff` of the test the data folder of
+/// the test ([`Env::test_data`], 01M53YP9DATAD95EZEZ6R75WEF).
+///
+/// ```
+/// assert_eq!(real_session::DATA_VAR, riff::run::DATA_VAR);
+/// ```
+pub const DATA_VAR: &str = "RIFF_DATA";
+
+/// The name of the data folder of the test, in the data folder of riff.
+pub const TEST_DATA: &str = "real-session";
 
 /// The comment of the test when it closes the pull request and the issue.
 pub const CLOSE_TEXT: &str = "The real-session test closes its scratch item.";
@@ -491,25 +521,47 @@ impl Env {
         Env::from_vars(|name| std::env::var_os(name))
     }
 
-    /// The folder of the session folders of `riff run`: `RIFF_HOME/sessions`,
-    /// else `riff/sessions` in [`Env::data`], as `riff::run::sessions_dir`
-    /// gives it.
+    /// The data folder of the test (01M53YP9DATAD95EZEZ6R75WEF):
+    /// [`TEST_DATA`] in `RIFF_HOME`, else in `riff` of [`Env::data`]. Each
+    /// `riff` of the test gets it as `RIFF_DATA` ([`Riff`]): the daemon of
+    /// the test and the session folders of its `riff run` are there. It is
+    /// in the folders of riff, so the home check leaves it out
+    /// ([`Env::skips`]).
     ///
     /// ```
     /// use std::path::Path;
     /// use real_session::Env;
     ///
     /// let env = Env::from_vars(|name| (name == "HOME").then(|| "/h".into()))?;
-    /// assert_eq!(env.sessions(), Path::new("/h/.local/share/riff/sessions"));
+    /// assert_eq!(env.test_data(), Path::new("/h/.local/share/riff/real-session"));
+    /// assert!(env.skips(&[]).iter().any(|skip| env.test_data().starts_with(skip)));
     /// let env = Env { riff_home: Some("/r".into()), ..env };
-    /// assert_eq!(env.sessions(), Path::new("/r/sessions"));
+    /// assert_eq!(env.test_data(), Path::new("/r/real-session"));
+    /// # Ok::<(), String>(())
+    /// ```
+    pub fn test_data(&self) -> PathBuf {
+        match &self.riff_home {
+            Some(dir) => dir.join(TEST_DATA),
+            None => self.data.join("riff").join(TEST_DATA),
+        }
+    }
+
+    /// The folder of the session folders of the `riff run` of the test:
+    /// `sessions` in [`Env::test_data`], as `riff::run::sessions_dir`
+    /// gives it with `RIFF_DATA`.
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use real_session::Env;
+    ///
+    /// let env = Env::from_vars(|name| (name == "HOME").then(|| "/h".into()))?;
+    /// assert_eq!(env.sessions(), Path::new("/h/.local/share/riff/real-session/sessions"));
+    /// let env = Env { riff_home: Some("/r".into()), ..env };
+    /// assert_eq!(env.sessions(), Path::new("/r/real-session/sessions"));
     /// # Ok::<(), String>(())
     /// ```
     pub fn sessions(&self) -> PathBuf {
-        match &self.riff_home {
-            Some(dir) => dir.join("sessions"),
-            None => self.data.join("riff/sessions"),
-        }
+        self.test_data().join("sessions")
     }
 
     /// The folders that the home check leaves out: the folders of riff,
@@ -1397,6 +1449,49 @@ struct Run {
     status: String,
 }
 
+/// The `riff` of the tree, with the data folder of the test
+/// (01M53YP9DATAD95EZEZ6R75WEF).
+///
+/// ```
+/// use std::path::Path;
+/// use real_session::{DATA_VAR, Riff};
+///
+/// let riff = Riff {
+///     bin: "target/debug/riff".into(),
+///     data: "/h/.local/share/riff/real-session".into(),
+/// };
+/// let command = riff.command(&["daemon", "status"]);
+/// assert_eq!(command.get_program(), "target/debug/riff");
+/// assert_eq!(command.get_args().collect::<Vec<_>>(), ["daemon", "status"]);
+/// let data = command.get_envs().find(|(name, _)| *name == DATA_VAR);
+/// assert_eq!(data, Some((DATA_VAR.as_ref(), Some(riff.data.as_os_str()))));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Riff {
+    /// The riff binary of the tree.
+    pub bin: PathBuf,
+    /// The data folder of the test ([`Env::test_data`]).
+    pub data: PathBuf,
+}
+
+impl Riff {
+    /// The riff binary `bin`, with the data folder of the test of `env`.
+    pub fn new(bin: &Path, env: &Env) -> Riff {
+        Riff {
+            bin: bin.to_owned(),
+            data: env.test_data(),
+        }
+    }
+
+    /// `riff ARGS`, with `RIFF_DATA` ([`DATA_VAR`]) set to the data
+    /// folder of the test.
+    pub fn command(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(&self.bin);
+        command.args(args).env(DATA_VAR, &self.data);
+        command
+    }
+}
+
 /// What the test made, for the clean-up.
 #[derive(Debug, Default)]
 struct Made {
@@ -1404,6 +1499,8 @@ struct Made {
     issue: Option<u64>,
     /// True when the test holds `verify-issue-N`.
     held: bool,
+    /// The `riff` of the test.
+    riff: Option<Riff>,
     /// The folder of the session folders.
     sessions: Option<PathBuf>,
     /// The riff daemon of the test.
@@ -1417,7 +1514,7 @@ pub fn run(options: &Options, stop: &AtomicBool) -> u8 {
     let mut made = Made::default();
     let result = steps(options, stop, &mut made);
     if let Some(issue) = made.issue {
-        clean_up(options, issue, made, stop);
+        clean_up(issue, made, stop);
     }
     match result {
         Ok(summary) => {
@@ -1434,6 +1531,8 @@ pub fn run(options: &Options, stop: &AtomicBool) -> u8 {
 /// Each step, in order. The first one that fails stops the test.
 fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String, Failure> {
     let (env, image, clones) = step(Step::Host, stop, || host(options, stop))?;
+    let riff = Riff::new(&options.riff, &env);
+    made.riff = Some(riff.clone());
     made.sessions = Some(env.sessions());
     let skips: Vec<PathBuf> = options
         .skips
@@ -1459,14 +1558,12 @@ fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String
     let line = scratch_line(stamp);
     let issue = step(Step::Item, stop, || make_item(stamp, &line, stop))?;
     made.issue = Some(issue);
-    made.held = step(Step::Keep, stop, || keep_verify(&options.riff, issue, stop))?;
+    made.held = step(Step::Keep, stop, || keep_verify(&riff, issue, stop))?;
     step(Step::Daemon, stop, || {
-        start_daemon(&options.riff, stop, &mut made.daemon)
+        start_daemon(&riff, stop, &mut made.daemon)
     })?;
     let item = format!("issue-{issue}");
-    step(Step::Run, stop, || {
-        run_item(&options.riff, &item, &image, stop)
-    })?;
+    step(Step::Run, stop, || run_item(&riff, &item, &image, stop))?;
     step(Step::Home, stop, || check_home(&home, &before, &env, issue))?;
     let pull = step(Step::Pull, stop, || find_pull(issue, stop))?;
     step(Step::Change, stop, || check_change(&pull, &line, stop))?;
@@ -1506,22 +1603,32 @@ fn step<T>(
     result.map_err(|reason| Failure { step, reason })
 }
 
-/// Runs `program ARGS`, and gives its stdout with no space at the ends.
-/// An error names the command and its stderr. A child that ends by
-/// SIGINT or SIGTERM sets `stop` ([`child_signal`]).
+/// Runs `program ARGS`, and gives its stdout with no space at the ends
+/// ([`output_of`]).
 fn output(program: impl AsRef<OsStr>, args: &[&str], stop: &AtomicBool) -> Result<String, String> {
-    let program = program.as_ref();
-    let shown = || format!("{} {}", program.to_string_lossy(), args.join(" "));
-    let out = Command::new(program)
-        .args(args)
+    let mut command = Command::new(program);
+    command.args(args);
+    output_of(command, stop)
+}
+
+/// Runs `command`, and gives its stdout with no space at the ends. An
+/// error names the command and its stderr. A child that ends by SIGINT
+/// or SIGTERM sets `stop` ([`child_signal`]).
+fn output_of(mut command: Command, stop: &AtomicBool) -> Result<String, String> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let args: Vec<String> = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let out = command
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("cannot run {}: {e}", program.to_string_lossy()))?;
+        .map_err(|e| format!("cannot run {program}: {e}"))?;
     if !out.status.success() {
         child_signal(out.status, stop);
         return Err(format!(
-            "{} ended with {}: {}",
-            shown(),
+            "{program} {} ended with {}: {}",
+            args.join(" "),
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         ));
@@ -1534,6 +1641,7 @@ fn output(program: impl AsRef<OsStr>, args: &[&str], stop: &AtomicBool) -> Resul
 /// main clone and the worktree of the test.
 fn host(options: &Options, stop: &AtomicBool) -> Result<(Env, String, Vec<PathBuf>), String> {
     let env = Env::of_process()?;
+    let riff = Riff::new(&options.riff, &env);
     let rootless = output(
         "podman",
         &["info", "--format", "{{.Host.Security.Rootless}}"],
@@ -1545,7 +1653,7 @@ fn host(options: &Options, stop: &AtomicBool) -> Result<(Env, String, Vec<PathBu
         ));
     }
     output("gh", &["auth", "status"], stop)?;
-    let image = output(&options.riff, &["image"], stop)?;
+    let image = output_of(riff.command(&["image"]), stop)?;
     if image.is_empty() {
         return Err("riff image printed no image".into());
     }
@@ -1590,7 +1698,7 @@ fn make_item(stamp: u64, line: &str, stop: &AtomicBool) -> Result<u64, String> {
 /// (01M5157V34H7FWFH6S2DRQXRMP). The issue gets the label [`NO_VERIFY`]:
 /// `gh label create --force` makes the label or updates it. Then the
 /// test holds `verify-issue-N`. True when it holds it.
-fn keep_verify(riff: &Path, issue: u64, stop: &AtomicBool) -> Result<bool, String> {
+fn keep_verify(riff: &Riff, issue: u64, stop: &AtomicBool) -> Result<bool, String> {
     output(
         "gh",
         &[
@@ -1622,9 +1730,9 @@ fn keep_verify(riff: &Path, issue: u64, stop: &AtomicBool) -> Result<bool, Strin
 
 /// Holds `verify-issue-N`. True when it did. A failed hold is a warning:
 /// the label [`NO_VERIFY`] keeps the verify.
-fn hold(riff: &Path, issue: u64, stop: &AtomicBool) -> bool {
+fn hold(riff: &Riff, issue: u64, stop: &AtomicBool) -> bool {
     let item = format!("verify-issue-{issue}");
-    match output(riff, &["plan", "hold", &item, HOLD_REASON], stop) {
+    match output_of(riff.command(&["plan", "hold", &item, HOLD_REASON]), stop) {
         Ok(_) => {
             println!("  held {item}");
             true
@@ -1639,22 +1747,29 @@ fn hold(riff: &Path, issue: u64, stop: &AtomicBool) -> bool {
     }
 }
 
-/// Step 5: starts `riff daemon` of the tree in a process group of its
-/// own, and puts it in `daemon`, also when the step fails. It waits until
-/// `riff daemon status` answers (01M4ZFPYNGFF49WWHR8EBWSTNG).
-fn start_daemon(riff: &Path, stop: &AtomicBool, daemon: &mut Option<Child>) -> Result<(), String> {
+/// Step 5: starts `riff daemon` of the tree with the data folder of the
+/// test, in a process group of its own, and puts it in `daemon`, also
+/// when the step fails. It waits until `riff daemon status` of the data
+/// folder answers (01M4ZFPYNGFF49WWHR8EBWSTNG,
+/// 01M53YP9DATAD95EZEZ6R75WEF).
+fn start_daemon(riff: &Riff, stop: &AtomicBool, daemon: &mut Option<Child>) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
 
-    if let Ok(status) = output(riff, &["daemon", "status"], stop) {
+    let status = || output_of(riff.command(&["daemon", "status"]), stop);
+    if let Ok(status) = status() {
         return Err(daemon_runs_text(&status));
     }
-    let child = Command::new(riff)
-        .arg("daemon")
+    let child = riff
+        .command(&["daemon"])
         .stdin(Stdio::null())
         .process_group(0)
         .spawn()
-        .map_err(|e| format!("cannot run {} daemon: {e}", riff.display()))?;
-    println!("  riff daemon, pid {}", child.id());
+        .map_err(|e| format!("cannot run {} daemon: {e}", riff.bin.display()))?;
+    println!(
+        "  riff daemon, pid {}, in {}",
+        child.id(),
+        riff.data.display()
+    );
     let child = daemon.insert(child);
     let start = Instant::now();
     loop {
@@ -1662,7 +1777,7 @@ fn start_daemon(riff: &Path, stop: &AtomicBool, daemon: &mut Option<Child>) -> R
             child_signal(status, stop);
             return Err(daemon_ended_text(status));
         }
-        if output(riff, &["daemon", "status"], stop).is_ok() {
+        if status().is_ok() {
             println!("  it answers");
             return Ok(());
         }
@@ -1679,19 +1794,24 @@ fn start_daemon(riff: &Path, stop: &AtomicBool, daemon: &mut Option<Child>) -> R
     }
 }
 
-/// The reason of a failed step 5 when a riff daemon answers before the
-/// start. `status` is the output of `riff daemon status`.
+/// The reason of a failed step 5 when a daemon of the test answers
+/// before the start. `status` is the output of `riff daemon status` with
+/// the data folder of the test. The daemon of the machine is not that
+/// daemon, and the text names no step for it
+/// (01M53YP9DATAD95EZEZ6R75WEF).
 ///
 /// ```
 /// let text = real_session::daemon_runs_text("pid 7");
-/// assert!(text.starts_with("a riff daemon runs already:\npid 7\n"));
-/// assert!(text.contains("systemctl --user stop riff"));
+/// assert!(text.starts_with("a riff daemon of the test runs already:\npid 7\n"));
+/// assert!(text.contains("Another real-session test runs"));
+/// assert!(!text.contains("systemctl"));
 /// ```
 pub fn daemon_runs_text(status: &str) -> String {
     format!(
-        "a riff daemon runs already:\n{status}\n\
-         The test runs the riff daemon of the tree. Stop the other daemon, for example with \
-         systemctl --user stop riff, and run the test again."
+        "a riff daemon of the test runs already:\n{status}\n\
+         Another real-session test runs, or a test that a second signal stopped left its \
+         daemon. Let the other test end, or stop its daemon by the pid above, and run the test \
+         again."
     )
 }
 
@@ -1728,12 +1848,12 @@ fn stop_daemon(daemon: &mut Child, stop: &AtomicBool) -> Result<String, String> 
 
 /// Step 6: `riff run ITEM --image IMAGE`. The person sees its output.
 /// When it ends by SIGINT or SIGTERM, it sets `stop` ([`child_signal`]).
-fn run_item(riff: &Path, item: &str, image: &str, stop: &AtomicBool) -> Result<(), String> {
-    let status = Command::new(riff)
-        .args(["run", item, "--image", image])
+fn run_item(riff: &Riff, item: &str, image: &str, stop: &AtomicBool) -> Result<(), String> {
+    let status = riff
+        .command(&["run", item, "--image", image])
         .stdin(Stdio::null())
         .status()
-        .map_err(|e| format!("cannot run {}: {e}", riff.display()))?;
+        .map_err(|e| format!("cannot run {}: {e}", riff.bin.display()))?;
     if status.success() {
         Ok(())
     } else {
@@ -1867,8 +1987,9 @@ fn report(what: &str, result: Result<String, String>) {
 /// Stops the daemon of the test (01M4ZFPYNGFF49WWHR8EBWSTNG), closes the
 /// pull request and deletes its branch, cancels each CI run of the branch
 /// that did not end, closes the issue, frees the hold, and removes the
-/// folder of the session (01M4ZCFGCY301G2ARFMRXV7XDR).
-fn clean_up(options: &Options, issue: u64, made: Made, stop: &AtomicBool) {
+/// folder of the session (01M4ZCFGCY301G2ARFMRXV7XDR). It stops only the
+/// daemon of the test (01M53YP9DATAD95EZEZ6R75WEF).
+fn clean_up(issue: u64, made: Made, stop: &AtomicBool) {
     println!("real-session: clean up issue #{issue}");
     if let Some(mut daemon) = made.daemon {
         report("stop the riff daemon", stop_daemon(&mut daemon, stop));
@@ -1945,11 +2066,13 @@ fn clean_up(options: &Options, issue: u64, made: Made, stop: &AtomicBool) {
             stop,
         ),
     );
-    if made.held {
+    if made.held
+        && let Some(riff) = &made.riff
+    {
         let item = format!("verify-issue-{issue}");
         report(
             &format!("free {item}"),
-            output(&options.riff, &["plan", "free", &item], stop),
+            output_of(riff.command(&["plan", "free", &item]), stop),
         );
     }
     for (_, folder) in made
@@ -2034,6 +2157,10 @@ mod tests {
         let riff = dir.path().join("riff");
         std::fs::write(&riff, "#!/bin/sh\nkill -TERM $$\n").unwrap();
         std::fs::set_permissions(&riff, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let riff = Riff {
+            bin: riff,
+            data: dir.path().join("data"),
+        };
         let stop = AtomicBool::new(false);
         let failure = step(Step::Run, &stop, || {
             run_item(&riff, "issue-12", "image", &stop)

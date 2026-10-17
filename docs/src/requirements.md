@@ -5111,6 +5111,17 @@ share.
   session, with mode 0700. The daemon starts no session whose spec binds
   the folder of the daemon, a folder above it or a path in it, or binds
   a path at `/run/riff`.
+- **01M53YP97S9BDMFBN0X5G444MY** With `RIFF_DATA=DIR`, the data folder
+  of riff is `DIR`: the folder of the daemon is `DIR/daemon`, and the
+  session folders are in `DIR/sessions`. `RIFF_DATA` wins over
+  `RIFF_HOME` for the data folder. The settings, the local files and the
+  secrets stay where they are. Only the real-session test sets it.
+- **01M53YP9AHPZ9YPNQFJ1SYZGWF** A daemon with `RIFF_DATA` or
+  `RIFF_HOME` set is never the daemon of the unit: it changes no unit
+  at its start, and it does not start again for a new riff. With either
+  variable set, `riff daemon install` installs nothing,
+  `riff daemon uninstall` removes nothing, and `riff update` does no
+  step for the daemon.
 - **01M4ZDTVSP0T1YENKAWGKA114D** The daemon binds the folder of the
   socket of a session at `/run/riff` in its container, with write, and
   sets `RIFF_SOCKET=/run/riff/riff.sock`. Each session has its own
@@ -6845,6 +6856,16 @@ with "Superseded by Wave C (ID)." holds until then.
   riff daemon answers before the start, the step fails, and the test
   does not stop that daemon. The clean-up stops the daemon of the test
   with SIGTERM, and kills it when it does not end in 10 seconds.
+  Superseded in part by 01M53YP9DATAD95EZEZ6R75WEF.
+- **01M53YP9DATAD95EZEZ6R75WEF** The real-session test runs its riff
+  daemon beside the daemon of the machine. Each `riff` that the test
+  runs gets `RIFF_DATA` set to `real-session` in the data folder of riff
+  (01M53YP97S9BDMFBN0X5G444MY). So the daemon of the test has its own
+  socket, its own session folders, and its own key and riff, and keeps
+  them for the next run. The daemon of the machine keeps running with
+  its peer links. The test does not talk to it, and no step of the test,
+  the book or the skill stops, starts or changes it. Step 5 fails only
+  when a daemon of the test answers before the start.
 - **01M4ZCFGKDKH16KGKR5NBEK3Y4** Before each tag, an admin runs
   `just real-session` on the merge commit of the release pull request,
   on a host with podman. It passes before the tag.

@@ -1279,14 +1279,15 @@ enum DaemonCommand {
     /// It writes riff.service in ~/.config/systemd/user, with the path
     /// of this riff and the PATH of this shell. It enables the unit and
     /// starts it again, so a new riff takes effect. It waits until the
-    /// daemon answers. With RIFF_HOME set, it installs nothing.
+    /// daemon answers. With RIFF_HOME or RIFF_DATA set, it installs
+    /// nothing.
     Install,
     /// Stop the riff daemon, and remove its systemd user unit
     ///
     /// It disables and stops riff.service, deletes the unit file that
     /// riff daemon install wrote, and reloads systemd. Each container
-    /// runs on, and the folder of the daemon stays. With RIFF_HOME set,
-    /// it removes nothing.
+    /// runs on, and the folder of the daemon stays. With RIFF_HOME or
+    /// RIFF_DATA set, it removes nothing.
     Uninstall,
     /// Show the riff daemon, its key, its riff and its sessions
     ///

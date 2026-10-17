@@ -771,8 +771,13 @@ installed, the command says so. To use the daemon again, run
 
 ### Run the daemon in a terminal
 
-With `RIFF_HOME` set, for example in `just dev`, `riff daemon install`
-installs nothing. Run the daemon of that `RIFF_HOME` in a terminal:
+With `RIFF_HOME` or `RIFF_DATA` set, `riff daemon install` installs
+nothing, and `riff daemon uninstall` removes nothing. `just dev` sets
+`RIFF_HOME`. `RIFF_DATA` moves only the data folder of riff: the folder
+of the daemon and the session folders. Your settings and your secrets
+stay where they are. The real-session test sets it (see
+[When a riff daemon runs already](#when-a-riff-daemon-runs-already)).
+Run the daemon of that folder in a terminal:
 
 ```sh
 riff daemon
@@ -1559,8 +1564,9 @@ just real-session
 ```mermaid
 flowchart LR
     T["just real-session"] -- "a scratch issue" --> G["GitHub"]
-    T -- "riff daemon" --> D["riff daemon"]
-    T -- "riff run" --> D
+    T -- "riff daemon, RIFF_DATA" --> D["the riff daemon of the test"]
+    T -- "riff run, RIFF_DATA" --> D
+    M["the riff daemon of your machine:<br/>it runs on, the test does not talk to it"]
     D -- "podman run" --> C["container: claude -p"]
     C -- "push, pull request" --> G
     T -- "check the pull request<br/>and the Gate" --> G
@@ -1582,9 +1588,9 @@ The test does these steps. The messages name them:
    the test goes on with a warning, and the label keeps the verify.
    When `gh` cannot put the label on, this step fails. See
    [Keep the verify of an item from the workers](how-it-works.md#keep-the-verify-of-an-item-from-the-workers).
-5. Start the daemon: the test starts `riff daemon` of your clone, and
-   waits until it answers. When a riff daemon runs already, this step
-   fails.
+5. Start the daemon: the test starts `riff daemon` of your clone,
+   beside the daemon of your machine, and waits until it answers. See
+   [When a riff daemon runs already](#when-a-riff-daemon-runs-already).
 6. Run the item: `riff run` does the issue. You see each event of the
    session.
 7. Check the home: the test lists your home again. A new file fails
@@ -1609,14 +1615,27 @@ shows.
 
 ### When a riff daemon runs already
 
-The test runs the riff daemon of your clone, not the daemon that you
-installed. Stop your daemon first, and start it again after the test:
+The daemon that you installed keeps running while the test runs. Do
+not stop it, and do not start it again. It keeps its sessions and its
+peer links. The test does not talk to it. Run the test as it is:
 
 ```sh
-systemctl --user stop riff
 just real-session
-systemctl --user start riff
 ```
+
+The test runs the riff daemon of your clone beside your daemon. Each
+`riff` of the test gets `RIFF_DATA`, the data folder of the test:
+`~/.local/share/riff/real-session`. So the daemon of the test has its
+own socket, its own session folders, and its own key and riff. Its key
+is in your OS keyring, as each key of a daemon. It keeps them there for
+the next run. The clean-up stops only the daemon of the test.
+
+Run one test at a time on a machine. When a daemon of the test runs
+already, step 5 fails, and the test does not stop that daemon. Another
+test runs, or a test that a second Ctrl-C stopped left its daemon. Let
+the other test end, or stop its daemon with the process ID in the
+message, and run the test again. Your own daemon does not make this
+step fail.
 
 ### What the home check compares
 
