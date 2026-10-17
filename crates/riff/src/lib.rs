@@ -121,6 +121,11 @@ pub mod run;
 pub mod runtime;
 pub mod sccache;
 pub mod screen;
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+))]
+pub mod keyring_store;
 pub mod secrets;
 pub mod service;
 pub mod session_image;
