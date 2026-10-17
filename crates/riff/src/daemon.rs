@@ -35,9 +35,8 @@
 //!
 //! `RIFF_DATA` ([`crate::run::DATA_VAR`]) moves the data folder
 //! (01M53YP97S9BDMFBN0X5G444MY). The daemon of the real-session test runs
-//! there, beside the daemon of the machine: with its own socket, its own
-//! session folders, its own key (01M51JW1XRZWC3Q7G32V0X0D89) and its own
-//! riff. It never acts as the daemon of the unit
+//! there, beside the daemon of the machine: with its own socket and its
+//! own session folders. It never acts as the daemon of the unit
 //! ([`crate::run::machine_data`], 01M53YP9AHPZ9YPNQFJ1SYZGWF).
 //!
 //! | Path | Holds |
@@ -46,14 +45,13 @@
 //! | `sessions/NAME/` | The folder of the socket of the session `NAME`, with mode 0700. |
 //! | `sessions/NAME/riff.sock` | The socket of that session. |
 //! | `live/NAME.json` | The [`Record`] of the session `NAME`, with no secret. |
-//! | `state/` | The log and the checkpoints of the state of the daemon ([`state_dir`]), and its riff (`riff.json`, [`RIFF`]). |
-//! | `state/records` | The records of the riff of peers of its own, in the order in which the daemon kept them ([`crate::peer::book`]). |
-//! | `state/joined` | The riff ID of the riff that the daemon joined, when it is in the riff of another owner ([`peers::JOINED`]). |
-//! | `state/riffs/RIFF/records` | The records of each riff that the daemon joined ([`peers::peers_dir`]). |
-//! | `invites.json` | The invites of the owner, with mode 0600: the hash of each secret, its user, its end, and whether a join used it ([`crate::peer::invite`]). |
-//! | `state.lost-MS/` | The old state of a lost key, from the time `MS` ([`Lost`]). riff never reads it. |
 //! | `limit.json` | The limit of the host ([`crate::room`]), when `riff daemon limit` set it. |
 //! | `waves.json` | The waves that the daemon runs ([`crate::wave`]). |
+//!
+//! riff 1.6 to 1.8 kept the state of the riff of peers in this folder
+//! too: `state/`, each `state.lost-MS/`, `invites.json` and
+//! `forges.json`. The daemon of riff 3.0 does not read, change or delete
+//! them (01M53NGWFBWR1WMJWC2DHVHJ3T).
 //!
 //! The daemon binds the folder of a session at [`IN_SESSION`] in its
 //! container, with write, and sets [`SOCKET_VAR`]
@@ -68,81 +66,15 @@
 //! takes (108 bytes). On Linux, riff binds and connects through a
 //! descriptor of the folder: `/proc/self/fd/N/riff.sock`.
 //!
-//! # The state of the daemon
+//! # The daemon and riff-server
 //!
-//! The daemon keeps the state of riff on its machine with the state
-//! machine of riff-server, the crate `riff-state`
-//! (01M4Z60B8AFV68ZSAFA540G73C, 01M4ZHW1Y1X21ZPV053D0CXWMC): a
-//! [`Local`] in [`state_dir`] (01M519Z2JMAKN0T6JZFBPSTKC8).
-//!
-//! - [`Daemon::open_riff`] reads the key of the daemon, then loads the
-//!   state: the newest checkpoint, and the log after it. See "The key of
-//!   the daemon".
-//! - Each change of `riff-state` goes through [`Daemon::state`]: one
-//!   command at a time, with its records in the log before its reply
-//!   (01M4ZHW22F8HE2E1WDSTNDJW4H). The riff tools of a session with no
-//!   riff-server act on the riff of peers, not on it
-//!   (01M51QQGYDR9NZ702NFEQR512W, [`Daemon::tools_of`]).
-//! - At the stop, [`Daemon::serve`] writes a checkpoint. A start after a
-//!   crash replays the log after the last checkpoint.
-//! - `riff daemon status` shows the public key of the daemon, the ID of
-//!   its riff, the user of the owner and the position of the log
-//!   ([`Status::key`], [`Status::riff`], [`Status::owner`],
-//!   [`Status::position`], 01M519Z2N2PMZJ0CYAPV0A47BZ,
-//!   01M4ZHW24JZZXM3JJXG3PRJS7N).
-//!
-//! # The key of the daemon
-//!
-//! Each daemon has one ed25519 key in the OS keyring
-//! ([`crate::daemon_key`], 01M519Z2BB0YJY5CRMB54JVYFA). At its first
-//! start, the daemon makes the key and a riff of its own: the riff ID is
-//! the public key, and the owner is the user of the daemon (`USER`). The
-//! object [`RIFF`] of the state keeps the riff ID and the user of the
-//! owner, until the record `riff` of Wave B keeps them.
-//!
-//! The key and the state go together (01M519Z2G77CT94Y6XPW9BCRK9). In a
-//! riff of its own, the riff ID names the key of the state. So [`step`]
-//! compares the key of the keyring with the riff of the state:
-//!
-//! ```mermaid
-//! flowchart TD
-//!     O["Daemon::open_riff"] --> W["daemon_key::wait: the key of the keyring<br/>(it waits while the keyring refuses)"]
-//!     W --> L["Local::open: the newest checkpoint,<br/>then the log after it"]
-//!     L --> S{"step: the key and the riff of the state"}
-//!     S -->|"the riff is the public key"| G["go on with the key and the riff"]
-//!     S -->|"no key and no riff"| F["the first start: a new key and a riff of its own"]
-//!     S -->|"a key and no riff, a riff and no key,<br/>a value that is no key, another key"| N["a line that says why;<br/>the old state goes to state.lost-MS;<br/>a new key and a riff of its own"]
-//! ```
-//!
-//! A new key goes to the keyring before the riff goes to the log. So a
-//! crash between the two gives a key and no riff: the next start makes
-//! a new key again, and says why.
-//!
-//! While the daemon waits for its keyring, it makes no key and no riff
-//! (01M51BFYNMYHSQ62BBJES3CCWT). `riff daemon` opens its riff in a task of
-//! its own ([`Daemon::open_riff`]), and serves at once: its sessions need no
-//! key until the records of Wave B. Until the riff is there,
-//! [`Status::waits`] says what the daemon waits for, and [`Daemon::state`]
-//! is `None` (01M51JW233MXB72MHHRAX4E4NF).
-//!
-//! # The riff of peers
-//!
-//! With its riff, the daemon opens the records of its riff of peers
-//! ([`crate::peer`]): the file `state/records` and the state that they
-//! give. The first record of a riff of its own is `riff`, with the user of
-//! the owner (01M519Z2JMAKN0T6JZFBPSTKC8). [`Daemon::write`] signs a new
-//! record of the daemon, keeps it and applies it. [`Daemon::keep`] takes a
-//! record of another daemon. [`Daemon::peers`] reads the state. Each of
-//! them waits for no lock of `tokio`: a write of a record holds the lock
-//! of the records for one append and one sync of the file.
-//!
-//! With its riff, the daemon binds its iroh endpoint with its key, and
-//! runs its peer links ([`crate::peer::sync`], 01M519Z2QE6QYPJX8HVY17GR6Z):
-//! it sends its records to the other daemons of its riff, and keeps
-//! theirs. `riff daemon` takes the net of [`crate::peer::sync::NET_VAR`]
-//! ([`Daemon::with_net`]). A daemon with no net, or whose bind fails, runs
-//! its sessions with no peer links. At its stop, it closes its endpoint
-//! ([`Daemon::close_links`]). [`Status::links`] shows each link.
+//! The daemon keeps no state of the riff and has no key of its own
+//! (01M53NGW3FR555TWP8Z8HHRVDJ). riff-server holds the claims, the
+//! messages and the wakes. The daemon makes the claim of each item on
+//! riff-server as the worker session of the item, with the sign-in of
+//! the person on this machine (01M53NGWTNC3655ZZJ76M1R5R7). The riff
+//! tools of each session act on riff-server through the daemon
+//! ([`Daemon::tools_of`]).
 //!
 //! # The relay
 //!
@@ -177,11 +109,6 @@
 //! | [`Ask::Wave`] | [`Say::Done`] when the daemon runs the wave, or [`Say::Failed`] |
 //! | [`Ask::WaveStop`] | [`Say::Done`] when the daemon ran the wave, or [`Say::Failed`] |
 //! | [`Ask::Takeover`] | [`Say::Line`] while the turn stops or ends, [`Say::Held`], then [`Say::Done`] after the go on, or [`Say::Failed`] |
-//! | [`Ask::Invite`] | [`Say::Invited`], or [`Say::Failed`] ([`peers`]) |
-//! | [`Ask::Join`], [`Ask::Leave`], [`Ask::Remove`] | each [`Say::Line`], then [`Say::Done`] or [`Say::Failed`] ([`peers`]) |
-//! | [`Ask::Members`] | [`Say::Members`], or [`Say::Failed`] ([`peers`]) |
-//! | [`Ask::Release`] | [`Say::Line`] and [`Say::Done`] when the daemon deleted the claim on the forge, or [`Say::Failed`] |
-//! | [`Ask::Run`] | as [`Ask::Start`], then [`Say::Line`] for each step after the end, then [`Say::Done`], or [`Say::Failed`] |
 //! | [`Ask::Sweep`] | [`Say::Line`] for each folder that the daemon removed, and for each folder whose work is over that it kept, or one line that it removed none, then [`Say::Done`] ([`sweep`]) |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
@@ -202,8 +129,8 @@
 //! |---|---|
 //! | [`SessionAsk::Hello`] | says [`Say::Session`]: the session ID, the item and the name of the container |
 //! | [`SessionAsk::Relay`] | relays the session ([`crate::session_relay`]) |
-//! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk: on its riff-server, or on the riff of peers of the daemon for a session with no riff-server ([`Daemon::tools_of`]) |
-//! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session: from riff-server ([`World::wake`]), or from the riff of peers ([`crate::peer::talk::Hub::wait`]) for a session with no riff-server |
+//! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk, on its riff-server ([`Daemon::tools_of`]) |
+//! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session, from riff-server ([`World::wake`]) |
 //!
 //! # A session
 //!
@@ -279,10 +206,7 @@
 //! takeover. A restart of the daemon keeps the takeover: a new `riff
 //! takeover NAME` gets [`Say::Held`] at once. The daemon refuses a
 //! takeover of a session with a terminal, and of a relay of a protocol
-//! before 4. A takeover works only for a session of this machine: for
-//! the session ID of a session of another daemon of the riff of peers,
-//! or the start of it, the refusal names the host of that session
-//! (`Daemon::elsewhere`, 01M522MRYR89SY6WRV720806RA).
+//! before 4.
 //!
 //! [`Up::Held`]: crate::session_relay::Up::Held
 //!
@@ -363,17 +287,6 @@
 //! again, and pulls the session image of each wave. When it wrote its
 //! unit, it starts again on it as for an old riff. So a new release
 //! needs no `riff init`.
-//!
-//! # The claims on the forge
-//!
-//! A session with no riff-server holds its item with a claim on the
-//! forge, `refs/riff/claims/ITEM` ([`crate::forge_claim`]). The daemon
-//! makes it, keeps its commit in the [`Record`] of the session
-//! ([`Forge`]), and releases it at the end of the session, before the
-//! end record. At its start it releases each claim of its key whose
-//! session does not run. The daemon of a lead deletes the claims of its
-//! user whose session ended or whose daemon has no link for 15 minutes.
-//! [`Ask::Release`] is `riff release ITEM --forge`. See [`forge`].
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -398,14 +311,6 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::{JoinHandle, JoinSet};
 
-use crate::daemon_key::{Found, Key};
-use crate::peer::body::Body;
-use crate::peer::invite::Invites;
-use crate::peer::keep::{Outcome, Peers};
-use crate::peer::record::Id;
-use crate::peer::state::{Applied, State as PeerState};
-use crate::peer::sync::{Links, Net};
-use crate::peer::talk::{Hub, Session as PeerTalk};
 use crate::room::{Limit, Room, Slot};
 use crate::run::{Scrub, user_line};
 use crate::runtime::{Bind, End, Env, Runtime, SessionSpec, Source};
@@ -413,11 +318,7 @@ use crate::session_relay::Up;
 use crate::text;
 use crate::wave::{Job, Wave, World};
 
-pub mod forge;
-pub mod peers;
 pub mod sweep;
-
-pub use forge::Forge;
 
 /// The version of the protocol between `riff` and the daemon, and
 /// between the relay and the daemon. Version 3 adds the waves
@@ -760,48 +661,6 @@ pub enum Ask {
         #[serde(default)]
         at_end: bool,
     },
-    /// `riff invite USER`: an invite of one new key of `user`
-    /// (01M519Z3SGEHVMS85HZD169CAP).
-    Invite {
-        /// The user of the new key.
-        user: String,
-    },
-    /// `riff join STRING` (01M519Z3YA9WBH9TWQPAH6A64Z).
-    Join {
-        /// The invite string. It holds a secret.
-        invite: crate::peer::invite::Text,
-    },
-    /// `riff leave` (01M519Z435DTR693NAK5GSB6XA).
-    Leave,
-    /// `riff remove USER [--host HOST]` (01M519Z45J9RC734KBY1G8D49V).
-    Remove {
-        /// The user.
-        user: String,
-        /// The host of the one key to remove.
-        #[serde(default)]
-        host: Option<String>,
-    },
-    /// `riff members` (01M519Z4823WC7D3VVTFSDYBS4).
-    Members,
-    /// `riff release ITEM --forge`: delete the claim of an item on the
-    /// forge (01M519Z4PESWFV8Y03SKTSGV4Q, [`Daemon::release_asked`]).
-    Release {
-        /// The main clone of the repository.
-        main: PathBuf,
-        /// The work item, for example `issue-12`.
-        item: String,
-    },
-    /// `riff run ITEM --peers`: one job of a wave with no riff-server
-    /// (01M519Z4RWHWP3TKNP4T5GKKE9, `crate::wave::run_one`).
-    Run {
-        /// The wave of the job: its repository, its main clone and the
-        /// host. Its riff-server is empty.
-        wave: Wave,
-        /// The work.
-        work: crate::wave::Work,
-        /// The image of the session.
-        image: String,
-    },
     /// `riff daemon sweep`: remove the folder of each session that does
     /// not run, when the forge says that its work is over and its clone
     /// holds no work of its own (01M53NJ5Y2CMY5MWF9328KW7DE,
@@ -828,9 +687,7 @@ pub struct Start {
     pub values: Vec<(String, String)>,
     /// The secrets that no event shows ([`Scrub`]).
     pub secrets: Vec<String>,
-    /// The riff-server of the session: its riff tools act there. Empty
-    /// for a session with no riff-server: its riff tools act on the riff
-    /// of peers of the daemon (01M51VZG27DXSRHBT8M14S7B9A).
+    /// The riff-server of the session: its riff tools act there.
     pub server: String,
     /// The URI of the session.
     pub me: SessionUri,
@@ -838,11 +695,6 @@ pub struct Start {
     /// in the command of the spec.
     #[serde(default)]
     pub terminal: bool,
-    /// The claim of the item on the forge, for a session with no
-    /// riff-server ([`Daemon::claim_forge`]): the daemon releases it at
-    /// the end of the session.
-    #[serde(default)]
-    pub claim: Option<Forge>,
 }
 
 /// A line of `riff` after [`Ask::Start`], [`Ask::Follow`] or
@@ -952,35 +804,8 @@ pub struct Status {
     pub since_ms: i64,
     /// The folder of the daemon.
     pub dir: PathBuf,
-    /// What the daemon waits for while it has no riff: its key in the OS
-    /// keyring, or its state (01M51JW233MXB72MHHRAX4E4NF).
-    #[serde(default)]
-    pub waits: Option<String>,
-    /// The public key of the daemon (01M519Z2N2PMZJ0CYAPV0A47BZ).
-    #[serde(default)]
-    pub key: Option<String>,
-    /// The ID of the riff of this machine, from the state of the daemon.
-    #[serde(default)]
-    pub riff: Option<String>,
-    /// The user of the owner of the riff of the daemon.
-    #[serde(default)]
-    pub owner: Option<String>,
-    /// The state of each peer link of the daemon: `None` while it has no
-    /// iroh endpoint ([`crate::peer::sync::Links::shown`]).
-    #[serde(default)]
-    pub links: Option<Vec<crate::peer::sync::Shown>>,
-    /// The position of the last record of the log of the daemon.
-    #[serde(default)]
-    pub position: u64,
     /// Its sessions, by name.
     pub sessions: Vec<Live>,
-    /// Each session that runs in the riff of peers of the daemon: of each
-    /// daemon of the riff, also of this one, with the user, the host, the
-    /// claims, the state and the status ([`crate::peer::talk::shown`],
-    /// 01M519Z554SC3EAT69Q3M6JDAP). A session of a daemon that is offline
-    /// is not live. Empty while the daemon has no riff.
-    #[serde(default)]
-    pub riff_sessions: Vec<SessionInfo>,
     /// The limit of the host ([`crate::room`]).
     #[serde(default)]
     pub limit: Option<Limit>,
@@ -1112,18 +937,6 @@ pub enum Say {
         /// The riff session ID: `claude --resume` takes it.
         session: String,
     },
-    /// The invite of [`Ask::Invite`].
-    Invited {
-        /// The invite string. It holds a secret.
-        invite: crate::peer::invite::Text,
-        /// Its end, in milliseconds since the epoch.
-        ends_ms: i64,
-    },
-    /// The owner and each member key of [`Ask::Members`].
-    Members {
-        /// One row for each key.
-        rows: Vec<crate::peer::members::Shown>,
-    },
     /// The ask is done.
     Done,
     /// The ask failed.
@@ -1201,8 +1014,7 @@ pub struct Record {
     pub live: Live,
     /// The folder of the session: `events.jsonl` is there.
     pub folder: PathBuf,
-    /// The riff-server of the session: its riff tools act there. Empty
-    /// for a session with no riff-server ([`Record::on_peers`]).
+    /// The riff-server of the session: its riff tools act there.
     pub server: String,
     /// The URI of the session.
     pub me: SessionUri,
@@ -1229,19 +1041,6 @@ pub struct Record {
     /// (01M51KJ1R9K7A7RW8T8XH8VW43).
     #[serde(default)]
     pub interrupt: bool,
-    /// The claim of the item on the forge, for a session with no
-    /// riff-server: the daemon releases it at the end of the session
-    /// (01M519Z4HK333JWVXAWQHCGK6M).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claim: Option<Forge>,
-}
-
-impl Record {
-    /// True when the session has no riff-server: its riff tools act on
-    /// the riff of peers of the daemon (01M51VZG27DXSRHBT8M14S7B9A).
-    pub fn on_peers(&self) -> bool {
-        self.server.is_empty()
-    }
 }
 
 /// What a link of a session tells the task that waits for its end.
@@ -1551,8 +1350,7 @@ fn lines_of(path: &Path) -> u64 {
     })
 }
 
-/// The daemon: the sessions of this machine, on the runtime `R`, and
-/// the state of riff on this machine.
+/// The daemon: the sessions of this machine, on the runtime `R`.
 pub struct Daemon<R> {
     runtime: R,
     dir: PathBuf,
@@ -1565,11 +1363,6 @@ pub struct Daemon<R> {
     /// The quiet limit of each session ([`QUIET_LIMIT`]).
     quiet: Duration,
     live: Mutex<BTreeMap<String, Arc<Owned>>>,
-    /// The riff of the daemon, when the keyring gave its key
-    /// ([`Daemon::open_riff`]).
-    riff: tokio::sync::OnceCell<Riff>,
-    /// While the riff is not there: what the daemon waits for.
-    waits: Mutex<String>,
     /// The limit of the host, and the starts that wait for room.
     room: Arc<Room>,
     /// The forge and the riff of the waves ([`crate::wave::Live`]).
@@ -1578,18 +1371,6 @@ pub struct Daemon<R> {
     waves: Mutex<BTreeMap<String, Running>>,
     /// A session ended, or a job of a wave ended: the waves look again.
     changed: Notify,
-    /// The net of the peer links: `None` for no iroh endpoint
-    /// ([`Daemon::with_net`]).
-    net: Option<Net>,
-    /// The peer links of the daemon, from its riff on
-    /// ([`crate::peer::sync`]).
-    links: OnceLock<Arc<Links>>,
-    /// The invites of the owner ([`crate::peer::invite`]): `riff invite`
-    /// makes them, and the peer links take a join with them.
-    invites: Arc<Invites>,
-    /// The world of the waves with no riff-server, from its riff on
-    /// ([`Daemon::world_of`]).
-    peer_world: OnceLock<Arc<dyn World>>,
     /// The folders of the sessions: the jobs that run, and one sweep at
     /// a time ([`sweep`]).
     folders: Arc<sweep::Folders>,
@@ -1605,184 +1386,6 @@ struct Running {
     taken: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// What it did last.
     word: Arc<Mutex<String>>,
-}
-
-/// The riff of a daemon: its key ([`crate::daemon_key`]), the user of
-/// the owner, and the state of riff on the machine.
-struct Riff {
-    owner: String,
-    state: Local,
-    /// The key, the records and the state of the riff of peers, and the
-    /// wakes of the sessions ([`crate::peer::talk`]).
-    hub: Arc<Hub>,
-}
-
-/// The object of the riff of the daemon in its state: the riff ID and
-/// the user of the owner ([`Made`]). The record `riff` of Wave B takes
-/// its place.
-pub const RIFF: &str = "riff.json";
-
-/// The riff that a daemon made: the object [`RIFF`] of its state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Made {
-    /// The ID of the riff: the public key of the daemon.
-    pub riff: String,
-    /// The user of the owner.
-    pub owner: String,
-}
-
-/// Why a daemon makes a new key and a riff of its own: its key and its
-/// state do not go together (01M519Z2G77CT94Y6XPW9BCRK9).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Lost {
-    /// The keyring holds a key, and the state has no riff.
-    NoState,
-    /// The state has a riff, and the keyring answers with no key.
-    NoKey,
-    /// The keyring holds a value that is not a key.
-    NotAKey,
-    /// The riff of the state is not the public key of the keyring.
-    OtherKey {
-        /// The riff of the state.
-        riff: String,
-    },
-}
-
-/// What the start of a daemon does with the key of its keyring and the
-/// riff of its state.
-#[derive(Debug)]
-pub enum Step {
-    /// The riff is the public key: go on with the key.
-    Go(Key),
-    /// No key and no riff: the first start.
-    First,
-    /// The key and the state do not go together.
-    New(Lost),
-}
-
-/// The step of a start with the key `found` of the keyring and the riff
-/// `riff` of the state (01M519Z2G77CT94Y6XPW9BCRK9). In a riff of its
-/// own, the riff ID is the public key of the daemon.
-///
-/// ```
-/// use riff::daemon::{Lost, Step, step};
-/// use riff::daemon_key::{Found, Key};
-///
-/// let key = || Found::Key(Key::from_bytes(&[1; 32]));
-/// let own = Key::from_bytes(&[1; 32]).public().to_string();
-/// assert!(matches!(step(key(), Some(&own)), Step::Go(_)));
-/// assert!(matches!(step(Found::None, None), Step::First));
-/// assert!(matches!(step(key(), None), Step::New(Lost::NoState)));
-/// assert!(matches!(step(Found::None, Some(&own)), Step::New(Lost::NoKey)));
-/// assert!(matches!(step(Found::NotAKey, None), Step::New(Lost::NotAKey)));
-/// let Step::New(Lost::OtherKey { riff }) = step(key(), Some("0a1b")) else { panic!() };
-/// assert_eq!(riff, "0a1b");
-/// ```
-pub fn step(found: Found, riff: Option<&str>) -> Step {
-    match (found, riff) {
-        (Found::Key(key), Some(riff)) if key.public().to_string() == riff => Step::Go(key),
-        (Found::Key(_), Some(riff)) => Step::New(Lost::OtherKey { riff: riff.into() }),
-        (Found::Key(_), None) => Step::New(Lost::NoState),
-        (Found::None, None) => Step::First,
-        (Found::None, Some(_)) => Step::New(Lost::NoKey),
-        (Found::NotAKey, _) => Step::New(Lost::NotAKey),
-    }
-}
-
-/// The user of the daemon: `USER`, in lower case, as riff writes a user.
-fn this_user() -> Result<String> {
-    let user = std::env::var("USER")
-        .ok()
-        .filter(|user| !user.is_empty())
-        .context(text::DAEMON_NO_USER)?;
-    Ok(riff_core::name::sanitize(&user.to_lowercase()))
-}
-
-/// Loads the state in the folder `state_dir`, with its store.
-async fn load_state(state_dir: &Path) -> Result<(Local, Arc<Dir>)> {
-    let store = Arc::new(Dir::new(state_dir));
-    let state = Local::open(store.clone(), checkpoint::Settings::default())
-        .await
-        .with_context(|| text::daemon_no_state(state_dir))?;
-    Ok((state, store))
-}
-
-/// The riff in the object [`RIFF`] of `store`, when it is there.
-async fn made(store: &Dir) -> Result<Option<Made>> {
-    let Some(loaded) = store.load(RIFF).await? else {
-        return Ok(None);
-    };
-    let made = serde_json::from_slice(&loaded.bytes)
-        .with_context(|| format!("cannot read {}", store.locate(RIFF)))?;
-    Ok(Some(made))
-}
-
-/// Writes `made` to the object [`RIFF`] of `store`, in place of an older
-/// one.
-async fn keep_made(store: &Dir, made: &Made) -> Result<()> {
-    let known = store.load(RIFF).await?.map(|loaded| loaded.version);
-    store.save(RIFF, serde_json::to_vec(made)?, known).await?;
-    Ok(())
-}
-
-/// Opens the records of the riff of the daemon of `key` in `state_dir`
-/// ([`Peers::open`]). A riff of its own with no record gets its first
-/// record: `riff`, with the user of the owner `owner` and the host of
-/// this machine (01M519Z2JMAKN0T6JZFBPSTKC8, 01M521J6T2PWA9JREDXJK6DZ0V).
-fn open_peers(
-    state_dir: &Path,
-    key: &Key,
-    owner: &str,
-    say: &mut impl FnMut(String),
-) -> Result<Peers> {
-    let mut peers = Peers::open(state_dir, key.public(), say)?;
-    if peers.state().owner().is_none() && peers.state().riff() == key.public() {
-        let riff = Body::Riff(crate::peer::body::Riff {
-            user: owner.to_owned(),
-            host: Some(crate::identity::this_host()),
-        });
-        peers.write(key, &riff, u64::try_from(now_ms()).unwrap_or_default())?;
-    }
-    Ok(peers)
-}
-
-/// Moves the folder `state_dir` of an old key to `state.lost-MS` beside
-/// it, or to `state.lost-MS-N` when that name is taken
-/// (01M51JW25SPDW564A3DG31D7XM). It gives the new path, or `None` when
-/// there is no such folder.
-fn put_aside(state_dir: &Path) -> Result<Option<PathBuf>> {
-    if !state_dir.exists() {
-        return Ok(None);
-    }
-    let stamp = format!("state.lost-{}", now_ms());
-    let lost = (0..)
-        .map(|n| match n {
-            0 => state_dir.with_file_name(&stamp),
-            n => state_dir.with_file_name(format!("{stamp}-{n}")),
-        })
-        .find(|path| !path.exists())
-        .expect("a free name");
-    std::fs::rename(state_dir, &lost)
-        .with_context(|| format!("cannot move {} to {}", state_dir.display(), lost.display()))?;
-    Ok(Some(lost))
-}
-
-/// Makes a new key in the secret `name` and a riff of its own in
-/// `state`, with the owner `owner`. The key goes to the keyring first.
-async fn make_riff(name: &str, state: &Local, store: &Dir, owner: &str) -> Result<Key> {
-    let key = Key::generate();
-    let name = name.to_owned();
-    let key =
-        tokio::task::spawn_blocking(move || crate::daemon_key::keep(&name, &key).map(|()| key))
-            .await??;
-    let riff = key.public().to_string();
-    let make = MakeRiff {
-        riff_id: riff.clone(),
-    };
-    state.run(&Caller::server(), &make).await?;
-    let owner = owner.to_owned();
-    keep_made(store, &Made { riff, owner }).await?;
-    Ok(key)
 }
 
 /// Binds the control socket in the folder `dir` of the daemon. It
@@ -1801,37 +1404,13 @@ pub async fn listen(dir: &Path) -> Result<UnixListener> {
 }
 
 impl<R: Runtime + 'static> Daemon<R> {
-    /// A daemon with no session, on `runtime`, with its folder `dir`,
-    /// and with its riff ([`Daemon::open_riff`]). It binds its own binary
-    /// into each session ([`own_binary`]). Only one daemon may open a
-    /// folder: call [`listen`] first. Its quiet limit is [`QUIET_LIMIT`],
-    /// or the value of [`QUIET_VAR`]. It says each line of its key on
-    /// the standard output.
-    pub async fn open(runtime: R, dir: PathBuf) -> Result<Self> {
-        let say = |line: String| println!("{line}");
-        Self::open_with(runtime, dir, crate::secrets::retry(), say).await
-    }
-
-    /// [`Daemon::open`] that gives [`Daemon::open_riff`] the time `retry`
-    /// and the lines `say`.
-    pub async fn open_with(
-        runtime: R,
-        dir: PathBuf,
-        retry: Duration,
-        say: impl FnMut(String) + Send,
-    ) -> Result<Self> {
-        let daemon = Self::new(runtime, dir)?;
-        daemon.open_riff(retry, say).await?;
-        Ok(daemon)
-    }
-
-    /// A daemon with no session and no riff yet, on `runtime`, with its
-    /// folder `dir`. It runs sessions before it has its riff
-    /// (01M51JW233MXB72MHHRAX4E4NF).
+    /// A daemon with no session, on `runtime`, with its folder `dir`. It
+    /// binds its own binary into each session ([`own_binary`]). Only one
+    /// daemon may open a folder: call [`listen`] first. Its quiet limit
+    /// is [`QUIET_LIMIT`], or the value of [`QUIET_VAR`].
     pub fn new(runtime: R, dir: PathBuf) -> Result<Self> {
         private_dir(&dir)?;
         let room = Room::new(dir.clone(), Arc::new(crate::room::free_memory));
-        let invites = Arc::new(Invites::in_dir(&dir));
         Ok(Daemon {
             runtime,
             dir,
@@ -1840,223 +1419,12 @@ impl<R: Runtime + 'static> Daemon<R> {
             any_relay: crate::release::takes_dynamic(),
             quiet: quiet_limit(),
             live: Mutex::new(BTreeMap::new()),
-            riff: tokio::sync::OnceCell::new(),
-            waits: Mutex::new(text::DAEMON_OPENS.into()),
             room,
             world: Arc::new(crate::wave::Live::default()),
             waves: Mutex::new(BTreeMap::new()),
             changed: Notify::new(),
-            net: None,
-            links: OnceLock::new(),
-            invites,
-            peer_world: OnceLock::new(),
             folders: Arc::default(),
         })
-    }
-
-    /// Reads the key of the daemon, and loads its state from
-    /// [`state_dir`]: the newest checkpoint, and the log after it. At the
-    /// first start, it makes the key and a riff of its own ([`step`]).
-    /// While the keyring refuses, it looks again each `retry`
-    /// (01M51BFYNMYHSQ62BBJES3CCWT). It gives `say` each line of its
-    /// key: the keyring refuses or answers again, and then the riff: a
-    /// first start, a new key and why, or the key that it read.
-    /// [`Status::waits`] shows the last line until the riff is there.
-    /// It says the line of the riff only after it has the riff and its
-    /// records, so a status after that line shows the key and the riff
-    /// (01M51WPSH4KBQMVT3XGDD45G63).
-    pub async fn open_riff(
-        &self,
-        retry: Duration,
-        mut say: impl FnMut(String) + Send,
-    ) -> Result<()> {
-        let mut say = |line: String| {
-            self.waits(line.clone());
-            say(line);
-        };
-        let name = crate::daemon_key::secret_name(&self.dir);
-        let found = crate::daemon_key::wait(&name, retry, &mut say).await?;
-        let state_dir = state_dir(&self.dir);
-        let (mut state, mut store) = load_state(&state_dir).await?;
-        let riff = state.read(State::riff_id).await;
-        let (key, owner, line) = match step(found, riff.as_deref()) {
-            Step::Go(key) => {
-                let riff = key.public().to_string();
-                let owner = match made(&store).await? {
-                    Some(made) if made.riff == riff => made.owner,
-                    // A crash after the riff and before its object.
-                    _ => {
-                        let made = Made {
-                            riff: riff.clone(),
-                            owner: this_user()?,
-                        };
-                        keep_made(&store, &made).await?;
-                        made.owner
-                    }
-                };
-                let line = text::daemon_read_riff(&riff, &owner);
-                (key, owner, line)
-            }
-            Step::First => {
-                let owner = this_user()?;
-                let key = make_riff(&name, &state, &store, &owner).await?;
-                let line = text::daemon_made_riff(&key.public().to_string(), &owner);
-                (key, owner, line)
-            }
-            Step::New(lost) => {
-                let owner = this_user()?;
-                drop(state);
-                let old = put_aside(&state_dir)?;
-                (state, store) = load_state(&state_dir).await?;
-                let key = make_riff(&name, &state, &store, &owner).await?;
-                let riff = key.public().to_string();
-                let line = text::daemon_new_riff(&lost, &riff, &owner, old.as_deref());
-                (key, owner, line)
-            }
-        };
-        // The riff that the daemon joined, else the riff of its own
-        // (01M521J6WZT2KR5ZQE9DZ9A5AC).
-        let peers = match peers::joined(&state_dir)? {
-            Some(riff) if riff != key.public() => Peers::open(
-                &peers::peers_dir(&state_dir, &riff, &key.public()),
-                riff,
-                &mut say,
-            )?,
-            _ => open_peers(&state_dir, &key, &owner, &mut say)?,
-        };
-        // The endpoint has the key of the daemon (01M519Z2DSFGHNV5S88AYFK7PY).
-        let endpoint = match &self.net {
-            Some(net) => match Links::bind(&key, net).await {
-                Ok(endpoint) => Some(endpoint),
-                Err(e) => {
-                    eprintln!("{e:#}");
-                    None
-                }
-            },
-            None => None,
-        };
-        let hub = Arc::new(Hub::new(key, peers));
-        let world = crate::wave::peers::Peers::new(hub.clone(), self.dir.clone());
-        let _ = self.peer_world.set(Arc::new(world));
-        self.riff
-            .set(Riff {
-                owner,
-                state,
-                hub: hub.clone(),
-            })
-            .map_err(|_| anyhow!("the riff daemon has its riff already"))?;
-        if let Some(endpoint) = endpoint {
-            let links = Links::start(endpoint, hub, |line| println!("{line}"));
-            links.take_joins(self.invites.clone());
-            let _ = self.links.set(links);
-        }
-        // A session that started while the daemon waited for its key gets
-        // its record now.
-        for record in self.records() {
-            if let Some(start) = self.peer_start(&record) {
-                let _ = start.await;
-            }
-        }
-        say(line);
-        Ok(())
-    }
-
-    /// Writes a record of the daemon with the body `body`: signed by its
-    /// key, kept in its book, and applied to its riff of peers
-    /// ([`Peers::write`]). It fails while the daemon has no riff.
-    pub fn write(&self, body: &Body) -> Result<(Id, Applied)> {
-        let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
-        riff.hub.write(body)
-    }
-
-    /// Takes the bytes of a record of another daemon ([`Peers::keep`]).
-    /// It fails while the daemon has no riff.
-    pub fn keep(&self, bytes: Vec<u8>) -> Result<Outcome> {
-        let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
-        riff.hub.keep(bytes, None)
-    }
-
-    /// The peer links of the daemon: `None` while it has no riff or no
-    /// iroh endpoint.
-    pub fn links(&self) -> Option<&Arc<Links>> {
-        self.links.get()
-    }
-
-    /// Closes the peer links and the iroh endpoint of the daemon, at its
-    /// stop.
-    pub async fn close_links(&self) {
-        if let Some(links) = self.links.get() {
-            links.close().await;
-        }
-    }
-
-    /// Reads the state of the riff of peers with `read`. `None` while the
-    /// daemon has no riff.
-    pub fn peers<T>(&self, read: impl FnOnce(&PeerState) -> T) -> Option<T> {
-        Some(self.riff.get()?.hub.read(read))
-    }
-
-    /// Writes the `session` record of the start of the session of
-    /// `record`, when the session has no riff-server, the daemon has its
-    /// riff and the riff has no record of the session that runs. A
-    /// worker claims its item. The lead takes the lead
-    /// (01M519Z3FTAZ20DQKDTW09M6NS, 01M51VZG27DXSRHBT8M14S7B9A).
-    /// The write syncs a file, so it runs on a thread for blocking work:
-    /// await the handle when the record must be there.
-    fn peer_start(&self, record: &Record) -> Option<JoinHandle<()>> {
-        if !record.on_peers() {
-            return None;
-        }
-        let hub = self.riff.get()?.hub.clone();
-        let claims = if record.terminal {
-            Vec::new()
-        } else {
-            vec![record.live.item.clone()]
-        };
-        let (me, lead, name) = (record.me.clone(), record.terminal, record.live.name.clone());
-        Some(tokio::task::spawn_blocking(move || {
-            if let Err(e) = hub.start(&me, !lead, lead, claims) {
-                eprintln!("riff daemon: {name}: {e:#}");
-            }
-        }))
-    }
-
-    /// Releases the claim of the session of `record` on the forge, and
-    /// then writes the `session` record of the end of the session, when
-    /// the session has no riff-server and the daemon has its riff
-    /// (01M519Z4HK333JWVXAWQHCGK6M). A job of a wave releases its claim
-    /// after its steps after the end ([`crate::wave`],
-    /// 01M526Z1WH3865PKGFPYPFWQT7).
-    fn peer_end(&self, record: &Record) {
-        if !record.on_peers() {
-            return;
-        }
-        let hub = self.riff.get().map(|riff| riff.hub.clone());
-        let record = record.clone();
-        tokio::task::spawn_blocking(move || {
-            if record.job.is_none() {
-                forge::release_at_end(&record);
-            }
-            if let Some(hub) = hub
-                && let Err(e) = hub.end(&record.live.session)
-            {
-                eprintln!("riff daemon: {}: {e:#}", record.live.name);
-            }
-        });
-    }
-
-    /// While the daemon has no riff, it waits for `line`.
-    fn waits(&self, line: String) {
-        *self.waits.lock().unwrap_or_else(PoisonError::into_inner) = line;
-    }
-
-    /// The daemon with peer links on the net `net`: it binds its iroh
-    /// endpoint when it has its riff ([`Daemon::open_riff`],
-    /// 01M519Z2QE6QYPJX8HVY17GR6Z).
-    #[must_use]
-    pub fn with_net(mut self, net: Net) -> Self {
-        self.net = Some(net);
-        self
     }
 
     /// The daemon with the quiet limit `quiet` in place of
@@ -2090,13 +1458,6 @@ impl<R: Runtime + 'static> Daemon<R> {
         self
     }
 
-    /// The state of riff on this machine, when the daemon has its riff.
-    /// The riff tools of a session do not act on it
-    /// ([`Daemon::tools_of`]).
-    pub fn state(&self) -> Option<&Local> {
-        self.riff.get().map(|riff| &riff.state)
-    }
-
     /// The folder of the daemon.
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -2107,26 +1468,10 @@ impl<R: Runtime + 'static> Daemon<R> {
         &self.room
     }
 
-    /// The world of a wave or of a session with the riff-server
-    /// `server`: the forge and riff-server 1.x ([`crate::wave::Live`], or
-    /// the world of a test), or for no riff-server the riff of
-    /// peers of the daemon ([`crate::wave::peers::Peers`],
-    /// 01M519Z4RWHWP3TKNP4T5GKKE9, 01M526Z1Q3QM3X0C7N6MCX8Z6T). The riff
-    /// of peers fails while the daemon has no riff.
-    pub(crate) fn world_of(&self, server: &str) -> Result<Arc<dyn World>> {
-        if !server.is_empty() {
-            return Ok(self.world.clone());
-        }
-        self.peer_world
-            .get()
-            .cloned()
-            .context(text::DAEMON_NO_RIFF_YET)
-    }
-
-    /// The world of the session of `record` ([`Daemon::world_of`]): `None`
-    /// for a session with no riff-server while the daemon has no riff.
-    fn world_for(&self, record: &Record) -> Option<Arc<dyn World>> {
-        self.world_of(&record.server).ok()
+    /// The world of the waves and of the sessions: the forge and
+    /// riff-server 1.x ([`crate::wave::Live`]), or the world of a test.
+    pub(crate) fn world(&self) -> Arc<dyn World> {
+        self.world.clone()
     }
 
     /// The number of sessions that the daemon owns, but the sessions
@@ -2160,41 +1505,16 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// The state of the daemon.
     pub async fn status(&self) -> Status {
-        let (waits, key, riff, owner, position) = match self.riff.get() {
-            Some(riff) => {
-                let position = riff.state.read(|state| state.written_position()).await;
-                let key = riff.hub.public().to_string();
-                // The riff of peers that the daemon is in: the riff of its
-                // own, or the riff that it joined (01M521J6WZT2KR5ZQE9DZ9A5AC).
-                let (id, owner) = riff
-                    .hub
-                    .read(|state| (state.riff().to_string(), state.owner().map(str::to_owned)));
-                (None, Some(key), Some(id), owner, position)
-            }
-            None => {
-                let waits = self.waits.lock().unwrap_or_else(PoisonError::into_inner);
-                (Some(waits.clone()), None, None, None, 0)
-            }
-        };
-        let links = self.links.get().map(|links| links.shown());
-        let riff_sessions = self.riff_sessions();
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
             since_ms: self.since_ms,
             dir: self.dir.clone(),
-            waits,
-            key,
-            riff,
-            owner,
-            links,
-            position,
             sessions: self
                 .lock()
                 .values()
                 .map(|owned| owned.lock().live())
                 .collect(),
-            riff_sessions,
             limit: Some(self.room.limit()),
             waiting: self.room.waiting(),
             waves: self.waves_shown(),
@@ -2210,27 +1530,6 @@ impl<R: Runtime + 'static> Daemon<R> {
                 })
                 .sum(),
         }
-    }
-
-    /// Each session that runs in the riff of peers: a session of a
-    /// daemon with no link to this one is offline
-    /// ([`crate::peer::talk::shown`], 01M519Z554SC3EAT69Q3M6JDAP). The
-    /// links lock no lock of the riff, so a read of the links in a read
-    /// of the riff waits for nothing.
-    fn riff_sessions(&self) -> Vec<SessionInfo> {
-        let Some(riff) = self.riff.get() else {
-            return Vec::new();
-        };
-        let (me, links, now) = (riff.hub.public(), self.links.get(), crate::run::now_ms());
-        riff.hub.read(|state| {
-            crate::peer::talk::shown(
-                state,
-                &me,
-                |key| links.is_some_and(|links| links.online(key)),
-                |key| links.and_then(|links| links.seen(key)),
-                now,
-            )
-        })
     }
 
     /// Asks for a new start of the daemon with `restart` when it runs an
@@ -2356,8 +1655,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Answers each connection of `listener` until `stop` ends. The stop
-    /// stops no session (01M4ZDTW00B7N6T9P3MK066KA7). At the stop, it
-    /// writes a checkpoint of the state.
+    /// stops no session (01M4ZDTW00B7N6T9P3MK066KA7).
     pub async fn serve(
         self: Arc<Self>,
         listener: UnixListener,
@@ -2366,14 +1664,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         tokio::pin!(stop);
         loop {
             tokio::select! {
-                () = &mut stop => {
-                    if let Some(state) = self.state()
-                        && let Err(e) = state.checkpoint().await
-                    {
-                        eprintln!("riff daemon: {e}");
-                    }
-                    return Ok(());
-                }
+                () = &mut stop => return Ok(()),
                 accepted = listener.accept() => match accepted {
                     Ok((conn, _)) => {
                         let daemon = self.clone();
@@ -2432,36 +1723,6 @@ impl<R: Runtime + 'static> Daemon<R> {
                 Ok(Ask::Takeover { name, at_end }) => {
                     self.takeover(&name, at_end, lines, &out).await;
                 }
-                Ok(Ask::Invite { user }) => {
-                    let now = u64::try_from(now_ms()).unwrap_or_default();
-                    out.say(match self.invite(&user, now) {
-                        Ok(invite) => Say::Invited {
-                            invite: crate::peer::invite::Text(invite.text().to_string()),
-                            ends_ms: i64::try_from(invite.ends_ms).unwrap_or(i64::MAX),
-                        },
-                        Err(e) => Say::Failed {
-                            error: format!("{e:#}"),
-                        },
-                    });
-                }
-                Ok(Ask::Join { invite }) => {
-                    let show = |text: String| out.say(Say::Line { text });
-                    let done = self.join(&invite.0, show).await;
-                    say_lines(&out, done.map(|line| vec![line]));
-                }
-                Ok(Ask::Leave) => say_lines(&out, self.leave().await),
-                Ok(Ask::Remove { user, host }) => {
-                    say_lines(&out, self.remove(&user, host.as_deref()));
-                }
-                Ok(Ask::Members) => out.say(match self.members() {
-                    Ok(rows) => Say::Members { rows },
-                    Err(e) => Say::Failed {
-                        error: format!("{e:#}"),
-                    },
-                }),
-                Ok(Ask::Run { wave, work, image }) => {
-                    crate::wave::run_one(self.clone(), wave, work, image, lines, &out).await;
-                }
                 Ok(Ask::Sweep) => {
                     let mut swept: Vec<String> =
                         self.sweep(None).await.into_iter().map(|s| s.line).collect();
@@ -2472,18 +1733,6 @@ impl<R: Runtime + 'static> Daemon<R> {
                         swept.push(text::SWEPT_NONE.into());
                     }
                     say_lines(&out, Ok(swept));
-                }
-                Ok(Ask::Release { main, item }) => {
-                    out.say(match self.release_asked(main, item).await {
-                        Ok(text) => {
-                            println!("{text}");
-                            out.say(Say::Line { text });
-                            Say::Done
-                        }
-                        Err(e) => Say::Failed {
-                            error: format!("{e:#}"),
-                        },
-                    })
                 }
                 Err(error) => out.say(Say::Failed { error }),
             }
@@ -2613,8 +1862,6 @@ impl<R: Runtime + 'static> Daemon<R> {
         match opened {
             Ok(door) => {
                 *owned.door.lock().unwrap_or_else(PoisonError::into_inner) = Some(door);
-                let record = owned.lock().record.clone();
-                self.peer_start(&record);
                 Ok((owned, noted))
             }
             Err(e) => {
@@ -2707,7 +1954,6 @@ impl<R: Runtime + 'static> Daemon<R> {
             server,
             me,
             terminal,
-            claim,
         } = start;
         let name = spec.name.clone();
         let record = Record {
@@ -2734,7 +1980,6 @@ impl<R: Runtime + 'static> Daemon<R> {
             terminal,
             takeover: false,
             interrupt: false,
-            claim,
         };
         if let Err(e) = self.check(&spec).and_then(|()| self.check_relay()) {
             out.say(Say::Failed {
@@ -2795,9 +2040,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     return record;
                 }
             };
-            if let Some(world) = self.world_for(&record) {
-                world.resume(&record);
-            }
+            self.world.resume(&record);
             out.say(Say::Done);
             let reader = from.map(|from| stop_on(from, owned.clone()));
             self.clone().watch(owned, notes, Some(end)).await;
@@ -2954,9 +2197,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             failed: failed || stopped || !exited,
         };
         println!("{}", text::daemon_session_ends(&owned.name, code));
-        if record.terminal
-            && let Some(world) = self.world_for(&record)
-        {
+        if record.terminal {
+            let world = self.world.clone();
             tokio::spawn(async move { world.leave(&record).await });
         }
         let followers = self.close(&owned);
@@ -2969,12 +2211,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// and its record go. It gives the connections that followed it.
     fn close(&self, owned: &Owned) -> Vec<Out> {
         // From now on, no step writes its record again.
-        let record = {
-            let mut state = owned.lock();
-            state.ended = true;
-            state.record.clone()
-        };
-        self.peer_end(&record);
+        owned.lock().ended = true;
         if let Some(door) = owned
             .door
             .lock()
@@ -3037,18 +2274,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             Ok(SessionAsk::Watch { .. }) => {
                 let (out, written) = writer(write);
                 let record = owned.lock().record.clone();
-                // The daemon wakes a session with no riff-server itself
-                // (01M519Z3DB3MVP0FK3FBC9KSGD, 01M51VZG27DXSRHBT8M14S7B9A).
-                let wake: crate::wave::BoxFuture<'_, Result<String>> =
-                    match (record.on_peers(), self.riff.get()) {
-                        (true, Some(riff)) => {
-                            let hub = riff.hub.clone();
-                            let id = record.live.session.clone();
-                            Box::pin(async move { Ok(hub.wait(&id).await) })
-                        }
-                        (true, None) => Box::pin(async { bail!("{}", text::DAEMON_NO_RIFF_YET) }),
-                        (false, _) => self.world.wake(&record),
-                    };
+                let wake = self.world.wake(&record);
                 // The wait ends when the relay leaves.
                 let gone = async { while let Ok(Some(_)) = lines.next_line().await {} };
                 tokio::select! {
@@ -3095,52 +2321,17 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// riff-server of the session, as in riff 1.x, with the sign-in of
     /// the person on this machine (01M4ZHSZV46RF3XDXDTQXWGXRG,
     /// 01M51VZG27DXSRHBT8M14S7B9A). That session is the worker session
-    /// of `riff run` or of a wave, which holds the claim of the item. A
-    /// session with no riff-server talks on the riff of peers of the
-    /// daemon ([`crate::peer::talk`], 01M519Z3FTAZ20DQKDTW09M6NS): it
-    /// fails while the daemon has no riff. The session gets only the
-    /// tools that talk, and act on no folder of the host and no claim
-    /// ([`crate::mcp::CONTAINER_TOOLS`], 01M4ZV3B6T2KB09WJ59F07HXET).
+    /// of `riff run` or of a wave, which holds the claim of the item. The
+    /// session gets only the tools that talk, and act on no folder of the
+    /// host and no claim ([`crate::mcp::CONTAINER_TOOLS`],
+    /// 01M4ZV3B6T2KB09WJ59F07HXET).
     pub fn tools_of(&self, record: &Record) -> Result<crate::mcp::Tools> {
-        let tools = if record.on_peers() {
-            let riff = self.riff.get().context(text::DAEMON_NO_RIFF_YET)?;
-            // Each tool of the session talks, so no call reaches the
-            // riff-server of this client.
-            let api = crate::api::Api::new(&record.server);
-            crate::mcp::Tools::new(api, record.me.clone())
-                .with_talk(Arc::new(PeerTalk::new(riff.hub.clone())))
-        } else {
-            let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
-            crate::mcp::Tools::new(api, record.me.clone())
-        }
-        .as_worker(!record.terminal);
+        let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
+        let tools = crate::mcp::Tools::new(api, record.me.clone()).as_worker(!record.terminal);
         Ok(if record.terminal {
             tools.in_lead_container()
         } else {
             tools.in_container()
-        })
-    }
-
-    /// The refusal of a takeover of `name` that names a session of
-    /// another daemon of the riff of peers: its session ID, or the start
-    /// of it. The text names the host of that session: a takeover works
-    /// only for a session of this machine (01M519Z554SC3EAT69Q3M6JDAP).
-    fn elsewhere(&self, name: &str) -> Option<String> {
-        let riff = self.riff.get().filter(|_| !name.is_empty())?;
-        let me = riff.hub.public();
-        riff.hub.read(|state| {
-            let run = state.runs().filter(|run| run.author != me).find(|run| {
-                run.body
-                    .session
-                    .who()
-                    .session()
-                    .is_some_and(|id| id.starts_with(name))
-            })?;
-            let uri = run.uri(state.is_lead(run));
-            Some(text::takeover_other_host(
-                &text::name(&uri),
-                uri.place().host(),
-            ))
         })
     }
 
@@ -3158,9 +2349,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     ) {
         let Some(owned) = self.lock().get(name).cloned() else {
             out.say(Say::Failed {
-                error: self
-                    .elsewhere(name)
-                    .unwrap_or_else(|| text::daemon_no_session(name)),
+                error: text::daemon_no_session(name),
             });
             return;
         };
@@ -3252,10 +2441,6 @@ impl<R: Runtime + 'static> Daemon<R> {
     ) {
         use rmcp::ServiceExt;
         let record = owned.lock().record.clone();
-        // The tools need the session record of the session.
-        if let Some(start) = self.peer_start(&record) {
-            let _ = start.await;
-        }
         let tools = match self.tools_of(&record) {
             Ok(tools) => tools,
             Err(e) => {
@@ -3305,10 +2490,8 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let _ = std::fs::remove_file(&path);
                 let _ = std::fs::remove_dir_all(session_dir(&self.dir, &name));
                 println!("{}", text::daemon_session_gone(&name));
-                if record.terminal
-                    && let Some(world) = self.world_for(&record)
-                {
-                    let record = record.clone();
+                if record.terminal {
+                    let (world, record) = (self.world.clone(), record.clone());
                     tokio::spawn(async move { world.leave(&record).await });
                 }
                 // The job of a wave does its steps after the end now:
@@ -3328,19 +2511,15 @@ impl<R: Runtime + 'static> Daemon<R> {
                 Ok((owned, notes)) => {
                     println!("{}", text::daemon_takes_up(&name));
                     // The lead keeps its session on riff-server alive.
-                    if record.terminal
-                        && let Some(world) = self.world_for(&record)
-                    {
-                        world.resume(&record);
+                    if record.terminal {
+                        self.world.resume(&record);
                     }
                     // The job of a wave goes on: the keep-alive of its
                     // claim, and its steps after the end.
                     if record.job.is_some() {
                         let (out, said) = Out::keep();
                         owned.lock().followers.push(out);
-                        if let Some(world) = self.world_for(&record) {
-                            world.resume(&record);
-                        }
+                        self.world.resume(&record);
                         let job = self.in_job(&record.live.item);
                         tokio::spawn(crate::wave::after(self.clone(), record, said, job));
                     }
@@ -3477,30 +2656,6 @@ fn say_lines(out: &Out, done: Result<Vec<String>>) {
     }
 }
 
-/// `riff invite USER`: asks the daemon in the folder `dir` for an invite
-/// of `user`. It gives the invite string and its end, in milliseconds.
-pub async fn invite(dir: &Path, user: &str) -> Result<(crate::peer::invite::Text, i64)> {
-    let mut client = Client::connect(dir).await?;
-    client.ask(Ask::Invite { user: user.into() }).await?;
-    match client.next().await? {
-        Some(Say::Invited { invite, ends_ms }) => Ok((invite, ends_ms)),
-        Some(Say::Failed { error }) => bail!("{error}"),
-        _ => bail!("{}", text::DAEMON_GONE),
-    }
-}
-
-/// `riff members`: the owner and each member key of the riff of the
-/// daemon in the folder `dir`.
-pub async fn members(dir: &Path) -> Result<Vec<crate::peer::members::Shown>> {
-    let mut client = Client::connect(dir).await?;
-    client.ask(Ask::Members).await?;
-    match client.next().await? {
-        Some(Say::Members { rows }) => Ok(rows),
-        Some(Say::Failed { error }) => bail!("{error}"),
-        _ => bail!("{}", text::DAEMON_GONE),
-    }
-}
-
 /// The state of the daemon in the folder `dir`.
 pub async fn status(dir: &Path) -> Result<Status> {
     let mut client = Client::connect(dir).await?;
@@ -3534,18 +2689,6 @@ pub async fn ask_done(dir: &Path, ask: Ask, mut show: impl FnMut(&str)) -> Resul
             _ => bail!("{}", text::DAEMON_GONE),
         }
     }
-}
-
-/// `riff release ITEM --forge`: asks the daemon in the folder `dir` to
-/// delete the claim of `item` on the forge of the main clone `main`
-/// ([`Ask::Release`], 01M519Z4PESWFV8Y03SKTSGV4Q). It prints the line of
-/// the daemon.
-pub async fn ask_release(dir: &Path, main: &Path, item: &str) -> Result<()> {
-    let ask = Ask::Release {
-        main: main.to_owned(),
-        item: item.to_owned(),
-    };
-    ask_done(dir, ask, |line| println!("{line}")).await
 }
 
 /// `riff daemon sweep`: asks the daemon in the folder `dir` to sweep the
@@ -3596,19 +2739,7 @@ pub async fn serve_here() -> Result<()> {
         let listener = listen(&dir).await?;
         let mut term = signal(SignalKind::terminate())?;
         let mut int = signal(SignalKind::interrupt())?;
-        let daemon =
-            Arc::new(Daemon::new(crate::podman::Podman, dir.clone())?.with_net(Net::from_env()));
-        // The sessions run while the daemon waits for its key
-        // (01M51JW233MXB72MHHRAX4E4NF).
-        let riff = daemon.clone();
-        tokio::spawn(async move {
-            let say = |line: String| println!("{line}");
-            if let Err(e) = riff.open_riff(crate::secrets::retry(), say).await {
-                let line = text::daemon_no_riff(&format!("{e:#}"));
-                eprintln!("{line}");
-                riff.waits(line);
-            }
-        });
+        let daemon = Arc::new(Daemon::new(crate::podman::Podman, dir.clone())?);
         let status = daemon.status().await;
         println!(
             "{}",
@@ -3616,7 +2747,6 @@ pub async fn serve_here() -> Result<()> {
         );
         daemon.recover().await;
         daemon.run_waves();
-        daemon.watch_forges();
         daemon.sweep_every();
         // The steps of an update of this release: the rules of Claude
         // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
@@ -3640,7 +2770,6 @@ pub async fn serve_here() -> Result<()> {
             }
         };
         daemon.clone().serve(listener, stop).await?;
-        daemon.close_links().await;
         let _ = std::fs::remove_file(socket(&dir));
         println!("{}", text::DAEMON_STOPS);
         Ok(())

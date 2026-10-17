@@ -94,28 +94,6 @@
 //! world, with the fake runtime ([`crate::runtime::Fake`]). The daemon
 //! also keeps the session of the lead alive through it, and follows the
 //! wakes of a session for `riff relay watch` ([`World::wake`]).
-//!
-//! # With no riff-server
-//!
-//! A wave with an empty riff-server (`riff wave run --peers`) and a job
-//! of `riff run --peers` (`run_one`) use the world of the riff of
-//! peers of the daemon ([`peers::Peers`], 01M519Z4RWHWP3TKNP4T5GKKE9).
-//! The daemon picks the world of each wave and of each session by its
-//! riff-server (`Daemon::world_of`). The look reads the
-//! pause and the holds from the `plan` records and the claims from
-//! `git ls-remote` (01M519Z4F7Z87BXQYT7F8EABCN). A job claims its item on
-//! the forge ([`crate::forge_claim`]). After the end, it sends the verify
-//! request or the result of a verify to the lead as a `message` record
-//! (`EndTalk`), and then releases the claim. The steps after the end
-//! of the riff of peers and of riff-server are one code: `EndTalk`
-//! picks where they talk.
-//!
-//! ```mermaid
-//! flowchart LR
-//!     W["a wave or riff run --peers"] --> S{"its riff-server"}
-//!     S -- "a URL" --> L["Live: riff-server 1.x and gh"]
-//!     S -- "empty" --> P["peers::Peers: the riff of peers, the forge and gh"]
-//! ```
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::future::Future;
@@ -128,8 +106,6 @@ use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::wire::{HoldInfo, Kind, PullState, RiffState, StartReason, WORKER_ALIVE_EVERY};
 use serde::{Deserialize, Serialize};
-use tokio::io::{BufReader, Lines};
-use tokio::net::unix::OwnedReadHalf;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -140,10 +116,7 @@ use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
-use crate::talk::Talk;
 use crate::{identity, pr, rollout, session_image, terminal, text};
-
-pub mod peers;
 
 /// The file of the waves that the daemon runs, in its folder.
 pub const WAVES_FILE: &str = "waves.json";
@@ -162,9 +135,7 @@ pub struct Wave {
     pub repo: String,
     /// The main clone of the repository on this machine.
     pub main: PathBuf,
-    /// The riff-server of the riff of the repository. Empty for a wave
-    /// with no riff-server: the riff of peers of the daemon
-    /// ([`peers::Peers`]).
+    /// The riff-server of the riff of the repository.
     pub server: String,
     /// The name of this host in the URI of a session.
     pub host: String,
@@ -223,8 +194,7 @@ pub fn write_waves(dir: &Path, waves: &BTreeMap<String, Wave>) -> Result<()> {
 
 /// `riff wave run`: asks the daemon in the folder `dir` to run the
 /// current wave of the repository of the place `here`, on the
-/// riff-server `server` (01M4ZV3B6J89KJQ0F14YWTZMJQ). An empty `server`
-/// is `riff wave run --peers`: the wave has no riff-server.
+/// riff-server `server` (01M4ZV3B6J89KJQ0F14YWTZMJQ).
 pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
     let repo = ask(dir, here, server, |line| println!("{line}")).await?;
     println!("{}", text::wave_asked(&repo));
@@ -471,7 +441,7 @@ pub trait World: Send + Sync {
     fn resume(&self, record: &Record);
 
     /// The steps after the end of the session of `record`. It gives a
-    /// line for each step, for `riff run` (`run_one`).
+    /// line for each step.
     fn finish<'a>(&'a self, record: &'a Record, ended: Ended)
     -> BoxFuture<'a, Result<Vec<String>>>;
 
@@ -544,15 +514,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 |full| say(text::wave_full(full)),
             )
             .await;
-        let world = match daemon.world_of(&wave.server) {
-            Ok(world) => world,
-            Err(e) => {
-                drop(slot);
-                say(text::wave_no_look(&format!("{e:#}")));
-                tokio::time::sleep(LOOK_EVERY).await;
-                continue;
-            }
-        };
+        let world = daemon.world();
         for line in daemon.sweep_news(Some(&wave.repo)).await {
             println!("{line}");
         }
@@ -604,7 +566,7 @@ async fn job<R: Runtime + 'static>(
 ) {
     let item = work.item();
     let held = daemon.in_job(&item);
-    match start_job(&daemon, &wave, &work, slot, None, None).await {
+    match start_job(&daemon, &wave, &work, slot).await {
         Ok(Some((record, ended))) => {
             finish(daemon.clone(), record, ended, held).await;
         }
@@ -612,87 +574,28 @@ async fn job<R: Runtime + 'static>(
         Err(e) => {
             let error = format!("{e:#}");
             eprintln!("riff daemon: {}: {item}: {error}", wave.repo);
-            if let Ok(world) = daemon.world_of(&wave.server) {
-                world
-                    .tell(&wave, &text::wave_job_failed(&item, &error))
-                    .await;
-            }
+            daemon
+                .world()
+                .tell(&wave, &text::wave_job_failed(&item, &error))
+                .await;
         }
     }
     lock(&taken).remove(&item);
     daemon.tell_changed();
 }
 
-/// `riff run ITEM --peers` ([`crate::daemon::Ask::Run`],
-/// 01M519Z4RWHWP3TKNP4T5GKKE9, 01M526Z1SVG3ZK38GH51AHCRHP): one job of
-/// `wave` with no riff-server,
-/// with the image `image`. It waits for room in the limit of the host,
-/// and does the job as a wave does: the claim on the forge, the clone,
-/// the session, then the steps after the end. It says each line, each
-/// event and the end of the session on `out`, then a line for each
-/// step after the end, and [`Say::Done`]. A [`crate::daemon::Then::Stop`]
-/// on `from` stops the container: the daemon still does the steps after
-/// the end.
-pub(crate) async fn run_one<R: Runtime + 'static>(
-    daemon: Arc<Daemon<R>>,
-    wave: Wave,
-    work: Work,
-    image: String,
-    mut from: Lines<BufReader<OwnedReadHalf>>,
-    out: &Out,
-) {
-    let item = work.item();
-    if !wave.server.is_empty() {
-        out.say(Say::Failed {
-            error: text::RUN_ONE_PEERS_ONLY.into(),
-        });
-        return;
-    }
-    let Some(slot) = daemon.room_for(&item, &mut from, out).await else {
-        return;
-    };
-    let follower = Some((from, out.clone()));
-    let held = daemon.in_job(&item);
-    match start_job(&daemon, &wave, &work, slot, Some(&image), follower).await {
-        Ok(Some((record, ended))) => {
-            for text in finish(daemon.clone(), record, ended, held).await {
-                out.say(Say::Line { text });
-            }
-            out.say(Say::Done);
-        }
-        Ok(None) => out.say(Say::Failed {
-            error: text::run_held_on_forge(&item),
-        }),
-        Err(e) => out.say(Say::Failed {
-            error: format!("{e:#}"),
-        }),
-    }
-    daemon.tell_changed();
-}
-
-/// A connection of `riff run` that follows a job: the lines that it
-/// sends, and the [`Out`] of its answers.
-type Follower = (Lines<BufReader<OwnedReadHalf>>, Out);
-
-/// The steps of a job up to the end of its session: the image, the
-/// steps before the start, and the session. `None` when the claim
-/// failed. With no `image`, the job takes the image that the wave pins.
-/// A `follower` gets each line of the session, and can stop it. Hold
-/// [`Daemon::in_job`] of the item from before the call to the end of
-/// [`finish`]: the sweep then keeps the folder.
+/// The steps of a job up to the end of its session: the image that the
+/// wave pins, the steps before the start, and the session. `None` when
+/// the claim failed. Hold [`Daemon::in_job`] of the item from before the
+/// call to the end of [`finish`]: the sweep then keeps the folder.
 async fn start_job<R: Runtime + 'static>(
     daemon: &Arc<Daemon<R>>,
     wave: &Wave,
     work: &Work,
     slot: Slot,
-    image: Option<&str>,
-    follower: Option<Follower>,
 ) -> Result<Option<(Record, Ended)>> {
-    let world = daemon.world_of(&wave.server)?;
-    let image = match image {
-        Some(image) => image.to_owned(),
-        None => world.image(wave).await?,
-    };
+    let world = daemon.world();
+    let image = world.image(wave).await?;
     daemon.have_image(&image, |line| println!("{line}")).await?;
     let Some(start) = world.begin(wave, work, &image).await? else {
         return Ok(None);
@@ -701,15 +604,9 @@ async fn start_job<R: Runtime + 'static>(
         wave: wave.clone(),
         work: work.clone(),
     };
-    let (from, to) = match follower {
-        Some((from, to)) => (Some(from), Some(to)),
-        None => (None, None),
-    };
     let (out, said) = Out::keep();
-    let ended = tokio::spawn(ended_of(said, to));
-    let record = daemon
-        .launch(start, Some(job), Some(slot), from, &out)
-        .await;
+    let ended = tokio::spawn(ended_of(said));
+    let record = daemon.launch(start, Some(job), Some(slot), None, &out).await;
     drop(out);
     let ended = ended.await.unwrap_or(Ended {
         code: None,
@@ -719,17 +616,13 @@ async fn start_job<R: Runtime + 'static>(
 }
 
 /// The end of a session from the lines that the daemon says to one of
-/// its followers. A failed start, or no end, is a failed session. It
-/// gives each line to `to` too, when there is one.
-async fn ended_of(mut said: mpsc::UnboundedReceiver<Say>, to: Option<Out>) -> Ended {
+/// its followers. A failed start, or no end, is a failed session.
+async fn ended_of(mut said: mpsc::UnboundedReceiver<Say>) -> Ended {
     let failed = Ended {
         code: None,
         failed: true,
     };
     while let Some(say) = said.recv().await {
-        if let Some(to) = &to {
-            to.say(say.clone());
-        }
         match say {
             Say::Ended(ended) => return ended,
             Say::Failed { error } => {
@@ -751,33 +644,21 @@ pub(crate) async fn after<R: Runtime + 'static>(
     said: mpsc::UnboundedReceiver<Say>,
     held: InJob,
 ) {
-    let ended = ended_of(said, None).await;
+    let ended = ended_of(said).await;
     finish(daemon, record, ended, held).await;
 }
 
-/// The steps after the end of the session of `record`, as it `ended`,
-/// with the world of its riff. It gives the line of each step. A session
-/// with no riff-server waits for the riff of the daemon: a job that
-/// ended while no daemon ran (01M526Z1Z80JFAS0GS04PVF1KG). The job
-/// `held` of the item ends after the last step: a step reads the folder
-/// of the session, so the sweep keeps it to then
-/// (01M53S7WDPQ2GWHJWJ6SZXZ5PN).
+/// The steps after the end of the session of `record`, as it `ended`.
+/// It gives the line of each step. The job `held` of the item ends after
+/// the last step: a step reads the folder of the session, so the sweep
+/// keeps it to then (01M53S7WDPQ2GWHJWJ6SZXZ5PN).
 pub(crate) async fn finish<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     record: Record,
     ended: Ended,
     held: InJob,
 ) -> Vec<String> {
-    let world = loop {
-        match daemon.world_of(&record.server) {
-            Err(_) if record.on_peers() => tokio::time::sleep(Duration::from_secs(1)).await,
-            world => break world,
-        }
-    };
-    let lines = match world {
-        Ok(world) => world.finish(&record, ended).await,
-        Err(e) => Err(e),
-    };
+    let lines = daemon.world().finish(&record, ended).await;
     drop(held);
     daemon.tell_changed();
     lines.unwrap_or_else(|e| {
@@ -872,7 +753,7 @@ fn branch_of(issue: u64) -> String {
 /// does ([`run::no_verify`], 01M51KH0H7J35PEKMHP5KQB84T).
 async fn after_build(
     gh: pr::Gh,
-    riff: &EndTalk<'_>,
+    api: &Api,
     record: &Record,
     wave: &Wave,
     issue: u64,
@@ -896,7 +777,7 @@ async fn after_build(
     let session = run::short(&record.live.session);
     let mut lines = Vec::new();
     let (body, kind) = match &pull {
-        Some(pull) => match riff.no_verify(me, &thread, gh, item, issue).await? {
+        Some(pull) => match no_verify(api, me, &thread, gh, item, issue).await? {
             Some(why) => (
                 text::wave_no_verify(
                     item,
@@ -928,78 +809,40 @@ async fn after_build(
         }
         None => lines.push(text::run_no_pull(&branch)),
     }
-    riff.talk()
-        .post(me, Some(&thread), &to, &body, kind)
-        .await?;
+    api.post(me, Some(&thread), &to, &body, kind).await?;
     Ok(lines)
 }
 
-/// Where the steps after the end of a job talk: riff-server 1.x, or the
-/// riff of peers of the daemon (01M519Z4RWHWP3TKNP4T5GKKE9).
-pub(crate) enum EndTalk<'a> {
-    /// riff-server 1.x, with the sign-in of the person.
-    Server(&'a Api),
-    /// The riff of peers of the daemon: its records.
-    Peers(crate::peer::talk::Session, Arc<crate::peer::talk::Hub>),
-}
-
-impl EndTalk<'_> {
-    /// The riff of peers of `hub`.
-    pub(crate) fn peers(hub: &Arc<crate::peer::talk::Hub>) -> EndTalk<'static> {
-        EndTalk::Peers(crate::peer::talk::Session::new(hub.clone()), hub.clone())
+/// [`run::no_verify`] now: the labels of the issue with `gh`, then the
+/// holds of `thread` on riff-server, as `me`. It asks for the holds only
+/// for an issue with no label. A fault of `gh` shows on stderr, and riff
+/// goes on to the holds.
+async fn no_verify(
+    api: &Api,
+    me: &SessionUri,
+    thread: &ThreadName,
+    gh: pr::Gh,
+    item: &str,
+    issue: u64,
+) -> Result<Option<String>> {
+    let labelled = blocking(move || run::labelled(&gh, issue))
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("riff: {e:#}");
+            false
+        });
+    if labelled {
+        return Ok(run::no_verify(item, issue, true, &BTreeMap::new()));
     }
-
-    /// The calls of the tools that talk.
-    fn talk(&self) -> &dyn Talk {
-        match self {
-            EndTalk::Server(api) => *api,
-            EndTalk::Peers(talk, _) => talk,
-        }
-    }
-
-    /// The holds of the repository `thread`, by item, as `me`.
-    async fn holds(
-        &self,
-        me: &SessionUri,
-        thread: &ThreadName,
-    ) -> Result<BTreeMap<String, HoldInfo>> {
-        match self {
-            EndTalk::Server(api) => Ok(api.plan_show(me, thread).await?.holds),
-            EndTalk::Peers(_, hub) => Ok(hub.read(|state| peers::holds_in(state, thread))),
-        }
-    }
-
-    /// [`run::no_verify`] now: the labels of the issue with `gh`, then
-    /// the holds of `thread`, as `me`. It asks for the holds only for an
-    /// issue with no label. A fault of `gh` shows on stderr, and riff
-    /// goes on to the holds.
-    async fn no_verify(
-        &self,
-        me: &SessionUri,
-        thread: &ThreadName,
-        gh: pr::Gh,
-        item: &str,
-        issue: u64,
-    ) -> Result<Option<String>> {
-        let labelled = blocking(move || run::labelled(&gh, issue))
-            .await
-            .unwrap_or_else(|e| {
-                eprintln!("riff: {e:#}");
-                false
-            });
-        if labelled {
-            return Ok(run::no_verify(item, issue, true, &BTreeMap::new()));
-        }
-        let holds = self.holds(me, thread).await?;
-        Ok(run::no_verify(item, issue, false, &holds))
-    }
+    let holds: BTreeMap<String, HoldInfo> = api.plan_show(me, thread).await?.holds;
+    Ok(run::no_verify(item, issue, false, &holds))
 }
 
 /// The steps after the end of a verify: the report of its result, as
 /// `riff verify` does. The folder of a verify that did not pass goes. It
 /// gives a line for each step.
 async fn after_verify(
-    riff: &EndTalk<'_>,
+    api: &Api,
     record: &Record,
     wave: &Wave,
     pull: u64,
@@ -1012,12 +855,11 @@ async fn after_verify(
         &wave.repo,
     )];
     let item = &record.live.item;
-    let talk = riff.talk();
     let found = last_result(&record.folder.join(crate::daemon::EVENTS));
     let Some((verdict, result)) = found.as_deref().and_then(verdict) else {
         let _ = std::fs::remove_dir_all(&record.folder);
         let body = text::wave_no_result(item, pull);
-        talk.post(me, Some(&thread), &lead, &body, Kind::Message)
+        api.post(me, Some(&thread), &lead, &body, Kind::Message)
             .await?;
         return Ok(vec![body]);
     };
@@ -1038,7 +880,7 @@ async fn after_verify(
         Err(e) => {
             let _ = std::fs::remove_dir_all(&record.folder);
             let body = text::wave_no_report(item, pull, &format!("{e:#}"));
-            talk.post(me, Some(&thread), &lead, &body, Kind::Message)
+            api.post(me, Some(&thread), &lead, &body, Kind::Message)
                 .await?;
             return Ok(vec![body]);
         }
@@ -1048,16 +890,14 @@ async fn after_verify(
     if verdict == Verdict::Fail {
         let _ = std::fs::remove_dir_all(&record.folder);
     }
-    if let EndTalk::Server(api) = riff {
-        let state = match verdict {
-            Verdict::Pass => PullState::Passed,
-            Verdict::Fail => PullState::Failed,
-        };
-        crate::look::tell_fact(api, me, reported.issue, pull, state).await;
-    }
-    let to = pr::result_to(reported.issue, me, &talk.who(me, false).await?);
+    let state = match verdict {
+        Verdict::Pass => PullState::Passed,
+        Verdict::Fail => PullState::Failed,
+    };
+    crate::look::tell_fact(api, me, reported.issue, pull, state).await;
+    let to = pr::result_to(reported.issue, me, &api.who(me, false).await?);
     let body = text::verify_post(verdict, pull, &reported, &result);
-    talk.post(me, Some(&thread), &to, &body, Kind::Message)
+    api.post(me, Some(&thread), &to, &body, Kind::Message)
         .await?;
     Ok(vec![line])
 }
@@ -1173,7 +1013,6 @@ impl Live {
             server: wave.server.clone(),
             me: me.clone(),
             terminal: false,
-            claim: None,
         })
     }
 }
@@ -1366,14 +1205,13 @@ impl World for Live {
                 "{}",
                 text::wave_ended(&wave.repo, &record.live.item, ended.code, ended.failed)
             );
-            let riff = EndTalk::Server(&api);
             let done = match &job.work {
                 Work::Build { issue } => {
                     let gh = pr::Gh::for_repo(&wave.repo);
-                    after_build(gh, &riff, record, wave, *issue).await
+                    after_build(gh, &api, record, wave, *issue).await
                 }
                 Work::Verify { pull, commit, .. } => {
-                    after_verify(&riff, record, wave, *pull, commit).await
+                    after_verify(&api, record, wave, *pull, commit).await
                 }
             };
             self.end(&api, &record.me, &thread, &record.live.item).await;

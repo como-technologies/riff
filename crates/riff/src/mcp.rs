@@ -122,10 +122,8 @@
 //! container. So that session gets only the tools of
 //! [`CONTAINER_TOOLS`]: they only talk, and act on no folder of the host
 //! and no claim (01M4ZV3B6T2KB09WJ59F07HXET). They act on the
-//! riff-server of the session. A session with no riff-server talks on
-//! the riff of peers of the daemon ([`crate::peer::talk`],
-//! 01M51VZG27DXSRHBT8M14S7B9A): [`Tools::with_talk`]. `riff run` does the
-//! claim, the release and the verify request. The tools do not list each
+//! riff-server of the session. `riff run` does the claim, the release
+//! and the verify request. The tools do not list each
 //! other tool, and refuse a call of it with [`text::not_in_a_container`].
 //! The instructions of the server are [`text::MCP_CONTAINER`].
 //!
@@ -148,7 +146,6 @@ use serde::Deserialize;
 
 use crate::api::{Api, PauseScope};
 use crate::binary::{Follow, with_last, with_place};
-use crate::talk::Talk;
 use crate::usage::{self, Meter};
 use crate::{dropped, identity, leave, relay, text};
 
@@ -164,10 +161,6 @@ pub const MODERN: &str = "modern";
 #[derive(Clone)]
 pub struct Tools {
     api: Api,
-    /// The calls of the tools that talk ([`crate::talk`]): the riff of
-    /// peers of the daemon for a session of the daemon. `None` talks on
-    /// riff-server with [`Tools::api`].
-    talk: Option<Arc<dyn Talk>>,
     me: Arc<Mutex<SessionUri>>,
     /// Where the session works: the directory of the WIP push of `leave`,
     /// and of the look for earlier work at a claim.
@@ -357,7 +350,6 @@ impl Tools {
     pub fn new(api: Api, me: SessionUri) -> Self {
         Self {
             api,
-            talk: None,
             me: Arc::new(Mutex::new(me)),
             dir: Arc::new(Mutex::new(std::env::current_dir().unwrap_or_default())),
             earlier: false,
@@ -398,7 +390,7 @@ impl Tools {
         let (Some(dir), Some(id)) = (&self.statusline, me.who().session()) else {
             return;
         };
-        if self.talk.is_some() || self.left() {
+        if self.left() {
             return;
         }
         let Ok(reply) = self.api.me(&me).await else {
@@ -412,21 +404,6 @@ impl Tools {
         };
         if let Err(e) = crate::local::keep_statusline(dir, id, &kept) {
             eprintln!("riff: cannot keep the status line: {e}");
-        }
-    }
-
-    /// The tools that talk call `talk`, not riff-server: the tools of a
-    /// session of the riff daemon (01M519Z3FTAZ20DQKDTW09M6NS).
-    pub fn with_talk(mut self, talk: Arc<dyn Talk>) -> Self {
-        self.talk = Some(talk);
-        self
-    }
-
-    /// The calls of the tools that talk.
-    fn talk(&self) -> &dyn Talk {
-        match &self.talk {
-            Some(talk) => talk.as_ref(),
-            None => &self.api,
         }
     }
 
@@ -530,13 +507,13 @@ your repository) and who set it."
     async fn whoami(&self) -> ToolResult {
         let me = self.here()?;
         let now = self
-            .talk()
+            .api
             .who(&me, true)
             .await
             .ok()
             .and_then(|list| list.into_iter().find(|s| same(&s.uri, &me)))
             .map_or(me.clone(), |s| s.uri);
-        let state = match self.talk().pauses(&me).await {
+        let state = match self.api.pauses(&me).await {
             Ok(pauses) => format!(
                 "{}\n{}",
                 text::riff_state(&pauses, now.default_thread().as_ref()),
@@ -553,8 +530,8 @@ your repository) and who set it."
     async fn who(&self, Parameters(a): Parameters<WhoArgs>) -> ToolResult {
         let me = self.here()?;
         let all = a.all.unwrap_or(false);
-        let pauses = self.talk().pauses(&me).await.map_err(err)?;
-        let mut who = self.talk().roster(&me, all).await.map_err(err)?;
+        let pauses = self.api.pauses(&me).await.map_err(err)?;
+        let mut who = self.api.roster(&me, all).await.map_err(err)?;
         crate::state::fill(&mut who.sessions, pauses.state);
         let owner = text::owner_line(&who.owner)
             .map(|line| format!("{line}\n"))
@@ -570,7 +547,7 @@ your repository) and who set it."
     #[tool(description = "List your threads with their unread counts.")]
     async fn threads(&self) -> ToolResult {
         let me = self.here()?;
-        let list = self.talk().threads(&me).await.map_err(err)?;
+        let list = self.api.threads(&me).await.map_err(err)?;
         Ok(text::threads(&list, &me))
     }
 
@@ -649,7 +626,7 @@ matches."
         let kind = a.kind.unwrap_or_default();
         let me = self.here()?;
         let posted = self
-            .talk()
+            .api
             .post(&me, Some(&thread), &to, &a.body, kind)
             .await
             .map_err(err)?;
@@ -665,7 +642,7 @@ wakes you, answer with this tool. Do not post a reply. When you cannot go on, us
     )]
     async fn status(&self, Parameters(a): Parameters<StatusArgs>) -> ToolResult {
         let status = Status { step: a.step };
-        self.talk()
+        self.api
             .status(&self.here()?, &status)
             .await
             .map_err(err)?;
@@ -681,7 +658,7 @@ your user, and the next prompt of your user ends it."
     )]
     async fn blocked(&self, Parameters(a): Parameters<BlockedArgs>) -> ToolResult {
         let told = self
-            .talk()
+            .api
             .blocked(&self.here()?, &a.reason)
             .await
             .map_err(err)?;
@@ -695,7 +672,7 @@ your user, and the next prompt of your user ends it."
     async fn tell(&self, Parameters(a): Parameters<TellArgs>) -> ToolResult {
         let me = self.here()?;
         let posted = self
-            .talk()
+            .api
             .tell(&me, &a.session, &a.body)
             .await
             .map_err(err)?;
@@ -713,7 +690,7 @@ your user, and the next prompt of your user ends it."
         let me = self.here()?;
         let thread = a.thread.map(|t| self.thread(Some(t))).transpose()?;
         let inbox = self
-            .talk()
+            .api
             .inbox_page(&me, thread.as_ref(), a.all.unwrap_or(false), a.after)
             .await
             .map_err(err)?;
@@ -790,7 +767,7 @@ does not end a claim. Each other session can still claim the item, with a warnin
         let thread = self.thread(a.thread)?;
         let me = self.here()?;
         let reply = self
-            .talk()
+            .api
             .hold(&me, &thread, &a.item, &a.reason)
             .await
             .map_err(err)?;
@@ -804,7 +781,7 @@ does not end a claim. Each other session can still claim the item, with a warnin
     async fn free(&self, Parameters(a): Parameters<FreeArgs>) -> ToolResult {
         let thread = self.thread(a.thread)?;
         let me = self.here()?;
-        let reply = self.talk().free(&me, &thread, &a.item).await.map_err(err)?;
+        let reply = self.api.free(&me, &thread, &a.item).await.map_err(err)?;
         self.lead_step(&me, format!("freed {}", a.item)).await;
         Ok(text::freed(reply, &thread, &a.item))
     }
@@ -816,7 +793,7 @@ your user says so."
     )]
     async fn lead(&self) -> ToolResult {
         let me = self.here()?;
-        let reply = self.talk().lead(&me).await.map_err(err)?;
+        let reply = self.api.lead(&me).await.map_err(err)?;
         self.lead_step(&me, text::LEAD_STEP.into()).await;
         Ok(text::led(&reply))
     }
@@ -968,7 +945,7 @@ impl Tools {
         let me = self.here()?;
         let scope = PauseScope::of(whole, None);
         let (reply, posted) = self
-            .talk()
+            .api
             .set_pause(&me, &scope, state)
             .await
             .map_err(err)?;
@@ -983,12 +960,12 @@ impl Tools {
     /// (01M3W8AYDFPZNZ898WAJS7JEZA). The step of each other session
     /// stays. A failure is not reported: the call of the lead is done.
     async fn lead_step(&self, me: &SessionUri, step: String) {
-        let Ok(list) = self.talk().who(me, false).await else {
+        let Ok(list) = self.api.who(me, false).await else {
             return;
         };
         let lead = list.into_iter().find(|s| same(&s.uri, me) && s.uri.lead());
         if lead.is_some() {
-            let _ = self.talk().status(me, &Status { step }).await;
+            let _ = self.api.status(me, &Status { step }).await;
         }
     }
 
@@ -1032,8 +1009,7 @@ impl Tools {
 }
 
 /// True when `a` and `b` are one session: the same who, or the same
-/// session ID. In the riff of peers, a session of the daemon has the
-/// user of the key of the daemon ([`crate::peer::talk`]).
+/// session ID.
 fn same(a: &SessionUri, b: &SessionUri) -> bool {
     a.who() == b.who() || (a.who().session().is_some() && a.who().session() == b.who().session())
 }
