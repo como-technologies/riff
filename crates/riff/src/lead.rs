@@ -15,7 +15,10 @@
 //!     participant S as riff-server
 //!     participant D as riff daemon
 //!     participant C as container riff-lead-OWNER-REPO
-//!     P->>D: status: does the lead run?
+//!     P->>D: status: does the lead run? Does the wave run?
+//!     opt no wave of the repository runs
+//!         P->>D: run the wave of the repository
+//!     end
 //!     P->>S: start the session of the lead
 //!     P->>D: start SPEC with a terminal
 //!     D->>C: podman run -d -i -t: riff relay --terminal -- claude
@@ -36,6 +39,7 @@
 //! | The wakes | `/opt/riff/riff relay watch` in a background task | 01M501PA04NP79RJQEDP4D7YTM |
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which | 01M51PD7Q24N252V66NFEHY49N |
+//! | The wave | the wave of the repository on the daemon, when none runs: the lead in a container has no rollout ([`crate::wave::ask`]); a failed ask stops no lead | 01M53NGVE839TRH7XB7CDPQNZE, 01M5515CJ7QDJ639VGR7SJTE08 |
 //!
 //! The clone and the Claude folder stay between the starts of the lead:
 //! the lead keeps the history of its conversations, and a dialog of
@@ -304,7 +308,9 @@ pub async fn start_with(
 ) -> Result<()> {
     let repo = here.repo_text();
     let name = name_of(&repo);
-    if runs(&daemon::status(dir).await?, &name) {
+    let status = daemon::status(dir).await?;
+    wave(dir, &status, here, server).await;
+    if runs(&status, &name) {
         println!("{}", text::lead_runs(&repo, &name));
         return attach_here(runtime, &name).await;
     }
@@ -366,6 +372,23 @@ pub async fn start_with(
         return Err(e);
     }
     attach_here(runtime, &name).await
+}
+
+/// Starts the wave of the repository of `here` on the daemon in the
+/// folder `dir`, when the daemon of `status` runs none
+/// (01M53NGVE839TRH7XB7CDPQNZE): the lead in a container has no rollout
+/// of its own. A failed ask stops no lead: it prints why
+/// (01M5515CJ7QDJ639VGR7SJTE08).
+async fn wave(dir: &Path, status: &Status, here: &Place, server: &str) {
+    let repo = here.repo_text();
+    if crate::wave::runs(status, &repo) {
+        println!("{}", text::wave_runs(&repo));
+        return;
+    }
+    match crate::wave::ask(dir, here, server, |line| println!("{line}")).await {
+        Ok(repo) => println!("{}", text::wave_asked(&repo)),
+        Err(e) => println!("{}", text::lead_no_wave(&repo, &format!("{e:#}"))),
+    }
 }
 
 /// Asks the daemon in the folder `dir` to start the session of `start`

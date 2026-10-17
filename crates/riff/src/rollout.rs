@@ -1,4 +1,4 @@
-//! riff starts workers by itself when the wave has free work.
+//! riff runs the free work by itself: the rollout of the lead.
 //!
 //! # Design
 //!
@@ -6,23 +6,27 @@
 //! So the start of work does not wait for an agent that remembers a
 //! step. Once each interval ([`crate::settings::workers_interval`],
 //! 10 seconds by default, 01M3Q5QE9H42FQKEDC5G9GKCWD), it looks at the
-//! riff, gives free work to the idle workers, and starts at most one
-//! worker:
+//! riff, gives free work to the idle workers in tmux, and asks the riff
+//! daemon of its machine to run the wave of the repository for the rest
+//! ([`crate::wave`], 01M53NGVE839TRH7XB7CDPQNZE). The daemon runs each
+//! item in a container. The rollout starts no worker in tmux: a person
+//! starts one with `riff workers start` (01M53NGVQDKCTNMG54YDFE22T2).
 //!
 //! ```mermaid
 //! flowchart TD
 //!     T["each interval"] --> L{"this session is the lead?"}
 //!     L -- no --> T
-//!     L -- yes --> R{"the riff runs?"}
+//!     L -- yes --> R{"the riff and the repository run?"}
 //!     R -- "no: paused" --> T
-//!     R -- yes --> P{"a machine with room,<br/>or an idle worker that joined?"}
+//!     R -- yes --> D["the daemon of this machine:<br/>does a wave of the repository run?"]
+//!     D --> P{"an idle worker that joined,<br/>or no wave runs?"}
 //!     P -- no --> T
 //!     P -- yes --> W["free work (gh): a fix item of a broken main first,<br/>pull requests that wait for a verify,<br/>free items of the current wave, no held item"]
 //!     W --> O["each idle worker with no open request:<br/>tell it request: claim ITEM"]
-//!     O --> I{"free work, and no idle worker?<br/>(a worker that refused does not count)"}
+//!     O --> I{"free work, no idle worker,<br/>and no wave runs?<br/>(a worker that refused does not count)"}
 //!     I -- no --> T
-//!     I -- yes --> S["start 1 worker on the machine<br/>with the most free capacity"]
-//!     S --> N["a note to the lead: host, pane, session"]
+//!     I -- yes --> S["ask the daemon: run the wave of the repository"]
+//!     S --> N["a note to the lead: the daemon runs the wave,<br/>or why it does not"]
 //!     N --> T
 //! ```
 //!
@@ -44,8 +48,8 @@
 //!   pull request waits for a verify or for the merge.
 //! - **No held item** ([`free_work_of`], 01M51A55Q2MDZT38JDCEJ1QECP). A
 //!   held item is no free work: `issue-N` and `verify-issue-N`, each by
-//!   its own hold. The rollout starts no worker for it and sends no
-//!   request for it. Each look reads the holds of the repository thread
+//!   its own hold. The rollout sends no request for it, and runs no wave
+//!   for it. Each look reads the holds of the repository thread
 //!   again ([`Api::plan_show`]), so a free of the item makes it free work
 //!   at the next look.
 //! - **A fix item first** ([`fix_items`], 01M51QEYS538XA58KDRY844T52). An
@@ -73,18 +77,17 @@
 //!   no work item holds a task claim `task-NAME`, so it is busy
 //!   (01M518P1N8R893MG9Z3VAQZR6Z). A worker that the server asked to stop
 //!   is not idle. A worker in another repository is not idle: it cannot
-//!   take the free work (01M3W27BJYFQCHY5MTZ2J4SKW4). riff starts a worker only when no
-//!   worker is idle (01M3Q5QEJNP1JGQM7VXXEBJ9J9). So a new worker must
-//!   claim before the next one starts. When no worker takes the counted work, one
-//!   worker waits idle, the server keeps it (#259), and riff starts no
-//!   more: no loop of starts and stops.
+//!   take the free work (01M3W27BJYFQCHY5MTZ2J4SKW4). The free work goes
+//!   to the idle workers first. riff asks for the wave only when free
+//!   work is left and no worker is idle ([`asks_wave`],
+//!   01M5515CA4CZ6KV4ZD6Y0744Z7).
 //! - **Requests** ([`Offers`], 01M49ZK19GQP79Z8HH14PK85QQ to
 //!   01M49ZK1EG52YAKG974XH201RK). An idle worker that joined sleeps on
 //!   its watch: only a wake makes it read. So the rollout gives it free
 //!   work with a request of the lead, as the lead does by hand. A
 //!   worker that does not claim in [`offer_wait`] refused the item: it
-//!   does not block a start. An item that two workers refused starts no
-//!   more workers.
+//!   does not count as idle, when it has no other item to take. So the
+//!   item goes to the wave.
 //! - **No verify for the author** ([`Authors`], [`authored`],
 //!   01M51533BJSD0RB7BFQR9CAFYW). A session that held `issue-N` never
 //!   gets a request for `verify-issue-N`. riff knows the author from two
@@ -94,31 +97,38 @@
 //!   on the issue with the first characters of the session ID
 //!   ([`crate::usage`]): it stays after the end of the session and after
 //!   a new start of `riff mcp` ([`authors`]). When the author is the only
-//!   idle worker, it has no item to take, and the rollout starts a new
-//!   worker for the verify.
-//! - **Machines** ([`Place`], [`pick`], 01M3Q5QE76BZ27SZ14FFE8HM1G).
-//!   The machine of the lead, when the lead runs in tmux, and each live
-//!   workers host of the user. A machine has room when its workers are
-//!   fewer than its limit, it is not busy
-//!   ([`crate::machine::Machine::busy`]), and its available memory is
-//!   not less than its floor ([`crate::machine::Machine::low`],
-//!   01M3WFZ01PTAYYKG3T5CFA2W4D). riff picks the machine with the
-//!   most free capacity. On a tie, the machine of the lead wins.
+//!   idle worker, it has no item to take, and the rollout runs the wave
+//!   for the verify. A verify of the wave is a new session
+//!   (01M4ZV3B6NKPEZ5FNE27X95GF0).
+//! - **The wave of the daemon** ([`View::wave`], [`Env::run_wave`]). The
+//!   daemon of the machine of the lead tells the waves that it runs
+//!   ([`crate::wave::runs`]). A daemon that does not answer runs no
+//!   wave. While a wave of the repository runs there, the rollout asks
+//!   nothing, and with no idle worker that joined, it makes no call of
+//!   `gh`. The claims on riff-server keep the wave and the workers in
+//!   tmux from one item (01M53NGWTNC3655ZZJ76M1R5R7). The limit of the
+//!   containers is the limit of the daemon (01M4ZV3B6HAFTSC2K63FMC5FYA).
+//!   A second machine runs its own wave with `riff wave run`
+//!   (01M53NGVH8A19QS3CQ79ENVVXT).
+//! - **Notes** (01M5515CA4CZ6KV4ZD6Y0744Z7). After the ask, the lead
+//!   gets a note ([`text::rollout_wave`]). When the ask fails, the lead
+//!   gets one note with the reason ([`text::rollout_no_wave`]), and the
+//!   rollout asks again at each look. The next note comes for a new
+//!   reason, or after an ask that worked.
+//! - **A stop of the wave** (01M5515CFHRA6AJG4GKX0ZV77W). `riff wave
+//!   stop` stops the wave of the daemon. The rollout asks for it again
+//!   at its next look with free work. To keep it stopped, turn the
+//!   rollout off (`riff workers interval 0`), or pause the repository.
 //! - **Pause** (01M3Q5QEBTNM90SPYXNVTT7RJA). A pause stops the rollout
-//!   within one look. A look that started before the pause can start
-//!   one more worker. After it, riff starts no worker while the riff is
-//!   paused.
-//! - **Notes** (01M3Q5QEE4MQNCRKVJK3D54G9Z). On the machine of the lead,
-//!   riff posts a note to the lead with the host, the pane and the
-//!   session. A workers host posts the same note when it starts a
-//!   worker.
-//!
-//! - **Where riff is off** (01M3XY2T542DCHBN95H9PX4AGQ). A worker
-//!   starts in the main clone. When riff is off there, the machine of
-//!   the lead is no place for a worker: riff starts none there, and the
-//!   lead gets one note with the reason and `riff enable`
-//!   (01M3YCGKKRDNFC338K1JSK30JK). A workers host can still take the
-//!   work.
+//!   within one look. A look that started before the pause can ask for
+//!   the wave one more time. The wave then starts nothing while the
+//!   repository is paused.
+//! - **Machines** ([`Place`], [`pick`]). The machine of the lead, when
+//!   the lead runs in tmux and riff is on in its main clone
+//!   (01M3XY2T542DCHBN95H9PX4AGQ), and each live workers host of the
+//!   user. The rollout starts no worker there. It uses them for the
+//!   message of a higher limit while the rollout is off ([`effect`]):
+//!   then a person starts the workers.
 //!
 //! The rollout never stops a worker. The server stops idle workers
 //! (#259). A worker over the limit of its machine ends after its item
@@ -141,7 +151,6 @@
 //!     S --> C{"a value changed?"}
 //!     C -- no --> T
 //!     C -- yes --> E{"what does the change do?"}
-//!     E -- "a higher limit gives room, and the rollout is on" --> N1["note: the rollout starts 1 worker"]
 //!     E -- "a higher limit gives room, and the rollout is off" --> W["message that wakes the lead:<br/>riff workers start N"]
 //!     E -- "more workers run than the new limit" --> N2["note: the workers over the limit end after their item"]
 //!     E -- "nothing" --> N3["note: the change"]
@@ -150,17 +159,19 @@
 //! [`effect`] finds what the change does (01M3X30R4PSBP3RQWM02BJ6GK3). The message is a note
 //! when the lead has nothing to do. It wakes the lead only when work
 //! waits that the change lets start and the rollout is off (01M3X30RA3X08JBJ2JBVCCNEH3).
+//! While the rollout is on, a higher limit starts nothing: the rollout
+//! starts no worker in tmux, and the wave of the daemon takes the free
+//! work (01M5515CCV7WNKVZVAMQ375J0M).
 //! One look uses each limit one time: the view of the look takes the
 //! limits that the look read for the changes ([`View::with_limits`]).
-//! So a limit that changes in the middle of a look starts no worker
-//! before the next look, and the note comes before the start
+//! So the message of a change says what the limit of that look does
 //! (01M3XFHSYJEN9V6QEKWJGJWQ8Q). A
 //! workers host sets its status at once when its limit changes, and
 //! posts the note for a change of its own MCP servers
 //! ([`crate::host`], 01M3X30RJS8YE5TXJBQDC2FT0C).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -172,7 +183,7 @@ use serde::Deserialize;
 
 use crate::api::Api;
 use crate::disk::Disk;
-use crate::host::{self, Request};
+use crate::host;
 use crate::machine::Machine;
 use crate::pr::Gh;
 use crate::terminal::{Terminal, Tmux, WorkerPane};
@@ -259,6 +270,24 @@ pub struct View {
     /// The sessions that held each item: of the claims of this look
     /// ([`holders`]) and of the usage comments ([`authors`]).
     pub authors: Authors,
+    /// The repository of the lead, as `OWNER/REPO`.
+    pub repo: String,
+    /// The wave of the repository on the riff daemon of the machine of
+    /// the lead.
+    pub wave: WaveState,
+}
+
+/// The wave of the repository of the lead on the riff daemon of its
+/// machine, at one look ([`crate::wave::runs`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum WaveState {
+    /// The daemon runs no wave of the repository.
+    #[default]
+    None,
+    /// The daemon runs a wave of the repository.
+    Runs,
+    /// No daemon answers, for this reason.
+    NoDaemon(String),
 }
 
 /// The sessions that held the work claim `issue-N`, by the issue N
@@ -387,9 +416,11 @@ pub fn pick(places: &[Place]) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// The machine for one new worker, or `None` when riff starts none:
-/// the riff is paused, there is no free work, a worker is idle
-/// (01M3Q5QEJNP1JGQM7VXXEBJ9J9), or no machine has room.
+/// The machine with room for one more worker, or `None`: the riff is
+/// paused, there is no free work, a worker is idle
+/// (01M3Q5QEJNP1JGQM7VXXEBJ9J9), or no machine has room. The rollout
+/// starts no worker in tmux (01M53NGVE839TRH7XB7CDPQNZE): it uses this
+/// for the message of a higher limit while it is off ([`effect`]).
 ///
 /// ```
 /// use riff::rollout::{Place, View, decide};
@@ -406,6 +437,30 @@ pub fn decide(view: &View) -> Option<usize> {
         return None;
     }
     pick(&view.places)
+}
+
+/// True when the rollout asks the riff daemon to run the wave of the
+/// repository (01M53NGVE839TRH7XB7CDPQNZE, 01M5515CA4CZ6KV4ZD6Y0744Z7):
+/// the riff runs, free work is left that no idle worker takes, and no
+/// wave of the repository runs on the daemon. The places do not count:
+/// the limit of the containers is the limit of the daemon.
+///
+/// ```
+/// use riff::rollout::{View, WaveState, asks_wave};
+///
+/// let view = View { running: true, work: 2, ..View::default() };
+/// assert!(asks_wave(&view));
+/// assert!(!asks_wave(&View { wave: WaveState::Runs, ..view.clone() }));
+/// // No daemon answers: there is no daemon to ask.
+/// let gone = WaveState::NoDaemon("no riff daemon".into());
+/// assert!(!asks_wave(&View { wave: gone, ..view.clone() }));
+/// assert!(!asks_wave(&View { running: false, ..view.clone() }));
+/// assert!(!asks_wave(&View { work: 0, ..view.clone() }));
+/// // An idle worker takes the free work first.
+/// assert!(!asks_wave(&View { idle: 1, ..view }));
+/// ```
+pub fn asks_wave(view: &View) -> bool {
+    view.running && view.work > 0 && view.idle == 0 && view.wave == WaveState::None
 }
 
 /// An idle worker of the user of the lead that joined the riff. The
@@ -453,9 +508,8 @@ pub fn request(item: &str) -> String {
 /// it can be the author. A request is open until its
 /// worker claims or goes, or its item is no longer free. A worker that
 /// does not claim in [`offer_wait`] refused the item. It never gets that
-/// request again. It does not block the start of a new worker, when it
-/// has no other item to take. An item that two workers refused is no
-/// work for a start: so no loop of starts.
+/// request again. It does not count as idle, when it has no other item
+/// to take: so the item goes to the wave of the daemon ([`asks_wave`]).
 ///
 /// ```
 /// use std::time::{Duration, Instant};
@@ -471,13 +525,13 @@ pub fn request(item: &str) -> String {
 /// // No second request within the wait.
 /// assert_eq!(offers.plan(&view, t0 + Duration::from_secs(30), wait).0, []);
 /// // No claim in the wait: the worker refused the item. It does not
-/// // count as idle, so the rollout can start a worker.
+/// // count as idle, so the rollout can run the wave for the item.
 /// let (requests, seen) = offers.plan(&view, t0 + wait, wait);
 /// assert_eq!((requests, seen.idle, seen.work), (vec![], 0, 1));
 ///
 /// // w1 held issue-7 at a look. After its release and its `/clear`, it
 /// // is idle, and the verify of issue-7 waits: w1 gets no request for
-/// // it, and it does not count as idle, so a new worker starts.
+/// // it, and it does not count as idle, so the wave takes the verify.
 /// let held = View { authors: [(7, ["w1".to_owned()].into())].into(), ..View::default() };
 /// let mut offers = Offers::default();
 /// offers.plan(&held, t0, wait);
@@ -498,9 +552,8 @@ pub struct Offers {
 
 impl Offers {
     /// The new requests of this look `view` at `now`, as pairs of
-    /// worker and item, and the view for [`decide`]: an idle worker
-    /// with no request and no item to take is not idle, and an item
-    /// that two workers refused is no work.
+    /// worker and item, and the view for [`asks_wave`]: an idle worker
+    /// with no request and no item to take is not idle.
     pub fn plan(
         &mut self,
         view: &View,
@@ -545,10 +598,8 @@ impl Offers {
                 None => spent += 1,
             }
         }
-        let dead = self.refused.values().filter(|r| r.len() >= 2).count();
         let view = View {
             idle: view.idle.saturating_sub(spent),
-            work: view.work.saturating_sub(dead),
             ..view.clone()
         };
         (requests, view)
@@ -696,8 +747,6 @@ impl Seen {
 pub enum Effect {
     /// Nothing more than the change.
     Nothing,
-    /// The rollout starts one worker at this look because of the change.
-    Starts,
     /// Free work waits that the change lets start, and the rollout is
     /// off: the lead starts `count` workers. `remote` is true for a
     /// workers host.
@@ -719,8 +768,12 @@ impl Effect {
 /// What `change` does, with the `view` of the look that found it. `on`
 /// is true when the rollout is on (01M3X30R4PSBP3RQWM02BJ6GK3).
 ///
-/// A higher limit starts a worker when the rollout starts none with the
-/// old limit and one with the new limit. A lower limit stops no worker.
+/// While the rollout is off, a higher limit lets a person start a worker
+/// when no machine had room with the old limit, and one has room with
+/// the new limit. While it is on, a higher limit does nothing: the
+/// rollout starts no worker in tmux, and the wave of the daemon takes
+/// the free work (01M5515CCV7WNKVZVAMQ375J0M). A lower limit stops no
+/// worker.
 ///
 /// ```
 /// use riff::rollout::{Change, Effect, Place, View, effect};
@@ -737,15 +790,16 @@ impl Effect {
 /// };
 /// let view = View { running: true, work: 2, idle: 0, places: vec![pangolin], ..View::default() };
 /// let raise = Change::Limit { host: "pangolin".into(), old: 3, new: 4 };
-/// assert_eq!(effect(&raise, &view, true), Effect::Starts);
 /// assert_eq!(effect(&raise, &view, false), Effect::Waits { count: 1, remote: true });
+/// // The rollout is on: the wave of the daemon takes the free work.
+/// assert_eq!(effect(&raise, &view, true), Effect::Nothing);
 /// // No free work: the change starts nothing.
-/// assert_eq!(effect(&raise, &View { work: 0, ..view.clone() }, true), Effect::Nothing);
+/// assert_eq!(effect(&raise, &View { work: 0, ..view.clone() }, false), Effect::Nothing);
 /// // The machine had room before the change.
 /// let more = Change::Limit { host: "pangolin".into(), old: 4, new: 5 };
 /// let mut wide = view.clone();
 /// wide.places[0].limit = 5;
-/// assert_eq!(effect(&more, &wide, true), Effect::Nothing);
+/// assert_eq!(effect(&more, &wide, false), Effect::Nothing);
 /// let lower = Change::Limit { host: "pangolin".into(), old: 4, new: 2 };
 /// assert_eq!(effect(&lower, &view, true), Effect::Over(3));
 /// ```
@@ -766,11 +820,8 @@ pub fn effect(change: &Change, view: &View, on: bool) -> Effect {
     }
     let mut before = view.clone();
     before.places[i].limit = *old;
-    if decide(&before).is_some() || decide(view).is_none() {
+    if on || decide(&before).is_some() || decide(view).is_none() {
         return Effect::Nothing;
-    }
-    if on {
-        return Effect::Starts;
     }
     let room = usize::from(place.limit).saturating_sub(place.workers);
     Effect::Waits {
@@ -788,8 +839,9 @@ pub trait Env {
     fn seen(&self) -> impl Future<Output = Result<Option<Seen>>> + Send;
     /// One look, or `None` when this session is not the lead.
     fn look(&self) -> impl Future<Output = Result<Option<View>>> + Send;
-    /// Starts one worker on `place`.
-    fn start(&self, place: &Place) -> impl Future<Output = Result<()>> + Send;
+    /// Asks the riff daemon of this machine to run the wave of the
+    /// repository of the lead (01M53NGVE839TRH7XB7CDPQNZE).
+    fn run_wave(&self) -> impl Future<Output = Result<()>> + Send;
     /// Gives `body` to the lead: a message that wakes it when `wake` is
     /// true, else a note.
     fn tell(&self, body: &str, wake: bool) -> impl Future<Output = Result<()>> + Send;
@@ -799,24 +851,26 @@ pub trait Env {
 }
 
 /// Runs the rollout until the task ends. It waits one interval, looks,
-/// and starts at most one worker, again and again. So riff starts at
-/// most one worker each interval. It prints an error once, not again
-/// until the error changes.
+/// gives free work to the idle workers ([`Offers`]), and asks the riff
+/// daemon for the wave when free work is left ([`asks_wave`]), again and
+/// again. It starts no worker in tmux (01M53NGVE839TRH7XB7CDPQNZE). It
+/// prints an error once, not again until the error changes.
 ///
 /// At each look it tells the lead each change of a worker setting
 /// (01M3X30KHKB6W11C3NBAW7KCGW). A rollout that is off looks at the settings each
-/// [`OFF_WAIT`], and starts no worker.
+/// [`OFF_WAIT`], and asks for no wave.
 ///
-/// One look reads each limit one time, tells the changes, and then
-/// starts the worker ([`View::with_limits`], 01M3XFHSYJEN9V6QEKWJGJWQ8Q).
-/// So the note of a higher limit comes before the start that it names.
-///
-/// At each look of a running riff, it gives free work to the idle
-/// workers first ([`Offers`]), and then decides on a start.
+/// The lead gets a note for each ask of the wave, and one note for each
+/// new reason why the rollout cannot ask: no daemon answers, or the ask
+/// failed (01M5515CA4CZ6KV4ZD6Y0744Z7). A wave that runs, or an ask that
+/// works, lets the next reason give a note again.
 pub async fn run(env: impl Env) {
     let mut last_error = None;
     let mut known: Option<Seen> = None;
     let mut offers = Offers::default();
+    // The reason of the last note that the rollout cannot ask for the
+    // wave.
+    let mut no_wave: Option<String> = None;
     loop {
         let every = env.interval();
         tokio::time::sleep(if every.is_zero() { OFF_WAIT } else { every }).await;
@@ -826,6 +880,7 @@ pub async fn run(env: impl Env) {
                 return anyhow::Ok(());
             };
             let on = seen.interval > 0;
+            let host = seen.host.clone();
             let changed = known.as_ref().map(|k| k.changes(&seen)).unwrap_or_default();
             // One look uses each limit one time: a limit that changes
             // after `seen` has no effect before the next look.
@@ -858,12 +913,26 @@ pub async fn run(env: impl Env) {
                     return Err(e);
                 }
             }
-            if let Some(i) = decide(&view) {
-                env.start(&view.places[i]).await?;
-                eprintln!(
-                    "riff: the rollout started a worker on {}",
-                    view.places[i].host
-                );
+            let why = match &view.wave {
+                WaveState::Runs => {
+                    no_wave = None;
+                    return Ok(());
+                }
+                WaveState::NoDaemon(why) => why.clone(),
+                WaveState::None if asks_wave(&view) => match env.run_wave().await {
+                    Ok(()) => {
+                        no_wave = None;
+                        eprintln!("riff: the rollout asked the riff daemon to run the wave");
+                        return env.tell(&text::rollout_wave(&host, &view.repo), false).await;
+                    }
+                    Err(e) => format!("{e:#}"),
+                },
+                WaveState::None => return Ok(()),
+            };
+            if no_wave.as_ref() != Some(&why) {
+                env.tell(&text::rollout_no_wave(&host, &view.repo, &why), false)
+                    .await?;
+                no_wave = Some(why);
             }
             Ok(())
         };
@@ -1854,42 +1923,15 @@ pub fn free_work_of(
     work
 }
 
-/// The real world of the rollout: the riff, `gh`, and tmux.
+/// The real world of the rollout: the riff, `gh`, tmux and the riff
+/// daemon.
 pub struct Live<M> {
     pub api: Api,
     /// The session now: it can move.
     pub me: M,
     /// The tmux of the lead, if it runs in tmux.
     pub tmux: Option<Tmux>,
-    pub claude: PathBuf,
     pub gh: Arc<Gh>,
-    /// True when the lead has the note that riff is off in the main
-    /// clone of its machine (01M3YCGKKRDNFC338K1JSK30JK).
-    pub off_told: std::sync::atomic::AtomicBool,
-}
-
-impl<M: Fn() -> SessionUri + Send + Sync> Live<M> {
-    /// True when riff is on where a worker of this machine starts: the
-    /// main clone of the lead. When it is off, a worker there is a plain
-    /// session, so the machine of the lead is no place for a worker
-    /// (01M3XY2T542DCHBN95H9PX4AGQ), and the lead gets one note with
-    /// the reason (01M3YCGKKRDNFC338K1JSK30JK). The next note comes
-    /// only after riff was on again.
-    async fn on_here(&self, me: &SessionUri) -> Result<bool> {
-        use std::sync::atomic::Ordering;
-        let Some(why) = worker::off(&identity::working_dir()?) else {
-            self.off_told.store(false, Ordering::Relaxed);
-            return Ok(true);
-        };
-        if !self.off_told.swap(true, Ordering::Relaxed) {
-            let note = text::rollout_off(me.place().host(), &why);
-            if let Err(e) = note_lead(self.api.base(), me, &note).await {
-                self.off_told.store(false, Ordering::Relaxed);
-                return Err(e);
-            }
-        }
-        Ok(false)
-    }
 }
 
 impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
@@ -1950,9 +1992,13 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         let mut panes = Vec::new();
         let settings = settings::path()?;
         let limit = settings::workers_limit(&settings)?;
+        // A worker of this machine starts in the main clone: where riff
+        // is off there, the machine is no place for one
+        // (01M3XY2T542DCHBN95H9PX4AGQ).
+        let dir = identity::working_dir()?;
         if let Some(tmux) = &self.tmux
             && limit > 0
-            && self.on_here(&me).await?
+            && worker::off(&dir).is_none()
         {
             let here = tmux.worker_panes()?;
             places.push(Place {
@@ -1963,8 +2009,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 floor: settings::workers_floor(&settings)?,
                 deaths: crate::deaths::here(),
                 machine: Some(Machine::here()),
-                disk: identity::main_worktree(&identity::working_dir()?)
-                    .and_then(|main| Disk::here(&main)),
+                disk: identity::main_worktree(&dir).and_then(|main| Disk::here(&main)),
             });
             panes.extend(here);
         }
@@ -1990,14 +2035,25 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         let idle = idle(&sessions, &me, &panes);
         let idlers = idlers(&sessions, &me);
         let mut authors = holders(&sessions, &me);
-        // With no room and no idle worker to give work to, the free
-        // work changes nothing: no call of gh.
-        if !places.iter().any(Place::room) && idlers.is_empty() {
+        let repo = me.place().repo_text();
+        let wave = match crate::daemon::dir() {
+            Ok(dir) => match crate::daemon::status(&dir).await {
+                Ok(status) if crate::wave::runs(&status, &repo) => WaveState::Runs,
+                Ok(_) => WaveState::None,
+                Err(e) => WaveState::NoDaemon(format!("{e:#}")),
+            },
+            Err(e) => WaveState::NoDaemon(format!("{e:#}")),
+        };
+        // With no idle worker to give work to, and no wave to ask for,
+        // the free work changes nothing: no call of gh.
+        if idlers.is_empty() && wave != WaveState::None {
             return Ok(Some(View {
                 running: true,
                 idle,
                 places,
                 authors,
+                repo,
+                wave,
                 ..View::default()
             }));
         }
@@ -2007,9 +2063,9 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
             None => BTreeMap::new(),
         };
         let holds: HashSet<String> = holds.into_keys().collect();
-        let (gh, repo) = (self.gh.clone(), me.place().repo_text());
+        let (gh, of) = (self.gh.clone(), repo.clone());
         let work =
-            tokio::task::spawn_blocking(move || free_work(&gh, &repo, &claims, &holds)).await??;
+            tokio::task::spawn_blocking(move || free_work(&gh, &of, &claims, &holds)).await??;
         add(&mut authors, &work.authors);
         Ok(Some(View {
             running: true,
@@ -2019,44 +2075,19 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
             items: work.items,
             idlers,
             authors,
+            repo,
+            wave,
         }))
     }
 
-    async fn start(&self, place: &Place) -> Result<()> {
+    async fn run_wave(&self) -> Result<()> {
         let me = (self.me)();
-        match &place.session {
-            Some(host) => {
-                self.api
-                    .tell(&me, host, &Request::Start(1).to_string())
-                    .await?;
-            }
-            None => {
-                let Some(tmux) = &self.tmux else {
-                    bail!("the lead does not run in tmux");
-                };
-                let dir = identity::working_dir()?;
-                // The start runs git and tmux: keep them off the runtime.
-                let (tmux, claude, base) = (
-                    tmux.clone(),
-                    self.claude.clone(),
-                    self.api.base().to_owned(),
-                );
-                let started = tokio::task::spawn_blocking(move || {
-                    worker::start(&tmux, 1, &claude, &base, &dir)
-                })
-                .await??;
-                let started = match started {
-                    Ok(started) => started,
-                    Err(why) => bail!(why),
-                };
-                note_lead(
-                    self.api.base(),
-                    &me,
-                    &text::host_started(&place.host, &started),
-                )
-                .await?;
-            }
-        }
+        // `riff mcp` talks on its stdout: the lines of the steps go to
+        // its stderr.
+        crate::wave::ask(&crate::daemon::dir()?, me.place(), self.api.base(), |line| {
+            eprintln!("riff: {line}");
+        })
+        .await?;
         Ok(())
     }
 

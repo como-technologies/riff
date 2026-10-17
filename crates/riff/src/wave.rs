@@ -226,12 +226,26 @@ pub fn write_waves(dir: &Path, waves: &BTreeMap<String, Wave>) -> Result<()> {
 /// riff-server `server` (01M4ZV3B6J89KJQ0F14YWTZMJQ). An empty `server`
 /// is `riff wave run --peers`: the wave has no riff-server.
 pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
+    let repo = ask(dir, here, server, |line| println!("{line}")).await?;
+    println!("{}", text::wave_asked(&repo));
+    Ok(())
+}
+
+/// [`ask_run`] with each line of the steps to `show`, for a caller with
+/// no stdout of its own, as `riff mcp` (01M53NGVE839TRH7XB7CDPQNZE). It
+/// gives the repository, as `OWNER/REPO`.
+pub async fn ask(
+    dir: &Path,
+    here: &Place,
+    server: &str,
+    mut show: impl FnMut(&str),
+) -> Result<String> {
     if here.default_thread().is_none() {
         bail!("{}", text::RUN_NO_REPO);
     }
     let (main, _) = run::main_clone(&identity::working_dir()?)?;
     // The repository pins its session image: each session needs it.
-    session_image::merged(&main, |line| println!("{line}"))?;
+    session_image::merged(&main, &mut show)?;
     let repo = here.repo_text();
     let wave = Wave {
         repo: repo.clone(),
@@ -239,12 +253,24 @@ pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
         server: server.to_owned(),
         host: here.host().to_owned(),
     };
-    crate::daemon::ask_done(dir, crate::daemon::Ask::Wave { wave }, |line| {
-        println!("{line}");
-    })
-    .await?;
-    println!("{}", text::wave_asked(&repo));
-    Ok(())
+    crate::daemon::ask_done(dir, crate::daemon::Ask::Wave { wave }, show).await?;
+    Ok(repo)
+}
+
+/// True when the daemon of `status` runs the wave of `repo`
+/// (`OWNER/REPO`).
+///
+/// ```
+/// let status: riff::daemon::Status = serde_json::from_value(serde_json::json!({
+///     "pid": 7, "build": "3.0.0", "since_ms": 0, "dir": "/d", "sessions": [],
+///     "waves": [{"repo": "o/r", "word": "no work"}],
+/// }))?;
+/// assert!(riff::wave::runs(&status, "o/r"));
+/// assert!(!riff::wave::runs(&status, "o/other"));
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+pub fn runs(status: &crate::daemon::Status, repo: &str) -> bool {
+    status.waves.iter().any(|w| w.repo == repo)
 }
 
 /// `riff wave stop`: asks the daemon in the folder `dir` to start no new
