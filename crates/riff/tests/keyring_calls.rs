@@ -12,6 +12,7 @@
 //!   reads each secret at most one time. Only the refresh of the sign-in
 //!   reads it again, under its lock (01M54510PS9FDKQKJB0RAH3XG3).
 
+use crate::book;
 use crate::common;
 
 use std::io::Write;
@@ -215,7 +216,10 @@ async fn each_hook_event_that_does_not_talk_to_riff_server_calls_no_keyring() {
         (&["hook", "tool", "--done"], input(tool)),
         (&["hook", "prompt"], input(r#","prompt":"hi""#)),
         (&["hook", "stop"], input("")),
-        (&["hook", "usage", "--session", ID, "--before", "0"], String::new()),
+        (
+            &["hook", "usage", "--session", ID, "--before", "0"],
+            String::new(),
+        ),
     ];
     for (args, stdin) in events {
         let (pid, out) = machine.riff(&server, None, &stdin, args).await;
@@ -286,6 +290,25 @@ async fn only_the_refresh_reads_the_sign_in_again_under_its_lock() {
             format!("read {device_key}"),
         ]
     );
+}
+
+/// The book has a how-to with `sh` blocks to count the calls.
+#[test]
+fn the_book_has_a_how_to_to_count_the_calls_to_the_keyring() {
+    let page = book::page("development.md");
+    let heading = "### Count the calls to the keyring";
+    let start = page
+        .find(&format!("\n{heading}\n"))
+        .unwrap_or_else(|| panic!("the book has no {heading:?}"));
+    let how = &page[start + 1..];
+    let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
+    let commands = book::commands_in(how);
+    let run = "RIFF_KEYRING_LOG=/tmp/riff-keyring-calls riff whoami";
+    assert!(commands.iter().any(|c| c == run), "{how}");
+    book::each_is_real(&["riff whoami".to_owned()]);
+    assert!(commands.iter().any(|c| c.contains("OpenSession")), "{how}");
+    assert!(commands.iter().any(|c| c.contains("VmLck")), "{how}");
+    assert!(how.contains("```mermaid"), "{how}");
 }
 
 /// The log has no secret: only the names of the secrets.

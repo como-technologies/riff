@@ -3409,6 +3409,25 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   line and posts one note to the lead. While it stays locked, the host
   says no new line. When the keyring answers again, the host says one
   line, posts one note to the lead, and goes on with no new start.
+- **01M54510M36SZ1C3AE2C8DS585** `riff statusline` with a kept answer
+  (01M53TZ0RBSJQ9ZZRXKMBM5R3E), and each `riff hook` event that does
+  not talk to riff-server, make no call to the OS keyring.
+- **01M54510PS9FDKQKJB0RAH3XG3** A `riff` process opens the OS keyring
+  at most one time, and reads each secret at most one time. It keeps
+  the value for its later calls, and a write or a delete of the process
+  changes the kept value. Only the refresh of the sign-in reads it
+  again, under the refresh lock (R107).
+- **01M54510SFK1Z9VPFYBYYSV10F** The `gh` calls of one clean of the
+  worktrees (01M3ZV0TKSHNW5QC2NG1XTJEJB) share one token. riff reads
+  it with `gh auth token` at the first call, and gives it to each call
+  in `GH_TOKEN`: in the environment of `gh` only, never in a command
+  line or a file. A clean with no `gh` call reads no token. When the
+  environment has `GH_TOKEN` or `GITHUB_TOKEN`, riff reads no token.
+- **01M54510W507A3T5JRTZ55H0ZQ** When `RIFF_KEYRING_LOG` names a file,
+  `riff` adds one line to it for each call to the keyring store: the
+  process ID and `read NAME`, `write NAME` or `delete NAME`. The first
+  call of a process adds the line `open` before it. The lines hold no
+  value of a secret. It is for tests and checks.
 - **R22** `riff-server` follows the MCP authorization spec, revision
   2026-07-28. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R83** `riff-server` has no authorization endpoint for now. Its
