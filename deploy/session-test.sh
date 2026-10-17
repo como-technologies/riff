@@ -2,7 +2,8 @@
 # Runs the tests of crates/riff in a container of the session image that
 # riff.toml pins, as a session of `riff run` runs them
 # (01M51117NDKF11FNZ915TTQED4): with --init (01M51117K3WXK35CE67KPRFMA8),
-# as the user of this machine, with a home of its own, with USER and
+# as the user of this machine with an entry in the passwd and group
+# files of the container, with a home of its own, with USER and
 # LOGNAME (01M4Z60B7S8V9KKZPNBCQ6M99N), with the limits of a session
 # (01M4Z60B7XT7462XMV49GJTVSJ), and with the values of `just cargo-test`.
 #
@@ -49,9 +50,26 @@ if [ -z "$IMAGE" ]; then
 fi
 
 # The user of this machine, so the files in target/session are its own.
+# docker has no keep-id. So the container gets a passwd and a group file
+# with an entry for the user, as keep-id of podman gives one: D-Bus, for
+# example, refuses a user with no entry. Each run has new files in a new
+# folder of TMPDIR, so no run changes the files of a container that runs.
+# They stay there: exec leaves no step after the run.
 case "$ENGINE" in
 podman) user=(--userns=keep-id) ;;
-*) user=(--user "$(id -u):$(id -g)") ;;
+*)
+    ids=$(mktemp -d "${TMPDIR:-/tmp}/riff-session-ids.XXXXXX")
+    "$ENGINE" run --rm "$IMAGE" cat /etc/passwd >"$ids/passwd"
+    "$ENGINE" run --rm "$IMAGE" cat /etc/group >"$ids/group"
+    if ! cut -d: -f3 "$ids/passwd" | grep -qx "$(id -u)"; then
+        echo "$(id -un):x:$(id -u):$(id -g)::/tmp/home:/bin/bash" >>"$ids/passwd"
+    fi
+    if ! cut -d: -f3 "$ids/group" | grep -qx "$(id -g)"; then
+        echo "$(id -gn):x:$(id -g):" >>"$ids/group"
+    fi
+    user=(--user "$(id -u):$(id -g)"
+        -v "$ids/passwd:/etc/passwd:ro" -v "$ids/group:/etc/group:ro")
+    ;;
 esac
 
 ROOT="$PWD"

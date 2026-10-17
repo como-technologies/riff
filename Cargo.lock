@@ -4223,6 +4223,7 @@ dependencies = [
  "rmcp",
  "rustyline",
  "schemars",
+ "secret-service",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4232,6 +4233,7 @@ dependencies = [
  "toml_edit",
  "tower",
  "vt100",
+ "zbus-secret-service-keyring-store",
  "zeroize",
 ]
 
