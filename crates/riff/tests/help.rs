@@ -172,17 +172,23 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
 /// the riff daemon to run the wave when none runs.
 #[test]
 fn the_help_of_view_and_lead_start_says_what_they_do_in_riff_3() {
-    let view = riff(&["view", "--help"]);
-    assert!(view.contains("It shows no session of another"), "{view}");
+    // The words, with no line breaks of the wrap.
+    let words = |args: &[&str]| riff(args).split_whitespace().collect::<Vec<_>>().join(" ");
+    let view = words(&["view", "--help"]);
+    assert!(
+        view.contains("It shows no session of another machine."),
+        "{view}"
+    );
     for word in ["other machines", "offline"] {
         assert!(!view.contains(word), "riff view --help: {word}: {view}");
     }
-    let lead = riff(&["lead", "start", "--help"]);
+    let lead = words(&["lead", "start", "--help"]);
     assert!(
-        lead.contains("When no wave of this repository runs, riff first asks the riff"),
+        lead.contains(
+            "When no wave of this repository runs, riff first asks the riff daemon to run the wave"
+        ),
         "{lead}"
     );
-    assert!(lead.contains("daemon to run the wave"), "{lead}");
 }
 
 #[test]
