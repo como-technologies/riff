@@ -82,8 +82,17 @@ It has no Kotlin or Java source of the riff project.
 ## Pair a phone
 
 A phone is a device of a member, as a machine is. You pair your phone
-from a machine where you have a live sign-in. Then the phone signs in
+from a machine where you ran `riff login`. Then the phone signs in
 with Google, as `riff login` does.
+
+```sh
+riff phone add pixel
+```
+
+NAME is the name of the phone, for example `pixel`, as the host name of
+a machine. It is not a Google ID. It is optional: with no NAME, the
+name is `phone`. Your chat lines from the phone show as `USER@NAME`,
+and `riff phone remove NAME` uses it.
 
 ```mermaid
 sequenceDiagram
@@ -105,8 +114,9 @@ sequenceDiagram
     S-->>A: the tokens
 ```
 
-- `riff phone add NAME` runs in a terminal of your own. It refuses with
-  no terminal, so an agent session cannot pair a phone. It draws the QR
+- `riff phone add [NAME]` runs in a terminal of your own. It refuses
+  with no terminal, so an agent session cannot pair a phone. It draws
+  the QR
   code with [tui-qrcode](https://crates.io/crates/tui-qrcode), a
   Ratatui widget, and prints the code as text too. The code is in no
   URL, so no request line and no log of riff-server holds it.
@@ -119,9 +129,10 @@ sequenceDiagram
   one tap on the account sheet. It needs an Android OAuth client and a
   Web OAuth client of the riff. riff-server takes an ID token whose
   audience is that Web client.
-- riff-server takes the phone only when the Google account is the
-  person who made the code. Then it binds the tokens of the phone to
-  the key.
+- The person comes from the `riff login` of the terminal: riff-server
+  ties the code to that Google account. It takes the phone only when
+  the phone signs in with the same Google account. Then it binds the
+  tokens of the phone to the key.
 - The key is ECDSA P-256 in the Android Keystore, in StrongBox when the
   phone has it. It cannot leave the Keystore. The device key of a
   machine is P-256 too, so the sign-in proof (DPoP) stays the same.

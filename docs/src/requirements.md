@@ -4870,12 +4870,14 @@ items are #962, #963, #977, #964 and #965.
   views. It calls the parts of Android through JNI: the Keystore,
   Credential Manager, the camera and the notices.
 - **01M53NTR47XBDX6C6QN49RNP29** A person pairs a phone from a machine
-  with a live sign-in: `riff phone add NAME`, in a terminal. It
-  refuses with no terminal. riff-server makes a pair code for the user
-  that works one time, for 10 minutes, and keeps only its hash. The
-  command draws a QR code with `tui-qrcode` that holds the address of
-  riff-server and the code, and prints the code as text. The code is
-  in no URL.
+  with a live sign-in: `riff phone add [NAME]`, in a terminal. NAME is
+  the name of the phone, as the host name of a machine, and not a
+  Google ID. With no NAME, the name is `phone`. The command refuses
+  with no terminal. riff-server makes a pair code that works one time,
+  for 10 minutes, ties it to the Google account of the sign-in of the
+  terminal, and keeps only its hash. The command draws a QR code with
+  `tui-qrcode` that holds the address of riff-server and the code, and
+  prints the code as text. The code is in no URL.
 - **01M53WZ032G5W435GJMPVBHD71** The app reads the QR code with the
   camera, through the NDK camera API and the decoder `rqrr`. A typed
   code is the fallback.
@@ -4884,7 +4886,7 @@ items are #962, #963, #977, #964 and #965.
   the code, the name, the Google ID token and a DPoP proof of the key
   of the phone. The audience of the ID token is a Web OAuth client of
   the riff. riff-server makes the sign-in of the phone only when the
-  Google account is the person who made the code.
+  phone signs in with the Google account that the code is tied to.
 - **01M53NTR7D6145FSQ3WVZ1H52W** The app makes the device key in the
   Android Keystore: ECDSA P-256, not exportable, in StrongBox when the
   phone has it. The key never leaves the Keystore. riff-server binds
