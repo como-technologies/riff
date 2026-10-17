@@ -231,12 +231,13 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     );
     // A worker has no Remote Control (01M3JD394YFA3TQRE3E72ZER4Z), also
     // when the user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), no
-    // recap (01M3MN0D429T4Q80DYBE9S9XR7), and the auto mode settings
+    // recap (01M3MN0D429T4Q80DYBE9S9XR7), a deny of each write of `riff
+    // cloud` (01M558C4VZ2PSMEYPAZBRYW1VV), and the auto mode settings
     // (01M516HEX3GVTN9K2QS12A4PG3).
     assert!(!log.contains("remote-control"), "{log}");
     assert!(
         flags.starts_with(
-            r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]},"skillOverrides":{"auto-mode-setup":"off"},"autoMode":{"environment":["$defaults","#
+            r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud create)","Bash(riff cloud create *)","Bash(riff cloud signin)","Bash(riff cloud signin *)","Bash(riff cloud deploy)","Bash(riff cloud deploy *)","Bash(riff cloud delete)","Bash(riff cloud delete *)"]},"skillOverrides":{"auto-mode-setup":"off"},"autoMode":{"environment":["$defaults","#
         ),
         "{flags}"
     );

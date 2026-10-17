@@ -157,7 +157,12 @@ pub fn worker_settings(lsp: &[String], trust: &crate::permissions::Trust) -> Str
 fn cloud_writes() -> Vec<String> {
     crate::cloud::WRITES
         .iter()
-        .flat_map(|w| [format!("Bash(riff cloud {w})"), format!("Bash(riff cloud {w} *)")])
+        .flat_map(|w| {
+            [
+                format!("Bash(riff cloud {w})"),
+                format!("Bash(riff cloud {w} *)"),
+            ]
+        })
         .collect()
 }
 
