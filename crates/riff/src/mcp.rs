@@ -23,6 +23,10 @@
 //!     M->>S: end
 //! ```
 //!
+//! The register runs beside the MCP handshake, and each tool call waits
+//! for its end (01M5512RG2TTTS85VY8CEFF8R4). So a slow riff-server does
+//! not make the first answer late. See [`serve`].
+//!
 //! `riff mcp` looks for the lead mark of its session only after its
 //! register ends (01M3XM68N5M5DKB86W5079X2G9). A query makes the server
 //! know a session, and makes no lead. So a session in `who` with no

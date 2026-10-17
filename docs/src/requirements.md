@@ -4638,6 +4638,20 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   riff, and the fix is `/mcp`, then reconnect `riff`. The reconnect
   frees the claims of the session. A worker gets no line: it ends after
   its item (01M517BT9WBQ4R79Z9KVY9SG1B).
+- **01M5512RG2TTTS85VY8CEFF8R4** `riff mcp` answers the MCP handshake
+  at once. It does not wait for its `register` to riff-server: the
+  register runs beside the handshake, and each tool call waits for the
+  end of the register. The keep-alive and the other tasks of
+  `riff mcp` start after the register.
+- **01M5512RKABQ70QPGC48S5F67W** When the riff tools refuse the
+  `tools/list` of Claude Code, the session has no riff tools.
+  `riff mcp` then keeps a mark for its agent process, and removes it
+  after a list that works. While the mark is there, the SessionStart
+  hook gives the session one line at each start of a context, and the
+  PostToolUse hook gives it once for each mark. The line says to use
+  the riff commands with the Bash tool. It tells a worker to tell its
+  lead, and each other session to tell its user to reconnect riff in
+  `/mcp`.
 - **01M43F5KE7G2A2A9PSVRJPPNET** When the `riff mcp` of a session
   ended and the session goes on, the status line of the session and
   each end of `riff watch` say it in one line, with the fix: reconnect
