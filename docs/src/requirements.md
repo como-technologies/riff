@@ -5458,9 +5458,11 @@ part when they merge.
 - **01M4ZHW22F8HE2E1WDSTNDJW4H** The daemon runs one command at a time.
   The records of a command are in its log before the command gets its
   reply. When a write of the log fails for good, each next command
-  fails until the daemon starts again.
+  fails until the daemon starts again. Superseded by the re-cut
+  (01M53NGW3FR555TWP8Z8HHRVDJ).
 - **01M4ZHW24JZZXM3JJXG3PRJS7N** `riff daemon status` also shows the ID
-  of the riff of the daemon and the position of its log.
+  of the riff of the daemon and the position of its log. Superseded by
+  the re-cut (01M53NGW3FR555TWP8Z8HHRVDJ, 01M53NGW6F5HP1DZ9QRGP50MGT).
 - **01M4ZDTW25YV0GMMVGWN6JTJC5** Until `riff relay` (#717), the input
   and the events of a session go through the `podman run` of the
   daemon. At a stop of the daemon they end: `claude` ends after its
@@ -6148,14 +6150,17 @@ part when they merge.
 ### Data and peers
 
 - **01M4Z60B8AFV68ZSAFA540G73C** The state machine of riff-server
-  becomes a library in the daemon.
+  becomes a library in the daemon. Superseded by the re-cut
+  (01M53NGW3FR555TWP8Z8HHRVDJ).
 - **01M4ZHW1Y1X21ZPV053D0CXWMC** The crate `riff-state` is the state
   machine: the state and its commands, the log and its replay, the
   checkpoints and the stores. It does no HTTP and knows no sign-in.
   riff-server 1.x and the riff daemon use it. Its log and its
   checkpoints have the format of riff-server: the format tests of
   riff-server check the fixtures of each release against it.
-  Superseded in part by Wave C (01M51R8GAE5E6ZKD4PSNJYGGMW).
+  Superseded in part by Wave C (01M51R8GAE5E6ZKD4PSNJYGGMW). Superseded
+  in part by the re-cut (01M53NGW3FR555TWP8Z8HHRVDJ). Only riff-server
+  uses it.
 - **01M4Z60B8BHAR9GHCC0M7V7CV5** The log has the shape of peer to peer:
   each author has an append-only signed log, and each type of record has
   one writer. A message or a status: its author. The plan and the waves:
@@ -7028,7 +7033,8 @@ items of Wave C that end riff-server in the Backlog
 - **01M4Z60B8K4C6DHFAKNCAWR91S** The daemon checks each peer and each
   record: iroh checks the node key, each record carries the signature of
   its author, and the daemon checks the size and the type of each
-  message before it applies it.
+  message before it applies it. Superseded by the re-cut
+  (01M53NGW3FR555TWP8Z8HHRVDJ).
 - **01M4Z60B8KDXD190RWC7D184Q3** No secret goes into a log line, a
   message or a file of a clone. riff builds no shell string from input.
   CI keeps `clippy -D warnings` and `cargo audit`.
