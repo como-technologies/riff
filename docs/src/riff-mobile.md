@@ -1,9 +1,9 @@
 # riff on a phone
 
-This page is the design of the phone app (#951): the riff chat on a
-phone. The build items come after Mike signs off the design. Until
-then, `riff --help` does not show `riff phone`, and riff-server serves
-no app. The
+This page is the design of the phone app (#951): the riff chat on an
+Android phone. The build items come after Mike signs off the design.
+Until then, `riff --help` does not show `riff phone`, and no release
+has the app. The
 [requirements of the phone app](requirements.md#the-phone-app) hold
 each decision.
 
@@ -26,48 +26,51 @@ own lead today, use Remote Control: see
 
 riff-server stays in riff 3.0 (#953). So the phone reaches the chat
 through riff-server over HTTPS, on riff 1.x and on riff 3.0.
-riff-server also serves the app.
 
 ```mermaid
 flowchart LR
-    subgraph P["your phone"]
-        A["the web app<br/>its key in WebCrypto"]
-        W["its service worker"]
+    subgraph P["your Android phone"]
+        U["the shell: Kotlin and Jetpack Compose<br/>the Keystore, the camera, the notices"]
+        R["the core: Rust, the crate riff-phone"]
+        U <-- "UniFFI" --> R
     end
     subgraph M["your machine"]
         C["riff chat"]
         L["your lead"]
     end
-    A -- "HTTPS: read, tail, post" --> S["riff-server<br/>/app and the API"]
+    R -- "HTTPS: read, tail, post" --> S["riff-server"]
     C -- "HTTPS" --> S
     L -- "HTTPS" --> S
-    S -- "Web Push" --> X["the push service of<br/>Apple, Google or Mozilla"]
-    X -- "a line names you" --> W
-    W -- "read the line" --> S
+    S -- "a line names you" --> F["Firebase Cloud Messaging"]
+    F -- "a data message" --> U
 ```
 
-The app uses the calls of `riff chat`: it joins the thread `chat`,
-reads its history, follows it with `/v1/tail`, and posts. It is a
-person, as `riff chat` is. It is not a session.
+- The core is Rust. It makes each call to riff-server, the DPoP proofs
+  and the signatures, and the parse of `@lead` and `@USER`, with the
+  code of riff-core. So the app and `riff chat` cannot differ.
+- The shell is Kotlin and Jetpack Compose. It draws the screens, and
+  it holds the parts of Android: the Keystore, the camera, Firebase
+  Cloud Messaging (FCM) and the notices. No part of the app draws in a
+  web view.
+- The app uses the calls of `riff chat`: it joins the thread `chat`,
+  reads its history, follows it with `/v1/tail`, and posts. It is a
+  person, as `riff chat` is. It is not a session.
 
 ## The platform
 
-| | Native: iOS and Android | A shared Rust core with native screens | A web app from riff-server |
-|---|---|---|---|
-| Code | Swift and Kotlin: two apps | riff-core in Rust for both, through bindings, and two thin apps for the screens | HTML and JavaScript: one app |
-| Cost | The most: each feature two times | Less: the logic one time, the screens two times | The least |
-| Store and account | The App Store (the Apple Developer Program: 99 USD each year, and a review) and Google Play (25 USD one time, and a review) | The same | None |
-| Notices | APNs, with a key of the Apple account on the sender, and FCM, with a Firebase project | The same | Web Push: a VAPID key on the sender, and no account. On iOS 16.4 or later, only from the Home Screen |
-| The key | In the Secure Enclave or the Android Keystore | The same | In WebCrypto: not extractable, in the storage of the app |
-| iroh | iroh is Rust, so it builds for iOS and Android. iOS stops an app in the background, so the app has no link while it sleeps | The same, in the core | In a browser, iroh runs as WebAssembly, only through the relays of n0 |
+Mike asked for an app in Rust, with no web app, and for Android only.
+The options, with the facts and their links, are in
+[the comparison on #951](https://github.com/como-technologies/riff/issues/951#issuecomment-6227996939):
 
-The first app is a web app that riff-server serves at `/app`. It works
-in Safari on iOS 16.4 or later from the Home Screen, and in Chrome on
-Android. It comes from the same origin as the API. So it needs no
-CORS, and it always has the build of its own riff-server: riff-server
-refuses a client of an old release line. A native app with a shared
-Rust core can come later. #958 can need it: see
-[What the phone needs from #958](#what-the-phone-needs-from-958).
+| | A Rust core with a native shell (UniFFI) | An app all in Rust (Slint, Makepad, egui) | A Rust UI in a web view (Dioxus, Tauri 2) |
+|---|---|---|---|
+| Draws in a web view | No | No | Yes |
+| Android today | Yes: Firefox for Android uses UniFFI | Slint and Makepad: yes. egui: the soft keyboard does not open | Yes |
+| Push, camera, Keystore | Plain Android code in the shell | No API: the team writes JNI code | Tauri: plugins, but no remote push |
+| iroh | iroh-ffi uses UniFFI | Rust: yes | Rust: yes |
+
+The app is a Rust core with a thin native shell. UniFFI makes the
+Kotlin bindings of the core. It runs on Android 10 or later.
 
 ## Pair a phone
 
@@ -84,9 +87,9 @@ sequenceDiagram
     P->>M: riff phone add pixel
     M->>S: ask for a pair code, with your sign-in
     S-->>M: the code: one time, 10 minutes
-    M-->>P: a QR code of /app#pair=CODE
+    M-->>P: a QR code: the address of riff-server and the code
     P->>A: scan the QR code
-    A->>A: make a P-256 key that cannot be exported
+    A->>A: make a P-256 key in the Keystore
     A->>S: the code, the name and the key (DPoP)
     S->>S: a new sign-in of you, bound to the key, host pixel
     S-->>A: the tokens
@@ -94,22 +97,28 @@ sequenceDiagram
 
 - `riff phone add NAME` runs in a terminal of your own. It refuses with
   no terminal, so an agent session cannot pair a phone.
-- The code is in the fragment of the link, after `#`. So no request
-  line and no log of riff-server holds it. riff-server keeps only its
-  hash.
-- The key never leaves the phone. The sign-in of the phone is bound to
-  the key, as the sign-in of `riff login` is bound to the device key of
-  a machine. Each call has a DPoP proof of the key.
+- The command prints the code as text too. The code is in no URL, so
+  no request line and no log of riff-server holds it. riff-server
+  keeps only its hash.
+- The key is ECDSA P-256 in the Android Keystore, in StrongBox when the
+  phone has it. It cannot leave the Keystore. The core asks the shell
+  to sign. The sign-in of the phone is bound to the key, as the sign-in
+  of `riff login` is bound to the device key of a machine. Each call
+  has a DPoP proof of the key.
 - Your lines from the phone show as `<USER@NAME>`, for example
   `<mike@pixel>`. riff-server sets the host from the name of the pair.
+  It refuses a name that is the host of a machine or of another phone
+  of yours, so a line of the phone cannot look like a line of a
+  machine.
 - The token of a phone acts only on the thread `chat` and on the
   notices of the phone. A phone cannot claim, pause, invite or read
   another thread. So a lost phone cannot do a step of a lead or of an
   admin.
 - A sign-in ends after 30 days with no refresh, as each sign-in does.
   Then pair the phone again.
-- The app keeps no text of a message on the phone: only its key, its
-  tokens and the number of the last line that it showed.
+- The app keeps no text of a message in its storage: only the alias of
+  its key, its tokens and the number of the last line that it showed.
+  A key of the Keystore encrypts the tokens.
 
 ## A lost phone
 
@@ -126,30 +135,43 @@ An admin ends the phone of another person with `--user`.
 the person. When you clear the data of the app, its key goes. Then
 pair the phone again.
 
+## Install the app
+
+Each release of riff attaches `riff-phone.apk`, of the same build as
+riff and riff-server. The release key of the riff project signs it.
+You install it by hand: Android asks you to allow the install.
+
+- The app sends its build, as each client of riff does. When
+  riff-server refuses its release line, the app says to install the
+  APK of the release of riff-server.
+- From 2027, Android installs an app from outside Google Play only
+  from a verified developer: see
+  [developer verification](https://developer.android.com/developer-verification).
+  Then the riff project uses a free account of "limited distribution",
+  for up to 20 devices: see
+  [the FAQ](https://developer.android.com/developer-verification/guides/faq).
+- Google Play can come later. It costs 25 USD one time.
+
 ## The notices
 
-A notice on a phone needs the push service of its browser: Apple for
-Safari, Google for Chrome, Mozilla for Firefox. riff-server sends each
-push with Web Push (RFC 8030), signed with its VAPID key (RFC 8292).
-The VAPID key is a P-256 key in Secret Manager. Web Push needs no
-account at Apple or Google. A native app needs more: an account of the
-Apple Developer Program and an APNs key on the sender, or a Firebase
-project for FCM.
-
-Mike keeps riff-server in riff 3.0 (#953), so riff-server sends the
-notices. The "no cloud" of Wave C (#879) does not stop them.
+riff-server sends each notice through Firebase Cloud Messaging (FCM).
+FCM is free. Firebase is on in the Google Cloud project of riff-server
+(`como-riff`). riff-server sends with the FCM HTTP v1 API and its Cloud
+Run service identity, so it needs no key file. Mike keeps riff-server
+in riff 3.0 (#953), so riff-server sends the notices. The "no cloud"
+of Wave C (#879) does not stop them.
 
 ```mermaid
 sequenceDiagram
     participant B as riff chat (brett)
     participant S as riff-server
     participant L as the lead of mike
-    participant X as the push service
+    participant F as FCM
     participant W as the app of mike
     B->>S: @mike can I take #14? (to user=mike, lead=true)
     S-->>L: wake
-    S->>X: push: chat, line 812 (encrypted)
-    X-->>W: push
+    S->>F: a data message: chat, line 812
+    F-->>W: the data message
     W->>S: read line 812
     W-->>W: notice: brett@heron: @mike can I take #14?
 ```
@@ -164,26 +186,31 @@ Your own lines give no notice. riff-server finds the lines from the
 `to`, the sender and the lead mark. It does not read the body: the
 client makes the selector `user=USER, lead=true` from `@USER`.
 
-- The push holds only the thread and the number of the line, encrypted
-  for the phone (RFC 8291). The app reads the line from riff-server,
-  then shows the sender and the line.
-- You turn the notices on and off in the app. The phone asks for your
+- The push is a data message with high priority. It holds only the
+  thread and the number of the line. The app reads the line from
+  riff-server, then shows the sender and the line.
+- You turn the notices on and off in the app. Android asks for your
   consent the first time.
-- When the push service says that a subscription is gone (404 or 410),
+- When FCM says that the token of a phone is not registered,
   riff-server deletes it. A push never delays a post.
+- The APK holds the Firebase config of `como-riff`. A riff-server in
+  another Google Cloud project sends notices only to an APK that is
+  built with its own Firebase config.
+- A phone with no Google Play services gets no notice. The chat works.
+  UnifiedPush can come later.
 
 ## What others can see
 
 | Who | What it sees |
 |---|---|
-| riff-server and the Google Cloud project `como-riff` | Each line in clear text, until #958. The name of the phone, its public key, its subscription, and the time of each call |
-| The push service of Apple, Google or Mozilla | The subscription of the phone, and the time and the size of each push. The push is encrypted for the phone, and holds no text of a line |
+| riff-server and the Google Cloud project `como-riff` | Each line in clear text, until #958. The name of the phone, its public key, its FCM token, and the time of each call |
+| Google, through FCM and Google Play services | The FCM token of the phone, and the time and the size of each push. A push holds the thread and the number of a line, and no text |
 | Google sign-in | Nothing: the phone does not sign in with Google |
 | n0 | Nothing: the app uses no iroh |
 | The model provider of each agent session | Each chat line that a lead reads, as today |
 
-The app calls no other service: no analytics, no crash report and no
-CDN.
+The app calls only riff-server, and FCM through the Firebase Messaging
+library. It has no analytics and no crash report.
 
 ## What the phone needs from #958
 
@@ -194,16 +221,31 @@ more device that needs a key. This design leaves the key choices to
 - The pair is the step where a machine of the person admits the new
   phone. #958 can admit the encryption key of the phone in the same
   step.
+- The Rust core can hold the encryption of #958, with the same crates
+  as the CLI.
 - The push holds no text already. The rule of the notices reads only
   the `to`, the sender and the lead mark. #958 must leave them in clear
   text, or give riff-server another way to find a line that names a
   person.
-- The web app comes from riff-server. So riff-server can change the
-  code of the app, and that code can use each key of the app. If #958
-  does not trust riff-server, the phone needs a native app whose code
-  a store signs.
+- The release key of the riff project signs the app, so riff-server
+  cannot change its code.
 - Today a new phone reads the kept history of the chat. #958 decides
   whether a new device can read the old lines.
+
+## An iPhone app
+
+The riff project makes no iPhone app. riff is open source, so another
+person can make one. It needs:
+
+- the Apple Developer Program, 99 USD each year: a free account cannot
+  use push;
+- a shell in Swift and SwiftUI over the same Rust core: UniFFI makes
+  Swift bindings too;
+- the key in the Secure Enclave, which keeps P-256 keys;
+- a Notification Service Extension in Swift, to show a push with no
+  text;
+- an APNs key on riff-server, or in Firebase;
+- a Mac to build the app.
 
 ## If a later release removes riff-server
 
@@ -213,11 +255,10 @@ path:
 - The phone talks over iroh to a daemon of its user, as a client of
   that daemon. It is no peer of the riff: a phone sleeps, and holds no
   copy of the records.
-- That daemon pairs the phone, and sends the notices with Web Push. Web
-  Push needs no account, so a daemon can send it.
-- In a browser, iroh runs only through the relays of n0. Then n0 sees
-  the address of the phone and the time of each link, but no line:
-  iroh encrypts each link.
+- n0 supports iroh on Android, and iroh-ffi uses UniFFI. So the core
+  can hold iroh.
+- That daemon pairs the phone. That release chooses how a notice
+  reaches the phone, for example FCM or UnifiedPush.
 
 ## The build items
 
@@ -227,9 +268,10 @@ this design, in this order:
 | Item | What | Needs |
 |---|---|---|
 | #962 | `riff phone add`, `riff phone list` and `riff phone remove`: pair a phone, and end its sign-in | None |
-| #963 | riff-server serves the web app of the chat at `/app` | #962 |
-| #964 | The notices, with Web Push | #963 |
-| #965 | The live check: Mike pairs his phone, chats, gets a notice and removes the phone | #964 |
+| #963 | The Rust core: the crate `riff-phone`, with UniFFI bindings for Kotlin | #962 |
+| #977 | The Android app: the Jetpack Compose shell, the key in the Keystore, the APK in each release | #963 |
+| #964 | The notices, with FCM | #977 |
+| #965 | The live check: Mike installs the APK, pairs, chats, gets a notice and removes the phone | #964 |
 
 The items need no item of #953. So they fit on the line 1.x and on
 riff 3.0. The lead puts them in the waves.
