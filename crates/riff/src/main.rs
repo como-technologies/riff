@@ -1313,6 +1313,14 @@ enum DaemonCommand {
         #[arg(long, value_name = "GB")]
         floor: Option<u64>,
     },
+    /// Remove the folders of the sessions whose work is over, now
+    ///
+    /// The daemon does it by itself at its start and each 10 minutes.
+    /// It removes the folder of each session that does not run, when the
+    /// pull request of its branch merged or closed, or when its issue is
+    /// closed and its branch has no pull request. It prints each folder
+    /// that it removed, with the reason.
+    Sweep,
 }
 
 #[derive(Subcommand)]
@@ -2806,6 +2814,7 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
             println!("{}", riff::text::daemon_limit(&limit));
             Ok(())
         }
+        Some(DaemonCommand::Sweep) => riff::daemon::ask_sweep(&riff::daemon::dir()?).await,
     }
 }
 

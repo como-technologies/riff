@@ -17,7 +17,7 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     A["wait for room (crate::room)"] --> S["sweep: the clone of each merged item goes"]
+//!     A["wait for room (crate::room)"] --> S["sweep: the clone of each item whose work is over goes"]
 //!     S --> L["look: the pause, the claims, the holds,<br/>the free work of gh, the Gate of each waiting pull request"]
 //!     L --> P{"pick"}
 //!     P -- "no work" --> W["give the room back; wait for an end, or LOOK_EVERY"] --> A
@@ -69,13 +69,15 @@
 //!
 //! # The clones
 //!
-//! The clone of a build stays until the merge of its pull request
-//! (01M4Z81ARSTAK8HR96S084SDFD). At each look, the sweep removes the
-//! folder of each session of the repository that does not run, when the
-//! pull request of its branch merged. For a pull request with
-//! `Refs #N`, it first adds the comment `Merged in #PR (COMMIT)` to the
-//! issue, as the verifier of a worker does, so the item is not free work
-//! again. The folder of a verify that did not pass goes at its end.
+//! The clone of a build stays until the work of its branch is over
+//! (01M4Z81ARSTAK8HR96S084SDFD). Before each look, the sweep of the
+//! daemon removes the folder of each session of the repository that does
+//! not run, when the pull request of its branch merged or closed, or its
+//! issue is closed ([`crate::daemon::sweep`], 01M53NJ5V27BCHDNHK2THQQZZQ).
+//! For a merged pull request with `Refs #N`, it first adds the comment
+//! `Merged in #PR (COMMIT)` to the issue, as the verifier of a worker
+//! does, so the item is not free work again. The folder of a verify that
+//! did not pass goes at its end. The daemon also sweeps with no wave.
 //!
 //! # The world
 //!
@@ -124,6 +126,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::api::{self, Api};
+use crate::daemon::sweep::{self, Fate};
 use crate::daemon::{Daemon, Ended, Out, Record, Say, Start};
 use crate::pr::Verdict;
 use crate::room::Slot;
@@ -438,9 +441,19 @@ pub trait World: Send + Sync {
     fn finish<'a>(&'a self, record: &'a Record, ended: Ended)
     -> BoxFuture<'a, Result<Vec<String>>>;
 
-    /// Removes the folder of each session of the wave whose item merged.
-    /// `keep` names the folders of the sessions that run.
-    fn sweep<'a>(&'a self, wave: &'a Wave, keep: &'a [PathBuf]) -> BoxFuture<'a, Result<()>>;
+    /// The fate of the folder of a session of the issue `issue` of the
+    /// repository `repo`, from the forge ([`Fate::of`]).
+    fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>>;
+
+    /// Adds the comment `Merged in #PULL (COMMIT)` to the issue `issue` of
+    /// `repo`, when it has none ([`crate::daemon::sweep`]).
+    fn merged_in<'a>(
+        &'a self,
+        repo: &'a str,
+        issue: u64,
+        pull: u64,
+        commit: &'a str,
+    ) -> BoxFuture<'a, Result<()>>;
 
     /// Tells the lead of the wave `body`, as a message.
     fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, ()>;
@@ -506,9 +519,8 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 continue;
             }
         };
-        let keep: Vec<PathBuf> = daemon.records().into_iter().map(|r| r.folder).collect();
-        if let Err(e) = world.sweep(&wave, &keep).await {
-            eprintln!("riff daemon: {}: {e:#}", wave.repo);
+        for line in daemon.sweep(Some(&wave.repo)).await {
+            println!("{line}");
         }
         let next = match world.look(&wave).await {
             Ok(look) => {
@@ -638,6 +650,8 @@ async fn start_job<R: Runtime + 'static>(
     image: Option<&str>,
     follower: Option<Follower>,
 ) -> Result<Option<(Record, Ended)>> {
+    // The sweep keeps the folder from before the clone on.
+    let _starting = daemon.starting(&work.item());
     let world = daemon.world_of(&wave.server)?;
     let image = match image {
         Some(image) => image.to_owned(),
@@ -1161,111 +1175,6 @@ fn clone_at(main: &Path, clone: &Path, commit: &str) -> Result<()> {
     Ok(())
 }
 
-/// A pull request as `gh pr view --json number,state,body,mergeCommit`
-/// gives it.
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Merged {
-    number: u64,
-    state: String,
-    body: String,
-    #[serde(default)]
-    merge_commit: Option<Oid>,
-}
-
-/// A commit, as `gh` gives it.
-#[derive(Debug, Deserialize)]
-struct Oid {
-    oid: String,
-}
-
-/// The comments of an issue, as `gh issue view --json comments` gives
-/// them.
-#[derive(Debug, Deserialize)]
-struct Comments {
-    comments: Vec<rollout::Comment>,
-}
-
-/// The work item of the folder `name` of a session: `ITEM-ID8`.
-///
-/// ```
-/// assert_eq!(riff::wave::item_of_folder("issue-12-1a2b3c4d"), Some("issue-12"));
-/// assert_eq!(riff::wave::item_of_folder("verify-issue-12-1a2b3c4d"), Some("verify-issue-12"));
-/// assert_eq!(riff::wave::item_of_folder("other"), None);
-/// ```
-pub fn item_of_folder(name: &str) -> Option<&str> {
-    let (item, id) = name.rsplit_once('-')?;
-    (id.len() == 8 && id.chars().all(|c| c.is_ascii_hexdigit())).then_some(item)
-}
-
-/// Sweeps the folder `folder` of a session of the repository `repo` that
-/// does not run: see "The clones" in the design.
-fn sweep_folder(repo: &str, folder: &Path) -> Result<()> {
-    let Some(name) = folder.file_name().and_then(|n| n.to_str()) else {
-        return Ok(());
-    };
-    let Some(item) = item_of_folder(name) else {
-        return Ok(());
-    };
-    let (verify, issue) = match verify_issue(item) {
-        Some(issue) => (true, issue),
-        None => match item.strip_prefix("issue-").and_then(|n| n.parse().ok()) {
-            Some(issue) => (false, issue),
-            None => return Ok(()),
-        },
-    };
-    let clone = folder.join("clone");
-    let origin = run::output("git", &clone, &["remote", "get-url", "origin"]).ok();
-    let theirs = origin
-        .as_deref()
-        .and_then(identity::parse_remote)
-        .map(|(owner, name)| format!("{owner}/{name}"));
-    if theirs.as_deref() != Some(repo) {
-        return Ok(());
-    }
-    let gh = pr::Gh::for_repo(repo);
-    let Ok(pull) = gh.json::<Merged>(&[
-        "pr",
-        "view",
-        &branch_of(issue),
-        "--json",
-        "number,state,body,mergeCommit",
-    ]) else {
-        return Ok(());
-    };
-    match pull.state.as_str() {
-        "MERGED" => {
-            let refs = format!("Refs #{issue}");
-            if pull.body.lines().any(|l| l.trim() == refs) {
-                let comments: Comments =
-                    gh.json(&["issue", "view", &issue.to_string(), "--json", "comments"])?;
-                let said = format!("Merged in #{}", pull.number);
-                if !comments
-                    .comments
-                    .iter()
-                    .any(|c| c.body.trim_start().starts_with(&said))
-                {
-                    let commit = pull.merge_commit.map(|c| c.oid).unwrap_or_default();
-                    let body = text::wave_merged(pull.number, &commit);
-                    gh.run(
-                        &["issue", "comment", &issue.to_string(), "--body-file", "-"],
-                        Some(&body),
-                    )?;
-                }
-            }
-            std::fs::remove_dir_all(folder)
-                .with_context(|| format!("cannot remove {}", folder.display()))?;
-            println!("{}", text::wave_swept(item, folder));
-        }
-        "CLOSED" if verify => {
-            std::fs::remove_dir_all(folder)
-                .with_context(|| format!("cannot remove {}", folder.display()))?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
 /// The free work of the repository `repo` with `gh`, with the items that
 /// a session claims (`claims`) and the held items (`holds`): the items,
 /// and the pull request of each verify among them, with the Gate of its
@@ -1429,28 +1338,22 @@ impl World for Live {
         })
     }
 
-    fn sweep<'a>(&'a self, wave: &'a Wave, keep: &'a [PathBuf]) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            let dir = run::sessions_dir()?;
-            let keep = keep.to_vec();
-            let repo = wave.repo.clone();
-            blocking(move || {
-                let Ok(entries) = std::fs::read_dir(&dir) else {
-                    return Ok(());
-                };
-                for entry in entries.flatten() {
-                    let folder = entry.path();
-                    if keep.contains(&folder) || !folder.is_dir() {
-                        continue;
-                    }
-                    if let Err(e) = sweep_folder(&repo, &folder) {
-                        eprintln!("riff daemon: {e:#}");
-                    }
-                }
-                Ok(())
-            })
-            .await
-        })
+    fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>> {
+        let gh = pr::Gh::for_repo(repo);
+        Box::pin(blocking(move || sweep::fate_on(&gh, issue)))
+    }
+
+    fn merged_in<'a>(
+        &'a self,
+        repo: &'a str,
+        issue: u64,
+        pull: u64,
+        commit: &'a str,
+    ) -> BoxFuture<'a, Result<()>> {
+        let (gh, commit) = (pr::Gh::for_repo(repo), commit.to_owned());
+        Box::pin(blocking(move || {
+            sweep::merged_in_on(&gh, issue, pull, &commit)
+        }))
     }
 
     fn leave<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, ()> {
@@ -1673,7 +1576,17 @@ mod tests {
             })
         }
 
-        fn sweep<'a>(&'a self, _: &'a Wave, _: &'a [PathBuf]) -> BoxFuture<'a, Result<()>> {
+        fn fate<'a>(&'a self, _: &'a str, _: u64) -> BoxFuture<'a, Result<Fate>> {
+            Box::pin(async { Ok(Fate::Stays) })
+        }
+
+        fn merged_in<'a>(
+            &'a self,
+            _: &'a str,
+            _: u64,
+            _: u64,
+            _: &'a str,
+        ) -> BoxFuture<'a, Result<()>> {
             Box::pin(async { Ok(()) })
         }
 
