@@ -5194,9 +5194,13 @@ part when they merge.
   `riff-server` of the lines 1 and 3 talk, in both directions, from
   riff 1.8.2 and riff 3.0.0. The same line and the line before still
   talk (01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK). Each
-  other pair is refused. riff 1.8.2 releases from v1.8.1 on the branch
-  `release/1.8`, before riff 3.0.0. riff-server 1.8.2 still uses no
-  checkpoint of the line 3 (01M4YNCEMNRCAXD37V03T4JQYR).
+  other pair is refused. On the side of the server, riff-server of the
+  line 3 takes a `riff` of the line 1 only from 1.8.2. It refuses an
+  older `riff` of the line 1 with 409 and the step to update riff,
+  before the call takes effect. The check of `riff` does not change.
+  riff 1.8.2 releases from v1.8.1 on the branch `release/1.8`, before
+  riff 3.0.0. riff-server 1.8.2 still uses no checkpoint of the line 3
+  (01M4YNCEMNRCAXD37V03T4JQYR).
 - **01M53NGW0DWJ075C4MDP06WAGS** riff 3.0.0 removes the riff of peers of
   Wave B (#803), with its code, its tests and its book text (#959). No
   cargo feature and no flag keeps it. Its items wait in the Backlog:

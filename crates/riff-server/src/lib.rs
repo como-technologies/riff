@@ -2025,7 +2025,7 @@ impl Service {
             // The facts answer also while the gate replies 503, and to a
             // `riff` of each version (01M3TJWJ12WEDCXW3W0529KRP2).
             .merge(facts)
-            .layer(middleware::from_fn(stamp_build))
+            .layer(middleware::from_fn_with_state(self.0.clone(), stamp_build))
             .with_state(self.0.clone())
     }
 
@@ -2894,13 +2894,15 @@ fn closed(mut reply: Response, whole: bool) -> Response {
 /// the line `denied` and the code `old_build` (01M3X4Z64ZNRD0G0F4JV1M64FN). A `riff`
 /// of the line of this server, of the line before, or of the other line
 /// of the bridge, goes on (01M3MX1DYY6AVDW946NR0B9T2C,
-/// 01M3MX1E1EY1M7JGNCN6FCEVQK, 01M55FCZNNZGKM4EKAXZQFTDWR). The OAuth
-/// metadata, `/v1/token` and `/v1/sign-in` stay open to each client
-/// (01M3MX4V43SF2XFCZWANHD19WV).
+/// 01M3MX1E1EY1M7JGNCN6FCEVQK, 01M55FCZNNZGKM4EKAXZQFTDWR). A server of
+/// the line 3 takes the line 1 only from [`build::BRIDGE_FROM`]
+/// ([`build::server_takes`]): it refuses an older `riff` of the line 1
+/// before the call takes effect. The OAuth metadata, `/v1/token` and
+/// `/v1/sign-in` stay open to each client (01M3MX4V43SF2XFCZWANHD19WV).
 async fn check_build(AxumState(s): AxumState<Shared>, request: Request, next: Next) -> Response {
-    let this = Build::this();
+    let this = s.config.build.clone();
     let riff = Build::from_header(request.headers().get(build::HEADER).map(|v| v.as_bytes()));
-    if riff.as_ref().is_some_and(|r| build::compatible(r, &this)) {
+    if riff.as_ref().is_some_and(|r| build::server_takes(r, &this)) {
         return next.run(request).await;
     }
     let mismatch = Mismatch {
@@ -2915,9 +2917,9 @@ async fn check_build(AxumState(s): AxumState<Shared>, request: Request, next: Ne
 
 /// Names the build of this server in each reply
 /// (01M3JEE7P46GWXR1BD4Q1TTSGN).
-async fn stamp_build(request: Request, next: Next) -> Response {
+async fn stamp_build(AxumState(s): AxumState<Shared>, request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
-    if let Ok(value) = header::HeaderValue::from_str(&Build::this().to_string()) {
+    if let Ok(value) = header::HeaderValue::from_str(&s.config.build.to_string()) {
         response.headers_mut().insert(build::HEADER, value);
     }
     response

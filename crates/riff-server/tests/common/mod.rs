@@ -64,14 +64,31 @@ pub fn build_header() -> reqwest::header::HeaderMap {
 
 /// Starts a server. Its public URL is its real address.
 pub async fn start(require_sign_in: bool, admins: &[&str]) -> (Service, String) {
+    serve(|url| Config {
+        require_sign_in,
+        admins: admins.iter().map(|a| a.to_string()).collect(),
+        ..Config::new(url)
+    })
+    .await
+}
+
+/// Starts a server that checks each `riff` against `build`, and names
+/// `build` in each reply: a server of another line than this build.
+pub async fn start_as(build: riff_core::build::Build) -> (Service, String) {
+    serve(|url| Config {
+        build,
+        ..Config::new(url)
+    })
+    .await
+}
+
+/// Starts a server with the config that `config` gives for its URL: its
+/// real address.
+async fn serve(config: impl FnOnce(&str) -> Config) -> (Service, String) {
     client();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let service = Service::new(Config {
-        require_sign_in,
-        admins: admins.iter().map(|a| a.to_string()).collect(),
-        ..Config::new(&url)
-    });
+    let service = Service::new(config(&url));
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     (service, url)

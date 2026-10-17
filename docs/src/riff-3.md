@@ -155,6 +155,20 @@ Then see the build:
 riff --version
 ```
 
+A machine that is still on riff 1.8.1 or older at riff-server 3.0.0
+does not work. riff-server 3.0.0 takes riff 1.x only from 1.8.2. It
+refuses each call of an older riff with 409, before the call takes
+effect: no post, no claim and no keep-alive gets in. Each riff command
+of that machine fails with the error of its own build, for example:
+
+```text
+riff: this riff (1.8.1 ef2cf5a92013 2026-10-17T07:09:34Z) and its riff-server (3.0.0 7213825ab1c2 2026-10-18T20:10:44Z) do not match. riff-server 3 talks only with riff 3 and 2. Update riff on this machine, then start your sessions again. See https://como-technologies.github.io/riff/how-it-works.html#when-the-versions-do-not-match
+```
+
+With `update.auto` on, the first refused call starts the update by
+itself. With `update.auto` off, run `riff update` on that machine, as
+above. Then start its sessions again.
+
 ### What goes in riff 3.0.0
 
 The riff of peers of riff 1.6 to 1.8, with its code, its tests and its

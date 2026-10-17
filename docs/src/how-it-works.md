@@ -373,8 +373,10 @@ line.
 
 `riff-server` talks with a `riff` of its own line, and of the line
 before. So you have one release to update `riff` in. The lines 1 and
-3 also talk, in both directions: the bridge. The line 2 is retired.
-See [riff 3.0.0 and the line 1.x](riff-3.md#riff-300-and-the-line-1x).
+3 also talk, in both directions: the bridge. `riff-server` of the
+line 3 takes `riff` of the line 1 only from 1.8.2, the first build
+that knows the bridge. The line 2 is retired. See
+[riff 3.0.0 and the line 1.x](riff-3.md#riff-300-and-the-line-1x).
 
 | riff | riff-server | Result |
 |---|---|---|
@@ -384,6 +386,7 @@ See [riff 3.0.0 and the line 1.x](riff-3.md#riff-300-and-the-line-1x).
 | 0.2.0 | 0.4.0 | riff-server refuses: update riff. |
 | 1.8.2 | 3.0.0 | They talk: the bridge. riff tells you to update soon. |
 | 3.0.0 | 1.8.2 | They talk: the bridge. riff tells you to update riff-server. |
+| 1.8.1 | 3.0.0 | riff-server refuses: update riff. |
 | 1.8.2 | 4.0.0 | riff-server refuses: update riff. |
 
 Each call of `riff` names its build, and each reply of `riff-server`
