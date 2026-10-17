@@ -12,7 +12,7 @@ hold each decision.
 |---|---|---|---|
 | The CLI | `riff COMMAND` | clap | This page |
 | The TUI | `riff` with no command, in a terminal | ratatui | #994 |
-| The phone app | The app on an Android phone | Slint | #951 |
+| The phone app | The app on an Android phone | Slint | #951: [riff on a phone](riff-mobile.md) |
 | The web UI | A browser | Slint, built to WebAssembly | #995 |
 | The desktop GUI | An app on the desktop | Slint | #996 |
 
@@ -149,7 +149,8 @@ itself, and picks one.
 
 Each UI that signs in is a device of the person: a machine, a phone, a
 browser or a desktop app with a sign-in of its own. The phone design
-(#951) has the commands of the devices, and builds them first:
+(#951) has the commands of the devices, and builds them first: see
+[Pair a phone](riff-mobile.md#pair-a-phone).
 
 | Command | Does |
 |---|---|

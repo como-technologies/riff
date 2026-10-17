@@ -7071,8 +7071,9 @@ that builds it merges.
   riff-server. The web design compares it with a riff-server that serves
   the web app itself, and picks one.
 - **01M542179DFVKMFQ008TV9DM8C** Each UI that signs in is a device of
-  the person, with the device commands of the phone design (#951):
-  `riff device list`, `riff device add` and `riff device remove`. The
+  the person, with the device commands of the phone design
+  (01M53XPZTG203SNM9MBKBERMB5): `riff device list`, `riff device add`
+  and `riff device remove`. The
   devices tab of the TUI shows each device with its kind, its name, its
   scope and its last use. It adds a
   device, and draws the QR code with `tui-qrcode`. It removes a device.
