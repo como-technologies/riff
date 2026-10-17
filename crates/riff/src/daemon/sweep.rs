@@ -416,7 +416,8 @@ impl Local {
     ///     for (key, value) in [("NAME", "t"), ("EMAIL", "t@t")] {
     ///         git.env(format!("GIT_AUTHOR_{key}"), value).env(format!("GIT_COMMITTER_{key}"), value);
     ///     }
-    ///     assert!(git.status().unwrap().success());
+    ///     let out = git.output().unwrap();
+    ///     assert!(out.status.success(), "git {args:?}: {out:?}");
     /// };
     /// let root = tempfile::tempdir()?;
     /// let (origin, clone) = (root.path().join("origin"), root.path().join("clone"));
