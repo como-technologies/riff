@@ -125,7 +125,7 @@ flowchart LR
   by default. It has riff-server, `riff workers` and each other part of
   riff 1.x, except the parts in [What goes](#what-goes-in-riff-300).
 - riff-server 3.0.0 serves riff 1.x too. So a machine of riff 1.x works
-  until it takes 3.0.0, and a worker in tmux ends its item.
+  until it takes 3.0.0.
 - After riff 3.0.0, each GitHub release of riff 1.x becomes a
   prerelease that says that the line is retired. No patch of 1.x comes
   after 3.0.0.
@@ -145,9 +145,8 @@ the flag `--forge` of `riff release`.
 ### What riff 3.0.0 leaves on a machine
 
 riff 1.6 to 1.8 made the state of the riff of peers on each machine.
-riff 3.0.0 does not read, change or delete it. riff deletes no file of
-yours. DIR is the folder of the daemon: `daemon` in the data folder of
-riff.
+riff 3.0.0 does not read, change or delete it. DIR is the folder of
+the daemon: `daemon` in the data folder of riff.
 
 | The state | Where it is |
 |---|---|
