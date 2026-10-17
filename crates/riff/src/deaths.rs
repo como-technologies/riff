@@ -3,11 +3,11 @@
 //!
 //! # Design
 //!
-//! riff replaces a worker that dies: its claims are free, and the
-//! rollout starts a worker for the free work ([`crate::rollout`]). A
-//! fault of the machine can kill each new worker too. Then each start
-//! costs tokens and gives nothing. So a loop of deaths is a fault, not a
-//! reason to start more (01M493YZZEW1FTDBNA090WT2AG).
+//! A worker that dies frees its claims: an idle worker or the wave of
+//! the daemon takes the free work ([`crate::rollout`]). A fault of the
+//! machine can kill each new worker too. Then each start costs tokens
+//! and gives nothing. So a loop of deaths is a fault, not a reason to
+//! start more (01M493YZZEW1FTDBNA090WT2AG).
 //!
 //! Each machine records the deaths of its workers in the file [`FILE`]
 //! of its local dir ([`crate::local::dir`]): one line for each session,
@@ -22,7 +22,8 @@
 //!
 //! A session counts one time, also when both see it. When more than
 //! [`LOOP`] workers died in the last [`WINDOW`], the machine has no room:
-//! the rollout starts no worker there ([`crate::rollout::Place::room`]).
+//! `riff workers start` starts no worker there
+//! ([`crate::rollout::Place::room`]).
 //! The death that starts the loop sends one message to the lead
 //! (01M493Z02KS82B3CVZEVFA3D6E). The machine has room again when the
 //! old deaths leave the window.
@@ -31,7 +32,7 @@
 //! flowchart TD
 //!     D["a worker dies"] --> R["record: time and session"]
 //!     R --> C{"more than 3 deaths<br/>in the last hour?"}
-//!     C -- no --> N["the rollout starts a worker<br/>for the free work"]
+//!     C -- no --> N["an idle worker or the wave<br/>takes the free work"]
 //!     C -- "yes, from this death" --> M["one message to the lead"]
 //!     M --> S["no start on this machine<br/>until the old deaths are 1 hour old"]
 //!     C -- "yes, before this death" --> S

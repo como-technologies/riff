@@ -172,10 +172,10 @@ for `riff update --check`.
 
 ## Get ready for riff 3.0
 
-riff 3.0 runs each work item in a container of its own on your
-machine. It is new: see [riff 3.0](riff-3.md). riff 1.x still runs the
-riff. To try riff 3.0, install podman and catatonit, the init of
-podman. riff starts each container with it. On Ubuntu:
+riff 3 runs each work item in a container of its own on your
+machine: the riff daemon runs it. It is new: see [riff 3.0](riff-3.md).
+To get ready, install podman and catatonit, the init of podman. riff
+starts each container with it. On Ubuntu:
 
 ```sh
 sudo apt install podman catatonit
@@ -212,6 +212,29 @@ A line with `fail` also gives the fix. Do each fix, then run
 starts the riff daemon, and the daemon gets the session image. A riff
 daemon that runs already stays. Then do one item: see
 [Run one item in a container](development.md#run-one-item-in-a-container).
+
+### Let the lead start the work
+
+You start no worker by hand. When the current wave has free work, the
+rollout of your lead asks the riff daemon of your machine to run the
+wave of the repository. The daemon runs each free item and each verify
+in a container, in the limit of the machine. The lead gets a note.
+
+To run your lead in a container too, run this in your clone of the
+project. It also starts the wave of the repository, when none runs:
+
+```sh
+riff lead start
+```
+
+To see the containers:
+
+```sh
+riff daemon status
+```
+
+A second machine takes work when its daemon runs the wave too: see
+[Use a second machine](development.md#use-a-second-machine).
 
 ### Get the static riff
 

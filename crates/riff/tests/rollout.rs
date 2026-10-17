@@ -567,7 +567,10 @@ async fn a_resume_asks_the_daemon_one_time_for_the_wave_and_starts_no_worker() {
     // No worker pane: riff mcp starts only its pane of `riff tail`.
     assert_eq!(lead.workers(), 0);
     let log = lead.tmux_log();
-    assert!(!log.contains("RIFF_WORKER"), "the rollout started a worker: {log}");
+    assert!(
+        !log.contains("RIFF_WORKER"),
+        "the rollout started a worker: {log}"
+    );
 }
 
 /// A wave of the repository runs on the daemon: the rollout asks
@@ -601,7 +604,10 @@ async fn an_item_with_an_open_pull_request_and_no_claim_is_no_build() {
     lead.pull(Some("SUCCESS"));
     lead.riff(RiffState::Running).await;
     lead.looked().await;
-    assert!(daemon.asks().is_empty(), "the pull request waits for the merge");
+    assert!(
+        daemon.asks().is_empty(),
+        "the pull request waits for the merge"
+    );
 
     lead.pull(Some("FAILURE"));
     daemon.until_asks(1).await;

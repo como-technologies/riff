@@ -923,7 +923,9 @@ pub async fn run(env: impl Env) {
                     Ok(()) => {
                         no_wave = None;
                         eprintln!("riff: the rollout asked the riff daemon to run the wave");
-                        return env.tell(&text::rollout_wave(&host, &view.repo), false).await;
+                        return env
+                            .tell(&text::rollout_wave(&host, &view.repo), false)
+                            .await;
                     }
                     Err(e) => format!("{e:#}"),
                 },
@@ -2090,9 +2092,14 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         let me = (self.me)();
         // `riff mcp` talks on its stdout: the lines of the steps go to
         // its stderr.
-        crate::wave::ask(&crate::daemon::dir()?, me.place(), self.api.base(), |line| {
-            eprintln!("riff: {line}");
-        })
+        crate::wave::ask(
+            &crate::daemon::dir()?,
+            me.place(),
+            self.api.base(),
+            |line| {
+                eprintln!("riff: {line}");
+            },
+        )
         .await?;
         Ok(())
     }
@@ -2984,8 +2991,8 @@ mod tests {
 
     /// A worker on a task of the lead with no work item holds a task
     /// claim: it gets no free work, and an idle worker gets it. When only
-    /// the worker with the task runs, the rollout starts a new worker for
-    /// the free item (01M518P1N8R893MG9Z3VAQZR6Z).
+    /// the worker with the task runs, no worker is idle: the free item
+    /// goes to the wave of the daemon (01M518P1N8R893MG9Z3VAQZR6Z).
     #[test]
     fn a_worker_with_a_task_claim_gets_no_free_work() {
         let me: SessionUri = "riff://mike@thelio/o/riff?session=l1&lead=true"
@@ -3021,15 +3028,15 @@ mod tests {
         let view = look(&[task.clone(), free], &panes);
         let (requests, seen) = Offers::default().plan(&view, Instant::now(), wait);
         assert_eq!(requests, [("bbbb2222-x".to_owned(), "issue-7".to_owned())]);
-        assert_eq!(decide(&seen), None);
+        assert!(!asks_wave(&seen));
 
         // Only the worker with the task runs: it gets no request, it is
-        // not idle, and the rollout starts a worker.
+        // not idle, and the rollout asks the daemon for the wave.
         let view = look(std::slice::from_ref(&task), &panes[..1]);
         let (requests, seen) = Offers::default().plan(&view, Instant::now(), wait);
         assert_eq!(requests, []);
         assert_eq!(seen.idle, 0);
-        assert_eq!(decide(&seen), Some(0));
+        assert!(asks_wave(&seen));
     }
 
     #[test]

@@ -799,8 +799,7 @@ pub fn tool_lines(lines: impl IntoIterator<Item = Option<String>>) -> Option<Str
 /// stuck on a replaced riff ([`crate::binary::stuck_mcp`]), once for
 /// each new riff (01M53QQRAJMB24B0804YHPMN18). `dir` is
 /// [`crate::local::dir`]. A worker gets no line: it ends after its
-/// item, and riff starts a new worker on the new riff
-/// (01M517BT9WBQ4R79Z9KVY9SG1B).
+/// item (01M517BT9WBQ4R79Z9KVY9SG1B).
 pub fn stuck_line(dir: &Path, worker: bool, now: std::time::SystemTime) -> Option<String> {
     if worker {
         return None;

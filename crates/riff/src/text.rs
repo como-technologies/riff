@@ -5008,13 +5008,15 @@ pub fn worker_over_limit(host: &str, pane: &str, limit: u16, runs: usize) -> Str
 /// assert_eq!(
 ///     riff::text::worker_old_riff("pangolin", "%3"),
 ///     "workers: the worker in the pane %3 on pangolin runs an old riff. It ends after its \
-///      item, in place of a clear. riff starts a new worker on the new riff for the free work."
+///      item, in place of a clear. Its free work goes to an idle worker or to the wave of the \
+///      riff daemon."
 /// );
 /// ```
 pub fn worker_old_riff(host: &str, pane: &str) -> String {
     format!(
         "workers: the worker in the pane {pane} on {host} runs an old riff. It ends after its \
-         item, in place of a clear. riff starts a new worker on the new riff for the free work."
+         item, in place of a clear. Its free work goes to an idle worker or to the wave of the \
+         riff daemon."
     )
 }
 
@@ -5026,15 +5028,15 @@ pub fn worker_old_riff(host: &str, pane: &str) -> String {
 /// assert_eq!(
 ///     riff::text::worker_new_rules("pangolin", "%3"),
 ///     "workers: the worker in the pane %3 on pangolin started before riff added rules of \
-///      Claude Code. It ends after its item, in place of a clear. riff starts a new worker \
-///      with the new rules for the free work."
+///      Claude Code. It ends after its item, in place of a clear. Its free work goes to an idle \
+///      worker or to the wave of the riff daemon."
 /// );
 /// ```
 pub fn worker_new_rules(host: &str, pane: &str) -> String {
     format!(
         "workers: the worker in the pane {pane} on {host} started before riff added rules of \
-         Claude Code. It ends after its item, in place of a clear. riff starts a new worker \
-         with the new rules for the free work."
+         Claude Code. It ends after its item, in place of a clear. Its free work goes to an idle \
+         worker or to the wave of the riff daemon."
     )
 }
 

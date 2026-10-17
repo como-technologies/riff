@@ -1927,9 +1927,16 @@ async fn riff_lead_start_starts_the_wave_when_none_runs_and_none_when_one_runs()
     let again = machine.ok(None, &["lead", "start"]).await;
     assert!(again.contains(&riff::text::wave_runs(repo)), "{again}");
     assert!(!again.contains(&riff::text::wave_asked(repo)), "{again}");
-    assert!(again.contains(&riff::text::lead_runs(repo, name)), "{again}");
+    assert!(
+        again.contains(&riff::text::lead_runs(repo, name)),
+        "{again}"
+    );
     let log = machine.read("daemon.out");
-    assert_eq!(log.matches(&riff::text::wave_runs(repo)).count(), 1, "{log}");
+    assert_eq!(
+        log.matches(&riff::text::wave_runs(repo)).count(),
+        1,
+        "{log}"
+    );
 
     machine.ok(None, &["wave", "stop"]).await;
     std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
@@ -1961,7 +1968,10 @@ async fn two_waves_of_one_repository_on_two_machines_never_run_one_item_two_time
         pangolin.ok(None, &["wave", "run"])
     );
     for out in [out_a, out_b] {
-        assert!(out.contains(&riff::text::wave_asked("como-technologies/riff")), "{out}");
+        assert!(
+            out.contains(&riff::text::wave_asked("como-technologies/riff")),
+            "{out}"
+        );
     }
 
     // One daemon runs issue 12. The other one looked after the claim,
@@ -2006,7 +2016,10 @@ async fn two_waves_of_one_repository_on_two_machines_never_run_one_item_two_time
         .await
         .contains("riff-issue-12-")
     {
-        assert!(started.elapsed() < isolated::HANG, "the session did not end");
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "the session did not end"
+        );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }

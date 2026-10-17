@@ -134,7 +134,7 @@ pub fn set_workers_limit(path: &Path, limit: u16) -> Result<()> {
 /// The default of `workers.interval`, in seconds.
 pub const WORKERS_INTERVAL: u16 = 10;
 
-/// The seconds between two workers that the rollout starts:
+/// The seconds between two looks of the rollout of the lead:
 /// `workers.interval`, or [`WORKERS_INTERVAL`] when the file or the key
 /// is missing. 0 turns the rollout off (01M3Q5QE9H42FQKEDC5G9GKCWD).
 ///

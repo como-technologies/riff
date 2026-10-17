@@ -57,8 +57,8 @@
 //! ([`mark_added`]). `riff workers run` gives each worker the mark of its
 //! start in [`WORKER_RULES`]. When the mark changed, the worker ends in
 //! place of its next clear, as a worker on an old riff does
-//! ([`crate::next`], 01M51M3ZRKQZ8KDVRGJR3XAY00). The rollout starts a
-//! new worker, with the new rules, for the free work.
+//! ([`crate::next`], 01M51M3ZRKQZ8KDVRGJR3XAY00). Its free work goes to
+//! an idle worker or to the wave of the daemon.
 //!
 //! ```mermaid
 //! sequenceDiagram
