@@ -274,7 +274,7 @@ fn text(out: &[u8]) -> String {
 
 /// Runs `git ARGS` in `dir`, with no config of the person, and gives
 /// its stdout.
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
         .args(args)
