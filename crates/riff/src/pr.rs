@@ -62,10 +62,11 @@
 //!     A->>G: riff pr wait 40: pr view until MERGED
 //! ```
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::process::{Command, ExitStatus, Stdio};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::SessionUri;
@@ -94,6 +95,9 @@ pub struct Gh {
     /// The repository of each call, as `OWNER/REPO`: `GH_REPO`. With
     /// none, `gh` takes the repository of the current folder.
     repo: Option<String>,
+    /// The time limit of each call. With none, a call can take each
+    /// time that `gh` takes.
+    limit: Option<Duration>,
 }
 
 impl Default for Gh {
@@ -101,16 +105,20 @@ impl Default for Gh {
         Self {
             program: "gh".into(),
             repo: None,
+            limit: None,
         }
     }
 }
+
+/// The time between two looks at a `gh` with a time limit.
+const LIMIT_POLL: Duration = Duration::from_millis(20);
 
 impl Gh {
     /// The `gh` at `program`, for tests.
     pub fn at(program: impl Into<PathBuf>) -> Self {
         Self {
             program: program.into(),
-            repo: None,
+            ..Self::default()
         }
     }
 
@@ -122,6 +130,35 @@ impl Gh {
             repo: Some(repo.to_owned()),
             ..Self::default()
         }
+    }
+
+    /// The same `gh` with the time limit `limit` for each call
+    /// (01M53S7WGM9DQV2DXFHBRSMTP8). At the end of the limit, riff stops
+    /// `gh` and each process that it started, and the call fails.
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let hangs = isolated::write_program(dir.path().join("gh"), "#!/bin/sh\nsleep 600\n");
+    /// let gh = riff::pr::Gh::at(&hangs).with_limit(Duration::from_millis(500));
+    /// assert_eq!(gh.limit(), Some(Duration::from_millis(500)));
+    /// let start = Instant::now();
+    /// let error = gh.run(&["pr", "list"], None).unwrap_err().to_string();
+    /// assert_eq!(error, "gh pr list: no answer in 0.5 s. riff stopped it.");
+    /// assert!(start.elapsed() < Duration::from_secs(10));
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_limit(self, limit: Duration) -> Self {
+        Self {
+            limit: Some(limit),
+            ..self
+        }
+    }
+
+    /// The time limit of each call, when it has one.
+    pub fn limit(&self) -> Option<Duration> {
+        self.limit
     }
 
     /// Runs `gh ARGS` with `input` on stdin, and returns its stdout. It
@@ -177,13 +214,15 @@ impl Gh {
     }
 
     /// Runs `gh ARGS`: whether it exits with status 0, its stdout and its
-    /// stderr.
+    /// stderr. With a time limit, it fails at the end of the limit
+    /// ([`Gh::with_limit`]).
     fn output(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
+        use std::os::unix::process::CommandExt;
         let mut command = Command::new(&self.program);
         if let Some(repo) = &self.repo {
             command.env("GH_REPO", repo);
         }
-        let mut child = command
+        command
             .args(args)
             .stdin(if input.is_some() {
                 Stdio::piped()
@@ -191,19 +230,75 @@ impl Gh {
                 Stdio::null()
             })
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        if self.limit.is_some() {
+            // A group of its own: the stop at the end of the limit also
+            // stops each process that `gh` started.
+            command.process_group(0);
+        }
+        let mut child = command
             .spawn()
             .with_context(|| format!("cannot run {}", self.program.display()))?;
-        if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-            stdin.write_all(input.as_bytes())?;
+        let Some(limit) = self.limit else {
+            if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+                stdin.write_all(input.as_bytes())?;
+            }
+            let out = child.wait_with_output()?;
+            return Ok((
+                out.status.success(),
+                String::from_utf8_lossy(&out.stdout).into_owned(),
+                String::from_utf8_lossy(&out.stderr).into_owned(),
+            ));
+        };
+        let end = Instant::now() + limit;
+        // The pipes go on threads: a `gh` that does not read or that
+        // writes much blocks no step of the wait.
+        let writer = child
+            .stdin
+            .take()
+            .zip(input.map(str::to_owned))
+            .map(|(mut stdin, input)| {
+                std::thread::spawn(move || {
+                    let _ = stdin.write_all(input.as_bytes());
+                })
+            });
+        let stdout = read_all(child.stdout.take());
+        let stderr = read_all(child.stderr.take());
+        let status: ExitStatus = loop {
+            if let Some(status) = child.try_wait()? {
+                break status;
+            }
+            if Instant::now() >= end {
+                if let Ok(group) = i32::try_from(child.id()) {
+                    let _ = nix::sys::signal::killpg(
+                        nix::unistd::Pid::from_raw(group),
+                        nix::sys::signal::Signal::SIGKILL,
+                    );
+                }
+                let _ = child.wait();
+                bail!(text::gh_no_answer(&args.join(" "), limit));
+            }
+            std::thread::sleep(LIMIT_POLL);
+        };
+        if let Some(writer) = writer {
+            let _ = writer.join();
         }
-        let out = child.wait_with_output()?;
-        Ok((
-            out.status.success(),
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-        ))
+        let text = |pipe: JoinHandle<Vec<u8>>| {
+            String::from_utf8_lossy(&pipe.join().unwrap_or_default()).into_owned()
+        };
+        Ok((status.success(), text(stdout), text(stderr)))
     }
+}
+
+/// Reads each byte of `pipe` on a thread of its own.
+fn read_all(pipe: Option<impl Read + Send + 'static>) -> JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
 }
 
 /// The body of a pull request for the issue of `link` in the form of the
@@ -848,9 +943,13 @@ pub fn report(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
     use hygiene::Link;
 
-    use super::body;
+    use super::{Gh, body};
+    use crate::text;
 
     const FULL: &str = "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";
 
@@ -935,5 +1034,49 @@ mod tests {
     fn a_line_that_the_body_has_two_times_stays() {
         let twice = "Closes #12\nCloses #12\n\nIssue: #12\nIssue: #12\nMilestone: Wave 3\n";
         assert_eq!(body(Link::Closes(12), twice, "Wave 3").unwrap(), twice);
+    }
+
+    /// At the end of its time limit, a `gh` stops with each process that
+    /// it started, also a process that keeps its pipes open
+    /// (01M53S7WGM9DQV2DXFHBRSMTP8).
+    #[test]
+    fn a_gh_with_a_time_limit_stops_with_each_process_that_it_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid = dir.path().join("pid");
+        let script = format!(
+            "#!/bin/sh\nsleep 600 &\necho $! > {}\nwait\n",
+            pid.display()
+        );
+        let limit = Duration::from_secs(2);
+        let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script)).with_limit(limit);
+        let start = Instant::now();
+        let error = gh
+            .json::<serde_json::Value>(&["pr", "view", "12"])
+            .unwrap_err();
+        assert_eq!(error.to_string(), text::gh_no_answer("pr view 12", limit));
+        assert!(start.elapsed() < isolated::HANG);
+        let sleep = std::fs::read_to_string(&pid).unwrap();
+        let stat = PathBuf::from(format!("/proc/{}/stat", sleep.trim()));
+        // A stopped process stays a zombie until its parent reaps it.
+        let gone = || std::fs::read_to_string(&stat).map_or(true, |s| s.contains(") Z "));
+        while !gone() {
+            assert!(start.elapsed() < isolated::HANG, "sleep {sleep} runs on");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// A `gh` with a time limit that answers in time gives its stdout,
+    /// its stderr and its status, and reads its input.
+    #[test]
+    fn a_gh_with_a_time_limit_that_answers_gives_its_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = "#!/bin/sh\ncat\necho \"$*\" >&2\nexit 3\n";
+        let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script))
+            .with_limit(isolated::HANG);
+        let big = "a body\n".repeat(20_000);
+        let (ok, stdout, stderr) = gh.output(&["issue", "comment"], Some(&big)).unwrap();
+        assert!(!ok);
+        assert_eq!(stdout, big);
+        assert_eq!(stderr, "issue comment\n");
     }
 }

@@ -511,15 +511,19 @@ esac
 }
 
 /// Makes the folder `name` of a session in `sessions`, with a clone whose
-/// origin is `o/r` on GitHub. It gives the folder.
+/// origin is `o/r` on GitHub. The clone is as a session leaves it after
+/// its push: one commit, which `main` of `origin` has. It gives the
+/// folder.
 fn session_folder(sessions: &Path, name: &str) -> PathBuf {
     let clone = sessions.join(name).join("clone");
     std::fs::create_dir_all(&clone).unwrap();
-    git(&clone, &["init", "-q"]);
+    git(&clone, &["init", "-q", "-b", "main"]);
+    git(&clone, &["commit", "-q", "--allow-empty", "-m", "start"]);
     git(
         &clone,
         &["remote", "add", "origin", "https://github.com/o/r.git"],
     );
+    git(&clone, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
     sessions.join(name)
 }
 
@@ -587,6 +591,53 @@ async fn riff_daemon_sweep_removes_the_folders_whose_work_is_over_and_says_why()
         text(&out.stdout),
         "riff removed no folder: the session of each folder runs, or its work is not over.\n"
     );
+    stop(daemon).await;
+}
+
+/// 01M53S7WAXD46YPN0DR96XSTMG: `riff daemon sweep` keeps the folder of a
+/// closed pull request while its clone has a commit that no branch of
+/// `origin` has, and says why. After the push, it removes the folder.
+#[tokio::test]
+async fn riff_daemon_sweep_keeps_a_folder_with_a_commit_that_is_not_pushed() {
+    let here = Here::new();
+    fake_sweep_gh(here.bin.path());
+    let sessions = here.env.riff_home().join("sessions");
+    let ahead = session_folder(&sessions, "issue-6-00000006");
+    let clone = ahead.join("clone");
+    git(&clone, &["switch", "-q", "-c", "worktree-issue-6"]);
+    git(
+        &clone,
+        &["commit", "-q", "--allow-empty", "-m", "not pushed"],
+    );
+    let daemon = here
+        .daemon_with("daemon.out", &[(riff::daemon::sweep::EVERY_VAR, "0")])
+        .await;
+
+    let out = here.run(false, &["daemon", "sweep"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "riff kept the folder {}: the pull request #46 closed with no merge, but its clone \
+             has 1 commit that is not pushed. Push the work, or remove the folder.\n",
+            ahead.display()
+        )
+    );
+    assert!(ahead.exists());
+
+    git(
+        &clone,
+        &["update-ref", "refs/remotes/origin/worktree-issue-6", "HEAD"],
+    );
+    let out = here.run(false, &["daemon", "sweep"]).await;
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "riff removed the folder {}: the pull request #46 closed with no merge.\n",
+            ahead.display()
+        )
+    );
+    assert!(!ahead.exists());
     stop(daemon).await;
 }
 

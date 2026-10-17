@@ -175,7 +175,7 @@
 //! | [`Ask::Members`] | [`Say::Members`], or [`Say::Failed`] ([`peers`]) |
 //! | [`Ask::Release`] | [`Say::Line`] and [`Say::Done`] when the daemon deleted the claim on the forge, or [`Say::Failed`] |
 //! | [`Ask::Run`] | as [`Ask::Start`], then [`Say::Line`] for each step after the end, then [`Say::Done`], or [`Say::Failed`] |
-//! | [`Ask::Sweep`] | [`Say::Line`] for each folder that the daemon removed, or one line that it removed none, then [`Say::Done`] ([`sweep`]) |
+//! | [`Ask::Sweep`] | [`Say::Line`] for each folder that the daemon removed, and for each folder whose work is over that it kept, or one line that it removed none, then [`Say::Done`] ([`sweep`]) |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
 //! [`Then::Stop`]: the daemon stops the container. When `riff` closes the
@@ -795,8 +795,9 @@ pub enum Ask {
         image: String,
     },
     /// `riff daemon sweep`: remove the folder of each session that does
-    /// not run, when the forge says that its work is over
-    /// (01M53NJ5Y2CMY5MWF9328KW7DE, [`Daemon::sweep`]).
+    /// not run, when the forge says that its work is over and its clone
+    /// holds no work of its own (01M53NJ5Y2CMY5MWF9328KW7DE,
+    /// 01M53S7WAXD46YPN0DR96XSTMG, [`Daemon::sweep`]).
     Sweep,
 }
 
@@ -1581,9 +1582,9 @@ pub struct Daemon<R> {
     /// The world of the waves with no riff-server, from its riff on
     /// ([`Daemon::world_of`]).
     peer_world: OnceLock<Arc<dyn World>>,
-    /// The folders of the sessions: the jobs that start, and one sweep
-    /// at a time ([`sweep`]).
-    folders: sweep::Folders,
+    /// The folders of the sessions: the jobs that run, and one sweep at
+    /// a time ([`sweep`]).
+    folders: Arc<sweep::Folders>,
 }
 
 /// A wave that runs in the daemon.
@@ -1841,7 +1842,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             links: OnceLock::new(),
             invites,
             peer_world: OnceLock::new(),
-            folders: sweep::Folders::default(),
+            folders: Arc::default(),
         })
     }
 
@@ -2454,7 +2455,8 @@ impl<R: Runtime + 'static> Daemon<R> {
                     crate::wave::run_one(self.clone(), wave, work, image, lines, &out).await;
                 }
                 Ok(Ask::Sweep) => {
-                    let mut swept = self.sweep(None).await;
+                    let mut swept: Vec<String> =
+                        self.sweep(None).await.into_iter().map(|s| s.line).collect();
                     for line in &swept {
                         println!("{line}");
                     }
@@ -3302,13 +3304,15 @@ impl<R: Runtime + 'static> Daemon<R> {
                     tokio::spawn(async move { world.leave(&record).await });
                 }
                 // The job of a wave does its steps after the end now:
-                // the session ended while no daemon ran.
+                // the session ended while no daemon ran. The sweep keeps
+                // its folder from now on (01M53S7WDPQ2GWHJWJ6SZXZ5PN).
                 if record.job.is_some() {
                     let ended = Ended {
                         code: None,
                         failed: true,
                     };
-                    tokio::spawn(crate::wave::finish(self.clone(), record, ended));
+                    let job = self.in_job(&record.live.item);
+                    tokio::spawn(crate::wave::finish(self.clone(), record, ended, job));
                 }
                 continue;
             }
@@ -3329,7 +3333,8 @@ impl<R: Runtime + 'static> Daemon<R> {
                         if let Some(world) = self.world_for(&record) {
                             world.resume(&record);
                         }
-                        tokio::spawn(crate::wave::after(self.clone(), record, said));
+                        let job = self.in_job(&record.live.item);
+                        tokio::spawn(crate::wave::after(self.clone(), record, said, job));
                     }
                     tokio::spawn(self.clone().watch(owned, notes, None));
                 }
@@ -5403,12 +5408,16 @@ mod tests {
     /// The riff-server of the lead, as the test plays it: it notes each
     /// keep-alive and each end, and gives a wake at once. No wave runs.
     /// The forge gives the fate of the folders of each issue of `fates`,
-    /// and [`Fate::Stays`](sweep::Fate::Stays) for each other issue.
+    /// and [`Fate::Stays`](sweep::Fate::Stays) for each other issue. With
+    /// `gh`, the fate comes from that `gh` ([`sweep::fate_on`]). With
+    /// `gate`, the steps after the end of a job wait for a permit of it.
     #[derive(Default)]
     pub(super) struct Server {
         said: Mutex<Vec<String>>,
         fates: BTreeMap<u64, sweep::Fate>,
         comments: Mutex<Vec<(String, u64, u64, String)>>,
+        gh: Option<crate::pr::Gh>,
+        gate: Option<Arc<tokio::sync::Semaphore>>,
     }
 
     impl Server {
@@ -5417,6 +5426,23 @@ mod tests {
             Server {
                 fates: fates.iter().cloned().collect(),
                 ..Server::default()
+            }
+        }
+
+        /// The forge of `gh`.
+        pub(super) fn with_gh(gh: crate::pr::Gh) -> Server {
+            Server {
+                gh: Some(gh),
+                ..Server::default()
+            }
+        }
+
+        /// The same forge: the steps after the end of a job wait for a
+        /// permit of `gate`.
+        pub(super) fn with_gate(self, gate: Arc<tokio::sync::Semaphore>) -> Server {
+            Server {
+                gate: Some(gate),
+                ..self
             }
         }
 
@@ -5429,7 +5455,7 @@ mod tests {
                 .clone()
         }
 
-        fn said(&self) -> Vec<String> {
+        pub(super) fn said(&self) -> Vec<String> {
             self.said
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -5471,10 +5497,17 @@ mod tests {
 
         fn finish<'a>(
             &'a self,
-            _: &'a Record,
+            record: &'a Record,
             _: Ended,
         ) -> crate::wave::BoxFuture<'a, Result<Vec<String>>> {
-            Box::pin(async { Ok(Vec::new()) })
+            Box::pin(async move {
+                self.note(format!("finish {}", record.live.item));
+                if let Some(gate) = &self.gate {
+                    gate.acquire().await?.forget();
+                }
+                self.note(format!("finished {}", record.live.item));
+                Ok(Vec::new())
+            })
         }
 
         fn fate<'a>(
@@ -5482,6 +5515,11 @@ mod tests {
             _: &'a str,
             issue: u64,
         ) -> crate::wave::BoxFuture<'a, Result<sweep::Fate>> {
+            if let Some(gh) = self.gh.clone() {
+                return Box::pin(async move {
+                    tokio::task::spawn_blocking(move || sweep::fate_on(&gh, issue)).await?
+                });
+            }
             let fate = self
                 .fates
                 .get(&issue)

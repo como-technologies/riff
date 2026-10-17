@@ -5689,10 +5689,31 @@ share.
   daemon has its record, while a job of the daemon starts it, or while
   the `riff run` that made the folder runs: it holds the lock
   `ITEM-ID8.lock` beside the folder from before the clone to its end.
+  Superseded in part by 01M53S7WAXD46YPN0DR96XSTMG and
+  01M53S7WDPQ2GWHJWJ6SZXZ5PN.
 - **01M53NJ5Y2CMY5MWF9328KW7DE** `riff daemon sweep` asks the daemon to
   remove the folders of 01M53NJ5V27BCHDNHK2THQQZZQ at once. It prints
   each folder that the daemon removed, with the reason, or one line that
-  it removed none.
+  it removed none. Superseded in part by 01M53S7WAXD46YPN0DR96XSTMG.
+- **01M53S7WAXD46YPN0DR96XSTMG** The sweep of
+  01M53NJ5V27BCHDNHK2THQQZZQ removes a folder only when its clone has no
+  file that is not committed (`git status --porcelain`) and no commit of
+  `HEAD` or of a local branch that no branch of `origin` has. Else, and
+  when git cannot read the clone, the folder stays. `riff daemon sweep`
+  prints each folder that stays for this reason, with the reason. The
+  log of the daemon gets that line one time, and again when the reason
+  changes.
+- **01M53S7WDPQ2GWHJWJ6SZXZ5PN** A job of the daemon keeps each folder
+  of its item from before the clone of its session to the end of its
+  last step after the end. The steps after the end read the folder, for
+  example `events.jsonl` of a verify, and the daemon has no record of
+  the session then. This is also true for a job that a new daemon takes
+  up.
+- **01M53S7WGM9DQV2DXFHBRSMTP8** Each `gh` call of the sweep of
+  01M53NJ5V27BCHDNHK2THQQZZQ has a time limit of 30 seconds. At the end
+  of the limit, riff stops `gh` and each process that it started. The
+  sweep then removes nothing for that folder, says why, and goes on to
+  the next folder. The next sweep tries again.
 - **01M4Z81ATZK3FX9GRFTM236FE6** `claude` in a session of `riff run`
   takes the riff session ID as its own session ID (`--session-id`), and
   runs in the auto permission mode (`--permission-mode auto`).

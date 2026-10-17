@@ -732,7 +732,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "vcs_state_changed: action push, branch worktree-issue-12",
         "end: success, 3 turns, 5 s, 0.25 USD",
         "The pull request #40: https://github.com/como-technologies/riff/pull/40",
-        &format!("The clone stays until the merge: {c}"),
+        &format!("The clone stays until the work of its branch is over: {c}"),
     ] {
         assert!(stdout.contains(part), "{part}\nnot in\n{stdout}");
     }
