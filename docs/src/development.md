@@ -3427,16 +3427,20 @@ The tag deploys the patch as each release tag does.
 
 `riff update` installs the release that GitHub marks Latest, not the
 highest tag (see [Releases](how-it-works.md#releases)). GitHub never
-marks a prerelease Latest. So when a line is retired, make each of its
-GitHub releases a prerelease. Put a first line in its notes that says
-that the line is retired, and names the issue. For example, for
-`v2.0.1` of the line 2.x, retired in #706:
+marks a prerelease Latest. So to retire a line, an admin makes each
+GitHub release of the line a prerelease, with a first line in its notes
+that says that the line is retired and names the issue. One command
+does it with the `gh` of your machine, in a clone of the repository.
+For example, for the line 1.x, retired in #961:
 
 ```sh
-gh release view v2.0.1 --repo como-technologies/riff --json body --jq .body > old.md
-printf '**Retired.** The line 2.x is retired (#706). Do not install this release.\n\n' | cat - old.md > notes.md
-gh release edit v2.0.1 --repo como-technologies/riff --prerelease --notes-file notes.md
+riff retire 1.x --issue 961
 ```
+
+It prints one line for each release of the line. It keeps the release
+that GitHub marks Latest, and each draft. When the Latest release is of
+the line, make a release of another line the Latest first. Then run the
+command again. A second run changes nothing.
 
 Check that the release of the line that the shared riff runs is the
 Latest, and that each release of the retired line is a prerelease:

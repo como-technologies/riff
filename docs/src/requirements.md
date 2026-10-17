@@ -1828,6 +1828,16 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   its notes says that the line is retired, and names the issue that
   retired it. The line 2.x is retired (#706): its one GitHub release,
   `v2.0.1`, is a prerelease. The tag `v2.0.0` has no GitHub release.
+- **01M550XYBAW5QYXEMQ49Z34M4N** `riff retire LINE --issue N` retires the
+  release line LINE in one step, with the `gh` of the machine. Each
+  GitHub release with a tag `vLINE.Y.Z` becomes a prerelease, and the
+  first line of its notes is `**Retired.** The line LINE.x is retired
+  (#N). Do not install this release.` The old notes stay under it. It
+  keeps the release that GitHub marks "Latest" and each draft as they
+  are, and says so. A prerelease whose notes start with `**Retired.**`
+  is retired already, so a second run changes nothing. It prints one
+  line for each release of the line and the count that it retired. It
+  fails, and changes nothing, when no release has a tag of the line.
 - **01M3MRMAY3P1K151RGAP9K6GSH** The deploy takes a release tag as its
   input. It checks out that tag and deploys only it. It refuses an
   input that is not a tag `vX.Y.Z` of the version of the crates.
