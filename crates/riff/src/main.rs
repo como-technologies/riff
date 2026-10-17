@@ -1833,6 +1833,13 @@ async fn main() -> Result<()> {
         {
             println!("{}", hook::tool_output(&line));
         }
+        // A session with no riff tools (01M5512RKABQ70QPGC48S5F67W).
+        if done
+            && let Some(dir) = local::dir()
+            && let Some(line) = hook::no_tools_line(&dir, worker::is_worker(), true)
+        {
+            println!("{}", hook::tool_output(&line));
+        }
         return Ok(());
     }
     if let Command::Hook {
@@ -3538,6 +3545,11 @@ async fn session_start(server: &str) -> String {
     }
     if mcp_off_here() {
         context.push_str(hook::MCP_OFF_LINE);
+    }
+    if let Some(line) =
+        local::dir().and_then(|dir| hook::no_tools_line(&dir, worker::is_worker(), false))
+    {
+        context.push_str(&format!("- {line}\n"));
     }
     if let Some(cwd) = cwd
         .as_deref()

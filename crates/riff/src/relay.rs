@@ -116,6 +116,54 @@ impl InFlight {
     }
 }
 
+/// The `tools/list` requests of Claude Code, and the answers of the
+/// tools to them (01M5512RKABQ70QPGC48S5F67W). A refusal means that the
+/// session has no riff tools.
+///
+/// ```
+/// use riff::relay::Listing;
+///
+/// let mut listing = Listing::default();
+/// listing.from_client(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
+/// listing.from_client(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call"}"#);
+/// assert_eq!(listing.from_tools(r#"{"jsonrpc":"2.0","id":3,"result":{}}"#), None);
+/// let refused = r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"no _meta"}}"#;
+/// assert_eq!(listing.from_tools(refused), Some(false));
+///
+/// listing.from_client(r#"{"jsonrpc":"2.0","id":4,"method":"tools/list"}"#);
+/// assert_eq!(listing.from_tools(r#"{"jsonrpc":"2.0","id":4,"result":{"tools":[]}}"#), Some(true));
+/// // Each answer counts once.
+/// assert_eq!(listing.from_tools(r#"{"jsonrpc":"2.0","id":4,"result":{"tools":[]}}"#), None);
+/// ```
+#[derive(Debug, Default)]
+pub struct Listing(HashSet<String>);
+
+impl Listing {
+    /// Notes a line from Claude Code.
+    pub fn from_client(&mut self, line: &str) {
+        let Ok(message) = serde_json::from_str::<Value>(line) else {
+            return;
+        };
+        if let (Some(method), Some(id)) = (message.get("method"), message.get("id"))
+            && method == "tools/list"
+        {
+            self.0.insert(id.to_string());
+        }
+    }
+
+    /// Notes a line from the tools: `Some(true)` when it lists the
+    /// tools, `Some(false)` when it refuses the list, `None` for each
+    /// other line.
+    pub fn from_tools(&mut self, line: &str) -> Option<bool> {
+        let message = serde_json::from_str::<Value>(line).ok()?;
+        if message.get("method").is_some() {
+            return None;
+        }
+        let id = message.get("id")?.to_string();
+        self.0.remove(&id).then_some(message.get("error").is_none())
+    }
+}
+
 /// Stdin of this process, with no buffer of its own.
 struct Stdin;
 
@@ -141,9 +189,14 @@ fn nonblocking(fd: BorrowedFd<'_>, on: bool) -> io::Result<()> {
 /// Passes each line of stdin to `tools`, and each line of `tools` to
 /// stdout, until Claude Code closes stdin or the tools end. When
 /// `update` is ready, it ends with [`Ended::Update`] at the first moment
-/// with no request in flight and no part of a line held. Stdin is
-/// blocking again when it returns.
-pub async fn run(tools: DuplexStream, update: impl Future<Output = ()>) -> io::Result<Ended> {
+/// with no request in flight and no part of a line held. It gives each
+/// answer to a `tools/list` to `listed`: true when it lists the tools
+/// ([`Listing`]). Stdin is blocking again when it returns.
+pub async fn run(
+    tools: DuplexStream,
+    update: impl Future<Output = ()>,
+    listed: impl FnMut(bool),
+) -> io::Result<Ended> {
     let stdin = AsyncFd::new(Stdin).map_err(|e| {
         io::Error::new(
             e.kind(),
@@ -151,7 +204,7 @@ pub async fn run(tools: DuplexStream, update: impl Future<Output = ()>) -> io::R
         )
     })?;
     nonblocking(io::stdin().as_fd(), true)?;
-    let ended = pass(&stdin, tools, update).await;
+    let ended = pass(&stdin, tools, update, listed).await;
     nonblocking(io::stdin().as_fd(), false)?;
     ended
 }
@@ -160,11 +213,13 @@ async fn pass(
     stdin: &AsyncFd<Stdin>,
     tools: DuplexStream,
     update: impl Future<Output = ()>,
+    mut listed: impl FnMut(bool),
 ) -> io::Result<Ended> {
     let (from_tools, mut to_tools) = tokio::io::split(tools);
     let mut from_tools = BufReader::new(from_tools).lines();
     let mut stdout = tokio::io::stdout();
     let mut flight = InFlight::default();
+    let mut listing = Listing::default();
     let mut held: Vec<u8> = Vec::new();
     let mut open = true;
     let mut new = false;
@@ -186,7 +241,9 @@ async fn pass(
                         held.extend_from_slice(&buf[..n]);
                         while let Some(end) = held.iter().position(|&b| b == b'\n') {
                             let line: Vec<u8> = held.drain(..=end).collect();
-                            flight.from_client(&String::from_utf8_lossy(&line));
+                            let text = String::from_utf8_lossy(&line);
+                            flight.from_client(&text);
+                            listing.from_client(&text);
                             to_tools.write_all(&line).await?;
                         }
                     }
@@ -198,6 +255,9 @@ async fn pass(
             line = from_tools.next_line() => {
                 let Some(line) = line? else { return Ok(Ended::Closed) };
                 flight.from_tools(&line);
+                if let Some(list) = listing.from_tools(&line) {
+                    listed(list);
+                }
                 stdout.write_all(line.as_bytes()).await?;
                 stdout.write_all(b"\n").await?;
                 stdout.flush().await?;

@@ -28,6 +28,8 @@
 //! | `build-PID` | The same `riff mcp`, next to `mcp-PID`. | The build of that `riff mcp`. |
 //! | `start-PID` | The same `riff mcp`, next to `mcp-PID`. | The start time of the agent process PID, from `/proc`. |
 //! | `stuck-PID` | The PostToolUse hook of the session of the agent process PID, when it told the session that its `riff mcp` is stuck on an old riff (see [`first_tell`]). | The inode of the new riff. |
+//! | `notools-PID` | The `riff mcp` of the agent process PID, when its tools refused the `tools/list` of Claude Code (see [`set_no_tools`]). It removes the file after a list that works. | The start time of the agent process, and the time of the mark. |
+//! | `notools-told-PID` | The hooks of the session of the agent process PID, when they told the session that it has no riff tools (see [`first_no_tools_tell`]). | The mark that they told. |
 //! | `watch-ID` | `riff watch` for the session ID. | Nothing. Only the lock counts. |
 //! | `statusline-ID` | `riff statusline` for the session ID ([`keep_statusline`]). | The last answer of riff-server: its URL, its time, its build and the line. |
 //! | `left-ID` | The `leave` tool. The `join` tool removes it. It is in [`marks`], not in [`dir`]. | Nothing. The file counts. |
@@ -297,9 +299,79 @@ pub fn agent_above(dir: &Path) -> Option<u32> {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn first_tell(dir: &Path, agent: u32, inode: u64) -> bool {
-    let file = dir.join(format!("stuck-{agent}"));
-    let told = std::fs::read_to_string(&file).is_ok_and(|t| t.trim() == inode.to_string());
-    !told && std::fs::write(&file, inode.to_string()).is_ok()
+    first(&dir.join(format!("stuck-{agent}")), &inode.to_string())
+}
+
+/// True the first time that `file` gets `key`: it keeps `key`.
+fn first(file: &Path, key: &str) -> bool {
+    let told = std::fs::read_to_string(file).is_ok_and(|t| t.trim() == key);
+    !told && std::fs::write(file, key).is_ok()
+}
+
+/// Keeps the mark that the session of the agent process `agent` has no
+/// riff tools: the tools refused the `tools/list` of Claude Code
+/// (01M5512RKABQ70QPGC48S5F67W). `none` false removes the mark, after a
+/// list that works. The mark holds the start time of the agent process
+/// and the time of the mark, so a later process with the same PID finds
+/// no mark, and each new mark is new to [`first_no_tools_tell`].
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// let agent = std::process::id();
+/// assert_eq!(riff::local::no_tools(run.path(), agent), None);
+/// # if std::path::Path::new("/proc/self/stat").exists() {
+/// riff::local::set_no_tools(run.path(), agent, true)?;
+/// assert!(riff::local::no_tools(run.path(), agent).is_some());
+/// riff::local::set_no_tools(run.path(), agent, false)?;
+/// assert_eq!(riff::local::no_tools(run.path(), agent), None);
+/// riff::local::set_no_tools(run.path(), agent, false)?;
+///
+/// // A mark of an earlier process with the same PID.
+/// std::fs::write(run.path().join(format!("notools-{agent}")), "1 2")?;
+/// assert_eq!(riff::local::no_tools(run.path(), agent), None);
+/// # }
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn set_no_tools(dir: &Path, agent: u32, none: bool) -> io::Result<()> {
+    let file = dir.join(format!("notools-{agent}"));
+    if none {
+        let start = started(agent).unwrap_or_default();
+        let now = crate::activity::now_ms();
+        return std::fs::write(file, format!("{start} {now}"));
+    }
+    match std::fs::remove_file(file) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        removed => removed,
+    }
+}
+
+/// The mark of [`set_no_tools`] of the agent process `agent`, when it
+/// is a mark of this same process.
+pub fn no_tools(dir: &Path, agent: u32) -> Option<String> {
+    let mark = std::fs::read_to_string(dir.join(format!("notools-{agent}"))).ok()?;
+    let start = mark.split_whitespace().next()?.parse::<u64>().ok()?;
+    (Some(start) == started(agent)).then(|| mark.trim().to_owned())
+}
+
+/// True the first time that riff tells the session of the agent process
+/// `agent` that it has no riff tools, for each new mark of
+/// [`set_no_tools`] (01M5512RKABQ70QPGC48S5F67W). It keeps the mark in
+/// `notools-told-PID`.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// let agent = std::process::id();
+/// assert!(!riff::local::first_no_tools_tell(run.path(), agent));
+/// # if std::path::Path::new("/proc/self/stat").exists() {
+/// riff::local::set_no_tools(run.path(), agent, true)?;
+/// assert!(riff::local::first_no_tools_tell(run.path(), agent));
+/// assert!(!riff::local::first_no_tools_tell(run.path(), agent));
+/// # }
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn first_no_tools_tell(dir: &Path, agent: u32) -> bool {
+    no_tools(dir, agent)
+        .is_some_and(|mark| first(&dir.join(format!("notools-told-{agent}")), &mark))
 }
 
 /// The session of a live `riff mcp` of a process above the agent

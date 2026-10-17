@@ -188,6 +188,10 @@ pub struct Tools {
     /// the status line of the session ([`Tools::with_statusline`]).
     /// `None` keeps nothing.
     statusline: Option<PathBuf>,
+    /// True when the register of the session ended: each tool call
+    /// waits for it ([`Tools::after_register`]). `None` waits for
+    /// nothing.
+    registered: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 /// The tools after which the tools keep a new answer for the status
@@ -358,7 +362,17 @@ impl Tools {
             meter: None,
             reach: Reach::Host,
             statusline: None,
+            registered: None,
         }
+    }
+
+    /// Makes each tool call wait until `registered` is true: the end of
+    /// the register of the session, also of a register that failed
+    /// (01M5512RG2TTTS85VY8CEFF8R4). The handshake does not wait. A
+    /// sender that is gone ends the wait too.
+    pub fn after_register(mut self, registered: tokio::sync::watch::Receiver<bool>) -> Self {
+        self.registered = Some(registered);
+        self
     }
 
     /// Keeps the answer of riff-server for the status line of the
@@ -883,6 +897,9 @@ impl ServerHandler for Tools {
                 rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(refusal)])
                     .into(),
             );
+        }
+        if let Some(mut registered) = self.registered.clone() {
+            let _ = registered.wait_for(|done| *done).await;
         }
         let line = STATUSLINE_TOOLS.contains(&request.name.as_ref());
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
@@ -1427,9 +1444,37 @@ pub const END_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 /// with no end call (01M3NT6WZTKAFKGDWGCFKC8TB5), also for a client
 /// with no initialize request (01M53QQR7J7DG86SMAERKMYSAF). With
 /// `client`, the [`Client`] of the old process, it skips the
-/// handshake. It sends `registered` when its register ends, also when
-/// the register fails (01M3XM68N5M5DKB86W5079X2G9). A session that left
-/// the riff does not register: it drops `registered` with no value.
+/// handshake.
+///
+/// The handshake does not wait for the register: the register runs
+/// beside it, and each tool call waits for its end
+/// (01M5512RG2TTTS85VY8CEFF8R4). A client of `2026-07-28` waits only a
+/// short time for its first answer. It sends `registered` when its
+/// register ends, also when the register fails
+/// (01M3XM68N5M5DKB86W5079X2G9). A session that left the riff does not
+/// register: it drops `registered` with no value. The keep-alive and the
+/// other tasks start after the register.
+///
+/// ```mermaid
+/// sequenceDiagram
+///     participant C as Claude Code
+///     participant M as riff mcp
+///     participant S as riff-server
+///     C->>M: server/discover
+///     M-->>C: the answer, at once
+///     M->>S: register
+///     C->>M: tools/list
+///     M-->>C: the tools
+///     C->>M: tools/call whoami
+///     S-->>M: done
+///     Note over M: the call waits for the register
+///     M->>S: who
+///     M-->>C: the URI
+/// ```
+///
+/// When the tools refuse a `tools/list`, the session has no riff tools.
+/// `riff mcp` keeps a mark for its agent process, and the hooks tell the
+/// session (01M5512RKABQ70QPGC48S5F67W, [`crate::local::set_no_tools`]).
 pub async fn serve(
     api: Api,
     me: SessionUri,
@@ -1438,29 +1483,31 @@ pub async fn serve(
 ) -> Result<()> {
     use tokio::signal::unix::{SignalKind, signal};
     let worker = crate::worker::is_worker();
+    let (open, gate) = tokio::sync::watch::channel(false);
     let tools = Tools::new(api.clone(), me.clone())
         .with_earlier_work()
         .with_meter(Meter::here())
         .with_statusline(crate::local::dir())
         .as_worker(worker)
-        .in_wrapper(crate::worker::wrapper());
+        .in_wrapper(crate::worker::wrapper())
+        .after_register(gate);
     // Start even if the server is down: each tool call reports the error.
-    if tools.left() {
-        drop(registered);
-    } else {
-        if let Err(e) = api.register_as(&me, worker).await {
-            eprintln!("riff: {e:#}");
-        }
-        // The receiver can be gone: nothing waits for the register.
-        let _ = registered.send(());
-    }
-    let alive = tools.keep_alive();
-    // A worker is never the lead.
-    let monitor = (!worker).then(|| tools.monitor());
-    let rollout = (!worker).then(|| tools.rollout());
-    let reap = (!worker).then(|| tools.reap());
-    let tidy = (!worker).then(|| tools.tidy());
-    let look = (!worker).then(|| tools.look());
+    let begin = {
+        let tools = tools.clone();
+        tokio::spawn(async move {
+            if tools.left() {
+                drop(registered);
+            } else {
+                if let Err(e) = api.register_as(&me, worker).await {
+                    eprintln!("riff: {e:#}");
+                }
+                // The receiver can be gone: nothing waits for the register.
+                let _ = registered.send(());
+            }
+            open.send_replace(true);
+            Background::start(&tools, worker)
+        })
+    };
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     let mut hup = signal(SignalKind::hangup())?;
@@ -1484,7 +1531,16 @@ pub async fn serve(
             .await;
     };
     let (outside, inside) = tokio::io::duplex(relay::PIPE);
-    let relay = relay::run(outside, update);
+    let agent = std::os::unix::process::parent_id();
+    let marks = crate::local::dir();
+    let listed = |list: bool| {
+        if let Some(dir) = &marks
+            && let Err(e) = crate::local::set_no_tools(dir, agent, !list)
+        {
+            eprintln!("riff: cannot keep the mark of the riff tools: {e}");
+        }
+    };
+    let relay = relay::run(outside, update, listed);
     tokio::pin!(relay);
     let given = given_client(client)?;
     let service = async {
@@ -1525,46 +1581,45 @@ pub async fn serve(
         None => None,
     };
     let client = known.lock().unwrap_or_else(|p| p.into_inner()).take();
+    Background::stop(begin).await;
     if ended == Some(relay::Ended::Update)
         && let Some(client) = client
     {
-        alive.abort();
-        if let Some(rollout) = &rollout {
-            rollout.abort();
-        }
-        if let Some(reap) = &reap {
-            reap.abort();
-        }
-        if let Some(monitor) = &monitor {
-            monitor.abort();
-        }
-        if let Some(tidy) = &tidy {
-            tidy.abort();
-        }
-        if let Some(look) = &look {
-            look.abort();
-        }
         let dir = tools.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let _ = std::env::set_current_dir(dir);
         follow.run(tools.args(&client));
         anyhow::bail!("riff mcp cannot run the new riff");
     }
-    alive.abort();
-    if let Some(rollout) = rollout {
-        rollout.abort();
-    }
-    if let Some(reap) = reap {
-        reap.abort();
-    }
-    if let Some(monitor) = monitor {
-        monitor.abort();
-    }
-    if let Some(tidy) = tidy {
-        tidy.abort();
-    }
-    if let Some(look) = look {
-        look.abort();
-    }
     tools.end().await;
     result
+}
+
+/// The tasks of `riff mcp` beside the tools. They start after the
+/// register. A worker is never the lead, so it runs only the keep-alive.
+struct Background(Vec<tokio::task::JoinHandle<()>>);
+
+impl Background {
+    fn start(tools: &Tools, worker: bool) -> Self {
+        let mut tasks = vec![tools.keep_alive()];
+        if !worker {
+            tasks.extend([
+                tools.monitor(),
+                tools.rollout(),
+                tools.reap(),
+                tools.tidy(),
+                tools.look(),
+            ]);
+        }
+        Self(tasks)
+    }
+
+    /// Stops the register of `begin`, or each task that it started.
+    async fn stop(begin: tokio::task::JoinHandle<Self>) {
+        begin.abort();
+        if let Ok(started) = begin.await {
+            for task in started.0 {
+                task.abort();
+            }
+        }
+    }
 }
