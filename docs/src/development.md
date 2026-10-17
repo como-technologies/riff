@@ -1213,7 +1213,57 @@ riff wave run
 ```
 
 The daemon keeps the wave, also over its own restart, until you stop
-it.
+it. The rollout of your lead runs it for you: see the next how-to.
+
+### Let the rollout of the lead run the wave
+
+You need no command for this. When the current wave has free work, the
+rollout of your lead first gives it to each idle worker in tmux. When
+free work is left and no worker is idle, it asks the riff daemon of
+its machine to run the wave of the repository. It asks only when no
+wave of the repository runs there. The rollout starts no worker in
+tmux. `riff lead start` starts the wave too.
+
+```mermaid
+flowchart LR
+    R["the rollout of the lead"] -- "request: claim ITEM" --> W["an idle worker in tmux"]
+    R -- "free work is left, and no wave runs" --> D["the riff daemon of its machine"]
+    D -- "podman run" --> C["a container for each item"]
+```
+
+After the ask, your lead gets a note:
+
+```text
+thelio: the rollout asked the riff daemon to run the wave of como-technologies/riff: the daemon runs each free item and each verify in a container. See it: riff daemon status
+```
+
+When the daemon cannot run the wave, for example when no daemon runs,
+the lead gets one note with the reason. The rollout asks again at its
+next look. To see how often the rollout looks:
+
+```sh
+riff workers interval
+```
+
+### Use a second machine
+
+The rollout of your lead asks only the daemon of its own machine. A
+second machine takes work in containers when its own daemon runs the
+wave of the repository. Get that machine ready as for `riff run` (see
+[Get ready to run an item](#get-ready-to-run-an-item)). Then, in the
+clone of the repository on that machine:
+
+```sh
+riff wave run
+```
+
+The claims on riff-server keep the two machines from one item: each
+item runs on one machine only. The limit of the containers of each
+machine is the limit of its daemon (see
+[Set the limit of the host](#set-the-limit-of-the-host)). To stop the
+wave of that machine, run `riff wave stop` there. For workers in tmux
+on a second machine, `riff workers host` stays: see
+[Offer workers from another machine](how-it-works.md#offer-workers-from-another-machine).
 
 ### Run the wave with no riff-server
 
@@ -1251,6 +1301,19 @@ riff wave stop
 
 The daemon starts no new session for the wave. The sessions that run
 go on to their end.
+
+### Keep the wave stopped
+
+The rollout of your lead asks for the wave again at its next look with
+free work. To keep the wave stopped, turn the rollout off on the
+machine of your lead:
+
+```sh
+riff workers interval 0
+```
+
+Or pause the repository with `riff pause`. To turn the rollout on
+again, set the interval back, for example `riff workers interval 10`.
 
 ### Keep an item from the wave
 
@@ -1330,14 +1393,6 @@ again.
 
 When the daemon stops during a session, the session runs on. A new
 daemon takes it up, and does the steps after its end.
-
-The rollout of your lead also starts workers for the free work. To let
-only the daemon start sessions, turn the rollout off on the machine of
-your lead:
-
-```sh
-riff workers interval 0
-```
 
 ## Run the lead and watch the riff
 

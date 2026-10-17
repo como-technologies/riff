@@ -949,20 +949,42 @@ pub fn workers_off(state: &crate::enable::State) -> String {
     format!("riff starts no worker here: {}", riff_here(state))
 }
 
-/// The note to the lead when the rollout starts no worker on its
-/// machine `host`, because riff is off in the main clone
-/// (01M3YCGKKRDNFC338K1JSK30JK). `why` is [`workers_off`].
+/// The note to the lead when the rollout asked the riff daemon of its
+/// machine `host` to run the wave of `repo` (01M53NGVE839TRH7XB7CDPQNZE,
+/// 01M5515CA4CZ6KV4ZD6Y0744Z7).
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::rollout_off("pangolin", "riff starts no worker here: riff off. To turn it on: riff enable"),
-///     "pangolin: riff starts no worker here: riff off. To turn it on: riff enable. The rollout \
-///      starts no worker on pangolin until riff is on in the main clone."
+///     riff::text::rollout_wave("thelio", "o/r"),
+///     "thelio: the rollout asked the riff daemon to run the wave of o/r: the daemon runs each \
+///      free item and each verify in a container. See it: riff daemon status"
 /// );
 /// ```
-pub fn rollout_off(host: &str, why: &str) -> String {
+pub fn rollout_wave(host: &str, repo: &str) -> String {
     format!(
-        "{host}: {why}. The rollout starts no worker on {host} until riff is on in the main clone."
+        "{host}: the rollout asked the riff daemon to run the wave of {repo}: the daemon runs \
+         each free item and each verify in a container. See it: riff daemon status"
+    )
+}
+
+/// The note to the lead when the rollout cannot ask the riff daemon of
+/// its machine `host` to run the wave of `repo`, for the reason `why`
+/// (01M5515CA4CZ6KV4ZD6Y0744Z7).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::rollout_no_wave("thelio", "o/r", "no riff daemon listens"),
+///     "thelio: the rollout cannot run the wave of o/r on the riff daemon: no riff daemon \
+///      listens. The rollout tries again at its next look."
+/// );
+/// // A reason that ends with a full stop gets no second one.
+/// assert!(riff::text::rollout_no_wave("a", "o/r", "Start it.").contains("Start it. The"));
+/// ```
+pub fn rollout_no_wave(host: &str, repo: &str, why: &str) -> String {
+    format!(
+        "{host}: the rollout cannot run the wave of {repo} on the riff daemon: {}. The \
+         rollout tries again at its next look.",
+        why.trim_end_matches('.')
     )
 }
 
@@ -2127,7 +2149,7 @@ pub fn idle_workers(idle: &riff_core::wire::Idle) -> String {
 /// The message to the lead for a change of a worker setting: the
 /// setting, the old value, the new value and the host
 /// (01M3X30KHKB6W11C3NBAW7KCGW), and what the change does
-/// (01M3X30R4PSBP3RQWM02BJ6GK3).
+/// (01M3X30R4PSBP3RQWM02BJ6GK3, 01M5515CCV7WNKVZVAMQ375J0M).
 ///
 /// ```
 /// use riff::rollout::{Change, Effect};
@@ -2135,10 +2157,6 @@ pub fn idle_workers(idle: &riff_core::wire::Idle) -> String {
 /// use riff_core::wire::Idle;
 ///
 /// let limit = |old, new| Change::Limit { host: "pangolin".into(), old, new };
-/// assert_eq!(
-///     setting_changed(&limit(3, 4), &Effect::Starts),
-///     "workers: limit 3 to 4 on pangolin: the rollout starts 1 worker."
-/// );
 /// assert_eq!(
 ///     setting_changed(&limit(3, 4), &Effect::Waits { count: 1, remote: false }),
 ///     "workers: limit 3 to 4 on pangolin: free work waits, and the rollout is off. \
@@ -2154,13 +2172,13 @@ pub fn idle_workers(idle: &riff_core::wire::Idle) -> String {
 /// let interval = |old, new| Change::Interval { host: "thelio".into(), old, new };
 /// assert_eq!(
 ///     setting_changed(&interval(10, 0), &Effect::Nothing),
-///     "workers: interval 10 to 0 on thelio: the rollout is off, and riff starts no worker by \
+///     "workers: interval 10 to 0 on thelio: the rollout is off, and riff starts no work by \
 ///      itself."
 /// );
 /// assert_eq!(
 ///     setting_changed(&interval(0, 30), &Effect::Nothing),
-///     "workers: interval 0 to 30 on thelio: the rollout is on, and riff starts at most one \
-///      worker each 30 seconds."
+///     "workers: interval 0 to 30 on thelio: the rollout is on. Each 30 seconds it gives free \
+///      work to the idle workers, and runs the wave of the riff daemon for the rest."
 /// );
 /// let mcp = Change::Mcp {
 ///     host: "pangolin".into(),
@@ -2196,7 +2214,6 @@ pub fn setting_changed(change: &crate::rollout::Change, effect: &crate::rollout:
             let what = format!("workers: limit {old} to {new} on {host}");
             match effect {
                 Effect::Nothing => format!("{what}."),
-                Effect::Starts => format!("{what}: the rollout starts 1 worker."),
                 Effect::Waits { count, remote } => {
                     let on = if *remote {
                         format!(" --host {host}")
@@ -2222,10 +2239,10 @@ pub fn setting_changed(change: &crate::rollout::Change, effect: &crate::rollout:
         Change::Interval { host, old, new } => {
             let what = format!("workers: interval {old} to {new} on {host}");
             match new {
-                0 => format!("{what}: the rollout is off, and riff starts no worker by itself."),
+                0 => format!("{what}: the rollout is off, and riff starts no work by itself."),
                 _ => format!(
-                    "{what}: the rollout is on, and riff starts at most one worker each {new} \
-                     seconds."
+                    "{what}: the rollout is on. Each {new} seconds it gives free work to the \
+                     idle workers, and runs the wave of the riff daemon for the rest."
                 ),
             }
         }
@@ -2298,7 +2315,7 @@ pub fn workers_stopped(n: usize) -> String {
 /// assert_eq!(
 ///     riff::text::worker_stopped(Some("%3"), Some("a6cf"), &status),
 ///     "worker stopped: pane %3, session a6cf, exit code 1. The wrapper does not start it \
-///      again: the rollout starts a new worker for the free work."
+///      again: the free work goes to an idle worker or to the wave of the riff daemon."
 /// );
 /// assert!(riff::text::worker_stopped(None, None, &status).starts_with(
 ///     "worker stopped: pane unknown, session unknown, exit code 1."
@@ -2310,7 +2327,7 @@ pub fn workers_stopped(n: usize) -> String {
 ///     "worker stopped: pane %3, session a6cf, signal 9. A kill ended it, for example when \
 ///      the workers took too much memory. Its work that is not committed is in its worktree: \
 ///      the next worker of its item goes on from there. The wrapper does not start it again: \
-///      the rollout starts a new worker for the free work."
+///      the free work goes to an idle worker or to the wave of the riff daemon."
 /// );
 /// ```
 pub fn worker_stopped(pane: Option<&str>, session: Option<&str>, status: &ExitStatus) -> String {
@@ -2322,7 +2339,7 @@ pub fn worker_stopped(pane: Option<&str>, session: Option<&str>, status: &ExitSt
     };
     format!(
         "worker stopped: pane {}, session {}, {}.{killed} The wrapper does not start it \
-         again: the rollout starts a new worker for the free work.",
+         again: the free work goes to an idle worker or to the wave of the riff daemon.",
         pane.unwrap_or("unknown"),
         session.unwrap_or("unknown"),
         crate::worker::exit_words(status)
@@ -5018,22 +5035,20 @@ pub fn verify_post(verdict: Verdict, number: u64, done: &Reported, result: &str)
 }
 
 /// The room for more workers when fewer than `limit` run
-/// (01M493Z063SSTAJS2KNDFBTEBJ).
+/// (01M493Z063SSTAJS2KNDFBTEBJ). The rollout starts no worker in tmux
+/// (01M53NGVE839TRH7XB7CDPQNZE): a person starts them with
+/// `riff workers start`.
 ///
 /// ```
 /// use riff::text::room_for;
-/// assert_eq!(room_for(3, 2).as_deref(), Some("room for 1 worker, the rollout starts it for free work"));
-/// assert_eq!(room_for(4, 1).as_deref(), Some("room for 3 workers, the rollout starts them for free work"));
+/// assert_eq!(room_for(3, 2).as_deref(), Some("room for 1 worker"));
+/// assert_eq!(room_for(4, 1).as_deref(), Some("room for 3 workers"));
 /// assert_eq!(room_for(2, 2), None);
 /// assert_eq!(room_for(2, 3), None);
 /// ```
 pub fn room_for(limit: u16, runs: usize) -> Option<String> {
     let room = usize::from(limit).checked_sub(runs).filter(|n| *n > 0)?;
-    let them = if room == 1 { "it" } else { "them" };
-    Some(format!(
-        "room for {}, the rollout starts {them} for free work",
-        workers_count(room)
-    ))
+    Some(format!("room for {}", workers_count(room)))
 }
 
 /// Why a machine with a loop of deaths starts no worker
@@ -5104,13 +5119,15 @@ pub fn worker_over_limit(host: &str, pane: &str, limit: u16, runs: usize) -> Str
 /// assert_eq!(
 ///     riff::text::worker_old_riff("pangolin", "%3"),
 ///     "workers: the worker in the pane %3 on pangolin runs an old riff. It ends after its \
-///      item, in place of a clear. riff starts a new worker on the new riff for the free work."
+///      item, in place of a clear. Its free work goes to an idle worker or to the wave of the \
+///      riff daemon."
 /// );
 /// ```
 pub fn worker_old_riff(host: &str, pane: &str) -> String {
     format!(
         "workers: the worker in the pane {pane} on {host} runs an old riff. It ends after its \
-         item, in place of a clear. riff starts a new worker on the new riff for the free work."
+         item, in place of a clear. Its free work goes to an idle worker or to the wave of the \
+         riff daemon."
     )
 }
 
@@ -5122,15 +5139,15 @@ pub fn worker_old_riff(host: &str, pane: &str) -> String {
 /// assert_eq!(
 ///     riff::text::worker_new_rules("pangolin", "%3"),
 ///     "workers: the worker in the pane %3 on pangolin started before riff added rules of \
-///      Claude Code. It ends after its item, in place of a clear. riff starts a new worker \
-///      with the new rules for the free work."
+///      Claude Code. It ends after its item, in place of a clear. Its free work goes to an idle \
+///      worker or to the wave of the riff daemon."
 /// );
 /// ```
 pub fn worker_new_rules(host: &str, pane: &str) -> String {
     format!(
         "workers: the worker in the pane {pane} on {host} started before riff added rules of \
-         Claude Code. It ends after its item, in place of a clear. riff starts a new worker \
-         with the new rules for the free work."
+         Claude Code. It ends after its item, in place of a clear. Its free work goes to an idle \
+         worker or to the wave of the riff daemon."
     )
 }
 
@@ -7874,6 +7891,24 @@ pub fn takeover_back(name: &str) -> String {
 /// `riff takeover`: the session ended before its turn ended.
 pub fn takeover_session_ended(name: &str) -> String {
     format!("The session in the container {name} ended before a takeover.")
+}
+
+/// `riff lead start`: the daemon does not run the wave of `repo`, for
+/// the reason `why`. The lead starts (01M5515CJ7QDJ639VGR7SJTE08).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_no_wave("o/r", "no pin."),
+///     "The riff daemon does not run the wave of o/r: no pin. The lead starts. To run the \
+///      wave: riff wave run"
+/// );
+/// ```
+pub fn lead_no_wave(repo: &str, why: &str) -> String {
+    format!(
+        "The riff daemon does not run the wave of {repo}: {}. The lead starts. To run the \
+         wave: riff wave run",
+        why.trim_end_matches('.')
+    )
 }
 
 /// `riff lead start`: the lead of the repository runs already.

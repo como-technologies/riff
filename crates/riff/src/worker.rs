@@ -14,8 +14,8 @@
 //! | the server stops an idle worker | `riff mcp` of the worker sends SIGTERM to the wrapper | a note of the server |
 //! | the pane dies with the wrapper, for example a memory kill | `riff workers host`, or `riff mcp` of the lead ([`crate::reap`]) | a note with the pane, the session, the item and the cause |
 //!
-//! The wrapper never starts `claude` again. The rollout starts a new
-//! worker for the free work ([`crate::rollout`]). An exit with a fault
+//! The wrapper never starts `claude` again. The free work goes to an
+//! idle worker or to the wave of the daemon ([`crate::rollout`]). An exit with a fault
 //! is a death of the worker: the wrapper records it ([`crate::deaths`]).
 //! A loop of deaths stops the starts on the machine, and the lead gets
 //! one message.

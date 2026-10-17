@@ -1112,19 +1112,17 @@ impl Tools {
         crate::worker::stop_wrapper(pid);
     }
 
-    /// Runs the rollout of workers for as long as the tools run
-    /// (01M3Q5QE01DB0FJQJWFKR450KQ). It acts only while this session is
-    /// the lead. See [`crate::rollout`].
+    /// Runs the rollout for as long as the tools run
+    /// (01M3Q5QE01DB0FJQJWFKR450KQ, 01M53NGVE839TRH7XB7CDPQNZE). It acts
+    /// only while this session is the lead. See [`crate::rollout`].
     pub fn rollout(&self) -> tokio::task::JoinHandle<()> {
         let tools = self.clone();
         let env = crate::rollout::Live {
             api: self.api.clone(),
             me: move || tools.me(),
             tmux: crate::terminal::Tmux::from_env(),
-            claude: "claude".into(),
             // The calls of `gh` share one token (01M54510SFK1Z9VPFYBYYSV10F).
             gh: Arc::new(crate::pr::Gh::default().with_one_token()),
-            off_told: false.into(),
         };
         tokio::spawn(crate::rollout::run(env))
     }
@@ -1142,7 +1140,8 @@ impl Tools {
     /// session is the lead, it ends the session of a worker whose pane
     /// is gone, and posts a note to the lead
     /// (01M3WG2460P4GF7GEVBY92Q33W). So the claims of a killed worker
-    /// are free at once, and the rollout starts a worker for the item.
+    /// are free at once, and the rollout gives the item to an idle
+    /// worker or to the wave of the daemon.
     /// A session outside tmux looks at nothing. See [`crate::reap`].
     pub fn reap(&self) -> tokio::task::JoinHandle<()> {
         use crate::reap::{self, Reaper};

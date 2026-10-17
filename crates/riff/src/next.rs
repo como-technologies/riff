@@ -136,7 +136,7 @@
 //! wrapper `PATH (deleted)` ([`crate::binary::runs_replaced`]), the
 //! worker ends in place of the clear (01M517BT9WBQ4R79Z9KVY9SG1B), as
 //! over the limit: a note to the lead, then [`crate::worker::stop`].
-//! The rollout starts a new worker on the new riff for the free work
+//! Its free work goes to an idle worker or to the wave of the daemon
 //! ([`crate::rollout`]). A worker that holds a claim gets no ask to
 //! clear, so riff never ends a busy worker.
 //!

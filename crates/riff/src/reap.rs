@@ -45,12 +45,12 @@
 //!   ([`looked_after`]). A machine can hold the workers of more than
 //!   one repository.
 //! - The note wakes nobody. The death of a worker is not an event for
-//!   the lead: the rollout starts a worker for the free item, as for
-//!   each free item ([`crate::rollout`]).
+//!   the lead: the free item goes to an idle worker or to the wave of
+//!   the daemon, as each free item ([`crate::rollout`]).
 //! - Each such end is a death of the machine ([`crate::deaths`]). The
 //!   death that starts a loop of deaths gives one message that wakes
-//!   the lead ([`Reaped::alarm`]), and the rollout starts no worker on
-//!   the machine (01M493YZZEW1FTDBNA090WT2AG).
+//!   the lead ([`Reaped::alarm`]), and `riff workers start` starts no
+//!   worker on the machine (01M493YZZEW1FTDBNA090WT2AG).
 //! - The cause is best effort ([`oom_cause`]). tmux puts each pane in a
 //!   systemd scope of its own. riff keeps the scope of each worker pane
 //!   while the pane lives ([`scope_of`]), and looks for the line of

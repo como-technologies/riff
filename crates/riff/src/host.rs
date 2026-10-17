@@ -49,12 +49,14 @@
 //! loop:
 //!
 //! - The rollout of the lead looks each interval ([`crate::rollout`]).
-//!   It starts a worker for free work on the machine with the most free
-//!   capacity, while a machine has room ([`crate::rollout::Place::room`]).
-//!   For a host, it sends [`Request::Start`].
+//!   It starts no worker in tmux (01M53NGVE839TRH7XB7CDPQNZE). A person
+//!   starts one with `riff workers start --host HOST`: it sends
+//!   [`Request::Start`], and the host starts at most its room
+//!   ([`crate::rollout::Place::room`]).
 //! - The host looks at its worker panes each [`reap::EVERY`]. A worker
 //!   that died frees its claims ([`crate::reap`]). The free item is free
-//!   work for the next look of the rollout.
+//!   work for the next look of the rollout: an idle worker or the wave
+//!   of the daemon takes it.
 //! - A worker that ends its item while more workers run than the limit
 //!   ends ([`crate::next`]). A higher limit gives room at the next look.
 //! - Each death counts ([`crate::deaths`]). More than

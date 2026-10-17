@@ -411,32 +411,39 @@ pub fn workers_floor(floor: u32, avail_gb: u32, path: &Path) -> String {
     )
 }
 
-/// `riff workers interval` (01M3Q5QE9H42FQKEDC5G9GKCWD): the most
-/// seconds between two workers that the lead starts by itself. 0 turns
-/// it off.
+/// `riff workers interval` (01M3Q5QE9H42FQKEDC5G9GKCWD): the seconds
+/// between two looks of the rollout of the lead. At each look it gives
+/// free work to the idle workers, and runs the wave of the riff daemon
+/// for the rest (01M53NGVE839TRH7XB7CDPQNZE, 01M5515CCV7WNKVZVAMQ375J0M).
+/// 0 turns it off.
 ///
 /// ```
 /// let out = riff::view::workers_interval(10, "/h/c.toml".as_ref());
 /// assert_eq!(
 ///     anstream::adapter::strip_str(&out).to_string(),
 ///     "workers.interval  10  (/h/c.toml)\n\
-///      The lead starts at most one worker each 10 seconds. \
-///      Set it with: riff workers interval SECONDS (0 turns it off)"
+///      Each 10 seconds the lead gives free work to the idle workers, and runs the wave of the \
+///      riff daemon for the rest. Set it with: riff workers interval SECONDS (0 turns it off)"
 /// );
 /// assert!(riff::view::workers_interval(0, "/h/c.toml".as_ref())
-///     .contains("The lead starts no worker by itself."));
+///     .contains("The lead starts no work by itself."));
 /// ```
 pub fn workers_interval(seconds: u16, path: &Path) -> String {
     let what = match seconds {
-        0 => "starts no worker by itself".to_owned(),
-        1 => "starts at most one worker each second".to_owned(),
-        n => format!("starts at most one worker each {n} seconds"),
+        0 => "The lead starts no work by itself".to_owned(),
+        1 => "Each second the lead gives free work to the idle workers, and runs the wave of the \
+              riff daemon for the rest"
+            .to_owned(),
+        n => format!(
+            "Each {n} seconds the lead gives free work to the idle workers, and runs the wave of \
+             the riff daemon for the rest"
+        ),
     };
     setting(
         "workers.interval",
         &seconds.to_string(),
         path,
-        &format!("The lead {what}. Set it with: riff workers interval SECONDS (0 turns it off)"),
+        &format!("{what}. Set it with: riff workers interval SECONDS (0 turns it off)"),
     )
 }
 
@@ -810,7 +817,7 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 /// // Fewer workers than the limit: room for more.
 /// assert_eq!(
 ///     plain(riff::view::host_heading("pangolin", 3, 1, None, 4, 0)),
-///     "pangolin  limit 3  runs 1: room for 2 workers, the rollout starts them for free work"
+///     "pangolin  limit 3  runs 1: room for 2 workers"
 /// );
 /// // More workers than the limit (01M402VFQHC5PH39DTFV6AH60F).
 /// assert_eq!(
@@ -827,7 +834,7 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 /// // A loop of deaths (01M493YZZEW1FTDBNA090WT2AG).
 /// assert_eq!(
 ///     plain(riff::view::host_heading("pangolin", 3, 1, None, 4, 4)),
-///     "pangolin  limit 3  runs 1: room for 2 workers, the rollout starts them for free work\n\
+///     "pangolin  limit 3  runs 1: room for 2 workers\n\
 ///      Starts no worker: 4 workers died in the last hour. riff starts workers again when 3 or \
 ///      fewer died in the last hour."
 /// );

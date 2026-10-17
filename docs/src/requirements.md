@@ -381,6 +381,7 @@
   the lead, the rollout posts one note to the lead: the host, the
   reason and `riff enable`. The next note comes only after riff was on
   there again.
+  Superseded by the re-cut (01M53NGVE839TRH7XB7CDPQNZE).
 - **01M3NJDSQ23FFRMH8ZD4GC57WY** `riff --help` lists the commands that
   people use under the headings Get started, Work in the riff, Pull
   requests, Lead and Members, in that order. Each command has one
@@ -3623,6 +3624,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   MustClear with `riff workers stop PANE`: the rollout starts a new
   worker with a fresh context. A person can also type `/clear` in its
   pane. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded in part by the re-cut (01M53NGVE839TRH7XB7CDPQNZE).
 - **01M3JQCD16CNWN5FCQBRKHXYMP** After the fresh context, the worker
   keeps its riff session ID, its lead and its watch. It follows the
   start routine and claims its next item with no person. Superseded by
@@ -3925,6 +3927,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   join yet, and a live worker of another user. A worker that the
   server asked to stop is not idle. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by the re-cut (01M53NGVE839TRH7XB7CDPQNZE,
+  01M5515CA4CZ6KV4ZD6Y0744Z7).
 - **01M3W27BJYFQCHY5MTZ2J4SKW4** An idle worker counts for the rollout
   only when it is in the repository of the lead. A worker in another
   repository does not count, also a worker of the user of the lead. A
@@ -3953,6 +3957,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   limit, and a machine whose load average is more than its cores. On a
   tie, the machine of the lead wins. A host with no numbers counts its
   limit as its score. Superseded by 3.0 (01M4Z60B7Y4XD6TJCYEYJT2R4S).
+  Superseded in part by the re-cut (01M53NGVE839TRH7XB7CDPQNZE).
 - **01M3Q5QE9H42FQKEDC5G9GKCWD** The interval of the rollout is the
   setting `workers.interval` of the machine of the lead, in seconds.
   The default is 10. 0 turns the rollout off. `riff workers interval`
@@ -3963,11 +3968,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   repository of the lead is paused. The resume starts the rollout
   again. A pause of another repository does not stop the rollout.
   Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded in part by the re-cut (01M5515CA4CZ6KV4ZD6Y0744Z7).
 - **01M3Q5QEE4MQNCRKVJK3D54G9Z** Each start of the rollout gives the
   lead a note with the host, the pane and the session of the new
   worker. A note wakes nobody. On the machine of the lead, the person
   posts it. On a host, the host posts it as its reply. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by the re-cut (01M5515CA4CZ6KV4ZD6Y0744Z7).
 - **01M3Q5QEJNP1JGQM7VXXEBJ9J9** The rollout starts a worker only when
   no worker is idle: each worker with no claim, also a new one that did
   not claim yet, counts. So when no worker takes the counted work, one
@@ -3975,6 +3982,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   workers. A worker that refused its request does not count
   (01M49ZK1C1P817KE63EXV3EJDC). Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded in part by the re-cut (01M5515CA4CZ6KV4ZD6Y0744Z7).
 - **01M518P1N8R893MG9Z3VAQZR6Z** A request of the lead with no work
   item names a task claim `task-NAME`, for example
   `request: claim task-iroh-listener, then ...`. The worker claims it
@@ -4006,6 +4014,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   free work for the start of a worker. So the rollout starts at most one
   more worker for a refused item, and no loop of starts and stops.
   Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by the re-cut (01M5515CA4CZ6KV4ZD6Y0744Z7).
 - **01M51533BJSD0RB7BFQR9CAFYW** The rollout never sends
   `request: claim verify-issue-N` to a session that held `issue-N`,
   also after a `/clear` of that session. The author is each session
@@ -4020,6 +4029,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `verify-issue-N`. Each look reads the holds of the repository thread
   again, so a free of the item makes it free work at the next look.
   Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded in part by the re-cut (01M53NGVE839TRH7XB7CDPQNZE).
 - **01M51BF5S2YKB8JG10DF6YVT42** The trailer `Issue: #N` of a pull
   request names its issue, as for `riff verify`. With no trailer, its
   branch names the issue (`worktree-issue-12`). The free work of the
@@ -4043,6 +4053,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   it says how many run and how many end after their item
   (01M402VFGAJQM1QW8B42NKMJM4). Superseded by 3.0
   (01M4Z60B7Y4XD6TJCYEYJT2R4S).
+  Superseded in part by the re-cut (01M5515CCV7WNKVZVAMQ375J0M).
 - **01M3X30RA3X08JBJ2JBVCCNEH3** The message for a change of a worker
   setting is a note. It wakes the lead only when free work waits that
   a higher limit lets start and the rollout is off. Then it names the
@@ -4185,6 +4196,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   request. It starts workers by hand only while the rollout is off. It
   never changes `workers.interval`. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by the re-cut (01M53NGVE839TRH7XB7CDPQNZE).
 - **01M3WG2460P4GF7GEVBY92Q33W** A worker can die at each moment.
   `riff workers host`, and `riff mcp` of the lead on the machine of the
   lead, look at the worker panes of the machine each 5 seconds. When a
@@ -4209,6 +4221,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   output of the process that acts and one note to the lead. The lead
   starts and stops no worker by hand for this. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded in part by the re-cut (01M53NGVE839TRH7XB7CDPQNZE).
 - **01M493YZVZGA7TSRJH6F67VN0H** Each worker pane runs `claude` through
   `riff workers run`. When `claude` exits on its own, the wrapper posts
   a note to the lead of the person in the repository, as the person:
@@ -4216,6 +4229,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   again: the rollout starts a new worker for the free work. On SIGTERM
   or SIGHUP, it stops `claude` and posts no note. Superseded by 3.0
   (01M4Z60B81RTZT71PN5HV0GZHX).
+  Superseded in part by the re-cut (01M53NGVE839TRH7XB7CDPQNZE).
 - **01M493YZZEW1FTDBNA090WT2AG** A machine records each death of its
   workers, one time for each session, in the file `worker-deaths` of
   its local riff dir: an exit of `claude` on its own with an exit code
@@ -4241,6 +4255,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `worker stopped` needs no step, because riff starts a new worker for
   the free work. The message of a loop of deaths goes to the user of
   the lead. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded in part by the re-cut (01M53NGVE839TRH7XB7CDPQNZE).
 - **01M3ZV0QSFVCHRSEKYK57B88VA** riff stops the processes of a worker
   itself, in code. The agent never names a process ID. With no scope
   of the worker (01M49SVFW0FZ3DK57PACS7W5EY), a process is of the
@@ -5080,6 +5095,30 @@ part when they merge.
   no worker in tmux by itself. It still gives free work to each idle
   worker in tmux, as in riff 1.x. `riff lead start` also starts the
   wave of the repository on its daemon, when no wave of it runs.
+- **01M5515CA4CZ6KV4ZD6Y0744Z7** The rollout gives free work to the
+  idle workers in tmux first. It asks the daemon for the wave only when
+  free work is left and no worker is idle. A worker that refused its
+  request does not count (01M49ZK1C1P817KE63EXV3EJDC). A daemon that
+  does not answer runs no wave. After an ask, the lead gets a note.
+  When no daemon answers, or the ask fails, the lead gets one note with
+  the reason, and the rollout asks again at its next look. The next
+  note comes for a new reason, or after a wave runs or an ask works.
+  While a wave of the repository runs and no idle worker joined, the
+  look makes no call of `gh`.
+- **01M5515CCV7WNKVZVAMQ375J0M** While the rollout is on, the message of
+  a higher limit says only the change: the rollout starts no worker in
+  tmux. While it is off, a higher limit that gives room for free work
+  wakes the lead with the `riff workers start` command
+  (01M3X30RA3X08JBJ2JBVCCNEH3). `riff workers interval` and the message
+  of a new interval say that the rollout gives free work to the idle
+  workers, and runs the wave of the daemon for the rest.
+- **01M5515CFHRA6AJG4GKX0ZV77W** `riff wave stop` stops the wave of the
+  daemon until the next look of the rollout with free work. To keep it
+  stopped, a person turns the rollout off with
+  `riff workers interval 0`, or pauses the repository.
+- **01M5515CJ7QDJ639VGR7SJTE08** When `riff lead start` cannot start the
+  wave of the repository, it prints the reason and the step
+  `riff wave run`, and it starts the lead.
 - **01M53NGVH8A19QS3CQ79ENVVXT** A second machine of a person takes work
   in containers when its daemon runs the wave of the repository:
   `riff wave run` in a clone on that machine. The claims on riff-server
