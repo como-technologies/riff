@@ -36,7 +36,7 @@
 //! | Key | Default | Meaning |
 //! |---|---|---|
 //! | `workers.limit` | 0 | The most workers that `riff workers start` runs on this machine (01M3JPQT35BMR7XMAMMFSCDC2B). |
-//! | `workers.interval` | 10 | The seconds between two workers that the rollout of the lead starts. 0 turns the rollout off (see [`rollout`](crate::rollout), 01M3Q5QE9H42FQKEDC5G9GKCWD). |
+//! | `workers.interval` | 10 | The seconds between two looks of the rollout of the lead. 0 turns the rollout off (see [`rollout`](crate::rollout), 01M3Q5QE9H42FQKEDC5G9GKCWD). |
 //! | `workers.mcp` | `["riff"]` | The MCP servers that a worker loads (see [`worker_mcp`](crate::worker_mcp)). |
 //! | `workers.jobs` | 0 | The compile jobs and the test threads of one worker. 0: riff makes the number from the machine (see [`limits`](crate::limits), 01M3WFYZRK5CT22GJW6ZHYT9CC). |
 //! | `workers.nice` | 10 | The nice value of each worker (01M3WFYZTX05CGDP2NQF9B356K). |
