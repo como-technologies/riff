@@ -1,16 +1,20 @@
 //! An instance change as Cloud Run makes it (#923): a second real
 //! `riff-server` starts on the same directory while the first one
 //! serves. Cloud Run sends each call to an instance with an open port
-//! (01M52JYGM7WH565B7PCVBEJC17, 01M52JYGPX5ETP3HKR0S0Y0YCR).
+//! (01M52JYGM7WH565B7PCVBEJC17, 01M52JYGPX5ETP3HKR0S0Y0YCR). At a
+//! deploy, Cloud Run can also start a second instance of the old
+//! revision (01M53NHJXGK1PN2A9F7NSX0B4G).
 
 use crate::common;
 
 use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 use isolated::Span;
 use riff_state::store::LEASE;
-use serde_json::json;
+use serde_json::{Value, json};
+use tempfile::NamedTempFile;
 use tokio::time::sleep;
 
 const MIKE: &str = "riff://mike@pangolin/como-technologies/riff?session=a#api";
@@ -133,4 +137,117 @@ async fn at_an_instance_change_each_call_gets_a_reply_within_20_seconds() {
         "{log}"
     );
     assert!(log.contains("exiting: another instance serves"), "{log}");
+}
+
+/// The lease object as JSON.
+fn lease_of(dir: &Path) -> Value {
+    serde_json::from_slice(&fs::read(dir.join(LEASE)).unwrap()).unwrap()
+}
+
+fn text(log: &NamedTempFile) -> String {
+    fs::read_to_string(log.path()).unwrap()
+}
+
+/// A deploy as Cloud Run made it at the release 1.7.0 (#923). The old
+/// instance closes its port when it reads the new lease. The new revision
+/// is not ready yet, so Cloud Run starts a second instance of the old
+/// revision while the new one waits. The second old instance does not
+/// take the lease of the newer revision (01M53NHJXGK1PN2A9F7NSX0B4G), and
+/// exits at once at its SIGTERM, before it serves
+/// (01M53NHK07KNXJ7FXS26NB1675). So the new instance serves after one
+/// wait of 15 seconds, not after two or three.
+#[tokio::test]
+async fn at_a_deploy_a_second_old_instance_does_not_take_the_lease_of_the_new_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let logs: [NamedTempFile; 3] = std::array::from_fn(|_| NamedTempFile::new().unwrap());
+    let old_listen = common::free_address();
+    let _old = common::Server(common::server_of_revision(
+        dir.path(),
+        &old_listen,
+        &logs[0],
+        "riff-server-00025-2s5",
+    ));
+    common::wait_until_it_serves(&old_listen).await;
+    let first = lease_of(dir.path());
+
+    // The deploy: an instance of the new revision starts.
+    let new_listen = common::free_address();
+    let mut new = common::Server(common::server_of_revision(
+        dir.path(),
+        &new_listen,
+        &logs[1],
+        "riff-server-00026-899",
+    ));
+    let span = Span::start();
+    let id = loop {
+        let lease = lease_of(dir.path());
+        if lease["id"] != first["id"] {
+            break lease["id"].clone();
+        }
+        assert!(span.within(Duration::from_secs(30)), "no new lease");
+        sleep(Duration::from_millis(50)).await;
+    };
+    let taken = Span::start();
+    while open(&old_listen).await {
+        assert!(taken.within(Duration::from_secs(5)), "the port closed late");
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    // No instance of the old revision has an open port: Cloud Run starts
+    // a second one.
+    let second_listen = common::free_address();
+    let mut second = common::Server(common::server_of_revision(
+        dir.path(),
+        &second_listen,
+        &logs[2],
+        "riff-server-00025-c7d",
+    ));
+    while !text(&logs[2]).contains("does not take it") {
+        assert_eq!(
+            lease_of(dir.path())["id"],
+            id,
+            "the second old instance took the lease"
+        );
+        assert!(taken.within(Duration::from_secs(12)), "{}", text(&logs[2]));
+        sleep(Duration::from_millis(50)).await;
+    }
+    // It replies 503 of riff-server.
+    let got = front(&[second_listen.as_str()], 0).await.unwrap();
+    assert_eq!((got.status, got.riff), (503, true));
+
+    // The new revision is ready: Cloud Run stops the second old instance.
+    let stop = Span::start();
+    let kill = std::process::Command::new("kill")
+        .args(["-TERM", &second.0.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(kill.success());
+    let status = loop {
+        if let Some(status) = second.0.try_wait().unwrap() {
+            break status;
+        }
+        assert!(stop.within(Duration::from_secs(3)), "it exited late");
+        sleep(Duration::from_millis(20)).await;
+    };
+    assert!(status.success(), "{status}");
+    assert!(
+        text(&logs[2]).contains("stopping before it serves"),
+        "{}",
+        text(&logs[2])
+    );
+
+    // The new instance serves after its one wait.
+    common::wait_until_it_serves(&new_listen).await;
+    assert!(
+        taken.within(Duration::from_secs(20)),
+        "it served {:?} after its take",
+        taken.wall()
+    );
+    assert!(new.0.try_wait().unwrap().is_none(), "{}", text(&logs[1]));
+    let got = front(&[new_listen.as_str()], 0).await.unwrap();
+    assert_eq!(got.status, 200);
+    // Each lease names the revision of its instance.
+    assert_eq!(first["revision"], 25);
+    let lease = lease_of(dir.path());
+    assert_eq!((&lease["id"], &lease["revision"]), (&id, &json!(26)));
 }

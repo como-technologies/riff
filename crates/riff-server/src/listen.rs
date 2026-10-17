@@ -55,6 +55,12 @@
 //!   sends each call to the new instance. It exits when the checkpoint
 //!   of the hand-over is written, at most [`crate::lease::Timing::exit_after`]
 //!   after the stop (01M52JYGPX5ETP3HKR0S0Y0YCR).
+//! - A SIGTERM before the end of the wait for the lease ends the start:
+//!   the server closes its port and exits at once. It has no state to
+//!   save yet (01M53NHK07KNXJ7FXS26NB1675). A lease that it took ends
+//!   by its age, or the next instance takes it. So a second instance of
+//!   an old revision, which waits for a lease of a newer revision
+//!   ([`crate::lease::Lease::take_as`]), exits when Cloud Run stops it.
 //! - A server with no store serves at once: its port opens when it
 //!   serves.
 //!
@@ -237,7 +243,9 @@ fn starting() -> Response {
 /// - `check` runs after the first save of the server, before it serves.
 ///   An error stops the start: `main` checks the listen address there.
 /// - At the end of `shutdown`, the server stops taking calls, saves and
-///   ends its lease (R129).
+///   ends its lease (R129). When `shutdown` ends before the end of the
+///   wait for the lease, it closes the port and returns at once
+///   (01M53NHK07KNXJ7FXS26NB1675).
 /// - When the server stops for good (R141, 01M52JYGPX5ETP3HKR0S0Y0YCR),
 ///   it closes the port at once, and returns when the hand-over is
 ///   written, at most [`crate::lease::Timing::exit_after`] later. When
@@ -275,6 +283,7 @@ where
     D: Future<Output = ()>,
     C: FnOnce(&Service) -> Result<(), String>,
 {
+    let mut shutdown = std::pin::pin!(shutdown);
     let routes: Arc<OnceLock<Router>> = Arc::default();
     let front = {
         let routes = routes.clone();
@@ -312,8 +321,19 @@ where
         }
         Start::AfterLease(loaded) => {
             let serving = open(port)?;
+            // The server has no state to save before the end of its wait
+            // for the lease: a SIGTERM then ends the start at once
+            // (01M53NHK07KNXJ7FXS26NB1675).
+            let leased = tokio::select! {
+                leased = loaded.lease() => leased,
+                () = &mut shutdown => {
+                    let _ = close.send(true);
+                    tracing::info!("stopping before it serves: it saves nothing");
+                    return Ok(());
+                }
+            };
             let started = async {
-                let service = loaded.serve().await.map_err(failed)?;
+                let service = leased.map_err(failed)?.serve().await.map_err(failed)?;
                 // The owner of the settings is a record of the start:
                 // wait for its write, so that the check reads it.
                 service.save().await.map_err(failed)?;
@@ -336,7 +356,7 @@ where
     tracing::info!("riff-server serves");
     tokio::select! {
         result = &mut serving => result.map_err(std::io::Error::other)?,
-        () = shutdown => {
+        () = &mut shutdown => {
             // Take no more calls, save each unsaved change, then exit (R129).
             let _ = close.send(true);
             tracing::info!("stopping: saving the state");

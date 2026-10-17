@@ -2042,6 +2042,19 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **R156** A new instance starts to serve at a whole second. When the
   lease shows another ID after its wait, it exits and does not serve.
   Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
+- **01M53NHJXGK1PN2A9F7NSX0B4G** The lease also holds the revision of
+  its instance: the number of its Cloud Run revision, from
+  `K_REVISION`. The number gives the order of the deploys. An instance
+  of an older revision does not write over a live lease of a newer
+  revision. It replies 503, reads the lease every 2 seconds, and takes
+  the lease only when that lease ended. When the instance or the holder
+  has no revision, the newest instance takes the lease (R138).
+  Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
+- **01M53NHK07KNXJ7FXS26NB1675** A SIGTERM before the end of the wait
+  for the lease ends the start of an instance at once. The instance
+  closes its port and exits with success. It saves nothing: it has no
+  state to save yet. A lease that it took ends by its age, or the next
+  instance takes it. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3X34282SG0DJ6X34F90HS26** The lease also holds a time. An
   instance writes the time when it takes the lease, and again every 30
   seconds. While a write of the time that is due fails, the instance

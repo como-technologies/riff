@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use std::path::Path;
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -153,17 +153,34 @@ pub fn free_address() -> String {
 /// The real `riff-server` with its state in `dir`, on `listen`. Its log
 /// goes to `log`. It has the real lease wait of 15 seconds.
 pub fn server_on_dir(dir: &Path, listen: &str, log: &tempfile::NamedTempFile) -> Child {
-    Isolated::shared()
-        .riff_server()
+    server_command(dir, listen, log).spawn().unwrap()
+}
+
+/// As [`server_on_dir`], for an instance of the Cloud Run revision
+/// `revision`, as `K_REVISION` names it.
+pub fn server_of_revision(
+    dir: &Path,
+    listen: &str,
+    log: &tempfile::NamedTempFile,
+    revision: &str,
+) -> Child {
+    server_command(dir, listen, log)
+        .env("K_REVISION", revision)
+        .spawn()
+        .unwrap()
+}
+
+fn server_command(dir: &Path, listen: &str, log: &tempfile::NamedTempFile) -> Command {
+    let mut command = Isolated::shared().riff_server();
+    command
         .arg("--dir")
         .arg(dir)
         .env("RIFF_LISTEN", listen)
         .env("NO_COLOR", "1")
         .stdin(Stdio::null())
         .stdout(log.reopen().unwrap())
-        .stderr(log.reopen().unwrap())
-        .spawn()
-        .unwrap()
+        .stderr(log.reopen().unwrap());
+    command
 }
 
 /// Waits until the real `riff-server` on `listen` serves. Its port

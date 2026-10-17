@@ -2096,10 +2096,85 @@ impl Loaded {
         &self.config
     }
 
-    /// The second step of [`Service::load`]: it takes the lease, waits
-    /// for the old instance, loads what came in that time, and gives the
-    /// server that serves. See [`Service::load`].
+    /// The second step of [`Service::load`]: [`Loaded::lease`], then
+    /// [`Leased::serve`]. See [`Service::load`].
     pub async fn serve(self) -> Result<Service, StoreError> {
+        self.lease().await?.serve().await
+    }
+
+    /// Takes the lease as an instance of [`Config::revision`], and waits
+    /// for the old instance (R138). The server has no state to save yet,
+    /// so `main` can drop this step at a SIGTERM (01M53NHK07KNXJ7FXS26NB1675).
+    ///
+    /// While a live lease holds a newer revision, the server does not take
+    /// it (01M53NHJXGK1PN2A9F7NSX0B4G). It reads the lease each
+    /// [`lease::Timing::read_every`], and takes it when that lease ended.
+    /// See "A second old instance" in [`lease`].
+    pub async fn lease(self) -> Result<Leased, StoreError> {
+        let timing = self.config.lease;
+        let revision = self.config.revision;
+        let mut told = false;
+        let (lease, taken) = loop {
+            let taken = Instant::now();
+            match Lease::take_as(self.store.clone(), revision, &timing).await? {
+                Ok(lease) => break (lease, taken),
+                Err(newer) => {
+                    if !told {
+                        told = true;
+                        let of = |r: Option<lease::Revision>| r.map(|r| r.to_string());
+                        tracing::info!(
+                            "the instance {} of the newer revision {} holds the lease: this \
+                             instance of the revision {} does not take it, and waits for its end",
+                            newer.id,
+                            of(newer.revision).unwrap_or_default(),
+                            of(revision).unwrap_or_default(),
+                        );
+                    }
+                    tokio::time::sleep(timing.read_every).await;
+                }
+            }
+        };
+        tracing::info!(
+            "took the lease as {}; waiting {:?} for the old instance",
+            lease.id(),
+            timing.wait
+        );
+        tokio::time::sleep(timing.wait).await;
+        // Serve from the next whole second, and refuse each proof issued
+        // before it (R142). See the lease module for the argument.
+        tokio::time::sleep(Duration::from_millis(1000 - now_ms() % 1000)).await;
+        let start = now_ms() / 1000;
+        Ok(Leased {
+            loaded: self,
+            lease,
+            taken,
+            start,
+        })
+    }
+}
+
+/// A server with a store that took the lease and waited for the old
+/// instance: the result of [`Loaded::lease`].
+pub struct Leased {
+    loaded: Loaded,
+    lease: Lease,
+    /// A time before the take of the lease.
+    taken: Instant,
+    /// The second from which the server serves (R142).
+    start: u64,
+}
+
+impl Leased {
+    /// The last step of [`Service::load`]: it loads what came during the
+    /// wait for the old instance, and gives the server that serves. See
+    /// [`Service::load`].
+    pub async fn serve(self) -> Result<Service, StoreError> {
+        let Leased {
+            loaded,
+            lease,
+            taken,
+            start,
+        } = self;
         let Loaded {
             config,
             store,
@@ -2115,19 +2190,7 @@ impl Loaded {
             mut state,
             mut skipped,
             mut skips,
-        } = self;
-        let taken = Instant::now();
-        let lease = Lease::take(store.clone()).await?;
-        tracing::info!(
-            "took the lease as {}; waiting {:?} for the old instance",
-            lease.id(),
-            config.lease.wait
-        );
-        tokio::time::sleep(config.lease.wait).await;
-        // Serve from the next whole second, and refuse each proof issued
-        // before it (R142). See the lease module for the argument.
-        tokio::time::sleep(Duration::from_millis(1000 - now_ms() % 1000)).await;
-        let start = now_ms() / 1000;
+        } = loaded;
         // The old instance can also write a checkpoint until it reads
         // the new lease, and it writes its last one when it reads it
         // (01M51X8MG0YQT5KBZC9H7917J3). This build writes none past a

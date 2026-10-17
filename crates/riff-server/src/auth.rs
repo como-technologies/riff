@@ -97,6 +97,10 @@ pub struct Config {
     pub provider: Option<Provider>,
     /// The times of the lease, for a server with a store.
     pub lease: crate::lease::Timing,
+    /// The revision of this instance: the order of its deploy
+    /// (01M53NHJXGK1PN2A9F7NSX0B4G). `main` reads it from `K_REVISION`
+    /// of Cloud Run. `None` outside Cloud Run.
+    pub revision: Option<crate::lease::Revision>,
     /// The times of the owner role (01M3Q5460YESBSQHTV3M15PE53).
     pub owner_role: riff_state::owner::Timing,
     /// How long the writer tries a chunk of the log.
@@ -124,6 +128,7 @@ impl Config {
             owner: None,
             provider: None,
             lease: crate::lease::Timing::default(),
+            revision: None,
             owner_role: riff_state::owner::Timing::default(),
             log: riff_state::log::Timing::default(),
             checkpoint: riff_state::checkpoint::Settings::default(),

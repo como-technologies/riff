@@ -3948,6 +3948,13 @@ At an instance change, `riff` sees this:
   it took the lease. `riff` tries each call again, and shows
   `(waits for riff-server…)` (see
   [Wait while the server starts](#wait-while-the-server-starts)).
+- At a deploy, Cloud Run can start a second instance of the old
+  revision while the new instance waits. The lease holds the number of
+  the revision of its instance, so the second old instance does not
+  take the lease of the newer revision. It replies 503 too, and it
+  exits at once when Cloud Run stops it. So the wait of the new
+  instance does not start again: each call gets its reply in less than
+  20 seconds.
 - Your access token still works on the new instance: `riff` does not
   refresh, and does not sign in again.
 
