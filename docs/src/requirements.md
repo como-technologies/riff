@@ -2421,6 +2421,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   next good look.
   `riff top --once`, a first look that fails, and each other fault end
   `riff top` with the error and a status that is not 0.
+- **01M53NDCJ0EF0YKDV8AARXKYCQ** When a call of a look of `riff top`
+  gets no reply in its budget, the line names that budget:
+  `riff-server gave no reply in 60 seconds` with `SHORT_BUDGET`
+  (01M4A803Z4Q0KX6NT1KC6QR43H). The line never names the limit of one
+  try or the interval of the look. A test that sets the budget with
+  `RIFF_LINK_BUDGET_MS` sees its own budget in the line.
 - **01M3ZC09FA9DZPTHK31XECZ566** When a later read of `gh` fails,
   `riff top` keeps the titles and the board of its last good read of
   `gh`.
