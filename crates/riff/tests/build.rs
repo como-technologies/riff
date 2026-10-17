@@ -802,8 +802,10 @@ fn the_book_has_the_part_that_the_error_names() {
 
 /// The book says what each level of a version means, and the test for
 /// each release (01M3N73E7YTHFX2J2KXT7017QX to
-/// 01M3N73EEQ4HPCPPAGCAHH3S6B). The major links to the level of the
-/// line 1.x (01M53N7KN4QKZ70W2GNQ3VQWQ9).
+/// 01M3N73EEQ4HPCPPAGCAHH3S6B). The minor names the line before, as
+/// the server does (01M3MX1E1EY1M7JGNCN6FCEVQK). The major links to the
+/// level of the line 1.x, and says its last minor and the next major
+/// (01M53N7KN4QKZ70W2GNQ3VQWQ9, 01M53NGVTE186GE5E48E68N0BY).
 #[test]
 fn the_book_says_what_patch_minor_and_major_mean() {
     let book = std::fs::read_to_string(
@@ -830,12 +832,21 @@ fn the_book_says_what_patch_minor_and_major_mean() {
     }
     assert!(part.contains("act differently"), "{part}");
     assert!(part.contains("fail to understand"), "{part}");
+    assert!(
+        part.contains("`riff-server` still talks with a `riff` of the line before its own"),
+        "{part}"
+    );
+    assert!(!part.contains("minor before"), "{part}");
     let major = &part[part.find("### Major\n").unwrap()..];
     let major = &major[..major[4..].find("\n### ").unwrap() + 4];
     assert!(
         major.contains(
             "The line\n1.x takes no major: see [Make a release](development.md#make-a-release)."
         ),
+        "{major}"
+    );
+    assert!(
+        major.contains("1.8.x is the last minor release of 1.x. The next major is 3.0.0"),
         "{major}"
     );
 }
