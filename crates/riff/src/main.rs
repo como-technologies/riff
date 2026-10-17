@@ -767,6 +767,22 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
+    /// Retire a release line on GitHub
+    ///
+    /// Each GitHub release of the line becomes a prerelease, and the first
+    /// line of its notes says that the line is retired and names the issue.
+    /// GitHub never marks a prerelease Latest, so riff update never
+    /// installs it. riff keeps the release that GitHub marks Latest, and
+    /// each draft. It uses the gh of this machine, in the repository of
+    /// this folder. It prints what it changed. A second run changes nothing.
+    Retire {
+        /// The line, for example 1.x or 1.
+        #[arg(value_parser = riff::retire::parse_line)]
+        line: u64,
+        /// The issue that retires the line, for example 961.
+        #[arg(long)]
+        issue: u64,
+    },
     /// Print the session image of this repository
     ///
     /// It reads the key image in the table [session] of riff.toml, at the
@@ -2022,6 +2038,12 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     }
+    if let Command::Retire { line, issue } = &cli.command {
+        let gh = pr::Gh::default().with_one_token();
+        let done = riff::retire::retire(&gh, *line, *issue)?;
+        println!("{}", text::retire_done(*line, &done));
+        return Ok(());
+    }
     if let Command::Release {
         item, forge: true, ..
     } = &cli.command
@@ -2471,6 +2493,7 @@ async fn main() -> Result<()> {
         | Command::Owner { .. }
         | Command::Run { .. }
         | Command::Release { forge: true, .. }
+        | Command::Retire { .. }
         | Command::Wave { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
