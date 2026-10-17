@@ -4846,9 +4846,9 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 
 ## The phone app
 
-The phone app is the design of #951. The book page
-[riff on a phone](riff-mobile.md) has the pictures. The build items
-are #962, #963, #964 and #965.
+The phone app is the design of #951, a child design of #982. The book
+page [riff on a phone](riff-mobile.md) has the pictures. The build
+items are #962, #963, #977, #964 and #965.
 
 - **01M53NTQTHC8WHW9ZZ6S1VZ2W8** The first phone app shows the thread
   `chat` (the history, then each new line), posts a line, sends
@@ -4859,29 +4859,37 @@ are #962, #963, #964 and #965.
   riff-server over HTTPS, on riff 1.x and on riff 3.0. It acts as a
   person, as `riff chat` does, with the calls of `riff chat`: join,
   read, tail and post.
-- **01M53NTR10TGJ9PHHCEN1P15K7** The phone app is for Android only. It
-  is a Rust core with a thin shell in Kotlin and Jetpack Compose.
-  UniFFI makes the Kotlin bindings of the core. No part of the app
-  draws in a web view. It runs on Android 10 or later.
-- **01M53RWDFBC3Q8R6PEX9R0XAVD** The core is the crate `riff-phone` of
-  the workspace. It makes each call to riff-server, the DPoP proofs,
-  the signatures, the parse of `@lead` and `@USER`, and the read after
-  a break. The shell draws the screens, and holds the parts of
-  Android: the Keystore, the camera, FCM and the notices.
+- **01M53NTR10TGJ9PHHCEN1P15K7** The phone app is for Android 10 or
+  later. It is a Slint app, all in Rust. The riff project writes no
+  Kotlin or Java source for it. A crate or a library may ship its own
+  Java. No part of the app draws in a web view.
+- **01M53WZ08JY80X32PP6P7FGNWP** The app uses the royalty-free license
+  of Slint, and shows the AboutSlint widget in its About screen.
+- **01M53RWDFBC3Q8R6PEX9R0XAVD** The app builds on the core library of
+  #982 (riff 3.1): the client of riff-server and the models of the
+  views. It calls the parts of Android through JNI: the Keystore,
+  Credential Manager, the camera and the notices.
 - **01M53NTR47XBDX6C6QN49RNP29** A person pairs a phone from a machine
   with a live sign-in: `riff phone add NAME`, in a terminal. It
   refuses with no terminal. riff-server makes a pair code for the user
   that works one time, for 10 minutes, and keeps only its hash. The
-  machine shows a QR code with the address of riff-server and the
-  code, and the code as text. The code is in no URL. The phone needs
-  no Google sign-in.
-- **01M53NTR7D6145FSQ3WVZ1H52W** At the pair, the shell makes the
-  device key in the Android Keystore: ECDSA P-256, not exportable, in
-  StrongBox when the phone has it. The key never leaves the Keystore.
-  The core asks the shell to sign through a UniFFI foreign trait.
-  riff-server binds a new sign-in of the person to the thumbprint of
-  that key. Each call of the app has a DPoP proof of the key, as for
-  `riff login`.
+  command draws a QR code with `tui-qrcode` that holds the address of
+  riff-server and the code, and prints the code as text. The code is
+  in no URL.
+- **01M53WZ032G5W435GJMPVBHD71** The app reads the QR code with the
+  camera, through the NDK camera API and the decoder `rqrr`. A typed
+  code is the fallback.
+- **01M53WZ05VFPG8SN581VZSWHKJ** After the pair code, the app signs the
+  person in with Google through Credential Manager. riff-server takes
+  the code, the name, the Google ID token and a DPoP proof of the key
+  of the phone. The audience of the ID token is a Web OAuth client of
+  the riff. riff-server makes the sign-in of the phone only when the
+  Google account is the person who made the code.
+- **01M53NTR7D6145FSQ3WVZ1H52W** The app makes the device key in the
+  Android Keystore: ECDSA P-256, not exportable, in StrongBox when the
+  phone has it. The key never leaves the Keystore. riff-server binds
+  the sign-in of the phone to the thumbprint of that key. Each call of
+  the app has a DPoP proof of the key, as for `riff login`.
 - **01M53NTRAKPS7QVCTFS2GJPX4G** riff-server sets the host of each call
   of a phone to the name of its pair. A line of a phone shows as
   `<USER@NAME>`. riff-server refuses a pair name that is the host of a
@@ -4896,14 +4904,15 @@ are #962, #963, #964 and #965.
   once. With `--user`, an admin names a phone of another person.
   `riff logout --all` and `riff remove --email` also end the sign-in
   of each phone of the person.
-- **01M53NTRKQ894YHQD9YYRNJBHZ** The core takes the parse of `@lead`
-  and `@USER`, the signed payload of a post, the check of a signature
-  and the DPoP proof from riff-core. So the app and `riff chat` cannot
+- **01M53NTRKQ894YHQD9YYRNJBHZ** The app takes the parse of `@lead` and
+  `@USER`, the signed payload of a post, the check of a signature and
+  the DPoP proof from riff-core. So the app and `riff chat` cannot
   differ.
 - **01M53NTRPS73Z0TPVDH7DCM2J3** The app sends its own build, as each
   client of riff does. When riff-server refuses its release line, the
   app says to install the APK of the release of riff-server.
-- **01M53RWDJ4J5TERZMBB3FC2ZKE** Each release of riff attaches
+- **01M53RWDJ4J5TERZMBB3FC2ZKE** Gradle builds the APK, with no Java
+  source of the riff project. Each release of riff attaches
   `riff-phone.apk`, of the same build, signed with the release key of
   the riff project. The key is a secret of the GitHub environment of
   the release. A person installs the APK by hand. When Android asks
@@ -4913,30 +4922,32 @@ are #962, #963, #964 and #965.
   its storage: only the alias of its key, its tokens and the number of
   the last line that it showed. A key of the Keystore encrypts the
   tokens.
-- **01M53NTRWVX0Z7R211JF1T6GKJ** riff-server sends the notices of a
-  phone through Firebase Cloud Messaging (FCM), with the HTTP v1 API
-  and its Cloud Run service identity, with no key file. The Firebase
-  project is the Google Cloud project of riff-server. A riff-server
-  with no FCM project sends no notice. A phone with no Google Play
-  services gets no notice.
 - **01M53NTRZT0B7539TXA5BV2BR8** A phone gets a notice for a line of
   the thread `chat` whose `to` has a selector with its user and
   `lead=true`, from a sender of another user. It also gets a notice
   for each line of the verified lead of its user. A line of a person
   client of its own user gives no notice. riff-server finds the lines
   from the `to`, the sender and the lead mark, not from the body.
-- **01M53NTS32HD38TSK335EY7V9C** A push is an FCM data message with
-  high priority. It holds only the thread and the number of the line.
-  The app reads the line from riff-server, and shows a notice with the
-  sender and the line.
+- **01M53NTS32HD38TSK335EY7V9C** While the app runs, it follows the
+  chat, and shows a local notice through JNI with the sender and the
+  line. In the background, the phone gets an FCM notification message
+  with a fixed text, and no text of the line. The Firebase library
+  shows it.
+- **01M53NTRWVX0Z7R211JF1T6GKJ** riff-server sends the notification
+  messages through Firebase Cloud Messaging (FCM), with the HTTP v1 API
+  and its Cloud Run service identity, with no key file. The Firebase
+  project is the Google Cloud project of riff-server. A riff-server
+  with no FCM project sends no push. A phone with no Google Play
+  services gets no background notice.
 - **01M53NTS63FNFS2MESV5E9JZH4** The person turns the notices on and
   off in the app. The app asks Android for the permission to post
   notices at the first turn on. riff-server deletes the FCM token of a
   phone when FCM answers that it is not registered. A push never
   delays a post.
 - **01M53NTSFADCRYKW71JSKW2504** The app calls only its riff-server,
-  and FCM through the Firebase Messaging library. It has no analytics,
-  no crash report and no other library of Firebase.
+  Google for the sign-in, and FCM through the Firebase Messaging
+  library. It has no analytics, no crash report and no other library
+  of Firebase.
 - **01M53NTS97JVY20GS4BRR3NDDP** If a later release removes
   riff-server, the phone talks over iroh to a daemon of its user, as a
   client of that daemon. It is no peer of the riff, and holds no copy
@@ -4944,9 +4955,9 @@ are #962, #963, #964 and #965.
   how a notice reaches the phone.
 - **01M53NTSC8C86B8S0HN0A5XAHB** The design of end-to-end encryption
   (#958) chooses the encryption key of a phone, and whether a new
-  phone reads the old lines. The core holds the encryption of #958.
-  The pair of a phone is the step where a machine of the person admits
-  the new keys of that phone.
+  phone reads the old lines. The app holds the encryption of #958, in
+  Rust. The pair of a phone is the step where a machine of the person
+  admits the new keys of that phone.
 
 ## riff 3.0
 
