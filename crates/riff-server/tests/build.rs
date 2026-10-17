@@ -84,7 +84,8 @@ async fn a_riff_of_the_other_line_of_the_bridge_passes_the_check() {
     };
     for version in others {
         for path in CALLS {
-            let (status, theirs, body) = call(&url, path, Some(&at(version.parse().unwrap()))).await;
+            let (status, theirs, body) =
+                call(&url, path, Some(&at(version.parse().unwrap()))).await;
             assert_ne!(status, 409, "{version} {path}: {body}");
             assert_eq!(theirs, VERSION, "{path}");
         }
