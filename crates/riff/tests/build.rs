@@ -831,7 +831,7 @@ fn the_book_says_what_patch_minor_and_major_mean() {
     assert!(part.contains("act differently"), "{part}");
     assert!(part.contains("fail to understand"), "{part}");
     let major = &part[part.find("### Major\n").unwrap()..];
-    let major = &major[..major[4..].find("\n### ").unwrap()];
+    let major = &major[..major[4..].find("\n### ").unwrap() + 4];
     assert!(
         major.contains(
             "The line\n1.x takes no major: see [Make a release](development.md#make-a-release)."
