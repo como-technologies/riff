@@ -3572,6 +3572,22 @@ pub fn forge_de_opt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Str
     <Option<String> as serde::Deserialize>::deserialize(d).map(|s| s.as_deref().map(forge))
 }
 
+/// A call `gh ARGS` that gave no answer in its time limit `limit`
+/// ([`crate::pr::Gh::with_limit`], 01M53S7WGM9DQV2DXFHBRSMTP8).
+///
+/// ```
+/// use std::time::Duration;
+///
+/// let line = riff::text::gh_no_answer("pr list --head worktree-issue-12", Duration::from_secs(30));
+/// assert_eq!(line, "gh pr list --head worktree-issue-12: no answer in 30 s. riff stopped it.");
+/// ```
+pub fn gh_no_answer(args: &str, limit: std::time::Duration) -> String {
+    format!(
+        "gh {args}: no answer in {} s. riff stopped it.",
+        limit.as_secs_f64()
+    )
+}
+
 /// The line of `riff tail` and `riff chat` for a break that lost `n`
 /// messages: the server no longer keeps them
 /// (01M49Z4EB7T972BHEP6T92P574). See [`crate::catch_up`].
@@ -5864,9 +5880,20 @@ pub fn run_no_pull(branch: &str) -> String {
     format!("No open pull request has the branch {branch}. The work is in the clone.")
 }
 
-/// Where the clone of a session of `riff run` stays.
+/// Where the clone of a session of `riff run` stays, and how long
+/// (01M53NJ5V27BCHDNHK2THQQZZQ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::run_kept(std::path::Path::new("/s/issue-12-1a2b3c4d/clone")),
+///     "The clone stays until the work of its branch is over: /s/issue-12-1a2b3c4d/clone"
+/// );
+/// ```
 pub fn run_kept(clone: &Path) -> String {
-    format!("The clone stays until the merge: {}", clone.display())
+    format!(
+        "The clone stays until the work of its branch is over: {}",
+        clone.display()
+    )
 }
 
 /// `riff run` lost the daemon before the end of its session: it waits
@@ -7518,6 +7545,53 @@ pub fn swept_why(issue: u64, fate: &crate::daemon::sweep::Fate) -> Option<String
             "the issue #{issue} is closed, and its branch has no pull request"
         )),
     }
+}
+
+/// The sweep kept the folder `folder` of a session whose work is over,
+/// for the reason `why` (01M53S7WAXD46YPN0DR96XSTMG): its clone holds
+/// work that is not on `origin` ([`crate::daemon::sweep::Local::why`]),
+/// or riff cannot read it.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let folder = Path::new("/s/issue-12-1a2b3c4d");
+/// assert_eq!(
+///     riff::text::swept_kept(folder, "the pull request #40 merged", "its clone has 1 commit that is not pushed"),
+///     "riff kept the folder /s/issue-12-1a2b3c4d: the pull request #40 merged, but its clone has 1 commit that is not pushed. Push the work, or remove the folder."
+/// );
+/// ```
+pub fn swept_kept(folder: &Path, over: &str, why: &str) -> String {
+    format!(
+        "riff kept the folder {}: {over}, but {why}. Push the work, or remove the folder.",
+        folder.display()
+    )
+}
+
+/// The sweep kept the folder `folder`: a step on the forge failed, for
+/// the reason `error`, for example a `gh` that gave no answer in its
+/// time limit (01M53S7WGM9DQV2DXFHBRSMTP8).
+///
+/// ```
+/// use std::path::Path;
+///
+/// let folder = Path::new("/s/issue-12-1a2b3c4d");
+/// assert_eq!(
+///     riff::text::swept_forge_failed(folder, "gh pr list: no answer in 30 s. riff stopped it."),
+///     "riff kept the folder /s/issue-12-1a2b3c4d: a step on the forge failed: gh pr list: no answer in 30 s. riff stopped it. The next sweep tries again."
+/// );
+/// assert_eq!(
+///     riff::text::swept_forge_failed(folder, "gh issue view 12: HTTP 502"),
+///     "riff kept the folder /s/issue-12-1a2b3c4d: a step on the forge failed: gh issue view 12: HTTP 502. The next sweep tries again."
+/// );
+/// ```
+pub fn swept_forge_failed(folder: &Path, error: &str) -> String {
+    let error = error.trim_end().trim_end_matches('.');
+    format!(
+        "riff kept the folder {}: a step on the forge failed: {error}. The next sweep tries \
+         again.",
+        folder.display()
+    )
 }
 
 /// `riff daemon sweep` found no folder to remove.

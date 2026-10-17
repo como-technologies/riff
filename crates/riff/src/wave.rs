@@ -126,7 +126,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::api::{self, Api};
-use crate::daemon::sweep::{self, Fate};
+use crate::daemon::sweep::{self, Fate, InJob};
 use crate::daemon::{Daemon, Ended, Out, Record, Say, Start};
 use crate::pr::Verdict;
 use crate::room::Slot;
@@ -519,7 +519,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 continue;
             }
         };
-        for line in daemon.sweep(Some(&wave.repo)).await {
+        for line in daemon.sweep_news(Some(&wave.repo)).await {
             println!("{line}");
         }
         let next = match world.look(&wave).await {
@@ -569,9 +569,10 @@ async fn job<R: Runtime + 'static>(
     taken: Arc<Mutex<BTreeSet<String>>>,
 ) {
     let item = work.item();
+    let held = daemon.in_job(&item);
     match start_job(&daemon, &wave, &work, slot, None, None).await {
         Ok(Some((record, ended))) => {
-            finish(daemon.clone(), record, ended).await;
+            finish(daemon.clone(), record, ended, held).await;
         }
         Ok(None) => println!("{}", text::wave_not_claimed(&wave.repo, &item)),
         Err(e) => {
@@ -617,9 +618,10 @@ pub(crate) async fn run_one<R: Runtime + 'static>(
         return;
     };
     let follower = Some((from, out.clone()));
+    let held = daemon.in_job(&item);
     match start_job(&daemon, &wave, &work, slot, Some(&image), follower).await {
         Ok(Some((record, ended))) => {
-            for text in finish(daemon.clone(), record, ended).await {
+            for text in finish(daemon.clone(), record, ended, held).await {
                 out.say(Say::Line { text });
             }
             out.say(Say::Done);
@@ -641,7 +643,9 @@ type Follower = (Lines<BufReader<OwnedReadHalf>>, Out);
 /// The steps of a job up to the end of its session: the image, the
 /// steps before the start, and the session. `None` when the claim
 /// failed. With no `image`, the job takes the image that the wave pins.
-/// A `follower` gets each line of the session, and can stop it.
+/// A `follower` gets each line of the session, and can stop it. Hold
+/// [`Daemon::in_job`] of the item from before the call to the end of
+/// [`finish`]: the sweep then keeps the folder.
 async fn start_job<R: Runtime + 'static>(
     daemon: &Arc<Daemon<R>>,
     wave: &Wave,
@@ -650,8 +654,6 @@ async fn start_job<R: Runtime + 'static>(
     image: Option<&str>,
     follower: Option<Follower>,
 ) -> Result<Option<(Record, Ended)>> {
-    // The sweep keeps the folder from before the clone on.
-    let _starting = daemon.starting(&work.item());
     let world = daemon.world_of(&wave.server)?;
     let image = match image {
         Some(image) => image.to_owned(),
@@ -707,24 +709,30 @@ async fn ended_of(mut said: mpsc::UnboundedReceiver<Say>, to: Option<Out>) -> En
 }
 
 /// Waits for the end of the session of `record` that a new daemon took
-/// up, on the lines `said`, and does the steps after the end.
+/// up, on the lines `said`, and does the steps after the end, in the job
+/// `held` of its item.
 pub(crate) async fn after<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     record: Record,
     said: mpsc::UnboundedReceiver<Say>,
+    held: InJob,
 ) {
     let ended = ended_of(said, None).await;
-    finish(daemon, record, ended).await;
+    finish(daemon, record, ended, held).await;
 }
 
 /// The steps after the end of the session of `record`, as it `ended`,
 /// with the world of its riff. It gives the line of each step. A session
 /// with no riff-server waits for the riff of the daemon: a job that
-/// ended while no daemon ran (01M526Z1Z80JFAS0GS04PVF1KG).
+/// ended while no daemon ran (01M526Z1Z80JFAS0GS04PVF1KG). The job
+/// `held` of the item ends after the last step: a step reads the folder
+/// of the session, so the sweep keeps it to then
+/// (01M53S7WDPQ2GWHJWJ6SZXZ5PN).
 pub(crate) async fn finish<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     record: Record,
     ended: Ended,
+    held: InJob,
 ) -> Vec<String> {
     let world = loop {
         match daemon.world_of(&record.server) {
@@ -736,6 +744,7 @@ pub(crate) async fn finish<R: Runtime + 'static>(
         Ok(world) => world.finish(&record, ended).await,
         Err(e) => Err(e),
     };
+    drop(held);
     daemon.tell_changed();
     lines.unwrap_or_else(|e| {
         let error = format!("{e:#}");
@@ -1339,7 +1348,7 @@ impl World for Live {
     }
 
     fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>> {
-        let gh = pr::Gh::for_repo(repo);
+        let gh = sweep::gh(repo);
         Box::pin(blocking(move || sweep::fate_on(&gh, issue)))
     }
 
@@ -1350,7 +1359,7 @@ impl World for Live {
         pull: u64,
         commit: &'a str,
     ) -> BoxFuture<'a, Result<()>> {
-        let (gh, commit) = (pr::Gh::for_repo(repo), commit.to_owned());
+        let (gh, commit) = (sweep::gh(repo), commit.to_owned());
         Box::pin(blocking(move || {
             sweep::merged_in_on(&gh, issue, pull, &commit)
         }))

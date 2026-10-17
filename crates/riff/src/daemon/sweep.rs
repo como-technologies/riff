@@ -1,5 +1,5 @@
 //! The folders of the sessions of `riff run` and of the waves (#938,
-//! 01M4Z81ARSTAK8HR96S084SDFD, 01M53NJ5V27BCHDNHK2THQQZZQ,
+//! #973, 01M4Z81ARSTAK8HR96S084SDFD, 01M53NJ5V27BCHDNHK2THQQZZQ,
 //! 01M53NJ5Y2CMY5MWF9328KW7DE).
 //!
 //! # Design
@@ -32,11 +32,24 @@
 //! so the item is not free work again. riff never removes a folder whose
 //! name has no issue, or whose clone has no `origin`.
 //!
+//! The fate looks only at the forge. So before riff removes a folder, it
+//! looks at the clone too, as `riff worktrees clean` does
+//! ([`Local::of`], 01M53S7WAXD46YPN0DR96XSTMG). The folder stays when the
+//! clone has a file that is not committed, or a commit that no branch of
+//! `origin` has: a session that ended before it pushed its work, on a
+//! branch with an older merged or closed pull request. The folder also
+//! stays when git cannot read the clone. riff says why in
+//! `riff daemon sweep`, and one time in the log of the daemon
+//! ([`Daemon::sweep_news`]).
+//!
 //! A session runs, and its folder stays, while one of these is true:
 //!
 //! - the daemon has the record of the session;
-//! - a job of the daemon starts the session, from before its clone to
-//!   its end (`Daemon::starting`);
+//! - a job of the daemon runs for the item of the folder, from before
+//!   the clone of its session to its last step after the end, which reads
+//!   `events.jsonl` in the folder (`Daemon::in_job`,
+//!   01M53S7WDPQ2GWHJWJ6SZXZ5PN). The daemon has no record of the
+//!   session after its end;
 //! - the `riff run` that made the folder runs. It holds the lock
 //!   `ITEM-ID8.lock` beside the folder from before the clone to its own
 //!   end ([`hold`]): its start can wait long for room, and the daemon has
@@ -49,12 +62,19 @@
 //!     R -- no --> O["the repository of the origin of its clone"]
 //!     O --> T{"the fate on the forge"}
 //!     T -- "an open pull request, or an open issue" --> K
-//!     T -- "merged, closed, or the issue closed" --> D["riff removes the folder and its lock, and says why"]
+//!     T -- "no answer of gh in GH_LIMIT" --> S["it stays, and riff says why"]
+//!     T -- "merged, closed, or the issue closed" --> C{"its clone: a file not committed,<br/>or a commit on no branch of origin?"}
+//!     C -- "yes, or git cannot say" --> S
+//!     C -- no --> D["riff removes the folder and its lock, and says why"]
 //! ```
 //!
 //! One sweep runs at a time. Each step of git and of `gh` can block, so
-//! it runs on a thread for blocking work. A fault at one folder stops no
-//! other folder: the daemon logs it and goes on.
+//! it runs on a thread for blocking work. Each wave sweeps before each
+//! look, so a `gh` that never ends would stop each wave. Each `gh` call
+//! of the sweep has the time limit [`GH_LIMIT`] ([`gh`],
+//! 01M53S7WGM9DQV2DXFHBRSMTP8). At the end of the limit, riff stops `gh`,
+//! keeps the folder and goes on to the next folder. A fault at one
+//! folder stops no other folder: the daemon logs it and goes on.
 //!
 //! [`World::fate`]: crate::wave::World::fate
 //! [`World::merged_in`]: crate::wave::World::merged_in
@@ -88,6 +108,22 @@ pub fn every() -> Option<Duration> {
         Some(s) => Some(Duration::from_secs(s)),
         None => Some(EVERY),
     }
+}
+
+/// The time limit of each `gh` call of the sweep
+/// (01M53S7WGM9DQV2DXFHBRSMTP8).
+pub const GH_LIMIT: Duration = Duration::from_secs(30);
+
+/// The `gh` of the sweep for the repository `repo`: each call has the
+/// time limit [`GH_LIMIT`].
+///
+/// ```
+/// use riff::daemon::sweep::{GH_LIMIT, gh};
+///
+/// assert_eq!(gh("o/r").limit(), Some(GH_LIMIT));
+/// ```
+pub fn gh(repo: &str) -> pr::Gh {
+    pr::Gh::for_repo(repo).with_limit(GH_LIMIT)
 }
 
 /// The fate of the folder of a session that does not run, from the
@@ -347,6 +383,118 @@ pub fn held(folder: &Path) -> bool {
     }
 }
 
+/// The work of the clone of a folder that is not on `origin`
+/// (01M53S7WAXD46YPN0DR96XSTMG).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Local {
+    /// Each file is committed, and a branch of `origin` has each commit.
+    None,
+    /// Some work is only in the clone.
+    Work {
+        /// The files that are not committed, as `git status` counts them.
+        files: usize,
+        /// The commits of `HEAD` and of each local branch that no branch
+        /// of `origin` has.
+        commits: usize,
+    },
+    /// git cannot read the clone, for this reason.
+    Unknown(String),
+}
+
+impl Local {
+    /// The work of the clone `clone` that is not on `origin`, as
+    /// `riff worktrees clean` and the claim of an item count it: `git
+    /// status --porcelain`, and `git rev-list HEAD --branches --not
+    /// --remotes=origin`.
+    ///
+    /// ```
+    /// use riff::daemon::sweep::Local;
+    ///
+    /// let git = |dir: &std::path::Path, args: &[&str]| {
+    ///     let mut git = std::process::Command::new("git");
+    ///     git.arg("-C").arg(dir).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null");
+    ///     for (key, value) in [("NAME", "t"), ("EMAIL", "t@t")] {
+    ///         git.env(format!("GIT_AUTHOR_{key}"), value).env(format!("GIT_COMMITTER_{key}"), value);
+    ///     }
+    ///     assert!(git.status().unwrap().success());
+    /// };
+    /// let root = tempfile::tempdir()?;
+    /// let (origin, clone) = (root.path().join("origin"), root.path().join("clone"));
+    /// git(root.path(), &["init", "-q", "--bare", origin.to_str().unwrap()]);
+    /// git(root.path(), &["clone", "-q", origin.to_str().unwrap(), clone.to_str().unwrap()]);
+    /// let commit = |m: &str| git(&clone, &["commit", "-q", "--allow-empty", "-m", m]);
+    /// commit("first");
+    /// git(&clone, &["push", "-q", "origin", "HEAD"]);
+    /// assert_eq!(Local::of(&clone), Local::None);
+    /// commit("second");
+    /// std::fs::write(clone.join("notes.md"), "text")?;
+    /// assert_eq!(Local::of(&clone), Local::Work { files: 1, commits: 1 });
+    /// assert!(matches!(Local::of(&root.path().join("gone")), Local::Unknown(_)), "no clone");
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn of(clone: &Path) -> Local {
+        let status = match run::output("git", clone, &["status", "--porcelain"]) {
+            Ok(status) => status,
+            Err(e) => return Local::Unknown(format!("{e:#}")),
+        };
+        let ahead = [
+            "rev-list",
+            "--count",
+            "HEAD",
+            "--branches",
+            "--not",
+            "--remotes=origin",
+        ];
+        let commits = match run::output("git", clone, &ahead) {
+            Ok(n) => match n.parse() {
+                Ok(n) => n,
+                Err(_) => return Local::Unknown(format!("git rev-list gave {n:?}")),
+            },
+            Err(e) => return Local::Unknown(format!("{e:#}")),
+        };
+        match (status.lines().count(), commits) {
+            (0, 0) => Local::None,
+            (files, commits) => Local::Work { files, commits },
+        }
+    }
+
+    /// Why the folder of the clone stays, or `None` when the clone holds
+    /// no work of its own.
+    ///
+    /// ```
+    /// use riff::daemon::sweep::Local;
+    ///
+    /// assert_eq!(Local::None.why(), None);
+    /// let work = Local::Work { files: 2, commits: 1 };
+    /// assert_eq!(work.why().unwrap(), "its clone has 2 files that are not committed and 1 commit that is not pushed");
+    /// let commits = Local::Work { files: 0, commits: 3 };
+    /// assert_eq!(commits.why().unwrap(), "its clone has 3 commits that are not pushed");
+    /// let file = Local::Work { files: 1, commits: 0 };
+    /// assert_eq!(file.why().unwrap(), "its clone has 1 file that is not committed");
+    /// let unknown = Local::Unknown("git status --porcelain: fatal: bad".into());
+    /// assert_eq!(unknown.why().unwrap(), "riff cannot read the work of its clone: git status --porcelain: fatal: bad");
+    /// ```
+    pub fn why(&self) -> Option<String> {
+        let count = |n: usize, one: &str, state: &str| match n {
+            1 => format!("1 {one} that is {state}"),
+            n => format!("{n} {one}s that are {state}"),
+        };
+        match self {
+            Local::None => None,
+            Local::Work { files, commits } => {
+                let files = (*files > 0).then(|| count(*files, "file", "not committed"));
+                let commits = (*commits > 0).then(|| count(*commits, "commit", "not pushed"));
+                let parts: Vec<String> = files.into_iter().chain(commits).collect();
+                Some(format!("its clone has {}", parts.join(" and ")))
+            }
+            Local::Unknown(why) => Some(format!(
+                "riff cannot read the work of its clone: {}",
+                text::safe(why)
+            )),
+        }
+    }
+}
+
 /// The repository `OWNER/REPO` of the `origin` of the clone `clone`.
 fn repo_of(clone: &Path) -> Option<String> {
     let origin = run::output("git", clone, &["remote", "get-url", "origin"]).ok()?;
@@ -364,39 +512,58 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| anyhow!("{e}"))?
 }
 
-/// The folders of the sessions of a daemon: the items of its jobs that
-/// start a session, and one sweep at a time.
+/// The folders of the sessions of a daemon: the items of its jobs, one
+/// sweep at a time, and the line of each kept folder that the log got.
 #[derive(Default)]
 pub struct Folders {
-    /// The items of the jobs that start, with their count.
-    starting: Mutex<BTreeMap<String, usize>>,
+    /// The items of the jobs that run, with their count.
+    jobs: Mutex<BTreeMap<String, usize>>,
     /// Held while a sweep runs.
     sweep: tokio::sync::Mutex<()>,
+    /// The last line of each kept folder that the log got
+    /// ([`Daemon::sweep_news`]).
+    said: Mutex<BTreeMap<PathBuf, String>>,
 }
 
 impl Folders {
-    fn starting(&self) -> MutexGuard<'_, BTreeMap<String, usize>> {
-        self.starting.lock().unwrap_or_else(PoisonError::into_inner)
+    fn jobs(&self) -> MutexGuard<'_, BTreeMap<String, usize>> {
+        self.jobs.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn said(&self) -> MutexGuard<'_, BTreeMap<PathBuf, String>> {
+        self.said.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
-/// A job of the daemon that starts a session of its item: the sweep
-/// keeps each folder of the item until the drop.
-pub struct Starting<'a> {
-    folders: &'a Folders,
+/// A job of the daemon for its item: the sweep keeps each folder of the
+/// item until the drop (01M53S7WDPQ2GWHJWJ6SZXZ5PN).
+pub struct InJob {
+    folders: Arc<Folders>,
     item: String,
 }
 
-impl Drop for Starting<'_> {
+impl Drop for InJob {
     fn drop(&mut self) {
-        let mut starting = self.folders.starting();
-        if let Some(count) = starting.get_mut(&self.item) {
+        let mut jobs = self.folders.jobs();
+        if let Some(count) = jobs.get_mut(&self.item) {
             *count -= 1;
             if *count == 0 {
-                starting.remove(&self.item);
+                jobs.remove(&self.item);
             }
         }
     }
+}
+
+/// What a sweep did with one folder: a line for a person.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Swept {
+    /// The folder.
+    pub folder: PathBuf,
+    /// Why riff removed the folder, or why it kept a folder whose work
+    /// is over.
+    pub line: String,
+    /// True when the folder stays.
+    pub kept: bool,
 }
 
 impl<R: Runtime + 'static> Daemon<R> {
@@ -406,21 +573,25 @@ impl<R: Runtime + 'static> Daemon<R> {
         self.dir.with_file_name("sessions")
     }
 
-    /// Keeps each folder of `item` while the job of the item starts its
-    /// session: from before its clone to the drop.
-    pub(crate) fn starting(&self, item: &str) -> Starting<'_> {
-        *self.folders.starting().entry(item.to_owned()).or_default() += 1;
-        Starting {
-            folders: &self.folders,
+    /// Keeps each folder of `item` while a job of the item runs: from
+    /// before the clone of its session to its last step after the end,
+    /// which reads the folder (01M53S7WDPQ2GWHJWJ6SZXZ5PN). Take it
+    /// before the job starts, and keep it to the end of
+    /// [`crate::wave::finish`].
+    pub(crate) fn in_job(&self, item: &str) -> InJob {
+        *self.folders.jobs().entry(item.to_owned()).or_default() += 1;
+        InJob {
+            folders: self.folders.clone(),
             item: item.to_owned(),
         }
     }
 
     /// Removes the folder of each session that does not run, when its
-    /// fate on the forge says so: see the design. With `repo`, only the
-    /// folders of that repository. It gives a line for each folder that
-    /// it removed, with the reason.
-    pub async fn sweep(&self, repo: Option<&str>) -> Vec<String> {
+    /// fate on the forge says so and its clone holds no work of its own:
+    /// see the design. With `repo`, only the folders of that repository.
+    /// It gives a line for each folder that it removed, and for each
+    /// folder whose work is over that it kept, with the reason.
+    pub async fn sweep(&self, repo: Option<&str>) -> Vec<Swept> {
         let _one = self.folders.sweep.lock().await;
         let dir = self.sessions_dir();
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -432,20 +603,42 @@ impl<R: Runtime + 'static> Daemon<R> {
             .filter(|path| path.is_dir())
             .collect();
         folders.sort();
-        let mut lines = Vec::new();
+        let mut swept = Vec::new();
         for folder in folders {
             match self.sweep_folder(&folder, repo).await {
-                Ok(Some(line)) => lines.push(line),
+                Ok(Some(line)) => swept.push(line),
                 Ok(None) => {}
                 Err(e) => eprintln!("riff daemon: {e:#}"),
             }
         }
-        lines
+        swept
     }
 
-    /// Sweeps the folder `folder`: the line of its removal, or `None`
-    /// when it stays.
-    async fn sweep_folder(&self, folder: &Path, only: Option<&str>) -> Result<Option<String>> {
+    /// Sweeps as [`Daemon::sweep`], and gives the lines for the log of
+    /// the daemon: each removed folder, and each kept folder with a new
+    /// reason. A folder that stays for the same reason as at an earlier
+    /// sweep gets no new line (01M53S7WAXD46YPN0DR96XSTMG).
+    pub async fn sweep_news(&self, repo: Option<&str>) -> Vec<String> {
+        let swept = self.sweep(repo).await;
+        let mut said = self.folders.said();
+        swept
+            .into_iter()
+            .filter_map(|swept| {
+                if !swept.kept {
+                    said.remove(&swept.folder);
+                } else if said.get(&swept.folder) == Some(&swept.line) {
+                    return None;
+                } else {
+                    said.insert(swept.folder, swept.line.clone());
+                }
+                Some(swept.line)
+            })
+            .collect()
+    }
+
+    /// Sweeps the folder `folder`: why it went, or why it stays when its
+    /// work is over. `None` when it stays and its work is not over.
+    async fn sweep_folder(&self, folder: &Path, only: Option<&str>) -> Result<Option<Swept>> {
         let Some(item) = folder
             .file_name()
             .and_then(|n| n.to_str())
@@ -466,18 +659,38 @@ impl<R: Runtime + 'static> Daemon<R> {
         if only.is_some_and(|only| only != repo) {
             return Ok(None);
         }
-        let fate = self.world.fate(&repo, issue).await?;
-        if let Fate::Merged {
-            pull,
-            commit,
-            refs: true,
-        } = &fate
-        {
-            self.world.merged_in(&repo, issue, *pull, commit).await?;
-        }
-        let Some(why) = text::swept_why(issue, &fate) else {
+        let kept = |line: String| {
+            Some(Swept {
+                folder: folder.to_owned(),
+                line,
+                kept: true,
+            })
+        };
+        // A fault of the forge, for example a `gh` with no answer in
+        // GH_LIMIT, keeps the folder: the next sweep tries again.
+        let forge = async {
+            let fate = self.world.fate(&repo, issue).await?;
+            if let Fate::Merged {
+                pull,
+                commit,
+                refs: true,
+            } = &fate
+            {
+                self.world.merged_in(&repo, issue, *pull, commit).await?;
+            }
+            anyhow::Ok(fate)
+        };
+        let fate = match forge.await {
+            Ok(fate) => fate,
+            Err(e) => return Ok(kept(text::swept_forge_failed(folder, &format!("{e:#}")))),
+        };
+        let Some(over) = text::swept_why(issue, &fate) else {
             return Ok(None);
         };
+        let clone = folder.join("clone");
+        if let Some(why) = blocking(move || Ok(Local::of(&clone).why())).await? {
+            return Ok(kept(text::swept_kept(folder, &over, &why)));
+        }
         let gone = folder.to_owned();
         blocking(move || {
             std::fs::remove_dir_all(&gone)
@@ -486,7 +699,11 @@ impl<R: Runtime + 'static> Daemon<R> {
             Ok(())
         })
         .await?;
-        Ok(Some(text::swept(folder, &why)))
+        Ok(Some(Swept {
+            folder: folder.to_owned(),
+            line: text::swept(folder, &over),
+            kept: false,
+        }))
     }
 
     /// True when the session of the folder `folder` of `item` runs: see
@@ -496,7 +713,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     fn runs(&self, folder: &Path, item: &str) -> bool {
         let name = folder.file_name();
         self.records().iter().any(|r| r.folder.file_name() == name)
-            || self.folders.starting().contains_key(item)
+            || self.folders.jobs().contains_key(item)
             || held(folder)
     }
 
@@ -510,7 +727,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let daemon = self.clone();
         tokio::spawn(async move {
             loop {
-                for line in daemon.sweep(None).await {
+                for line in daemon.sweep_news(None).await {
                     println!("{line}");
                 }
                 tokio::time::sleep(every).await;
@@ -521,15 +738,22 @@ impl<R: Runtime + 'static> Daemon<R> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
     use crate::daemon::tests::{Here, IMAGE, Server, until};
-    use crate::daemon::{Ask, QUIET_LIMIT, ask_done};
+    use crate::daemon::{Ask, Live, QUIET_LIMIT, Record, ask_done};
     use crate::runtime::Fake;
-    use crate::wave::World;
+    use crate::wave::{Job, Wave, Work, World};
 
     /// A daemon whose world gives the fate of each issue of `fates`.
     async fn here(fates: &[(u64, Fate)]) -> (Here, Arc<Server>) {
-        let server = Arc::new(Server::with_fates(fates));
+        with(Server::with_fates(fates)).await
+    }
+
+    /// A daemon with the world `server`.
+    async fn with(server: Server) -> (Here, Arc<Server>) {
+        let server = Arc::new(server);
         let world: Arc<dyn World> = server.clone();
         let fake = Fake::default().with_image(IMAGE);
         let here = Here::with_world(fake, QUIET_LIMIT, Some(world)).await;
@@ -540,16 +764,42 @@ mod tests {
     /// `here`, with the origin `o/r` on GitHub. It gives the folder.
     fn folder(here: &Here, name: &str) -> PathBuf {
         let folder = here.daemon.sessions_dir().join(name);
-        let clone = folder.join("clone");
-        std::fs::create_dir_all(&clone).unwrap();
-        origin(&clone, "https://github.com/o/r.git");
+        origin(&folder.join("clone"), "https://github.com/o/r.git");
         folder
     }
 
-    /// A git clone at `clone` with the origin `url`.
+    /// Runs git in `dir` with no config of the person, and gives its
+    /// stdout.
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "riff test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "riff test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// A git clone at `clone` with the origin `url`, as a session leaves
+    /// it after its push: one commit, which `main` of `origin` has.
     fn origin(clone: &Path, url: &str) {
-        run::output("git", clone, &["init", "-q"]).unwrap();
-        run::output("git", clone, &["remote", "add", "origin", url]).unwrap();
+        std::fs::create_dir_all(clone).unwrap();
+        git(clone, &["init", "-q", "-b", "main"]);
+        git(clone, &["commit", "-q", "--allow-empty", "-m", "start"]);
+        git(clone, &["remote", "add", "origin", url]);
+        git(clone, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    }
+
+    /// The lines of `swept`.
+    fn lines(swept: Vec<Swept>) -> Vec<String> {
+        swept.into_iter().map(|s| s.line).collect()
     }
 
     #[tokio::test]
@@ -585,18 +835,18 @@ mod tests {
         // The riff run that made the folder holds its lock.
         let locked = folder(&here, "issue-6-00000006");
         let lock = hold(&locked).unwrap();
-        // A job of the daemon starts a session of issue-7.
-        let starting = folder(&here, "issue-7-00000007");
-        let job = here.daemon.starting("issue-7");
+        // A job of the daemon runs for issue-7.
+        let in_job = folder(&here, "issue-7-00000007");
+        let job = here.daemon.in_job("issue-7");
         let other = here.daemon.sessions_dir().join("lead-00000008");
         std::fs::create_dir_all(&other).unwrap();
 
-        let lines = here.daemon.sweep(None).await;
+        let lines = lines(here.daemon.sweep(None).await);
 
         assert!(!gone_merged.exists());
         assert!(!gone_closed.exists());
         assert!(!gone_issue.exists());
-        for kept in [&runs, &open, &locked, &starting, &other] {
+        for kept in [&runs, &open, &locked, &in_job, &other] {
             assert!(kept.exists(), "{}", kept.display());
         }
         assert_eq!(
@@ -617,11 +867,267 @@ mod tests {
 
         // The lock and the job end: the next sweep removes their folders.
         drop((lock, job));
-        let lines = here.daemon.sweep(None).await;
-        assert_eq!(lines.len(), 2, "{lines:?}");
+        let swept = here.daemon.sweep(None).await;
+        assert_eq!(swept.len(), 2, "{swept:?}");
         assert!(!locked.exists() && !lock_of(&locked).exists());
-        assert!(!starting.exists());
+        assert!(!in_job.exists());
         assert!(runs.exists() && open.exists());
+    }
+
+    /// 01M53S7WAXD46YPN0DR96XSTMG: a folder whose work is over stays
+    /// while its clone has a file that is not committed, or a commit that
+    /// no branch of `origin` has, or when git cannot read the clone.
+    /// `riff daemon sweep` says why.
+    #[tokio::test]
+    async fn a_clone_with_work_that_is_not_pushed_stays_and_riff_daemon_sweep_says_why() {
+        let merged = Fate::Merged {
+            pull: 43,
+            commit: "c43".into(),
+            refs: true,
+        };
+        let (here, server) = here(&[
+            (1, Fate::Closed { pull: 41 }),
+            (2, Fate::Closed { pull: 42 }),
+            (3, merged),
+            (4, Fate::IssueClosed),
+            (5, Fate::Closed { pull: 45 }),
+            (6, Fate::Closed { pull: 46 }),
+        ])
+        .await;
+        // Each file committed, and each commit on origin: it goes.
+        let pushed = folder(&here, "issue-1-00000001");
+        // A file that is not committed.
+        let changed = folder(&here, "issue-2-00000002");
+        std::fs::write(changed.join("clone/notes.md"), "not committed").unwrap();
+        // A commit on the branch of the item that the session did not
+        // push, on a branch with an older merged pull request.
+        let ahead = folder(&here, "issue-3-00000003");
+        let clone = ahead.join("clone");
+        git(&clone, &["switch", "-q", "-c", "worktree-issue-3"]);
+        git(&clone, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        git(&clone, &["commit", "-q", "--allow-empty", "-m", "two"]);
+        // A commit on another local branch.
+        let other = folder(&here, "issue-4-00000004");
+        let clone = other.join("clone");
+        git(&clone, &["switch", "-q", "-c", "spare"]);
+        git(&clone, &["commit", "-q", "--allow-empty", "-m", "spare"]);
+        git(&clone, &["switch", "-q", "main"]);
+        // The session pushed its branch: origin has each commit.
+        let branch = folder(&here, "issue-5-00000005");
+        let clone = branch.join("clone");
+        git(&clone, &["switch", "-q", "-c", "worktree-issue-5"]);
+        git(&clone, &["commit", "-q", "--allow-empty", "-m", "work"]);
+        git(
+            &clone,
+            &["update-ref", "refs/remotes/origin/worktree-issue-5", "HEAD"],
+        );
+        // git cannot read the clone: a bad index.
+        let broken = folder(&here, "issue-6-00000006");
+        std::fs::write(broken.join("clone/.git/index"), "not an index").unwrap();
+
+        let mut said = Vec::new();
+        ask_done(&here.dir, Ask::Sweep, |line| said.push(line.to_owned()))
+            .await
+            .unwrap();
+
+        assert!(!pushed.exists() && !branch.exists());
+        for kept in [&changed, &ahead, &other, &broken] {
+            assert!(kept.exists(), "{}", kept.display());
+        }
+        let closed = |n: u64| format!("the pull request #{n} closed with no merge");
+        assert_eq!(said.len(), 6, "{said:#?}");
+        assert_eq!(said[0], text::swept(&pushed, &closed(41)));
+        assert_eq!(
+            said[1],
+            text::swept_kept(
+                &changed,
+                &closed(42),
+                "its clone has 1 file that is not committed"
+            )
+        );
+        assert_eq!(
+            said[2],
+            text::swept_kept(
+                &ahead,
+                "the pull request #43 merged",
+                "its clone has 2 commits that are not pushed"
+            )
+        );
+        assert_eq!(
+            said[3],
+            text::swept_kept(
+                &other,
+                "the issue #4 is closed, and its branch has no pull request",
+                "its clone has 1 commit that is not pushed"
+            )
+        );
+        assert_eq!(said[4], text::swept(&branch, &closed(45)));
+        let unread = format!(
+            "riff kept the folder {}: {}, but riff cannot read the work of its clone: git status \
+             --porcelain: ",
+            broken.display(),
+            closed(46)
+        );
+        assert!(said[5].starts_with(&unread), "{}", said[5]);
+        // The issue of a merged pull request gets its comment, also when
+        // the folder stays: the item is not free work again.
+        assert_eq!(
+            server.comments(),
+            [("o/r".to_owned(), 3, 43, "c43".to_owned())]
+        );
+
+        // The session of issue-3 pushed after all: the next sweep removes
+        // its folder.
+        let clone = ahead.join("clone");
+        git(
+            &clone,
+            &["update-ref", "refs/remotes/origin/worktree-issue-3", "HEAD"],
+        );
+        let swept = here.daemon.sweep(None).await;
+        assert!(!ahead.exists());
+        assert!(
+            swept
+                .iter()
+                .any(|s| !s.kept && s.line == text::swept(&ahead, "the pull request #43 merged")),
+            "{swept:#?}"
+        );
+    }
+
+    /// The log of the daemon gets the line of a kept folder one time,
+    /// and again when the reason changes (01M53S7WAXD46YPN0DR96XSTMG).
+    #[tokio::test]
+    async fn the_log_gets_the_line_of_a_kept_folder_one_time() {
+        let (here, _) = here(&[(1, Fate::Closed { pull: 41 })]).await;
+        let kept = folder(&here, "issue-1-00000001");
+        let clone = kept.join("clone");
+        git(&clone, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        let over = "the pull request #41 closed with no merge";
+        let one = text::swept_kept(&kept, over, "its clone has 1 commit that is not pushed");
+
+        assert_eq!(here.daemon.sweep_news(None).await, [one.clone()]);
+        assert!(here.daemon.sweep_news(None).await.is_empty());
+        assert_eq!(
+            lines(here.daemon.sweep(None).await),
+            [one],
+            "riff daemon sweep says it each time"
+        );
+
+        git(&clone, &["commit", "-q", "--allow-empty", "-m", "two"]);
+        let two = text::swept_kept(&kept, over, "its clone has 2 commits that are not pushed");
+        assert_eq!(here.daemon.sweep_news(None).await, [two]);
+
+        git(&clone, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        assert_eq!(
+            here.daemon.sweep_news(None).await,
+            [text::swept(&kept, over)]
+        );
+        assert!(!kept.exists());
+    }
+
+    /// 01M53S7WGM9DQV2DXFHBRSMTP8: a `gh` that gives no answer stops at
+    /// its time limit. The sweep removes nothing for its folder, says
+    /// why, and goes on to the next folder.
+    #[tokio::test]
+    async fn a_gh_that_hangs_keeps_its_folder_and_the_sweep_goes_on() {
+        let root = tempfile::tempdir().unwrap();
+        let script = r#"#!/bin/sh
+case "$*" in
+*"--head worktree-issue-1 "*) exec sleep 600 ;;
+*) echo '[{"number":42,"state":"CLOSED","body":"Closes #2"}]' ;;
+esac
+"#;
+        let limit = Duration::from_secs(1);
+        let gh = pr::Gh::at(isolated::write_program(root.path().join("gh"), script))
+            .with_limit(limit);
+        let (here, _) = with(Server::with_gh(gh)).await;
+        let hangs = folder(&here, "issue-1-00000001");
+        let closed = folder(&here, "issue-2-00000002");
+
+        let start = Instant::now();
+        let swept = here.daemon.sweep(None).await;
+        assert!(start.elapsed() < isolated::HANG);
+
+        assert!(hangs.exists());
+        assert!(!closed.exists(), "the sweep went on to the next folder");
+        let call = "pr list --head worktree-issue-1 --state all --json \
+                    number,state,body,mergeCommit --limit 100";
+        assert_eq!(
+            swept,
+            [
+                Swept {
+                    folder: hangs.clone(),
+                    line: text::swept_forge_failed(&hangs, &text::gh_no_answer(call, limit)),
+                    kept: true,
+                },
+                Swept {
+                    folder: closed.clone(),
+                    line: text::swept(&closed, "the pull request #42 closed with no merge"),
+                    kept: false,
+                },
+            ]
+        );
+    }
+
+    /// 01M53S7WDPQ2GWHJWJ6SZXZ5PN: a session of a job that ended while
+    /// no daemon ran. A new daemon does the steps after the end, and the
+    /// sweep keeps the folder until the last step: the daemon has no
+    /// record of the session then.
+    #[tokio::test]
+    async fn the_steps_after_the_end_of_a_job_keep_its_folder() {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let server = Server::with_fates(&[(12, Fate::Closed { pull: 40 })]).with_gate(gate.clone());
+        let (here, server) = with(server).await;
+        let folder = folder(&here, "issue-12-9f8e7d6c");
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        let name = "riff-issue-12-9f8e7d6c";
+        let record = Record {
+            live: Live {
+                name: name.into(),
+                session: "9f8e7d6c-0000-4000-8000-000000000000".into(),
+                item: "issue-12".into(),
+                image: IMAGE.into(),
+                since_ms: 0,
+                phase: Default::default(),
+                last: String::new(),
+            },
+            folder: folder.clone(),
+            server: wave.server.clone(),
+            me: crate::daemon::tests::me(name),
+            inputs: Vec::new(),
+            closed: false,
+            failed: false,
+            job: Some(Job {
+                wave,
+                work: Work::Build { issue: 12 },
+            }),
+            terminal: false,
+            takeover: false,
+            interrupt: false,
+            claim: None,
+        };
+        let path = crate::daemon::record_path(&here.dir, name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string(&record).unwrap()).unwrap();
+
+        here.daemon.recover().await;
+        until(|| server.said().contains(&"finish issue-12".to_owned())).await;
+        assert!(here.daemon.records().is_empty());
+        assert!(here.daemon.sweep(None).await.is_empty());
+        assert!(folder.exists(), "the steps after the end run");
+
+        gate.add_permits(1);
+        until(|| server.said().contains(&"finished issue-12".to_owned())).await;
+        let start = Instant::now();
+        while folder.exists() {
+            assert!(start.elapsed() < isolated::HANG, "the job did not end");
+            here.daemon.sweep(None).await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     #[tokio::test]
@@ -633,18 +1139,17 @@ mod tests {
         .await;
         let mine = folder(&here, "issue-1-00000001");
         let theirs = here.daemon.sessions_dir().join("issue-2-00000002");
-        std::fs::create_dir_all(theirs.join("clone")).unwrap();
         origin(&theirs.join("clone"), "git@github.com:other/r.git");
         let no_origin = here.daemon.sessions_dir().join("issue-2-00000003");
         std::fs::create_dir_all(no_origin.join("clone")).unwrap();
 
-        let lines = here.daemon.sweep(Some("o/r")).await;
-        assert_eq!(lines.len(), 1, "{lines:?}");
+        let swept = here.daemon.sweep(Some("o/r")).await;
+        assert_eq!(swept.len(), 1, "{swept:?}");
         assert!(!mine.exists());
         assert!(theirs.exists() && no_origin.exists());
 
-        let lines = here.daemon.sweep(None).await;
-        assert_eq!(lines.len(), 1, "{lines:?}");
+        let swept = here.daemon.sweep(None).await;
+        assert_eq!(swept.len(), 1, "{swept:?}");
         assert!(!theirs.exists());
         assert!(
             no_origin.exists(),
