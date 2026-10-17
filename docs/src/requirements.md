@@ -6308,10 +6308,10 @@ part when they merge.
 ### Wave B: the record
 
 The requirements of Wave B (#803) say how the daemons of two or more
-people share one riff. A requirement of Wave B holds when the item of Wave B that builds it
-merges. A requirement that ends with "Superseded by Wave B (ID)."
-holds until then. The re-cut supersedes each requirement of Wave B
-(01M53NGW9FH02EM74GKY829808).
+people share one riff. A requirement of Wave B holds when the item of
+Wave B that builds it merges. A requirement that ends with "Superseded
+by Wave B (ID)." holds until then. The re-cut supersedes each
+requirement of Wave B (01M53NGW9FH02EM74GKY829808).
 
 - **01M519Z1WKH6THH971AQWHH8CN** A record is one change of the riff by
   one author. Its bytes are, in this order: the format version (1, one

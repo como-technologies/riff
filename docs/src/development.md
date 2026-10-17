@@ -649,11 +649,11 @@ systemctl --user restart riff
 systemctl --user stop riff
 ```
 
-A stop or a restart of the daemon stops no container. conmon, the monitor of
-podman, holds each container. While the daemon is away, `riff relay`
-keeps `claude` running and keeps its events. A new daemon takes up
-each session that runs, and the relay sends it the kept events. No
-event is lost.
+A stop or a restart of the daemon stops no container. conmon, the
+monitor of podman, holds each container. While the daemon is away,
+`riff relay` keeps `claude` running and keeps its events. A new daemon
+takes up each session that runs, and the relay sends it the kept
+events. No event is lost.
 
 `riff run` says that the daemon went away, and waits up to 10 minutes
 for a new daemon. Then it shows the session again from the next event.
@@ -1292,8 +1292,9 @@ The view shows each session of the daemon of this machine: its
 container, its item, its state, its age and its last step. It also
 shows the daemon, the limit of the host, each start that waits for
 room, and each wave. It draws them again each second. It shows no
-session of another machine. A later release merges `riff view` and `riff top` into one sessions
-view in each UI: see [Design: the UIs of riff](riff-uis.md).
+session of another machine. A later release merges `riff view` and
+`riff top` into one sessions view in each UI: see
+[Design: the UIs of riff](riff-uis.md).
 
 | Key | Does |
 |---|---|
