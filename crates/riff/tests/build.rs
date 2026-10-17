@@ -860,7 +860,8 @@ fn the_book_says_what_patch_minor_and_major_mean() {
 }
 
 /// The notes and the error in the book are the real text
-/// (01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MX1E65XGWDZ062PQ9YXQ5T).
+/// (01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MX1E65XGWDZ062PQ9YXQ5T,
+/// 01M55FCZNNZGKM4EKAXZQFTDWR).
 #[test]
 fn the_book_shows_the_real_notes_and_error() {
     use riff_core::build::{Mismatch, other_build};
@@ -877,6 +878,10 @@ fn the_book_shows_the_real_notes_and_error() {
             &b("0.4.3 7213825ab1c2 2026-09-27T20:10:44Z"),
         ),
         other_build(&b("0.3.2 929605821e54 2026-09-20T22:03:01Z"), &server),
+        other_build(
+            &b("3.0.0 929605821e54 2026-10-18T22:03:01Z"),
+            &b("1.8.2 7213825ab1c2 2026-10-17T20:10:44Z"),
+        ),
         Mismatch {
             riff: Some(b("0.2.0 929605821e54 2026-09-27T22:03:01Z")),
             server: Some(b("0.4.0 7213825ab1c2 2026-09-28T20:10:44Z")),
