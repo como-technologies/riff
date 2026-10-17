@@ -877,7 +877,8 @@ tells the older session to update.
 
 `1.0.0` promises that the wire and the behavior stay stable. After
 it, a major breaks, a minor adds and a patch fixes. A change of
-behavior that can break a pipeline or a policy is a major.
+behavior that can break a pipeline or a policy is a major. The line
+1.x takes no major: see [Make a release](development.md#make-a-release).
 
 ### The test for each release
 

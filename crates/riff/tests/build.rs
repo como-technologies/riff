@@ -802,7 +802,8 @@ fn the_book_has_the_part_that_the_error_names() {
 
 /// The book says what each level of a version means, and the test for
 /// each release (01M3N73E7YTHFX2J2KXT7017QX to
-/// 01M3N73EEQ4HPCPPAGCAHH3S6B).
+/// 01M3N73EEQ4HPCPPAGCAHH3S6B). The major links to the level of the
+/// line 1.x (01M53N7KN4QKZ70W2GNQ3VQWQ9).
 #[test]
 fn the_book_says_what_patch_minor_and_major_mean() {
     let book = std::fs::read_to_string(
@@ -829,6 +830,14 @@ fn the_book_says_what_patch_minor_and_major_mean() {
     }
     assert!(part.contains("act differently"), "{part}");
     assert!(part.contains("fail to understand"), "{part}");
+    let major = &part[part.find("### Major\n").unwrap()..];
+    let major = &major[..major[4..].find("\n### ").unwrap() + 4];
+    assert!(
+        major.contains(
+            "The line\n1.x takes no major: see [Make a release](development.md#make-a-release)."
+        ),
+        "{major}"
+    );
 }
 
 /// The notes and the error in the book are the real text

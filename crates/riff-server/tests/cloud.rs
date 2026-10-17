@@ -453,7 +453,8 @@ fn the_book_deploys_a_release_again() {
 /// commands (01M3N73AW2J3TVSZWFJ88A91PG). The pull request states the
 /// level and the reason, and the notes list what each person runs
 /// (01M3N73EGY4NQDQQP8Y185E9VZ). GitHub generates the rest of the
-/// notes (01M3NB3EWE2V9PCTMNTZAKEXMA).
+/// notes (01M3NB3EWE2V9PCTMNTZAKEXMA). A release of the line 1.x that
+/// the test makes a major is a minor (01M53N7KN4QKZ70W2GNQ3VQWQ9).
 #[test]
 fn the_book_makes_a_release() {
     let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
@@ -462,6 +463,7 @@ fn the_book_makes_a_release() {
     for text in [
         "An admin makes the release",
         "(how-it-works.md#the-test-for-each-release)",
+        "\nOn the line 1.x, a release that the test makes a major is a minor.\n",
         "states the level and the\nreason in one line",
         "```text\nLevel: minor.",
         "the commands that each person\nruns",
