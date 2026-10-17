@@ -619,7 +619,9 @@ impl Lease {
     /// let deploy = Lease::take_as(store.clone(), new, &timing).await?.unwrap();
     /// assert!(!first.held().await?);
     /// // A second instance of the old revision does not take it.
-    /// let held = Lease::take_as(store.clone(), old, &timing).await?.unwrap_err();
+    /// let Err(held) = Lease::take_as(store.clone(), old, &timing).await? else {
+    ///     panic!("the old revision took the lease");
+    /// };
     /// assert_eq!((held.id.as_str(), held.revision), (deploy.id(), new));
     /// assert!(deploy.held().await?);
     /// // A second instance of the same revision takes it: the newest serves.
@@ -771,10 +773,21 @@ mod tests {
 
     /// A memory store in which another holder takes the lease after the
     /// next load of the lease: between the load and the save of a
-    /// renewal.
+    /// renewal. It writes the lease `other`.
     struct Taken {
         store: Memory,
         armed: AtomicBool,
+        other: Vec<u8>,
+    }
+
+    impl Taken {
+        fn new(store: &Memory, other: &[u8]) -> Taken {
+            Taken {
+                store: store.clone(),
+                armed: AtomicBool::new(false),
+                other: other.to_vec(),
+            }
+        }
     }
 
     impl Store for Taken {
@@ -783,8 +796,7 @@ mod tests {
                 let loaded = self.store.load(name).await?;
                 if name == LEASE && self.armed.swap(false, Ordering::SeqCst) {
                     let known = loaded.as_ref().map(|lease| lease.version);
-                    let other = br#"{"id":"other","renewed_at_ms":1}"#.to_vec();
-                    self.store.save(LEASE, other, known).await?;
+                    self.store.save(LEASE, self.other.clone(), known).await?;
                 }
                 Ok(loaded)
             }
@@ -816,10 +828,7 @@ mod tests {
     #[test]
     fn a_renewal_and_an_end_never_write_over_the_lease_of_another_holder() {
         let memory = Memory::default();
-        let store = Arc::new(Taken {
-            store: memory.clone(),
-            armed: AtomicBool::new(false),
-        });
+        let store = Arc::new(Taken::new(&memory, br#"{"id":"other","renewed_at_ms":1}"#));
         block_on(async {
             for end in [false, true] {
                 let lease = Lease::take(store.clone()).await.unwrap();
@@ -837,6 +846,104 @@ mod tests {
                 assert!(!lease.held().await.unwrap());
             }
         });
+    }
+
+    fn revision(number: u64) -> Option<Revision> {
+        Some(Revision(number))
+    }
+
+    /// The bytes of a live lease of the instance `id` of the revision
+    /// `number`.
+    fn live(id: &str, number: u64) -> Vec<u8> {
+        format!(r#"{{"id":"{id}","renewed_at_ms":{},"revision":{number}}}"#, now_ms()).into_bytes()
+    }
+
+    /// 01M53NHJXGK1PN2A9F7NSX0B4G: a take names the version of the lease
+    /// that it read. When an instance of a newer revision writes the
+    /// lease between the read and the write, the take reads it again,
+    /// and does not write over it.
+    #[test]
+    fn a_take_reads_again_when_a_newer_revision_wrote_the_lease_in_between() {
+        let memory = Memory::default();
+        let newer = live("0123456789abcdef0123456789abcdef", 26);
+        let store = Arc::new(Taken::new(&memory, &newer));
+        let timing = Timing::default();
+        block_on(async {
+            store.armed.store(true, Ordering::SeqCst);
+            let taken = Lease::take_as(store.clone(), revision(25), &timing).await;
+            let Err(held) = taken.unwrap() else {
+                panic!("it wrote over the newer revision");
+            };
+            assert_eq!(held.revision, revision(26));
+            assert_eq!(memory.load(LEASE).await.unwrap().unwrap().bytes, newer);
+
+            // The same with no revision: the take writes over it.
+            store.armed.store(true, Ordering::SeqCst);
+            let lease = Lease::take(store.clone()).await.unwrap();
+            assert!(lease.held().await.unwrap());
+        });
+    }
+
+    /// 01M53NHJXGK1PN2A9F7NSX0B4G: only a live lease of a newer revision
+    /// comes first. With no revision on one side, and after a lease of a
+    /// newer revision ended by its age, the take writes over it. So is a
+    /// lease that does not read, as before the revision.
+    #[test]
+    fn only_a_live_lease_of_a_newer_revision_comes_first() {
+        let store = Memory::default();
+        let shared: Arc<dyn Store> = Arc::new(store.clone());
+        let timing = Timing::default();
+        let take = |mine| Lease::take_as(shared.clone(), mine, &timing);
+        block_on(async {
+            let newer = live("n", 26);
+            store.save(LEASE, newer, None).await.unwrap();
+            assert!(take(revision(25)).await.unwrap().is_err());
+            assert!(take(None).await.unwrap().is_ok(), "no revision of mine");
+
+            for lease in [
+                format!(r#"{{"id":"cut-a","renewed_at_ms":{}}}"#, now_ms()).into_bytes(),
+                format!(r#"{{"id":"n","renewed_at_ms":{},"revision":26}}"#, now_ms() - 95_000)
+                    .into_bytes(),
+                br#"{"id":"n","renewed_at_ms":1,"ended":true,"revision":26}"#.to_vec(),
+                b"x".to_vec(),
+            ] {
+                let version = store.load(LEASE).await.unwrap().map(|l| l.version);
+                store.save(LEASE, lease, version).await.unwrap();
+                let mine = take(revision(25)).await.unwrap().unwrap();
+                assert!(mine.held().await.unwrap());
+            }
+        });
+    }
+
+    /// The lease keeps the revision in each renewal and at its end. A
+    /// field that this build does not know reads: so an older build reads
+    /// the lease of this one at a rollback.
+    #[test]
+    fn a_renewal_and_an_end_keep_the_revision() {
+        let store = Arc::new(Memory::default());
+        let timing = Timing::default();
+        let revision_of = |bytes: &[u8]| parse(bytes).unwrap().revision;
+        block_on(async {
+            let lease = Lease::take_as(store.clone(), revision(26), &timing)
+                .await
+                .unwrap()
+                .unwrap();
+            let bytes = store.load(LEASE).await.unwrap().unwrap().bytes;
+            assert_eq!(revision_of(&bytes), revision(26));
+            assert!(lease.renew().await.unwrap());
+            let bytes = store.load(LEASE).await.unwrap().unwrap().bytes;
+            assert_eq!(revision_of(&bytes), revision(26));
+            lease.end().await.unwrap();
+            let bytes = store.load(LEASE).await.unwrap().unwrap().bytes;
+            assert_eq!(revision_of(&bytes), revision(26));
+            // No revision: no field.
+            let none = Lease::take(store.clone()).await.unwrap();
+            let bytes = store.load(LEASE).await.unwrap().unwrap().bytes;
+            assert!(!String::from_utf8(bytes).unwrap().contains("revision"));
+            assert!(none.held().await.unwrap());
+        });
+        let later = br#"{"id":"a","renewed_at_ms":1,"revision":27,"zone":"b"}"#;
+        assert_eq!(revision_of(later), revision(27));
     }
 
     #[test]
