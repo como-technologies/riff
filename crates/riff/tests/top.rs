@@ -569,6 +569,38 @@ async fn an_item_with_no_claim_and_an_open_pull_request_is_in_verify() {
     );
 }
 
+/// The `gh` calls of `riff top` share the token of one read
+/// (01M54510SFK1Z9VPFYBYYSV10F): one `gh auth token`, then the token in
+/// `GH_TOKEN` of each call.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_gh_calls_of_top_share_the_token_of_one_read() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    let log = bin.path().join("gh.log");
+    script(
+        bin.path(),
+        "gh",
+        &format!(
+            "echo \"${{GH_TOKEN:-none}} $1 $2\" >> {}\n\
+             case \"$1 $2\" in\n  'auth token') echo gho_one_read ;;\n  'pr list') echo '[]' ;;\n  \
+             *) echo '[{{\"number\": 12, \"title\": \"t\", \"milestone\": {{\"title\": \"Wave 3\"}}}}]' ;;\nesac",
+            log.display()
+        ),
+    );
+    live(&server, "pangolin", "a1").await;
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    assert!(top.contains("Wave 3 (como-technologies/riff)"), "{top}");
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        calls,
+        "none auth token\ngho_one_read issue list\ngho_one_read pr list\n"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn with_no_gh_the_row_still_prints() {
     let (server, _) = start_server().await;

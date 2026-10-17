@@ -2228,6 +2228,58 @@ In 30 seconds the host tells the lead
 `keyring: the OS keyring of pangolin answers again. The host goes on.`
 You do not start the host again.
 
+### Count the calls to the keyring
+
+Each process that calls the OS keyring opens a session of the Secret
+Service. A GNOME Keyring that gets a new session each few seconds can
+grow until it aborts. Then the keyring stays locked. So riff makes few
+calls:
+
+```mermaid
+flowchart LR
+    P[a riff process] -->|first call: one session| K[(OS keyring)]
+    P -->|later calls: the kept value| P
+    M[riff mcp] -->|keeps the reply| L[the status line]
+    L -.->|no call| K
+    C[riff top, a clean of the worktrees] -->|gh auth token: one time| G[gh]
+    G --> K
+    C -->|GH_TOKEN| V[each gh call]
+```
+
+- A process opens the keyring at most one time, and reads each secret
+  at most one time. Only a refresh of the sign-in reads it again.
+- The `riff mcp` of a session keeps the reply for its status line. So
+  `riff statusline` makes no call while `riff mcp` runs. A hook that
+  does not talk to riff-server makes no call.
+- The `gh` calls of one clean of the worktrees share one token. So do
+  the `gh` calls of `riff top`, and of the rollout and the look of the
+  lead: they read it again each 10 minutes.
+
+To see the calls of one `riff` command, give it a file in
+`RIFF_KEYRING_LOG`. Each line has the process ID and the call, for
+example `4242 read sign-in https://riff.example`. A line never holds
+the value of a secret:
+
+```sh
+RIFF_KEYRING_LOG=/tmp/riff-keyring-calls riff whoami
+cat /tmp/riff-keyring-calls
+```
+
+To count the sessions that all the programs of a Linux machine open
+in 10 minutes, watch the Secret Service. The command reads only the
+header of each call, not its body:
+
+```sh
+timeout 600 dbus-monitor --session --profile "type='method_call',interface='org.freedesktop.Secret.Service',member='OpenSession'" | grep -c '^mc'
+```
+
+To see the locked memory of GNOME Keyring, run the command below. At
+8192 kB, the keyring can open no new session:
+
+```sh
+grep VmLck /proc/"$(pidof gnome-keyring-daemon)"/status
+```
+
 ### When riff says the riff has no sign-in
 
 A riff can start again with no sign-in, for example after

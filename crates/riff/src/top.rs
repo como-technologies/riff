@@ -320,21 +320,16 @@ impl Issues {
     }
 
     /// The open issues of `repo` from `gh`. `None` when `gh` is not
-    /// there or fails.
-    pub fn from_gh(repo: &str) -> Option<Issues> {
-        let gh = |args: Vec<String>| {
-            let out = std::process::Command::new("gh")
-                .args(args)
-                .stdin(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .output()
-                .ok()?;
-            out.status
-                .success()
-                .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    /// there or fails. `riff top` gives each read the same `gh`, whose
+    /// calls share one token ([`crate::pr::Gh::with_one_token`],
+    /// 01M54510SFK1Z9VPFYBYYSV10F).
+    pub fn from_gh(gh: &crate::pr::Gh, repo: &str) -> Option<Issues> {
+        let run = |args: Vec<String>| {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            gh.run(&args, None).ok()
         };
-        let issues = Self::parse(&gh(Self::gh_args(repo))?)?;
-        Some(match gh(Self::gh_pull_args(repo)) {
+        let issues = Self::parse(&run(Self::gh_args(repo))?)?;
+        Some(match run(Self::gh_pull_args(repo)) {
             Some(pulls) => issues.with_pulls(&pulls),
             None => issues,
         })

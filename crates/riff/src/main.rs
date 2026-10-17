@@ -27,10 +27,13 @@ use riff_core::wire::{
 const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
 
 /// How long `riff statusline` keeps the answer of riff-server
-/// (01M53TZ0RBSJQ9ZZRXKMBM5R3E). Claude Code runs the status line after
-/// each change of the conversation, and each call swaps the person token
-/// for a session token: a change of the token store.
-const STATUSLINE_KEEP: Duration = Duration::from_secs(10);
+/// (01M53TZ0RBSJQ9ZZRXKMBM5R3E, 01M547VMQ5PCJ1GGC4M0GDCT31). Claude Code
+/// runs the status line after each change of the conversation, and each
+/// call swaps the person token for a session token, and opens a session
+/// of the OS keyring (#1003). The `riff mcp` of the session keeps a new
+/// answer at least each 60 seconds, its keep-alive, so the status line
+/// makes no call while it runs ([`riff::mcp::Tools::keep_statusline`]).
+const STATUSLINE_KEEP: Duration = Duration::from_secs(90);
 
 /// How often a watch looks for a leave of its session
 /// (01M3MEEFETT9A0DRWBKQTG77Z2).
@@ -3659,7 +3662,8 @@ fn mcp_off_here() -> bool {
 /// (01M3T5GFVS8NMA992KHZN4VE17). It never fails, and it waits at most
 /// [`STATUSLINE_WAIT`] for riff-server. It keeps a good answer for
 /// [`STATUSLINE_KEEP`], and asks riff-server nothing while it has one
-/// (01M53TZ0RBSJQ9ZZRXKMBM5R3E).
+/// (01M53TZ0RBSJQ9ZZRXKMBM5R3E). The `riff mcp` of the session keeps new
+/// answers too (01M547VMMDPB4DXBMWVERF60C4).
 async fn statusline(server: &str) -> String {
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -3678,9 +3682,9 @@ async fn statusline(server: &str) -> String {
     }
     let dir = local::dir();
     let now = riff::activity::now_ms();
-    let kept = dir
-        .as_deref()
-        .and_then(|dir| local::kept_statusline(dir, &id, server, now, STATUSLINE_KEEP));
+    let kept = dir.as_deref().and_then(|dir| {
+        local::kept_statusline(dir, &id, riff::link::base_of(server), now, STATUSLINE_KEEP)
+    });
     let (mut line, build) = match kept {
         Some(kept) => (kept.line, kept.build.and_then(|b| b.parse().ok())),
         None => statusline_of(server, &id, dir.as_deref(), now).await,
@@ -3723,7 +3727,7 @@ async fn statusline_of(
     let line = text::statusline(id, info.as_ref());
     if let Some(dir) = dir.filter(|_| answered) {
         let kept = local::Kept {
-            server: server.to_owned(),
+            server: riff::link::base_of(server).to_owned(),
             at_ms: now,
             build: build.as_ref().map(Build::to_string),
             line: line.clone(),
@@ -3966,13 +3970,16 @@ async fn draw_top(
     use std::io::{IsTerminal, Write};
     use std::time::Instant;
     // One read of `gh` for each repository with a live session
-    // (01M42KHN80V49HDDZF953HXDT0).
+    // (01M42KHN80V49HDDZF953HXDT0). The calls share one token
+    // (01M54510SFK1Z9VPFYBYYSV10F).
+    let gh = pr::Gh::default().with_one_token();
     let fetch = |repos: std::collections::BTreeSet<String>| {
+        let gh = gh.clone();
         tokio::task::spawn_blocking(move || {
             repos
                 .into_iter()
                 .map(|repo| {
-                    let issues = riff::top::Issues::from_gh(&repo);
+                    let issues = riff::top::Issues::from_gh(&gh, &repo);
                     (repo, issues)
                 })
                 .collect::<Vec<_>>()

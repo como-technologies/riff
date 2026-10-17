@@ -64,6 +64,43 @@
 //! The file name is the name of the secret in hex ([`file_of`]). Only the
 //! owner can read the files.
 //!
+//! # Few calls to the keyring
+//!
+//! Each process that calls the OS keyring opens one session of the
+//! Secret Service: one D-Bus connection and one key exchange. A
+//! GNOME Keyring that gets a new session each few seconds grows until
+//! it aborts, and then the keyring stays locked (#1003). So riff makes
+//! few calls:
+//!
+//! - A process opens the store one time, at its first call
+//!   ([`has_keyring`], [`get`], [`set`] or [`delete`]). A process that
+//!   needs no secret makes no call, so it opens nothing: for example
+//!   `riff statusline` with a kept answer, and each `riff hook` event
+//!   that does not talk to riff-server (01M54510M36SZ1C3AE2C8DS585).
+//! - [`kept`] reads a secret from the store one time for each process,
+//!   and gives the same value at each later call. The sign-in and the
+//!   device key use it. [`set`] and [`delete`] keep the value that the
+//!   store then holds, and [`get`] reads the store again and keeps the
+//!   new value. The kept
+//!   values belong to the store: a new store, for example the store of
+//!   another machine in a test, keeps none. Only the refresh of the
+//!   sign-in reads it again, under its lock
+//!   (01M54510PS9FDKQKJB0RAH3XG3).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     K[kept NAME] -->|kept value| V[the value]
+//!     K -->|no kept value| G[get NAME]
+//!     G -->|one read| S[(the store)]
+//!     G -->|keeps it| V
+//!     W[set or delete NAME] -->|one write| S
+//!     W -->|keeps what it wrote| V
+//! ```
+//!
+//! [`LOG_VAR`] names a file for one line on each call to the store, so
+//! that a test counts the calls of each process
+//! (01M54510W507A3T5JRTZ55H0ZQ).
+//!
 //! # Example
 //!
 //! ```standalone_crate
@@ -82,7 +119,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
@@ -221,53 +258,185 @@ pub fn refuses(name: &str) -> bool {
     get(name).is_err_and(|e| is_locked(&e))
 }
 
-/// Returns the secret with this name, or `None` if there is none.
+/// Returns the secret with this name, or `None` if there is none. It
+/// reads the store at each call, and keeps the value for [`kept`].
 pub fn get(name: &str) -> Result<Option<String>> {
-    if let Some(dir) = files() {
-        return file_get(&dir, name).map_err(file_locked);
-    }
-    let owned = name.to_owned();
-    in_time(KEYRING_WAIT, move || match entry(&owned)?.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(Error::NoEntry) => Ok(None),
-        Err(e) => Err(fail("read", &owned, e)),
-    })?
+    log("read", name);
+    let value = if let Some(dir) = files() {
+        file_get(&dir, name).map_err(file_locked)
+    } else {
+        let owned = name.to_owned();
+        in_time(KEYRING_WAIT, move || match entry(&owned)?.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(Error::NoEntry) => Ok(None),
+            Err(e) => Err(fail("read", &owned, e)),
+        })?
+    }?;
+    Kept::keep(name, value.clone());
+    Ok(value)
 }
 
-/// Keeps a secret with this name. It replaces an older value.
-pub fn set(name: &str, value: &str) -> Result<()> {
-    if let Some(dir) = files() {
-        return file_set(&dir, name, value).map_err(file_locked);
+/// The secret with this name, as [`get`] gives it, read from the store
+/// at most one time in this process (01M54510PS9FDKQKJB0RAH3XG3). An
+/// error is not kept, so the next call reads again.
+///
+/// ```standalone_crate
+/// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+/// use riff::secrets;
+///
+/// secrets::set("k", "v-1")?;
+/// assert_eq!(secrets::kept("k")?.as_deref(), Some("v-1"));
+/// // Another process writes the store.
+/// keyring_core::Entry::new(secrets::SERVICE, "k")?.set_password("v-2")?;
+/// assert_eq!(secrets::kept("k")?.as_deref(), Some("v-1"));
+/// // A read of the store keeps the new value.
+/// assert_eq!(secrets::get("k")?.as_deref(), Some("v-2"));
+/// assert_eq!(secrets::kept("k")?.as_deref(), Some("v-2"));
+/// secrets::delete("k")?;
+/// assert_eq!(secrets::kept("k")?, None);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn kept(name: &str) -> Result<Option<String>> {
+    match Kept::value(name) {
+        Some(value) => Ok(value),
+        None => get(name),
     }
-    let (owned, value) = (name.to_owned(), value.to_owned());
-    in_time(KEYRING_WAIT, move || {
-        entry(&owned)?
-            .set_password(&value)
-            .map_err(|e| fail("write", &owned, e))
-    })?
+}
+
+/// Keeps a secret with this name. It replaces an older value. [`kept`]
+/// then gives the new value, or reads again after an error.
+pub fn set(name: &str, value: &str) -> Result<()> {
+    log("write", name);
+    let done = if let Some(dir) = files() {
+        file_set(&dir, name, value).map_err(file_locked)
+    } else {
+        let (owned, value) = (name.to_owned(), value.to_owned());
+        in_time(KEYRING_WAIT, move || {
+            entry(&owned)?
+                .set_password(&value)
+                .map_err(|e| fail("write", &owned, e))
+        })
+        .and_then(|done| done)
+    };
+    Kept::wrote(name, done.is_ok().then(|| Some(value.to_owned())));
+    done
 }
 
 /// Removes the secret with this name. A missing secret is not an error.
+/// [`kept`] then gives `None`, or reads again after an error.
 pub fn delete(name: &str) -> Result<()> {
-    if let Some(dir) = files() {
-        return file_delete(&dir, name).map_err(file_locked);
-    }
-    let owned = name.to_owned();
-    in_time(KEYRING_WAIT, move || {
-        match entry(&owned)?.delete_credential() {
-            Ok(()) | Err(Error::NoEntry) => Ok(()),
-            Err(e) => Err(fail("delete", &owned, e)),
-        }
-    })?
+    log("delete", name);
+    let done = if let Some(dir) = files() {
+        file_delete(&dir, name).map_err(file_locked)
+    } else {
+        let owned = name.to_owned();
+        in_time(KEYRING_WAIT, move || {
+            match entry(&owned)?.delete_credential() {
+                Ok(()) | Err(Error::NoEntry) => Ok(()),
+                Err(e) => Err(fail("delete", &owned, e)),
+            }
+        })
+        .and_then(|done| done)
+    };
+    Kept::wrote(name, done.is_ok().then_some(None));
+    done
 }
 
 /// True when riff keeps secrets in files, a keyring store is set, or
 /// riff can open the keyring of the OS. A keyring that does not answer
 /// counts as one, so that the next call says that it does not answer.
 pub fn has_keyring() -> bool {
+    log("", "");
     files().is_some()
         || keyring_core::get_default_store().is_some()
         || in_time(KEYRING_WAIT, || os_store().is_ok()).unwrap_or(true)
+}
+
+/// The values that [`kept`] read in this process, and the store that
+/// they came from.
+#[derive(Default)]
+struct Kept {
+    store: String,
+    values: std::collections::HashMap<String, Option<String>>,
+}
+
+static KEPT: LazyLock<Mutex<Kept>> = LazyLock::new(Mutex::default);
+
+impl Kept {
+    /// The kept values, empty when the store changed since they came.
+    fn of_store() -> MutexGuard<'static, Kept> {
+        let store = store_id();
+        let mut kept = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
+        if kept.store != store {
+            *kept = Kept {
+                store,
+                ..Kept::default()
+            };
+        }
+        kept
+    }
+
+    fn value(name: &str) -> Option<Option<String>> {
+        Self::of_store().values.get(name).cloned()
+    }
+
+    fn keep(name: &str, value: Option<String>) {
+        Self::of_store().values.insert(name.to_owned(), value);
+    }
+
+    /// After a write of `name`: keeps the value that the store now holds,
+    /// or drops the kept value when the write failed (`None`).
+    fn wrote(name: &str, value: Option<Option<String>>) {
+        match value {
+            Some(value) => Self::keep(name, value),
+            None => {
+                Self::of_store().values.remove(name);
+            }
+        }
+    }
+}
+
+/// The store of the secrets of this process: the folder of the secret
+/// files, or the default store of `keyring-core`. Empty before riff set
+/// the store of the OS.
+fn store_id() -> String {
+    match (files(), keyring_core::get_default_store()) {
+        (Some(dir), _) => dir.display().to_string(),
+        (None, Some(store)) => format!("{:p}", std::sync::Arc::as_ptr(&store)),
+        (None, None) => String::new(),
+    }
+}
+
+/// The variable that names a file for the calls to the keyring store,
+/// for tests (01M54510W507A3T5JRTZ55H0ZQ). riff adds one line for each
+/// call: the process ID and `read NAME`, `write NAME` or `delete NAME`.
+/// The first call of a process adds the line `open` before it. riff
+/// never writes a value.
+pub const LOG_VAR: &str = "RIFF_KEYRING_LOG";
+
+/// Adds the line of the call `call` of the secret `name` to the file of
+/// [`LOG_VAR`], when the variable is set. An empty `call` adds only the
+/// line `open` of the first call.
+fn log(call: &str, name: &str) {
+    use std::io::Write;
+    static OPENED: AtomicBool = AtomicBool::new(false);
+    let Some(path) = std::env::var_os(LOG_VAR) else {
+        return;
+    };
+    let pid = std::process::id();
+    let mut lines = String::new();
+    if !OPENED.swap(true, Ordering::SeqCst) {
+        lines.push_str(&format!("{pid} open\n"));
+    }
+    if !call.is_empty() {
+        lines.push_str(&format!("{pid} {call} {name}\n"));
+    }
+    // One write, so that the lines of two processes do not mix.
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(lines.as_bytes()));
 }
 
 /// True when riff set the store of the OS keyring in this process.
@@ -494,6 +663,37 @@ mod tests {
         set("unit two", "2").unwrap();
         assert_eq!(get("unit one").unwrap().as_deref(), Some("1"));
         assert_eq!(get("unit two").unwrap().as_deref(), Some("2"));
+    }
+
+    /// 01M54510PS9FDKQKJB0RAH3XG3: `kept` reads the store one time. A
+    /// store that would refuse the next read shows that no later `kept`
+    /// reads it. Only `get` reads it again.
+    #[test]
+    fn kept_reads_the_store_one_time() {
+        mock_store();
+        set("unit kept", "a").unwrap();
+        let entry = Entry::new(SERVICE, "unit kept").unwrap();
+        let cred: &mock::Cred = entry.as_any().downcast_ref().unwrap();
+        cred.set_error(Error::NoStorageAccess(Box::new(std::io::Error::other(
+            "locked",
+        ))));
+        for _ in 0..3 {
+            assert_eq!(kept("unit kept").unwrap().as_deref(), Some("a"));
+        }
+        assert!(is_locked(&get("unit kept").unwrap_err()));
+        // An error changes no kept value.
+        assert_eq!(kept("unit kept").unwrap().as_deref(), Some("a"));
+
+        // A value that another process wrote: one read, then the kept
+        // value.
+        let name = "unit kept other";
+        let other = Entry::new(SERVICE, name).unwrap();
+        other.set_password("b").unwrap();
+        assert_eq!(kept(name).unwrap().as_deref(), Some("b"));
+        other.set_password("c").unwrap();
+        assert_eq!(kept(name).unwrap().as_deref(), Some("b"));
+        delete(name).unwrap();
+        assert_eq!(kept(name).unwrap(), None);
     }
 
     #[test]

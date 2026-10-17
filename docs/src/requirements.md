@@ -2481,7 +2481,17 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   of riff-server for 10 seconds, for each session and each server. In
   that time, it asks riff-server nothing: no call, so no swap for a
   session token. It makes its tags at each run, from the local files
-  and the build of the kept answer.
+  and the build of the kept answer. The time is now 90 seconds
+  (01M547VMQ5PCJ1GGC4M0GDCT31).
+- **01M547VMMDPB4DXBMWVERF60C4** The `riff mcp` of a session keeps the
+  answer of riff-server for the status line of the session: at a
+  keep-alive, at most each 30 seconds, and after each call of the tools
+  `claim`, `release`, `lead`, `blocked` and `join`. It uses the token
+  that it holds, so `riff statusline` shows the line with no call to
+  riff-server and no call to the OS keyring.
+- **01M547VMQ5PCJ1GGC4M0GDCT31** `riff statusline` keeps a good answer
+  for 90 seconds: longer than the 60 seconds of the keep-alive of `riff
+  mcp` (R204).
 - **01M3JFFJEW8BSRBZ9JQPKT0S8Z** `riff connect claude` adds the riff
   status line to the user settings of Claude Code
   (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)
@@ -3409,6 +3419,27 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   line and posts one note to the lead. While it stays locked, the host
   says no new line. When the keyring answers again, the host says one
   line, posts one note to the lead, and goes on with no new start.
+- **01M54510M36SZ1C3AE2C8DS585** `riff statusline` with a kept answer
+  (01M53TZ0RBSJQ9ZZRXKMBM5R3E), and each `riff hook` event that does
+  not talk to riff-server, make no call to the OS keyring.
+- **01M54510PS9FDKQKJB0RAH3XG3** A `riff` process opens the OS keyring
+  at most one time, and reads each secret at most one time. It keeps
+  the value for its later calls, and a write or a delete of the process
+  changes the kept value. Only the refresh of the sign-in reads it
+  again, under the refresh lock (R107).
+- **01M54510SFK1Z9VPFYBYYSV10F** The `gh` calls of one clean of the
+  worktrees (01M3ZV0TKSHNW5QC2NG1XTJEJB), of `riff top`, and of the
+  rollout and the look of the lead share one token. riff reads it with
+  `gh auth token` at the first call, and again at the first call after
+  10 minutes. It gives the token to each call in `GH_TOKEN`: in the
+  environment of `gh` only, never in a command line or a file. With no
+  `gh` call, riff reads no token. When the environment has `GH_TOKEN`
+  or `GITHUB_TOKEN`, riff reads no token.
+- **01M54510W507A3T5JRTZ55H0ZQ** When `RIFF_KEYRING_LOG` names a file,
+  `riff` adds one line to it for each call to the keyring store: the
+  process ID and `read NAME`, `write NAME` or `delete NAME`. The first
+  call of a process adds the line `open` before it. The lines hold no
+  value of a secret. It is for tests and checks.
 - **R22** `riff-server` follows the MCP authorization spec, revision
   2026-07-28. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R83** `riff-server` has no authorization endpoint for now. Its

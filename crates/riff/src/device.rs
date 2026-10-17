@@ -28,10 +28,11 @@ pub fn secret_name(server: &str) -> String {
 }
 
 /// The device key for `server`. Makes and keeps a new key if there is
-/// none.
+/// none. A process reads it from the keyring one time
+/// ([`secrets::kept`], 01M54510PS9FDKQKJB0RAH3XG3).
 pub fn key(server: &str) -> Result<Key> {
     let name = secret_name(server);
-    if let Some(secret) = secrets::get(&name)? {
+    if let Some(secret) = secrets::kept(&name)? {
         return Key::from_secret(&secret)
             .with_context(|| format!("the keyring entry \"{name}\" is not a device key"));
     }

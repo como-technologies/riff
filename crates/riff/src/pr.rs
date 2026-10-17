@@ -62,9 +62,11 @@
 //!     A->>G: riff pr wait 40: pr view until MERGED
 //! ```
 
+use std::fmt;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -74,6 +76,7 @@ use riff_core::selector::Selector;
 use riff_core::wire::SessionInfo;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use zeroize::Zeroizing;
 
 use crate::text;
 
@@ -98,6 +101,10 @@ pub struct Gh {
     /// The time limit of each call. With none, a call can take each
     /// time that `gh` takes.
     limit: Option<Duration>,
+    /// The token of each call, from one read for each time `keep`
+    /// ([`Gh::with_token_kept`]). With none, each call of `gh` reads its
+    /// token itself.
+    token: Option<Shared>,
 }
 
 impl Default for Gh {
@@ -106,9 +113,41 @@ impl Default for Gh {
             program: "gh".into(),
             repo: None,
             limit: None,
+            token: None,
         }
     }
 }
+
+/// The token that the clones of a `gh` share, and how long one read
+/// stays.
+#[derive(Debug, Clone)]
+struct Shared {
+    keep: Duration,
+    read: Arc<Mutex<Option<GhToken>>>,
+}
+
+/// One read of the token of `gh`: its time, and the token, or `None`
+/// when the read gave none. Its debug text has no value, and the memory
+/// of the token is cleared when it drops.
+struct GhToken {
+    at: Instant,
+    token: Option<Zeroizing<String>>,
+}
+
+impl fmt::Debug for GhToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("GhToken")
+    }
+}
+
+/// How long the calls of a `gh` with one token use one read of it
+/// ([`Gh::with_one_token`]). A process that runs for a long time reads
+/// it again after this time, so a new sign-in of `gh` reaches it.
+pub const TOKEN_KEEP: Duration = Duration::from_secs(600);
+
+/// The variables that give `gh` its token. When one is set, a call of
+/// `gh` reads no keyring.
+const TOKEN_VARS: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
 
 /// The time between two looks at a `gh` with a time limit.
 const LIMIT_POLL: Duration = Duration::from_millis(20);
@@ -159,6 +198,93 @@ impl Gh {
     /// The time limit of each call, when it has one.
     pub fn limit(&self) -> Option<Duration> {
         self.limit
+    }
+
+    /// The same `gh`, whose calls share the token of one read in each
+    /// [`TOKEN_KEEP`] (01M54510SFK1Z9VPFYBYYSV10F). See
+    /// [`Gh::with_token_kept`].
+    pub fn with_one_token(self) -> Self {
+        self.with_token_kept(TOKEN_KEEP)
+    }
+
+    /// The same `gh`, whose calls share the token of one read in each
+    /// time `keep`. Each call of `gh` reads its token from the OS
+    /// keyring, and each read opens a session of the Secret Service
+    /// (#1003). So a call runs `gh auth token` when the last read is
+    /// `keep` old or there is none, and each call gets the token in
+    /// `GH_TOKEN`: in its environment, never in a command line or a
+    /// file. The clones of this `gh` share the token. A `gh` that makes
+    /// no call reads nothing. When the environment has `GH_TOKEN` or
+    /// `GITHUB_TOKEN`, it reads nothing, and `gh` takes that token. When
+    /// `gh auth token` fails, each call reads its token itself.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let log = dir.path().join("gh.log");
+    /// let script = format!(
+    ///     "#!/bin/sh\necho \"${{GH_TOKEN:-none}} $*\" >> {}\n\
+    ///      [ \"$1 $2\" = \"auth token\" ] && echo gho_one_read\nexit 0\n",
+    ///     log.display(),
+    /// );
+    /// let gh = isolated::write_program(dir.path().join("gh"), &script);
+    /// let shared = riff::pr::Gh::at(&gh).with_one_token();
+    /// shared.run(&["pr", "view", "a"], None)?;
+    /// shared.clone().run(&["pr", "view", "b"], None)?;
+    /// // A token that stays no time: a read for each call.
+    /// let fresh = riff::pr::Gh::at(&gh).with_token_kept(Duration::ZERO);
+    /// fresh.run(&["pr", "view", "c"], None)?;
+    /// # if std::env::var_os("GH_TOKEN").is_none() && std::env::var_os("GITHUB_TOKEN").is_none() {
+    /// assert_eq!(
+    ///     std::fs::read_to_string(&log)?,
+    ///     "none auth token\ngho_one_read pr view a\ngho_one_read pr view b\n\
+    ///      none auth token\ngho_one_read pr view c\n",
+    /// );
+    /// # }
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_token_kept(self, keep: Duration) -> Self {
+        Self {
+            token: Some(Shared {
+                keep,
+                read: Arc::default(),
+            }),
+            ..self
+        }
+    }
+
+    /// The token for the calls of this `gh`: `None` when it reads no
+    /// token, or when the read fails.
+    fn token(&self) -> Option<Zeroizing<String>> {
+        let shared = self.token.as_ref()?;
+        let mut read = shared.read.lock().unwrap_or_else(PoisonError::into_inner);
+        if read.as_ref().is_none_or(|r| r.at.elapsed() >= shared.keep) {
+            *read = Some(GhToken {
+                at: Instant::now(),
+                token: self.read_token(),
+            });
+        }
+        read.as_ref()?.token.clone()
+    }
+
+    /// One read of the token with `gh auth token`, or `None` when the
+    /// environment gives `gh` a token, or when the read fails.
+    fn read_token(&self) -> Option<Zeroizing<String>> {
+        if TOKEN_VARS
+            .iter()
+            .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty()))
+        {
+            return None;
+        }
+        let plain = Gh {
+            token: None,
+            ..self.clone()
+        };
+        let (ok, stdout, _) = plain.output(&["auth", "token"], None).ok()?;
+        let stdout = Zeroizing::new(stdout);
+        let token = stdout.trim();
+        (ok && !token.is_empty()).then(|| Zeroizing::new(token.to_owned()))
     }
 
     /// Runs `gh ARGS` with `input` on stdin, and returns its stdout. It
@@ -221,6 +347,9 @@ impl Gh {
         let mut command = Command::new(&self.program);
         if let Some(repo) = &self.repo {
             command.env("GH_REPO", repo);
+        }
+        if let Some(token) = self.token() {
+            command.env("GH_TOKEN", token.as_str());
         }
         command
             .args(args)

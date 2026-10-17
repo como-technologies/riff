@@ -34,6 +34,7 @@ mod hosts;
 mod hygiene;
 mod identity;
 mod jobserver;
+mod keyring_calls;
 mod lead_book;
 mod lead_clone;
 mod lead_step;

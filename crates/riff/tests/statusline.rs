@@ -207,9 +207,10 @@ async fn the_status_line_calls_me_and_not_who() {
     assert!(!calls.iter().any(|c| c == "/v1/who"), "{calls:?}");
 }
 
-/// 01M53TZ0RBSJQ9ZZRXKMBM5R3E: the status line keeps a good answer of
-/// riff-server for 10 seconds. The status lines after it in that time
-/// ask the server nothing, so they make no token swap either.
+/// 01M53TZ0RBSJQ9ZZRXKMBM5R3E, 01M547VMQ5PCJ1GGC4M0GDCT31: the status
+/// line keeps a good answer of riff-server for 90 seconds. The status
+/// lines after it in that time ask the server nothing, so they make no
+/// token swap either.
 #[tokio::test]
 async fn the_status_lines_soon_after_a_good_answer_ask_the_server_nothing() {
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -222,6 +223,49 @@ async fn the_status_lines_soon_after_a_good_answer_ask_the_server_nothing() {
     }
     let calls = calls.lock().unwrap().clone();
     assert_eq!(calls, ["/v1/me"]);
+}
+
+/// 01M547VMMDPB4DXBMWVERF60C4: the `riff mcp` of the session keeps the
+/// answer for the status line. The status line shows it with no call to
+/// riff-server and no call to the OS keyring.
+#[tokio::test]
+async fn the_status_line_shows_the_answer_that_riff_mcp_kept() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let server = counting_server(calls.clone()).await;
+    let dir = repo();
+    join(&server, dir.path()).await;
+    let (_, code) = riff(&server, dir.path(), Some(ID), "", &["claim", "issue-82"]).await;
+    assert_eq!(code, 0);
+    let me = format!("riff://mike@pangolin/como-technologies/riff?session={ID}")
+        .parse()
+        .unwrap();
+    let tools = riff::mcp::Tools::new(riff::api::Api::new(&server), me)
+        .with_statusline(Some(dir.path().join("state")));
+    tools.keep_statusline().await;
+    calls.lock().unwrap().clear();
+
+    let log = dir.path().join("keyring-calls");
+    let stdin = format!(r#"{{"session_id":"{ID}","cwd":"/x"}}"#);
+    let mut cmd = Isolated::shared().assert_riff();
+    cmd.arg("statusline")
+        .current_dir(dir.path())
+        .env("RIFF_SERVER", &server)
+        .env("RIFF_HOST", "pangolin")
+        .env("RIFF_HOME", dir.path())
+        .env("RIFF_KEYRING_LOG", &log)
+        .env("USER", "mike")
+        .env_remove("RIFF_USER")
+        .env_remove("RIFF_SESSION")
+        .write_stdin(stdin);
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "riff a6cf2205 lead issue-82\n"
+    );
+    assert_eq!(*calls.lock().unwrap(), [""; 0], "no call to riff-server");
+    assert!(!log.exists(), "no call to the keyring");
 }
 
 #[tokio::test]

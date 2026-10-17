@@ -184,7 +184,20 @@ pub struct Tools {
     /// container, it gets only the tools of [`CONTAINER_TOOLS`]
     /// (01M4ZV3B6T2KB09WJ59F07HXET), or of [`LEAD_TOOLS`] for the lead.
     reach: Reach,
+    /// The folder where the tools keep the answer of riff-server for
+    /// the status line of the session ([`Tools::with_statusline`]).
+    /// `None` keeps nothing.
+    statusline: Option<PathBuf>,
 }
+
+/// The tools after which the tools keep a new answer for the status
+/// line: the line shows the claims, the lead and a block
+/// (01M547VMMDPB4DXBMWVERF60C4).
+const STATUSLINE_TOOLS: [&str; 5] = ["claim", "release", "lead", "blocked", "join"];
+
+/// The shortest time between two answers for the status line that the
+/// keep-alive keeps (01M547VMMDPB4DXBMWVERF60C4).
+pub const STATUSLINE_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Where a session runs, for its tools.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -344,6 +357,43 @@ impl Tools {
             wrapper: None,
             meter: None,
             reach: Reach::Host,
+            statusline: None,
+        }
+    }
+
+    /// Keeps the answer of riff-server for the status line of the
+    /// session in the folder `dir` (01M547VMMDPB4DXBMWVERF60C4). `riff
+    /// mcp` turns it on with the local folder of riff, and a test only
+    /// with a folder of its own.
+    pub fn with_statusline(mut self, dir: Option<PathBuf>) -> Self {
+        self.statusline = dir;
+        self
+    }
+
+    /// Asks riff-server for this session, and keeps the line of the
+    /// answer for `riff statusline` (01M547VMMDPB4DXBMWVERF60C4). The
+    /// tools hold their token, so `riff statusline` then shows the line
+    /// with no call of its own: no call to riff-server and no call to
+    /// the OS keyring (#1003). It keeps nothing when the call fails.
+    pub async fn keep_statusline(&self) {
+        let me = self.me();
+        let (Some(dir), Some(id)) = (&self.statusline, me.who().session()) else {
+            return;
+        };
+        if self.talk.is_some() || self.left() {
+            return;
+        }
+        let Ok(reply) = self.api.me(&me).await else {
+            return;
+        };
+        let kept = crate::local::Kept {
+            server: self.api.base().to_owned(),
+            at_ms: crate::activity::now_ms(),
+            build: crate::link::server_build().map(|b| b.to_string()),
+            line: text::statusline(id, reply.session.as_ref()),
+        };
+        if let Err(e) = crate::local::keep_statusline(dir, id, &kept) {
+            eprintln!("riff: cannot keep the status line: {e}");
         }
     }
 
@@ -834,8 +884,16 @@ impl ServerHandler for Tools {
                     .into(),
             );
         }
+        let line = STATUSLINE_TOOLS.contains(&request.name.as_ref());
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        self.router().call(call).await
+        let result = self.router().call(call).await;
+        // The status line shows the change at once
+        // (01M547VMMDPB4DXBMWVERF60C4). The reply does not wait for it.
+        if line && self.statusline.is_some() {
+            let tools = self.clone();
+            tokio::spawn(async move { tools.keep_statusline().await });
+        }
+        result
     }
 }
 
@@ -984,6 +1042,7 @@ impl Tools {
             let mut tick = tokio::time::interval(every);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             tick.tick().await;
+            let mut kept = None;
             loop {
                 tick.tick().await;
                 if tools.left() {
@@ -1009,6 +1068,12 @@ impl Tools {
                     && reply.stop
                 {
                     tools.stop_wrapper();
+                }
+                // A new answer for the status line, at most each
+                // STATUSLINE_EVERY (01M547VMMDPB4DXBMWVERF60C4).
+                if kept.is_none_or(|at: tokio::time::Instant| at.elapsed() >= STATUSLINE_EVERY) {
+                    kept = Some(tokio::time::Instant::now());
+                    let _ = tokio::time::timeout(every, tools.keep_statusline()).await;
                 }
             }
         })
@@ -1036,7 +1101,8 @@ impl Tools {
             me: move || tools.me(),
             tmux: crate::terminal::Tmux::from_env(),
             claude: "claude".into(),
-            gh: Arc::new(crate::pr::Gh::default()),
+            // The calls of `gh` share one token (01M54510SFK1Z9VPFYBYYSV10F).
+            gh: Arc::new(crate::pr::Gh::default().with_one_token()),
             off_told: false.into(),
         };
         tokio::spawn(crate::rollout::run(env))
@@ -1375,6 +1441,7 @@ pub async fn serve(
     let tools = Tools::new(api.clone(), me.clone())
         .with_earlier_work()
         .with_meter(Meter::here())
+        .with_statusline(crate::local::dir())
         .as_worker(worker)
         .in_wrapper(crate::worker::wrapper());
     // Start even if the server is down: each tool call reports the error.

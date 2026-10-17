@@ -3664,27 +3664,37 @@ place of your `statusLine`:
 ```
 
 Claude Code runs the status line after each change of the
-conversation. The status line asks riff-server with the call
-`GET /v1/me`. The reply holds only this session and the build of the
+conversation. The reply of riff-server to the call `GET /v1/me` makes
+the line. The reply holds only this session and the build of the
 server, not the whole riff. The call changes nothing on the server.
-The status line keeps a good reply for 10 seconds, and in that time it
-asks riff-server nothing. So a claim or a lead can show up to 10
-seconds late. Each call costs a swap for a session token (see
-[Sign-in](#sign-in)), so a busy session makes at most one swap each 10
-seconds for its status line.
+
+The `riff mcp` of the session asks for the reply and keeps it: after
+each `claim`, `release`, `lead`, `blocked` and `join`, and at its
+keep-alive, at most each 30 seconds. The status line shows a kept
+reply that is less than 90 seconds old, and asks riff-server nothing.
+So a claim of the session shows at once, and a change by another
+session, for example a release by the lead, can show up to 60 seconds
+late. Only when no reply is kept does the status line ask riff-server
+itself. That call costs a swap for a session token (see
+[Sign-in](#sign-in)), and a call to the OS keyring (see
+[Count the calls to the keyring](development.md#count-the-calls-to-the-keyring)).
 
 ```mermaid
 sequenceDiagram
     participant C as Claude Code
+    participant M as riff mcp
     participant S as riff statusline
     participant R as riff-server
+    M->>R: GET /v1/me, after a claim and at the keep-alive
+    R-->>M: this session, the build
+    Note over M: keeps the reply
     C->>S: the session ID on stdin
-    alt a reply less than 10 s old is kept
+    alt a reply less than 90 s old is kept
         S-->>C: the kept line
     else no reply is kept
         S->>R: GET /v1/me
         R-->>S: this session, the build
-        Note over S: keeps the reply for 10 s
+        Note over S: keeps the reply
         S-->>C: riff 2a880834 lead issue-82
     end
 ```

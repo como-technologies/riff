@@ -964,7 +964,9 @@ pub async fn once(
 /// Runs the look while the tools run. It acts only while `me` is the
 /// lead. It prints an error once, not again until the error changes.
 pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf>) {
-    let (gh, notifier) = (Arc::new(Gh::default()), Notifier::default());
+    // The calls of `gh` share one token (01M54510SFK1Z9VPFYBYYSV10F).
+    let gh = Arc::new(Gh::default().with_one_token());
+    let notifier = Notifier::default();
     let mut watch = PullWatch::default();
     let mut main = MainWatch::default();
     let mut last_error = None;

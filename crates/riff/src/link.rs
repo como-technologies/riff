@@ -450,10 +450,21 @@ pub fn of(base: &str) -> Arc<Link> {
     with(base, Limits::default())
 }
 
+/// The URL of the server at `url` as its link names it
+/// ([`Link::base`]): with no `/` at the end.
+///
+/// ```
+/// assert_eq!(riff::link::base_of("http://127.0.0.1:7878/"), "http://127.0.0.1:7878");
+/// assert_eq!(riff::link::base_of("http://127.0.0.1:7878"), "http://127.0.0.1:7878");
+/// ```
+pub fn base_of(url: &str) -> &str {
+    url.trim_end_matches('/')
+}
+
 /// The one link of the server at `base` with `limits` in this process.
 /// A test gives limits in milliseconds.
 pub fn with(base: &str, limits: Limits) -> Arc<Link> {
-    let base = base.trim_end_matches('/').to_owned();
+    let base = base_of(base).to_owned();
     let mut links = LINKS.lock().unwrap_or_else(|poison| poison.into_inner());
     links
         .entry((base.clone(), limits))

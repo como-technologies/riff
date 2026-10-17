@@ -441,3 +441,63 @@ fn the_book_has_a_how_to_for_the_free_disk() {
         assert!(how.contains(text), "the how-to has no {text:?}: {how}");
     }
 }
+
+/// A `gh` that logs each call with the token in its environment, and
+/// says that each pull request is open. `gh auth token` prints
+/// `gho_one_read`.
+const TOKEN_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "${GH_TOKEN:-none} $*" >> "$dir/gh.log"
+case "$1 $2" in
+'auth token') echo gho_one_read ;;
+'pr view') echo '{"number":40,"state":"OPEN","headRefOid":"x"}' ;;
+*) exit 1 ;;
+esac
+"#;
+
+/// The calls of `gh` of one `riff worktrees clean` with `env` in its
+/// environment. Three worktrees have work that is not on `main`, so the
+/// clean asks `gh` for the pull request of each.
+async fn gh_calls_of_one_clean(env: &[(&str, &str)]) -> Vec<String> {
+    let r = Riff::new().await;
+    script(r.fake.path(), "gh", TOKEN_GH);
+    for name in ["issue-7", "issue-8", "issue-9"] {
+        let tree = r.worktree(name);
+        git(&tree, &["commit", "-q", "--allow-empty", "-m", "the work"]);
+    }
+    let mut cmd = r.riff(&["worktrees", "clean"]);
+    cmd.envs(env.iter().copied());
+    let out = cmd.output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let log = std::fs::read_to_string(r.fake.path().join("gh.log")).unwrap();
+    log.lines().map(str::to_owned).collect()
+}
+
+/// 01M54510SFK1Z9VPFYBYYSV10F: one clean of the worktrees reads the
+/// token of `gh` one time, and gives it to each `gh` call. The workers
+/// host, the `riff mcp` of the lead and `riff worktrees clean` run the
+/// same clean (`worktrees::clean_here`).
+#[tokio::test(flavor = "multi_thread")]
+async fn one_clean_gives_its_gh_calls_the_token_of_one_read() {
+    let calls = gh_calls_of_one_clean(&[]).await;
+    assert_eq!(calls[0], "none auth token", "{calls:?}");
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    for branch in ["worktree-issue-7", "worktree-issue-8", "worktree-issue-9"] {
+        let call = format!("gho_one_read pr view {branch} --json number,state,headRefOid");
+        assert!(calls.contains(&call), "{call:?} in {calls:?}");
+    }
+}
+
+/// With `GH_TOKEN` in the environment, `gh` takes it: the clean reads
+/// no token.
+#[tokio::test(flavor = "multi_thread")]
+async fn with_gh_token_in_the_environment_the_clean_reads_no_token() {
+    let calls = gh_calls_of_one_clean(&[("GH_TOKEN", "gho_of_the_environment")]).await;
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    for call in &calls {
+        assert!(
+            call.starts_with("gho_of_the_environment pr view "),
+            "{calls:?}"
+        );
+    }
+}
