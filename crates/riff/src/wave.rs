@@ -1408,6 +1408,11 @@ mod tests {
         gate: Option<Arc<tokio::sync::Semaphore>>,
         /// Each item whose steps after the end started.
         finishing: Vec<String>,
+        /// The codes of the refusals of the next claims, in order, as
+        /// riff-server gives them: for example `paused`.
+        refusals: Vec<String>,
+        /// Each item whose claim riff-server refused.
+        refused: Vec<String>,
     }
 
     /// A fake [`World`]: a forge in memory, a claim that fails for a
@@ -1468,6 +1473,17 @@ mod tests {
                 let mut forge = lock(&self.forge);
                 if forge.holds.contains(&item) || forge.claims.contains_key(&item) {
                     return Ok(None);
+                }
+                if !forge.refusals.is_empty() {
+                    let code = forge.refusals.remove(0);
+                    forge.refused.push(item);
+                    return Err(api::Refusal {
+                        op: "claim".into(),
+                        status: reqwest::StatusCode::CONFLICT,
+                        text: format!("refused: {code}"),
+                        code: Some(code),
+                    }
+                    .into());
                 }
                 forge.sessions += 1;
                 let session = format!("{:08x}", forge.sessions);
@@ -1819,6 +1835,49 @@ mod tests {
         let forge = here.forge();
         assert_eq!(forge.starts.len(), 3);
         assert_eq!(forge.told, [text::wave_spent("issue-1", STARTS)]);
+    }
+
+    /// 01M558EYCXPFW8CJV3XJ7HK3NR: riff-server refuses the claim of each
+    /// job for a pause, more times than [`STARTS`]. Such a start does not
+    /// count, and the lead hears nothing of it: after the pause, the item
+    /// starts.
+    #[tokio::test]
+    async fn a_claim_refused_for_a_pause_is_no_start_of_the_item() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        let pauses = STARTS as usize + 1;
+        here.forge().refusals = vec!["paused".into(); pauses];
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        let forge = here.forge();
+        assert_eq!(forge.refused, vec!["issue-1"; pauses]);
+        assert_eq!(forge.starts.len(), 1);
+        assert!(forge.told.is_empty(), "{:?}", forge.told);
+    }
+
+    /// 01M558EYCXPFW8CJV3XJ7HK3NR: each other refusal of the claim is a
+    /// failed start: it counts, and the lead hears of it.
+    #[tokio::test]
+    async fn each_other_refusal_of_the_claim_counts_as_a_start() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().refusals = vec!["must_clear".into(); STARTS as usize];
+        here.run();
+        let spent = text::wave_spent("issue-1", STARTS);
+        here.until(3, |h| h.forge().told.contains(&spent)).await;
+        here.until(3, |h| h.forge().told.len() == STARTS as usize + 1)
+            .await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.refused.len(), STARTS as usize);
+        assert!(forge.starts.is_empty(), "{forge:?}");
+        let failed = text::wave_job_failed(
+            "issue-1",
+            "claim failed (409 Conflict): refused: must_clear",
+        );
+        let count = |text: &str| forge.told.iter().filter(|t| *t == text).count();
+        assert_eq!(count(&failed), STARTS as usize, "{:?}", forge.told);
+        assert_eq!(count(&spent), 1, "{:?}", forge.told);
     }
 
     #[tokio::test]

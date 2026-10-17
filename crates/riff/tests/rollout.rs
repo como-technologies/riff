@@ -90,7 +90,9 @@ const QUIET: Duration = Duration::from_secs(4);
 
 /// A fake riff daemon in the riff home of a lead. It answers `status`
 /// with the waves that it runs, and takes `wave`: it logs the ask, and
-/// the wave of its repository runs. Each other ask fails.
+/// the wave of its repository runs. It takes `image`: it logs the image,
+/// and has it, unless [`FakeDaemon::no_container`] says why it cannot.
+/// Each other ask fails.
 struct FakeDaemon {
     /// The repository of each ask of `wave`, in order.
     asks: Arc<Mutex<Vec<String>>>,
@@ -98,6 +100,9 @@ struct FakeDaemon {
     waves: Arc<Mutex<Vec<String>>>,
     /// The asks of `status`: one at each look of a running riff.
     looks: Arc<Mutex<usize>>,
+    /// The image of each ask of `image`, in order, and why the daemon
+    /// cannot start a container, when it cannot.
+    images: Arc<Mutex<(Vec<String>, Option<String>)>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -116,20 +121,48 @@ impl FakeDaemon {
         let asks = Arc::new(Mutex::new(Vec::new()));
         let shown = Arc::new(Mutex::new(waves.iter().map(|w| w.to_string()).collect()));
         let looks = Arc::new(Mutex::new(0));
-        let (a, w, l) = (asks.clone(), shown.clone(), looks.clone());
+        let images = Arc::new(Mutex::new((Vec::new(), None)));
+        let (a, w, l, i) = (asks.clone(), shown.clone(), looks.clone(), images.clone());
         let task = tokio::spawn(async move {
             loop {
                 let Ok((conn, _)) = listener.accept().await else {
                     return;
                 };
-                let (a, w, l) = (a.clone(), w.clone(), l.clone());
-                tokio::spawn(async move { FakeDaemon::answer(conn, &a, &w, &l).await });
+                let (a, w, l, i) = (a.clone(), w.clone(), l.clone(), i.clone());
+                tokio::spawn(async move { FakeDaemon::answer(conn, &a, &w, &l, &i).await });
             }
         });
         FakeDaemon {
             asks,
             waves: shown,
             looks,
+            images,
+            task,
+        }
+    }
+
+    /// A fake daemon of the riff home `home` that takes each connection,
+    /// keeps it open, and never answers: as a daemon whose status waits
+    /// on a lock (01M558EY88CACNZ55FWMRT8RP7). It counts the connections
+    /// as looks.
+    async fn silent(home: &Path) -> FakeDaemon {
+        let dir = riff::daemon::dir_in(home);
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = tokio::net::UnixListener::bind(riff::daemon::socket(&dir)).unwrap();
+        let looks = Arc::new(Mutex::new(0));
+        let l = looks.clone();
+        let task = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((conn, _)) = listener.accept().await {
+                *l.lock().unwrap() += 1;
+                held.push(conn);
+            }
+        });
+        FakeDaemon {
+            asks: Arc::default(),
+            waves: Arc::default(),
+            looks,
+            images: Arc::default(),
             task,
         }
     }
@@ -140,6 +173,7 @@ impl FakeDaemon {
         asks: &Mutex<Vec<String>>,
         waves: &Mutex<Vec<String>>,
         looks: &Mutex<usize>,
+        images: &Mutex<(Vec<String>, Option<String>)>,
     ) {
         use riff::daemon::{Ask, Hello, Say};
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -169,6 +203,14 @@ impl FakeDaemon {
                 waves.lock().unwrap().push(wave.repo);
                 Say::Done
             }
+            Ask::Image { image } => {
+                let mut images = images.lock().unwrap();
+                images.0.push(image);
+                match images.1.clone() {
+                    Some(error) => Say::Failed { error },
+                    None => Say::Done,
+                }
+            }
             _ => Say::Failed {
                 error: "the fake daemon takes no other ask".into(),
             },
@@ -181,6 +223,17 @@ impl FakeDaemon {
     /// The repository of each ask of the wave.
     fn asks(&self) -> Vec<String> {
         self.asks.lock().unwrap().clone()
+    }
+
+    /// The image of each ask of `image`.
+    fn images(&self) -> Vec<String> {
+        self.images.lock().unwrap().0.clone()
+    }
+
+    /// From now on, each ask of `image` fails with `why`, as on a machine
+    /// that cannot start a container.
+    fn no_container(&self, why: &str) {
+        self.images.lock().unwrap().1 = Some(why.to_owned());
     }
 
     /// The wave of each repository stops, as with `riff wave stop`.
@@ -559,6 +612,8 @@ async fn a_resume_asks_the_daemon_one_time_for_the_wave_and_starts_no_worker() {
     lead.riff(RiffState::Running).await;
     daemon.until_asks(1).await;
     assert_eq!(daemon.asks(), ["o/r"]);
+    // Before the ask, the daemon got the image that the repository pins.
+    assert_eq!(daemon.images(), [PINNED]);
     lead.reads(&riff::text::rollout_wave("a", "o/r")).await;
     // More looks while the wave runs: no second ask.
     daemon.looked().await;
@@ -590,6 +645,56 @@ async fn a_wave_that_runs_gets_no_ask_and_no_call_of_gh() {
 }
 
 const ONE_ITEM: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#;
+
+/// 01M558EY88CACNZ55FWMRT8RP7: a daemon that takes the connection and
+/// never answers stops no look. After the time limit of the look, it
+/// goes on with no daemon facts: the idle worker gets its request, and
+/// the lead gets one note with the reason. The next looks ask the daemon
+/// again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_daemon_that_never_answers_does_not_stop_the_rollout() {
+    let lead = lead(5).await;
+    let daemon = FakeDaemon::silent(lead.home.path()).await;
+    lead.issues(ONE_ITEM);
+    lead.riff(RiffState::Running).await;
+    let worker = lead.join_idle(1).await;
+    let _stream = lead.api.watch(&worker).await.unwrap();
+    reads(&lead.api, &worker, "request: claim issue-1").await;
+    let why = riff::text::daemon_silent(riff::daemon::STATUS_WAIT);
+    lead.reads(&riff::text::rollout_no_wave("a", "o/r", &why))
+        .await;
+    daemon.looked().await;
+}
+
+/// 01M558EYAJFZK7Y822NVWGBS9H: the daemon cannot start a container of
+/// the session image, as on a machine with no podman. The rollout asks
+/// the daemon for the image that the repository pins, makes no ask of
+/// the wave, and the lead gets one note with the reason. The next looks
+/// ask for the image again, and give no second note.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_machine_that_cannot_run_a_container_gets_no_ask_of_the_wave() {
+    let lead = lead(5).await;
+    let daemon = FakeDaemon::start(lead.home.path(), &[]).await;
+    let why = riff::text::no_program("podman");
+    daemon.no_container(&why);
+    lead.issues(ONE_ITEM);
+    lead.riff(RiffState::Running).await;
+    let reason = riff::text::wave_no_container(&why);
+    lead.reads(&riff::text::rollout_no_wave("a", "o/r", &reason))
+        .await;
+    daemon.looked().await;
+    daemon.looked().await;
+    assert!(daemon.asks().is_empty(), "an ask of the wave");
+    let images = daemon.images();
+    assert!(images.len() >= 2, "{images:?}");
+    assert!(images.iter().all(|image| image == PINNED), "{images:?}");
+    let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
+    let read = riff::text::inbox(&inbox, &lead.me);
+    assert!(
+        !read.contains("the rollout cannot run the wave"),
+        "a second note: {read}"
+    );
+}
 
 /// The author of a pull request released its item at the verify
 /// request. The item is no free work for a build
