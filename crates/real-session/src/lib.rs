@@ -1963,8 +1963,11 @@ fn clean_up(options: &Options, issue: u64, made: Made, stop: &AtomicBool) {
                 .map(|()| String::new())
                 .map_err(|e| e.to_string()),
         );
-        // The lock of the riff run of the folder is beside it.
-        let _ = std::fs::remove_file(riff::daemon::sweep::lock_of(&folder));
+        // The lock of the riff run of the folder is beside it: `ITEM-ID8.lock`
+        // (`riff::daemon::sweep::lock_of`).
+        let mut lock = folder.clone().into_os_string();
+        lock.push(".lock");
+        let _ = std::fs::remove_file(lock);
     }
 }
 
