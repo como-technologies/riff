@@ -439,9 +439,10 @@ pub async fn update(
 
 /// The step of [`update`] for the riff daemon of this machine
 /// ([`crate::daemon::after_update`]), with the `riff` on `PATH`. It does
-/// nothing with `RIFF_HOME` set. It gives an error as a line.
+/// nothing with `RIFF_HOME` or `RIFF_DATA` set. It gives an error as a
+/// line.
 async fn daemon_after_update() -> Vec<String> {
-    if crate::home::dir().is_some() {
+    if !crate::run::machine_data() {
         return Vec::new();
     }
     let Some(riff) = crate::binary::on_path("riff") else {

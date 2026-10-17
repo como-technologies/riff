@@ -443,6 +443,93 @@ async fn a_second_daemon_does_not_start_while_one_answers() {
     assert!(said.contains("It stopped no session"), "{said}");
 }
 
+/// 01M53YP97S9BDMFBN0X5G444MY: a daemon of a `RIFF_DATA` runs beside the
+/// daemon that runs already, with its own folder, socket and key. Each
+/// `riff daemon` command with that `RIFF_DATA` talks only to it. Its stop
+/// leaves the other daemon as it was.
+#[tokio::test]
+async fn a_daemon_of_riff_data_runs_beside_the_daemon_that_runs_already() {
+    let here = Here::new();
+    let first = here.daemon("first.out").await;
+    let key = here.status_line("Its key: ").await;
+    let data = here.env.path().join("test-data");
+    let vars = [(riff::run::DATA_VAR, data.to_str().unwrap())];
+    let second = here.daemon_with("second.out", &vars).await;
+    let mut cmd = here.command(false, &["daemon", "status"]);
+    cmd.envs(vars);
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    let theirs = text(&out.stdout);
+    assert!(out.status.success(), "{theirs}");
+    let pid = format!("pid {}, ", second.id());
+    assert!(theirs.contains(&pid), "{theirs}");
+    let folder = format!("Its folder: {}", data.join("daemon").display());
+    assert!(theirs.lines().any(|l| l == folder), "{theirs}");
+    assert!(!theirs.contains(&key), "{theirs}");
+    assert!(data.join("daemon/riff.sock").exists());
+
+    stop(second).await;
+    assert!(!data.join("daemon/riff.sock").exists());
+    // The first daemon answers on, with its own key.
+    let out = here.run(false, &["daemon", "status"]).await;
+    let ours = text(&out.stdout);
+    assert!(out.status.success(), "{ours}");
+    assert!(ours.contains(&format!("pid {}, ", first.id())), "{ours}");
+    assert!(ours.lines().any(|l| l == key), "{ours}");
+    stop(first).await;
+}
+
+/// 01M53YP9AHPZ9YPNQFJ1SYZGWF: the daemon of a `RIFF_DATA` is never the
+/// daemon of the unit. `riff daemon install` and `riff daemon uninstall`
+/// with `RIFF_DATA` change nothing, and the start steps of its daemon
+/// have no step of the unit. With no `RIFF_DATA`, they have it.
+#[tokio::test]
+async fn the_daemon_of_riff_data_is_never_the_daemon_of_the_unit() {
+    let here = Here::new();
+    let data = here.env.path().join("test-data");
+    for args in [["daemon", "install"], ["daemon", "uninstall"]] {
+        let mut cmd = here.command(true, &args);
+        cmd.env(riff::run::DATA_VAR, &data);
+        let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+            .await
+            .unwrap();
+        assert!(!out.status.success());
+        let stderr = text(&out.stderr);
+        assert!(stderr.contains("RIFF_HOME or RIFF_DATA is set"), "{stderr}");
+    }
+    assert!(!here.env.home().join(".config/systemd").exists());
+    assert_eq!(here.read("systemctl.log"), "");
+
+    // The daemons of the machine, with no RIFF_HOME. The keyring of the
+    // test fails, so each one waits for its key, and serves.
+    let start = |name: &str, data: Option<&Path>| {
+        let log = here.bin.path().join(name);
+        let out = std::fs::File::create(&log).unwrap();
+        let mut cmd = here.command(true, &["daemon"]);
+        if let Some(data) = data {
+            cmd.env(riff::run::DATA_VAR, data);
+        }
+        let child = cmd
+            .stdout(out.try_clone().unwrap())
+            .stderr(out)
+            .spawn()
+            .unwrap();
+        (child, log)
+    };
+    let (child, log) = start("machine.out", None);
+    wait_for(&log, riff::text::STEP_UNIT).await;
+    stop(child).await;
+
+    let (child, log) = start("data.out", Some(&data));
+    let socket = data.join("daemon/riff.sock");
+    wait_for(&log, &format!("listens on {}", socket.display())).await;
+    wait_for(&log, riff::text::INIT_RULES).await;
+    stop(child).await;
+    let said = std::fs::read_to_string(&log).unwrap();
+    assert!(!said.contains(riff::text::STEP_UNIT), "{said}");
+}
+
 /// `riff daemon limit` shows the limit of the host, and sets it in the
 /// folder of the daemon. `riff daemon status` shows it
 /// (01M4ZV3B6HAFTSC2K63FMC5FYA).

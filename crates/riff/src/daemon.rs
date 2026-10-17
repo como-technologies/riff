@@ -33,6 +33,13 @@
 //! of riff ([`crate::run::data_dir`]), with mode 0700
 //! (01M4ZDTVQEHD87WD5TSN93XFSS).
 //!
+//! `RIFF_DATA` ([`crate::run::DATA_VAR`]) moves the data folder
+//! (01M53YP97S9BDMFBN0X5G444MY). The daemon of the real-session test runs
+//! there, beside the daemon of the machine: with its own socket, its own
+//! session folders, its own key (01M51JW1XRZWC3Q7G32V0X0D89) and its own
+//! riff. It never acts as the daemon of the unit
+//! ([`crate::run::machine_data`], 01M53YP9AHPZ9YPNQFJ1SYZGWF).
+//!
 //! | Path | Holds |
 //! |---|---|
 //! | `riff.sock` | The control socket: `riff run`, `riff daemon status`. |
@@ -586,9 +593,10 @@ pub fn stale(unit: Option<&crate::service::Unit>, own: &Path, replaced: bool) ->
 /// that its own step of the unit wrote again
 /// ([`crate::update_steps::unit_written`], 01M51QFPQ68JHS08TWXNNWZ0D7),
 /// and the unit of `manager` runs it (01M517BTP6BAGTRBYWPX9GPVE0). The
-/// daemon of a `RIFF_HOME` is never the daemon of the unit.
+/// daemon of a `RIFF_HOME` or a `RIFF_DATA` is never the daemon of the
+/// unit ([`crate::run::machine_data`]).
 fn old_here(manager: &impl crate::service::ServiceManager) -> bool {
-    if crate::home::dir().is_some() {
+    if !crate::run::machine_data() {
         return false;
     }
     let Ok(own) = own_binary() else {
@@ -3672,7 +3680,7 @@ pub async fn install(
     dir: &Path,
     wait: Duration,
 ) -> Result<()> {
-    if crate::home::dir().is_some() {
+    if !crate::run::machine_data() {
         bail!("{}", text::DAEMON_INSTALL_RIFF_HOME);
     }
     let path = manager.install(unit)?;
@@ -3698,7 +3706,7 @@ pub fn uninstall(
     manager: &impl crate::service::ServiceManager,
     unit_path: &Path,
 ) -> Result<String> {
-    if crate::home::dir().is_some() {
+    if !crate::run::machine_data() {
         bail!("{}", text::DAEMON_UNINSTALL_RIFF_HOME);
     }
     Ok(match manager.uninstall()? {

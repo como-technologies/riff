@@ -430,30 +430,45 @@ pub fn branch(item: &str) -> String {
     format!("{}{item}", dropped::BRANCH)
 }
 
-/// The data folder of riff 3.0: `RIFF_HOME`, else `XDG_DATA_HOME/riff`,
-/// else `HOME/.local/share/riff`. It holds the session folders and the
-/// folder of the daemon ([`crate::daemon::dir`]).
+/// The variable that names the data folder of riff 3.0 in place of the
+/// data folder of the machine (01M53YP97S9BDMFBN0X5G444MY). Only the
+/// real-session test sets it, so that its riff daemon runs beside the
+/// daemon of the machine, with a folder and a socket of its own. It
+/// moves only the data folder: the settings, the local files and the
+/// secrets stay where they are. An empty value counts as unset.
+///
+/// ```
+/// assert_eq!(riff::run::DATA_VAR, "RIFF_DATA");
+/// ```
+pub const DATA_VAR: &str = "RIFF_DATA";
+
+/// The data folder of riff 3.0: `RIFF_DATA` ([`DATA_VAR`]), else
+/// `RIFF_HOME`, else `XDG_DATA_HOME/riff`, else
+/// `HOME/.local/share/riff`. It holds the session folders and the folder
+/// of the daemon ([`crate::daemon::dir`]).
 ///
 /// ```
 /// use riff::run::data_dir_from;
 /// use std::path::Path;
 ///
 /// let some = |s: &str| Some(s.into());
-/// assert_eq!(data_dir_from(some("/r"), some("/d"), some("/h"))?, Path::new("/r"));
-/// assert_eq!(data_dir_from(None, some("/d"), some("/h"))?, Path::new("/d/riff"));
+/// assert_eq!(data_dir_from(some("/t"), some("/r"), some("/d"), some("/h"))?, Path::new("/t"));
+/// assert_eq!(data_dir_from(some(""), some("/r"), some("/d"), some("/h"))?, Path::new("/r"));
+/// assert_eq!(data_dir_from(None, None, some("/d"), some("/h"))?, Path::new("/d/riff"));
 /// assert_eq!(
-///     data_dir_from(None, some(""), some("/h"))?,
+///     data_dir_from(None, None, some(""), some("/h"))?,
 ///     Path::new("/h/.local/share/riff")
 /// );
-/// assert!(data_dir_from(None, None, None).is_err());
+/// assert!(data_dir_from(None, None, None, None).is_err());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn data_dir_from(
+    riff_data: Option<OsString>,
     riff_home: Option<OsString>,
     data_home: Option<OsString>,
     home: Option<OsString>,
 ) -> Result<PathBuf> {
-    if let Some(dir) = home::dir_from(riff_home) {
+    if let Some(dir) = home::dir_from(riff_data).or_else(|| home::dir_from(riff_home)) {
         return Ok(dir);
     }
     let set = |v: Option<OsString>| v.filter(|v| !v.is_empty()).map(PathBuf::from);
@@ -467,10 +482,33 @@ pub fn data_dir_from(
 /// [`data_dir_from`] with the values of this process.
 pub fn data_dir() -> Result<PathBuf> {
     data_dir_from(
+        std::env::var_os(DATA_VAR),
         std::env::var_os(home::VAR),
         std::env::var_os("XDG_DATA_HOME"),
         std::env::var_os("HOME"),
     )
+}
+
+/// True when the data folder is the data folder of the machine: neither
+/// `RIFF_DATA` nor `RIFF_HOME` names another one. Only a daemon of the
+/// data folder of the machine can be the daemon of the unit
+/// (01M53YP9AHPZ9YPNQFJ1SYZGWF).
+///
+/// ```
+/// use riff::run::machine_data_from;
+///
+/// assert!(machine_data_from(None, None));
+/// assert!(machine_data_from(Some("".into()), Some("".into())));
+/// assert!(!machine_data_from(Some("/t".into()), None));
+/// assert!(!machine_data_from(None, Some("/r".into())));
+/// ```
+pub fn machine_data_from(riff_data: Option<OsString>, riff_home: Option<OsString>) -> bool {
+    home::dir_from(riff_data).is_none() && home::dir_from(riff_home).is_none()
+}
+
+/// [`machine_data_from`] with the values of this process.
+pub fn machine_data() -> bool {
+    machine_data_from(std::env::var_os(DATA_VAR), std::env::var_os(home::VAR))
 }
 
 /// The folder of the session folders: `sessions` in [`data_dir`].
@@ -480,16 +518,27 @@ pub fn data_dir() -> Result<PathBuf> {
 /// use std::path::Path;
 ///
 /// let some = |s: &str| Some(s.into());
-/// assert_eq!(sessions_dir_from(some("/r"), some("/d"), some("/h"))?, Path::new("/r/sessions"));
-/// assert_eq!(sessions_dir_from(None, some("/d"), some("/h"))?, Path::new("/d/riff/sessions"));
+/// assert_eq!(
+///     sessions_dir_from(some("/t"), some("/r"), some("/d"), some("/h"))?,
+///     Path::new("/t/sessions")
+/// );
+/// assert_eq!(
+///     sessions_dir_from(None, some("/r"), some("/d"), some("/h"))?,
+///     Path::new("/r/sessions")
+/// );
+/// assert_eq!(
+///     sessions_dir_from(None, None, some("/d"), some("/h"))?,
+///     Path::new("/d/riff/sessions")
+/// );
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn sessions_dir_from(
+    riff_data: Option<OsString>,
     riff_home: Option<OsString>,
     data_home: Option<OsString>,
     home: Option<OsString>,
 ) -> Result<PathBuf> {
-    Ok(data_dir_from(riff_home, data_home, home)?.join("sessions"))
+    Ok(data_dir_from(riff_data, riff_home, data_home, home)?.join("sessions"))
 }
 
 /// [`sessions_dir_from`] with the values of this process.

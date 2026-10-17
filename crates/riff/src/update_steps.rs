@@ -496,11 +496,12 @@ fn home_here() -> Option<PathBuf> {
 }
 
 /// The service manager of the unit of the daemon of this machine. None
-/// with `RIFF_HOME`: that daemon is never the daemon of the unit.
+/// with `RIFF_HOME` or `RIFF_DATA`: that daemon is never the daemon of
+/// the unit ([`crate::run::machine_data`]).
 fn manager_here() -> Option<crate::service::Systemd> {
     crate::service::Systemd::here()
         .ok()
-        .filter(|_| crate::home::dir().is_none())
+        .filter(|_| crate::run::machine_data())
 }
 
 /// The steps on this machine with `runtime` and the session `images`,
