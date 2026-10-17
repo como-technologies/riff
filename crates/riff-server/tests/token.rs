@@ -185,7 +185,10 @@ async fn each_token_stays_valid_across_a_restart_and_a_deploy() {
     // The task of each second saves the swap: the hash of its token.
     let span = isolated::Span::start();
     while !saved_holds(&store, &b.access_token).await {
-        assert!(span.within(Duration::from_secs(10)), "the swap is not saved");
+        assert!(
+            span.within(Duration::from_secs(10)),
+            "the swap is not saved"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
@@ -312,7 +315,7 @@ impl riff_state::store::Store for RateLimited {
             return self.store.save(name, bytes, known);
         }
         Box::pin(async move {
-            let slow = self.saves.fetch_add(1, Ordering::SeqCst) % 2 == 0;
+            let slow = self.saves.fetch_add(1, Ordering::SeqCst).is_multiple_of(2);
             let takes = Duration::from_millis(if slow { 300 } else { 20 });
             tokio::time::sleep(takes).await;
             let last = self.changes.lock().unwrap().last().copied();
