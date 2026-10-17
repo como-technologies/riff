@@ -1828,8 +1828,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   its notes says that the line is retired, and names the issue that
   retired it. The line 2.x is retired (#706): its one GitHub release,
   `v2.0.1`, is a prerelease. The tag `v2.0.0` has no GitHub release.
-- **01M550XYBAW5QYXEMQ49Z34M4N** `riff retire LINE --issue N` retires the
-  release line LINE in one step, with the `gh` of the machine. Each
+- **01M550XYBAW5QYXEMQ49Z34M4N** `riff retire LINE --issue N` retires
+  the release line LINE in one step, with the `gh` of the machine. Each
   GitHub release with a tag `vLINE.Y.Z` becomes a prerelease, and the
   first line of its notes is `**Retired.** The line LINE.x is retired
   (#N). Do not install this release.` The old notes stay under it. It
