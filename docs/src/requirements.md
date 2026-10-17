@@ -1035,11 +1035,18 @@
   `who --all` shows it in the place of the last record that names it.
 - **R127** `riff-server` saves the changed token store at most once
   each second. Superseded by 3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
+- **01M53T8X5KH59R3P8H2D22WE32** The second of R127 counts from the
+  end of one save of the token store to the start of the next. So the
+  store gets at most one save of the object each second, also when one
+  save is slow and the next one is fast. Superseded by 3.0
+  (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R128** Replaced by 01M3XA877YZQ649SWB5TN60V5P.
-- **01M3TFG527M04TA7ESM970X3B8** `riff-server` replies to a refresh and
+- **01M3TFG527M04TA7ESM970X3B8** Replaced by 01M53T8XH45WSVKS9FV3VXF2X8.
+- **01M53T8XH45WSVKS9FV3VXF2X8** `riff-server` replies to a refresh and
   to a swap for a session token before it saves the token store. While
-  the last save of the token store failed, a refresh or a swap first
-  saves it again, and gets 503 when that save fails too. Superseded by
+  the last save of the token store failed, a refresh first saves it
+  again, and gets 503 when that save fails too. A swap never waits for
+  a save, and a failed or busy save does not refuse it. Superseded by
   3.0 (01M4Z60B8C8JBV1T8T0W6ZKFE6).
 - **R150** When that save fails, `riff-server` replies 503. The next
   save tries the change again. Superseded by 3.0
@@ -2007,6 +2014,15 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   writes no checkpoint (01M3TBZBQDF0ES4KM54FJQF6Z8). A shutdown waits
   for the end of that write. Superseded by 3.0
   (01M4Z60B7FCREZDCTVR73WWRY1).
+- **01M53T8XCTVEXGJVF9GSYVAT7Y** At the hand-over, before the
+  checkpoint, the instance also saves the token store when it changed
+  since its last save. The save names the version that the instance
+  knows (R141). It does not wait for the second of R127. It has a time
+  limit of half the wait for the lease. A save that waits for its
+  second when the instance stops ends at once. So a token from the last
+  second of the old instance works on the new instance: the new one
+  loads the sign-ins again after its wait. Superseded by 3.0
+  (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M51X8P4M8PHSSJMWF1J1KQS1** After the wait for the lease, when a
   checkpoint came since the load, the instance loads its state again
   from the newest checkpoint that reads, and replays the log after it.
@@ -2026,8 +2042,9 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **R140** Replaced by 01M52JYGPX5ETP3HKR0S0Y0YCR.
 - **01M52JYGPX5ETP3HKR0S0Y0YCR** An instance that reads another ID in
   the lease stops for good. It closes each stream, replies 503 to each
-  call in flight, and saves nothing more, except the checkpoint of the
-  hand-over (01M51X8MG0YQT5KBZC9H7917J3). It closes its port at once,
+  call in flight, and saves nothing more, except the checkpoint and the
+  token store of the hand-over (01M51X8MG0YQT5KBZC9H7917J3,
+  01M53T8XCTVEXGJVF9GSYVAT7Y). It closes its port at once,
   so it takes no new call, and Cloud Run sends each call to the new
   instance. It exits when the hand-over is written, at most 10 seconds
   after the stop. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
@@ -2460,6 +2477,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   caller: its state, claims and status, and the build of the server.
   The call changes nothing: it is not a call of the session, and it
   adds no session.
+- **01M53TZ0RBSJQ9ZZRXKMBM5R3E** `riff statusline` keeps a good answer
+  of riff-server for 10 seconds, for each session and each server. In
+  that time, it asks riff-server nothing: no call, so no swap for a
+  session token. It makes its tags at each run, from the local files
+  and the build of the kept answer.
 - **01M3JFFJEW8BSRBZ9JQPKT0S8Z** `riff connect claude` adds the riff
   status line to the user settings of Claude Code
   (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)

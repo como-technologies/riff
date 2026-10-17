@@ -29,6 +29,7 @@
 //! | `start-PID` | The same `riff mcp`, next to `mcp-PID`. | The start time of the agent process PID, from `/proc`. |
 //! | `stuck-PID` | The PostToolUse hook of the session of the agent process PID, when it told the session that its `riff mcp` is stuck on an old riff (see [`first_tell`]). | The inode of the new riff. |
 //! | `watch-ID` | `riff watch` for the session ID. | Nothing. Only the lock counts. |
+//! | `statusline-ID` | `riff statusline` for the session ID ([`keep_statusline`]). | The last answer of riff-server: its URL, its time, its build and the line. |
 //! | `left-ID` | The `leave` tool. The `join` tool removes it. It is in [`marks`], not in [`dir`]. | Nothing. The file counts. |
 //! | `update.lock` | The update of riff by itself (see [`crate::auto_update`]). | Nothing. Only the lock counts. |
 //! | `update-tried` | The same update. | The release tag that it tried last. |
@@ -354,6 +355,62 @@ pub fn watching(dir: &Path, session: &str) -> bool {
 
 fn watch_file(dir: &Path, session: &str) -> PathBuf {
     dir.join(format!("watch-{}", riff_core::name::sanitize(session)))
+}
+
+/// The last answer of riff-server to `riff statusline` of one session
+/// (01M53TZ0RBSJQ9ZZRXKMBM5R3E).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Kept {
+    /// The URL of the riff-server that answered.
+    pub server: String,
+    /// The time of the answer, in milliseconds since 1970.
+    pub at_ms: u64,
+    /// The build of that riff-server.
+    pub build: Option<String>,
+    /// The part of the status line that came from the answer.
+    pub line: String,
+}
+
+/// The kept answer of `server` to the status line of `session`, when it
+/// is less than `keep` old at `now_ms` (01M53TZ0RBSJQ9ZZRXKMBM5R3E).
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::local::{Kept, keep_statusline, kept_statusline};
+///
+/// let run = tempfile::tempdir()?;
+/// let (url, keep) = ("http://127.0.0.1:7878", Duration::from_secs(10));
+/// let kept = Kept { server: url.into(), at_ms: 1_000, build: None, line: "riff a6cf".into() };
+/// keep_statusline(run.path(), "a6cf", &kept)?;
+/// assert_eq!(kept_statusline(run.path(), "a6cf", url, 10_999, keep), Some(kept));
+/// // Too old, another server, another session: nothing.
+/// assert_eq!(kept_statusline(run.path(), "a6cf", url, 11_000, keep), None);
+/// assert_eq!(kept_statusline(run.path(), "a6cf", "http://other", 2_000, keep), None);
+/// assert_eq!(kept_statusline(run.path(), "5b1e", url, 2_000, keep), None);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn kept_statusline(
+    dir: &Path,
+    session: &str,
+    server: &str,
+    now_ms: u64,
+    keep: std::time::Duration,
+) -> Option<Kept> {
+    let text = std::fs::read_to_string(statusline_file(dir, session)).ok()?;
+    let kept: Kept = serde_json::from_str(&text).ok()?;
+    let age = now_ms.checked_sub(kept.at_ms)?;
+    (kept.server == server && u128::from(age) < keep.as_millis()).then_some(kept)
+}
+
+/// Keeps the answer of riff-server to the status line of `session`.
+pub fn keep_statusline(dir: &Path, session: &str, kept: &Kept) -> io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let text = serde_json::to_string(kept).map_err(io::Error::other)?;
+    std::fs::write(statusline_file(dir, session), text)
+}
+
+fn statusline_file(dir: &Path, session: &str) -> PathBuf {
+    dir.join(format!("statusline-{}", riff_core::name::sanitize(session)))
 }
 
 /// Takes the update lock of this machine

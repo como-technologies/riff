@@ -133,7 +133,9 @@
 //!   writes it when it changed, at most one time each write window
 //!   (R127). One lock holds each write: the writes of each sign-in, of
 //!   each refresh and of the task of each second wait for the same
-//!   window. The window is [`auth::Config::save_every`]. A store that
+//!   window. The window is [`auth::Config::save_every`], from the end
+//!   of the last write, so a slow write does not bring the next one
+//!   closer at the store (01M53T8X5KH59R3P8H2D22WE32). A store that
 //!   is busy ([`store::StoreError::Busy`], a 429 of Cloud Storage)
 //!   doubles the window, to at most [`BUSY_WINDOW_MOST`] times
 //!   `save_every`. A good write sets it back
@@ -145,7 +147,7 @@
 //!   change of the people get their reply after the write of their
 //!   records in the log.
 //! - A refresh and a new session token get their reply before the write
-//!   (01M3TFG527M04TA7ESM970X3B8). The object keeps the hash of each
+//!   (01M53T8XH45WSVKS9FV3VXF2X8). The object keeps the hash of each
 //!   live access token, so a new session token is a change of it too
 //!   (01M52JYGSNTFPQ0ZP50AD2BG89). After a crash, the object can be one
 //!   write behind: a token of that last write is not known, and its
@@ -154,7 +156,15 @@
 //!   writes the store again, and gets 503 when that write fails too.
 //!   While the store is busy, a refresh writes nothing: it goes on
 //!   while the last good write is less than one window old, and gets
-//!   503 after that (01M3ZZQCEKEYK9CE8MGPM80Z2P).
+//!   503 after that (01M3ZZQCEKEYK9CE8MGPM80Z2P). A swap for a session
+//!   token never waits for a write, and a failed or busy store does not
+//!   refuse it: a lost session token costs its client one 401 and a new
+//!   swap.
+//! - At a deploy, the old instance writes the token store one last time
+//!   when it reads the new lease, before the checkpoint of the hand-over
+//!   (01M53T8XCTVEXGJVF9GSYVAT7Y). The new instance loads the sign-ins
+//!   again after its wait, so a token from the last window of the old
+//!   instance works on the new one.
 //! - A server with a store loads first ([`Service::prepare`]), opens
 //!   its port, then takes the [`lease`], and keeps reading it
 //!   ([`Loaded::serve`]). Until it serves, each call gets 503
@@ -484,7 +494,7 @@ struct Saved {
 }
 
 /// How the last writes of the token store went, for the window of the
-/// next write and for a refresh (01M3TFG527M04TA7ESM970X3B8,
+/// next write and for a refresh (01M53T8XH45WSVKS9FV3VXF2X8,
 /// 01M3ZZQ9TRG9385GRQGM79RCXX).
 #[derive(Clone, Copy, Debug)]
 struct TokenWrites {
@@ -492,8 +502,8 @@ struct TokenWrites {
     failed: Option<WriteFailed>,
     /// The start of the last good write, or the load of the store.
     good: tokio::time::Instant,
-    /// The least time from the start of one write to the start of the
-    /// next.
+    /// The least time from the end of one write to the start of the
+    /// next (01M53T8X5KH59R3P8H2D22WE32).
     window: Duration,
 }
 
@@ -554,7 +564,8 @@ impl TokenWrites {
 struct Written {
     /// The version of the object that the server knows (R141).
     version: Option<Version>,
-    /// The start of the last write (R127).
+    /// The end of the last write: the window counts from it (R127,
+    /// 01M53T8X5KH59R3P8H2D22WE32).
     at: Option<tokio::time::Instant>,
 }
 
@@ -709,35 +720,43 @@ impl Server {
 
     async fn save_tokens(&self, saved: &Saved, written: &mut Written) -> Result<(), StoreError> {
         // At most one write each window: `save_every`, or more while
-        // the store is busy (R127, 01M3ZZQ9TRG9385GRQGM79RCXX). Each call
-        // that waits for the lock finds its change in this write.
+        // the store is busy (R127, 01M3ZZQ9TRG9385GRQGM79RCXX). The
+        // window counts from the end of the last write, so a slow write
+        // does not bring two writes closer at the store
+        // (01M53T8X5KH59R3P8H2D22WE32). Each call that waits for the
+        // lock finds its change in this write. A stop ends the wait, so
+        // the hand-over gets the lock at once (01M53T8XCTVEXGJVF9GSYVAT7Y).
         if let Some(at) = written.at {
             let window = self.token_writes().window;
-            tokio::time::sleep_until(at + window).await;
+            tokio::select! {
+                () = tokio::time::sleep_until(at + window) => {}
+                () = self.stopping() => {}
+            }
         }
+        if !self.leased() {
+            return Err(StoreError::Failed("the server does not serve now".into()));
+        }
+        let result = self.write_tokens(saved, written).await;
+        if let Err(error @ StoreError::Conflict(_)) = &result {
+            self.stop(&error.to_string());
+        }
+        result
+    }
+
+    /// Writes the token store now, with the version that the server
+    /// knows (R141), and keeps the result for the next window.
+    async fn write_tokens(&self, saved: &Saved, written: &mut Written) -> Result<(), StoreError> {
         let (bytes, changes) = {
             let tokens = self.tokens();
             let changes = self.tokens_changes.load(Ordering::SeqCst);
             (tokens.to_bytes(Instant::now(), SystemTime::now()), changes)
         };
-        if !self.leased() {
-            return Err(StoreError::Failed("the server does not serve now".into()));
-        }
         let started = tokio::time::Instant::now();
-        written.at = Some(started);
         let result = saved.store.save(SIGN_INS, bytes, written.version).await;
+        written.at = Some(tokio::time::Instant::now());
         self.token_writes()
             .after(&result, started, self.config.save_every);
-        let version = match result {
-            Ok(version) => version,
-            Err(error) => {
-                if let StoreError::Conflict(_) = error {
-                    self.stop(&error.to_string());
-                }
-                return Err(error);
-            }
-        };
-        written.version = Some(version);
+        written.version = Some(result?);
         self.tokens_saved.fetch_max(changes, Ordering::SeqCst);
         Ok(())
     }
@@ -749,7 +768,7 @@ impl Server {
     }
 
     /// Lets a refresh go on, which gets its reply before the write of
-    /// the token store (01M3TFG527M04TA7ESM970X3B8). While the last write
+    /// the token store (01M53T8XH45WSVKS9FV3VXF2X8). While the last write
     /// failed, it writes the store again first, and refuses when that
     /// write fails too. So the saved store does not fall more and more
     /// generations behind.
@@ -913,6 +932,11 @@ impl Server {
     /// is right with no lease too. With the ID of a tool, the server
     /// writes none: a tool can cut the log. A server that shuts down
     /// writes none either: its shutdown wrote its last checkpoint.
+    ///
+    /// Before the checkpoint, it writes the token store when it changed
+    /// since the last write (01M53T8XCTVEXGJVF9GSYVAT7Y). So a token that
+    /// this instance gave in its last window works on the new instance,
+    /// which loads the sign-ins again after its wait.
     async fn hand_over(&self, lease: &Lease) {
         let _writing = self.gate.handing_over.lock().await;
         self.stop("another instance holds the lease");
@@ -921,6 +945,7 @@ impl Server {
         }
         match lease.taken_by_instance().await {
             Ok(true) => {
+                self.hand_over_tokens().await;
                 tracing::info!("writing the last checkpoint for the new instance");
                 self.last_checkpoint().await;
             }
@@ -930,6 +955,37 @@ impl Server {
                     "no checkpoint for the new instance: the lease read failed: {error}"
                 );
             }
+        }
+    }
+
+    /// The last write of the token store, at the hand-over
+    /// (01M53T8XCTVEXGJVF9GSYVAT7Y). It writes only when a change is not
+    /// saved, with the version that this instance knows (R141): when the
+    /// new instance wrote first, the write fails and changes nothing. It
+    /// does not wait for the window. Its time limit is half the wait of
+    /// the lease, so it ends before the new instance loads the sign-ins
+    /// again.
+    async fn hand_over_tokens(&self) {
+        let Some(saved) = &self.saved else {
+            return;
+        };
+        let limit = self.config.lease.wait / 2;
+        let write = async {
+            let mut written = saved.written.lock().await;
+            if !self.tokens_unsaved(0) {
+                return Ok(false);
+            }
+            self.write_tokens(saved, &mut written).await.map(|()| true)
+        };
+        match tokio::time::timeout(limit, write).await {
+            Ok(Ok(true)) => tracing::info!("saved the token store for the new instance"),
+            Ok(Ok(false)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!("the token store was not saved for the new instance: {error}");
+            }
+            Err(_) => tracing::warn!(
+                "the token store was not saved for the new instance: no reply in {limit:?}"
+            ),
         }
     }
 
@@ -1866,7 +1922,11 @@ impl Service {
                 if server.is_stopped() {
                     break;
                 }
-                if let Err(error) = server.save_tokens_since(0).await {
+                // A write that a stop ended is no error: the stop has its
+                // own line, and the hand-over saves the change.
+                if let Err(error) = server.save_tokens_since(0).await
+                    && !server.is_stopped()
+                {
                     server.error(format!("the token store was not saved: {error}"));
                 }
             }
@@ -2696,7 +2756,7 @@ const UNAVAILABLE: &str = "temporarily_unavailable";
 /// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.
 /// A sign-in gets its reply after the write of the token store (R128).
 /// A refresh and a session token do not wait for it
-/// (01M3TFG527M04TA7ESM970X3B8).
+/// (01M53T8XH45WSVKS9FV3VXF2X8).
 async fn token(
     AxumState(s): AxumState<Shared>,
     headers: HeaderMap,
@@ -2955,7 +3015,10 @@ async fn exchange(
 /// Swaps a person access token for a session access token (R19). The
 /// token store keeps the hash of the session token, so the swap is a
 /// change of it: the task of each second saves it
-/// (01M52JYGSNTFPQ0ZP50AD2BG89).
+/// (01M52JYGSNTFPQ0ZP50AD2BG89). The swap does not wait for that write,
+/// and a failed or a busy store does not refuse it
+/// (01M53T8XH45WSVKS9FV3VXF2X8): a session token has no chain, so a lost
+/// one costs its client only a 401 and a new swap.
 async fn for_session(
     s: &Server,
     r: &TokenRequest,
@@ -2968,7 +3031,6 @@ async fn for_session(
     if s.tokens().caller(token, &proof.jkt, now).is_err() {
         return Err(no("invalid_grant"));
     }
-    s.tokens_written().await?;
     s.first_use(proof).map_err(|_| no("invalid_dpop_proof"))?;
     s.tokens_change()
         .for_session(token, &proof.jkt, session, now)
@@ -3218,6 +3280,10 @@ mod tests {
         later: Mutex<Option<(&'static str, &'static str)>>,
         /// The start of each write of the token store.
         token_saves: Mutex<Vec<tokio::time::Instant>>,
+        /// The end of each write of the token store.
+        token_ends: Mutex<Vec<tokio::time::Instant>>,
+        /// How long each write of the token store takes, in turn.
+        token_delays: Mutex<Vec<Duration>>,
         /// Each write of the token store fails with this error.
         token_fail: Mutex<Option<StoreError>>,
     }
@@ -3287,14 +3353,25 @@ mod tests {
         ) -> BoxFuture<'a, Result<Version, StoreError>> {
             Box::pin(async move {
                 if name == SIGN_INS {
-                    self.token_saves
+                    let delay = {
+                        let mut saves = self.token_saves.lock().unwrap();
+                        saves.push(tokio::time::Instant::now());
+                        let delays = self.token_delays.lock().unwrap();
+                        (!delays.is_empty()).then(|| delays[(saves.len() - 1) % delays.len()])
+                    };
+                    if let Some(delay) = delay {
+                        sleep(delay).await;
+                    }
+                    let fail = self.token_fail.lock().unwrap().clone();
+                    let saved = match fail {
+                        Some(error) => Err(error),
+                        None => self.store.save(name, bytes, known).await,
+                    };
+                    self.token_ends
                         .lock()
                         .unwrap()
                         .push(tokio::time::Instant::now());
-                    let fail = self.token_fail.lock().unwrap().clone();
-                    if let Some(error) = fail {
-                        return Err(error);
-                    }
+                    return saved;
                 }
                 if name.starts_with(log::LOG) {
                     self.tries.fetch_add(1, Ordering::SeqCst);
@@ -6067,6 +6144,102 @@ mod tests {
         // it, the writes start one, two and four windows apart.
         let in_busy = saves.iter().filter(|at| busy <= **at && **at < back);
         assert!(in_busy.count() <= 3, "{saves:?}");
+    }
+
+    /// A slow write of the token store does not bring the next write
+    /// closer: the window counts from the end of each write
+    /// (01M53T8X5KH59R3P8H2D22WE32). So with a change in each tenth of
+    /// a second, the store gets at most one write each window, also when
+    /// one write takes 400 ms and the next one 10 ms.
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_write_of_the_token_store_does_not_bring_the_next_write_closer() {
+        let store = Arc::new(Gated::default());
+        *store.token_delays.lock().unwrap() =
+            vec![Duration::from_millis(400), Duration::from_millis(10)];
+        let service = Service::load(config(), store.clone()).await.unwrap();
+        let every = service.0.config.save_every;
+        for _ in 0..60 {
+            drop(service.0.tokens_change());
+            sleep(Duration::from_millis(100)).await;
+        }
+        service.save().await.unwrap();
+
+        let starts = store.token_saves.lock().unwrap().clone();
+        let ends = store.token_ends.lock().unwrap().clone();
+        assert!(starts.len() >= 4, "{} writes", starts.len());
+        for (end, next) in ends.iter().zip(&starts[1..]) {
+            assert!(*next >= *end + every, "{:?} after the end", *next - *end);
+        }
+        for two in ends.windows(2) {
+            assert!(two[1] - two[0] >= every, "{:?}", two[1] - two[0]);
+        }
+    }
+
+    /// A stop ends the wait of a write for its window, so the hand-over
+    /// gets the lock of the token store at once
+    /// (01M53T8XCTVEXGJVF9GSYVAT7Y). The ended write is no error line.
+    #[tokio::test(start_paused = true)]
+    async fn a_stop_ends_the_wait_of_a_write_of_the_token_store() {
+        let capture = Capture::start();
+        let store = Arc::new(Gated::default());
+        *store.token_delays.lock().unwrap() = vec![Duration::from_secs(5)];
+        let mut config = config();
+        config.save_every = Duration::from_secs(10);
+        // The load writes from 0 s to 5 s. The task of each second then
+        // writes from 15 s to 20 s, and at 25 s it waits for the window
+        // until 30 s.
+        let service = Service::load(config, store.clone()).await.unwrap();
+        drop(service.0.tokens_change());
+        sleep(Duration::from_secs(11)).await;
+        drop(service.0.tokens_change());
+        sleep(Duration::from_secs(11)).await;
+        let saved = service.0.saved.as_ref().unwrap();
+        assert!(saved.written.try_lock().is_err(), "the task waits");
+        service.0.stop("another instance holds the lease");
+        let free = isolated::in_time(Duration::from_millis(100), saved.written.lock()).await;
+        assert!(free.is_ok(), "the stop ended the wait");
+        drop(free);
+        sleep(Duration::from_secs(10)).await;
+        let text = capture.text();
+        assert!(!text.contains("the token store was not saved"), "{text}");
+    }
+
+    /// At the hand-over, the token store gets one write, only for a change
+    /// that is not saved, and with no wait for the window. When the new
+    /// instance wrote first, the write fails and changes nothing
+    /// (01M53T8XCTVEXGJVF9GSYVAT7Y).
+    #[tokio::test(start_paused = true)]
+    async fn the_hand_over_writes_only_an_unsaved_change_of_the_token_store() {
+        let store = Arc::new(Gated::default());
+        let mut config = config();
+        config.save_every = Duration::from_secs(600);
+        config.lease.wait = Duration::from_secs(4);
+        let service = Service::load(config, store.clone()).await.unwrap();
+        let server = &service.0;
+        let writes = || store.token_saves.lock().unwrap().len();
+        let before = writes();
+        server.hand_over_tokens().await;
+        assert_eq!(writes(), before, "no change, no write");
+
+        drop(server.tokens_change());
+        let started = tokio::time::Instant::now();
+        server.hand_over_tokens().await;
+        assert_eq!(writes(), before + 1);
+        assert!(started.elapsed() < Duration::from_secs(1), "no wait");
+        assert!(!server.tokens_unsaved(0));
+
+        let version = store.store.load(SIGN_INS).await.unwrap().unwrap().version;
+        let new = b"the token store of the new instance".to_vec();
+        store
+            .store
+            .save(SIGN_INS, new.clone(), Some(version))
+            .await
+            .unwrap();
+        drop(server.tokens_change());
+        server.hand_over_tokens().await;
+        assert_eq!(writes(), before + 2);
+        let kept = store.store.load(SIGN_INS).await.unwrap().unwrap().bytes;
+        assert_eq!(kept, new);
     }
 
     /// A busy store gives no 503 to a refresh while the last good write
