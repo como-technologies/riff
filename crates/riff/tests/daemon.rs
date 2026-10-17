@@ -444,7 +444,7 @@ case "$*" in
   *) exit 1 ;;
 esac
 "#;
-    isolated::write_program(&bin.join("gh"), body);
+    isolated::write_program(bin.join("gh"), body);
 }
 
 /// Makes the folder `name` of a session in `sessions`, with a clone whose

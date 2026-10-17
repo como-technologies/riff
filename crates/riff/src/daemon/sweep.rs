@@ -331,11 +331,12 @@ pub fn hold(folder: &Path) -> std::io::Result<File> {
 }
 
 /// True when a `riff run` holds the lock of the folder `folder`
-/// ([`hold`]). A lock that riff cannot read counts as held: the folder
-/// stays.
+/// ([`hold`]). No lock file is no lock. A lock that riff cannot read
+/// counts as held: the folder stays.
 pub fn held(folder: &Path) -> bool {
-    let Ok(file) = File::open(lock_of(folder)) else {
-        return false;
+    let file = match File::open(lock_of(folder)) {
+        Ok(file) => file,
+        Err(e) => return e.kind() != std::io::ErrorKind::NotFound,
     };
     match file.try_lock_shared() {
         Ok(()) => {
