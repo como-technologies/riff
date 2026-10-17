@@ -708,7 +708,12 @@ async fn riff_mcp_of_a_client_with_no_initialize_runs_each_new_binary() {
         let build = format!("have the build {}", riff_core::build::VERSION);
         assert!(text.contains(&build), "{text}");
     }
-    assert_eq!(log().matches("a new riff is on disk").count(), 2, "{}", log());
+    assert_eq!(
+        log().matches("a new riff is on disk").count(),
+        2,
+        "{}",
+        log()
+    );
     assert!(child.try_wait().unwrap().is_none(), "{}", log());
 }
 
@@ -774,7 +779,11 @@ done
         let read = |f: &str| std::fs::read_to_string(d.join(f)).unwrap_or_default();
         format!("mcp: {}\nhook: {}", read("mcp.err"), read("hook.err"))
     };
-    assert!(riff::local::recorded(&state, agent_pid).is_some(), "{}", log());
+    assert!(
+        riff::local::recorded(&state, agent_pid).is_some(),
+        "{}",
+        log()
+    );
     let step = AtomicUsize::new(0);
     // Runs the hook in the agent with the variable `env`, and gives its
     // stdout.
@@ -790,7 +799,10 @@ done
     };
     let old = |path: &Path| {
         let past = std::time::SystemTime::now() - riff::binary::STUCK_AFTER * 2;
-        let epoch = past.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let epoch = past
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let out = std::process::Command::new("touch")
             .args(["-m", "-d", &format!("@{epoch}")])
             .arg(path)
@@ -807,7 +819,8 @@ done
     // The new riff came long ago: one line, then no more.
     old(&binary);
     let out = hook("A=1").await;
-    let json: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+    let json: serde_json::Value =
+        serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
     assert_eq!(json["hookSpecificOutput"]["hookEventName"], "PostToolUse");
     let line = json["hookSpecificOutput"]["additionalContext"]
         .as_str()
@@ -820,7 +833,11 @@ done
     install(&riff, &binary);
     old(&binary);
     assert_eq!(hook("RIFF_WORKER=1").await, "", "{}", log());
-    assert!(hook("A=1").await.contains("still run the old riff"), "{}", log());
+    assert!(
+        hook("A=1").await.contains("still run the old riff"),
+        "{}",
+        log()
+    );
 
     std::fs::write(d.join("end"), "").unwrap();
     let span = Span::start();
