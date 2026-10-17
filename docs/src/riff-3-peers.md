@@ -8,7 +8,7 @@ peer.
 The riff of peers is an experiment. It is behind the cargo feature
 `peers` of the crate `riff`, and the feature is off by default. So the
 release build of riff does not have it: riff 3.0.0 uses riff-server
-(see [riff 3.0](riff-3.md)). The feature comes with #FLAG. Until then,
+(see [riff 3.0](riff-3.md)). The feature comes with #959. Until then,
 each build has the riff of peers, as riff 1.7.0 has it. The
 [requirements of the re-cut](requirements.md#the-re-cut-isolation-by-default)
 say what a build with no `peers` does.

@@ -5091,11 +5091,12 @@ requirements of this part when they merge.
   `daemon-key DIR` in the OS keyring. A build with `peers` opens them
   again. A claim ref `refs/riff/claims/ITEM` on the forge stays until a
   person deletes it. riff 3.0.0 removes none of them.
-- **01M53NGWN190T2MYB1EZAD36VB** The items of Wave C that end riff-server
-  wait in the Backlog: the update with no riff-server (#881), the move
-  (#882), the delete of the cloud parts (#883), the live check of the
-  move (#884), the commands of a person on the daemon (#885), the
-  removal of the sign-in (#886) and the removal of riff-server (#888).
+- **01M53NGWN190T2MYB1EZAD36VB** The items of Wave C that end
+  riff-server wait in the Backlog: the update with no riff-server
+  (#881), the move (#882), the delete of the cloud parts (#883), the
+  live check of the move (#884), the commands of a person on the daemon
+  (#885), the removal of the sign-in (#886), the removal of riff-server
+  (#888), and the steps of #889 that end riff-server.
   A new design brings them back when Mike decides that riff-server
   goes. A requirement that ends with "Superseded by Wave C (ID)" or
   "Superseded in part by Wave C (ID)" holds again when the re-cut

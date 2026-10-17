@@ -131,6 +131,9 @@ flowchart LR
 - After riff 3.0.0, each GitHub release of riff 1.x becomes a
   prerelease that says that the line is retired. No patch of 1.x comes
   after 3.0.0.
+- The build items: the feature `peers` (#959), the rollout and the end
+  of the workers in tmux (#960), the command that retires a line
+  (#795), and the live check of 3.0.0 (#961).
 
 ### What goes in riff 3.0.0
 

@@ -8,8 +8,9 @@ This plan is not in riff 3.0.0. The re-cut of #953 keeps riff-server:
 see [riff 3.0](riff-3.md). The items of Wave C that end riff-server
 wait in the Backlog: #881, #882, #883, #884, #885, #886 and #888. A
 new design brings them back when Mike decides that riff-server goes.
-The removal of the workers in tmux (#887) is in riff 3.0.0, and the
-plugin stays. The rest of this page is the plan of Wave C as it was.
+riff 3.0.0 removes the workers in tmux (#960, the half of #887 that
+removes them), and the plugin stays. The release steps of #889 are in
+#961. The rest of this page is the plan of Wave C as it was.
 
 `riff move` and `riff cloud delete --all` come with the items of Wave
 C. Until then, `riff --help` does not show them. The
