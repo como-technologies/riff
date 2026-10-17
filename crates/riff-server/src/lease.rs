@@ -258,7 +258,9 @@ impl Revision {
     pub fn parse(name: &str) -> Option<Revision> {
         let mut parts = name.rsplit('-');
         parts.next().filter(|suffix| !suffix.is_empty())?;
-        let number = parts.next().filter(|n| n.bytes().all(|b| b.is_ascii_digit()))?;
+        let number = parts
+            .next()
+            .filter(|n| n.bytes().all(|b| b.is_ascii_digit()))?;
         // The name of the service comes before the number.
         parts.next().filter(|service| !service.is_empty())?;
         number.parse().ok().map(Revision)
@@ -529,7 +531,10 @@ impl<'a> ToolLease<'a> {
             return Ok(Err(Busy::Held(held)));
         }
         let id = format!("{name}-{}", new_id()?);
-        match store.save(LEASE, json(&id, None, false)?, found.version).await {
+        match store
+            .save(LEASE, json(&id, None, false)?, found.version)
+            .await
+        {
             Ok(_) => {}
             Err(StoreError::Conflict(_)) => return Ok(Err(Busy::Taken)),
             Err(error) => return Err(error),
@@ -855,7 +860,11 @@ mod tests {
     /// The bytes of a live lease of the instance `id` of the revision
     /// `number`.
     fn live(id: &str, number: u64) -> Vec<u8> {
-        format!(r#"{{"id":"{id}","renewed_at_ms":{},"revision":{number}}}"#, now_ms()).into_bytes()
+        format!(
+            r#"{{"id":"{id}","renewed_at_ms":{},"revision":{number}}}"#,
+            now_ms()
+        )
+        .into_bytes()
     }
 
     /// 01M53NHJXGK1PN2A9F7NSX0B4G: a take names the version of the lease
@@ -902,8 +911,11 @@ mod tests {
 
             for lease in [
                 format!(r#"{{"id":"cut-a","renewed_at_ms":{}}}"#, now_ms()).into_bytes(),
-                format!(r#"{{"id":"n","renewed_at_ms":{},"revision":26}}"#, now_ms() - 95_000)
-                    .into_bytes(),
+                format!(
+                    r#"{{"id":"n","renewed_at_ms":{},"revision":26}}"#,
+                    now_ms() - 95_000
+                )
+                .into_bytes(),
                 br#"{"id":"n","renewed_at_ms":1,"ended":true,"revision":26}"#.to_vec(),
                 b"x".to_vec(),
             ] {

@@ -203,7 +203,11 @@ async fn at_a_deploy_a_second_old_instance_does_not_take_the_lease_of_the_new_re
         "riff-server-00025-c7d",
     ));
     while !text(&logs[2]).contains("does not take it") {
-        assert_eq!(lease_of(dir.path())["id"], id, "the second old instance took the lease");
+        assert_eq!(
+            lease_of(dir.path())["id"],
+            id,
+            "the second old instance took the lease"
+        );
         assert!(taken.within(Duration::from_secs(12)), "{}", text(&logs[2]));
         sleep(Duration::from_millis(50)).await;
     }
