@@ -883,11 +883,12 @@ pub async fn clean_here(
     let who = api.who(me, false).await?;
     let host = me.place().host().to_owned();
     let repo = me.place().repo_text();
-    // git and gh: keep them off the runtime.
+    // git and gh: keep them off the runtime. The `gh` calls of one clean
+    // share the token of one read (01M54510SFK1Z9VPFYBYYSV10F).
     let done = {
         let (here, repo) = (dir.to_owned(), repo.clone());
         tokio::task::spawn_blocking(move || {
-            clean(&main, &here, &Gh::default(), |tree| {
+            clean(&main, &here, &Gh::default().with_one_token(), |tree| {
                 owner_in(&who, &host, &repo, tree)
             })
         })

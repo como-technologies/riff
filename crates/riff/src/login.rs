@@ -178,10 +178,20 @@ pub fn secret_name(server: &str) -> String {
     format!("sign-in {server}")
 }
 
-/// The sign-in at `server`, if there is one.
+/// The sign-in at `server`, if there is one. A process reads it from
+/// the keyring one time ([`secrets::kept`], 01M54510PS9FDKQKJB0RAH3XG3).
 pub fn stored(server: &str) -> Result<Option<SignIn>> {
-    secrets::get(&secret_name(server))?
-        .map(|json| serde_json::from_str(&json).context("the stored sign-in is bad"))
+    parse(secrets::kept(&secret_name(server))?)
+}
+
+/// The sign-in at `server` from a new read of the keyring: under the
+/// refresh lock, another process can have changed it.
+fn fresh(server: &str) -> Result<Option<SignIn>> {
+    parse(secrets::get(&secret_name(server))?)
+}
+
+fn parse(json: Option<String>) -> Result<Option<SignIn>> {
+    json.map(|json| serde_json::from_str(&json).context("the stored sign-in is bad"))
         .transpose()
 }
 
@@ -323,15 +333,16 @@ async fn sign_in_with(api: &Api, config: &SignInConfig, id_token: String) -> Res
 /// later call gives [`ENDED`] with no call to the server
 /// (01M3W947QF6PFBWR28ZVXCVQHG).
 pub async fn access_token(api: &Api) -> Result<String> {
-    if let Some(live) = live(api.base())? {
+    if let Some(live) = live(api.base(), stored(api.base())?)? {
         return Ok(live.access_token);
     }
     let _lock = refresh_lock(api.base()).await?;
     // Another process may have refreshed while this one waited.
-    if let Some(live) = live(api.base())? {
+    let sign_in = fresh(api.base())?;
+    if let Some(live) = live(api.base(), sign_in.clone())? {
         return Ok(live.access_token);
     }
-    let Some(sign_in) = stored(api.base())? else {
+    let Some(sign_in) = sign_in else {
         bail!("no sign-in for {}: run riff login", api.base());
     };
     if sign_in.ended() {
@@ -355,7 +366,7 @@ pub async fn access_token(api: &Api) -> Result<String> {
         {
             // `riff login` takes no lock: keep a sign-in that came
             // during the call.
-            if stored(api.base())?.as_ref() == Some(&sign_in) {
+            if fresh(api.base())?.as_ref() == Some(&sign_in) {
                 store(api.base(), &sign_in.end())?;
             }
             return Err(e.context(ENDED));
@@ -378,7 +389,7 @@ pub async fn access_token(api: &Api) -> Result<String> {
 /// (01M3MX4VCEBTY0DN4JMF624WYE). The server did not take the token.
 pub async fn forget(server: &str, token: &str) -> Result<()> {
     let _lock = refresh_lock(server).await?;
-    if let Some(sign_in) = stored(server)?
+    if let Some(sign_in) = fresh(server)?
         && sign_in.access_token == token
     {
         let old = SignIn {
@@ -425,10 +436,10 @@ async fn exchange(api: &Api, session: &str, person: &str) -> Result<TokenReply> 
     .await
 }
 
-/// The sign-in at `server` when its access token is live. `Err` when
-/// there is no sign-in.
-fn live(server: &str) -> Result<Option<SignIn>> {
-    let Some(sign_in) = stored(server)? else {
+/// The sign-in `sign_in` at `server` when its access token is live.
+/// `Err` when there is no sign-in.
+fn live(server: &str, sign_in: Option<SignIn>) -> Result<Option<SignIn>> {
+    let Some(sign_in) = sign_in else {
         bail!("no sign-in for {server}: run riff login");
     };
     Ok((now() + REFRESH_MARGIN.as_secs() < sign_in.expires_at).then_some(sign_in))

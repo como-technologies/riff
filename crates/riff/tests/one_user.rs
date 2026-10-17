@@ -25,7 +25,9 @@ async fn start_server() -> Api {
 }
 
 /// A sign-in of mike at `server` in the mock keyring, and a keyring
-/// that fails on the next read of it.
+/// that fails on the next read of it. Another process wrote the
+/// sign-in, so this process keeps no value of it
+/// ([`secrets::kept`]): only this test uses `server`.
 fn broken_sign_in(server: &str) {
     common::mock_keyring();
     let sign_in = SignIn {
@@ -35,8 +37,10 @@ fn broken_sign_in(server: &str) {
         expires_at: 0,
         riff_id: None,
     };
-    login::store(server, &sign_in).unwrap();
     let entry = Entry::new(secrets::SERVICE, &login::secret_name(server)).unwrap();
+    entry
+        .set_password(&serde_json::to_string(&sign_in).unwrap())
+        .unwrap();
     let cred: &mock::Cred = entry.as_any().downcast_ref().unwrap();
     cred.set_error(Error::NoStorageAccess(Box::new(std::io::Error::other(
         "locked",
@@ -45,7 +49,7 @@ fn broken_sign_in(server: &str) {
 
 #[test]
 fn a_keyring_error_stops_the_user_lookup() {
-    let server = "http://127.0.0.1:9";
+    let server = "http://one-user.invalid:9";
     // SAFETY: this test binary changes the environment only here.
     unsafe { std::env::remove_var("RIFF_USER") };
     let place = identity::place(std::path::Path::new(".")).unwrap();
