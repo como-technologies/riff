@@ -773,7 +773,10 @@ fn the_test_passes_beside_the_daemon_of_the_machine_and_leaves_it_running() {
     let out = fake.run(&[]);
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
-    assert!(stdout.contains("real-session: PASS: issue #801"), "{stdout}");
+    assert!(
+        stdout.contains("real-session: PASS: issue #801"),
+        "{stdout}"
+    );
     let data = fake.test_data().display().to_string();
     let started = stdout
         .lines()
