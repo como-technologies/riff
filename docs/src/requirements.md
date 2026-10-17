@@ -5706,8 +5706,9 @@ share.
 - **01M53S7WDPQ2GWHJWJ6SZXZ5PN** A job of the daemon keeps each folder
   of its item from before the clone of its session to the end of its
   last step after the end. The steps after the end read the folder, for
-  example `events.jsonl` of a verify, and the daemon has no record of the
-  session then. This is also true for a job that a new daemon takes up.
+  example `events.jsonl` of a verify, and the daemon has no record of
+  the session then. This is also true for a job that a new daemon takes
+  up.
 - **01M53S7WGM9DQV2DXFHBRSMTP8** Each `gh` call of the sweep of
   01M53NJ5V27BCHDNHK2THQQZZQ has a time limit of 30 seconds. At the end
   of the limit, riff stops `gh` and each process that it started. The

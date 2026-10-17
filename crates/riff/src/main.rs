@@ -1318,8 +1318,10 @@ enum DaemonCommand {
     /// The daemon does it by itself at its start and each 10 minutes.
     /// It removes the folder of each session that does not run, when the
     /// pull request of its branch merged or closed, or when its issue is
-    /// closed and its branch has no pull request. It prints each folder
-    /// that it removed, with the reason.
+    /// closed and its branch has no pull request. A folder whose clone has
+    /// a file that is not committed, or a commit that is not pushed,
+    /// stays. It prints each folder that it removed, and each folder that
+    /// stays with work in its clone, with the reason.
     Sweep,
 }
 

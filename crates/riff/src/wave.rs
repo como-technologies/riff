@@ -81,8 +81,8 @@
 //! The folder of a verify that did not pass goes at its end. The daemon
 //! also sweeps with no wave.
 //!
-//! A job holds [`Daemon::in_job`] of its item from before the clone of
-//! its session to the end of [`finish`], so the sweep keeps its folder
+//! A job holds `Daemon::in_job` of its item from before the clone of
+//! its session to the end of `finish`, so the sweep keeps its folder
 //! while a step after the end reads it (01M53S7WDPQ2GWHJWJ6SZXZ5PN). Each
 //! `gh` call of the sweep has a time limit, so a `gh` that never ends
 //! stops no wave (01M53S7WGM9DQV2DXFHBRSMTP8).

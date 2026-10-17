@@ -1004,7 +1004,10 @@ pub(crate) mod tests {
         let over = "the pull request #41 closed with no merge";
         let one = text::swept_kept(&kept, over, "its clone has 1 commit that is not pushed");
 
-        assert_eq!(here.daemon.sweep_news(None).await, [one.clone()]);
+        assert_eq!(
+            here.daemon.sweep_news(None).await,
+            std::slice::from_ref(&one)
+        );
         assert!(here.daemon.sweep_news(None).await.is_empty());
         assert_eq!(
             lines(here.daemon.sweep(None).await),
@@ -1037,8 +1040,8 @@ case "$*" in
 esac
 "#;
         let limit = Duration::from_secs(1);
-        let gh = pr::Gh::at(isolated::write_program(root.path().join("gh"), script))
-            .with_limit(limit);
+        let gh =
+            pr::Gh::at(isolated::write_program(root.path().join("gh"), script)).with_limit(limit);
         let (here, _) = with(Server::with_gh(gh)).await;
         let hangs = folder(&here, "issue-1-00000001");
         let closed = folder(&here, "issue-2-00000002");
