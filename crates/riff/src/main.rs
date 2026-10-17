@@ -1494,7 +1494,9 @@ enum HookEvent {
     ///
     /// It reads the hook input on stdin, and writes the newest fact of
     /// the session on this machine: the tool that runs. It makes no
-    /// call. It always exits with status 0.
+    /// call. After a tool, it tells a session whose riff mcp still runs
+    /// a replaced riff how to reconnect, once for each new riff. It
+    /// always exits with status 0.
     Tool {
         /// The tool ended: the PostToolUse hook.
         #[arg(long)]
@@ -1810,6 +1812,15 @@ async fn main() -> Result<()> {
             activity::Hook::Pre
         };
         activity::run(hook, &stdin, None);
+        // A riff mcp that cannot start again on the new riff by itself
+        // (01M53QQRAJMB24B0804YHPMN18).
+        if done
+            && let Some(dir) = local::dir()
+            && let Some(line) =
+                hook::stuck_line(&dir, worker::is_worker(), std::time::SystemTime::now())
+        {
+            println!("{}", hook::tool_output(&line));
+        }
         return Ok(());
     }
     if let Command::Hook {

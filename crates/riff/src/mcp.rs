@@ -49,7 +49,25 @@
 //! first moment with no request in flight, with no end call, so that
 //! the claims of the session stay. Claude Code keeps its connection: the
 //! new process answers the next request with no new handshake
-//! (01M3NT6WZTKAFKGDWGCFKC8TB5). See [`crate::relay`].
+//! (01M3NT6WZTKAFKGDWGCFKC8TB5). See [`crate::relay`]. Claude Code
+//! sends no initialize request: it starts with `server/discover` (MCP
+//! `2026-07-28`). The old process then gives the new one
+//! `--client modern` ([`Client`], 01M53QQR7J7DG86SMAERKMYSAF).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     H["the handshake ends"] --> P{"peer info?"}
+//!     P -- "yes: initialize" --> J["--client JSON"]
+//!     P -- "no: server/discover" --> M["--client modern"]
+//!     J --> N["the new riff mcp: serve_directly with the peer info"]
+//!     M --> O["the new riff mcp: serve_directly with no peer info"]
+//! ```
+//!
+//! A `riff mcp` that runs a replaced riff for longer than
+//! [`crate::binary::STUCK_AFTER`] cannot start again by itself, for
+//! example a `riff mcp` of v1.7.0 or older with Claude Code. The hook of
+//! the session then tells the session the fix (see
+//! [`crate::binary::stuck_mcp`], 01M53QQRAJMB24B0804YHPMN18).
 //!
 //! # The tokens of a claim
 //!
@@ -130,9 +148,14 @@ use crate::talk::Talk;
 use crate::usage::{self, Meter};
 use crate::{dropped, identity, leave, relay, text};
 
-/// The hidden option that gives a new `riff mcp` the initialize request
-/// of its client, as JSON, after an update (01M3NT6WZTKAFKGDWGCFKC8TB5).
+/// The hidden option that gives a new `riff mcp` the client of its
+/// connection after an update (01M3NT6WZTKAFKGDWGCFKC8TB5): the
+/// initialize request as JSON, or [`MODERN`] (see [`Client`]).
 pub const CLIENT: &str = "--client";
+
+/// The value of [`CLIENT`] for a client that sent no initialize request
+/// (01M53QQR7J7DG86SMAERKMYSAF).
+pub const MODERN: &str = "modern";
 
 #[derive(Clone)]
 pub struct Tools {
@@ -1214,24 +1237,85 @@ pub const CHECK: &str = "--check";
 /// The longest wait for the check of a new binary.
 pub const CHECK_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// The initialize request of the client that an old `riff mcp` gave in
-/// [`CLIENT`]. `None` with no `json`. The check of a new binary
-/// (01M43F5F9AQ9S39E1JZF8EBJEH) reads it too, so a binary that cannot
-/// read it fails the check.
+/// The client of the connection of `riff mcp`, that an old process gives
+/// the new one in [`CLIENT`] after an update.
+///
+/// A client of the MCP protocol `2025-11-25` or older starts with an
+/// initialize request. A client of `2026-07-28`, as Claude Code is,
+/// starts with `server/discover`, and sends its version, its name and
+/// its capabilities with each request. rmcp then knows no peer info. The
+/// new process serves such a connection with no peer info too
+/// (01M53QQR7J7DG86SMAERKMYSAF).
+#[derive(Debug, Clone)]
+pub enum Client {
+    /// The initialize request of the client.
+    Initialized(Box<rmcp::model::InitializeRequestParams>),
+    /// A client that sent no initialize request: [`MODERN`].
+    Modern,
+}
+
+impl Client {
+    /// The client of a connection whose peer info is `peer`: the
+    /// initialize request, or [`Client::Modern`] with none.
+    pub fn of(peer: Option<&rmcp::model::InitializeRequestParams>) -> Client {
+        match peer {
+            Some(peer) => Client::Initialized(Box::new(peer.clone())),
+            None => Client::Modern,
+        }
+    }
+
+    /// The value of [`CLIENT`] for this client.
+    ///
+    /// ```
+    /// use riff::mcp::{Client, given_client};
+    ///
+    /// assert_eq!(Client::of(None).arg()?, "modern");
+    /// let json = r#"{"protocolVersion":"2025-06-18","capabilities":{},
+    ///     "clientInfo":{"name":"claude-code","version":"2"}}"#;
+    /// let client = given_client(Some(json))?.expect("a client");
+    /// let again = given_client(Some(&client.arg()?))?.expect("a client");
+    /// assert_eq!(again.peer().unwrap().client_info.name, "claude-code");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn arg(&self) -> Result<String> {
+        Ok(match self {
+            Client::Initialized(peer) => serde_json::to_string(peer)?,
+            Client::Modern => MODERN.to_owned(),
+        })
+    }
+
+    /// The peer info of the new process: the initialize request, or
+    /// none for [`Client::Modern`].
+    pub fn peer(self) -> Option<rmcp::model::InitializeRequestParams> {
+        match self {
+            Client::Initialized(peer) => Some(*peer),
+            Client::Modern => None,
+        }
+    }
+}
+
+/// The client that an old `riff mcp` gave in [`CLIENT`]. `None` with no
+/// `arg`. The check of a new binary (01M43F5F9AQ9S39E1JZF8EBJEH) reads
+/// it too, so a binary that cannot read it fails the check.
 ///
 /// ```
-/// use riff::mcp::given_client;
+/// use riff::mcp::{Client, given_client};
 ///
 /// assert!(given_client(None)?.is_none());
 /// let json = r#"{"protocolVersion":"2025-06-18","capabilities":{},
 ///     "clientInfo":{"name":"claude-code","version":"2"}}"#;
 /// let client = given_client(Some(json))?.expect("a client");
-/// assert_eq!(client.client_info.name, "claude-code");
+/// assert_eq!(client.peer().unwrap().client_info.name, "claude-code");
+/// assert!(matches!(given_client(Some("modern"))?, Some(Client::Modern)));
 /// assert!(given_client(Some("{}")).is_err());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn given_client(json: Option<&str>) -> Result<Option<rmcp::model::InitializeRequestParams>> {
-    Ok(json.map(serde_json::from_str).transpose()?)
+pub fn given_client(arg: Option<&str>) -> Result<Option<Client>> {
+    Ok(match arg {
+        None => None,
+        Some(MODERN) => Some(Client::Modern),
+        Some(json) => Some(Client::Initialized(serde_json::from_str(json)?)),
+    })
 }
 
 /// Runs the new binary at `binary` with `args` and [`CHECK`], in `dir`,
@@ -1274,8 +1358,9 @@ pub const END_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 /// sends keep-alives while it runs, and the end call when its stdin
 /// closes or a signal stops it (R204, R205). On a new binary that
 /// passes its check (01M43F5F9AQ9S39E1JZF8EBJEH), it runs it in place,
-/// with no end call (01M3NT6WZTKAFKGDWGCFKC8TB5). With
-/// `client`, the initialize request of the old process, it skips the
+/// with no end call (01M3NT6WZTKAFKGDWGCFKC8TB5), also for a client
+/// with no initialize request (01M53QQR7J7DG86SMAERKMYSAF). With
+/// `client`, the [`Client`] of the old process, it skips the
 /// handshake. It sends `registered` when its register ends, also when
 /// the register fails (01M3XM68N5M5DKB86W5079X2G9). A session that left
 /// the riff does not register: it drops `registered` with no value.
@@ -1313,9 +1398,9 @@ pub async fn serve(
     let mut int = signal(SignalKind::interrupt())?;
     let mut hup = signal(SignalKind::hangup())?;
     let follow = Follow::this();
-    // An update waits for the end of the handshake, and for the client:
-    // with no client, the new process cannot take the connection
-    // (01M43F5KH7RE8241T18ZJJH7DV).
+    // An update waits for the end of the handshake: before it, the new
+    // process cannot take the connection. A client with no initialize
+    // request ends it too (01M53QQR7J7DG86SMAERKMYSAF).
     let ready = tokio::sync::Notify::new();
     let known = Mutex::new(None::<String>);
     let update = async {
@@ -1340,7 +1425,7 @@ pub async fn serve(
             Some(client) => Ok(rmcp::service::serve_directly(
                 tools.clone(),
                 inside,
-                Some(client),
+                client.peer(),
             )),
             None => tools.clone().serve(inside).await,
         }
@@ -1358,9 +1443,9 @@ pub async fn serve(
         _ = int.recv() => None,
         _ = hup.recv() => None,
     };
-    let peer = service.as_ref().and_then(|s| s.peer().peer_info());
-    if let Some(peer) = peer {
-        *known.lock().unwrap_or_else(|p| p.into_inner()) = Some(serde_json::to_string(&*peer)?);
+    if let Some(service) = &service {
+        let client = Client::of(service.peer().peer_info().as_deref());
+        *known.lock().unwrap_or_else(|p| p.into_inner()) = Some(client.arg()?);
     }
     ready.notify_one();
     let ended = match &service {

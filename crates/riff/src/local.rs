@@ -27,6 +27,7 @@
 //! | `mcp-PID` | `riff mcp`. PID is its parent: the agent tool. | The session ID. |
 //! | `build-PID` | The same `riff mcp`, next to `mcp-PID`. | The build of that `riff mcp`. |
 //! | `start-PID` | The same `riff mcp`, next to `mcp-PID`. | The start time of the agent process PID, from `/proc`. |
+//! | `stuck-PID` | The PostToolUse hook of the session of the agent process PID, when it told the session that its `riff mcp` is stuck on an old riff (see [`first_tell`]). | The inode of the new riff. |
 //! | `watch-ID` | `riff watch` for the session ID. | Nothing. Only the lock counts. |
 //! | `left-ID` | The `leave` tool. The `join` tool removes it. It is in [`marks`], not in [`dir`]. | Nothing. The file counts. |
 //! | `update.lock` | The update of riff by itself (see [`crate::auto_update`]). | Nothing. Only the lock counts. |
@@ -273,6 +274,31 @@ pub fn recorded(dir: &Path, agent: u32) -> Option<String> {
 /// The session recorded for the nearest process above this one.
 pub fn recorded_above(dir: &Path) -> Option<String> {
     ancestors().find_map(|pid| recorded(dir, pid))
+}
+
+/// The nearest process above this one with a live `riff mcp`: the agent
+/// process of the session.
+pub fn agent_above(dir: &Path) -> Option<u32> {
+    ancestors().find(|&pid| recorded(dir, pid).is_some())
+}
+
+/// True the first time that riff tells the session of the agent process
+/// `agent` that its `riff mcp` is stuck on the replaced riff before the
+/// new riff `inode` (01M53QQRAJMB24B0804YHPMN18). It keeps the inode in
+/// `stuck-PID`, so each new riff gets one line.
+///
+/// ```
+/// let run = tempfile::tempdir()?;
+/// assert!(riff::local::first_tell(run.path(), 42, 7));
+/// assert!(!riff::local::first_tell(run.path(), 42, 7));
+/// assert!(riff::local::first_tell(run.path(), 42, 8));
+/// assert!(riff::local::first_tell(run.path(), 43, 8));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn first_tell(dir: &Path, agent: u32, inode: u64) -> bool {
+    let file = dir.join(format!("stuck-{agent}"));
+    let told = std::fs::read_to_string(&file).is_ok_and(|t| t.trim() == inode.to_string());
+    !told && std::fs::write(&file, inode.to_string()).is_ok()
 }
 
 /// The session of a live `riff mcp` of a process above the agent

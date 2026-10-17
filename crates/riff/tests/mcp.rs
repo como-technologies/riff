@@ -649,6 +649,203 @@ async fn riff_mcp_runs_the_new_binary_and_keeps_the_connection() {
     assert!(child.try_wait().unwrap().is_none(), "{}", log());
 }
 
+/// Claude Code sends no initialize request: it starts with
+/// `server/discover` (MCP `2026-07-28`), so rmcp knows no peer info.
+/// `riff mcp` still runs each new binary at its next idle time, and
+/// keeps the connection, also at the second update
+/// (01M53QQR7J7DG86SMAERKMYSAF).
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_mcp_of_a_client_with_no_initialize_runs_each_new_binary() {
+    use rmcp::model::ProtocolVersion;
+    use rmcp::service::{ClientLifecycleMode, ClientServiceExt};
+
+    let api = start_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("riff");
+    let riff = Isolated::shared().riff_path();
+    install(&riff, &binary);
+    let stderr = dir.path().join("stderr");
+    let mut cmd = tokio::process::Command::from(Isolated::shared().command(&binary));
+    let mut child = cmd
+        .arg("mcp")
+        .current_dir(dir.path())
+        .env("RIFF_HOME", dir.path())
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("RIFF_SESSION", "a1")
+        .env("RIFF_SERVER", api.base())
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .env_remove("TMUX")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&stderr).unwrap())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let pid = child.id().unwrap();
+    let io = (child.stdout.take().unwrap(), child.stdin.take().unwrap());
+    let discover = ClientLifecycleMode::Discover {
+        preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+    };
+    let client = ().serve_with_lifecycle(io, discover).await.unwrap();
+    let (text, failed) = call(&client, "whoami", serde_json::json!({})).await;
+    assert!(!failed && text.contains("session=a1"), "{text}");
+    let log = || std::fs::read_to_string(&stderr).unwrap_or_default();
+
+    for update in 1..=2 {
+        install(&riff, &binary);
+        let new = std::fs::metadata(&binary).unwrap().ino();
+        let span = Span::start();
+        while runs(pid) != new && span.within(UPDATE_WAIT) {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(runs(pid), new, "update {update}: {}", log());
+        // The same connection, with no new handshake: the build of the
+        // new riff answers.
+        let (text, failed) = call(&client, "whoami", serde_json::json!({})).await;
+        assert!(!failed && text.contains("session=a1"), "{text}");
+        let build = format!("have the build {}", riff_core::build::VERSION);
+        assert!(text.contains(&build), "{text}");
+    }
+    assert_eq!(
+        log().matches("a new riff is on disk").count(),
+        2,
+        "{}",
+        log()
+    );
+    assert!(child.try_wait().unwrap().is_none(), "{}", log());
+}
+
+/// A `riff mcp` that runs a replaced riff for longer than
+/// [`riff::binary::STUCK_AFTER`] cannot start again by itself. After a
+/// tool, the hook of its session gives the session one line with the
+/// fix, once for each new riff. A worker gets no line
+/// (01M53QQRAJMB24B0804YHPMN18).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_session_of_a_stuck_riff_mcp_gets_one_line_with_the_fix() {
+    let api = start_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let binary = d.join("riff");
+    let riff = Isolated::shared().riff_path();
+    install(&riff, &binary);
+    let input = r#"{"session_id":"x","tool_name":"Bash","tool_input":{"command":"ls","description":"List files"}}"#;
+    std::fs::write(d.join("input"), input).unwrap();
+    // The agent process: it starts `riff mcp` as its child, as Claude
+    // Code does, and runs the hook of step N when `run-N` is there. Its
+    // `riff mcp` makes no handshake, so it never runs a new riff.
+    let agent = r#"
+mkfifo "$D/in"
+"$B" mcp < "$D/in" > /dev/null 2> "$D/mcp.err" &
+exec 3> "$D/in"
+n=1
+while [ ! -e "$D/end" ]; do
+  if [ -e "$D/run-$n" ]; then
+    env $(cat "$D/run-$n") "$R" hook tool --done < "$D/input" > "$D/out-$n.part" 2>> "$D/hook.err"
+    mv "$D/out-$n.part" "$D/out-$n"
+    n=$((n + 1))
+  fi
+  sleep 0.05
+done
+"#;
+    let mut cmd = tokio::process::Command::from(Isolated::shared().command("sh"));
+    let mut child = cmd
+        .args(["-c", agent])
+        .current_dir(d)
+        .env("D", d)
+        .env("B", &binary)
+        .env("R", &riff)
+        .env("RIFF_HOME", d)
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("RIFF_SESSION", "a1")
+        .env("RIFF_SERVER", api.base())
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .env_remove("TMUX")
+        .env_remove("RIFF_WORKER")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let agent_pid = child.id().unwrap();
+    let state = d.join("state");
+    let span = Span::start();
+    while riff::local::recorded(&state, agent_pid).is_none() && span.within(Duration::from_secs(20))
+    {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let log = || {
+        let read = |f: &str| std::fs::read_to_string(d.join(f)).unwrap_or_default();
+        format!("mcp: {}\nhook: {}", read("mcp.err"), read("hook.err"))
+    };
+    assert!(
+        riff::local::recorded(&state, agent_pid).is_some(),
+        "{}",
+        log()
+    );
+    let step = AtomicUsize::new(0);
+    // Runs the hook in the agent with the variable `env`, and gives its
+    // stdout.
+    let hook = async |env: &str| {
+        let n = step.fetch_add(1, Ordering::SeqCst) + 1;
+        std::fs::write(d.join(format!("run-{n}")), env).unwrap();
+        let out = d.join(format!("out-{n}"));
+        let span = Span::start();
+        while !out.exists() && span.within(Duration::from_secs(20)) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        std::fs::read_to_string(&out).unwrap_or_else(|e| panic!("step {n}: {e}"))
+    };
+    let old = |path: &Path| {
+        let past = std::time::SystemTime::now() - riff::binary::STUCK_AFTER * 2;
+        let epoch = past
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let out = std::process::Command::new("touch")
+            .args(["-m", "-d", &format!("@{epoch}")])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    };
+
+    // The riff that riff mcp runs is on disk: no line.
+    assert_eq!(hook("A=1").await, "", "{}", log());
+    // A new riff that just came: riff mcp can still follow it.
+    install(&riff, &binary);
+    assert_eq!(hook("A=1").await, "", "{}", log());
+    // The new riff came long ago: one line, then no more.
+    old(&binary);
+    let out = hook("A=1").await;
+    let json: serde_json::Value =
+        serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+    assert_eq!(json["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+    let line = json["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(line.contains("still run the old riff"), "{line}");
+    assert!(line.contains("/mcp"), "{line}");
+    assert!(line.contains(&binary.display().to_string()), "{line}");
+    assert_eq!(hook("A=1").await, "", "{}", log());
+    // A next new riff: a worker gets no line, the session gets one.
+    install(&riff, &binary);
+    old(&binary);
+    assert_eq!(hook("RIFF_WORKER=1").await, "", "{}", log());
+    assert!(
+        hook("A=1").await.contains("still run the old riff"),
+        "{}",
+        log()
+    );
+
+    std::fs::write(d.join("end"), "").unwrap();
+    let span = Span::start();
+    while child.try_wait().unwrap().is_none() && span.within(Duration::from_secs(10)) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// A new binary that fails its check does not take the place of a
 /// running `riff mcp`: the old process keeps the tools, says the error
 /// once, and runs the next new binary that passes
@@ -750,6 +947,12 @@ async fn the_check_of_riff_mcp_serves_nothing() {
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     assert!(out.stdout.is_empty(), "{out:?}");
+    // A client with no initialize request (01M53QQR7J7DG86SMAERKMYSAF).
+    let mut modern = check(riff::mcp::MODERN);
+    let out = tokio::task::spawn_blocking(move || modern.output().unwrap())
+        .await
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
     let mut bad = check("{}");
     let out = tokio::task::spawn_blocking(move || bad.output().unwrap())
         .await

@@ -4568,9 +4568,23 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   check passes does `riff mcp` run the new binary. When the check
   fails, the old process keeps the tools of the session, says the
   error once on stderr, and waits for the next new binary.
-- **01M43F5KH7RE8241T18ZJJH7DV** A `riff mcp` that has no initialize
-  request of its client does not run a new binary. It keeps the tools
-  of the session until the session ends.
+- **01M43F5KH7RE8241T18ZJJH7DV** Replaced by
+  01M53QQR7J7DG86SMAERKMYSAF.
+- **01M53QQR7J7DG86SMAERKMYSAF** A `riff mcp` whose client sent no
+  initialize request runs a new binary too. A client of the MCP
+  protocol `2026-07-28`, as Claude Code is, starts with
+  `server/discover` and sends its facts with each request. The old
+  process gives the new one the hidden option `--client modern`, and the
+  new process serves the connection with no handshake and no peer
+  info. Only a `riff mcp` whose handshake did not end does not run a
+  new binary.
+- **01M53QQRAJMB24B0804YHPMN18** When the `riff mcp` of a session still
+  runs a replaced riff 2 minutes after the new riff came, it cannot
+  start again by itself. Then the PostToolUse hook of the session gives
+  the session one line, once for each new riff: the tools run the old
+  riff, and the fix is `/mcp`, then reconnect `riff`. The reconnect
+  frees the claims of the session. A worker gets no line: it ends after
+  its item (01M517BT9WBQ4R79Z9KVY9SG1B).
 - **01M43F5KE7G2A2A9PSVRJPPNET** When the `riff mcp` of a session
   ended and the session goes on, the status line of the session and
   each end of `riff watch` say it in one line, with the fix: reconnect
