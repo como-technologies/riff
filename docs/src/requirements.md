@@ -1955,12 +1955,15 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   session that runs them, to the riff, the forge or the cloud: `riff
   workers start` (01M3JPQT79FE47518Z8DFFQYYG), `riff retire`
   (01M553AWMXYAG7CJGW7M30XDZ8), and the writes of `riff cloud`:
-  `create`, `signin`, `deploy` and `delete`. Each one refuses, and
-  changes nothing, in a worker (`RIFF_WORKER=1`) and in an agent session
-  that is not the lead of its user. They use one check. A person in a
-  plain terminal and the lead can run them. The flag settings of a
-  worker deny the writes of `riff cloud`. Each session can run the reads
-  of `riff cloud`: `list`, `status`, `log` and `smoke`.
+  `create`, `signin`, `deploy`, `smoke` and `delete`. Each one refuses,
+  and changes nothing, in a worker (`RIFF_WORKER=1`) and in an agent
+  session that is not the lead of its user. They use one check in code,
+  and this check is the guard. A person in a plain terminal and the lead
+  can run them. The flag settings of a worker deny the plain shape of
+  each write of `riff cloud` (`riff cloud WRITE ...`) as a second layer.
+  A write with a global flag before it passes these rules, and the check
+  in code refuses it. Each session can run the reads of `riff cloud`:
+  `list`, `status` and `log`.
 - **01M4262E0QJHCZXNH7EFG7FXN2** The CI deploy job deploys with
   `riff cloud deploy shared TAG --confirm shared`, from the riff of the
   tag. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).

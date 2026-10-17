@@ -237,7 +237,7 @@ fn workers_start_opens_one_window_with_a_pane_for_each_worker() {
     assert!(!log.contains("remote-control"), "{log}");
     assert!(
         flags.starts_with(
-            r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud create)","Bash(riff cloud create *)","Bash(riff cloud signin)","Bash(riff cloud signin *)","Bash(riff cloud deploy)","Bash(riff cloud deploy *)","Bash(riff cloud delete)","Bash(riff cloud delete *)"]},"skillOverrides":{"auto-mode-setup":"off"},"autoMode":{"environment":["$defaults","#
+            r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud create)","Bash(riff cloud create *)","Bash(riff cloud signin)","Bash(riff cloud signin *)","Bash(riff cloud deploy)","Bash(riff cloud deploy *)","Bash(riff cloud smoke)","Bash(riff cloud smoke *)","Bash(riff cloud delete)","Bash(riff cloud delete *)"]},"skillOverrides":{"auto-mode-setup":"off"},"autoMode":{"environment":["$defaults","#
         ),
         "{flags}"
     );

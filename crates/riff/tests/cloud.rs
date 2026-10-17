@@ -171,6 +171,12 @@ impl Cloud {
     /// `riff cloud ARGS` with `RIFF_OWNER` set to `owner` or not set,
     /// and `input` on stdin.
     fn run_with(&self, args: &[&str], owner: Option<&str>, input: &str) -> Ran {
+        self.riff(&[&["cloud"][..], args].concat(), owner, input)
+    }
+
+    /// `riff ARGS`, for example with a global flag before `cloud`, with
+    /// `RIFF_OWNER` set to `owner` or not set, and `input` on stdin.
+    fn riff(&self, args: &[&str], owner: Option<&str>, input: &str) -> Ran {
         let logs = tempfile::tempdir().unwrap();
         let log = logs.path().join("calls");
         let each = logs.path().join("args");
@@ -181,8 +187,7 @@ impl Cloud {
         let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake");
         let path = format!("{}:{}", fake.display(), std::env::var("PATH").unwrap());
         let mut cmd = self.env.riff();
-        cmd.arg("cloud")
-            .args(args)
+        cmd.args(args)
             .current_dir(self.top.path())
             .env("PATH", path)
             .env("RIFF_USER", "mike")
@@ -1229,11 +1234,20 @@ fn delete_asks_for_the_name_and_keeps_the_state() {
 
 /// Each write of `riff cloud`, with the arguments of a run that changes
 /// the stage (01M558C4VZ2PSMEYPAZBRYW1VV).
-const WRITES: [&[&str]; 4] = [
+const WRITES: [&[&str]; 5] = [
     &["create", "stage"],
     &["signin", "stage"],
     &["deploy", "stage", "--confirm", "stage"],
+    &["smoke", "stage"],
     &["delete", "stage", "--confirm", "stage"],
+];
+
+/// Each global flag of `riff`, with a value.
+const GLOBAL_FLAGS: [&[&str]; 4] = [
+    &["--server", "http://127.0.0.1:9"],
+    &["--server=http://127.0.0.1:9"],
+    &["--color", "never"],
+    &["--place", "thelio/acme/alpha"],
 ];
 
 /// The test runs each write of [`riff::cloud::WRITES`].
@@ -1261,6 +1275,32 @@ fn each_write_refuses_in_a_worker_and_calls_no_gcloud() {
             "{args:?}"
         );
         assert!(ran.calls.is_empty(), "{args:?}: {}", ran.calls);
+    }
+    assert_eq!(cloud.text("stage.env"), before);
+}
+
+/// A write with a global flag before `cloud`, or between `cloud` and the
+/// write, refuses in a worker and calls no `gcloud`. The deny rules of a
+/// worker match only the plain shape of a write: the check in code is
+/// the guard (01M558C4VZ2PSMEYPAZBRYW1VV).
+#[test]
+fn each_write_with_a_global_flag_refuses_in_a_worker_and_calls_no_gcloud() {
+    let cloud = Cloud::new()
+        .found(&["run services describe riff-stage "])
+        .var("RIFF_WORKER", "1");
+    let before = cloud.text("stage.env");
+    let refusal = format!("{}\n", riff::text::CLOUD.worker);
+    for args in WRITES {
+        for flag in GLOBAL_FLAGS {
+            let first = [flag, &["cloud"], args].concat();
+            let between = [&["cloud"][..], flag, args].concat();
+            for line in [first, between] {
+                let ran = cloud.riff(&line, Some("owner@example.com"), "");
+                assert_eq!(ran.out.status.code(), Some(1), "{line:?}: {}", ran.stderr());
+                assert_eq!(ran.stderr(), refusal, "{line:?}");
+                assert!(ran.calls.is_empty(), "{line:?}: {}", ran.calls);
+            }
+        }
     }
     assert_eq!(cloud.text("stage.env"), before);
 }
@@ -1296,12 +1336,6 @@ fn a_worker_runs_the_reads() {
         let ran = cloud.run(args).ok();
         assert!(!ran.calls.is_empty(), "{args:?}: no call of gcloud");
     }
-    let ran = cloud.run(&["smoke", "stage"]);
-    assert!(
-        ran.stderr().contains(riff::text::SMOKE_NO_TOKEN),
-        "{}",
-        ran.stderr()
-    );
 }
 
 /// A riff-server on a free port of this machine.

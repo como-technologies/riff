@@ -116,7 +116,7 @@ pub const JOIN: &str = "Join the riff.";
 ///
 /// let trust = Trust { owner: Some("acme"), server: Some("http://h:7878") };
 /// let auto = auto_mode(&trust);
-/// let deny = r#"["Bash(riff cloud create)","Bash(riff cloud create *)","Bash(riff cloud signin)","Bash(riff cloud signin *)","Bash(riff cloud deploy)","Bash(riff cloud deploy *)","Bash(riff cloud delete)","Bash(riff cloud delete *)"]"#;
+/// let deny = r#"["Bash(riff cloud create)","Bash(riff cloud create *)","Bash(riff cloud signin)","Bash(riff cloud signin *)","Bash(riff cloud deploy)","Bash(riff cloud deploy *)","Bash(riff cloud smoke)","Bash(riff cloud smoke *)","Bash(riff cloud delete)","Bash(riff cloud delete *)"]"#;
 /// let start = format!(
 ///     r#"{{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{{"deny":{deny}}}"#
 /// );
@@ -152,8 +152,10 @@ pub fn worker_settings(lsp: &[String], trust: &crate::permissions::Trust) -> Str
 }
 
 /// The deny rules of the writes of `riff cloud` in a worker
-/// (01M558C4VZ2PSMEYPAZBRYW1VV): each write with no arguments, and with
-/// arguments.
+/// (01M558C4VZ2PSMEYPAZBRYW1VV): the plain shape of each write, with no
+/// arguments and with arguments. A global flag before the write passes
+/// them, for example `riff --color never cloud deploy`: the check of
+/// `riff cloud` in code refuses it.
 fn cloud_writes() -> Vec<String> {
     crate::cloud::WRITES
         .iter()

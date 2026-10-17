@@ -857,7 +857,11 @@ impl CloudCommand {
     fn writes(&self) -> bool {
         matches!(
             self,
-            Self::Create { .. } | Self::Signin { .. } | Self::Deploy { .. } | Self::Delete { .. }
+            Self::Create { .. }
+                | Self::Signin { .. }
+                | Self::Deploy { .. }
+                | Self::Smoke { .. }
+                | Self::Delete { .. }
         )
     }
 }
