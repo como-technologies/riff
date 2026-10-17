@@ -440,8 +440,9 @@ is also true when you removed their worktree. You do not run `/mcp`.
 - The riff tools of a session run the new `riff` when no tool call
   runs. The session keeps its tools and its claims. First they run the
   new `riff` once as a check. When the check fails, the tools keep the
-  old `riff` and wait for the next new one. The error is in the MCP
-  log of the session.
+  old `riff` and wait for the next new one. Claude Code keeps no log of
+  the error. After 2 minutes, the session gets a line with the fix. See
+  [When the riff tools cannot start again](#when-the-riff-tools-cannot-start-again).
 - `riff workers host` runs the new `riff` between two requests of the
   lead. It keeps its session, and its workers go on.
 
@@ -849,6 +850,49 @@ again. Its sessions go on:
 ```sh
 riff daemon install
 ```
+
+#### When the riff tools cannot start again
+
+The riff tools of a session (`riff mcp`) run the new `riff` a few
+seconds after an update. Claude Code starts each connection with
+`server/discover`, not with an initialize request. `riff mcp` gives
+the new process `--client modern` for such a connection, so the
+connection stays. Two cases stay where `riff mcp` cannot start again
+by itself:
+
+- A `riff mcp` of v1.7.0 or older. It waits for an initialize request
+  that never comes.
+- A new `riff` that fails the check of `riff mcp`.
+
+```mermaid
+flowchart LR
+    N["a new riff on disk"] --> I{"riff mcp idle?"}
+    I -- yes --> R["riff mcp runs the new riff"]
+    I -- "no: still the old riff<br/>after 2 minutes" --> L["one line to the session<br/>after its next tool"]
+    L --> M["/mcp, reconnect riff"]
+```
+
+When `riff mcp` still runs the old `riff` 2 minutes after the update,
+the hook of the session adds one line after the next tool call. It
+comes once for each new `riff`:
+
+```text
+riff: the riff tools of this session (riff mcp, pid 2183628) still run the old riff. The new riff is in /home/mike/.cargo/bin/riff, but this riff mcp cannot start again on it by itself. To get the new tools, tell your user to run /mcp in this session, select riff, and select Reconnect. The reconnect frees the claims of this session: claim them again after it.
+```
+
+`riff top` marks such a session with `↑` (see
+[Update a session that runs an old riff](#update-a-session-that-runs-an-old-riff)).
+To find these sessions:
+
+```sh
+riff top --once
+```
+
+To get the new tools in such a session, type `/mcp` in the session,
+select `riff`, and select Reconnect. The reconnect ends the riff
+session of the old tools, so its claims are free. Claim them again
+after the reconnect. A worker gets no line: it ends after its item,
+and riff starts a new worker on the new `riff`.
 
 ### A new machine asks about the update by itself
 
@@ -1436,7 +1480,9 @@ step for the session:
   ```
 
 - Your own session: run `/mcp` in the session, and reconnect the
-  server `riff`. Or start the session again.
+  server `riff`. Or start the session again. The reconnect frees the
+  claims of the session: claim them again. See
+  [When the riff tools cannot start again](#when-the-riff-tools-cannot-start-again).
 
 ### The numbers of each machine
 
