@@ -1,73 +1,14 @@
-# riff 3.0: peers
+# Design: the riff of peers
 
-This page is the design of Wave B of riff 3.0 (#803): two or more
-people share one riff, and no server holds it. The daemon of each
-machine keeps a copy of the riff, and the daemons connect peer to
-peer.
+This page is the design of Wave B (#803): two or more people share one
+riff, and no server holds it. The daemon of each machine keeps a copy
+of the riff, and the daemons connect peer to peer. riff 1.6 to 1.8
+have the riff of peers. riff 3.0.0 removes it, with this page (#959).
+See [What goes in riff 3.0.0](riff-3.md#what-goes-in-riff-300).
 
-The riff of peers is an experiment. It is behind the cargo feature
-`peers` of the crate `riff`, and the feature is off by default. So the
-release build of riff does not have it: riff 3.0.0 uses riff-server
-(see [riff 3.0](riff-3.md)). The feature comes with #959. Until then,
-each build has the riff of peers, as riff 1.7.0 has it. The
-[requirements of the re-cut](requirements.md#the-re-cut-isolation-by-default)
-say what a build with no `peers` does.
-
-## Build riff with the riff of peers
-
-Build the static riff with the feature `peers`, in your clone of
-riff:
-
-```sh
-just static release peers
-```
-
-Install it in place of your riff, and start the daemon of the new
-build:
-
-```sh
-install -m 0755 target/static/release/riff ~/.cargo/bin/riff
-riff daemon install
-```
-
-Then turn off the update by itself on that machine. An update
-installs the release build, which has no riff of peers:
-
-```sh
-riff update --auto off
-```
-
-`riff daemon status` then shows the key of the daemon and its riff.
-To go back to the release build, run `riff update`.
-
-## The state of the riff of peers on each machine
-
-A daemon of riff 1.6.0 to 1.7.0 has the riff of peers. It made a key
-and a riff of its own at its first start. A build with no `peers`
-does not read, change or delete that state. A build with `peers` opens
-it again.
-
-| The state | Where it is |
-|---|---|
-| The key of the daemon | The secret `daemon-key DIR` in the OS keyring, where DIR is the folder of the daemon |
-| The records, the riff that the daemon joined, and the state of the riff | The folder `state` in the folder of the daemon: `daemon` in the data folder of riff |
-| The invites of the owner | `invites.json` in the folder of the daemon |
-| The main clones of the claims | `forges.json` in the folder of the daemon |
-| The claims of `--peers` | The refs `refs/riff/claims/ITEM` on GitHub |
-
-riff removes none of them. To see the claims of `--peers` that are
-left on GitHub, run this in a clone of the repository:
-
-```sh
-git ls-remote origin 'refs/riff/claims/*'
-```
-
-## The design
-
-The commands on this page need a build with `peers`. `riff invite`,
-`riff join`, `riff leave`, `riff remove` and `riff members` act on the
-riff of the riff daemon of your machine. With `--email`, the member
-commands act on riff-server, also in the release build (see
+`riff invite`, `riff join`, `riff leave`, `riff remove` and
+`riff members` act on the riff of the riff daemon of your machine.
+With `--email`, the member commands act on riff-server (see
 [riff-server and the riff of peers](#riff-server-and-the-riff-of-peers)).
 The [requirements of Wave B](requirements.md#wave-b-the-record) hold
 each decision.
@@ -486,10 +427,11 @@ flowchart TD
 
 ## riff-server and the riff of peers
 
-- riff-server stays in riff 3.0.0 (see [riff 3.0](riff-3.md)). A
-  daemon of the riff of peers does not talk to it for a session of
-  `--peers`. A session of riff-server and a session of the riff of
-  peers do not see the messages or the claims of each other.
+- riff-server stays in riff 3.0.0, and the riff of peers goes (see
+  [riff 3.0](riff-3.md)). A daemon of the riff of peers does not talk
+  to it for a session of `--peers`. A session of riff-server and a
+  session of the riff of peers do not see the messages or the claims
+  of each other.
 - The work of one repository runs on riff-server or on the riff of
   peers, not on both at one time. Mike decides.
 - Each session of `riff run`, of a wave and of `riff lead start` has a
@@ -508,4 +450,4 @@ flowchart TD
   `riff release ITEM --forge` acts on a claim of the riff of peers. The
   daemon makes each claim of the riff of peers.
 - The plan to end riff-server waits in the Backlog. See
-  [riff 3.0: no cloud](riff-3-no-cloud.md).
+  [Design: no cloud, a later plan](riff-3-no-cloud.md).

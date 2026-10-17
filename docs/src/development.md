@@ -610,7 +610,7 @@ The daemon also keeps the state of riff on your machine, in
 in the file `records`, and the log and the checkpoints of `riff-state`
 for the ID of the riff. The messages, the status, the lead marks, the
 holds and the pauses of its sessions with no riff-server are records
-(see [riff 3.0: peers](riff-3-peers.md#the-records)). The first start
+(see [The records](riff-3-peers.md#the-records)). The first start
 of the daemon makes its key and the riff (see
 [See the key of the daemon](#see-the-key-of-the-daemon)). Each next
 start reads the records again, so the state stays.
@@ -651,10 +651,10 @@ journalctl --user -u riff -f
 
 The daemon has one key: an ed25519 key. The first start of the daemon
 makes the key, and keeps it in the OS keyring. The key never leaves
-your machine. Its public key is the ID of the daemon. In Wave B of
-riff 3.0, it is the ID of the daemon for the other daemons, and it
-signs each change of the daemon (see
-[riff 3.0: peers](riff-3-peers.md)).
+your machine. Its public key is the ID of the daemon. In the riff of
+peers, it is the ID of the daemon for the other daemons, and it signs
+each change of the daemon (see
+[Design: the riff of peers](riff-3-peers.md)).
 
 The first start also makes a riff of your own. The ID of the riff is
 the public key of the daemon, and you (`USER`) are its owner. To see
@@ -684,8 +684,8 @@ daemon then reads its key and its riff.
 
 ### See the peer links of the daemon
 
-In [riff 3.0](riff-3-peers.md), the daemons of a riff connect peer to
-peer over iroh, and send each other their records. The daemon binds its
+In [the riff of peers](riff-3-peers.md), the daemons of a riff connect
+peer to peer over iroh, and send each other their records. The daemon binds its
 iroh endpoint at its start, with the key of the daemon. To see each
 connection of your daemon:
 
@@ -871,12 +871,11 @@ riff run issue-12 --image localhost/riff-session:test
 
 ### Run an item with no riff-server
 
-With `--peers`, `riff run` needs no riff-server: riff 3.0 (see
-[riff 3.0: peers](riff-3-peers.md)). The riff daemon of your machine
-claims the item on GitHub, and the session talks on the riff of the
-daemon. Until Wave C, riff-server stays the default, and the work of
-one repository runs on one riff only. In your clone of the
-repository:
+With `--peers`, `riff run` needs no riff-server (see
+[Design: the riff of peers](riff-3-peers.md)). The riff daemon of your
+machine claims the item on GitHub, and the session talks on the riff
+of the daemon. riff-server stays the default, and the work of one
+repository runs on one riff only. In your clone of the repository:
 
 ```sh
 riff run issue-12 --peers
@@ -1160,14 +1159,12 @@ of your user sees each post of a session with your riff-server, and
 A session with no riff-server talks on the riff of peers of the
 daemon, with no riff-server: each post, status, lead mark, hold and
 pause is a record of the daemon (see
-[riff 3.0: peers](riff-3-peers.md)). The daemon writes a record at the
+[Design: the riff of peers](riff-3-peers.md)). The daemon writes a record at the
 start and at the end of each such session, and a worker claims its
 item in it. A session of 1.x and a session of the riff of peers do not
 see the messages of each other. So the work of a repository is on one
 riff only. `--peers` gives sessions with no riff-server (see
 [Run an item with no riff-server](#run-an-item-with-no-riff-server)).
-Each session has no riff-server when the repository moves to riff 3.0
-(Wave C).
 
 ```mermaid
 flowchart LR
@@ -1347,8 +1344,8 @@ In riff 3.0 the lead is a session of the riff daemon too: `claude` in
 a container of the session image, with a terminal. conmon, the monitor
 of podman, holds the terminal. So the lead runs on when you close your
 terminal, and when the daemon stops. `riff view` shows each session of
-the daemon, and attaches your terminal to the lead. riff 3.0 uses no
-tmux.
+the daemon, and attaches your terminal to the lead. The lead in a
+container uses no tmux.
 
 ```mermaid
 flowchart LR
@@ -1474,7 +1471,7 @@ riff view
 ```
 
 When the daemon of this machine is in a riff with other machines (see
-[riff 3.0: peers](riff-3-peers.md)), the view also shows each session
+[Design: the riff of peers](riff-3-peers.md)), the view also shows each session
 of each other daemon of the riff. These rows come after the sessions of
 this machine:
 

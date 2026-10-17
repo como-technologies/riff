@@ -4,14 +4,10 @@ This page is the design of riff 3.0. riff 3.0 is isolation by
 default: the riff daemon of each machine runs each work item in its
 own container. riff-server stays the server of the riff: the claims,
 the messages, the chat, the sign-in and the update of each machine.
-The waves stay on GitHub. The
+`riff workers` and each other part of riff 1.x stay as they are. The
+waves stay on GitHub. The
 [requirements of the re-cut](requirements.md#the-re-cut-isolation-by-default)
 hold each decision of the plan (#953).
-
-The riff of peers, with no riff-server, is an experiment behind a
-cargo feature. The release build does not have it. See
-[riff 3.0: peers](riff-3-peers.md). The plan to end riff-server waits
-in the Backlog. See [riff 3.0: no cloud](riff-3-no-cloud.md).
 
 ## The goal of isolation
 
@@ -56,9 +52,11 @@ flowchart LR
   machine.
 - Each work item is one session in one rootless podman container. A
   verify is an item too. The session starts, does its item and ends.
-- The rollout is the wave of the daemon. The lead asks the daemon to
-  run the wave of the repository. The wave starts one session for each
-  free item, in the limit of the machine. No worker runs in tmux.
+- The rollout runs the wave of the daemon. The lead asks the daemon
+  to run the wave of the repository. The wave starts one session for
+  each free item, in the limit of the machine. The rollout starts no
+  worker in tmux. A person can still start one with
+  `riff workers start`, as in riff 1.x.
 - `riff relay` is the entrypoint of the container. It starts `claude`
   and talks to the daemon through a socket that only that session
   sees.
@@ -104,11 +102,11 @@ item.
 | Get a machine ready | `riff connect claude` | Also `riff init` one time: podman, the daemon and the session image. See [Get ready for riff 3.0](start-a-riff.md#get-ready-for-riff-30). |
 | Pin a session image | No image | `riff.toml` of each repository pins one. A repository with no image of its own pins the image of riff: `riff image` prints it. |
 | Start the lead | `claude` in the clone | `riff lead start`, or `claude` in the clone as before. See [Start the lead](development.md#start-the-lead). |
-| Start the work | The rollout starts workers in tmux | The rollout runs the wave of the daemon. See [Let riff run the wave](development.md#let-riff-run-the-wave). |
-| Use a second machine | `riff workers host` | `riff wave run` in a clone on that machine |
-| Set the limit of a machine | `riff workers limit` | `riff daemon limit`. See [Set the limit of the host](development.md#set-the-limit-of-the-host). |
+| Start the work | The rollout starts workers in tmux | The rollout runs the wave of the daemon. See [Let riff run the wave](development.md#let-riff-run-the-wave). `riff workers start` still starts workers in tmux. |
+| Use a second machine | `riff workers host` | `riff wave run` in a clone on that machine, or `riff workers host` as before |
+| Set the limit of a machine | `riff workers limit` | `riff daemon limit` for the sessions in containers. See [Set the limit of the host](development.md#set-the-limit-of-the-host). `riff workers limit` for the workers in tmux, as before. |
 | See the sessions | `riff top` | `riff view` or `riff top` |
-| Work with a session | Its tmux pane | `riff takeover NAME`, or `t` in `riff view`. See [Take over a session](development.md#take-over-a-session). |
+| Work with a session | Its tmux pane | `riff takeover NAME`, or `t` in `riff view`. See [Take over a session](development.md#take-over-a-session). A worker in tmux keeps its pane. |
 | Chat, pause, resume, hold | `riff chat`, `riff pause`, `riff resume`, `riff plan` | The same, on riff-server |
 | Update | `riff update`, or by itself | The same. riff 3.0.0 comes from riff-server. |
 
@@ -124,30 +122,50 @@ flowchart LR
 ```
 
 - riff 3.0.0 is the first release where each item runs in a container
-  by default. It has riff-server. It has no workers in tmux, and no
-  riff of peers.
+  by default. It has riff-server, `riff workers` and each other part of
+  riff 1.x, except the parts in [What goes](#what-goes-in-riff-300).
 - riff-server 3.0.0 serves riff 1.x too. So a machine of riff 1.x works
   until it takes 3.0.0, and a worker in tmux ends its item.
 - After riff 3.0.0, each GitHub release of riff 1.x becomes a
   prerelease that says that the line is retired. No patch of 1.x comes
   after 3.0.0.
-- The build items: the feature `peers` (#959), the rollout and the end
-  of the workers in tmux (#960), the command that retires a line
-  (#795), and the live check of 3.0.0 (#961).
+- The build items: the end of the riff of peers (#959), the rollout
+  that runs the wave of the daemon (#960), the command that retires a
+  line (#795), and the live check of 3.0.0 (#961).
 
 ### What goes in riff 3.0.0
 
-The workers in tmux, and each part that exists only for them:
-`riff workers` and each of its subcommands, the workers host, the
-clear of a worker, the reap, the pool of build jobs, the monitor and
-`riff worktrees`.
+The riff of peers of riff 1.6 to 1.8, with its code, its tests and its
+book text (#959): iroh and the use of n0, the key of the daemon, the
+records and their sync, the claims on GitHub, `riff invite USER`,
+`riff join`, `riff leave`, `riff remove USER`, `riff members` with no
+`--email`, the flag `--peers` of `riff run` and of `riff wave run`, and
+the flag `--forge` of `riff release`.
+
+### What riff 3.0.0 leaves on a machine
+
+riff 1.6 to 1.8 made the state of the riff of peers on each machine.
+riff 3.0.0 does not read, change or delete it. riff deletes no file of
+yours. DIR is the folder of the daemon: `daemon` in the data folder of
+riff.
+
+| The state | Where it is |
+|---|---|
+| The key of the daemon | The secret `daemon-key DIR` in the OS keyring |
+| The records and the riffs of the daemon | The folder `state` in DIR, and each folder `state.lost-MS` beside it |
+| The invites of the owner | `invites.json` in DIR |
+| The main clones of the claims | `forges.json` in DIR |
+| The claims of `--peers` | The refs `refs/riff/claims/ITEM` on GitHub |
 
 ### What stays in riff 3.0.0
 
 - riff-server, `riff cloud`, the sign-in, the deploy and the stage.
+- `riff workers` and each of its subcommands, the workers in tmux, the
+  workers host, the clear of a worker, the reap, the pool of build
+  jobs, the monitor and `riff worktrees`.
 - The plugin of Claude Code, its skill and its hooks, `riff connect`,
   `riff enable`, `riff disable` and the status line, for a session on
-  the host. The skill loses the text of the workers in tmux.
+  the host.
 - Each command of riff-server: `riff who`, `riff chat`, `riff pause`,
   `riff resume`, `riff plan`, `riff claim`, `riff release` and the
   member commands with `--email`.
