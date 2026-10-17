@@ -475,6 +475,46 @@ commands in a shell, for example:
 riff read
 ```
 
+### When Claude Code lists no riff tools
+
+The riff tools of a session can run, but Claude Code can list none of
+them. Then the session has no riff tool, and Claude Code shows no
+error. `riff mcp` sees it: the tools refused the `tools/list` of
+Claude Code. It keeps a mark, and the hooks tell the session in one
+line. The start hook tells it at each start of a context, also after
+`/clear`. After a tool call, the session gets the line once.
+
+```mermaid
+flowchart LR
+    C["Claude Code: tools/list"] --> T{"the riff tools list?"}
+    T -- yes --> OK["the session has the tools"]
+    T -- no --> M["riff mcp keeps a mark"]
+    M --> H["the hooks tell the session"]
+    H --> W["a worker: the riff commands, and riff tell lead"]
+    H --> P["other sessions: /mcp, reconnect riff"]
+```
+
+A worker cannot run `/mcp`. It tells the lead, and does its work with
+the riff commands in a shell:
+
+```sh
+riff tell lead "this session has no riff tools"
+riff whoami
+riff read
+riff claim issue-12
+riff status "write the tests"
+riff release issue-12
+```
+
+The commands have no `move`. In each other session, run `/mcp`, and
+reconnect the server `riff`. The reconnect frees the claims of the
+session: claim them again after it.
+
+One cause is a slow first answer. Claude Code waits only a short time
+for the first answer of `riff mcp`. So `riff mcp` answers it at once,
+and calls riff-server after it. Each tool call waits for that first
+call.
+
 ### When riff cannot read its directory
 
 A `riff` command in a removed directory fails. The error names the

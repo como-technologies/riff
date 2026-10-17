@@ -1825,13 +1825,16 @@ async fn main() -> Result<()> {
         };
         activity::run(hook, &stdin, None);
         // A riff mcp that cannot start again on the new riff by itself
-        // (01M53QQRAJMB24B0804YHPMN18).
+        // (01M53QQRAJMB24B0804YHPMN18), and a session with no riff tools
+        // (01M5512RKABQ70QPGC48S5F67W).
         if done
             && let Some(dir) = local::dir()
-            && let Some(line) =
-                hook::stuck_line(&dir, worker::is_worker(), std::time::SystemTime::now())
+            && let Some(out) = hook::tool_lines([
+                hook::stuck_line(&dir, worker::is_worker(), std::time::SystemTime::now()),
+                hook::no_tools_line(&dir, worker::is_worker(), true),
+            ])
         {
-            println!("{}", hook::tool_output(&line));
+            println!("{out}");
         }
         return Ok(());
     }
@@ -3538,6 +3541,11 @@ async fn session_start(server: &str) -> String {
     }
     if mcp_off_here() {
         context.push_str(hook::MCP_OFF_LINE);
+    }
+    if let Some(line) =
+        local::dir().and_then(|dir| hook::no_tools_line(&dir, worker::is_worker(), false))
+    {
+        context.push_str(&format!("- {line}\n"));
     }
     if let Some(cwd) = cwd
         .as_deref()

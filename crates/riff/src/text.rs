@@ -3278,6 +3278,40 @@ pub fn stuck_mcp(stuck: &crate::binary::Stuck) -> String {
     )
 }
 
+/// The line to a session with no riff tools: the tools refused the
+/// `tools/list` of Claude Code (01M5512RKABQ70QPGC48S5F67W). A worker
+/// cannot run `/mcp`, so it tells its lead.
+///
+/// ```
+/// let line = riff::text::no_tools(false);
+/// assert!(line.starts_with("riff: this session has no riff tools."), "{line}");
+/// assert!(line.contains("como-technologies/riff#1013"), "{line}");
+/// assert!(line.contains("`riff claim ITEM`"), "{line}");
+/// assert!(line.contains("select riff, and select Reconnect"), "{line}");
+/// assert!(!line.contains('\n'), "{line}");
+/// let worker = riff::text::no_tools(true);
+/// assert!(worker.contains("riff tell lead"), "{worker}");
+/// assert!(!worker.contains("Reconnect"), "{worker}");
+/// ```
+pub fn no_tools(worker: bool) -> String {
+    let fix = if worker {
+        "A worker cannot run /mcp: tell your lead now with \
+         `riff tell lead \"this session has no riff tools\"`, and go on with the commands."
+    } else {
+        "To get the tools, tell your user to run /mcp in this session, select riff, and \
+         select Reconnect. The reconnect frees the claims of this session: claim them \
+         again after it."
+    };
+    format!(
+        "riff: this session has no riff tools. The riff tools refused the tools/list of \
+         Claude Code, so it lists none (como-technologies/riff#1013). Use the riff commands \
+         with the Bash tool in their place: `riff whoami`, `riff read`, `riff claim ITEM`, \
+         `riff release ITEM`, `riff status STEP`, `riff blocked REASON`, \
+         `riff tell SESSION TEXT` and `riff post --kind note --to FIELD=VALUE TEXT`. The \
+         commands have no `move`. {fix}"
+    )
+}
+
 /// The answer to `status`.
 ///
 /// ```

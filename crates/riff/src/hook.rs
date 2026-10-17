@@ -777,6 +777,24 @@ pub fn tool_output(context: &str) -> String {
     .to_string()
 }
 
+/// The JSON of the PostToolUse hook with each line of `lines`, or `None`
+/// with no line. Claude Code reads one JSON object, so all lines go in
+/// one [`tool_output`].
+///
+/// ```
+/// use riff::hook::tool_lines;
+///
+/// assert_eq!(tool_lines([None, None]), None);
+/// let out = tool_lines([Some("a".to_owned()), None, Some("b".to_owned())]).unwrap();
+/// let out: serde_json::Value = serde_json::from_str(&out)?;
+/// assert_eq!(out["hookSpecificOutput"]["additionalContext"], "a\nb");
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+pub fn tool_lines(lines: impl IntoIterator<Item = Option<String>>) -> Option<String> {
+    let lines: Vec<String> = lines.into_iter().flatten().collect();
+    (!lines.is_empty()).then(|| tool_output(&lines.join("\n")))
+}
+
 /// The line of the PostToolUse hook for a session whose `riff mcp` is
 /// stuck on a replaced riff ([`crate::binary::stuck_mcp`]), once for
 /// each new riff (01M53QQRAJMB24B0804YHPMN18). `dir` is
@@ -790,6 +808,19 @@ pub fn stuck_line(dir: &Path, worker: bool, now: std::time::SystemTime) -> Optio
     let agent = crate::local::agent_above(dir)?;
     let stuck = crate::binary::stuck_mcp(agent, now)?;
     crate::local::first_tell(dir, agent, stuck.inode).then(|| crate::text::stuck_mcp(&stuck))
+}
+
+/// The line of the hooks for a session with no riff tools: its
+/// `riff mcp` kept the mark of [`crate::local::set_no_tools`]
+/// (01M5512RKABQ70QPGC48S5F67W). `dir` is [`crate::local::dir`]. With
+/// `once`, the PostToolUse hook gives it only the first time for each
+/// mark. Without it, the SessionStart hook gives it at each start of a
+/// context. Each marks the line as told.
+pub fn no_tools_line(dir: &Path, worker: bool, once: bool) -> Option<String> {
+    let agent = crate::local::agent_above(dir)?;
+    let first = crate::local::first_no_tools_tell(dir, agent);
+    let tell = first || (!once && crate::local::no_tools(dir, agent).is_some());
+    tell.then(|| crate::text::no_tools(worker))
 }
 
 #[cfg(test)]
