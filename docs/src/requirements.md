@@ -4994,13 +4994,17 @@ requirements of this part when they merge.
   riff: the claims, the messages, the threads, the chat, the sign-in,
   the pauses, the holds and the update of each machine. The waves stay
   on the forge (R223).
-- **01M53NGVB7SZJW7X8SYS3B0ZHG** In riff 3, riff-server, `riff cloud`,
-  the sign-in and the tokens stay. A requirement of one of these parts
-  that ends with "Superseded by 3.0 (ID)", where ID is
-  01M4Z60B7E6X53NBJ01R95RYGE, 01M4Z60B7FCREZDCTVR73WWRY1 or
-  01M4Z60B8C8JBV1T8T0W6ZKFE6, still holds in riff 3. A requirement of
-  tmux, of the workers in tmux, of their clear, of the tidy of
-  worktrees and of the pool of build jobs stays superseded.
+- **01M53NGVB7SZJW7X8SYS3B0ZHG** In riff 3, these parts of riff 1.x
+  stay: riff-server and its log, `riff cloud`, the sign-in, the tokens,
+  the device key and the signed messages, the members and the roles of
+  riff-server, and a session on the host with the plugin, also a lead
+  in tmux. A requirement of one of these parts that ends with
+  "Superseded by 3.0 (ID)" or "Superseded in part by 3.0 (ID)" still
+  holds in riff 3, for each ID. R203 is one of them: a second machine
+  can still use the riff-server of a first machine. A requirement of
+  the workers in tmux, of their clear, of the tidy of worktrees and of
+  the pool of build jobs stays superseded
+  (01M53NGVQDKCTNMG54YDFE22T2).
 - **01M53NGWTNC3655ZZJ76M1R5R7** In riff 3.0.0, the claim of a
   container session is a claim on riff-server, as in riff 1.x. The
   daemon makes it as the worker session of the item
@@ -6194,7 +6198,9 @@ requirements of this part when they merge.
   with two peers uses the defaults of iroh: the DNS discovery and the
   public relays of n0. A small discovery service on Cloud Run comes when
   riff leaves those defaults. DNS discovery on comotechnologies.io is
-  future work. Superseded by the re-cut (01M53NGW0DWJ075C4MDP06WAGS).
+  future work. Superseded in part by the re-cut
+  (01M53NGW0DWJ075C4MDP06WAGS): the riff of peers is an experiment. A
+  build with `peers` still uses the defaults of n0.
 
 ### Wave B: the record
 
@@ -6958,7 +6964,10 @@ items of Wave C that end riff-server in the Backlog
   of riff 2.0 goes at the start of Wave C. No part of riff uses it since
   riff 2.x retired (01M4Z60B8N9W9TBE7KKDJQAN2C). The owner of the GitHub
   organization deletes it in the settings of the organization: only the
-  App itself can delete it with the API of GitHub.
+  App itself can delete it with the API of GitHub. Superseded in part
+  by the re-cut (01M53NGWN190T2MYB1EZAD36VB): Wave C waits in the
+  Backlog, so the owner of the organization deletes the App at any
+  time.
 - **01M51R8HQZJV6PFTAMACVDWDBR** Each step of Wave C has a way back
   until the end. A release goes back with `riff update --tag` of the
   release before it. A move goes back with `riff move --back`. The stop
