@@ -20,7 +20,12 @@ fn fake_gh(bin: &Path) {
     for (tag, id, prerelease, body) in [
         ("v1.8.1", 81, false, "Level: patch."),
         ("v1.8.0", 80, false, "Level: minor."),
-        ("v2.0.1", 201, true, "**Retired.** The line 2.x is retired (#706)."),
+        (
+            "v2.0.1",
+            201,
+            true,
+            "**Retired.** The line 2.x is retired (#706).",
+        ),
         ("v1.7.0", 70, false, "Level: minor."),
         ("v0.8.0", 8, false, "Level: minor."),
     ] {
@@ -118,7 +123,11 @@ fn riff_retire_marks_each_release_of_the_line_and_a_second_run_changes_nothing()
         "{}",
         text(&again)
     );
-    assert_eq!(writes(bin.path()).len(), 2, "the second run changed a release");
+    assert_eq!(
+        writes(bin.path()).len(),
+        2,
+        "the second run changed a release"
+    );
 }
 
 #[test]

@@ -190,8 +190,10 @@ pub fn retire(gh: &Gh, line: u64, issue: u64) -> Result<Vec<Done>> {
             done.push(Done::Draft(tag));
             continue;
         }
-        let release: Release =
-            gh.json(&["api", &format!("repos/{{owner}}/{{repo}}/releases/tags/{tag}")])?;
+        let release: Release = gh.json(&[
+            "api",
+            &format!("repos/{{owner}}/{{repo}}/releases/tags/{tag}"),
+        ])?;
         if retired(&release) {
             done.push(Done::Already(tag));
             continue;
@@ -237,7 +239,12 @@ mod tests {
         let releases = [
             ("v1.8.1", 81, false, "Level: patch."),
             ("v1.8.0", 80, false, "Level: minor."),
-            ("v2.0.1", 201, true, "**Retired.** The line 2.x is retired (#706)."),
+            (
+                "v2.0.1",
+                201,
+                true,
+                "**Retired.** The line 2.x is retired (#706).",
+            ),
             ("v1.7.0", 70, false, ""),
             ("v0.8.0", 8, false, "Level: minor."),
         ];
@@ -345,7 +352,10 @@ mod tests {
         let calls = calls(dir.path());
         assert!(!calls.iter().any(|c| c.contains(" -X ")), "{calls:#?}");
         // The line 2.x was retired before, by hand: no change either.
-        assert_eq!(retire(&gh, 2, 706).unwrap(), [Done::Already("v2.0.1".into())]);
+        assert_eq!(
+            retire(&gh, 2, 706).unwrap(),
+            [Done::Already("v2.0.1".into())]
+        );
     }
 
     #[test]
