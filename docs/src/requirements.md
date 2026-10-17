@@ -5119,6 +5119,24 @@ part when they merge.
 - **01M5515CJ7QDJ639VGR7SJTE08** When `riff lead start` cannot start the
   wave of the repository, it prints the reason and the step
   `riff wave run`, and it starts the lead.
+- **01M558EY88CACNZ55FWMRT8RP7** Each look of the rollout waits at most
+  5 seconds for the status of the daemon of its machine. A daemon that
+  gives no answer in that time runs no wave for that look. The look
+  goes on: the idle workers in tmux still get their requests, and the
+  lead gets the note with the reason (01M5515CA4CZ6KV4ZD6Y0744Z7).
+- **01M558EYAJFZK7Y822NVWGBS9H** Before the ask of the wave, the
+  rollout and `riff wave run` ask the daemon to have the session image
+  that the repository pins: podman runs, and the image is on the
+  machine, or the daemon pulls it. When the daemon cannot, it gets no
+  ask of the wave, and the lead gets the note with the reason. So a
+  machine that cannot start a container runs no wave, and sends no
+  message of a failed start.
+- **01M558EYCXPFW8CJV3XJ7HK3NR** When riff-server refuses the claim of
+  a job of a wave, the daemon ends the new worker session of the job at
+  once. A refusal for a pause does not count as one of the 3 starts of
+  the item (01M4ZV3B6PSRH40EYQEVYH2MBA), and the lead gets no message
+  for it. Each other refusal counts, and the lead gets the message of a
+  failed start.
 - **01M53NGVH8A19QS3CQ79ENVVXT** A second machine of a person takes work
   in containers when its daemon runs the wave of the repository:
   `riff wave run` in a clone on that machine. The claims on riff-server

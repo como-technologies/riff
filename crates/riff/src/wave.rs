@@ -41,7 +41,8 @@
 //!   its own item (01M4ZV3B6NKPEZ5FNE27X95GF0);
 //! - a verify before the Gate of the head commit is done;
 //! - an item that started [`STARTS`] times in this run of the wave. The
-//!   lead gets one message for it.
+//!   lead gets one message for it. A start whose claim riff-server
+//!   refused for a pause does not count (01M558EYCXPFW8CJV3XJ7HK3NR).
 //!
 //! # A job
 //!
@@ -52,6 +53,13 @@
 //! room that the loop took. The [`Record`] of the session holds the
 //! [`Job`], so a new daemon goes on with the keep-alive and does the
 //! steps after the end ([`crate::daemon::Daemon::recover`]).
+//!
+//! When riff-server refuses the claim, the job ends the new worker
+//! session at once, so no idle worker with no item stays
+//! (01M558EYCXPFW8CJV3XJ7HK3NR). A pause can come between the look and
+//! the claim. Its refusal (`paused`) is no fault: the lead gets no
+//! message, and the start does not count. Each other refusal is a failed
+//! start: the lead gets a message, and the start counts.
 //!
 //! After the end ([`Live::finish`]):
 //!
@@ -204,6 +212,14 @@ pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
 /// [`ask_run`] with each line of the steps to `show`, for a caller with
 /// no stdout of its own, as `riff mcp` (01M53NGVE839TRH7XB7CDPQNZE). It
 /// gives the repository, as `OWNER/REPO`.
+///
+/// Before the ask of the wave, the daemon must have the session image
+/// that the repository pins: podman runs, and the image is on the
+/// machine, or the daemon pulls it ([`crate::daemon::image`]). When it
+/// cannot, the daemon gets no ask of the wave: a machine that cannot
+/// start a container runs no wave (01M558EYAJFZK7Y822NVWGBS9H). The git
+/// steps of the pin block, so they run on a thread that may block: they
+/// stop no task of `riff mcp`.
 pub async fn ask(
     dir: &Path,
     here: &Place,
@@ -213,9 +229,20 @@ pub async fn ask(
     if here.default_thread().is_none() {
         bail!("{}", text::RUN_NO_REPO);
     }
-    let (main, _) = run::main_clone(&identity::working_dir()?)?;
-    // The repository pins its session image: each session needs it.
-    session_image::merged(&main, &mut show)?;
+    let work = identity::working_dir()?;
+    let (main, image, lines) = blocking(move || {
+        let (main, _) = run::main_clone(&work)?;
+        let mut lines = Vec::new();
+        let image = session_image::merged(&main, |line| lines.push(line.to_owned()))?;
+        Ok((main, image.to_string(), lines))
+    })
+    .await?;
+    for line in &lines {
+        show(line);
+    }
+    crate::daemon::image(dir, &image, &mut show)
+        .await
+        .map_err(|e| anyhow!("{}", text::wave_no_container(&format!("{e:#}"))))?;
     let repo = here.repo_text();
     let wave = Wave {
         repo: repo.clone(),
@@ -428,7 +455,9 @@ pub trait World: Send + Sync {
 
     /// The steps before the start: the checks, the claim, the clone and
     /// the start text. `None` when another session holds the item, or
-    /// the item is held. After the claim, an error releases the item.
+    /// the item is held. Each other refusal of the claim, for example
+    /// `paused`, is the error ([`api::Refusal`]), and the new session
+    /// ends. After the claim, an error releases the item.
     fn begin<'a>(
         &'a self,
         wave: &'a Wave,
@@ -503,7 +532,9 @@ pub(crate) async fn run<R: Runtime + 'static>(
     word: Arc<Mutex<String>>,
 ) {
     let say = |text: String| *lock(&word) = text;
-    let mut starts: BTreeMap<String, u32> = BTreeMap::new();
+    // The starts of each item. A job takes back the start of a claim
+    // that riff-server refused for a pause.
+    let starts: Starts = Arc::default();
     let mut told: BTreeSet<String> = BTreeSet::new();
     loop {
         let slot = daemon
@@ -520,12 +551,13 @@ pub(crate) async fn run<R: Runtime + 'static>(
         }
         let next = match world.look(&wave).await {
             Ok(look) => {
-                for item in spent(&look, &starts) {
+                let spent: Vec<String> = spent(&look, &lock(&starts)).cloned().collect();
+                for item in spent {
                     if told.insert(item.clone()) {
-                        world.tell(&wave, &text::wave_spent(item, STARTS)).await;
+                        world.tell(&wave, &text::wave_spent(&item, STARTS)).await;
                     }
                 }
-                let next = pick(&look, &running(&daemon, &wave, &taken), &starts);
+                let next = pick(&look, &running(&daemon, &wave, &taken), &lock(&starts));
                 say(match &next {
                     _ if look.paused => text::WAVE_PAUSED.into(),
                     Some(work) => text::wave_started(&work.item()),
@@ -541,9 +573,10 @@ pub(crate) async fn run<R: Runtime + 'static>(
         match next {
             Some(work) => {
                 let item = work.item();
-                *starts.entry(item.clone()).or_default() += 1;
+                *lock(&starts).entry(item.clone()).or_default() += 1;
                 lock(&taken).insert(item);
-                tokio::spawn(job(daemon.clone(), wave.clone(), work, slot, taken.clone()));
+                let (taken, starts) = (taken.clone(), starts.clone());
+                tokio::spawn(job(daemon.clone(), wave.clone(), work, slot, taken, starts));
             }
             None => {
                 drop(slot);
@@ -556,13 +589,28 @@ pub(crate) async fn run<R: Runtime + 'static>(
     }
 }
 
-/// One job of the wave `wave`: the work `work` in the room of `slot`.
+/// The starts of each item in one run of a wave, shared by its loop and
+/// its jobs.
+type Starts = Arc<Mutex<BTreeMap<String, u32>>>;
+
+/// True when `error` is a refusal of riff-server for a pause: the riff
+/// or the repository is paused.
+fn paused(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<api::Refusal>()
+        .is_some_and(|refusal| refusal.code.as_deref() == Some("paused"))
+}
+
+/// One job of the wave `wave`: the work `work` in the room of `slot`. A
+/// claim that riff-server refused for a pause takes back its start in
+/// `starts`, and tells the lead nothing (01M558EYCXPFW8CJV3XJ7HK3NR).
 async fn job<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     wave: Wave,
     work: Work,
     slot: Slot,
     taken: Arc<Mutex<BTreeSet<String>>>,
+    starts: Starts,
 ) {
     let item = work.item();
     let held = daemon.in_job(&item);
@@ -571,6 +619,12 @@ async fn job<R: Runtime + 'static>(
             finish(daemon.clone(), record, ended, held).await;
         }
         Ok(None) => println!("{}", text::wave_not_claimed(&wave.repo, &item)),
+        Err(e) if paused(&e) => {
+            println!("{}", text::wave_claim_paused(&wave.repo, &item));
+            if let Some(count) = lock(&starts).get_mut(&item) {
+                *count = count.saturating_sub(1);
+            }
+        }
         Err(e) => {
             let error = format!("{e:#}");
             eprintln!("riff daemon: {}: {item}: {error}", wave.repo);
@@ -1162,7 +1216,15 @@ impl World for Live {
             let thread = wave.thread()?;
             let api = Api::new(&wave.server).signed_in(Some(&session))?;
             api.start(&me, StartReason::Process, true).await?;
-            let claimed = api.claim(&me, &thread, &item).await?;
+            // A refused claim ends the new session: else it lives on as
+            // an idle worker with no item (01M558EYCXPFW8CJV3XJ7HK3NR).
+            let claimed = match api.claim(&me, &thread, &item).await {
+                Ok(claimed) => claimed,
+                Err(e) => {
+                    let _ = api.end(&me).await;
+                    return Err(e);
+                }
+            };
             if !claimed.granted {
                 let _ = api.end(&me).await;
                 return Ok(None);

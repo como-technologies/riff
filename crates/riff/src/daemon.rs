@@ -2649,6 +2649,19 @@ pub async fn status(dir: &Path) -> Result<Status> {
     }
 }
 
+/// The longest wait of the look of the rollout for the status of the
+/// daemon ([`status_within`], 01M558EY88CACNZ55FWMRT8RP7).
+pub const STATUS_WAIT: Duration = Duration::from_secs(5);
+
+/// [`status`], with the time limit `limit`. A daemon that takes the
+/// connection and gives no answer in `limit`, for example a status that
+/// waits on a lock, gives an error: it stops no caller.
+pub async fn status_within(dir: &Path, limit: Duration) -> Result<Status> {
+    tokio::time::timeout(limit, status(dir))
+        .await
+        .map_err(|_| anyhow!("{}", text::daemon_silent(limit)))?
+}
+
 /// Asks the daemon in the folder `dir` to have the image `image`. It
 /// shows each line of the daemon with `show`.
 pub async fn image(dir: &Path, image: &str, show: impl FnMut(&str)) -> Result<()> {
