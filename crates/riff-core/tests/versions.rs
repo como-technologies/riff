@@ -5,7 +5,7 @@
 //! `crates/riff/tests/build.rs` and `crates/riff-server/tests/build.rs`
 //! run the same rule with the binaries.
 
-use riff_core::build::{Build, Mismatch, UPDATE_URL, compatible, other_build};
+use riff_core::build::{Build, Mismatch, UPDATE_URL, compatible, other_build, server_takes};
 
 fn build(version: &str) -> Build {
     Build {
@@ -100,6 +100,41 @@ fn the_lines_1_and_3_talk_in_both_directions() {
     }
 }
 
+/// riff-server of the line 3 takes a riff of the line 1 only from 1.8.2,
+/// the first build that knows the bridge. riff 1.8.1 refuses each reply
+/// of riff-server 3, so riff-server 3 refuses its call first, and does
+/// nothing. Each other pair is as for riff (01M55FCZNNZGKM4EKAXZQFTDWR).
+#[test]
+fn riff_server_3_takes_riff_1_only_from_the_bridge() {
+    // riff, riff-server, the server takes the call.
+    let pairs = [
+        ("1.8.2", "3.0.0", true),
+        ("1.8.9", "3.0.0", true),
+        ("1.9.0", "3.4.1", true),
+        ("1.8.1", "3.0.0", false),
+        ("1.0.0", "3.0.0", false),
+        ("1.8.1", "3.4.1", false),
+        ("3.0.0", "1.8.2", true),
+        ("3.4.1", "1.0.0", true),
+        ("1.0.0", "1.8.2", true),
+        ("1.8.2", "1.8.1", true),
+        ("2.0.0", "3.0.0", true),
+        ("3.0.0", "4.0.0", true),
+        ("1.8.2", "4.0.0", false),
+        ("0.9.0", "3.0.0", false),
+    ];
+    for (riff, server, takes) in pairs {
+        assert_eq!(
+            server_takes(&build(riff), &build(server)),
+            takes,
+            "riff {riff}, riff-server {server}"
+        );
+    }
+    // The rule of riff does not change: riff 1.8.1 takes a reply of
+    // riff-server 3.
+    assert!(compatible(&build("1.8.1"), &build("3.0.0")));
+}
+
 /// Across the bridge, the error names each line that the server takes,
 /// and the note names the older side.
 #[test]
@@ -114,8 +149,19 @@ fn the_texts_name_the_bridge() {
     };
     let three = refused("0.9.0", "3.0.0");
     assert!(
-        three.contains("riff-server 3 talks only with riff 3, 2 and 1."),
+        three.contains("riff-server 3 talks only with riff 3, 2 and 1 from 1.8.2."),
         "{three}"
+    );
+    // A riff of the line 1 before the bridge is told to update riff.
+    let before = refused("1.8.1", "3.0.0");
+    assert_eq!(
+        before,
+        format!(
+            "this riff (1.8.1 c181 2026-09-28T12:00:00Z) and its riff-server (3.0.0 c300 \
+             2026-09-28T12:00:00Z) do not match. riff-server 3 talks only with riff 3, 2 and 1 \
+             from 1.8.2. Update riff on this machine, then start your sessions again. See \
+             {UPDATE_URL}"
+        )
     );
     let one = refused("0.9.0", "1.8.2");
     assert!(

@@ -3,11 +3,14 @@
 //! of the bridge, and names its own build in each reply
 //! (01M3JEE7P46GWXR1BD4Q1TTSGN, 01M3MX1E65XGWDZ062PQ9YXQ5T,
 //! 01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK,
-//! 01M55FCZNNZGKM4EKAXZQFTDWR).
+//! 01M55FCZNNZGKM4EKAXZQFTDWR). riff-server of the line 3 takes the line
+//! 1 only from 1.8.2.
 
 use crate::common;
 
-use riff_core::build::{Build, HEADER, Semver, VERSION};
+use riff_core::build::{Build, HEADER, Semver, UPDATE_URL, VERSION};
+use riff_core::name::SessionUri;
+use riff_core::wire::{Post, Read, ReadReply, Register};
 use riff_server::auth::RESOURCE_METADATA_PATH;
 
 /// The version of this server.
@@ -72,14 +75,14 @@ async fn a_riff_of_this_line_or_the_line_before_passes_the_check() {
 }
 
 /// The bridge: riff-server of the line 1 takes a `riff` of the line 3,
-/// and riff-server of the line 3 takes a `riff` of the line 1
+/// and riff-server of the line 3 takes a `riff` of the line 1 from 1.8.2
 /// (01M55FCZNNZGKM4EKAXZQFTDWR). This server is on one of the two lines.
 #[tokio::test]
 async fn a_riff_of_the_other_line_of_the_bridge_passes_the_check() {
     let (_service, url) = common::start(false, &[]).await;
     let others = match this().major {
         1 => ["3.0.0", "3.2.1"],
-        3 => ["1.8.2", "1.0.0"],
+        3 => ["1.8.2", "1.9.0"],
         major => panic!("riff-server {major}.x is on no line of the bridge"),
     };
     for version in others {
@@ -90,6 +93,96 @@ async fn a_riff_of_the_other_line_of_the_bridge_passes_the_check() {
             assert_eq!(theirs, VERSION, "{path}");
         }
     }
+}
+
+/// riff-server of the line 3 takes a `riff` of the line 1 only from
+/// 1.8.2, the first build that knows the bridge
+/// (01M55FCZNNZGKM4EKAXZQFTDWR). riff 1.8.1 refuses each reply of
+/// riff-server 3, so the server refuses its call with 409 and the step
+/// to update riff.
+#[tokio::test]
+async fn riff_server_3_refuses_a_riff_of_the_line_1_before_the_bridge() {
+    let server = at("3.0.0".parse().unwrap());
+    let (_service, url) = common::start_as(server.clone()).await;
+    for version in ["1.8.1", "1.0.0"] {
+        let old = at(version.parse().unwrap());
+        for path in CALLS {
+            let (status, theirs, body) = call(&url, path, Some(&old)).await;
+            assert_eq!(status, 409, "{version} {path}: {body}");
+            assert_eq!(theirs, server.to_string(), "{path}");
+            assert!(
+                body.contains(&old.to_string()) && body.contains(&server.to_string()),
+                "{body}"
+            );
+            assert!(
+                body.contains("riff-server 3 talks only with riff 3, 2 and 1 from 1.8.2."),
+                "{body}"
+            );
+            assert!(body.contains("Update riff on this machine"), "{body}");
+            assert!(body.contains(UPDATE_URL), "{body}");
+        }
+    }
+    for version in ["1.8.2", "1.9.0"] {
+        for path in CALLS {
+            let (status, _, body) = call(&url, path, Some(&at(version.parse().unwrap()))).await;
+            assert_ne!(status, 409, "{version} {path}: {body}");
+        }
+    }
+}
+
+/// A call that riff-server 3 refuses takes no effect: a post of riff
+/// 1.8.1 is not in the thread. The same post of riff 1.8.2 is
+/// (01M55FCZNNZGKM4EKAXZQFTDWR).
+#[tokio::test]
+async fn a_call_that_riff_server_3_refuses_takes_no_effect() {
+    let (_service, url) = common::start_as(at("3.0.0".parse().unwrap())).await;
+    let old = at("1.8.1".parse().unwrap());
+    let bridge = at("1.8.2".parse().unwrap());
+    let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=lead"
+        .parse()
+        .unwrap();
+    let thread = me.default_thread().unwrap();
+    let register = Register {
+        me: me.clone(),
+        worker: false,
+    };
+    let reply = send(&url, "/v1/register", &bridge, &register).await;
+    assert_eq!(reply.status(), 200);
+    let post = |body| Post::new(&me, Some(thread.clone()), Vec::new(), body);
+    let reply = send(&url, "/v1/post", &old, &post("from 1.8.1")).await;
+    assert_eq!(reply.status(), 409);
+    let reply = send(&url, "/v1/post", &bridge, &post("from 1.8.2")).await;
+    assert_eq!(reply.status(), 200);
+    let read = Read {
+        me: me.clone(),
+        thread: thread.clone(),
+        all: true,
+        after: None,
+    };
+    let reply: ReadReply = send(&url, "/v1/read", &bridge, &read)
+        .await
+        .json()
+        .await
+        .unwrap();
+    let bodies: Vec<&str> = reply.messages.iter().map(|m| m.body.as_str()).collect();
+    assert!(bodies.contains(&"from 1.8.2"), "{bodies:?}");
+    assert!(!bodies.contains(&"from 1.8.1"), "{bodies:?}");
+}
+
+/// A call of a `riff` of `build`, with `body` as JSON.
+async fn send(
+    url: &str,
+    path: &str,
+    build: &Build,
+    body: &impl serde::Serialize,
+) -> reqwest::Response {
+    reqwest::Client::new()
+        .post(format!("{url}{path}"))
+        .header(HEADER, build.to_string())
+        .json(body)
+        .send()
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

@@ -59,6 +59,7 @@
 
 use std::collections::{HashSet, VecDeque};
 
+use riff_core::build::Build;
 use riff_core::dpop::{ALG, MAX_AGE, MAX_SKEW};
 use riff_core::name::Who;
 use riff_core::wire::{Post, ResourceMetadata, ServerMetadata, TOKEN_EXCHANGE};
@@ -109,6 +110,11 @@ pub struct Config {
     pub checkpoint: riff_state::checkpoint::Settings,
     /// The least time between two writes of the token store (R127).
     pub save_every: std::time::Duration,
+    /// The build that the server checks each `riff` against, and names
+    /// in each reply (01M3MX1E65XGWDZ062PQ9YXQ5T,
+    /// 01M3JEE7P46GWXR1BD4Q1TTSGN). [`Build::this`], except in a test
+    /// of the check of another line.
+    pub build: Build,
 }
 
 impl Default for Config {
@@ -133,6 +139,7 @@ impl Config {
             log: riff_state::log::Timing::default(),
             checkpoint: riff_state::checkpoint::Settings::default(),
             save_every: crate::SAVE_EVERY,
+            build: Build::this(),
         }
     }
 
