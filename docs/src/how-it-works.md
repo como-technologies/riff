@@ -1396,9 +1396,9 @@ riff top
 
 In each look, `riff top` also asks the riff daemon of this machine for
 the sessions of its riff of peers (see
-[Design: the riff of peers](riff-3-peers.md)), and adds them to the tree: the
-sessions of each machine of the riff, with the user, the host, the
-claims, the state and the status. A
+[Design: the riff of peers](riff-3-peers.md)), and adds them to the
+tree: the sessions of each machine of the riff, with the user, the
+host, the claims, the state and the status. A
 session of a machine whose daemon is offline shows `offline`, the time
 when your daemon last saw that daemon, its claims and its last status:
 

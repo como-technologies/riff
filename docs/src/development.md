@@ -685,9 +685,9 @@ daemon then reads its key and its riff.
 ### See the peer links of the daemon
 
 In [the riff of peers](riff-3-peers.md), the daemons of a riff connect
-peer to peer over iroh, and send each other their records. The daemon binds its
-iroh endpoint at its start, with the key of the daemon. To see each
-connection of your daemon:
+peer to peer over iroh, and send each other their records. The daemon
+binds its iroh endpoint at its start, with the key of the daemon. To
+see each connection of your daemon:
 
 ```sh
 riff daemon status
@@ -1159,11 +1159,12 @@ of your user sees each post of a session with your riff-server, and
 A session with no riff-server talks on the riff of peers of the
 daemon, with no riff-server: each post, status, lead mark, hold and
 pause is a record of the daemon (see
-[Design: the riff of peers](riff-3-peers.md)). The daemon writes a record at the
-start and at the end of each such session, and a worker claims its
-item in it. A session of 1.x and a session of the riff of peers do not
-see the messages of each other. So the work of a repository is on one
-riff only. `--peers` gives sessions with no riff-server (see
+[Design: the riff of peers](riff-3-peers.md)). The daemon writes a
+record at the start and at the end of each such session, and a worker
+claims its item in it. A session of 1.x and a session of the riff of
+peers do not see the messages of each other. So the work of a
+repository is on one riff only. `--peers` gives sessions with no
+riff-server (see
 [Run an item with no riff-server](#run-an-item-with-no-riff-server)).
 
 ```mermaid
@@ -1471,9 +1472,9 @@ riff view
 ```
 
 When the daemon of this machine is in a riff with other machines (see
-[Design: the riff of peers](riff-3-peers.md)), the view also shows each session
-of each other daemon of the riff. These rows come after the sessions of
-this machine:
+[Design: the riff of peers](riff-3-peers.md)), the view also shows each
+session of each other daemon of the riff. These rows come after the
+sessions of this machine:
 
 ```text
   SESSION                                 ITEM             STATE                AGE  LAST

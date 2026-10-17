@@ -4982,10 +4982,11 @@ share. The re-cut of #953 changes the plan: see the next part.
 
 ### The re-cut: isolation by default
 
-The requirements of the re-cut (#953) replace the plan of Wave C. A
-requirement of Wave C that the re-cut replaces ends with "Superseded
-by the re-cut (ID)." The build items of the re-cut hold the
-requirements of this part when they merge.
+The requirements of the re-cut (#953) replace the plan of Wave C and
+the riff of peers. A requirement that the re-cut replaces ends with
+"Superseded by the re-cut (ID)." or "Superseded in part by the re-cut
+(ID)." The build items of the re-cut hold the requirements of this
+part when they merge.
 
 - **01M53NGS8FGRNY12DDJA3P0GH2** riff 3.0.0 is isolation by default,
   with riff-server. The daemon of each machine runs each work item, a
@@ -4993,36 +4994,39 @@ requirements of this part when they merge.
   (01M4Z60B7NW4GHKGCYZZDG26R6). riff-server stays the server of the
   riff: the claims, the messages, the threads, the chat, the sign-in,
   the pauses, the holds and the update of each machine. The waves stay
-  on the forge (R223).
-- **01M53NGVB7SZJW7X8SYS3B0ZHG** In riff 3, these parts of riff 1.x
-  stay: riff-server and its log, `riff cloud`, the sign-in, the tokens,
-  the device key and the signed messages, the members and the roles of
-  riff-server, and a session on the host with the plugin, also a lead
-  in tmux. A requirement of one of these parts that ends with
-  "Superseded by 3.0 (ID)" or "Superseded in part by 3.0 (ID)" still
-  holds in riff 3, for each ID. R203 is one of them: a second machine
-  can still use the riff-server of a first machine. A requirement of
-  the workers in tmux, of their clear, of the tidy of worktrees and of
-  the pool of build jobs stays superseded
-  (01M53NGVQDKCTNMG54YDFE22T2).
+  on the forge (R223). riff 3.0.0 has no riff of peers
+  (01M53NGW0DWJ075C4MDP06WAGS).
+- **01M53NGVB7SZJW7X8SYS3B0ZHG** In riff 3, each part of riff 1.x stays
+  as it is, except the riff of peers (01M53NGW0DWJ075C4MDP06WAGS) and
+  the start of a worker in tmux by the rollout
+  (01M53NGVE839TRH7XB7CDPQNZE). The parts that stay include
+  riff-server and its log, `riff cloud`, the sign-in, the tokens, the
+  device key and the signed messages, the members and the roles of
+  riff-server, the workers in tmux (01M53NGVQDKCTNMG54YDFE22T2), and a
+  session on the host with the plugin, also a lead in tmux. A
+  requirement of a part that stays that ends with "Superseded by 3.0
+  (ID)" or "Superseded in part by 3.0 (ID)" still holds in riff 3, for
+  each ID. R203 is one of them: a second machine can still use the
+  riff-server of a first machine.
 - **01M53NGWTNC3655ZZJ76M1R5R7** In riff 3.0.0, the claim of a
   container session is a claim on riff-server, as in riff 1.x. The
   daemon makes it as the worker session of the item
   (01M4ZV3B6Q0Y6AX0KSKC55S31R). The riff tools of each container
-  session act on riff-server (01M4ZV3B6T2KB09WJ59F07HXET). A claim on
-  the forge (01M4Z60B8C3W5TMPVWNFXD1SYN) is only in a build with the
-  feature `peers` (01M53NGW0DWJ075C4MDP06WAGS).
-- **01M53NGVE839TRH7XB7CDPQNZE** The rollout of riff 3 is the wave of
+  session act on riff-server (01M4ZV3B6T2KB09WJ59F07HXET).
+- **01M53NGVE839TRH7XB7CDPQNZE** The rollout of riff 3 runs the wave of
   the daemon (01M4ZV3B6J89KJQ0F14YWTZMJQ). When the rollout of a lead
   finds free work, it asks the daemon of its machine to run the wave of
   the repository, when no wave of that repository runs there. It starts
-  no worker in tmux. `riff lead start` also starts the wave of the
-  repository on its daemon, when no wave of it runs.
+  no worker in tmux by itself. It still gives free work to each idle
+  worker in tmux, as in riff 1.x. `riff lead start` also starts the
+  wave of the repository on its daemon, when no wave of it runs.
 - **01M53NGVH8A19QS3CQ79ENVVXT** A second machine of a person takes work
-  when its daemon runs the wave of the repository: `riff wave run` in a
-  clone on that machine. The claims on riff-server keep two machines
-  from one item (01M4ZV3B6M7PZRJ39XTXBZP3ZH). The limit of each machine
-  is the limit of its daemon (01M4ZV3B6HAFTSC2K63FMC5FYA).
+  in containers when its daemon runs the wave of the repository:
+  `riff wave run` in a clone on that machine. The claims on riff-server
+  keep two machines from one item (01M4ZV3B6M7PZRJ39XTXBZP3ZH). The
+  limit of the containers of each machine is the limit of its daemon
+  (01M4ZV3B6HAFTSC2K63FMC5FYA). `riff workers host` stays, for the
+  workers in tmux.
 - **01M53NGVMD2PGEC0P9S3X4CTHT** The lead of a person runs in a
   container with `riff lead start` (01M501P9MXNAP5QXNVBVF5JJFN), or on
   the host as a session of Claude Code with the plugin of riff, as in
@@ -5030,87 +5034,78 @@ requirements of this part when they merge.
   skill and its hooks, `riff connect`, `riff enable`, `riff disable`,
   `riff mcp`, `riff watch` and the status line stay in riff 3.0.0, for
   a session on the host.
-- **01M53NGVQDKCTNMG54YDFE22T2** riff 3.0.0 removes the workers in tmux
-  and each part that exists only for them, with their tests and their
-  book text: `riff workers` and each of its subcommands, the workers
-  host, the start of a worker in tmux by the rollout, the clear of a
-  worker, the reap, the pool of build jobs, the monitor, `riff
-  worktrees`, and the worker role of a session on the host
-  (`RIFF_WORKER`). The skill of the plugin loses its text of the
-  workers in tmux. Each rule of the table of the permission rules that
-  only a worker in tmux needs goes.
+- **01M53NGVQDKCTNMG54YDFE22T2** riff 3.0.0 keeps the workers in tmux
+  and each of their parts, as in riff 1.x: `riff workers` and each of
+  its subcommands, the workers host, the clear of a worker, the reap,
+  the pool of build jobs, the monitor, `riff worktrees`, the worker
+  role of a session on the host (`RIFF_WORKER`), the text of the
+  workers in the skill of the plugin, and the permission rules of a
+  worker. A person starts a worker in tmux with `riff workers start`.
 - **01M53NGVTE186GE5E48E68N0BY** The last minor release of riff 1.x ends
-  Wave 30: 1.8.0. riff 3.0.0 releases when
-  each build item of the re-cut merged. Its tag deploys it to
-  riff-server, as each release. Each machine with `update.auto` on
-  then takes it from riff-server by itself
-  (01M3N7JJEKZMN1E5NJQRK2QYVB). Then the line 1.x
-  retires: each GitHub release of riff 1.x becomes a prerelease with a
-  first line that says that the line is retired (#795). No patch of
-  riff 1.x comes after riff 3.0.0.
+  Wave 30: 1.8.0. riff 3.0.0 releases when each build item of the
+  re-cut merged. Its tag deploys it to riff-server, as each release.
+  Each machine with `update.auto` on then takes it from riff-server by
+  itself (01M3N7JJEKZMN1E5NJQRK2QYVB). Then the line 1.x retires: each
+  GitHub release of riff 1.x becomes a prerelease with a first line
+  that says that the line is retired (#795). No patch of riff 1.x comes
+  after riff 3.0.0.
 - **01M53NGVXEMBTJ8E4K3MHPQ7W9** riff-server 3.0.0 serves the API of
-  riff 1.x. So a machine of riff 1.x works until it takes riff 3.0.0,
-  and a worker in tmux of riff 1.x ends its item.
-- **01M53NGW0DWJ075C4MDP06WAGS** The riff of peers of Wave B is an
-  experiment behind the cargo feature `peers` of the crate `riff`. The
-  feature is off by default. `just static`, `just install`,
-  `cargo install` with no flag and each GitHub release build riff with
-  no `peers`. Mike can change this later.
-- **01M53NGW3FR555TWP8Z8HHRVDJ** In a build with no `peers`, the daemon
-  binds no iroh endpoint, contacts no service of n0, reads and makes
-  no daemon key in the OS keyring, opens no riff of peers, writes no
-  record, and reads and releases no claim on the forge. `iroh` and each
-  other dependency that only the riff of peers uses are optional
-  dependencies of the feature. So the release binary holds none of
-  their code.
-- **01M53NGW6F5HP1DZ9QRGP50MGT** In a build with no `peers`, these are
-  not in the build and not in `--help`: `riff invite USER`,
-  `riff join`, `riff leave`, `riff remove USER`, `riff members` with no
-  `--email`, the flag `--peers` of `riff run` and of `riff wave run`,
-  and the flag `--forge` of `riff release`. The forms with `--email` of
+  riff 1.x. So a machine of riff 1.x works until it takes riff 3.0.0.
+- **01M53NGW0DWJ075C4MDP06WAGS** riff 3.0.0 removes the riff of peers of
+  Wave B (#803), with its code, its tests and its book text (#959). No
+  cargo feature and no flag keeps it. Its items wait in the Backlog:
+  the live checks (#846, #920, #921, #922), the fixes (#928, #943,
+  #944, #946, #957) and the facts of n0 (#941). A new design brings
+  them back when Mike decides.
+- **01M53NGW3FR555TWP8Z8HHRVDJ** The daemon of riff 3.0.0 binds no iroh
+  endpoint, contacts no service of n0, reads and makes no daemon key in
+  the OS keyring, opens no riff of peers and no folder `state`, writes
+  no record, and reads and releases no claim on the forge.
+  `crates/riff/Cargo.toml` names no dependency that only the riff of
+  peers uses, and `Cargo.lock` has no `iroh`.
+- **01M53NGW6F5HP1DZ9QRGP50MGT** riff 3.0.0 has none of these, also not
+  in `--help`: `riff invite USER`, `riff join`, `riff leave`,
+  `riff remove USER`, `riff members` with no `--email`, the flag
+  `--peers` of `riff run` and of `riff wave run`, and the flag
+  `--forge` of `riff release`. The forms with `--email` of
   `riff invite`, `riff remove` and `riff members` stay, and act on
   riff-server. `riff daemon status`, `riff view` and `riff top` show no
   key, no riff of peers, no peer link and no session of another
   daemon.
-- **01M53NGW9FH02EM74GKY829808** A build with `peers` has the riff of
-  peers of Wave B, as riff 1.7.0 has it. Each requirement of Wave B
-  (#803), and each requirement of "Data and peers" of the records, the
-  keys, the members, the sync and the claims on the forge, holds only
-  in a build with `peers`. In a build with no `peers`, a requirement
-  that ends with "Superseded by Wave B (ID)" still holds.
-- **01M53NGWQVXKY1Z46X8RXAM250** `just static PROFILE peers` builds the
-  static riff with the feature `peers` into `target/static`. The book
-  page "riff 3.0: peers" says how to build it, how to install it, and
-  to turn off `update.auto` on that machine: an update installs the
-  release build, with no `peers`.
-- **01M53NGWCEAA23NQJPPRKF26G7** The Gate checks both builds. `just
-  lint` runs clippy with the default features and with
-  `--features peers`. The Gate runs the tests of the workspace with the
-  default features, and again with `--features peers`. A test of the
-  riff of peers runs only in a build with `peers`.
-- **01M53NGWFBWR1WMJWC2DHVHJ3T** A build with no `peers` does not read,
-  change or delete the state of the riff of peers that a machine has:
-  the folders `state` and `state.lost-MS` and the files `invites.json`
-  and `forges.json` in the folder of the daemon, and the secret
-  `daemon-key DIR` in the OS keyring. A build with `peers` opens them
-  again. A claim ref `refs/riff/claims/ITEM` on the forge stays until a
-  person deletes it. riff 3.0.0 removes none of them.
-- **01M53NGWN190T2MYB1EZAD36VB** The items of Wave C that end
-  riff-server wait in the Backlog: the update with no riff-server
-  (#881), the move (#882), the delete of the cloud parts (#883), the
-  live check of the move (#884), the commands of a person on the daemon
-  (#885), the removal of the sign-in (#886), the removal of riff-server
-  (#888), and the steps of #889 that end riff-server.
-  A new design brings them back when Mike decides that riff-server
-  goes. A requirement that ends with "Superseded by Wave C (ID)" or
-  "Superseded in part by Wave C (ID)" holds again when the re-cut
-  supersedes that ID.
+- **01M53NGW9FH02EM74GKY829808** The re-cut supersedes each requirement
+  of Wave B (#803), and each requirement of the riff of peers in "Data
+  and peers": the log of peers, the keys of the members, the claims on
+  the forge and the transport. Each of them holds for riff 1.6 to 1.8,
+  until #959 merges. 01M4ZV3B6T2KB09WJ59F07HXET and
+  01M501P9XWXWDBSXP4QRTHTZ4P hold again in riff 3.0.0, except their
+  words of peer to peer: the riff tools of a container session and of
+  a lead in a container act on riff-server. 01M4ZHW2083VFTQJ772ZJ27XAC
+  stays superseded (01M53NGW3FR555TWP8Z8HHRVDJ).
+- **01M53NGWFBWR1WMJWC2DHVHJ3T** riff 3.0.0 does not read, change or
+  delete the state of the riff of peers that riff 1.6 to 1.8 made on a
+  machine: the folders `state` and `state.lost-MS` and the files
+  `invites.json` and `forges.json` in the folder of the daemon, and the
+  secret `daemon-key DIR` in the OS keyring. A claim ref
+  `refs/riff/claims/ITEM` on the forge stays until a person deletes it.
+  The book page "riff 3.0" names each of them.
+- **01M53NGWN190T2MYB1EZAD36VB** The items of Wave C wait in the
+  Backlog: the update with no riff-server (#881), the move (#882), the
+  delete of the cloud parts (#883), the live check of the move (#884),
+  the commands of a person on the daemon (#885), the removal of the
+  sign-in (#886), the removal of the plugin and of the workers in tmux
+  (#887), the removal of riff-server (#888), and the steps of #889 that
+  end riff-server. A new design brings them back when Mike decides that
+  riff-server goes. A requirement that ends with "Superseded by Wave C
+  (ID)" or "Superseded in part by Wave C (ID)" holds again when the
+  re-cut supersedes that ID.
 - **01M53NGWJ48MMYPQNJQ0EY9T47** The book page "riff 3.0" has the plan
   of the re-cut, with a mermaid diagram of a container session with
-  riff-server. The page "riff 3.0: peers" says that the riff of peers
-  is an experiment behind the feature `peers`, and how to build it. The
-  page "riff 3.0: no cloud" says that its plan is not in riff 3.0.0,
-  and that its items wait in the Backlog.
+  riff-server, what riff 3.0.0 removes, and the state that it leaves on
+  a machine. It has no other text of the riff of peers. The page
+  "Design: the riff of peers" holds the how-tos of the riff of peers of
+  riff 1.6 to 1.8, and goes with #959. The page "Design: no cloud, a
+  later plan" says that its plan is not in riff 3.0.0, and that its
+  items wait in the Backlog.
 
 ### Shape
 
@@ -6167,50 +6162,54 @@ requirements of this part when they merge.
   the lead of the repository. The members: the owner
   (01M4Z60B8C8JBV1T8T0W6ZKFE6). A claim: a compare-and-swap push to the
   forge (01M4Z60B8C3W5TMPVWNFXD1SYN). The keys are ed25519.
+  Superseded by the re-cut (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8C8JBV1T8T0W6ZKFE6** The owner signs the key of each member.
   riff 3.0 has no sign-in with an OpenID Connect provider, no OAuth
-  client and no riff token. Superseded in part by the re-cut
+  client and no riff token. Superseded by the re-cut
   (01M53NGVB7SZJW7X8SYS3B0ZHG, 01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8C3W5TMPVWNFXD1SYN** A claim is the ref
   `refs/riff/claims/ITEM` on the forge, for example
   `refs/riff/claims/issue-12` or `refs/riff/claims/verify-issue-12`. It
-  is not a branch.
+  is not a branch. Superseded by the re-cut
+  (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8DYAVEQF6F8N9QP7MS** Each claim is a new commit: the empty
   tree, no parent, no signature, and a message with the item, the user,
   the session and the time. The daemon makes each claim and each
   release, not the session. A claim is a create with
   `git push --force-with-lease=REF:`: the empty value means that the ref
   does not exist yet. A release is a delete with the lease of the claim
-  commit.
+  commit. Superseded by the re-cut (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8EB7A44A41CWWP7G8K** A claim fails when its lease fails in
   the client (`stale info`) or on the server (`cannot lock ref`). riff
-  reads both as: another session holds the item.
+  reads both as: another session holds the item. Superseded by the
+  re-cut (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8FQ3GMWQH12CXE0JS9** A claim ref has no time limit. It holds
   until its release, or until the lead deletes it
-  (01M4Z60B8FFRMT3DVG8H1CCZ13).
+  (01M4Z60B8FFRMT3DVG8H1CCZ13). Superseded by the re-cut
+  (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8FFRMT3DVG8H1CCZ13** The lead deletes the claim of a session
-  that is gone, with the lease of its claim commit.
+  that is gone, with the lease of its claim commit. Superseded by the
+  re-cut (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8G1VWGNKBH8ZJGJ7QJ** In a public repository, each claim ref
   and each claim commit is public, also after the release. A claim
-  commit holds no secret.
+  commit holds no secret. Superseded by the re-cut
+  (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8HN1C1XAG1CA1YS36H** Peer to peer comes right after local
   isolation works. The transport is iroh (#697). The first release
   with two peers uses the defaults of iroh: the DNS discovery and the
   public relays of n0. A small discovery service on Cloud Run comes when
   riff leaves those defaults. DNS discovery on comotechnologies.io is
-  future work. Superseded in part by the re-cut
-  (01M53NGW0DWJ075C4MDP06WAGS): the riff of peers is an experiment. A
-  build with `peers` still uses the defaults of n0.
+  future work. Superseded by the re-cut (01M53NGW9FH02EM74GKY829808).
 
 ### Wave B: the record
 
 The requirements of Wave B (#803) say how the daemons of two or more
 people share one riff. The book page
-[riff 3.0: peers](riff-3-peers.md) has the picture. A requirement of
-Wave B holds when the item of Wave B that builds it merges. A
-requirement that ends with "Superseded by Wave B (ID)." holds until
-then. Since the re-cut, each requirement of Wave B holds only in a
-build with the feature `peers` (01M53NGW9FH02EM74GKY829808).
+[Design: the riff of peers](riff-3-peers.md) has the picture. A
+requirement of Wave B holds when the item of Wave B that builds it
+merges. A requirement that ends with "Superseded by Wave B (ID)."
+holds until then. The re-cut supersedes each requirement of Wave B
+(01M53NGW9FH02EM74GKY829808).
 
 - **01M519Z1WKH6THH971AQWHH8CN** A record is one change of the riff by
   one author. Its bytes are, in this order: the format version (1, one
@@ -6753,7 +6752,8 @@ build with the feature `peers` (01M53NGW9FH02EM74GKY829808).
 
 The requirements of Wave C (#879) say how riff 3.0 ends riff-server and
 the cloud parts of riff. The book page
-[riff 3.0: no cloud](riff-3-no-cloud.md) has the order and the steps
+[Design: no cloud, a later plan](riff-3-no-cloud.md) has the order and
+the steps
 of a person. A requirement of Wave C holds when the item of Wave C that
 builds it merges, or when its step is done. A requirement that ends
 with "Superseded by Wave C (ID)." holds until then. The re-cut puts the
@@ -6793,9 +6793,9 @@ items of Wave C that end riff-server in the Backlog
   `riff lead compact` and `riff lead blocked`. Each session of riff 3.0
   runs in a container of the daemon (01M4Z60B7NW4GHKGCYZZDG26R6). The
   user place of the permission rules goes. The project place
-  (`riff setup`) and the session place stay. Superseded in part by the
-  re-cut (01M53NGVQDKCTNMG54YDFE22T2, 01M53NGVMD2PGEC0P9S3X4CTHT). The
-  plugin stays.
+  (`riff setup`) and the session place stay. Superseded by the re-cut
+  (01M53NGVMD2PGEC0P9S3X4CTHT, 01M53NGVQDKCTNMG54YDFE22T2,
+  01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8G59KA4WFCD7CBAYP5DN** After Wave C, riff has these commands:
   `riff init`, `riff daemon`, `riff run`, `riff wave`,
   `riff lead start`, `riff view`, `riff takeover`, `riff image`,
