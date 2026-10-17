@@ -980,7 +980,8 @@
 - **01M517P9MTBWPN0FQRMXEJ9JG5** The unit tests of `riff` set the mock
   keyring store in one place: `secrets::mock_store`, one time for the
   process. A unit test fails on each other line of code of `riff` that
-  sets the store.
+  sets the store, apart from the one line that sets the store of the OS
+  (01M556QPPRSQ91HDED128G2X7G).
 - **01M517P9QE2SQ45SPV3K2SM71B** `just stress ARGS` runs `cargo test
   ARGS` many times while busy loops keep the CPUs busy: 50 runs and 8
   loops, or the numbers in `STRESS_RUNS` and `STRESS_LOAD`. It builds
@@ -3427,6 +3428,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the value for its later calls, and a write or a delete of the process
   changes the kept value. Only the refresh of the sign-in reads it
   again, under the refresh lock (R107).
+- **01M556QPPRSQ91HDED128G2X7G** On Linux and BSD, `riff` opens each
+  session of the Secret Service as a plain session, as `gh` does, not
+  as a DH session. It keeps each secret as the store of the `keyring`
+  crate did: an item in the default collection with the attributes
+  `service` and `username`. So it reads and writes the secrets of an
+  older `riff`.
 - **01M54510SFK1Z9VPFYBYYSV10F** The `gh` calls of one clean of the
   worktrees (01M3ZV0TKSHNW5QC2NG1XTJEJB), of `riff top`, and of the
   rollout and the look of the lead share one token. riff reads it with
@@ -5187,8 +5194,9 @@ part when they merge.
 - **01M51117NDKF11FNZ915TTQED4** `just session-test` runs the tests of
   `crates/riff` in a container of the session image that `riff.toml`
   pins. The container has `--init`, the user of the host with `USER`
-  and `LOGNAME`, a home of its own and the limits of a session (`--cpus
-  4`, `--memory 8g`), as a session has. In CI, the test parts of the
+  and `LOGNAME` and an entry in its passwd and group files, a home of
+  its own and the limits of a session (`--cpus 4`, `--memory 8g`), as a
+  session has. In CI, the test parts of the
   Gate run there (01M515Z3Y7GSFNTJGXJD727MQK).
 - **01M515Z3Y7GSFNTJGXJD727MQK** The jobs `Tests I/N` of the Gate run
   `deploy/session-test.sh --part I/N`: part I of N of the tests of the

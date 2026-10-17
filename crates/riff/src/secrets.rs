@@ -9,15 +9,18 @@
 //! |---|---|
 //! | macOS | Keychain |
 //! | Windows | Credential Manager |
-//! | Linux and BSD | Secret Service, for example GNOME Keyring or KWallet |
+//! | Linux and BSD | Secret Service, for example GNOME Keyring or KWallet, with plain sessions |
 //!
 //! Each secret is one keyring entry. The service is [`SERVICE`]. The
 //! account is the name of the secret. A name says what the secret is and
 //! which server it is for, so one machine can use two servers.
 //!
 //! The module uses the default store of `keyring-core`. When no store is
-//! set, the first call sets the store of the OS. A test sets the mock
-//! store of `keyring-core` first, so tests never touch the real keyring.
+//! set, the first call sets the store of the OS. On Linux and BSD, that
+//! is the store of riff, [`keyring_store`](crate::keyring_store): it
+//! opens plain sessions of the Secret Service (01M556QPPRSQ91HDED128G2X7G).
+//! A test sets the mock store of `keyring-core` first, so tests never
+//! touch the real keyring.
 //!
 //! The default store is global to the process, and rustdoc can run the
 //! merged doc tests of a crate as threads of one process. So a doc test
@@ -67,10 +70,10 @@
 //! # Few calls to the keyring
 //!
 //! Each process that calls the OS keyring opens one session of the
-//! Secret Service: one D-Bus connection and one key exchange. A
-//! GNOME Keyring that gets a new session each few seconds grows until
-//! it aborts, and then the keyring stays locked (#1003). So riff makes
-//! few calls:
+//! Secret Service: one D-Bus connection. A GNOME Keyring that gets a new
+//! session each few seconds grows, and a DH session also costs it locked
+//! memory until it aborts. Then the keyring stays locked (#1003). So
+//! riff opens plain sessions, and makes few calls:
 //!
 //! - A process opens the store one time, at its first call
 //!   ([`has_keyring`], [`get`], [`set`] or [`delete`]). A process that
@@ -445,11 +448,37 @@ static OS_STORE: AtomicBool = AtomicBool::new(false);
 /// Sets the store of the OS keyring as the default store of
 /// `keyring-core`, one time for the process, and gives the result.
 fn os_store() -> &'static keyring_core::Result<()> {
-    let status = keyring::Entry::store_status();
+    static STATUS: LazyLock<keyring_core::Result<()>> = LazyLock::new(set_os_store);
+    let status = &*STATUS;
     if status.is_ok() {
         OS_STORE.store(true, Ordering::SeqCst);
     }
     status
+}
+
+/// Sets the store of riff with plain sessions of the Secret Service
+/// (01M556QPPRSQ91HDED128G2X7G).
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+))]
+fn set_os_store() -> keyring_core::Result<()> {
+    let store = crate::keyring_store::Store::new()?;
+    keyring_core::set_default_store(store);
+    Ok(())
+}
+
+/// Sets the store of the `keyring` crate: the Keychain of macOS, or the
+/// Credential Manager of Windows.
+#[cfg(not(all(
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+)))]
+fn set_os_store() -> keyring_core::Result<()> {
+    keyring::Entry::store_status()
+        .as_ref()
+        .map(|_| ())
+        .map_err(|e| Error::PlatformFailure(e.to_string().into()))
 }
 
 /// True when this process set the store of its secrets itself, before
@@ -866,9 +895,10 @@ mod tests {
     }
 
     /// 01M517P9MTBWPN0FQRMXEJ9JG5: only [`mock_store`] sets the store
-    /// in the code of riff. Two setters, for example a `Once` in each of
-    /// two test modules, replace the store that a test of the other wrote
-    /// to, and that test finds no entry.
+    /// in the code of riff for the unit tests. Two setters, for example a
+    /// `Once` in each of two test modules, replace the store that a test
+    /// of the other wrote to, and that test finds no entry. The one other
+    /// setter is `set_os_store` (01M556QPPRSQ91HDED128G2X7G).
     #[test]
     fn the_unit_tests_set_the_store_in_one_place() {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -877,13 +907,28 @@ mod tests {
         let mut setters = Vec::new();
         for file in &files {
             let text = std::fs::read_to_string(file).unwrap();
+            let lines: Vec<&str> = text.lines().collect();
             for line in store_setters(&text) {
                 let name = file.strip_prefix(&src).unwrap().display();
-                setters.push(format!("{name}:{line}"));
+                setters.push(format!("{name}:{line}: {}", lines[line - 1].trim()));
             }
         }
-        assert_eq!(setters.len(), 1, "call secrets::mock_store: {setters:?}");
-        assert!(setters[0].starts_with("secrets.rs:"), "{setters:?}");
+        // In two parts, so that these lines are no setters.
+        let set = concat!("keyring_core::set_default_store", "(");
+        let mock = format!("MOCK.call_once(|| {set}keyring_core::mock::Store::new().unwrap()));");
+        let os = format!("{set}store);");
+        let mut texts: Vec<&str> = setters
+            .iter()
+            .filter(|s| s.starts_with("secrets.rs:"))
+            .filter_map(|s| s.split_once(": ").map(|(_, text)| text))
+            .collect();
+        texts.sort();
+        assert_eq!(
+            texts,
+            [mock.as_str(), os.as_str()],
+            "call secrets::mock_store: {setters:?}"
+        );
+        assert_eq!(setters.len(), 2, "call secrets::mock_store: {setters:?}");
     }
 
     #[test]

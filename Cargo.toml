@@ -31,6 +31,8 @@ gethostname = "1.1.0"
 anyhow = "1.0.104"
 keyring = "4.2.0"
 keyring-core = "1.0.0"
+secret-service = { version = "5.2.0", features = ["rt-async-io-crypto-rust"] }
+zbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
 base64 = "0.23.1"
 getrandom = "0.4.3"
 ed25519-dalek = "3.0.0"

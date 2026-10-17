@@ -32,7 +32,6 @@ data-encoding.workspace = true
 iroh.workspace = true
 zeroize.workspace = true
 gethostname.workspace = true
-keyring.workspace = true
 keyring-core.workspace = true
 open.workspace = true
 reqwest.workspace = true
@@ -56,6 +55,19 @@ tower.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 vt100.workspace = true
 
+# 01M556QPPRSQ91HDED128G2X7G: on Linux and BSD, riff keeps its secrets
+# through its own store of the Secret Service, with plain sessions. On
+# each other OS, through the store of the keyring crate. The tests compare
+# the store of riff with the store of the keyring crate on Linux.
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+secret-service.workspace = true
+
+[target.'cfg(not(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android")))))'.dependencies]
+keyring.workspace = true
+
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dev-dependencies]
+zbus-secret-service-keyring-store.workspace = true
+
 [[test]]
 name = "all"
 path = "tests/all.rs"
@@ -71,3 +83,7 @@ path = "tests/join_a_riff.rs"
 [[test]]
 name = "isolation"
 path = "tests/isolation.rs"
+
+[[test]]
+name = "keyring_store"
+path = "tests/keyring_store.rs"

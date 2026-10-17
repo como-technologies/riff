@@ -551,8 +551,9 @@ machine. So a test can pass on your machine and fail in a session.
 `just session-test` runs the tests of `crates/riff` in a container of
 the image that `riff.toml` pins, as a session runs them: with an init
 process, as your user, with a home of its own, and with the limits of a
-session (4 CPUs, 8 GB). It uses podman, else docker. The build goes to
-`target/session`:
+session (4 CPUs, 8 GB). It uses podman, else docker. With docker, it
+gives your user an entry in the passwd and group files of the
+container, as podman does. The build goes to `target/session`:
 
 ```sh
 just session-test
@@ -2278,6 +2279,26 @@ To see the locked memory of GNOME Keyring, run the command below. At
 
 ```sh
 grep VmLck /proc/"$(pidof gnome-keyring-daemon)"/status
+```
+
+### See the kind of each keyring session
+
+On Linux, riff opens each session of the Secret Service as a plain
+session, as `gh` does. A DH session costs GNOME Keyring about 0.6 kB
+of locked memory, and the keyring keeps it also after the session
+closes. A plain session costs none.
+
+With a plain session, each secret goes over your D-Bus session bus
+with no encryption. A process that watches all of that bus sees the
+secrets of riff and of `gh`. Only your own processes and root can
+watch it, and they can also read the secrets from the keyring itself.
+
+To see the kind of each new session, watch the calls `OpenSession`.
+The line after each call is the kind: `plain`, or
+`dh-ietf1024-sha256-aes128-cbc-pkcs7` for a DH session:
+
+```sh
+dbus-monitor --session "type='method_call',interface='org.freedesktop.Secret.Service',member='OpenSession'" | grep -A1 OpenSession
 ```
 
 ### When riff says the riff has no sign-in
