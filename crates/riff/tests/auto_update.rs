@@ -269,6 +269,18 @@ async fn one_update_runs_for_the_machine_with_the_release_of_the_server() {
         riff::local::tried(&machine.state()).as_deref(),
         Some(newer_tag().as_str())
     );
+
+    // 01M53NEE7W0ZC8B7EV9ET6QHBB: after the update, no line of
+    // update.log names the old build as the build that runs.
+    let ended = wait_for(Duration::from_secs(20), async || {
+        !riff::local::updating(&machine.state())
+    })
+    .await;
+    assert!(ended, "the update in the background runs on");
+    let update_log = std::fs::read_to_string(riff::local::update_log(&machine.state())).unwrap();
+    assert!(update_log.contains(&words), "{update_log}");
+    let old = format!("this riff runs build {}", Build::this());
+    assert!(!update_log.contains(&old), "{update_log}");
 }
 
 /// With `update.auto = false`, nothing runs, and the note to update

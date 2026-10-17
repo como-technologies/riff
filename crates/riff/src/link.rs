@@ -590,7 +590,9 @@ impl Link {
     /// (01M3MX1E65XGWDZ062PQ9YXQ5T). For a reply with no build, the error
     /// names its status and URL (01M3QCMJ9F1GRTRRSB4AW9TC3D). The error
     /// is a [`Mismatch`]. Another build that it can talk to goes on, with
-    /// one note on stderr for each link (01M3MX1E8M9TKBN90P4DYKH3H8). A
+    /// one note on stderr for each link (01M3MX1E8M9TKBN90P4DYKH3H8), and
+    /// no note in the update in the background
+    /// ([`auto_update::in_background`], 01M53NEE7W0ZC8B7EV9ET6QHBB). A
     /// newer release at the server can start the update of riff by itself
     /// ([`auto_update::begin`]).
     pub fn check_build(
@@ -606,7 +608,10 @@ impl Link {
         }
         match server {
             Some(server) if build::compatible(&this, &server) => {
-                if !server.matches(&this) && !self.noted.swap(true, Ordering::Relaxed) {
+                if !server.matches(&this)
+                    && !auto_update::in_background()
+                    && !self.noted.swap(true, Ordering::Relaxed)
+                {
                     eprintln!("riff: {}", build::other_build(&this, &server));
                 }
                 if let Ok(mut seen) = SERVER_BUILD.lock() {
