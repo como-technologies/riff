@@ -153,7 +153,7 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
     }
     for name in ["invite", "remove", "members"] {
         let help = riff(&[name, "--help"]);
-        let usage = format!("Usage: riff {name} --email");
+        let usage = format!("Usage: riff {name} [OPTIONS] --email");
         assert!(help.lines().any(|l| l.starts_with(&usage)), "{help}");
         for word in ["USER", "--host", "key", "riff daemon", "invite string"] {
             assert!(!help.contains(word), "riff {name} --help: {word}: {help}");

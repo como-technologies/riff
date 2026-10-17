@@ -114,7 +114,7 @@ item.
 
 ```mermaid
 flowchart LR
-    W30["Wave 30:<br/>this design and fixes"] --> R18["1.8.0:<br/>the last release of 1.x"]
+    W30["Wave 30:<br/>this design and fixes"] --> R18["1.8.x:<br/>the last minor release of 1.x"]
     R18 --> W31["Wave 31:<br/>the build items of the re-cut"]
     W31 --> R3["3.0.0: its tag<br/>deploys riff-server"]
     R3 --> U["each machine takes 3.0.0<br/>from riff-server"]

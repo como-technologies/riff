@@ -2,7 +2,7 @@
 
 This page is the design of Wave C (#879): riff-server and the cloud
 parts of riff go. Each machine keeps its riff daemon, and the daemons
-connect peer to peer (see [Design: the riff of peers](riff-3-peers.md)).
+connect peer to peer.
 
 This plan is not in riff 3.0.0. riff 3.0.0 keeps riff-server and each
 other part of riff 1.x, and removes the riff of peers: see
@@ -92,8 +92,7 @@ riff update
 riff init
 ```
 
-Then put the machine in the riff of the owner: see
-[Join a riff](riff-3-peers.md#join-a-riff).
+Then put the machine in the riff of the owner.
 
 ### Pin a session image
 

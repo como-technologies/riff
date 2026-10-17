@@ -89,15 +89,14 @@
 //!
 //! `riff run` asks the riff daemon to run the session (#716). The
 //! daemon of the machine, for example the unit `riff.service` of an
-//! installed riff, runs on with its peer links: the test never stops,
-//! starts or changes it, and does not talk to it
+//! installed riff, runs on: the test never stops, starts or changes it,
+//! and does not talk to it
 //! (01M53YP9DATAD95EZEZ6R75WEF). The test runs a daemon of its own
 //! beside it. Each `riff` that the test runs ([`Riff`]) gets `RIFF_DATA`
 //! ([`DATA_VAR`]): the data folder of the test ([`Env::test_data`]), in
-//! the folders of riff. So the daemon of the test has its own socket, its
-//! own session folders, and its own key and riff
-//! (01M53YP97S9BDMFBN0X5G444MY, 01M51JW1XRZWC3Q7G32V0X0D89). It keeps
-//! them in that folder for the next run.
+//! the folders of riff. So the daemon of the test has its own socket and
+//! its own session folders (01M53YP97S9BDMFBN0X5G444MY). It keeps them in
+//! that folder for the next run.
 //!
 //! ```mermaid
 //! flowchart LR

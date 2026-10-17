@@ -6308,9 +6308,7 @@ part when they merge.
 ### Wave B: the record
 
 The requirements of Wave B (#803) say how the daemons of two or more
-people share one riff. The book page
-[Design: the riff of peers](riff-3-peers.md) has the picture. A
-requirement of Wave B holds when the item of Wave B that builds it
+people share one riff. A requirement of Wave B holds when the item of Wave B that builds it
 merges. A requirement that ends with "Superseded by Wave B (ID)."
 holds until then. The re-cut supersedes each requirement of Wave B
 (01M53NGW9FH02EM74GKY829808).

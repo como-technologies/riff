@@ -605,15 +605,12 @@ binary. When it is not static, the daemon starts no container, and
 its error names `riff update`. See
 [Get the static riff](start-a-riff.md#get-the-static-riff).
 
-The daemon also keeps the state of riff on your machine, in
-`~/.local/share/riff/daemon/state`: the records of its riff of peers
-in the file `records`, and the log and the checkpoints of `riff-state`
-for the ID of the riff. The messages, the status, the lead marks, the
-holds and the pauses of its sessions with no riff-server are records
-(see [The records](riff-3-peers.md#the-records)). The first start
-of the daemon makes its key and the riff (see
-[See the key of the daemon](#see-the-key-of-the-daemon)). Each next
-start reads the records again, so the state stays.
+The daemon keeps no state of the riff, and has no key of its own.
+riff-server holds the claims, the messages and the wakes of its
+sessions. riff 1.6 to 1.8 kept the state of a riff of peers in
+`~/.local/share/riff/daemon`. riff 3.0 does not read, change or delete
+it: see
+[What riff 3.0.0 leaves on a machine](riff-3.md#what-riff-300-leaves-on-a-machine).
 
 ### Install the daemon
 
@@ -637,105 +634,13 @@ again: it starts the daemon again with the new riff.
 riff daemon status
 ```
 
-It shows the process ID, the build and the sessions of the daemon. The
-line `Its riff:` shows the ID of the riff of your machine, and the
-position of the last record of its log. When no daemon answers, it
-shows the state of the unit, and exits with
-1. To see the log of the daemon:
+It shows the process ID, the build and the sessions of the daemon.
+When no daemon answers, it shows the state of the unit, and exits
+with 1. To see the log of the daemon:
 
 ```sh
 journalctl --user -u riff -f
 ```
-
-### See the key of the daemon
-
-The daemon has one key: an ed25519 key. The first start of the daemon
-makes the key, and keeps it in the OS keyring. The key never leaves
-your machine. Its public key is the ID of the daemon. In the riff of
-peers, it is the ID of the daemon for the other daemons, and it signs
-each change of the daemon (see
-[Design: the riff of peers](riff-3-peers.md)).
-
-The first start also makes a riff of your own. The ID of the riff is
-the public key of the daemon, and you (`USER`) are its owner. To see
-the key, the riff and the owner:
-
-```sh
-riff daemon status
-```
-
-```text
-Its key: 8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c
-Its riff: 8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c, at position 2 of its log.
-The owner of its riff: mike
-```
-
-The key and the state go together. When the keyring has no key of the
-daemon, or the state has no riff, the daemon makes a new key and a new
-riff of its own. Its log says why. The old state goes to
-`~/.local/share/riff/daemon/state.lost-MS`, where `MS` is the time.
-riff does not read it.
-
-While the OS keyring is locked, or does not answer, the daemon waits
-for it. It makes no new key. It says one line in its log, and looks
-again each 30 seconds. `riff daemon status` shows that line. Your
-sessions run in that time. Unlock the keyring at the desktop: the
-daemon then reads its key and its riff.
-
-### See the peer links of the daemon
-
-In [the riff of peers](riff-3-peers.md), the daemons of a riff connect
-peer to peer over iroh, and send each other their records. The daemon
-binds its iroh endpoint at its start, with the key of the daemon. To
-see each connection of your daemon:
-
-```sh
-riff daemon status
-```
-
-```text
-Its peer links:
-  1b2c3d4e  mike on pangolin  up for 2h, direct
-  4f5e6d7c  brett on kadomony  connects again in 8s, after 3 tries: no connect in 5 s
-  9a8b7c6d  ann on anvil  waits for that daemon to connect
-```
-
-Each line shows the start of the key of the other daemon, its user and
-its host, and the state of the link:
-
-| State | What it means |
-|---|---|
-| `up for TIME, direct` or `on a relay` | The link runs. iroh uses a direct path, or a relay of n0. |
-| `connects again in TIME, after N tries: WHY` | Your daemon has the lower key, so it connects. The last try failed, for example because the other daemon is offline. |
-| `waits for that daemon to connect` | The other daemon has the lower key, so it connects to yours. |
-
-A riff of your own has no other daemon: the line is
-`Its peer links: none: its riff has no other daemon.` When the daemon
-cannot bind its endpoint, the line is
-`Its peer links: none: it has no iroh endpoint.`, and the log of the
-daemon says why. The log also has a line for each link that starts or
-ends, and for each record that the daemon refuses:
-
-```sh
-journalctl --user -u riff | grep "peer link"
-```
-
-### Share the riff of the daemon
-
-The owner of a riff invites a person in a terminal of their own, and
-the person joins with the invite string on their machine.
-[Share a riff](riff-3-peers.md#share-a-riff) has each step: invite,
-join, leave, remove, and see the members.
-
-```sh
-riff invite brett
-riff join riff1-...
-riff members
-```
-
-After a join, the line `Its riff:` of `riff daemon status` shows the
-riff of the owner, and the line `The owner of its riff:` shows the
-user of the owner.
 
 ### Restart or stop the daemon
 
@@ -744,8 +649,7 @@ systemctl --user restart riff
 systemctl --user stop riff
 ```
 
-At a stop, the daemon writes a checkpoint of its state. A stop or a
-restart of the daemon stops no container. conmon, the monitor of
+A stop or a restart of the daemon stops no container. conmon, the monitor of
 podman, holds each container. While the daemon is away, `riff relay`
 keeps `claude` running and keeps its events. A new daemon takes up
 each session that runs, and the relay sends it the kept events. No
@@ -765,7 +669,7 @@ riff daemon uninstall
 It stops and disables the unit `riff.service`, deletes the unit file
 that `riff daemon install` wrote, and reloads systemd. Each container
 runs on: conmon holds it. The folder of the daemon,
-`~/.local/share/riff/daemon`, stays with its state. When no unit is
+`~/.local/share/riff/daemon`, stays. When no unit is
 installed, the command says so. To use the daemon again, run
 `riff daemon install`.
 
@@ -784,18 +688,6 @@ riff daemon
 ```
 
 Press Ctrl-C to stop it. Its containers run on.
-
-### Keep a daemon off the network of n0
-
-The daemon binds its iroh endpoint with the DNS and the relays of n0.
-To keep a test daemon on your machine only, set `RIFF_PEER_NET`:
-
-```sh
-RIFF_PEER_NET=local riff daemon
-```
-
-The daemon then binds on 127.0.0.1, with no relay and no DNS. It finds
-no other daemon. The tests of riff set this variable.
 
 ## Run one item in a container
 
@@ -869,21 +761,6 @@ with `--image`:
 riff run issue-12 --image localhost/riff-session:test
 ```
 
-### Run an item with no riff-server
-
-With `--peers`, `riff run` needs no riff-server (see
-[Design: the riff of peers](riff-3-peers.md)). The riff daemon of your
-machine claims the item on GitHub, and the session talks on the riff
-of the daemon. riff-server stays the default, and the work of one
-repository runs on one riff only. In your clone of the repository:
-
-```sh
-riff run issue-12 --peers
-```
-
-See
-[What riff run does with no riff-server](#what-riff-run-does-with-no-riff-server).
-
 ### What riff run does
 
 First, riff asks the daemon for the image: the daemon pulls it when
@@ -929,45 +806,6 @@ work of the branch is over. Then the daemon removes the folder: see
 [Remove the folders of old sessions](#remove-the-folders-of-old-sessions).
 Its `events.jsonl` has each event, with no secret: the daemon writes
 it.
-
-### What riff run does with no riff-server
-
-With `--peers`, riff does the same checks first. A failed check takes
-no claim. Then riff asks the daemon to do the item, as for a job of a
-wave, and shows each line and each event. The daemon does these steps:
-
-```mermaid
-sequenceDiagram
-    participant H as riff run --peers
-    participant D as riff daemon
-    participant G as GitHub
-    participant C as the container
-    H->>D: do issue-12
-    D->>G: claim: push refs/riff/claims/issue-12, lease: no ref
-    D->>D: the clone, the session record with the claim
-    D->>C: start the session
-    C->>G: push the branch, open the pull request
-    C-->>D: the end
-    D->>D: the verify request to your lead: a message record
-    D->>G: release: delete the ref, lease: the claim commit
-    D-->>H: the lines of the steps, then done
-```
-
-1. It claims the item on GitHub with your git sign-in (see
-   [How a claim works](riff-3-peers.md#how-a-claim-works)). When
-   another session holds the item, riff starts nothing, and ends with
-   the exit code 1.
-2. It makes the clone of the session, and runs the session. The riff
-   tools of the session talk on the riff of the daemon.
-3. At the end, it finds the pull request of the branch, and sends the
-   verify request to your lead as a message of the riff of the daemon.
-   It sends none when the issue has the label `no-verify`, or when a
-   lead holds `verify-ITEM`: your lead gets a note with the reason.
-4. It releases the item on GitHub.
-
-Ctrl-C stops the container. The daemon still does steps 3 and 4. When
-the daemon stops before the end, the session runs on, and the next
-daemon does steps 3 and 4.
 
 ### Stop a session
 
@@ -1151,35 +989,15 @@ page [riff 3.0](riff-3.md).
 
 The riff tools of a session of the daemon act on the riff-server of
 the session, as in riff 1.x. Each session of `riff run`, of a wave and
-of `riff lead start` has your riff-server. A session of
-`riff run --peers` or of `riff wave run --peers` has none. So the lead
-of your user sees each post of a session with your riff-server, and
-`riff relay watch` of that session wakes on a message of riff-server.
-
-A session with no riff-server talks on the riff of peers of the
-daemon, with no riff-server: each post, status, lead mark, hold and
-pause is a record of the daemon (see
-[Design: the riff of peers](riff-3-peers.md)). The daemon writes a
-record at the start and at the end of each such session, and a worker
-claims its item in it. A session of 1.x and a session of the riff of
-peers do not see the messages of each other. So the work of a
-repository is on one riff only. `--peers` gives sessions with no
-riff-server (see
-[Run an item with no riff-server](#run-an-item-with-no-riff-server)).
+of `riff lead start` has your riff-server. So the lead of your user
+sees each post of a session, and `riff relay watch` of that session
+wakes on a message of riff-server.
 
 ```mermaid
 flowchart LR
-    S["a session of the daemon: post, read, tell, status"] --> Q{"a riff-server?"}
-    Q -- "yes: riff run, a wave, riff lead start" --> R["your riff-server: the lead of your user sees it"]
-    Q -- "no: riff run --peers, riff wave run --peers" --> D["the riff daemon: its records"]
-    D -- "a message to a session of the daemon" --> W["riff relay watch of that session wakes"]
-```
-
-In the riff of peers, a session has the user of the key of the daemon.
-To see the sessions, the key and the owner of that riff:
-
-```sh
-riff daemon status
+    S["a session of the daemon: post, read, tell, status"] --> D["the riff daemon"]
+    D -- "as the worker session of the item" --> R["your riff-server: the lead of your user sees it"]
+    R -- "a message to the session" --> W["riff relay watch of that session wakes"]
 ```
 
 ## Let riff run the wave
@@ -1264,21 +1082,6 @@ machine is the limit of its daemon (see
 wave of that machine, run `riff wave stop` there. For workers in tmux
 on a second machine, `riff workers host` stays: see
 [Offer workers from another machine](how-it-works.md#offer-workers-from-another-machine).
-
-### Run the wave with no riff-server
-
-With `--peers`, the wave needs no riff-server, as
-[Run an item with no riff-server](#run-an-item-with-no-riff-server).
-The look reads the pause and the holds from the riff of the daemon,
-and the claims from GitHub. Each job claims its item on GitHub, and
-sends its verify request and the result of a verify to your lead as
-messages of the riff of the daemon. In your clone of the repository:
-
-```sh
-riff wave run --peers
-```
-
-`riff wave stop` stops it, as each wave.
 
 ### See the wave
 
@@ -1488,10 +1291,8 @@ riff view
 The view shows each session of the daemon of this machine: its
 container, its item, its state, its age and its last step. It also
 shows the daemon, the limit of the host, each start that waits for
-room, and each wave. It draws them again each second. The sessions of
-the other machines of your riff come after them (see
-[See the sessions of other machines](#see-the-sessions-of-other-machines)).
-A later release merges `riff view` and `riff top` into one sessions
+room, and each wave. It draws them again each second. It shows no
+session of another machine. A later release merges `riff view` and `riff top` into one sessions
 view in each UI: see [Design: the UIs of riff](riff-uis.md).
 
 | Key | Does |
@@ -1519,41 +1320,6 @@ The states of a session:
 
 `riff daemon status` shows the same state and last step of each
 session.
-
-### See the sessions of other machines
-
-```sh
-riff view
-```
-
-When the daemon of this machine is in a riff with other machines (see
-[Design: the riff of peers](riff-3-peers.md)), the view also shows each
-session of each other daemon of the riff. These rows come after the
-sessions of this machine:
-
-```text
-  SESSION                                 ITEM             STATE                AGE  LAST
-> riff-lead-o-r                           lead             lead                 2h
-  riff-issue-12-1a2b3c4d                  issue-12         works                5m   > Bash: just check
-  brett@kadomony:riff#issue-14 (77e0aaaa) issue-14         busy                      tests
-  mike@pangolin:riff#issue-15 (5b1e2a90)  issue-15         offline, seen 5m ago      docs
-```
-
-| Column | Shows for a session of another machine |
-|---|---|
-| SESSION | The user, the host, the repository, the worktree and the short session ID. |
-| ITEM | The claims of the session, or `lead`. |
-| STATE | `busy`, `idle` or `paused`. When the daemon of that machine is offline: `offline`, and the time when your daemon last saw it. |
-| LAST | The status of the session. |
-
-A daemon is online while your daemon has a peer link to it (see
-[See the peer links of the daemon](#see-the-peer-links-of-the-daemon)).
-Else your daemon last saw it at the end of its last link, or at the
-time of its last record when that is later.
-
-You can take over only a session of this machine. `t` on a row of
-another machine does not take it over: the note under the rows names
-the host of the session.
 
 ### Take over a session
 
@@ -2250,9 +2016,7 @@ the OS keyring of pangolin is locked or does not answer: unlock it at the deskto
 
 A workers host says the line one time, and the lead gets a note
 `keyring: the OS keyring of pangolin is locked ...`. The host looks at
-the keyring again each 30 seconds. It does not stop. The riff daemon
-waits for the keyring too: see
-[See the key of the daemon](#see-the-key-of-the-daemon).
+the keyring again each 30 seconds. It does not stop.
 
 ```mermaid
 sequenceDiagram

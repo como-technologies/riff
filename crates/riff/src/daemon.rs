@@ -415,19 +415,6 @@ pub fn record_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(LIVE).join(format!("{name}.json"))
 }
 
-/// The folder of the state of the daemon in its folder `dir`: the log
-/// and the checkpoints.
-///
-/// ```
-/// use std::path::Path;
-///
-/// let dir = Path::new("/h/.local/share/riff/daemon");
-/// assert_eq!(riff::daemon::state_dir(dir), Path::new("/h/.local/share/riff/daemon/state"));
-/// ```
-pub fn state_dir(dir: &Path) -> PathBuf {
-    dir.join("state")
-}
-
 /// The path of the socket in a session: `/run/riff/riff.sock`.
 pub fn in_session() -> PathBuf {
     Path::new(IN_SESSION).join(SOCKET)

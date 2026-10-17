@@ -7632,17 +7632,6 @@ pub fn view_no_takeover(name: &str) -> String {
     format!("The session in {name} is the lead: Enter attaches to it.")
 }
 
-/// `riff view`: the state of a session of a daemon that is offline,
-/// with the time since that daemon was last seen
-/// (01M519Z554SC3EAT69Q3M6JDAP).
-///
-/// ```
-/// assert_eq!(riff::text::view_offline(300), "offline, seen 5m ago");
-/// ```
-pub fn view_offline(secs: u64) -> String {
-    format!("offline, seen {} ago", ago(secs))
-}
-
 /// A job of a wave: the daemon sent the verify request of the pull
 /// request `pull` to the lead.
 pub fn run_verify_sent(item: &str, pull: u64) -> String {

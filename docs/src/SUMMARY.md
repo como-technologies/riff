@@ -14,7 +14,6 @@
 - [Design: the client link](design-link.md)
 - [Design: the plan on the server](design-plan.md)
 - [Design: the UIs of riff](riff-uis.md)
-- [Design: the riff of peers](riff-3-peers.md)
 - [Design: no cloud, a later plan](riff-3-no-cloud.md)
 - [Requirements](requirements.md)
 - [Development](development.md)
