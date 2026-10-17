@@ -6,9 +6,11 @@
 use crate::book;
 
 use isolated::Isolated;
+use riff::api::Api;
+use riff_core::name::SessionUri;
 use std::fs;
 use std::path::Path;
-use std::process::Output;
+use std::process::{Command, Output};
 
 /// A fake `gh` in `bin`. Its list has the Latest release and two other
 /// releases of the line 1.x, and a release of each of the lines 2.x and
@@ -45,16 +47,22 @@ fn fake_gh(bin: &Path) {
     );
 }
 
-/// `riff retire ARGS` with the fake `gh` of `bin` first in `PATH`.
-fn riff_retire(env: &Isolated, bin: &Path, args: &[&str]) -> Output {
+/// `riff retire ARGS` in `dir`, with the fake `gh` of `bin` first in
+/// `PATH`.
+fn retire_in(env: &Isolated, bin: &Path, dir: &Path, args: &[&str]) -> Command {
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    env.riff()
-        .arg("retire")
+    let mut cmd = env.riff();
+    cmd.arg("retire")
         .args(args)
-        .current_dir(bin)
-        .env("PATH", path)
-        .output()
-        .unwrap()
+        .current_dir(dir)
+        .env("PATH", path);
+    cmd
+}
+
+/// `riff retire ARGS` in `bin`, with the fake `gh` of `bin` first in
+/// `PATH`.
+fn riff_retire(env: &Isolated, bin: &Path, args: &[&str]) -> Output {
+    retire_in(env, bin, bin, args).output().unwrap()
 }
 
 fn text(out: &Output) -> String {
@@ -152,6 +160,99 @@ fn riff_retire_refuses_a_line_with_no_release_or_a_bad_line() {
         text(&bad)
     );
     assert!(writes(bin.path()).is_empty());
+}
+
+/// `riff retire` refuses in a worker, and calls no `gh`
+/// (01M553AWMXYAG7CJGW7M30XDZ8).
+#[test]
+fn riff_retire_refuses_in_a_worker_and_calls_no_gh() {
+    let env = Isolated::new();
+    let bin = tempfile::tempdir().unwrap();
+    fake_gh(bin.path());
+    let before = release(bin.path(), 80);
+
+    let out = retire_in(&env, bin.path(), bin.path(), &["1.x", "--issue", "961"])
+        .env("RIFF_WORKER", "1")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    assert_eq!(
+        text(&out),
+        "riff: a worker never retires a release line. riff retire changed nothing.\n"
+    );
+    assert!(
+        !bin.path().join("gh.log").exists(),
+        "riff called gh: {}",
+        fs::read_to_string(bin.path().join("gh.log")).unwrap()
+    );
+    assert_eq!(release(bin.path(), 80), before);
+}
+
+/// A riff-server on a free port of this machine.
+async fn start_server() -> Api {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, riff_server::router()).await.unwrap();
+    });
+    Api::new(&format!("http://{addr}"))
+}
+
+/// In an agent session, only the lead of its user retires a line. A
+/// session that is not the lead gets a refusal, and riff calls no `gh`
+/// (01M553AWMXYAG7CJGW7M30XDZ8).
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_retire_refuses_in_a_session_that_is_not_the_lead() {
+    let api = start_server().await;
+    let env = Isolated::new();
+    let bin = tempfile::tempdir().unwrap();
+    fake_gh(bin.path());
+    let repo = tempfile::tempdir().unwrap();
+    let dir = fs::canonicalize(repo.path()).unwrap();
+    let init = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{init:?}");
+    let place = riff::identity::place_in(&dir, "pangolin").unwrap();
+    for id in ["a1", "a2"] {
+        let who = riff_core::name::Who::new("mike", Some(id)).unwrap();
+        api.register(&SessionUri::new(who, place.clone()))
+            .await
+            .unwrap();
+    }
+    let retire_as = |id: &str| {
+        retire_in(&env, bin.path(), &dir, &["1.x", "--issue", "961"])
+            .env("RIFF_SERVER", api.base())
+            .env("RIFF_USER", "mike")
+            .env("RIFF_HOST", "pangolin")
+            .env("RIFF_SESSION", id)
+            .output()
+            .unwrap()
+    };
+
+    let out = retire_as("a2");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    assert_eq!(
+        text(&out),
+        "riff: only the lead of your user retires a release line. This session is not the \
+         lead, so riff retire changed nothing.\n"
+    );
+    assert!(
+        !bin.path().join("gh.log").exists(),
+        "riff called gh: {}",
+        fs::read_to_string(bin.path().join("gh.log")).unwrap()
+    );
+
+    let out = retire_as("a1");
+    assert!(out.status.success(), "{}", text(&out));
+    assert!(
+        text(&out).ends_with("riff retired 2 releases of the line 1.x.\n"),
+        "{}",
+        text(&out)
+    );
+    assert_eq!(writes(bin.path()).len(), 2);
 }
 
 /// The how-to "Retire a release line" of `development.md` retires a line
