@@ -430,12 +430,21 @@ impl Local {
     /// std::fs::write(clone.join("notes.md"), "text")?;
     /// assert_eq!(Local::of(&clone), Local::Work { files: 1, commits: 1 });
     /// assert!(matches!(Local::of(&root.path().join("gone")), Local::Unknown(_)), "no clone");
+    /// // A clone with no commit: git cannot count. The reason is one line.
+    /// let empty = root.path().join("empty");
+    /// git(root.path(), &["init", "-q", empty.to_str().unwrap()]);
+    /// let Local::Unknown(why) = Local::of(&empty) else { panic!("git counts no HEAD") };
+    /// assert!(why.starts_with("git rev-list --count HEAD") && !why.contains('\n'), "{why}");
     /// # Ok::<(), std::io::Error>(())
     /// ```
     pub fn of(clone: &Path) -> Local {
+        let unknown = |e: anyhow::Error| {
+            let text = format!("{e:#}");
+            Local::Unknown(text.lines().next().unwrap_or_default().to_owned())
+        };
         let status = match run::output("git", clone, &["status", "--porcelain"]) {
             Ok(status) => status,
-            Err(e) => return Local::Unknown(format!("{e:#}")),
+            Err(e) => return unknown(e),
         };
         let ahead = [
             "rev-list",
@@ -450,7 +459,7 @@ impl Local {
                 Ok(n) => n,
                 Err(_) => return Local::Unknown(format!("git rev-list gave {n:?}")),
             },
-            Err(e) => return Local::Unknown(format!("{e:#}")),
+            Err(e) => return unknown(e),
         };
         match (status.lines().count(), commits) {
             (0, 0) => Local::None,
