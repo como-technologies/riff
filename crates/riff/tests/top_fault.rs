@@ -372,7 +372,10 @@ async fn stays_open(away: Option<Mode>) {
         .iter()
         .map(|fault| riff::text::top_fault(fault, &url, &last, &last))
         .collect();
-    assert!(lines.iter().any(|l| l == line), "{line}\nis not one of {lines:#?}");
+    assert!(
+        lines.iter().any(|l| l == line),
+        "{line}\nis not one of {lines:#?}"
+    );
     assert!(!view.contains("─ d4  "), "{view}");
     assert!(
         view.lines().filter(|l| l.starts_with("riff: ")).count() == 1,
