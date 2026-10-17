@@ -5057,14 +5057,14 @@ pub fn room_for(limit: u16, runs: usize) -> Option<String> {
 /// ```
 /// assert_eq!(
 ///     riff::text::deaths_halt(4),
-///     "4 workers died in the last hour. riff starts workers again when 3 or fewer died in \
-///      the last hour."
+///     "4 workers died in the last hour. riff workers start starts workers there again when 3 \
+///      or fewer died in the last hour."
 /// );
 /// ```
 pub fn deaths_halt(deaths: usize) -> String {
     format!(
-        "{deaths} workers died in the last hour. riff starts workers again when {} or fewer \
-         died in the last hour.",
+        "{deaths} workers died in the last hour. riff workers start starts workers there again \
+         when {} or fewer died in the last hour.",
         crate::deaths::LOOP
     )
 }
@@ -6094,6 +6094,19 @@ pub fn daemon_none(socket: &Path) -> String {
 /// The daemon closed the connection before its answer.
 pub const DAEMON_GONE: &str = "The riff daemon closed the connection before its answer.";
 
+/// The daemon took the connection, and gave no answer in its time limit
+/// `limit` (01M558EY88CACNZ55FWMRT8RP7).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_silent(std::time::Duration::from_secs(5)),
+///     "The riff daemon gave no answer in 5 s."
+/// );
+/// ```
+pub fn daemon_silent(limit: std::time::Duration) -> String {
+    format!("The riff daemon gave no answer in {} s.", limit.as_secs())
+}
+
 /// `riff daemon` on a host that is not Linux.
 pub const DAEMON_LINUX_ONLY: &str = "riff daemon needs Linux: riff 3.0 runs on Linux only.";
 
@@ -7045,6 +7058,38 @@ pub fn wave_claimed(repo: &str, item: &str, session: &str) -> String {
 pub fn wave_not_claimed(repo: &str, item: &str) -> String {
     format!(
         "The wave of {repo}: the claim of {item} failed. Another session holds it, or it is held."
+    )
+}
+
+/// The riff daemon cannot start a container of the session image, for
+/// the reason `error`, so it gets no ask of the wave
+/// (01M558EYAJFZK7Y822NVWGBS9H).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_no_container("riff cannot start podman. Install it, or put it on PATH."),
+///     "The riff daemon cannot start a container of the session image: riff cannot start \
+///      podman. Install it, or put it on PATH."
+/// );
+/// ```
+pub fn wave_no_container(error: &str) -> String {
+    format!("The riff daemon cannot start a container of the session image: {error}")
+}
+
+/// riff-server refused the claim of `item` of a wave for a pause
+/// (01M558EYCXPFW8CJV3XJ7HK3NR).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_claim_paused("o/r", "issue-12"),
+///     "The wave of o/r: riff-server refused the claim of issue-12: the riff or the \
+///      repository is paused. riff ended the new session. The start does not count."
+/// );
+/// ```
+pub fn wave_claim_paused(repo: &str, item: &str) -> String {
+    format!(
+        "The wave of {repo}: riff-server refused the claim of {item}: the riff or the \
+         repository is paused. riff ended the new session. The start does not count."
     )
 }
 

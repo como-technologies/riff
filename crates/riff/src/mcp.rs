@@ -33,8 +33,10 @@
 //! lead mark can be a session whose register is not done. The tail
 //! pane, the rollout and the reap all start after the register.
 //!
-//! The `riff mcp` of the lead also starts workers by itself when the
-//! wave has free work (see [`crate::rollout`]). It ends the session of a
+//! The `riff mcp` of the lead also runs the free work of the wave by
+//! itself: it gives it to the idle workers, and asks the riff daemon to
+//! run the wave for the rest (see [`crate::rollout`]). It ends the
+//! session of a
 //! worker of its machine whose pane is gone (see [`crate::reap`]). Each
 //! 10 minutes it tidies the worktrees and the disk of its machine (see
 //! [`crate::tidy`]).

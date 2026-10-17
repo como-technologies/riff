@@ -4706,8 +4706,8 @@ riff workers floor 8
 ```
 
 `riff workers floor` with no number shows the floor and the memory
-that is available now. riff starts workers again when enough memory is
-available.
+that is available now. `riff workers start` starts workers again when
+enough memory is available.
 
 ### Start workers
 
@@ -4792,7 +4792,8 @@ pgrep -a rust-analyzer
 ```
 
 A worker that started before this release keeps its server. Stop it
-with `riff workers stop`. riff starts new workers by itself.
+with `riff workers stop`, and start new workers with
+`riff workers start`.
 
 #### The auto mode settings of a session
 
@@ -4838,7 +4839,7 @@ pgrep -af '"auto-mode-setup":"off"'
 ```
 
 A worker that started before this release shows no line. Stop it with
-`riff workers stop`. riff starts new workers by itself.
+`riff workers stop`, and start new workers with `riff workers start`.
 
 See the entries that auto mode uses in your own session:
 
@@ -4882,12 +4883,14 @@ worker in tmux: you start those with `riff workers start` (see
 flowchart TD
     T["each 10 seconds"] --> R{"the riff runs?"}
     R -- "no: paused" --> T
-    R -- yes --> D["ask the riff daemon of this machine:<br/>does a wave of the repository run?"]
+    R -- yes --> D["ask the riff daemon of this machine, at most 5 s:<br/>does a wave of the repository run?"]
     D --> W["count the free work with gh"]
     W --> O["tell each idle worker: request: claim ITEM"]
     O --> I{"free work, no idle worker,<br/>and no wave runs?"}
     I -- no --> T
-    I -- yes --> S["ask the daemon: run the wave of the repository"]
+    I -- yes --> C{"ask the daemon: have the session image<br/>(podman, and a pull when it is missing)"}
+    C -- "it cannot" --> N
+    C -- "it has it" --> S["ask the daemon: run the wave of the repository"]
     S --> N["a note to the lead"]
     N --> T
 ```
@@ -4940,9 +4943,20 @@ flowchart TD
   riff-server keep the wave and the workers in tmux from one item. A
   second machine runs its own wave (see
   [Use a second machine](development.md#use-a-second-machine)).
+- **A daemon that does not answer.** Each look waits at most 5 seconds
+  for the answer of the daemon. A daemon that gives no answer in that
+  time runs no wave. The look goes on: the idle workers still get
+  their requests.
+- **A machine that cannot run a container.** Before it asks for the
+  wave, riff asks the daemon to have the session image. podman must
+  run, and the image must be on the machine, or the daemon pulls it.
+  When the daemon cannot, riff asks for no wave. So a machine with no
+  podman runs no wave, and its daemon sends no message of a failed
+  start.
 - **Notes.** After each ask, the lead gets a note. When the daemon
-  cannot run the wave, the lead gets one note with the reason, and
-  riff asks again at its next look. A note does not wake the lead.
+  gives no answer, cannot start a container, or cannot run the wave,
+  the lead gets one note with the reason, and riff asks again at its
+  next look. A note does not wake the lead.
 - **Pause.** A pause stops the rollout within one look. A look that
   started before the pause can ask for the wave one more time. The
   wave starts nothing while the repository is paused. The resume
@@ -4950,6 +4964,28 @@ flowchart TD
 
 Your lead can also give an idle worker a free item with a request. The
 server stops idle workers.
+
+#### See why the rollout runs no wave
+
+The note to the lead gives the reason. On a machine with no podman, it
+is:
+
+```text
+thelio: the rollout cannot run the wave of como-technologies/riff on the riff daemon: The riff daemon cannot start a container of the session image: riff cannot start podman. Install it, or put it on PATH.: No such file or directory (os error 2). The rollout tries again at its next look.
+```
+
+A daemon that takes the ask and gives no answer gives the reason
+`The riff daemon gave no answer in 5 s`. On the machine of the lead,
+see whether the daemon answers, and whether podman runs:
+
+```sh
+riff daemon status
+podman info
+```
+
+Install podman, or start the daemon again with
+`riff daemon install`. The next look asks again: you run no other
+command.
 
 #### Keep an item from the rollout
 
@@ -5626,7 +5662,7 @@ riff workers
 thelio  limit 3  runs 1: room for 2 workers  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
 
 pangolin  limit 2  runs 3: 1 worker ends after its item  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 0.40  score 24.0
-Starts no worker: 4 workers died in the last hour. riff starts workers again when 3 or fewer died in the last hour.
+Starts no worker: 4 workers died in the last hour. riff workers start starts workers there again when 3 or fewer died in the last hour.
 ```
 
 ### When the server gives a workers host no reply
@@ -6017,8 +6053,8 @@ A fault of a machine can kill each new worker too, for example too
 little memory. Then each new start costs tokens and gives nothing. So
 riff counts the deaths of the workers of each machine: an exit of
 `claude` with a fault, and a pane that ends with no end call. When
-more than 3 workers of a machine died in the last hour, riff starts no
-worker there, also with `riff workers start`. Your lead gets one
+more than 3 workers of a machine died in the last hour,
+`riff workers start` starts no worker there. Your lead gets one
 message, and it wakes:
 
 ```text

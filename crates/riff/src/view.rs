@@ -835,8 +835,8 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 /// assert_eq!(
 ///     plain(riff::view::host_heading("pangolin", 3, 1, None, 4, 4)),
 ///     "pangolin  limit 3  runs 1: room for 2 workers\n\
-///      Starts no worker: 4 workers died in the last hour. riff starts workers again when 3 or \
-///      fewer died in the last hour."
+///      Starts no worker: 4 workers died in the last hour. riff workers start starts workers \
+///      there again when 3 or fewer died in the last hour."
 /// );
 /// ```
 pub fn host_heading(

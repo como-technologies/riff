@@ -1031,6 +1031,11 @@ clone of the repository:
 riff wave run
 ```
 
+First the daemon must have the session image that the repository
+pins. It pulls the image when it is not on the machine. When podman
+does not run, or the pull fails, `riff wave run` says why, and the
+daemon runs no wave.
+
 The daemon keeps the wave, also over its own restart, until you stop
 it. The rollout of your lead runs it for you: see the next how-to.
 
@@ -1056,9 +1061,12 @@ After the ask, your lead gets a note:
 thelio: the rollout asked the riff daemon to run the wave of como-technologies/riff: the daemon runs each free item and each verify in a container. See it: riff daemon status
 ```
 
-When the daemon cannot run the wave, for example when no daemon runs,
-the lead gets one note with the reason. The rollout asks again at its
-next look. To see how often the rollout looks:
+When the daemon cannot run the wave, the lead gets one note with the
+reason. For example, no daemon runs, the daemon gives no answer in 5
+seconds, or the daemon cannot start a container of the session image.
+The rollout asks again at its next look (see
+[See why the rollout runs no wave](how-it-works.md#see-why-the-rollout-runs-no-wave)).
+To see how often the rollout looks:
 
 ```sh
 riff workers interval
@@ -1179,6 +1187,11 @@ For each item, the daemon does the steps of `riff run` itself: a
 worker session, the claim, the clone and the start. After the end of
 a build, it sends the verify request for the pull request of the
 branch to your lead, and releases the item.
+
+When riff-server refuses the claim, the daemon ends the new worker
+session at once. A pause can come after the look, before the claim.
+Then the start does not count as one of the 3, and your lead gets no
+message. For each other refusal, your lead gets a message.
 
 A verify session gets a clone at the head commit of the pull request.
 It checks the work against the `Done when:` line of the issue, and
@@ -3437,14 +3450,15 @@ flowchart TD
    line and `yes, signed in as USER` on the `sign-in` line, the riff
    ID is the one of before.
 6. The whole riff is paused after the import. The owner or an admin
-   resumes it. riff then starts the workers by itself:
+   resumes it. riff then gives the free work to the idle workers, and
+   asks the riff daemon to run the wave for the rest (see
+   [riff starts the work by itself](how-it-works.md#riff-starts-the-work-by-itself)):
 
    ```sh
    riff resume --riff
    ```
 
-   When the rollout is off (`riff workers interval` shows 0), start
-   the workers with a count:
+   To run workers in tmux, start them with a count:
 
    ```sh
    riff workers start 2

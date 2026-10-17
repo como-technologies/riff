@@ -1061,8 +1061,8 @@ the free item goes to an idle worker or to the wave. You get a note
 the session, the item and the cause. The note does not wake you: do
 nothing for it. The next session of the item goes on from the pushed
 branch (see "Pick up dropped work"). When more than 3 workers of a machine die in
-one hour, riff starts no worker there, and you get one message
-`workers: N workers died in the last hour`. Tell your user.
+one hour, `riff workers start` starts no worker there, and you get one
+message `workers: N workers died in the last hour`. Tell your user.
 
 When a session of your user holds an item and is gone or does not
 answer, free the claim for it: call `release` with the item and

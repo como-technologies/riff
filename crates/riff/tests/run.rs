@@ -39,9 +39,10 @@ fn script(path: &Path, body: &str) {
 /// A fake `gh` that logs each call to `bin/gh.log`. The branch has no
 /// pull request when `bin/no-pr` is there. The issue has the label
 /// `no-verify` when `bin/no-verify` is there. `pr view` waits while
-/// `bin/pr-hold` is there. For the look of a wave, the open milestone is
-/// Wave 27, no pull request is open, and issue 12 is the open issue of
-/// Wave 27 while `bin/wave-issue` is there.
+/// `bin/pr-hold` is there, and the view of the milestone of the issue
+/// while `bin/milestone-hold` is there. For the look of a wave, the open
+/// milestone is Wave 27, no pull request is open, and issue 12 is the
+/// open issue of Wave 27 while `bin/wave-issue` is there.
 fn fake_gh(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -49,6 +50,7 @@ echo "gh $*" >> "$dir/gh.log"
 case "$*" in
   'auth token') echo GHTOKEN ;;
   'issue view 12 --json number,state,milestone')
+    while [ -f "$dir/milestone-hold" ]; do sleep 0.05; done
     echo '{"number":12,"state":"OPEN","milestone":{"title":"Wave 27"}}' ;;
   'issue view 12 --json number,labels')
     if [ -f "$dir/no-verify" ]; then echo '{"number":12,"labels":[{"name":"no-verify"}]}'
@@ -2016,6 +2018,50 @@ async fn two_waves_of_one_repository_on_two_machines_never_run_one_item_two_time
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// 01M558EYCXPFW8CJV3XJ7HK3NR: the person pauses the repository after the
+/// look of the wave, before the claim of its job. riff-server refuses
+/// the claim. The daemon ends the new worker session of the job at once:
+/// it is not in `riff who`. It starts no container, and tells the lead
+/// nothing.
+#[tokio::test]
+async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let bin = machine.bin.path();
+    std::fs::write(bin.join("wave-issue"), "").unwrap();
+    std::fs::write(bin.join("milestone-hold"), "").unwrap();
+    machine.ok(None, &["wave", "run"]).await;
+
+    // The job looked, and waits for the milestone of the issue: its
+    // step before the claim.
+    wait_for(
+        &bin.join("gh.log"),
+        "gh issue view 12 --json number,state,milestone",
+    )
+    .await;
+    machine.ok(None, &["pause"]).await;
+    std::fs::remove_file(bin.join("milestone-hold")).unwrap();
+    let repo = "como-technologies/riff";
+    wait_for(
+        &bin.join("daemon.out"),
+        &riff::text::wave_claim_paused(repo, "issue-12"),
+    )
+    .await;
+
+    let who = machine.ok(None, &["who", "--long"]).await;
+    assert!(
+        !who.contains("#issue-12"),
+        "the session of the job lives: {who}"
+    );
+    assert!(!bin.join("run.args").exists(), "a container started");
+    let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+    assert!(
+        !thread.contains("could not start issue-12"),
+        "the lead got a message: {thread}"
+    );
+    machine.ok(None, &["wave", "stop"]).await;
 }
 
 #[tokio::test]

@@ -18,14 +18,16 @@
 //!     L -- no --> T
 //!     L -- yes --> R{"the riff and the repository run?"}
 //!     R -- "no: paused" --> T
-//!     R -- yes --> D["the daemon of this machine:<br/>does a wave of the repository run?"]
+//!     R -- yes --> D["the daemon of this machine, at most 5 s:<br/>does a wave of the repository run?"]
 //!     D --> P{"an idle worker that joined,<br/>or no wave runs?"}
 //!     P -- no --> T
 //!     P -- yes --> W["free work (gh): a fix item of a broken main first,<br/>pull requests that wait for a verify,<br/>free items of the current wave, no held item"]
 //!     W --> O["each idle worker with no open request:<br/>tell it request: claim ITEM"]
 //!     O --> I{"free work, no idle worker,<br/>and no wave runs?<br/>(a worker that refused does not count)"}
 //!     I -- no --> T
-//!     I -- yes --> S["ask the daemon: run the wave of the repository"]
+//!     I -- yes --> C["ask the daemon: have the session image<br/>(podman, and a pull when it is missing)"]
+//!     C -- "it cannot" --> N
+//!     C -- "it has it" --> S["ask the daemon: run the wave of the repository"]
 //!     S --> N["a note to the lead: the daemon runs the wave,<br/>or why it does not"]
 //!     N --> T
 //! ```
@@ -103,13 +105,24 @@
 //! - **The wave of the daemon** ([`View::wave`], [`Env::run_wave`]). The
 //!   daemon of the machine of the lead tells the waves that it runs
 //!   ([`crate::wave::runs`]). A daemon that does not answer runs no
-//!   wave. While a wave of the repository runs there, the rollout asks
-//!   nothing, and with no idle worker that joined, it makes no call of
-//!   `gh`. The claims on riff-server keep the wave and the workers in
-//!   tmux from one item (01M53NGWTNC3655ZZJ76M1R5R7). The limit of the
-//!   containers is the limit of the daemon (01M4ZV3B6HAFTSC2K63FMC5FYA).
-//!   A second machine runs its own wave with `riff wave run`
-//!   (01M53NGVH8A19QS3CQ79ENVVXT).
+//!   wave. The look waits at most [`crate::daemon::STATUS_WAIT`] for
+//!   that answer ([`wave_state`], 01M558EY88CACNZ55FWMRT8RP7): a daemon
+//!   that takes the connection and never answers stops no look, and the
+//!   idle workers still get their requests. While a wave of the
+//!   repository runs there, the rollout asks nothing, and with no idle
+//!   worker that joined, it makes no call of `gh`. The claims on
+//!   riff-server keep the wave and the workers in tmux from one item
+//!   (01M53NGWTNC3655ZZJ76M1R5R7). The limit of the containers is the
+//!   limit of the daemon (01M4ZV3B6HAFTSC2K63FMC5FYA). A second machine
+//!   runs its own wave with `riff wave run` (01M53NGVH8A19QS3CQ79ENVVXT).
+//! - **A machine that cannot run a container**
+//!   (01M558EYAJFZK7Y822NVWGBS9H). Before it asks for the wave, the
+//!   rollout asks the daemon to have the session image: podman runs, and
+//!   the image is on the machine, or the daemon pulls it
+//!   ([`crate::wave::ask`]). When the daemon cannot, the rollout makes no
+//!   ask of the wave, and the lead gets the note of a failed ask. So a
+//!   machine with no podman runs no wave, and no job of it sends a
+//!   message.
 //! - **Notes** (01M5515CA4CZ6KV4ZD6Y0744Z7). After the ask, the lead
 //!   gets a note ([`text::rollout_wave`]). When the ask fails, the lead
 //!   gets one note with the reason ([`text::rollout_no_wave`]), and the
@@ -288,6 +301,19 @@ pub enum WaveState {
     Runs,
     /// No daemon answers, for this reason.
     NoDaemon(String),
+}
+
+/// The wave of the repository `repo` (`OWNER/REPO`) on the riff daemon in
+/// the folder `dir`. The look waits at most `limit` for the status of the
+/// daemon ([`crate::daemon::STATUS_WAIT`], 01M558EY88CACNZ55FWMRT8RP7). A
+/// daemon that gives no answer in that time runs no wave: the look goes
+/// on with no daemon facts.
+pub async fn wave_state(dir: &Path, repo: &str, limit: Duration) -> WaveState {
+    match crate::daemon::status_within(dir, limit).await {
+        Ok(status) if crate::wave::runs(&status, repo) => WaveState::Runs,
+        Ok(_) => WaveState::None,
+        Err(e) => WaveState::NoDaemon(format!("{e:#}")),
+    }
 }
 
 /// The sessions that held the work claim `issue-N`, by the issue N
@@ -2039,11 +2065,7 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
         let mut authors = holders(&sessions, &me);
         let repo = me.place().repo_text();
         let wave = match crate::daemon::dir() {
-            Ok(dir) => match crate::daemon::status(&dir).await {
-                Ok(status) if crate::wave::runs(&status, &repo) => WaveState::Runs,
-                Ok(_) => WaveState::None,
-                Err(e) => WaveState::NoDaemon(format!("{e:#}")),
-            },
+            Ok(dir) => wave_state(&dir, &repo, crate::daemon::STATUS_WAIT).await,
             Err(e) => WaveState::NoDaemon(format!("{e:#}")),
         };
         // The free work matters to an idle worker, to the ask of the
@@ -2352,6 +2374,29 @@ mod tests {
         assert_eq!(fake.asks(begin), [10]);
         assert_eq!(fake.told(), [asked()]);
         assert!(fake.with(|w| w.places.iter().all(|p| p.workers == 0)));
+    }
+
+    /// 01M558EY88CACNZ55FWMRT8RP7: a daemon that takes the connection and
+    /// never answers runs no wave. The look waits only the time limit
+    /// for its answer.
+    #[tokio::test(start_paused = true)]
+    async fn a_daemon_that_never_answers_runs_no_wave_after_the_time_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = tokio::net::UnixListener::bind(crate::daemon::socket(dir.path())).unwrap();
+        // It takes each connection, keeps it open, and says nothing.
+        let silent = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((conn, _)) = listener.accept().await {
+                held.push(conn);
+            }
+        });
+        let limit = crate::daemon::STATUS_WAIT;
+        let begin = tokio::time::Instant::now();
+        let state = wave_state(dir.path(), "o/r", limit).await;
+        assert_eq!(state, WaveState::NoDaemon(text::daemon_silent(limit)));
+        assert!(begin.elapsed() >= limit, "{:?}", begin.elapsed());
+        assert!(begin.elapsed() < limit * 2, "{:?}", begin.elapsed());
+        silent.abort();
     }
 
     #[tokio::test(start_paused = true)]
