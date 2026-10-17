@@ -375,7 +375,7 @@ async fn many_token_calls_in_each_second_give_at_most_one_write_each_second() {
 /// A swap for a session token does not wait for the write of the token
 /// store, and a store that fails does not refuse it
 /// (01M53T8XH45WSVKS9FV3VXF2X8). A refresh still writes the store again
-/// first, and gets 503 (01M3TFG527M04TA7ESM970X3B8).
+/// first, and gets 503 (01M53T8XH45WSVKS9FV3VXF2X8).
 #[tokio::test]
 async fn a_swap_goes_on_while_the_token_store_is_not_written() {
     let store = Failing::default();
@@ -484,7 +484,7 @@ async fn signed_in_on(store: &Failing) -> (riff_server::Service, String, Key, To
 }
 
 /// A refresh gets its reply before the write of the token store
-/// (01M3TFG527M04TA7ESM970X3B8). The server then stops with no write: a
+/// (01M53T8XH45WSVKS9FV3VXF2X8). The server then stops with no write: a
 /// crash. The saved store is one generation behind, and the sign-in
 /// stays (01M3TFG4WE7CZQ4TCJE2NTC52E).
 #[tokio::test]
@@ -552,7 +552,7 @@ async fn after_a_restart_the_saved_generation_is_good() {
 
 /// While the last write of the token store failed, a refresh writes it
 /// again first, and gets 503 when that write fails too
-/// (01M3TFG527M04TA7ESM970X3B8). A 503 loses no generation: the same
+/// (01M53T8XH45WSVKS9FV3VXF2X8). A 503 loses no generation: the same
 /// refresh token works after the store is back.
 #[tokio::test]
 async fn a_refresh_gets_503_while_the_token_store_is_not_written() {

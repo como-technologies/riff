@@ -1022,9 +1022,14 @@ in the keyring.
 
 A session token has no refresh token. Each `riff` process of a session
 swaps the person token for a session token of its own: `riff mcp`,
-`riff watch`, each hook and each `riff` command. A new session token
-ends no other token. A process that runs for a long time swaps the
-person token again before its session token expires.
+`riff watch`, each hook, the status line and each `riff` command. A
+new session token ends no other token. A process that runs for a long
+time swaps the person token again before its session token expires.
+
+`riff-server` keeps each sign-in, and the hash of each live token, in
+the object `signins.json`. A swap is a change of it too.
+[A restart with a bucket](#a-restart-with-a-bucket) says when the
+server writes the object, and which reply waits for the write.
 
 ```mermaid
 sequenceDiagram
@@ -3652,10 +3657,15 @@ place of your `statusLine`:
 }
 ```
 
-The status line changes after each answer of the session. Each time,
-it asks riff-server with the call `GET /v1/me`. The reply holds only
-this session and the build of the server, not the whole riff. The call
-changes nothing on the server.
+Claude Code runs the status line after each change of the
+conversation. The status line asks riff-server with the call
+`GET /v1/me`. The reply holds only this session and the build of the
+server, not the whole riff. The call changes nothing on the server.
+The status line keeps a good reply for 10 seconds, and in that time it
+asks riff-server nothing. So a claim or a lead can show up to 10
+seconds late. Each call costs a swap for a session token (see
+[Sign-in](#sign-in)), so a busy session makes at most one swap each 10
+seconds for its status line.
 
 ```mermaid
 sequenceDiagram
@@ -3663,9 +3673,14 @@ sequenceDiagram
     participant S as riff statusline
     participant R as riff-server
     C->>S: the session ID on stdin
-    S->>R: GET /v1/me
-    R-->>S: this session, the build
-    S-->>C: riff 2a880834 lead issue-82
+    alt a reply less than 10 s old is kept
+        S-->>C: the kept line
+    else no reply is kept
+        S->>R: GET /v1/me
+        R-->>S: this session, the build
+        Note over S: keeps the reply for 10 s
+        S-->>C: riff 2a880834 lead issue-82
+    end
 ```
 
 Then find the session of `riff who` by its short ID:
@@ -3890,11 +3905,25 @@ session, and each direct thread whose two sessions are gone.
 
 A sign-in stays valid after a restart with a bucket. The server saves
 the sign-ins and their chains in the object `signins.json`, with only a
-hash of each refresh token. It writes the object at most one time each
-second. The object also keeps a hash of each live access token. So
-after a restart or a deploy, `riff` uses its access token as before,
-and does not refresh. Only a token from the last second before a crash
-is lost: then `riff` refreshes one time by itself.
+hash of each refresh token. The object also keeps a hash of each live
+access token. So after a restart or a deploy, `riff` uses its access
+token as before, and does not refresh.
+
+The server writes the object when it changed:
+
+- at most one time each second. The second counts from the end of the
+  last write, so Cloud Storage never gets two writes of the object in
+  one second, also when one write is slow;
+- when Cloud Storage refuses a write for its rate limit (429), the
+  server waits two times longer before the next write, up to 32
+  seconds. A good write sets the wait back to one second;
+- on SIGTERM, after the last record;
+- at a deploy, when the old instance reads the lease of the new one.
+  It writes the object one last time, before its last checkpoint. So a
+  token from the last second of the old instance works on the new one.
+
+Only a token from the last second before a crash is lost: then `riff`
+refreshes one time by itself.
 
 The people are not in that object. Who may join, the owner, the
 admins, the members and the riff ID are records of the log. So they
@@ -3927,7 +3956,9 @@ refresh gets its reply before the write. So after a crash,
 the object can be one generation behind. The first refresh of each
 chain after a start takes the saved generation, or the next one, as
 good. While a write of the object fails, a refresh gets 503, and `riff`
-tries again.
+tries again. A swap for a session token never gets 503 for a write
+that failed: after a crash, a lost session token only costs `riff` one
+new swap.
 
 ```mermaid
 sequenceDiagram
@@ -3970,6 +4001,7 @@ sequenceDiagram
         S-->>O: new ID
         O-->>W: close the stream
         Note over O: closes its port, saves no record
+        O->>S: write signins.json, when it changed
         O->>S: write the last checkpoint
         Note over O: exits
         N->>S: list the checkpoints again
@@ -4001,8 +4033,9 @@ At an instance change, `riff` sees this:
   exits at once when Cloud Run stops it. So the wait of the new
   instance does not start again: each call gets its reply in less than
   20 seconds.
-- Your access token still works on the new instance: `riff` does not
-  refresh, and does not sign in again.
+- Your access token still works on the new instance, also a token
+  from the last second of the old instance: `riff` gets no 401, does
+  not refresh, and does not sign in again.
 
 The claims of each session come back with the log. Each session has 5
 minutes from the load to call again. After that, its claims are free.

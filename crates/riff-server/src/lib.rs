@@ -147,7 +147,7 @@
 //!   change of the people get their reply after the write of their
 //!   records in the log.
 //! - A refresh and a new session token get their reply before the write
-//!   (01M3TFG527M04TA7ESM970X3B8). The object keeps the hash of each
+//!   (01M53T8XH45WSVKS9FV3VXF2X8). The object keeps the hash of each
 //!   live access token, so a new session token is a change of it too
 //!   (01M52JYGSNTFPQ0ZP50AD2BG89). After a crash, the object can be one
 //!   write behind: a token of that last write is not known, and its
@@ -158,8 +158,8 @@
 //!   while the last good write is less than one window old, and gets
 //!   503 after that (01M3ZZQCEKEYK9CE8MGPM80Z2P). A swap for a session
 //!   token never waits for a write, and a failed or busy store does not
-//!   refuse it (01M53T8XH45WSVKS9FV3VXF2X8): a lost session token costs
-//!   its client one 401 and a new swap.
+//!   refuse it: a lost session token costs its client one 401 and a new
+//!   swap.
 //! - At a deploy, the old instance writes the token store one last time
 //!   when it reads the new lease, before the checkpoint of the hand-over
 //!   (01M53T8XCTVEXGJVF9GSYVAT7Y). The new instance loads the sign-ins
@@ -494,7 +494,7 @@ struct Saved {
 }
 
 /// How the last writes of the token store went, for the window of the
-/// next write and for a refresh (01M3TFG527M04TA7ESM970X3B8,
+/// next write and for a refresh (01M53T8XH45WSVKS9FV3VXF2X8,
 /// 01M3ZZQ9TRG9385GRQGM79RCXX).
 #[derive(Clone, Copy, Debug)]
 struct TokenWrites {
@@ -768,7 +768,7 @@ impl Server {
     }
 
     /// Lets a refresh go on, which gets its reply before the write of
-    /// the token store (01M3TFG527M04TA7ESM970X3B8). While the last write
+    /// the token store (01M53T8XH45WSVKS9FV3VXF2X8). While the last write
     /// failed, it writes the store again first, and refuses when that
     /// write fails too. So the saved store does not fall more and more
     /// generations behind.
@@ -2756,7 +2756,7 @@ const UNAVAILABLE: &str = "temporarily_unavailable";
 /// The OAuth 2.1 token endpoint: swaps a refresh token for a new pair.
 /// A sign-in gets its reply after the write of the token store (R128).
 /// A refresh and a session token do not wait for it
-/// (01M3TFG527M04TA7ESM970X3B8).
+/// (01M53T8XH45WSVKS9FV3VXF2X8).
 async fn token(
     AxumState(s): AxumState<Shared>,
     headers: HeaderMap,
