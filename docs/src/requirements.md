@@ -1838,6 +1838,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   is retired already, so a second run changes nothing. It prints one
   line for each release of the line and the count that it retired. It
   fails, and changes nothing, when no release has a tag of the line.
+- **01M553AWMXYAG7CJGW7M30XDZ8** `riff retire` refuses, and calls no
+  `gh`, in a worker (`RIFF_WORKER=1`) and in an agent session that is
+  not the lead of its user. It uses the check of `riff workers start`
+  (01M3JPQT79FE47518Z8DFFQYYG). A person in a plain terminal and the
+  lead can run it.
 - **01M3MRMAY3P1K151RGAP9K6GSH** The deploy takes a release tag as its
   input. It checks out that tag and deploys only it. It refuses an
   input that is not a tag `vX.Y.Z` of the version of the crates.

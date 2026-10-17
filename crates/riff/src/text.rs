@@ -2008,20 +2008,44 @@ fn workers_count(n: usize) -> String {
 pub const NO_WORKER_LIMIT: &str = "riff: the limit of workers on this machine is 0, so riff \
 workers start started nothing. Your user sets the limit, for example: riff workers limit 2";
 
-/// The refusal of `riff workers start` in a worker
-/// (01M3JPQT79FE47518Z8DFFQYYG).
-pub const WORKER_STARTS_NO_WORKER: &str =
-    "riff: a worker never starts workers. riff workers start started nothing.";
+/// The refusals of a command that only a person in a plain terminal or
+/// the lead of its user runs (01M3JPQT79FE47518Z8DFFQYYG,
+/// 01M553AWMXYAG7CJGW7M30XDZ8).
+pub struct LeadOnly {
+    /// In a worker.
+    pub worker: &'static str,
+    /// In an agent session that is not the lead.
+    pub not_the_lead: &'static str,
+    /// In an agent session when riff cannot ask riff-server for the lead.
+    pub lead_unknown: &'static str,
+}
 
-/// The refusal of `riff workers start` in an agent session that is not
-/// the lead (01M3JPQT79FE47518Z8DFFQYYG).
-pub const NOT_THE_LEAD_STARTS_NO_WORKER: &str = "riff: only the lead of your user starts \
-workers. This session is not the lead, so riff workers start started nothing.";
+/// The refusals of `riff workers start` (01M3JPQT79FE47518Z8DFFQYYG).
+pub const START_WORKERS: LeadOnly = LeadOnly {
+    worker: "riff: a worker never starts workers. riff workers start started nothing.",
+    not_the_lead: "riff: only the lead of your user starts workers. This session is not the \
+lead, so riff workers start started nothing.",
+    lead_unknown: "riff: cannot check that this session is the lead, so riff workers start \
+started nothing. Check the riff with riff whoami.",
+};
 
-/// The refusal of `riff workers start` in an agent session when riff
-/// cannot ask riff-server for the lead (01M3JPQT79FE47518Z8DFFQYYG).
-pub const LEAD_UNKNOWN_STARTS_NO_WORKER: &str = "riff: cannot check that this session is the \
-lead, so riff workers start started nothing. Check the riff with riff whoami.";
+/// The refusals of `riff retire` (01M553AWMXYAG7CJGW7M30XDZ8).
+///
+/// ```
+/// use riff::text::RETIRE;
+///
+/// for refusal in [RETIRE.worker, RETIRE.not_the_lead, RETIRE.lead_unknown] {
+///     assert!(refusal.starts_with("riff: "), "{refusal}");
+///     assert!(refusal.contains("riff retire changed nothing."), "{refusal}");
+/// }
+/// ```
+pub const RETIRE: LeadOnly = LeadOnly {
+    worker: "riff: a worker never retires a release line. riff retire changed nothing.",
+    not_the_lead: "riff: only the lead of your user retires a release line. This session is \
+not the lead, so riff retire changed nothing.",
+    lead_unknown: "riff: cannot check that this session is the lead, so riff retire changed \
+nothing. Check the riff with riff whoami.",
+};
 
 /// The refusal of `riff workers start` when `run` workers fill the
 /// `limit` (01M3JPQT57PJCRBQYJNDVESS04).

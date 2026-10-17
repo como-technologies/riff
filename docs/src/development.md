@@ -3442,6 +3442,9 @@ that GitHub marks Latest, and each draft. When the Latest release is of
 the line, make a release of another line the Latest first. Then run the
 command again. A second run changes nothing.
 
+Run it in a terminal, or let the lead run it. A worker and an agent
+session that is not the lead cannot: riff refuses, and changes nothing.
+
 Check that the release of the line that the shared riff runs is the
 Latest, and that each release of the retired line is a prerelease:
 
