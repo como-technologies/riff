@@ -3,8 +3,9 @@
 This page is the design of the phone app (#951): the riff chat on a
 phone. The build items come after Mike signs off the design. Until
 then, `riff --help` does not show `riff phone`, and riff-server serves
-no app. The [requirements of the phone app](requirements.md#the-phone-app)
-hold each decision.
+no app. The
+[requirements of the phone app](requirements.md#the-phone-app) hold
+each decision.
 
 ## What the app does first
 
@@ -63,8 +64,8 @@ person, as `riff chat` is. It is not a session.
 The first app is a web app that riff-server serves at `/app`. It works
 in Safari on iOS 16.4 or later from the Home Screen, and in Chrome on
 Android. It comes from the same origin as the API. So it needs no
-CORS, and it sends the build of its own riff-server: riff-server
-refuses a client of another release line. A native app with a shared
+CORS, and it always has the build of its own riff-server: riff-server
+refuses a client of an old release line. A native app with a shared
 Rust core can come later. #958 can need it: see
 [What the phone needs from #958](#what-the-phone-needs-from-958).
 
@@ -145,7 +146,7 @@ sequenceDiagram
     participant L as the lead of mike
     participant X as the push service
     participant W as the app of mike
-    B->>S: "@mike can I take #14?", to user=mike, lead=true
+    B->>S: @mike can I take #14? (to user=mike, lead=true)
     S-->>L: wake
     S->>X: push: chat, line 812 (encrypted)
     X-->>W: push
