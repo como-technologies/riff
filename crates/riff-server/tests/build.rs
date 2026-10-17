@@ -1,8 +1,9 @@
 //! `riff-server` refuses a `riff` of a version that it cannot talk to,
-//! takes a `riff` of its line or of the line before, and names its own
-//! build in each reply (01M3JEE7P46GWXR1BD4Q1TTSGN,
-//! 01M3MX1E65XGWDZ062PQ9YXQ5T, 01M3MX1DYY6AVDW946NR0B9T2C,
-//! 01M3MX1E1EY1M7JGNCN6FCEVQK).
+//! takes a `riff` of its line, of the line before or of the other line
+//! of the bridge, and names its own build in each reply
+//! (01M3JEE7P46GWXR1BD4Q1TTSGN, 01M3MX1E65XGWDZ062PQ9YXQ5T,
+//! 01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK,
+//! 01M55FCZNNZGKM4EKAXZQFTDWR).
 
 use crate::common;
 
@@ -70,13 +71,31 @@ async fn a_riff_of_this_line_or_the_line_before_passes_the_check() {
     }
 }
 
+/// The bridge: riff-server of the line 1 takes a `riff` of the line 3,
+/// and riff-server of the line 3 takes a `riff` of the line 1
+/// (01M55FCZNNZGKM4EKAXZQFTDWR). This server is on one of the two lines.
+#[tokio::test]
+async fn a_riff_of_the_other_line_of_the_bridge_passes_the_check() {
+    let (_service, url) = common::start(false, &[]).await;
+    let others = match this().major {
+        1 => ["3.0.0", "3.2.1"],
+        3 => ["1.8.2", "1.0.0"],
+        major => panic!("riff-server {major}.x is on no line of the bridge"),
+    };
+    for version in others {
+        for path in CALLS {
+            let (status, theirs, body) = call(&url, path, Some(&at(version.parse().unwrap()))).await;
+            assert_ne!(status, 409, "{version} {path}: {body}");
+            assert_eq!(theirs, VERSION, "{path}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn an_older_riff_is_refused_and_told_to_update_riff() {
     let (_service, url) = common::start(false, &[]).await;
-    let old = at(this()
-        .line_before()
-        .and_then(Semver::line_before)
-        .unwrap_or_else(|| "0.8.0".parse().unwrap()));
+    // No line of riff-server from the line 1 takes a riff of 0.x.
+    let old = at("0.8.0".parse().unwrap());
     for path in CALLS {
         let (status, theirs, body) = call(&url, path, Some(&old)).await;
         assert_eq!(status, 409, "{path}");

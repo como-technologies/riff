@@ -2892,8 +2892,9 @@ fn closed(mut reply: Response, whole: bool) -> Response {
 /// Refuses a call from a `riff` of a version that this server cannot
 /// talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T), with
 /// the line `denied` and the code `old_build` (01M3X4Z64ZNRD0G0F4JV1M64FN). A `riff`
-/// of the line of this server, or of the line before, goes on
-/// (01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK). The OAuth
+/// of the line of this server, of the line before, or of the other line
+/// of the bridge, goes on (01M3MX1DYY6AVDW946NR0B9T2C,
+/// 01M3MX1E1EY1M7JGNCN6FCEVQK, 01M55FCZNNZGKM4EKAXZQFTDWR). The OAuth
 /// metadata, `/v1/token` and `/v1/sign-in` stay open to each client
 /// (01M3MX4V43SF2XFCZWANHD19WV).
 async fn check_build(AxumState(s): AxumState<Shared>, request: Request, next: Next) -> Response {
