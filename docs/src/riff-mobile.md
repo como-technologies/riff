@@ -2,9 +2,9 @@
 
 This page is the design of the phone app (#951): the riff chat on an
 Android phone. It is one child design of
-[the UIs of riff](riff-uis.md) (#982). The build items come after Mike signs off the design. Until
-then, `riff --help` does not show `riff device`, and no release has the
-app. The
+[the UIs of riff](riff-uis.md) (#982). The build items come after
+Mike signs off the design. Until then, `riff --help` does not show
+`riff device`, and no release has the app. The
 [requirements of the phone app](requirements.md#the-phone-app) hold
 each decision.
 
