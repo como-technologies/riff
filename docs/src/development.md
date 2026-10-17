@@ -2239,17 +2239,21 @@ calls:
 flowchart LR
     P[a riff process] -->|first call: one session| K[(OS keyring)]
     P -->|later calls: the kept value| P
-    S[riff statusline with a kept answer, a hook with no call to riff-server] -.->|no call| K
-    C[one clean of the worktrees] -->|gh auth token: one time| G[gh]
+    M[riff mcp] -->|keeps the reply| L[the status line]
+    L -.->|no call| K
+    C[riff top, a clean of the worktrees] -->|gh auth token: one time| G[gh]
     G --> K
-    C -->|GH_TOKEN| V[each gh call of the clean]
+    C -->|GH_TOKEN| V[each gh call]
 ```
 
 - A process opens the keyring at most one time, and reads each secret
   at most one time. Only a refresh of the sign-in reads it again.
-- `riff statusline` with a kept answer, and each hook that does not
-  talk to riff-server, make no call.
-- The `gh` calls of one clean of the worktrees share one token.
+- The `riff mcp` of a session keeps the reply for its status line. So
+  `riff statusline` makes no call while `riff mcp` runs. A hook that
+  does not talk to riff-server makes no call.
+- The `gh` calls of one clean of the worktrees share one token. So do
+  the `gh` calls of `riff top`, and of the rollout and the look of the
+  lead: they read it again each 10 minutes.
 
 To see the calls of one `riff` command, give it a file in
 `RIFF_KEYRING_LOG`. Each line has the process ID and the call, for

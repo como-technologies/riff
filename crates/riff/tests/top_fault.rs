@@ -414,10 +414,13 @@ async fn top_stays_open_when_the_server_gives_no_reply() {
 
 /// A `gh` for `PATH` that gives one open issue of Wave 3 at its first
 /// call, and fails at each later call. It writes the number of its
-/// calls to the file `gh.calls` next to it.
+/// calls to the file `gh.calls` next to it. `gh auth token` gives a
+/// token, and does not count: it is no read of the forge
+/// (01M54510SFK1Z9VPFYBYYSV10F).
 fn gh_that_fails_after_one_call(bin: &Path) {
     let gh = bin.join("gh");
     let script = r#"#!/bin/sh
+[ "$1 $2" = "auth token" ] && echo gho_test && exit 0
 n=0
 [ -f "$0.calls" ] && read -r n < "$0.calls"
 echo $((n + 1)) > "$0.calls"
