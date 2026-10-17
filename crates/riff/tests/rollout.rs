@@ -1,8 +1,11 @@
-//! riff starts workers by itself when the wave has free work
-//! (01M3Q5QE01DB0FJQJWFKR450KQ to 01M3Q5QEE4MQNCRKVJK3D54G9Z). The lead
-//! runs `riff mcp` with a fake `tmux` and a fake `gh` on `PATH`, and its
-//! own riff home. The unit tests of `riff::rollout` test the rate, the
-//! limit and the placement with a fake clock.
+//! The rollout of the lead runs the free work by itself: it gives free
+//! work to the idle workers in tmux, and asks the riff daemon to run the
+//! wave of the repository for the rest. It starts no worker in tmux
+//! (01M53NGVE839TRH7XB7CDPQNZE, 01M5515CA4CZ6KV4ZD6Y0744Z7). The lead
+//! runs `riff mcp` with a fake `tmux` and a fake `gh` on `PATH`, its own
+//! riff home, and a fake riff daemon ([`FakeDaemon`]) when the test needs
+//! one. The unit tests of `riff::rollout` test the rate and the notes
+//! with a fake clock.
 //!
 //! The lead gets a message for each change of a worker setting
 //! (01M3X30KHKB6W11C3NBAW7KCGW to 01M3X30RA3X08JBJ2JBVCCNEH3).
@@ -16,6 +19,7 @@
 use isolated::Isolated;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use riff::api::{Api, PauseScope};
@@ -83,6 +87,128 @@ const WAIT: Duration = Duration::from_secs(60);
 /// workers that does not change for this time is the result of each
 /// look that ran.
 const QUIET: Duration = Duration::from_secs(4);
+
+/// A fake riff daemon in the riff home of a lead. It answers `status`
+/// with the waves that it runs, and takes `wave`: it logs the ask, and
+/// the wave of its repository runs. Each other ask fails.
+struct FakeDaemon {
+    /// The repository of each ask of `wave`, in order.
+    asks: Arc<Mutex<Vec<String>>>,
+    /// The repositories of the waves that run.
+    waves: Arc<Mutex<Vec<String>>>,
+    /// The asks of `status`: one at each look of a running riff.
+    looks: Arc<Mutex<usize>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for FakeDaemon {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl FakeDaemon {
+    /// The fake daemon of the riff home `home`, with the waves `waves`.
+    async fn start(home: &Path, waves: &[&str]) -> FakeDaemon {
+        let dir = riff::daemon::dir_in(home);
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = tokio::net::UnixListener::bind(riff::daemon::socket(&dir)).unwrap();
+        let asks = Arc::new(Mutex::new(Vec::new()));
+        let shown = Arc::new(Mutex::new(waves.iter().map(|w| w.to_string()).collect()));
+        let looks = Arc::new(Mutex::new(0));
+        let (a, w, l) = (asks.clone(), shown.clone(), looks.clone());
+        let task = tokio::spawn(async move {
+            loop {
+                let Ok((conn, _)) = listener.accept().await else {
+                    return;
+                };
+                let (a, w, l) = (a.clone(), w.clone(), l.clone());
+                tokio::spawn(async move { FakeDaemon::answer(conn, &a, &w, &l).await });
+            }
+        });
+        FakeDaemon {
+            asks,
+            waves: shown,
+            looks,
+            task,
+        }
+    }
+
+    /// Answers the one ask of `conn`.
+    async fn answer(
+        conn: tokio::net::UnixStream,
+        asks: &Mutex<Vec<String>>,
+        waves: &Mutex<Vec<String>>,
+        looks: &Mutex<usize>,
+    ) {
+        use riff::daemon::{Ask, Hello, Say};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let (read, mut write) = conn.into_split();
+        let mut lines = BufReader::new(read).lines();
+        let Ok(Some(line)) = lines.next_line().await else {
+            return;
+        };
+        let hello: Hello = serde_json::from_str(&line).unwrap();
+        let say = match hello.ask {
+            Ask::Status => {
+                *looks.lock().unwrap() += 1;
+                let shown: Vec<serde_json::Value> = waves
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|repo| serde_json::json!({"repo": repo, "word": "no work"}))
+                    .collect();
+                let status = serde_json::json!({
+                    "pid": 1, "build": "test", "since_ms": 0, "dir": "/d",
+                    "sessions": [], "waves": shown,
+                });
+                Say::Status(Box::new(serde_json::from_value(status).unwrap()))
+            }
+            Ask::Wave { wave } => {
+                asks.lock().unwrap().push(wave.repo.clone());
+                waves.lock().unwrap().push(wave.repo);
+                Say::Done
+            }
+            _ => Say::Failed {
+                error: "the fake daemon takes no other ask".into(),
+            },
+        };
+        let mut line = serde_json::to_string(&say).unwrap();
+        line.push('\n');
+        let _ = write.write_all(line.as_bytes()).await;
+    }
+
+    /// The repository of each ask of the wave.
+    fn asks(&self) -> Vec<String> {
+        self.asks.lock().unwrap().clone()
+    }
+
+    /// The wave of each repository stops, as with `riff wave stop`.
+    fn stop(&self) {
+        self.waves.lock().unwrap().clear();
+    }
+
+    /// Waits until the rollout made `n` asks of the wave.
+    async fn until_asks(&self, n: usize) {
+        let start = Instant::now();
+        while self.asks().len() < n {
+            assert!(start.elapsed() < WAIT, "timed out: {n} asks of the wave");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Waits until two more looks of a running riff asked the daemon
+    /// for its status after this call: the second one is a full look
+    /// that started after the call.
+    async fn looked(&self) {
+        let start = Instant::now();
+        let before = *self.looks.lock().unwrap();
+        while *self.looks.lock().unwrap() < before + 2 {
+            assert!(start.elapsed() < WAIT, "timed out: no look of the rollout");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+}
 
 struct Lead {
     api: Api,
@@ -154,10 +280,25 @@ impl Lead {
         (pane.to_owned(), worker)
     }
 
+    /// A person starts a worker in tmux: the pane `%N` of the session
+    /// `wN`, for the next N. The rollout starts none
+    /// (01M53NGVE839TRH7XB7CDPQNZE). Gives N.
+    fn add_worker(&self) -> usize {
+        let n = self.workers() + 1;
+        let path = self.fake.path().join("workers");
+        let mut workers = std::fs::read_to_string(&path).unwrap_or_default();
+        workers.push_str(&format!("%{n} w{n}\n"));
+        std::fs::write(path, workers).unwrap();
+        n
+    }
+
     /// The worker `n` (from 1) of the fake tmux joins the riff and
-    /// claims `item`, as a real worker does.
+    /// claims `item`, as a real worker does. A person starts it when it
+    /// does not run yet.
     async fn claim(&self, n: usize, item: &str) {
-        self.until_workers(n).await;
+        while self.workers() < n {
+            self.add_worker();
+        }
         let (_, worker) = self.worker(n);
         self.api.register_as(&worker, true).await.unwrap();
         let thread = self.me.default_thread().unwrap();
@@ -182,21 +323,15 @@ impl Lead {
     }
 
     /// The worker `n` (from 1) of the fake tmux joins the riff and
-    /// claims nothing. A watch of it keeps it live.
+    /// claims nothing. A person starts it when it does not run yet. A
+    /// watch of it keeps it live.
     async fn join_idle(&self, n: usize) -> SessionUri {
-        self.until_workers(n).await;
+        while self.workers() < n {
+            self.add_worker();
+        }
         let (_, worker) = self.worker(n);
         self.api.register_as(&worker, true).await.unwrap();
         worker
-    }
-
-    /// Waits until `n` workers run.
-    async fn until_workers(&self, n: usize) {
-        let start = Instant::now();
-        while self.workers() < n {
-            assert!(start.elapsed() < WAIT, "timed out: {n} workers");
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
     }
 
     /// The looks of the rollout that got to `gh`: a look of a running
@@ -291,14 +426,22 @@ fn script(dir: &Path, name: &str, text: &str) {
     isolated::write_program(&path, text);
 }
 
-/// A repository with a commit and an origin on GitHub.
+/// The image that `riff.toml` of the repository pins.
+const PINNED: &str = "ghcr.io/o/riff-session@sha256:\
+                      0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+/// A repository `o/r` with a commit that pins the session image, and an
+/// origin on disk: OWNER/REPO from its path, as on GitHub. So the ask of
+/// the wave reads the merged pin with no network.
 fn repository(root: &Path) -> PathBuf {
+    let bare = root.join("o/r.git");
+    std::fs::create_dir_all(&bare).unwrap();
     let main = root.join("riff");
     std::fs::create_dir(&main).unwrap();
-    let git = |args: &[&str]| {
+    let git = |dir: &Path, args: &[&str]| {
         let out = Command::new("git")
             .arg("-C")
-            .arg(&main)
+            .arg(dir)
             .args(["-c", "user.name=t", "-c", "user.email=t@t"])
             .args(["-c", "commit.gpgsign=false"])
             .args(args)
@@ -306,45 +449,26 @@ fn repository(root: &Path) -> PathBuf {
             .unwrap();
         assert!(out.status.success(), "git {args:?}: {out:?}");
     };
-    git(&["init", "-q"]);
-    git(&["commit", "-q", "--allow-empty", "-m", "x"]);
-    git(&["remote", "add", "origin", "https://github.com/o/r.git"]);
+    git(&bare, &["init", "-q", "--bare", "-b", "main"]);
+    git(&main, &["init", "-q", "-b", "main"]);
+    std::fs::write(
+        main.join("riff.toml"),
+        format!("[session]\nimage = \"{PINNED}\"\n"),
+    )
+    .unwrap();
+    git(&main, &["add", "riff.toml"]);
+    git(&main, &["commit", "-q", "-m", "x"]);
+    git(&main, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git(&main, &["push", "-q", "origin", "main"]);
+    git(&main, &["fetch", "-q", "origin"]);
+    git(&main, &["remote", "set-head", "origin", "main"]);
     std::fs::canonicalize(&main).unwrap()
 }
 
-/// What turns riff on for the lead of a test.
-enum On {
-    /// `RIFF_ON=1` of the test environment. The lead works in the main
-    /// clone.
-    Env,
-    /// The project settings of a linked worktree, where the lead works.
-    /// riff is off in the main clone.
-    Worktree,
-}
-
 /// The lead `l1` of mike on host `a`, with a limit of `limit` workers,
-/// in a paused riff.
+/// in a paused riff. `RIFF_ON=1` of the test environment turns riff on,
+/// and the lead works in the main clone.
 async fn lead(limit: u16) -> Lead {
-    lead_with(limit, On::Env).await
-}
-
-/// A linked worktree of `main` whose project settings turn riff on.
-fn worktree_with_riff_on(main: &Path) -> PathBuf {
-    let tree = main.join(".claude/worktrees/lead");
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(main)
-        .args(["worktree", "add", "-q", "-b", "lead"])
-        .arg(&tree)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git worktree add: {out:?}");
-    riff::enable::set(&tree.join(".claude/settings.json"), Some(true)).unwrap();
-    tree
-}
-
-/// [`lead`], with riff on by `on`.
-async fn lead_with(limit: u16, on: On) -> Lead {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -367,17 +491,10 @@ async fn lead_with(limit: u16, on: On) -> Lead {
         fake.path().display(),
         std::env::var("PATH").unwrap()
     );
-    let dir = match on {
-        On::Env => main.clone(),
-        On::Worktree => worktree_with_riff_on(&main),
-    };
-    let mut mcp = Isolated::shared().riff();
-    if let On::Worktree = on {
-        mcp.env_remove("RIFF_ON");
-    }
-    let mcp = mcp
+    let mcp = Isolated::shared()
+        .riff()
         .arg("mcp")
-        .current_dir(&dir)
+        .current_dir(&main)
         .env("PATH", path)
         .env("RIFF_HOME", home.path())
         .env("RIFF_SERVER", api.base())
@@ -397,7 +514,7 @@ async fn lead_with(limit: u16, on: On) -> Lead {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let place = identity::place_in(&dir, "a").unwrap();
+    let place = identity::place_in(&main, "a").unwrap();
     let me = SessionUri::new(Who::new("mike", Some("l1")).unwrap(), place);
     let start = Instant::now();
     loop {
@@ -425,64 +542,48 @@ const TWO_FREE: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"tit
 {"number":4,"body":"","comments":[{"body":"Merged in #9 (abc)"}],"milestone":{"title":"Wave 1"}},
 {"number":8,"body":"","comments":[],"milestone":{"title":"Backlog"}}]"#;
 
-/// A resume of a paused riff starts one worker for each free item, with
-/// no other step, and a note to the lead for each
-/// (01M3Q5QE01DB0FJQJWFKR450KQ, 01M3Q5QEE4MQNCRKVJK3D54G9Z). The next
-/// worker starts only when the new one claimed (01M3Q5QEJNP1JGQM7VXXEBJ9J9).
-/// A pause stops the rollout within one look, and the resume starts it
-/// again (01M3Q5QEBTNM90SPYXNVTT7RJA).
+/// Free work in the current wave and no wave of the repository on the
+/// daemon (01M53NGVE839TRH7XB7CDPQNZE, 01M5515CA4CZ6KV4ZD6Y0744Z7). While
+/// the riff is paused, the rollout asks nothing. The resume makes the
+/// rollout ask the daemon one time to run the wave of the repository,
+/// and the lead gets a note. Then the wave runs: the later looks ask
+/// nothing. No pane of tmux starts.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_resume_starts_one_worker_for_each_free_item() {
+async fn a_resume_asks_the_daemon_one_time_for_the_wave_and_starts_no_worker() {
     let lead = lead(5).await;
+    let daemon = FakeDaemon::start(lead.home.path(), &[]).await;
     lead.issues(TWO_FREE);
-    assert_eq!(
-        lead.settled().await,
-        0,
-        "no worker starts while the riff is paused"
-    );
-
-    // The unit tests of riff::rollout check the rate with a fake clock.
-    lead.riff(RiffState::Running).await;
-    lead.until_workers(1).await;
-    // `RIFF_ON=1` turned riff on for the lead, so its worker gets it
-    // (01M3XY2SWEK0N8MC3MY4TMYTD3).
-    let log = lead.tmux_log();
-    assert!(log.contains("-e RIFF_ON=1"), "{log}");
-    assert_eq!(
-        lead.settled().await,
-        1,
-        "the new worker is idle until it claims"
-    );
-    lead.claim(1, "issue-1").await;
-    lead.claim(2, "issue-2").await;
-    // Each free item has a worker: no third one.
-    assert_eq!(lead.settled().await, 2);
-
-    let start = Instant::now();
-    let mut read = String::new();
-    while read.matches("a: started 1 worker").count() < 2 {
-        let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
-        read.push_str(&riff::text::inbox(&inbox, &lead.me));
-        assert!(start.elapsed() < WAIT, "no notes: {read}");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    lead.riff(RiffState::Paused).await;
-    lead.issues(
-        r#"[{"number":5,"body":"","comments":[],"milestone":{"title":"Wave 1"}},
-        {"number":6,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#,
-    );
-    // A look that started before the pause can start one more worker.
-    // Then the count stays: the two free items get no worker each.
-    let paused = lead.settled().await;
-    assert!(paused <= 3, "a pause stops the rollout: {paused} workers");
     tokio::time::sleep(QUIET).await;
-    assert_eq!(lead.workers(), paused, "the count grows in a paused riff");
+    assert!(daemon.asks().is_empty(), "no ask while the riff is paused");
 
-    // The resume starts the rollout again: a worker for each free item.
     lead.riff(RiffState::Running).await;
-    lead.claim(3, "issue-5").await;
-    lead.until_workers(4).await;
+    daemon.until_asks(1).await;
+    assert_eq!(daemon.asks(), ["o/r"]);
+    lead.reads(&riff::text::rollout_wave("a", "o/r")).await;
+    // More looks while the wave runs: no second ask.
+    daemon.looked().await;
+    daemon.looked().await;
+    assert_eq!(daemon.asks().len(), 1);
+    // No worker pane: riff mcp starts only its pane of `riff tail`.
+    assert_eq!(lead.workers(), 0);
+    let log = lead.tmux_log();
+    assert!(!log.contains("RIFF_WORKER"), "the rollout started a worker: {log}");
+}
+
+/// A wave of the repository runs on the daemon: the rollout asks
+/// nothing, and with no idle worker it makes no call of `gh`
+/// (01M53NGVE839TRH7XB7CDPQNZE).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wave_that_runs_gets_no_ask_and_no_call_of_gh() {
+    let lead = lead(5).await;
+    let daemon = FakeDaemon::start(lead.home.path(), &["o/r"]).await;
+    lead.issues(TWO_FREE);
+    lead.riff(RiffState::Running).await;
+    daemon.looked().await;
+    daemon.looked().await;
+    assert!(daemon.asks().is_empty());
+    assert_eq!(lead.looks(), 0, "a call of gh");
+    assert_eq!(lead.workers(), 0);
 }
 
 const ONE_ITEM: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#;
@@ -490,57 +591,56 @@ const ONE_ITEM: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"tit
 /// The author of a pull request released its item at the verify
 /// request. The item is no free work for a build
 /// (01M3Z9N5HHHS1E17NFGMVBKZ0K): while the pull request waits for the
-/// merge, the rollout starts no worker. After a failed verify the item
-/// is free again, and the rollout starts a worker for it.
+/// merge, the rollout asks the daemon for no wave. After a failed verify
+/// the item is free again, and the rollout asks for the wave.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_item_with_an_open_pull_request_and_no_claim_is_no_build() {
     let lead = lead(5).await;
+    let daemon = FakeDaemon::start(lead.home.path(), &[]).await;
     lead.issues(ONE_ITEM);
     lead.pull(Some("SUCCESS"));
     lead.riff(RiffState::Running).await;
     lead.looked().await;
-    assert_eq!(
-        lead.settled().await,
-        0,
-        "the pull request waits for the merge: {}",
-        lead.tmux_log()
-    );
+    assert!(daemon.asks().is_empty(), "the pull request waits for the merge");
 
     lead.pull(Some("FAILURE"));
-    lead.until_workers(1).await;
-    // The next session holds the item: no more work.
-    lead.claim(1, "issue-1").await;
-    lead.looked().await;
-    assert_eq!(lead.settled().await, 1, "{}", lead.tmux_log());
+    daemon.until_asks(1).await;
 }
 
 /// A pull request that waits for a verify is one unit of work: a
-/// verify. The rollout starts one worker for it, and the worker takes
-/// the verify claim. Then no work is left: the item is no build
-/// (01M3Z9N5HHHS1E17NFGMVBKZ0K).
+/// verify. An idle worker gets it, and takes the verify claim. Then no
+/// work is left: the item is no build (01M3Z9N5HHHS1E17NFGMVBKZ0K), and
+/// the rollout asks for no wave.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pull_request_that_waits_for_a_verify_counts_one_time() {
     let lead = lead(5).await;
+    let daemon = FakeDaemon::start(lead.home.path(), &[]).await;
     lead.issues(ONE_ITEM);
     lead.pull(None);
     lead.riff(RiffState::Running).await;
-    lead.until_workers(1).await;
-    lead.claim(1, "verify-issue-1").await;
-    lead.looked().await;
-    assert_eq!(
-        lead.settled().await,
-        1,
-        "a second worker for the build: {}",
-        lead.tmux_log()
-    );
+    let worker = lead.join_idle(1).await;
+    let _stream = lead.api.watch(&worker).await.unwrap();
+    reads(&lead.api, &worker, "request: claim verify-issue-1").await;
+    let thread = lead.me.default_thread().unwrap();
+    let reply = lead
+        .api
+        .claim(&worker, &thread, "verify-issue-1")
+        .await
+        .unwrap();
+    assert!(reply.granted, "{reply:?}");
+    daemon.looked().await;
+    daemon.looked().await;
+    assert!(daemon.asks().is_empty(), "a wave for the build");
 }
 
 /// The pull request of an issue with the label `no-verify` is no work
-/// for a verify (01M5157V0P92EBHF4M7N9K0RGR): the rollout starts no
-/// worker for it. With no label, the same pull request gets a worker.
+/// for a verify (01M5157V0P92EBHF4M7N9K0RGR): the rollout asks for no
+/// wave for it. With no label, the same pull request is work for the
+/// wave.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_pull_request_of_an_issue_with_the_label_no_verify_is_no_work() {
     let lead = lead(5).await;
+    let daemon = FakeDaemon::start(lead.home.path(), &[]).await;
     lead.issues(
         r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Backlog"},
         "labels":[{"name":"no-verify"}]}]"#,
@@ -548,7 +648,7 @@ async fn the_pull_request_of_an_issue_with_the_label_no_verify_is_no_work() {
     lead.pull(None);
     lead.riff(RiffState::Running).await;
     lead.looked().await;
-    assert_eq!(lead.settled().await, 0, "{}", lead.tmux_log());
+    assert!(daemon.asks().is_empty());
     let log = std::fs::read_to_string(lead.fake.path().join("gh.log")).unwrap();
     assert!(
         log.contains("--json number,body,comments,milestone,labels"),
@@ -556,10 +656,11 @@ async fn the_pull_request_of_an_issue_with_the_label_no_verify_is_no_work() {
     );
 
     lead.issues(r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Backlog"}}]"#);
-    lead.until_workers(1).await;
+    daemon.until_asks(1).await;
 }
 
-/// An idle worker that joined gets a request of the lead for a pull
+/// An idle worker in tmux that joined still gets free work, as in riff
+/// 1.x (01M53NGVE839TRH7XB7CDPQNZE): a request of the lead for a pull
 /// request that waits for a verify, with no step of the lead
 /// (01M49ZK19GQP79Z8HH14PK85QQ). It gets the request one time
 /// (01M49ZK1C1P817KE63EXV3EJDC). It claims, and no worker starts.
@@ -623,8 +724,7 @@ async fn an_idle_worker_gets_the_fix_item_of_a_broken_main_first() {
 
 /// A worker on a task of the lead with no work item holds a task claim
 /// (01M518P1N8R893MG9Z3VAQZR6Z). It is busy: the rollout sends it no
-/// request, and starts a new worker for the free item. The new worker
-/// gets the request.
+/// request. A new idle worker gets the request for the free item.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_worker_with_a_task_claim_gets_no_free_work() {
     let lead = lead(5).await;
@@ -646,9 +746,9 @@ async fn a_worker_with_a_task_claim_gets_no_free_work() {
         .unwrap();
     assert!(reply.granted, "{reply:?}");
 
-    lead.issues(ONE_ITEM);
     let worker = lead.join_idle(1).await;
     let _stream = lead.api.watch(&worker).await.unwrap();
+    lead.issues(ONE_ITEM);
     reads(&lead.api, &worker, "request: claim issue-1").await;
     // The look that gave the request gave none to the worker with the
     // task.
@@ -736,31 +836,26 @@ async fn a_held_item_gets_no_worker_until_the_lead_frees_it() {
 }
 
 /// The worker does not claim in 6 intervals: it refused the item, and
-/// the rollout starts a new worker (01M49ZK1C1P817KE63EXV3EJDC). The new
-/// worker gets the request and also does not claim. Two workers refused
-/// the item: no third worker starts (01M49ZK1EG52YAKG974XH201RK).
+/// the rollout asks the daemon for the wave (01M49ZK1C1P817KE63EXV3EJDC,
+/// 01M5515CA4CZ6KV4ZD6Y0744Z7). Before that, it asks nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_worker_that_does_not_claim_does_not_block_a_new_worker() {
+async fn a_worker_that_does_not_claim_does_not_block_the_wave() {
     let lead = lead(5).await;
+    let daemon = FakeDaemon::start(lead.home.path(), &[]).await;
     lead.issues(ONE_ITEM);
     lead.riff(RiffState::Running).await;
     let first = lead.join_idle(1).await;
     let _first = lead.api.watch(&first).await.unwrap();
     reads(&lead.api, &first, "request: claim issue-1").await;
     let start = Instant::now();
-    lead.until_workers(2).await;
+    daemon.until_asks(1).await;
     // The interval is 1 second: the wait is 6 seconds.
     assert!(
         start.elapsed() >= Duration::from_secs(5),
         "{:?}",
         start.elapsed()
     );
-    let second = lead.join_idle(2).await;
-    let _second = lead.api.watch(&second).await.unwrap();
-    reads(&lead.api, &second, "request: claim issue-1").await;
-    // The second worker refuses too.
-    tokio::time::sleep(Duration::from_secs(8)).await;
-    assert_eq!(lead.settled().await, 2, "{}", lead.tmux_log());
+    assert_eq!(lead.workers(), 1, "{}", lead.tmux_log());
 }
 
 /// The unread text of `who`, with no wait.
@@ -771,9 +866,8 @@ async fn unread(lead: &Lead, who: &SessionUri) -> String {
 
 /// The worker A holds issue-1, asks for a verify and releases the item.
 /// riff clears its context: A keeps its session ID, and it is idle. The
-/// rollout never gives the verify to A. A has no item to take, so the
-/// rollout starts the worker B, and B gets the request
-/// (01M51533BJSD0RB7BFQR9CAFYW).
+/// rollout never gives the verify to A. A person starts the worker B,
+/// and B gets the request (01M51533BJSD0RB7BFQR9CAFYW).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_author_gets_no_request_for_its_verify_also_after_a_clear() {
     let lead = lead(5).await;
@@ -792,8 +886,7 @@ async fn the_author_gets_no_request_for_its_verify_also_after_a_clear() {
     lead.pull(None);
     lead.api.start(&a, StartReason::Clear, true).await.unwrap();
     // After its clear, A is the only worker that joined and has no
-    // claim, and the verify waits. A worker B can run already, but it
-    // did not join: it gets no request.
+    // claim, and the verify waits.
     lead.looked().await;
     let b = lead.join_idle(2).await;
     let _b = lead.api.watch(&b).await.unwrap();
@@ -806,14 +899,14 @@ async fn the_author_gets_no_request_for_its_verify_also_after_a_clear() {
 /// A usage comment on the issue names the author of issue-1: the first
 /// characters of the session ID of A. The rollout never saw the claim of
 /// A, as after a new start of the lead. A gets no request for the
-/// verify, and the new worker B gets it (01M51533BJSD0RB7BFQR9CAFYW).
+/// verify, and the worker B gets it (01M51533BJSD0RB7BFQR9CAFYW).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_author_of_a_usage_comment_gets_no_request_for_its_verify() {
     let lead = lead(5).await;
     lead.issues(ONE_ITEM);
     lead.pull(None);
     lead.riff(RiffState::Running).await;
-    lead.until_workers(1).await;
+    lead.add_worker();
     let (_, a) = lead.worker(1);
     let claim = riff::usage::Claim {
         thread: "o/r".into(),
@@ -842,48 +935,14 @@ async fn the_author_of_a_usage_comment_gets_no_request_for_its_verify() {
     assert!(!read.contains("request: claim verify-issue-1"), "{read}");
 }
 
-/// The rollout starts no worker where riff is off in the main clone
-/// (01M3XY2T542DCHBN95H9PX4AGQ). A worker there is a plain session: it
-/// never joins the riff, so each look would start one more. The lead
-/// works in a linked worktree whose project settings turn riff on. The
-/// lead gets one note with the reason (01M3YCGKKRDNFC338K1JSK30JK).
-/// `riff enable` in the main clone lets the rollout start a worker.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_rollout_starts_no_worker_where_riff_is_off_in_the_main_clone() {
-    let lead = lead_with(5, On::Worktree).await;
-    lead.issues(TWO_FREE);
-    lead.riff(RiffState::Running).await;
-    let note = "a: riff starts no worker here: riff off. To turn it on: riff enable. The rollout \
-                starts no worker on a until riff is on in the main clone.";
-    let read = lead.reads(note).await;
-    assert_eq!(read.matches(note).count(), 1, "{read}");
-    assert_eq!(
-        lead.settled().await,
-        0,
-        "riff is off in the main clone: {}",
-        lead.tmux_log()
-    );
-    // More looks ran in that time: the note came one time.
-    let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
-    let later = riff::text::inbox(&inbox, &lead.me);
-    assert!(!later.contains("riff starts no worker"), "{later}");
-
-    riff::enable::enable(&lead.main, riff::enable::Place::Local, None).unwrap();
-    lead.until_workers(1).await;
-    let log = lead.tmux_log();
-    assert!(
-        !log.contains("RIFF_ON"),
-        "no RIFF_ON made the lead on: {log}"
-    );
-}
-
 /// An idle worker of another user in another repository cannot take the
-/// free work, so the rollout starts a worker (01M3W27BJYFQCHY5MTZ2J4SKW4).
-/// An idle worker of another user in the repository of the lead can
-/// take it, so the rollout starts none.
+/// free work, so the rollout asks the daemon for the wave
+/// (01M3W27BJYFQCHY5MTZ2J4SKW4). An idle worker of another user in the
+/// repository of the lead can take it, so the rollout asks nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_idle_worker_in_another_repository_does_not_stop_the_rollout() {
     let lead = lead(5).await;
+    let daemon = FakeDaemon::start(lead.home.path(), &[]).await;
     lead.issues(r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#);
     // A live idle worker of brett in the repository o/strata.
     let other: SessionUri = "riff://brett@k/o/strata?session=w1".parse().unwrap();
@@ -894,25 +953,28 @@ async fn an_idle_worker_in_another_repository_does_not_stop_the_rollout() {
     assert!(seen.live && seen.worker && seen.uri.claims().is_empty());
 
     lead.riff(RiffState::Running).await;
-    lead.until_workers(1).await;
-    lead.claim(1, "issue-1").await;
+    daemon.until_asks(1).await;
 
-    // A live idle worker of brett in the repository of the lead.
+    // The wave stops. A live idle worker of brett in the repository of
+    // the lead.
     let place = Place::new("k", lead.me.place().repo().clone(), None).unwrap();
     let same = SessionUri::new(Who::new("brett", Some("w2")).unwrap(), place);
     lead.api.register_as(&same, true).await.unwrap();
     let _same = lead.api.watch(&same).await.unwrap();
-    lead.issues(r#"[{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#);
-    assert_eq!(lead.settled().await, 1, "brett's worker can take the item");
+    daemon.stop();
+    daemon.looked().await;
+    daemon.looked().await;
+    assert_eq!(daemon.asks().len(), 1, "brett's worker can take the item");
 }
 
 /// The whole riff runs, and the repository of the lead is paused: the
-/// rollout starts no worker for it. A pause of another repository does
+/// rollout asks for no wave for it. A pause of another repository does
 /// not stop the rollout (01M3Q5QEBTNM90SPYXNVTT7RJA,
 /// 01M3XAHZBGSSJB3YX23K88W01K).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pause_of_the_repository_of_the_lead_stops_the_rollout() {
     let lead = lead(5).await;
+    let daemon = FakeDaemon::start(lead.home.path(), &[]).await;
     lead.issues(r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#);
     // The lead of brett pauses the repository o/strata, and the lead
     // pauses its own repository.
@@ -930,69 +992,50 @@ async fn a_pause_of_the_repository_of_the_lead_stops_the_rollout() {
     lead.riff(RiffState::Running).await;
     let pauses = lead.api.pauses(&lead.me).await.unwrap();
     assert!(pauses.riff.is_none() && pauses.repositories.len() == 2);
-    assert_eq!(
-        lead.settled().await,
-        0,
-        "no worker starts for a paused repository"
-    );
+    tokio::time::sleep(QUIET).await;
+    assert!(daemon.asks().is_empty(), "an ask for a paused repository");
 
     // The lead resumes its repository. The other one stays paused, and
-    // the rollout starts a worker for the free item.
+    // the rollout asks for the wave.
     lead.api
         .set_pause(&lead.me, &PauseScope::Here, RiffState::Running)
         .await
         .unwrap();
-    lead.until_workers(1).await;
+    daemon.until_asks(1).await;
     assert_eq!(lead.api.riff(&other).await.unwrap(), RiffState::Paused);
-}
-
-/// The rollout never starts more workers than the limit of the machine.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_limit_caps_the_rollout() {
-    let lead = lead(1).await;
-    lead.issues(TWO_FREE);
-    lead.riff(RiffState::Running).await;
-    lead.claim(1, "issue-1").await;
-    assert_eq!(lead.settled().await, 1);
 }
 
 /// A worker with a claim is killed: its pane is gone, with no end call,
 /// and its watch stream stays open on the server, as behind a front
 /// end. With no call of the lead, `riff mcp` of the lead ends the
-/// session, the item is free at once, the rollout starts a new worker,
-/// and the new worker holds the item. The lead gets one note
-/// (01M3WG2460P4GF7GEVBY92Q33W).
+/// session, the item is free at once, and the lead gets one note
+/// (01M3WG2460P4GF7GEVBY92Q33W). The rollout starts no new worker: it
+/// asks the daemon for the wave of the free item
+/// (01M53NGVE839TRH7XB7CDPQNZE).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_new_worker_takes_the_item_of_a_killed_worker() {
+async fn the_item_of_a_killed_worker_goes_to_the_wave() {
     let lead = lead(5).await;
+    let daemon = FakeDaemon::start(lead.home.path(), &[]).await;
     lead.issues(r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#);
     lead.riff(RiffState::Running).await;
     lead.claim(1, "issue-1").await;
     let (pane, dead) = lead.worker(1);
     let _stream = lead.api.watch(&dead).await.unwrap();
-    assert_eq!(lead.settled().await, 1, "the item has its worker");
+    lead.looked().await;
+    assert!(daemon.asks().is_empty(), "the item has its worker");
     // riff looked at the pane one time or more.
     tokio::time::sleep(riff::reap::EVERY * 2).await;
 
     // The kill of the whole pane: no process of the worker is left.
     std::fs::write(lead.fake.path().join("workers"), "").unwrap();
 
-    let start = Instant::now();
-    while lead.workers() < 1 {
-        assert!(start.elapsed() < WAIT, "no new worker for the free item");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let (_, new) = lead.worker(1);
-    assert_ne!(new.who(), dead.who());
+    daemon.until_asks(1).await;
+    assert_eq!(lead.workers(), 0, "{}", lead.tmux_log());
     let who = lead.api.who(&lead.me, false).await.unwrap();
     assert!(
         !who.iter().any(|s| s.uri.who() == dead.who()),
         "the session of the killed worker is gone at once"
     );
-    lead.api.register_as(&new, true).await.unwrap();
-    let thread = lead.me.default_thread().unwrap();
-    let reply = lead.api.claim(&new, &thread, "issue-1").await.unwrap();
-    assert!(reply.granted, "{reply:?}");
 
     let id = dead.who().session().unwrap();
     let note = format!(
@@ -1077,39 +1120,33 @@ fn riff_workers_interval_shows_and_sets_the_interval() {
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     assert!(run(&[]).starts_with("workers.interval  10  ("));
-    assert!(run(&[]).contains("\nThe lead starts at most one worker each 10 seconds."));
+    assert!(run(&[]).contains(
+        "\nEach 10 seconds the lead gives free work to the idle workers, and runs the wave of the \
+         riff daemon for the rest."
+    ));
     assert!(run(&["30"]).starts_with("workers.interval  30  ("));
-    assert!(run(&[]).contains("each 30 seconds"));
-    assert!(run(&["0"]).contains("\nThe lead starts no worker by itself."));
+    assert!(run(&[]).contains("Each 30 seconds"));
+    assert!(run(&["0"]).contains("\nThe lead starts no work by itself."));
 }
 
 /// A person sets a higher limit on a machine that is at its limit, while
 /// an item is free. The lead gets one note with the setting, the old
-/// value, the new value and the host, and it says that the rollout
-/// starts a worker. The rollout starts it
-/// (01M3X30KHKB6W11C3NBAW7KCGW, 01M3X30R4PSBP3RQWM02BJ6GK3).
-///
-/// The test does not depend on the moment of the change: one look uses
-/// each limit one time, and the note comes before the start
-/// (01M3XFHSYJEN9V6QEKWJGJWQ8Q). The first worker shows that a look
-/// with the old limit ended, and its claim is on the server before the
-/// change.
+/// value, the new value and the host. The rollout is on, so the change
+/// does nothing more: the rollout starts no worker in tmux
+/// (01M3X30KHKB6W11C3NBAW7KCGW, 01M5515CCV7WNKVZVAMQ375J0M).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_higher_limit_tells_the_lead_and_the_rollout_starts_a_worker() {
+async fn a_higher_limit_tells_the_lead_and_starts_no_worker() {
     let lead = lead(1).await;
     lead.issues(TWO_FREE);
     lead.riff(RiffState::Running).await;
     lead.claim(1, "issue-1").await;
-    assert_eq!(lead.settled().await, 1, "the machine is at its limit");
+    // Looks with the old limit.
+    assert_eq!(lead.settled().await, 1);
 
     lead.set(&["limit", "2"]);
-    let read = lead
-        .reads("workers: limit 1 to 2 on a: the rollout starts 1 worker.")
-        .await;
-    assert!(read.contains("note: workers: limit 1 to 2 on a"), "{read}");
-    lead.until_workers(2).await;
-    lead.claim(2, "issue-2").await;
-    assert_eq!(lead.settled().await, 2);
+    let read = lead.reads("note: workers: limit 1 to 2 on a.").await;
+    assert!(!read.contains("the rollout starts"), "{read}");
+    assert_eq!(lead.settled().await, 1, "{}", lead.tmux_log());
     let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
     let more = riff::text::inbox(&inbox, &lead.me);
     assert!(!more.contains("workers: limit"), "one message: {more}");
@@ -1131,7 +1168,7 @@ async fn a_higher_limit_wakes_the_lead_when_the_rollout_is_off() {
     let read = lead
         .reads("note: workers: interval 1 to 0 on a: the rollout is off")
         .await;
-    assert!(read.contains("riff starts no worker by itself."), "{read}");
+    assert!(read.contains("riff starts no work by itself."), "{read}");
 
     lead.set(&["limit", "3"]);
     let needle = "workers: limit 1 to 3 on a: free work waits, and the rollout is off. \
@@ -1217,7 +1254,6 @@ fn the_book_and_the_skill_say_what_the_lead_gets_for_a_change() {
     let texts = [
         "```sh\nriff workers limit 4\n```".to_owned(),
         "```mermaid".to_owned(),
-        setting_changed(&limit(3, 4), &Effect::Starts),
         setting_changed(&limit(3, 4), &Effect::Nothing),
         setting_changed(&limit(1, 3), &waits),
         setting_changed(&limit(4, 2), &Effect::Over(4)),
@@ -1254,7 +1290,7 @@ fn the_book_and_the_skill_say_what_the_lead_gets_for_a_change() {
     let skill =
         std::fs::read_to_string(root.join("claude-plugin/riff/skills/riff/SKILL.md")).unwrap();
     assert!(
-        skill.contains(&setting_changed(&limit(3, 4), &Effect::Starts)),
+        skill.contains(&setting_changed(&limit(1, 3), &waits)),
         "skill"
     );
 }
@@ -1353,16 +1389,11 @@ impl Host {
             .collect()
     }
 
-    /// Waits until a worker runs on `b`, and gives the first one.
-    async fn first_worker(&self) -> (String, String) {
-        let start = Instant::now();
-        loop {
-            if let Some(worker) = self.workers().into_iter().next() {
-                return worker;
-            }
-            assert!(start.elapsed() < WAIT, "timed out: no worker on b");
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+    /// A person starts a worker on `b`: the pane `%1` of the session
+    /// `b1`. Gives the pane and the session.
+    fn add_worker(&self) -> (String, String) {
+        std::fs::write(self.fake.path().join("workers"), "%1 b1\n").unwrap();
+        ("%1".into(), "b1".into())
     }
 
     /// The worker pane of `b` ends with no end call.
@@ -1396,50 +1427,42 @@ async fn claim_on_b(lead: &Lead, id: &str, item: &str) -> SessionUri {
 
 const ONE_FREE: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#;
 
-/// riff keeps the workers of a host as the person set them
-/// (01M493YZRPS33RR47Q6T9V6WP9). The machine of the lead has the limit
-/// 0, and the host `b` the limit 1. A worker of `b` dies with a claim.
-/// The host ends its session and records the death, the item is free,
-/// and the rollout of the lead starts a replacement on `b`. The lead
-/// gets one note for the death, and no message that wakes it.
+/// A worker of the host `b` dies with a claim
+/// (01M493YZRPS33RR47Q6T9V6WP9). The host ends its session and records
+/// the death, and the item is free. The lead gets one note for the
+/// death, and no message that wakes it. The rollout starts no
+/// replacement (01M53NGVE839TRH7XB7CDPQNZE): the free item goes to an
+/// idle worker or to the wave of the daemon.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_worker_of_a_host_dies_and_the_host_starts_a_replacement() {
+async fn a_worker_of_a_host_dies_and_the_host_frees_its_item() {
     let lead = lead(0).await;
     lead.issues(ONE_FREE);
     let b = Host::start(&lead, 1, &[]).await;
     lead.riff(RiffState::Running).await;
-    let (pane, id) = b.first_worker().await;
+    let (pane, id) = b.add_worker();
     let worker = claim_on_b(&lead, &id, "issue-1").await;
     // Its watch stream stays open on the server.
     let _stream = lead.api.watch(&worker).await.unwrap();
-    let mut read = lead.reads("b: started 1 worker").await;
     // The host looked at the pane one time or more.
     tokio::time::sleep(riff::reap::EVERY * 2).await;
 
     b.kill_workers();
 
-    read += &lead
+    let read = lead
         .reads(&format!("worker stopped: pane {pane}, session {id}, on b."))
         .await;
-    let start = Instant::now();
-    let new = loop {
-        if let Some((_, new)) = b.workers().into_iter().next() {
-            break new;
-        }
-        assert!(start.elapsed() < WAIT, "no replacement on b");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };
-    assert_ne!(new, id);
-    read += &lead.reads(&new).await;
+    assert!(read.contains("It held issue-1: free now."), "{read}");
     assert_eq!(b.deaths(), 1);
     assert_eq!(read.matches("worker stopped").count(), 1, "{read}");
     assert!(!read.contains("workers died"), "{read}");
+    tokio::time::sleep(QUIET).await;
+    assert!(b.workers().is_empty(), "a replacement on b");
     assert_eq!(lead.workers(), 0, "the machine of the lead has the limit 0");
 }
 
 /// 3 workers of `b` died in the last hour. The fourth death on `b`
 /// starts a loop of deaths: the lead gets one message that wakes it, and
-/// the rollout starts no replacement on `b`, though the item is free
+/// `b` starts no worker, though the item is free
 /// (01M493YZZEW1FTDBNA090WT2AG, 01M493Z02KS82B3CVZEVFA3D6E).
 #[tokio::test(flavor = "multi_thread")]
 async fn four_deaths_in_an_hour_stop_the_replacement_on_a_host() {
@@ -1447,7 +1470,7 @@ async fn four_deaths_in_an_hour_stop_the_replacement_on_a_host() {
     lead.issues(ONE_FREE);
     let b = Host::start(&lead, 1, &["d1", "d2", "d3"]).await;
     lead.riff(RiffState::Running).await;
-    let (_, id) = b.first_worker().await;
+    let (_, id) = b.add_worker();
     let worker = claim_on_b(&lead, &id, "issue-1").await;
     // Its watch stream stays open on the server.
     let _stream = lead.api.watch(&worker).await.unwrap();
@@ -1477,8 +1500,6 @@ async fn four_deaths_in_an_hour_stop_the_replacement_on_a_host() {
         assert!(start.elapsed() < WAIT, "the host tells no deaths");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    // No machine has room, so a look stops before `gh`. Each look in
-    // this time starts nothing.
     tokio::time::sleep(QUIET * 2).await;
     assert!(b.workers().is_empty(), "no replacement on b");
     let inbox = lead.api.inbox(&lead.me, None, false).await.unwrap();
@@ -1487,10 +1508,10 @@ async fn four_deaths_in_an_hour_stop_the_replacement_on_a_host() {
 }
 
 /// The lead lowers the limit: the worker over it ends after its item.
-/// The lead raises it again: a new worker starts for the free work
-/// (01M493YZRPS33RR47Q6T9V6WP9, 01M402VFGAJQM1QW8B42NKMJM4).
+/// The lead raises it again: the lead gets a note, and the rollout starts
+/// no worker (01M402VFGAJQM1QW8B42NKMJM4, 01M5515CCV7WNKVZVAMQ375J0M).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_lower_limit_ends_a_worker_after_its_item_and_a_higher_one_starts_one() {
+async fn a_lower_limit_ends_a_worker_after_its_item_and_a_higher_one_starts_none() {
     let lead = lead(2).await;
     lead.issues(TWO_FREE);
     lead.riff(RiffState::Running).await;
@@ -1524,11 +1545,8 @@ async fn a_lower_limit_ends_a_worker_after_its_item_and_a_higher_one_starts_one(
 {"number":3,"body":"","comments":[],"milestone":{"title":"Wave 1"}}]"#,
     );
     lead.set(&["limit", "2"]);
-    lead.reads("workers: limit 1 to 2 on a: the rollout starts 1 worker.")
-        .await;
-    lead.until_workers(2).await;
-    let (_, new) = lead.worker(2);
-    assert_ne!(new.who(), worker.who());
+    lead.reads("note: workers: limit 1 to 2 on a.").await;
+    assert_eq!(lead.settled().await, 1, "{}", lead.tmux_log());
 }
 
 /// The Stop hook of the worker `id` in `pane` on the machine of the lead.

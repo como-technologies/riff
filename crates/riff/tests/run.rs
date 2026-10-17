@@ -343,6 +343,8 @@ struct Machine {
     daemon: Option<std::process::Child>,
     /// The quiet limit of the daemon, when the test sets one.
     quiet: Option<Duration>,
+    /// The name of this host in each command of riff.
+    host: &'static str,
 }
 
 impl Drop for Machine {
@@ -427,6 +429,7 @@ impl Machine {
             server,
             daemon: None,
             quiet,
+            host: "thelio",
         };
         machine.start_daemon().await;
         machine
@@ -497,7 +500,7 @@ impl Machine {
             .env("RIFF_SERVER", &self.server)
             .env("RIFF_USER", "mike")
             .env("USER", "mike")
-            .env("RIFF_HOST", "thelio")
+            .env("RIFF_HOST", self.host)
             .env("PATH", path);
         if let Some(session) = session {
             cmd.env("RIFF_SESSION", session);
@@ -1901,6 +1904,111 @@ async fn riff_lead_start_keeps_a_clone_that_git_cannot_fast_forward_and_starts_t
     assert_eq!(git(&clone, &["rev-parse", "HEAD"]), old);
     assert_eq!(std::fs::read_to_string(clone.join("b")).unwrap(), "mine\n");
     until_the_lead_ends().await;
+}
+
+/// 01M53NGVE839TRH7XB7CDPQNZE: the lead in a container has no rollout,
+/// so `riff lead start` starts the wave of the repository on the daemon
+/// when none runs. The daemon is real, and the fake `podman` of this file
+/// is its runtime. A second `riff lead start` sees the wave, and asks
+/// the daemon nothing: the daemon takes one ask of the wave.
+#[tokio::test]
+async fn riff_lead_start_starts_the_wave_when_none_runs_and_none_when_one_runs() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    std::fs::write(machine.bin.path().join("hold"), "").unwrap();
+    let (repo, name) = ("como-technologies/riff", "riff-lead-como-technologies-riff");
+
+    let out = machine.ok(None, &["lead", "start"]).await;
+    assert!(out.contains(&riff::text::wave_asked(repo)), "{out}");
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(status.contains(&format!("Waves:\n  {repo}  ")), "{status}");
+    assert!(status.contains(name), "{status}");
+
+    let again = machine.ok(None, &["lead", "start"]).await;
+    assert!(again.contains(&riff::text::wave_runs(repo)), "{again}");
+    assert!(!again.contains(&riff::text::wave_asked(repo)), "{again}");
+    assert!(again.contains(&riff::text::lead_runs(repo, name)), "{again}");
+    let log = machine.read("daemon.out");
+    assert_eq!(log.matches(&riff::text::wave_runs(repo)).count(), 1, "{log}");
+
+    machine.ok(None, &["wave", "stop"]).await;
+    std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
+    let started = Instant::now();
+    while machine.ok(None, &["daemon", "status"]).await.contains(name) {
+        assert!(started.elapsed() < isolated::HANG, "the lead did not end");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// 01M53NGVH8A19QS3CQ79ENVVXT, 01M53NGWTNC3655ZZJ76M1R5R7: two machines
+/// of one person, each with its own daemon, and one riff-server. Each
+/// machine runs the wave of the repository. Issue 12 is free on both.
+/// The claim on riff-server lets one daemon start it, and the other one
+/// starts nothing: no item runs two times.
+#[tokio::test]
+async fn two_waves_of_one_repository_on_two_machines_never_run_one_item_two_times() {
+    let server = server().await;
+    let thelio = Machine::with_server(None, server.clone()).await;
+    let mut pangolin = Machine::with_server(None, server).await;
+    pangolin.host = "pangolin";
+    thelio.lead().await;
+    for machine in [&thelio, &pangolin] {
+        std::fs::write(machine.bin.path().join("hold"), "").unwrap();
+        std::fs::write(machine.bin.path().join("wave-issue"), "").unwrap();
+    }
+    let (out_a, out_b) = tokio::join!(
+        thelio.ok(None, &["wave", "run"]),
+        pangolin.ok(None, &["wave", "run"])
+    );
+    for out in [out_a, out_b] {
+        assert!(out.contains(&riff::text::wave_asked("como-technologies/riff")), "{out}");
+    }
+
+    // One daemon runs issue 12. The other one looked after the claim,
+    // and found no free work.
+    let ran = |m: &Machine| m.bin.path().join("run.args").exists();
+    let idle = |status: &str| status.contains(riff::text::WAVE_NO_WORK);
+    let started = Instant::now();
+    loop {
+        let a = thelio.ok(None, &["daemon", "status"]).await;
+        let b = pangolin.ok(None, &["daemon", "status"]).await;
+        if (ran(&thelio) && idle(&b)) || (ran(&pangolin) && idle(&a)) {
+            break;
+        }
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "no one start of issue 12:\n{a}\n{b}\n{}\n{}",
+            thelio.read("daemon.out"),
+            pangolin.read("daemon.out")
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // More looks of the other wave start nothing.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        ran(&thelio) != ran(&pangolin),
+        "issue 12 ran on both machines:\n{}\n{}",
+        thelio.read("daemon.out"),
+        pangolin.read("daemon.out")
+    );
+    let who = thelio.ok(None, &["who", "--long"]).await;
+    assert_eq!(who.matches("claim=issue-12").count(), 1, "{who}");
+
+    for machine in [&thelio, &pangolin] {
+        machine.ok(None, &["wave", "stop"]).await;
+        std::fs::remove_file(machine.bin.path().join("wave-issue")).unwrap();
+        std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
+    }
+    let runs = if ran(&thelio) { &thelio } else { &pangolin };
+    let started = Instant::now();
+    while runs
+        .ok(None, &["daemon", "status"])
+        .await
+        .contains("riff-issue-12-")
+    {
+        assert!(started.elapsed() < isolated::HANG, "the session did not end");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 #[tokio::test]

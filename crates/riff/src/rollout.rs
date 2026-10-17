@@ -2044,9 +2044,15 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
             },
             Err(e) => WaveState::NoDaemon(format!("{e:#}")),
         };
-        // With no idle worker to give work to, and no wave to ask for,
-        // the free work changes nothing: no call of gh.
-        if idlers.is_empty() && wave != WaveState::None {
+        // The free work matters to an idle worker, to the ask of the
+        // wave, and to a person who can start a worker on a machine with
+        // room while no wave runs ([`effect`]). Else: no call of gh.
+        let matters = match &wave {
+            WaveState::None => true,
+            WaveState::Runs => false,
+            WaveState::NoDaemon(_) => places.iter().any(Place::room),
+        };
+        if idlers.is_empty() && !matters {
             return Ok(Some(View {
                 running: true,
                 idle,
