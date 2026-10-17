@@ -1437,8 +1437,8 @@ shows.
 ### When a riff daemon runs already
 
 The daemon that you installed keeps running while the test runs. Do
-not stop it, and do not start it again. It keeps its sessions and its
-peer links. The test does not talk to it. Run the test as it is:
+not stop it, and do not start it again. It keeps its sessions. The
+test does not talk to it. Run the test as it is:
 
 ```sh
 just real-session
@@ -1447,9 +1447,8 @@ just real-session
 The test runs the riff daemon of your clone beside your daemon. Each
 `riff` of the test gets `RIFF_DATA`, the data folder of the test:
 `~/.local/share/riff/real-session`. So the daemon of the test has its
-own socket, its own session folders, and its own key and riff. Its key
-is in your OS keyring, as each key of a daemon. It keeps them there for
-the next run. The clean-up stops only the daemon of the test.
+own socket and its own session folders. It keeps them there for the
+next run. The clean-up stops only the daemon of the test.
 
 Run one test at a time on a machine. When a daemon of the test runs
 already, step 5 fails, and the test does not stop that daemon. Another
