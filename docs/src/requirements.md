@@ -1950,9 +1950,17 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   settings have `CLOUD_CONFIRM=true`, as the shared riff has. With no
   terminal, only `--confirm NAME` gives it. `delete` keeps the bucket
   unless `--with-state`. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
-- **01M4262DY8NN30SC4REYX2G9DV** A worker never runs `riff cloud`. The
-  flag settings of a worker deny it, and `riff cloud` refuses when
-  `RIFF_WORKER` is `1`. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
+- **01M4262DY8NN30SC4REYX2G9DV** Replaced by 01M558C4VZ2PSMEYPAZBRYW1VV.
+- **01M558C4VZ2PSMEYPAZBRYW1VV** These riff commands write outside the
+  session that runs them, to the riff, the forge or the cloud: `riff
+  workers start` (01M3JPQT79FE47518Z8DFFQYYG), `riff retire`
+  (01M553AWMXYAG7CJGW7M30XDZ8), and the writes of `riff cloud`:
+  `create`, `signin`, `deploy` and `delete`. Each one refuses, and
+  changes nothing, in a worker (`RIFF_WORKER=1`) and in an agent session
+  that is not the lead of its user. They use one check. A person in a
+  plain terminal and the lead can run them. The flag settings of a
+  worker deny the writes of `riff cloud`. Each session can run the reads
+  of `riff cloud`: `list`, `status`, `log` and `smoke`.
 - **01M4262E0QJHCZXNH7EFG7FXN2** The CI deploy job deploys with
   `riff cloud deploy shared TAG --confirm shared`, from the riff of the
   tag. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).

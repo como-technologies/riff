@@ -851,6 +851,17 @@ enum CloudCommand {
     },
 }
 
+impl CloudCommand {
+    /// True for a write: a subcommand of [`cloud::WRITES`]
+    /// (01M558C4VZ2PSMEYPAZBRYW1VV).
+    fn writes(&self) -> bool {
+        matches!(
+            self,
+            Self::Create { .. } | Self::Signin { .. } | Self::Deploy { .. } | Self::Delete { .. }
+        )
+    }
+}
+
 /// On or off.
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum Switch {
@@ -1902,7 +1913,7 @@ async fn main() -> Result<()> {
         return workers(command.as_ref(), *long, &server).await;
     }
     if let Command::Cloud { command } = &cli.command {
-        return cloud(command).await;
+        return cloud(command, &server).await;
     }
     if let Command::Pr {
         command: Pr::Wait { number, every },
@@ -2810,11 +2821,15 @@ async fn relay_command(
     }
 }
 
-/// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A worker never runs it
-/// (01M4262DY8NN30SC4REYX2G9DV).
-async fn cloud(command: &CloudCommand) -> Result<()> {
-    if std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1") {
-        anyhow::bail!(text::CLOUD_WORKER);
+/// `riff cloud` (01M4262DQ9RNFNJ07CRTSGEAM1). A write refuses before
+/// each call of `gcloud` in a worker and in an agent session that is not
+/// the lead (01M558C4VZ2PSMEYPAZBRYW1VV).
+async fn cloud(command: &CloudCommand, server: &str) -> Result<()> {
+    if command.writes()
+        && let Some(why) = lead_only(server, &text::CLOUD).await
+    {
+        eprintln!("{why}");
+        std::process::exit(1);
     }
     let gcloud = cloud::Gcloud::default();
     let here = identity::working_dir()?;
@@ -2925,7 +2940,8 @@ async fn riff_paused(url: &str, here: &std::path::Path) -> Option<bool> {
 }
 
 /// Why this process may not run the command of `refusals`, or `None`
-/// when it may (01M3JPQT79FE47518Z8DFFQYYG, 01M553AWMXYAG7CJGW7M30XDZ8).
+/// when it may (01M558C4VZ2PSMEYPAZBRYW1VV). `riff workers start`,
+/// `riff retire` and the writes of `riff cloud` use it.
 /// A person in a plain terminal may. A worker may not. An agent session
 /// may only when it is the lead.
 async fn lead_only(server: &str, refusals: &text::LeadOnly) -> Option<String> {
@@ -4130,6 +4146,32 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    /// The writes of `riff cloud` are the subcommands of
+    /// `riff::cloud::WRITES`, which the flag settings of a worker deny.
+    /// Each other subcommand is a read (01M558C4VZ2PSMEYPAZBRYW1VV).
+    #[test]
+    fn the_writes_of_riff_cloud_are_the_subcommands_that_a_worker_denies() {
+        use clap::Parser;
+        let cli = Cli::command();
+        let cloud = cli.find_subcommand("cloud").unwrap();
+        let mut writes = Vec::new();
+        for sub in cloud.get_subcommands() {
+            let name = sub.get_name();
+            let mut args = vec!["riff", "cloud", name];
+            if sub.get_positionals().any(clap::Arg::is_required_set) {
+                args.push("stage");
+            }
+            let parsed = Cli::try_parse_from(&args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            let super::Command::Cloud { command } = parsed.command else {
+                panic!("{args:?}: not riff cloud");
+            };
+            if command.writes() {
+                writes.push(name);
+            }
+        }
+        assert_eq!(writes, riff::cloud::WRITES);
     }
 
     /// Each subcommand that a person uses is in one group of `riff

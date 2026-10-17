@@ -11,7 +11,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use crate::book;
+
 use isolated::Isolated;
+use riff::api::Api;
+use riff_core::name::{SessionUri, Who};
 
 /// The folder of the settings files of the repository.
 fn settings_dir() -> PathBuf {
@@ -53,6 +57,8 @@ struct Cloud {
     denied: bool,
     /// The reply of each `get-iam-policy` call.
     iam: String,
+    /// More variables of each run, for example `RIFF_WORKER`.
+    vars: Vec<(String, String)>,
 }
 
 /// The result of one `riff cloud` run.
@@ -109,7 +115,14 @@ impl Cloud {
             signin_ended: false,
             denied: false,
             iam: String::new(),
+            vars: Vec::new(),
         }
+    }
+
+    /// Sets the variable `key` to `value` in each run.
+    fn var(mut self, key: &str, value: &str) -> Cloud {
+        self.vars.push((key.to_owned(), value.to_owned()));
+        self
     }
 
     /// The reply of each `get-iam-policy` call.
@@ -189,6 +202,7 @@ impl Cloud {
         if self.denied {
             cmd.env("FAKE_GCLOUD_DENIED", "1");
         }
+        cmd.envs(self.vars.iter().map(|(k, v)| (k, v)));
         let mut child = cmd.spawn().unwrap();
         {
             use std::io::Write;
@@ -1213,27 +1227,137 @@ fn delete_asks_for_the_name_and_keeps_the_state() {
     assert!(cloud.text("stage.env").contains("CLOUD_SERVICE=riff-stage"));
 }
 
-/// A worker never runs `riff cloud` (01M4262DY8NN30SC4REYX2G9DV).
+/// Each write of `riff cloud`, with the arguments of a run that changes
+/// the stage (01M558C4VZ2PSMEYPAZBRYW1VV).
+const WRITES: [&[&str]; 4] = [
+    &["create", "stage"],
+    &["signin", "stage"],
+    &["deploy", "stage", "--confirm", "stage"],
+    &["delete", "stage", "--confirm", "stage"],
+];
+
+/// The test runs each write of [`riff::cloud::WRITES`].
 #[test]
-fn a_worker_never_runs_riff_cloud() {
-    let cloud = Cloud::new();
-    let logs = tempfile::tempdir().unwrap();
-    let log = logs.path().join("calls");
-    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake");
-    let out = cloud
-        .env
-        .riff()
-        .args(["cloud", "list"])
-        .current_dir(cloud.top.path())
-        .env(
-            "PATH",
-            format!("{}:{}", fake.display(), std::env::var("PATH").unwrap()),
-        )
-        .env("FAKE_GCLOUD_LOG", &log)
-        .env("RIFF_WORKER", "1")
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("a worker never runs riff cloud"));
-    assert!(!log.exists());
+fn the_tests_run_each_write() {
+    let names: Vec<&str> = WRITES.iter().map(|args| args[0]).collect();
+    assert_eq!(names, riff::cloud::WRITES);
+}
+
+/// A write refuses in a worker, and calls no `gcloud`
+/// (01M558C4VZ2PSMEYPAZBRYW1VV).
+#[test]
+fn each_write_refuses_in_a_worker_and_calls_no_gcloud() {
+    let cloud = Cloud::new()
+        .found(&["run services describe riff-stage "])
+        .var("RIFF_WORKER", "1");
+    let before = cloud.text("stage.env");
+    for args in WRITES {
+        let ran = cloud.run(args);
+        assert_eq!(ran.out.status.code(), Some(1), "{args:?}: {}", ran.stderr());
+        assert_eq!(
+            ran.stderr(),
+            "riff: a worker never changes a riff in the cloud. riff cloud changed nothing. Ask \
+             the lead: the lead or a person runs it.\n",
+            "{args:?}"
+        );
+        assert!(ran.calls.is_empty(), "{args:?}: {}", ran.calls);
+    }
+    assert_eq!(cloud.text("stage.env"), before);
+}
+
+/// The how-to of `riff cloud` says who runs its writes, names each
+/// write, and shows the refusal of a worker as riff prints it
+/// (01M558C4VZ2PSMEYPAZBRYW1VV).
+#[test]
+fn the_book_says_who_runs_the_writes() {
+    let part = book::part("start-a-team-riff.md", "Host your own riff on Cloud Run");
+    let start = part
+        .find("\n### Who runs riff cloud\n")
+        .expect("the how-to has \"### Who runs riff cloud\"");
+    let who = &part[start + 1..];
+    let who = who[4..].find("\n###").map_or(who, |end| &who[..end + 4]);
+    for write in riff::cloud::WRITES {
+        assert!(who.contains(&format!("`{write}`")), "{write}: {who}");
+    }
+    assert!(who.contains(riff::text::CLOUD.worker), "{who}");
+    assert!(who.contains("lead"), "{who}");
+}
+
+/// A worker runs the reads of `riff cloud` (01M558C4VZ2PSMEYPAZBRYW1VV).
+#[test]
+fn a_worker_runs_the_reads() {
+    // A dead URL: the test never reaches a riff.
+    let cloud = Cloud::new()
+        .set("shared.env", "CLOUD_URL", "http://127.0.0.1:9")
+        .set("stage.env", "CLOUD_URL", "http://127.0.0.1:9")
+        .found(&["run services describe riff-stage "])
+        .var("RIFF_WORKER", "1");
+    for args in [&["list"][..], &["status", "stage"], &["log", "stage"]] {
+        let ran = cloud.run(args).ok();
+        assert!(!ran.calls.is_empty(), "{args:?}: no call of gcloud");
+    }
+    let ran = cloud.run(&["smoke", "stage"]);
+    assert!(
+        ran.stderr().contains(riff::text::SMOKE_NO_TOKEN),
+        "{}",
+        ran.stderr()
+    );
+}
+
+/// A riff-server on a free port of this machine.
+async fn start_server() -> Api {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, riff_server::router()).await.unwrap();
+    });
+    Api::new(&format!("http://{addr}"))
+}
+
+/// In an agent session, only the lead of its user runs a write. A
+/// session that is not the lead gets a refusal, and riff calls no
+/// `gcloud` (01M558C4VZ2PSMEYPAZBRYW1VV).
+#[tokio::test(flavor = "multi_thread")]
+async fn each_write_refuses_in_a_session_that_is_not_the_lead() {
+    let api = start_server().await;
+    let cloud = Cloud::new().found(&["run services describe riff-stage "]);
+    let dir = fs::canonicalize(cloud.top.path()).unwrap();
+    let place = riff::identity::place_in(&dir, "pangolin").unwrap();
+    for id in ["a1", "a2"] {
+        let who = Who::new("mike", Some(id)).unwrap();
+        api.register(&SessionUri::new(who, place.clone()))
+            .await
+            .unwrap();
+    }
+    let cloud = cloud
+        .var("RIFF_SERVER", api.base())
+        .var("RIFF_HOST", "pangolin")
+        .var("RIFF_SESSION", "a2");
+    let before = cloud.text("stage.env");
+    for args in WRITES {
+        let ran = cloud.run(args);
+        assert_eq!(ran.out.status.code(), Some(1), "{args:?}: {}", ran.stderr());
+        assert_eq!(
+            ran.stderr(),
+            "riff: only the lead of your user changes a riff in the cloud. This session is not \
+             the lead, so riff cloud changed nothing.\n",
+            "{args:?}"
+        );
+        assert!(ran.calls.is_empty(), "{args:?}: {}", ran.calls);
+    }
+    assert_eq!(cloud.text("stage.env"), before);
+
+    // The later value of a variable wins: now the run is the lead.
+    let lead = cloud.var("RIFF_SESSION", "a1");
+    for args in WRITES {
+        let ran = lead.run(args);
+        assert!(
+            !ran.stderr().contains("riff cloud changed nothing"),
+            "{args:?}: {}",
+            ran.stderr()
+        );
+        if args[0] == "delete" {
+            ran.ok().line("run services delete riff-stage --quiet ");
+        }
+    }
 }
