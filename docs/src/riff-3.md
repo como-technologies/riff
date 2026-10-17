@@ -1,9 +1,17 @@
 # riff 3.0
 
-This page is the design of riff 3.0. riff 3.0 is one binary on the
-machine of each person. A daemon of riff runs each work item in its
-own container. Later, the daemons of different people connect peer to
-peer.
+This page is the design of riff 3.0. riff 3.0 is isolation by
+default: the riff daemon of each machine runs each work item in its
+own container. riff-server stays the server of the riff: the claims,
+the messages, the chat, the sign-in and the update of each machine.
+The waves stay milestones on GitHub. The
+[requirements of the re-cut](requirements.md#the-re-cut-isolation-by-default)
+hold each decision of the plan (#953).
+
+The riff of peers, with no riff-server, is an experiment behind a
+cargo feature. The release build does not have it. See
+[riff 3.0: peers](riff-3-peers.md). The plan to end riff-server waits
+in the Backlog. See [riff 3.0: no cloud](riff-3-no-cloud.md).
 
 ## The goal of isolation
 
@@ -23,7 +31,8 @@ plain `claude` lacks, other than the riff tools.
 ```mermaid
 flowchart LR
     subgraph M["your machine"]
-        V["riff: CLI and ratatui view"] --> D["riff daemon<br/>systemd user unit"]
+        L["the lead:<br/>riff lead start,<br/>or claude on the host"] -- "the rollout:<br/>run the wave" --> D["riff daemon<br/>systemd user unit"]
+        V["riff view, riff top"] --> D
         D -- "podman" --> C1
         D -- "podman" --> C2
         subgraph C1["container: issue-12 (conmon)"]
@@ -37,29 +46,108 @@ flowchart LR
         I[("session image<br/>pinned by digest")] -.-> C1
         I -.-> C2
     end
-    D <-- "iroh, later" --> P["the daemon of another person"]
-    D -- "claims" --> G["GitHub"]
-    C1 -- "push with your sign-in" --> G
+    D -- "claims, riff tools, wakes:<br/>your sign-in of riff" --> S["riff-server"]
+    L -- "messages" --> S
+    C1 -- "push with your sign-in" --> G["GitHub"]
+    D -- "verify, waves" --> G
 ```
 
-- The daemon is a systemd user unit. It owns the state, the keys and
-  the sessions.
+- The daemon is a systemd user unit. It owns the sessions of the
+  machine.
 - Each work item is one session in one rootless podman container. A
   verify is an item too. The session starts, does its item and ends.
+- The rollout is the wave of the daemon. The lead asks the daemon to
+  run the wave of the repository. The wave starts one session for each
+  free item, in the limit of the machine. No worker runs in tmux.
 - `riff relay` is the entrypoint of the container. It starts `claude`
   and talks to the daemon through a socket that only that session
   sees.
+- The daemon makes the claim of each item on riff-server, as the worker
+  session of the item, with your sign-in of riff. The riff tools of the
+  session act on riff-server through the daemon.
 - Each repository names its session image, pinned by digest, in the
   file `riff.toml` at its root. See
   [Change the session image](development.md#change-the-session-image).
-- The daemon makes the claims on GitHub. The session pushes its work
-  with your sign-in.
-- Later, the daemons of two people connect over iroh, with the DNS
-  discovery and the public relays of n0. The spike of #697 checked
-  it between two machines. Its
-  [result](https://github.com/como-technologies/riff/blob/main/spikes/iroh/README.md)
-  has the numbers and the notes for that work. The page
-  [riff 3.0: peers](riff-3-peers.md) has the design.
+- The session pushes its work with your sign-in of GitHub.
+
+## How a session works
+
+```mermaid
+sequenceDiagram
+    participant W as the wave of the daemon
+    participant S as riff-server
+    participant D as the riff daemon
+    participant C as the container: relay and claude
+    participant G as GitHub
+    W->>S: the pause, the holds and the claims
+    W->>G: the free items and the pull requests that wait for a verify
+    W->>D: room for one more session?
+    D->>S: a new worker session, and its claim of issue-12
+    D->>D: a clone of the item, with --reference MAIN
+    D->>C: podman run --init: riff relay -- claude
+    C->>D: the riff tools, on the socket of the session
+    D->>S: read, post, tell and status, as the worker session
+    C->>G: push the branch, open the pull request
+    C-->>D: the end of claude
+    D->>S: the verify request to the lead, then the release of issue-12
+    D->>D: the container and the clone go
+```
+
+A second machine takes work when its daemon runs the wave of the
+repository too. The claims on riff-server keep two machines from one
+item.
+
+## What changes for a person
+
+| Step | riff 1.x | riff 3.0.0 |
+|---|---|---|
+| Get a machine ready | `riff connect claude` | Also `riff init` one time: podman, the daemon and the session image. See [Get ready for riff 3.0](start-a-riff.md#get-ready-for-riff-30). |
+| Pin a session image | No image | `riff.toml` of each repository pins one. A repository with no image of its own pins the image of riff: `riff image` prints it. |
+| Start the lead | `claude` in the clone | `riff lead start`, or `claude` in the clone as before. See [Start the lead](development.md#start-the-lead). |
+| Start the work | The rollout starts workers in tmux | The rollout runs the wave of the daemon. See [Let riff run the wave](development.md#let-riff-run-the-wave). |
+| Use a second machine | `riff workers host` | `riff wave run` in a clone on that machine |
+| Set the limit of a machine | `riff workers limit` | `riff daemon limit`. See [Set the limit of the host](development.md#set-the-limit-of-the-host). |
+| See the sessions | `riff top` | `riff view` or `riff top` |
+| Work with a session | Its tmux pane | `riff takeover NAME`, or `t` in `riff view`. See [Take over a session](development.md#take-over-a-session). |
+| Chat, pause, resume, hold | `riff chat`, `riff pause`, `riff resume`, `riff plan` | The same, on riff-server |
+| Update | `riff update`, or by itself | The same. riff 3.0.0 comes from riff-server. |
+
+## riff 3.0.0 and the line 1.x
+
+```mermaid
+flowchart LR
+    W30["Wave 30:<br/>this design and fixes"] --> R18["1.8.0:<br/>the last minor of 1.x"]
+    R18 --> W31["Wave 31:<br/>the build items of the re-cut"]
+    W31 --> R3["3.0.0: its tag<br/>deploys riff-server"]
+    R3 --> U["each machine takes 3.0.0<br/>from riff-server"]
+    U --> X["the line 1.x retires"]
+```
+
+- riff 3.0.0 is the first release where each item runs in a container
+  by default. It has riff-server. It has no workers in tmux, and no
+  riff of peers.
+- riff-server 3.0.0 serves riff 1.x too. So a machine of riff 1.x works
+  until it takes 3.0.0, and a worker in tmux ends its item.
+- After riff 3.0.0, each GitHub release of riff 1.x becomes a
+  prerelease that says that the line is retired. No patch of 1.x comes
+  after 3.0.0.
+
+### What goes in riff 3.0.0
+
+The workers in tmux, and each part that exists only for them:
+`riff workers` and each of its subcommands, the workers host, the
+clear of a worker, the reap, the pool of build jobs, the monitor and
+`riff worktrees`.
+
+### What stays in riff 3.0.0
+
+- riff-server, `riff cloud`, the sign-in, the deploy and the stage.
+- The plugin of Claude Code, its skill and its hooks, `riff connect`,
+  `riff enable`, `riff disable` and the status line, for a session on
+  the host. The skill loses the text of the workers in tmux.
+- Each command of riff-server: `riff who`, `riff chat`, `riff pause`,
+  `riff resume`, `riff plan`, `riff claim`, `riff release` and the
+  member commands with `--email`.
 
 ## What sessions share
 
@@ -80,7 +168,7 @@ decision of the design.
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
 | git: the commit | A commit has your git identity and a `Riff-Session:` trailer. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main`. No gpg agent goes into a container. | Nothing. Only the trailer tells the commits of two sessions apart. |
 | git: the repository on GitHub | Each session pushes its own branch from its own clone. The daemon makes the claims, not the session: see the next row. | With your sign-in, a session can push to the branch of another session, or delete it. |
-| The claims | A claim is the ref `refs/riff/claims/ITEM` on GitHub, for example `refs/riff/claims/issue-12`. It is not a branch. Each claim is a new commit: the empty tree, no parent, no signature, and the message `riff claim ITEM` with the trailers `Riff-Item`, `Riff-User`, `Riff-Session`, `Riff-Key` (the public key of the daemon) and `Riff-Time` (UTC, RFC 3339). The daemon creates the ref with a lease (the old value: no ref), and deletes it with the lease of its commit. GitHub compares the old value on the server, so only one session gets an item. A failed lease means that another session holds the item. No ruleset covers `refs/riff/**`, so only the lease that riff uses keeps a claim. In a public repository, each claim ref and each claim commit is public, also after the release. A claim commit holds no secret. A claim ref has no time limit. The lead deletes the claim of a session that is gone, with the lease of its claim commit (decision 35). | With your sign-in, a session can delete or replace a claim ref with no lease, for example with `git push --force`. |
+| The claims | The daemon claims each item on riff-server, as the worker session of the item, with your sign-in of riff. riff-server gives each item to one session. The daemon releases the claim at the end of the session. riff-server ends the claim of a session that stops, as in riff 1.x. | Nothing. A session has no sign-in of riff-server, and no riff tool of a session claims or releases. |
 | The processes | Each container has its own processes. Its PID 1 is the init of podman (`podman run --init`): it reaps each process that ends, so no zombie stays. A `pkill` in one session does not hit another. `podman stop` ends a session and each of its processes. | Nothing: it does not see the processes of another container. |
 | `/tmp` | Each container has its own `/tmp`. It goes when the session ends. | Nothing. |
 | The ports | Each container has its own loopback. A test port of one session does not hit another. | It can reach a port that listens on the network of your machine, as each program on it can. |
@@ -91,4 +179,4 @@ decision of the design.
 | The network | Each session reaches the internet, as a plain `claude` does. No proxy and no filter. | It uses the same connection and reaches each service that your machine reaches. |
 | The sign-in of `gh` | The daemon reads `gh auth token` on the host and gives the container `GH_TOKEN`. podman gets only the name of the variable, so the value is in no command line. The image has `gh` at `/usr/bin/gh`. A session has your rights on GitHub, as a plain `claude` has. No GitHub App. No secret goes into a log line, a message or a file of a clone. | It can do on GitHub each thing that you can do, also to the issues and the pull requests of another session. |
 | The sign-in of `claude` | Each session has its own Claude folder in a folder of riff. riff trusts the clone of the session there, as you trust the main clone. The daemon gives the session the long-lived token of `claude setup-token` in `CLAUDE_CODE_OAUTH_TOKEN`. Until that works, riff binds your `~/.claude/.credentials.json` with no write, and starts no session while its access token has less than 60 minutes left. riff never changes your own Claude config. | It uses the limits of your plan that another session needs. |
-| The daemon and the riff tools | Each relay talks to the daemon through its own Unix socket, in a folder that only that session sees. The socket tells the daemon which session asks. A session gets only the riff tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and `blocked`. No riff tool of a session acts on a folder of your machine or on a claim. The owner and admin steps need a person at the CLI. No riff tool does them. | It can send messages to other sessions through the riff tools. |
+| The daemon and the riff tools | Each relay talks to the daemon through its own Unix socket, in a folder that only that session sees. The socket tells the daemon which session asks. The daemon serves the riff tools of the session on riff-server, as its worker session. A session gets only the riff tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and `blocked`. No riff tool of a session acts on a folder of your machine or on a claim. The owner and admin steps need a person at the CLI. No riff tool does them. | It can send messages to other sessions through the riff tools. |

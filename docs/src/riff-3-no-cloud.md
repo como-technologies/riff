@@ -4,10 +4,19 @@ This page is the design of Wave C of riff 3.0 (#879): riff-server and
 the cloud parts of riff go. Each machine keeps its riff daemon, and the
 daemons connect peer to peer (see [riff 3.0: peers](riff-3-peers.md)).
 
+This plan is not in riff 3.0.0. The re-cut of #953 keeps riff-server:
+see [riff 3.0](riff-3.md). The items of Wave C that end riff-server
+wait in the Backlog: #881, #882, #883, #884, #885, #886 and #888. A
+new design brings them back when Mike decides that riff-server goes.
+The removal of the workers in tmux (#887) is in riff 3.0.0, and the
+plugin stays. The rest of this page is the plan of Wave C as it was.
+
 `riff move` and `riff cloud delete --all` come with the items of Wave
 C. Until then, `riff --help` does not show them. The
 [requirements of Wave C](requirements.md#wave-c-what-goes-and-what-stays)
-hold each decision.
+hold each decision, and the
+[requirements of the re-cut](requirements.md#the-re-cut-isolation-by-default)
+say which of them the re-cut replaces.
 
 ## What goes
 
