@@ -3,7 +3,7 @@
 This page is the design of the phone app (#951): the riff chat on an
 Android phone. It is one child design of the UI architecture of riff
 (#982). The build items come after Mike signs off the design. Until
-then, `riff --help` does not show `riff phone`, and no release has the
+then, `riff --help` does not show `riff device`, and no release has the
 app. The
 [requirements of the phone app](requirements.md#the-phone-app) hold
 each decision.
@@ -81,27 +81,33 @@ It has no Kotlin or Java source of the riff project.
 
 ## Pair a phone
 
-A phone is a device of a member, as a machine is. You pair your phone
-from a machine where you ran `riff login`. Then the phone signs in
-with Google, as `riff login` does.
+A phone is a device of a member, as a machine is. One command adds each
+kind of device: `riff device add`. You add your phone from a machine
+where you ran `riff login`. Then the phone signs in with Google, as
+`riff login` does.
 
 ```sh
-riff phone add pixel
+riff device add pixel
 ```
 
-NAME is the name of the phone, for example `pixel`, as the host name of
-a machine. It is not a Google ID. It is optional: with no NAME, the
-name is `phone`. Your chat lines from the phone show as `USER@NAME`,
-and `riff phone remove NAME` uses it.
+- NAME is the name of the device, for example `pixel`, as the host name
+  of a machine. It is not a Google ID. Your chat lines from the phone
+  show as `USER@NAME`, and `riff device remove NAME` uses it.
+- `--kind` names the kind of device. The kind sets the scope of the
+  device when you add it. The first kind is `phone`, the default: a
+  phone acts only on the chat. Each child design of #982 adds its kind
+  and its scope, for example a browser or a desktop app.
+- NAME is optional. With no NAME, the name is the kind, for example
+  `phone`.
 
 ```mermaid
 sequenceDiagram
     participant P as you
-    participant M as riff phone add (your machine)
+    participant M as riff device add (your machine)
     participant S as riff-server
     participant A as the app (your phone)
     participant G as Google
-    P->>M: riff phone add pixel
+    P->>M: riff device add pixel
     M->>S: ask for a pair code, with your sign-in
     S-->>M: the code: one time, 10 minutes
     M-->>P: a QR code: the address of riff-server and the code
@@ -114,8 +120,8 @@ sequenceDiagram
     S-->>A: the tokens
 ```
 
-- `riff phone add [NAME]` runs in a terminal of your own. It refuses
-  with no terminal, so an agent session cannot pair a phone. It draws
+- `riff device add [NAME]` runs in a terminal of your own. It refuses
+  with no terminal, so an agent session cannot add a device. It draws
   the QR
   code with [tui-qrcode](https://crates.io/crates/tui-qrcode), a
   Ratatui widget, and prints the code as text too. The code is in no
@@ -153,18 +159,21 @@ sequenceDiagram
 
 ## A lost phone
 
-`riff phone list` shows each of your phones. `riff phone remove NAME`
-ends the sign-in of one phone at once. Run them on a machine of yours:
+`riff device list` shows each of your devices: its kind, its name, the
+time of its sign-in and the time of its last call. A machine where you
+ran `riff login` is a device of the kind `machine`, with its host as
+its name. `riff device remove NAME` ends the sign-in of one device at
+once, also of a machine. Run them on a machine of yours:
 
 ```sh
-riff phone list
-riff phone remove pixel
+riff device list
+riff device remove pixel
 ```
 
-An admin ends the phone of another person with `--user`.
-`riff logout --all` and `riff remove --email` also end each phone of
-the person. When you clear the data of the app, its key goes. Then
-pair the phone again.
+An admin ends the device of another person with `--user`.
+`riff logout --all` and `riff remove --email` also end each device of
+the person. When you clear the data of the app, its key goes. Then add
+the phone again.
 
 ## Install the app
 
@@ -298,7 +307,7 @@ this design, in this order:
 
 | Item | What | Needs |
 |---|---|---|
-| #962 | `riff phone add`, `riff phone list` and `riff phone remove`: the pair code, the QR code, the Google sign-in of the phone on riff-server, and the end of one phone | None |
+| #962 | `riff device add`, `riff device list` and `riff device remove`: the pair code, the QR code, the Google sign-in of the phone on riff-server, the scope of each kind, and the end of one device | None |
 | #963 | The Slint app: the chat, the key in the Keystore, the typed code, the Google sign-in, and the APK in each release | #962, and the core library of #982 (riff 3.1) |
 | #977 | The QR scan with the NDK camera | #963 |
 | #964 | The notices: a local notice while the app runs, and an FCM notification message with a fixed text in the background | #963 |

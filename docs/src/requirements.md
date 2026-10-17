@@ -4869,15 +4869,24 @@ items are #962, #963, #977, #964 and #965.
   #982 (riff 3.1): the client of riff-server and the models of the
   views. It calls the parts of Android through JNI: the Keystore,
   Credential Manager, the camera and the notices.
-- **01M53NTR47XBDX6C6QN49RNP29** A person pairs a phone from a machine
-  with a live sign-in: `riff phone add [NAME]`, in a terminal. NAME is
-  the name of the phone, as the host name of a machine, and not a
-  Google ID. With no NAME, the name is `phone`. The command refuses
-  with no terminal. riff-server makes a pair code that works one time,
-  for 10 minutes, ties it to the Google account of the sign-in of the
-  terminal, and keeps only its hash. The command draws a QR code with
-  `tui-qrcode` that holds the address of riff-server and the code, and
-  prints the code as text. The code is in no URL.
+- **01M53XPZTG203SNM9MBKBERMB5** One command adds, lists and removes
+  each kind of device of a person:
+  `riff device add [NAME] [--kind KIND]`, `riff device list` and
+  `riff device remove NAME`. The kind
+  sets the scope of the device at add time. The first kind is `phone`,
+  the default. Each child design of #982 adds its kind and its scope.
+  A machine of `riff login` is a device of the kind `machine`, with
+  its host as its name and the scope of today.
+- **01M53NTR47XBDX6C6QN49RNP29** A person adds a phone from a machine
+  with a live sign-in: `riff device add [NAME]`, in a terminal. NAME
+  is the name of the device, as the host name of a machine, and not a
+  Google ID. With no NAME, the name is the kind, for example `phone`.
+  The command refuses with no terminal. riff-server makes a pair code
+  that works one time, for 10 minutes, ties it to the Google account
+  of the sign-in of the terminal and to the kind, and keeps only its
+  hash. The command draws a QR code with `tui-qrcode` that holds the
+  address of riff-server and the code, and prints the code as text.
+  The code is in no URL.
 - **01M53WZ032G5W435GJMPVBHD71** The app reads the QR code with the
   camera, through the NDK camera API and the decoder `rqrr`. A typed
   code is the fallback.
@@ -4894,18 +4903,21 @@ items are #962, #963, #977, #964 and #965.
   the app has a DPoP proof of the key, as for `riff login`.
 - **01M53NTRAKPS7QVCTFS2GJPX4G** riff-server sets the host of each call
   of a phone to the name of its pair. A line of a phone shows as
-  `<USER@NAME>`. riff-server refuses a pair name that is the host of a
-  session, of a post or of another phone of the same person.
-- **01M53NTRDKDBTCWX0QNFJY9D4K** The token of a phone acts only on the
-  thread `chat` and on the notices of that phone. riff-server refuses
-  each other call of a phone token, for example a claim, a pause, an
-  invite, `who`, a session token and a read of another thread.
-- **01M53NTRGP2MJG6JT85BCVYE18** `riff phone list` shows each phone of
-  the person: its name, the time of its pair and the time of its last
-  call. `riff phone remove NAME` ends the sign-in of that phone at
-  once. With `--user`, an admin names a phone of another person.
-  `riff logout --all` and `riff remove --email` also end the sign-in
-  of each phone of the person.
+  `<USER@NAME>`. riff-server refuses a name that is the name of
+  another device of the same person, or the host of one of its
+  sessions or posts.
+- **01M53NTRDKDBTCWX0QNFJY9D4K** The scope of the kind `phone` is the
+  chat only: the token of a phone acts only on the thread `chat` and
+  on the notices of that phone. riff-server refuses each other call of
+  a phone token, for example a claim, a pause, an invite, `who`, a
+  session token and a read of another thread.
+- **01M53NTRGP2MJG6JT85BCVYE18** `riff device list` shows each device
+  of the person: its kind, its name, the time of its sign-in and the
+  time of its last call. `riff device remove NAME` ends the sign-in of
+  that device at once, also of a machine. With `--user`, an admin
+  names a device of another person. `riff logout --all` and
+  `riff remove --email` also end the sign-in of each device of the
+  person.
 - **01M53NTRKQ894YHQD9YYRNJBHZ** The app takes the parse of `@lead` and
   `@USER`, the signed payload of a post, the check of a signature and
   the DPoP proof from riff-core. So the app and `riff chat` cannot
