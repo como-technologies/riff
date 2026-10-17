@@ -36,6 +36,14 @@
 //! ([`Binary::new_one_that`], 01M43F5F9AQ9S39E1JZF8EBJEH). It runs it
 //! in its place only when the check passes.
 //!
+//! A `riff mcp` that still runs a replaced riff [`STUCK_AFTER`] after
+//! the new one came is stuck ([`stuck_mcp`]): its check fails, or it is
+//! a `riff mcp` of v1.7.0 or older that waits for an initialize request
+//! of Claude Code. It cannot start again by itself. So the PostToolUse
+//! hook of its session tells the session the fix, once for each new
+//! riff: `/mcp`, then reconnect `riff` (01M53QQRAJMB24B0804YHPMN18). A
+//! worker gets no line: it ends after its item (01M517BT9WBQ4R79Z9KVY9SG1B).
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant U as riff update
@@ -53,7 +61,7 @@ use std::future::Future;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use riff_core::name::Place;
 
@@ -235,6 +243,113 @@ pub fn replaced(exe: &Path) -> bool {
 /// ```
 pub fn runs_replaced(pid: u32) -> bool {
     replaced(&PathBuf::from(format!("/proc/{pid}/exe")))
+}
+
+/// How long a `riff mcp` can run a replaced riff before riff calls it
+/// stuck (01M53QQRAJMB24B0804YHPMN18). A `riff mcp` that can follow the
+/// update runs the new riff a few seconds after it, at its first moment
+/// with no tool call.
+pub const STUCK_AFTER: Duration = Duration::from_secs(120);
+
+/// A `riff mcp` that still runs a riff which a new one replaced more
+/// than [`STUCK_AFTER`] ago (01M53QQRAJMB24B0804YHPMN18).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stuck {
+    /// The process of the `riff mcp`.
+    pub pid: u32,
+    /// The new riff on disk.
+    pub path: PathBuf,
+    /// The inode of the new riff. riff tells a session once for each new
+    /// riff.
+    pub inode: u64,
+}
+
+/// The `riff mcp` child of the agent process `agent` that is stuck at
+/// `now`: see [`stuck_at`]. `None` when there is none, or when riff
+/// cannot read `/proc`. The agent tool starts `riff mcp` as its child.
+pub fn stuck_mcp(agent: u32, now: SystemTime) -> Option<Stuck> {
+    children(agent).into_iter().find_map(|pid| {
+        let exe = PathBuf::from(format!("/proc/{pid}/exe"));
+        stuck_at(pid, &exe, &args_of(pid), now)
+    })
+}
+
+/// The process `pid` as a stuck `riff mcp` at `now`: `args` has the word
+/// `mcp`, the link `exe` names a file `riff` that was replaced (see
+/// [`replaced`]), and the new file at that path came more than
+/// [`STUCK_AFTER`] before `now`. For a process, `exe` is
+/// `/proc/PID/exe`.
+///
+/// ```
+/// use std::os::fd::AsRawFd;
+/// use std::path::PathBuf;
+/// use std::time::SystemTime;
+/// use riff::binary::{STUCK_AFTER, stuck_at};
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("riff");
+/// std::fs::write(&path, "old")?;
+/// // An open file has a link in /proc, as a process has for its binary.
+/// let file = std::fs::File::open(&path)?;
+/// let exe = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+/// let args = ["riff".to_owned(), "mcp".to_owned()];
+/// let later = SystemTime::now() + STUCK_AFTER * 2;
+/// assert_eq!(stuck_at(7, &exe, &args, later), None);
+/// // A new riff in its place, as `riff update` does.
+/// std::fs::write(dir.path().join("new"), "new")?;
+/// std::fs::rename(dir.path().join("new"), &path)?;
+/// let stuck = stuck_at(7, &exe, &args, later).expect("stuck");
+/// assert_eq!((stuck.pid, stuck.path), (7, path));
+/// // Not yet: it can still follow the update.
+/// assert_eq!(stuck_at(7, &exe, &args, SystemTime::now()), None);
+/// // Not a riff mcp.
+/// let watch = ["riff".to_owned(), "watch".to_owned()];
+/// assert_eq!(stuck_at(7, &exe, &watch, later), None);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn stuck_at(pid: u32, exe: &Path, args: &[String], now: SystemTime) -> Option<Stuck> {
+    if !args.iter().skip(1).any(|a| a == "mcp") || !replaced(exe) {
+        return None;
+    }
+    let path = on_disk(std::fs::read_link(exe).ok()?);
+    if path.file_name()? != "riff" {
+        return None;
+    }
+    let meta = std::fs::metadata(&path).ok()?;
+    let age = now.duration_since(meta.modified().ok()?).ok()?;
+    (age >= STUCK_AFTER).then(|| Stuck {
+        pid,
+        path,
+        inode: meta.ino(),
+    })
+}
+
+/// The child processes of `pid`, from `/proc/PID/task/*/children`.
+fn children(pid: u32) -> Vec<u32> {
+    let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+        return Vec::new();
+    };
+    tasks
+        .flatten()
+        .filter_map(|task| std::fs::read_to_string(task.path().join("children")).ok())
+        .flat_map(|list| {
+            list.split_whitespace()
+                .filter_map(|p| p.parse().ok())
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The arguments of the process `pid`, from `/proc/PID/cmdline`.
+fn args_of(pid: u32) -> Vec<String> {
+    std::fs::read(format!("/proc/{pid}/cmdline"))
+        .map(|raw| {
+            raw.split(|&b| b == 0)
+                .filter(|a| !a.is_empty())
+                .map(|a| String::from_utf8_lossy(a).into_owned())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// True when `a` and `b` name one file: the same path, or two paths

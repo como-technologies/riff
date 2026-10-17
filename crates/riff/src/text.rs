@@ -3253,6 +3253,31 @@ pub fn needs_you_tag(line: &str) -> String {
     format!("needs you: {line}")
 }
 
+/// The line to a session whose `riff mcp` is stuck on a replaced riff,
+/// with the fix (01M53QQRAJMB24B0804YHPMN18).
+///
+/// ```
+/// use riff::binary::Stuck;
+///
+/// let stuck = Stuck { pid: 42, path: "/home/mike/.cargo/bin/riff".into(), inode: 7 };
+/// let line = riff::text::stuck_mcp(&stuck);
+/// assert!(line.starts_with("riff: the riff tools of this session (riff mcp, pid 42) still run the old riff."), "{line}");
+/// assert!(line.contains("/home/mike/.cargo/bin/riff"), "{line}");
+/// assert!(line.contains("run /mcp in this session, select riff, and select Reconnect"), "{line}");
+/// assert!(!line.contains('\n'), "{line}");
+/// ```
+pub fn stuck_mcp(stuck: &crate::binary::Stuck) -> String {
+    format!(
+        "riff: the riff tools of this session (riff mcp, pid {}) still run the old riff. \
+         The new riff is in {}, but this riff mcp cannot start again on it by itself. \
+         To get the new tools, tell your user to run /mcp in this session, select riff, \
+         and select Reconnect. The reconnect frees the claims of this session: claim them \
+         again after it.",
+        stuck.pid,
+        stuck.path.display()
+    )
+}
+
 /// The answer to `status`.
 ///
 /// ```

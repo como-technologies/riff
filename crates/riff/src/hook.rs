@@ -758,6 +758,40 @@ pub fn start_output(context: &str) -> String {
     .to_string()
 }
 
+/// The JSON that the PostToolUse hook prints to add `context` to the
+/// session.
+///
+/// ```
+/// let out: serde_json::Value = serde_json::from_str(&riff::hook::tool_output("hi"))?;
+/// assert_eq!(out["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+/// assert_eq!(out["hookSpecificOutput"]["additionalContext"], "hi");
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+pub fn tool_output(context: &str) -> String {
+    serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": context,
+        }
+    })
+    .to_string()
+}
+
+/// The line of the PostToolUse hook for a session whose `riff mcp` is
+/// stuck on a replaced riff ([`crate::binary::stuck_mcp`]), once for
+/// each new riff (01M53QQRAJMB24B0804YHPMN18). `dir` is
+/// [`crate::local::dir`]. A worker gets no line: it ends after its
+/// item, and riff starts a new worker on the new riff
+/// (01M517BT9WBQ4R79Z9KVY9SG1B).
+pub fn stuck_line(dir: &Path, worker: bool, now: std::time::SystemTime) -> Option<String> {
+    if worker {
+        return None;
+    }
+    let agent = crate::local::agent_above(dir)?;
+    let stuck = crate::binary::stuck_mcp(agent, now)?;
+    crate::local::first_tell(dir, agent, stuck.inode).then(|| crate::text::stuck_mcp(&stuck))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
