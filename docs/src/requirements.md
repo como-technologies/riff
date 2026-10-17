@@ -4848,7 +4848,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 
 The phone app is the design of #951. The book page
 [riff on a phone](riff-mobile.md) has the pictures. The build items
-are #962, #963, #977, #964 and #965.
+are #962, #963, #964 and #965.
 
 - **01M53NTQTHC8WHW9ZZ6S1VZ2W8** The first phone app shows the thread
   `chat` (the history, then each new line), posts a line, sends
@@ -4859,12 +4859,10 @@ are #962, #963, #977, #964 and #965.
   riff-server over HTTPS, on riff 1.x and on riff 3.0. It acts as a
   person, as `riff chat` does, with the calls of `riff chat`: join,
   read, tail and post.
-- **01M53NTR10TGJ9PHHCEN1P15K7** The phone app is an Android app: a
-  Rust core with a thin shell in Kotlin and Jetpack Compose. UniFFI
-  makes the Kotlin bindings of the core. No part of the app draws in a
-  web view. It runs on Android 10 or later.
-- **01M53RWDCHXGA7J30EMW6Q9F5H** The riff project makes no iPhone app
-  and has no account of the Apple Developer Program.
+- **01M53NTR10TGJ9PHHCEN1P15K7** The phone app is for Android only. It
+  is a Rust core with a thin shell in Kotlin and Jetpack Compose.
+  UniFFI makes the Kotlin bindings of the core. No part of the app
+  draws in a web view. It runs on Android 10 or later.
 - **01M53RWDFBC3Q8R6PEX9R0XAVD** The core is the crate `riff-phone` of
   the workspace. It makes each call to riff-server, the DPoP proofs,
   the signatures, the parse of `@lead` and `@USER`, and the read after

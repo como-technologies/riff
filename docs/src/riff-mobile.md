@@ -58,19 +58,18 @@ flowchart LR
 
 ## The platform
 
-Mike asked for an app in Rust, with no web app, and for Android only.
-The options, with the facts and their links, are in
-[the comparison on #951](https://github.com/como-technologies/riff/issues/951#issuecomment-6227996939):
+Mike asked for an app in Rust, for Android only. The app is a Rust
+core with a thin native shell. UniFFI makes the Kotlin bindings of the
+core. It runs on Android 10 or later. The other way is Slint, for all
+Rust on the screen too:
 
-| | A Rust core with a native shell (UniFFI) | An app all in Rust (Slint, Makepad, egui) | A Rust UI in a web view (Dioxus, Tauri 2) |
-|---|---|---|---|
-| Draws in a web view | No | No | Yes |
-| Android today | Yes: Firefox for Android uses UniFFI | Slint and Makepad: yes. egui: the soft keyboard does not open | Yes |
-| Push, camera, Keystore | Plain Android code in the shell | No API: the team writes JNI code | Tauri: plugins, but no remote push |
-| iroh | iroh-ffi uses UniFFI | Rust: yes | Rust: yes |
-
-The app is a Rust core with a thin native shell. UniFFI makes the
-Kotlin bindings of the core. It runs on Android 10 or later.
+| | A Rust core with a Compose shell (UniFFI) | All Rust on the screen (Slint) |
+|---|---|---|
+| Android today | Yes: Firefox for Android uses [UniFFI](https://github.com/mozilla/uniffi-rs) | Yes, since [Slint 1.5](https://slint.dev/blog/slint-1.5-released) |
+| The screens | Kotlin and Jetpack Compose | Rust and the language of Slint |
+| The notices, the camera, the key | Plain Android code in the shell | No API in Slint: Kotlin or JNI code |
+| License | MPL-2.0 | GPLv3, a royalty-free license (the app shows the AboutSlint widget), or commercial |
+| iroh | [iroh-ffi](https://github.com/n0-computer/iroh-ffi) uses UniFFI | Rust: yes |
 
 ## Pair a phone
 
@@ -232,21 +231,6 @@ more device that needs a key. This design leaves the key choices to
 - Today a new phone reads the kept history of the chat. #958 decides
   whether a new device can read the old lines.
 
-## An iPhone app
-
-The riff project makes no iPhone app. riff is open source, so another
-person can make one. It needs:
-
-- the Apple Developer Program, 99 USD each year: a free account cannot
-  use push;
-- a shell in Swift and SwiftUI over the same Rust core: UniFFI makes
-  Swift bindings too;
-- the key in the Secure Enclave, which keeps P-256 keys;
-- a Notification Service Extension in Swift, to show a push with no
-  text;
-- an APNs key on riff-server, or in Firebase;
-- a Mac to build the app.
-
 ## If a later release removes riff-server
 
 No release removes riff-server now. If one does, the phone needs a new
@@ -268,9 +252,8 @@ this design, in this order:
 | Item | What | Needs |
 |---|---|---|
 | #962 | `riff phone add`, `riff phone list` and `riff phone remove`: pair a phone, and end its sign-in | None |
-| #963 | The Rust core: the crate `riff-phone`, with UniFFI bindings for Kotlin | #962 |
-| #977 | The Android app: the Jetpack Compose shell, the key in the Keystore, the APK in each release | #963 |
-| #964 | The notices, with FCM | #977 |
+| #963 | The app: part 1, the Rust core (the crate `riff-phone`, with UniFFI bindings for Kotlin); part 2, the Jetpack Compose shell, the key in the Keystore, and the APK in each release | #962 |
+| #964 | The notices, with FCM | #963 |
 | #965 | The live check: Mike installs the APK, pairs, chats, gets a notice and removes the phone | #964 |
 
 The items need no item of #953. So they fit on the line 1.x and on
