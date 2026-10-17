@@ -4978,16 +4978,147 @@ items are #962, #963, #977, #964 and #965.
 riff 3.0 is the design of #699. riff 1.x runs today. Each
 requirement of this section holds for riff 3.0. The book page
 [riff 3.0](riff-3.md) has the picture and the table of what sessions
-share.
+share. The re-cut of #953 changes the plan: see the next part.
+
+### The re-cut: isolation by default
+
+The requirements of the re-cut (#953) replace the plan of Wave C and
+the riff of peers. A requirement that the re-cut replaces ends with
+"Superseded by the re-cut (ID)." or "Superseded in part by the re-cut
+(ID)." The build items of the re-cut hold the requirements of this
+part when they merge.
+
+- **01M53NGS8FGRNY12DDJA3P0GH2** riff 3.0.0 is isolation by default,
+  with riff-server. The daemon of each machine runs each work item, a
+  build or a verify, as a container session
+  (01M4Z60B7NW4GHKGCYZZDG26R6). riff-server stays the server of the
+  riff: the claims, the messages, the threads, the chat, the sign-in,
+  the pauses, the holds and the update of each machine. The waves stay
+  on the forge (R223). riff 3.0.0 has no riff of peers
+  (01M53NGW0DWJ075C4MDP06WAGS).
+- **01M53NGVB7SZJW7X8SYS3B0ZHG** In riff 3, each part of riff 1.x stays
+  as it is, except the riff of peers (01M53NGW0DWJ075C4MDP06WAGS) and
+  the start of a worker in tmux by the rollout
+  (01M53NGVE839TRH7XB7CDPQNZE). The parts that stay include
+  riff-server and its log, `riff cloud`, the sign-in, the tokens, the
+  device key and the signed messages, the members and the roles of
+  riff-server, the workers in tmux (01M53NGVQDKCTNMG54YDFE22T2), and a
+  session on the host with the plugin, also a lead in tmux. A
+  requirement of a part that stays that ends with "Superseded by 3.0
+  (ID)" or "Superseded in part by 3.0 (ID)" still holds in riff 3, for
+  each ID. R203 is one of them: a second machine can still use the
+  riff-server of a first machine.
+- **01M53NGWTNC3655ZZJ76M1R5R7** In riff 3.0.0, the claim of a
+  container session is a claim on riff-server, as in riff 1.x. The
+  daemon makes it as the worker session of the item
+  (01M4ZV3B6Q0Y6AX0KSKC55S31R). The riff tools of each container
+  session act on riff-server (01M4ZV3B6T2KB09WJ59F07HXET).
+- **01M53NGVE839TRH7XB7CDPQNZE** The rollout of riff 3 runs the wave of
+  the daemon (01M4ZV3B6J89KJQ0F14YWTZMJQ). When the rollout of a lead
+  finds free work, it asks the daemon of its machine to run the wave of
+  the repository, when no wave of that repository runs there. It starts
+  no worker in tmux by itself. It still gives free work to each idle
+  worker in tmux, as in riff 1.x. `riff lead start` also starts the
+  wave of the repository on its daemon, when no wave of it runs.
+- **01M53NGVH8A19QS3CQ79ENVVXT** A second machine of a person takes work
+  in containers when its daemon runs the wave of the repository:
+  `riff wave run` in a clone on that machine. The claims on riff-server
+  keep two machines from one item (01M4ZV3B6M7PZRJ39XTXBZP3ZH). The
+  limit of the containers of each machine is the limit of its daemon
+  (01M4ZV3B6HAFTSC2K63FMC5FYA). `riff workers host` stays, for the
+  workers in tmux.
+- **01M53NGVMD2PGEC0P9S3X4CTHT** The lead of a person runs in a
+  container with `riff lead start` (01M501P9MXNAP5QXNVBVF5JJFN), or on
+  the host as a session of Claude Code with the plugin of riff, as in
+  riff 1.x. Each lead gets its wakes from riff-server. The plugin, its
+  skill and its hooks, `riff connect`, `riff enable`, `riff disable`,
+  `riff mcp`, `riff watch` and the status line stay in riff 3.0.0, for
+  a session on the host.
+- **01M53NGVQDKCTNMG54YDFE22T2** riff 3.0.0 keeps the workers in tmux
+  and each of their parts, as in riff 1.x: `riff workers` and each of
+  its subcommands, the workers host, the clear of a worker, the reap,
+  the pool of build jobs, the monitor, `riff worktrees`, the worker
+  role of a session on the host (`RIFF_WORKER`), the text of the
+  workers in the skill of the plugin, and the permission rules of a
+  worker. A person starts a worker in tmux with `riff workers start`.
+- **01M53NGVTE186GE5E48E68N0BY** The last minor release of riff 1.x ends
+  Wave 30: 1.8.0. riff 3.0.0 releases when each build item of the
+  re-cut merged. Its tag deploys it to riff-server, as each release.
+  Each machine with `update.auto` on then takes it from riff-server by
+  itself (01M3N7JJEKZMN1E5NJQRK2QYVB). Then the line 1.x retires: each
+  GitHub release of riff 1.x becomes a prerelease with a first line
+  that says that the line is retired (#795). No patch of riff 1.x comes
+  after riff 3.0.0.
+- **01M53NGVXEMBTJ8E4K3MHPQ7W9** riff-server 3.0.0 serves the API of
+  riff 1.x. So a machine of riff 1.x works until it takes riff 3.0.0.
+- **01M53NGW0DWJ075C4MDP06WAGS** riff 3.0.0 removes the riff of peers of
+  Wave B (#803), with its code, its tests and its book text (#959). No
+  cargo feature and no flag keeps it. Its items wait in the Backlog:
+  the live checks (#846, #920, #921, #922), the fixes (#928, #943,
+  #944, #946, #957) and the facts of n0 (#941). A new design brings
+  them back when Mike decides.
+- **01M53NGW3FR555TWP8Z8HHRVDJ** The daemon of riff 3.0.0 binds no iroh
+  endpoint, contacts no service of n0, reads and makes no daemon key in
+  the OS keyring, opens no riff of peers and no folder `state`, writes
+  no record, and reads and releases no claim on the forge.
+  `crates/riff/Cargo.toml` names no dependency that only the riff of
+  peers uses, and `Cargo.lock` has no `iroh`.
+- **01M53NGW6F5HP1DZ9QRGP50MGT** riff 3.0.0 has none of these, also not
+  in `--help`: `riff invite USER`, `riff join`, `riff leave`,
+  `riff remove USER`, `riff members` with no `--email`, the flag
+  `--peers` of `riff run` and of `riff wave run`, and the flag
+  `--forge` of `riff release`. The forms with `--email` of
+  `riff invite`, `riff remove` and `riff members` stay, and act on
+  riff-server. `riff daemon status`, `riff view` and `riff top` show no
+  key, no riff of peers, no peer link and no session of another
+  daemon.
+- **01M53NGW9FH02EM74GKY829808** The re-cut supersedes each requirement
+  of Wave B (#803), and each requirement of the riff of peers in "Data
+  and peers": the log of peers, the keys of the members, the claims on
+  the forge and the transport. Each of them holds for riff 1.6 to 1.8,
+  until #959 merges. 01M4ZV3B6T2KB09WJ59F07HXET and
+  01M501P9XWXWDBSXP4QRTHTZ4P hold again in riff 3.0.0, except their
+  words of peer to peer: the riff tools of a container session and of
+  a lead in a container act on riff-server. 01M4ZHW2083VFTQJ772ZJ27XAC
+  stays superseded (01M53NGW3FR555TWP8Z8HHRVDJ).
+- **01M53NGWFBWR1WMJWC2DHVHJ3T** riff 3.0.0 does not read, change or
+  delete the state of the riff of peers that riff 1.6 to 1.8 made on a
+  machine: the folders `state` and `state.lost-MS` and the files
+  `invites.json` and `forges.json` in the folder of the daemon, and the
+  secret `daemon-key DIR` in the OS keyring. A claim ref
+  `refs/riff/claims/ITEM` on the forge stays until a person deletes it.
+  The book page "riff 3.0" names each of them.
+- **01M53NGWN190T2MYB1EZAD36VB** The items of Wave C wait in the
+  Backlog: the update with no riff-server (#881), the move (#882), the
+  delete of the cloud parts (#883), the live check of the move (#884),
+  the commands of a person on the daemon (#885), the removal of the
+  sign-in (#886), the removal of the plugin and of the workers in tmux
+  (#887), the removal of riff-server (#888), and the steps of #889 that
+  end riff-server. A new design brings them back when Mike decides that
+  riff-server goes. A requirement that ends with "Superseded by Wave C
+  (ID)" or "Superseded in part by Wave C (ID)" holds again when the
+  re-cut supersedes that ID.
+- **01M53NGWJ48MMYPQNJQ0EY9T47** The book page "riff 3.0" has the plan
+  of the re-cut, with a mermaid diagram of a container session with
+  riff-server, what riff 3.0.0 removes, and the state that it leaves on
+  a machine. It has no other text of the riff of peers. The page
+  "Design: the riff of peers" holds the how-tos of the riff of peers of
+  riff 1.6 to 1.8, and goes with #959. The page "Design: no cloud, a
+  later plan" says that its plan is not in riff 3.0.0, and that its
+  items wait in the Backlog.
 
 ### Shape
 
 - **01M4Z60B7E6X53NBJ01R95RYGE** riff 3.0 is one binary: the CLI, a
   daemon, the MCP shim and the relay. It runs on the machine of each
-  person. Cloud workers are future work.
+  person. Cloud workers are future work. Superseded in part by the
+  re-cut (01M53NGVB7SZJW7X8SYS3B0ZHG). riff-server stays a second
+  binary.
 - **01M4Z60B7FCREZDCTVR73WWRY1** The daemon of riff is a systemd user
   unit. It owns the state, the keys, the sessions and, later, the peer
-  links. It is the server of riff 3.0.
+  links. It is the server of riff 3.0. Superseded in part by the re-cut
+  (01M53NGS8FGRNY12DDJA3P0GH2). riff-server stays the server of the
+  riff.
 - **01M4Z60B7GTV4HHF9R3TMZRS7J** riff 3.0 runs on Linux only. Each
   platform part is a trait, and its Linux implementation is behind
   `cfg(target_os = "linux")`: `Runtime` (the start, the stop, the attach
@@ -5327,9 +5458,11 @@ share.
 - **01M4ZHW22F8HE2E1WDSTNDJW4H** The daemon runs one command at a time.
   The records of a command are in its log before the command gets its
   reply. When a write of the log fails for good, each next command
-  fails until the daemon starts again.
+  fails until the daemon starts again. Superseded by the re-cut
+  (01M53NGW3FR555TWP8Z8HHRVDJ).
 - **01M4ZHW24JZZXM3JJXG3PRJS7N** `riff daemon status` also shows the ID
-  of the riff of the daemon and the position of its log.
+  of the riff of the daemon and the position of its log. Superseded by
+  the re-cut (01M53NGW3FR555TWP8Z8HHRVDJ, 01M53NGW6F5HP1DZ9QRGP50MGT).
 - **01M4ZDTW25YV0GMMVGWN6JTJC5** Until `riff relay` (#717), the input
   and the events of a session go through the `podman run` of the
   daemon. At a stop of the daemon they end: `claude` ends after its
@@ -6017,60 +6150,71 @@ share.
 ### Data and peers
 
 - **01M4Z60B8AFV68ZSAFA540G73C** The state machine of riff-server
-  becomes a library in the daemon.
+  becomes a library in the daemon. Superseded by the re-cut
+  (01M53NGW3FR555TWP8Z8HHRVDJ).
 - **01M4ZHW1Y1X21ZPV053D0CXWMC** The crate `riff-state` is the state
   machine: the state and its commands, the log and its replay, the
   checkpoints and the stores. It does no HTTP and knows no sign-in.
   riff-server 1.x and the riff daemon use it. Its log and its
   checkpoints have the format of riff-server: the format tests of
   riff-server check the fixtures of each release against it.
-  Superseded in part by Wave C (01M51R8GAE5E6ZKD4PSNJYGGMW).
+  Superseded in part by Wave C (01M51R8GAE5E6ZKD4PSNJYGGMW). Superseded
+  in part by the re-cut (01M53NGW3FR555TWP8Z8HHRVDJ). Only riff-server
+  uses it.
 - **01M4Z60B8BHAR9GHCC0M7V7CV5** The log has the shape of peer to peer:
   each author has an append-only signed log, and each type of record has
   one writer. A message or a status: its author. The plan and the waves:
   the lead of the repository. The members: the owner
   (01M4Z60B8C8JBV1T8T0W6ZKFE6). A claim: a compare-and-swap push to the
   forge (01M4Z60B8C3W5TMPVWNFXD1SYN). The keys are ed25519.
+  Superseded by the re-cut (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8C8JBV1T8T0W6ZKFE6** The owner signs the key of each member.
   riff 3.0 has no sign-in with an OpenID Connect provider, no OAuth
-  client and no riff token.
+  client and no riff token. Superseded by the re-cut
+  (01M53NGVB7SZJW7X8SYS3B0ZHG, 01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8C3W5TMPVWNFXD1SYN** A claim is the ref
   `refs/riff/claims/ITEM` on the forge, for example
   `refs/riff/claims/issue-12` or `refs/riff/claims/verify-issue-12`. It
-  is not a branch.
+  is not a branch. Superseded by the re-cut
+  (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8DYAVEQF6F8N9QP7MS** Each claim is a new commit: the empty
   tree, no parent, no signature, and a message with the item, the user,
   the session and the time. The daemon makes each claim and each
   release, not the session. A claim is a create with
   `git push --force-with-lease=REF:`: the empty value means that the ref
   does not exist yet. A release is a delete with the lease of the claim
-  commit.
+  commit. Superseded by the re-cut (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8EB7A44A41CWWP7G8K** A claim fails when its lease fails in
   the client (`stale info`) or on the server (`cannot lock ref`). riff
-  reads both as: another session holds the item.
+  reads both as: another session holds the item. Superseded by the
+  re-cut (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8FQ3GMWQH12CXE0JS9** A claim ref has no time limit. It holds
   until its release, or until the lead deletes it
-  (01M4Z60B8FFRMT3DVG8H1CCZ13).
+  (01M4Z60B8FFRMT3DVG8H1CCZ13). Superseded by the re-cut
+  (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8FFRMT3DVG8H1CCZ13** The lead deletes the claim of a session
-  that is gone, with the lease of its claim commit.
+  that is gone, with the lease of its claim commit. Superseded by the
+  re-cut (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8G1VWGNKBH8ZJGJ7QJ** In a public repository, each claim ref
   and each claim commit is public, also after the release. A claim
-  commit holds no secret.
+  commit holds no secret. Superseded by the re-cut
+  (01M53NGW9FH02EM74GKY829808).
 - **01M4Z60B8HN1C1XAG1CA1YS36H** Peer to peer comes right after local
   isolation works. The transport is iroh (#697). The first release
   with two peers uses the defaults of iroh: the DNS discovery and the
   public relays of n0. A small discovery service on Cloud Run comes when
   riff leaves those defaults. DNS discovery on comotechnologies.io is
-  future work.
+  future work. Superseded by the re-cut (01M53NGW9FH02EM74GKY829808).
 
 ### Wave B: the record
 
 The requirements of Wave B (#803) say how the daemons of two or more
 people share one riff. The book page
-[riff 3.0: peers](riff-3-peers.md) has the picture. A requirement of
-Wave B holds when the item of Wave B that builds it merges. A
-requirement that ends with "Superseded by Wave B (ID)." holds until
-then.
+[Design: the riff of peers](riff-3-peers.md) has the picture. A
+requirement of Wave B holds when the item of Wave B that builds it
+merges. A requirement that ends with "Superseded by Wave B (ID)."
+holds until then. The re-cut supersedes each requirement of Wave B
+(01M53NGW9FH02EM74GKY829808).
 
 - **01M519Z1WKH6THH971AQWHH8CN** A record is one change of the riff by
   one author. Its bytes are, in this order: the format version (1, one
@@ -6606,16 +6750,20 @@ then.
 - **01M519Z57K3SPRN8Z517VZ62BB** The book page "riff 3.0: peers" (#803)
   has the picture of a riff of peers, the steps to share a riff, and a
   mermaid diagram of the sync, of a join and of a claim. Each item of
-  Wave B adds its how-to to it.
+  Wave B adds its how-to to it. Superseded in part by the re-cut
+  (01M53NGWJ48MMYPQNJQ0EY9T47).
 
 ### Wave C: what goes and what stays
 
 The requirements of Wave C (#879) say how riff 3.0 ends riff-server and
 the cloud parts of riff. The book page
-[riff 3.0: no cloud](riff-3-no-cloud.md) has the order and the steps
+[Design: no cloud, a later plan](riff-3-no-cloud.md) has the order and
+the steps
 of a person. A requirement of Wave C holds when the item of Wave C that
 builds it merges, or when its step is done. A requirement that ends
-with "Superseded by Wave C (ID)." holds until then.
+with "Superseded by Wave C (ID)." holds until then. The re-cut puts the
+items of Wave C that end riff-server in the Backlog
+(01M53NGWN190T2MYB1EZAD36VB).
 
 - **01M51R8FXQFXWHRD374577HZ3H** Wave C removes riff-server and each
   part that exists only for it: the crate and the binary `riff-server`;
@@ -6628,7 +6776,8 @@ with "Superseded by Wave C (ID)." holds until then.
   `design-plan.md`); and, in the Google Cloud project `como-riff`, the
   Cloud Run services, the buckets, the service accounts, the Secret
   Manager entries, the image repository, the sign-in of GitHub Actions
-  and the alert of each instance.
+  and the alert of each instance. Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8G06XMJF3GAP7MFW06R0** Wave C removes each part of `riff` that
   acts only on riff-server, with its tests and its book text:
   `riff login`, `riff logout`, `riff server`, the flag `--server` and
@@ -6638,7 +6787,8 @@ with "Superseded by Wave C (ID)." holds until then.
   release, and the shell forms of the session tools: `riff who`,
   `riff whoami`, `riff read`, `riff post`, `riff tell`, `riff status`,
   `riff blocked`, and `riff lead` with no subcommand. The pages
-  `start-a-team-riff.md` and `join-a-riff.md` go.
+  `start-a-team-riff.md` and `join-a-riff.md` go. Superseded by the
+  re-cut (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8G2RZAVZN1432EGZSW0X** Wave C removes the parts of riff 1.x
   for a session on the host, with their tests and their book text: the
   plugin of Claude Code with its skill and its hooks, `riff connect`,
@@ -6648,7 +6798,9 @@ with "Superseded by Wave C (ID)." holds until then.
   `riff lead compact` and `riff lead blocked`. Each session of riff 3.0
   runs in a container of the daemon (01M4Z60B7NW4GHKGCYZZDG26R6). The
   user place of the permission rules goes. The project place
-  (`riff setup`) and the session place stay.
+  (`riff setup`) and the session place stay. Superseded by the re-cut
+  (01M53NGVMD2PGEC0P9S3X4CTHT, 01M53NGVQDKCTNMG54YDFE22T2,
+  01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8G59KA4WFCD7CBAYP5DN** After Wave C, riff has these commands:
   `riff init`, `riff daemon`, `riff run`, `riff wave`,
   `riff lead start`, `riff view`, `riff takeover`, `riff image`,
@@ -6661,18 +6813,21 @@ with "Superseded by Wave C (ID)." holds until then.
   `riff run` and `riff wave run` do the steps of
   01M519Z4RWHWP3TKNP4T5GKKE9, with no flag `--peers`. The
   crates `riff`, `riff-core`, `riff-state`, `hygiene`, `reqs`,
-  `real-session` and `isolated` stay.
+  `real-session` and `isolated` stay. Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8G7R46NC07YVWYJ211NM** After Wave C, a person at the CLI has
   `riff top`, `riff view`, `riff chat`, `riff tail`, `riff pause`,
   `riff resume`, `riff plan hold` and `riff plan free`. Each one acts on
   the daemon of this machine and its peers, with no riff-server. Only
   the owner pauses and resumes the whole riff
-  (01M519Z3J7Z0M3PNDY249Q57FH).
+  (01M519Z3J7Z0M3PNDY249Q57FH). Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8GAE5E6ZKD4PSNJYGGMW** After Wave C, `riff-state` serves only
   the daemon. The parts of `riff-core` that only the HTTP API of
   riff-server uses go: its wire types, DPoP and the signed messages of
   the device key. The format fixtures of riff-server go with it. The
-  test environment `isolated` starts no riff-server.
+  test environment `isolated` starts no riff-server. Superseded by the
+  re-cut (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8GD2EY0A0GF2X82PMA5B** Each item of Wave C that removes a part
   marks each requirement of that part that has no mark yet with
   "Superseded by Wave C (ID).", where ID is the requirement of Wave C
@@ -6680,7 +6835,9 @@ with "Superseded by Wave C (ID)." holds until then.
 - **01M51R8GFNC8Y3PY290CPZ2SY0** A release of riff 3 has the files
   `riff-x86_64-unknown-linux-musl` and `SHA256SUMS`, and no
   riff-server. The job "Static riff" builds and checks only `riff`.
-  `riff update` installs only `riff` from such a release.
+  `riff update` installs only `riff` from such a release. Superseded by
+  the re-cut (01M53NGVB7SZJW7X8SYS3B0ZHG). A release of riff 3 has
+  riff-server.
 
 ### Wave C: the order
 
@@ -6692,6 +6849,8 @@ with "Superseded by Wave C (ID)." holds until then.
   (01M51R8HK0VPBD4W6CKACWC1WW). Each step starts only when the step
   before it is done. The items of Wave C that remove code merge on
   `main` after the stop. No release of riff 3 comes before the end.
+  Superseded by the re-cut (01M53NGS8FGRNY12DDJA3P0GH2,
+  01M53NGVTE186GE5E48E68N0BY).
 - **01M51R8GMRND1SFCYZSM53KS5M** The bridge release is the last minor
   release of riff 1.x. It has each item of Wave B, and the items of Wave
   C that the move needs: the update with no riff-server
@@ -6700,6 +6859,7 @@ with "Superseded by Wave C (ID)." holds until then.
   the first item of Wave C that removes code merges, an admin points the
   branch `release/1.x` at the tag of the bridge release. A patch of riff
   1.x then goes on `release/1.x` (01M4YJ6KGBPTCSVMFQCDKACZPV).
+  Superseded by the re-cut (01M53NGVTE186GE5E48E68N0BY).
 - **01M51R8GQ8AKGGEEBYPS1ED8RQ** riff 1.x and riff 3.0 run side by side
   from the bridge release to the stop of riff-server. The work of one
   repository runs on one of them at a time, and riff does not check it.
@@ -6708,7 +6868,8 @@ with "Superseded by Wave C (ID)." holds until then.
   `como-technologies/riff`, then `n8behavior/dotfiles`, then
   `como-technologies/strata`. Mike decides when each of his
   repositories moves. Mike and Brett decide together when
-  `como-technologies/strata` moves.
+  `como-technologies/strata` moves. Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 
 ### Wave C: the move of a repository
 
@@ -6720,7 +6881,7 @@ with "Superseded by Wave C (ID)." holds until then.
   (01M4Z7SP3KSKJYKNRP1MQ70C4Q); riff-server answers and the person is
   signed in; no session holds a claim in the repository on riff-server;
   and no worker of riff 1.x runs for the repository. Each failed check
-  names its fix.
+  names its fix. Superseded by the re-cut (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8GW67GFMFZ6S2MAAV6AX** After its checks, `riff move` pauses
   the repository on riff-server. It copies each hold of the repository
   on riff-server into a hold of the daemon, with the same item and
@@ -6728,18 +6889,21 @@ with "Superseded by Wave C (ID)." holds until then.
   repository, as `riff disable` does. It posts a note to the thread of
   the repository on riff-server and on the daemon: who moved it, when,
   and that `riff move --back` undoes it. Then it names the next step:
-  `riff lead start`.
+  `riff lead start`. Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8GYRF329RKH4F7HP1TAA** `riff move` copies the memory of the
   lead of riff 1.x into the Claude folder of the lead of riff 3.0, when
   that folder has no memory yet. The memory of the lead of riff 1.x is
   the folder `memory` of the project of the main clone, in the Claude
   folder of the person. riff reads the Claude folder of the person, and
-  writes nothing there (01M4Z60B85X62PNYSVJWKXEWH3).
+  writes nothing there (01M4Z60B85X62PNYSVJWKXEWH3). Superseded by the
+  re-cut (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8H1BXVQ5D8SRTFFQBWDQ** `riff move --back` undoes a move while
   riff-server runs. It stops the wave of the daemon and the lead of
   riff 3.0 of the repository. It resumes the repository on riff-server,
   removes the entry that `riff move` wrote to turn riff 1.x off, and
   posts the note on both threads. The holds of the daemon stay.
+  Superseded by the re-cut (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8H3TXPKAEWDJQGQ01PBK** A repository with no session image of
   its own pins the session image of `como-technologies/riff`: its
   `riff.toml` has the same key `image` as the `riff.toml` of riff. That
@@ -6750,7 +6914,8 @@ with "Superseded by Wave C (ID)." holds until then.
   to riff 3.0, except the holds that `riff move` copies. riff 3.0 starts
   with no message, no thread and no claim of riff-server. A repository
   moves with no open claim on riff-server. The sign-ins, the tokens and
-  the device keys of riff-server go with it.
+  the device keys of riff-server go with it. Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 
 ### Wave C: the end of riff-server
 
@@ -6762,17 +6927,19 @@ with "Superseded by Wave C (ID)." holds until then.
   `main` until the end: the item that removes riff-server keeps it.
   After `riff cloud delete NAME --all` of each instance, the live check
   of the end removes `deploy/cloud` from `main`, before the release of
-  riff 3.0.0.
+  riff 3.0.0. Superseded by the re-cut (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8H8W8ZBEBXFKWTK7ZB14** The owner stops riff-server with
   `riff cloud delete shared`: the service goes, and the bucket and each
   other part stay. The owner stops it only when each repository of
   riff-server with work moved, and no session of riff 1.x is live.
+  Superseded by the re-cut (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8HBB98JQ6QG6RFZWBY74** For 7 days after the stop, each cloud
   part stays: the go-back window. In that time, the owner brings
   riff-server back with its state with `riff cloud deploy shared TAG`,
   where TAG is the tag of the bridge release, and the email of the
   owner is in `RIFF_OWNER` (01M3JN3ASSV9SA0QZKXXJ0RTEV). Then
-  `riff move --back` in a clone moves a repository back.
+  `riff move --back` in a clone moves a repository back. Superseded by
+  the re-cut (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8HDY6BVG735NDKDM39Y5** `riff cloud delete NAME --all` deletes
   each part of the instance NAME: the service and its domain mapping,
   the alert and its channel, the service accounts, the secret, the
@@ -6784,29 +6951,35 @@ with "Superseded by Wave C (ID)." holds until then.
   was gone already, so a second run deletes nothing. It keeps the
   project and the settings file. With `--project`, it then deletes the
   Google Cloud project, after the person types its ID. Google keeps a
-  deleted project for 30 days.
+  deleted project for 30 days. Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8HGD8TV6BMHNZ3QCXFWZ** Before `riff cloud delete --all`
   deletes a bucket, it writes each record of the log of the instance as
   text, as `riff-server log` prints them, into the file
   `archive/NAME-log-DATE.txt` in the data folder of riff, with mode
   0600. It writes no token and no secret. riff never reads the file: it
-  is for people.
+  is for people. Superseded by the re-cut (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8HK0VPBD4W6CKACWC1WW** The end comes after the go-back window.
   The owner runs `riff cloud delete NAME --all` for each instance that
   `riff cloud list` shows, with the riff of the bridge release. Then
   riff 3.0.0 releases (01M51R8J200TMFS4ANDN9ZE6TB), and the line 1.x
-  retires (01M51R8J4G95J1HPG16SRG25JY).
+  retires (01M51R8J4G95J1HPG16SRG25JY). Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8HNF5GDNAHMEG7W2Q273** The GitHub App `riff-como-technologies`
   of riff 2.0 goes at the start of Wave C. No part of riff uses it since
   riff 2.x retired (01M4Z60B8N9W9TBE7KKDJQAN2C). The owner of the GitHub
   organization deletes it in the settings of the organization: only the
-  App itself can delete it with the API of GitHub.
+  App itself can delete it with the API of GitHub. Superseded in part
+  by the re-cut (01M53NGWN190T2MYB1EZAD36VB): Wave C waits in the
+  Backlog, so the owner of the organization deletes the App at any
+  time.
 - **01M51R8HQZJV6PFTAMACVDWDBR** Each step of Wave C has a way back
   until the end. A release goes back with `riff update --tag` of the
   release before it. A move goes back with `riff move --back`. The stop
   goes back in the go-back window (01M51R8HBB98JQ6QG6RFZWBY74). After
   the end, riff 1.x does not come back: a fault of riff 3.0 gets a fix
-  in a release of riff 3.
+  in a release of riff 3. Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 
 ### Wave C: the update and the line 1.x
 
@@ -6816,10 +6989,12 @@ with "Superseded by Wave C (ID)." holds until then.
   the daemon, the daemon installs it as `riff update` does, and starts
   again after its last session (01M517BTP6BAGTRBYWPX9GPVE0). A release
   of riff 1.x still comes only from riff-server
-  (01M510NWBNC20GXFRMHPW12TW9).
+  (01M510NWBNC20GXFRMHPW12TW9). Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8HWXNCSXEWR95T0HHJ5B** After Wave C, `riff update` with no
   `--tag` installs the release that GitHub marks Latest. riff never
-  installs an older release by itself.
+  installs an older release by itself. Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8HZF5KQ28PBJA2DZZYKJ** When `riff update`, by a person or by
   itself, installs a release of riff 3 or later over a riff of 1.x, it
   first removes the parts of riff 1.x that `riff connect`,
@@ -6831,20 +7006,23 @@ with "Superseded by Wave C (ID)." holds until then.
   consent of the person for this step (#855). So no hook of riff 1.x
   runs after the update. The riff 1.x that runs the update does this
   step. riff 3 writes nothing in the Claude config of the person
-  (01M4Z60B85X62PNYSVJWKXEWH3).
+  (01M4Z60B85X62PNYSVJWKXEWH3). Superseded by the re-cut
+  (01M53NGWN190T2MYB1EZAD36VB).
 - **01M51R8J200TMFS4ANDN9ZE6TB** riff 3.0.0 releases at the end of Wave
   C, as the release that GitHub marks Latest. Each machine with
   `update.auto` on takes it by itself (01M51R8HTE7X1Q5NKZAS16E9PD). On
-  each other machine, the person runs `riff update` one time.
+  each other machine, the person runs `riff update` one time. Superseded
+  by the re-cut (01M53NGVTE186GE5E48E68N0BY).
 - **01M51R8J4G95J1HPG16SRG25JY** At the end of Wave C, the line 1.x
   retires: each GitHub release of riff 1.x becomes a prerelease with a
   first line that says that the line is retired (#795). No patch of 1.x
   comes after that. The branch `release/1.x` stays as history.
+  Superseded by the re-cut (01M53NGVTE186GE5E48E68N0BY).
 - **01M51R8J6ZRE60NYEJX9KS2XWD** The book page "riff 3.0: no cloud"
   (#879) says what goes and what stays, the order of the steps with a
   mermaid diagram, how a person moves a repository, the end of
   riff-server, and how to go back. Each item of Wave C adds its how-to
-  to it.
+  to it. Superseded by the re-cut (01M53NGWJ48MMYPQNJQ0EY9T47).
 
 ### The security of riff's own code
 
@@ -6855,7 +7033,8 @@ with "Superseded by Wave C (ID)." holds until then.
 - **01M4Z60B8K4C6DHFAKNCAWR91S** The daemon checks each peer and each
   record: iroh checks the node key, each record carries the signature of
   its author, and the daemon checks the size and the type of each
-  message before it applies it.
+  message before it applies it. Superseded by the re-cut
+  (01M53NGW3FR555TWP8Z8HHRVDJ).
 - **01M4Z60B8KDXD190RWC7D184Q3** No secret goes into a log line, a
   message or a file of a clone. riff builds no shell string from input.
   CI keeps `clippy -D warnings` and `cargo audit`.
@@ -6887,7 +7066,8 @@ with "Superseded by Wave C (ID)." holds until then.
   (ID)." It holds for riff 1.x until riff 3.0 replaces it. No
   requirement is deleted or renumbered. The requirements of the GitHub
   App and of the 2.0 sandbox left `main` with 2.x
-  (01M4Z60B8N9W9TBE7KKDJQAN2C).
+  (01M4Z60B8N9W9TBE7KKDJQAN2C). Superseded in part by the re-cut
+  (01M53NGVB7SZJW7X8SYS3B0ZHG).
 - **01M4Z60B8RES9JSQDHNBFVR8AH** After 3.0 replaces 1.3, the Cloud Run
   service, the GCS bucket, the Secret Manager entries and the GitHub App
   of riff go. Mike decides when. Superseded by Wave C

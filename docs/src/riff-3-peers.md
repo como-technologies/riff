@@ -1,17 +1,17 @@
-# riff 3.0: peers
+# Design: the riff of peers
 
-This page is the design of Wave B of riff 3.0 (#803): two or more
-people share one riff, and no server holds it. The daemon of each
-machine keeps a copy of the riff, and the daemons connect peer to
-peer.
+This page is the design of Wave B (#803): two or more people share one
+riff, and no server holds it. The daemon of each machine keeps a copy
+of the riff, and the daemons connect peer to peer. riff 1.6 to 1.8
+have the riff of peers. riff 3.0.0 removes it, with this page (#959).
+See [What goes in riff 3.0.0](riff-3.md#what-goes-in-riff-300).
 
-The commands on this page come with the items of Wave B. `riff invite`,
-`riff join`, `riff leave`, `riff remove` and `riff members` act on the
-riff of the riff daemon of your machine. With `--email`, the member
-commands act on riff-server 1.x (see
-[The way over from riff 1.x](#the-way-over-from-riff-1x)). The
-[requirements of Wave B](requirements.md#wave-b-the-record) hold each
-decision.
+`riff invite`, `riff join`, `riff leave`, `riff remove` and
+`riff members` act on the riff of the riff daemon of your machine.
+With `--email`, the member commands act on riff-server (see
+[riff-server and the riff of peers](#riff-server-and-the-riff-of-peers)).
+The [requirements of Wave B](requirements.md#wave-b-the-record) hold
+each decision.
 
 The claims on the forge are here: see
 [Free the claim of a machine that is gone](#free-the-claim-of-a-machine-that-is-gone)
@@ -425,16 +425,17 @@ flowchart TD
     E -- "of another user, and its daemon is offline" --> H["the claim holds: riff release --forge frees it"]
 ```
 
-## The way over from riff 1.x
+## riff-server and the riff of peers
 
-- riff-server 1.x runs on until Wave C. A daemon of 3.0 does not talk
-  to it. A session of 1.x and a session of 3.0 do not see the messages
-  or the claims of each other.
-- The work of one repository runs on 1.x or on 3.0, not on both at
-  one time. Mike decides when a repository moves.
-- Until Wave C, each session of `riff run`, of a wave and of
-  `riff lead start` has a riff-server, so its riff tools act on 1.x.
-  See
+- riff-server stays in riff 3.0.0, and the riff of peers goes (see
+  [riff 3.0](riff-3.md)). A daemon of the riff of peers does not talk
+  to it for a session of `--peers`. A session of riff-server and a
+  session of the riff of peers do not see the messages or the claims
+  of each other.
+- The work of one repository runs on riff-server or on the riff of
+  peers, not on both at one time. Mike decides.
+- Each session of `riff run`, of a wave and of `riff lead start` has a
+  riff-server, so its riff tools act on riff-server. See
   [The riff tools of a session](development.md#the-riff-tools-of-a-session).
   With `--peers`, `riff run` and `riff wave run` need no riff-server:
   the daemon claims on GitHub, and each riff step goes to the riff of
@@ -442,11 +443,11 @@ flowchart TD
   [Run an item with no riff-server](development.md#run-an-item-with-no-riff-server)
   and
   [Run the wave with no riff-server](development.md#run-the-wave-with-no-riff-server).
-- Until Wave C, the member commands of 1.x take `--email`:
+- The member commands of riff-server take `--email`:
   `riff invite --email EMAIL`, `riff remove --email EMAIL` and
   `riff members --email`.
-- Until Wave C, `riff claim` and `riff release` act on riff-server
-  1.x. Only `riff release ITEM --forge` acts on a claim of 3.0. The
-  daemon makes each claim of 3.0.
-- Wave C moves each repository to riff 3.0, and ends riff-server. See
-  [riff 3.0: no cloud](riff-3-no-cloud.md).
+- `riff claim` and `riff release` act on riff-server. Only
+  `riff release ITEM --forge` acts on a claim of the riff of peers. The
+  daemon makes each claim of the riff of peers.
+- The plan to end riff-server waits in the Backlog. See
+  [Design: no cloud, a later plan](riff-3-no-cloud.md).
