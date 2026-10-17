@@ -6999,6 +6999,100 @@ with "Superseded by Wave C (ID)." holds until then.
   `just real-session` on the merge commit of the release pull request,
   on a host with podman. It passes before the tag.
 
+## The UIs
+
+The UIs are the design of #982: one Rust core library, and a child
+design for each UI. The book page [Design: the UIs of riff](riff-uis.md)
+has the pictures. A requirement of this part holds when the build item
+that builds it merges.
+
+- **01M54215XK0QAM58RBRMS8F4ZX** Each UI of riff is Rust: the CLI, the
+  TUI, the phone app, the web UI and the desktop GUI. The riff project
+  writes no JavaScript, uses no JavaScript framework, writes no UI in
+  HTML and CSS, and uses no npm tooling. A Rust app built to
+  WebAssembly can run in a browser, when its Rust toolkit makes the
+  small HTML, JavaScript or CSS that starts it.
+- **01M542160DDTZMMDCZYZZ0Q4WC** The phone app is for Android (#951).
+  riff-server stays on Google Cloud Run while the UIs come. A server
+  part of a UI runs on Cloud Run, in the Google Cloud project of
+  riff-server.
+- **01M5421633BKPPMANYRVZ76BVP** Each UI shows the sessions in one view:
+  the sessions on riff-server and the container sessions of the
+  daemons, in one list. In the TUI, the sessions tab replaces the live
+  table of `riff top` and the view of `riff view`, with each of their
+  actions, also the attach to a session.
+- **01M542165T96VW72HAWFXVD160** The CLI stays complete: it serves
+  scripts, agents through the MCP server, and hooks. Each command prints
+  plain lines that `grep` can find.
+- **01M542168PYP1WH78D3D9DKEK6** Each command that prints data takes
+  `--format text` (the default) or `--format json`. serde makes the JSON
+  from the types of the data. It has the same facts as the text.
+- **01M54216BCJQTQFKK5SD1PRJK9** When the TUI ships, `riff top` prints
+  one look of the sessions and ends, as `riff top --once` does. The
+  live view is the sessions tab of the TUI. The TUI design picks a
+  plain alias of `riff top`, or none.
+- **01M54216E2GY49GFV5SNPWTBEB** `riff` with no command starts the TUI
+  in a terminal. With no terminal, it prints the help of the CLI.
+  `riff --help` stays the help of the CLI, and says that
+  `riff` with no command starts the TUI. `riff COMMAND` stays the CLI.
+  When the TUI design finds that a bare `riff` makes the CLI awkward,
+  the TUI is `riff ui`.
+- **01M54216GT8SX6NVMKRGNR2H0T** The TUI is a ratatui app with a tab for
+  each area: the sessions, the chat, the waves (the items, the claims,
+  the pull requests and the verifies), the machines, the devices, and
+  the reports (the usage, the audit and the log of a session). Each
+  action of the TUI calls the same code as its CLI command.
+- **01M54216KMTGS7KD1R3RY5JKQ0** riff 3.1 adds the crate `riff-client`,
+  the core library of each UI. The client of riff-server (the sign-in,
+  the tokens, the API calls and the watch stream) and the models of the
+  views (the sessions, the threads, the waves and the machines) move
+  into it, out of the crate `riff`. `riff-core` stays the model that the
+  clients and riff-server share.
+- **01M54216PBE319RASGNMY9F0MR** `riff-client` holds no terminal code.
+  It builds for Linux, for Android (`aarch64-linux-android`) and for
+  WebAssembly (`wasm32-unknown-unknown`). The Gate builds it for each of
+  these targets, and fails when it depends on a crate of the terminal,
+  for example ratatui, clap or rustyline.
+- **01M54216S51X5VBXN3YAERW6J6** Each part of `riff-client` that is not
+  the same on each platform is a trait that each UI gives, for example
+  the store of the tokens and of the device key. The socket of the riff
+  daemon stays in the crate `riff`. A terminal UI gives the container
+  sessions of its daemon to the sessions model of `riff-client`.
+- **01M54216VVY6072F2X2PM2Z0DQ** The CLI, the TUI, the MCP server and
+  each graphical UI use `riff-client` for each call to riff-server.
+- **01M54216YKW1X70KDV4TQCQJTE** The graphical UIs (the phone app, the
+  web UI and the desktop GUI) use Slint, and share their screens. Each
+  child design checks that Slint does its platform today.
+- **01M5421718PRVCDJP42J8X5J3E** The web UI runs on Cloud Run, at one
+  address with the API of riff-server, so the browser needs no CORS.
+  The start is a Cloud Run service of its own for the web app, behind a
+  router (for example the rewrites of Firebase Hosting, or a load
+  balancer with a URL map), so a deploy of the UI does not restart
+  riff-server. The web design compares it with a riff-server that serves
+  the web app itself, and picks one.
+- **01M542179DFVKMFQ008TV9DM8C** Each UI that signs in is a device of
+  the person, with the device commands of the phone design
+  (01M53XPZTG203SNM9MBKBERMB5): `riff device list`, `riff device add`
+  and `riff device remove`. The
+  devices tab of the TUI shows each device with its kind, its name, its
+  scope and its last use. It adds a
+  device, and draws the QR code with `tui-qrcode`. It removes a device.
+  Each graphical UI has a devices view that lists and removes devices,
+  and adds a device where it can show a QR code.
+- **01M54217C256KCGWSVAVPHEQQB** The UIs come in this order: the TUI,
+  the phone app, the web UI and the desktop GUI. After riff 3.1, the TUI
+  and the phone app can be built at the same time: the TUI does not
+  block the phone app.
+- **01M54217ET3G7R4ZJ33CQRE5P9** riff 3.0 (#953) comes first, with the
+  patch releases that make it stable. riff 3.1 comes after a stable
+  3.0. It moves the core library out of
+  the CLI in small steps. Each step keeps each test and changes no
+  command. The UIs come after riff 3.1.
+- **01M54217HF6JK1KYK4Q11551KR** Each UI has a child design issue that
+  links #982: the TUI (#994), the phone app (#951), the web UI (#995)
+  and the desktop GUI (#996). The build items of a UI come from its
+  child design, after Mike signs it off.
+
 ## Open
 
 None.

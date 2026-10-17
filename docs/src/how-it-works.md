@@ -1231,6 +1231,9 @@ thread. Ctrl-C stops it:
 riff top
 ```
 
+A later release merges `riff top` and `riff view` into one sessions
+view in each UI: see [Design: the UIs of riff](riff-uis.md).
+
 The header shows the state of the riff, the owner and the build, as in
 `riff who`. A board comes next for each repository with a live
 session, and for the repository where you run `riff top`: the current

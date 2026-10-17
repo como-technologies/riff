@@ -15,5 +15,6 @@
 - [Design: the command engine of riff-server](design-engine.md)
 - [Design: the client link](design-link.md)
 - [Design: the plan on the server](design-plan.md)
+- [Design: the UIs of riff](riff-uis.md)
 - [Requirements](requirements.md)
 - [Development](development.md)
