@@ -167,7 +167,11 @@ fn riff_image_names_a_missing_config() {
 /// Runs `deploy/session-test.sh` with `args`, the fake engines of `bin`
 /// first in `PATH`, and the engine `engine` when it is set.
 fn session_test_output(args: &[&str], bin: &Path, engine: Option<&str>) -> Output {
-    let env = Isolated::new();
+    session_test_in(&Isolated::new(), args, bin, engine)
+}
+
+/// [`session_test_output`] in the environment `env`.
+fn session_test_in(env: &Isolated, args: &[&str], bin: &Path, engine: Option<&str>) -> Output {
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let mut cmd = env.command(top().join("deploy/session-test.sh"));
     cmd.args(args).env("PATH", path).env_remove("RIFF_ENGINE");
@@ -259,25 +263,99 @@ fn the_session_tests_run_one_part_of_the_tests_of_the_workspace() {
 }
 
 /// 01M51117NDKF11FNZ915TTQED4: docker has no `--userns=keep-id`, so the
-/// tests run there as the user and the group of the host.
+/// tests run there as the user and the group of the host. The container
+/// gets the passwd and the group file of the image, in a new folder of
+/// `TMPDIR`, with an entry for the user and the group, as keep-id of
+/// podman gives one.
 #[test]
 fn the_session_tests_run_as_the_user_of_the_host_in_docker() {
+    let (uid, gid) = (host_id("-u"), host_id("-g"));
+    let image = Image::of_repository(&top()).unwrap().to_string();
     let bin = tempfile::tempdir().unwrap();
     fake_engine(bin.path());
     isolated::copy_program(bin.path().join("podman"), bin.path().join("docker"));
-    let args = session_test(&[], bin.path(), Some("docker"));
-    let id = |flag: &str| {
-        let out = Command::new("id").arg(flag).output().unwrap();
-        String::from_utf8(out.stdout).unwrap().trim().to_owned()
-    };
-    let user = format!("{}:{}", id("-u"), id("-g"));
+    let env = Isolated::new();
+    let args = in_docker(&env, bin.path());
+    let copy = |file: &str| ["run", "--rm", image.as_str(), "cat", file].map(String::from);
+    assert_eq!(args[..5], copy("/etc/passwd"), "{args:?}");
+    assert_eq!(args[5..10], copy("/etc/group"), "{args:?}");
+    let run = &args[10..];
+    let user = format!("{uid}:{gid}");
     assert_eq!(
-        args[..5],
+        run[..5],
         ["run", "--rm", "--init", "--user", &user],
         "{args:?}"
     );
-    assert!(!args.iter().any(|a| a.starts_with("--userns")), "{args:?}");
-    assert_eq!(command_of(&args), ["just", "cargo-test", "-p", "riff"]);
+    assert!(!run.iter().any(|a| a.starts_with("--userns")), "{args:?}");
+    assert_eq!(command_of(run), ["just", "cargo-test", "-p", "riff"]);
+    // The fake image has no entry for the user: the run adds one.
+    for file in ["passwd", "group"] {
+        let source = bind_source(run, file);
+        assert!(source.starts_with(env.path().join("tmp")), "{source:?}");
+    }
+    let passwd = format!("{}:x:{uid}:{gid}::/tmp/home:/bin/bash\n", host_id("-un"));
+    assert_eq!(bound(run, "passwd"), passwd);
+    assert_eq!(
+        bound(run, "group"),
+        format!("{}:x:{gid}:\n", host_id("-gn"))
+    );
+}
+
+/// 01M51117NDKF11FNZ915TTQED4: with docker, an image with an entry for
+/// the UID and the GID of the user gets no second one.
+#[test]
+fn the_session_tests_in_docker_keep_the_entry_of_the_image() {
+    let (uid, gid) = (host_id("-u"), host_id("-g"));
+    let passwd = format!("me:x:{uid}:{gid}::/home/me:/bin/sh");
+    let group = format!("us:x:{gid}:");
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(
+        bin.path().join("docker"),
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n\
+             *' cat /etc/passwd') echo '{passwd}' ;;\n\
+             *' cat /etc/group') echo '{group}' ;;\n\
+             *) for a in \"$@\"; do printf '%s\\n' \"$a\"; done >> {log} ;;\n\
+             esac\n",
+            log = bin.path().join("podman.log").display(),
+        ),
+    );
+    let env = Isolated::new();
+    let run = in_docker(&env, bin.path());
+    assert_eq!(run[..3], ["run", "--rm", "--init"], "{run:?}");
+    assert_eq!(bound(&run, "passwd"), format!("{passwd}\n"));
+    assert_eq!(bound(&run, "group"), format!("{group}\n"));
+}
+
+/// The output of `id FLAG` on the host.
+fn host_id(flag: &str) -> String {
+    let out = Command::new("id").arg(flag).output().unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// Runs `deploy/session-test.sh` with the fake docker of `bin` in `env`,
+/// and gives the arguments that the fake docker logged, one by one.
+fn in_docker(env: &Isolated, bin: &Path) -> Vec<String> {
+    let out = session_test_in(env, &[], bin, Some("docker"));
+    assert!(out.status.success(), "{out:?}");
+    let log = fs::read_to_string(bin.join("podman.log")).unwrap();
+    log.lines().map(str::to_owned).collect()
+}
+
+/// The file that the arguments `run` bind with no write over
+/// `/etc/FILE`.
+fn bind_source(run: &[String], file: &str) -> PathBuf {
+    let target = format!(":/etc/{file}:ro");
+    let at = run
+        .windows(2)
+        .position(|w| w[0] == "-v" && w[1].ends_with(&target))
+        .unwrap_or_else(|| panic!("no bind of /etc/{file}: {run:?}"));
+    PathBuf::from(run[at + 1].trim_end_matches(&target))
+}
+
+/// The text of the file that the arguments `run` bind over `/etc/FILE`.
+fn bound(run: &[String], file: &str) -> String {
+    fs::read_to_string(bind_source(run, file)).unwrap()
 }
 
 /// 01M515Z3Y7GSFNTJGXJD727MQK: the jobs "Tests I/N" of the Gate run each

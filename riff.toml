@@ -4,4 +4,4 @@
 # The session image, pinned by digest. The workflow "Session image"
 # builds it from deploy/session/. See "Change the session image" in
 # docs/src/development.md.
-image = "ghcr.io/como-technologies/riff-session@sha256:6c45b48b3444a09a4baff8de6eb884dac82a47cb77bc7fe6f93cf4ad05d46741"
+image = "ghcr.io/como-technologies/riff-session@sha256:57413e21fc507e6ace6af4f695b3a873218b29f8a94ff66868ae27b178a7ff20"

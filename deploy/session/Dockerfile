@@ -1,7 +1,8 @@
 # The session image of this repository (01M4Z60B7JF80TMP6FHQ04MHCZ).
 # It has claude, git, gh, CA certificates, a POSIX shell and the Rust
 # toolchain of rust-toolchain.toml. It also has the tools of
-# `just check`. It holds no riff and no secret.
+# `just check`, and a D-Bus with GNOME Keyring for the tests. It holds
+# no riff and no secret.
 #
 # The workflow "Session image" builds it on each change of this folder,
 # and riff.toml pins its digest (01M4Z7SP7Y19BQ8QTV1T6AE8SR). See
@@ -21,10 +22,12 @@ ARG MDBOOK_GRUVBOX_VERSION=1.2.0
 ARG SCCACHE_VERSION=0.18.0
 
 # procps: ps, for crates/hygiene/ci-lock.sh. gcc and make: the C code
-# of aws-lc-sys.
+# of aws-lc-sys. dbus-bin, dbus-daemon and gnome-keyring: the private
+# keyring of the tests of the keyring store (01M556QPPRSQ91HDED128G2X7G).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash ca-certificates curl gcc git libc6-dev make pkg-config procps \
+      bash ca-certificates curl dbus-bin dbus-daemon gcc git gnome-keyring \
+      libc6-dev make pkg-config procps \
  && rm -rf /var/lib/apt/lists/*
 
 # The toolchain is in the image, with no write for the session. The
