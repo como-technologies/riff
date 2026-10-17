@@ -41,7 +41,8 @@ that watch ends.";
 /// (01M3Z8FXE2DY34ZP75WJE1S8HR): the time of the last good look `last`,
 /// then the fault. The time has the date when `now` is another day.
 /// The line is short, so that it fits in 80 columns: it does not name
-/// `base`, the URL of the server.
+/// `base`, the URL of the server. A look with no reply names the budget
+/// of its call (01M53NDCJ0EF0YKDV8AARXKYCQ).
 ///
 /// ```
 /// use chrono::{FixedOffset, TimeZone};
@@ -56,9 +57,9 @@ that watch ends.";
 ///     top_fault(&fault, base, &last, &now),
 ///     "riff: no good look since 21:35:07: cannot reach riff-server"
 /// );
-/// let slow = riff::text::no_reply(base, std::time::Duration::from_secs(10));
+/// let slow = riff::text::no_reply(base, riff::link::SHORT_BUDGET);
 /// let line = top_fault(&slow, base, &last, &now);
-/// assert_eq!(line, "riff: no good look since 21:35:07: riff-server gave no reply in 10 seconds");
+/// assert_eq!(line, "riff: no good look since 21:35:07: riff-server gave no reply in 60 seconds");
 /// assert!(line.len() <= 80);
 /// let next_day = zone.with_ymd_and_hms(2026, 10, 2, 7, 0, 0).unwrap();
 /// assert_eq!(

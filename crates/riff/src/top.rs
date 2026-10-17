@@ -120,7 +120,9 @@
 //! after a fault ([`crate::link::Link::swap`]). When a look fails,
 //! `riff top` keeps the last table, shows [`Top::fault`] as its first
 //! line, and looks again at its interval. The line goes at the next
-//! good look.
+//! good look. When a call of the look gets no reply in its budget, the
+//! line names the budget, not the limit of one try and not [`REFRESH`]
+//! (01M53NDCJ0EF0YKDV8AARXKYCQ).
 //!
 //! `riff top --once`, the first look, and a fault that a new try cannot
 //! repair end `riff top` with the error.

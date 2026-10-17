@@ -24,6 +24,10 @@ use tokio::task::JoinHandle;
 /// The start of the line of a look that failed.
 const FAULT: &str = "riff: no good look since ";
 
+/// The budget of each call of a look in a test: a look that gets no
+/// reply ends in 3 seconds, not in 60.
+const BUDGET: Duration = Duration::from_secs(3);
+
 /// What the gate does with a new connection.
 #[derive(Clone, Copy)]
 enum Mode {
@@ -32,6 +36,9 @@ enum Mode {
     /// It closes the connection with no reply: a connection that fails
     /// in the middle of a call.
     Break,
+    /// It keeps the connection open and gives no reply: a server that
+    /// hangs.
+    Hang,
     /// It replies as a server that is not `riff-server`: 404, with no
     /// build.
     Other,
@@ -106,6 +113,12 @@ impl Gate {
                         Mode::Break => {
                             // The request comes, and no reply goes back.
                             let _ = client.read(&mut [0; 1024]).await;
+                        }
+                        Mode::Hang => {
+                            // The request comes, and the connection stays
+                            // until the gate closes it.
+                            let _ = client.read(&mut [0; 1024]).await;
+                            std::future::pending::<()>().await;
                         }
                         Mode::Other => {
                             let _ = client.read(&mut [0; 4096]).await;
@@ -183,8 +196,7 @@ fn top(server: &str, dir: &Path, path: &Path, args: &[&str]) -> Command {
         .args(args)
         .current_dir(dir)
         .env("RIFF_SERVER", server)
-        // A look that gets no reply ends in 3 seconds, not in 60.
-        .env(riff::link::BUDGET_VAR, "3000")
+        .env(riff::link::BUDGET_VAR, BUDGET.as_millis().to_string())
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_HOME", dir)
         .env("RIFF_USER", "mike")
@@ -341,16 +353,26 @@ async fn stays_open(away: Option<Mode>) {
     let kept = |v: &str| v.starts_with(FAULT) && has(v, "b2");
     let (at, view) = live.view(0, "the line and the last table", kept).await;
     let line = view.lines().next().unwrap();
-    let (time, fault) = line.strip_prefix(FAULT).unwrap().split_at("21:35:07".len());
-    assert!(
-        chrono::NaiveTime::parse_from_str(time, "%H:%M:%S").is_ok(),
-        "{line}"
-    );
-    let faults = [
-        ": cannot reach riff-server",
-        ": riff-server gave no reply in 10 seconds",
-    ];
-    assert!(faults.contains(&fault), "{line}");
+    let (time, _) = line.strip_prefix(FAULT).unwrap().split_at("21:35:07".len());
+    let time = chrono::NaiveTime::parse_from_str(time, "%H:%M:%S");
+    let time = time.unwrap_or_else(|e| panic!("{line}: {e}"));
+    // A look that fails names the fault of its last try. With no reply,
+    // it names the budget of its call (01M53NDCJ0EF0YKDV8AARXKYCQ). On a
+    // busy machine, the last try of a cut or of a refused connect can
+    // also end with no reply.
+    let url = gate.url();
+    let slow = riff::text::no_reply(&url, BUDGET);
+    let faults = match away {
+        Some(Mode::Hang) => vec![slow],
+        _ => vec![format!("cannot reach riff-server at {url}"), slow],
+    };
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
+    let last = day.and_time(time).and_utc();
+    let lines: Vec<_> = faults
+        .iter()
+        .map(|fault| riff::text::top_fault(fault, &url, &last, &last))
+        .collect();
+    assert!(lines.iter().any(|l| l == line), "{line}\nis not one of {lines:#?}");
     assert!(!view.contains("─ d4  "), "{view}");
     assert!(
         view.lines().filter(|l| l.starts_with("riff: ")).count() == 1,
@@ -377,6 +399,14 @@ async fn top_stays_open_while_the_server_is_away() {
 #[tokio::test(flavor = "multi_thread")]
 async fn top_stays_open_when_each_connection_fails_in_the_middle() {
     stays_open(Some(Mode::Break)).await;
+}
+
+/// The third case of the fault: the server takes each call and gives no
+/// reply. The line names the budget of the call of the look
+/// (01M53NDCJ0EF0YKDV8AARXKYCQ).
+#[tokio::test(flavor = "multi_thread")]
+async fn top_stays_open_when_the_server_gives_no_reply() {
+    stays_open(Some(Mode::Hang)).await;
 }
 
 /// A `gh` for `PATH` that gives one open issue of Wave 3 at its first
