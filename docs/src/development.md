@@ -921,8 +921,10 @@ riff run stopped at a signal. It did not send the verify request, the release, t
 
 The folder of the session is
 `~/.local/share/riff/sessions/ITEM-ID8`. Its `clone` stays until the
-merge. Its `events.jsonl` has each event, with no secret: the daemon
-writes it.
+work of the branch is over. Then the daemon removes the folder: see
+[Remove the folders of old sessions](#remove-the-folders-of-old-sessions).
+Its `events.jsonl` has each event, with no secret: the daemon writes
+it.
 
 ### What riff run does with no riff-server
 
@@ -1015,6 +1017,38 @@ riff daemon events riff-issue-12-1a2b3c4d
 and each new event until the session ends. Press Ctrl-C to stop the
 view: the session goes on. The file `events.jsonl` in the folder of
 the session also has each event, with no secret.
+
+### Remove the folders of old sessions
+
+The folder of a session holds its clone with its `target`: often some
+GB. The daemon removes the folder of each session that does not run
+when the work of its branch is over. It does this at its start, then
+each 10 minutes, also when no wave runs. You do not have to do a step.
+
+```mermaid
+flowchart TD
+    F["the folder of a session that does not run"] --> P{"the branch worktree-ITEM"}
+    P -- "an open pull request" --> K["the folder stays"]
+    P -- "a merged or a closed pull request" --> D["the daemon removes the folder"]
+    P -- "no pull request" --> I{"the issue"}
+    I -- "open" --> K
+    I -- "closed" --> D
+```
+
+While `riff run` runs, its folder stays, also while its start waits
+for room. A verify session has the fate of the branch of its item.
+
+To remove the folders now, for example when the disk is full:
+
+```sh
+riff daemon sweep
+```
+
+It prints each folder that the daemon removed, with the reason:
+
+```text
+riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge.
+```
 
 ### What the container gets
 
@@ -1239,9 +1273,10 @@ comment on the pull request, the status `riff/verify` of the commit,
 and a message to the holder of the item and to your lead. On a pass,
 GitHub merges the pull request.
 
-At each look, the daemon removes the folder of each session of the
-repository that does not run, when the pull request of its branch
-merged. For a pull request with `Refs #N`, it first adds the comment
+Before each look, the daemon removes the folders of the sessions of
+the repository whose work is over (see
+[Remove the folders of old sessions](#remove-the-folders-of-old-sessions)).
+For a merged pull request with `Refs #N`, it first adds the comment
 `Merged in #PR (COMMIT)` to the issue, so the item is not free work
 again.
 

@@ -5636,7 +5636,20 @@ share.
   `ID8` is the start of the session ID. With `RIFF_HOME`, the folder is
   `RIFF_HOME/sessions/ITEM-ID8`. It holds the clone, the own Claude
   folder and `events.jsonl`, each event with no secret. The clone stays
-  until the merge.
+  until the work of its branch is over (01M53NJ5V27BCHDNHK2THQQZZQ).
+- **01M53NJ5V27BCHDNHK2THQQZZQ** The riff daemon removes the folder of
+  each session of `riff run` and of a wave that does not run, also when
+  no wave runs: at its start, then each 10 minutes, and before each
+  look of a wave. It removes the folder when the branch of its item has
+  no open pull request and a merged or a closed one, or when the branch
+  has no pull request and the issue is closed. A session runs while the
+  daemon has its record, while a job of the daemon starts it, or while
+  the `riff run` that made the folder runs: it holds the lock
+  `ITEM-ID8.lock` beside the folder from before the clone to its end.
+- **01M53NJ5Y2CMY5MWF9328KW7DE** `riff daemon sweep` asks the daemon to
+  remove the folders of 01M53NJ5V27BCHDNHK2THQQZZQ at once. It prints
+  each folder that the daemon removed, with the reason, or one line that
+  it removed none.
 - **01M4Z81ATZK3FX9GRFTM236FE6** `claude` in a session of `riff run`
   takes the riff session ID as its own session ID (`--session-id`), and
   runs in the auto permission mode (`--permission-mode auto`).

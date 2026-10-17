@@ -1,6 +1,7 @@
-//! `riff daemon`, `riff daemon install`, `riff daemon uninstall` and
-//! `riff daemon status` (#716, #736, 01M4ZDTVK74596M0ZA46N51NKV,
-//! 01M501M0T0JBWGMMHCT7HT95T9, 01M4ZDTVNBKDM64043GGWQEV4S).
+//! `riff daemon`, `riff daemon install`, `riff daemon uninstall`,
+//! `riff daemon status` and `riff daemon sweep` (#716, #736, #938,
+//! 01M4ZDTVK74596M0ZA46N51NKV, 01M501M0T0JBWGMMHCT7HT95T9,
+//! 01M4ZDTVNBKDM64043GGWQEV4S).
 //!
 //! A fake `systemctl` logs each call. Its `restart riff.service` starts
 //! the `riff daemon` of this build in the background, as systemd does.
@@ -11,7 +12,7 @@ use std::process::{Command, Output};
 
 use isolated::Isolated;
 
-use crate::run::{fake_systemctl, wait_for};
+use crate::run::{fake_systemctl, git, wait_for};
 
 fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
@@ -413,14 +414,153 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
         .unwrap();
 }
 
+/// A fake `gh` for the sweep of the folders of the sessions. It logs
+/// `GH_REPO` and each call to `bin/gh.log`. On the forge:
+///
+/// | Issue | Its branch and the issue |
+/// |---|---|
+/// | 1 | the pull request #41 merged |
+/// | 2 | the pull request #42 closed with no merge |
+/// | 3 | no pull request, and the issue is closed |
+/// | 4 | the pull request #44 is open, after the closed #43 |
+/// | 5 | no pull request, and the issue is open |
+/// | 6 | the pull request #46 closed with no merge |
+fn fake_sweep_gh(bin: &Path) {
+    let body = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "$GH_REPO gh $*" >> "$dir/gh.log"
+fields='--state all --json number,state,body,mergeCommit --limit 100'
+case "$*" in
+  "pr list --head worktree-issue-1 $fields")
+    echo '[{"number":41,"state":"MERGED","body":"Closes #1","mergeCommit":{"oid":"c41"}}]' ;;
+  "pr list --head worktree-issue-2 $fields") echo '[{"number":42,"state":"CLOSED","body":""}]' ;;
+  "pr list --head worktree-issue-3 $fields") echo '[]' ;;
+  'issue view 3 --json state') echo '{"state":"CLOSED"}' ;;
+  "pr list --head worktree-issue-4 $fields")
+    echo '[{"number":44,"state":"OPEN","body":""},{"number":43,"state":"CLOSED","body":""}]' ;;
+  "pr list --head worktree-issue-5 $fields") echo '[]' ;;
+  'issue view 5 --json state') echo '{"state":"OPEN"}' ;;
+  "pr list --head worktree-issue-6 $fields") echo '[{"number":46,"state":"CLOSED","body":""}]' ;;
+  *) exit 1 ;;
+esac
+"#;
+    isolated::write_program(bin.join("gh"), body);
+}
+
+/// Makes the folder `name` of a session in `sessions`, with a clone whose
+/// origin is `o/r` on GitHub. It gives the folder.
+fn session_folder(sessions: &Path, name: &str) -> PathBuf {
+    let clone = sessions.join(name).join("clone");
+    std::fs::create_dir_all(&clone).unwrap();
+    git(&clone, &["init", "-q"]);
+    git(
+        &clone,
+        &["remote", "add", "origin", "https://github.com/o/r.git"],
+    );
+    sessions.join(name)
+}
+
+/// 01M53NJ5Y2CMY5MWF9328KW7DE: `riff daemon sweep` removes the folder of
+/// each session whose pull request merged or closed, or whose issue is
+/// closed with no pull request, and prints each one with its reason. It
+/// keeps the folder of an open pull request, of an open issue, and of a
+/// `riff run` that holds its lock.
+#[tokio::test]
+async fn riff_daemon_sweep_removes_the_folders_whose_work_is_over_and_says_why() {
+    let here = Here::new();
+    fake_sweep_gh(here.bin.path());
+    let sessions = here.env.riff_home().join("sessions");
+    let merged = session_folder(&sessions, "issue-1-00000001");
+    let closed = session_folder(&sessions, "verify-issue-2-00000002");
+    let issue = session_folder(&sessions, "issue-3-00000003");
+    let open = session_folder(&sessions, "issue-4-00000004");
+    let open_issue = session_folder(&sessions, "issue-5-00000005");
+    let runs = session_folder(&sessions, "issue-6-00000006");
+    let lock = riff::daemon::sweep::hold(&runs).unwrap();
+    // No sweep at the start: this test sweeps by hand.
+    let daemon = here
+        .daemon_with("daemon.out", &[(riff::daemon::sweep::EVERY_VAR, "0")])
+        .await;
+
+    let out = here.run(false, &["daemon", "sweep"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let removed =
+        |folder: &Path, why: &str| format!("riff removed the folder {}: {why}.", folder.display());
+    assert_eq!(
+        text(&out.stdout),
+        [
+            removed(&merged, "the pull request #41 merged"),
+            removed(
+                &issue,
+                "the issue #3 is closed, and its branch has no pull request"
+            ),
+            removed(&closed, "the pull request #42 closed with no merge"),
+        ]
+        .map(|line| format!("{line}\n"))
+        .concat()
+    );
+    for gone in [&merged, &closed, &issue] {
+        assert!(!gone.exists(), "{}", gone.display());
+    }
+    for kept in [&open, &open_issue, &runs] {
+        assert!(kept.exists(), "{}", kept.display());
+    }
+    let log = here.read("gh.log");
+    assert!(log.lines().all(|l| l.starts_with("o/r gh ")), "{log}");
+
+    // The riff run ends: its folder goes, with its lock.
+    drop(lock);
+    let out = here.run(false, &["daemon", "sweep"]).await;
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "{}\n",
+            removed(&runs, "the pull request #46 closed with no merge")
+        )
+    );
+    assert!(!runs.exists() && !riff::daemon::sweep::lock_of(&runs).exists());
+    let out = here.run(false, &["daemon", "sweep"]).await;
+    assert_eq!(
+        text(&out.stdout),
+        "riff removed no folder: the session of each folder runs, or its work is not over.\n"
+    );
+    stop(daemon).await;
+}
+
+/// 01M53NJ5V27BCHDNHK2THQQZZQ: the daemon sweeps by itself at its start,
+/// with no wave and no step of a person.
+#[tokio::test]
+async fn the_daemon_removes_the_folder_of_a_closed_pull_request_at_its_start() {
+    let here = Here::new();
+    fake_sweep_gh(here.bin.path());
+    let sessions = here.env.riff_home().join("sessions");
+    let closed = session_folder(&sessions, "issue-2-00000002");
+    let open = session_folder(&sessions, "issue-4-00000004");
+    let daemon = here.daemon("daemon.out").await;
+    wait_for(
+        &here.bin.path().join("daemon.out"),
+        &format!("riff removed the folder {}", closed.display()),
+    )
+    .await;
+    assert!(!closed.exists());
+    assert!(open.exists());
+    stop(daemon).await;
+}
+
 impl Here {
     /// Starts `riff daemon` of the `RIFF_HOME`, writes its output to
     /// `name`, and waits until it listens and has its riff.
     pub(crate) async fn daemon(&self, name: &str) -> std::process::Child {
+        self.daemon_with(name, &[]).await
+    }
+
+    /// [`Here::daemon`] with the variables `vars`.
+    async fn daemon_with(&self, name: &str, vars: &[(&str, &str)]) -> std::process::Child {
         let log = self.bin.path().join(name);
         let out = std::fs::File::create(&log).unwrap();
         let child = self
             .command(false, &["daemon"])
+            .envs(vars.iter().copied())
             .stdout(out.try_clone().unwrap())
             .stderr(out)
             .spawn()

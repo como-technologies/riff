@@ -274,7 +274,7 @@ fn text(out: &[u8]) -> String {
 
 /// Runs `git ARGS` in `dir`, with no config of the person, and gives
 /// its stdout.
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
         .args(args)
@@ -508,17 +508,19 @@ impl Machine {
         self.ok(Some("lead1"), &["resume", "--riff"]).await;
     }
 
-    /// The one session folder of the item.
+    /// The one session folder of the item. Its lock file
+    /// `ITEM-ID8.lock` is beside it.
     fn folder(&self, item: &str) -> PathBuf {
         let sessions = self.env.riff_home().join("sessions");
         let found: Vec<PathBuf> = std::fs::read_dir(&sessions)
             .unwrap()
             .map(|e| e.unwrap().path())
             .filter(|p| {
-                p.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with(&format!("{item}-"))
+                p.is_dir()
+                    && p.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with(&format!("{item}-"))
             })
             .collect();
         assert_eq!(found.len(), 1, "{found:?}");

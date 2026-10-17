@@ -185,10 +185,14 @@
 //!
 //! Each session has a folder of its own in [`sessions_dir`]: `ITEM-ID8`,
 //! where `ID8` is the start of the session ID (01M4Z81ARSTAK8HR96S084SDFD).
+//! The host holds the lock `ITEM-ID8.lock` beside it from before the
+//! clone to its end ([`crate::daemon::sweep::hold`]): the sweep of the
+//! daemon keeps the folder while the start waits for room, before the
+//! daemon has a record of the session.
 //!
 //! | Path | Holds |
 //! |---|---|
-//! | `clone/` | The clone of the session: `git clone --reference MAIN`. It stays until the merge. |
+//! | `clone/` | The clone of the session: `git clone --reference MAIN`. It stays until the daemon removes the folder ([`crate::daemon::sweep`]). |
 //! | `claude/` | The own Claude folder of the session ([`claude_folder`]): the first-run answers of `claude` with the trust of the clone, no attribution line of `claude`, and the auto mode settings ([`settings`]). |
 //! | `events.jsonl` | Each event of `claude`, with no secret ([`Scrub`]). The daemon writes it. |
 //!
@@ -1629,6 +1633,10 @@ async fn work(
     steps: &mut EndSteps,
 ) -> Result<i32> {
     let folder = sessions_dir()?.join(format!("{item}-{}", short(session)));
+    // The sweep of the daemon keeps the folder while this lock is held
+    // (01M53NJ5V27BCHDNHK2THQQZZQ).
+    let _held = daemon::sweep::hold(&folder)
+        .with_context(|| format!("cannot lock {}", folder.display()))?;
     let clone = folder.join("clone");
     let claude = folder.join("claude");
     let auto = crate::permissions::Trust::of(me.place().repo(), server);

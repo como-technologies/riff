@@ -53,6 +53,7 @@ use super::{
     BoxFuture, EndTalk, Live, Look, Wave, Work, World, after_build, after_verify, blocking,
     free_work, lock,
 };
+use crate::daemon::sweep::Fate;
 use crate::daemon::{Ended, Record, Start};
 use crate::peer::state::State;
 use crate::peer::talk::Hub;
@@ -104,7 +105,8 @@ pub struct Peers {
     /// The folder of the daemon: the main clones of its claims
     /// ([`crate::daemon::forge::FORGES`]).
     dir: PathBuf,
-    /// The steps that do not talk: the image, the clone and the sweep.
+    /// The steps that do not talk: the image, the clone and the fate of
+    /// a folder.
     live: Live,
     /// The last text that the lead of each wave got: a text goes one
     /// time in a row.
@@ -248,8 +250,18 @@ impl World for Peers {
         })
     }
 
-    fn sweep<'a>(&'a self, wave: &'a Wave, keep: &'a [PathBuf]) -> BoxFuture<'a, Result<()>> {
-        self.live.sweep(wave, keep)
+    fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>> {
+        self.live.fate(repo, issue)
+    }
+
+    fn merged_in<'a>(
+        &'a self,
+        repo: &'a str,
+        issue: u64,
+        pull: u64,
+        commit: &'a str,
+    ) -> BoxFuture<'a, Result<()>> {
+        self.live.merged_in(repo, issue, pull, commit)
     }
 
     fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, ()> {

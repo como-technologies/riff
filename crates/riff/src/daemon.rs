@@ -175,6 +175,7 @@
 //! | [`Ask::Members`] | [`Say::Members`], or [`Say::Failed`] ([`peers`]) |
 //! | [`Ask::Release`] | [`Say::Line`] and [`Say::Done`] when the daemon deleted the claim on the forge, or [`Say::Failed`] |
 //! | [`Ask::Run`] | as [`Ask::Start`], then [`Say::Line`] for each step after the end, then [`Say::Done`], or [`Say::Failed`] |
+//! | [`Ask::Sweep`] | [`Say::Line`] for each folder that the daemon removed, or one line that it removed none, then [`Say::Done`] ([`sweep`]) |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
 //! [`Then::Stop`]: the daemon stops the container. When `riff` closes the
@@ -407,6 +408,7 @@ use crate::wave::{Job, Wave, World};
 
 pub mod forge;
 pub mod peers;
+pub mod sweep;
 
 pub use forge::Forge;
 
@@ -792,6 +794,10 @@ pub enum Ask {
         /// The image of the session.
         image: String,
     },
+    /// `riff daemon sweep`: remove the folder of each session that does
+    /// not run, when the forge says that its work is over
+    /// (01M53NJ5Y2CMY5MWF9328KW7DE, [`Daemon::sweep`]).
+    Sweep,
 }
 
 /// A session to start. It holds the values of the host and the
@@ -1575,6 +1581,9 @@ pub struct Daemon<R> {
     /// The world of the waves with no riff-server, from its riff on
     /// ([`Daemon::world_of`]).
     peer_world: OnceLock<Arc<dyn World>>,
+    /// The folders of the sessions: the jobs that start, and one sweep
+    /// at a time ([`sweep`]).
+    folders: sweep::Folders,
 }
 
 /// A wave that runs in the daemon.
@@ -1832,6 +1841,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             links: OnceLock::new(),
             invites,
             peer_world: OnceLock::new(),
+            folders: sweep::Folders::default(),
         })
     }
 
@@ -2442,6 +2452,16 @@ impl<R: Runtime + 'static> Daemon<R> {
                 }),
                 Ok(Ask::Run { wave, work, image }) => {
                     crate::wave::run_one(self.clone(), wave, work, image, lines, &out).await;
+                }
+                Ok(Ask::Sweep) => {
+                    let mut swept = self.sweep(None).await;
+                    for line in &swept {
+                        println!("{line}");
+                    }
+                    if swept.is_empty() {
+                        swept.push(text::SWEPT_NONE.into());
+                    }
+                    say_lines(&out, Ok(swept));
                 }
                 Ok(Ask::Release { main, item }) => {
                     out.say(match self.release_asked(main, item).await {
@@ -3515,6 +3535,13 @@ pub async fn ask_release(dir: &Path, main: &Path, item: &str) -> Result<()> {
     ask_done(dir, ask, |line| println!("{line}")).await
 }
 
+/// `riff daemon sweep`: asks the daemon in the folder `dir` to sweep the
+/// folders of its sessions now ([`Ask::Sweep`],
+/// 01M53NJ5Y2CMY5MWF9328KW7DE). It prints each line of the daemon.
+pub async fn ask_sweep(dir: &Path) -> Result<()> {
+    ask_done(dir, Ask::Sweep, |line| println!("{line}")).await
+}
+
 /// `riff daemon events NAME`: shows each event of the live session in
 /// the container `name` from its start, as `riff run` does, and each new
 /// one until the end of the session (01M4ZKX0KMS58NR2E9AF8229A8). A
@@ -3577,6 +3604,7 @@ pub async fn serve_here() -> Result<()> {
         daemon.recover().await;
         daemon.run_waves();
         daemon.watch_forges();
+        daemon.sweep_every();
         // The steps of an update of this release: the rules of Claude
         // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
         let steps = dir.clone();
@@ -3781,7 +3809,11 @@ mod tests {
 
         /// A daemon on `fake` with the quiet limit `quiet` and the
         /// riff-server of `world`.
-        async fn with_world(fake: Fake, quiet: Duration, world: Option<Arc<dyn World>>) -> Here {
+        pub(super) async fn with_world(
+            fake: Fake,
+            quiet: Duration,
+            world: Option<Arc<dyn World>>,
+        ) -> Here {
             let root = tempfile::tempdir().unwrap();
             let dir = dir_in(root.path());
             let (daemon, stop, served) = serve_in(&fake, &dir, quiet, world.clone()).await;
@@ -5370,12 +5402,33 @@ mod tests {
 
     /// The riff-server of the lead, as the test plays it: it notes each
     /// keep-alive and each end, and gives a wake at once. No wave runs.
+    /// The forge gives the fate of the folders of each issue of `fates`,
+    /// and [`Fate::Stays`](sweep::Fate::Stays) for each other issue.
     #[derive(Default)]
-    struct Server {
+    pub(super) struct Server {
         said: Mutex<Vec<String>>,
+        fates: BTreeMap<u64, sweep::Fate>,
+        comments: Mutex<Vec<(String, u64, u64, String)>>,
     }
 
     impl Server {
+        /// The forge with the fate of each issue of `fates`.
+        pub(super) fn with_fates(fates: &[(u64, sweep::Fate)]) -> Server {
+            Server {
+                fates: fates.iter().cloned().collect(),
+                ..Server::default()
+            }
+        }
+
+        /// Each comment `Merged in`: the repository, the issue, the pull
+        /// request and the commit.
+        pub(super) fn comments(&self) -> Vec<(String, u64, u64, String)> {
+            self.comments
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+
         fn said(&self) -> Vec<String> {
             self.said
                 .lock()
@@ -5424,12 +5477,33 @@ mod tests {
             Box::pin(async { Ok(Vec::new()) })
         }
 
-        fn sweep<'a>(
+        fn fate<'a>(
             &'a self,
-            _: &'a Wave,
-            _: &'a [PathBuf],
+            _: &'a str,
+            issue: u64,
+        ) -> crate::wave::BoxFuture<'a, Result<sweep::Fate>> {
+            let fate = self
+                .fates
+                .get(&issue)
+                .cloned()
+                .unwrap_or(sweep::Fate::Stays);
+            Box::pin(async move { Ok(fate) })
+        }
+
+        fn merged_in<'a>(
+            &'a self,
+            repo: &'a str,
+            issue: u64,
+            pull: u64,
+            commit: &'a str,
         ) -> crate::wave::BoxFuture<'a, Result<()>> {
-            Box::pin(async { Ok(()) })
+            Box::pin(async move {
+                self.comments
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push((repo.to_owned(), issue, pull, commit.to_owned()));
+                Ok(())
+            })
         }
 
         fn tell<'a>(&'a self, _: &'a Wave, _: &'a str) -> crate::wave::BoxFuture<'a, ()> {

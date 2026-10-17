@@ -7426,13 +7426,51 @@ pub fn wave_merged(number: u64, commit: &str) -> String {
     )
 }
 
-/// The sweep removed the folder of a session.
-pub fn wave_swept(item: &str, folder: &Path) -> String {
-    format!(
-        "The pull request of {item} merged: riff removed the folder {}.",
-        folder.display()
-    )
+/// The sweep removed the folder `folder` of a session, for the reason
+/// `why` ([`swept_why`], 01M53NJ5V27BCHDNHK2THQQZZQ).
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     riff::text::swept(Path::new("/s/issue-12-1a2b3c4d"), "the pull request #40 merged"),
+///     "riff removed the folder /s/issue-12-1a2b3c4d: the pull request #40 merged."
+/// );
+/// ```
+pub fn swept(folder: &Path, why: &str) -> String {
+    format!("riff removed the folder {}: {why}.", folder.display())
 }
+
+/// Why the sweep removes the folder of a session of the issue `issue`
+/// with the fate `fate`. `None` when the folder stays.
+///
+/// ```
+/// use riff::daemon::sweep::Fate;
+/// use riff::text::swept_why;
+///
+/// let merged = Fate::Merged { pull: 40, commit: "c".into(), refs: false };
+/// assert_eq!(swept_why(12, &merged).unwrap(), "the pull request #40 merged");
+/// let closed = Fate::Closed { pull: 41 };
+/// assert_eq!(swept_why(12, &closed).unwrap(), "the pull request #41 closed with no merge");
+/// let gone = swept_why(12, &Fate::IssueClosed).unwrap();
+/// assert_eq!(gone, "the issue #12 is closed, and its branch has no pull request");
+/// assert_eq!(swept_why(12, &Fate::Stays), None);
+/// ```
+pub fn swept_why(issue: u64, fate: &crate::daemon::sweep::Fate) -> Option<String> {
+    use crate::daemon::sweep::Fate;
+    match fate {
+        Fate::Stays => None,
+        Fate::Merged { pull, .. } => Some(format!("the pull request #{pull} merged")),
+        Fate::Closed { pull } => Some(format!("the pull request #{pull} closed with no merge")),
+        Fate::IssueClosed => Some(format!(
+            "the issue #{issue} is closed, and its branch has no pull request"
+        )),
+    }
+}
+
+/// `riff daemon sweep` found no folder to remove.
+pub const SWEPT_NONE: &str = "riff removed no folder: the session of each folder runs, or its \
+                              work is not over.";
 
 /// `riff wave run`: the daemon runs the wave.
 pub fn wave_asked(repo: &str) -> String {
