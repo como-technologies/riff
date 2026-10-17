@@ -737,7 +737,7 @@ impl<R: Runtime + 'static> Daemon<R> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::time::Instant;
 
     use super::*;
@@ -789,7 +789,7 @@ mod tests {
 
     /// A git clone at `clone` with the origin `url`, as a session leaves
     /// it after its push: one commit, which `main` of `origin` has.
-    fn origin(clone: &Path, url: &str) {
+    pub(crate) fn origin(clone: &Path, url: &str) {
         std::fs::create_dir_all(clone).unwrap();
         git(clone, &["init", "-q", "-b", "main"]);
         git(clone, &["commit", "-q", "--allow-empty", "-m", "start"]);

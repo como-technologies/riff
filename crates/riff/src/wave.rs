@@ -73,11 +73,19 @@
 //! (01M4Z81ARSTAK8HR96S084SDFD). Before each look, the sweep of the
 //! daemon removes the folder of each session of the repository that does
 //! not run, when the pull request of its branch merged or closed, or its
-//! issue is closed ([`crate::daemon::sweep`], 01M53NJ5V27BCHDNHK2THQQZZQ).
-//! For a merged pull request with `Refs #N`, it first adds the comment
-//! `Merged in #PR (COMMIT)` to the issue, as the verifier of a worker
-//! does, so the item is not free work again. The folder of a verify that
-//! did not pass goes at its end. The daemon also sweeps with no wave.
+//! issue is closed, and its clone holds no work that is not on `origin`
+//! ([`crate::daemon::sweep`], 01M53NJ5V27BCHDNHK2THQQZZQ,
+//! 01M53S7WAXD46YPN0DR96XSTMG). For a merged pull request with `Refs #N`,
+//! it first adds the comment `Merged in #PR (COMMIT)` to the issue, as
+//! the verifier of a worker does, so the item is not free work again.
+//! The folder of a verify that did not pass goes at its end. The daemon
+//! also sweeps with no wave.
+//!
+//! A job holds [`Daemon::in_job`] of its item from before the clone of
+//! its session to the end of [`finish`], so the sweep keeps its folder
+//! while a step after the end reads it (01M53S7WDPQ2GWHJWJ6SZXZ5PN). Each
+//! `gh` call of the sweep has a time limit, so a `gh` that never ends
+//! stops no wave (01M53S7WGM9DQV2DXFHBRSMTP8).
 //!
 //! # The world
 //!
@@ -1463,6 +1471,15 @@ mod tests {
         sessions: u64,
         /// A build ends with no pull request.
         no_pull: bool,
+        /// Each folder is `ITEM-ID8` with a git clone of `o/r`, so that
+        /// the sweep acts on it.
+        git: bool,
+        /// The fate of the folders of each issue, else it stays.
+        fates: BTreeMap<u64, Fate>,
+        /// The steps after the end wait for a permit of it.
+        gate: Option<Arc<tokio::sync::Semaphore>>,
+        /// Each item whose steps after the end started.
+        finishing: Vec<String>,
     }
 
     /// A fake [`World`]: a forge in memory, a claim that fails for a
@@ -1529,9 +1546,15 @@ mod tests {
                 forge.claims.insert(item.clone(), session.clone());
                 forge.starts.push((item.clone(), session.clone()));
                 let name = format!("riff-{item}-{session}");
-                let folder = self.root.join("sessions").join(&name);
+                let folder = match forge.git {
+                    true => self.root.join("sessions").join(format!("{item}-{session}")),
+                    false => self.root.join("sessions").join(&name),
+                };
                 let clone = folder.join("clone");
                 std::fs::create_dir_all(&clone)?;
+                if forge.git {
+                    crate::daemon::sweep::tests::origin(&clone, "https://github.com/o/r.git");
+                }
                 let spec = SessionSpec {
                     name,
                     image: image.into(),
@@ -1572,6 +1595,14 @@ mod tests {
             _: Ended,
         ) -> BoxFuture<'a, Result<Vec<String>>> {
             Box::pin(async move {
+                let gate = {
+                    let mut forge = lock(&self.forge);
+                    forge.finishing.push(record.live.item.clone());
+                    forge.gate.clone()
+                };
+                if let Some(gate) = gate {
+                    gate.acquire().await?.forget();
+                }
                 let mut forge = lock(&self.forge);
                 let job = record.job.as_ref().expect("a job");
                 match job.work {
@@ -1585,8 +1616,9 @@ mod tests {
             })
         }
 
-        fn fate<'a>(&'a self, _: &'a str, _: u64) -> BoxFuture<'a, Result<Fate>> {
-            Box::pin(async { Ok(Fate::Stays) })
+        fn fate<'a>(&'a self, _: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>> {
+            let fate = lock(&self.forge).fates.get(&issue).cloned();
+            Box::pin(async move { Ok(fate.unwrap_or(Fate::Stays)) })
         }
 
         fn merged_in<'a>(
@@ -1739,6 +1771,39 @@ mod tests {
             6,
             "one session for each item and each verify"
         );
+    }
+
+    /// 01M53S7WDPQ2GWHJWJ6SZXZ5PN: after the end of a session, the daemon
+    /// has no record of it, and the wave sweeps before each look. The
+    /// folder still stays until the last step after the end of the job,
+    /// which reads the folder.
+    #[tokio::test]
+    async fn the_folder_of_a_job_stays_until_its_last_step_after_the_end() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 1, free).await;
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        {
+            let mut forge = here.forge();
+            forge.git = true;
+            forge.gate = Some(gate.clone());
+            forge.fates.insert(1, Fate::Closed { pull: 41 });
+        }
+        here.run();
+        here.until(1, |h| h.running("issue-1").is_some()).await;
+        let folder = here.daemon.records()[0].folder.clone();
+        here.end("issue-1").await;
+        let finishing = |h: &Here| h.forge().finishing.contains(&"issue-1".to_owned());
+        here.until(1, finishing).await;
+        here.idle(1).await;
+
+        assert!(here.running("issue-1").is_none());
+        assert!(folder.exists(), "the steps after the end run");
+        assert!(here.daemon.sweep(None).await.is_empty());
+
+        gate.add_permits(1);
+        here.until(1, |h| h.forge().finished.contains(&"issue-1".to_owned()))
+            .await;
+        here.until(1, |_| !folder.exists()).await;
     }
 
     /// 01M51STPHXSSZMHF9T7Z85097R: the wave of the daemon takes the

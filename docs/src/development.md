@@ -1029,14 +1029,22 @@ each 10 minutes, also when no wave runs. You do not have to do a step.
 flowchart TD
     F["the folder of a session that does not run"] --> P{"the branch worktree-ITEM"}
     P -- "an open pull request" --> K["the folder stays"]
-    P -- "a merged or a closed pull request" --> D["the daemon removes the folder"]
+    P -- "a merged or a closed pull request" --> C{"the clone"}
     P -- "no pull request" --> I{"the issue"}
     I -- "open" --> K
-    I -- "closed" --> D
+    I -- "closed" --> C
+    C -- "a file not committed, or a commit not pushed" --> W["the folder stays, and riff says why"]
+    C -- "each file committed and pushed" --> D["the daemon removes the folder"]
 ```
 
 While `riff run` runs, its folder stays, also while its start waits
 for room. A verify session has the fate of the branch of its item.
+After the end of a session, the folder stays until the daemon did each
+step after the end, for example the report of a verify.
+
+The daemon asks GitHub with `gh`. When `gh` gives no answer in 30
+seconds, the daemon stops it and keeps the folder. The next sweep
+tries again.
 
 To remove the folders now, for example when the disk is full:
 
@@ -1048,6 +1056,43 @@ It prints each folder that the daemon removed, with the reason:
 
 ```text
 riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge.
+```
+
+### When a folder with work in its clone stays
+
+The daemon does not remove a folder when its clone holds work that is
+only there:
+
+- a file that is not committed, or
+- a commit that no branch of `origin` has. For example, the session
+  ended before it pushed, and an older pull request of its branch
+  merged.
+
+`riff daemon sweep` prints each folder that stays for this reason, and
+the log of the daemon prints it one time:
+
+```text
+riff kept the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge, but its clone has 1 commit that is not pushed. Push the work, or remove the folder.
+```
+
+Look at the work in the clone:
+
+```sh
+git -C ~/.local/share/riff/sessions/issue-735-7788e301/clone status
+git -C ~/.local/share/riff/sessions/issue-735-7788e301/clone log --branches --not --remotes=origin
+```
+
+To keep the work, commit it and push its branch. The next sweep then
+removes the folder:
+
+```sh
+git -C ~/.local/share/riff/sessions/issue-735-7788e301/clone push -u origin HEAD
+```
+
+To drop the work, remove the folder:
+
+```sh
+rm -rf ~/.local/share/riff/sessions/issue-735-7788e301
 ```
 
 ### What the container gets

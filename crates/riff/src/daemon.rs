@@ -175,7 +175,7 @@
 //! | [`Ask::Members`] | [`Say::Members`], or [`Say::Failed`] ([`peers`]) |
 //! | [`Ask::Release`] | [`Say::Line`] and [`Say::Done`] when the daemon deleted the claim on the forge, or [`Say::Failed`] |
 //! | [`Ask::Run`] | as [`Ask::Start`], then [`Say::Line`] for each step after the end, then [`Say::Done`], or [`Say::Failed`] |
-//! | [`Ask::Sweep`] | [`Say::Line`] for each folder that the daemon removed, or one line that it removed none, then [`Say::Done`] ([`sweep`]) |
+//! | [`Ask::Sweep`] | [`Say::Line`] for each folder that the daemon removed, and for each folder whose work is over that it kept, or one line that it removed none, then [`Say::Done`] ([`sweep`]) |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
 //! [`Then::Stop`]: the daemon stops the container. When `riff` closes the
@@ -795,8 +795,9 @@ pub enum Ask {
         image: String,
     },
     /// `riff daemon sweep`: remove the folder of each session that does
-    /// not run, when the forge says that its work is over
-    /// (01M53NJ5Y2CMY5MWF9328KW7DE, [`Daemon::sweep`]).
+    /// not run, when the forge says that its work is over and its clone
+    /// holds no work of its own (01M53NJ5Y2CMY5MWF9328KW7DE,
+    /// 01M53S7WAXD46YPN0DR96XSTMG, [`Daemon::sweep`]).
     Sweep,
 }
 
