@@ -372,7 +372,9 @@ starts a new line (see [Versions](#versions)). Most merges keep the
 line.
 
 `riff-server` talks with a `riff` of its own line, and of the line
-before. So you have one release to update `riff` in:
+before. So you have one release to update `riff` in. The lines 1 and
+3 also talk, in both directions: the bridge. The line 2 is retired.
+See [riff 3.0.0 and the line 1.x](riff-3.md#riff-300-and-the-line-1x).
 
 | riff | riff-server | Result |
 |---|---|---|
@@ -380,6 +382,9 @@ before. So you have one release to update `riff` in:
 | 0.3.2 | 0.4.0 | They talk. riff tells you to update soon. |
 | 0.4.0 | 0.3.2 | riff-server refuses: update riff-server. |
 | 0.2.0 | 0.4.0 | riff-server refuses: update riff. |
+| 1.8.2 | 3.0.0 | They talk: the bridge. riff tells you to update soon. |
+| 3.0.0 | 1.8.2 | They talk: the bridge. riff tells you to update riff-server. |
+| 1.8.2 | 4.0.0 | riff-server refuses: update riff. |
 
 Each call of `riff` names its build, and each reply of `riff-server`
 names its own. Each side compares the versions:
@@ -423,7 +428,16 @@ server refuses it. The note says so:
 riff: riff-server runs build 0.4.0 7213825ab1c2 2026-09-27T20:10:44Z; this riff runs build 0.3.2 929605821e54 2026-09-20T22:03:01Z. riff-server 0.5 will refuse riff 0.3. Run riff update soon.
 ```
 
-Update riff on this machine when you can:
+Across the bridge, `riff` of the line 3 talks with `riff-server` of
+the line 1, for example after a rollback of the server. Then the
+server is the older side. The note says so, and this machine needs no
+step:
+
+```text
+riff: riff-server runs build 1.8.2 7213825ab1c2 2026-10-17T20:10:44Z; this riff runs build 3.0.0 929605821e54 2026-10-18T22:03:01Z. Update riff-server when you can.
+```
+
+In each other case, update riff on this machine when you can:
 
 ```sh
 riff update
@@ -991,8 +1005,10 @@ notice:
 
 `riff-server` still talks with a `riff` of the line before its own
 (see [Builds](#builds)), so a wire change stays additive for one
-line. Riff does not bridge a difference in behavior: the version note
-tells the older session to update.
+line. The lines 1 and 3 also talk, in both directions, because the
+line 2 is retired: the wire of 3.0.0 is the wire of 1.8. Riff does
+not bridge a difference in behavior: the version note tells the older
+session to update.
 
 ### Major
 

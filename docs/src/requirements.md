@@ -4559,6 +4559,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3MX1E1EY1M7JGNCN6FCEVQK** `riff-server` also talks with a `riff`
   of the line before its own: `0.3.x` on a `0.4` server, `1.x` on a
   `2` server. It does not talk with a `riff` of a later line.
+  Superseded in part by 01M55FCZNNZGKM4EKAXZQFTDWR: the lines 1 and 3
+  talk, in both directions.
 - **01M514C19H3WQP1FSX9RBVSC69** A build is older than another build
   when its version is lower, or when the version is the same and the
   time of its commit is older. A build of a higher version is not
@@ -5186,6 +5188,15 @@ part when they merge.
   after riff 3.0.0.
 - **01M53NGVXEMBTJ8E4K3MHPQ7W9** riff-server 3.0.0 serves the API of
   riff 1.x. So a machine of riff 1.x works until it takes riff 3.0.0.
+  Superseded in part by 01M55FCZNNZGKM4EKAXZQFTDWR: only from riff
+  1.8.2.
+- **01M55FCZNNZGKM4EKAXZQFTDWR** The bridge: a `riff` and a
+  `riff-server` of the lines 1 and 3 talk, in both directions, from
+  riff 1.8.2 and riff 3.0.0. The same line and the line before still
+  talk (01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK). Each
+  other pair is refused. riff 1.8.2 releases from v1.8.1 on the branch
+  `release/1.8`, before riff 3.0.0. riff-server 1.8.2 still uses no
+  checkpoint of the line 3 (01M4YNCEMNRCAXD37V03T4JQYR).
 - **01M53NGW0DWJ075C4MDP06WAGS** riff 3.0.0 removes the riff of peers of
   Wave B (#803), with its code, its tests and its book text (#959). No
   cargo feature and no flag keeps it. Its items wait in the Backlog:

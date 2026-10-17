@@ -221,6 +221,9 @@ pub fn later(theirs: &str, ours: &str) -> bool {
 /// use riff_state::checkpoint::later_line;
 ///
 /// assert!(later_line("2.0.1", "1.3.1"));
+/// // The bridge of the lines 1 and 3 does not change it: riff-server
+/// // 1.8.2 uses no checkpoint of 3.0.0 (01M55FCZNNZGKM4EKAXZQFTDWR).
+/// assert!(later_line("3.0.0", "1.8.2"));
 /// assert!(!later_line("1.4.0", "1.3.1"));
 /// assert!(!later_line("1.3.1", "2.0.1"));
 /// assert!(!later_line("0.9.0", "0.8.1"));
