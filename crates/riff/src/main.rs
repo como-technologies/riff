@@ -3966,13 +3966,16 @@ async fn draw_top(
     use std::io::{IsTerminal, Write};
     use std::time::Instant;
     // One read of `gh` for each repository with a live session
-    // (01M42KHN80V49HDDZF953HXDT0).
+    // (01M42KHN80V49HDDZF953HXDT0). The calls share one token
+    // (01M54510SFK1Z9VPFYBYYSV10F).
+    let gh = pr::Gh::default().with_one_token();
     let fetch = |repos: std::collections::BTreeSet<String>| {
+        let gh = gh.clone();
         tokio::task::spawn_blocking(move || {
             repos
                 .into_iter()
                 .map(|repo| {
-                    let issues = riff::top::Issues::from_gh(&repo);
+                    let issues = riff::top::Issues::from_gh(&gh, &repo);
                     (repo, issues)
                 })
                 .collect::<Vec<_>>()

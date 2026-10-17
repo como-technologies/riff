@@ -3418,11 +3418,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   changes the kept value. Only the refresh of the sign-in reads it
   again, under the refresh lock (R107).
 - **01M54510SFK1Z9VPFYBYYSV10F** The `gh` calls of one clean of the
-  worktrees (01M3ZV0TKSHNW5QC2NG1XTJEJB) share one token. riff reads
-  it with `gh auth token` at the first call, and gives it to each call
-  in `GH_TOKEN`: in the environment of `gh` only, never in a command
-  line or a file. A clean with no `gh` call reads no token. When the
-  environment has `GH_TOKEN` or `GITHUB_TOKEN`, riff reads no token.
+  worktrees (01M3ZV0TKSHNW5QC2NG1XTJEJB), of `riff top`, and of the
+  rollout and the look of the lead share one token. riff reads it with
+  `gh auth token` at the first call, and again at the first call after
+  10 minutes. It gives the token to each call in `GH_TOKEN`: in the
+  environment of `gh` only, never in a command line or a file. With no
+  `gh` call, riff reads no token. When the environment has `GH_TOKEN`
+  or `GITHUB_TOKEN`, riff reads no token.
 - **01M54510W507A3T5JRTZ55H0ZQ** When `RIFF_KEYRING_LOG` names a file,
   `riff` adds one line to it for each call to the keyring store: the
   process ID and `read NAME`, `write NAME` or `delete NAME`. The first

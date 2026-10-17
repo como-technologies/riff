@@ -372,9 +372,12 @@ async fn three_processes_with_three_tmpdirs_refresh_one_sign_in_once() {
         assert!(!stored(&url).ended(), "round {round}");
     }
     // The kept pair is the live pair of the server: a refresh with it
-    // works.
+    // works. A new process reads it: this test process keeps the sign-in
+    // of its own login (01M54510PS9FDKQKJB0RAH3XG3).
     expire(&url);
-    login::access_token(&Api::new(&url)).await.unwrap();
+    let cmd = riff(&url, dir.path(), "m0", &["members", "--email"]);
+    let out = tokio::process::Command::from(cmd).output().await.unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(refreshes.load(Ordering::SeqCst), 4);
 }
 

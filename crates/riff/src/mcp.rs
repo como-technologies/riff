@@ -1036,7 +1036,8 @@ impl Tools {
             me: move || tools.me(),
             tmux: crate::terminal::Tmux::from_env(),
             claude: "claude".into(),
-            gh: Arc::new(crate::pr::Gh::default()),
+            // The calls of `gh` share one token (01M54510SFK1Z9VPFYBYYSV10F).
+            gh: Arc::new(crate::pr::Gh::default().with_one_token()),
             off_told: false.into(),
         };
         tokio::spawn(crate::rollout::run(env))
