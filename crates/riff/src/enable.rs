@@ -891,6 +891,10 @@ pub struct Scoped {
     /// True when the install is old, and riff kept its choice with no
     /// question: each repository.
     pub kept: bool,
+    /// When riff is off in the working directory: the repositories of
+    /// the Claude Code state file where riff is on ([`on_in`],
+    /// 01M53NEE536G72QMVXCVTS28ES). Else empty.
+    pub on_in: Vec<PathBuf>,
 }
 
 /// The files that [`scope`] reads and writes.
@@ -978,13 +982,18 @@ pub fn scope(
         (None, None) => ask()?,
     };
     let take_out = matches!(answer, Some(Scope::Repo | Scope::None));
+    let claude = || {
+        files
+            .claude
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default()
+    };
     let mut moved = None;
     if take_out && global() {
         if let Some(user) = files.user {
             set(user, None)?;
         }
-        let text = files.claude.and_then(|p| std::fs::read_to_string(p).ok());
-        moved = Some(used(&text.unwrap_or_default()));
+        moved = Some(used(&claude()));
     }
     match answer {
         Some(Scope::Global) => {
@@ -998,12 +1007,18 @@ pub fn scope(
     if let Some(answer) = answer {
         crate::settings::set_connect_scope(files.riff, answer)?;
     }
+    let state = State::of(dir, files.user, false);
+    let on_in = match state.on {
+        true => Vec::new(),
+        false => on_in(&claude(), files.user),
+    };
     Ok(Scoped {
         answer,
         moved,
-        state: State::of(dir, files.user, false),
+        state,
         global: global(),
         kept,
+        on_in,
     })
 }
 
@@ -1080,6 +1095,43 @@ pub fn mcp_off_in(state: Option<&Path>, dir: &Path, repo: Option<&Repo>) -> bool
         .chain(tops.flatten().map(PathBuf::as_path))
         .collect();
     mcp_off(&text, &dirs)
+}
+
+/// The repositories of the Claude Code state text `text` where riff is
+/// on, with the user settings `user` (01M53NEE536G72QMVXCVTS28ES): the
+/// main clone of the repository of each project, once, in order. A
+/// project in a linked worktree counts for its main clone.
+///
+/// ```
+/// use riff::enable::{on_in, set};
+///
+/// let dir = tempfile::tempdir()?;
+/// let (on, off) = (dir.path().join("on"), dir.path().join("off"));
+/// for repo in [&on, &off] {
+///     std::fs::create_dir_all(repo.join(".git"))?;
+/// }
+/// set(&on.join(".claude/settings.local.json"), Some(true))?;
+/// let text = serde_json::json!({"projects": {
+///     on.join("src").to_str().unwrap(): {},
+///     on.to_str().unwrap(): {},
+///     off.to_str().unwrap(): {},
+///     dir.path().join("gone").to_str().unwrap(): {},
+/// }})
+/// .to_string();
+/// assert_eq!(on_in(&text, None), [on]);
+/// assert!(on_in("", None).is_empty());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn on_in(text: &str, user: Option<&Path>) -> Vec<PathBuf> {
+    let mut mains: Vec<PathBuf> = projects(text)
+        .into_iter()
+        .filter_map(|(path, _)| Repo::of(&path))
+        .map(|repo| repo.home().to_owned())
+        .collect();
+    mains.sort();
+    mains.dedup();
+    mains.retain(|main| State::of(main, user, false).on);
+    mains
 }
 
 /// The repositories of the Claude Code state text `text` that used

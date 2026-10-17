@@ -484,6 +484,126 @@ fn riff_update_in_a_terminal_asks_nothing_and_keeps_the_choice() {
     }
 }
 
+/// Writes the state file of Claude Code with a project for each of
+/// `dirs`.
+fn claude_projects(machine: &Machine, dirs: &[&Path]) {
+    let projects: serde_json::Map<String, Value> = dirs
+        .iter()
+        .map(|dir| (dir.to_str().unwrap().to_owned(), json!({})))
+        .collect();
+    let state = json!({ "projects": projects });
+    std::fs::write(machine.env.home().join(".claude.json"), state.to_string()).unwrap();
+}
+
+/// 01M53NEE536G72QMVXCVTS28ES: riff is off in the working directory,
+/// and on in a repository of the state file of Claude Code. The last
+/// line of `riff connect claude` names that repository, and does not
+/// say `riff is installed but off`.
+#[test]
+fn connect_names_the_repositories_where_riff_is_on() {
+    let machine = Machine::new();
+    let (app, other) = (machine.repo("app"), machine.repo("other"));
+    machine.run(&app, &["enable"]);
+    // Claude Code ran in a linked worktree of app: it counts for app.
+    let tree = app.join(".claude/worktrees/issue-12");
+    let first = [
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "first",
+    ];
+    let add = [
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "issue-12",
+        tree.to_str().unwrap(),
+    ];
+    for args in [&first[..], &add[..]] {
+        let status = machine
+            .env
+            .command("git")
+            .args(args)
+            .current_dir(&app)
+            .status();
+        assert!(status.unwrap().success(), "{args:?}");
+    }
+    claude_projects(&machine, &[&tree, &other, &machine.plain("notes")]);
+
+    let home = machine.env.home();
+    let out = machine.connect(&home, &[]);
+    let line = format!(
+        "riff is on in 1 repository on this machine: {}. To turn it on in another repository: \
+         cd REPO && riff enable\n",
+        app.display()
+    );
+    assert!(out.ends_with(&line), "{out}");
+    assert!(!out.contains("installed but off"), "{out}");
+
+    // In the repository where riff is on, the line says so.
+    let out = machine.connect(&app, &[]);
+    assert!(out.contains("riff is on in this repository ("), "{out}");
+}
+
+/// 01M53NEE536G72QMVXCVTS28ES: the update in the background runs `riff
+/// update` with no terminal, in the home directory, and its output goes
+/// to `update.log`. It says `riff is installed but off` only when riff is
+/// off in each repository. The update runs a fake `cargo`, the `riff` of
+/// this build and a fake `riff-server`.
+#[test]
+fn riff_update_says_installed_but_off_only_when_riff_is_off_in_each_repository() {
+    for on in [false, true] {
+        let machine = Machine::new();
+        let script = |name: &str| {
+            let path = machine.bin().join(name);
+            isolated::write_program(&path, "#!/bin/sh\nexit 0\n");
+            path
+        };
+        let cargo = script("cargo");
+        script("riff-server");
+        std::os::unix::fs::symlink(machine.env.riff_path(), machine.bin().join("riff")).unwrap();
+        let app = machine.repo("app");
+        if on {
+            machine.run(&app, &["enable"]);
+        }
+        claude_projects(&machine, &[&app]);
+
+        let home = machine.env.home();
+        let claude = machine.bin().join("claude");
+        let out = machine
+            .riff(&home, &["update", "--tag", "v0.8.0"])
+            .arg("--cargo")
+            .arg(&cargo)
+            .arg("--claude")
+            .arg(&claude)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{stdout}\n{out:?}");
+        let off = "riff is installed but off.";
+        let names = format!(
+            "riff is on in 1 repository on this machine: {}.",
+            app.display()
+        );
+        match on {
+            true => {
+                assert!(!stdout.contains(off), "{stdout}");
+                assert!(stdout.contains(&names), "{stdout}");
+            }
+            false => {
+                assert!(stdout.contains(off), "{stdout}");
+                assert!(!stdout.contains("riff is on in"), "{stdout}");
+            }
+        }
+    }
+}
+
 /// 01M3XY2SKQ27K3TE4NV28FHTVV: `riff enable` and `riff disable` change
 /// only the entry of riff, as text. Each other byte of the file stays:
 /// the indent, the order and the lines.
