@@ -2134,11 +2134,9 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    /// A fake world: a riff with free work, and machines. Each start adds
-    /// a worker to its machine. The new worker is idle until it claims an
-    /// item, [`World::claim_after`] after its start. With
-    /// [`World::keep_idle`], the fake stops idle workers as the server
-    /// does (#259).
+    /// A fake world: a riff with free work, machines and a riff daemon.
+    /// An ask of the wave makes the wave of the daemon run, unless
+    /// [`World::ask_fails`] says why it fails.
     struct Fake {
         state: Mutex<World>,
     }
@@ -2149,28 +2147,22 @@ mod tests {
         lead: bool,
         running: bool,
         work: usize,
-        /// Idle workers that were there before, and never claim.
+        /// The idle workers: each one with no claim, also one that did
+        /// not join yet.
         idle: usize,
         places: Vec<Place>,
-        /// How long a new worker takes to claim an item. `None`: it never
-        /// claims, because no worker takes the counted work.
-        claim_after: Option<Duration>,
-        /// The idle workers that the server keeps on each host after 60
-        /// seconds of idle time. `None`: the server stops none.
-        keep_idle: Option<usize>,
-        /// Each new worker that did not claim: its host and its start.
-        new: Vec<(String, tokio::time::Instant)>,
-        /// The host of each start, with the time of the start.
-        starts: Vec<(String, tokio::time::Instant)>,
-        /// The workers that the server stopped.
-        stops: usize,
+        /// The wave of the repository on the daemon.
+        wave: WaveState,
+        /// Why an ask of the wave fails. `None`: it works, and the wave
+        /// runs.
+        ask_fails: Option<String>,
+        /// The time of each ask of the wave.
+        asks: Vec<tokio::time::Instant>,
         /// Each message to the lead, with true when it wakes the lead.
         told: Vec<(String, bool)>,
         /// A person sets this limit on the first machine in the middle
         /// of the next look: after its `seen`, before its `look`.
         limit_in_look: Option<u16>,
-        /// What the rollout did, in order: `told` and `start`.
-        order: Vec<&'static str>,
         /// The free work by name, for the requests.
         items: Vec<String>,
         /// The idle workers that joined. Each one is also in `idle`.
@@ -2179,41 +2171,6 @@ mod tests {
         offers: Vec<(String, String, tokio::time::Instant)>,
         /// The authors that a look sees.
         authors: Authors,
-    }
-
-    impl World {
-        /// The claims and the idle stops up to now.
-        fn advance(&mut self) {
-            let now = tokio::time::Instant::now();
-            if let Some(after) = self.claim_after {
-                while self.work > 0
-                    && let Some(i) = self.new.iter().position(|(_, at)| now >= *at + after)
-                {
-                    self.new.remove(i);
-                    self.work -= 1;
-                }
-            }
-            let Some(keep) = self.keep_idle else {
-                return;
-            };
-            for place in &mut self.places {
-                let mut idle: Vec<usize> = (0..self.new.len())
-                    .filter(|&i| self.new[i].0 == place.host)
-                    .collect();
-                // Keep the newest ones; stop the others past 60 s.
-                idle.sort_by_key(|&i| std::cmp::Reverse(self.new[i].1));
-                let stop: Vec<usize> = idle
-                    .into_iter()
-                    .skip(keep)
-                    .filter(|&i| now >= self.new[i].1 + Duration::from_secs(60))
-                    .collect();
-                for i in stop.into_iter().rev() {
-                    self.new.remove(i);
-                    place.workers -= 1;
-                    self.stops += 1;
-                }
-            }
-        }
     }
 
     impl Fake {
@@ -2227,8 +2184,13 @@ mod tests {
             f(&mut self.state.lock().unwrap())
         }
 
-        fn hosts(&self) -> Vec<String> {
-            self.with(|w| w.starts.iter().map(|(h, _)| h.clone()).collect())
+        /// The second of each ask of the wave, from `begin`.
+        fn asks(&self, begin: tokio::time::Instant) -> Vec<u64> {
+            self.with(|w| w.asks.iter().map(|at| (*at - begin).as_secs()).collect())
+        }
+
+        fn told(&self) -> Vec<(String, bool)> {
+            self.with(|w| w.told.clone())
         }
     }
 
@@ -2254,24 +2216,22 @@ mod tests {
         }
 
         async fn tell(&self, body: &str, wake: bool) -> Result<()> {
-            self.with(|w| {
-                w.told.push((body.to_owned(), wake));
-                w.order.push("told");
-            });
+            self.with(|w| w.told.push((body.to_owned(), wake)));
             Ok(())
         }
 
         async fn look(&self) -> Result<Option<View>> {
             Ok(self.with(|w| {
-                w.advance();
                 w.lead.then(|| View {
                     running: w.running,
                     work: w.work,
-                    idle: w.idle + w.new.len(),
+                    idle: w.idle,
                     places: w.places.clone(),
                     items: w.items.clone(),
                     idlers: w.idlers.clone(),
                     authors: w.authors.clone(),
+                    repo: "o/r".into(),
+                    wave: w.wave.clone(),
                 })
             }))
         }
@@ -2284,16 +2244,17 @@ mod tests {
             Ok(())
         }
 
-        async fn start(&self, place: &Place) -> Result<()> {
+        async fn run_wave(&self) -> Result<()> {
             self.with(|w| {
-                let p = w.places.iter_mut().find(|p| p.host == place.host).unwrap();
-                p.workers += 1;
-                let now = tokio::time::Instant::now();
-                w.new.push((place.host.clone(), now));
-                w.starts.push((place.host.clone(), now));
-                w.order.push("start");
-            });
-            Ok(())
+                w.asks.push(tokio::time::Instant::now());
+                match &w.ask_fails {
+                    Some(why) => bail!("{why}"),
+                    None => {
+                        w.wave = WaveState::Runs;
+                        Ok(())
+                    }
+                }
+            })
         }
     }
 
@@ -2342,14 +2303,11 @@ mod tests {
             work,
             idle: 0,
             places: vec![thelio(), pangolin()],
-            claim_after: Some(Duration::from_secs(5)),
-            keep_idle: None,
-            new: Vec::new(),
-            starts: Vec::new(),
-            stops: 0,
+            wave: WaveState::None,
+            ask_fails: None,
+            asks: Vec::new(),
             told: Vec::new(),
             limit_in_look: None,
-            order: Vec::new(),
             items: Vec::new(),
             idlers: Vec::new(),
             offers: Vec::new(),
@@ -2364,104 +2322,157 @@ mod tests {
         task.abort();
     }
 
+    /// The note of an ask of the wave of the fake.
+    fn asked() -> (String, bool) {
+        (text::rollout_wave("thelio", "o/r"), false)
+    }
+
+    /// Free work and no wave on the daemon: the first look asks the
+    /// daemon one time to run the wave, and tells the lead. The wave
+    /// runs, so no later look asks again. No worker starts in tmux
+    /// (01M53NGVE839TRH7XB7CDPQNZE, 01M5515CA4CZ6KV4ZD6Y0744Z7).
     #[tokio::test(start_paused = true)]
-    async fn it_starts_one_worker_each_interval_until_each_item_has_one() {
+    async fn it_asks_the_daemon_one_time_for_the_wave_and_starts_no_worker() {
         let fake = Fake::new(world(3));
         let begin = tokio::time::Instant::now();
         run_for(&fake, 60).await;
-        let starts = fake.with(|w| w.starts.clone());
-        assert_eq!(starts.len(), 3, "one worker for each free item");
-        let secs: Vec<u64> = starts
-            .iter()
-            .map(|(_, at)| (*at - begin).as_secs())
-            .collect();
-        assert_eq!(secs, [10, 20, 30]);
+        assert_eq!(fake.asks(begin), [10]);
+        assert_eq!(fake.told(), [asked()]);
+        assert!(fake.with(|w| w.places.iter().all(|p| p.workers == 0)));
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_interval_setting_changes_the_rate() {
+    async fn the_interval_setting_changes_the_time_of_the_ask() {
         let fake = Fake::new(World {
             interval: Duration::from_secs(30),
             ..world(3)
         });
+        let begin = tokio::time::Instant::now();
         run_for(&fake, 60).await;
-        assert_eq!(fake.hosts().len(), 2);
+        assert_eq!(fake.asks(begin), [30]);
     }
 
     #[tokio::test(start_paused = true)]
-    async fn an_interval_of_zero_starts_nothing() {
+    async fn an_interval_of_zero_asks_nothing() {
         let fake = Fake::new(World {
             interval: Duration::ZERO,
             ..world(3)
         });
         run_for(&fake, 60).await;
-        assert!(fake.hosts().is_empty());
+        assert!(fake.with(|w| w.asks.is_empty()));
     }
 
+    /// 01M3Q5QEBTNM90SPYXNVTT7RJA: while the riff or the repository is
+    /// paused, the rollout asks nothing. The resume asks.
     #[tokio::test(start_paused = true)]
-    async fn a_pause_stops_the_rollout() {
-        let fake = Fake::new(world(5));
+    async fn a_pause_asks_nothing_and_the_resume_asks() {
+        let fake = Fake::new(World {
+            running: false,
+            ..world(5)
+        });
+        let begin = tokio::time::Instant::now();
         let task = tokio::spawn(run(fake.clone()));
-        tokio::time::sleep(Duration::from_secs(25)).await;
-        fake.with(|w| w.running = false);
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        assert_eq!(fake.hosts().len(), 2, "no start while paused");
+        tokio::time::sleep(Duration::from_secs(65)).await;
+        assert!(fake.with(|w| w.asks.is_empty()), "no ask while paused");
         fake.with(|w| w.running = true);
         tokio::time::sleep(Duration::from_secs(10)).await;
         task.abort();
-        assert_eq!(fake.hosts().len(), 3, "the resume starts the rollout again");
+        assert_eq!(fake.asks(begin), [70], "the resume asks for the wave");
     }
 
     #[tokio::test(start_paused = true)]
-    async fn only_the_lead_starts_workers() {
+    async fn only_the_lead_asks_for_the_wave() {
         let fake = Fake::new(World {
             lead: false,
             ..world(3)
         });
         run_for(&fake, 60).await;
-        assert!(fake.hosts().is_empty());
+        assert!(fake.with(|w| w.asks.is_empty() && w.told.is_empty()));
+    }
+
+    /// A wave of the repository runs on the daemon: no ask, and no note.
+    #[tokio::test(start_paused = true)]
+    async fn no_ask_while_a_wave_of_the_repository_runs() {
+        let fake = Fake::new(World {
+            wave: WaveState::Runs,
+            ..world(3)
+        });
+        run_for(&fake, 120).await;
+        assert!(fake.with(|w| w.asks.is_empty() && w.told.is_empty()));
     }
 
     #[tokio::test(start_paused = true)]
-    async fn no_worker_starts_while_a_worker_is_idle() {
+    async fn no_ask_with_no_free_work() {
+        let fake = Fake::new(world(0));
+        run_for(&fake, 60).await;
+        assert!(fake.with(|w| w.asks.is_empty()));
+    }
+
+    /// An idle worker that did not join yet can take the free work: no
+    /// ask while it is idle. Its claim ends the wait
+    /// (01M5515CA4CZ6KV4ZD6Y0744Z7).
+    #[tokio::test(start_paused = true)]
+    async fn no_ask_while_a_worker_is_idle() {
         let fake = Fake::new(World {
             idle: 1,
             ..world(3)
         });
-        run_for(&fake, 60).await;
-        assert!(fake.hosts().is_empty());
+        let begin = tokio::time::Instant::now();
+        let task = tokio::spawn(run(fake.clone()));
+        tokio::time::sleep(Duration::from_secs(45)).await;
+        assert!(fake.with(|w| w.asks.is_empty()));
+        fake.with(|w| w.idle = 0);
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        task.abort();
+        assert_eq!(fake.asks(begin), [50]);
     }
 
+    /// The ask fails: the lead gets one note with the reason, and the
+    /// rollout asks again at each look. A new reason gives a new note.
+    /// Then the ask works: the note of the ask, and the wave runs
+    /// (01M5515CA4CZ6KV4ZD6Y0744Z7).
     #[tokio::test(start_paused = true)]
-    async fn the_next_worker_waits_until_the_new_one_claims() {
+    async fn a_failed_ask_gives_one_note_for_each_reason_and_the_rollout_asks_again() {
         let fake = Fake::new(World {
-            claim_after: Some(Duration::from_secs(25)),
-            ..world(3)
+            ask_fails: Some("no session image".into()),
+            ..world(2)
         });
         let begin = tokio::time::Instant::now();
-        run_for(&fake, 100).await;
-        let secs: Vec<u64> = fake.with(|w| {
-            w.starts
-                .iter()
-                .map(|(_, at)| (*at - begin).as_secs())
-                .collect()
-        });
-        // Each new worker claims 25 s after its start.
-        assert_eq!(secs, [10, 40, 70]);
+        let task = tokio::spawn(run(fake.clone()));
+        tokio::time::sleep(Duration::from_secs(35)).await;
+        fake.with(|w| w.ask_fails = Some("the daemon is gone".into()));
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        fake.with(|w| w.ask_fails = None);
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        task.abort();
+        assert_eq!(fake.asks(begin), [10, 20, 30, 40, 50, 60]);
+        let no = |why| (text::rollout_no_wave("thelio", "o/r", why), false);
+        assert_eq!(
+            fake.told(),
+            [no("no session image"), no("the daemon is gone"), asked()]
+        );
     }
 
-    /// Work that no worker takes gives one idle worker, which the server
-    /// keeps (#259): no loop of starts and stops.
+    /// No daemon answers: the lead gets one note with the reason, and
+    /// the rollout asks nothing. An idle worker still gets its request
+    /// (01M53NGVE839TRH7XB7CDPQNZE, 01M5515CA4CZ6KV4ZD6Y0744Z7).
     #[tokio::test(start_paused = true)]
-    async fn work_that_no_worker_takes_starts_no_endless_loop() {
+    async fn no_daemon_gives_one_note_and_the_idle_worker_still_gets_work() {
         let fake = Fake::new(World {
-            claim_after: None,
-            keep_idle: Some(1),
-            ..world(3)
+            wave: WaveState::NoDaemon("no riff daemon listens".into()),
+            ..one_idle("issue-7")
         });
-        run_for(&fake, 3600).await;
-        assert_eq!(fake.hosts().len(), 1);
-        assert_eq!(fake.with(|w| w.stops), 0);
+        let begin = tokio::time::Instant::now();
+        run_for(&fake, 60).await;
+        assert!(fake.with(|w| w.asks.is_empty()));
+        assert_eq!(
+            fake.told(),
+            [(
+                text::rollout_no_wave("thelio", "o/r", "no riff daemon listens"),
+                false
+            )]
+        );
+        assert_eq!(offers(&fake, begin), [("w1".into(), "issue-7".into(), 10)]);
     }
 
     fn idler(session: &str) -> Idler {
@@ -2477,7 +2488,6 @@ mod tests {
             idle: 1,
             idlers: vec![idler("w1")],
             items: vec![item.into()],
-            claim_after: None,
             ..world(1)
         }
     }
@@ -2492,6 +2502,8 @@ mod tests {
         })
     }
 
+    /// 01M53NGVE839TRH7XB7CDPQNZE: an idle worker in tmux still gets free
+    /// work, as in riff 1.x, and the rollout asks for no wave for it.
     #[tokio::test(start_paused = true)]
     async fn an_idle_worker_gets_a_request_for_a_waiting_verify() {
         let fake = Fake::new(one_idle("verify-issue-12"));
@@ -2501,7 +2513,10 @@ mod tests {
             offers(&fake, begin),
             [("w1".into(), "verify-issue-12".into(), 10)]
         );
-        assert!(fake.hosts().is_empty(), "the idle worker has the work");
+        assert!(
+            fake.with(|w| w.asks.is_empty()),
+            "the idle worker has the work"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -2519,39 +2534,23 @@ mod tests {
         assert_eq!(fake.with(|w| w.offers.len()), 1);
     }
 
-    /// The worker does not claim in 6 intervals: it does not block the
-    /// start of a new worker.
+    /// The worker does not claim in 6 intervals: it refused the item, so
+    /// the item goes to the wave of the daemon. A new worker that joins
+    /// later still gets the request (01M49ZK1C1P817KE63EXV3EJDC).
     #[tokio::test(start_paused = true)]
-    async fn a_worker_that_does_not_claim_does_not_block_a_start() {
-        let fake = Fake::new(one_idle("issue-7"));
-        let begin = tokio::time::Instant::now();
-        run_for(&fake, 75).await;
-        let secs: Vec<u64> = fake.with(|w| {
-            w.starts
-                .iter()
-                .map(|(_, at)| (*at - begin).as_secs())
-                .collect()
-        });
-        assert_eq!(secs, [70]);
-    }
-
-    /// The new worker joins, gets the request and also does not claim.
-    /// Two workers refused the item: no third worker starts.
-    #[tokio::test(start_paused = true)]
-    async fn an_item_that_two_workers_refuse_starts_no_loop() {
+    async fn an_item_that_a_worker_refuses_goes_to_the_wave() {
         let fake = Fake::new(one_idle("issue-7"));
         let begin = tokio::time::Instant::now();
         let task = tokio::spawn(run(fake.clone()));
         tokio::time::sleep(Duration::from_secs(75)).await;
+        assert_eq!(fake.asks(begin), [70]);
         fake.with(|w| {
-            // The new worker joins.
-            w.new.clear();
             w.idle += 1;
             w.idlers.push(idler("w2"));
         });
         tokio::time::sleep(Duration::from_secs(600)).await;
         task.abort();
-        assert_eq!(fake.hosts().len(), 1);
+        assert_eq!(fake.asks(begin), [70], "the wave runs: no second ask");
         assert_eq!(
             offers(&fake, begin),
             [
@@ -2590,14 +2589,13 @@ mod tests {
 
     /// w1 held issue-12. It released the item at its verify request, and
     /// riff cleared its context: the session ID stays, and the worktree
-    /// is gone. w1 never gets a request for the verify. The rollout
-    /// starts a new worker, and the new worker w2 gets the request
-    /// (01M51533BJSD0RB7BFQR9CAFYW).
+    /// is gone. w1 never gets a request for the verify. So the rollout
+    /// asks the daemon for the wave. A new worker w2 that joins gets the
+    /// request (01M51533BJSD0RB7BFQR9CAFYW).
     #[tokio::test(start_paused = true)]
     async fn the_author_gets_no_request_for_its_verify_after_a_clear() {
         let fake = Fake::new(World {
             authors: [(12, ["w1".to_owned()].into())].into(),
-            claim_after: None,
             ..world(0)
         });
         let begin = tokio::time::Instant::now();
@@ -2613,20 +2611,13 @@ mod tests {
         });
         tokio::time::sleep(Duration::from_secs(10)).await;
         fake.with(|w| {
-            // The new worker joins.
-            w.new.clear();
+            // A worker joins.
             w.idle += 1;
             w.idlers.push(idler("w2"));
         });
         tokio::time::sleep(Duration::from_secs(10)).await;
         task.abort();
-        let starts: Vec<u64> = fake.with(|w| {
-            w.starts
-                .iter()
-                .map(|(_, at)| (*at - begin).as_secs())
-                .collect()
-        });
-        assert_eq!(starts, [20], "a new worker for the verify");
+        assert_eq!(fake.asks(begin), [20], "the wave takes the verify");
         assert_eq!(
             offers(&fake, begin),
             [("w2".into(), "verify-issue-12".into(), 30)]
@@ -2657,116 +2648,89 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn the_limit_of_each_machine_caps_the_rollout() {
-        let mut w = world(20);
-        w.places[0].limit = 2;
-        w.places[1].limit = 1;
-        let fake = Fake::new(w);
-        run_for(&fake, 300).await;
-        let hosts = fake.hosts();
-        assert_eq!(hosts.len(), 3);
-        assert_eq!(hosts.iter().filter(|h| *h == "thelio").count(), 2);
-        assert_eq!(hosts.iter().filter(|h| *h == "pangolin").count(), 1);
+    #[test]
+    fn the_bigger_machine_has_the_most_free_capacity() {
+        // thelio scores 64 and pangolin 24.
+        assert_eq!(pick(&[thelio(), pangolin()]), Some(0));
+        assert_eq!(pick(&[pangolin(), thelio()]), Some(1));
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn the_first_workers_go_to_the_bigger_machine() {
-        let mut w = world(20);
-        w.places[0].limit = 20;
-        w.places[1].limit = 20;
-        let fake = Fake::new(w);
-        run_for(&fake, 100).await;
-        let hosts = fake.hosts();
-        assert_eq!(hosts.len(), 10);
-        // thelio scores 64 and pangolin 24: pangolin gets none of the
-        // first 10.
-        assert!(hosts.iter().all(|h| h == "thelio"), "{hosts:?}");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn the_smaller_machine_gets_workers_when_it_has_the_most_room() {
-        let mut w = world(3);
-        w.places[0].workers = 60;
-        w.places[0].limit = 70;
-        let fake = Fake::new(w);
-        run_for(&fake, 30).await;
+    #[test]
+    fn the_smaller_machine_wins_when_it_has_the_most_room() {
+        let full = Place {
+            workers: 60,
+            limit: 70,
+            ..thelio()
+        };
         // thelio has 64 - 60 = 4 free, pangolin 24.
-        assert_eq!(fake.hosts(), ["pangolin", "pangolin", "pangolin"]);
+        assert_eq!(pick(&[full, pangolin()]), Some(1));
     }
 
-    /// A higher limit on a machine that was full, with free work: the
-    /// lead gets a note that the rollout starts a worker, and the
-    /// rollout starts it (01M3X30KHKB6W11C3NBAW7KCGW, 01M3X30R4PSBP3RQWM02BJ6GK3).
+    /// A higher limit while the rollout is on: the lead gets a note with
+    /// only the change. The rollout starts no worker in tmux, and the
+    /// wave of the daemon takes the free work (01M3X30KHKB6W11C3NBAW7KCGW,
+    /// 01M5515CCV7WNKVZVAMQ375J0M).
     #[tokio::test(start_paused = true)]
-    async fn a_higher_limit_tells_the_lead_that_the_rollout_starts_a_worker() {
+    async fn a_higher_limit_gives_a_note_and_starts_no_worker_while_the_rollout_is_on() {
         let mut w = world(3);
+        w.wave = WaveState::Runs;
         w.places = vec![Place {
             limit: 1,
+            workers: 1,
             ..pangolin()
         }];
         let fake = Fake::new(w);
         let task = tokio::spawn(run(fake.clone()));
         tokio::time::sleep(Duration::from_secs(35)).await;
-        assert_eq!(fake.hosts(), ["pangolin"]);
-        assert!(fake.with(|w| w.told.is_empty()), "no change, no message");
+        assert!(fake.told().is_empty(), "no change, no message");
 
         fake.with(|w| w.places[0].limit = 2);
         tokio::time::sleep(Duration::from_secs(10)).await;
         task.abort();
-        assert_eq!(fake.hosts(), ["pangolin", "pangolin"]);
+        assert_eq!(fake.with(|w| w.places[0].workers), 1);
         assert_eq!(
-            fake.with(|w| w.told.clone()),
-            [(
-                "workers: limit 1 to 2 on pangolin: the rollout starts 1 worker.".to_owned(),
-                false
-            )]
+            fake.told(),
+            [("workers: limit 1 to 2 on pangolin.".to_owned(), false)]
         );
     }
 
-    /// A person sets a higher limit in the middle of a look: after the
-    /// look read the limits, before it reads the machines. That look
-    /// starts no worker with the new limit. The next look tells the
-    /// lead that the rollout starts a worker, and then starts it
-    /// (01M3XFHSYJEN9V6QEKWJGJWQ8Q).
+    /// A person sets a higher limit in the middle of a look, while the
+    /// rollout is off: after the look read the limits, before it reads
+    /// the machines. That look uses the old limit, so it gives no
+    /// message. The next look gives one message, with the room of the
+    /// new limit (01M3XFHSYJEN9V6QEKWJGJWQ8Q).
     #[tokio::test(start_paused = true)]
-    async fn a_limit_that_changes_in_a_look_gives_the_note_before_the_start() {
+    async fn a_limit_that_changes_in_a_look_gives_one_message_at_the_next_look() {
         let mut w = world(3);
+        w.interval = Duration::ZERO;
         w.places = vec![Place {
             limit: 1,
+            workers: 1,
             ..pangolin()
         }];
         let fake = Fake::new(w);
         let task = tokio::spawn(run(fake.clone()));
-        // The looks at 10, 20 and 30 s: one worker, and it claimed.
-        tokio::time::sleep(Duration::from_secs(35)).await;
-        assert_eq!(fake.with(|w| w.order.clone()), ["start"]);
-
-        // The look at 40 s reads the limit 1. Then the limit is 2.
+        tokio::time::sleep(OFF_WAIT * 2).await;
         fake.with(|w| w.limit_in_look = Some(2));
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(OFF_WAIT).await;
         assert_eq!(fake.with(|w| w.places[0].limit), 2);
-        assert_eq!(
-            fake.with(|w| w.order.clone()),
-            ["start"],
-            "the look with the old limit starts no worker"
-        );
-
-        // The look at 50 s.
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert!(fake.told().is_empty(), "the look with the old limit");
+        tokio::time::sleep(OFF_WAIT * 2).await;
         task.abort();
-        assert_eq!(fake.with(|w| w.order.clone()), ["start", "told", "start"]);
         assert_eq!(
-            fake.with(|w| w.told.clone()),
+            fake.told(),
             [(
-                "workers: limit 1 to 2 on pangolin: the rollout starts 1 worker.".to_owned(),
-                false
+                "workers: limit 1 to 2 on pangolin: free work waits, and the rollout is off. \
+                 Start workers with: riff workers start 1 --host pangolin"
+                    .to_owned(),
+                true
             )]
         );
     }
 
-    /// With the rollout off, the same change wakes the lead: work waits,
-    /// and only the lead can start the worker (01M3X30RA3X08JBJ2JBVCCNEH3).
+    /// With the rollout off, a higher limit wakes the lead: work waits,
+    /// and only a person can start the worker (01M3X30RA3X08JBJ2JBVCCNEH3).
+    /// A rollout that is off asks for no wave.
     #[tokio::test(start_paused = true)]
     async fn a_higher_limit_wakes_the_lead_when_the_rollout_is_off() {
         let mut w = world(3);
@@ -2783,11 +2747,11 @@ mod tests {
         tokio::time::sleep(OFF_WAIT * 2).await;
         task.abort();
         assert!(
-            fake.hosts().is_empty(),
-            "a rollout that is off starts nothing"
+            fake.with(|w| w.asks.is_empty()),
+            "a rollout that is off asks nothing"
         );
         assert_eq!(
-            fake.with(|w| w.told.clone()),
+            fake.told(),
             [(
                 "workers: limit 1 to 3 on pangolin: free work waits, and the rollout is off. \
                  Start workers with: riff workers start 2 --host pangolin"
@@ -2816,7 +2780,7 @@ mod tests {
         task.abort();
         assert_eq!(fake.with(|w| w.places[1].workers), 3);
         assert_eq!(
-            fake.with(|w| w.told.clone()),
+            fake.told(),
             [
                 (
                     "workers: limit 4 to 2 on pangolin: 3 workers run there. 1 worker ends after \
@@ -2844,7 +2808,7 @@ mod tests {
         fake.with(|w| w.lead = true);
         tokio::time::sleep(Duration::from_secs(20)).await;
         task.abort();
-        assert!(fake.with(|w| w.told.is_empty()));
+        assert!(fake.told().is_empty());
     }
 
     #[test]
@@ -2866,33 +2830,22 @@ mod tests {
         assert!(Place { floor: 0, ..low }.room());
     }
 
-    /// 01M41A11DX1QRP48YPTDNT67W4: under 5% of free disk, the rollout
-    /// starts no worker on the machine. It picks the other one.
-    #[tokio::test(start_paused = true)]
-    async fn the_rollout_starts_no_worker_on_a_machine_with_a_low_disk() {
-        let mut w = world(1);
-        w.places[0].disk = Some(Disk {
+    /// 01M41A11DX1QRP48YPTDNT67W4: under 5% of free disk, a machine has
+    /// no room for a worker. The other one has room.
+    #[test]
+    fn a_machine_with_a_low_disk_gets_no_worker() {
+        let mut low = thelio();
+        low.disk = Some(Disk {
             free_gb: 4,
             total_gb: 100,
         });
-        w.places[1].disk = Some(Disk {
+        let mut ok = pangolin();
+        ok.disk = Some(Disk {
             free_gb: 5,
             total_gb: 100,
         });
-        let fake = Fake::new(w);
-        run_for(&fake, 30).await;
-        assert_eq!(fake.hosts(), ["pangolin"]);
-        assert!(!fake.with(|w| w.places[0].room()));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn the_rollout_starts_no_worker_on_a_machine_under_its_floor() {
-        let mut w = world(4);
-        w.places[0].machine = w.places[0].machine.map(|m| Machine { avail_gb: 1, ..m });
-        w.places[1].machine = w.places[1].machine.map(|m| Machine { avail_gb: 2, ..m });
-        let fake = Fake::new(w);
-        run_for(&fake, 60).await;
-        assert!(fake.hosts().is_empty(), "{:?}", fake.hosts());
+        assert!(!low.room());
+        assert_eq!(pick(&[low, ok]), Some(1));
     }
 
     #[test]
