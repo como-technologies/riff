@@ -5,6 +5,7 @@
 use isolated::Isolated;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use riff::api::Api;
@@ -305,6 +306,61 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
         ],
         "a local pane is no worker; blocked comes first: {top}"
     );
+}
+
+/// A fake riff daemon of riff 1.8 in the folder `daemon`: it answers each
+/// ask with a status that has a session of another daemon of its riff of
+/// peers. It gives the count of the asks.
+async fn old_daemon(daemon: &Path) -> Arc<AtomicUsize> {
+    use tokio::io::AsyncWriteExt;
+    let listener = riff::daemon::listen(daemon).await.unwrap();
+    let asks = Arc::new(AtomicUsize::new(0));
+    let count = asks.clone();
+    let status = serde_json::json!({
+        "say": "status", "pid": 7, "build": "1.8.0", "since_ms": 0, "dir": daemon,
+        "sessions": [], "key": "0a1b", "riff": "0a1b", "owner": "mike",
+        "riff_sessions": [{
+            "uri": "riff://brett@kadomony/como-technologies/riff?session=77e0aaaa-1&claim=issue-14#issue-14",
+            "live": true,
+        }],
+    });
+    tokio::spawn(async move {
+        while let Ok((mut conn, _)) = listener.accept().await {
+            count.fetch_add(1, Ordering::SeqCst);
+            let _ = conn.write_all(format!("{status}\n").as_bytes()).await;
+        }
+    });
+    asks
+}
+
+/// 01M53NGW6F5HP1DZ9QRGP50MGT: `riff top` shows the sessions of
+/// riff-server only. It asks no riff daemon, so a session of another
+/// daemon of a riff of peers of riff 1.6 to 1.8 shows nowhere.
+#[tokio::test(flavor = "multi_thread")]
+async fn top_shows_no_session_of_another_daemon() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    three_sessions(&server, dir, bin.path()).await;
+    let asks = old_daemon(&dir.join("daemon")).await;
+
+    let top = output(riff(
+        &server,
+        dir,
+        Some("a1"),
+        bin.path(),
+        &["top", "--once"],
+    ))
+    .await;
+    assert!(
+        rows(&top).iter().any(|row| row.contains("a1  lead")),
+        "{top}"
+    );
+    for other in ["brett", "kadomony", "77e0aaaa", "issue-14"] {
+        assert!(!top.contains(other), "{other}: {top}");
+    }
+    assert_eq!(asks.load(Ordering::SeqCst), 0);
 }
 
 /// A worker that registered on thelio shows `worker` in `riff top` and

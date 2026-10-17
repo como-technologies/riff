@@ -124,16 +124,47 @@ fn riff_help_of_a_command_shows_the_long_text() {
         help.starts_with("Let a person join this riff\n\n"),
         "{help}"
     );
-    // riff 3.0 and riff-server 1.x (01M519Z4AEMDFGBF22RZ3HQR1R).
     assert!(
-        help.contains("riff invite USER prints an invite string for one new machine"),
-        "{help}"
-    );
-    assert!(
-        help.contains("With --email, it acts on riff-server 1.x"),
+        help.contains("It adds the verified email of a person to the members"),
         "{help}"
     );
     assert_eq!(riff(&["invite", "--help"]), help);
+}
+
+/// 01M53NGW6F5HP1DZ9QRGP50MGT: the help has no command and no flag of
+/// the riff of peers. The member commands show only their forms with
+/// `--email`, on riff-server.
+#[test]
+fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
+    let help = riff(&["--help"]);
+    for name in ["join", "leave"] {
+        assert!(
+            !help
+                .lines()
+                .any(|l| l.trim_start().starts_with(&format!("{name} "))),
+            "{name}: {help}"
+        );
+        let out = Isolated::shared()
+            .riff()
+            .args([name, "--help"])
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "riff {name} --help: {out:?}");
+    }
+    for name in ["invite", "remove", "members"] {
+        let help = riff(&[name, "--help"]);
+        let usage = format!("Usage: riff {name} --email");
+        assert!(help.lines().any(|l| l.starts_with(&usage)), "{help}");
+        for word in ["USER", "--host", "key", "riff daemon", "invite string"] {
+            assert!(!help.contains(word), "riff {name} --help: {word}: {help}");
+        }
+    }
+    for args in [&["run", "--help"][..], &["wave", "run", "--help"]] {
+        let help = riff(args);
+        assert!(!help.contains("--peers"), "riff {args:?}: {help}");
+    }
+    let help = riff(&["release", "--help"]);
+    assert!(!help.contains("--forge"), "{help}");
 }
 
 #[test]

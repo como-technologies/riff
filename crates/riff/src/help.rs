@@ -87,9 +87,7 @@ pub const GROUPS: &[Group] = &[
     },
     Group {
         heading: "Members",
-        commands: &[
-            "members", "invite", "join", "leave", "remove", "admin", "owner",
-        ],
+        commands: &["members", "invite", "remove", "admin", "owner"],
     },
 ];
 

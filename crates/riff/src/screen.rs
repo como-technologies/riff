@@ -546,6 +546,43 @@ mod tests {
         assert_eq!(lines[7], "a note");
     }
 
+    /// 01M53NGW6F5HP1DZ9QRGP50MGT: the view shows no session of another
+    /// daemon, also when the status of a daemon of riff 1.6 to 1.8 has
+    /// the sessions of its riff of peers.
+    #[test]
+    fn the_view_shows_no_session_of_another_daemon() {
+        let mut old = serde_json::to_value(status(vec![live(
+            "riff-issue-12-1a2b3c4d",
+            "issue-12",
+            Phase::Works,
+            "",
+        )]))
+        .unwrap();
+        old["key"] = "0a1b".into();
+        old["riff_sessions"] = serde_json::json!([
+            {"uri": "riff://brett@kadomony/o/riff?session=77e0aaaa-1&claim=issue-14#issue-14", "live": true},
+            {"uri": "riff://mike@pangolin/o/riff?session=5b1e2a90-1&claim=issue-15#issue-15", "live": false},
+        ]);
+        let mut screen = Screen::default();
+        screen.set(Ok(serde_json::from_value(old).unwrap()));
+        assert_eq!(screen.rows().len(), 1);
+        let lines = drawn(&screen, 150, 8);
+        assert!(
+            lines[2].starts_with("> riff-issue-12-1a2b3c4d "),
+            "{lines:#?}"
+        );
+        for other in [
+            "brett", "kadomony", "issue-14", "pangolin", "issue-15", "offline",
+        ] {
+            assert!(
+                !lines.iter().any(|l| l.contains(other)),
+                "{other}: {lines:#?}"
+            );
+        }
+        screen.on_key(Key::Down);
+        assert_eq!(screen.selected(), 0);
+    }
+
     #[test]
     fn the_view_with_no_daemon_says_how_to_start_it() {
         let mut screen = Screen::default();
