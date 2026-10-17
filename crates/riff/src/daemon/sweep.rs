@@ -36,7 +36,7 @@
 //!
 //! - the daemon has the record of the session;
 //! - a job of the daemon starts the session, from before its clone to
-//!   its end ([`Daemon::starting`]);
+//!   its end (`Daemon::starting`);
 //! - the `riff run` that made the folder runs. It holds the lock
 //!   `ITEM-ID8.lock` beside the folder from before the clone to its own
 //!   end ([`hold`]): its start can wait long for room, and the daemon has
