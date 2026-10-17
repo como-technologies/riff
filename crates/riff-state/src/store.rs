@@ -1,4 +1,4 @@
-//! Where `riff-server` and the riff daemon save their state (R30, R34).
+//! Where `riff-server` saves its state (R30, R34).
 //!
 //! # Objects
 //!
@@ -15,7 +15,7 @@
 //! | Store | For |
 //! |---|---|
 //! | [`Memory`] | Tests, and a `riff-server` with no bucket and no directory. |
-//! | [`Dir`] | Files in a directory: `riff-server --dir` (`RIFF_DIR`) for local development, and the riff daemon. |
+//! | [`Dir`] | Files in a directory: `riff-server --dir` (`RIFF_DIR`) for local development. |
 //! | `Gcs` of riff-server | A Cloud Storage bucket (`--bucket`). |
 //!
 //! # Versions

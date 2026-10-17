@@ -1,4 +1,4 @@
-//! The in-memory state of riff, in riff-server and in the riff daemon.
+//! The in-memory state of riff, in riff-server.
 //!
 //! # Model
 //!
@@ -50,8 +50,7 @@
 //! part that it changes.
 //!
 //! riff-server runs each command through its engine: the engine owns
-//! the state and its lock, and the writer finishes each command. The
-//! riff daemon runs each command through [`crate::local::Local`].
+//! the state and its lock, and the writer finishes each command.
 //!
 //! # Event sourcing
 //!
@@ -1244,8 +1243,8 @@ impl State {
     }
 
     /// [`State::run`], which also gives the caller with its worker
-    /// mark: [`State::reply`] needs it. [`crate::local::Local`] runs it.
-    pub fn run_as<C: Command>(
+    /// mark: [`State::reply`] needs it.
+    fn run_as<C: Command>(
         &mut self,
         caller: &Caller,
         command: &C,

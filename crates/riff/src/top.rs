@@ -9,14 +9,9 @@
 //! (01M3NB589WMPRSAR43BSG9SP41). It draws the table again every
 //! [`REFRESH`] and after each message of the thread.
 //!
-//! Each look also asks the riff daemon of this machine for its status
-//! ([`riff_sessions`]), and adds each session of its riff of peers to the
-//! sessions of riff-server ([`with_riff_sessions`],
-//! 01M519Z554SC3EAT69Q3M6JDAP, 01M522MRYR89SY6WRV720806RA): the sessions
-//! of each daemon of the riff. A session of a daemon that is offline
-//! shows `offline`, with the time when that daemon was last seen, its
-//! claims and its last step (01M522MRW21RHGF2B6F0VCP0BD). With no daemon,
-//! `riff top` shows the sessions of riff-server only.
+//! `riff top` shows the sessions of riff-server only. It asks no riff
+//! daemon, so it shows no session of another daemon
+//! (01M53NGW6F5HP1DZ9QRGP50MGT).
 //!
 //! The titles of the issues and the current wave come from one
 //! `gh issue list` of the open issues ([`Issues`]) of each repository
@@ -71,11 +66,9 @@
 //!     participant T as riff top
 //!     participant G as gh
 //!     participant S as riff-server
-//!     participant D as riff daemon of this machine
 //!     T->>G: issue list, pr list of each repository (each ISSUES_TTL)
 //!     loop each REFRESH, and each message of the thread
 //!         T->>S: riff, who
-//!         T->>D: status: the sessions of the riff of peers
 //!         T->>T: draw the table in place
 //!     end
 //! ```
@@ -422,51 +415,6 @@ impl Issues {
                 Some((repo, issues))
             })
             .collect()
-    }
-}
-
-/// How long `riff top` waits for the status of the daemon of this
-/// machine in each look ([`riff_sessions`]).
-pub const DAEMON_LOOK: Duration = Duration::from_secs(2);
-
-/// The sessions of the riff of peers of the daemon in the folder `dir`
-/// ([`crate::daemon::Status::riff_sessions`],
-/// 01M519Z554SC3EAT69Q3M6JDAP). None when no daemon answers in
-/// [`DAEMON_LOOK`]: then `riff top` shows the sessions of riff-server
-/// only.
-pub async fn riff_sessions(dir: &std::path::Path) -> Vec<SessionInfo> {
-    match tokio::time::timeout(DAEMON_LOOK, crate::daemon::status(dir)).await {
-        Ok(Ok(status)) => status.riff_sessions,
-        Ok(Err(_)) | Err(_) => Vec::new(),
-    }
-}
-
-/// Adds the sessions `riff` of the riff of peers to `sessions`, the
-/// sessions of riff-server (01M519Z554SC3EAT69Q3M6JDAP): each one with a
-/// session ID that `sessions` does not have. A session of a daemon that
-/// is offline is offline, with the time when its daemon was last seen.
-/// riff-server has no session of the riff of peers
-/// (01M51VZG27DXSRHBT8M14S7B9A), so a session shows one time.
-///
-/// ```
-/// let info = |uri: &str| -> riff_core::wire::SessionInfo {
-///     serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap()
-/// };
-/// let mut sessions = vec![info("riff://mike@thelio/o/r?session=aaaa1111")];
-/// let riff = vec![
-///     info("riff://mike@thelio/o/r?session=aaaa1111"),
-///     info("riff://brett@kadomony/o/r?session=77e0aaaa"),
-/// ];
-/// riff::top::with_riff_sessions(&mut sessions, riff);
-/// let ids: Vec<_> = sessions.iter().map(|s| s.uri.who().session().unwrap()).collect();
-/// assert_eq!(ids, ["aaaa1111", "77e0aaaa"]);
-/// ```
-pub fn with_riff_sessions(sessions: &mut Vec<SessionInfo>, riff: Vec<SessionInfo>) {
-    for s in riff {
-        let id = s.uri.who().session();
-        if !sessions.iter().any(|known| known.uri.who().session() == id) {
-            sessions.push(s);
-        }
     }
 }
 
@@ -1731,47 +1679,6 @@ mod tests {
     fn tree(text: &str) -> Vec<String> {
         let part = text.rsplit("\n\n").next().unwrap();
         part.lines().map(str::to_owned).collect()
-    }
-
-    /// 01M519Z554SC3EAT69Q3M6JDAP: `riff top` shows each session of each
-    /// daemon of the riff of three daemons
-    /// ([`crate::peer::talk::three_daemons`], the records of the test of
-    /// `riff view`) beside a session of riff-server: the user, the host,
-    /// the item, the state and the status. The session of the daemon of
-    /// pangolin, which is offline, shows as offline with the time when
-    /// that daemon was last seen.
-    #[test]
-    fn riff_top_shows_the_sessions_of_each_daemon_of_the_riff() {
-        let mut sessions = vec![info(
-            "riff://ann@heron/o/riff?session=c0ffee00",
-            SessionState::Idle,
-        )];
-        with_riff_sessions(&mut sessions, crate::peer::talk::three_daemons(10_000_000));
-        let text = shown(&sessions, &BTreeMap::new(), &Show::default());
-        assert_eq!(
-            tree(&text),
-            [
-                "ann  online  › heron  › riff  1 session: 1 idle",
-                "└─ c0ffee00  idle",
-                "     ready for work for 0s",
-                "brett  online  › kadomony  › riff  1 session: 1 container; 1 busy, 1 claim",
-                "│  no numbers",
-                "└─ 77e0aaaa  #issue-14  container  busy",
-                "     working on #14",
-                "     2m ago: tests",
-                "mike  online  2 sessions: 1 idle, 1 claim",
-                "├─ pangolin  › riff  1 session: 1 container; 1 claim",
-                "│  └─ 5b1e2a90  #issue-15  container  offline",
-                "│       seen 5m ago",
-                "│       working on #15",
-                "│       10m ago: docs",
-                "└─ thelio  › riff  1 session: 1 lead; 1 idle",
-                "   └─ 1a2b3c4d  lead container  idle",
-                "        monitoring work for 1h",
-                "        1h ago: plan",
-            ],
-            "{text}"
-        );
     }
 
     /// 2 people, 3 hosts and 2 repositories.

@@ -7,6 +7,7 @@
 //! the `riff daemon` of this build in the background, as systemd does.
 //! The test of `riff run` through the daemon is in `run.rs`.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -115,12 +116,11 @@ async fn riff_daemon_install_writes_the_unit_and_starts_the_daemon() {
     let status = text(&out.stdout);
     assert!(out.status.success(), "{status}");
     assert!(status.contains("Sessions: none."), "{status}");
-    // The isolated home has no OS keyring: the daemon waits for its key,
-    // and says why (01M51JW20CSAECFRZTJ95P6F3E, 01M51JW233MXB72MHHRAX4E4NF).
-    let waits = "The riff daemon waits for its key in the OS keyring: riff cannot open the OS \
-                 keyring.";
-    assert!(status.contains(waits), "{status}");
-    assert!(status.contains("Its riff: none yet."), "{status}");
+    // The daemon has no key and no riff of peers (01M53NGW6F5HP1DZ9QRGP50MGT).
+    assert!(
+        !status.contains("key") && !status.contains("Its riff"),
+        "{status}"
+    );
     assert!(
         status.contains(&format!(
             "Its folder: {}",
@@ -451,7 +451,7 @@ async fn a_second_daemon_does_not_start_while_one_answers() {
 async fn a_daemon_of_riff_data_runs_beside_the_daemon_that_runs_already() {
     let here = Here::new();
     let first = here.daemon("first.out").await;
-    let key = here.status_line("Its key: ").await;
+    let ours = format!("pid {}, ", first.id());
     let data = here.env.path().join("test-data");
     let vars = [(riff::run::DATA_VAR, data.to_str().unwrap())];
     let second = here.daemon_with("second.out", &vars).await;
@@ -466,17 +466,18 @@ async fn a_daemon_of_riff_data_runs_beside_the_daemon_that_runs_already() {
     assert!(theirs.contains(&pid), "{theirs}");
     let folder = format!("Its folder: {}", data.join("daemon").display());
     assert!(theirs.lines().any(|l| l == folder), "{theirs}");
-    assert!(!theirs.contains(&key), "{theirs}");
+    assert!(!theirs.contains(&ours), "{theirs}");
     assert!(data.join("daemon/riff.sock").exists());
 
     stop(second).await;
     assert!(!data.join("daemon/riff.sock").exists());
-    // The first daemon answers on, with its own key.
+    // The first daemon answers on, in its own folder.
     let out = here.run(false, &["daemon", "status"]).await;
-    let ours = text(&out.stdout);
-    assert!(out.status.success(), "{ours}");
-    assert!(ours.contains(&format!("pid {}, ", first.id())), "{ours}");
-    assert!(ours.lines().any(|l| l == key), "{ours}");
+    let status = text(&out.stdout);
+    assert!(out.status.success(), "{status}");
+    assert!(status.contains(&ours), "{status}");
+    let folder = format!("Its folder: {}", here.daemon_dir().display());
+    assert!(status.lines().any(|l| l == folder), "{status}");
     stop(first).await;
 }
 
@@ -501,8 +502,7 @@ async fn the_daemon_of_riff_data_is_never_the_daemon_of_the_unit() {
     assert!(!here.env.home().join(".config/systemd").exists());
     assert_eq!(here.read("systemctl.log"), "");
 
-    // The daemons of the machine, with no RIFF_HOME. The keyring of the
-    // test fails, so each one waits for its key, and serves.
+    // The daemons of the machine, with no RIFF_HOME.
     let start = |name: &str, data: Option<&Path>| {
         let log = here.bin.path().join(name);
         let out = std::fs::File::create(&log).unwrap();
@@ -750,7 +750,7 @@ async fn the_daemon_removes_the_folder_of_a_closed_pull_request_at_its_start() {
 
 impl Here {
     /// Starts `riff daemon` of the `RIFF_HOME`, writes its output to
-    /// `name`, and waits until it listens and has its riff.
+    /// `name`, and waits until it listens.
     pub(crate) async fn daemon(&self, name: &str) -> std::process::Child {
         self.daemon_with(name, &[]).await
     }
@@ -767,25 +767,7 @@ impl Here {
             .spawn()
             .unwrap();
         wait_for(&log, "The riff daemon listens on").await;
-        wait_for(&log, RIFF_LINE).await;
         child
-    }
-
-    /// The line `Its riff: ...` of `riff daemon status`.
-    async fn riff_line(&self) -> String {
-        self.status_line("Its riff: ").await
-    }
-
-    /// The line of `riff daemon status` that starts with `start`.
-    pub(crate) async fn status_line(&self, start: &str) -> String {
-        let out = self.run(false, &["daemon", "status"]).await;
-        let status = text(&out.stdout);
-        assert!(out.status.success(), "{status}");
-        status
-            .lines()
-            .find(|line| line.starts_with(start))
-            .unwrap_or_else(|| panic!("no line {start:?} in\n{status}"))
-            .to_owned()
     }
 
     /// The folder of the daemon of the `RIFF_HOME`.
@@ -793,23 +775,56 @@ impl Here {
         self.env.riff_home().join("daemon")
     }
 
-    /// The file of the key of the daemon of the `RIFF_HOME`: the file
-    /// store of the secrets of the tests stands for the OS keyring.
-    fn key_file(&self) -> PathBuf {
-        let name = riff::daemon_key::secret_name(&self.daemon_dir());
-        riff::secrets::file_of(&self.env.riff_home().join("secrets"), &name)
+    /// The folder of the secrets of the `RIFF_HOME`: the file store of
+    /// the secrets of the tests stands for the OS keyring.
+    fn secrets(&self) -> PathBuf {
+        self.env.riff_home().join("secrets")
     }
 
     /// The text of the file `name` of the output of a daemon.
     fn output(&self, name: &str) -> String {
         std::fs::read_to_string(self.bin.path().join(name)).unwrap()
     }
+
+    /// A fake `git` first in `PATH`: it logs each call to `git.log`, and
+    /// runs the `git` of the machine. It gives the log.
+    fn logged_git(&self) -> PathBuf {
+        let real = std::env::var("PATH")
+            .unwrap()
+            .split(':')
+            .map(|dir| Path::new(dir).join("git"))
+            .find(|git| git.is_file())
+            .unwrap();
+        let log = self.bin.path().join("git.log");
+        let script = format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+            log.display(),
+            real.display()
+        );
+        isolated::write_program(self.bin.path().join("git"), &script);
+        log
+    }
 }
 
-/// A part of each line of a daemon that has its riff: it made it, made
-/// a new one, or read it. The daemon says it after it has the riff, so
-/// a status after it shows the riff (01M51WPSH4KBQMVT3XGDD45G63).
-const RIFF_LINE: &str = ", of the owner ";
+/// Each file under `dir`, with its bytes. Empty when `dir` is not there.
+fn files_of(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(at) = todo.pop() {
+        let Ok(entries) = std::fs::read_dir(&at) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                todo.push(path);
+            } else {
+                files.insert(path.clone(), std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    files
+}
 
 /// Stops `child` with a SIGTERM, and waits for its end.
 pub(crate) async fn stop(mut child: std::process::Child) {
@@ -820,227 +835,85 @@ pub(crate) async fn stop(mut child: std::process::Child) {
     assert!(status.success(), "{status}");
 }
 
-/// 01M4ZHW2083VFTQJ772ZJ27XAC, 01M4ZHW24JZZXM3JJXG3PRJS7N: the first
-/// start of the daemon makes the riff of the machine. A stop writes a
-/// checkpoint, and the next start loads the same riff.
+/// 01M53NGW3FR555TWP8Z8HHRVDJ, 01M53NGW6F5HP1DZ9QRGP50MGT: a start with
+/// an empty fake keyring makes no key, opens no riff of peers, writes no
+/// record and reads no claim on the forge (`git ls-remote`). `riff
+/// daemon status` shows no key, no riff and no peer link.
+///
+/// 01M53NGWFBWR1WMJWC2DHVHJ3T: the state of the riff of peers that riff
+/// 1.6 to 1.8 made on a machine is the same after a start, a status and
+/// a stop: the folders `state` and `state.lost-MS`, the files
+/// `invites.json` and `forges.json`, and the secret `daemon-key DIR` in
+/// the fake keyring.
 #[tokio::test]
-async fn a_restart_of_the_daemon_keeps_its_riff() {
+async fn the_daemon_makes_no_key_and_no_riff_and_leaves_the_state_of_the_riff_of_peers() {
     let here = Here::new();
-    let first = here.daemon("first.out").await;
-    let line = here.riff_line().await;
-    assert!(line.ends_with(" of its log."), "{line}");
-    stop(first).await;
-    let checkpoints = here.env.riff_home().join("daemon/state/checkpoint");
-    assert_eq!(std::fs::read_dir(&checkpoints).unwrap().count(), 1);
-
-    let second = here.daemon("second.out").await;
-    assert_eq!(here.riff_line().await, line);
-    stop(second).await;
-}
-
-/// 01M519Z2BB0YJY5CRMB54JVYFA, 01M519Z2N2PMZJ0CYAPV0A47BZ: the first
-/// start makes the key in the keyring and a riff whose ID is the public
-/// key. `riff daemon status` shows the key, the riff and the user of the
-/// owner. A second start loads the same key and the same riff.
-#[tokio::test]
-async fn riff_daemon_status_shows_the_key_the_riff_and_the_owner() {
-    let here = Here::new();
-    let first = here.daemon("first.out").await;
-    let out = here.run(false, &["daemon", "status"]).await;
-    let status = text(&out.stdout);
-    assert!(out.status.success(), "{status}");
-    let key = here.status_line("Its key: ").await["Its key: ".len()..].to_owned();
-    assert_eq!(key.len(), 64, "{status}");
-    assert!(
-        status.contains(&format!("Its riff: {key}, at position ")),
-        "{status}"
-    );
-    let user = std::env::var("USER").unwrap().to_lowercase();
-    assert!(
-        status.contains(&format!("The owner of its riff: {user}\n")),
-        "{status}"
-    );
-    // 01M519Z2QE6QYPJX8HVY17GR6Z: the daemon binds its iroh endpoint at
-    // its start. A riff of its own has no other daemon to link to.
-    assert!(
-        status.contains("Its peer links: none: its riff has no other daemon.\n"),
-        "{status}"
-    );
-    assert!(here.key_file().exists());
-    let said = here.output("first.out");
-    assert!(
-        said.contains(&riff::text::daemon_made_riff(&key, &user)),
-        "{said}"
-    );
-    stop(first).await;
-
-    let second = here.daemon("second.out").await;
-    assert_eq!(
-        here.status_line("Its key: ").await,
-        format!("Its key: {key}")
-    );
-    assert!(
-        here.riff_line()
-            .await
-            .starts_with(&format!("Its riff: {key}, "))
-    );
-    let said = here.output("second.out");
-    assert!(
-        said.contains(&riff::text::daemon_read_riff(&key, &user)),
-        "{said}"
-    );
-    assert!(!said.contains("made"), "{said}");
-    stop(second).await;
-}
-
-/// 01M519Z2G77CT94Y6XPW9BCRK9, 01M51JW25SPDW564A3DG31D7XM: a state with
-/// no key, and a key with no state, each make a new key and a new riff.
-/// The log of the daemon says why. The old state goes to
-/// `state.lost-MS`.
-#[tokio::test]
-async fn a_lost_key_or_a_lost_state_makes_a_new_key_and_a_new_riff() {
-    let here = Here::new();
-    let first = here.daemon("first.out").await;
-    let key1 = here.status_line("Its key: ").await;
-    stop(first).await;
-
-    std::fs::remove_file(here.key_file()).unwrap();
-    let second = here.daemon("second.out").await;
-    let key2 = here.status_line("Its key: ").await;
-    assert_ne!(key2, key1);
-    let said = here.output("second.out");
-    assert!(
-        said.contains(
-            "Why: its state has a riff, but the OS keyring has no key of the daemon. Its old \
-             state is in "
-        ),
-        "{said}"
-    );
-    stop(second).await;
-    let lost: Vec<_> = std::fs::read_dir(here.daemon_dir())
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|name| name.starts_with("state.lost-"))
-        .collect();
-    assert_eq!(lost.len(), 1, "{lost:?}");
-    assert!(said.contains(&lost[0]), "{said}");
-
-    std::fs::remove_dir_all(here.daemon_dir().join("state")).unwrap();
-    let third = here.daemon("third.out").await;
-    let key3 = here.status_line("Its key: ").await;
-    assert_ne!(key3, key2);
-    assert_ne!(key3, key1);
-    let said = here.output("third.out");
-    assert!(
-        said.contains("Why: the OS keyring has a key of the daemon, but its state has no riff."),
-        "{said}"
-    );
-    let riff = here.riff_line().await;
-    assert!(riff.starts_with(&format!("Its riff: {}, ", &key3["Its key: ".len()..])));
-    stop(third).await;
-}
-
-/// 01M519Z2BB0YJY5CRMB54JVYFA: no file of the folder of the daemon and
-/// no line of its log holds the secret key, as hex or as bytes.
-#[tokio::test]
-async fn no_file_of_the_daemon_and_no_line_of_its_log_holds_the_secret_key() {
-    let here = Here::new();
-    let first = here.daemon("first.out").await;
-    here.riff_line().await;
-    stop(first).await;
-    let second = here.daemon("second.out").await;
-    here.riff_line().await;
-    stop(second).await;
-
-    let hex = std::fs::read_to_string(here.key_file()).unwrap();
-    assert_eq!(hex.len(), 64, "{hex}");
-    let bytes: Vec<u8> = (0..32)
-        .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
-        .collect();
-    let upper = hex.to_uppercase();
-    let holds = |data: &[u8]| {
-        data.windows(64)
-            .any(|w| w == hex.as_bytes() || w == upper.as_bytes())
-            || data.windows(32).any(|w| w == bytes.as_slice())
-    };
-    let mut files = vec![
-        here.bin.path().join("first.out"),
-        here.bin.path().join("second.out"),
-    ];
-    let mut dirs = vec![here.daemon_dir()];
-    while let Some(dir) = dirs.pop() {
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let entry = entry.unwrap();
-            let kind = entry.file_type().unwrap();
-            if kind.is_dir() {
-                dirs.push(entry.path());
-            } else if kind.is_file() {
-                files.push(entry.path());
-            }
+    let git = here.logged_git();
+    let dir = here.daemon_dir();
+    let shown = |status: &str| {
+        for part in ["key", "Its riff", "owner", "peer", "link"] {
+            assert!(!status.contains(part), "{part}: {status}");
         }
-    }
-    assert!(files.len() > 4, "{files:?}");
-    for file in &files {
-        let data = std::fs::read(file).unwrap();
-        assert!(!holds(&data), "{} holds the secret key", file.display());
-    }
-}
+    };
 
-/// 01M51BFYNMYHSQ62BBJES3CCWT, 01M51JW233MXB72MHHRAX4E4NF: while the
-/// keyring refuses (a secret file that riff may not read), the daemon
-/// waits: one line, no new key and no riff. `riff daemon status` says
-/// why. When the keyring answers, the daemon loads the same key.
-#[tokio::test]
-async fn a_locked_keyring_makes_the_daemon_wait_and_say_why() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let here = Here::new();
-    let first = here.daemon("first.out").await;
-    let key = here.status_line("Its key: ").await;
-    let riff = here.riff_line().await;
-    stop(first).await;
-
-    let secrets = here.env.riff_home().join("secrets");
-    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let log = here.bin.path().join("locked.out");
-    let out = std::fs::File::create(&log).unwrap();
-    let child = here
-        .command(false, &["daemon"])
-        .env(riff::secrets::RETRY_VAR, "1")
-        .stdout(out.try_clone().unwrap())
-        .stderr(out)
-        .spawn()
-        .unwrap();
-    wait_for(&log, "The riff daemon waits for its key in the OS keyring").await;
+    // An empty fake keyring, and no state.
+    let daemon = here.daemon("empty.out").await;
     let out = here.run(false, &["daemon", "status"]).await;
     let status = text(&out.stdout);
     assert!(out.status.success(), "{status}");
-    assert!(
-        status.contains("The riff daemon waits for its key in the OS keyring: the OS keyring of"),
-        "{status}"
-    );
-    assert!(status.contains("Its riff: none yet."), "{status}");
-    assert!(!status.contains("Its key"), "{status}");
-    // The daemon serves while it waits: its sessions need no key.
-    wait_for(&log, "The riff daemon listens on").await;
-    // A second look gives no new line.
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    shown(&status);
+    stop(daemon).await;
+    assert_eq!(files_of(&here.secrets()), BTreeMap::new());
+    for name in ["state", "invites.json", "forges.json"] {
+        assert!(!dir.join(name).exists(), "{name}");
+    }
+    let said = here.output("empty.out");
+    for part in ["its key", "its riff", "peer link", "iroh"] {
+        assert!(!said.contains(part), "{part}: {said}");
+    }
 
-    std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o700)).unwrap();
-    wait_for(&log, "The riff daemon read its key and its riff").await;
-    assert_eq!(here.status_line("Its key: ").await, key);
-    assert_eq!(here.riff_line().await, riff);
-    stop(child).await;
-    let said = std::fs::read_to_string(&log).unwrap();
-    assert_eq!(said.matches("waits for its key").count(), 1, "{said}");
-    assert_eq!(said.matches("answers again").count(), 1, "{said}");
-    assert!(!said.contains("made"), "{said}");
-    let lost = std::fs::read_dir(here.daemon_dir())
-        .unwrap()
-        .filter(|entry| {
-            let name = entry.as_ref().unwrap().file_name();
-            name.to_string_lossy().starts_with("state.lost-")
-        })
-        .count();
-    assert_eq!(lost, 0);
+    // The state of riff 1.8, and its key in the fake keyring.
+    let main = here.env.path().join("main");
+    let old = [
+        (
+            "state/riff.json",
+            r#"{"riff":"0a1b","owner":"mike"}"#.to_owned(),
+        ),
+        ("state/records", "a record of riff 1.8".to_owned()),
+        ("state.lost-7/records", "an old record".to_owned()),
+        ("invites.json", "[]".to_owned()),
+        (
+            "forges.json",
+            serde_json::json!({ "o/r": main }).to_string(),
+        ),
+    ];
+    for (name, bytes) in &old {
+        let path = dir.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+    let key = riff::secrets::file_of(&here.secrets(), &format!("daemon-key {}", dir.display()));
+    std::fs::create_dir_all(key.parent().unwrap()).unwrap();
+    std::fs::write(&key, "a key of riff 1.8").unwrap();
+    let peer_state = || {
+        let mut files = files_of(&dir.join("state"));
+        files.extend(files_of(&dir.join("state.lost-7")));
+        for name in ["invites.json", "forges.json"] {
+            files.insert(dir.join(name), std::fs::read(dir.join(name)).unwrap());
+        }
+        files.extend(files_of(&here.secrets()));
+        files
+    };
+    let before = peer_state();
+    assert_eq!(before.len(), 6);
+
+    let daemon = here.daemon("old.out").await;
+    let out = here.run(false, &["daemon", "status"]).await;
+    let status = text(&out.stdout);
+    assert!(out.status.success(), "{status}");
+    shown(&status);
+    stop(daemon).await;
+    assert_eq!(peer_state(), before);
+    let calls = std::fs::read_to_string(&git).unwrap_or_default();
+    assert!(!calls.contains("ls-remote"), "{calls}");
 }

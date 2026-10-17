@@ -234,11 +234,6 @@ enum Command {
     /// The lead frees the claim of another session of its user with
     /// `--session`, for example a session that is gone or that does not
     /// answer. Then the next session can claim the item.
-    ///
-    /// With `--forge`, it frees a claim of riff 3.0 on the forge: the ref
-    /// refs/riff/claims/ITEM. The riff daemon of this machine deletes it.
-    /// A person frees a claim of their own user. The owner of the riff
-    /// frees each claim.
     Release {
         /// The thread. The default is your repository thread.
         #[arg(long, short)]
@@ -247,10 +242,6 @@ enum Command {
         /// of it, as `riff who` shows it. Only the lead can name one.
         #[arg(long)]
         session: Option<String>,
-        /// Free the claim of riff 3.0 on the forge, in the repository of
-        /// this clone, and not on riff-server.
-        #[arg(long, conflicts_with_all = ["thread", "session"])]
-        forge: bool,
         /// The work item, for example issue-12.
         item: String,
     },
@@ -361,83 +352,31 @@ enum Command {
     },
     /// Let a person join this riff
     ///
-    /// riff invite USER prints an invite string for one new machine of the
-    /// user USER, in the riff of the riff daemon of this machine. Only the
-    /// owner of the riff runs it, in a terminal. The string works one time,
-    /// for 24 hours. It is a secret: send it to the person by hand. They
-    /// run riff join with it. The daemon of the owner must be online for
-    /// the join.
-    ///
-    /// With --email, it acts on riff-server 1.x: it adds the verified
-    /// email of a person to the members, and prints the address of the riff
-    /// and the lines that the person runs to join. Only the owner or an
-    /// admin can.
-    #[command(group = clap::ArgGroup::new("who").required(true).args(["user", "email"]))]
+    /// It adds the verified email of a person to the members of the riff
+    /// of riff-server, and prints the address of the riff and the lines
+    /// that the person runs to join. Only the owner or an admin can.
     Invite {
-        /// The user of the new machine, for example brett.
-        user: Option<String>,
-        /// riff-server 1.x: the email that the person signs in with.
+        /// The email that the person signs in with.
         #[arg(long)]
-        email: Option<String>,
+        email: String,
     },
-    /// Join the riff of another person with an invite string
-    ///
-    /// The riff daemon of this machine connects to the daemon of the owner,
-    /// and gets each record of the riff. The daemon of the owner must be
-    /// online. A daemon is in one riff at a time: riff join refuses while
-    /// your riff has another member. A machine that left a riff joins it
-    /// again with a new invite string of the owner. A machine that the
-    /// owner removed cannot join again. Run it in a terminal. A failed
-    /// join changes nothing, and says why.
-    Join {
-        /// The invite string of the owner: riff1-...
-        invite: String,
-    },
-    /// Take this machine out of the riff of another person
-    ///
-    /// The riff daemon of this machine tells each member that it leaves,
-    /// and has a riff of its own again, with the same key. It waits up to
-    /// 5 seconds until a member got the news. When none got it, it says so,
-    /// and names the riff remove command for the owner. Each session of
-    /// this machine leaves with it. The owner cannot leave. To join that
-    /// riff again, ask the owner for a new invite string, and run riff
-    /// join with it. Run it in a terminal.
-    Leave,
     /// Remove a member of this riff
     ///
-    /// riff remove USER removes each machine of the user USER from the riff
-    /// of the riff daemon of this machine. With --host, it removes one
-    /// machine. Each daemon of the riff then refuses the key of that
-    /// machine. A removed machine cannot join again, also with a new
-    /// invite. Only the owner runs it, in a terminal. The owner cannot
-    /// remove itself.
-    ///
-    /// With --email, it acts on riff-server 1.x: it removes a person, and
-    /// ends each sign-in of that person. Only the owner or an admin can.
-    /// The owner stays.
-    #[command(group = clap::ArgGroup::new("who").required(true).args(["user", "email"]))]
+    /// It removes a person from the riff of riff-server, and ends each
+    /// sign-in of that person. Only the owner or an admin can. The owner
+    /// stays.
     Remove {
-        /// The user, for example brett.
-        user: Option<String>,
-        /// Remove only the machine of USER on this host.
-        #[arg(long, requires = "user")]
-        host: Option<String>,
-        /// riff-server 1.x: the email of the person.
-        #[arg(long, conflicts_with = "user")]
-        email: Option<String>,
+        /// The email of the person.
+        #[arg(long)]
+        email: String,
     },
     /// List who may join this riff
     ///
-    /// It lists the owner and each machine of the riff of the riff daemon
-    /// of this machine: the user, the host, the start of its key, and its
-    /// state: this machine, online, or when it was last seen, and forked,
-    /// removed or left.
-    ///
-    /// With --email, it acts on riff-server 1.x: it lists the owner, the
-    /// admins, the members and the allowed domains.
+    /// It lists the owner, the admins, the members and the allowed domains
+    /// of the riff of riff-server.
     Members {
-        /// riff-server 1.x: list the people of the riff of riff-server.
-        #[arg(long)]
+        /// List the people of the riff of riff-server by their email.
+        #[arg(long, required = true)]
         email: bool,
     },
     /// Make a person an admin, or a member again
@@ -656,11 +595,6 @@ enum Command {
     /// session. At the end, it sends a verify request for the pull
     /// request of the branch, releases ITEM, and keeps the clone until
     /// the merge. Ctrl-C stops the container.
-    ///
-    /// With --peers, it needs no riff-server: the daemon does each riff
-    /// step. It claims ITEM on the forge, the session talks on the riff
-    /// of the daemon, and at the end the daemon sends the verify request
-    /// to your lead and releases ITEM.
     Run {
         /// The work item: an issue, for example issue-12.
         item: String,
@@ -669,10 +603,6 @@ enum Command {
         /// of origin pins.
         #[arg(long)]
         image: Option<String>,
-        /// Do each riff step on the riff of the daemon of this machine
-        /// and on the forge, with no riff-server (riff 3.0).
-        #[arg(long)]
-        peers: bool,
     },
     /// Plan the waves of this repository, or run one
     ///
@@ -1280,14 +1210,8 @@ enum WaveCommand {
     ///
     /// The daemon keeps the wave, also over its own restart, until riff
     /// wave stop. It needs the sign-in of riff, of gh and of claude on
-    /// this machine. With --peers, it needs no sign-in of riff: each
-    /// riff step goes to the riff of the daemon and to the forge.
-    Run {
-        /// Do each riff step on the riff of the daemon of this machine
-        /// and on the forge, with no riff-server (riff 3.0).
-        #[arg(long)]
-        peers: bool,
-    },
+    /// this machine.
+    Run,
     /// Start no new session for the wave of this repository
     ///
     /// The sessions that run go on to their end.
@@ -1311,12 +1235,12 @@ enum DaemonCommand {
     /// runs on, and the folder of the daemon stays. With RIFF_HOME or
     /// RIFF_DATA set, it removes nothing.
     Uninstall,
-    /// Show the riff daemon, its key, its riff and its sessions
+    /// Show the riff daemon and its sessions
     ///
-    /// It shows the public key of the daemon, the ID of its riff and the
-    /// user of its owner. While the daemon waits for its key in the OS
-    /// keyring, it shows why. It exits with 1 when no daemon answers, and
-    /// shows the state of the unit riff.service.
+    /// It shows the process, the build and the folder of the daemon, the
+    /// limit of the host, each session, each start that waits for room,
+    /// and each wave. It exits with 1 when no daemon answers, and shows
+    /// the state of the unit riff.service.
     Status,
     /// Show the events of a session of the riff daemon
     ///
@@ -1738,22 +1662,6 @@ async fn main() -> Result<()> {
     if let Command::View = cli.command {
         return view_command().await;
     }
-    // The member commands of a riff of peers (#843). With --email they act
-    // on riff-server 1.x, below (01M519Z4AEMDFGBF22RZ3HQR1R).
-    match &cli.command {
-        Command::Invite {
-            user: Some(user), ..
-        } => return riff::share::invite(user).await,
-        Command::Join { invite } => return riff::share::join(invite).await,
-        Command::Leave => return riff::share::leave().await,
-        Command::Remove {
-            user: Some(user),
-            host,
-            ..
-        } => return riff::share::remove(user, host.as_deref()).await,
-        Command::Members { email: false } => return riff::share::members().await,
-        _ => {}
-    }
     if let Command::Takeover { name, at_end } = &cli.command {
         let code = riff::takeover::here(name, *at_end).await?;
         if code != 0 {
@@ -2034,7 +1942,7 @@ async fn main() -> Result<()> {
                 let ended = riff::waves::end(&gh, *number)?;
                 Some(text::waves_ended(&ended.title, ended.closed_issues))
             }
-            WaveCommand::Run { .. } | WaveCommand::Stop => None,
+            WaveCommand::Run | WaveCommand::Stop => None,
         };
         if let Some(line) = line {
             println!("{line}");
@@ -2052,13 +1960,6 @@ async fn main() -> Result<()> {
         let done = riff::retire::retire(&gh, *line, *issue)?;
         println!("{}", text::retire_done(*line, &done));
         return Ok(());
-    }
-    if let Command::Release {
-        item, forge: true, ..
-    } = &cli.command
-    {
-        let (main, _) = riff::run::main_clone(&identity::working_dir()?)?;
-        return riff::daemon::ask_release(&riff::daemon::dir()?, &main, item).await;
     }
     let api = Api::new(&server);
     match &cli.command {
@@ -2078,18 +1979,14 @@ async fn main() -> Result<()> {
             println!("{}", text::revoked(&done));
             return Ok(());
         }
-        Command::Invite {
-            email: Some(email), ..
-        } => {
+        Command::Invite { email } => {
             let me = person(&api)?;
             let changed = api.signed_in(None)?.invite(&me, email).await?;
             println!("{}", text::invited(&changed.done));
             print_members_news(&changed.news);
             return Ok(());
         }
-        Command::Remove {
-            email: Some(email), ..
-        } => {
+        Command::Remove { email } => {
             let me = person(&api)?;
             let changed = api.signed_in(None)?.remove(&me, email).await?;
             println!("{}", text::removed(&changed.done));
@@ -2100,7 +1997,7 @@ async fn main() -> Result<()> {
             let me = person(&api)?;
             return riff::chat::run(&api.signed_in(None)?, &me, *after).await;
         }
-        Command::Members { email: true } => {
+        Command::Members { .. } => {
             anstream::print!("{}", view::members(&api.signed_in(None)?.members().await?));
             return Ok(());
         }
@@ -2152,16 +2049,7 @@ async fn main() -> Result<()> {
     riff::auto_update::remember(&here);
     // `riff run` is a session of its own, not the session that runs it
     // (01M4Z81APKC14AVNJWCGRQKNVW).
-    if let Command::Run {
-        item,
-        image,
-        peers: true,
-    } = &cli.command
-    {
-        let code = riff::run::run_peers(&here, item, image.as_deref()).await?;
-        std::process::exit(code);
-    }
-    if let Command::Run { item, image, .. } = &cli.command {
+    if let Command::Run { item, image } = &cli.command {
         let server = api.base().to_owned();
         let code = riff::run::run(api, &here, &server, item, image.as_deref()).await?;
         std::process::exit(code);
@@ -2176,10 +2064,7 @@ async fn main() -> Result<()> {
     if let Command::Wave { command } = &cli.command {
         let dir = riff::daemon::dir()?;
         match command {
-            WaveCommand::Run { peers: false } => {
-                riff::wave::ask_run(&dir, &here, api.base()).await?;
-            }
-            WaveCommand::Run { peers: true } => riff::wave::ask_run(&dir, &here, "").await?,
+            WaveCommand::Run => riff::wave::ask_run(&dir, &here, api.base()).await?,
             WaveCommand::Stop => riff::wave::ask_stop(&dir, &here).await?,
             WaveCommand::List
             | WaveCommand::Make { .. }
@@ -2338,7 +2223,6 @@ async fn main() -> Result<()> {
             thread,
             session,
             item,
-            forge: false,
         } => {
             let thread = thread_or_default(thread, &here)?;
             match session {
@@ -2492,8 +2376,6 @@ async fn main() -> Result<()> {
         | Command::Login
         | Command::Logout { .. }
         | Command::Invite { .. }
-        | Command::Join { .. }
-        | Command::Leave
         | Command::Remove { .. }
         | Command::Members { .. }
         | Command::Audit { .. }
@@ -2501,7 +2383,6 @@ async fn main() -> Result<()> {
         | Command::Admin { .. }
         | Command::Owner { .. }
         | Command::Run { .. }
-        | Command::Release { forge: true, .. }
         | Command::Retire { .. }
         | Command::Wave { .. } => unreachable!("handled before the identity"),
     }
@@ -4040,12 +3921,6 @@ async fn draw_top(
             let pauses = api.pauses(me).await?;
             let mut who = api.roster(me, false).await?;
             riff::state::fill(&mut who.sessions, pauses.state);
-            // Each session of each daemon of the riff of peers
-            // (01M519Z554SC3EAT69Q3M6JDAP).
-            if let Ok(dir) = riff::daemon::dir() {
-                let riff = riff::top::riff_sessions(&dir).await;
-                riff::top::with_riff_sessions(&mut who.sessions, riff);
-            }
             anyhow::Ok((pauses, who))
         };
         // Each call of a look has the budget of a short command

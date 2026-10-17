@@ -12,21 +12,13 @@
 //! > riff-lead-o-r                           lead             lead                 2h
 //!   riff-issue-12-1a2b3c4d                  issue-12         works                5m   > Bash: just check
 //!   riff-verify-issue-9-2b3c4d5e            verify-issue-9   ends                 1m   end: success, 8 turns
-//!   brett@kadomony:riff#issue-14 (77e0aaaa) issue-14         busy                      tests
-//!   mike@pangolin:riff#issue-15 (5b1e2a90)  issue-15         offline, seen 5m ago      docs
 //! wave o/r: started issue-12
 //! Up/Down select   Enter attach to the lead   t take over now   q quit
 //! ```
 //!
-//! The rows of this machine come first: each session that the daemon
-//! owns ([`Row::Here`]). Then come the sessions of each other daemon of
-//! the riff of peers, from their `session` records ([`Row::Peer`],
-//! [`crate::daemon::Status::riff_sessions`],
-//! 01M519Z554SC3EAT69Q3M6JDAP): the name with the user, the host and the
-//! short session ID, the claims, the state and the status. A session of
-//! a daemon that is offline shows `offline`, with the time when its
-//! daemon was last seen. A takeover works only for a session of this
-//! machine: `t` on a row of another machine says so, and names its host.
+//! Each row is a session that the daemon of this machine owns
+//! ([`Row`]). The view shows no session of another daemon
+//! (01M53NGW6F5HP1DZ9QRGP50MGT).
 //!
 //! [`Screen`] holds the state of the view, and [`Screen::on_key`] turns
 //! a key into an [`Action`]: both have no terminal, so a test checks
@@ -59,8 +51,6 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Row as TableRow, Table, TableState};
-
-use riff_core::wire::{SessionInfo, SessionState};
 
 use crate::daemon::{self, Live, Phase, Status};
 use crate::runtime::Runtime;
@@ -95,62 +85,28 @@ pub enum Action {
     Quit,
 }
 
-/// A row of the view.
+/// A row of the view: a session that the daemon of this machine owns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Row<'a> {
-    /// A session that the daemon of this machine owns.
-    Here(&'a Live),
-    /// A session of another daemon of the riff of peers, from its
-    /// `session` records (01M519Z554SC3EAT69Q3M6JDAP).
-    Peer(&'a SessionInfo),
-}
+pub struct Row<'a>(pub &'a Live);
 
 impl Row<'_> {
-    /// The name of the lead of this machine: a session with a terminal.
+    /// The name of the lead: a session with a terminal.
     fn lead_here(self) -> Option<String> {
-        match self {
-            Row::Here(live) if live.phase == Phase::Terminal => Some(live.name.clone()),
-            Row::Here(_) | Row::Peer(_) => None,
-        }
+        (self.0.phase == Phase::Terminal).then(|| self.0.name.clone())
     }
 
     /// The cells of the row, with the ages at the time `now_ms`: the
-    /// name, the item, the state, the age and the last step. A row of
-    /// another machine has its claims as the item, and its status as the
-    /// last step.
+    /// name, the item, the state, the age and the last step.
     fn cells(self, now_ms: i64) -> [String; 5] {
-        match self {
-            Row::Here(s) => {
-                let age = u64::try_from((now_ms - s.since_ms) / 1000).unwrap_or(0);
-                [
-                    text::safe(&s.name),
-                    text::safe(&s.item),
-                    text::phase_word(s.phase).to_owned(),
-                    text::ago(age),
-                    text::safe(&s.last),
-                ]
-            }
-            Row::Peer(s) => {
-                let claims = s.uri.claims();
-                let item = if claims.is_empty() && s.uri.lead() {
-                    "lead".to_owned()
-                } else {
-                    claims.join(", ")
-                };
-                let state = match s.state.unwrap_or_default() {
-                    SessionState::Offline => text::view_offline(s.idle_secs),
-                    state => state.word().to_owned(),
-                };
-                let last = s.status.as_ref().map_or("", |status| &status.status.step);
-                [
-                    text::safe(&text::name(&s.uri)),
-                    text::safe(&item),
-                    state,
-                    String::new(),
-                    text::safe(last),
-                ]
-            }
-        }
+        let s = self.0;
+        let age = u64::try_from((now_ms - s.since_ms) / 1000).unwrap_or(0);
+        [
+            text::safe(&s.name),
+            text::safe(&s.item),
+            text::phase_word(s.phase).to_owned(),
+            text::ago(age),
+            text::safe(&s.last),
+        ]
     }
 }
 
@@ -227,36 +183,15 @@ impl Screen {
         self.note.as_deref()
     }
 
-    /// The rows of the view, in order. First the sessions of the daemon
-    /// of this machine: each lead first, then the others, each by its
-    /// name. Then each session of another daemon of the riff, by its
-    /// user, its host and its name. A session of the riff that this
-    /// daemon owns has only its row of this machine.
+    /// The rows of the view, in order: the sessions of the daemon of
+    /// this machine, each lead first, then the others, each by its name.
     pub fn rows(&self) -> Vec<Row<'_>> {
         let Some(Ok(status)) = &self.status else {
             return Vec::new();
         };
         let mut here: Vec<&Live> = status.sessions.iter().collect();
         here.sort_by_key(|s| (s.phase != Phase::Terminal, s.name.clone()));
-        let owned = |s: &SessionInfo| {
-            let id = s.uri.who().session();
-            status
-                .sessions
-                .iter()
-                .any(|live| Some(live.session.as_str()) == id)
-        };
-        let mut peers: Vec<&SessionInfo> =
-            status.riff_sessions.iter().filter(|s| !owned(s)).collect();
-        peers.sort_by_key(|s| {
-            (
-                s.uri.who().user().to_owned(),
-                s.uri.place().host().to_owned(),
-                text::name(&s.uri),
-            )
-        });
-        let mut rows: Vec<Row> = here.into_iter().map(Row::Here).collect();
-        rows.extend(peers.into_iter().map(Row::Peer));
-        rows
+        here.into_iter().map(Row).collect()
     }
 
     /// The selected row.
@@ -281,13 +216,7 @@ impl Screen {
             .and_then(Row::lead_here)
             .or_else(|| all.iter().find_map(|row| row.lead_here()));
         let rows = all.len();
-        let selected = selected.map(|row| match row {
-            Row::Here(s) => Ok((s.name.clone(), s.phase)),
-            Row::Peer(s) => Err(text::takeover_other_host(
-                &text::name(&s.uri),
-                s.uri.place().host(),
-            )),
-        });
+        let selected = selected.map(|Row(s)| (s.name.clone(), s.phase));
         match key {
             Key::Quit => Some(Action::Quit),
             Key::Up => {
@@ -308,17 +237,11 @@ impl Screen {
                 }
             },
             Key::Takeover => match selected {
-                Some(Ok((name, Phase::Terminal))) => {
+                Some((name, Phase::Terminal)) => {
                     self.note(text::view_no_takeover(&name));
                     None
                 }
-                Some(Ok((name, _))) => Some(Action::Takeover(name)),
-                // Only a session of this machine
-                // (01M519Z554SC3EAT69Q3M6JDAP).
-                Some(Err(refused)) => {
-                    self.note(refused);
-                    None
-                }
+                Some((name, _)) => Some(Action::Takeover(name)),
                 None => None,
             },
         }
@@ -507,14 +430,7 @@ mod tests {
             build: "1.3.1 06a0ae03be98".into(),
             since_ms: 0,
             dir: "/d".into(),
-            waits: None,
-            key: None,
-            riff: None,
-            owner: None,
-            links: None,
-            position: 0,
             sessions,
-            riff_sessions: vec![],
             limit: Some(crate::room::Limit::default()),
             waiting: vec![],
             waves: vec![],
@@ -604,121 +520,6 @@ mod tests {
         assert_eq!(lines[1].find("ITEM"), Some(2 + lead.len() + 1));
     }
 
-    /// The view of thelio in the riff of three daemons
-    /// ([`crate::peer::talk::three_daemons`]): the lead and a worker of
-    /// this machine, and the sessions of brett on kadomony (online) and
-    /// of mike on pangolin (offline). The lead of this machine is in the
-    /// riff of peers too.
-    fn riff() -> Screen {
-        let mut shown = status(vec![
-            live("riff-lead-o-r", "lead", Phase::Terminal, ""),
-            live(
-                "riff-issue-12-1a2b3c4d",
-                "issue-12",
-                Phase::Works,
-                "> Bash: just check",
-            ),
-        ]);
-        shown.sessions[0].session = "1a2b3c4d-1".into();
-        shown.riff_sessions = crate::peer::talk::three_daemons(NOW);
-        let mut screen = Screen::default();
-        screen.set(Ok(shown));
-        screen
-    }
-
-    /// 01M519Z554SC3EAT69Q3M6JDAP
-    #[test]
-    fn the_view_shows_the_sessions_of_each_daemon_of_the_riff() {
-        let lines = drawn(&riff(), 150, 10);
-        assert!(lines[2].starts_with("> riff-lead-o-r "), "{lines:#?}");
-        assert!(
-            lines[3].starts_with("  riff-issue-12-1a2b3c4d "),
-            "{lines:#?}"
-        );
-        // Each session of another daemon: the user and the host in its
-        // name, its item, its state and its status.
-        let brett = &lines[4];
-        assert!(
-            brett.starts_with("  brett@kadomony:riff#issue-14 (77e0aaaa) "),
-            "{lines:#?}"
-        );
-        assert!(
-            brett.contains(" issue-14 ") && brett.contains(" busy "),
-            "{brett}"
-        );
-        assert!(brett.ends_with(" tests"), "{brett}");
-        // The daemon of pangolin is offline: its link ended 5 minutes ago.
-        let pangolin = &lines[5];
-        assert!(
-            pangolin.starts_with("  mike@pangolin:riff#issue-15 (5b1e2a90) "),
-            "{lines:#?}"
-        );
-        assert!(pangolin.contains(" issue-15 "), "{pangolin}");
-        assert!(pangolin.contains(" offline, seen 5m ago "), "{pangolin}");
-        assert!(pangolin.ends_with(" docs"), "{pangolin}");
-        // The lead of thelio in the riff of peers has no second row.
-        assert!(
-            !lines.iter().any(|l| l.contains("mike@thelio")),
-            "{lines:#?}"
-        );
-        assert_eq!(lines[6], "");
-        // Each name and each state shows in full: the columns start at
-        // the same place on each row.
-        let at = |line: &str, part: &str| line.find(part).unwrap();
-        let item = at(&lines[1], "ITEM");
-        assert_eq!(at(&lines[3], " issue-12 ") + 1, item);
-        assert_eq!(at(brett, " issue-14 ") + 1, item);
-        assert_eq!(at(pangolin, " issue-15 ") + 1, item);
-        let state = at(&lines[1], "STATE");
-        assert_eq!(at(brett, " busy ") + 1, state);
-        assert_eq!(at(pangolin, " offline") + 1, state);
-        assert!(
-            at(&lines[1], "AGE") > at(pangolin, " seen 5m ago "),
-            "{lines:#?}"
-        );
-    }
-
-    /// 01M519Z554SC3EAT69Q3M6JDAP: a takeover works only for a session of
-    /// this machine.
-    #[test]
-    fn a_takeover_of_a_session_of_another_machine_refuses_and_names_its_host() {
-        let mut screen = riff();
-        screen.on_key(Key::Down);
-        screen.on_key(Key::Down);
-        assert_eq!(screen.selected(), 2);
-        assert_eq!(screen.on_key(Key::Takeover), None);
-        let refused =
-            text::takeover_other_host("brett@kadomony:riff#issue-14 (77e0aaaa)", "kadomony");
-        assert!(refused.contains("runs on the host kadomony"), "{refused}");
-        assert_eq!(screen.shown_note(), Some(refused.as_str()));
-        assert_eq!(drawn(&screen, 150, 10)[8], refused);
-        // The offline session of pangolin: the same, with its host.
-        screen.on_key(Key::Down);
-        assert_eq!(screen.on_key(Key::Takeover), None);
-        assert!(
-            screen
-                .shown_note()
-                .is_some_and(|note| note.contains("runs on the host pangolin")),
-            "{:?}",
-            screen.shown_note()
-        );
-        // Enter on a row of another machine attaches to the lead of this
-        // machine. Down stops at the last row.
-        assert_eq!(
-            screen.on_key(Key::Enter),
-            Some(Action::Attach("riff-lead-o-r".into()))
-        );
-        screen.on_key(Key::Down);
-        assert_eq!(screen.selected(), 3);
-        // A worker of this machine still takes a takeover.
-        screen.on_key(Key::Up);
-        screen.on_key(Key::Up);
-        assert_eq!(
-            screen.on_key(Key::Takeover),
-            Some(Action::Takeover("riff-issue-12-1a2b3c4d".into()))
-        );
-    }
-
     #[test]
     fn the_view_shows_the_waves_the_starts_that_wait_and_a_note() {
         let mut screen = Screen::default();
@@ -743,6 +544,43 @@ mod tests {
             text::view_waiting(&["riff-issue-13-2b3c4d5e".into()])
         );
         assert_eq!(lines[7], "a note");
+    }
+
+    /// 01M53NGW6F5HP1DZ9QRGP50MGT: the view shows no session of another
+    /// daemon, also when the status of a daemon of riff 1.6 to 1.8 has
+    /// the sessions of its riff of peers.
+    #[test]
+    fn the_view_shows_no_session_of_another_daemon() {
+        let mut old = serde_json::to_value(status(vec![live(
+            "riff-issue-12-1a2b3c4d",
+            "issue-12",
+            Phase::Works,
+            "",
+        )]))
+        .unwrap();
+        old["key"] = "0a1b".into();
+        old["riff_sessions"] = serde_json::json!([
+            {"uri": "riff://brett@kadomony/o/riff?session=77e0aaaa-1&claim=issue-14#issue-14", "live": true},
+            {"uri": "riff://mike@pangolin/o/riff?session=5b1e2a90-1&claim=issue-15#issue-15", "live": false},
+        ]);
+        let mut screen = Screen::default();
+        screen.set(Ok(serde_json::from_value(old).unwrap()));
+        assert_eq!(screen.rows().len(), 1);
+        let lines = drawn(&screen, 150, 8);
+        assert!(
+            lines[2].starts_with("> riff-issue-12-1a2b3c4d "),
+            "{lines:#?}"
+        );
+        for other in [
+            "brett", "kadomony", "issue-14", "pangolin", "issue-15", "offline",
+        ] {
+            assert!(
+                !lines.iter().any(|l| l.contains(other)),
+                "{other}: {lines:#?}"
+            );
+        }
+        screen.on_key(Key::Down);
+        assert_eq!(screen.selected(), 0);
     }
 
     #[test]

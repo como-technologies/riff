@@ -160,10 +160,8 @@ pub fn spec(facts: &Facts, repo: &str) -> SessionSpec {
 ///     last: String::new(),
 /// };
 /// let status = Status {
-///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), waits: None, key: None,
-///     riff: None, owner: None, links: None, position: 0, sessions: vec![live],
-///     riff_sessions: vec![], limit: None,
-///     waiting: vec![], waves: vec![], jobs: 0,
+///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![live],
+///     limit: None, waiting: vec![], waves: vec![], jobs: 0,
 /// };
 /// assert!(riff::lead::runs(&status, "riff-lead-o-r"));
 /// assert!(!riff::lead::runs(&status, "riff-lead-o-other"));
@@ -364,7 +362,6 @@ pub async fn start_with(
         server: server.to_owned(),
         me: me.clone(),
         terminal: true,
-        claim: None,
     };
     println!("{}", text::lead_starts(&repo, &name, &session));
     if let Err(e) = ask_start(dir, start).await {

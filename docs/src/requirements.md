@@ -6308,12 +6308,10 @@ part when they merge.
 ### Wave B: the record
 
 The requirements of Wave B (#803) say how the daemons of two or more
-people share one riff. The book page
-[Design: the riff of peers](riff-3-peers.md) has the picture. A
-requirement of Wave B holds when the item of Wave B that builds it
-merges. A requirement that ends with "Superseded by Wave B (ID)."
-holds until then. The re-cut supersedes each requirement of Wave B
-(01M53NGW9FH02EM74GKY829808).
+people share one riff. A requirement of Wave B holds when the item of
+Wave B that builds it merges. A requirement that ends with "Superseded
+by Wave B (ID)." holds until then. The re-cut supersedes each
+requirement of Wave B (01M53NGW9FH02EM74GKY829808).
 
 - **01M519Z1WKH6THH971AQWHH8CN** A record is one change of the riff by
   one author. Its bytes are, in this order: the format version (1, one
@@ -7273,7 +7271,9 @@ items of Wave C that end riff-server in the Backlog
   them for the next run. The daemon of the machine keeps running with
   its peer links. The test does not talk to it, and no step of the test,
   the book or the skill stops, starts or changes it. Step 5 fails only
-  when a daemon of the test answers before the start.
+  when a daemon of the test answers before the start. Superseded in part
+  by the re-cut (01M53NGW3FR555TWP8Z8HHRVDJ): the daemon of the test has
+  no key and no riff, and the daemon of the machine has no peer links.
 - **01M4ZCFGKDKH16KGKR5NBEK3Y4** Before each tag, an admin runs
   `just real-session` on the merge commit of the release pull request,
   on a host with podman. It passes before the tag.

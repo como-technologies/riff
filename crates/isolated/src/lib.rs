@@ -18,7 +18,6 @@
 //! | `RIFF_ON` | `1`: riff is on in each directory, so a test of a hook needs no repository with `riff enable`. A test of the state removes it (01M3XY2SWEK0N8MC3MY4TMYTD3) |
 //! | `RIFF_DYNAMIC` | `1`: `riff init` and the daemon take the riff under test, which is not static, because a fake `podman` runs `riff relay` on the host. A test of the check removes it (01M510NWEFSN0NWQH8KQ6FA7DC) |
 //! | `RIFF_HOME` | a dir of its own: riff keeps its settings, local files and secrets there, and never opens the OS keyring |
-//! | `RIFF_PEER_NET` | `local`: the riff daemon binds its iroh endpoint on 127.0.0.1, with no relay and no DNS, so no test reaches n0 (01M51ZA0E79V2FPBMQ6F1MYZJ5) |
 //! | `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR`, `TMPDIR` | dirs of its own |
 //! | `DBUS_SESSION_BUS_ADDRESS` | a bus that does not exist, so each call to the OS keyring fails |
 //! | `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM` | `/dev/null` and `1`: git reads no config of the machine |
@@ -204,7 +203,6 @@ impl Isolated {
             ("RIFF_ON".into(), Some("1".into())),
             ("RIFF_DYNAMIC".into(), Some("1".into())),
             ("RIFF_HOME".into(), path(self.riff_home())),
-            ("RIFF_PEER_NET".into(), Some("local".into())),
             ("HOME".into(), path(home.clone())),
             ("XDG_CONFIG_HOME".into(), path(home.join(".config"))),
             ("XDG_DATA_HOME".into(), path(home.join(".local/share"))),
