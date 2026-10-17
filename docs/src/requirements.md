@@ -4844,6 +4844,91 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   For example, a saved session has a status, a step, or both: an
   enum, not two options.
 
+## The phone app
+
+The phone app is the design of #951. The book page
+[riff on a phone](riff-mobile.md) has the pictures. The build items
+are #962 to #965.
+
+- **01M53NTQTHC8WHW9ZZ6S1VZ2W8** The first phone app shows the thread
+  `chat` (the history, then each new line), posts a line, sends
+  `@lead`, `@USER` and `/me` as `riff chat` does, and shows a notice
+  when a line names its user. `riff top`, the questions of the lead
+  and the steps of a lead come later.
+- **01M53NTQXQTM29BT67E6KHZFCK** The phone reaches the chat through
+  riff-server over HTTPS, on riff 1.x and on riff 3.0. It acts as a
+  person, as `riff chat` does, with the calls of `riff chat`: join,
+  read, tail and post.
+- **01M53NTR10TGJ9PHHCEN1P15K7** The phone app is a web app that
+  riff-server serves at `/app` of its own origin, from its binary. It
+  needs no app store and no account at Apple or Google. It works in
+  Safari on iOS 16.4 or later from the Home Screen, and in Chrome on
+  Android.
+- **01M53NTR47XBDX6C6QN49RNP29** A person pairs a phone from a machine
+  with a live sign-in: `riff phone add NAME`, in a terminal. It
+  refuses with no terminal. riff-server makes a pair code for the user
+  that works one time, for 10 minutes, and keeps only its hash. The
+  machine shows the link `/app#pair=CODE` as text and as a QR code.
+  The phone needs no Google sign-in.
+- **01M53NTR7D6145FSQ3WVZ1H52W** At the pair, the app makes its device
+  key with WebCrypto: ECDSA P-256, not extractable, kept in IndexedDB
+  of the app. The key never leaves the phone. riff-server binds a new
+  sign-in of the person to the thumbprint of that key. Each call of
+  the app has a DPoP proof of the key, as for `riff login`.
+- **01M53NTRAKPS7QVCTFS2GJPX4G** riff-server sets the host of each call
+  of a phone to the name of its pair. A line of a phone shows as
+  `<USER@NAME>`.
+- **01M53NTRDKDBTCWX0QNFJY9D4K** The token of a phone acts only on the
+  thread `chat` and on the notices of that phone. riff-server refuses
+  each other call of a phone token, for example a claim, a pause, an
+  invite, `who`, a session token and a read of another thread.
+- **01M53NTRGP2MJG6JT85BCVYE18** `riff phone list` shows each phone of
+  the person: its name, the time of its pair and the time of its last
+  call. `riff phone remove NAME` ends the sign-in of that phone at
+  once. With `--user`, an admin names a phone of another person.
+  `riff logout --all` and `riff remove --email` also end the sign-in
+  of each phone of the person.
+- **01M53NTRKQ894YHQD9YYRNJBHZ** The app parses `@lead` and `@USER`,
+  signs a post and checks a signature as `riff chat` does. One set of
+  cases in riff-core checks the app and `riff chat`.
+- **01M53NTRPS73Z0TPVDH7DCM2J3** The app sends the build of the
+  riff-server that served it. After a 409 for the build, it loads
+  itself again.
+- **01M53NTRSTXCK3VP8YGQETEZX5** The app keeps no text of a message in
+  the storage of the phone: only its key, its tokens and the number of
+  the last line that it showed.
+- **01M53NTRWVX0Z7R211JF1T6GKJ** riff-server sends the notices of a
+  phone with Web Push (RFC 8030) and its VAPID key (RFC 8292): a P-256
+  key that `riff cloud deploy` keeps in Secret Manager as
+  `riff-vapid-key`. A riff-server with no VAPID key sends no notice.
+- **01M53NTRZT0B7539TXA5BV2BR8** A phone gets a notice for a line of
+  the thread `chat` whose `to` has a selector with its user and
+  `lead=true`, from a sender of another user. It also gets a notice
+  for each line of the verified lead of its user. A line of a person
+  client of its own user gives no notice. riff-server finds the lines
+  from the `to`, the sender and the lead mark, not from the body.
+- **01M53NTS32HD38TSK335EY7V9C** A push holds only the thread and the
+  number of the line, encrypted for the phone (RFC 8291). The service
+  worker of the app reads the line from riff-server, and shows the
+  sender and the line.
+- **01M53NTS63FNFS2MESV5E9JZH4** The person turns the notices on and
+  off in the app. The app asks the phone for consent at the first turn
+  on. riff-server deletes a subscription when the push service answers
+  404 or 410. A push never delays a post.
+- **01M53NTSFADCRYKW71JSKW2504** The app calls only its riff-server,
+  and the push service of its browser through the browser. It has no
+  analytics, no crash report and no CDN.
+- **01M53NTS97JVY20GS4BRR3NDDP** If a later release removes
+  riff-server, the phone talks over iroh to a daemon of its user, as a
+  client of that daemon. It is no peer of the riff, and holds no copy
+  of its records. That daemon pairs the phone and sends its notices
+  with Web Push.
+- **01M53NTSC8C86B8S0HN0A5XAHB** The design of end-to-end encryption
+  (#958) chooses the encryption key of a phone, whether a new phone
+  reads the old lines, and whether the phone needs a native app whose
+  code a store signs. The pair of a phone is the step where a machine
+  of the person admits the new keys of that phone.
+
 ## riff 3.0
 
 riff 3.0 is the design of #699. riff 1.x runs today. Each

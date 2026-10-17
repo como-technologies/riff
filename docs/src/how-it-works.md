@@ -2617,6 +2617,9 @@ fails, it tries once more at once. While it cannot connect, it shows
 `(reconnecting…)`, then `(back)`. `riff tail` and `riff workers host`
 connect again in the same way.
 
+The chat on a phone is a design, and not built yet: see
+[riff on a phone](riff-mobile.md).
+
 ### Ask a lead in the chat
 
 A chat line wakes no session. A line with `@lead` wakes your lead.
