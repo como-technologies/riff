@@ -665,6 +665,37 @@ mod tests {
         assert_eq!(get("unit two").unwrap().as_deref(), Some("2"));
     }
 
+    /// 01M54510PS9FDKQKJB0RAH3XG3: `kept` reads the store one time. A
+    /// store that would refuse the next read shows that no later `kept`
+    /// reads it. Only `get` reads it again.
+    #[test]
+    fn kept_reads_the_store_one_time() {
+        mock_store();
+        set("unit kept", "a").unwrap();
+        let entry = Entry::new(SERVICE, "unit kept").unwrap();
+        let cred: &mock::Cred = entry.as_any().downcast_ref().unwrap();
+        cred.set_error(Error::NoStorageAccess(Box::new(std::io::Error::other(
+            "locked",
+        ))));
+        for _ in 0..3 {
+            assert_eq!(kept("unit kept").unwrap().as_deref(), Some("a"));
+        }
+        assert!(is_locked(&get("unit kept").unwrap_err()));
+        // An error changes no kept value.
+        assert_eq!(kept("unit kept").unwrap().as_deref(), Some("a"));
+
+        // A value that another process wrote: one read, then the kept
+        // value.
+        let name = "unit kept other";
+        let other = Entry::new(SERVICE, name).unwrap();
+        other.set_password("b").unwrap();
+        assert_eq!(kept(name).unwrap().as_deref(), Some("b"));
+        other.set_password("c").unwrap();
+        assert_eq!(kept(name).unwrap().as_deref(), Some("b"));
+        delete(name).unwrap();
+        assert_eq!(kept(name).unwrap(), None);
+    }
+
     #[test]
     fn a_missing_secret_is_none_and_deletes_quietly() {
         mock_store();
