@@ -52,12 +52,13 @@ fi
 # The user of this machine, so the files in target/session are its own.
 # docker has no keep-id. So the container gets a passwd and a group file
 # with an entry for the user, as keep-id of podman gives one: D-Bus, for
-# example, refuses a user with no entry.
-mkdir -p target/session/etc
+# example, refuses a user with no entry. Each run has new files in a new
+# folder of TMPDIR, so no run changes the files of a container that runs.
+# They stay there: exec leaves no step after the run.
 case "$ENGINE" in
 podman) user=(--userns=keep-id) ;;
 *)
-    ids="$PWD/target/session/etc"
+    ids=$(mktemp -d "${TMPDIR:-/tmp}/riff-session-ids.XXXXXX")
     "$ENGINE" run --rm "$IMAGE" cat /etc/passwd >"$ids/passwd"
     "$ENGINE" run --rm "$IMAGE" cat /etc/group >"$ids/group"
     if ! cut -d: -f3 "$ids/passwd" | grep -qx "$(id -u)"; then
