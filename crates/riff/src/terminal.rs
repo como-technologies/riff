@@ -103,10 +103,11 @@ pub const JOIN: &str = "Join the riff.";
 /// The flag settings of a worker: no Remote Control, also when the
 /// user settings turn it on (01M3JV0ZNGKDFMRR9ACT0480V9), no recap
 /// (01M3MN0D429T4Q80DYBE9S9XR7), and each plugin of `lsp` off: the
-/// plugins with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3). A rule
-/// denies `riff cloud` (01M4262DY8NN30SC4REYX2G9DV). The auto mode
-/// settings of `trust` turn off `/auto-mode-setup` and give auto mode the
-/// places of riff work ([`crate::permissions::auto_mode`],
+/// plugins with a language server (01M3ZJ1FAF7EJXP9CSET8ZY1K3). Rules
+/// deny each write of `riff cloud` ([`crate::cloud::WRITES`],
+/// 01M558C4VZ2PSMEYPAZBRYW1VV), and no read. The auto mode settings of
+/// `trust` turn off `/auto-mode-setup` and give auto mode the places of
+/// riff work ([`crate::permissions::auto_mode`],
 /// 01M516HEX3GVTN9K2QS12A4PG3).
 ///
 /// ```
@@ -115,7 +116,10 @@ pub const JOIN: &str = "Join the riff.";
 ///
 /// let trust = Trust { owner: Some("acme"), server: Some("http://h:7878") };
 /// let auto = auto_mode(&trust);
-/// let start = r#"{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{"deny":["Bash(riff cloud)","Bash(riff cloud *)"]}"#;
+/// let deny = r#"["Bash(riff cloud create)","Bash(riff cloud create *)","Bash(riff cloud signin)","Bash(riff cloud signin *)","Bash(riff cloud deploy)","Bash(riff cloud deploy *)","Bash(riff cloud smoke)","Bash(riff cloud smoke *)","Bash(riff cloud delete)","Bash(riff cloud delete *)"]"#;
+/// let start = format!(
+///     r#"{{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"permissions":{{"deny":{deny}}}"#
+/// );
 /// let off = r#""enabledPlugins":{"rust-analyzer-lsp@claude-plugins-official":false}"#;
 /// let tail = format!(
 ///     r#""skillOverrides":{},"autoMode":{}}}"#,
@@ -131,7 +135,7 @@ pub fn worker_settings(lsp: &[String], trust: &crate::permissions::Trust) -> Str
     let mut settings = serde_json::json!({
         "remoteControlAtStartup": false,
         "awaySummaryEnabled": false,
-        "permissions": {"deny": ["Bash(riff cloud)", "Bash(riff cloud *)"]},
+        "permissions": {"deny": cloud_writes()},
     });
     if !lsp.is_empty() {
         let off: serde_json::Map<String, serde_json::Value> =
@@ -145,6 +149,23 @@ pub fn worker_settings(lsp: &[String], trust: &crate::permissions::Trust) -> Str
         settings.extend(auto);
     }
     settings.to_string()
+}
+
+/// The deny rules of the writes of `riff cloud` in a worker
+/// (01M558C4VZ2PSMEYPAZBRYW1VV): the plain shape of each write, with no
+/// arguments and with arguments. A global flag before the write passes
+/// them, for example `riff --color never cloud deploy`: the check of
+/// `riff cloud` in code refuses it.
+fn cloud_writes() -> Vec<String> {
+    crate::cloud::WRITES
+        .iter()
+        .flat_map(|w| {
+            [
+                format!("Bash(riff cloud {w})"),
+                format!("Bash(riff cloud {w} *)"),
+            ]
+        })
+        .collect()
 }
 
 /// A program to run in a new pane.

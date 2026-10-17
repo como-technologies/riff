@@ -16,6 +16,16 @@
 //! | `riff cloud log NAME [--errors]` | The log lines of the service |
 //! | `riff cloud delete NAME [--with-state]` | Deletes the service, and the bucket with `--with-state` ([`delete`]) |
 //!
+//! ## Who runs it
+//!
+//! The writes ([`WRITES`]) refuse before each call of `gcloud` in a
+//! worker and in an agent session that is not the lead, with the check
+//! of `riff workers start` (01M558C4VZ2PSMEYPAZBRYW1VV). This check is
+//! the guard. A person in a plain terminal and the lead run them. The
+//! flag settings of a worker deny the plain shape of each write too,
+//! `riff cloud WRITE ...` ([`crate::terminal::worker_settings`]). Each
+//! session runs the reads: `list`, `status` and `log`.
+//!
 //! ## Settings
 //!
 //! Each instance has one settings file `NAME.env` of `KEY=VALUE` lines
@@ -72,6 +82,16 @@ pub const LIFECYCLE: &str = include_str!("../../../deploy/lifecycle.json");
 /// The alert on each error of the service, before [`alert`] names the
 /// service in it.
 pub const ALERT: &str = include_str!("../../../deploy/alert.json");
+
+/// The subcommands of `riff cloud` that change an instance: on Cloud
+/// Run, or on its riff, as `smoke` does with its sign-in, its session and
+/// its note (01M558C4VZ2PSMEYPAZBRYW1VV). Only a person in a plain
+/// terminal and the lead run them.
+///
+/// ```
+/// assert_eq!(riff::cloud::WRITES, ["create", "signin", "deploy", "smoke", "delete"]);
+/// ```
+pub const WRITES: [&str; 5] = ["create", "signin", "deploy", "smoke", "delete"];
 
 /// The APIs that an instance uses.
 const APIS: [&str; 10] = [

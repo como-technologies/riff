@@ -256,7 +256,7 @@ async fn the_wrapper_gives_claude_the_flag_settings() {
     assert_eq!(
         std::fs::read_to_string(seen).unwrap(),
         format!(
-            "--settings\n{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"permissions\":{{\"deny\":[\"Bash(riff cloud)\",\"Bash(riff cloud *)\"]}},\"enabledPlugins\":{{\"rust-lsp@m\":false}},\"skillOverrides\":{skills},\"autoMode\":{mode},\"env\":{{\"TMPDIR\":\"{tmp}\",\"CLAUDE_CODE_TMPDIR\":\"{tmp}\"}}}}\nJoin the riff.\n",
+            "--settings\n{{\"remoteControlAtStartup\":false,\"awaySummaryEnabled\":false,\"permissions\":{{\"deny\":[\"Bash(riff cloud create)\",\"Bash(riff cloud create *)\",\"Bash(riff cloud signin)\",\"Bash(riff cloud signin *)\",\"Bash(riff cloud deploy)\",\"Bash(riff cloud deploy *)\",\"Bash(riff cloud smoke)\",\"Bash(riff cloud smoke *)\",\"Bash(riff cloud delete)\",\"Bash(riff cloud delete *)\"]}},\"enabledPlugins\":{{\"rust-lsp@m\":false}},\"skillOverrides\":{skills},\"autoMode\":{mode},\"env\":{{\"TMPDIR\":\"{tmp}\",\"CLAUDE_CODE_TMPDIR\":\"{tmp}\"}}}}\nJoin the riff.\n",
             skills = auto["skillOverrides"],
             mode = auto["autoMode"],
             tmp = dir.path().join("tmp/w1").display()

@@ -3660,7 +3660,8 @@ before serves and saves, while the new build takes the lease, reads
 the state and serves. Put the results on the issue of the release.
 
 Only a person runs these steps: each step writes to the cloud or signs
-in. A worker never runs `riff cloud`: its settings deny it.
+in. A worker cannot run the writes of `riff cloud`. See
+[Who runs riff cloud](start-a-team-riff.md#who-runs-riff-cloud).
 
 ```mermaid
 flowchart LR

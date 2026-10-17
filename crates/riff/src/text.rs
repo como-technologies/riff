@@ -2031,8 +2031,7 @@ pub const NO_WORKER_LIMIT: &str = "riff: the limit of workers on this machine is
 workers start started nothing. Your user sets the limit, for example: riff workers limit 2";
 
 /// The refusals of a command that only a person in a plain terminal or
-/// the lead of its user runs (01M3JPQT79FE47518Z8DFFQYYG,
-/// 01M553AWMXYAG7CJGW7M30XDZ8).
+/// the lead of its user runs (01M558C4VZ2PSMEYPAZBRYW1VV).
 pub struct LeadOnly {
     /// In a worker.
     pub worker: &'static str,
@@ -5484,9 +5483,24 @@ pub fn monitor_event(
     }
 }
 
-/// The refusal of `riff cloud` in a worker (01M4262DY8NN30SC4REYX2G9DV).
-pub const CLOUD_WORKER: &str = "riff: a worker never runs riff cloud. Ask the lead: a person \
-runs it.";
+/// The refusals of a write of `riff cloud` (01M558C4VZ2PSMEYPAZBRYW1VV).
+///
+/// ```
+/// use riff::text::CLOUD;
+///
+/// for refusal in [CLOUD.worker, CLOUD.not_the_lead, CLOUD.lead_unknown] {
+///     assert!(refusal.starts_with("riff: "), "{refusal}");
+///     assert!(refusal.contains("riff cloud changed nothing."), "{refusal}");
+/// }
+/// ```
+pub const CLOUD: LeadOnly = LeadOnly {
+    worker: "riff: a worker never changes a riff in the cloud. riff cloud changed nothing. \
+Ask the lead: the lead or a person runs it.",
+    not_the_lead: "riff: only the lead of your user changes a riff in the cloud. This session \
+is not the lead, so riff cloud changed nothing.",
+    lead_unknown: "riff: cannot check that this session is the lead, so riff cloud changed \
+nothing. Check the riff with riff whoami.",
+};
 
 /// The refusal of a client ID that is not a Google client ID.
 pub const CLOUD_BAD_CLIENT_ID: &str = "A Google client ID ends in .apps.googleusercontent.com.";

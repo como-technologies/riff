@@ -90,6 +90,20 @@ flowchart LR
     D --> L["riff cloud list<br/>status, log"]
 ```
 
+### Who runs riff cloud
+
+You run the writes of `riff cloud` in a terminal: `create`, `signin`,
+`deploy`, `smoke` and `delete`. `smoke` is a write too: it signs in to
+the riff, and posts a message. Your lead session can run them too. A
+worker, or an agent session that is not your lead, cannot run them:
+riff refuses, and changes nothing. In a worker, it says:
+
+```text
+riff: a worker never changes a riff in the cloud. riff cloud changed nothing. Ask the lead: the lead or a person runs it.
+```
+
+Each session can run the reads: `list`, `status` and `log`.
+
 ### Make the riff
 
 Do these steps in a clone of riff, so that the deploy can build the
