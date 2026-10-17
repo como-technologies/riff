@@ -45,9 +45,11 @@ fn older() -> Build {
         .unwrap_or_else(|| "0.8.0".parse().unwrap()))
 }
 
-/// A server two lines after this riff: it refuses this riff.
+/// A server three lines after this riff: it refuses this riff. Two
+/// lines after the line 1 is the line 3, which talks with the line 1
+/// (01M55FCZNNZGKM4EKAXZQFTDWR).
 fn much_newer() -> Build {
-    at(this().line_after().line_after())
+    at(this().line_after().line_after().line_after())
 }
 
 /// A layer that names `build` in each reply, or no build.
@@ -313,6 +315,23 @@ async fn a_server_of_the_next_line_works_with_the_update_note() {
         next.line_after().line(),
         this().line()
     );
+    works_and_notes_once(theirs, &note).await;
+}
+
+/// 01M55FCZNNZGKM4EKAXZQFTDWR: a server of the other line of the
+/// bridge talks with this riff. The note names the older side.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_of_the_other_line_of_the_bridge_works_with_the_note() {
+    let (version, step) = match this().major {
+        1 => (
+            "3.0.0",
+            "riff-server 4 will refuse riff 1. Run riff update soon.",
+        ),
+        3 => ("1.8.2", "Update riff-server when you can."),
+        major => panic!("riff {major}.x is on no line of the bridge"),
+    };
+    let theirs = at(version.parse().unwrap());
+    let note = format!("riff-server runs build {theirs}; this riff runs build {VERSION}. {step}");
     works_and_notes_once(theirs, &note).await;
 }
 
@@ -852,7 +871,8 @@ fn the_book_says_what_patch_minor_and_major_mean() {
 }
 
 /// The notes and the error in the book are the real text
-/// (01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MX1E65XGWDZ062PQ9YXQ5T).
+/// (01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MX1E65XGWDZ062PQ9YXQ5T,
+/// 01M55FCZNNZGKM4EKAXZQFTDWR).
 #[test]
 fn the_book_shows_the_real_notes_and_error() {
     use riff_core::build::{Mismatch, other_build};
@@ -869,6 +889,10 @@ fn the_book_shows_the_real_notes_and_error() {
             &b("0.4.3 7213825ab1c2 2026-09-27T20:10:44Z"),
         ),
         other_build(&b("0.3.2 929605821e54 2026-09-20T22:03:01Z"), &server),
+        other_build(
+            &b("3.0.0 929605821e54 2026-10-18T22:03:01Z"),
+            &b("1.8.2 7213825ab1c2 2026-10-17T20:10:44Z"),
+        ),
         Mismatch {
             riff: Some(b("0.2.0 929605821e54 2026-09-27T22:03:01Z")),
             server: Some(b("0.4.0 7213825ab1c2 2026-09-28T20:10:44Z")),

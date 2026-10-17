@@ -22,7 +22,9 @@
 //!
 //! `riff-server` also takes a `riff` of the line before its own
 //! (01M3MX1E1EY1M7JGNCN6FCEVQK), so a person has one release to update
-//! in. [`compatible`] holds the rule.
+//! in. The lines 1 and 3 also talk, in both directions: the
+//! [`BRIDGE`] (01M55FCZNNZGKM4EKAXZQFTDWR). [`compatible`] holds the
+//! rule.
 //!
 //! Each call of `riff` carries its build in the header [`HEADER`], and
 //! each reply of `riff-server` carries the build of the server
@@ -34,7 +36,7 @@
 //!     participant R as riff
 //!     participant S as riff-server
 //!     R->>S: call, riff-build: 0.3.2 929605821e54 2026-09-27T22:03:01Z
-//!     alt the line of the server, or the line before
+//!     alt the line of the server, the line before, or the bridge
 //!         S-->>R: reply, riff-build: 0.4.0 7213825ab1c2 2026-09-28T20:10:44Z
 //!         Note over R: another build: one note to update, then go on
 //!     else another line, or no build
@@ -174,7 +176,75 @@ impl Semver {
     pub fn same_line(self, other: Semver) -> bool {
         self.key() == other.key()
     }
+
+    /// The first version of the other line of the [`BRIDGE`]: `3.0.0`
+    /// for the line 1, and `1.0.0` for the line 3. `None` for each
+    /// other line.
+    ///
+    /// ```
+    /// use riff_core::build::Semver;
+    ///
+    /// let v = |s: &str| s.parse::<Semver>().unwrap();
+    /// assert_eq!(v("1.8.2").bridge(), Some(v("3.0.0")));
+    /// assert_eq!(v("3.0.0").bridge(), Some(v("1.0.0")));
+    /// assert_eq!(v("2.0.1").bridge(), None);
+    /// assert_eq!(v("0.1.0").bridge(), None);
+    /// ```
+    pub fn bridge(self) -> Option<Semver> {
+        let [one, three] = BRIDGE;
+        let other = match self.major {
+            major if major == one => three,
+            major if major == three => one,
+            _ => return None,
+        };
+        Some(Semver {
+            major: other,
+            minor: 0,
+            patch: 0,
+        })
+    }
+
+    /// The lines of `riff` that a `riff-server` of this version talks
+    /// with, as the first version of each line: its own line
+    /// (01M3MX1DYY6AVDW946NR0B9T2C), the line before
+    /// (01M3MX1E1EY1M7JGNCN6FCEVQK) and the other line of the
+    /// [`BRIDGE`] (01M55FCZNNZGKM4EKAXZQFTDWR).
+    ///
+    /// ```
+    /// use riff_core::build::Semver;
+    ///
+    /// let v = |s: &str| s.parse::<Semver>().unwrap();
+    /// assert_eq!(v("0.4.2").riff_lines(), [v("0.4.0"), v("0.3.0")]);
+    /// assert_eq!(v("1.8.2").riff_lines(), [v("1.0.0"), v("3.0.0")]);
+    /// assert_eq!(v("3.0.0").riff_lines(), [v("3.0.0"), v("2.0.0"), v("1.0.0")]);
+    /// assert_eq!(v("4.1.0").riff_lines(), [v("4.0.0"), v("3.0.0")]);
+    /// ```
+    pub fn riff_lines(self) -> Vec<Semver> {
+        let first = match self.key() {
+            (0, minor) => Semver {
+                major: 0,
+                minor,
+                patch: 0,
+            },
+            (major, _) => Semver {
+                major,
+                minor: 0,
+                patch: 0,
+            },
+        };
+        [Some(first), self.line_before(), self.bridge()]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
 }
+
+/// The bridge: a `riff` and a `riff-server` of the lines 1 and 3 talk,
+/// in both directions (01M55FCZNNZGKM4EKAXZQFTDWR). The line 2 is
+/// retired, and the wire of 3.0.0 is the wire of 1.8. So a machine on
+/// 1.8.2 works while it takes 3.0.0, and a rollback of riff-server to
+/// 1.8.2 needs no step on a machine.
+pub const BRIDGE: [u64; 2] = [1, 3];
 
 impl fmt::Display for Semver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -294,9 +364,11 @@ impl Build {
     }
 }
 
-/// True when `riff` and `riff-server` can talk: the two versions are on
-/// the same line (01M3MX1DYY6AVDW946NR0B9T2C), or `riff` is on the line
-/// before the line of the server (01M3MX1E1EY1M7JGNCN6FCEVQK).
+/// True when `riff` and `riff-server` can talk: `riff` is on a line
+/// that the server takes ([`Semver::riff_lines`]). That is the line of
+/// the server (01M3MX1DYY6AVDW946NR0B9T2C), the line before
+/// (01M3MX1E1EY1M7JGNCN6FCEVQK), or the other line of the [`BRIDGE`]
+/// (01M55FCZNNZGKM4EKAXZQFTDWR).
 ///
 /// ```
 /// use riff_core::build::{Build, compatible};
@@ -308,13 +380,16 @@ impl Build {
 /// assert!(!compatible(&b("0.4.0"), &b("0.3.2")));
 /// assert!(!compatible(&b("0.2.0"), &b("0.4.0")));
 /// assert!(compatible(&b("1.0.0"), &b("1.3.0")));
+/// assert!(compatible(&b("1.8.2"), &b("3.0.0")));
+/// assert!(compatible(&b("3.0.0"), &b("1.8.2")));
+/// assert!(!compatible(&b("1.8.2"), &b("4.0.0")));
 /// assert!(!compatible(&b("next"), &b("0.4.0")));
 /// ```
 pub fn compatible(riff: &Build, server: &Build) -> bool {
     let (Some(r), Some(s)) = (riff.semver(), server.semver()) else {
         return false;
     };
-    r.same_line(s) || s.line_before().is_some_and(|before| r.same_line(before))
+    s.riff_lines().into_iter().any(|line| r.same_line(line))
 }
 
 impl fmt::Display for Build {
@@ -435,15 +510,13 @@ impl fmt::Display for Mismatch {
             name(&self.riff),
         )?;
         if let Some(s) = self.server.as_ref().and_then(Build::semver) {
-            let line = s.line();
-            match s.line_before() {
-                Some(before) => write!(
-                    f,
-                    "riff-server {line} talks only with riff {line} and {}. ",
-                    before.line()
-                )?,
-                None => write!(f, "riff-server {line} talks only with riff {line}. ")?,
-            }
+            let lines: Vec<String> = s.riff_lines().into_iter().map(Semver::line).collect();
+            write!(
+                f,
+                "riff-server {} talks only with riff {}. ",
+                s.line(),
+                and_list(&lines)
+            )?;
         }
         let step = match self.older() {
             Side::Riff => "Update riff on this machine, then start your sessions again.",
@@ -455,10 +528,21 @@ impl fmt::Display for Mismatch {
 
 impl std::error::Error for Mismatch {}
 
+/// The items as text: `a`, `a and b`, or `a, b and c`.
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
 /// The note when the builds differ and they can talk
 /// (01M3MX1E8M9TKBN90P4DYKH3H8). `riff` prints it once for each process,
-/// and goes on. When `riff` is on the line before the server, the note
-/// says that the next line of the server refuses it.
+/// and goes on. When `riff` is on an earlier line than the server, the
+/// note says that the next line of the server refuses it. When `riff`
+/// is on a later line, across the [`BRIDGE`], the server is the older
+/// side, and the note says to update it.
 ///
 /// ```
 /// use riff_core::build::{Build, other_build};
@@ -477,10 +561,20 @@ impl std::error::Error for Mismatch {}
 ///      0.3.2 cccc 2026-09-20T11:00:00Z. riff-server 0.5 will refuse riff 0.3. Run riff \
 ///      update soon."
 /// );
+/// let server: Build = "1.8.2 dddd 2026-10-17T10:00:00Z".parse().unwrap();
+/// let riff: Build = "3.0.0 eeee 2026-10-18T10:00:00Z".parse().unwrap();
+/// assert_eq!(
+///     other_build(&riff, &server),
+///     "riff-server runs build 1.8.2 dddd 2026-10-17T10:00:00Z; this riff runs build \
+///      3.0.0 eeee 2026-10-18T10:00:00Z. Update riff-server when you can."
+/// );
 /// ```
 pub fn other_build(riff: &Build, server: &Build) -> String {
     let head = format!("riff-server runs build {server}; this riff runs build {riff}.");
     match (riff.semver(), server.semver()) {
+        (Some(r), Some(s)) if !r.same_line(s) && r > s => {
+            format!("{head} Update riff-server when you can.")
+        }
         (Some(r), Some(s)) if !r.same_line(s) => format!(
             "{head} riff-server {} will refuse riff {}. Run riff update soon.",
             s.line_after().line(),

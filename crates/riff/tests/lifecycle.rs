@@ -290,9 +290,11 @@ async fn server_names_another_build_and_what_to_run() {
         stdout.ends_with("\nRun riff update, then riff login\n"),
         "{stdout}"
     );
+    // Three lines after: two lines after the line 1 is the line 3, which
+    // talks with it (01M55FCZNNZGKM4EKAXZQFTDWR).
     let this = Build::this().semver().unwrap();
     let other_line = Build {
-        version: this.line_after().line_after().to_string(),
+        version: this.line_after().line_after().line_after().to_string(),
         ..other()
     };
     let url = fake(other_line.clone()).await;
