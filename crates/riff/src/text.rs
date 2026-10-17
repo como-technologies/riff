@@ -689,7 +689,7 @@ pub fn riff_set(
 ///     statusline: Statusline::Added("/h/.claude/settings.json".into()),
 /// };
 /// let off = State { on: false, by: None, forced: false, repo: None };
-/// let mut scoped = Scoped { answer: None, moved: None, state: off.clone(), global: false, kept: false };
+/// let mut scoped = Scoped { answer: None, moved: None, state: off.clone(), global: false, kept: false, on_in: vec![] };
 /// assert_eq!(
 ///     riff::text::connected(&done, &scoped),
 ///     "Removed the old riff MCP server entry.\n\
@@ -714,13 +714,13 @@ pub fn riff_set(
 ///
 /// // A person took the entry of the user settings out: riff was on in
 /// // each repository.
-/// scoped = Scoped { answer: None, moved: Some(vec!["/r".into()]), state: off.clone(), global: false, kept: false };
+/// scoped = Scoped { answer: None, moved: Some(vec!["/r".into()]), state: off.clone(), global: false, kept: false, on_in: vec![] };
 /// let text = riff::text::connected(&done, &scoped);
 /// assert!(text.contains("Now it is on only where you turn it on."), "{text}");
 /// assert!(text.contains("\n  cd /r && riff enable\n"), "{text}");
 /// assert!(text.ends_with("cd REPO && riff enable"), "{text}");
 ///
-/// scoped = Scoped { answer: Some(Scope::Global), moved: None, state: off.clone(), global: true, kept: false };
+/// scoped = Scoped { answer: Some(Scope::Global), moved: None, state: off.clone(), global: true, kept: false, on_in: vec![] };
 /// assert!(riff::text::connected(&done, &scoped).ends_with("To turn it off: riff disable --global"));
 /// // An old install: riff kept its choice, and asked nothing.
 /// scoped.kept = true;
@@ -728,8 +728,18 @@ pub fn riff_set(
 ///     "\nriff stays on in each repository on this machine, as before this release. To \
 ///      change it: riff disable --global"
 /// ));
-/// scoped = Scoped { answer: Some(Scope::Repo), moved: None, state: off, global: false, kept: false };
+/// scoped = Scoped { answer: Some(Scope::Repo), moved: None, state: off.clone(), global: false, kept: false, on_in: vec![] };
 /// assert!(riff::text::connected(&done, &scoped).contains("This directory is not in a git repository."));
+///
+/// // riff is off here, and on in other repositories: the line names them
+/// // (01M53NEE536G72QMVXCVTS28ES).
+/// scoped = Scoped { answer: None, moved: None, state: off, global: false, kept: false, on_in: vec!["/r".into()] };
+/// assert!(riff::text::connected(&done, &scoped).ends_with(
+///     "\nriff is on in 1 repository on this machine: /r. To turn it on in another repository: \
+///      cd REPO && riff enable"
+/// ));
+/// scoped.on_in.push("/s".into());
+/// assert!(riff::text::connected(&done, &scoped).contains("on in 2 repositories on this machine: /r, /s."));
 /// ```
 pub fn connected(done: &Connected, scoped: &crate::enable::Scoped) -> String {
     use crate::enable::Scope;
@@ -794,9 +804,26 @@ pub fn connected(done: &Connected, scoped: &crate::enable::Scoped) -> String {
         if scoped.answer == Some(Scope::Repo) && scoped.state.repo.is_none() {
             out.push_str("This directory is not in a git repository. ");
         }
-        out.push_str(
-            "riff is installed but off. To turn it on in a repository: cd REPO && riff enable",
-        );
+        let repos: Vec<String> = scoped
+            .on_in
+            .iter()
+            .map(|repo| repo.display().to_string())
+            .collect();
+        match repos.len() {
+            0 => out.push_str(
+                "riff is installed but off. To turn it on in a repository: cd REPO && riff \
+                 enable",
+            ),
+            n => {
+                let what = if n == 1 { "repository" } else { "repositories" };
+                let _ = write!(
+                    out,
+                    "riff is on in {n} {what} on this machine: {}. To turn it on in another \
+                     repository: cd REPO && riff enable",
+                    repos.join(", ")
+                );
+            }
+        }
     }
     out
 }

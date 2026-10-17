@@ -197,6 +197,10 @@ fi
 /// as systemd does, and writes its pid to `bin/daemon.pid`. `disable
 /// --now riff.service` stops it with a SIGTERM.
 /// `is-active riff.service` says `active` while that daemon runs.
+/// `show --property=MainPID` gives that pid. `--no-block try-restart
+/// riff.service` does what the file `bin/try-restart` says: `stop` ends
+/// this `systemctl` with a SIGTERM, as the stop of the unit does; other
+/// text goes to stderr with the exit code 1. With no file, it exits 0.
 pub fn fake_systemctl(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -207,6 +211,18 @@ case "$*" in
       echo active; exit 0
     fi
     echo inactive; exit 3 ;;
+  '--user show --property=MainPID --value riff.service')
+    n=0
+    while [ ! -s "$dir/daemon.pid" ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n + 1)); done
+    cat "$dir/daemon.pid" 2>/dev/null || echo 0 ;;
+  '--user --no-block try-restart riff.service')
+    if [ -f "$dir/try-restart" ]; then
+      if [ "$(cat "$dir/try-restart")" = stop ]; then
+        kill -TERM $$
+      fi
+      cat "$dir/try-restart" >&2
+      exit 1
+    fi ;;
   '--user disable --now riff.service')
     [ -f "$dir/daemon.pid" ] && kill "$(cat "$dir/daemon.pid")" 2>/dev/null ;;
   '--user restart riff.service')

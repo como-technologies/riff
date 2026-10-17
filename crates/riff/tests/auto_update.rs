@@ -269,6 +269,18 @@ async fn one_update_runs_for_the_machine_with_the_release_of_the_server() {
         riff::local::tried(&machine.state()).as_deref(),
         Some(newer_tag().as_str())
     );
+
+    // 01M53NEE7W0ZC8B7EV9ET6QHBB: after the update, no line of
+    // update.log names the old build as the build that runs.
+    let ended = wait_for(Duration::from_secs(20), async || {
+        !riff::local::updating(&machine.state())
+    })
+    .await;
+    assert!(ended, "the update in the background runs on");
+    let update_log = std::fs::read_to_string(riff::local::update_log(&machine.state())).unwrap();
+    assert!(update_log.contains(&words), "{update_log}");
+    let old = format!("this riff runs build {}", Build::this());
+    assert!(!update_log.contains(&old), "{update_log}");
 }
 
 /// With `update.auto = false`, nothing runs, and the note to update
@@ -459,6 +471,62 @@ fn the_book_shows_how_to_update_riff_by_itself() {
         .unwrap();
     assert!(text(&help.stdout).contains("--auto [<AUTO>]"));
     assert!(!text(&help.stdout).contains("--background"));
+}
+
+/// "Each step of an update" in the book shows the real lines of
+/// `update.log` and of the log of the daemon (01M53NEE2AVNHA8RD8N40FPH03,
+/// 01M53NEE536G72QMVXCVTS28ES, 01M53NEE7W0ZC8B7EV9ET6QHBB).
+#[test]
+fn the_book_shows_the_log_lines_of_an_update() {
+    use riff::enable::{Scoped, State};
+    use riff::plugin::{Connected, Statusline};
+
+    let book = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
+    )
+    .unwrap();
+    let start = book
+        .find("\n#### Each step of an update\n")
+        .expect("the section");
+    let rest = &book[start + 1..];
+    let part = &rest[..rest[5..].find("\n#").map_or(rest.len(), |i| i + 5)];
+
+    let connected = Connected {
+        dir: "/home/mike/.local/share/riff/claude-plugin".into(),
+        removed_old: false,
+        statusline: Statusline::Set,
+    };
+    let off = State {
+        on: false,
+        by: None,
+        forced: false,
+        repo: None,
+    };
+    let scoped = Scoped {
+        answer: None,
+        moved: None,
+        state: off,
+        global: false,
+        kept: false,
+        on_in: vec!["/home/mike/src/riff".into()],
+    };
+    let connect = riff::text::connected(&connected, &scoped);
+    let updated = format!(
+        "riff: {}",
+        riff::text::auto_updated("pangolin", "v1.6.0", "v1.7.0")
+    );
+    let no_restart = riff::text::daemon_no_restart("");
+    let no_restart = no_restart.split(':').next().unwrap();
+    for line in connect.lines().chain([
+        riff::text::updated(None).as_str(),
+        updated.as_str(),
+        riff::text::DAEMON_NEW_RIFF,
+        no_restart,
+        "riff is installed but off",
+        "riff daemon install",
+    ]) {
+        assert!(part.contains(line), "{line:?} is not in the section");
+    }
 }
 
 /// A fake `cargo` in `bin` that logs its arguments like

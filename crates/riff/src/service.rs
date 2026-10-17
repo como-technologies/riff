@@ -42,6 +42,11 @@
 //! | Start it again when it runs, and do not wait | `systemctl --user --no-block try-restart riff.service` |
 //! | The process of the daemon | `systemctl --user show --property=MainPID --value riff.service` |
 //!
+//! The new start stops each process of the unit, also the `systemctl`
+//! child of the daemon that asked for it. So that child can end by a
+//! signal before it exits. With no text on stderr, the new start runs:
+//! it is no failure ([`restarted`], 01M53NEE2AVNHA8RD8N40FPH03).
+//!
 //! ```
 //! use riff::service::Unit;
 //!
@@ -57,7 +62,7 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 
 use anyhow::{Context, Result, bail};
 
@@ -251,7 +256,9 @@ pub trait ServiceManager {
     fn rewrite(&self, unit: &Unit) -> Result<PathBuf>;
 
     /// Asks the manager to start the unit again when it runs. It does
-    /// not wait for the new start (01M517BTJ9EV4ZGPYRB6HXJJC9).
+    /// not wait for the new start (01M517BTJ9EV4ZGPYRB6HXJJC9). A new
+    /// start that stops the process that asks is no failure
+    /// ([`restarted`], 01M53NEE2AVNHA8RD8N40FPH03).
     fn try_restart(&self) -> Result<()>;
 
     /// The process ID of the daemon that the unit runs, or `None` when
@@ -306,23 +313,73 @@ impl Systemd {
     }
 }
 
-/// Runs `systemctl --user ARGS`, and gives its stdout. With `check`, an
-/// exit that is not 0 is an error that names the command.
-fn systemctl(args: &[&str], check: bool) -> Result<String> {
-    let out = std::process::Command::new("systemctl")
+/// Runs `systemctl --user ARGS`, and gives its output.
+fn output(args: &[&str]) -> Result<Output> {
+    std::process::Command::new("systemctl")
         .arg("--user")
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .with_context(|| text::no_program("systemctl"))?;
+        .with_context(|| text::no_program("systemctl"))
+}
+
+/// The error of `systemctl --user ARGS` that gave `out`: the command,
+/// and its stderr, or its exit when stderr has no text.
+fn failed(args: &[&str], out: &Output) -> anyhow::Error {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let why = match stderr.trim() {
+        "" => out.status.to_string(),
+        text => text.to_owned(),
+    };
+    anyhow::anyhow!("systemctl --user {}: {why}", args.join(" "))
+}
+
+/// Runs `systemctl --user ARGS`, and gives its stdout. With `check`, an
+/// exit that is not 0 is an error that names the command.
+fn systemctl(args: &[&str], check: bool) -> Result<String> {
+    let out = output(args)?;
     if check && !out.status.success() {
-        bail!(
-            "systemctl --user {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
+        return Err(failed(args, &out));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+/// The result of `systemctl --user ARGS`, a new start of the unit, from
+/// its output `out` (01M53NEE2AVNHA8RD8N40FPH03). The new start stops
+/// each process of the unit. When the daemon asks, that is also its
+/// `systemctl` child, which can end by a signal before it exits. With
+/// no text on stderr, systemd has the job, and the new start runs. An
+/// exit code that is not 0, or a signal with text on stderr, is a
+/// failure. The exit code 0 is no failure, also with a warning on
+/// stderr.
+///
+/// ```
+/// use std::os::unix::process::ExitStatusExt;
+/// use std::process::{ExitStatus, Output};
+/// use riff::service::restarted;
+///
+/// let out = |status: i32, stderr: &str| Output {
+///     status: ExitStatus::from_raw(status),
+///     stdout: Vec::new(),
+///     stderr: stderr.into(),
+/// };
+/// let args = ["--no-block", "try-restart", "riff.service"];
+/// assert!(restarted(&args, &out(0, "")).is_ok());
+/// // The stop of the unit ends the child with a SIGTERM (15).
+/// assert!(restarted(&args, &out(15, "")).is_ok());
+/// // The exit code 1 (the wait status 1 << 8), with its error.
+/// let e = restarted(&args, &out(1 << 8, "Access denied")).unwrap_err();
+/// assert_eq!(e.to_string(), "systemctl --user --no-block try-restart riff.service: Access denied");
+/// let e = restarted(&args, &out(15, "Failed to connect to bus")).unwrap_err();
+/// assert!(e.to_string().ends_with(": Failed to connect to bus"));
+/// ```
+pub fn restarted(args: &[&str], out: &Output) -> Result<()> {
+    use std::os::unix::process::ExitStatusExt;
+    let stopped = out.status.signal().is_some() && out.stderr.trim_ascii().is_empty();
+    if out.status.success() || stopped {
+        return Ok(());
+    }
+    Err(failed(args, out))
 }
 
 /// Writes `text` to `path`, through a new file and a rename.
@@ -372,7 +429,8 @@ impl ServiceManager for Systemd {
     }
 
     fn try_restart(&self) -> Result<()> {
-        systemctl(&["--no-block", "try-restart", UNIT], true).map(drop)
+        let args = ["--no-block", "try-restart", UNIT];
+        restarted(&args, &output(&args)?)
     }
 
     fn main_pid(&self) -> Result<Option<u32>> {
@@ -466,6 +524,41 @@ mod tests {
         let e = systemd.uninstall().unwrap_err().to_string();
         assert!(e.starts_with("riff did not write the unit "), "{e}");
         assert!(systemd.unit_path().exists());
+    }
+
+    /// 01M53NEE2AVNHA8RD8N40FPH03: a child that a signal ends at the new
+    /// start is no failure. An exit code that is not 0, or text on
+    /// stderr, is a failure with its error.
+    #[test]
+    fn a_child_that_a_signal_ends_at_the_new_start_is_no_failure() {
+        let run = |script: &str| {
+            std::process::Command::new("sh")
+                .args(["-c", script])
+                .stdin(Stdio::null())
+                .output()
+                .unwrap()
+        };
+        let args = ["--no-block", "try-restart", UNIT];
+        for signal in ["TERM", "KILL"] {
+            let out = run(&format!("kill -{signal} $$"));
+            assert!(!out.status.success());
+            restarted(&args, &out).unwrap();
+        }
+        let failed = |script: &str| restarted(&args, &run(script)).unwrap_err().to_string();
+        assert_eq!(
+            failed("echo 'Failed to try-restart riff.service: Access denied' >&2; exit 1"),
+            "systemctl --user --no-block try-restart riff.service: Failed to try-restart \
+             riff.service: Access denied"
+        );
+        assert_eq!(
+            failed("exit 5"),
+            "systemctl --user --no-block try-restart riff.service: exit status: 5"
+        );
+        assert_eq!(
+            failed("echo 'Failed to connect to bus' >&2; kill -TERM $$"),
+            "systemctl --user --no-block try-restart riff.service: Failed to connect to bus"
+        );
+        restarted(&args, &run("echo 'Warning: the unit changed on disk' >&2")).unwrap();
     }
 
     /// The unit that riff wrote comes back from its file, with no

@@ -79,8 +79,16 @@ use riff_core::name::Place;
 
 use crate::{identity, lifecycle, local, release, settings, text};
 
-/// True in the update in the background: it starts no other update.
+/// True in the update in the background ([`in_background`]).
 static OFF: AtomicBool = AtomicBool::new(false);
+
+/// True in the update in the background ([`run`]). It starts no other
+/// update. It prints no note that `riff-server` runs another build: it
+/// installs that build, and its last line and its message to the lead
+/// say how it went (01M53NEE7W0ZC8B7EV9ET6QHBB).
+pub fn in_background() -> bool {
+    OFF.load(Ordering::Relaxed)
+}
 
 /// The release that this process started an update for.
 static STARTED: Mutex<Option<String>> = Mutex::new(None);
@@ -176,7 +184,7 @@ pub fn begin(url: &str, server: &Build) {
         }
         None => return,
     };
-    if OFF.load(Ordering::Relaxed) {
+    if in_background() {
         return;
     }
     let mark = mark(&tag);

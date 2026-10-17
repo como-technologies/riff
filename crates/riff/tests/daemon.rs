@@ -257,6 +257,69 @@ async fn a_daemon_of_a_dev_build_does_no_step_of_an_update() {
     wait_for(&log, "The riff daemon stops").await;
 }
 
+/// Starts the daemon of a unit that names the riff of an older release,
+/// with `mode` in the file `try-restart` of the fake `systemctl`. The
+/// daemon runs an old riff, so it asks for its new start at once. Waits
+/// for that ask, and for `line` in the log of the daemon. Then it stops
+/// the daemon, and gives its log.
+async fn the_daemon_of_an_old_unit_starts_again(mode: &str, line: &str) -> String {
+    let here = Here::new();
+    std::fs::write(here.bin.path().join("try-restart"), mode).unwrap();
+    let unit = riff::service::Unit {
+        exe: "/opt/riff-of-an-older-release/riff".into(),
+        env: vec![("PATH".into(), here.path.clone())],
+    };
+    let unit_path = here.env.home().join(".config/systemd/user/riff.service");
+    std::fs::create_dir_all(unit_path.parent().unwrap()).unwrap();
+    std::fs::write(&unit_path, unit.text().unwrap()).unwrap();
+
+    // systemd starts the daemon of the unit.
+    let mut cmd = here.env.command(here.bin.path().join("systemctl"));
+    cmd.args(["--user", "restart", "riff.service"])
+        .env("PATH", &here.path)
+        .env("FAKE_RIFF", here.env.riff_path())
+        .env_remove("RIFF_HOME");
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let log = here.bin.path().join("daemon.out");
+    wait_for(&log, riff::text::DAEMON_NEW_RIFF).await;
+    let ask = "systemctl --user --no-block try-restart riff.service";
+    wait_for(&here.bin.path().join("systemctl.log"), ask).await;
+    wait_for(&log, line).await;
+
+    let pid: u32 = here.read("daemon.pid").trim().parse().unwrap();
+    term(pid);
+    wait_for(&log, "The riff daemon stops").await;
+    std::fs::read_to_string(&log).unwrap()
+}
+
+/// 01M53NEE2AVNHA8RD8N40FPH03, 01M517BTP6BAGTRBYWPX9GPVE0: the stop of
+/// the unit at the new start ends the `systemctl` child of the daemon
+/// with a SIGTERM. The daemon logs no failure, and no `riff daemon
+/// install` step. A real failure of `systemctl`, with an exit code that
+/// is not 0 and its error on stderr, still logs the error.
+#[tokio::test]
+async fn a_new_start_that_stops_the_systemctl_of_the_daemon_logs_no_failure() {
+    let no_restart = riff::text::daemon_no_restart("");
+    let no_restart = no_restart.split(':').next().unwrap();
+
+    let stopped = the_daemon_of_an_old_unit_starts_again("stop", riff::text::DAEMON_NEW_RIFF).await;
+    assert!(!stopped.contains(no_restart), "{stopped}");
+    assert!(!stopped.contains("Run: riff daemon install"), "{stopped}");
+
+    let error = "Failed to try-restart riff.service: Access denied";
+    let failed = format!(
+        "riff daemon: {}",
+        riff::text::daemon_no_restart(&format!(
+            "systemctl --user --no-block try-restart riff.service: {error}"
+        ))
+    );
+    let log = the_daemon_of_an_old_unit_starts_again(error, &failed).await;
+    assert_eq!(log.matches(no_restart).count(), 1, "{log}");
+}
+
 #[tokio::test]
 async fn riff_daemon_install_with_riff_home_installs_nothing() {
     let here = Here::new();

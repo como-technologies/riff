@@ -361,6 +361,12 @@
   directory, the file that decides, and the command to change it. The
   start context names the file that turned riff on, and
   `riff disable`.
+- **01M53NEE536G72QMVXCVTS28ES** When riff is off in the working
+  directory, the last line of `riff connect claude` names each
+  repository of the Claude Code state file where riff is on: the main
+  clone of each project. It says `riff is installed but off` only when
+  riff is on in none of them. So the line of an update, which runs in
+  the home directory, is true.
 - **01M3XY2T0R2Q39XYX8AYV7T0RK** When the Claude Code state file has
   `plugin:riff:riff` in `disabledMcpServers` of the project, a person
   turned the riff server off there in `/mcp`. The start context then
@@ -4610,6 +4616,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the lead of the user gets one direct message from the person: the
   host, the old release and the new release. After a failed update,
   the message holds the error, and the old binaries stay.
+- **01M53NEE7W0ZC8B7EV9ET6QHBB** The update in the background prints
+  no note that `riff-server` runs another build
+  (01M3MX1E8M9TKBN90P4DYKH3H8): it installs that build. So no line of
+  `update.log` names the old build as the build that runs.
 - **01M3NT2Q0RNM9PVHT42V459624** An update in the background runs in
   the local files of riff, not in the working directory of the process
   that started it. It gets the place of that process, so the message
@@ -5113,6 +5123,12 @@ share.
   minute. When it runs an old riff and owns no session, no start
   waits and no job runs, it asks systemd one time to start the unit
   again. A failed ask is one line in its log.
+- **01M53NEE2AVNHA8RD8N40FPH03** The new start of the unit stops the
+  `systemctl` child of the daemon that asks for it. When that child
+  ends by a signal with no text on stderr, the new start runs: the
+  daemon logs no failure and no `riff daemon install` step. An exit
+  code that is not 0, or a signal with text on stderr, is a failed ask,
+  and its line names the error.
 - **01M4ZHW2083VFTQJ772ZJ27XAC** The daemon keeps its state in the
   folder `state` in its folder: the log and the checkpoints of
   `riff-state`. At each start, it loads the newest checkpoint that it
