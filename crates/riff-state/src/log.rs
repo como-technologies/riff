@@ -1,5 +1,4 @@
-//! The log of riff: chunks in a [`Store`]. riff-server and the riff
-//! daemon ([`crate::local`]) write it.
+//! The log of riff: chunks in a [`Store`]. riff-server writes it.
 //!
 //! # Chunks (01M3T4118SDERYGJ25TAT1RGR2)
 //!
@@ -216,7 +215,7 @@ pub fn decode(bytes: &[u8]) -> Result<(Header, Vec<Line>), String> {
 /// The proof that the records of a chunk are in the log (01M3X4Z6DSWKMJ2R549R4TSYP0).
 /// Only [`write()`] and [`write_counted`] make it, so only a written
 /// chunk reaches the written copy of the state: the engine of
-/// riff-server and [`crate::local::Local`] take it. A chunk
+/// riff-server takes it. A chunk
 /// with no record needs no object: a write of no record gives the proof
 /// with no I/O.
 ///

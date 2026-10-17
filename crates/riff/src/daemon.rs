@@ -2301,8 +2301,8 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// The riff tools of the session of `record`. They act on the
     /// riff-server of the session, as in riff 1.x, with the sign-in of
-    /// the person on this machine (01M4ZHSZV46RF3XDXDTQXWGXRG,
-    /// 01M51VZG27DXSRHBT8M14S7B9A). That session is the worker session
+    /// the person on this machine (01M4ZHSZV46RF3XDXDTQXWGXRG). That
+    /// session is the worker session
     /// of `riff run` or of a wave, which holds the claim of the item. The
     /// session gets only the tools that talk, and act on no folder of the
     /// host and no claim ([`crate::mcp::CONTAINER_TOOLS`],

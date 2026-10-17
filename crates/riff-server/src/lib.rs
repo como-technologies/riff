@@ -23,8 +23,8 @@
 //!   passes the time in, so tests control it.
 //! - The state machine is the crate `riff-state`: the [`state`], the
 //!   [`log`] and its replay, the [`checkpoint`], the [`store`], and the
-//!   rules of the [`owner`] role and of [`idle`] workers. The riff
-//!   daemon uses it too (01M4ZHW1Y1X21ZPV053D0CXWMC). This crate adds
+//!   rules of the [`owner`] role and of [`idle`] workers. Only
+//!   riff-server uses it (01M4ZHW1Y1X21ZPV053D0CXWMC). This crate adds
 //!   HTTP, the sign-in, the lease and the engine.
 //! - The writer sends the wakes and the `tail` event of a message to
 //!   two broadcast channels, after the write of its record. Each open

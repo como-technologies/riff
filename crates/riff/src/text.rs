@@ -6269,7 +6269,7 @@ pub const DAEMON_NO_HELLO: &str =
     "The riff daemon cannot read the first line: it is not a hello of riff.";
 
 /// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S,
-/// 01M4ZHW24JZZXM3JJXG3PRJS7N, 01M501PADKZNRHBZD9XPMJGW06).
+/// 01M501PADKZNRHBZD9XPMJGW06).
 ///
 /// ```
 /// use riff::daemon::{Live, Phase, Status, WaveShown};

@@ -7271,7 +7271,9 @@ items of Wave C that end riff-server in the Backlog
   them for the next run. The daemon of the machine keeps running with
   its peer links. The test does not talk to it, and no step of the test,
   the book or the skill stops, starts or changes it. Step 5 fails only
-  when a daemon of the test answers before the start.
+  when a daemon of the test answers before the start. Superseded in part
+  by the re-cut (01M53NGW3FR555TWP8Z8HHRVDJ): the daemon of the test has
+  no key and no riff, and the daemon of the machine has no peer links.
 - **01M4ZCFGKDKH16KGKR5NBEK3Y4** Before each tag, an admin runs
   `just real-session` on the merge commit of the release pull request,
   on a host with podman. It passes before the tag.
