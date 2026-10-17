@@ -4,6 +4,7 @@
 [riff 3.0](riff-3.md)
 [riff 3.0: peers](riff-3-peers.md)
 [riff 3.0: no cloud](riff-3-no-cloud.md)
+[riff on a phone](riff-mobile.md)
 
 - [Start a Riff](start-a-riff.md)
 - [Start a Team Riff](start-a-team-riff.md)
