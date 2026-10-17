@@ -2,7 +2,7 @@
 
 This page is the design of the UI architecture of riff (#982). It
 decides the core library, the list of UIs and their order. Each UI has
-a child design of its own. No UI of this page is built yet: the work
+a child design of its own. Only the CLI is built: the work on the rest
 starts in riff 3.1 (see [The order](#the-order)). Until then,
 `riff --help` does not show `riff device`, and `riff` with no command
 prints the help. The [requirements of the UIs](requirements.md#the-uis)
