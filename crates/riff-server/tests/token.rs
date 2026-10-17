@@ -1,11 +1,13 @@
 use crate::common;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use isolated::in_time;
 use riff_core::dpop::Key;
 use riff_core::wire::{TokenError, TokenReply};
+use riff_server::lease::Timing;
 use riff_state::store::{Loaded, Memory, SIGN_INS, Store, StoreError, Version};
 
 async fn error(reply: reqwest::Response) -> (u16, String) {
@@ -181,20 +183,9 @@ async fn each_token_stays_valid_across_a_restart_and_a_deploy() {
     assert_eq!(register(&url, &key, &a.access_token, A).await, 200);
     let b = for_session(&url, &key, &third.access_token, "b").await;
     // The task of each second saves the swap: the hash of its token.
-    let hash = {
-        use base64::Engine;
-        use sha2::Digest;
-        let digest = sha2::Sha256::digest(b.access_token.as_bytes());
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
-    };
     let span = isolated::Span::start();
-    loop {
-        let saved = store.load(SIGN_INS).await.unwrap().unwrap().bytes;
-        let saved = String::from_utf8(saved).unwrap();
-        if saved.contains(&hash) {
-            break;
-        }
-        assert!(span.within(Duration::from_secs(10)), "{saved}");
+    while !saved_holds(&store, &b.access_token).await {
+        assert!(span.within(Duration::from_secs(10)), "the swap is not saved");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
@@ -224,6 +215,189 @@ async fn each_token_stays_valid_across_a_restart_and_a_deploy() {
     let gone = common::refresh(&url, &key, &form(&fourth.refresh_token)).await;
     assert_eq!(error(gone).await, (400, "invalid_grant".into()));
     assert_eq!(register(&url, &key, &a.access_token, A).await, 401);
+}
+
+/// True when the saved token store holds the hash of `token`.
+async fn saved_holds(store: &Memory, token: &str) -> bool {
+    use base64::Engine;
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(token.as_bytes());
+    let hash = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
+    let saved = store.load(SIGN_INS).await.unwrap().unwrap().bytes;
+    String::from_utf8(saved).unwrap().contains(&hash)
+}
+
+/// The lease times of a deploy in a test: the new instance waits long
+/// enough for the old one to read the new lease and to hand over, also
+/// under load.
+const DEPLOY: Timing = Timing {
+    wait: Duration::from_secs(3),
+    ..common::LEASE
+};
+
+/// No client with a valid access token gets a 401 at a deploy. The old
+/// instance gives a session token in its last window, so its task of
+/// each second does not write it. When the old instance reads the new
+/// lease, it writes the token store (01M53T8XCTVEXGJVF9GSYVAT7Y). The
+/// new instance loads the sign-ins again after its wait, so the token
+/// works there.
+#[tokio::test]
+async fn a_token_from_the_last_window_of_the_old_instance_works_after_a_deploy() {
+    let store = Memory::default();
+    // The log knows the person, and the store holds the sign-in.
+    let (first, _) = common::start_signed_on(Arc::new(store.clone())).await;
+    let key = Key::generate();
+    let person = first
+        .admit("mike@comotechnologies.io", true, &key.thumbprint())
+        .await
+        .unwrap();
+    first.shutdown().await.unwrap();
+    drop(first);
+
+    // The window of the old instance is longer than the test.
+    let long = Duration::from_secs(600);
+    let (old, url) = common::start_on_with(Arc::new(store.clone()), DEPLOY, long, true).await;
+    let a = for_session(&url, &key, &person.access_token, "a").await;
+    assert_eq!(register(&url, &key, &a.access_token, A).await, 200);
+    assert!(!saved_holds(&store, &a.access_token).await, "not saved yet");
+
+    let (new, url) =
+        common::start_on_with(Arc::new(store.clone()), DEPLOY, common::SAVE_EVERY, true).await;
+    in_time(Duration::from_secs(5), old.stopped())
+        .await
+        .unwrap();
+    old.handed_over().await;
+    assert!(saved_holds(&store, &a.access_token).await, "the hand-over");
+    assert_eq!(register(&url, &key, &a.access_token, A).await, 200);
+    assert_eq!(register(&url, &key, &person.access_token, MIKE).await, 200);
+    new.shutdown().await.unwrap();
+}
+
+/// A model of the rate limit of Cloud Storage for one object: a save of
+/// the token store less than one second after the last change of the
+/// object gets 429 ([`StoreError::Busy`]). The saves take 300 ms and
+/// 20 ms in turn, and the object changes at the end of a save.
+#[derive(Clone, Default)]
+struct RateLimited {
+    store: Memory,
+    saves: Arc<AtomicUsize>,
+    /// The time of each change of the token store.
+    changes: Arc<std::sync::Mutex<Vec<Instant>>>,
+    /// The number of saves that got 429.
+    limited: Arc<AtomicUsize>,
+}
+
+impl riff_state::store::Store for RateLimited {
+    fn load<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<Option<Loaded>, StoreError>> {
+        self.store.load(name)
+    }
+
+    fn list<'a>(
+        &'a self,
+        prefix: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<Vec<String>, StoreError>> {
+        self.store.list(prefix)
+    }
+
+    fn save<'a>(
+        &'a self,
+        name: &'a str,
+        bytes: Vec<u8>,
+        known: Option<Version>,
+    ) -> futures::future::BoxFuture<'a, Result<Version, StoreError>> {
+        if name != SIGN_INS {
+            return self.store.save(name, bytes, known);
+        }
+        Box::pin(async move {
+            let slow = self.saves.fetch_add(1, Ordering::SeqCst) % 2 == 0;
+            let takes = Duration::from_millis(if slow { 300 } else { 20 });
+            tokio::time::sleep(takes).await;
+            let last = self.changes.lock().unwrap().last().copied();
+            if last.is_some_and(|last| last.elapsed() < Duration::from_secs(1)) {
+                self.limited.fetch_add(1, Ordering::SeqCst);
+                return Err(StoreError::Busy("429: the rate limit of one object".into()));
+            }
+            let saved = self.store.save(name, bytes, known).await;
+            if saved.is_ok() {
+                self.changes.lock().unwrap().push(Instant::now());
+            }
+            saved
+        })
+    }
+
+    fn delete<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures::future::BoxFuture<'a, Result<(), StoreError>> {
+        self.store.delete(name)
+    }
+}
+
+/// Many token calls in each second give at most one write of the token
+/// store each second at the store, also when one write is slow and the
+/// next one is fast: the window counts from the end of each write
+/// (01M53T8X5KH59R3P8H2D22WE32). So the rate limit of Cloud Storage
+/// refuses no write, and no swap gets 503.
+#[tokio::test]
+async fn many_token_calls_in_each_second_give_at_most_one_write_each_second() {
+    let store = RateLimited::default();
+    let every = Duration::from_secs(1);
+    let (service, url) = common::start_on_every(Arc::new(store.clone()), every).await;
+    let key = Key::generate();
+    let person = service
+        .tokens()
+        .sign_in(
+            "mike@comotechnologies.io",
+            &key.thumbprint(),
+            Instant::now(),
+        )
+        .unwrap();
+    // About 20 swaps each second for 4 seconds, as the status lines of
+    // busy sessions make them.
+    let started = Instant::now();
+    let mut swaps = 0;
+    while started.elapsed() < Duration::from_secs(4) {
+        let calls = ["a", "b", "c", "d"].map(|s| for_session(&url, &key, &person.access_token, s));
+        futures::future::join_all(calls).await;
+        swaps += 4;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    service.save().await.unwrap();
+    let changes = store.changes.lock().unwrap().clone();
+    assert_eq!(store.limited.load(Ordering::SeqCst), 0, "{changes:?}");
+    assert!(changes.len() >= 3, "{} writes", changes.len());
+    assert!(swaps > changes.len(), "{swaps} swaps");
+}
+
+/// A swap for a session token does not wait for the write of the token
+/// store, and a store that fails does not refuse it
+/// (01M53T8XH45WSVKS9FV3VXF2X8). A refresh still writes the store again
+/// first, and gets 503 (01M3TFG527M04TA7ESM970X3B8).
+#[tokio::test]
+async fn a_swap_goes_on_while_the_token_store_is_not_written() {
+    let store = Failing::default();
+    let (service, url, key, first) = signed_in_on(&store).await;
+    service.save().await.unwrap();
+    store.busy(true);
+    for_session(&url, &key, &first.access_token, "a").await;
+    // Two more saves: the first one failed, and the server knows it.
+    let saves = store.saves().len();
+    store.saved(saves + 2).await;
+    for session in ["b", "c"] {
+        let swap = for_session(&url, &key, &first.access_token, session).await;
+        let who = service
+            .tokens()
+            .caller(&swap.access_token, &key.thumbprint(), Instant::now());
+        assert_eq!(who.unwrap().to_string(), format!("mike/{session}"));
+    }
+    let refused = common::refresh(&url, &key, &form(&first.refresh_token)).await;
+    assert_eq!(
+        error(refused).await,
+        (503, "temporarily_unavailable".into())
+    );
 }
 
 /// A store whose saves of the token store fail while `failing` is true.

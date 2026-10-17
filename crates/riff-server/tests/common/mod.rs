@@ -113,7 +113,10 @@ pub async fn start_signed_on(store: Arc<dyn Store>) -> (Service, String) {
     start_on_with(store, LEASE, SAVE_EVERY, true).await
 }
 
-async fn start_on_with(
+/// As [`start_on`], with the lease times `lease`, `save_every` between
+/// two writes of the token store, and the token check on each call when
+/// `require_sign_in`.
+pub async fn start_on_with(
     store: Arc<dyn Store>,
     lease: Timing,
     save_every: Duration,
