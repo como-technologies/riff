@@ -307,11 +307,12 @@ impl Keyring {
             !has_owner(),
             "the bus {bus} already has a Secret Service: it is not a private bus. Stop."
         );
+        let log = Path::new(&std::env::var_os("HOME").unwrap()).join("gnome-keyring.log");
         let mut daemon = Command::new("gnome-keyring-daemon")
             .args(["--foreground", "--unlock", "--components=secrets"])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(std::fs::File::create(&log).unwrap())
             .spawn()
             .unwrap();
         // The daemon reads the password up to the end of its input.
@@ -326,7 +327,9 @@ impl Keyring {
         while !has_owner() {
             assert!(
                 start.elapsed() < Duration::from_secs(10),
-                "the test keyring did not start"
+                "the test keyring did not start. The bus: {}. The keyring: {}",
+                bus_call("NameHasOwner"),
+                std::fs::read_to_string(&log).unwrap_or_default()
             );
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -367,7 +370,7 @@ fn has_owner() -> bool {
 }
 
 /// The reply of the bus to the call `method` with the name of the
-/// Secret Service.
+/// Secret Service, then the errors of the call.
 fn bus_call(method: &str) -> String {
     let out = Command::new("dbus-send")
         .args([
@@ -380,7 +383,7 @@ fn bus_call(method: &str) -> String {
         ])
         .output()
         .unwrap();
-    String::from_utf8_lossy(&out.stdout).into_owned()
+    String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr)
 }
 
 /// A `dbus-monitor` of each `OpenSession` call on the bus of the child.

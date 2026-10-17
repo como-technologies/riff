@@ -5262,8 +5262,9 @@ part when they merge.
 - **01M51117NDKF11FNZ915TTQED4** `just session-test` runs the tests of
   `crates/riff` in a container of the session image that `riff.toml`
   pins. The container has `--init`, the user of the host with `USER`
-  and `LOGNAME`, a home of its own and the limits of a session (`--cpus
-  4`, `--memory 8g`), as a session has. In CI, the test parts of the
+  and `LOGNAME` and an entry in its passwd and group files, a home of
+  its own and the limits of a session (`--cpus 4`, `--memory 8g`), as a
+  session has. In CI, the test parts of the
   Gate run there (01M515Z3Y7GSFNTJGXJD727MQK).
 - **01M515Z3Y7GSFNTJGXJD727MQK** The jobs `Tests I/N` of the Gate run
   `deploy/session-test.sh --part I/N`: part I of N of the tests of the
