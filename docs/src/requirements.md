@@ -4583,8 +4583,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
     changes what a session does, for example the pull request flow,
     the verify, the claims, the waves or the pause.
 
-  A wire change stays additive for one minor, so that `riff-server`
-  serves the minor before its own (01M3MX1E1EY1M7JGNCN6FCEVQK). Riff
+  A wire change stays additive for one line, so that `riff-server`
+  serves the line before its own (01M3MX1E1EY1M7JGNCN6FCEVQK). Riff
   does not bridge a difference in behavior: the version note tells the
   older session to update.
 - **01M3N73ECKSDSH6820AKW9J8F7** The major release `1.0.0` promises

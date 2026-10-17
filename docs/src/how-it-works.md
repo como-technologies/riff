@@ -989,9 +989,9 @@ notice:
   what a session does, for example the pull request flow, the verify,
   the claims, the waves or the pause.
 
-`riff-server` still talks with a `riff` of the minor before its own
+`riff-server` still talks with a `riff` of the line before its own
 (see [Builds](#builds)), so a wire change stays additive for one
-minor. Riff does not bridge a difference in behavior: the version note
+line. Riff does not bridge a difference in behavior: the version note
 tells the older session to update.
 
 ### Major
@@ -1000,6 +1000,8 @@ tells the older session to update.
 it, a major breaks, a minor adds and a patch fixes. A change of
 behavior that can break a pipeline or a policy is a major. The line
 1.x takes no major: see [Make a release](development.md#make-a-release).
+1.8.x is the last minor release of 1.x. The next major is 3.0.0: see
+[riff 3.0.0 and the line 1.x](riff-3.md#riff-300-and-the-line-1x).
 
 ### The test for each release
 

@@ -167,6 +167,30 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
     assert!(!help.contains("--forge"), "{help}");
 }
 
+/// 01M53NGW6F5HP1DZ9QRGP50MGT, 01M53NGVE839TRH7XB7CDPQNZE: `riff view`
+/// shows only the sessions of this machine, and `riff lead start` asks
+/// the riff daemon to run the wave when none runs.
+#[test]
+fn the_help_of_view_and_lead_start_says_what_they_do_in_riff_3() {
+    // The words, with no line breaks of the wrap.
+    let words = |args: &[&str]| riff(args).split_whitespace().collect::<Vec<_>>().join(" ");
+    let view = words(&["view", "--help"]);
+    assert!(
+        view.contains("It shows no session of another machine."),
+        "{view}"
+    );
+    for word in ["other machines", "offline"] {
+        assert!(!view.contains(word), "riff view --help: {word}: {view}");
+    }
+    let lead = words(&["lead", "start", "--help"]);
+    assert!(
+        lead.contains(
+            "When no wave of this repository runs, riff first asks the riff daemon to run the wave"
+        ),
+        "{lead}"
+    );
+}
+
 #[test]
 fn the_help_shows_no_value_of_an_environment_variable() {
     let out = Isolated::shared()
