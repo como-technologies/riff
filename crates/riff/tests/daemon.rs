@@ -326,7 +326,7 @@ async fn riff_daemon_install_with_riff_home_installs_nothing() {
     let out = here.run(false, &["daemon", "install"]).await;
     assert!(!out.status.success());
     let stderr = text(&out.stderr);
-    assert!(stderr.contains("RIFF_HOME is set"), "{stderr}");
+    assert!(stderr.contains("RIFF_HOME or RIFF_DATA is set"), "{stderr}");
     assert!(!here.env.home().join(".config/systemd").exists());
     assert_eq!(here.read("systemctl.log"), "");
 }
@@ -381,7 +381,7 @@ async fn riff_daemon_uninstall_with_riff_home_removes_nothing() {
     let out = here.run(false, &["daemon", "uninstall"]).await;
     assert!(!out.status.success());
     let stderr = text(&out.stderr);
-    assert!(stderr.contains("RIFF_HOME is set"), "{stderr}");
+    assert!(stderr.contains("RIFF_HOME or RIFF_DATA is set"), "{stderr}");
     assert_eq!(here.read("systemctl.log"), "");
 }
 

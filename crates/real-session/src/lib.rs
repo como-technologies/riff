@@ -1616,10 +1616,10 @@ fn output(program: impl AsRef<OsStr>, args: &[&str], stop: &AtomicBool) -> Resul
 /// or SIGTERM sets `stop` ([`child_signal`]).
 fn output_of(mut command: Command, stop: &AtomicBool) -> Result<String, String> {
     let program = command.get_program().to_string_lossy().into_owned();
-    let shown = || {
-        let args: Vec<_> = command.get_args().map(OsStr::to_string_lossy).collect();
-        format!("{program} {}", args.join(" "))
-    };
+    let args: Vec<String> = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
     let out = command
         .stdin(Stdio::null())
         .output()
@@ -1627,8 +1627,8 @@ fn output_of(mut command: Command, stop: &AtomicBool) -> Result<String, String> 
     if !out.status.success() {
         child_signal(out.status, stop);
         return Err(format!(
-            "{} ended with {}: {}",
-            shown(),
+            "{program} {} ended with {}: {}",
+            args.join(" "),
             out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         ));
