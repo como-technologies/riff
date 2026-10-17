@@ -207,6 +207,23 @@ async fn the_status_line_calls_me_and_not_who() {
     assert!(!calls.iter().any(|c| c == "/v1/who"), "{calls:?}");
 }
 
+/// 01M53TZ0RBSJQ9ZZRXKMBM5R3E: the status line keeps a good answer of
+/// riff-server for 10 seconds. The status lines after it in that time
+/// ask the server nothing, so they make no token swap either.
+#[tokio::test]
+async fn the_status_lines_soon_after_a_good_answer_ask_the_server_nothing() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let server = counting_server(calls.clone()).await;
+    let dir = repo();
+    join(&server, dir.path()).await;
+    calls.lock().unwrap().clear();
+    for _ in 0..3 {
+        assert_eq!(line(&server, dir.path()).await, "riff a6cf2205 lead\n");
+    }
+    let calls = calls.lock().unwrap().clone();
+    assert_eq!(calls, ["/v1/me"]);
+}
+
 #[tokio::test]
 async fn a_newer_release_gives_the_tag_and_the_same_release_none() {
     let dir = repo();

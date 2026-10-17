@@ -26,6 +26,12 @@ use riff_core::wire::{
 /// (01M4A803Z4Q0KX6NT1KC6QR43H).
 const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
 
+/// How long `riff statusline` keeps the answer of riff-server
+/// (01M53TZ0RBSJQ9ZZRXKMBM5R3E). Claude Code runs the status line after
+/// each change of the conversation, and each call swaps the person token
+/// for a session token: a change of the token store.
+const STATUSLINE_KEEP: Duration = Duration::from_secs(10);
+
 /// How often a watch looks for a leave of its session
 /// (01M3MEEFETT9A0DRWBKQTG77Z2).
 const LEFT_POLL: Duration = Duration::from_millis(250);
@@ -3648,7 +3654,9 @@ fn mcp_off_here() -> bool {
 /// ([`text::statusline`]). It finds the session like a hook does, and
 /// asks riff-server for only that session with `GET /v1/me`, not `who`
 /// (01M3T5GFVS8NMA992KHZN4VE17). It never fails, and it waits at most
-/// [`STATUSLINE_WAIT`] for riff-server.
+/// [`STATUSLINE_WAIT`] for riff-server. It keeps a good answer for
+/// [`STATUSLINE_KEEP`], and asks riff-server nothing while it has one
+/// (01M53TZ0RBSJQ9ZZRXKMBM5R3E).
 async fn statusline(server: &str) -> String {
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -3665,22 +3673,16 @@ async fn statusline(server: &str) -> String {
     if local::dir().is_some_and(|dir| local::mcp_gone_above(&dir)) {
         return text::statusline_mcp_gone(&id);
     }
-    let find = async {
-        let here = identity::place(&identity::working_dir()?)?;
-        let api = Api::new(server).one_try(STATUSLINE_WAIT);
-        let me = identity::agent(&here, &id, api.base())?;
-        anyhow::Ok(api.signed_in(me.who().session())?.me(&me).await?.session)
+    let dir = local::dir();
+    let now = riff::activity::now_ms();
+    let kept = dir
+        .as_deref()
+        .and_then(|dir| local::kept_statusline(dir, &id, server, now, STATUSLINE_KEEP));
+    let (mut line, build) = match kept {
+        Some(kept) => (kept.line, kept.build.and_then(|b| b.parse().ok())),
+        None => statusline_of(server, &id, dir.as_deref(), now).await,
     };
-    let found = tokio::time::timeout(STATUSLINE_WAIT, find).await;
-    // The build of the server comes with its answer: no extra call
-    // (01M3NJCWDN5APKZ3Z53XQR8P0B).
-    let server = match &found {
-        Ok(Err(e)) => e.downcast_ref::<Mismatch>().and_then(|m| m.server.clone()),
-        _ => riff::link::server_build(),
-    };
-    let info = found.ok().and_then(Result::ok).flatten();
-    let mut line = text::statusline(&id, info.as_ref());
-    if let Some(tag) = server.and_then(|server| update_tag(&server)) {
+    if let Some(tag) = build.and_then(|build| update_tag(&build)) {
         line = format!("{line} {}", text::update_tag(&tag));
     }
     // A step of an update that only the person can do
@@ -3689,6 +3691,43 @@ async fn statusline(server: &str) -> String {
         line = format!("{line} {}", text::needs_you_tag(&step));
     }
     line
+}
+
+/// The part of the status line of the session `id` that comes from the
+/// answer of `server`, and the build of the server. A good answer is
+/// kept in `dir` (01M53TZ0RBSJQ9ZZRXKMBM5R3E).
+async fn statusline_of(
+    server: &str,
+    id: &str,
+    dir: Option<&std::path::Path>,
+    now: u64,
+) -> (String, Option<Build>) {
+    let find = async {
+        let here = identity::place(&identity::working_dir()?)?;
+        let api = Api::new(server).one_try(STATUSLINE_WAIT);
+        let me = identity::agent(&here, id, api.base())?;
+        anyhow::Ok(api.signed_in(me.who().session())?.me(&me).await?.session)
+    };
+    let found = tokio::time::timeout(STATUSLINE_WAIT, find).await;
+    // The build of the server comes with its answer: no extra call
+    // (01M3NJCWDN5APKZ3Z53XQR8P0B).
+    let build = match &found {
+        Ok(Err(e)) => e.downcast_ref::<Mismatch>().and_then(|m| m.server.clone()),
+        _ => riff::link::server_build(),
+    };
+    let answered = matches!(found, Ok(Ok(_)));
+    let info = found.ok().and_then(Result::ok).flatten();
+    let line = text::statusline(id, info.as_ref());
+    if let Some(dir) = dir.filter(|_| answered) {
+        let kept = local::Kept {
+            server: server.to_owned(),
+            at_ms: now,
+            build: build.as_ref().map(Build::to_string),
+            line: line.clone(),
+        };
+        let _ = local::keep_statusline(dir, id, &kept);
+    }
+    (line, build)
 }
 
 /// The tag of the status line for a riff of `server`
