@@ -116,7 +116,8 @@ item.
 flowchart LR
     W30["Wave 30:<br/>this design and fixes"] --> R18["1.8.0:<br/>the last release of 1.x"]
     R18 --> W31["Wave 31:<br/>the build items of the re-cut"]
-    W31 --> R3["3.0.0: its tag<br/>deploys riff-server"]
+    W31 --> B["1.8.2: the bridge,<br/>each machine takes it"]
+    B --> R3["3.0.0: its tag<br/>deploys riff-server"]
     R3 --> U["each machine takes 3.0.0<br/>from riff-server"]
     U --> X["the line 1.x retires"]
 ```
@@ -124,14 +125,35 @@ flowchart LR
 - riff 3.0.0 is the first release where each item runs in a container
   by default. It has riff-server, `riff workers` and each other part of
   riff 1.x, except the parts in [What goes](#what-goes-in-riff-300).
-- riff-server 3.0.0 serves riff 1.x too. So a machine of riff 1.x works
-  until it takes 3.0.0.
+- riff 1.8.2 comes first: the bridge. riff 1.8.2 and riff 3.0.0 talk,
+  in both directions. A machine of riff 1.x takes 1.8.2 first, by
+  itself with `update.auto` on. Then it works while it takes 3.0.0. A
+  rollback of riff-server from 3.0.0 to 1.8.2 needs no step on a
+  machine. See [Builds](how-it-works.md#builds).
 - After riff 3.0.0, each GitHub release of riff 1.x becomes a
   prerelease that says that the line is retired. No patch of 1.x comes
   after 3.0.0.
 - The build items: the end of the riff of peers (#959), the rollout
   that runs the wave of the daemon (#960), the command that retires a
   line (#795), and the live check of 3.0.0 (#961).
+
+### Take riff 1.8.2 before riff 3.0.0
+
+riff 1.8.1 does not talk with riff-server 3.0.0, and riff-server 1.8.1
+does not talk with riff 3.0.0. 1.8.1 has the old check, and no release
+can change it. A machine with `update.auto` on takes 1.8.2 by itself.
+On a machine with `update.auto` off, take 1.8.2 after its deploy, and
+before the deploy of 3.0.0:
+
+```sh
+riff update
+```
+
+Then see the build:
+
+```sh
+riff --version
+```
 
 ### What goes in riff 3.0.0
 
