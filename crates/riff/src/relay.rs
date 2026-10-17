@@ -266,3 +266,32 @@ async fn pass(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_list_with_a_text_id_counts() {
+        let mut listing = Listing::default();
+        listing.from_client(r#"{"jsonrpc":"2.0","id":"l1","method":"tools/list"}"#);
+        // The same id as a number is another request.
+        assert_eq!(
+            listing.from_tools(r#"{"jsonrpc":"2.0","id":1,"error":{}}"#),
+            None
+        );
+        let refused = r#"{"jsonrpc":"2.0","id":"l1","error":{"code":-32602,"message":"m"}}"#;
+        assert_eq!(listing.from_tools(refused), Some(false));
+    }
+
+    #[test]
+    fn a_request_of_the_tools_is_no_answer() {
+        let mut listing = Listing::default();
+        listing.from_client(r#"{"jsonrpc":"2.0","id":5,"method":"tools/list"}"#);
+        let ping = r#"{"jsonrpc":"2.0","id":5,"method":"ping"}"#;
+        assert_eq!(listing.from_tools(ping), None);
+        assert_eq!(listing.from_tools("not json"), None);
+        let listed = r#"{"jsonrpc":"2.0","id":5,"result":{"tools":[]}}"#;
+        assert_eq!(listing.from_tools(listed), Some(true));
+    }
+}

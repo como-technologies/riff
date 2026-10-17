@@ -909,6 +909,286 @@ done
     }
 }
 
+/// A riff-server that holds each register while `hold` is true. It
+/// keeps the path of each call in `paths`.
+async fn start_server_that_holds(
+    hold: tokio::sync::watch::Receiver<bool>,
+    paths: Arc<std::sync::Mutex<Vec<String>>>,
+) -> Api {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let router = riff_server::router().layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let mut hold = hold.clone();
+            let paths = paths.clone();
+            async move {
+                let path = request.uri().path().to_owned();
+                paths.lock().unwrap().push(path.clone());
+                if path == "/v1/register" {
+                    let _ = hold.wait_for(|held| !*held).await;
+                }
+                next.run(request).await
+            }
+        },
+    ));
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    Api::new(&format!("http://{addr}"))
+}
+
+/// A worker that riff starts gets its riff tools also when riff-server
+/// is slow: `riff mcp` answers the `server/discover` of a client of
+/// `2026-07-28`, as Claude Code is, before its register ends. The tools
+/// list at once, and a tool call waits for the register
+/// (01M5512RG2TTTS85VY8CEFF8R4, #1013).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_gets_its_tools_while_its_register_waits() {
+    use rmcp::model::ProtocolVersion;
+    use rmcp::service::{ClientLifecycleMode, ClientServiceExt};
+
+    let (hold, held) = tokio::sync::watch::channel(true);
+    let paths = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let api = start_server_that_holds(held, paths.clone()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let stderr = dir.path().join("stderr");
+    let mut cmd = tokio::process::Command::from(Isolated::shared().riff());
+    let mut child = cmd
+        .arg("mcp")
+        .current_dir(dir.path())
+        .env("RIFF_HOME", dir.path())
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("RIFF_SESSION", "a1")
+        .env("RIFF_SERVER", api.base())
+        .env("RIFF_WORKER", "1")
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .env_remove("TMUX")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(std::fs::File::create(&stderr).unwrap())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let log = || std::fs::read_to_string(&stderr).unwrap_or_default();
+    let io = (child.stdout.take().unwrap(), child.stdin.take().unwrap());
+    let discover = ClientLifecycleMode::Discover {
+        preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+    };
+    // Before the fix, the answer came only after the register.
+    let Ok(client) = in_time(
+        Duration::from_secs(20),
+        ().serve_with_lifecycle(io, discover),
+    )
+    .await
+    else {
+        panic!("no answer while the register waits: {}", log());
+    };
+    let client = client.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    assert!(tools.iter().any(|t| t.name == "whoami"), "{tools:?}");
+    assert!(tools.iter().any(|t| t.name == "move"), "{tools:?}");
+
+    let peer = client.peer().clone();
+    let whoami = tokio::spawn(async move {
+        peer.call_tool(CallToolRequestParams::new("whoami".to_owned()))
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!whoami.is_finished(), "the call did not wait: {}", log());
+    let seen = paths.lock().unwrap().clone();
+    assert!(seen.iter().all(|p| p == "/v1/register"), "{seen:?}");
+    assert!(!seen.is_empty(), "no register: {}", log());
+
+    hold.send_replace(false);
+    let answer = in_time(Duration::from_secs(20), whoami)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let text = answer
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect::<String>();
+    assert!(text.contains("session=a1"), "{text}");
+    let seen = paths.lock().unwrap().clone();
+    let first_other = seen.iter().position(|p| p != "/v1/register").unwrap();
+    assert!(first_other > 0, "{seen:?}");
+    assert!(child.try_wait().unwrap().is_none(), "{}", log());
+}
+
+/// When the tools refuse the `tools/list` of Claude Code, the session
+/// has no riff tools. `riff mcp` keeps a mark for its agent process.
+/// The PostToolUse hook gives the session one line, once for each
+/// mark, and the SessionStart hook at each start. A list that works
+/// removes the mark (01M5512RKABQ70QPGC48S5F67W, #1013).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_with_no_riff_tools_gets_a_line_with_the_commands() {
+    let api = start_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let riff = Isolated::shared().riff_path();
+    let tool = r#"{"session_id":"x","tool_name":"Bash","tool_input":{"command":"ls","description":"List files"}}"#;
+    std::fs::write(d.join("tool"), tool).unwrap();
+    std::fs::write(d.join("start"), r#"{"session_id":"a1","source":"clear"}"#).unwrap();
+    // The agent process: it starts `riff mcp` as its child, as Claude
+    // Code does, and runs the hook of step N when `run-N` is there.
+    let agent = r#"
+mkfifo "$D/in"
+"$R" mcp < "$D/in" > "$D/mcp.out" 2> "$D/mcp.err" &
+exec 3> "$D/in"
+n=1
+while [ ! -e "$D/end" ]; do
+  if [ -e "$D/run-$n" ]; then
+    case "$(cat "$D/run-$n")" in
+      tool) "$R" hook tool --done < "$D/tool" > "$D/out-$n.part" 2>> "$D/hook.err" ;;
+      start) "$R" hook session-start < "$D/start" > "$D/out-$n.part" 2>> "$D/hook.err" ;;
+    esac
+    mv "$D/out-$n.part" "$D/out-$n"
+    n=$((n + 1))
+  fi
+  sleep 0.05
+done
+"#;
+    let mut cmd = tokio::process::Command::from(Isolated::shared().command("sh"));
+    let mut child = cmd
+        .args(["-c", agent])
+        .current_dir(d)
+        .env("D", d)
+        .env("R", &riff)
+        .env("RIFF_HOME", d)
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "pangolin")
+        .env("RIFF_SESSION", "a1")
+        .env("RIFF_SERVER", api.base())
+        .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
+        .env_remove("CLAUDE_CODE_SESSION_ID")
+        .env_remove("TMUX")
+        .env_remove("RIFF_WORKER")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let agent_pid = child.id().unwrap();
+    let state = d.join("state");
+    let log = || {
+        let read = |f: &str| std::fs::read_to_string(d.join(f)).unwrap_or_default();
+        format!(
+            "out: {}\nmcp: {}\nhook: {}",
+            read("mcp.out"),
+            read("mcp.err"),
+            read("hook.err")
+        )
+    };
+    let span = Span::start();
+    while riff::local::recorded(&state, agent_pid).is_none() && span.within(Duration::from_secs(20))
+    {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        riff::local::recorded(&state, agent_pid).is_some(),
+        "{}",
+        log()
+    );
+    let mut to_mcp = std::fs::OpenOptions::new()
+        .write(true)
+        .open(d.join("in"))
+        .unwrap();
+    // Sends `line` to riff mcp, and gives its answer to the id `id`.
+    let mut ask = async |line: &str, id: u32| {
+        use std::io::Write;
+        writeln!(to_mcp, "{line}").unwrap();
+        let key = format!(r#""id":{id},"#);
+        let span = Span::start();
+        loop {
+            let out = std::fs::read_to_string(d.join("mcp.out")).unwrap_or_default();
+            if let Some(answer) = out.lines().find(|l| l.contains(&key)) {
+                return answer.to_owned();
+            }
+            assert!(
+                span.within(Duration::from_secs(20)),
+                "no answer {id}: {}",
+                log()
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+    let meta = r#""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"#;
+    let step = AtomicUsize::new(0);
+    // Runs the hook `which` in the agent, and gives its stdout.
+    let hook = async |which: &str| {
+        let n = step.fetch_add(1, Ordering::SeqCst) + 1;
+        std::fs::write(d.join(format!("run-{n}")), which).unwrap();
+        let out = d.join(format!("out-{n}"));
+        let span = Span::start();
+        while !out.exists() && span.within(Duration::from_secs(30)) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        std::fs::read_to_string(&out).unwrap_or_else(|e| panic!("step {n}: {e}"))
+    };
+    let line = "riff: this session has no riff tools.";
+
+    // The lines of Claude Code 2.1.302 after a late answer to its
+    // probe: the probe, a legacy initialize, and a list with no _meta.
+    let discover =
+        format!(r#"{{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{{{meta}}}}}"#);
+    let found = ask(&discover, 1).await;
+    assert!(found.contains("2026-07-28"), "{found}");
+    let initialize = r#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"claude-code","version":"2.1.302"}}}"#;
+    let initialized = ask(initialize, 2).await;
+    assert!(initialized.contains("2025-11-25"), "{initialized}");
+    let list = r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#;
+    let refused = ask(list, 3).await;
+    assert!(refused.contains("_meta is missing"), "{refused}");
+    let span = Span::start();
+    while riff::local::no_tools(&state, agent_pid).is_none() && span.within(Duration::from_secs(20))
+    {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        riff::local::no_tools(&state, agent_pid).is_some(),
+        "{}",
+        log()
+    );
+
+    // After a tool: one line, then no more.
+    let out = hook("tool").await;
+    let json: serde_json::Value =
+        serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}: {}", log()));
+    assert_eq!(json["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+    let told = json["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert_eq!(told, riff::text::no_tools(false));
+    assert_eq!(hook("tool").await, "", "{}", log());
+    // A new context gets it again.
+    let start = hook("start").await;
+    assert!(start.contains(&format!("- {line}")), "{start}");
+    assert_eq!(hook("tool").await, "", "{}", log());
+
+    // A list that works removes the mark.
+    let listed = ask(
+        &format!(r#"{{"jsonrpc":"2.0","id":4,"method":"tools/list","params":{{{meta}}}}}"#),
+        4,
+    )
+    .await;
+    assert!(listed.contains("whoami"), "{listed}");
+    let span = Span::start();
+    while riff::local::no_tools(&state, agent_pid).is_some() && span.within(Duration::from_secs(20))
+    {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(riff::local::no_tools(&state, agent_pid), None, "{}", log());
+    assert!(!hook("start").await.contains(line), "{}", log());
+
+    std::fs::write(d.join("end"), "").unwrap();
+    let span = Span::start();
+    while child.try_wait().unwrap().is_none() && span.within(Duration::from_secs(10)) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// A new binary that fails its check does not take the place of a
 /// running `riff mcp`: the old process keeps the tools, says the error
 /// once, and runs the next new binary that passes

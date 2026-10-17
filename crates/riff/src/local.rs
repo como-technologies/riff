@@ -857,6 +857,40 @@ mod tests {
     }
 
     #[test]
+    fn each_new_mark_of_no_tools_is_told_once() {
+        let run = tempfile::tempdir().unwrap();
+        let agent = std::process::id();
+        set_no_tools(run.path(), agent, true).unwrap();
+        assert!(first_no_tools_tell(run.path(), agent));
+        assert!(!first_no_tools_tell(run.path(), agent));
+        // The line of a stuck riff mcp keeps its own file.
+        assert!(first_tell(run.path(), agent, 7));
+        assert!(!first_no_tools_tell(run.path(), agent));
+        let told = no_tools(run.path(), agent).unwrap();
+        let span = isolated::Span::start();
+        while no_tools(run.path(), agent).as_deref() == Some(told.as_str()) {
+            assert!(span.within(Duration::from_secs(10)), "no new mark");
+            std::thread::sleep(Duration::from_millis(2));
+            set_no_tools(run.path(), agent, true).unwrap();
+        }
+        assert!(first_no_tools_tell(run.path(), agent));
+        set_no_tools(run.path(), agent, false).unwrap();
+        assert!(!first_no_tools_tell(run.path(), agent));
+    }
+
+    #[test]
+    fn a_mark_of_no_tools_of_another_process_does_not_count() {
+        let run = tempfile::tempdir().unwrap();
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        set_no_tools(run.path(), child.id(), true).unwrap();
+        assert!(no_tools(run.path(), child.id()).is_some());
+        assert_eq!(no_tools(run.path(), std::process::id()), None);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(no_tools(run.path(), child.id()), None);
+    }
+
+    #[test]
     fn a_second_record_for_one_agent_waits_for_the_first() {
         let run = tempfile::tempdir().unwrap();
         let first = record_when_free(run.path(), 42, "a");
