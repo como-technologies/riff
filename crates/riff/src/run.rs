@@ -1599,7 +1599,6 @@ async fn work(
             server: server.to_owned(),
             me: me.clone(),
             terminal: false,
-            claim: None,
         },
         signals,
     )

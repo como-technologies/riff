@@ -52,7 +52,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Row as TableRow, Table, TableState};
 
-
 use crate::daemon::{self, Live, Phase, Status};
 use crate::runtime::Runtime;
 use crate::text;

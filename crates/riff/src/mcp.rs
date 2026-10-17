@@ -642,10 +642,7 @@ wakes you, answer with this tool. Do not post a reply. When you cannot go on, us
     )]
     async fn status(&self, Parameters(a): Parameters<StatusArgs>) -> ToolResult {
         let status = Status { step: a.step };
-        self.api
-            .status(&self.here()?, &status)
-            .await
-            .map_err(err)?;
+        self.api.status(&self.here()?, &status).await.map_err(err)?;
         Ok(text::status_set(&status))
     }
 
@@ -671,11 +668,7 @@ your user, and the next prompt of your user ends it."
     )]
     async fn tell(&self, Parameters(a): Parameters<TellArgs>) -> ToolResult {
         let me = self.here()?;
-        let posted = self
-            .api
-            .tell(&me, &a.session, &a.body)
-            .await
-            .map_err(err)?;
+        let posted = self.api.tell(&me, &a.session, &a.body).await.map_err(err)?;
         let to = posted
             .woken
             .first()
@@ -944,11 +937,7 @@ impl Tools {
     async fn set_riff(&self, whole: bool, state: RiffState) -> ToolResult {
         let me = self.here()?;
         let scope = PauseScope::of(whole, None);
-        let (reply, posted) = self
-            .api
-            .set_pause(&me, &scope, state)
-            .await
-            .map_err(err)?;
+        let (reply, posted) = self.api.set_pause(&me, &scope, state).await.map_err(err)?;
         self.lead_step(&me, text::riff_step(whole, state).into())
             .await;
         let repository = scope.repository(&me);

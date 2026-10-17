@@ -606,7 +606,9 @@ async fn start_job<R: Runtime + 'static>(
     };
     let (out, said) = Out::keep();
     let ended = tokio::spawn(ended_of(said));
-    let record = daemon.launch(start, Some(job), Some(slot), None, &out).await;
+    let record = daemon
+        .launch(start, Some(job), Some(slot), None, &out)
+        .await;
     drop(out);
     let ended = ended.await.unwrap_or(Ended {
         code: None,
@@ -1446,7 +1448,6 @@ mod tests {
                     server: "http://127.0.0.1:1".into(),
                     me,
                     terminal: false,
-                    claim: None,
                 }))
             })
         }
@@ -1535,8 +1536,7 @@ mod tests {
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
             let relay = root.path().join("static-riff");
             crate::secrets::mock_store();
-            let daemon = Daemon::open(fake.clone(), dir.clone())
-                .await
+            let daemon = Daemon::new(fake.clone(), dir.clone())
                 .unwrap()
                 .with_memory(memory)
                 .with_world(world.clone())
@@ -1924,7 +1924,6 @@ mod tests {
                 terminal: false,
                 takeover: false,
                 interrupt: false,
-                claim: None,
             };
             Self {
                 api,
@@ -1962,15 +1961,9 @@ esac
         /// Runs [`after_build`] with `gh`, and gives each message that the
         /// lead can read, with its kind.
         async fn after_build(&self, gh: pr::Gh) -> Vec<(Kind, String)> {
-            after_build(
-                gh,
-                &EndTalk::Server(&self.api),
-                &self.record,
-                &self.wave,
-                12,
-            )
-            .await
-            .unwrap();
+            after_build(gh, &self.api, &self.record, &self.wave, 12)
+                .await
+                .unwrap();
             let thread = self.wave.thread().unwrap();
             self.api
                 .read(&self.lead, &thread, true)
