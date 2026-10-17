@@ -93,7 +93,9 @@ terminal: an update never turns riff on in more repositories, and
 never turns it off. On a machine where a release up to v0.8.0 turned
 riff on in each repository, the command asks nothing and keeps that.
 The last line of the command says where riff is on, and the command
-to change it.
+to change it. Where riff is off, it names each repository of Claude
+Code where riff is on. It says `riff is installed but off` only when
+riff is on in none.
 
 ### Turn riff on or off for a repository
 
@@ -708,6 +710,35 @@ flowchart TD
   ```text
   riff a6cf2205 lead needs you: the init of podman: install catatonit, the init of podman, for example: sudo apt install catatonit
   ```
+
+The update and the daemon say what they did in their logs:
+
+- `update.log` holds the output of the update by itself. Its last
+  lines after an update:
+
+  ```text
+  riff downloads the static riff and riff-server of v1.7.0 (x86_64-unknown-linux-musl) into /home/mike/.cargo/bin.
+  Added the riff plugin from /home/mike/.local/share/riff/claude-plugin to Claude Code.
+  riff is on in 1 repository on this machine: /home/mike/src/riff. To turn it on in another repository: cd REPO && riff enable
+  riff is up to date. Start your Claude Code sessions again.
+  riff: riff on pangolin updated itself from v1.6.0 to v1.7.0.
+  ```
+
+  The third line names each repository of Claude Code where riff is
+  on. It says `riff is installed but off` only when riff is off in each
+  of them. The update shows no note that `riff-server` runs another
+  build: the update installed that build.
+- The log of the riff daemon has one line when the daemon starts again
+  on a new riff:
+
+  ```text
+  riff daemon: a new riff is on disk, and no session runs. The daemon starts again on it.
+  ```
+
+  The new start stops the old daemon and its `systemctl`. That is no
+  failure, so the log has no other line for it. Only a failed ask to
+  systemd logs `cannot start again on the new riff`, with the error and
+  the fix `riff daemon install`.
 
 #### See each step of an update
 
