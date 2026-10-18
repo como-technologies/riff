@@ -5791,7 +5791,11 @@ mod tests {
                 wave,
                 session: format!("daemon-{host}"),
             };
-            tokio::spawn(remote::serve(here.dir.clone(), served));
+            tokio::spawn(remote::serve(
+                here.dir.clone(),
+                served,
+                here.daemon.news.clone(),
+            ));
             both.push(here);
         }
         let b = both.pop().unwrap();
