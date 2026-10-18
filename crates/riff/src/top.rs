@@ -46,8 +46,8 @@
 //! `--host` and `--repo` show a part ([`Show`],
 //! 01M42KHNCBMBCT3TFBYWE339H5). A session gets the tags of
 //! [`crate::text::tags`]: its role, `lead` or `worker`, and its kind,
-//! `container` or `host` (01M3NT4M159EHN5W8JRTQ417N4,
-//! 01M510MG2YSETB2CCAS8XDHPZ0). The role and the container mark come
+//! `container`, `host` or `daemon` (01M3NT4M159EHN5W8JRTQ417N4,
+//! 01M510MG2YSETB2CCAS8XDHPZ0, 01M589HH6HCWYJP1ZC7MRAXZ6E). The role and the container mark come
 //! from the server, so each machine shows the same. The line of a host
 //! counts each kind (01M510MG5J92PYDWZSDQS8HMWK). The owner is a person:
 //! the tag `owner` is on the row of the person.
@@ -576,7 +576,7 @@ fn take_width(text: &str, cols: usize) -> (String, bool) {
 ///
 /// ```text
 /// 3 sessions: 1 busy, 1 idle, 1 blocked, 2 claims
-/// 6 sessions: 3 workers, 2 containers, 1 host; 2 to update; 4 busy, 2 idle, 4 claims
+/// 7 sessions: 2 containers, 3 workers, 1 host, 1 daemon; 2 to update; 4 busy, 3 idle, 4 claims
 /// ```
 fn counts(sessions: &[&SessionInfo], kinds: bool, server: Option<&Build>) -> String {
     let many = |n: usize, word: &str| {
@@ -1337,6 +1337,76 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains(text::NO_NUMBERS), "{text}");
+    }
+
+    /// 01M510MG5J92PYDWZSDQS8HMWK, 01M589HH6HCWYJP1ZC7MRAXZ6E: the line
+    /// of a host counts each kind, the daemon too, so the kinds add up
+    /// to the sessions. The daemon and the host do not say `ready for
+    /// work` (01M589HH8Z1TCYDCZHQQHTYWMK).
+    #[test]
+    fn the_host_line_counts_the_daemon_and_the_kinds_add_up() {
+        use riff_core::wire::{Status, StatusInfo};
+
+        let with_step = |uri: &str, step: String| SessionInfo {
+            status: Some(StatusInfo {
+                status: Status { step },
+                age_secs: 25,
+                stale: false,
+            }),
+            ..info(uri, SessionState::Idle)
+        };
+        let host = HostStatus {
+            limit: 10,
+            floor: 4,
+            deaths: 0,
+            machine: None,
+            disk: None,
+            monitor: None,
+            more: 0,
+            workers: vec![],
+        };
+        let daemon = crate::daemon::remote::status_line(249_637, "3.2.0", 0);
+        let sessions = [
+            info(
+                "riff://mike@pangolin/o/riff?session=a1&lead=true",
+                SessionState::Idle,
+            ),
+            SessionInfo {
+                container: true,
+                worker: true,
+                ..info(
+                    "riff://mike@thelio/o/riff?session=c1&claim=issue-12",
+                    SessionState::Busy,
+                )
+            },
+            SessionInfo {
+                worker: true,
+                ..info("riff://mike@thelio/o/riff?session=w1", SessionState::Idle)
+            },
+            with_step("riff://mike@thelio/o/riff?session=h1", host.line()),
+            with_step("riff://mike@thelio/o/riff?session=d1", daemon),
+        ];
+        let text = shown(&sessions, &BTreeMap::new(), &Show::default());
+        let rows = tree(&text);
+        let thelio = "└─ thelio  › riff  \
+             4 sessions: 1 container, 1 worker, 1 host, 1 daemon; 1 busy, 3 idle, 1 claim";
+        assert!(rows.iter().any(|r| r == thelio), "{text}");
+        let after = |head: &str| {
+            let at = rows.iter().position(|r| r.ends_with(head)).unwrap();
+            rows[at + 1].trim_start_matches(['│', ' ']).to_owned()
+        };
+        assert_eq!(
+            after("─ d1  daemon  idle"),
+            "hosts containers for 0s",
+            "{text}"
+        );
+        assert_eq!(after("─ h1  host  idle"), "hosts workers for 0s", "{text}");
+        assert_eq!(
+            after("─ w1  worker  idle"),
+            "ready for work for 0s",
+            "{text}"
+        );
+        assert_eq!(text.matches("ready for work").count(), 1, "{text}");
     }
 
     /// The lines of the tree: the last part of the text.

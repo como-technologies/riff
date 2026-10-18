@@ -497,6 +497,28 @@ pub fn status_line(pid: u32, build: &str, sessions: usize) -> String {
     format!("{PREFIX} pid {pid}, build {build}, {sessions} sessions")
 }
 
+/// True when `s` is the session of a daemon: its status starts with
+/// [`PREFIX`] (01M589HH6HCWYJP1ZC7MRAXZ6E).
+///
+/// ```
+/// use riff::daemon::remote::{is_daemon, status_line};
+/// use riff_core::wire::{SessionInfo, Status, StatusInfo};
+///
+/// let mut s: SessionInfo = serde_json::from_value(serde_json::json!({
+///     "uri": "riff://mike@thelio/o/r?session=d1", "live": true,
+/// }))?;
+/// assert!(!is_daemon(&s));
+/// let status = Status { step: status_line(812, "3.0.1", 0) };
+/// s.status = Some(StatusInfo { status, age_secs: 1, stale: false });
+/// assert!(is_daemon(&s));
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+pub fn is_daemon(s: &SessionInfo) -> bool {
+    s.status
+        .as_ref()
+        .is_some_and(|st| st.status.step.starts_with(PREFIX))
+}
+
 /// The session ID of the live daemon of `user` on `host` in the
 /// repository `repo`, from `sessions`.
 pub fn find<'a>(
@@ -509,11 +531,7 @@ pub fn find<'a>(
         .iter()
         .filter(|s| s.live && s.uri.who().user() == user)
         .filter(|s| s.uri.place().repo_text() == repo && s.uri.place().host() == host)
-        .filter(|s| {
-            s.status
-                .as_ref()
-                .is_some_and(|st| st.status.step.starts_with(PREFIX))
-        })
+        .filter(|s| is_daemon(s))
         .find_map(|s| s.uri.who().session())
 }
 

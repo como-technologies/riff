@@ -2456,6 +2456,16 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `worker`. The lead in a container has `lead container`. The session
   of `riff workers host` has the tag `host`: its status is the status
   of a host.
+- **01M589HH6HCWYJP1ZC7MRAXZ6E** The session of the riff daemon has the
+  kind and the tag `daemon` in `riff who`, the MCP `who` tool and
+  `riff top`: its status starts with `daemon host:`. It comes after the
+  host in the order of the kinds. The line of a host in `riff top`
+  counts it in `daemons`.
+- **01M589HH8Z1TCYDCZHQQHTYWMK** The session of `riff workers host` and
+  the session of the riff daemon take no claims. So an `idle` one does
+  not show `ready for work for`. The session of `riff workers host`
+  shows `hosts workers for` and the time. The session of the riff
+  daemon shows `hosts containers for` and the time.
 - **01M3NT4M3A4E3K5S2NM7MS6PQD** The reply to `who` lists each member of
   the riff with a USER, also when away: the USER, the role (`owner`,
   `admin` or `member`), whether a session of the person is live, and
@@ -2512,7 +2522,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   states: leads, containers, workers and hosts, each that is more than
   0, for example `6 sessions: 3 workers, 2 containers, 1 host; 2 busy,
   2 idle, 4 claims`. A session counts once, as the first of these that
-  matches. The person and repository lines count no kinds.
+  matches. The person and repository lines count no kinds. Superseded
+  in part by 01M589HH6HCWYJP1ZC7MRAXZ6E.
 - **01M514C142K5BM2746F1D9Y448** `riff top` puts the mark `↑`, in
   yellow, after the short ID of each session that is out of date: the
   file of its riff was replaced, or its build is older than the build
@@ -2716,7 +2727,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   (01M41FZR4XRP55M409YBCPTHPH). A person is
   `online` when a session of the person is live, else `offline` with
   `seen` and the time since the last call. Superseded in part by
-  01M522MRW21RHGF2B6F0VCP0BD.
+  01M522MRW21RHGF2B6F0VCP0BD and 01M589HH8Z1TCYDCZHQQHTYWMK.
 - **01M522MRW21RHGF2B6F0VCP0BD** The detail of an `offline` session is
   `seen` with the time, then its claims, then its last step with its
   age: `seen 5m ago`, `working on #15`, `10m ago: docs`. So a session of
