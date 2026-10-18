@@ -2752,6 +2752,48 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   fact. `riff mcp` puts the newest fact, with its age, into each
   keep-alive. `who` gives it as `work`, and shows it as `runs TOOL for
   12m`, `works, 5s ago` or `turn ended 5m ago`.
+- **01M57XY3Q6HEYQG27FE0CEQ7HB** The plugin has a `PermissionDenied`
+  hook for each tool: `riff hook denied`. The settings of each
+  container session, the lead and each worker of the riff daemon, run
+  `/opt/riff/riff relay denied` for it. The hook reads its input,
+  keeps one record, starts the send as a detached process, and returns
+  at once. It never waits for riff-server. It does nothing where riff
+  is off, and in a session that left the riff. In a container session,
+  the riff daemon posts the record as the session.
+- **01M57XY3SEG8HCXPZFBVATQ1W2** Each refusal of auto mode is one note
+  in the thread `denials`: one line, the tags first, then a colon and
+  the text: `denied reason=R tool=T head="H" role=O user=U host=N
+  repo=P session=S claim=C: TEXT`. A note wakes no session.
+- **01M57XY3VP35QDP2KK88ERF82M** The tags of a record: `reason` is the
+  rule in the square brackets of the reason as a slug, `no-verdict`,
+  or `checker-unavailable` for "Classifier unavailable". `tool` is the
+  tool name, with `@SERVER` for an MCP tool. `head` is, for Bash, the
+  first two words of the command after `nice -n N`, `env`, the
+  variables and `cd X &&`; for another tool, the path, else the first
+  field of the input; at most 60 characters. `role` is `lead`,
+  `worker` (in tmux), `container` or `session`, with `+subagent` in a
+  subagent. `session` is the first 8 characters of the session ID.
+  `claim` is the claim of the session, or `-`. The text is the command
+  or the input, on one line, at most 300 characters.
+- **01M57XY3XXCKBXMVPFBY0C2KDM** No secret goes to the thread
+  `denials`. The hook replaces each secret of the session with
+  `[secret]` before it keeps the record: the secret variables, the
+  values of the MCP servers of the session and the tokens of the
+  sign-in file of `claude`.
+- **01M57XY405BSXEH3K3Z977RWAW** After it posts the records, the
+  session leaves the thread `denials`. So no session sees the records
+  of other sessions at its `read`.
+- **01M57XY42CNR16M5G024PWKANV** When riff-server or the riff daemon
+  does not take a record, the record stays in a local file: in the
+  local folder of riff on the host, and in the Claude folder of a
+  container session. The next send posts the kept records first, in
+  order.
+- **01M57XY44K2N3PS9F8NQ6SZQP9** `riff denials` reads the thread
+  `denials`. It counts the records by `reason`, by `tool` and `head`,
+  by `role` and by `repo`, and then shows the last 20 records.
+  `--since TIME` (for example `7d`, `12h`) keeps only the records of
+  that time. `--format json` prints the records. It works with
+  riff-server 3.2.0, with no change of riff-server.
 - **01M41FZP2C4Z4J6WKRXZ5B31EH** `riff-server` has no credential of the
   forge. The clients send the facts of the items of their repository:
   `riff pr open` (a verify is asked), `riff verify` (passed or

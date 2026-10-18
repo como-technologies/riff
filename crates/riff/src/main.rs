@@ -265,6 +265,20 @@ enum Command {
         #[arg(long, requires = "issue")]
         total: bool,
     },
+    /// Count the refusals of auto mode
+    ///
+    /// Each refusal of the auto mode checker of Claude Code goes to the
+    /// thread denials as one record with tags. It counts the records by
+    /// reason, by tool and head, by role and by repo, and then shows the
+    /// last 20 records.
+    Denials {
+        /// Only the records of this time, for example 7d, 12h or 30m.
+        #[arg(long, value_name = "TIME")]
+        since: Option<String>,
+        /// text for the counts, json for the records.
+        #[arg(long, value_enum, default_value = "text")]
+        format: DenialsFormat,
+    },
     /// Make this session the lead of your user
     ///
     /// Each person has one lead in each repository. The other sessions of
@@ -1427,6 +1441,16 @@ enum RelayCommand {
     ///
     /// The lead runs it as a background task: it ends at the next wake.
     Watch,
+    /// Run the PermissionDenied hook of the session
+    ///
+    /// It reads the hook input on stdin, keeps one record with no secret
+    /// in the Claude folder of the session, and starts the send through
+    /// the riff daemon, detached. It always exits with status 0.
+    Denied {
+        /// Send the kept records now: the hook starts it, detached.
+        #[arg(long)]
+        send: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1605,6 +1629,22 @@ enum HookEvent {
     /// prompt of the person on this machine. A prompt after a block ends
     /// the block. It makes no call. It always exits with status 0.
     Prompt,
+    /// Run the PermissionDenied hook
+    ///
+    /// It reads the hook input on stdin: a refusal of the auto mode
+    /// checker. It keeps one record with no secret on this machine, and
+    /// starts the send to the thread denials, detached. It never waits
+    /// for riff-server. It always exits with status 0.
+    Denied,
+    /// Post the refusals of auto mode that this machine keeps
+    ///
+    /// The PermissionDenied hook starts it, detached.
+    #[command(hide = true)]
+    DeniedSend {
+        /// The riff session ID.
+        #[arg(long)]
+        session: String,
+    },
     /// Check whether riff clears the context of a worker now
     ///
     /// The Stop hook starts it, detached, in each worker in tmux.
@@ -1664,8 +1704,12 @@ impl HookEvent {
             | HookEvent::SessionEnd
             | HookEvent::Stop
             | HookEvent::Tool { .. }
-            | HookEvent::Prompt => true,
-            HookEvent::Clear { .. } | HookEvent::Compact { .. } | HookEvent::Usage { .. } => false,
+            | HookEvent::Prompt
+            | HookEvent::Denied => true,
+            HookEvent::Clear { .. }
+            | HookEvent::Compact { .. }
+            | HookEvent::Usage { .. }
+            | HookEvent::DeniedSend { .. } => false,
         }
     }
 }
@@ -1696,6 +1740,15 @@ impl PlaceArgs {
             _ => enable::Place::Local,
         }
     }
+}
+
+/// The output of `riff denials`.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum DenialsFormat {
+    /// The counts and the last records.
+    Text,
+    /// Each record as JSON.
+    Json,
 }
 
 /// Where `riff connect claude` turns riff on.
@@ -1925,6 +1978,22 @@ async fn main() -> Result<()> {
         let mut stdin = String::new();
         let _ = std::io::stdin().read_to_string(&mut stdin);
         activity::run_prompt(&stdin);
+        return Ok(());
+    }
+    if let Command::Hook {
+        event: HookEvent::Denied,
+    } = cli.command
+    {
+        denied_hook();
+        return Ok(());
+    }
+    if let Command::Hook {
+        event: HookEvent::DeniedSend { session },
+    } = &cli.command
+    {
+        if let Err(e) = denied_send(session, &server).await {
+            eprintln!("riff: cannot send the refusals of auto mode: {e:#}");
+        }
         return Ok(());
     }
     if let Command::Hook {
@@ -2338,6 +2407,25 @@ async fn main() -> Result<()> {
             let thread = thread.map(|t| t.parse::<ThreadName>()).transpose()?;
             let inbox = api.inbox(&me, thread.as_ref(), all).await?;
             println!("{}", text::inbox(&inbox, &me).trim_end());
+        }
+        Command::Denials { since, format } => {
+            let span = since.as_deref().map(riff::denied::since).transpose()?;
+            let from_ms = span.map_or(0, |span| {
+                usage::now_ms().saturating_sub(span.as_millis() as u64)
+            });
+            let records = riff::denied::read(&api, &me, from_ms).await?;
+            match format {
+                DenialsFormat::Json => {
+                    println!("{}", serde_json::to_string_pretty(&records)?);
+                }
+                DenialsFormat::Text => {
+                    let span = match &since {
+                        Some(since) => format!("in the last {since}"),
+                        None => format!("in the thread {}", riff::denied::THREAD),
+                    };
+                    print!("{}", riff::denied::report(&records, &span));
+                }
+            }
         }
         Command::Claim { thread, item } => {
             let thread = thread_or_default(thread, &here)?;
@@ -3119,6 +3207,26 @@ async fn relay_command(
             println!("{}", riff::session_relay::watch(&socket).await?);
             Ok(())
         }
+        Some(RelayCommand::Denied { send }) => {
+            let Some(queue) = riff::denied::Queue::here() else {
+                return Ok(());
+            };
+            if send {
+                let socket = riff::session_relay::socket_here()?;
+                if let Err(e) = riff::session_relay::send_denials(&socket, &queue).await {
+                    eprintln!("riff: cannot send the refusals of auto mode: {e:#}");
+                }
+                return Ok(());
+            }
+            let mut stdin = String::new();
+            let _ = std::io::stdin().read_to_string(&mut stdin);
+            if let Err(e) = riff::denied::keep_input(&stdin, &queue, false) {
+                eprintln!("riff: cannot keep the refusal of auto mode: {e:#}");
+                return Ok(());
+            }
+            start_detached(&["relay", "denied", "--send"]);
+            Ok(())
+        }
         None if terminal => Err(riff::session_relay::terminal(&session)),
         None => {
             let code = riff::session_relay::main(session).await?;
@@ -3374,6 +3482,62 @@ fn count_usage(id: &str, transcript: Option<&std::path::Path>, ends: bool) {
     });
     if let Err(e) = started {
         eprintln!("riff: cannot report the tokens of the claims: {e}");
+    }
+}
+
+/// The PermissionDenied hook of a session on the host
+/// (01M57XY3Q6HEYQG27FE0CEQ7HB): it keeps the refusal on this machine,
+/// with no secret, and starts `riff hook denied-send`, detached. It does
+/// nothing when the session left the riff. It never fails.
+fn denied_hook() {
+    let mut stdin = String::new();
+    let _ = std::io::stdin().read_to_string(&mut stdin);
+    let input: riff::denied::Input = serde_json::from_str(&stdin).unwrap_or_default();
+    let Some(id) = identity::agent_session(input.session_id) else {
+        return;
+    };
+    if local::left_here(&id) {
+        return;
+    }
+    let Some(queue) = riff::denied::Queue::here() else {
+        return;
+    };
+    if let Err(e) = riff::denied::keep_input(&stdin, &queue, worker::is_worker()) {
+        eprintln!("riff: cannot keep the refusal of auto mode: {e:#}");
+        return;
+    }
+    start_detached(&["hook", "denied-send", "--session", &id]);
+}
+
+/// Posts the refusals of auto mode that this machine keeps, as the
+/// session `id` ([`riff::denied::send_here`]).
+async fn denied_send(id: &str, server: &str) -> Result<()> {
+    let Some(queue) = riff::denied::Queue::here() else {
+        return Ok(());
+    };
+    let here = identity::place(&identity::working_dir()?)?;
+    let api = Api::new(server);
+    let me = identity::agent(&here, id, api.base())?;
+    let api = api.signed_in(Some(id))?;
+    riff::denied::send_here(&api, &me, &queue).await?;
+    Ok(())
+}
+
+/// Starts this riff with `args`, detached, so that a hook returns at
+/// once. A failure goes to stderr.
+fn start_detached(args: &[&str]) {
+    use std::os::unix::process::CommandExt;
+    let started = std::env::current_exe().and_then(|exe| {
+        std::process::Command::new(exe)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn()
+    });
+    if let Err(e) = started {
+        eprintln!("riff: cannot start riff {}: {e}", args.join(" "));
     }
 }
 

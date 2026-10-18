@@ -513,8 +513,9 @@ pub fn sessions_dir() -> Result<PathBuf> {
 /// ([`crate::permissions::session_rules`], 01M5084K4YQCZF20XA0P2485SG).
 /// It has the auto mode settings of `auto`: no `/auto-mode-setup`, and
 /// the places of riff work ([`crate::permissions::auto_mode`],
-/// 01M516HEX3GVTN9K2QS12A4PG3). It is a setting of riff for its
-/// sessions, not a copy of a setting of the person.
+/// 01M516HEX3GVTN9K2QS12A4PG3). It has the hook `PermissionDenied`
+/// ([`denied_hooks`], 01M57XY3Q6HEYQG27FE0CEQ7HB). It is a setting of
+/// riff for its sessions, not a copy of a setting of the person.
 ///
 /// ```
 /// use riff::permissions::{Trust, auto_mode};
@@ -522,6 +523,7 @@ pub fn sessions_dir() -> Result<PathBuf> {
 /// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878") };
 /// let settings = riff::run::settings(&auto);
 /// assert_eq!(settings["includeCoAuthoredBy"], false);
+/// assert_eq!(settings["hooks"], riff::run::denied_hooks());
 /// let allow = settings["permissions"]["allow"].as_array().unwrap();
 /// assert!(allow.iter().any(|r| r == "Bash(gh issue view *)"));
 /// assert_eq!(allow.len(), riff::permissions::session_rules().allow.len());
@@ -532,6 +534,7 @@ pub fn settings(auto: &crate::permissions::Trust) -> Value {
     let mut settings = json!({
         "includeCoAuthoredBy": false,
         "permissions": { "allow": crate::permissions::session_rules().allow },
+        "hooks": denied_hooks(),
     });
     if let (Some(settings), Value::Object(auto)) = (
         settings.as_object_mut(),
@@ -540,6 +543,69 @@ pub fn settings(auto: &crate::permissions::Trust) -> Value {
         settings.extend(auto);
     }
     settings
+}
+
+/// The hooks of each container session: `PermissionDenied` runs
+/// `/opt/riff/riff relay denied` for each tool (01M57XY3Q6HEYQG27FE0CEQ7HB,
+/// [`crate::denied`]).
+///
+/// ```
+/// let hooks = riff::run::denied_hooks();
+/// let hook = &hooks["PermissionDenied"][0];
+/// assert_eq!(hook["matcher"], "*");
+/// assert_eq!(hook["hooks"][0]["command"], "/opt/riff/riff relay denied");
+/// ```
+pub fn denied_hooks() -> Value {
+    json!({
+        "PermissionDenied": [{
+            "matcher": "*",
+            "hooks": [{
+                "type": "command",
+                "command": format!("{} relay denied", daemon::RELAY_BIN),
+            }],
+        }],
+    })
+}
+
+/// Adds the hooks of [`denied_hooks`] to the settings file `path` when
+/// its `PermissionDenied` hooks lack them. Each other key stays. True
+/// when it wrote the file.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("settings.json");
+/// std::fs::write(&path, r#"{"model":"opus","hooks":{"Stop":[]}}"#)?;
+/// assert!(riff::run::add_denied_hooks(&path)?);
+/// assert!(!riff::run::add_denied_hooks(&path)?, "the hook is there");
+/// let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+/// assert_eq!(settings["model"], "opus");
+/// assert_eq!(settings["hooks"]["Stop"], serde_json::json!([]));
+/// assert_eq!(settings["hooks"]["PermissionDenied"], riff::run::denied_hooks()["PermissionDenied"]);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn add_denied_hooks(path: &Path) -> Result<bool> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let mut settings: Value =
+        serde_json::from_str(&text).with_context(|| format!("{} is no JSON", path.display()))?;
+    let wanted = denied_hooks()["PermissionDenied"][0].clone();
+    let Some(root) = settings.as_object_mut() else {
+        bail!("{} is no JSON object", path.display());
+    };
+    let hooks = root.entry("hooks").or_insert_with(|| json!({}));
+    let Some(hooks) = hooks.as_object_mut() else {
+        bail!("`hooks` in {} is no object", path.display());
+    };
+    let denied = hooks.entry("PermissionDenied").or_insert_with(|| json!([]));
+    let Some(denied) = denied.as_array_mut() else {
+        bail!("`hooks.PermissionDenied` in {} is no list", path.display());
+    };
+    if denied.contains(&wanted) {
+        return Ok(false);
+    }
+    denied.push(wanted);
+    std::fs::write(path, serde_json::to_string_pretty(&settings)?)
+        .with_context(|| format!("cannot write {}", path.display()))?;
+    Ok(true)
 }
 
 /// Writes the own Claude folder `dir` of a session: the lead, a session
@@ -593,6 +659,7 @@ pub fn settings(auto: &crate::permissions::Trust) -> Value {
 /// assert_eq!(settings["permissions"], riff::run::settings(&auto)["permissions"]);
 /// assert_eq!(settings["skillOverrides"], riff::run::settings(&auto)["skillOverrides"]);
 /// assert_eq!(settings["autoMode"], riff::run::settings(&auto)["autoMode"]);
+/// assert_eq!(settings["hooks"], riff::run::denied_hooks());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn claude_folder(
@@ -635,6 +702,7 @@ pub fn claude_folder(
     if settings_file.exists() {
         crate::permissions::add(&settings_file, &crate::permissions::session_rules())?;
         crate::permissions::add_auto_mode(&settings_file, auto)?;
+        add_denied_hooks(&settings_file)?;
     } else {
         std::fs::write(
             &settings_file,

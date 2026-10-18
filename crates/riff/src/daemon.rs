@@ -134,6 +134,7 @@
 //! | [`SessionAsk::Relay`] | relays the session ([`crate::session_relay`]) |
 //! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk, on its riff-server ([`Daemon::tools_of`]) |
 //! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session, from riff-server ([`World::wake`]) |
+//! | [`SessionAsk::Denied`] | posts the refusals of auto mode of the session, and says [`Say::Posted`] ([`Daemon::post_denials`]) |
 //!
 //! # A session
 //!
@@ -818,6 +819,14 @@ pub enum SessionAsk {
         /// [`PROTOCOL`] of the relay.
         protocol: u32,
     },
+    /// Post these refusals of auto mode as the session:
+    /// `riff relay denied --send` ([`crate::denied`]).
+    Denied {
+        /// [`PROTOCOL`] of the relay.
+        protocol: u32,
+        /// The refusals, oldest first, with no secret.
+        denials: Vec<crate::denied::Denial>,
+    },
 }
 
 /// The state of the daemon.
@@ -970,6 +979,12 @@ pub enum Say {
     },
     /// The ask is done.
     Done,
+    /// To `riff relay denied --send`: the daemon posted this many
+    /// refusals, the first ones.
+    Posted {
+        /// The number of refusals.
+        count: usize,
+    },
     /// The ask failed.
     Failed {
         /// Why.
@@ -2633,6 +2648,18 @@ impl<R: Runtime + 'static> Daemon<R> {
                     .await;
             }
             Ok(SessionAsk::Mcp { client, .. }) => self.mcp(&owned, client, lines, write).await,
+            Ok(SessionAsk::Denied { denials, .. }) => {
+                let (out, written) = writer(write);
+                let record = owned.lock().record.clone();
+                out.say(match self.post_denials(&record, &denials).await {
+                    Ok(count) => Say::Posted { count },
+                    Err(e) => Say::Failed {
+                        error: format!("{e:#}"),
+                    },
+                });
+                drop(out);
+                let _ = written.await;
+            }
             Ok(SessionAsk::Watch { .. }) => {
                 let (out, written) = writer(write);
                 let record = owned.lock().record.clone();
@@ -2696,6 +2723,31 @@ impl<R: Runtime + 'static> Daemon<R> {
         } else {
             tools.in_container()
         })
+    }
+
+    /// Posts each refusal of auto mode of `denials` as the session of
+    /// `record`, and gives the number that it posted
+    /// (01M57XY3Q6HEYQG27FE0CEQ7HB). The session with a terminal is the
+    /// lead, with no claim. Each other session is a worker in a
+    /// container, with the claim of its item.
+    pub async fn post_denials(
+        &self,
+        record: &Record,
+        denials: &[crate::denied::Denial],
+    ) -> Result<usize> {
+        use crate::denied::{Role, Where};
+        let api =
+            riff_client::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
+        let at = if record.terminal {
+            Where::of(&record.me, Role::Lead, None)
+        } else {
+            Where::of(&record.me, Role::Container, Some(&record.live.item))
+        };
+        let lines: Vec<String> = denials
+            .iter()
+            .map(|d| crate::denied::line(d, &at))
+            .collect();
+        Ok(crate::denied::post(&api, &record.me, &lines).await)
     }
 
     /// Takes over the live session `name` for the person of `out`
@@ -6073,5 +6125,108 @@ mod tests {
             none.unwrap_err().to_string(),
             text::daemon_no_session(&name)
         );
+    }
+
+    /// A riff-server for the tests of the refusals of auto mode, and a
+    /// reader of its thread `denials`.
+    async fn denials_server() -> (String, riff_client::api::Api, SessionUri) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, riff_server::router()).await.unwrap();
+        });
+        let server = format!("http://{addr}");
+        let api = riff_client::api::Api::new(&server);
+        let reader: SessionUri = "riff://ann@heron/acme/app?session=r1".parse().unwrap();
+        api.register(&reader).await.unwrap();
+        (server, api, reader)
+    }
+
+    /// Gives the denials of `kept` to the session `name` through its
+    /// socket, as `riff relay denied --send` does, and gives the bodies
+    /// of the thread `denials`.
+    async fn send_denials_of(
+        here: &Here,
+        name: &str,
+        api: &riff_client::api::Api,
+        reader: &SessionUri,
+    ) -> Vec<String> {
+        let queue_dir = here.root.path().join("claude-of-the-session");
+        let queue = crate::denied::Queue::in_dir(&queue_dir);
+        let input: crate::denied::Input = serde_json::from_value(serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": {"command": "GH_TOKEN=gho_secret1 git push origin main"},
+            "reason": "[Git Push to Default Branch]",
+        }))
+        .unwrap();
+        let scrub = Scrub::new(["gho_secret1".to_owned()]);
+        queue
+            .keep(&[crate::denied::Denial::of(&input, &scrub, false, 5)])
+            .unwrap();
+        let socket = session_dir(&here.dir, name).join(SOCKET);
+        crate::session_relay::send_denials(&socket, &queue)
+            .await
+            .unwrap();
+        assert!(queue.take().is_empty(), "the daemon posted each denial");
+        api.read(reader, &crate::denied::thread(), true)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|m| m.message.body)
+            .collect()
+    }
+
+    /// 01M57XY3Q6HEYQG27FE0CEQ7HB, 01M57XY3SEG8HCXPZFBVATQ1W2,
+    /// 01M57XY405BSXEH3K3Z977RWAW: a refusal in a container session makes
+    /// one record in the thread `denials`, with the claim of its item and
+    /// no secret. The session is no member of the thread after it.
+    #[tokio::test]
+    async fn a_refusal_in_a_container_session_makes_one_record() {
+        let (server, api, reader) = denials_server().await;
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let mut start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        start.server = server;
+        api.register(&start.me).await.unwrap();
+        let me = start.me.clone();
+        let (client, name) = here.started(start).await;
+        drop(client);
+
+        let bodies = send_denials_of(&here, &name, &api, &reader).await;
+        assert_eq!(
+            bodies,
+            [
+                "denied reason=git-push-to-default-branch tool=Bash head=\"git push\" \
+                 role=container user=mike host=thelio repo=como-technologies/riff \
+                 session=riff-iss claim=issue-12: GH_TOKEN=[secret] git push origin main"
+            ]
+        );
+        let threads = api.threads(&me).await.unwrap();
+        let denials = threads
+            .iter()
+            .find(|t| t.thread.to_string() == crate::denied::THREAD);
+        assert!(
+            denials.is_none_or(|t| t.members.iter().all(|m| m.who() != me.who())),
+            "{threads:?}"
+        );
+    }
+
+    /// 01M57XY3Q6HEYQG27FE0CEQ7HB: a refusal in the lead makes one record
+    /// with the role lead and no claim.
+    #[tokio::test]
+    async fn a_refusal_in_the_lead_makes_one_record() {
+        let (server, api, reader) = denials_server().await;
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let mut start = here.start("riff-lead-o-r", "lead");
+        start.terminal = true;
+        start.server = server;
+        api.register(&start.me).await.unwrap();
+        let (client, name) = here.started(start).await;
+        drop(client);
+
+        let bodies = send_denials_of(&here, &name, &api, &reader).await;
+        assert_eq!(bodies.len(), 1, "{bodies:?}");
+        let record = crate::denied::Record::parse(&bodies[0], 0).unwrap();
+        assert_eq!(record.tag("role"), "lead");
+        assert_eq!(record.tag("claim"), "-");
     }
 }
