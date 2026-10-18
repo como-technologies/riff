@@ -172,11 +172,16 @@ pub fn config(names: &[String], riff: &Path, person: &Map<String, Value>) -> (Va
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn write(dir: &Path, config: &Value) -> Result<PathBuf> {
+    write_as(dir, FILE, config)
+}
+
+/// Writes `config` to the file `name` in `dir`, as [`write()`] does.
+pub fn write_as(dir: &Path, name: &str, config: &Value) -> Result<PathBuf> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     crate::local::make_dir(dir).with_context(|| format!("cannot make {}", dir.display()))?;
-    let path = dir.join(FILE);
-    let new = dir.join(format!("{FILE}.{}", std::process::id()));
+    let path = dir.join(name);
+    let new = dir.join(format!("{name}.{}", std::process::id()));
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)

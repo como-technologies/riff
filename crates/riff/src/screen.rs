@@ -452,6 +452,7 @@ mod tests {
             waiting: vec![],
             waves: vec![],
             jobs: 0,
+            mcp: vec![],
         }
     }
 

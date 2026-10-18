@@ -1311,6 +1311,37 @@ enum DaemonCommand {
     /// stays. It prints each folder that it removed, and each folder that
     /// stays with work in its clone, with the reason.
     Sweep,
+    /// Show or change the MCP servers of the sessions of this host
+    ///
+    /// These are the MCP servers that each new container session of this
+    /// host loads. The default is riff only. A session that runs keeps
+    /// its servers. They are in mcp.json in the folder of the daemon.
+    Mcp {
+        #[command(subcommand)]
+        command: Option<DaemonMcp>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DaemonMcp {
+    /// Give each new session of this host an MCP server
+    ///
+    /// NAME is an MCP server of your Claude Code config. `claude mcp list`
+    /// shows the names. riff copies its config now: after a change of
+    /// it, add it again. A stdio server runs in the container, so riff
+    /// refuses it when the session image of the repository of this folder
+    /// does not have its program.
+    Add {
+        /// The name of the MCP server.
+        name: String,
+    },
+    /// Take an MCP server from each new session of this host
+    ///
+    /// riff stays.
+    Remove {
+        /// The name of the MCP server.
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2818,6 +2849,27 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
             Ok(())
         }
         Some(DaemonCommand::Sweep) => riff::daemon::ask_sweep(&riff::daemon::dir()?).await,
+        Some(DaemonCommand::Mcp { command }) => {
+            use riff::session_mcp;
+            let dir = riff::daemon::dir()?;
+            let names = match command {
+                None => session_mcp::names(&session_mcp::read(&dir)?),
+                Some(DaemonMcp::Add { name }) => {
+                    let here = identity::working_dir()?;
+                    let person = riff::worker_mcp::person_servers(
+                        riff::worker_mcp::claude_json().as_deref(),
+                        &here,
+                    );
+                    session_mcp::add(&dir, name, &person, |program| {
+                        let image = riff::session_image::of_folder(&here)?;
+                        session_mcp::has_program(&image.to_string(), program)
+                    })?
+                }
+                Some(DaemonMcp::Remove { name }) => session_mcp::remove(&dir, name)?,
+            };
+            println!("{}", riff::text::session_mcp(&names));
+            Ok(())
+        }
     }
 }
 

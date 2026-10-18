@@ -142,8 +142,9 @@
 //!
 //! The relay gives `claude` the riff tools: it adds `--mcp-config` with
 //! the MCP server `riff`, which runs `RELAY_BIN relay mcp`
-//! ([`with_tools`]). [`mcp`] passes each line between `claude` and the
-//! daemon, on the socket of the session ([`SessionAsk::Mcp`]). The
+//! ([`with_tools`]), and each MCP server that the person gave the
+//! sessions of the host ([`crate::session_mcp`]). [`mcp`] passes each
+//! line between `claude` and the daemon, on the socket of the session ([`SessionAsk::Mcp`]). The
 //! daemon serves the tools as that session (01M4ZHSZV46RF3XDXDTQXWGXRG):
 //! only the tools that talk ([`crate::mcp::CONTAINER_TOOLS`],
 //! 01M4ZV3B6T2KB09WJ59F07HXET).
@@ -162,7 +163,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::net::unix::OwnedWriteHalf;
@@ -289,14 +290,21 @@ impl Kept {
 }
 
 /// The secrets of a session: the value of each variable of
-/// [`SECRET_VARS`] that `var` gives, and the tokens of the sign-in file
-/// of `claude`, when `credentials` holds its text.
+/// [`SECRET_VARS`] that `var` gives, each value of the `env` and the
+/// `headers` of the MCP servers in [`crate::session_mcp::VAR`]
+/// (01M57840R2HNXGP9B2ENSKTWD3), and the tokens of the sign-in file of
+/// `claude`, when `credentials` holds its text.
 ///
 /// ```
-/// let var = |name: &str| (name == "GH_TOKEN").then(|| "gho_x1y2".to_owned());
+/// let servers = r#"{"docs": {"command": "docs", "env": {"DOCS_TOKEN": "t1"}}}"#;
+/// let var = |name: &str| match name {
+///     "GH_TOKEN" => Some("gho_x1y2".to_owned()),
+///     riff::session_mcp::VAR => Some(servers.to_owned()),
+///     _ => None,
+/// };
 /// let file = r#"{"claudeAiOauth":{"accessToken":"sk-a1","refreshToken":"sk-r1","expiresAt":0}}"#;
 /// let secrets = riff::session_relay::secrets(var, Some(file));
-/// assert_eq!(secrets, ["gho_x1y2", "sk-a1", "sk-r1"]);
+/// assert_eq!(secrets, ["gho_x1y2", "t1", "sk-a1", "sk-r1"]);
 /// assert!(riff::session_relay::secrets(|_| None, Some("no json")).is_empty());
 /// ```
 pub fn secrets(var: impl Fn(&str) -> Option<String>, credentials: Option<&str>) -> Vec<String> {
@@ -305,6 +313,8 @@ pub fn secrets(var: impl Fn(&str) -> Option<String>, credentials: Option<&str>) 
         .filter_map(|name| var(name))
         .filter(|v| !v.is_empty())
         .collect();
+    let servers = crate::session_mcp::from_var(var(crate::session_mcp::VAR).as_deref());
+    secrets.extend(crate::session_mcp::secrets(&servers));
     if let Some(file) = credentials
         && let Ok(sign_in) = crate::run::sign_in(file, 0)
     {
@@ -313,8 +323,10 @@ pub fn secrets(var: impl Fn(&str) -> Option<String>, credentials: Option<&str>) 
     secrets
 }
 
-/// [`secrets`] of this process: its variables, and the sign-in file in
-/// `CLAUDE_CONFIG_DIR`, else in `HOME/.claude`.
+/// [`secrets`] of this process: its variables, with the MCP servers that
+/// the daemon gives it, and the sign-in file in `CLAUDE_CONFIG_DIR`, else
+/// in `HOME/.claude`. So a daemon that takes up the session after its
+/// restart gets each event scrubbed by the relay.
 pub fn secrets_here() -> Vec<String> {
     let dir = std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|d| !d.is_empty())
@@ -325,39 +337,51 @@ pub fn secrets_here() -> Vec<String> {
 }
 
 /// The MCP config that gives `claude` the riff tools: the server
-/// [`MCP_SERVER`] runs `bin relay mcp`.
+/// [`MCP_SERVER`] runs `bin relay mcp`. Each server of `more`, the MCP
+/// servers of the host ([`crate::session_mcp`]), goes beside it. `riff`
+/// stays the riff of the relay.
 ///
 /// ```
-/// let config = riff::session_relay::mcp_config("/opt/riff/riff".as_ref());
+/// let more = serde_json::json!({"docs": {"type": "http", "url": "https://d"}, "riff": {}});
+/// let config = riff::session_relay::mcp_config("/opt/riff/riff".as_ref(), more.as_object().unwrap());
 /// assert_eq!(config["mcpServers"]["riff"]["command"], "/opt/riff/riff");
 /// assert_eq!(config["mcpServers"]["riff"]["args"], serde_json::json!(["relay", "mcp"]));
+/// assert_eq!(config["mcpServers"]["docs"]["url"], "https://d");
 /// ```
-pub fn mcp_config(bin: &Path) -> Value {
-    json!({
-        "mcpServers": {
-            MCP_SERVER: {
-                "type": "stdio",
-                "command": bin.to_string_lossy(),
-                "args": ["relay", "mcp"],
-            }
-        }
-    })
+pub fn mcp_config(bin: &Path, more: &Map<String, Value>) -> Value {
+    let mut servers = more.clone();
+    servers.insert(
+        MCP_SERVER.into(),
+        json!({
+            "type": "stdio",
+            "command": bin.to_string_lossy(),
+            "args": ["relay", "mcp"],
+        }),
+    );
+    json!({ "mcpServers": servers })
 }
 
-/// `command` with the riff tools: the option `--mcp-config` with
-/// [`mcp_config`] goes last, because it takes more than one value.
+/// `command` with the riff tools and the servers of `more`: the option
+/// `--mcp-config` with [`mcp_config`] goes last, because it takes more
+/// than one value.
 ///
 /// ```
 /// let command = ["claude".to_owned(), "-p".to_owned()];
-/// let with = riff::session_relay::with_tools(&command, "/opt/riff/riff".as_ref());
+/// let with = riff::session_relay::with_tools(&command, "/opt/riff/riff".as_ref(), &Default::default());
 /// assert_eq!(with[..3], ["claude", "-p", "--mcp-config"]);
 /// assert!(with[3].contains("\"relay\",\"mcp\""));
 /// ```
-pub fn with_tools(command: &[String], bin: &Path) -> Vec<String> {
+pub fn with_tools(command: &[String], bin: &Path, more: &Map<String, Value>) -> Vec<String> {
     let mut with = command.to_vec();
     with.push("--mcp-config".into());
-    with.push(mcp_config(bin).to_string());
+    with.push(mcp_config(bin, more).to_string());
     with
+}
+
+/// The MCP servers of the host that the daemon gives this process in
+/// [`crate::session_mcp::VAR`].
+fn more_here() -> Map<String, Value> {
+    crate::session_mcp::from_var(std::env::var(crate::session_mcp::VAR).ok().as_deref())
 }
 
 /// The command of `claude` that goes on after a takeover:
@@ -742,6 +766,7 @@ fn spawn_claude(command: &[String], pid: &Arc<AtomicU32>) -> Result<Child> {
         .split_first()
         .ok_or_else(|| anyhow!("{}", text::RELAY_NO_COMMAND))?;
     let mut child = tokio::process::Command::new(program)
+        .env_remove(crate::session_mcp::VAR)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -771,7 +796,7 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
     use tokio::signal::unix::{SignalKind, signal};
     let socket = socket_here()?;
     let bin = std::env::current_exe().context("cannot find the path of riff")?;
-    let command = with_tools(&command, &bin);
+    let command = with_tools(&command, &bin, &more_here());
     let again_command = resumed(&command);
     // The handlers come first: a signal before them ends the relay, and
     // not claude.
@@ -832,11 +857,14 @@ pub fn terminal(command: &[String]) -> anyhow::Error {
         Ok(bin) => bin,
         Err(e) => return anyhow!(e).context("cannot find the path of riff"),
     };
-    let command = with_tools(command, &bin);
+    let command = with_tools(command, &bin, &more_here());
     let Some((program, args)) = command.split_first() else {
         return anyhow!("{}", text::RELAY_NO_COMMAND);
     };
-    let error = std::process::Command::new(program).args(args).exec();
+    let error = std::process::Command::new(program)
+        .args(args)
+        .env_remove(crate::session_mcp::VAR)
+        .exec();
     anyhow!(error).context(text::no_program(program))
 }
 
@@ -1000,6 +1028,29 @@ mod tests {
     use super::*;
     use tokio::net::UnixListener;
     use tokio::net::unix::OwnedReadHalf;
+
+    #[test]
+    fn the_scrub_of_the_relay_hides_the_values_of_the_added_mcp_servers() {
+        let servers = json!({
+            "docs": {"command": "docs-mcp", "env": {"DOCS_TOKEN": "env-s3cret"}},
+            "unifi": {
+                "type": "http",
+                "url": "https://unifi.example",
+                "headers": {"Authorization": "Bearer head-s3cret"},
+            },
+        })
+        .to_string();
+        let var = |name: &str| (name == crate::session_mcp::VAR).then(|| servers.clone());
+        let scrub = Scrub::new(secrets(var, None));
+        let line = r#"{"tool":"docs","env":"env-s3cret","auth":"Bearer head-s3cret","url":"https://unifi.example"}"#;
+        assert_eq!(
+            scrub.clean(line),
+            format!(
+                r#"{{"tool":"docs","env":"{0}","auth":"{0}","url":"https://unifi.example"}}"#,
+                crate::run::HIDDEN
+            )
+        );
+    }
 
     /// A fake daemon on a socket in a temp folder.
     struct Daemon {

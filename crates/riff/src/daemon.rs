@@ -761,6 +761,10 @@ pub struct Status {
     /// end of the steps after its session.
     #[serde(default)]
     pub jobs: usize,
+    /// The MCP servers of each new session ([`crate::session_mcp`]).
+    /// An old daemon gives none.
+    #[serde(default)]
+    pub mcp: Vec<String>,
 }
 
 impl Status {
@@ -1445,6 +1449,36 @@ impl<R: Runtime + 'static> Daemon<R> {
         self.room.ended();
     }
 
+    /// Gives the session of `spec` the MCP servers of the host
+    /// (01M57840R2HNXGP9B2ENSKTWD3): [`crate::session_mcp::VAR`] with its
+    /// value in `values`, and the secrets of the servers in `secrets`.
+    /// When riff cannot read them, it says so, and the session starts
+    /// with riff only.
+    fn give_mcp(
+        &self,
+        spec: &mut SessionSpec,
+        values: &mut Vec<(String, String)>,
+        secrets: &mut Vec<String>,
+    ) {
+        use crate::session_mcp::VAR;
+        let servers = match crate::session_mcp::read(&self.dir) {
+            Ok(servers) => servers,
+            Err(e) => {
+                println!("{}", text::session_mcp_unread(&format!("{e:#}")));
+                return;
+            }
+        };
+        spec.env
+            .retain(|e| !matches!(e, Env::Host(name) | Env::Value(name, _) if name == VAR));
+        values.retain(|(name, _)| name != VAR);
+        if servers.is_empty() {
+            return;
+        }
+        secrets.extend(crate::session_mcp::secrets(&servers));
+        spec.env.push(Env::Host(VAR.into()));
+        values.push((VAR.into(), Value::Object(servers).to_string()));
+    }
+
     /// The state of the daemon.
     pub async fn status(&self) -> Status {
         Status {
@@ -1471,6 +1505,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                         .len()
                 })
                 .sum(),
+            mcp: crate::session_mcp::read(&self.dir)
+                .map(|servers| crate::session_mcp::names(&servers))
+                .unwrap_or_default(),
         }
     }
 
@@ -1894,8 +1931,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             folder,
             mut spec,
             start,
-            values,
-            secrets,
+            mut values,
+            mut secrets,
             server,
             me,
             terminal,
@@ -1904,6 +1941,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         crate::compile_cache::Setting::read(&self.dir)
             .unwrap_or_default()
             .apply(&mut spec);
+        self.give_mcp(&mut spec, &mut values, &mut secrets);
         let name = spec.name.clone();
         let record = Record {
             live: Live {
@@ -3145,6 +3183,48 @@ mod tests {
         // The session that runs keeps the caps of its start.
         let spec = here.fake.spec(&first).unwrap();
         assert_eq!(caps(&spec), (8, vec!["8"], "8g"));
+    }
+
+    /// 01M57840K7SNPS243CYMYNYVFX, 01M57840R2HNXGP9B2ENSKTWD3.
+    #[tokio::test]
+    async fn an_added_mcp_server_is_in_the_mcp_config_of_each_new_session() {
+        use crate::session_mcp::{self, VAR};
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (_first, first) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let spec = here.fake.spec(&first).unwrap();
+        assert!(!spec.env.contains(&Env::Host(VAR.into())));
+        assert_eq!(status(&here.dir).await.unwrap().mcp, ["riff"]);
+
+        let person = serde_json::json!({
+            "docs": {"type": "http", "url": "https://d", "headers": {"Authorization": "Bearer t1"}},
+        });
+        let names =
+            session_mcp::add(&here.dir, "docs", person.as_object().unwrap(), |_| Ok(true)).unwrap();
+        assert_eq!(names, ["riff", "docs"]);
+        assert!(session_mcp::remove(&here.dir, "riff").is_err());
+        let (_second, second) = here
+            .started(here.start("riff-issue-13-2b3c4d5e", "issue-13"))
+            .await;
+        // The servers go beside the spec, as a token does.
+        let spec = here.fake.spec(&second).unwrap();
+        assert!(spec.env.contains(&Env::Host(VAR.into())));
+        assert!(!format!("{spec:?}").contains("https://d"));
+        let values = here.fake.values(&second);
+        let (_, value) = values.iter().find(|(name, _)| name == VAR).unwrap();
+        let config = crate::session_relay::mcp_config(
+            RELAY_BIN.as_ref(),
+            &session_mcp::from_var(Some(value)),
+        );
+        assert_eq!(config["mcpServers"]["docs"]["url"], "https://d");
+        assert_eq!(
+            config["mcpServers"]["riff"]["args"],
+            serde_json::json!(["relay", "mcp"])
+        );
+        assert_eq!(status(&here.dir).await.unwrap().mcp, ["riff", "docs"]);
+        // The session that runs keeps the servers of its start.
+        assert!(here.fake.values(&first).iter().all(|(name, _)| name != VAR));
     }
 
     #[tokio::test]
