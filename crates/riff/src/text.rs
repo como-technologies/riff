@@ -7343,6 +7343,94 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
     )
 }
 
+/// The start text of a build session of a wave that rebases the pull
+/// request `pull` of `issue` on `main`: its head `commit` has a conflict
+/// with `main` (01M57FJ3WWMQSDBFRRHXN3SMFQ).
+///
+/// ```
+/// let text = riff::text::wave_rebase_start("o/r", 12, 40, "1a2b3c4d5e", "worktree-issue-12", "9f8e");
+/// assert!(text.contains("on the branch worktree-issue-12 of pull request #40"));
+/// assert!(text.contains("a conflict with main at commit 1a2b3c4"));
+/// assert!(text.contains("gh issue view 12 --comments"));
+/// assert!(text.contains("git rebase origin/main"));
+/// assert!(text.contains("Resolve each conflict"));
+/// assert!(text.contains("just check"));
+/// assert!(text.contains("git push --force-with-lease origin worktree-issue-12"));
+/// assert!(text.contains("Do not open a second pull request"));
+/// assert!(text.contains("A new Gate and a new verify"));
+/// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
+/// assert!(!text.contains("gh pr create"));
+/// ```
+pub fn wave_rebase_start(
+    repo: &str,
+    issue: u64,
+    pull: u64,
+    commit: &str,
+    branch: &str,
+    session: &str,
+) -> String {
+    let commit = commit.get(..7).unwrap_or(commit);
+    format!(
+        "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
+         branch {branch} of pull request #{pull}. The pull request has a conflict with main at \
+         commit {commit}, so it cannot merge. Rebase it on main, then stop. riff does the \
+         claim, the release and the verify request for you. Your riff tools only talk: whoami, \
+         who, threads, read, post, tell, status and blocked.\n\n\
+         1. Read the issue and its comments: gh issue view {issue} --comments\n   \
+         Read the pull request: gh pr view {pull} --comments\n\
+         2. Read CLAUDE.md, and obey its rules.\n\
+         3. Rebase the branch on main:\n   \
+         git fetch -q origin main\n   \
+         git rebase origin/main\n\
+         4. Resolve each conflict. Keep the work of the pull request and the new work of main. \
+         Add the files, and run git rebase --continue. Give each new commit this trailer:\n   \
+         git commit --trailer \"Riff-Session: {session}\"\n\
+         5. Run the checks that CLAUDE.md names before a push, for example just check. Fix each \
+         fault of the rebase.\n\
+         6. Push to the same pull request:\n   \
+         git push --force-with-lease origin {branch}\n   \
+         Never push to main. Do not open a second pull request.\n\
+         7. A new Gate and a new verify of the new commit follow. Another session does the \
+         verify: do not verify your own work.\n\
+         8. Stop each background task that you started, for example a Monitor or a command \
+         in the background. Leave no background task at the end of your work: while one runs, \
+         your session does not end.\n\
+         9. Reply with the URL of the pull request in one line.\n\n\
+         Do not print the environment or a token."
+    )
+}
+
+/// The message to the lead when the rebase session of `item` ended and
+/// its pull request still has the head `commit` with the conflict: the
+/// session pushed nothing (01M57FJ3Z8AFDY9G0KTAYZJESY).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_not_rebased("issue-12", 40, "worktree-issue-12", "1a2b3c4d5e", "9f8e7d6c"),
+///     "issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). PR #40, \
+///      branch worktree-issue-12, still has the head commit 1a2b3c4 with the conflict with \
+///      main. The riff daemon sends no verify request, and the wave starts no second session \
+///      for this commit. Give the item to a session to rebase, or run riff wave run to start \
+///      the rebase again. The item is free."
+/// );
+/// ```
+pub fn wave_not_rebased(
+    item: &str,
+    number: u64,
+    branch: &str,
+    commit: &str,
+    session: &str,
+) -> String {
+    let commit = commit.get(..7).unwrap_or(commit);
+    format!(
+        "{item}: the rebase session of the wave ended with no push (session {session}). PR \
+         #{number}, branch {branch}, still has the head commit {commit} with the conflict with \
+         main. The riff daemon sends no verify request, and the wave starts no second session \
+         for this commit. Give the item to a session to rebase, or run riff wave run to start \
+         the rebase again. The item is free."
+    )
+}
+
 /// The start text of a verify session of a wave
 /// (01M4ZV3B6R4WSEJXYT7QPRWT6X).
 ///
@@ -7799,6 +7887,15 @@ pub fn run_verify_sent(item: &str, pull: u64) -> String {
 pub fn run_lead_noted(item: &str) -> String {
     format!(
         "riff sent no verify request of {}: your lead got a note with the reason.",
+        safe(item)
+    )
+}
+
+/// A job of a wave: the lead got a message in place of a verify
+/// request, because the rebase pushed nothing (01M57FJ3Z8AFDY9G0KTAYZJESY).
+pub fn run_lead_told(item: &str) -> String {
+    format!(
+        "riff sent no verify request of {}: your lead got a message with the reason.",
         safe(item)
     )
 }
