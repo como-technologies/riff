@@ -5215,6 +5215,23 @@ part when they merge.
 - **01M57A7A48A70Y7PTD95A3MBYC** `riff wave run` on a wave that the
   daemon runs clears the starts of each item of the wave
   (01M4ZV3B6PSRH40EYQEVYH2MBA). A spent item then starts again.
+- **01M57FJ3WWMQSDBFRRHXN3SMFQ** The wave of the daemon starts a build
+  session for the item of an open pull request with auto-merge on and
+  a conflict with `main`, also after its verify passed. A pull request
+  whose verify failed is free work as a build already. The start text
+  tells the session to rebase the branch on `main`, resolve the
+  conflict, run the checks, and push to the same pull request. Such an
+  item comes after the fix items of a broken `main`
+  (01M51QEYS538XA58KDRY844T52), before each other item. The wave
+  starts no verify of a head commit with a conflict. Each head commit
+  with a conflict starts one session in a run of the wave. A start that
+  riff-server refused for a pause, or a fault of the host, does not
+  count. `riff wave run` clears the starts of the rebases too
+  (01M57A7A48A70Y7PTD95A3MBYC).
+- **01M57FJ3Z8AFDY9G0KTAYZJESY** When the rebase session of a wave ends
+  and its pull request still has the head commit with the conflict,
+  the daemon sends no verify request. The lead gets a message with the
+  pull request, the commit and the steps for the person.
 - **01M53NGVH8A19QS3CQ79ENVVXT** A second machine of a person takes work
   in containers when its daemon runs the wave of the repository:
   `riff wave run` in a clone on that machine. The claims on riff-server

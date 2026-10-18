@@ -1115,7 +1115,33 @@ does not run, or the pull fails, `riff wave run` says why, and the
 daemon runs no wave.
 
 The daemon keeps the wave, also over its own restart, until you stop
-it. The rollout of your lead runs it for you: see the next how-to.
+it. The rollout of your lead runs it for you: see
+[Let the rollout of the lead run the wave](#let-the-rollout-of-the-lead-run-the-wave).
+
+A pull request with auto-merge on can get a conflict with `main` when
+`main` moves. Then it cannot merge, also after its verify passed. The
+wave starts a build session for its item. The session rebases the
+branch on `main`, resolves the conflict, runs `just check`, and pushes
+to the same pull request. Then a new Gate runs, and a new session
+verifies the new commit. The wave starts no verify of a commit with a
+conflict.
+
+```mermaid
+flowchart LR
+    C["pull request: auto-merge on, a conflict"] --> R["a session rebases the branch"]
+    R -- "push" --> V["a new Gate, then a new verify"]
+    R -- "no push" --> L["a message to your lead"]
+```
+
+The wave starts one session for each head commit with a conflict.
+When that session ends with no push, your lead gets a message:
+
+```text
+issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4 with the conflict with main. The riff daemon sends no verify request, and the wave starts no second session for this commit. Give the item to a session to rebase, or run riff wave run to start the rebase again. The item is free.
+```
+
+To start the rebase of the same commit again, see
+[Start a spent item again](#start-a-spent-item-again).
 
 ### When the sign-in of claude ends soon
 
@@ -1151,7 +1177,9 @@ riff wave run
 ```
 
 The wave goes on, and the starts of each item go back to 0. The
-sessions that run go on.
+sessions that run go on. The rebase of a pull request with a conflict
+starts again too, also for the same commit (see
+[Run the wave](#run-the-wave)).
 
 ### Let the rollout of the lead run the wave
 
@@ -1441,8 +1469,10 @@ refuses a worker session and another user.
 The daemon waits for room. Then it looks at the wave, and starts the
 first free work:
 
-1. The pull requests that wait for a verify, then the free items of
-   the current wave. It takes the free work as the rollout of the lead
+1. The fix items of a broken `main`, then the pull requests with a
+   conflict with `main` (see [Run the wave](#run-the-wave)), then the
+   pull requests that wait for a verify, then the free items of the
+   current wave. It takes the free work as the rollout of the lead
    does.
 2. It starts nothing while the riff or the repository is paused. It
    never starts a held item, or an item that a session claims.

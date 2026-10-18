@@ -1813,36 +1813,63 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
     ])
 }
 
+/// The open milestones, issues and pull requests of a repository: the
+/// facts of its free work ([`free_work_of`]).
+#[derive(Debug, Clone, Default)]
+pub struct Open {
+    pub milestones: Vec<Milestone>,
+    pub issues: Vec<Issue>,
+    pub pulls: Vec<Pull>,
+}
+
+impl Open {
+    /// The open milestones, issues and pull requests of the repository
+    /// `repo` (`OWNER/REPO`), with `gh`.
+    pub fn of(gh: &Gh, repo: &str) -> Result<Self> {
+        let milestones: Vec<Milestone> = gh.json(&[
+            "api",
+            &format!("repos/{repo}/milestones?state=open&per_page=100"),
+        ])?;
+        let pulls = pulls(gh, repo)?;
+        let issues: Vec<Issue> = gh.json(&[
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            "number,body,comments,milestone,labels",
+        ])?;
+        Ok(Self {
+            milestones,
+            issues,
+            pulls,
+        })
+    }
+
+    /// [`free_work_of`] with these facts.
+    pub fn free_work(&self, claims: &HashSet<String>, holds: &HashSet<String>) -> Vec<String> {
+        free_work_of(&self.milestones, &self.issues, &self.pulls, claims, holds)
+    }
+}
+
 /// The free work of the repository `repo` (`OWNER/REPO`), with `gh`:
 /// [`free_work_of`] with its open milestones, its open issues and its
-/// open pull requests. The usage comments of the issue of each verify
-/// name its authors ([`authors`], 01M51533BJSD0RB7BFQR9CAFYW).
+/// open pull requests ([`Open`]). The usage comments of the issue of
+/// each verify name its authors ([`authors`], 01M51533BJSD0RB7BFQR9CAFYW).
 pub fn free_work(
     gh: &Gh,
     repo: &str,
     claims: &HashSet<String>,
     holds: &HashSet<String>,
 ) -> Result<Work> {
-    let open: Vec<Milestone> = gh.json(&[
-        "api",
-        &format!("repos/{repo}/milestones?state=open&per_page=100"),
-    ])?;
-    let pulls = pulls(gh, repo)?;
-    let issues: Vec<Issue> = gh.json(&[
-        "issue",
-        "list",
-        "--repo",
-        repo,
-        "--state",
-        "open",
-        "--limit",
-        "1000",
-        "--json",
-        "number,body,comments,milestone,labels",
-    ])?;
+    let open = Open::of(gh, repo)?;
     Ok(Work {
-        items: free_work_of(&open, &issues, &pulls, claims, holds),
-        authors: authors(&issues, &waiting_verifies(&pulls, claims)),
+        items: open.free_work(claims, holds),
+        authors: authors(&open.issues, &waiting_verifies(&open.pulls, claims)),
     })
 }
 

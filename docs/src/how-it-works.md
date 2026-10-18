@@ -2315,7 +2315,8 @@ flowchart TD
 - A conflict with the default branch: the message names the pull
   request and the commit. The session that holds the item rebases it
   and pushes. When no session holds it, the lead gives it to a free
-  session.
+  session. The wave of the riff daemon starts a session for it by
+  itself (see [Run the wave](development.md#run-the-wave)).
 - A verify that no session claims for 30 minutes: the lead gives the
   verify to a free session, or starts a worker.
 
