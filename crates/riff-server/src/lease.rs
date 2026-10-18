@@ -107,6 +107,38 @@
 //!     Note over P: SIGTERM: exits
 //! ```
 //!
+//! # A failed deploy
+//!
+//! Cloud Run can stop the new instance in its wait, before it serves: a
+//! failed deploy, or a shift of the traffic back to the old revision.
+//! At that SIGTERM, the new instance ends its lease before it exits
+//! (01M56T4SZ4Y6PSY1VTVA3758FT). [`Lease::end`] writes only over its own
+//! ID, so it does not end the lease of another instance. The next read of
+//! an old instance shows a lease that ended. It takes the lease, waits
+//! [`Timing::wait`], and serves: less than 20 seconds after the SIGTERM.
+//!
+//! A crash gives no SIGTERM. Then the lease ends by its age: the old
+//! instance takes it [`Timing::ends_after`] after the last write of the
+//! time, and serves after its own wait. That is at most 90 + 2 + 15
+//! seconds, 107 seconds, after the take of the new instance.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant N as new instance, revision 26
+//!     participant S as store
+//!     participant P as old instance, revision 25
+//!     N->>S: write the lease (revision 26)
+//!     Note over N: waits 15 s
+//!     P->>S: read the lease: revision 26 is newer
+//!     Note over P: 503, reads it each 2 s
+//!     Note over N: SIGTERM
+//!     N->>S: end the lease
+//!     Note over N: exits
+//!     P->>S: read the lease: ended
+//!     P->>S: write the lease (revision 25)
+//!     Note over P: waits 15 s, serves
+//! ```
+//!
 //! # A live lease
 //!
 //! A tool that changes the log, for example `riff-server log cut`, must

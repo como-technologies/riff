@@ -2159,18 +2159,53 @@ impl Loaded {
     /// The second step of [`Service::load`]: [`Loaded::lease`], then
     /// [`Leased::serve`]. See [`Service::load`].
     pub async fn serve(self) -> Result<Service, StoreError> {
-        self.lease().await?.serve().await
+        match self.lease(std::future::pending()).await? {
+            Some(leased) => leased.serve().await,
+            None => unreachable!("a stop that never ends"),
+        }
     }
 
     /// Takes the lease as an instance of [`Config::revision`], and waits
-    /// for the old instance (R138). The server has no state to save yet,
-    /// so `main` can drop this step at a SIGTERM (01M53NHK07KNXJ7FXS26NB1675).
+    /// for the old instance (R138).
     ///
     /// While a live lease holds a newer revision, the server does not take
     /// it (01M53NHJXGK1PN2A9F7NSX0B4G). It reads the lease each
     /// [`lease::Timing::read_every`], and takes it when that lease ended.
     /// See "A second old instance" in [`lease`].
-    pub async fn lease(self) -> Result<Leased, StoreError> {
+    ///
+    /// The server has no state to save yet. So when `stop` ends first (a
+    /// SIGTERM in `main`), this step gives `None` at once. When the server
+    /// took the lease, it ends the lease first, so that an instance of an
+    /// older revision takes it at once (01M56T4SZ4Y6PSY1VTVA3758FT). See
+    /// "A failed deploy" in [`lease`].
+    ///
+    /// ```
+    /// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
+    /// use std::sync::Arc;
+    /// use std::time::Duration;
+    /// use riff_server::Service;
+    /// use riff_server::auth::Config;
+    /// use riff_server::lease::{Lease, Revision, Timing, holder, now_ms};
+    /// use riff_state::store::Memory;
+    ///
+    /// let store = Arc::new(Memory::default());
+    /// let mut config = Config::default();
+    /// config.revision = Revision::parse("riff-server-00026-899");
+    /// config.lease.wait = Duration::from_secs(3600);
+    /// let loaded = Service::prepare(config, store.clone()).await?;
+    /// // A SIGTERM comes during the wait for the old instance.
+    /// let stop = tokio::time::sleep(Duration::from_millis(50));
+    /// assert!(loaded.lease(stop).await?.is_none());
+    ///
+    /// // The lease ended, so an older revision takes it at once.
+    /// let timing = Timing::default();
+    /// assert_eq!(holder(&*store, now_ms(), &timing).await?, None);
+    /// let old = Revision::parse("riff-server-00025-2s5");
+    /// assert!(Lease::take_as(store, old, &timing).await?.is_ok());
+    /// # Ok(()) }
+    /// ```
+    pub async fn lease(self, stop: impl Future<Output = ()>) -> Result<Option<Leased>, StoreError> {
+        let mut stop = std::pin::pin!(stop);
         let timing = self.config.lease;
         let revision = self.config.revision;
         let mut told = false;
@@ -2190,7 +2225,10 @@ impl Loaded {
                             of(revision).unwrap_or_default(),
                         );
                     }
-                    tokio::time::sleep(timing.read_every).await;
+                    tokio::select! {
+                        () = tokio::time::sleep(timing.read_every) => {}
+                        () = &mut stop => return Ok(None),
+                    }
                 }
             }
         };
@@ -2199,17 +2237,35 @@ impl Loaded {
             lease.id(),
             timing.wait
         );
-        tokio::time::sleep(timing.wait).await;
-        // Serve from the next whole second, and refuse each proof issued
-        // before it (R142). See the lease module for the argument.
-        tokio::time::sleep(Duration::from_millis(1000 - now_ms() % 1000)).await;
+        let wait = async {
+            tokio::time::sleep(timing.wait).await;
+            // Serve from the next whole second, and refuse each proof
+            // issued before it (R142). See the lease module for the
+            // argument.
+            tokio::time::sleep(Duration::from_millis(1000 - now_ms() % 1000)).await;
+        };
+        tokio::select! {
+            () = wait => {}
+            () = &mut stop => {
+                // An older revision then takes the lease at once, and
+                // does not wait for its age (01M56T4SZ4Y6PSY1VTVA3758FT).
+                match lease.end().await {
+                    Ok(()) => tracing::info!("stopping in the wait for the lease: ended it"),
+                    Err(error) => tracing::warn!(
+                        "stopping in the wait for the lease: its end failed, so it ends by \
+                         its age: {error}"
+                    ),
+                }
+                return Ok(None);
+            }
+        }
         let start = now_ms() / 1000;
-        Ok(Leased {
+        Ok(Some(Leased {
             loaded: self,
             lease,
             taken,
             start,
-        })
+        }))
     }
 }
 

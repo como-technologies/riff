@@ -2102,11 +2102,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the lease only when that lease ended. When the instance or the holder
   has no revision, the newest instance takes the lease (R138).
   Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
-- **01M53NHK07KNXJ7FXS26NB1675** A SIGTERM before the end of the wait
+- **01M53NHK07KNXJ7FXS26NB1675** Replaced by 01M56T4SZ4Y6PSY1VTVA3758FT.
+- **01M56T4SZ4Y6PSY1VTVA3758FT** A SIGTERM before the end of the wait
   for the lease ends the start of an instance at once. The instance
-  closes its port and exits with success. It saves nothing: it has no
-  state to save yet. A lease that it took ends by its age, or the next
-  instance takes it. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
+  ends the lease that it took, closes its port and exits with success.
+  It saves nothing: it has no state to save yet. So an instance of an
+  older revision takes the lease at its next read. When the end of the
+  lease fails, the lease ends by its age. After a crash, the lease also
+  ends by its age. Superseded by 3.0 (01M4Z60B7FCREZDCTVR73WWRY1).
 - **01M3X34282SG0DJ6X34F90HS26** The lease also holds a time. An
   instance writes the time when it takes the lease, and again every 30
   seconds. While a write of the time that is due fails, the instance
