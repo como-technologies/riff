@@ -154,7 +154,7 @@ fn text(log: &NamedTempFile) -> String {
 /// revision while the new one waits. The second old instance does not
 /// take the lease of the newer revision (01M53NHJXGK1PN2A9F7NSX0B4G), and
 /// exits at once at its SIGTERM, before it serves
-/// (01M53NHK07KNXJ7FXS26NB1675). So the new instance serves after one
+/// (01M56T4SZ4Y6PSY1VTVA3758FT). So the new instance serves after one
 /// wait of 15 seconds, not after two or three.
 #[tokio::test]
 async fn at_a_deploy_a_second_old_instance_does_not_take_the_lease_of_the_new_revision() {
@@ -250,4 +250,116 @@ async fn at_a_deploy_a_second_old_instance_does_not_take_the_lease_of_the_new_re
     assert_eq!(first["revision"], 25);
     let lease = lease_of(dir.path());
     assert_eq!((&lease["id"], &lease["revision"]), (&id, &json!(26)));
+}
+
+/// Sends SIGTERM to `server`, and gives its exit status. It exits in
+/// less than 3 seconds.
+async fn stop(server: &mut common::Server) -> std::process::ExitStatus {
+    let span = Span::start();
+    let kill = std::process::Command::new("kill")
+        .args(["-TERM", &server.0.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(kill.success());
+    loop {
+        if let Some(status) = server.0.try_wait().unwrap() {
+            return status;
+        }
+        assert!(span.within(Duration::from_secs(3)), "it exited late");
+        sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// A failed deploy: Cloud Run stops the new instance in its wait for
+/// the lease, before it serves. The new instance ends its lease at the
+/// SIGTERM (01M56T4SZ4Y6PSY1VTVA3758FT). So the instance of the old
+/// revision that waits for that lease takes it at its next read, and
+/// serves less than 20 seconds after the SIGTERM, not after the 90
+/// seconds of the age of the lease.
+#[tokio::test]
+async fn at_a_failed_deploy_the_old_revision_serves_again_within_20_seconds() {
+    let dir = tempfile::tempdir().unwrap();
+    let logs: [NamedTempFile; 3] = std::array::from_fn(|_| NamedTempFile::new().unwrap());
+    let old_listen = common::free_address();
+    let _old = common::Server(common::server_of_revision(
+        dir.path(),
+        &old_listen,
+        &logs[0],
+        "riff-server-00025-2s5",
+    ));
+    common::wait_until_it_serves(&old_listen).await;
+    let first = lease_of(dir.path());
+
+    // The deploy: an instance of the new revision takes the lease, and
+    // the old instance closes its port.
+    let new_listen = common::free_address();
+    let mut new = common::Server(common::server_of_revision(
+        dir.path(),
+        &new_listen,
+        &logs[1],
+        "riff-server-00026-899",
+    ));
+    let span = Span::start();
+    let id = loop {
+        let lease = lease_of(dir.path());
+        if lease["id"] != first["id"] {
+            break lease["id"].clone();
+        }
+        assert!(span.within(Duration::from_secs(30)), "no new lease");
+        sleep(Duration::from_millis(50)).await;
+    };
+    let taken = Span::start();
+    while open(&old_listen).await {
+        assert!(taken.within(Duration::from_secs(5)), "the port closed late");
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    // Cloud Run starts a second instance of the old revision. It waits
+    // for the lease of the newer revision.
+    let second_listen = common::free_address();
+    let _second = common::Server(common::server_of_revision(
+        dir.path(),
+        &second_listen,
+        &logs[2],
+        "riff-server-00025-c7d",
+    ));
+    while !text(&logs[2]).contains("does not take it") {
+        assert!(taken.within(Duration::from_secs(12)), "{}", text(&logs[2]));
+        sleep(Duration::from_millis(50)).await;
+    }
+    let got = front(&[new_listen.as_str()], 0).await.unwrap();
+    assert_eq!(
+        (got.status, got.riff),
+        (503, true),
+        "the new instance serves"
+    );
+
+    // The deploy fails: Cloud Run stops the new instance in its wait.
+    let stopped = Span::start();
+    let status = stop(&mut new).await;
+    assert!(status.success(), "{status}");
+    assert!(
+        text(&logs[1]).contains("stopping in the wait for the lease: ended it"),
+        "{}",
+        text(&logs[1])
+    );
+    // The lease ended, or the old revision took it already.
+    let lease = lease_of(dir.path());
+    assert!(
+        lease["id"] != id || lease["ended"] == json!(true),
+        "{lease}"
+    );
+
+    // The old revision serves again.
+    common::wait_until_it_serves(&second_listen).await;
+    assert!(
+        stopped.within(Duration::from_secs(20)),
+        "it served {:?} after the SIGTERM",
+        stopped.wall()
+    );
+    let got = front(&[second_listen.as_str()], 0).await.unwrap();
+    assert_eq!(got.status, 200);
+    let lease = lease_of(dir.path());
+    assert_eq!(lease["revision"], 25);
+    assert_ne!(lease["id"], id);
 }

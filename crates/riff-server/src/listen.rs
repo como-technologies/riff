@@ -57,8 +57,9 @@
 //!   after the stop (01M52JYGPX5ETP3HKR0S0Y0YCR).
 //! - A SIGTERM before the end of the wait for the lease ends the start:
 //!   the server closes its port and exits at once. It has no state to
-//!   save yet (01M53NHK07KNXJ7FXS26NB1675). A lease that it took ends
-//!   by its age, or the next instance takes it. So a second instance of
+//!   save yet. It ends a lease that it took, so an instance of an older
+//!   revision takes it at once (01M56T4SZ4Y6PSY1VTVA3758FT). So a
+//!   failed deploy does not stop the old revision. A second instance of
 //!   an old revision, which waits for a lease of a newer revision
 //!   ([`crate::lease::Lease::take_as`]), exits when Cloud Run stops it.
 //! - A server with no store serves at once: its port opens when it
@@ -244,8 +245,8 @@ fn starting() -> Response {
 ///   An error stops the start: `main` checks the listen address there.
 /// - At the end of `shutdown`, the server stops taking calls, saves and
 ///   ends its lease (R129). When `shutdown` ends before the end of the
-///   wait for the lease, it closes the port and returns at once
-///   (01M53NHK07KNXJ7FXS26NB1675).
+///   wait for the lease, it ends the lease that it took, closes the port
+///   and returns at once (01M56T4SZ4Y6PSY1VTVA3758FT).
 /// - When the server stops for good (R141, 01M52JYGPX5ETP3HKR0S0Y0YCR),
 ///   it closes the port at once, and returns when the hand-over is
 ///   written, at most [`crate::lease::Timing::exit_after`] later. When
@@ -323,14 +324,15 @@ where
             let serving = open(port)?;
             // The server has no state to save before the end of its wait
             // for the lease: a SIGTERM then ends the start at once
-            // (01M53NHK07KNXJ7FXS26NB1675).
-            let leased = tokio::select! {
-                leased = loaded.lease() => leased,
-                () = &mut shutdown => {
+            // (01M56T4SZ4Y6PSY1VTVA3758FT).
+            let leased = match loaded.lease(&mut shutdown).await {
+                Ok(Some(leased)) => Ok(leased),
+                Ok(None) => {
                     let _ = close.send(true);
                     tracing::info!("stopping before it serves: it saves nothing");
                     return Ok(());
                 }
+                Err(error) => Err(error),
             };
             let started = async {
                 let service = leased.map_err(failed)?.serve().await.map_err(failed)?;

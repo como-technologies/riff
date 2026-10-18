@@ -4087,6 +4087,20 @@ At an instance change, `riff` sees this:
   exits at once when Cloud Run stops it. So the wait of the new
   instance does not start again: each call gets its reply in less than
   20 seconds.
+- At a failed deploy, Cloud Run stops the new instance in its wait,
+  before it serves. The new instance ends its lease before it exits.
+  So an instance of the old revision takes the lease at its next read,
+  and serves 15 seconds later: each call gets its reply in less than
+  20 seconds after the stop.
+- At a shift of the traffic back to an older revision in the Cloud Run
+  console, Cloud Run stops the newer instance. When it still waits, it
+  ends its lease as at a failed deploy. When it serves, it ends its
+  lease at its shutdown. The older instance then serves after its wait
+  of 15 seconds. Until then, each call gets 503.
+- When the new instance crashes in its wait, it does not end its
+  lease. The lease then ends by its age: 90 seconds after its last
+  write. An old instance then takes it and serves 15 seconds later. So
+  each call can get 503 for up to 2 minutes.
 - Your access token still works on the new instance, also a token
   from the last second of the old instance: `riff` gets no 401, does
   not refresh, and does not sign in again.
