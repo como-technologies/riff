@@ -290,14 +290,21 @@ impl Kept {
 }
 
 /// The secrets of a session: the value of each variable of
-/// [`SECRET_VARS`] that `var` gives, and the tokens of the sign-in file
-/// of `claude`, when `credentials` holds its text.
+/// [`SECRET_VARS`] that `var` gives, each value of the `env` and the
+/// `headers` of the MCP servers in [`crate::session_mcp::VAR`]
+/// (01M57840R2HNXGP9B2ENSKTWD3), and the tokens of the sign-in file of
+/// `claude`, when `credentials` holds its text.
 ///
 /// ```
-/// let var = |name: &str| (name == "GH_TOKEN").then(|| "gho_x1y2".to_owned());
+/// let servers = r#"{"docs": {"command": "docs", "env": {"DOCS_TOKEN": "t1"}}}"#;
+/// let var = |name: &str| match name {
+///     "GH_TOKEN" => Some("gho_x1y2".to_owned()),
+///     riff::session_mcp::VAR => Some(servers.to_owned()),
+///     _ => None,
+/// };
 /// let file = r#"{"claudeAiOauth":{"accessToken":"sk-a1","refreshToken":"sk-r1","expiresAt":0}}"#;
 /// let secrets = riff::session_relay::secrets(var, Some(file));
-/// assert_eq!(secrets, ["gho_x1y2", "sk-a1", "sk-r1"]);
+/// assert_eq!(secrets, ["gho_x1y2", "t1", "sk-a1", "sk-r1"]);
 /// assert!(riff::session_relay::secrets(|_| None, Some("no json")).is_empty());
 /// ```
 pub fn secrets(var: impl Fn(&str) -> Option<String>, credentials: Option<&str>) -> Vec<String> {
@@ -306,6 +313,8 @@ pub fn secrets(var: impl Fn(&str) -> Option<String>, credentials: Option<&str>) 
         .filter_map(|name| var(name))
         .filter(|v| !v.is_empty())
         .collect();
+    let servers = crate::session_mcp::from_var(var(crate::session_mcp::VAR).as_deref());
+    secrets.extend(crate::session_mcp::secrets(&servers));
     if let Some(file) = credentials
         && let Ok(sign_in) = crate::run::sign_in(file, 0)
     {
@@ -314,8 +323,10 @@ pub fn secrets(var: impl Fn(&str) -> Option<String>, credentials: Option<&str>) 
     secrets
 }
 
-/// [`secrets`] of this process: its variables, and the sign-in file in
-/// `CLAUDE_CONFIG_DIR`, else in `HOME/.claude`.
+/// [`secrets`] of this process: its variables, with the MCP servers that
+/// the daemon gives it, and the sign-in file in `CLAUDE_CONFIG_DIR`, else
+/// in `HOME/.claude`. So a daemon that takes up the session after its
+/// restart gets each event scrubbed by the relay.
 pub fn secrets_here() -> Vec<String> {
     let dir = std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|d| !d.is_empty())
@@ -1017,6 +1028,29 @@ mod tests {
     use super::*;
     use tokio::net::UnixListener;
     use tokio::net::unix::OwnedReadHalf;
+
+    #[test]
+    fn the_scrub_of_the_relay_hides_the_values_of_the_added_mcp_servers() {
+        let servers = json!({
+            "docs": {"command": "docs-mcp", "env": {"DOCS_TOKEN": "env-s3cret"}},
+            "unifi": {
+                "type": "http",
+                "url": "https://unifi.example",
+                "headers": {"Authorization": "Bearer head-s3cret"},
+            },
+        })
+        .to_string();
+        let var = |name: &str| (name == crate::session_mcp::VAR).then(|| servers.clone());
+        let scrub = Scrub::new(secrets(var, None));
+        let line = r#"{"tool":"docs","env":"env-s3cret","auth":"Bearer head-s3cret","url":"https://unifi.example"}"#;
+        assert_eq!(
+            scrub.clean(line),
+            format!(
+                r#"{{"tool":"docs","env":"{0}","auth":"{0}","url":"https://unifi.example"}}"#,
+                crate::run::HIDDEN
+            )
+        );
+    }
 
     /// A fake daemon on a socket in a temp folder.
     struct Daemon {
