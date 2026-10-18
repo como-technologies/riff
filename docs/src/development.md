@@ -1218,6 +1218,35 @@ riff daemon limit --cpus 12 --memory 16
 The values go in `limit.json` with the limit. A new session gets them
 at its start. A session that runs keeps its caps. riff refuses 0.
 
+### Set or empty the compile cache of the container sessions
+
+The container sessions of a host share one compile cache of sccache:
+the podman volume `riff-sccache`. Its most size is 40G by default. To
+see its size now and its most size:
+
+```sh
+riff daemon cache
+```
+
+`riff daemon status` shows the same line. To set the most size, for
+example 20G:
+
+```sh
+riff daemon cache 20G
+```
+
+The size goes in `cache.json` in the folder of the daemon. A new
+session gets it at its start. A session that runs keeps its size.
+
+To delete each file of the cache:
+
+```sh
+riff daemon cache --clear
+```
+
+The clear keeps the volume. You can clear while sessions run: their
+builds compile what they do not find, and fill the cache again.
+
 ### What the wave does
 
 The daemon waits for room. Then it looks at the wave, and starts the

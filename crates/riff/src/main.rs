@@ -1285,6 +1285,22 @@ enum DaemonCommand {
         #[arg(long, value_name = "GB")]
         memory: Option<u64>,
     },
+    /// Show, set or empty the compile cache of the sessions
+    ///
+    /// The container sessions of this host share one compile cache of
+    /// sccache: the podman volume riff-sccache. With no argument, it
+    /// shows the size of the volume now and the most size. The default
+    /// most size is 40G. A new session gets the size at its start; a
+    /// session that runs keeps its size. --clear deletes each file of
+    /// the cache, also while sessions run: their builds compile again.
+    Cache {
+        /// The new most size: a number with K, M, G or T, for example 20G.
+        #[arg(conflicts_with = "clear")]
+        size: Option<String>,
+        /// Delete each file of the cache.
+        #[arg(long)]
+        clear: bool,
+    },
     /// Remove the folders of the sessions whose work is over, now
     ///
     /// The daemon does it by itself at its start and each 10 minutes.
@@ -2786,6 +2802,19 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
             };
             let limit = riff::room::set(&riff::daemon::dir()?, change)?;
             println!("{}", riff::text::daemon_limit(&limit));
+            Ok(())
+        }
+        Some(DaemonCommand::Cache { size, clear }) => {
+            let dir = riff::daemon::dir()?;
+            if *clear {
+                if let Some(folder) = riff::compile_cache::folder() {
+                    riff::compile_cache::clear(&folder)?;
+                    println!("{}", riff::text::DAEMON_CACHE_CLEARED);
+                }
+            } else {
+                riff::compile_cache::set(&dir, size.as_deref())?;
+            }
+            println!("{}", riff::compile_cache::shown(&dir));
             Ok(())
         }
         Some(DaemonCommand::Sweep) => riff::daemon::ask_sweep(&riff::daemon::dir()?).await,

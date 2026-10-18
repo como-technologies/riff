@@ -105,6 +105,7 @@ item.
 | Start the work | The rollout starts workers in tmux | The rollout runs the wave of the daemon. See [Let the rollout of the lead run the wave](development.md#let-the-rollout-of-the-lead-run-the-wave). `riff workers start` still starts workers in tmux. |
 | Use a second machine | `riff workers host` | `riff wave run` in a clone on that machine, or `riff workers host` as before. See [Use a second machine](development.md#use-a-second-machine). |
 | Set the limit of a machine | `riff workers limit` | `riff daemon limit` for the sessions in containers. See [Set the limit of the host](development.md#set-the-limit-of-the-host). `riff workers limit` for the workers in tmux, as before. |
+| Set or empty the compile cache | `riff workers cache` | `riff daemon cache` for the sessions in containers. See [Set or empty the compile cache of the container sessions](development.md#set-or-empty-the-compile-cache-of-the-container-sessions). `riff workers cache` for the workers in tmux, as before. |
 | See the sessions | `riff top` | `riff view` or `riff top` |
 | Work with a session | Its tmux pane | `riff takeover NAME`, or `t` in `riff view`. See [Take over a session](development.md#take-over-a-session). A worker in tmux keeps its pane. |
 | Chat, pause, resume, hold | `riff chat`, `riff pause`, `riff resume`, `riff plan` | The same, on riff-server |

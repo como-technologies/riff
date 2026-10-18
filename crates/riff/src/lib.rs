@@ -87,6 +87,7 @@ pub mod chat;
 pub mod check;
 pub mod cloud;
 pub mod compact;
+pub mod compile_cache;
 pub mod daemon;
 pub mod deaths;
 pub mod disk;
