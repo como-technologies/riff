@@ -792,7 +792,7 @@ flowchart TD
   its fix, until it is in step:
 
   ```text
-  riff a6cf2205 lead needs you: the init of podman: install catatonit, the init of podman, for example: sudo apt install catatonit
+  riff 3.2.0 como-technologies/riff a6cf2205 lead needs you: the init of podman: install catatonit, the init of podman, for example: sudo apt install catatonit
   ```
 
 The update and the daemon say what they did in their logs:
@@ -3974,9 +3974,18 @@ Show each session in the status line of Claude Code: its short session
 ID, `lead`, its claims, and `blocked`. For example:
 
 ```text
-riff 2a880834 lead
+riff 3.2.0 como-technologies/riff 2a880834 lead
 riff dceb0b68 issue-82 blocked
 ```
+
+The line of a lead starts with the build of riff and the repository.
+So when you lead in more than one repository, you can see which lead
+is which. The build is the build of the `riff mcp` of the session, else
+of the installed riff. After an update, the line shows the build that
+the session still runs, and the tag `v3.3.0 installed` says that a new
+build waits. The repository is the `origin` of the working folder, as
+`OWNER/REPO`. Both come from this machine, not from riff-server. The
+line of a worker stays short.
 
 The short ID is the same as in `riff who`. `riff connect claude` sets
 this status line for you, when your Claude Code settings have no other
@@ -4020,12 +4029,12 @@ sequenceDiagram
     Note over M: keeps the reply
     C->>S: the session ID on stdin
     alt a reply less than 90 s old is kept
-        S-->>C: the kept line
+        S-->>C: the line of the kept reply
     else no reply is kept
         S->>R: GET /v1/me
         R-->>S: this session, the build
         Note over S: keeps the reply
-        S-->>C: riff 2a880834 lead issue-82
+        S-->>C: riff 3.2.0 como-technologies/riff 2a880834 lead issue-82
     end
 ```
 
@@ -4041,7 +4050,7 @@ When the riff runs a newer release than your session, the status line
 adds a tag. For example:
 
 ```text
-riff 2a880834 lead update v0.6.0: riff update
+riff 0.5.0 como-technologies/riff 2a880834 lead update v0.6.0: riff update
 ```
 
 | Tag | What it means | What to do |

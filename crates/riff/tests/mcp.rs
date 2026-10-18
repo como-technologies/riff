@@ -143,21 +143,18 @@ async fn the_tools_keep_the_answer_for_the_status_line() {
     let (text, failed) = call(&client, "claim", serde_json::json!({"item": "issue-7"})).await;
     assert!(!failed, "{text}");
     let line = kept_line(&api, state.path(), |l| l.contains("issue-7")).await;
-    assert_eq!(line, "riff a1 lead issue-7");
+    assert_eq!(line, "lead issue-7");
     let (text, failed) = call(&client, "release", serde_json::json!({"item": "issue-7"})).await;
     assert!(!failed, "{text}");
     assert_eq!(
         kept_line(&api, state.path(), |l| !l.contains("issue-7")).await,
-        "riff a1 lead"
+        "lead"
     );
 
     // The keep-alive keeps an answer too.
     std::fs::remove_dir_all(state.path()).unwrap();
     let task = alive.keep_alive_every(Duration::from_millis(20));
-    assert_eq!(
-        kept_line(&api, state.path(), |_| true).await,
-        "riff a1 lead"
-    );
+    assert_eq!(kept_line(&api, state.path(), |_| true).await, "lead");
     task.abort();
 }
 

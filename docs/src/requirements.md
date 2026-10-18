@@ -2568,6 +2568,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M547VMQ5PCJ1GGC4M0GDCT31** `riff statusline` keeps a good answer
   for 90 seconds: longer than the 60 seconds of the keep-alive of `riff
   mcp` (R204).
+- **01M58ASFT4VBG13X5TXPHS67AQ** The status line of a lead session
+  starts with the build of riff and the repository, as `OWNER/REPO`:
+  `riff 3.2.0 como-technologies/riff 2a880834 lead issue-78`. The build
+  is the build of the `riff mcp` of the session, else of this riff. The
+  repository is the repository of the working folder. Both are local
+  facts: the kept answer (01M53TZ0RBSJQ9ZZRXKMBM5R3E) does not hold
+  them. The line of each other session does not change.
 - **01M3JFFJEW8BSRBZ9JQPKT0S8Z** `riff connect claude` adds the riff
   status line to the user settings of Claude Code
   (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)

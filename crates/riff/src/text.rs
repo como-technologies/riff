@@ -3119,16 +3119,33 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
     out
 }
 
+/// The local facts of the status line of a lead
+/// (01M58ASFT4VBG13X5TXPHS67AQ): the build of riff and the repository.
+/// They never come from riff-server, so a kept answer never shows an
+/// old build.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Here {
+    /// The version of the build of the `riff mcp` of the session, else
+    /// of this riff.
+    pub build: Option<String>,
+    /// The repository of the working folder, as `OWNER/REPO`.
+    pub repo: Option<String>,
+}
+
 /// The line that `riff statusline` prints for the agent session `id`:
 /// `riff`, the short session ID of [`name`], `lead` for the lead, each
 /// claim, and `blocked` when the session is blocked. So a person finds
 /// the pane of each session of `riff who`. `info` is the session in
-/// `riff who`, or None when riff cannot find it.
+/// `riff who`, or None when riff cannot find it. The line of a lead
+/// starts with the build and the repository of `here`
+/// (01M58ASFT4VBG13X5TXPHS67AQ).
 ///
 /// ```
+/// use riff::text::{Here, statusline};
 /// use riff_core::wire::{BlockedInfo, SessionInfo};
 ///
 /// let id = "2a880834-3707-4672";
+/// let here = Here { build: Some("3.2.0".into()), repo: Some("como-technologies/riff".into()) };
 /// let mut info = SessionInfo {
 ///     uri: "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&claim=issue-78#issue-78"
 ///         .parse()?,
@@ -3149,7 +3166,8 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     step: None,
 ///     machine: None,
 /// };
-/// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 issue-78");
+/// // A worker: no build and no repository.
+/// assert_eq!(statusline(id, Some(&info), &here), "riff 2a880834 issue-78");
 /// info.uri = info.uri.with_lead(true);
 /// info.blocked = Some(BlockedInfo {
 ///     reason: "which design?".into(),
@@ -3159,29 +3177,74 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
 ///     unanswered: false,
 /// });
 /// assert_eq!(
-///     riff::text::statusline(id, Some(&info)),
-///     "riff 2a880834 lead issue-78 blocked"
+///     statusline(id, Some(&info), &here),
+///     "riff 3.2.0 como-technologies/riff 2a880834 lead issue-78 blocked"
 /// );
 /// info.blocked = None;
-/// assert_eq!(riff::text::statusline(id, Some(&info)), "riff 2a880834 lead issue-78");
-/// assert_eq!(riff::text::statusline(id, None), "riff 2a880834 (not in the riff)");
+/// assert_eq!(
+///     statusline(id, Some(&info), &here),
+///     "riff 3.2.0 como-technologies/riff 2a880834 lead issue-78"
+/// );
+/// // A lead outside git.
+/// let no_repo = Here { repo: None, ..here.clone() };
+/// assert_eq!(statusline(id, Some(&info), &no_repo), "riff 3.2.0 2a880834 lead issue-78");
+/// // Not in the riff: no build and no repository.
+/// assert_eq!(statusline(id, None, &here), "riff 2a880834 (not in the riff)");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn statusline(id: &str, info: Option<&SessionInfo>) -> String {
-    let short: String = id.chars().take(ID_CHARS).collect();
-    let mut out = format!("riff {short}");
+pub fn statusline(id: &str, info: Option<&SessionInfo>, here: &Here) -> String {
+    let lead = info.is_some_and(|info| info.uri.lead());
+    statusline_kept(id, lead, &statusline_answer(info), here)
+}
+
+/// The words of the status line that come from the answer of
+/// riff-server: `lead`, each claim and `blocked`, or `(not in the
+/// riff)`. riff keeps them (01M53TZ0RBSJQ9ZZRXKMBM5R3E).
+///
+/// ```
+/// assert_eq!(riff::text::statusline_answer(None), "(not in the riff)");
+/// ```
+pub fn statusline_answer(info: Option<&SessionInfo>) -> String {
     let Some(info) = info else {
-        out.push_str(" (not in the riff)");
-        return out;
+        return "(not in the riff)".into();
     };
+    let mut words = Vec::new();
     if info.uri.lead() {
-        out.push_str(" lead");
+        words.push("lead".to_owned());
     }
-    for claim in info.uri.claims() {
-        let _ = write!(out, " {claim}");
-    }
+    words.extend(info.uri.claims().iter().cloned());
     if info.blocked.is_some() {
-        out.push_str(" blocked");
+        words.push("blocked".to_owned());
+    }
+    words.join(" ")
+}
+
+/// The status line of the session `id` from the kept words `answer` of
+/// [`statusline_answer`]. Only a `lead` shows the facts of `here`
+/// (01M58ASFT4VBG13X5TXPHS67AQ).
+///
+/// ```
+/// use riff::text::{Here, statusline_kept};
+///
+/// let here = Here { build: Some("3.2.0".into()), repo: Some("como-technologies/riff".into()) };
+/// assert_eq!(
+///     statusline_kept("2a880834-aaaa", true, "lead", &here),
+///     "riff 3.2.0 como-technologies/riff 2a880834 lead"
+/// );
+/// assert_eq!(statusline_kept("2a880834-aaaa", false, "", &here), "riff 2a880834");
+/// assert_eq!(statusline_kept("2a880834-aaaa", true, "lead", &Here::default()), "riff 2a880834 lead");
+/// ```
+pub fn statusline_kept(id: &str, lead: bool, answer: &str, here: &Here) -> String {
+    let short: String = id.chars().take(ID_CHARS).collect();
+    let mut out = String::from("riff");
+    if lead {
+        for fact in [&here.build, &here.repo].into_iter().flatten() {
+            let _ = write!(out, " {fact}");
+        }
+    }
+    let _ = write!(out, " {short}");
+    if !answer.is_empty() {
+        let _ = write!(out, " {answer}");
     }
     out
 }
