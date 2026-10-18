@@ -904,7 +904,8 @@ mod tests {
     fn rule_1_of_the_skill_is_asd_ste100() {
         let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
         let skill = text("riff/skills/riff/SKILL.md");
-        let rules = flat(&skill[skill.find("## Rules").unwrap()..skill.find("## Your URI").unwrap()]);
+        let rules =
+            flat(&skill[skill.find("## Rules").unwrap()..skill.find("## Your URI").unwrap()]);
         let rule = |n: usize| {
             let start = rules.find(&format!(" {n}. ")).unwrap();
             let end = rules.find(&format!(" {}. ", n + 1)).unwrap_or(rules.len());
