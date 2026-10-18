@@ -175,7 +175,8 @@
 //! | `~/.gitconfig`, `~/.config/gh` | no write, when they exist | 01M4Z60B7QDWEFQ96H448RE9N2 |
 //! | The sign-in of `gh` | `-e GH_TOKEN`: the name only | 01M4Z60B89BHXQVJ2MGRRQ2CKJ |
 //! | No signature | `commit.gpgsign=false` by `GIT_CONFIG_*` | 01M4Z60B89G8YNVMTEPGX7FQCV |
-//! | The Claude folder | with write; the sign-in file of the host with no write | 01M4Z60B86N999JRN7Z1G52PG4, 01M4Z60B869HWDTZMSYPVYACD8 |
+//! | The Claude folder | with write | 01M4Z60B86N999JRN7Z1G52PG4 |
+//! | The sign-in of `claude` | `-e CLAUDE_CODE_OAUTH_TOKEN`: the name only, when a token is set ([`crate::claude_token`]); else the sign-in file of the host with no write | 01M58B7H2HMYT6VTY0B8T2G0KW, 01M4Z60B869HWDTZMSYPVYACD8 |
 //! | The caches | the volumes `riff-cargo` and `riff-sccache` | 01M4Z60B7RPSQ1ABGVMJSZWS5P |
 //! | The size of the compile cache | `SCCACHE_CACHE_SIZE`: the daemon puts the setting of the host at the start ([`crate::compile_cache`]) | 01M57818168N3AQGE3G5GDYDDD |
 //! | The caps | `--memory`, `--cpus` and `CARGO_BUILD_JOBS`: the defaults, and the daemon puts the caps of the host at the start ([`crate::room::Limit::caps`]) | 01M4Z60B7XT7462XMV49GJTVSJ, 01M56Q4AQ86V99RC8CA1KGCMSZ |
@@ -246,19 +247,30 @@ pub struct Facts {
     pub objects: PathBuf,
     /// The own Claude folder of the session.
     pub claude: PathBuf,
-    /// The sign-in file of `claude` on the host.
-    pub credentials: PathBuf,
+    /// How `claude` signs in.
+    pub sign_in: ClaudeSignIn,
     /// `~/.gitconfig`, when it exists.
     pub gitconfig: Option<PathBuf>,
     /// `~/.config/gh`, when it exists.
     pub gh_config: Option<PathBuf>,
 }
 
+/// How `claude` in a container signs in. It holds no secret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaudeSignIn {
+    /// The long-lived token in [`crate::claude_token::VAR`]
+    /// (01M58B7H2HMYT6VTY0B8T2G0KW).
+    Token,
+    /// The sign-in file of `claude` on the host, with no write
+    /// (01M4Z60B869HWDTZMSYPVYACD8).
+    File(PathBuf),
+}
+
 /// The [`SessionSpec`] of a session: decision 10 of #699, with the
 /// facts of #707.
 ///
 /// ```
-/// use riff::run::{Facts, spec};
+/// use riff::run::{ClaudeSignIn, Facts, spec};
 /// use riff::runtime::{Env, Source};
 ///
 /// let facts = Facts {
@@ -270,7 +282,7 @@ pub struct Facts {
 ///     clone: "/data/riff/sessions/issue-12-1a2b3c4d/clone".into(),
 ///     objects: "/src/riff/.git/objects".into(),
 ///     claude: "/data/riff/sessions/issue-12-1a2b3c4d/claude".into(),
-///     credentials: "/home/mike/.claude/.credentials.json".into(),
+///     sign_in: ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
 ///     gitconfig: Some("/home/mike/.gitconfig".into()),
 ///     gh_config: None,
 /// };
@@ -283,6 +295,11 @@ pub struct Facts {
 /// // The token of gh goes by its name only.
 /// assert!(spec.env.contains(&Env::Host("GH_TOKEN".into())));
 /// assert!(spec.command.windows(2).any(|w| w == ["--session-id", facts.session.as_str()]));
+/// // With a token, the name of the variable and no sign-in file.
+/// let token = riff::run::spec(&Facts { sign_in: ClaudeSignIn::Token, ..facts.clone() });
+/// assert!(token.env.contains(&Env::Host("CLAUDE_CODE_OAUTH_TOKEN".into())));
+/// assert!(!token.binds.iter().any(|b| b.target.ends_with(".credentials.json")));
+/// assert!(!spec.env.contains(&Env::Host("CLAUDE_CODE_OAUTH_TOKEN".into())));
 /// ```
 pub fn spec(facts: &Facts) -> SessionSpec {
     let home = &facts.home;
@@ -315,16 +332,18 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         target: claude_dir.clone(),
         write: true,
     });
-    binds.push(Bind {
-        source: Source::Path(facts.credentials.clone()),
-        target: claude_dir.join(".credentials.json"),
-        write: false,
-    });
+    if let ClaudeSignIn::File(credentials) = &facts.sign_in {
+        binds.push(Bind {
+            source: Source::Path(credentials.clone()),
+            target: claude_dir.join(".credentials.json"),
+            write: false,
+        });
+    }
     binds.push(volume(CARGO_VOLUME, cargo.clone()));
     binds.push(volume(SCCACHE_VOLUME, sccache.clone()));
     let value = |name: &str, value: &str| Env::Value(name.into(), value.into());
     let shown = |p: &Path| p.to_string_lossy().into_owned();
-    let env = vec![
+    let mut env = vec![
         value("HOME", &shown(home)),
         value("USER", &facts.user),
         value("LOGNAME", &facts.user),
@@ -339,6 +358,9 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         value("SCCACHE_IDLE_TIMEOUT", "0"),
         value("SCCACHE_IGNORE_SERVER_IO_ERROR", "1"),
     ];
+    if facts.sign_in == ClaudeSignIn::Token {
+        env.push(Env::Host(crate::claude_token::VAR.into()));
+    }
     let command = [
         "claude",
         "-p",
@@ -971,22 +993,112 @@ pub(crate) fn output(program: &str, dir: &Path, args: &[&str]) -> Result<String>
 /// The facts of the host that `riff run` checks before the claim.
 struct Checked {
     milestone: String,
-    gh_token: String,
-    sign_in: SignIn,
-    home: PathBuf,
-    user: String,
-    credentials: PathBuf,
+    host: Host,
 }
 
 /// The facts of the host that each session needs: the sign-in of `gh`,
-/// the home and the user of the person, and the sign-in of `claude` with
-/// [`MIN_MINUTES`] or more left (01M4Z81B3A324KKE8M8Z71TM4M).
+/// the home and the user of the person, and the sign-in of `claude`
+/// (01M4Z81B3A324KKE8M8Z71TM4M).
 pub(crate) struct Host {
     pub(crate) gh_token: String,
-    pub(crate) sign_in: SignIn,
     pub(crate) home: PathBuf,
     pub(crate) user: String,
-    pub(crate) credentials: PathBuf,
+    pub(crate) claude: Claude,
+}
+
+impl Host {
+    /// The values of the variables of the host in the spec: `GH_TOKEN`,
+    /// and the token of `claude` when it is set.
+    pub(crate) fn values(&self) -> Vec<(String, String)> {
+        let mut values = vec![("GH_TOKEN".to_owned(), self.gh_token.clone())];
+        if let Claude::Token(token) = &self.claude {
+            values.push((crate::claude_token::VAR.to_owned(), token.clone()));
+        }
+        values
+    }
+
+    /// The secrets that no event shows.
+    pub(crate) fn secrets(&self) -> Vec<String> {
+        std::iter::once(self.gh_token.clone())
+            .chain(self.claude.secrets())
+            .collect()
+    }
+}
+
+/// The sign-in of `claude` on the host for the container sessions. It
+/// has no `Debug`: it holds a secret.
+pub enum Claude {
+    /// The long-lived token of `riff claude-token`
+    /// (01M58B7H50RCG2VXXV9XX5Y7HM).
+    Token(String),
+    /// No token: the sign-in file of `claude`, with [`MIN_MINUTES`] or
+    /// more left.
+    File {
+        /// The path of the sign-in file.
+        path: PathBuf,
+        /// What riff reads in it.
+        sign_in: SignIn,
+    },
+}
+
+impl Claude {
+    /// How the container signs in, with no secret.
+    pub fn sign_in(&self) -> ClaudeSignIn {
+        match self {
+            Claude::Token(_) => ClaudeSignIn::Token,
+            Claude::File { path, .. } => ClaudeSignIn::File(path.clone()),
+        }
+    }
+
+    /// The secrets that no event shows.
+    pub fn secrets(&self) -> Vec<String> {
+        match self {
+            Claude::Token(token) => vec![token.clone()],
+            Claude::File { sign_in, .. } => sign_in.secrets.clone(),
+        }
+    }
+}
+
+/// The sign-in of `claude` for the sessions of the daemon in the folder
+/// `daemon`, at the time `now_ms`: the token of `riff claude-token` when
+/// it is set, with no rule of [`MIN_MINUTES`]. Else the sign-in file
+/// `credentials`, with the rule (01M58B7H50RCG2VXXV9XX5Y7HM). A token
+/// that `claude` refused is a fault (01M58B7H7HD0H48A0C79F8M4CR).
+///
+/// ```
+/// use riff::run::{Claude, HostFault, claude_of};
+///
+/// let dir = tempfile::tempdir()?;
+/// let credentials = dir.path().join(".credentials.json");
+/// // The access token has 10 minutes left.
+/// let file = r#"{"claudeAiOauth":{"accessToken":"sk-a","expiresAt":600000}}"#;
+/// std::fs::write(&credentials, file)?;
+/// let daemon = dir.path().join("daemon");
+/// assert!(matches!(claude_of(&daemon, &credentials, 0), Err(HostFault::SignInEnds(10))));
+/// riff::claude_token::store(&daemon, "sk-ant-oat01-x")?;
+/// assert!(matches!(claude_of(&daemon, &credentials, 0), Ok(Claude::Token(t)) if t == "sk-ant-oat01-x"));
+/// riff::claude_token::refuse(&daemon)?;
+/// assert!(matches!(claude_of(&daemon, &credentials, 0), Err(HostFault::TokenRefused)));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn claude_of(daemon: &Path, credentials: &Path, now_ms: i64) -> Result<Claude, HostFault> {
+    if let Some(token) = crate::claude_token::load(daemon) {
+        if crate::claude_token::refused(daemon) {
+            return Err(HostFault::TokenRefused);
+        }
+        return Ok(Claude::Token(token));
+    }
+    let missing = HostFault::Missing;
+    let file = std::fs::read_to_string(credentials)
+        .map_err(|e| missing(format!("{}: {e}", text::run_no_sign_in(credentials))))?;
+    let sign_in = sign_in(&file, now_ms).map_err(|e| missing(format!("{e:#}")))?;
+    if let Some(fault) = HostFault::of_minutes(sign_in.minutes) {
+        return Err(fault);
+    }
+    Ok(Claude::File {
+        path: credentials.to_owned(),
+        sign_in,
+    })
 }
 
 /// A fact of the host that stops each start of a session, whatever the
@@ -997,6 +1109,9 @@ pub enum HostFault {
     /// The sign-in of `claude` has less than [`MIN_MINUTES`] left: the
     /// minutes that it has.
     SignInEnds(i64),
+    /// `claude` refused the token of `riff claude-token`
+    /// (01M58B7H7HD0H48A0C79F8M4CR).
+    TokenRefused,
     /// Another fact is missing: the text that says the fix.
     Missing(String),
 }
@@ -1025,10 +1140,13 @@ impl HostFault {
     /// assert!(text.contains("ends in 42 minutes"), "{text}");
     /// assert!(!text.contains("riff run"), "{text}");
     /// assert!(HostFault::SignInEnds(42).to_string().contains("riff run again"));
+    /// let refused = HostFault::TokenRefused.wave_text();
+    /// assert!(refused.contains("claude setup-token"), "{refused}");
     /// ```
     pub fn wave_text(&self) -> String {
         match self {
             HostFault::SignInEnds(minutes) => text::wave_sign_in_ends(*minutes),
+            HostFault::TokenRefused => text::CLAUDE_TOKEN_REFUSED.to_owned(),
             HostFault::Missing(text) => text.clone(),
         }
     }
@@ -1038,6 +1156,7 @@ impl std::fmt::Display for HostFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HostFault::SignInEnds(minutes) => f.write_str(&text::run_sign_in_ends(*minutes)),
+            HostFault::TokenRefused => f.write_str(text::CLAUDE_TOKEN_REFUSED),
             HostFault::Missing(text) => f.write_str(text),
         }
     }
@@ -1059,8 +1178,9 @@ pub fn credentials_in(home: &Path) -> PathBuf {
         .join(".credentials.json")
 }
 
-/// Reads the [`Host`] facts, with `gh` in the folder `main`. A fact
-/// that is missing is a [`HostFault`] that says the fix.
+/// Reads the [`Host`] facts, with `gh` in the folder `main`, for the
+/// daemon of this process ([`daemon::dir`]). A fact that is missing is
+/// a [`HostFault`] that says the fix.
 pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
     let missing = HostFault::Missing;
     let gh_token = output("gh", main, &["auth", "token"])
@@ -1073,19 +1193,13 @@ pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
         .ok()
         .filter(|u| !u.is_empty())
         .ok_or_else(|| missing("set USER".into()))?;
-    let credentials = credentials_in(&home);
-    let file = std::fs::read_to_string(&credentials)
-        .map_err(|e| missing(format!("{}: {e}", text::run_no_sign_in(&credentials))))?;
-    let sign_in = sign_in(&file, now_ms()).map_err(|e| missing(format!("{e:#}")))?;
-    if let Some(fault) = HostFault::of_minutes(sign_in.minutes) {
-        return Err(fault);
-    }
+    let dir = daemon::dir().map_err(|e| missing(format!("{e:#}")))?;
+    let claude = claude_of(&dir, &credentials_in(&home), now_ms())?;
     Ok(Host {
         gh_token,
-        sign_in,
         home,
         user,
-        credentials,
+        claude,
     })
 }
 
@@ -1198,20 +1312,10 @@ pub(crate) async fn no_verify_now(
 /// have it (01M4Z81B5A456HDKW7G0WFGCY6).
 async fn check(daemon: &Path, main: &Path, issue: u64, image: &str) -> Result<Checked> {
     daemon::image(daemon, image, |line| println!("{line}")).await?;
-    let Host {
-        gh_token,
-        sign_in,
-        home,
-        user,
-        credentials,
-    } = host_facts(main)?;
+    let host = host_facts(main)?;
     Ok(Checked {
         milestone: milestone(&pr::Gh::default(), issue)?,
-        gh_token,
-        sign_in,
-        home,
-        user,
-        credentials,
+        host,
     })
 }
 
@@ -1688,7 +1792,7 @@ async fn work(
     let clone = folder.join("clone");
     let claude = folder.join("claude");
     let auto = crate::permissions::Trust::of(me.place().repo(), server);
-    let home = &checked.home;
+    let home = &checked.host.home;
     claude_folder(&claude, &clone, &home.join(".claude.json"), &auto)?;
     let branch = branch(item);
     let earlier = make_clone(main, &clone, &branch)?;
@@ -1698,11 +1802,11 @@ async fn work(
         item: item.to_owned(),
         image: image.to_owned(),
         home: home.clone(),
-        user: checked.user.clone(),
+        user: checked.host.user.clone(),
         clone: clone.clone(),
         objects: common.join("objects"),
         claude,
-        credentials: checked.credentials.clone(),
+        sign_in: checked.host.claude.sign_in(),
         gitconfig: existing(home.join(".gitconfig")),
         gh_config: existing(home.join(".config/gh")),
     };
@@ -1722,10 +1826,8 @@ async fn work(
         &checked.milestone,
         earlier,
     );
-    let secrets = std::iter::once(checked.gh_token.clone())
-        .chain(checked.sign_in.secrets.iter().cloned())
-        .collect();
-    let values = vec![("GH_TOKEN".to_owned(), checked.gh_token.clone())];
+    let secrets = checked.host.secrets();
+    let values = checked.host.values();
     // The handlers come first: a signal before them ends riff with no
     // release. The same streams serve the end steps.
     let signals = steps.signals()?;
@@ -1796,6 +1898,74 @@ async fn work(
 mod tests {
     use super::*;
 
+    #[test]
+    fn with_a_token_podman_gets_the_name_of_the_variable_and_no_sign_in_file() {
+        let token = "sk-ant-oat01-secret1";
+        let facts = Facts {
+            sign_in: ClaudeSignIn::Token,
+            ..facts()
+        };
+        let spec = spec(&facts);
+        let host = Host {
+            gh_token: "gho_secret1".into(),
+            home: facts.home.clone(),
+            user: facts.user.clone(),
+            claude: Claude::Token(token.into()),
+        };
+        assert!(spec.check_values(&host.values()).is_ok());
+        assert!(host.secrets().contains(&token.to_owned()));
+        let args: Vec<String> = crate::podman::run_args(&spec)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.into_string().unwrap())
+            .collect();
+        let at = args
+            .iter()
+            .position(|a| a == crate::claude_token::VAR)
+            .unwrap();
+        assert_eq!(args[at - 1], "-e");
+        assert!(!args.iter().any(|a| a.contains(token)), "{args:?}");
+        assert!(
+            !args.iter().any(|a| a.contains(".credentials.json")),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn with_no_token_podman_binds_the_sign_in_file_and_gets_no_token_variable() {
+        let args: Vec<String> = crate::podman::run_args(&spec(&facts()))
+            .unwrap()
+            .into_iter()
+            .map(|a| a.into_string().unwrap())
+            .collect();
+        assert!(
+            args.iter().any(|a| a.contains(".credentials.json")),
+            "{args:?}"
+        );
+        assert!(!args.iter().any(|a| a.contains(crate::claude_token::VAR)));
+    }
+
+    #[test]
+    fn a_token_starts_a_session_with_10_minutes_left_and_no_token_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = dir.path().join(".credentials.json");
+        let file =
+            r#"{"claudeAiOauth":{"accessToken":"sk-a","refreshToken":"sk-r","expiresAt":600000}}"#;
+        std::fs::write(&credentials, file).unwrap();
+        let daemon = dir.path().join("daemon");
+        assert!(matches!(
+            claude_of(&daemon, &credentials, 0),
+            Err(HostFault::SignInEnds(10))
+        ));
+        crate::claude_token::store(&daemon, "sk-ant-oat01-x").unwrap();
+        let claude = claude_of(&daemon, &credentials, 0).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(claude.sign_in(), ClaudeSignIn::Token);
+        assert_eq!(claude.secrets(), ["sk-ant-oat01-x"]);
+        // With no sign-in file at all, the token still holds.
+        std::fs::remove_file(&credentials).unwrap();
+        assert!(claude_of(&daemon, &credentials, 0).is_ok());
+    }
+
     fn facts() -> Facts {
         Facts {
             session: "1a2b3c4d-0000-4000-8000-000000000000".into(),
@@ -1806,7 +1976,7 @@ mod tests {
             clone: "/r/sessions/issue-12-1a2b3c4d/clone".into(),
             objects: "/src/riff/.git/objects".into(),
             claude: "/r/sessions/issue-12-1a2b3c4d/claude".into(),
-            credentials: "/home/mike/.claude/.credentials.json".into(),
+            sign_in: ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
             gitconfig: Some("/home/mike/.gitconfig".into()),
             gh_config: Some("/home/mike/.config/gh".into()),
         }

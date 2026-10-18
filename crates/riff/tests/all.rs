@@ -17,6 +17,7 @@ mod chat;
 mod check_build;
 mod claim;
 mod claim_end;
+mod claude_token;
 mod clear;
 mod cli;
 mod cloud;

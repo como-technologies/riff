@@ -524,6 +524,7 @@ mod tests {
             waves: vec![],
             jobs: 0,
             mcp: vec![],
+            claude_token: Default::default(),
         }
     }
 
