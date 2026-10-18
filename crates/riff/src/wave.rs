@@ -29,8 +29,10 @@
 //!
 //! # The pick
 //!
-//! [`pick`] takes the first item of the free work of
-//! [`crate::rollout::free_work`]: a fix item of a broken `main` first
+//! [`pick`] takes the first item of the free work of the look
+//! ([`look_on`]): the free work of the rollout of the lead
+//! ([`crate::rollout::free_work`]) with the rebases ([`rebases`]). A fix
+//! item of a broken `main` first
 //! ([`crate::rollout::BROKEN_MAIN`], 01M51QEYS538XA58KDRY844T52), then
 //! the rebase of each pull request with a conflict (see "A conflict with
 //! main"), then the pull requests that wait for a verify, then the free
