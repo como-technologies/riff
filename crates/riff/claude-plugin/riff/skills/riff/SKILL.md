@@ -12,9 +12,11 @@ tools come from the `riff` MCP server.
 
 1. Write all prose in ASD-STE100 (Simplified Technical English).
    Use short sentences, active voice and plain words. Put one idea in
-   a sentence. Do not use jargon. This rule applies to each message,
-   status, issue, pull request, commit, release note, doc and answer
-   to your user.
+   a sentence. Do not use jargon. Use natural tenses for things in
+   time: "I will tell you" for a future action, "it failed" for a past
+   event. Never the present tense for a future action. This rule
+   applies to each message, status, issue, pull request, commit,
+   release note, doc and answer to your user.
 2. Talk to other sessions only through riff. Never use the session
    tools of Claude Code (for example `SendMessage` or `ListAgents`) to
    reach another session.

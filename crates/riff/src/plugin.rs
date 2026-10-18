@@ -899,19 +899,27 @@ mod tests {
         }
     }
 
+    /// 01M3PRHM97CJ16FZD9ZK48ERAD, 01M58BCCKMNG6V495YF8AM9P5C.
     #[test]
     fn rule_1_of_the_skill_is_asd_ste100() {
+        let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
         let skill = text("riff/skills/riff/SKILL.md");
-        let rules = &skill[skill.find("## Rules").unwrap()..skill.find("## Your URI").unwrap()];
-        let rules = rules.split_whitespace().collect::<Vec<_>>().join(" ");
+        let rules =
+            flat(&skill[skill.find("## Rules").unwrap()..skill.find("## Your URI").unwrap()]);
         let rule = |n: usize| {
             let start = rules.find(&format!(" {n}. ")).unwrap();
             let end = rules.find(&format!(" {}. ", n + 1)).unwrap_or(rules.len());
             rules[start..end].to_string()
         };
         assert!(rule(1).contains("Write all prose in ASD-STE100"));
+        let tenses = "Use natural tenses for things in time: \"I will tell you\" for a future action, \
+                      \"it failed\" for a past event. Never the present tense for a future action.";
+        assert!(rule(1).contains(tenses), "{}", rule(1));
+        let top = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let notes = flat(&std::fs::read_to_string(top.join("CLAUDE.md")).unwrap());
+        assert!(notes.contains(tenses), "CLAUDE.md");
         // Each reference names the rule that says what the reference means.
-        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        let flat = flat(skill);
         let mut refs = 0;
         for (at, _) in flat.match_indices("(rule ") {
             let n: usize = flat[at + 6..].split(')').next().unwrap().parse().unwrap();

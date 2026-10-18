@@ -65,6 +65,10 @@
   release note, doc and answer to its user. This is rule 1 of the
   skill. The level line of a release uses plain words that a person
   understands.
+- **01M58BCCKMNG6V495YF8AM9P5C** A session uses natural tenses for
+  things in time: the future with "will" for a future action, and the
+  past for a past event. It never writes a future action in the
+  present tense. Rule 1 of the skill and `CLAUDE.md` say so.
 - **R173** After a session claims an issue, it reads the issue. When the
   `Done when:` line is missing or cannot be tested, the session does
   not start work. It writes the criteria, adds them to the issue, posts
