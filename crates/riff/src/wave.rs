@@ -626,6 +626,14 @@ pub trait World: Send + Sync {
         None
     }
 
+    /// The folder of the leave marks of this machine
+    /// ([`crate::local::marks`]). The daemon posts no refusal of auto
+    /// mode of a session with a mark in it
+    /// ([`crate::daemon::Daemon::post_denials`]). `None` has no mark.
+    fn marks(&self) -> Option<PathBuf> {
+        None
+    }
+
     /// The fate of the folder of a session of the issue `issue` of the
     /// repository `repo`, from the forge ([`Fate::of`]).
     fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>>;
@@ -1598,6 +1606,10 @@ impl World for Live {
             dir: crate::local::marks()?,
             gh: sweep::gh(repo),
         })
+    }
+
+    fn marks(&self) -> Option<PathBuf> {
+        crate::local::marks()
     }
 
     fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>> {
