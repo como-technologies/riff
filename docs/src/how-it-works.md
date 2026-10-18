@@ -6264,7 +6264,7 @@ flowchart TD
     C --> R
     Q -- "no claim and no free item" --> I["it waits idle:<br/>riff shows idle,<br/>its watch runs"]
     I -- "a request of the lead" --> N[it claims the item]
-    I -- "idle too long, and another idle worker on its host" --> X["the server stops it:<br/>the pane closes, the lead gets a note"]
+    I -- "idle too long, and past the idle limit of its host" --> X["the server stops it:<br/>the pane closes, the lead gets a note"]
     Q -- "riff workers stop" --> S[the pane closes, no message]
     Q -- "it sent a verify request" --> K["it releases the item:<br/>riff clears its context"]
     Q -- "the pane dies: a memory kill, a crash, a closed pane" --> D["riff ends its session:<br/>its claims are free at once,<br/>the lead gets a note"]
@@ -6398,9 +6398,12 @@ request.
 
 Your lead starts a worker when it has work for it. So idle workers do
 not pile up, the server looks at the workers each 5 seconds. An idle
-worker is a worker with no claim that makes no call. On each host, the
-server keeps the idle worker with the shortest idle time. It stops
-each other worker that is idle for 60 seconds. It never stops a lead,
+worker is a worker with no claim that makes no call. The server stops
+idle workers past a limit. The limit is a setting of the riff, by
+default 1 on each host: `riff workers idle` shows it. On each host, the
+server keeps that many idle workers, those with the shortest idle
+time. It stops each other worker that is idle for the time of the
+setting, by default 60 seconds. It never stops a lead,
 a session that is not a worker, or a worker with a claim. It also
 does not stop a worker that has an unread request of your lead: a
 direct message from the lead that starts with `request:`.

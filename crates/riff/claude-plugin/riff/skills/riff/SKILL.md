@@ -964,7 +964,8 @@ item and each verify in a container. You get a note. You do not start
 workers for the free work that the wave takes. A worker that does not
 claim in 6 intervals does not block the wave. Give work by hand only
 when the rollout misses it. The server stops idle workers past a
-limit: at most 1 on each host (`riff workers idle`).
+limit. The limit is a setting of the riff, by default 1 on each host:
+`riff workers idle` shows it.
 
 Give free work to a free worker. Check each time a riff line wakes
 you, and each time you free an item: a need merges, your user decides
