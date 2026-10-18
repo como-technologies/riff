@@ -493,6 +493,17 @@ mod tests {
             assert_eq!(replayed.last, 8);
             assert_eq!(replayed.records[0].envelope.position, position + 1);
         }
+        // A read of the whole log says that the chunks are gone, with
+        // no command that deletes the store (01M588N3CKQMSDQPVFYGTJQQ2T).
+        let error = log::replay(&store).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the log starts at position 5, and the read needs the log from position 1: \
+             the checkpoint rule removed the chunks before position 5"
+        );
+        assert!(!error.at_start().contains("remove the old state"));
+        let (oldest, kept) = log::replay_kept(&store).await.unwrap();
+        assert_eq!((oldest, kept.records[0].envelope.position), (5, 5));
     }
 
     #[tokio::test]

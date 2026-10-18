@@ -527,7 +527,7 @@ fn the_book_has_a_how_to_for_the_monitor() {
     book::each_is_real(&commands);
     let top = book::page("how-it-works.md");
     assert!(
-        top.contains("load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10"),
+        top.contains("load5 9.8 of 12  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10"),
         "the example of riff top has no line of numbers"
     );
     // What the line shows of the pool (01M515PDFZZXQ9ZCQE7SQ6KB8G).

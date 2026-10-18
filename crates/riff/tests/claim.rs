@@ -367,6 +367,46 @@ async fn read_all_reads_each_page() {
     }
 }
 
+/// `riff read` shows each direct thread first, then the other threads
+/// (01M58AG7Z2PETHBZG7X9QD8PK5).
+#[tokio::test]
+async fn read_shows_the_direct_messages_first() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    agent(&server, dir, "brett", "b2", &["read"]).await;
+    let api = riff_client::api::Api::new(&server);
+    let mike: riff_core::name::SessionUri =
+        "riff://mike@pangolin/como-technologies/riff?session=a1"
+            .parse()
+            .unwrap();
+    api.register(&mike).await.unwrap();
+    let thread = mike.default_thread().unwrap();
+    for n in 1..=60 {
+        let body = format!("history {n}");
+        api.post(&mike, Some(&thread), &[], &body, Default::default())
+            .await
+            .unwrap();
+    }
+    riff(
+        &server,
+        dir,
+        "mike",
+        &["tell", "b2", "request: claim issue-7"],
+    )
+    .await;
+
+    let (out, code) = agent(&server, dir, "brett", "b2", &["read"]).await;
+    assert_eq!(code, 0);
+    let top = format!(
+        "{}\n\ndirect with mike@pangolin\n[1] mike@pangolin to session=b2 (verified): request: claim issue-7\n",
+        riff::text::DATA_NOTE
+    );
+    assert!(out.starts_with(&top), "{out}");
+    assert!(out.contains("como-technologies/riff\n["), "{out}");
+    assert!(out.contains("history 60"), "{out}");
+}
+
 #[tokio::test]
 async fn read_takes_a_named_thread() {
     let server = start_server().await;

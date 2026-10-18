@@ -41,6 +41,25 @@
 //! reason. So is a record that the facts cannot prove, for example a
 //! claim of an item that is in no wave.
 //!
+//! # After a prune
+//!
+//! The checkpoint rule of the server removes the oldest chunks of the
+//! log. The reply then gives the records from the oldest kept chunk,
+//! with [`Pruned`]: the position and the time of the oldest kept
+//! record. The report says so, and a check that needs a gone record is
+//! "not checked", with the reason (01M588N3R2VP12A8X4EASX0BJ4):
+//!
+//! - The rules 2 to 7, when the span starts before the oldest kept
+//!   record.
+//! - Rule 1 for an item with no claim in the kept records: a fact of the
+//!   forge that is missing still fails.
+//! - Rule 1 for a release after a verify request by a session whose
+//!   start is gone.
+//! - Rule 2 and rule 3 for a claim of a session whose fresh start is
+//!   gone: it can hold a gone claim, or owe a clear.
+//! - Rule 4 when the pause of the riff or of the repository is gone.
+//! - Rule 6 and rule 7 for a user with no lead in the kept records.
+//!
 //! # Example
 //!
 //! ```
@@ -76,7 +95,7 @@
 //!     issues: [(7, Issue { wave: Some("Wave 1".into()), needs: vec![], merged_ms: Some(3500) })].into(),
 //!     pulls: vec![Pull { number: 40, issue: 7, merged_ms: Some(3500), verified: true }],
 //! };
-//! let report = audit("Wave 1", &records, &forge, 10_000)?;
+//! let report = audit("Wave 1", &records, None, &forge, 10_000)?;
 //! assert_eq!(report.rules[0].verdict(), Verdict::Pass);
 //! assert_eq!(report.rules[1].verdict(), Verdict::Pass);
 //! // No session posted a request in the span.
@@ -91,7 +110,7 @@ use std::fmt::Write;
 use anyhow::{Result, bail};
 use riff_core::name::{Place, ThreadName, Who};
 use riff_core::record::{By, Change, Posted, Record, Scope};
-use riff_core::wire::{RiffState, StartReason};
+use riff_core::wire::{Pruned, RiffState};
 use serde::Deserialize;
 
 use crate::pr::Gh;
@@ -177,7 +196,7 @@ pub struct Rule {
     pub number: usize,
     pub findings: Vec<Finding>,
     /// Why the rule is not checked when it has no check.
-    pub none: &'static str,
+    pub none: String,
 }
 
 /// The text of each rule, in order.
@@ -193,11 +212,11 @@ pub const RULES: [&str; 7] = [
 ];
 
 impl Rule {
-    fn new(number: usize, none: &'static str) -> Rule {
+    fn new(number: usize, none: &str) -> Rule {
         Rule {
             number,
             findings: Vec::new(),
-            none,
+            none: none.to_owned(),
         }
     }
 
@@ -235,6 +254,9 @@ pub struct Report {
     /// The end of the span: the close of the wave. `None` while the wave
     /// is open: the span ends now.
     pub to_ms: Option<u64>,
+    /// The records that the log no longer keeps, when the checkpoint
+    /// rule removed some.
+    pub pruned: Option<Pruned>,
     /// The rules 1 to 7, in order.
     pub rules: Vec<Rule>,
 }
@@ -316,6 +338,16 @@ struct Replay {
     /// The pause of the riff and of the repository.
     riff_paused: bool,
     repo_paused: bool,
+    /// The sessions with a fresh start in the records. A fresh start
+    /// frees each claim and ends the need to clear, so the records have
+    /// each later claim and release of the session.
+    fresh: BTreeSet<Who>,
+    /// The users with a `lead_set` in the records.
+    lead_set: BTreeSet<String>,
+    /// True when the records have a `pause_set` of the riff, and of the
+    /// repository.
+    riff_pause_set: bool,
+    repo_pause_set: bool,
 }
 
 /// What rule 1 finds for an item in the whole log.
@@ -330,16 +362,37 @@ struct Item {
     /// Each release before the merge, with no verify result and no
     /// verify request of a worker before it.
     early: Vec<u64>,
+    /// Each release after a verify request of a session whose start is
+    /// not in the kept records, after a prune: it can be the release of
+    /// a worker.
+    unsure: Vec<u64>,
 }
 
 /// Checks each rule for the wave `title` (01M3ZWRC6H0P7EF6CMECCYZ2RC).
 /// `records` are the records of the repository in log order. `now_ms`
 /// ends the span of an open wave. It fails when the forge has no such
 /// wave, or when an earlier wave is open.
-pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Result<Report> {
+///
+/// `pruned` says which records the log no longer keeps
+/// (01M588N3R2VP12A8X4EASX0BJ4). The rules 2 to 7 are not checked when
+/// the span starts before the oldest kept record. Rule 1 does not check
+/// the log facts of an item with no claim in the kept records. A check
+/// of the rules 2 to 7 whose state can be in a gone record is not
+/// checked.
+pub fn audit(
+    title: &str,
+    records: &[Record],
+    pruned: Option<Pruned>,
+    forge: &Forge,
+    now_ms: u64,
+) -> Result<Report> {
     let (wave, from_ms) = span(title, &forge.waves)?;
     let end_ms = wave.closed_ms.unwrap_or(now_ms);
-    let in_span = |record: &Record| (from_ms..=end_ms).contains(&record.envelope.written_at_ms);
+    // A record of the span can be gone when the span starts before the
+    // oldest kept record.
+    let span_kept = pruned.is_none_or(|p| p.first_ms < from_ms);
+    let in_span =
+        |record: &Record| span_kept && (from_ms..=end_ms).contains(&record.envelope.written_at_ms);
 
     let mut rules: Vec<Rule> = [
         "the wave has no item",
@@ -354,6 +407,14 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
     .enumerate()
     .map(|(i, none)| Rule::new(i + 1, none))
     .collect();
+    if let Some(p) = pruned.filter(|_| !span_kept) {
+        for rule in &mut rules[1..] {
+            rule.none = format!(
+                "the span starts before record {}, the oldest record that the log keeps",
+                p.first
+            );
+        }
+    }
 
     let wave_items: BTreeSet<u64> = forge
         .issues
@@ -392,7 +453,13 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
             Change::Claimed(c) => {
                 let who = c.session.who();
                 if checked {
-                    check_claim(&mut rules, &state, forge, record, who, &c.item, &authors);
+                    let claim = Claim {
+                        record,
+                        who,
+                        item: &c.item,
+                        pruned: pruned.is_some(),
+                    };
+                    check_claim(&mut rules, &state, forge, &claim, &authors);
                 }
                 if let Some(n) = work_item(&c.item) {
                     items
@@ -424,10 +491,16 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
                     let item = items.entry(n).or_default();
                     item.releases.push(record.envelope.position);
                     let merged = merged_of(n).is_some_and(|merged| merged <= at);
-                    let worker_asked = state.workers.get(who).copied().unwrap_or(false)
-                        && state.requested.contains(who);
-                    if !(merged || state.results.contains(&n) || worker_asked) {
-                        item.early.push(record.envelope.position);
+                    let asked = state.requested.contains(who);
+                    let worker = state.workers.get(who).copied();
+                    let done = merged || state.results.contains(&n);
+                    // The start of the session can be gone after a prune.
+                    let unsure = asked && worker.is_none() && pruned.is_some();
+                    let early = !(done || (asked && worker == Some(true)));
+                    match (early, unsure) {
+                        (true, true) => item.unsure.push(record.envelope.position),
+                        (true, false) => item.early.push(record.envelope.position),
+                        (false, _) => {}
                     }
                 }
                 if state.holders.get(&r.item) == Some(who) {
@@ -442,8 +515,9 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
             Change::SessionStarted(s) => {
                 let who = s.session.who();
                 state.workers.insert(who.clone(), s.worker);
-                if matches!(s.reason, StartReason::Clear | StartReason::Process) {
+                if s.reason.is_fresh() {
                     state.must_clear.remove(who);
+                    state.fresh.insert(who.clone());
                 }
             }
             Change::SessionForgotten(f) => {
@@ -454,6 +528,7 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
             Change::LeadSet(m) => {
                 let who = m.session.who();
                 state.leads.insert(who.user().to_owned(), who.clone());
+                state.lead_set.insert(who.user().to_owned());
             }
             Change::LeftThread(m) => {
                 let who = m.session.who();
@@ -462,8 +537,14 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
             Change::PauseSet(set) => {
                 let paused = set.state == RiffState::Paused;
                 match set.scope {
-                    Scope::Riff => state.riff_paused = paused,
-                    Scope::Repository(_) => state.repo_paused = paused,
+                    Scope::Riff => {
+                        state.riff_paused = paused;
+                        state.riff_pause_set = true;
+                    }
+                    Scope::Repository(_) => {
+                        state.repo_paused = paused;
+                        state.repo_pause_set = true;
+                    }
                     Scope::Other => {}
                 }
             }
@@ -480,7 +561,9 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
                             }
                         }
                     }
-                    "request" if checked => check_request(&mut rules[6], &state, record, posted),
+                    "request" if checked => {
+                        check_request(&mut rules[6], &state, record, posted, pruned.is_some());
+                    }
                     _ => {}
                 }
             }
@@ -490,7 +573,7 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
 
     for n in &wave_items {
         let item = items.remove(n).unwrap_or_default();
-        let (verdict, text) = item_flow(*n, &item, forge);
+        let (verdict, text) = item_flow(*n, &item, forge, pruned);
         rules[0].add(verdict, text);
     }
 
@@ -498,17 +581,22 @@ pub fn audit(title: &str, records: &[Record], forge: &Forge, now_ms: u64) -> Res
         wave: title.to_owned(),
         from_ms,
         to_ms: wave.closed_ms,
+        pruned,
         rules,
     })
 }
 
-/// Rule 1 for the item `n`: its verdict and its text.
-fn item_flow(n: u64, item: &Item, forge: &Forge) -> (Verdict, String) {
+/// Rule 1 for the item `n`: its verdict and its text. The facts of the
+/// log of an item with no claim in the kept records are not checked
+/// after a prune (01M588N3R2VP12A8X4EASX0BJ4): its claim, its verify and
+/// its release can be in the records that are gone.
+fn item_flow(n: u64, item: &Item, forge: &Forge, pruned: Option<Pruned>) -> (Verdict, String) {
     let mut found = Vec::new();
-    let mut missing = Vec::new();
+    // Each missing fact, with true for a fact of the log.
+    let mut missing: Vec<(bool, String)> = Vec::new();
     match item.claims.first() {
         Some((position, who)) => found.push(format!("claim at record {position} by {}", name(who))),
-        None => missing.push("no claim".to_owned()),
+        None => missing.push((true, "no claim".to_owned())),
     }
     let pulls: Vec<&Pull> = forge.pulls.iter().filter(|p| p.issue == n).collect();
     let pull = pulls
@@ -517,7 +605,7 @@ fn item_flow(n: u64, item: &Item, forge: &Forge) -> (Verdict, String) {
         .or(pulls.first());
     match pull {
         Some(pull) => found.push(format!("PR #{}", pull.number)),
-        None => missing.push("no pull request".to_owned()),
+        None => missing.push((false, "no pull request".to_owned())),
     }
     let authors: BTreeSet<&Who> = item.claims.iter().map(|(_, who)| who).collect();
     let verifier = item.verifies.iter().find(|(_, who)| !authors.contains(who));
@@ -527,45 +615,91 @@ fn item_flow(n: u64, item: &Item, forge: &Forge) -> (Verdict, String) {
             name(who)
         )),
         (Some(pull), _) if !pull.verified => {
-            missing.push(format!(
-                "no riff/verify success on the head of PR #{}",
-                pull.number
+            missing.push((
+                false,
+                format!("no riff/verify success on the head of PR #{}", pull.number),
             ));
         }
-        (Some(_), _) => missing.push("no verify claim by a session that is not the author".into()),
+        (Some(_), _) => missing.push((
+            true,
+            "no verify claim by a session that is not the author".into(),
+        )),
         (None, _) => {}
     }
     match pull.and_then(|p| p.merged_ms) {
         Some(_) => found.push("merged".to_owned()),
-        None if pull.is_some() => missing.push("not merged".to_owned()),
+        None if pull.is_some() => missing.push((false, "not merged".to_owned())),
         None => {}
     }
     match item.releases.last() {
         Some(position) => found.push(format!("release at record {position}")),
-        None => missing.push("no release".to_owned()),
+        None => missing.push((true, "no release".to_owned())),
     }
     for position in &item.early {
-        missing.push(format!(
-            "release at record {position} before the merge and before a verify result"
+        missing.push((
+            true,
+            format!("release at record {position} before the merge and before a verify result"),
         ));
+    }
+    if let Some(p) = pruned.filter(|_| item.claims.is_empty()) {
+        missing.retain(|(log, _)| !log);
+        if missing.is_empty() {
+            let found = found.iter().map(|f| format!("{f}, ")).collect::<String>();
+            return (
+                Verdict::NotChecked,
+                format!(
+                    "issue-{n}: {found}its claim is not in the records that the log keeps, \
+                     from record {} on.",
+                    p.first
+                ),
+            );
+        }
+    }
+    if missing.is_empty()
+        && let Some(position) = item.unsure.first()
+    {
+        return (
+            Verdict::NotChecked,
+            format!(
+                "issue-{n}: release at record {position} after a verify request, and the start of \
+                 its session is not in the records that the log keeps."
+            ),
+        );
     }
     if missing.is_empty() {
         (Verdict::Pass, format!("issue-{n}: {}.", found.join(", ")))
     } else {
+        let missing: Vec<String> = missing.into_iter().map(|(_, text)| text).collect();
         (Verdict::Fail, format!("issue-{n}: {}.", missing.join("; ")))
     }
 }
 
-/// The rules 2 to 6 at a claim in the span.
+/// A claim in the span.
+struct Claim<'a> {
+    record: &'a Record,
+    who: &'a Who,
+    item: &'a str,
+    /// True after a prune: the replay does not see the gone records.
+    pruned: bool,
+}
+
+/// The rules 2 to 6 at a claim in the span. After a prune, a check that
+/// can need a gone record is not checked (01M588N3R2VP12A8X4EASX0BJ4).
 fn check_claim(
     rules: &mut [Rule],
     state: &Replay,
     forge: &Forge,
-    record: &Record,
-    who: &Who,
-    item: &str,
+    claim: &Claim,
     authors: &BTreeMap<u64, BTreeSet<Who>>,
 ) {
+    let Claim {
+        record,
+        who,
+        item,
+        pruned,
+    } = *claim;
+    // The replay sees each claim and each release of this session.
+    let seen = !pruned || state.fresh.contains(who);
     let at = record.envelope.written_at_ms;
     let position = record.envelope.position;
     let claim = format!("{item} at record {position} by {}", name(who));
@@ -586,7 +720,9 @@ fn check_claim(
         if author {
             why.push(format!("it is an author of issue-{n}"));
         }
-        if why.is_empty() {
+        if why.is_empty() && !seen {
+            rules[1].add(Verdict::NotChecked, format!("{claim}: {}", gone_start(who)));
+        } else if why.is_empty() {
             rules[1].add(Verdict::Pass, claim.clone());
         } else {
             rules[1].add(Verdict::Fail, format!("{claim}: {}.", why.join("; ")));
@@ -600,6 +736,9 @@ fn check_claim(
             Verdict::Fail,
             format!("{claim}: no clear after its last release at record {release}."),
         ),
+        None if !seen => {
+            rules[2].add(Verdict::NotChecked, format!("{claim}: {}", gone_start(who)));
+        }
         None => rules[2].add(Verdict::Pass, claim.clone()),
     }
 
@@ -611,6 +750,16 @@ fn check_claim(
             "the repository"
         };
         rules[3].add(Verdict::Fail, format!("{claim}: {what} was paused."));
+    } else if pruned && !(state.riff_pause_set && state.repo_pause_set) {
+        let what = if state.riff_pause_set {
+            "the repository"
+        } else {
+            "the riff"
+        };
+        rules[3].add(
+            Verdict::NotChecked,
+            format!("{claim}: no pause of {what} is in the records that the log keeps."),
+        );
     } else {
         rules[3].add(Verdict::Pass, claim.clone());
     }
@@ -632,10 +781,27 @@ fn check_claim(
                 Verdict::Fail,
                 format!("{claim}: it was the lead of {}.", who.user()),
             );
+        } else if pruned && !state.lead_set.contains(who.user()) {
+            rules[5].add(
+                Verdict::NotChecked,
+                format!(
+                    "{claim}: {} has no lead in the records that the log keeps.",
+                    who.user()
+                ),
+            );
         } else {
             rules[5].add(Verdict::Pass, claim);
         }
     }
+}
+
+/// Why a check of a session with no fresh start in the kept records is
+/// not checked: the session can hold a gone claim, or owe a clear.
+fn gone_start(who: &Who) -> String {
+    format!(
+        "the fresh start of {} is not in the records that the log keeps.",
+        name(who)
+    )
 }
 
 /// Rule 5 for a claim of the issue `n` at `at`: its verdict, and why
@@ -682,8 +848,10 @@ fn wave_and_needs(n: u64, at: u64, forge: &Forge) -> (Verdict, Option<String>) {
     }
 }
 
-/// Rule 7 at a post with the mark `request` in the span.
-fn check_request(rule: &mut Rule, state: &Replay, record: &Record, posted: &Posted) {
+/// Rule 7 at a post with the mark `request` in the span. After a prune
+/// (`pruned`), the lead can be in the records that are gone: a sender
+/// with no lead is not checked (01M588N3R2VP12A8X4EASX0BJ4).
+fn check_request(rule: &mut Rule, state: &Replay, record: &Record, posted: &Posted, pruned: bool) {
     let from = posted.message.from.who();
     let request = format!(
         "request at record {} from {}",
@@ -694,6 +862,7 @@ fn check_request(rule: &mut Rule, state: &Replay, record: &Record, posted: &Post
     match state.leads.get(from.user()) {
         Some(lead) if lead == from => {}
         Some(lead) => why.push(format!("the lead of {} was {}", from.user(), name(lead))),
+        None if pruned => {}
         None => why.push(format!("{} had no lead", from.user())),
     }
     if let Some(to) = posted.thread.peer(from)
@@ -704,10 +873,17 @@ fn check_request(rule: &mut Rule, state: &Replay, record: &Record, posted: &Post
             name(&to)
         ));
     }
-    if why.is_empty() {
-        rule.add(Verdict::Pass, request);
-    } else {
+    let no_lead = !state.leads.contains_key(from.user());
+    if !why.is_empty() {
         rule.add(Verdict::Fail, format!("{request}: {}.", why.join("; ")));
+    } else if no_lead {
+        let text = format!(
+            "{request}: {} has no lead in the records that the log keeps.",
+            from.user()
+        );
+        rule.add(Verdict::NotChecked, text);
+    } else {
+        rule.add(Verdict::Pass, request);
     }
 }
 
@@ -726,11 +902,19 @@ fn time(ms: u64) -> String {
 /// ```
 /// use riff::audit::{Report, Rule, render};
 ///
-/// let report = Report { wave: "Wave 1".into(), from_ms: 0, to_ms: None, rules: vec![] };
+/// let report = Report { wave: "Wave 1".into(), from_ms: 0, to_ms: None, pruned: None, rules: vec![] };
 /// assert_eq!(
 ///     render(&report, "acme/app"),
 ///     "Audit of Wave 1 in acme/app, from 1970-01-01 00:00 UTC to now.\n\nResult: each rule passes.\n"
 /// );
+///
+/// // After a prune, the report says which records the audit does not see.
+/// let pruned = Some(riff_core::wire::Pruned { first: 1918, first_ms: 0 });
+/// let text = render(&Report { pruned, ..report }, "acme/app");
+/// assert!(text.contains(
+///     "\nThe log keeps the records from record 1918 on, from 1970-01-01 00:00 UTC. The \
+///      checkpoint rule removed the records before it: the audit does not see them.\n"
+/// ));
 /// ```
 pub fn render(report: &Report, repo: &str) -> String {
     let to = report.to_ms.map_or_else(|| "now".to_owned(), time);
@@ -739,6 +923,18 @@ pub fn render(report: &Report, repo: &str) -> String {
         crate::text::forge(&report.wave),
         time(report.from_ms)
     );
+    if let Some(p) = report.pruned {
+        let from = match p.first_ms {
+            u64::MAX => String::new(),
+            ms => format!(", from {}", time(ms)),
+        };
+        let _ = writeln!(
+            out,
+            "\nThe log keeps the records from record {} on{from}. The checkpoint rule removed \
+             the records before it: the audit does not see them.",
+            p.first
+        );
+    }
     for rule in &report.rules {
         let verdict = rule.verdict();
         let _ = writeln!(out, "\nRule {}: {}", rule.number, verdict.word());
@@ -982,7 +1178,7 @@ mod tests {
     use super::*;
     use riff_core::record::Envelope;
     use riff_core::record::{Claimed, Member, PauseSet, Released, SessionStarted};
-    use riff_core::wire::Message;
+    use riff_core::wire::{Message, StartReason};
 
     const WAVE: &str = "Wave 2";
 
@@ -1148,7 +1344,7 @@ mod tests {
     }
 
     fn verdicts(records: &[Record]) -> Vec<Verdict> {
-        audit(WAVE, records, &forge(), 100_000)
+        audit(WAVE, records, None, &forge(), 100_000)
             .unwrap()
             .rules
             .iter()
@@ -1157,7 +1353,7 @@ mod tests {
     }
 
     fn fails(records: &[Record], rule: usize) -> Vec<String> {
-        audit(WAVE, records, &forge(), 100_000).unwrap().rules[rule - 1]
+        audit(WAVE, records, None, &forge(), 100_000).unwrap().rules[rule - 1]
             .findings
             .iter()
             .filter(|f| f.verdict == Verdict::Fail)
@@ -1172,17 +1368,17 @@ mod tests {
 
     #[test]
     fn the_span_starts_when_the_wave_is_current() {
-        let report = audit(WAVE, &good(), &forge(), 100_000).unwrap();
+        let report = audit(WAVE, &good(), None, &forge(), 100_000).unwrap();
         assert_eq!((report.from_ms, report.to_ms), (5_000, None));
         let mut open = forge();
         open.waves[0].closed_ms = None;
-        let error = audit(WAVE, &good(), &open, 100_000).unwrap_err();
+        let error = audit(WAVE, &good(), None, &open, 100_000).unwrap_err();
         assert!(
             error
                 .to_string()
                 .starts_with("Wave 2 has not started: Wave 1 is open.")
         );
-        let error = audit("Wave 9", &good(), &forge(), 100_000).unwrap_err();
+        let error = audit("Wave 9", &good(), None, &forge(), 100_000).unwrap_err();
         assert_eq!(error.to_string(), "the repository has no wave Wave 9");
     }
 
@@ -1208,7 +1404,7 @@ mod tests {
         let mut forge = forge();
         forge.pulls[0].verified = false;
         forge.pulls[0].merged_ms = None;
-        let report = audit(WAVE, &good(), &forge, 100_000).unwrap();
+        let report = audit(WAVE, &good(), None, &forge, 100_000).unwrap();
         assert_eq!(
             report.rules[0].findings[0].text,
             "issue-7: no riff/verify success on the head of PR #40; not merged."
@@ -1308,7 +1504,7 @@ mod tests {
             .into_iter()
             .filter(|r| !matches!(&r.change, Change::Posted(p) if p.message.body == "request"))
             .collect();
-        let report = audit(WAVE, &records, &forge(), 100_000).unwrap();
+        let report = audit(WAVE, &records, None, &forge(), 100_000).unwrap();
         assert_eq!(report.rules[6].verdict(), Verdict::NotChecked);
         assert!(!report.failed());
         let text = render(&report, "acme/app");
@@ -1324,7 +1520,7 @@ mod tests {
     fn the_report_names_each_item_and_each_failure() {
         let mut records = good();
         records.push(claim(38, "l1", "issue-9"));
-        let report = audit(WAVE, &records, &forge(), 100_000).unwrap();
+        let report = audit(WAVE, &records, None, &forge(), 100_000).unwrap();
         let text = render(&report, "acme/app");
         assert!(
             text.contains(
@@ -1336,5 +1532,210 @@ mod tests {
         assert!(text.contains("Rule 6: fail\n"), "{text}");
         assert!(text.contains("  4 checks pass.\n  fail: issue-9 at record 38 by ann/l1"));
         assert!(text.ends_with("Result: the rules 5, 6 fail.\n"), "{text}");
+    }
+
+    /// The records of [`good`] that a log keeps from `first` on, and the
+    /// prune, with the time `first_ms` of the oldest kept record.
+    fn kept(first: u64, first_ms: u64) -> (Vec<Record>, Option<Pruned>) {
+        let records = good()
+            .into_iter()
+            .filter(|r| r.envelope.position >= first)
+            .collect();
+        (records, Some(Pruned { first, first_ms }))
+    }
+
+    fn texts(rule: &Rule) -> Vec<(Verdict, &str)> {
+        rule.findings
+            .iter()
+            .map(|f| (f.verdict, f.text.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn after_a_prune_a_span_with_gone_records_is_not_checked() {
+        let (records, pruned) = kept(14, 14_000);
+        let report = audit(WAVE, &records, pruned, &forge(), 100_000).unwrap();
+        assert!(!report.failed());
+        // The start of w1 at 11 is gone: its release of issue-7 after its
+        // verify request can be the release of a worker.
+        assert_eq!(
+            texts(&report.rules[0]),
+            [
+                (
+                    Verdict::NotChecked,
+                    "issue-7: release at record 16 after a verify request, and the start of its \
+                     session is not in the records that the log keeps."
+                ),
+                (
+                    Verdict::Pass,
+                    "issue-8: claim at record 32 by ann/w1, PR #41, verify claim at record 36 by \
+                     ann/w2, merged, release at record 34."
+                ),
+            ]
+        );
+        for rule in &report.rules[1..] {
+            assert_eq!(rule.verdict(), Verdict::NotChecked);
+        }
+        let text = render(&report, "acme/app");
+        assert!(
+            text.contains(
+                "\nThe log keeps the records from record 14 on, from 1970-01-01 00:00 UTC. The \
+                 checkpoint rule removed the records before it: the audit does not see them.\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "Rule 2: not checked\n  Each verifier held no other claim, and is not the author.\n  \
+                 Not checked: the span starts before record 14, the oldest record that the log \
+                 keeps.\n"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn after_a_prune_rule_1_does_not_check_the_log_of_an_item_with_a_gone_claim() {
+        let (records, pruned) = kept(17, 17_000);
+        let report = audit(WAVE, &records, pruned, &forge(), 100_000).unwrap();
+        assert_eq!(
+            texts(&report.rules[0])[0],
+            (
+                Verdict::NotChecked,
+                "issue-7: PR #40, verify claim at record 17 by ann/w2, merged, its claim is not in \
+                 the records that the log keeps, from record 17 on."
+            )
+        );
+        // A fact of the forge still fails.
+        let mut forge = forge();
+        forge.pulls[0].verified = false;
+        let report = audit(WAVE, &records, pruned, &forge, 100_000).unwrap();
+        assert_eq!(
+            texts(&report.rules[0])[0],
+            (
+                Verdict::Fail,
+                "issue-7: no riff/verify success on the head of PR #40."
+            )
+        );
+    }
+
+    #[test]
+    fn after_a_prune_a_request_with_a_gone_lead_is_not_checked() {
+        // The span starts at 5 s, after the oldest kept record. The lead
+        // of ann at record 10 is gone.
+        let (records, pruned) = kept(11, 4_000);
+        let report = audit(WAVE, &records, pruned, &forge(), 100_000).unwrap();
+        assert_eq!(
+            texts(&report.rules[6]),
+            [(
+                Verdict::NotChecked,
+                "request at record 13 from ann/l1: ann has no lead in the records that the log \
+                 keeps."
+            )]
+        );
+        // The fresh starts of w1 and w2 are kept. No pause and no lead
+        // are kept.
+        let verdicts: Vec<Verdict> = report.rules[1..6].iter().map(Rule::verdict).collect();
+        assert_eq!(
+            verdicts,
+            [
+                Verdict::Pass,
+                Verdict::Pass,
+                Verdict::NotChecked,
+                Verdict::Pass,
+                Verdict::NotChecked
+            ]
+        );
+        // With no prune, the same records fail rule 7.
+        assert_eq!(
+            fails(&records, 7),
+            ["request at record 13 from ann/l1: ann had no lead."]
+        );
+    }
+
+    #[test]
+    fn after_a_prune_a_claim_that_needs_a_gone_record_is_not_checked() {
+        // The lead, a claim of w2, a release of w3 that must clear and a
+        // pause are before record 5, the oldest kept record.
+        let gone = [
+            lead(1, "l1"),
+            claim(2, "w2", "issue-5"),
+            release(3, "w3", "issue-4", true),
+            pause(4, RiffState::Paused),
+        ];
+        let kept = vec![
+            started(5, "w1", StartReason::Process),
+            claim(10, "l1", "issue-8"),
+            claim(11, "w2", "verify-issue-7"),
+            claim(12, "w3", "issue-7"),
+        ];
+        let whole: Vec<Record> = gone.iter().chain(&kept).cloned().collect();
+        let report = audit(WAVE, &whole, None, &forge(), 100_000).unwrap();
+        for n in [2, 3, 4, 6] {
+            assert_eq!(report.rules[n - 1].verdict(), Verdict::Fail, "rule {n}");
+        }
+        let pruned = Some(Pruned {
+            first: 5,
+            first_ms: 4_000,
+        });
+        let report = audit(WAVE, &kept, pruned, &forge(), 100_000).unwrap();
+        for n in [2, 3, 4, 6] {
+            assert_eq!(
+                report.rules[n - 1].verdict(),
+                Verdict::NotChecked,
+                "rule {n}"
+            );
+        }
+        assert_eq!(
+            texts(&report.rules[1]),
+            [(
+                Verdict::NotChecked,
+                "verify-issue-7 at record 11 by ann/w2: the fresh start of ann/w2 is not in the \
+                 records that the log keeps."
+            )]
+        );
+        assert_eq!(
+            texts(&report.rules[3])[0],
+            (
+                Verdict::NotChecked,
+                "issue-8 at record 10 by ann/l1: no pause of the riff is in the records that the \
+                 log keeps."
+            )
+        );
+        assert_eq!(
+            texts(&report.rules[5])[0],
+            (
+                Verdict::NotChecked,
+                "issue-8 at record 10 by ann/l1: ann has no lead in the records that the log \
+                 keeps."
+            )
+        );
+
+        // A fresh start, a lead and a pause of each scope in the kept
+        // records: the audit checks again.
+        let repo = PauseSet {
+            scope: Scope::Repository("acme/app".parse().unwrap()),
+            state: RiffState::Running,
+        };
+        let seen = vec![
+            started(5, "w2", StartReason::Process),
+            started(6, "w3", StartReason::Clear),
+            started(6, "l1", StartReason::Process),
+            lead(7, "l1"),
+            pause(8, RiffState::Running),
+            record(9, "lead", Change::PauseSet(repo)),
+        ];
+        let records: Vec<Record> = seen.into_iter().chain(kept).collect();
+        let report = audit(WAVE, &records, pruned, &forge(), 100_000).unwrap();
+        for n in [2, 3, 4] {
+            assert_eq!(report.rules[n - 1].verdict(), Verdict::Pass, "rule {n}");
+        }
+        assert_eq!(
+            texts(&report.rules[5])[0],
+            (
+                Verdict::Fail,
+                "issue-8 at record 10 by ann/l1: it was the lead of ann."
+            )
+        );
     }
 }

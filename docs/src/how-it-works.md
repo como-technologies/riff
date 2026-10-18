@@ -812,7 +812,7 @@ flowchart TD
   its fix, until it is in step:
 
   ```text
-  riff a6cf2205 lead needs you: the init of podman: install catatonit, the init of podman, for example: sudo apt install catatonit
+  riff 3.2.0 como-technologies/riff a6cf2205 lead needs you: the init of podman: install catatonit, the init of podman, for example: sudo apt install catatonit
   ```
 
 The update and the daemon say what they did in their logs:
@@ -1323,7 +1323,7 @@ riff top --host thelio
 Hosts:
 mike@thelio (12s ago)
   daemon 3.1.0 d2ae080  sessions 1/4  floor 8GB
-  load 1.5/32  100GB avail  disk 300GB free (75%)  podman 5.2.1  image here
+  load 1.5/32 threads  100GB avail  disk 300GB free (75%)  podman 5.2.1  image here
   riff on  gh on  claude 1h30m left
   wave como-technologies/riff: started issue-12
   riff-issue-12-1a2b3c4d  issue-12  works  > Bash: just check
@@ -1332,9 +1332,11 @@ mike@thelio (12s ago)
 
 - The first line: the riff build of the daemon, the live sessions
   against the limit, and the floor of free memory.
-- The second line: the load against the cores, the free memory, the
-  disk of the session folders, the version of podman, and the session
-  image of the repository.
+- The second line: the 1-minute load against the hardware threads, the
+  free memory, the disk of the session folders, the version of podman,
+  and the session image of the repository. The hardware threads are
+  the logical CPUs: thelio has 16 cores with 2 threads each, so 32.
+  The load is yellow when it is more than the threads.
 - The third line: the sign-ins on the host. `claude` shows the time
   left. riff and `gh` show `on` or `off`. `?` means that riff cannot
   read it.
@@ -1435,7 +1437,7 @@ brett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim
      working on #88 Split the store
 mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 ├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims
-│  │  load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10
+│  │  load5 9.8 of 12  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10
 │  │  last kill 14:03:12 by systemd-oomd
 │  ├─ 5b1e2a90  #issue-7  worker  busy
 │  │    working on #7 Fix the help
@@ -1520,8 +1522,13 @@ The table of each state, its color and its detail is in
 [The state of a session](#the-state-of-a-session).
 
 - A machine that runs workers: under its host comes a line of
-  numbers. `load 13.2 9.8/8` is the load average of 1 and 5 minutes,
-  and the physical cores. `3000MHz now 2990` is the cap of the clock
+  numbers. `load5 9.8 of 12` is the 5-minute load average and the
+  limit of the monitor: 1.5 times the physical cores (see
+  [Watch the health of a machine](#watch-the-health-of-a-machine)). A
+  host with no monitor numbers shows `load 13.2/16 threads`: the
+  1-minute load against the hardware threads, as in
+  [See the facts of each host](#see-the-facts-of-each-host).
+  `3000MHz now 2990` is the cap of the clock
   and the clock now. `20GB avail/4` is the available memory and the
   floor. `workers 3/4` is the workers and the limit. `pool 10` is the
   tokens of the pool of build jobs, or `jobs 2` the jobs of each
@@ -1786,7 +1793,8 @@ Each session gets the hook: a session with the plugin runs `riff hook
 denied`, and the lead and each container session of the riff daemon
 run `/opt/riff/riff relay denied`. The hook never waits for
 `riff-server`. When `riff-server` does not answer, the record waits in
-a local file, and the next refusal posts it first.
+a local file, and the next refusal posts it first. A session that left
+the riff sends no record, on the host and in a container.
 
 One record is one line, the tags first:
 
@@ -2692,6 +2700,9 @@ sequenceDiagram
 In a thread, a selector with `lead: true` that matches no live session
 wakes each live session with no claim that its other fields match. So
 a post to the lead still reaches a free session when the lead is gone.
+This fallback runs only when the user has no live lead. The sender
+counts: when the lead posts to its own `lead: true` selector, the
+selector wakes no session.
 
 `tell` sends a direct message to one session. A person follows a
 thread with `riff tail`, reads it with `riff read`, posts with
@@ -2793,6 +2804,29 @@ an older message. The server gives the messages in pages of 50, and
 one page. When more messages follow, it says so, with the number of
 the last message. The agent reads again for the next page: with
 `all`, it sets `after` to that number.
+
+### Direct messages come first
+
+A read with no thread shows each direct thread first, then your other
+threads. A direct thread holds a request of your lead or a question to
+you. So a full page of a long thread does not hide it:
+
+```sh
+riff read
+```
+
+```text
+direct with mike@pangolin:riff (a6cf)
+[1] mike@pangolin:riff (a6cf) lead=true to session=b2 (verified): request: claim issue-12
+chat
+[128] brett@heron (verified): the build is green
+como-technologies/riff
+[2527] mike@pangolin:riff (a6cf) lead=true to all (verified): Wave 34 starts
+```
+
+The `read` tool of an agent session shows the same order. Only its
+part of the messages to you after a page comes before it. See
+[One read after a wake shows the message of the wake](#one-read-after-a-wake-shows-the-message-of-the-wake).
 
 ### A message that came before the start of a session
 
@@ -3051,6 +3085,27 @@ riff watch --once
 
 Without `--once`, `riff watch` prints one line for each wake until
 you stop it.
+
+### One read after a wake shows the message of the wake
+
+A read gives one page of 50 messages of each thread, the oldest unread
+first. The message of a wake can come after many older pages. So the
+page also gives each unread message after it that woke the session.
+The `read` tool shows them first, in their own part:
+
+```text
+Messages to you after this page (the watch does not wake for them again):
+chat
+[327] mike@pangolin to session=193c7051 (verified): Can you look at #1110?
+
+chat
+[128] ann@heron (verified): ...
+More messages follow. Read this thread again. With all, set after to 177.
+```
+
+One read after a wake is enough: the next watch does not wake again
+for the messages of that part. Later pages show them again in their
+place.
 
 ### The watch ends before the limit of a background task
 
@@ -3939,9 +3994,18 @@ Show each session in the status line of Claude Code: its short session
 ID, `lead`, its claims, and `blocked`. For example:
 
 ```text
-riff 2a880834 lead
+riff 3.2.0 como-technologies/riff 2a880834 lead
 riff dceb0b68 issue-82 blocked
 ```
+
+The line of a lead starts with the build of riff and the repository.
+So when you lead in more than one repository, you can see which lead
+is which. The build is the build of the `riff mcp` of the session, else
+of the installed riff. After an update, the line shows the build that
+the session still runs, and the tag `v3.3.0 installed` says that a new
+build waits. The repository is the `origin` of the working folder, as
+`OWNER/REPO`. Both come from this machine, not from riff-server. The
+line of a worker stays short.
 
 The short ID is the same as in `riff who`. `riff connect claude` sets
 this status line for you, when your Claude Code settings have no other
@@ -3985,12 +4049,12 @@ sequenceDiagram
     Note over M: keeps the reply
     C->>S: the session ID on stdin
     alt a reply less than 90 s old is kept
-        S-->>C: the kept line
+        S-->>C: the line of the kept reply
     else no reply is kept
         S->>R: GET /v1/me
         R-->>S: this session, the build
         Note over S: keeps the reply
-        S-->>C: riff 2a880834 lead issue-82
+        S-->>C: riff 3.2.0 como-technologies/riff 2a880834 lead issue-82
     end
 ```
 
@@ -4006,7 +4070,7 @@ When the riff runs a newer release than your session, the status line
 adds a tag. For example:
 
 ```text
-riff 2a880834 lead update v0.6.0: riff update
+riff 0.5.0 como-technologies/riff 2a880834 lead update v0.6.0: riff update
 ```
 
 | Tag | What it means | What to do |
@@ -4771,11 +4835,11 @@ riff workers limit 4
 When the memory gets short, the pool slows the builds down by itself
 (see
 [The pool and the memory pressure](#the-pool-and-the-memory-pressure)).
-`riff workers` shows the cores, the memory and the available memory of
-the machine. When the number does not fit, set fewer jobs (see
-[Set the jobs of a worker](#set-the-jobs-of-a-worker)). Each worker
-also has a worktree with its own build files. In the riff repository,
-they take 23 to 44 GB of disk for each worker.
+`riff workers` shows the hardware threads, the memory and the
+available memory of the machine. When the number does not fit, set
+fewer jobs (see [Set the jobs of a worker](#set-the-jobs-of-a-worker)).
+Each worker also has a worktree with its own build files. In the riff
+repository, they take 23 to 44 GB of disk for each worker.
 
 #### See the pool of build jobs
 
@@ -4828,7 +4892,7 @@ When you lower the limit, the workers that run go on (see
 [Limit the workers of a machine](#limit-the-workers-of-a-machine)). Then
 more workers run than the pool counts. Each worker after the count
 keeps one token out of the pool, and gives it back when other workers
-end. So 4 workers with a limit of 2 do not get twice the cores:
+end. So 4 workers with a limit of 2 do not get twice the jobs:
 
 ```text
 pool for 2 workers = 16 - 2 - 2 = 12 tokens
@@ -5329,17 +5393,17 @@ rollout gives neither.
 
 #### The score of a machine
 
-Each machine tells six numbers: its CPU cores, its CPU speed, its
+Each machine tells six numbers: its hardware threads, its CPU speed, its
 clock now, its memory, its available memory and its 1-minute load
 average. The CPU speed is the cap of the clock: the lowest
-`scaling_max_freq` of the cores. A cap or a power profile lowers it.
-The clock now is the mean of `scaling_cur_freq` of the cores. From
-them riff makes a score: the number of workers in tmux that the
-machine runs well. One worker needs one core and 2 GB of memory. A
-core at 3000 MHz counts 1:
+`scaling_max_freq` of the logical CPUs. A cap or a power profile
+lowers it. The clock now is the mean of `scaling_cur_freq` of the
+logical CPUs. From them riff makes a score: the number of workers in
+tmux that the machine runs well. One worker needs one hardware thread
+and 2 GB of memory. A thread at 3000 MHz counts 1:
 
 ```text
-score = min(cores, memory GB / 2) × MHz / 3000
+score = min(threads, memory GB / 2) × MHz / 3000
 ```
 
 The score counts the cap, not the clock now. So a machine with a cap
@@ -5347,7 +5411,7 @@ of 3000 MHz gets fewer workers than the same machine with no cap.
 `riff workers` shows both, for example `cpu 16x3000MHz (now 2990MHz)`.
 
 The score less the workers that run there is the free capacity. A
-machine whose load average is more than its cores, or whose available
+machine whose load average is more than its threads, or whose available
 memory is less than its floor, has no room (see
 [Set the memory that a new worker needs](#set-the-memory-that-a-new-worker-needs)).
 While the rollout is off, the message of a higher limit names the

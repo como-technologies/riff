@@ -203,6 +203,9 @@ pub struct Thread {
     pub lines: Vec<Line>,
     /// The seq of the last line, when more messages follow.
     pub next: Option<u64>,
+    /// Each unread line after the page that woke the reader
+    /// (01M588J4XNV1TXEPMGTKRVY9VK).
+    pub woken: Vec<Line>,
 }
 
 impl Thread {
@@ -216,11 +219,11 @@ impl Thread {
     /// let me: SessionUri = "riff://brett@heron?session=b1".parse()?;
     /// let mike: SessionUri = "riff://mike@pangolin?session=a1".parse()?;
     /// let thread = "o/r".parse()?;
-    /// let inbox = Inbox { thread, members: vec![], messages: vec![], next: Some(4) };
+    /// let inbox = Inbox { thread, members: vec![], messages: vec![], next: Some(4), woken: vec![] };
     /// let t = Thread::of(&inbox, &me);
     /// assert_eq!((t.other, t.next), (None, Some(4)));
     /// let direct = ThreadName::direct(me.who(), mike.who());
-    /// let inbox = Inbox { thread: direct, members: vec![me.clone(), mike.clone()], messages: vec![], next: None };
+    /// let inbox = Inbox { thread: direct, members: vec![me.clone(), mike.clone()], messages: vec![], next: None, woken: vec![] };
     /// assert_eq!(Thread::of(&inbox, &me).other, Some(mike));
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
@@ -242,8 +245,39 @@ impl Thread {
                 .map(|c| Line::of(c, &inbox.thread))
                 .collect(),
             next: inbox.next,
+            woken: inbox
+                .woken
+                .iter()
+                .map(|c| Line::of(c, &inbox.thread))
+                .collect(),
         }
     }
+}
+
+/// Puts each direct thread of a read first, and keeps the order of the
+/// other threads (01M58AG7Z2PETHBZG7X9QD8PK5). A direct thread holds
+/// the request of a lead or a question, so a full page of each other
+/// thread does not hide it.
+///
+/// ```
+/// use riff_client::api::Inbox;
+/// use riff_client::threads::direct_first;
+/// use riff_core::name::{SessionUri, ThreadName};
+///
+/// let me: SessionUri = "riff://brett@heron?session=b1".parse()?;
+/// let mike: SessionUri = "riff://mike@pangolin?session=a1".parse()?;
+/// let inbox = |thread: ThreadName| Inbox {
+///     thread, members: vec![], messages: vec![], next: None, woken: vec![],
+/// };
+/// let direct = ThreadName::direct(me.who(), mike.who());
+/// let mut list = [inbox("chat".parse()?), inbox("o/r".parse()?), inbox(direct.clone())];
+/// direct_first(&mut list);
+/// let order: Vec<String> = list.iter().map(|i| i.thread.to_string()).collect();
+/// assert_eq!(order, [direct.to_string(), "chat".into(), "o/r".into()]);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn direct_first(list: &mut [Inbox]) {
+    list.sort_by_key(|inbox| !inbox.thread.is_direct());
 }
 
 #[cfg(test)]
@@ -270,6 +304,7 @@ mod tests {
                 .map(|message| Checked { message, verified })
                 .collect(),
             next: Some(2),
+            woken: vec![],
         }
     }
 
@@ -300,6 +335,59 @@ mod tests {
         let thread = Thread::of(&inbox(false), &me);
         assert!(!thread.lines[0].lead);
         assert_eq!(thread.lines[0].sender().name, "mike a6cf");
+    }
+
+    /// A full page of the chat and of the repository thread, then one
+    /// direct message, in the order of the list of the server.
+    #[test]
+    fn a_read_shows_the_direct_thread_before_two_full_pages() {
+        let me: SessionUri = "riff://brett@heron?session=b1".parse().unwrap();
+        let lead: SessionUri = "riff://mike@pangolin?session=a1&lead=true".parse().unwrap();
+        let page = |thread: ThreadName, count: u64| {
+            let messages = (1..=count).map(|seq| Checked {
+                message: Message {
+                    seq,
+                    from: lead.clone(),
+                    to: vec![],
+                    body: format!("{thread} {seq}"),
+                    at_ms: 0,
+                    kind: Kind::Message,
+                    sig: None,
+                    payload: None,
+                },
+                verified: true,
+            });
+            Inbox {
+                members: vec![me.clone(), lead.clone()],
+                messages: messages.collect(),
+                next: (count == 50).then_some(count),
+                woken: vec![],
+                thread,
+            }
+        };
+        let direct = ThreadName::direct(me.who(), lead.who());
+        let name = |t: &str| t.parse::<ThreadName>().unwrap();
+        let mut list = [
+            page(name("chat"), 50),
+            page(name("o/r"), 50),
+            page(direct.clone(), 1),
+        ];
+        direct_first(&mut list);
+        let order: Vec<(String, usize)> = list
+            .iter()
+            .map(|i| (i.thread.to_string(), i.messages.len()))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                (direct.to_string(), 1),
+                ("chat".into(), 50),
+                ("o/r".into(), 50)
+            ]
+        );
+        let first = Thread::of(&list[0], &me);
+        assert_eq!(first.other, Some(lead.clone()));
+        assert_eq!(first.lines[0].body, format!("{direct} 1"));
     }
 
     #[test]

@@ -355,7 +355,7 @@ async fn a_token_store_of_an_old_format_stops_the_load_with_the_fix() {
     let error = common::load_on(Arc::new(store(&url))).await.err().unwrap();
     assert!(matches!(error, StoreError::NotValid { .. }), "{error:?}");
     assert_eq!(
-        error.to_string(),
+        error.at_start(),
         "cannot read the saved object gs://riff-test/signins.json: missing field `chains` \
          at line 1 column 43. It can be state of an old format. To start again with an \
          empty state, stop each server of this store and remove the old state: \

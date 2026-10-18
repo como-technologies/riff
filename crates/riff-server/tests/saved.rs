@@ -199,7 +199,11 @@ async fn a_chunk_that_does_not_read_stops_the_load_and_names_the_chunk() {
     assert_eq!(object, &name);
     assert_eq!(fix, &None);
     assert!(
-        error.to_string().ends_with("remove the old state."),
+        error.at_start().ends_with("remove the old state."),
+        "{error}"
+    );
+    assert!(
+        !error.to_string().contains("remove the old state"),
         "{error}"
     );
 }
@@ -220,8 +224,20 @@ async fn a_gap_in_the_log_stops_the_load() {
         gap.save(name, bytes, None).await.unwrap();
     }
     let error = common::load_on(Arc::new(gap)).await.err().unwrap();
-    assert!(error.to_string().contains("the log needs 1"), "{error}");
-    assert!(error.to_string().contains(&names[1]), "{error}");
+    assert!(
+        matches!(error, StoreError::Pruned { needs: 1, .. }),
+        "{error:?}"
+    );
+    assert!(
+        error
+            .at_start()
+            .contains("the read needs the log from position 1"),
+        "{error}"
+    );
+    assert!(
+        !error.at_start().contains("remove the old state"),
+        "{error}"
+    );
 }
 
 /// The session of `who` in the `who` reply that Mike gets, gone

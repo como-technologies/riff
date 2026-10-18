@@ -899,19 +899,27 @@ mod tests {
         }
     }
 
+    /// 01M3PRHM97CJ16FZD9ZK48ERAD, 01M58BCCKMNG6V495YF8AM9P5C.
     #[test]
     fn rule_1_of_the_skill_is_asd_ste100() {
+        let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
         let skill = text("riff/skills/riff/SKILL.md");
-        let rules = &skill[skill.find("## Rules").unwrap()..skill.find("## Your URI").unwrap()];
-        let rules = rules.split_whitespace().collect::<Vec<_>>().join(" ");
+        let rules =
+            flat(&skill[skill.find("## Rules").unwrap()..skill.find("## Your URI").unwrap()]);
         let rule = |n: usize| {
             let start = rules.find(&format!(" {n}. ")).unwrap();
             let end = rules.find(&format!(" {}. ", n + 1)).unwrap_or(rules.len());
             rules[start..end].to_string()
         };
         assert!(rule(1).contains("Write all prose in ASD-STE100"));
+        let tenses = "Use natural tenses for things in time: \"I will tell you\" for a future action, \
+                      \"it failed\" for a past event. Never the present tense for a future action.";
+        assert!(rule(1).contains(tenses), "{}", rule(1));
+        let top = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let notes = flat(&std::fs::read_to_string(top.join("CLAUDE.md")).unwrap());
+        assert!(notes.contains(tenses), "CLAUDE.md");
         // Each reference names the rule that says what the reference means.
-        let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        let flat = flat(skill);
         let mut refs = 0;
         for (at, _) in flat.match_indices("(rule ") {
             let n: usize = flat[at + 6..].split(')').next().unwrap().parse().unwrap();
@@ -1277,6 +1285,25 @@ mod tests {
         }
     }
 
+    /// 01M588J4XNV1TXEPMGTKRVY9VK: the skill says what one read after a
+    /// wake shows, in the words of the read.
+    #[test]
+    fn the_skill_says_what_one_read_after_a_wake_shows() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let part = &skill[skill.find("## Keep the watch running").unwrap()..];
+        let part = &part[..part.find("\n## Pick up dropped work").unwrap()];
+        let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+        let head = crate::text::WOKEN_HEAD;
+        let head = &head[..head.find(" (").unwrap()];
+        for word in [
+            "One read after a wake shows the message of the wake.",
+            &format!("under \"{head}\""),
+            "The next watch does not wake for it again.",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
     /// 01M3K0AXMCVRST7HYH4DM8B3AN: a worker with no work waits idle.
     #[test]
     fn the_skill_tells_a_worker_with_no_work_to_wait_idle() {
@@ -1425,7 +1452,7 @@ mod tests {
     }
 
     /// 01M3JPMQG9FDB719BC8MDCBNBA, 01M3JPMQJCC3F19QAJ84EKMVKA,
-    /// 01M3JY1TBPQHH6WPPBTF42T64H.
+    /// 01M3JY1TBPQHH6WPPBTF42T64H, 01M58AQX46RH9KFP91QAFS43N7.
     #[test]
     fn the_skill_wakes_only_the_sessions_that_must_act() {
         let skill = text("riff/skills/riff/SKILL.md");
@@ -1437,6 +1464,7 @@ mod tests {
             "| A verify request | `message` | `[{\"user\": \"USER\", \"repo\": \"OWNER/REPO\", \"lead\": true}]` |",
             "| A verify result | `message` | `[{\"claim\": \"issue-12\"}]`, and your lead when no session holds the item |",
             "When your user has no live lead, each live session of your user in the repository with no claim wakes in its place.",
+            "This fallback runs only when the user has no live lead. The sender counts: when you are the lead and post to your own `lead` selector, it wakes nobody.",
             "Post a note that you are done",
             "post the board as a note",
             "Do both steps in the same response: two tool calls in one message.",

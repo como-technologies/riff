@@ -58,6 +58,10 @@ pub struct Presence {
     pub(super) sessions: BTreeMap<Who, Session>,
     /// The last sequence number that each session read in each thread.
     pub(super) cursors: BTreeMap<(Who, ThreadName), u64>,
+    /// The newest message after the page of a read that woke the
+    /// session, and that the read showed, by session and thread
+    /// (01M588J4XNV1TXEPMGTKRVY9VK). The checkpoint does not keep it.
+    pub(super) shown: BTreeMap<(Who, ThreadName), u64>,
     /// The last pause or resume of the riff, or the replay. A status
     /// from before it is stale (01M3Q551YHYZBFV2NDS1QCYXCD).
     pub(super) riff_changed: Option<Instant>,
@@ -168,11 +172,14 @@ pub enum Signal {
     /// The session ended (R205).
     Ended,
     /// The session read `thread` up to `seq`. A read of all the
-    /// messages (`all`) never moves the cursor back.
+    /// messages (`all`) never moves the cursor back. `woken` is the
+    /// newest message after `seq` that woke the session and that the
+    /// read showed, or 0 (01M588J4XNV1TXEPMGTKRVY9VK).
     Read {
         thread: ThreadName,
         seq: u64,
         all: bool,
+        woken: u64,
     },
     /// The server asks this idle worker to stop
     /// (01M3Q5A0NKY1FCS0YH6N6YD3GN).
@@ -188,8 +195,19 @@ impl Signal {
     /// the ask to clear: it is in the riff
     /// ([`State::signal`](super::State::signal)).
     pub fn set(self, presence: &mut Presence, who: &Who, now: Instant) -> AliveReply {
-        if let Signal::Read { thread, seq, all } = self {
-            let cursor = presence.cursors.entry((who.clone(), thread)).or_insert(0);
+        if let Signal::Read {
+            thread,
+            seq,
+            all,
+            woken,
+        } = self
+        {
+            let key = (who.clone(), thread);
+            if woken > 0 {
+                let shown = presence.shown.entry(key.clone()).or_insert(0);
+                *shown = (*shown).max(woken);
+            }
+            let cursor = presence.cursors.entry(key).or_insert(0);
             *cursor = if all { (*cursor).max(seq) } else { seq };
             return AliveReply::default();
         }
@@ -384,7 +402,7 @@ impl Presence {
     ///   stale status (01M3Q551YHYZBFV2NDS1QCYXCD), for the riff or for
     ///   the repository of the record.
     /// - `session_forgotten`: the session leaves memory, with its read
-    ///   cursors, and each cursor of a thread that is gone.
+    ///   cursors and its shown marks, and each of a thread that is gone.
     /// - `posted`: a message, not a note and not a status request, that
     ///   wakes a blocked session answers its block
     ///   (01M41FZPT31ATXP75QW965P3JB). The block is then not unanswered
@@ -427,8 +445,11 @@ impl Presence {
             Change::SessionForgotten(forgotten) => {
                 let who = forgotten.session.who();
                 self.sessions.remove(who);
-                self.cursors
-                    .retain(|(reader, thread), _| reader != who && riff.threads().has(thread));
+                let kept = |(reader, thread): &(Who, ThreadName), _: &mut u64| {
+                    reader != who && riff.threads().has(thread)
+                };
+                self.cursors.retain(kept);
+                self.shown.retain(kept);
             }
             Change::JoinedThread(_)
             | Change::LeftThread(_)
@@ -512,6 +533,14 @@ impl Presence {
             .unwrap_or(0)
     }
 
+    /// The last sequence number that `who` saw in `thread` of the
+    /// messages that woke it: its read cursor, or a later message that
+    /// a read showed after its page (01M588J4XNV1TXEPMGTKRVY9VK).
+    pub(super) fn seen_woken(&self, who: &Who, thread: &ThreadName) -> u64 {
+        let shown = self.shown.get(&(who.clone(), thread.clone())).copied();
+        self.cursor(who, thread).max(shown.unwrap_or(0))
+    }
+
     /// The read cursors, and the status and the long step of each
     /// session, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
@@ -519,6 +548,7 @@ impl Presence {
         let Presence {
             sessions,
             cursors,
+            shown: _,
             riff_changed: _,
             repository_changed: _,
             loaded: _,

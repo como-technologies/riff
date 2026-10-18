@@ -1514,6 +1514,11 @@ pub struct ReadReply {
     /// [`Read::after`] to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<u64>,
+    /// In an unread read: each message after the page that woke `me`
+    /// and that no read showed yet. The read marks it as seen, so the
+    /// next watch does not wake for it (01M588J4XNV1TXEPMGTKRVY9VK).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub woken: Vec<Message>,
     /// The keys of the user of each sender, to verify the messages.
     #[serde(default, skip_serializing_if = "Keys::is_empty")]
     pub keys: Keys,
@@ -2628,6 +2633,32 @@ pub struct LogQuery {
 pub struct LogReply {
     #[serde(deserialize_with = "known_records")]
     pub records: Vec<Record>,
+    /// The records that the log no longer keeps: `None` when it keeps
+    /// each record from position 1 (01M588N3R2VP12A8X4EASX0BJ4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pruned: Option<Pruned>,
+}
+
+/// The start of the log after the checkpoint rule removed its oldest
+/// chunks: the reply of `POST /v1/log` has the records from `first`
+/// on (01M588N3R2VP12A8X4EASX0BJ4).
+///
+/// ```
+/// use riff_core::wire::{LogReply, Pruned};
+///
+/// let reply: LogReply = serde_json::from_str(
+///     r#"{"records":[],"pruned":{"first":1918,"first_ms":5000}}"#,
+/// ).unwrap();
+/// assert_eq!(reply.pruned, Some(Pruned { first: 1918, first_ms: 5000 }));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Pruned {
+    /// The position of the oldest record that the log keeps.
+    pub first: u64,
+    /// When the oldest record of a known kind that the log keeps was
+    /// written, in milliseconds since the Unix epoch. A record before it
+    /// can be gone.
+    pub first_ms: u64,
 }
 
 /// The records of a [`LogReply`] with a kind that this build knows.

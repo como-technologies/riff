@@ -54,6 +54,15 @@ fn newer() -> Build {
     release(v.major, v.minor + 1)
 }
 
+/// The status line of the lead [`ID`] in the repository of [`repo`],
+/// with this build: `lead` and then `rest` (01M58ASFT4VBG13X5TXPHS67AQ).
+fn lead(rest: &str) -> String {
+    format!(
+        "riff {} como-technologies/riff a6cf2205 lead{rest}\n",
+        Build::this().version
+    )
+}
+
 /// A git repository with a GitHub origin.
 fn repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -125,7 +134,7 @@ async fn the_status_line_shows_the_session_and_its_claims() {
     let stdin = format!(r#"{{"session_id":"{ID}","cwd":"/x"}}"#);
     let (out, code) = riff(&server, dir.path(), None, &stdin, &["statusline"]).await;
     // The session is the lead of mike in the repository.
-    assert_eq!(out, "riff a6cf2205 lead issue-82\n");
+    assert_eq!(out, lead(" issue-82"));
     assert_eq!(code, 0);
 }
 
@@ -198,10 +207,7 @@ async fn the_status_line_calls_me_and_not_who() {
     assert_eq!(code, 0);
     calls.lock().unwrap().clear();
 
-    assert_eq!(
-        line(&server, dir.path()).await,
-        "riff a6cf2205 lead issue-82\n"
-    );
+    assert_eq!(line(&server, dir.path()).await, lead(" issue-82"));
     let calls = calls.lock().unwrap().clone();
     assert!(calls.iter().any(|c| c == "/v1/me"), "{calls:?}");
     assert!(!calls.iter().any(|c| c == "/v1/who"), "{calls:?}");
@@ -219,7 +225,7 @@ async fn the_status_lines_soon_after_a_good_answer_ask_the_server_nothing() {
     join(&server, dir.path()).await;
     calls.lock().unwrap().clear();
     for _ in 0..3 {
-        assert_eq!(line(&server, dir.path()).await, "riff a6cf2205 lead\n");
+        assert_eq!(line(&server, dir.path()).await, lead(""));
     }
     let calls = calls.lock().unwrap().clone();
     assert_eq!(calls, ["/v1/me"]);
@@ -260,10 +266,7 @@ async fn the_status_line_shows_the_answer_that_riff_mcp_kept() {
     let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
         .await
         .unwrap();
-    assert_eq!(
-        String::from_utf8(out.stdout).unwrap(),
-        "riff a6cf2205 lead issue-82\n"
-    );
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), lead(" issue-82"));
     assert_eq!(*calls.lock().unwrap(), [""; 0], "no call to riff-server");
     assert!(!log.exists(), "no call to the keyring");
 }
@@ -275,10 +278,7 @@ async fn a_newer_release_gives_the_tag_and_the_same_release_none() {
     join(&server, dir.path()).await;
     assert_eq!(
         line(&server, dir.path()).await,
-        format!(
-            "riff a6cf2205 lead update v{}: riff update\n",
-            newer().version
-        )
+        lead(&format!(" update v{}: riff update", newer().version))
     );
 
     // Another commit of the same release: a dev build or a loopback riff.
@@ -289,7 +289,7 @@ async fn a_newer_release_gives_the_tag_and_the_same_release_none() {
     let dir = repo();
     let server = server_of(dev).await;
     join(&server, dir.path()).await;
-    assert_eq!(line(&server, dir.path()).await, "riff a6cf2205 lead\n");
+    assert_eq!(line(&server, dir.path()).await, lead(""));
 }
 
 #[tokio::test]
@@ -320,10 +320,10 @@ async fn a_step_that_needs_the_person_gives_a_tag_with_its_fix() {
     riff::local::set_needs_you(&state, Some(step)).unwrap();
     assert_eq!(
         line(&server, dir.path()).await,
-        format!("riff a6cf2205 lead needs you: {step}\n")
+        lead(&format!(" needs you: {step}"))
     );
     riff::local::set_needs_you(&state, None).unwrap();
-    assert_eq!(line(&server, dir.path()).await, "riff a6cf2205 lead\n");
+    assert_eq!(line(&server, dir.path()).await, lead(""));
 }
 
 #[tokio::test]
@@ -339,7 +339,7 @@ async fn with_update_auto_on_the_tag_says_updating_then_installed() {
     std::fs::write(dir.path().join("config.toml"), "[update]\nauto = true\n").unwrap();
     assert_eq!(
         line(&server, dir.path()).await,
-        format!("riff a6cf2205 lead updating to v{}\n", newer().version)
+        lead(&format!(" updating to v{}", newer().version))
     );
     drop(lock);
 
@@ -361,12 +361,16 @@ async fn with_update_auto_on_the_tag_says_updating_then_installed() {
     join(&server, dir.path()).await;
     assert_eq!(
         line(&server, dir.path()).await,
-        format!("riff a6cf2205 lead v{} installed\n", Build::this().version)
+        format!(
+            "riff {} como-technologies/riff a6cf2205 lead v{} installed\n",
+            older.version,
+            Build::this().version
+        )
     );
 
     // riff mcp runs the new release: no tag.
     std::fs::write(&build_file, Build::this().to_string()).unwrap();
-    assert_eq!(line(&server, dir.path()).await, "riff a6cf2205 lead\n");
+    assert_eq!(line(&server, dir.path()).await, lead(""));
     drop(mcp);
 }
 
@@ -446,4 +450,17 @@ async fn the_end_of_the_watch_says_when_riff_mcp_stopped() {
     mcp_ended(dir.path());
     let out = watch_a_second(&server, dir.path()).await;
     assert_eq!(out.matches(riff::text::WATCH_MCP_GONE).count(), 1, "{out}");
+}
+
+/// 01M58ASFT4VBG13X5TXPHS67AQ: only a lead shows the build and the
+/// repository. The line of another session does not change.
+#[tokio::test]
+async fn the_line_of_a_session_that_is_not_the_lead_has_no_build() {
+    let server = start_server().await;
+    let dir = repo();
+    let (_, code) = riff(&server, dir.path(), None, "", &["resume", "--riff"]).await;
+    assert_eq!(code, 0);
+    let (_, code) = riff(&server, dir.path(), Some(ID), "", &["claim", "issue-82"]).await;
+    assert_eq!(code, 0);
+    assert_eq!(line(&server, dir.path()).await, "riff a6cf2205 issue-82\n");
 }

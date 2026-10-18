@@ -12,7 +12,7 @@
 //! | Type | Holds |
 //! |---|---|
 //! | [`HostStatus`] | The limit, the floor, the deaths and the workers of a host, with the parts below. |
-//! | [`Machine`] | The cores, the clock, the memory and the load (01M3Q5QE4SQ8VYN2PSF42KB3QJ). |
+//! | [`Machine`] | The hardware threads, the clock, the memory and the load (01M3Q5QE4SQ8VYN2PSF42KB3QJ). |
 //! | [`Disk`] | The free disk of the main clone (01M41A11GHP78E2VYN14JSE27P). |
 //! | [`Numbers`] | The numbers of the monitor (01M421QPX01BB15GJXHFYRETTX), with its [`Jobs`] and its last [`Kill`]. |
 //! | [`Host`] | The user and the host of a machine, and its [`HostStatus`]. |
@@ -33,7 +33,7 @@
 //! ```
 //! use riff_client::machines::{HostStatus, Machine};
 //!
-//! let m = Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 };
+//! let m = Machine { threads: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 };
 //! let status = HostStatus { machine: Some(m), ..HostStatus::default() };
 //! assert_eq!(
 //!     status.line(),
@@ -86,25 +86,25 @@ pub const NUMBERS_TTL: Duration = Duration::from_secs(180);
 /// The numbers of a machine.
 ///
 /// The score of a machine is the number of workers that it can run
-/// well (01M3Q5QE76BZ27SZ14FFE8HM1G). One worker needs one core and
-/// 2 GB of memory. A core at [`BASE_MHZ`] counts 1, a faster core
-/// counts more:
+/// well (01M3Q5QE76BZ27SZ14FFE8HM1G). One worker needs one hardware
+/// thread and 2 GB of memory. A thread at [`BASE_MHZ`] counts 1, a
+/// faster thread counts more:
 ///
 /// ```text
-/// score = min(cores, memory GB / 2) × MHz / 3000
+/// score = min(threads, memory GB / 2) × MHz / 3000
 /// ```
 ///
 /// The score less the workers that run there is the free capacity
 /// ([`Machine::free`]). A machine whose load average is more than its
-/// cores is busy ([`Machine::busy`]): riff starts no worker there. A
+/// hardware threads is busy ([`Machine::busy`]): riff starts no worker there. A
 /// machine whose available memory is less than its floor is low
 /// ([`Machine::low`]): riff starts no worker there too.
 ///
 /// ```
 /// use riff_client::machines::Machine;
 ///
-/// let thelio = Machine { cores: 32, mhz: 5800, now_mhz: 4100, mem_gb: 128, avail_gb: 100, load: 3.0 };
-/// let pangolin = Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 3, load: 0.5 };
+/// let thelio = Machine { threads: 32, mhz: 5800, now_mhz: 4100, mem_gb: 128, avail_gb: 100, load: 3.0 };
+/// let pangolin = Machine { threads: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 3, load: 0.5 };
 /// assert!(thelio.free(0) > pangolin.free(0));
 /// assert!(!thelio.busy());
 /// assert!(Machine { load: 33.0, ..thelio }.busy());
@@ -113,8 +113,13 @@ pub const NUMBERS_TTL: Duration = Duration::from_secs(180);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Machine {
-    /// The CPU cores.
-    pub cores: u16,
+    /// The hardware threads: the logical CPUs that the kernel runs at
+    /// one time. A core with two threads counts 2. The physical cores
+    /// are in [`Numbers::physical`].
+    // The key `cores` is the wire name of 3.x: the daemon facts of
+    // each host carry it (01M3N73ECKSDSH6820AKW9J8F7).
+    #[serde(rename = "cores")]
+    pub threads: u16,
     /// The most speed of one core, in MHz: the cap of the clock.
     pub mhz: u32,
     /// The clock now: the mean of the cores, in MHz.
@@ -134,13 +139,13 @@ impl Machine {
     /// ```
     /// use riff_client::machines::Machine;
     ///
-    /// let m = Machine { cores: 8, mhz: 3000, now_mhz: 1400, mem_gb: 64, avail_gb: 64, load: 0.0 };
+    /// let m = Machine { threads: 8, mhz: 3000, now_mhz: 1400, mem_gb: 64, avail_gb: 64, load: 0.0 };
     /// assert_eq!(m.score(), 8.0);
     /// assert_eq!(Machine { mem_gb: 8, ..m }.score(), 4.0);
     /// assert_eq!(Machine { mhz: 6000, ..m }.score(), 16.0);
     /// ```
     pub fn score(&self) -> f64 {
-        let size = f64::from(self.cores).min(f64::from(self.mem_gb) / 2.0);
+        let size = f64::from(self.threads).min(f64::from(self.mem_gb) / 2.0);
         size * f64::from(self.mhz) / f64::from(BASE_MHZ)
     }
 
@@ -149,9 +154,9 @@ impl Machine {
         self.score() - workers as f64
     }
 
-    /// True when the load average is more than the cores.
+    /// True when the load average is more than the hardware threads.
     pub fn busy(&self) -> bool {
-        f64::from(self.load) > f64::from(self.cores)
+        f64::from(self.load) > f64::from(self.threads)
     }
 
     /// True when the available memory is less than `floor_gb`
@@ -167,7 +172,7 @@ impl Machine {
     /// ```
     /// use riff_client::machines::Machine;
     ///
-    /// let m = Machine { cores: 32, mhz: 5883, now_mhz: 4100, mem_gb: 124, avail_gb: 100, load: 18.96 };
+    /// let m = Machine { threads: 32, mhz: 5883, now_mhz: 4100, mem_gb: 124, avail_gb: 100, load: 18.96 };
     /// assert_eq!(
     ///     m.to_string(),
     ///     "cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 18.96"
@@ -184,7 +189,7 @@ impl Machine {
     /// ```
     pub fn parse(text: &str) -> Option<Machine> {
         let rest = text.strip_prefix("cpu ")?;
-        let (cores, rest) = rest.split_once('x')?;
+        let (threads, rest) = rest.split_once('x')?;
         let (speed, rest) = rest.split_once(", mem ")?;
         // A host of the release before tells no clock now
         // (01M419XAZBPV0Y08CAR51KQSZS).
@@ -207,7 +212,7 @@ impl Machine {
             }
         };
         Some(Machine {
-            cores: cores.parse().ok()?,
+            threads: threads.parse().ok()?,
             mhz,
             now_mhz,
             mem_gb,
@@ -222,7 +227,7 @@ impl fmt::Display for Machine {
         write!(
             f,
             "cpu {}x{}MHz (now {}MHz), mem {}GB, {}GB available, load {:.2}",
-            self.cores, self.mhz, self.now_mhz, self.mem_gb, self.avail_gb, self.load
+            self.threads, self.mhz, self.now_mhz, self.mem_gb, self.avail_gb, self.load
         )
     }
 }
@@ -485,7 +490,7 @@ impl fmt::Display for Numbers {
 ///     limit: 3,
 ///     floor: 4,
 ///     deaths: 0,
-///     machine: Some(Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
+///     machine: Some(Machine { threads: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
 ///     disk: None,
 ///     monitor: None,
 ///     more: 0,
@@ -859,7 +864,7 @@ mod tests {
             .collect();
         assert_eq!(hosts, [("mike", "thelio"), ("mike", "pangolin")]);
         assert_eq!(found[0].status.runs(), 1);
-        assert_eq!(found[0].status.machine.map(|m| m.cores), Some(16));
+        assert_eq!(found[0].status.machine.map(|m| m.threads), Some(16));
         assert_eq!((found[1].status.limit, found[1].status.floor), (3, 8));
     }
 
@@ -875,7 +880,7 @@ mod tests {
     #[test]
     fn a_small_fast_machine_loses_to_a_big_one() {
         let big = Machine {
-            cores: 32,
+            threads: 32,
             mhz: 4000,
             now_mhz: 4000,
             mem_gb: 128,
@@ -883,7 +888,7 @@ mod tests {
             load: 0.0,
         };
         let small = Machine {
-            cores: 4,
+            threads: 4,
             mhz: 6000,
             now_mhz: 6000,
             mem_gb: 16,
@@ -915,7 +920,7 @@ mod tests {
     #[test]
     fn little_memory_caps_the_score() {
         let m = Machine {
-            cores: 16,
+            threads: 16,
             mhz: 3000,
             now_mhz: 3000,
             mem_gb: 4,

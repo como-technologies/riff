@@ -86,7 +86,8 @@ fn a_new_file_of_riff_has_0600_in_a_folder_of_0700() {
         server: "http://127.0.0.1:7878".into(),
         at_ms: 1_000,
         build: None,
-        line: "riff a6cf".into(),
+        lead: true,
+        line: "lead".into(),
     };
     riff::local::keep_statusline(&dir, "a6cf", &kept).unwrap();
     assert_eq!(mode(&dir), 0o700);

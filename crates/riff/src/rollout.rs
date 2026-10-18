@@ -410,14 +410,14 @@ impl View {
 /// use riff_client::machines::Machine;
 /// use riff::rollout::{Place, pick};
 ///
-/// let place = |host: &str, cores, workers| Place {
+/// let place = |host: &str, threads, workers| Place {
 ///     host: host.into(),
 ///     session: None,
 ///     limit: 4,
 ///     workers,
 ///     floor: 4,
 ///     deaths: 0,
-///     machine: Some(Machine { cores, mhz: 3000, now_mhz: 3000, mem_gb: 64, avail_gb: 64, load: 0.0 }),
+///     machine: Some(Machine { threads, mhz: 3000, now_mhz: 3000, mem_gb: 64, avail_gb: 64, load: 0.0 }),
 ///     disk: None,
 /// };
 /// let places = [place("thelio", 32, 0), place("pangolin", 8, 0)];
@@ -2320,9 +2320,9 @@ mod tests {
         }
     }
 
-    fn machine(cores: u16, mhz: u32, mem_gb: u32) -> Option<Machine> {
+    fn machine(threads: u16, mhz: u32, mem_gb: u32) -> Option<Machine> {
         Some(Machine {
-            cores,
+            threads,
             mhz,
             now_mhz: mhz,
             mem_gb,

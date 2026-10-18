@@ -158,7 +158,7 @@ pub struct Facts {
     /// The waves that the daemon runs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub waves: Vec<Wave>,
-    /// The cores, the memory and the load of the host.
+    /// The hardware threads, the memory and the load of the host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<Machine>,
     /// The disk of the session folders.
@@ -336,7 +336,7 @@ mod tests {
                 word: "started issue-12".into(),
             }],
             machine: Some(Machine {
-                cores: 16,
+                threads: 16,
                 mhz: 4500,
                 now_mhz: 4400,
                 mem_gb: 32,
@@ -358,6 +358,16 @@ mod tests {
         };
         assert_eq!(Facts::parse(&facts.line()), Some(facts.clone()));
         assert!(!facts.line().contains('\n'));
+    }
+
+    #[test]
+    fn the_facts_of_a_3_2_0_daemon_give_the_threads() {
+        let old = r#"daemon facts: {"build":"3.2.0","limit":8,"floor_gb":8,"machine":{"cores":32,"mhz":5883,"now_mhz":3848,"mem_gb":124,"avail_gb":117,"load":0.1}}"#;
+        let facts = Facts::parse(old).unwrap();
+        let machine = facts.machine.unwrap();
+        assert_eq!(machine.threads, 32);
+        assert_eq!((machine.mhz, machine.avail_gb), (5883, 117));
+        assert!(facts.line().contains(r#""cores":32"#));
     }
 
     #[test]

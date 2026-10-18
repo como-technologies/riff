@@ -143,21 +143,18 @@ async fn the_tools_keep_the_answer_for_the_status_line() {
     let (text, failed) = call(&client, "claim", serde_json::json!({"item": "issue-7"})).await;
     assert!(!failed, "{text}");
     let line = kept_line(&api, state.path(), |l| l.contains("issue-7")).await;
-    assert_eq!(line, "riff a1 lead issue-7");
+    assert_eq!(line, "lead issue-7");
     let (text, failed) = call(&client, "release", serde_json::json!({"item": "issue-7"})).await;
     assert!(!failed, "{text}");
     assert_eq!(
         kept_line(&api, state.path(), |l| !l.contains("issue-7")).await,
-        "riff a1 lead"
+        "lead"
     );
 
     // The keep-alive keeps an answer too.
     std::fs::remove_dir_all(state.path()).unwrap();
     let task = alive.keep_alive_every(Duration::from_millis(20));
-    assert_eq!(
-        kept_line(&api, state.path(), |_| true).await,
-        "riff a1 lead"
-    );
+    assert_eq!(kept_line(&api, state.path(), |_| true).await, "lead");
     task.abort();
 }
 
@@ -424,6 +421,40 @@ async fn a_tell_to_a_new_worker_stays_unread_until_a_read_shows_it() {
         read.contains(&format!("{direct}\n[1] ")) && read.contains("request: claim issue-12"),
         "{read}"
     );
+}
+
+/// A session with 60 unread messages in its repository thread and one
+/// unread direct message gets the direct message at the top of its
+/// first read (01M58AG7Z2PETHBZG7X9QD8PK5). The name of a direct thread
+/// sorts after the repository thread in the list of the server.
+#[tokio::test]
+async fn the_first_read_shows_the_direct_message_at_the_top() {
+    let api = start_server().await;
+    let lead = connect(&api, MIKE).await;
+    let lead_uri: SessionUri = MIKE.parse().unwrap();
+    let worker = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=w1",
+    )
+    .await;
+    let repo = lead_uri.default_thread().unwrap();
+    for n in 1..=60 {
+        let body = format!("history {n}");
+        api.post(&lead_uri, Some(&repo), &[], &body, Default::default())
+            .await
+            .unwrap();
+    }
+    let tell = serde_json::json!({ "session": "w1", "body": "request: claim issue-7" });
+    call(&lead, "tell", tell).await;
+
+    let (read, _) = call(&worker, "read", serde_json::json!({})).await;
+    let top = format!(
+        "{}\n\ndirect with mike@pangolin:riff#api (a1)\n[1] ",
+        riff::text::DATA_NOTE
+    );
+    assert!(read.starts_with(&top), "{read}");
+    assert!(read.contains("request: claim issue-7"), "{read}");
+    assert!(read.contains("como-technologies/riff\n[1] "), "{read}");
 }
 
 #[tokio::test]

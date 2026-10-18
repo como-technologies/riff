@@ -12,9 +12,11 @@ tools come from the `riff` MCP server.
 
 1. Write all prose in ASD-STE100 (Simplified Technical English).
    Use short sentences, active voice and plain words. Put one idea in
-   a sentence. Do not use jargon. This rule applies to each message,
-   status, issue, pull request, commit, release note, doc and answer
-   to your user.
+   a sentence. Do not use jargon. Use natural tenses for things in
+   time: "I will tell you" for a future action, "it failed" for a past
+   event. Never the present tense for a future action. This rule
+   applies to each message, status, issue, pull request, commit,
+   release note, doc and answer to your user.
 2. Talk to other sessions only through riff. Never use the session
    tools of Claude Code (for example `SendMessage` or `ListAgents`) to
    reach another session.
@@ -746,6 +748,8 @@ session, with its work that is not committed.
 - `threads` lists your threads with their unread counts.
 - `join_thread` joins a different thread. `leave_thread` leaves it.
 - `read` with no thread reads the unread messages of all your threads.
+  It shows each direct thread first: a request of your lead or a
+  question to you. Then it shows the other threads.
 
 ## Wake other sessions
 
@@ -764,6 +768,11 @@ matches one or more selectors.
 | All sessions of a person | `[{"user": "mike"}]` |
 | The sessions in a worktree | `[{"worktree": "issue-12"}]` |
 | The lead of a person in a repository | `[{"user": "mike", "repo": "OWNER/REPO", "lead": true}]` |
+
+In a thread, a `lead` selector that matches no live lead wakes each
+live session with no claim that its other fields match. This fallback
+runs only when the user has no live lead. The sender counts: when you
+are the lead and post to your own `lead` selector, it wakes nobody.
 
 The post result names each session that woke. It also names each
 selector that matched no session. Riff matches the selectors only when
@@ -1173,6 +1182,12 @@ minutes: this is a normal end. When it ends:
 
 Do both steps in the same response: two tool calls in one message. So
 a wake costs one request.
+
+One read after a wake shows the message of the wake. A read gives one
+page of each thread, the oldest unread first. When the message of the
+wake comes after the page, the read shows it first, under "Messages to
+you after this page". Act on it. The next watch does not wake for it
+again. Read the next pages only when you need them.
 
 A harness can stop a background task at a time limit: Claude Code
 stops it after 2 hours at most. When the harness stops the watch, do

@@ -354,20 +354,20 @@ impl Cores {
     /// Linux, riff counts the pairs of `physical id` and `core id` in
     /// `/proc/cpuinfo`, or in the file that [`CPUINFO`] names. When
     /// [`crate::machine::MACHINE`] gives the numbers and [`CPUINFO`] is
-    /// not set, the physical cores are `machine.cores`.
+    /// not set, the physical cores are `machine.threads`.
     pub fn here(machine: &Machine) -> Cores {
         let file = std::env::var_os(CPUINFO);
         if file.is_none() && std::env::var_os(crate::machine::MACHINE).is_some() {
             return Cores {
-                physical: machine.cores,
-                logical: machine.cores,
+                physical: machine.threads,
+                logical: machine.threads,
                 read: true,
             };
         }
         let file = file.unwrap_or_else(|| "/proc/cpuinfo".into());
         Cores::from(
             &std::fs::read_to_string(file).unwrap_or_default(),
-            machine.cores,
+            machine.threads,
         )
     }
 

@@ -65,6 +65,10 @@
   release note, doc and answer to its user. This is rule 1 of the
   skill. The level line of a release uses plain words that a person
   understands.
+- **01M58BCCKMNG6V495YF8AM9P5C** A session uses natural tenses for
+  things in time: the future with "will" for a future action, and the
+  past for a past event. It never writes a future action in the
+  present tense. Rule 1 of the skill and `CLAUDE.md` say so.
 - **R173** After a session claims an issue, it reads the issue. When the
   `Done when:` line is missing or cannot be tested, the session does
   not start work. It writes the criteria, adds them to the issue, posts
@@ -462,6 +466,18 @@
   and the audit refuses it.
 - **01M3ZWRCF5H95R4SYX09CWAJS8** `riff audit` checks one wave. It has
   no span of time of its own.
+- **01M588N3R2VP12A8X4EASX0BJ4** After the checkpoint rule removed the
+  oldest chunks of the log, `POST /v1/log` gives the records from the
+  oldest kept chunk, with the position and the time of the oldest kept
+  record. `riff audit` prints them. A check that needs a gone record is
+  not checked, with the reason: the rules 2 to 7 when the span starts
+  before the oldest kept record; rule 1 for the facts of the log of an
+  item with no claim in the kept records; rule 1 for a release after a
+  verify request by a session whose start is gone; rule 7 for a request
+  from a user with no lead in the kept records; rule 2 and rule 3 for a
+  claim of a session with no fresh start in the kept records; rule 4
+  when the kept records have no pause of the riff or of the repository;
+  rule 6 for a claim of a user with no lead in the kept records.
 - **01M43GSGB9ZFHSG0Q83Y50FEGW** A lead holds an item of its repository
   with a reason, and frees it again: `riff plan hold ITEM REASON`,
   `riff plan free ITEM`, and the tools `hold` and `free`. The server
@@ -1105,6 +1121,14 @@
   names the object, for example `gs://BUCKET/signins.json`, and the
   fix: stop each server of the store and remove the old state, with the
   command.
+- **01M588N3JF6MXF3ZKB5PBWP06G** The fix that removes the old state
+  comes only in the error of a start of `riff-server`. The reply to a
+  request of a client never has it. An error of the store in such a
+  reply is 503 only when the store did not do the call.
+- **01M588N3CKQMSDQPVFYGTJQQ2T** A read of the log from a position
+  before the oldest chunk fails with an error that names the oldest
+  position and the position that the read needs, and says that the
+  checkpoint rule removed the chunks before it.
 
 ## The log
 
@@ -1594,6 +1618,10 @@
   (01M49KT28N4B07P4G80Z74GRAH). For example, the `read` tool with no
   thread gives `after` to each thread, so a direct message that came
   after the first page of a long repository thread stays unread.
+- **01M58AG7Z2PETHBZG7X9QD8PK5** A read with no thread shows each
+  direct thread first, then the other threads in the order of the list
+  of the server. `riff read` and the `read` tool of `riff mcp` do the
+  same. Only the part of 01M588J4XNV1TXEPMGTKRVY9VK comes before them.
 - **01M3TBZBZVH907QD359AB8TBSX** Each hour, a timer of `riff-server`
   writes a `session_forgotten` record for each session with no sign of
   life for 30 days. It does not run in the first 3 minutes after a
@@ -2560,6 +2588,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M547VMQ5PCJ1GGC4M0GDCT31** `riff statusline` keeps a good answer
   for 90 seconds: longer than the 60 seconds of the keep-alive of `riff
   mcp` (R204).
+- **01M58ASFT4VBG13X5TXPHS67AQ** The status line of a lead session
+  starts with the build of riff and the repository, as `OWNER/REPO`:
+  `riff 3.2.0 como-technologies/riff 2a880834 lead issue-78`. The build
+  is the build of the `riff mcp` of the session, else of this riff. The
+  repository is the repository of the working folder. Both are local
+  facts: the kept answer (01M53TZ0RBSJQ9ZZRXKMBM5R3E) does not hold
+  them. The line of each other session does not change.
 - **01M3JFFJEW8BSRBZ9JQPKT0S8Z** `riff connect claude` adds the riff
   status line to the user settings of Claude Code
   (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)
@@ -2590,6 +2625,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `riff://USER@HOST/-?session=ID#DIRECTORY`.
 - **R49** When a watch starts, it wakes the session once if an addressed
   message is unread.
+- **01M588J4XNV1TXEPMGTKRVY9VK** An unread read of one page also gives
+  each unread message after the page that woke the session, and that
+  no read gave so yet. The `read` tool of `riff mcp` shows them first,
+  in their own part. For R49, such a message is no longer unread: the
+  next watch does not wake for it. The read cursor does not move over
+  it, so a later page shows it again in its place.
 - **R163** `riff-server` records the time of each call of a session.
   `who` is a call too. A keep-alive (R204) is not a call. `who` shows
   each session as `live`, or with the time since its last call, for
@@ -3028,6 +3069,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   reaches a free session of the author's user when that user has no
   live lead. With a live lead, it wakes only the lead. The skill and
   the book say so.
+- **01M58AQX46RH9KFP91QAFS43N7** The sender of a post counts as a live
+  session for the fallback of 01M3JY1TBPQHH6WPPBTF42T64H. A lead that
+  posts to its own `lead=true` selector wakes no other session for that
+  selector, and the post result names no unmatched selector for it.
+  The skill and the book say so.
 - **01M3JPMQJCC3F19QAJ84EKMVKA** The skill and the start hook tell a
   session to call `read` and start the watch again in the same
   response, so that a wake costs one request.
@@ -4618,7 +4664,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   and the pool or the jobs (01M515PDFZZXQ9ZCQE7SQ6KB8G). A number over
   its limit has the warning style. The line fits in 80 columns. A
   second line shows the time and the cause of the last kill. The
-  sources of the numbers are in 01M515KST9Z0B4B1D4HJV3Y2CM.
+  sources of the numbers are in 01M515KST9Z0B4B1D4HJV3Y2CM. The load
+  part is superseded by 01M588HSXQ2KWX0V8RYM65CPFR.
 - **01M515KST9Z0B4B1D4HJV3Y2CM** `riff top` on each machine shows the
   numbers of each machine that runs workers. The first source of a
   machine wins: the status of its live workers host; for the machine
@@ -5903,6 +5950,18 @@ part when they merge.
   sign-in of `claude`. The sign-ins of riff and `gh` refresh or have no
   end: the facts say `on` or `off` for each, or `?` when riff cannot
   read it.
+- **01M588HSV1APXX4TQ1J1VRZCBF** The facts of a daemon show the
+  1-minute load of the host against its hardware threads, the logical
+  CPUs, with the word `threads`: `load 1.5/32 threads`. The load has
+  the warning style when it is more than the threads. The line of
+  numbers of `riff top` shows the same part for a host that tells no
+  numbers of the monitor. The word `cores` names only the physical
+  cores.
+- **01M588HSXQ2KWX0V8RYM65CPFR** The line of numbers of `riff top`
+  shows the 5-minute load against the limit of the monitor:
+  `load5 9.8 of 12`. It has the warning style when the load is over
+  the limit. This supersedes the load part of
+  01M421QPZ9E01PQ62PDBH378SJ.
 
 ### riff relay
 

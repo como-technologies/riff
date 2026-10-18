@@ -239,11 +239,11 @@ use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
     Claim, DenyOwner, End, FactError, Free, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
     ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
-    PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Read, ReadReply,
-    Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery,
-    RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetPlan, SetStatus,
-    SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
-    TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+    PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Pruned, Read,
+    ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner,
+    RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetPlan,
+    SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply,
+    TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
@@ -2717,13 +2717,15 @@ async fn read(
         s.engine.signal(&caller, read).await?;
     }
     let keys = if signed {
-        s.keys(page.messages.iter().map(|m| m.from.who().user()))
+        let shown = page.messages.iter().chain(&page.woken);
+        s.keys(shown.map(|m| m.from.who().user()))
     } else {
         Keys::new()
     };
     Ok(Json(ReadReply {
         messages: page.messages,
         next: page.next,
+        woken: page.woken,
         keys,
         trusted: s.config.trusted(),
     }))
@@ -2872,9 +2874,12 @@ async fn members(
 
 /// Gives the records of one repository for an audit
 /// (01M3ZWRC11R5M9V1KTF05P240W): only to the owner and the admins. It
-/// reads the log from the store, so it has each record, also the
-/// records before the last checkpoint. A post has only its mark
-/// (01M3ZWRC3XBFN8FJDGE8XWZ5EA).
+/// reads the log from the store, so it has each record that the log
+/// keeps, also the records before the last checkpoint. After a prune,
+/// it reads from the oldest chunk, and the reply says so
+/// (01M588N3R2VP12A8X4EASX0BJ4). A post has only its mark
+/// (01M3ZWRC3XBFN8FJDGE8XWZ5EA). An error has no fix that deletes the
+/// store (01M588N3JF6MXF3ZKB5PBWP06G).
 async fn log_records(
     AxumState(s): AxumState<Shared>,
     Extension(signed_in): Extension<SignedIn>,
@@ -2885,18 +2890,29 @@ async fn log_records(
         let reason = "only the owner and the admins can read the log";
         return Err(Failed::Refused(Refused::new(Code::NotAllowed, reason)).into());
     }
-    let replayed = log::replay(&*s.log).await.map_err(|error| {
+    let (first, replayed) = log::replay_kept(&*s.log).await.map_err(|error| {
         tracing::error!("the log for an audit did not read: {error}");
-        let text = format!("the log did not read: {error}");
-        (StatusCode::SERVICE_UNAVAILABLE, text)
+        let status = match error {
+            StoreError::Failed(_) | StoreError::Busy(_) => StatusCode::SERVICE_UNAVAILABLE,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (status, format!("the log did not read: {error}"))
     })?;
+    // With no record of a known kind, each record can be gone.
+    let pruned = (first > 1).then(|| Pruned {
+        first,
+        first_ms: replayed
+            .records
+            .first()
+            .map_or(u64::MAX, |record| record.envelope.written_at_ms),
+    });
     let records = replayed
         .records
         .into_iter()
         .filter(|record| record.of_repository(&r.repo))
         .map(Record::for_audit)
         .collect();
-    Ok(Json(LogReply { records }))
+    Ok(Json(LogReply { records, pruned }))
 }
 
 /// Lets a request through only with a live access token in the
