@@ -3376,6 +3376,29 @@ same release:
 riff server
 ```
 
+### Count the 500s after a deploy
+
+After each deploy, count the 500s of `riff-server` and the replies of
+Cloud Run apart. Put the time of the deploy in place of `START`, for
+example `2026-10-17T19:30:00Z`.
+
+A 500 of `riff-server` is a bug: open an issue with the path and the
+log line. Its count must be 0:
+
+```sh
+riff cloud log shared --limit 1000 --filter 'timestamp>="START" AND httpRequest.status=500 AND NOT textPayload:"no available instance"' | wc -l
+```
+
+Cloud Run replies 500 or 429 with `no available instance` by itself,
+for a few seconds after the old instance exits. `riff` tries these
+calls again (see
+[A restart with a bucket](how-it-works.md#a-restart-with-a-bucket)).
+They are not a bug. Write their count in the comment of the release:
+
+```sh
+riff cloud log shared --limit 1000 --filter 'timestamp>="START" AND textPayload:"no available instance"' | wc -l
+```
+
 ### Approve the deploy of a release
 
 The owner approves each deploy to the shared riff. Find the run that

@@ -895,15 +895,19 @@ async fn a_cut_stream_shows_no_error_in_tail() {
 }
 
 /// A riff server behind a front end. While `down` is true, the front
-/// end answers each call with 502 and no build header, as Cloud Run
-/// does while it moves an instance (01M3QCMJ9F1GRTRRSB4AW9TC3D).
+/// end answers each call with 500, the text of Cloud Run and no build
+/// header, as Cloud Run does after the old instance exits at a deploy
+/// (01M3QCMJ9F1GRTRRSB4AW9TC3D, 01M56WNP3TEGH98B9EAM4H62P4).
 async fn behind_a_front_end(down: Arc<std::sync::atomic::AtomicBool>) -> String {
     let router = riff_server::router().layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
             let down = down.load(std::sync::atomic::Ordering::SeqCst);
             async move {
                 if down {
-                    axum::response::IntoResponse::into_response(axum::http::StatusCode::BAD_GATEWAY)
+                    axum::response::IntoResponse::into_response((
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "The request was aborted because there was no available instance.",
+                    ))
                 } else {
                     next.run(request).await
                 }
@@ -916,7 +920,7 @@ async fn behind_a_front_end(down: Arc<std::sync::atomic::AtomicBool>) -> String 
     format!("http://{addr}")
 }
 
-/// A 502 of the front end with no build is no version error: the chat
+/// A 500 of the front end with no build is no version error: the chat
 /// starts, and after a cut it connects again and goes on, with no error
 /// on stderr (01M3QCMJ9F1GRTRRSB4AW9TC3D).
 #[tokio::test]

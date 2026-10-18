@@ -905,9 +905,14 @@ fn the_book_shows_the_real_notes_and_error() {
     }
 }
 
+/// The text of a reply of Cloud Run when it sends a call to an instance
+/// that exited (01M56WNP3TEGH98B9EAM4H62P4).
+const NO_INSTANCE: &str = "The request was aborted because there was no available instance.";
+
 /// A real riff-server behind a front end that answers the first `fails`
-/// calls with `status` and no build header, as Cloud Run does while it
-/// moves an instance (01M3QCMJ9F1GRTRRSB4AW9TC3D).
+/// calls with `status`, the text of Cloud Run and no build header, as
+/// Cloud Run does while it moves an instance
+/// (01M3QCMJ9F1GRTRRSB4AW9TC3D).
 async fn behind_a_front_end(fails: usize, status: axum::http::StatusCode) -> String {
     let left = Arc::new(std::sync::atomic::AtomicUsize::new(fails));
     let router = riff_server::router().layer(axum::middleware::from_fn(
@@ -917,7 +922,7 @@ async fn behind_a_front_end(fails: usize, status: axum::http::StatusCode) -> Str
                 .is_ok();
             async move {
                 if fail {
-                    status.into_response()
+                    (status, NO_INSTANCE).into_response()
                 } else {
                     next.run(request).await
                 }
@@ -929,11 +934,13 @@ async fn behind_a_front_end(fails: usize, status: axum::http::StatusCode) -> Str
 
 /// A 5xx or 429 of the front end with no build is an outage, not a
 /// version error: riff tries again, and the call works
-/// (01M3QCMJ9F1GRTRRSB4AW9TC3D).
+/// (01M3QCMJ9F1GRTRRSB4AW9TC3D). The 500 and the 429 of Cloud Run with
+/// no available instance are two of them (01M56WNP3TEGH98B9EAM4H62P4).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_front_end_error_with_no_build_is_tried_again() {
     use axum::http::StatusCode;
     for status in [
+        StatusCode::INTERNAL_SERVER_ERROR,
         StatusCode::BAD_GATEWAY,
         StatusCode::GATEWAY_TIMEOUT,
         StatusCode::TOO_MANY_REQUESTS,
@@ -944,6 +951,34 @@ async fn a_front_end_error_with_no_build_is_tried_again() {
         let err = text(&out.stderr);
         assert!(out.status.success(), "{status}: {err}");
         assert!(!err.contains("do not match"), "{status}: {err}");
+    }
+}
+
+/// The probe of `riff server` and `riff update` takes a 500 or a 429 of
+/// Cloud Run as an outage, not as a server with no build
+/// (01M56WNP3TEGH98B9EAM4H62P4). So `riff update` does not install the
+/// Latest release in place of the release of the server.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_probe_takes_a_front_end_error_as_an_outage() {
+    use axum::http::StatusCode;
+    for status in [
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::TOO_MANY_REQUESTS,
+    ] {
+        let url = behind_a_front_end(2, status).await;
+        let api = riff::api::Api::new(&url);
+        let error = api.probe(Duration::from_secs(3)).await.unwrap_err();
+        let outage = error.downcast_ref::<riff::api::Outage>();
+        assert!(outage.is_some_and(|o| o.status == status), "{error:#}");
+        assert!(riff::api::passes(&error), "{error:#}");
+        let error = riff::lifecycle::server_release(&url).await.unwrap_err();
+        assert!(
+            format!("{error:#}").contains("riff update --tag"),
+            "{error:#}"
+        );
+        // The next call gets riff-server.
+        let probe = api.probe(Duration::from_secs(3)).await.unwrap();
+        assert!(probe.build.is_some(), "{status}: {probe:?}");
     }
 }
 

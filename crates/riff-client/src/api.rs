@@ -603,6 +603,8 @@ impl Api {
     /// What the server tells about itself, with no token and no check
     /// of its build, within `wait`: for `riff server` and `riff update`
     /// (01M3Q5VE74608N5H2M73RB6Y2Z). An error when it does not answer.
+    /// A reply of the front end is an [`Outage`], not a server with no
+    /// build (01M56WNP3TEGH98B9EAM4H62P4).
     pub async fn probe(&self, wait: Duration) -> Result<Probe> {
         let base = self.base();
         let response = self
@@ -614,6 +616,12 @@ impl Api {
             .send()
             .await
             .with_context(|| format!("cannot reach riff-server at {base}"))?;
+        let status = response.status();
+        let has_build = response.headers().contains_key(build::HEADER);
+        if link::outcome(status, has_build) == Outcome::Fault && !has_build {
+            let base = base.to_owned();
+            return Err(Outage { base, status }.into());
+        }
         let build = Build::from_header(response.headers().get(build::HEADER).map(|v| v.as_bytes()));
         let sign_in = match response.status() {
             reqwest::StatusCode::NOT_FOUND => Some(false),
