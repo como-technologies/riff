@@ -2183,6 +2183,12 @@ sequenceDiagram
 - riff reads the transcripts of the agent tool on the machine of the
   session. A claim counts from its `claim` to its `release`. A new
   start or the end of the session also ends it.
+- Container sessions count too: the sessions of `riff run` and of the
+  wave of the riff daemon. At the end of a container session, the
+  daemon puts the tokens of its claim on the issue, for a build and
+  for a verify. The claim counts from the start of the container to
+  its end. When `gh` fails, the session still ends, and the tokens
+  stay on the machine.
 - `issue-12` and `verify-issue-12` are claims of the issue 12. riff
   puts one comment on the issue for each claim.
 - The numbers are public on the issue. The comment holds the item, the

@@ -616,6 +616,49 @@ async fn a_new_start_reports_the_claim_that_it_frees() {
 
 const MERGED: &str = r#"{"state":"MERGED","mergeCommit":{"oid":"9f8e7d6c"}}"#;
 
+/// 01M588N85Z94PX1ZP0BDXTPX83: at the end of a container session, the
+/// daemon reports its claim from the transcript in the Claude folder of
+/// the session. `riff usage ISSUE` shows that claim with its session ID.
+#[tokio::test]
+async fn usage_shows_the_claim_of_a_container_session_with_its_session() {
+    let machine = Machine::new().await;
+    let (folder, marks) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let session = "ed2b8396-0d6a-4f4e-9f00-5b7c1d2e3f40";
+    let project = folder.path().join("claude/projects/-data-clone");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join(format!("{session}.jsonl")),
+        reply(&now(), "m1", OPUS, [1, 20, 300, 4000]),
+    )
+    .unwrap();
+    let meter = Meter {
+        dir: marks.path().to_owned(),
+        gh: Gh::at(machine.bin.path().join("gh")),
+    };
+    let transcripts = riff::usage::transcripts_in(&folder.path().join("claude"), session);
+    let start = riff::usage::now_ms() - 60_000;
+    let claim = ("como-technologies/riff", "verify-issue-12");
+    let ended = meter.session_ended(session, claim, start, &transcripts, start + 120_000);
+    let claim = ended.expect("a transcript").unwrap();
+    let outcome = riff::usage::report(&meter.gh, session, &claim);
+    assert!(
+        matches!(outcome, riff::usage::Outcome::Posted { issue: 12, .. }),
+        "{outcome:?}"
+    );
+
+    let shown = machine.ok("s1", &["usage", "12"]).await;
+    let lines: Vec<&str> = shown.lines().collect();
+    assert_eq!(
+        lines[0],
+        "#12: 4,321 tokens (input 1, output 20, cache write 300, cache read 4,000) in 1 claim"
+    );
+    assert_eq!(lines[1], "verify: 4,321 tokens");
+    assert!(
+        lines[2].starts_with("  verify-issue-12, verify, session ed2b8396, "),
+        "{shown}"
+    );
+}
+
 /// Makes the fake `gh` of `machine` also know pull request 40 of the
 /// issue 12, merged.
 fn knows_pr_40(machine: &Machine) {
@@ -868,6 +911,10 @@ fn the_book_shows_how_to_see_the_tokens_of_an_issue() {
     assert!(
         part.contains("public"),
         "the numbers are public on the issue"
+    );
+    assert!(
+        part.contains("Container sessions count too"),
+        "the tokens of a container session count"
     );
     book::each_is_real(
         &commands

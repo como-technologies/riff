@@ -43,6 +43,14 @@
 //! | `claim` (the tool and the command) | the item and its start time ([`started`]) |
 //! | `release`, `leave` | the end time and the sum ([`ended`], [`ended_all`]) |
 //! | the start hook at a new start, the end hook | the end of each claim that is still open ([`ended_all`]) |
+//! | the riff daemon, at the end of a container session | each transcript, the claim from the start of the session, and its end ([`Meter::session_ended`]) |
+//!
+//! A container session has no hook on the host, and its riff tools make
+//! no claim: the daemon claims its item. So at the end of a container
+//! session, the daemon reads its transcripts in the Claude folder of the
+//! session ([`transcripts_in`]) and reports its claim, as a release does
+//! (01M588N85Z94PX1ZP0BDXTPX83). A work claim and a verify claim count
+//! the same.
 //!
 //! # The sum
 //!
@@ -1281,6 +1289,31 @@ impl Meter {
         }
     }
 
+    /// The end of the container session `session`, which held `item` in
+    /// `thread` from `from_ms` to `now` (01M588N85Z94PX1ZP0BDXTPX83): it
+    /// records each of its `transcripts` and its claim, ends the claim,
+    /// and sums it. It reads each transcript now: the folder of the
+    /// session can go after its end. [`report`] puts the sum on its
+    /// issue. `None` for a session with no transcript.
+    pub fn session_ended(
+        &self,
+        session: &str,
+        (thread, item): (&str, &str),
+        from_ms: u64,
+        transcripts: &[PathBuf],
+        now: u64,
+    ) -> Option<io::Result<Claim>> {
+        if transcripts.is_empty() {
+            return None;
+        }
+        transcripts
+            .iter()
+            .try_for_each(|t| saw(&self.dir, session, t))
+            .and_then(|()| started(&self.dir, session, thread, item, from_ms))
+            .and_then(|()| ended(&self.dir, session, thread, item, now))
+            .transpose()
+    }
+
     /// After the merge of the pull request of `issue`: puts the open
     /// claim of the issue of `session` on the issue as it is now, then
     /// writes the total of the issue (01M3Y1YP514MPX8DTKMTWDHE8Q). The
@@ -1312,6 +1345,36 @@ impl Meter {
         };
         Ok(total_written(issue, &total))
     }
+}
+
+/// The transcripts of the session `session` in the Claude folder
+/// `claude` of a container session: `projects/*/SESSION.jsonl`. `claude`
+/// takes the riff session ID as its own (01M588N8AYSGVWFW05A5RV976H).
+///
+/// ```
+/// let claude = tempfile::tempdir()?;
+/// let project = claude.path().join("projects/-data-clone");
+/// std::fs::create_dir_all(&project)?;
+/// std::fs::write(project.join("a6cf.jsonl"), "")?;
+/// std::fs::write(project.join("other.jsonl"), "")?;
+/// assert_eq!(
+///     riff::usage::transcripts_in(claude.path(), "a6cf"),
+///     [project.join("a6cf.jsonl")]
+/// );
+/// assert!(riff::usage::transcripts_in(&claude.path().join("none"), "a6cf").is_empty());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn transcripts_in(claude: &Path, session: &str) -> Vec<PathBuf> {
+    let name = format!("{}.jsonl", riff_core::name::sanitize(session));
+    let mut found: Vec<PathBuf> = std::fs::read_dir(claude.join("projects"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path().join(&name))
+        .filter(|path| path.is_file())
+        .collect();
+    found.sort();
+    found
 }
 
 /// The line after riff wrote the total comment of `issue`.
