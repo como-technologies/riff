@@ -1405,8 +1405,11 @@ riff daemon host
 restarts.
 
 Then, from the lead, or from a terminal of yours in the clone of the
-repository, add `--host` and the name of the host. To see the daemon,
-its sessions and its waves:
+repository, add `--host` and the name of the host. Only you in a
+terminal and your lead in this repository can use `--host`. The daemon
+of HOST refuses each other session, for example a worker.
+
+To see the daemon, its sessions and its waves:
 
 ```sh
 riff daemon status --host thelio
@@ -1462,14 +1465,21 @@ that it starts again after its last session. Then `riff daemon status
 --host thelio` shows its new pid and build.
 
 riff waits for the reply, prints it, and exits with 1 when the daemon
-refused or failed. The daemon acts only for you and your lead. It
-refuses a worker session and another user. Each request and each reply
-is a direct message: no other session and no other user reads it.
+refused or failed. The refusal names the cause, for example:
+
+```text
+refused: "daemon status" comes from the session 193c7051 of mike, which is not the lead of mike in como-technologies/riff. Only mike and the lead act on the daemon of thelio.
+```
+
+Each request and each reply is a direct message: no other session and
+no other user reads it.
 
 ### See a session on another host
 
 Your lead, or you in a terminal, can see the sessions of the daemon of
-another host, with no SSH. Do the step `riff daemon host` of
+another host, with no SSH. Only you in a terminal and your lead in this
+repository can use `--host`. The daemon of HOST refuses each other
+session, for example a worker. Do the step `riff daemon host` of
 [Manage the daemon of another host](#manage-the-daemon-of-another-host)
 on that host first. Then run each command in the clone of the
 repository.

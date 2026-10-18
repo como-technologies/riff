@@ -5414,7 +5414,9 @@ the deploy and the update, and starts them again after them.
 #### Stop one worker on another machine
 
 Give the pane, or the first 8 characters of the session ID, with the
-host. The workers host on that machine stops only that worker:
+host. The workers host on that machine stops only that worker. Only
+your lead in this repository can use `--host`. riff refuses it in each
+other session, for example a worker, and in a terminal.
 
 ```sh
 riff workers stop %3 --host pangolin
@@ -5754,8 +5756,10 @@ monitor: pangolin: the 5-minute load is 13.20, over the limit 12.00 (1.5 times 8
 The monitor only reads and tells. It changes no setting and stops no
 worker. You and the lead decide.
 
-The lead turns the monitor of a workers host on or off. The host
-replies with a note:
+The lead turns the monitor of a workers host on or off. Only your lead
+in this repository can use `--host`. riff refuses it in each other
+session, for example a worker, and in a terminal. The host replies
+with a note:
 
 ```sh
 riff workers monitor on --host thelio
@@ -5858,7 +5862,9 @@ sequenceDiagram
 The rollout of the lead starts no worker there. For work in containers
 on that machine, see
 [Use a second machine](development.md#use-a-second-machine). The lead
-starts and stops workers on that machine by its host name:
+starts and stops workers on that machine by its host name. Only your
+lead in this repository can use `--host`. riff refuses it in each
+other session, for example a worker, and in a terminal.
 
 ```sh
 riff workers start 2 --host pangolin

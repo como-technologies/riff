@@ -660,7 +660,10 @@ enum Command {
     /// at once. q ends the view; the sessions go on.
     View {
         /// Show the riff daemon of HOST, through riff-server. riff asks it
-        /// each 3 seconds. Enter and t work only on HOST.
+        /// each 3 seconds. Enter and t work only on HOST. Only you in a
+        /// terminal and your lead in this repository can use --host. The
+        /// daemon of HOST refuses each other session, for example a
+        /// worker.
         #[arg(long)]
         host: Option<String>,
     },
@@ -975,7 +978,9 @@ enum Workers {
         #[arg(long, default_value = "claude")]
         claude: std::path::PathBuf,
         /// Start the workers on HOST, through its `riff workers host`.
-        /// `riff workers` lists the hosts.
+        /// `riff workers` lists the hosts. Only your lead in this
+        /// repository can use --host. riff refuses it in each other
+        /// session, for example a worker, and in a terminal.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1113,7 +1118,9 @@ enum Workers {
         #[arg(long, value_name = "N")]
         load: Option<f64>,
         /// Turn the monitor of HOST on or off, through its
-        /// `riff workers host`.
+        /// `riff workers host`. Only your lead in this repository can use
+        /// --host. riff refuses it in each other session, for example a
+        /// worker, and in a terminal.
         #[arg(long, requires = "state", conflicts_with_all = ["every", "load"])]
         host: Option<String>,
     },
@@ -1136,7 +1143,9 @@ enum Workers {
         /// The tmux pane of one worker, for example %3, or its session ID
         /// or the first 8 characters of it. `riff workers` shows them.
         pane: Option<String>,
-        /// Stop the workers on HOST, through its `riff workers host`.
+        /// Stop the workers on HOST, through its `riff workers host`. Only
+        /// your lead in this repository can use --host. riff refuses it in
+        /// each other session, for example a worker, and in a terminal.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1242,7 +1251,9 @@ enum WaveCommand {
     /// own main clone of the repository.
     Run {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
-        /// for its reply.
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1252,7 +1263,9 @@ enum WaveCommand {
     /// HOST stops its wave.
     Stop {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
-        /// for its reply.
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1283,7 +1296,9 @@ enum DaemonCommand {
     /// the state of the unit riff.service.
     Status {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
-        /// for its reply.
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1300,6 +1315,9 @@ enum DaemonCommand {
         name: String,
         /// Ask the riff daemon of HOST, through riff-server. It shows the
         /// same events, and follows them up to the end of the session.
+        /// Only you in a terminal and your lead in this repository can
+        /// use --host. The daemon of HOST refuses each other session, for
+        /// example a worker.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1327,7 +1345,9 @@ enum DaemonCommand {
         #[arg(long, value_name = "GB")]
         memory: Option<u64>,
         /// Ask the riff daemon of HOST, through riff-server. riff waits
-        /// for its reply.
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1347,7 +1367,9 @@ enum DaemonCommand {
         #[arg(long)]
         clear: bool,
         /// Ask the riff daemon of HOST, through riff-server. riff waits
-        /// for its reply.
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1362,7 +1384,9 @@ enum DaemonCommand {
     /// stays with work in its clone, with the reason.
     Sweep {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
-        /// for its reply.
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1375,7 +1399,9 @@ enum DaemonCommand {
         /// The name of the container, for example riff-issue-12-1a2b3c4d.
         name: String,
         /// Ask the riff daemon of HOST, through riff-server. riff waits
-        /// for its reply.
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1386,7 +1412,9 @@ enum DaemonCommand {
     /// it says why not. riff daemon status shows the new pid and build.
     Restart {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
-        /// for its reply.
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker.
         #[arg(long)]
         host: Option<String>,
     },

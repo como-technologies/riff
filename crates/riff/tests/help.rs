@@ -321,3 +321,83 @@ fn riff_with_no_command_names_no_hidden_command() {
         "error: name a command. Run 'riff --help' to list them.\n"
     );
 }
+
+/// The words of `text` on one line, with no backticks.
+fn words(text: &str) -> String {
+    let text = text.replace('`', "");
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The text under the heading `heading` of the book page `name`, up to
+/// the next heading.
+fn under(name: &str, heading: &str) -> String {
+    let page = book::page(name);
+    let start = page
+        .lines()
+        .position(|l| l == heading)
+        .unwrap_or_else(|| panic!("{heading} is in {name}"));
+    let rest: Vec<_> = page.lines().skip(start + 1).collect();
+    let end = rest.iter().position(|l| l.starts_with("##"));
+    rest[..end.unwrap_or(rest.len())].join("\n")
+}
+
+/// 01M588QXAGD3B8BTK7N17M29WM: the help of each `--host` flag that asks
+/// the daemon or the workers host of another host says who can use it.
+/// The how-to of each flag in the book has the same words.
+#[test]
+fn the_help_and_the_book_say_who_can_use_each_host_flag() {
+    let daemon = riff::text::DAEMON_HOST_WHO;
+    let workers = riff::text::WORKERS_HOST_WHO;
+    for (args, who) in [
+        (&["daemon", "status"][..], daemon),
+        (&["daemon", "events"], daemon),
+        (&["daemon", "limit"], daemon),
+        (&["daemon", "cache"], daemon),
+        (&["daemon", "sweep"], daemon),
+        (&["daemon", "end"], daemon),
+        (&["daemon", "restart"], daemon),
+        (&["wave", "run"], daemon),
+        (&["wave", "stop"], daemon),
+        (&["view"], daemon),
+        (&["workers", "start"], workers),
+        (&["workers", "stop"], workers),
+        (&["workers", "monitor"], workers),
+    ] {
+        for flag in ["--help", "-h"] {
+            let help = words(&riff(&[args, &[flag]].concat()));
+            // clap drops the period at the end of the help of a flag.
+            let who = who.trim_end_matches('.');
+            assert!(help.contains(who), "riff {args:?} {flag}: {help}");
+        }
+    }
+    for (name, heading, who) in [
+        (
+            "development.md",
+            "### Manage the daemon of another host",
+            daemon,
+        ),
+        (
+            "development.md",
+            "### See a session on another host",
+            daemon,
+        ),
+        (
+            "how-it-works.md",
+            "#### Stop one worker on another machine",
+            workers,
+        ),
+        (
+            "how-it-works.md",
+            "### Watch the health of a machine",
+            workers,
+        ),
+        (
+            "how-it-works.md",
+            "### Offer workers from another machine",
+            workers,
+        ),
+    ] {
+        let text = words(&under(name, heading));
+        assert!(text.contains(who), "{name} {heading}: {text}");
+    }
+}
