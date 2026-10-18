@@ -2771,13 +2771,19 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// `record`, and gives the number that it posted
     /// (01M57XY3Q6HEYQG27FE0CEQ7HB). The session with a terminal is the
     /// lead, with no claim. Each other session is a worker in a
-    /// container, with the claim of its item.
+    /// container, with the claim of its item. A session that left the
+    /// riff posts none, and gives the number of `denials`: the relay
+    /// keeps none of them ([`World::marks`]).
     pub async fn post_denials(
         &self,
         record: &Record,
         denials: &[crate::denied::Denial],
     ) -> Result<usize> {
         use crate::denied::{Role, Where};
+        let session = &record.live.session;
+        if (self.world.marks()).is_some_and(|dir| riff_client::marks::left(&dir, session)) {
+            return Ok(denials.len());
+        }
         let api =
             riff_client::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
         let at = if record.terminal {
@@ -4782,6 +4788,8 @@ mod tests {
         watches: Mutex<Vec<mpsc::UnboundedSender<Wake>>>,
         /// The marks and the `gh` of [`World::meter`].
         meter: Option<(PathBuf, crate::pr::Gh)>,
+        /// The leave marks of [`World::marks`].
+        marks: Option<PathBuf>,
     }
 
     impl Server {
@@ -4806,6 +4814,14 @@ mod tests {
         pub(super) fn with_meter(self, dir: &Path, gh: crate::pr::Gh) -> Server {
             Server {
                 meter: Some((dir.to_owned(), gh)),
+                ..self
+            }
+        }
+
+        /// The same forge, with the leave marks in `dir`.
+        pub(super) fn with_marks(self, dir: &Path) -> Server {
+            Server {
+                marks: Some(dir.to_owned()),
                 ..self
             }
         }
@@ -4913,6 +4929,10 @@ mod tests {
         fn meter(&self, _: &str) -> Option<crate::usage::Meter> {
             let (dir, gh) = self.meter.clone()?;
             Some(crate::usage::Meter { dir, gh })
+        }
+
+        fn marks(&self) -> Option<PathBuf> {
+            self.marks.clone()
         }
 
         fn fate<'a>(
@@ -6343,7 +6363,7 @@ mod tests {
 
     /// Gives the denials of `kept` to the session `name` through its
     /// socket, as `riff relay denied --send` does, and gives the bodies
-    /// of the thread `denials`.
+    /// of the thread `denials`: none when the thread is missing.
     async fn send_denials_of(
         here: &Here,
         name: &str,
@@ -6369,7 +6389,7 @@ mod tests {
         assert!(queue.take().is_empty(), "the daemon posted each denial");
         api.read(reader, &crate::denied::thread(), true)
             .await
-            .unwrap()
+            .unwrap_or_default()
             .into_iter()
             .map(|m| m.message.body)
             .collect()
@@ -6407,6 +6427,26 @@ mod tests {
             denials.is_none_or(|t| t.members.iter().all(|m| m.who() != me.who())),
             "{threads:?}"
         );
+    }
+
+    /// 01M57XY3Q6HEYQG27FE0CEQ7HB: a refusal in a container session that
+    /// left the riff makes no record, and the relay keeps none.
+    #[tokio::test]
+    async fn a_refusal_in_a_container_session_that_left_makes_no_record() {
+        let (server, api, reader) = denials_server().await;
+        let marks = tempfile::tempdir().unwrap();
+        let world: Arc<dyn World> = Arc::new(Server::default().with_marks(marks.path()));
+        let fake = Fake::default().with_image(IMAGE);
+        let here = Here::with_world(fake, QUIET_LIMIT, Some(world)).await;
+        let mut start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        start.server = server;
+        api.register(&start.me).await.unwrap();
+        riff_client::marks::leave(marks.path(), &start.session).unwrap();
+        let (client, name) = here.started(start).await;
+        drop(client);
+
+        let bodies = send_denials_of(&here, &name, &api, &reader).await;
+        assert!(bodies.is_empty(), "{bodies:?}");
     }
 
     /// 01M57XY3Q6HEYQG27FE0CEQ7HB: a refusal in the lead makes one record

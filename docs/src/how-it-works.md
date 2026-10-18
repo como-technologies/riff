@@ -1766,7 +1766,8 @@ Each session gets the hook: a session with the plugin runs `riff hook
 denied`, and the lead and each container session of the riff daemon
 run `/opt/riff/riff relay denied`. The hook never waits for
 `riff-server`. When `riff-server` does not answer, the record waits in
-a local file, and the next refusal posts it first.
+a local file, and the next refusal posts it first. A session that left
+the riff sends no record, on the host and in a container.
 
 One record is one line, the tags first:
 
