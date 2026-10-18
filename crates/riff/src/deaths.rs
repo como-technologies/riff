@@ -39,8 +39,8 @@
 //! ```
 //!
 //! A workers host tells its count in its status
-//! ([`riff_client::machines::HostStatus`]), so the rollout of the lead on another
-//! machine sees it.
+//! ([`riff_client::machines::HostStatus`]), so the rollout of the lead
+//! on another machine sees it.
 
 use std::io::{Read, Seek, Write};
 use std::path::Path;

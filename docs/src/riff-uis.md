@@ -89,7 +89,7 @@ colors and the ratatui widgets stay in the crate `riff`.
 |---|---|---|---|
 | The sessions | `sessions` | The sessions of riff-server and the container sessions of the riff daemon, one entry for each session ID | `riff top`, `riff view` |
 | The threads | `threads` | One line for each message: the sender, the receivers, the mark `verified`, the kind and the body | `riff read`, `riff tail`, `riff chat` |
-| The waves | `waves` | The open issues, the board of the current wave, the open milestones | `riff top`, `riff wave list` |
+| The waves | `waves` | The open issues, the board of the current wave, the open waves | `riff top`, `riff wave list` |
 | The machines | `machines` | The numbers of each host: the limit, the workers, the machine, the disk and the monitor | `riff top`, `riff workers` |
 
 ```mermaid
