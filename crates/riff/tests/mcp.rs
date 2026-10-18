@@ -426,6 +426,40 @@ async fn a_tell_to_a_new_worker_stays_unread_until_a_read_shows_it() {
     );
 }
 
+/// A session with 60 unread messages in its repository thread and one
+/// unread direct message gets the direct message at the top of its
+/// first read (01M58AG7Z2PETHBZG7X9QD8PK5). The name of a direct thread
+/// sorts after the repository thread in the list of the server.
+#[tokio::test]
+async fn the_first_read_shows_the_direct_message_at_the_top() {
+    let api = start_server().await;
+    let lead = connect(&api, MIKE).await;
+    let lead_uri: SessionUri = MIKE.parse().unwrap();
+    let worker = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=w1",
+    )
+    .await;
+    let repo = lead_uri.default_thread().unwrap();
+    for n in 1..=60 {
+        let body = format!("history {n}");
+        api.post(&lead_uri, Some(&repo), &[], &body, Default::default())
+            .await
+            .unwrap();
+    }
+    let tell = serde_json::json!({ "session": "w1", "body": "request: claim issue-7" });
+    call(&lead, "tell", tell).await;
+
+    let (read, _) = call(&worker, "read", serde_json::json!({})).await;
+    let top = format!(
+        "{}\n\ndirect with mike@pangolin:riff#api (a1)\n[1] ",
+        riff::text::DATA_NOTE
+    );
+    assert!(read.starts_with(&top), "{read}");
+    assert!(read.contains("request: claim issue-7"), "{read}");
+    assert!(read.contains("como-technologies/riff\n[1] "), "{read}");
+}
+
 #[tokio::test]
 async fn a_status_request_gets_an_answer_with_the_status_tool() {
     let api = start_server().await;
