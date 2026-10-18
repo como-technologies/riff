@@ -1877,8 +1877,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// A [`Then::Stop`] on `from` stops it. It gives the record of the
     /// session. A session with a terminal takes no slot: it says
     /// [`Say::Done`] when its container runs. The container gets the
-    /// caps of the host now (01M56Q4AQ86V99RC8CA1KGCMSZ): a later change
-    /// of the limit does not change it.
+    /// caps of the host now (01M56Q4AQ86V99RC8CA1KGCMSZ), and the size of
+    /// the compile cache (01M57818168N3AQGE3G5GDYDDD): a later change of
+    /// the limit or of the size does not change it.
     pub(crate) async fn launch(
         self: &Arc<Self>,
         start: Start,
@@ -1900,6 +1901,9 @@ impl<R: Runtime + 'static> Daemon<R> {
             terminal,
         } = start;
         self.room.limit().caps(&mut spec);
+        crate::compile_cache::Setting::read(&self.dir)
+            .unwrap_or_default()
+            .apply(&mut spec);
         let name = spec.name.clone();
         let record = Record {
             live: Live {
@@ -2746,6 +2750,7 @@ pub async fn show_status(dir: &Path, manager: &impl crate::service::ServiceManag
     match status(dir).await {
         Ok(status) => {
             print!("{}", text::daemon_status(&status, now_ms()));
+            println!("{}", crate::compile_cache::shown(dir));
             0
         }
         Err(e) => {

@@ -177,6 +177,7 @@
 //! | No signature | `commit.gpgsign=false` by `GIT_CONFIG_*` | 01M4Z60B89G8YNVMTEPGX7FQCV |
 //! | The Claude folder | with write; the sign-in file of the host with no write | 01M4Z60B86N999JRN7Z1G52PG4, 01M4Z60B869HWDTZMSYPVYACD8 |
 //! | The caches | the volumes `riff-cargo` and `riff-sccache` | 01M4Z60B7RPSQ1ABGVMJSZWS5P |
+//! | The size of the compile cache | `SCCACHE_CACHE_SIZE`: the daemon puts the setting of the host at the start ([`crate::compile_cache`]) | 01M57818168N3AQGE3G5GDYDDD |
 //! | The caps | `--memory`, `--cpus` and `CARGO_BUILD_JOBS`: the defaults, and the daemon puts the caps of the host at the start ([`crate::room::Limit::caps`]) | 01M4Z60B7XT7462XMV49GJTVSJ, 01M56Q4AQ86V99RC8CA1KGCMSZ |
 //! | `claude` | `-p` in stream-json, the riff session ID, the auto mode | 01M4Z60B82FHN2YG9YJHW8XZX1, 01M4Z81ATZK3FX9GRFTM236FE6 |
 //! | The socket of the session | the daemon adds it: its folder at `/run/riff` with write, and `RIFF_SOCKET` | 01M4ZDTVSP0T1YENKAWGKA114D |
@@ -336,6 +337,7 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         value("SCCACHE_DIR", &shown(&sccache)),
         value("RUSTC_WRAPPER", "sccache"),
         value("SCCACHE_IDLE_TIMEOUT", "0"),
+        value("SCCACHE_IGNORE_SERVER_IO_ERROR", "1"),
     ];
     let command = [
         "claude",
@@ -1836,6 +1838,7 @@ mod tests {
                 "SCCACHE_DIR=/home/mike/.cache/sccache",
                 "RUSTC_WRAPPER=sccache",
                 "SCCACHE_IDLE_TIMEOUT=0",
+                "SCCACHE_IGNORE_SERVER_IO_ERROR=1",
                 "CARGO_BUILD_JOBS=8",
             ]
         );

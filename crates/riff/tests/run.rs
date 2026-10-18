@@ -79,7 +79,8 @@ esac
 /// the bind at `/run/riff`. With `-d` (a terminal), it runs it in the
 /// background, and `wait` waits for its end. `stop` logs, and ends the
 /// `run`. `container inspect` says `true` while the `run` runs. `attach`
-/// and `exec` log, and end at once. With `bin/exit-in-attach`, `attach`
+/// and `exec` log, and end at once. `volume inspect` of `riff-sccache`
+/// gives the folder `bin/volume` when it is there. With `bin/exit-in-attach`, `attach`
 /// first ends the `run`, as `/exit` in the lead does. A zombie counts as
 /// ended. The `run`
 /// with `-d` exits, so PID 1 becomes the parent of the relay. When PID 1
@@ -115,6 +116,10 @@ case "$1" in
       echo false
     fi
     exit 0 ;;
+  volume)
+    [ "$*" = "volume inspect --format {{.Mountpoint}} riff-sccache" ] || exit 2
+    [ -d "$dir/volume" ] || exit 125
+    echo "$dir/volume"; exit 0 ;;
   run) ;;
   *) exit 2 ;;
 esac
@@ -652,7 +657,11 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "-e",
         "SCCACHE_IDLE_TIMEOUT=0",
         "-e",
+        "SCCACHE_IGNORE_SERVER_IO_ERROR=1",
+        "-e",
         "CARGO_BUILD_JOBS=8",
+        "-e",
+        "SCCACHE_CACHE_SIZE=40G",
         "-e",
         "RIFF_SOCKET=/run/riff/riff.sock",
         "-w",
@@ -847,6 +856,69 @@ async fn riff_run_sends_no_verify_request_when_a_lead_holds_the_verify() {
     let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
     assert!(!thread.contains("verify request: issue-12"), "{thread}");
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// `riff daemon cache SIZE` sets the size of the compile cache, and the
+/// daemon gives it to each new session (01M57818168N3AQGE3G5GDYDDD).
+/// `riff daemon cache` and `riff daemon status` show the size of the
+/// volume now and the setting (01M5781930TF6XBX7ME7RAMX2X). A clear
+/// while the session runs empties the volume, keeps its folder, and the
+/// session goes on to its end (01M5781A4PRTTYRHH5GJ1GHN7G).
+#[tokio::test]
+async fn riff_daemon_cache_sets_the_size_of_each_new_session_and_a_clear_empties_the_volume() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let set = machine.ok(None, &["daemon", "cache", "20G"]).await;
+    assert!(
+        set.contains(
+            "The compile cache of the container sessions: no volume riff-sccache yet, at most 20G."
+        ),
+        "{set}"
+    );
+    let volume = machine.bin.path().join("volume");
+    std::fs::create_dir_all(volume.join("a/b")).unwrap();
+    std::fs::write(volume.join("a/b/f"), vec![1u8; 3 << 20]).unwrap();
+    std::fs::write(volume.join("g"), b"o").unwrap();
+
+    let hold = machine.bin.path().join("hold");
+    std::fs::write(&hold, "").unwrap();
+    let child = machine
+        .command(None, &["run", "issue-12", "--image", IMAGE])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(&machine.bin.path().join("run.stdin"), "user").await;
+    let args = machine.read("run.args");
+    assert!(args.contains("\nSCCACHE_CACHE_SIZE=20G\n"), "{args}");
+    assert!(!args.contains("SCCACHE_CACHE_SIZE=40G"), "{args}");
+
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(
+        status.contains(
+            "The compile cache of the container sessions: 3MB now, at most 20G, in the volume \
+             riff-sccache.\nSet it with: riff daemon cache SIZE. Empty it with: riff daemon cache \
+             --clear"
+        ),
+        "{status}"
+    );
+    let cleared = machine.ok(None, &["daemon", "cache", "--clear"]).await;
+    assert!(
+        cleared.contains("riff deleted each file of the compile cache of the container sessions."),
+        "{cleared}"
+    );
+    assert!(cleared.contains(": 0MB now, at most 20G"), "{cleared}");
+    assert!(volume.is_dir());
+    assert_eq!(std::fs::read_dir(&volume).unwrap().count(), 0);
+
+    std::fs::remove_file(&hold).unwrap();
+    let out = output_of(child).await;
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
 }
 
 /// The issue has the label `no-verify`, as the scratch item of the

@@ -5787,6 +5787,19 @@ part when they merge.
   `limit.json` with no value for one of them gives the default.
   `riff daemon limit` and `riff daemon status` show both. riff refuses
   0 for each.
+- **01M57818168N3AQGE3G5GDYDDD** `riff daemon cache SIZE` sets the most
+  size of the compile cache of the container sessions of the host in
+  `cache.json` in the folder of the daemon. The default is `40G`. The
+  daemon gives the size to each new session in `SCCACHE_CACHE_SIZE`. A
+  session that runs keeps the size of its start.
+- **01M5781930TF6XBX7ME7RAMX2X** `riff daemon cache` shows the size of
+  the volume `riff-sccache` now and the most size. `riff daemon status`
+  shows the same line.
+- **01M5781A4PRTTYRHH5GJ1GHN7G** `riff daemon cache --clear` deletes
+  each file and folder in the volume `riff-sccache`, and keeps the
+  volume. It works while sessions run. Each session has
+  `SCCACHE_IGNORE_SERVER_IO_ERROR=1`, and a build compiles each file
+  that the clear deleted.
 - **01M4ZV3B6J89KJQ0F14YWTZMJQ** `riff wave run` in a clone asks the
   daemon to run the current wave of the repository of the clone. The
   daemon keeps each wave in `waves.json` in its folder, with the main

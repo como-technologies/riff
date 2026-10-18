@@ -6761,6 +6761,40 @@ pub fn daemon_limit(limit: &crate::room::Limit) -> String {
     )
 }
 
+/// The compile cache of the container sessions, as `riff daemon cache`
+/// and `riff daemon status` show it (01M5781930TF6XBX7ME7RAMX2X): the
+/// size of the volume now, or `None` when podman has no volume yet, and
+/// the most size.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_cache("40G", Some(2_684_354_560)),
+///     "The compile cache of the container sessions: 2.5GB now, at most 40G, in the volume riff-sccache.\n\
+///      Set it with: riff daemon cache SIZE. Empty it with: riff daemon cache --clear"
+/// );
+/// assert!(riff::text::daemon_cache("40G", None).starts_with(
+///     "The compile cache of the container sessions: no volume riff-sccache yet, at most 40G.\n"
+/// ));
+/// ```
+pub fn daemon_cache(size: &str, now: Option<u64>) -> String {
+    let volume = crate::run::SCCACHE_VOLUME;
+    let head = match now {
+        Some(bytes) => format!(
+            "{} now, at most {size}, in the volume {volume}",
+            size_words(bytes)
+        ),
+        None => format!("no volume {volume} yet, at most {size}"),
+    };
+    format!(
+        "The compile cache of the container sessions: {head}.\n\
+         Set it with: riff daemon cache SIZE. Empty it with: riff daemon cache --clear"
+    )
+}
+
+/// `riff daemon cache --clear` emptied the volume.
+pub const DAEMON_CACHE_CLEARED: &str =
+    "riff deleted each file of the compile cache of the container sessions.";
+
 /// The first word of a wave.
 pub fn wave_starts() -> String {
     "starts".into()
