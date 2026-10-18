@@ -823,6 +823,10 @@ mod tests {
             admin: text("bob@acme.io"),
         });
         c.trip(&LogQuery { repo: thread() });
+        c.trip(&Pruned {
+            first: 1918,
+            first_ms: 5000,
+        });
         c.trip(&Members {});
         c.trip(&MembersReply {
             owner: Some(text("ann@acme.io")),
@@ -867,7 +871,13 @@ mod tests {
     /// The types with no schema: a round trip of their own covers each.
     fn with_no_schema(c: &mut Covered) {
         // The reply of the log holds the records as they are.
-        let reply = LogReply { records: records() };
+        let reply = LogReply {
+            records: records(),
+            pruned: Some(Pruned {
+                first: 2,
+                first_ms: 5000,
+            }),
+        };
         round_trip(&reply);
         let read: LogReply = serde_json::from_value(serde_json::to_value(&reply).unwrap()).unwrap();
         assert_eq!(read, reply);

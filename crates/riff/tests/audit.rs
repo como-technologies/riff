@@ -26,7 +26,8 @@ use riff_core::record::{
 use riff_core::wire::{Message, RiffState, StartReason};
 use riff_server::Service;
 use riff_server::auth::Config;
-use riff_state::store::Memory;
+use riff_state::log::{self, chunk_name};
+use riff_state::store::{Memory, Store};
 use serde_json::json;
 
 /// The time of second 0 of the test log: 2026-10-01 00:00 UTC.
@@ -203,6 +204,18 @@ async fn serve(
     listener: tokio::net::TcpListener,
     url: &str,
 ) -> Service {
+    serve_split(records, 0, home, listener, url).await.0
+}
+
+/// As [`serve`], with the log in two chunks when `split` is not 0: the
+/// first `split` records, and the rest. It gives the store too.
+async fn serve_split(
+    records: Vec<Record>,
+    split: usize,
+    home: &Isolated,
+    listener: tokio::net::TcpListener,
+    url: &str,
+) -> (Service, Memory) {
     let store = Memory::default();
     let records: Vec<Record> = records
         .into_iter()
@@ -212,9 +225,12 @@ async fn serve(
             r
         })
         .collect();
-    riff_state::log::write(&store, &records, &Default::default(), || true)
-        .await
-        .unwrap();
+    let (first, rest) = records.split_at(split);
+    for chunk in [first, rest].into_iter().filter(|c| !c.is_empty()) {
+        riff_state::log::write(&store, chunk, &Default::default(), || true)
+            .await
+            .unwrap();
+    }
     let config = Config {
         require_sign_in: true,
         lease: riff_server::lease::Timing {
@@ -226,11 +242,13 @@ async fn serve(
         },
         ..Config::new(url)
     };
-    let service = Service::load(config, Arc::new(store)).await.unwrap();
+    let service = Service::load(config, Arc::new(store.clone()))
+        .await
+        .unwrap();
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     sign_in(&service, url, home, "mike@comotechnologies.io", false).await;
-    service
+    (service, store)
 }
 
 /// Signs in `email` with a new device key, and keeps both in the
@@ -665,6 +683,82 @@ async fn the_log_has_only_the_records_of_the_repository_and_no_body() {
         })
         .collect();
     assert_eq!(bodies, ["request", "verify request", "verify request"]);
+}
+
+/// A server whose log is in two chunks: the first `split` records of
+/// `records`, and the rest. With `prune`, the checkpoint rule removed the
+/// first chunk after the start, so the oldest chunk starts after 1.
+async fn split_server(
+    records: Vec<Record>,
+    split: usize,
+    home: &Isolated,
+) -> (Service, String, Memory) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (service, store) = serve_split(records, split, home, listener, &url).await;
+    (service, url, store)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn after_a_prune_the_audit_reads_the_kept_log_and_says_what_it_does_not_see() {
+    let machine = Machine::new();
+    // The records 1 to 4 are gone: the oldest kept record is the claim
+    // of issue-7 at 14 s, after the start of the span at 5 s.
+    let (_service, url, store) = split_server(good(), 4, &machine.env).await;
+    store.delete(&chunk_name(1)).await.unwrap();
+    assert_eq!(log::chunks(&store).await.unwrap()[0].0, 5);
+
+    let out = machine.run(&url, &["audit", "--wave", "Wave 2"]).await;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.is_empty(), "{stderr}");
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.contains(
+            "\nThe log keeps the records from record 5 on, from 2026-10-01 00:00 UTC. The \
+             checkpoint rule removed the records before it: the audit does not see them.\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "  not checked: issue-7: release at record 7 after a verify request, and the start \
+             of its session is not in the records that the log keeps.\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "Rule 4: not checked\n  No claim while the riff or the repository was paused.\n  \
+             Not checked: the span starts before record 5, the oldest record that the log keeps.\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("Result: no rule fails. 6 rules are not checked.\n"),
+        "{text}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_log_that_does_not_read_gives_the_client_no_fix_that_deletes_the_store() {
+    let machine = Machine::new();
+    let (_service, url, store) = split_server(good(), 0, &machine.env).await;
+    let broken = chunk_name(1000);
+    store.save(&broken, b"[]".to_vec(), None).await.unwrap();
+
+    let out = machine.run(&url, &["audit", "--wave", "Wave 2"]).await;
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("500 Internal Server Error"), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "the log did not read: cannot read the saved object {broken}"
+        )),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("remove the old state"), "{stderr}");
+    assert!(!stderr.contains("old format"), "{stderr}");
 }
 
 #[test]

@@ -466,6 +466,18 @@
   and the audit refuses it.
 - **01M3ZWRCF5H95R4SYX09CWAJS8** `riff audit` checks one wave. It has
   no span of time of its own.
+- **01M588N3R2VP12A8X4EASX0BJ4** After the checkpoint rule removed the
+  oldest chunks of the log, `POST /v1/log` gives the records from the
+  oldest kept chunk, with the position and the time of the oldest kept
+  record. `riff audit` prints them. A check that needs a gone record is
+  not checked, with the reason: the rules 2 to 7 when the span starts
+  before the oldest kept record; rule 1 for the facts of the log of an
+  item with no claim in the kept records; rule 1 for a release after a
+  verify request by a session whose start is gone; rule 7 for a request
+  from a user with no lead in the kept records; rule 2 and rule 3 for a
+  claim of a session with no fresh start in the kept records; rule 4
+  when the kept records have no pause of the riff or of the repository;
+  rule 6 for a claim of a user with no lead in the kept records.
 - **01M43GSGB9ZFHSG0Q83Y50FEGW** A lead holds an item of its repository
   with a reason, and frees it again: `riff plan hold ITEM REASON`,
   `riff plan free ITEM`, and the tools `hold` and `free`. The server
@@ -1109,6 +1121,14 @@
   names the object, for example `gs://BUCKET/signins.json`, and the
   fix: stop each server of the store and remove the old state, with the
   command.
+- **01M588N3JF6MXF3ZKB5PBWP06G** The fix that removes the old state
+  comes only in the error of a start of `riff-server`. The reply to a
+  request of a client never has it. An error of the store in such a
+  reply is 503 only when the store did not do the call.
+- **01M588N3CKQMSDQPVFYGTJQQ2T** A read of the log from a position
+  before the oldest chunk fails with an error that names the oldest
+  position and the position that the read needs, and says that the
+  checkpoint rule removed the chunks before it.
 
 ## The log
 

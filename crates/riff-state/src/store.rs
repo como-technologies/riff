@@ -31,9 +31,15 @@
 //! A store can hold state of an old format, for example a token store
 //! from before a change of its fields. riff-server does not migrate it:
 //! the load fails with [`StoreError::NotValid`]. Its text names the
-//! object, with [`Store::locate`], and the fix: remove the old state,
-//! with [`Store::empty_command`] when the store has one
-//! (01M3MMXYS1V8CA89D2XHKPR6C4).
+//! object, with [`Store::locate`]. Only the start of the server adds the
+//! fix, with [`StoreError::at_start`]: remove the old state, with
+//! [`Store::empty_command`] when the store has one
+//! (01M3MMXYS1V8CA89D2XHKPR6C4). The reply to a request of a client has
+//! no fix (01M588N3JF6MXF3ZKB5PBWP06G).
+//!
+//! A read of the log from a position before the oldest chunk fails with
+//! [`StoreError::Pruned`] (01M588N3CKQMSDQPVFYGTJQQ2T). The checkpoint
+//! rule removes old chunks on purpose ([`crate::checkpoint`]).
 //!
 //! ```
 //! use riff_state::store::{Memory, SIGN_INS, StoreError};
@@ -41,10 +47,22 @@
 //! let error = StoreError::not_valid(&Memory::default(), SIGN_INS, "missing field `sign_ins`");
 //! assert_eq!(
 //!     error.to_string(),
+//!     "cannot read the saved object signins.json: missing field `sign_ins`"
+//! );
+//! assert_eq!(
+//!     error.at_start(),
 //!     "cannot read the saved object signins.json: missing field `sign_ins`. \
 //!      It can be state of an old format. To start again with an empty state, \
 //!      stop each server of this store and remove the old state."
 //! );
+//!
+//! let pruned = StoreError::Pruned { oldest: 1918, needs: 1 };
+//! assert_eq!(
+//!     pruned.to_string(),
+//!     "the log starts at position 1918, and the read needs the log from position 1: \
+//!      the checkpoint rule removed the chunks before position 1918"
+//! );
+//! assert_eq!(pruned.at_start(), pruned.to_string());
 //! ```
 //!
 //! # Example
@@ -115,6 +133,9 @@ pub enum StoreError {
         /// one.
         fix: Option<String>,
     },
+    /// A read of the log needs the records from the position `needs`,
+    /// and the oldest chunk of the log starts at `oldest`, after it.
+    Pruned { oldest: u64, needs: u64 },
 }
 
 /// A saved object that the server cannot read: its name in the store,
@@ -135,6 +156,23 @@ impl StoreError {
             fix: store.empty_command(),
         }
     }
+
+    /// The text of the error when the server cannot load its state at a
+    /// start: for an object that does not read, with the fix
+    /// (01M3MMXYS1V8CA89D2XHKPR6C4). Only the start uses it
+    /// (01M588N3JF6MXF3ZKB5PBWP06G).
+    pub fn at_start(&self) -> String {
+        let StoreError::NotValid { fix, .. } = self else {
+            return self.to_string();
+        };
+        let fix = fix
+            .as_ref()
+            .map_or_else(|| ".".to_owned(), |command| format!(": {command}"));
+        format!(
+            "{self}. It can be state of an old format. To start again with an empty state, \
+             stop each server of this store and remove the old state{fix}"
+        )
+    }
 }
 
 impl fmt::Display for StoreError {
@@ -142,18 +180,14 @@ impl fmt::Display for StoreError {
         match self {
             StoreError::Conflict(name) => write!(f, "another version of {name} is in the store"),
             StoreError::Failed(message) | StoreError::Busy(message) => f.write_str(message),
-            StoreError::NotValid { object, why, fix } => {
-                write!(
-                    f,
-                    "cannot read the saved object {object}: {why}. \
-                     It can be state of an old format. To start again with an empty state, \
-                     stop each server of this store and remove the old state"
-                )?;
-                match fix {
-                    Some(command) => write!(f, ": {command}"),
-                    None => f.write_str("."),
-                }
+            StoreError::NotValid { object, why, .. } => {
+                write!(f, "cannot read the saved object {object}: {why}")
             }
+            StoreError::Pruned { oldest, needs } => write!(
+                f,
+                "the log starts at position {oldest}, and the read needs the log from position \
+                 {needs}: the checkpoint rule removed the chunks before position {oldest}"
+            ),
         }
     }
 }

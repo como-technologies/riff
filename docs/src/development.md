@@ -2282,6 +2282,41 @@ flowchart LR
   is a check that the facts cannot prove, for example a claim of an
   item that is in no wave.
 
+### What the audit sees after a prune
+
+The server keeps the log in chunks. After each checkpoint, it removes
+the old chunks that no kept checkpoint needs. So the log of a shared
+riff often starts after record 1. The audit then reads the records
+that the log keeps, and says where they start:
+
+```sh
+riff audit --wave 33
+```
+
+```text
+The log keeps the records from record 1918 on, from 2026-10-17 09:12 UTC. The checkpoint rule removed the records before it: the audit does not see them.
+```
+
+A check that needs a removed record is `not checked`, with the reason:
+
+- The rules 2 to 7, when the wave starts before the oldest kept
+  record.
+- Rule 1 for an item whose claim is not in the kept records. A fact of
+  the forge that is missing, for example no pull request, still
+  fails.
+- Rule 1 for a release after a verify request, when the start of the
+  session is not in the kept records.
+- Rule 2 and rule 3 for a claim of a session whose fresh start
+  (`process` or `clear`) is not in the kept records. The session can
+  hold a removed claim, or owe a clear.
+- Rule 4 when the kept records have no pause of the riff, or no pause
+  of the repository.
+- Rule 6 for a claim, and rule 7 for a request, of a user with no lead
+  in the kept records.
+
+The error of a log that does not read never tells you to delete the
+state. Only a server that cannot load its state at a start says so.
+
 ## Sign in on this machine
 
 Sign-in uses the OAuth client of the Google Cloud project `como-riff`.

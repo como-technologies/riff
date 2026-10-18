@@ -359,6 +359,46 @@ pub async fn replay(store: &dyn Store) -> Result<Replayed, StoreError> {
     replay_after(store, 0).await
 }
 
+/// Reads each record that the log keeps, in order: from the oldest
+/// chunk. It gives the position of the oldest chunk too: 1 when the
+/// checkpoint rule removed no chunk ([`crate::checkpoint`]). A read
+/// from before the oldest chunk fails with [`StoreError::Pruned`]
+/// (01M588N3CKQMSDQPVFYGTJQQ2T).
+///
+/// ```
+/// # #[tokio::main] async fn main() -> Result<(), riff_state::store::StoreError> {
+/// use riff_core::record::{Change, Envelope, PauseSet, Record, Scope};
+/// use riff_core::wire::RiffState;
+/// use riff_state::log::{Timing, chunk_name, replay, replay_kept, write};
+/// use riff_state::store::{Memory, Store, StoreError};
+///
+/// let store = Memory::default();
+/// let record = |position| Record {
+///     envelope: Envelope {
+///         position,
+///         written_at_ms: 0,
+///         by: None,
+///         command: None,
+///         call: None,
+///     },
+///     change: Change::PauseSet(PauseSet { scope: Scope::Riff, state: RiffState::Running }),
+/// };
+/// write(&store, &[record(1), record(2)], &Timing::default(), || true).await?;
+/// write(&store, &[record(3)], &Timing::default(), || true).await?;
+/// assert_eq!(replay_kept(&store).await?.0, 1);
+///
+/// store.delete(&chunk_name(1)).await?;
+/// let (oldest, replayed) = replay_kept(&store).await?;
+/// assert_eq!((oldest, replayed.records.len()), (3, 1));
+/// assert_eq!(replay(&store).await, Err(StoreError::Pruned { oldest: 3, needs: 1 }));
+/// # Ok(()) }
+/// ```
+pub async fn replay_kept(store: &dyn Store) -> Result<(u64, Replayed), StoreError> {
+    let oldest = chunks(store).await?.first().map_or(1, |(first, _)| *first);
+    let replayed = replay_after(store, oldest.saturating_sub(1)).await?;
+    Ok((oldest, replayed))
+}
+
 /// The first position of a chunk, from its name.
 ///
 /// ```
@@ -442,11 +482,13 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
         };
         let (header, lines) = decode(&loaded.bytes).map_err(not_valid)?;
         // The first chunk holds the position after + 1, or starts the log.
-        let expected = next.unwrap_or(if header.first <= after + 1 {
-            header.first
-        } else {
-            after + 1
-        });
+        if next.is_none() && header.first > after + 1 {
+            return Err(StoreError::Pruned {
+                oldest: header.first,
+                needs: after + 1,
+            });
+        }
+        let expected = next.unwrap_or(header.first);
         if header.first != expected {
             return Err(not_valid(format!(
                 "the chunk starts at position {}, and the log needs {expected}",
