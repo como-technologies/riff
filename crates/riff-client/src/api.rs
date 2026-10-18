@@ -1419,8 +1419,10 @@ impl Api {
     }
 
     /// The unread messages (or all of them) of one thread. With no
-    /// thread, those of each thread that `me` joined. Leaves out each
-    /// thread with no messages to show. It reads each page.
+    /// thread, those of each thread that `me` joined, each direct
+    /// thread first ([`direct_first`](crate::threads::direct_first)).
+    /// Leaves out each thread with no messages to show. It reads each
+    /// page.
     pub async fn inbox(
         &self,
         me: &SessionUri,
@@ -1478,6 +1480,7 @@ impl Api {
                 });
             }
         }
+        crate::threads::direct_first(&mut out);
         Ok(out)
     }
 

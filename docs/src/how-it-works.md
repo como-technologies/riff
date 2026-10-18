@@ -2785,6 +2785,29 @@ one page. When more messages follow, it says so, with the number of
 the last message. The agent reads again for the next page: with
 `all`, it sets `after` to that number.
 
+### Direct messages come first
+
+A read with no thread shows each direct thread first, then your other
+threads. A direct thread holds a request of your lead or a question to
+you. So a full page of a long thread does not hide it:
+
+```sh
+riff read
+```
+
+```text
+direct with mike@pangolin:riff (a6cf)
+[1] mike@pangolin:riff (a6cf) lead=true to session=b2 (verified): request: claim issue-12
+chat
+[128] brett@heron (verified): the build is green
+como-technologies/riff
+[2527] mike@pangolin:riff (a6cf) lead=true to all (verified): Wave 34 starts
+```
+
+The `read` tool of an agent session shows the same order. Only its
+part of the messages to you after a page comes before it. See
+[One read after a wake shows the message of the wake](#one-read-after-a-wake-shows-the-message-of-the-wake).
+
 ### A message that came before the start of a session
 
 A read marks as read only the messages that it shows. A message to a
