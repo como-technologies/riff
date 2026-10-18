@@ -3813,6 +3813,38 @@ where
 /// assert!(text.ends_with("\nRun riff login"), "{text}");
 /// ```
 ///
+/// `riff update` installs the release of the server. So the last line
+/// asks for it only when the server is newer. When this riff is newer,
+/// it asks for an update of the server, as `riff whoami` does
+/// (01M56Q55SHHJSKJWNHMW79X7HA):
+///
+/// ```
+/// use riff::api::Probe;
+/// use riff::lifecycle::{Seen, Source, View};
+/// use riff_core::build::Build;
+///
+/// let server = |time: &str| View {
+///     source: Source::Default,
+///     used: Seen {
+///         url: "http://127.0.0.1:7878".into(),
+///         answer: Ok(Probe {
+///             build: Some(Build { commit: "0000deadbeef".into(), time: time.into(), ..Build::this() }),
+///             sign_in: Some(false),
+///         }),
+///         user: None,
+///     },
+///     local: None,
+///     facts: None,
+///     here: None,
+/// };
+/// let plain = |view: &View| anstream::adapter::strip_str(&riff::text::server_view(view)).to_string();
+/// let newer = plain(&server("2999-01-01T00:00:00Z"));
+/// assert!(newer.ends_with("\nRun riff update"), "{newer}");
+/// let older = plain(&server("2000-01-01T00:00:00Z"));
+/// assert!(older.ends_with("\nUpdate riff-server when you can."), "{older}");
+/// assert!(!older.contains("riff update"), "{older}");
+/// ```
+///
 /// When the riff gives its facts (01M3TJWJ12WEDCXW3W0529KRP2), they
 /// come under its sign-in line:
 ///
@@ -3910,8 +3942,7 @@ pub fn server_view(view: &crate::lifecycle::View) -> String {
         out.push_str(&row("repository", &riff_here(here)));
     }
     if let Some(style) = need.style {
-        let run = format!("Run {}", need.run.join(", then "));
-        let _ = write!(out, "\n{}", styled(style, &run));
+        let _ = write!(out, "\n{}", styled(style, &need.last_line()));
     }
     out
 }
@@ -3940,10 +3971,44 @@ pub(crate) fn build_facts(build: &Build) -> String {
 #[derive(Default)]
 struct Need {
     run: Vec<&'static str>,
+    /// The style of the update of a riff-server that is older than this
+    /// riff (01M56Q55SHHJSKJWNHMW79X7HA).
+    old_server: Option<anstyle::Style>,
     style: Option<anstyle::Style>,
 }
 
 impl Need {
+    /// Asks for an update of the older side, in `style`: the riff-server
+    /// when `old_server`, else this riff. `riff update` installs the
+    /// release of the server, so a newer riff does not run it.
+    fn update(&mut self, old_server: bool, style: anstyle::Style) {
+        if !old_server {
+            return self.add("riff update", style);
+        }
+        if self.old_server != Some(ERROR) {
+            self.old_server = Some(style);
+        }
+        if self.style != Some(ERROR) {
+            self.style = Some(style);
+        }
+    }
+
+    /// The last line of [`server_view`]: the commands to run, then the
+    /// update of an older riff-server, as `riff whoami` says it.
+    fn last_line(&self) -> String {
+        let run = (!self.run.is_empty()).then(|| format!("Run {}", self.run.join(", then ")));
+        let server = self.old_server.map(|style| match style == ERROR {
+            true => "Update riff-server.",
+            false => "Update riff-server when you can.",
+        });
+        match (run, server) {
+            (Some(run), Some(server)) => format!("{run}. {server}"),
+            (Some(run), None) => run,
+            (None, Some(server)) => server.to_owned(),
+            (None, None) => String::new(),
+        }
+    }
+
     /// Adds `command`, once. Red wins over yellow.
     fn add(&mut self, command: &'static str, style: anstyle::Style) {
         if !self.run.contains(&command) {
@@ -3977,12 +4042,12 @@ fn seen_rows(out: &mut String, seen: &crate::lifecycle::Seen, need: &mut Need) {
             styled(GOOD, "✓")
         ),
         Some(b) if riff_core::build::compatible(&this, b) => {
-            need.add("riff update", WARNING);
+            need.update(b.older_than(&this), WARNING);
             let facts = format!("{}  another build; the versions can talk", build_facts(b));
             styled(WARNING, &facts)
         }
         Some(b) => {
-            need.add("riff update", ERROR);
+            need.update(b.older_than(&this), ERROR);
             let facts = format!(
                 "{}  another build; this riff cannot talk to it",
                 build_facts(b)
@@ -7611,6 +7676,32 @@ pub fn run_lead_noted(item: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 01M56Q55SHHJSKJWNHMW79X7HA
+    #[test]
+    fn the_last_line_updates_the_older_side() {
+        let mut need = Need::default();
+        need.update(false, WARNING);
+        assert_eq!(need.last_line(), "Run riff update");
+        assert_eq!(need.style, Some(WARNING));
+
+        let mut need = Need::default();
+        need.update(true, WARNING);
+        assert_eq!(need.last_line(), "Update riff-server when you can.");
+        assert_eq!(need.style, Some(WARNING));
+        need.add("riff login", ERROR);
+        assert_eq!(
+            need.last_line(),
+            "Run riff login. Update riff-server when you can."
+        );
+        assert_eq!(need.style, Some(ERROR));
+
+        let mut need = Need::default();
+        need.update(true, ERROR);
+        need.update(true, WARNING);
+        assert_eq!(need.last_line(), "Update riff-server.");
+        assert_eq!(need.style, Some(ERROR));
+    }
 
     #[test]
     fn the_styled_block_has_the_styles() {

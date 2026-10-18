@@ -1742,6 +1742,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   is the server of `riff`. When the person must act, the last line says
   what to run: yellow when the versions can talk, red when they cannot
   or when the person must sign in. `--color` works as in `riff tail`.
+- **01M56Q55SHHJSKJWNHMW79X7HA** The last line of `riff server` says
+  `riff update` only when the server runs a newer build than `riff`.
+  When `riff` is newer, it says "Update riff-server when you can.", or
+  "Update riff-server." when the versions cannot talk.
 - **01M3Q5V313XQN86BA2PBTXHEZC** Each `riff` command that shows facts
   or a list has one look. Facts are `key  value` lines, aligned. A
   list is a table with a header row. A row shows a short session ID
