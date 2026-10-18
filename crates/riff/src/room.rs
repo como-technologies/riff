@@ -32,6 +32,15 @@
 //! of the daemon. The daemon reads the file at each look for room, so a
 //! change counts at once, with no restart. With no file, the limit is
 //! [`Limit::default`]: 3 sessions and a floor of 8 GB.
+//!
+//! # The caps of a container
+//!
+//! The same file holds the caps of each new container of the host
+//! (01M56Q4AQ86V99RC8CA1KGCMSZ): its CPUs, which are also its build jobs
+//! in `CARGO_BUILD_JOBS`, and its memory. The daemon puts them in the
+//! spec of a session when it starts it ([`Limit::caps`]). So a session
+//! that runs keeps the caps of its start. The defaults are 8 CPUs and
+//! 8 GB.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -39,9 +48,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
+
+use crate::runtime::{Env, SessionSpec};
 
 /// The default number of live sessions of a host
 /// (01M4Z60B7Y4XD6TJCYEYJT2R4S).
@@ -49,6 +60,17 @@ pub const SESSIONS: u32 = 3;
 
 /// The default floor of free memory, in GB (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 pub const FLOOR_GB: u64 = 8;
+
+/// The default CPUs and build jobs of each container
+/// (01M56Q4AQ86V99RC8CA1KGCMSZ).
+pub const CPUS: u32 = 8;
+
+/// The default memory cap of each container, in GB
+/// (01M56Q4AQ86V99RC8CA1KGCMSZ).
+pub const MEMORY_GB: u64 = 8;
+
+/// The variable of the build jobs of a container.
+pub const JOBS_VAR: &str = "CARGO_BUILD_JOBS";
 
 /// The file of the limit, in the folder of the daemon.
 pub const LIMIT_FILE: &str = "limit.json";
@@ -61,21 +83,33 @@ pub const LOOK_EVERY: Duration = Duration::from_secs(5);
 const GB: u64 = 1 << 30;
 
 /// The limit of the host: at most `sessions` live sessions, and no start
-/// while the free memory is below `floor_gb`.
+/// while the free memory is below `floor_gb`. Each new container gets
+/// `cpus` CPUs and build jobs, and `memory_gb` GB of memory. A value that
+/// the file does not have is the default.
 ///
 /// ```
 /// use riff::room::Limit;
 ///
 /// let limit = Limit::default();
-/// assert_eq!((limit.sessions, limit.floor_gb), (3, 8));
-/// assert_eq!(serde_json::to_string(&limit).unwrap(), r#"{"sessions":3,"floor_gb":8}"#);
+/// assert_eq!((limit.sessions, limit.floor_gb, limit.cpus, limit.memory_gb), (3, 8, 8, 8));
+/// assert_eq!(
+///     serde_json::to_string(&limit).unwrap(),
+///     r#"{"sessions":3,"floor_gb":8,"cpus":8,"memory_gb":8}"#
+/// );
+/// let old: Limit = serde_json::from_str(r#"{"sessions":2,"floor_gb":4}"#).unwrap();
+/// assert_eq!(old, Limit { sessions: 2, floor_gb: 4, ..Limit::default() });
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Limit {
     /// The most live sessions.
     pub sessions: u32,
     /// The floor of free memory, in GB.
     pub floor_gb: u64,
+    /// The CPUs and the build jobs of each new container.
+    pub cpus: u32,
+    /// The memory cap of each new container, in GB.
+    pub memory_gb: u64,
 }
 
 impl Default for Limit {
@@ -83,8 +117,23 @@ impl Default for Limit {
         Limit {
             sessions: SESSIONS,
             floor_gb: FLOOR_GB,
+            cpus: CPUS,
+            memory_gb: MEMORY_GB,
         }
     }
+}
+
+/// The values that `riff daemon limit` sets. `None` keeps the value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Change {
+    /// `--sessions`.
+    pub sessions: Option<u32>,
+    /// `--floor`, in GB.
+    pub floor_gb: Option<u64>,
+    /// `--cpus`.
+    pub cpus: Option<u32>,
+    /// `--memory`, in GB.
+    pub memory_gb: Option<u64>,
 }
 
 /// Why a host has no room now.
@@ -121,6 +170,37 @@ impl Limit {
         std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
     }
 
+    /// Puts the caps of a container in `spec`: `--cpus`, the same number
+    /// in `CARGO_BUILD_JOBS`, and `--memory` (01M56Q4AQ86V99RC8CA1KGCMSZ).
+    ///
+    /// ```
+    /// use riff::room::Limit;
+    /// use riff::runtime::{Env, SessionSpec};
+    ///
+    /// let mut spec = SessionSpec {
+    ///     name: "s".into(),
+    ///     image: "i".into(),
+    ///     home: "/h".into(),
+    ///     workdir: "/w".into(),
+    ///     binds: vec![],
+    ///     env: vec![Env::Value("CARGO_BUILD_JOBS".into(), "8".into())],
+    ///     memory: "8g".into(),
+    ///     cpus: 8,
+    ///     command: vec![],
+    /// };
+    /// Limit { cpus: 12, memory_gb: 16, ..Limit::default() }.caps(&mut spec);
+    /// assert_eq!((spec.cpus, spec.memory.as_str()), (12, "16g"));
+    /// assert_eq!(spec.env, [Env::Value("CARGO_BUILD_JOBS".into(), "12".into())]);
+    /// ```
+    pub fn caps(&self, spec: &mut SessionSpec) {
+        spec.cpus = self.cpus;
+        spec.memory = format!("{}g", self.memory_gb);
+        spec.env
+            .retain(|e| !matches!(e, Env::Value(name, _) if name == JOBS_VAR));
+        spec.env
+            .push(Env::Value(JOBS_VAR.into(), self.cpus.to_string()));
+    }
+
     /// Has the host room for one more session, with `live` sessions and
     /// slots, and `free` bytes of free memory? With no number for the
     /// free memory, only the sessions count.
@@ -129,13 +209,13 @@ impl Limit {
     /// use riff::room::{Full, Limit};
     ///
     /// let gb = 1u64 << 30;
-    /// let limit = Limit { sessions: 2, floor_gb: 8 };
+    /// let limit = Limit { sessions: 2, floor_gb: 8, ..Limit::default() };
     /// assert_eq!(limit.room(1, Some(9 * gb)), Ok(()));
     /// assert_eq!(limit.room(2, Some(9 * gb)), Err(Full::Sessions { live: 2, limit: 2 }));
     /// assert_eq!(limit.room(0, Some(7 * gb)), Err(Full::Memory { free_gb: 7, floor_gb: 8 }));
     /// assert_eq!(limit.room(0, Some(8 * gb)), Ok(()));
     /// assert_eq!(limit.room(0, None), Ok(()));
-    /// assert_eq!(Limit { sessions: 0, floor_gb: 0 }.room(0, None), Err(Full::Sessions { live: 0, limit: 0 }));
+    /// assert_eq!(Limit { sessions: 0, floor_gb: 0, ..Limit::default() }.room(0, None), Err(Full::Sessions { live: 0, limit: 0 }));
     /// ```
     pub fn room(&self, live: usize, free: Option<u64>) -> Result<(), Full> {
         if live >= usize::try_from(self.sessions).unwrap_or(usize::MAX) {
@@ -154,31 +234,48 @@ impl Limit {
     }
 }
 
-/// `riff daemon limit`: sets the number of `sessions` and the `floor`
-/// in GB that are given, in the folder `dir` of the daemon, and gives the
-/// limit (01M4ZV3B6HAFTSC2K63FMC5FYA). With neither, it changes nothing.
+/// `riff daemon limit`: sets the values of `change` in the folder `dir`
+/// of the daemon, and gives the limit (01M4ZV3B6HAFTSC2K63FMC5FYA,
+/// 01M56Q4ASHTDWVA2MS2CBQ2PAM). With no value, it changes nothing. It
+/// refuses 0 CPUs and 0 GB of memory.
 ///
 /// ```
+/// use riff::room::{Change, Limit, set};
+///
 /// let dir = tempfile::tempdir()?;
-/// let limit = riff::room::set(dir.path(), None, None)?;
-/// assert_eq!(limit, riff::room::Limit::default());
+/// let limit = set(dir.path(), Change::default())?;
+/// assert_eq!(limit, Limit::default());
 /// assert!(!dir.path().join(riff::room::LIMIT_FILE).exists());
-/// let limit = riff::room::set(dir.path(), Some(5), None)?;
+/// let limit = set(dir.path(), Change { sessions: Some(5), ..Change::default() })?;
 /// assert_eq!((limit.sessions, limit.floor_gb), (5, 8));
-/// assert_eq!(riff::room::set(dir.path(), None, Some(4))?.sessions, 5);
+/// let limit = set(dir.path(), Change { cpus: Some(6), memory_gb: Some(12), ..Change::default() })?;
+/// assert_eq!((limit.sessions, limit.cpus, limit.memory_gb), (5, 6, 12));
+/// assert!(set(dir.path(), Change { cpus: Some(0), ..Change::default() }).is_err());
+/// assert!(set(dir.path(), Change { memory_gb: Some(0), ..Change::default() }).is_err());
+/// assert_eq!(Limit::read(dir.path())?.cpus, 6);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn set(dir: &Path, sessions: Option<u32>, floor_gb: Option<u64>) -> Result<Limit> {
+pub fn set(dir: &Path, change: Change) -> Result<Limit> {
+    if change.cpus == Some(0) {
+        bail!("riff refuses --cpus 0: a container needs 1 CPU or more");
+    }
+    if change.memory_gb == Some(0) {
+        bail!("riff refuses --memory 0: a container needs 1 GB of memory or more");
+    }
     let mut limit = Limit::read(dir)?;
-    if sessions.is_none() && floor_gb.is_none() {
+    if change == Change::default() {
         return Ok(limit);
     }
-    if let Some(sessions) = sessions {
-        limit.sessions = sessions;
-    }
-    if let Some(floor_gb) = floor_gb {
-        limit.floor_gb = floor_gb;
-    }
+    let Change {
+        sessions,
+        floor_gb,
+        cpus,
+        memory_gb,
+    } = change;
+    limit.sessions = sessions.unwrap_or(limit.sessions);
+    limit.floor_gb = floor_gb.unwrap_or(limit.floor_gb);
+    limit.cpus = cpus.unwrap_or(limit.cpus);
+    limit.memory_gb = memory_gb.unwrap_or(limit.memory_gb);
     limit.write(dir)?;
     Ok(limit)
 }
@@ -352,6 +449,7 @@ mod tests {
         let limit = Limit {
             sessions: 5,
             floor_gb: 0,
+            ..Limit::default()
         };
         limit.write(dir.path()).unwrap();
         assert_eq!(Limit::read(dir.path()).unwrap(), limit);
@@ -365,6 +463,7 @@ mod tests {
         Limit {
             sessions: 1,
             floor_gb: 0,
+            ..Limit::default()
         }
         .write(dir.path())
         .unwrap();
@@ -396,6 +495,7 @@ mod tests {
         Limit {
             sessions: 3,
             floor_gb: 8,
+            ..Limit::default()
         }
         .write(dir.path())
         .unwrap();

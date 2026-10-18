@@ -532,16 +532,19 @@ async fn the_daemon_of_riff_data_is_never_the_daemon_of_the_unit() {
 
 /// `riff daemon limit` shows the limit of the host, and sets it in the
 /// folder of the daemon. `riff daemon status` shows it
-/// (01M4ZV3B6HAFTSC2K63FMC5FYA).
+/// (01M4ZV3B6HAFTSC2K63FMC5FYA). `--cpus` and `--memory` set the caps of
+/// each new container, and riff refuses 0 (01M56Q4ASHTDWVA2MS2CBQ2PAM).
 #[tokio::test]
 async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
     let here = Here::new();
     let out = here.run(false, &["daemon", "limit"]).await;
     assert_eq!(
         text(&out.stdout),
-        "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start.\n"
+        "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start.\n\
+         Each new container: 8 CPUs and 8 build jobs, and 8 GB of memory.\n"
     );
-    assert!(!here.env.riff_home().join("daemon/limit.json").exists());
+    let file = here.env.riff_home().join("daemon/limit.json");
+    assert!(!file.exists());
     let out = here
         .run(
             false,
@@ -550,14 +553,33 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
         .await;
     let set =
         "The limit of this host: 5 live sessions, and 4 GB of free memory or more for a start.";
-    assert_eq!(text(&out.stdout), format!("{set}\n"));
+    assert_eq!(
+        text(&out.stdout),
+        format!("{set}\nEach new container: 8 CPUs and 8 build jobs, and 8 GB of memory.\n")
+    );
     let out = here.run(false, &["daemon", "limit", "--floor", "6"]).await;
     assert!(text(&out.stdout).contains("5 live sessions, and 6 GB"));
+    let out = here
+        .run(false, &["daemon", "limit", "--cpus", "6", "--memory", "12"])
+        .await;
+    let caps = "Each new container: 6 CPUs and 6 build jobs, and 12 GB of memory.";
+    assert!(text(&out.stdout).contains(caps), "{}", text(&out.stdout));
+    let saved = std::fs::read_to_string(&file).unwrap();
+    assert!(saved.contains(r#""cpus":6,"memory_gb":12"#), "{saved}");
+    for zero in [["--cpus", "0"], ["--memory", "0"]] {
+        let out = here
+            .run(false, &["daemon", "limit", zero[0], zero[1]])
+            .await;
+        assert!(!out.status.success());
+        assert!(text(&out.stderr).contains(&format!("riff refuses {} 0", zero[0])));
+    }
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), saved);
 
     let mut daemon = here.daemon("daemon.out").await;
     let out = here.run(false, &["daemon", "status"]).await;
     let status = text(&out.stdout);
     assert!(status.contains("5 live sessions, and 6 GB"), "{status}");
+    assert!(status.contains(caps), "{status}");
     term(daemon.id());
     tokio::task::spawn_blocking(move || daemon.wait().unwrap())
         .await

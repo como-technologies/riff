@@ -1916,7 +1916,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// `job` of a wave, says its events on `out`, and waits for its end.
     /// A [`Then::Stop`] on `from` stops it. It gives the record of the
     /// session. A session with a terminal takes no slot: it says
-    /// [`Say::Done`] when its container runs.
+    /// [`Say::Done`] when its container runs. The container gets the
+    /// caps of the host now (01M56Q4AQ86V99RC8CA1KGCMSZ): a later change
+    /// of the limit does not change it.
     pub(crate) async fn launch(
         self: &Arc<Self>,
         start: Start,
@@ -1937,6 +1939,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             me,
             terminal,
         } = start;
+        self.room.limit().caps(&mut spec);
         let name = spec.name.clone();
         let record = Record {
             live: Live {
@@ -3137,6 +3140,45 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// The caps of a container: `--cpus`, `CARGO_BUILD_JOBS` and
+    /// `--memory`, as the daemon gives them to the runtime.
+    fn caps(spec: &SessionSpec) -> (u32, Vec<&str>, &str) {
+        let jobs = spec
+            .env
+            .iter()
+            .filter_map(|e| match e {
+                Env::Value(name, value) if name == "CARGO_BUILD_JOBS" => Some(value.as_str()),
+                _ => None,
+            })
+            .collect();
+        (spec.cpus, jobs, spec.memory.as_str())
+    }
+
+    #[tokio::test]
+    async fn each_new_container_gets_the_caps_of_the_host_and_keeps_them() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (_first, first) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let spec = here.fake.spec(&first).unwrap();
+        assert_eq!(caps(&spec), (8, vec!["8"], "8g"));
+
+        let change = crate::room::Change {
+            cpus: Some(6),
+            memory_gb: Some(12),
+            ..crate::room::Change::default()
+        };
+        crate::room::set(&here.dir, change).unwrap();
+        let (_second, second) = here
+            .started(here.start("riff-issue-13-2b3c4d5e", "issue-13"))
+            .await;
+        let spec = here.fake.spec(&second).unwrap();
+        assert_eq!(caps(&spec), (6, vec!["6"], "12g"));
+        // The session that runs keeps the caps of its start.
+        let spec = here.fake.spec(&first).unwrap();
+        assert_eq!(caps(&spec), (8, vec!["8"], "8g"));
     }
 
     #[tokio::test]

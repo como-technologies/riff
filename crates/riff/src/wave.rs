@@ -1622,6 +1622,7 @@ mod tests {
             Limit {
                 sessions,
                 floor_gb: 8,
+                ..Limit::default()
             }
             .write(&dir)
             .unwrap();

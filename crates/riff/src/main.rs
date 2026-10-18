@@ -1270,6 +1270,10 @@ enum DaemonCommand {
     /// limit live, and the free memory is at or above the floor. Each
     /// other start waits for room, in order. With no flag, it shows the
     /// limit. The default is 3 sessions and a floor of 8 GB.
+    ///
+    /// The limit also holds the caps of each new container: its CPUs,
+    /// which are also its build jobs, and its memory. The default is 8
+    /// CPUs and 8 GB. A session that runs keeps its caps.
     Limit {
         /// The most live sessions.
         #[arg(long)]
@@ -1277,6 +1281,12 @@ enum DaemonCommand {
         /// The floor of free memory for a start, in GB.
         #[arg(long, value_name = "GB")]
         floor: Option<u64>,
+        /// The CPUs and the build jobs of each new container, 1 or more.
+        #[arg(long, value_name = "N")]
+        cpus: Option<u32>,
+        /// The memory cap of each new container, in GB, 1 or more.
+        #[arg(long, value_name = "GB")]
+        memory: Option<u64>,
     },
     /// Remove the folders of the sessions whose work is over, now
     ///
@@ -2763,8 +2773,19 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
             }
             Ok(())
         }
-        Some(DaemonCommand::Limit { sessions, floor }) => {
-            let limit = riff::room::set(&riff::daemon::dir()?, *sessions, *floor)?;
+        Some(DaemonCommand::Limit {
+            sessions,
+            floor,
+            cpus,
+            memory,
+        }) => {
+            let change = riff::room::Change {
+                sessions: *sessions,
+                floor_gb: *floor,
+                cpus: *cpus,
+                memory_gb: *memory,
+            };
+            let limit = riff::room::set(&riff::daemon::dir()?, change)?;
             println!("{}", riff::text::daemon_limit(&limit));
             Ok(())
         }
