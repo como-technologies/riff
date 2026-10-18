@@ -5996,11 +5996,14 @@ part when they merge.
   that the clear deleted.
 - **01M588JW2KS6EVX1SE49686FQ7** `riff daemon cache` and `riff daemon
   status` show the size on the disk of each file in the volume
-  `riff-sccache`. When the person cannot read a folder of the volume
-  (rootless podman), riff reads it with `podman unshare`. When riff
-  cannot read it, it says so, and never shows 0. `riff daemon cache
-  --clear` also deletes with `podman unshare` when the person may not,
-  and fails with the reason when it cannot delete.
+  `riff-sccache`, with 1GB = 1024³ bytes: the unit of the most size,
+  which `sccache` reads as 1024³ bytes for each `G`. `podman system
+  df -v` counts 1GB as 1000³ bytes, so its number is about 7% larger,
+  for example 8.3GB for 7.7GB. When the person cannot read a folder of
+  the volume (rootless podman), riff reads it with `podman unshare`.
+  When riff cannot read it, it says so, and never shows 0. `riff
+  daemon cache --clear` also deletes with `podman unshare` when the
+  person may not, and fails with the reason when it cannot delete.
 - **01M57840K7SNPS243CYMYNYVFX** `riff daemon mcp` shows the MCP
   servers of each new container session of the host. The default is
   `riff` only. `riff daemon mcp add NAME` copies the server NAME from

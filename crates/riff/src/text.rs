@@ -5098,6 +5098,19 @@ pub fn temp_removed(dir: &std::path::Path) -> String {
 /// assert_eq!(size_words(5 * 1024 * 1024), "5MB");
 /// assert_eq!(size_words(2_684_354_560), "2.5GB");
 /// ```
+///
+/// 1MB is 1024² bytes, and 1GB is 1024³ bytes: the unit of the most
+/// size of the compile cache, which `sccache` reads as 1024³ bytes for
+/// each `G`. `podman system df -v` counts 1GB as 1000³ bytes. So for
+/// one byte count, the number of podman is about 7% larger
+/// (01M588JW2KS6EVX1SE49686FQ7):
+///
+/// ```
+/// // The volume riff-sccache on thelio: podman system df -v shows 8.281GB.
+/// let bytes = 8_280_858_436_u64;
+/// assert_eq!(riff::text::size_words(bytes), "7.7GB"); // 1GB = 1024³ bytes
+/// assert_eq!(format!("{:.1}GB", bytes as f64 / 1e9), "8.3GB"); // 1GB = 1000³ bytes
+/// ```
 pub fn size_words(bytes: u64) -> String {
     const MB: u64 = 1024 * 1024;
     const GB: u64 = 1024 * MB;

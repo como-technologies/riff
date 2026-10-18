@@ -241,14 +241,19 @@ pub fn folder_of(out: &str) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
-/// The size of the files in the folder `dir` now, in bytes: the size
-/// that `podman system df -v` shows for the volume
-/// (01M588JW2KS6EVX1SE49686FQ7). It reads the folder as the person
-/// first. In rootless podman, a folder of the volume can belong to a
-/// user of the container: then the person cannot read it, and riff
-/// reads it with `podman unshare du`, as the root of the user
-/// namespace. It is an error when riff cannot read it either way: riff
-/// never shows 0 for a folder that it cannot read.
+/// The size of the files in the folder `dir` now, in bytes: the size on
+/// the disk of each file (01M588JW2KS6EVX1SE49686FQ7). riff shows it
+/// with 1GB = 1024³ bytes ([`crate::text::size_words`]), the unit of the
+/// most size: `sccache` reads `40G` as 40 × 1024³ bytes. `podman system
+/// df -v` counts 1GB as 1000³ bytes, so its number for the volume is
+/// about 7% larger, for example 8.3GB for 7.7GB.
+///
+/// It reads the folder as the person first. In rootless podman, a
+/// folder of the volume can belong to a user of the container: then
+/// the person cannot read it, and riff reads it with `podman unshare
+/// du`, as the root of the user namespace. It is an error when riff
+/// cannot read it either way: riff never shows 0 for a folder that it
+/// cannot read.
 ///
 /// ```
 /// let dir = tempfile::tempdir()?;

@@ -1342,11 +1342,14 @@ riff daemon cache
 ```
 
 `riff daemon status` shows the same line. The size is the size on the
-disk of each file in the folder of the volume, the same as the size
-that `podman system df -v` shows. In rootless podman, the folders of
-the volume can belong to a user of the container. Then riff reads them
-with `podman unshare du`. When riff cannot read the size, the line
-says so and gives the reason.
+disk of each file in the folder of the volume. riff counts 1GB as
+1024³ bytes, the same as the most size: sccache reads `40G` as 40 ×
+1024³ bytes. `podman system df -v` counts 1GB as 1000³ bytes, so its
+number is about 7% larger: for example 8.3GB where riff shows 7.7GB.
+
+In rootless podman, the folders of the volume can belong to a user of
+the container. Then riff reads them with `podman unshare du`. When
+riff cannot read the size, the line says so and gives the reason.
 
 To set the most size, for example 20G:
 
