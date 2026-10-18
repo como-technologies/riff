@@ -441,6 +441,14 @@ async fn top_keeps_the_board_when_gh_fails_too() {
     const WAVE: &str = "Wave 3 (como-technologies/riff)";
     let mut gate = Gate::start().await;
     session(&gate.direct(), "b2").await;
+    // A paused riff has no group `free` (01M588G5K0B58QXD35AA5MTZ6E).
+    let b2: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2"
+        .parse()
+        .unwrap();
+    gate.direct()
+        .set_riff(&b2, riff_core::wire::RiffState::Running)
+        .await
+        .unwrap();
     let bin = bin();
     gh_that_fails_after_one_call(bin.path());
     let calls = bin.path().join("gh.calls");

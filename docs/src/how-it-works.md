@@ -1391,6 +1391,7 @@ wave with its repository, one line for the `free`
 items, one for the `claimed` items, and one for the items in `verify`.
 An item is in `verify` when a session verifies it, and when no session
 holds it and its pull request waits for a verify or for the merge.
+
 Under the boards, a tree shows each person, the hosts of the person,
 the repositories on each host, and the sessions in each repository:
 
@@ -1441,6 +1442,10 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
            monitoring work for 1h
 ```
 
+- When the riff or the repository is paused, nobody can claim its
+  items. Then the wave line of the board ends with `paused`, and the
+  board has no `free` line, for example
+  `Wave 9: Cleanup 2 (como-technologies/strata)  paused`.
 - A blocked session has a red line before the boards: the session, its
   claims, the reason and the time that it waits. When the lead gave no
   answer, the line says so. See [A blocked session](#a-blocked-session).

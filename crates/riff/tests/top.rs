@@ -616,11 +616,52 @@ async fn an_item_with_no_claim_and_an_open_pull_request_is_in_verify() {
         ),
     );
     live(&server, "pangolin", "a1").await;
+    for args in [&["lead"][..], &["resume", "--riff"]] {
+        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
+    }
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(
         top.contains("\n\nWave 3 (como-technologies/riff)\n  free: #14 #15\n  verify: #12 #13\n\n"),
+        "{top}"
+    );
+}
+
+/// The board of a paused repository ends its wave line with `paused`
+/// and has no group `free`: nobody can claim its items
+/// (01M588G5K0B58QXD35AA5MTZ6E).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_board_of_a_paused_repository_has_no_free_items() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    let issue =
+        |n: u64| format!(r#"{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}}}"#);
+    script(
+        bin.path(),
+        "gh",
+        &format!(
+            "case \"$1\" in\n  pr) echo '[]' ;;\n  *) echo '[{}, {}]' ;;\nesac",
+            issue(12),
+            issue(13),
+        ),
+    );
+    live(&server, "pangolin", "a1").await;
+    for args in [
+        &["lead"][..],
+        &["resume", "--riff"],
+        &["claim", "issue-12"],
+        &["pause"],
+    ] {
+        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
+    }
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    assert!(
+        top.contains("\n\nWave 3 (como-technologies/riff)  paused\n  claimed: #12\n\n"),
         "{top}"
     );
 }
