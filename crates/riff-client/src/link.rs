@@ -47,7 +47,7 @@
 //! | Outcome | Examples | What the link does |
 //! |---|---|---|
 //! | reply | Each 2xx of `riff-server` | It gives the reply. |
-//! | fault | No connect. A cut before the end of the reply. No reply in the limit of the try. A 5xx or 429 with no build header: a reply of the front end. A 503 of `riff-server`. | A new try after a wait, while the budget lasts. |
+//! | fault | No connect. A cut before the end of the reply. No reply in the limit of the try. A 5xx or 429 with no build header: a reply of the front end, for example the 500 or 429 of Cloud Run with "no available instance" at a deploy (01M56WNP3TEGH98B9EAM4H62P4). A 503 of `riff-server`. | A new try after a wait, while the budget lasts. |
 //! | refusal | Each other reply of `riff-server`. A build that riff cannot talk to. | No new try. |
 //!
 //! - A 401 to a token is the one exception: the link gets a new token
@@ -342,7 +342,7 @@ pub enum Outcome {
 /// use riff_client::link::{Outcome, outcome};
 ///
 /// assert_eq!(outcome(StatusCode::OK, true), Outcome::Reply);
-/// for front in [502, 503, 504, 429] {
+/// for front in [500, 502, 503, 504, 429] {
 ///     let status = StatusCode::from_u16(front).unwrap();
 ///     assert_eq!(outcome(status, false), Outcome::Fault, "{status}");
 /// }

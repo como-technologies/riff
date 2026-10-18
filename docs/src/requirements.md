@@ -4658,6 +4658,20 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   on quietly. A reply with another status and no build header is
   still a version error. Its text names the status and the URL of the
   reply.
+- **01M56WNP3TEGH98B9EAM4H62P4** At a deploy, Cloud Run can send calls
+  to the old instance for a few seconds after it exits. Cloud Run then
+  replies 500 or 429 with the text "The request was aborted because
+  there was no available instance", and no build header. Each client
+  of `riff-server` tries the call again, as after a 503
+  (01M3QCMJ9F1GRTRRSB4AW9TC3D): each command, `riff mcp`, `riff watch`,
+  `riff tail`, `riff chat` and the daemon. The status line shows
+  `(not in the riff)` for one refresh, as after a 503. `riff server`
+  and `riff update` take that reply as a server that does not answer,
+  not as a server with no build.
+- **01M56WQBZ629ENP5E12RN3WYDH** The check after a deploy counts the
+  500s of `riff-server` and the replies of Cloud Run with "no available
+  instance" apart. A 500 of `riff-server` is a bug. A reply of Cloud
+  Run in the hand-over is not.
 - **01M3MNVT9TYNXZ8V845BHKQADV** Replaced by
   01M3MX1E8M9TKBN90P4DYKH3H8.
 - **01M3MX1E8M9TKBN90P4DYKH3H8** With another build that it can talk

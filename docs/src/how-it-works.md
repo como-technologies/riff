@@ -4118,6 +4118,15 @@ At an instance change, `riff` sees this:
   it took the lease. `riff` tries each call again, and shows
   `(waits for riff-server…)` (see
   [Wait while the server starts](#wait-while-the-server-starts)).
+- For a few seconds after the old instance exits, Cloud Run can still
+  send a call to it. Cloud Run then replies 500 or 429 by itself, with
+  the text `The request was aborted because there was no available
+  instance`. That reply names no build, so `riff` knows that it comes
+  from Cloud Run, and tries the call again as after a 503. Each
+  command, `riff mcp`, `riff watch`, `riff tail`, `riff chat` and the
+  daemon do this. The status line shows `(not in the riff)` for one
+  refresh. `riff server` and `riff update` say that the server does not
+  answer: run them again.
 - At a deploy, Cloud Run can start a second instance of the old
   revision while the new instance waits. The lease holds the number of
   the revision of its instance, so the second old instance does not
