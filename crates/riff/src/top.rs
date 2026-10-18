@@ -10,8 +10,10 @@
 //! [`REFRESH`] and after each message of the thread.
 //!
 //! `riff top` shows the sessions of riff-server only. It asks no riff
-//! daemon, so it shows no session of another daemon
-//! (01M53NGW6F5HP1DZ9QRGP50MGT).
+//! daemon (01M53NGW6F5HP1DZ9QRGP50MGT). The daemon of each host sends
+//! its facts to riff-server: `riff top` shows them under the row of the
+//! host, with the container sessions of that daemon, their item, phase
+//! and last step ([`riff_client::daemons`], 01M57D3F9SWMKP22WNRPRY3X5T).
 //!
 //! `riff top` only draws the models of `riff-client`
 //! (01M56Y8KAPHJMSK89ZW1PA8B0E): the sessions model ([`Sessions`]) with
@@ -941,12 +943,22 @@ impl Top<'_> {
             "│  "
         };
         let more = format!("{under}{bar}");
+        let daemons = riff_client::daemons::hosts(self.sessions.on_server());
         for row in chain.iter().filter(|r| r.level == Level::Host) {
             let user = row.sessions.first().map(|s| s.uri.who().user());
             let machine = self
                 .machines
                 .iter()
                 .find(|m| Some(m.user.as_str()) == user && m.host == row.key);
+            // The facts of the daemon of the host (01M57D3F9SWMKP22WNRPRY3X5T).
+            let daemon = daemons
+                .iter()
+                .find(|d| Some(d.user.as_str()) == user && d.host == row.key);
+            if let Some(d) = daemon {
+                for parts in text::daemon_facts(&d.facts) {
+                    lines.push(Line::new(more.clone(), parts));
+                }
+            }
             match machine {
                 Some(m) => {
                     lines.push(Line::new(more.clone(), numbers(&m.status)));
@@ -956,7 +968,7 @@ impl Top<'_> {
                 }
                 // A machine with workers that tells no numbers
                 // (01M515KSZHC9Y2XQSS73PZ27R0).
-                None if row.sessions.iter().any(|s| s.live && s.worker) => {
+                None if daemon.is_none() && row.sessions.iter().any(|s| s.live && s.worker) => {
                     let none = (text::NO_NUMBERS.to_owned(), MUTED);
                     lines.push(Line::new(more.clone(), vec![none]));
                 }
@@ -1240,6 +1252,65 @@ mod tests {
         assert!(under("kadomony").contains("m1"), "{text}");
         assert!(under("heron").contains("w3"), "{text}");
         assert_eq!(text.matches(text::NO_NUMBERS).count(), 1, "{text}");
+    }
+
+    /// 01M57D3F9SWMKP22WNRPRY3X5T: the facts of the daemon of each of two
+    /// hosts go under the row of that host, and the host gets no `no
+    /// numbers`.
+    #[test]
+    fn the_facts_of_each_daemon_go_under_its_host() {
+        use riff_client::daemons::{Facts, Session};
+        use riff_client::sessions::Phase;
+        use riff_core::wire::MachineInfo;
+
+        let daemon = |uri: &str, facts: Facts| SessionInfo {
+            machine: Some(MachineInfo {
+                numbers: facts.line(),
+                age_secs: 5,
+            }),
+            ..info(uri, SessionState::Idle)
+        };
+        let session = |item: &str| Session {
+            name: format!("riff-{item}-1a2b3c4d"),
+            item: item.into(),
+            phase: Phase::Works,
+            last: format!("> Bash: test {item}"),
+        };
+        let facts = |limit: u32, item: &str| Facts {
+            build: "3.1.0".into(),
+            limit,
+            sessions: vec![session(item)],
+            ..Facts::default()
+        };
+        let sessions = [
+            daemon("riff://mike@a/o/riff?session=d1", facts(2, "issue-1")),
+            SessionInfo {
+                worker: true,
+                ..info("riff://mike@a/o/riff?session=w1", SessionState::Busy)
+            },
+            daemon("riff://mike@b/o/riff?session=d2", facts(5, "issue-2")),
+        ];
+        let text = shown_with(&sessions, &BTreeMap::new(), &Show::default(), &[]);
+        let rows = tree(&text);
+        let at = |host: &str| {
+            rows.iter()
+                .position(|r| r.contains(&format!("─ {host} ")))
+                .unwrap()
+        };
+        let (a, b) = (at("a"), at("b"));
+        let of_a = rows[a..b].join("\n");
+        let of_b = rows[b..].join("\n");
+        assert!(of_a.contains("daemon 3.1.0  sessions 1/2"), "{text}");
+        assert!(
+            of_a.contains("riff-issue-1-1a2b3c4d  issue-1  works  > Bash: test issue-1"),
+            "{text}"
+        );
+        assert!(of_b.contains("daemon 3.1.0  sessions 1/5"), "{text}");
+        assert!(
+            of_b.contains("issue-2") && !of_b.contains("issue-1"),
+            "{text}"
+        );
+        assert!(!text.contains(text::NO_NUMBERS), "{text}");
     }
 
     /// The lines of the tree: the last part of the text.

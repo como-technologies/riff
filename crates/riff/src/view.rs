@@ -794,8 +794,50 @@ pub fn who(
             .collect();
         out.push_str(&table(&head, &rows));
     }
+    out.push_str(&hosts(sessions));
     for action in actions {
         let _ = writeln!(out, "{action}");
+    }
+    out
+}
+
+/// The part `Hosts` of `riff who`: the facts of the daemon of each host
+/// in `sessions` (01M57D3F7FXTPZB3M72Z1DQ1T7), or nothing with no
+/// facts.
+///
+/// ```
+/// use riff_client::daemons::Facts;
+/// use riff_core::wire::{MachineInfo, SessionInfo};
+///
+/// let facts = Facts { build: "3.1.0".into(), limit: 4, floor_gb: 8, ..Facts::default() };
+/// let mut s: SessionInfo = serde_json::from_value(serde_json::json!({
+///     "uri": "riff://mike@thelio/o/r?session=d1", "live": true,
+/// }))?;
+/// s.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 12 });
+/// let text = riff::view::hosts(&[s]);
+/// let plain = anstream::adapter::strip_str(&text).to_string();
+/// assert!(plain.starts_with("\nHosts:\nmike@thelio (12s ago)\n  daemon 3.1.0  sessions 0/4  floor 8GB\n"), "{plain}");
+/// assert_eq!(riff::view::hosts(&[]), "");
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+pub fn hosts(sessions: &[SessionInfo]) -> String {
+    let found = riff_client::daemons::hosts(sessions);
+    if found.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\nHosts:\n");
+    for host in found {
+        let _ = writeln!(
+            out,
+            "{}@{} ({} ago)",
+            styled(BOLD, &safe(&host.user)),
+            styled(BOLD, &safe(&host.host)),
+            text::ago(host.age_secs)
+        );
+        for parts in text::daemon_facts(&host.facts) {
+            let line: Vec<String> = parts.iter().map(|(t, style)| styled(*style, t)).collect();
+            let _ = writeln!(out, "  {}", line.join("  "));
+        }
     }
     out
 }

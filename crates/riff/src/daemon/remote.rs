@@ -66,6 +66,7 @@ use riff_core::selector::Selector;
 use riff_core::wire::{Kind, SessionInfo, Status};
 use serde::{Deserialize, Serialize};
 
+use super::facts::{News, Said, Short};
 use super::{Ask, Say};
 use crate::room::Change;
 use crate::text;
@@ -77,9 +78,10 @@ pub const SERVED_FILE: &str = "served.json";
 /// The start of the status of the session of a daemon.
 pub const PREFIX: &str = "daemon host:";
 
-/// How often the daemon sets its status again, and reads the requests
-/// that it did not read.
-pub const REFRESH: Duration = Duration::from_secs(30);
+/// How often the daemon sets its status again, sends its facts
+/// ([`super::facts`]), and reads the requests that it did not read. A
+/// test sets [`super::facts::EVERY_VAR`].
+pub const REFRESH: Duration = riff_client::daemons::EVERY;
 
 /// The longest wait of riff for the reply of the daemon of another
 /// host. A `wave run` can pull the session image first.
@@ -616,8 +618,10 @@ async fn events(dir: &Path, name: &str) -> Result<String> {
 
 /// The session of the daemon in the folder `dir` on riff-server for
 /// the repository of `served`, until the task ends. It sets its status,
-/// keeps the session alive, and answers each request.
-pub async fn serve(dir: PathBuf, served: Served) {
+/// keeps the session alive, and answers each request. Each
+/// [`super::facts::every`] it sends the facts of the host, and the notes
+/// for the lead in `news` ([`super::facts`]).
+pub async fn serve(dir: PathBuf, served: Served, news: News) {
     let repo = served.wave.repo.clone();
     let session = match Session::new(&dir, &served) {
         Ok(session) => session,
@@ -636,20 +640,28 @@ pub async fn serve(dir: PathBuf, served: Served) {
     });
     let _alive = Abort(alive);
     let mut wakes = Box::pin(follow(|| session.api.watch(&session.me), STREAM_RETRY));
-    let mut refresh = tokio::time::interval(REFRESH);
+    let mut refresh = tokio::time::interval(super::facts::every());
+    let mut short = Short::default();
     loop {
-        tokio::select! {
+        let look = tokio::select! {
             wake = wakes.next() => {
                 if wake.is_none() {
                     return;
                 }
+                false
             }
-            _ = refresh.tick() => {}
-        }
+            _ = refresh.tick() => true,
+        };
         if let Err(e) = session.set_status().await {
             eprintln!("riff daemon: {repo}: cannot set the status: {e:#}");
         }
         session.answer().await;
+        if look {
+            session.send_facts(&mut short).await;
+            for note in news.take(&repo) {
+                session.note_lead(&note).await;
+            }
+        }
     }
 }
 
@@ -681,6 +693,46 @@ impl Session {
             api,
             me,
         })
+    }
+
+    /// Sends the facts of the host as the numbers of the machine of the
+    /// session, and the note of a change of the sign-in of `claude` to
+    /// the lead (01M57D3F50347RD8ED79KEA9V7, 01M57D3FC5PB5EQ6Y38Y5R2DBB).
+    async fn send_facts(&self, short: &mut Short) {
+        let repo = &self.served.wave.repo;
+        let facts = match super::facts::look(&self.dir, &self.served.wave, &self.api).await {
+            Ok(facts) => facts,
+            Err(e) => {
+                eprintln!("riff daemon: {repo}: cannot read the facts: {e:#}");
+                return;
+            }
+        };
+        if let Err(e) = self.api.machine(&self.me, &facts.line()).await {
+            eprintln!("riff daemon: {repo}: cannot send the facts: {e:#}");
+        }
+        let host = &self.served.wave.host;
+        let note = match short.look(&facts.claude) {
+            None => return,
+            Some(Said::Short(minutes)) => text::daemon_claude_short(host, minutes),
+            Some(Said::Back) => text::daemon_claude_back(host),
+        };
+        println!("riff daemon: {note}");
+        self.note_lead(&note).await;
+    }
+
+    /// Posts `note` to the lead of the user in the repository, as a note
+    /// in the repository thread. It wakes nobody.
+    async fn note_lead(&self, note: &str) {
+        let Some(thread) = self.me.default_thread() else {
+            return;
+        };
+        let to = [Selector::lead(self.me.who().user(), &thread.to_string())];
+        let post = self
+            .api
+            .post(&self.me, Some(&thread), &to, note, Kind::Note);
+        if let Err(e) = post.await {
+            eprintln!("riff daemon: cannot tell the lead: {e:#}");
+        }
     }
 
     async fn set_status(&self) -> Result<()> {

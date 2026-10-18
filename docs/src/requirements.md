@@ -5739,6 +5739,33 @@ part when they merge.
   session of the daemon: the daemon frees its item on riff-server at
   once, ends its session there, then stops its container. It refuses
   the lead.
+- **01M57D3F50347RD8ED79KEA9V7** Each 30 seconds, each session of the
+  daemon of a host sends the facts of the host to riff-server, as the
+  numbers of its machine: `daemon facts: ` and one line of JSON, at
+  most 4000 characters. The facts are the riff build, the limit and
+  the floor, the live sessions with their item, phase and last step,
+  the starts that wait, the state of each wave, the load, the free
+  memory, the disk, the version of podman, the session image of the
+  repository, and the sign-ins of riff, `gh` and `claude`. Facts older
+  than 180 seconds count as none.
+- **01M57D3F7FXTPZB3M72Z1DQ1T7** `riff who` ends with the part `Hosts`:
+  the facts of the daemon of each host, with their age.
+- **01M57D3F9SWMKP22WNRPRY3X5T** `riff top` shows the facts of the
+  daemon of a host under the row of that host, with the container
+  sessions of that daemon. A host with facts gets no `no numbers`.
+- **01M57D3FC5PB5EQ6Y38Y5R2DBB** When the sign-in of `claude` on a host
+  has less than 2 hours left, or is missing, the daemon posts one note
+  to the lead with the step for the person. It posts no new note at
+  each look. When the sign-in has 2 hours or more again, it posts one
+  note.
+- **01M57D3FEJPHD962GW0H82N8E6** When a sweep of the daemon keeps a
+  folder whose work is over, because its clone holds work that is not
+  on `origin`, the daemon posts one note to the lead of its repository.
+  It posts a new note only when the reason changes.
+- **01M57D3FGV57W96A7SWTEFRCGW** The facts give the minutes left of the
+  sign-in of `claude`. The sign-ins of riff and `gh` refresh or have no
+  end: the facts say `on` or `off` for each, or `?` when riff cannot
+  read it.
 
 ### riff relay
 

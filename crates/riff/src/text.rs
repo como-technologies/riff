@@ -6073,6 +6073,208 @@ pub fn daemon_protocol(theirs: u32, ours: u32) -> String {
 pub const DAEMON_NO_HELLO: &str =
     "The riff daemon cannot read the first line: it is not a hello of riff.";
 
+/// The note to the lead: the sign-in of `claude` on `host` has
+/// `minutes` left, less than 2 hours, or 0 when it ended or is missing
+/// (01M57D3FC5PB5EQ6Y38Y5R2DBB).
+///
+/// ```
+/// let note = riff::text::daemon_claude_short("thelio", 100);
+/// assert!(note.starts_with("The sign-in of claude on thelio ends in 100 minutes."), "{note}");
+/// assert!(note.contains("run claude on thelio"), "{note}");
+/// assert!(riff::text::daemon_claude_short("thelio", 0).contains("ended, or is missing"));
+/// ```
+pub fn daemon_claude_short(host: &str, minutes: i64) -> String {
+    let host = safe(host);
+    let state = match minutes {
+        0 => "ended, or is missing".to_owned(),
+        n => format!("ends in {n} minutes"),
+    };
+    format!(
+        "The sign-in of claude on {host} {state}. The daemon of {host} starts no session with \
+         less than {} minutes left. Ask the person to run claude on {host}, and to sign in when \
+         claude asks.",
+        crate::run::MIN_MINUTES
+    )
+}
+
+/// The note to the lead: the sign-in of `claude` on `host` has 2 hours
+/// or more left again (01M57D3FC5PB5EQ6Y38Y5R2DBB).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_claude_back("thelio"),
+///     "The sign-in of claude on thelio is back: it has 2 hours or more left."
+/// );
+/// ```
+pub fn daemon_claude_back(host: &str) -> String {
+    format!(
+        "The sign-in of claude on {} is back: it has 2 hours or more left.",
+        safe(host)
+    )
+}
+
+/// The note to the lead: the sweep kept a folder whose clone holds work
+/// that is not on `origin`, with the `line` of the sweep
+/// (01M57D3FEJPHD962GW0H82N8E6).
+///
+/// ```
+/// assert_eq!(riff::text::daemon_kept_work("riff kept the folder /s/x."), "riff daemon: riff kept the folder /s/x.");
+/// ```
+pub fn daemon_kept_work(line: &str) -> String {
+    format!("riff daemon: {line}")
+}
+
+/// A sign-in in the facts of a host (01M57D3FGV57W96A7SWTEFRCGW).
+///
+/// ```
+/// use riff_client::daemons::Sign;
+/// use riff::text::sign_word;
+///
+/// assert_eq!(sign_word(&Sign::On), "on");
+/// assert_eq!(sign_word(&Sign::Off), "off");
+/// assert_eq!(sign_word(&Sign::Unknown), "?");
+/// assert_eq!(sign_word(&Sign::Left { minutes: 312 }), "5h12m left");
+/// assert_eq!(sign_word(&Sign::Left { minutes: 45 }), "45m left");
+/// assert_eq!(sign_word(&Sign::Left { minutes: -3 }), "ended");
+/// ```
+pub fn sign_word(sign: &riff_client::daemons::Sign) -> String {
+    use riff_client::daemons::Sign;
+    match sign {
+        Sign::On => "on".into(),
+        Sign::Off => "off".into(),
+        Sign::Unknown => "?".into(),
+        Sign::Left { minutes } if *minutes <= 0 => "ended".into(),
+        Sign::Left { minutes } if *minutes < 60 => format!("{minutes}m left"),
+        Sign::Left { minutes } => format!("{}h{:02}m left", minutes / 60, minutes % 60),
+    }
+}
+
+/// The lines of the facts of the daemon of a host in `riff who` and
+/// `riff top` (01M57D3F7FXTPZB3M72Z1DQ1T7, 01M57D3F9SWMKP22WNRPRY3X5T):
+/// each line is its parts, each with its style. A fact that needs the
+/// person has the warning style: no podman, no session image, a
+/// sign-in that is off or short, low memory or disk.
+///
+/// ```
+/// use riff_client::daemons::{Facts, Image, Session, Sign, Wave};
+/// use riff_client::machines::{Disk, Machine};
+/// use riff_client::sessions::Phase;
+///
+/// let facts = Facts {
+///     build: "3.1.0 d2ae080 2026-10-18T11:36:06Z".into(),
+///     limit: 4,
+///     floor_gb: 8,
+///     sessions: vec![Session {
+///         name: "riff-issue-12-1a2b3c4d".into(),
+///         item: "issue-12".into(),
+///         phase: Phase::Works,
+///         last: "> Bash: just check".into(),
+///     }],
+///     waiting: vec!["riff-issue-13-2b3c4d5e".into()],
+///     waves: vec![Wave { repo: "o/r".into(), word: "started issue-12".into() }],
+///     machine: Some(Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
+///     disk: Some(Disk { free_gb: 200, total_gb: 455 }),
+///     podman: Some("5.2.1".into()),
+///     image: Some(Image { name: "ghcr.io/o/riff-session".into(), here: true }),
+///     riff: Sign::On,
+///     gh: Sign::On,
+///     claude: Sign::Left { minutes: 90 },
+///     ..Facts::default()
+/// };
+/// let plain: Vec<String> = riff::text::daemon_facts(&facts)
+///     .into_iter()
+///     .map(|parts| parts.into_iter().map(|(t, _)| t).collect::<Vec<_>>().join("  "))
+///     .collect();
+/// assert_eq!(
+///     plain,
+///     [
+///         "daemon 3.1.0 d2ae080  sessions 1/4  floor 8GB",
+///         "load 1.5/16  24GB avail  disk 200GB free (43%)  podman 5.2.1  image here",
+///         "riff on  gh on  claude 1h30m left",
+///         "wave o/r: started issue-12",
+///         "riff-issue-12-1a2b3c4d  issue-12  works  > Bash: just check",
+///         "waits: riff-issue-13-2b3c4d5e",
+///     ]
+/// );
+/// let warned: Vec<String> = riff::text::daemon_facts(&facts)
+///     .into_iter()
+///     .flatten()
+///     .filter(|(_, style)| *style == riff::style::WARNING)
+///     .map(|(t, _)| t)
+///     .collect();
+/// assert_eq!(warned, ["claude 1h30m left"]);
+/// let bare = riff::text::daemon_facts(&Facts { build: "3.1.0".into(), ..Facts::default() });
+/// let words: Vec<&str> = bare[1..3].iter().flatten().map(|(t, _)| t.as_str()).collect();
+/// assert_eq!(words, ["no podman", "no session image", "riff ?", "gh ?", "claude ?"]);
+/// ```
+pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, anstyle::Style)>> {
+    let plain = anstyle::Style::new;
+    let warn = |over: bool| if over { WARNING } else { plain() };
+    // The version and the commit of the build, with no time.
+    let build: Vec<&str> = facts.build.split_whitespace().take(2).collect();
+    let head = vec![
+        (format!("daemon {}", safe(&build.join(" "))), plain()),
+        (
+            format!("sessions {}/{}", facts.runs(), facts.limit),
+            warn(facts.runs() > facts.limit as usize),
+        ),
+        (format!("floor {}GB", facts.floor_gb), plain()),
+    ];
+    let mut host = Vec::new();
+    if let Some(m) = &facts.machine {
+        host.push((format!("load {:.1}/{}", m.load, m.cores), warn(m.busy())));
+        let floor = u32::try_from(facts.floor_gb).unwrap_or(u32::MAX);
+        host.push((format!("{}GB avail", m.avail_gb), warn(m.low(floor))));
+    }
+    if let Some(d) = &facts.disk {
+        host.push((
+            format!("disk {}GB free ({}%)", d.free_gb, d.percent()),
+            warn(d.tight()),
+        ));
+    }
+    host.push(match &facts.podman {
+        Some(version) => (format!("podman {}", safe(version)), plain()),
+        None => ("no podman".to_owned(), WARNING),
+    });
+    host.push(match &facts.image {
+        Some(image) if image.here => ("image here".to_owned(), plain()),
+        Some(_) => ("image missing".to_owned(), WARNING),
+        None => ("no session image".to_owned(), WARNING),
+    });
+    let sign = |name: &str, sign: &riff_client::daemons::Sign| {
+        (format!("{name} {}", sign_word(sign)), warn(sign.short()))
+    };
+    let signs = vec![
+        sign("riff", &facts.riff),
+        sign("gh", &facts.gh),
+        sign("claude", &facts.claude),
+    ];
+    let mut lines = vec![head, host, signs];
+    for wave in &facts.waves {
+        let line = format!("wave {}: {}", safe(&wave.repo), safe(&wave.word));
+        lines.push(vec![(line, plain())]);
+    }
+    for s in &facts.sessions {
+        let mut parts = vec![
+            (safe(&s.name), plain()),
+            (safe(&s.item), plain()),
+            (phase_word(s.phase).to_owned(), plain()),
+        ];
+        if !s.last.is_empty() {
+            parts.push((safe(&s.last), MUTED));
+        }
+        lines.push(parts);
+    }
+    if facts.more > 0 {
+        lines.push(vec![(format!("{} more sessions", facts.more), MUTED)]);
+    }
+    if !facts.waiting.is_empty() {
+        let names: Vec<String> = facts.waiting.iter().map(|n| safe(n)).collect();
+        lines.push(vec![(format!("waits: {}", names.join(", ")), plain())]);
+    }
+    lines
+}
+
 /// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S,
 /// 01M501PADKZNRHBZD9XPMJGW06).
 ///

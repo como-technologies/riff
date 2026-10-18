@@ -34,6 +34,7 @@
 //! | [`threads`] | The threads model: the lines of `riff read`, `riff tail` and `riff chat`. |
 //! | [`waves`] | The waves model: the board of `riff top` and the waves of `riff wave list`. |
 //! | [`machines`] | The machines model: the numbers of each host in `riff top` and `riff workers`. |
+//! | [`daemons`] | The daemons model: the facts of the riff daemon of each host in `riff who` and `riff top`. |
 //!
 //! # What a UI gives
 //!
@@ -75,6 +76,7 @@
 //! checks it. `riff-server` does not use this crate.
 
 pub mod api;
+pub mod daemons;
 pub mod device;
 pub mod files;
 pub mod link;
