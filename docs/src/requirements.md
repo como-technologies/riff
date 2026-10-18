@@ -7680,6 +7680,61 @@ items of Wave C that end riff-server in the Backlog
   of riff go. Mike decides when. Superseded by Wave C
   (01M51R8HK0VPBD4W6CKACWC1WW).
 
+### The release commands
+
+- **01M58B0HZYMAK1B2AJMWKHCXG0** `riff release cut X.Y.Z` makes the
+  release pull request from `origin/main`. A lead or a worker runs it.
+  It sets X.Y.Z in `Cargo.toml`, in the `plugin.json` of the plugin
+  and in `Cargo.lock`, runs `deploy/release-check.sh`, and pushes the
+  branch `release-vX.Y.Z`. The pull request "Release vX.Y.Z" has the
+  label `release`, the current wave, auto-merge on, and a body with the
+  level line, the list "Waves in this release", and the items of each
+  wave since the last release tag. It says `Refs #N` and `Part of #N`
+  for the release issue, never `Closes #N`. riff makes the release
+  issue in the current wave when there is none. It refuses a version
+  that is not newer than the last published release.
+- **01M58B0J4VQ61ER69Q09JYP7CG** `riff release cut` refuses while the
+  version on `origin/main` is newer than the last published release
+  and has no published release. Only `--skip VERSION --reason TEXT`
+  with that version lets it go on. The reason goes into the body of the
+  new release pull request, and from there into its GitHub release.
+- **01M58B0JABCET719T3HFB19NDW** `riff release publish vX.Y.Z` refuses,
+  and changes nothing, when one of these is false: the pull request
+  "Release vX.Y.Z" with the label `release` merged, and the status
+  `riff/verify` of its head commit is a success; its merge commit is on
+  `origin/main`, and `Cargo.toml` there has X.Y.Z; the tag does not
+  exist on GitHub; the riff is paused; the account of `gh` is an admin
+  of the repository. Then it makes the annotated tag on the merge
+  commit, pushes only that tag, and makes the GitHub release: the body
+  of the pull request with no link line, no line `Part of` and no
+  trailer, then the generated notes from the last release tag, marked
+  as the latest. It prints the URL of the CI run of the tag, and says
+  that the deploy waits for the approval of `production` by a person.
+  When GitHub refuses the push of the tag, it says so, names the
+  ruleset of the tags, and deletes the local tag.
+- **01M58B0JEYNAW67NS226FMX5XH** `riff release status` shows, for each
+  session: the version on `origin/main`, the last published release
+  tag, a merged release pull request whose version has no published
+  release, and each CI run that waits for the environment `production`.
+- **01M58B0JMFQ5E40TWTQ48MPSGK** `riff release approve vX.Y.Z` finds
+  the CI run of the tag that waits for the environment `production`,
+  shows the tag, the commit and the run, asks yes or no, and on yes
+  approves it with the comment `Release vX.Y.Z`. With no waiting run,
+  it says so and changes nothing.
+- **01M58B0JSQMWNCMSNX19536XT8** `riff release publish` refuses, and
+  changes nothing, in a worker, in a container session, and in an
+  agent session that is not the lead of its user, also when riff
+  cannot ask riff-server, and for a member, in a terminal or in its
+  lead: a user that is not the owner and not an admin of the riff. In a
+  terminal it also refuses when riff cannot ask riff-server for the
+  role. A riff with no sign-in has no roles, so there each person and
+  each lead may. `riff release approve` refuses
+  in each agent session: a worker, a container session, a process with
+  a session ID, and a process under Claude Code (`CLAUDECODE`), also a
+  `!` command.
+  The lead skill makes each release with these commands, and has no
+  tag line and no `gh release` line.
+
 ### The real-session test
 
 - **01M4ZCFGCY301G2ARFMRXV7XDR** `just real-session` is the

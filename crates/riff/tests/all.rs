@@ -73,6 +73,7 @@ mod plugin;
 mod pr;
 mod read_length;
 mod release;
+mod release_cycle;
 mod restart;
 mod rollout;
 mod run;

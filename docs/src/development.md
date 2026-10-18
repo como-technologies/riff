@@ -3600,7 +3600,7 @@ email 30 days before.
 Do [Set up the cloud project](#set-up-the-cloud-project) and
 [Make the OAuth client](#make-the-oauth-client) first.
 
-CI deploys only a release. An admin pushes the release tag at the end
+CI deploys only a release. The lead publishes the release tag at the end
 of a wave, and CI deploys it. The repository variable `CLOUD_DEPLOY`
 must be `true`. A push to `main` does not deploy. A `riff` refuses a
 server of another build (see [Builds](how-it-works.md#builds)), so a
@@ -3630,50 +3630,84 @@ flowchart LR
 
 ### Make a release
 
-An admin makes the release when each item of the wave is merged. Stop
-the workers first. Set the new version in `Cargo.toml` and in the
-`plugin.json` of the plugin, and update `Cargo.lock`. Pick the level
-with
+The lead makes the release with four riff commands, when each item of
+the wave is merged. A person only approves the deploy. No session
+writes a script, or a raw line of `gh` or `git`, for a release.
+
+```mermaid
+sequenceDiagram
+    participant L as the lead
+    participant G as GitHub
+    participant P as a person
+    L->>G: riff release cut 3.3.0
+    G->>G: verify, Gate, merge of "Release v3.3.0"
+    L->>G: riff release publish v3.3.0
+    G->>G: CI of the tag: Release check, Static riff
+    G-->>P: the job Deploy waits for production
+    P->>G: riff release approve v3.3.0
+```
+
+Pick the version with
 [The test for each release](how-it-works.md#the-test-for-each-release).
 On the line 1.x, a release that the test makes a major is a minor.
-When `main` already has the new version, keep it. This example makes
-`v0.2.0`:
+
+#### See the release cycle
+
+Each session can see the version on `origin/main`, the last published
+release, a merged release that is not published, and each CI run that
+waits for the approval of `production`:
+
+```sh
+riff release status
+```
+
+#### Cut the release pull request
+
+A lead or a worker cuts the release. Stop the workers first:
 
 ```sh
 riff workers stop
-git switch -c release-v0.2.0 origin/main
-sed -i 's/^version = ".*"/version = "0.2.0"/' Cargo.toml
-sed -i 's/"version": ".*"/"version": "0.2.0"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json
-cargo update --workspace
-git commit -am "Release v0.2.0"
-git push -u origin HEAD
+riff release cut 3.3.0
 ```
 
-Open a pull request for the branch. Its body states the level and the
-reason in one line. Write the line in plain words that a person
-understands (ASD-STE100), for example:
+riff makes the branch `release-v3.3.0` from `origin/main`. It sets the
+version in `Cargo.toml`, in the `plugin.json` of the plugin and in
+`Cargo.lock`, and runs `deploy/release-check.sh`. Then it opens the
+pull request "Release v3.3.0" with the label `release` and auto-merge
+on. The release notes leave out the pull requests with this label. The
+body has the level line, the list "Waves in this release", and the
+items of each wave since the last release. The body says `Part of #N`
+for the release issue, never `Closes #N`: the release issue closes
+only when the checks after the deploy pass. riff makes the release
+issue in the current wave when there is none.
 
-```text
-Level: minor. Old and new sessions work together, but they act differently: a new session asks for a verify in a new way.
-```
-
-The body also has the link line and the trailers of each pull request
-(see [Check a pull request on GitHub](#check-a-pull-request-on-github)).
-The trailer `Issue: #N` names the release issue. So the rollout gives
-no worker the release issue while the pull request waits (see
-[See the item of a pull request](how-it-works.md#see-the-item-of-a-pull-request)).
-
-Give it the label `release`. The release notes leave out the pull
-requests with this label:
+To add the reason of the level to the level line, in plain words that
+a person understands (ASD-STE100):
 
 ```sh
-gh pr create --title "Release v0.2.0" --label release --body-file pr.md
+riff release cut 3.3.0 --why "Old and new sessions work together, but a new session asks for a verify in a new way."
 ```
 
-Get it verified and merged as each other change. Then run the
-real-session test on the merge commit, on a machine with podman (see
-[Run the real-session test](#run-the-real-session-test)). It must pass
-before the tag:
+riff refuses a version that is not newer than the last release. It
+also refuses while the version on `origin/main` has no published
+release: publish that release first. To go on with no release of that
+version, give the version and the reason. The reason goes into the
+pull request and into the GitHub release:
+
+```sh
+riff release cut 3.4.0 --skip 3.3.0 --reason "the push of the tag was refused"
+```
+
+`publish` takes the notes of the release from the body of the pull
+request. Before the merge, add to the body the commands that each
+person runs, for example `riff update --tag v3.3.0` when the old
+`riff` cannot read the new server. Edit the body on GitHub, or with
+`gh pr edit`.
+
+Get the pull request verified and merged as each other change. Then
+run the real-session test on the merge commit, on a machine with
+podman (see [Run the real-session test](#run-the-real-session-test)).
+It must pass before the release:
 
 ```sh
 git fetch origin
@@ -3681,44 +3715,67 @@ git switch --detach origin/main
 just real-session
 ```
 
-Then tag the merge commit, and push the tag:
+#### Publish the release
+
+Only the owner or an admin of the riff, in a terminal or by the lead,
+publishes. A riff with no sign-in has no roles: there each person and
+each lead may. `gh` and `git` must sign in as an admin of the
+repository: the ruleset `releases` lets only an admin push a release
+tag. Pause the riff first:
 
 ```sh
-git fetch origin
-git tag v0.2.0 origin/main
-git push origin v0.2.0
+riff pause --riff
+riff release publish v3.3.0
 ```
 
-Write the start of the release notes in `notes.md`: the level line
-of the pull request. It also lists the commands that each person
-runs, for example `riff update --tag v0.2.0` when the old `riff`
-cannot read the new server. Publish the release on the tag. GitHub
-adds each pull request merged since the last release. The GitHub
-releases are the changelog of riff:
+riff checks each fact first, and names the check that fails:
+
+- the pull request "Release v3.3.0" with the label `release` merged,
+  and its check `riff/verify` passed;
+- its merge commit is on `origin/main`, and `Cargo.toml` there has the
+  version 3.3.0;
+- the tag `v3.3.0` does not exist on GitHub;
+- the riff is paused.
+
+Then riff makes the annotated tag on the merge commit, and pushes only
+that tag. It makes the GitHub release: the notes of the pull request,
+then the notes that GitHub makes from the last release, marked as the
+latest. The GitHub releases are the changelog of riff. riff prints the
+URL of the CI run of the tag. It refuses in a worker, in a container
+session, and in a session that is not the lead.
+
+The installed riff can be older than the release. For the first
+release with these commands, run `publish` from a build of the merge
+commit (see [Build riff for a check](#build-riff-for-a-check)):
 
 ```sh
-gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file notes.md --generate-notes
+riff build
+~/.cache/riff/check/target/static/release/riff release publish v3.3.0
 ```
-
-When the last tag is not the release before this one, name the tag of
-that release, for example `--notes-start-tag v0.1.0`.
 
 CI runs the job `Release check` for the tag. It fails when the tag is
 not the version of the crates. The job `Static riff` builds the static
 `riff` and `riff-server` of the tag. Then the job
 `Static riff release` adds them to the release, with `SHA256SUMS` (see
 [How riff is built and installed](#how-riff-is-built-and-installed)).
-It waits up to 60 minutes for the release, so publish the release soon
-after the push of the tag. When both jobs pass, the job `Deploy`
-deploys the tag to the shared server. So a machine that sees the new
-server can download the new riff. See
+When both jobs pass, the job `Deploy` waits for the approval of the
+environment `production`. See
 [Deploy the shared server at the end of a wave](#deploy-the-shared-server-at-the-end-of-a-wave).
-Watch both jobs:
+
+#### Approve the deploy
+
+A person, an admin, approves the deploy in a plain terminal. Exit each
+Claude Code session first: the command refuses in each agent session,
+also in a `!` command of Claude Code:
 
 ```sh
-gh run list --workflow CI --event push --limit 1
-gh run watch
+riff release approve v3.3.0
 ```
+
+riff finds the CI run of the tag that waits for `production`. It shows
+the tag, the commit and the run, and asks yes or no. With `yes`, it
+approves the run with the comment `Release v3.3.0`. When no run waits,
+it says so and changes nothing.
 
 ### Make a patch of an older release
 
@@ -3758,7 +3815,8 @@ gh pr merge --auto --squash
 line: the fork point of your branch and `origin/main`. So it runs the
 tests of each crate that changed on the line.
 
-Make the release as in [Make a release](#make-a-release), with
+`riff release cut` and `riff release publish` work only from
+`origin/main`. Make a patch of an older line by hand, with
 `release/1.x` in place of `origin/main`. Set the version on a branch
 of the line:
 
@@ -3772,7 +3830,8 @@ git push -u origin HEAD
 gh pr create --base release/1.x --title "Release v1.3.1" --label release --body-file pr.md
 ```
 
-After the merge, tag the merge commit on the branch. Name the last
+After the merge, write the notes in `notes.md`: the level line of the
+pull request. Tag the merge commit on the branch. Name the last
 tag of the line for the notes. The release of the line that the
 shared riff runs is the latest release on GitHub. This example is a
 patch of that line, so it is the latest:
@@ -3858,15 +3917,10 @@ riff cloud log shared --limit 1000 --filter 'timestamp>="START" AND textPayload:
 
 ### Approve the deploy of a release
 
-The owner approves each deploy to the shared riff. Find the run that
-waits, and its environment ID. Then approve it:
-
-```sh
-gh run list --workflow CI --status waiting --limit 1
-gh api repos/como-technologies/riff/actions/runs/RUN_ID/pending_deployments --jq '.[].environment.id'
-gh api -X POST repos/como-technologies/riff/actions/runs/RUN_ID/pending_deployments \
-  -F 'environment_ids[]=ENV_ID' -f state=approved -f comment='Release vX.Y.Z'
-```
+The owner approves each deploy to the shared riff with
+`riff release approve` in a plain terminal: see
+[Approve the deploy](#approve-the-deploy). The GitHub app and the page
+of the run also approve it.
 
 #### Let only an approved job deploy
 

@@ -68,8 +68,8 @@ the riff repository, the update is
 
 A push to `main` does not deploy the shared server. So a merge in the
 middle of a wave does not stop the sessions with a build mismatch.
-An admin makes a release once, at the end of the wave. CI deploys its
-tag.
+The lead makes a release once, at the end of the wave, with the riff
+commands. CI deploys its tag after a person approves the deploy.
 See [Make a release](development.md#make-a-release) and
 [Deploy the shared server at the end of a wave](development.md#deploy-the-shared-server-at-the-end-of-a-wave).
 

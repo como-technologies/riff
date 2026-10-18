@@ -233,11 +233,14 @@ enum Command {
         #[command(subcommand)]
         command: PlanCommand,
     },
-    /// Release a work item that you claimed
+    /// Release a claimed item, or make a release of riff
     ///
-    /// The lead frees the claim of another session of its user with
-    /// `--session`, for example a session that is gone or that does not
-    /// answer. Then the next session can claim the item.
+    /// With ITEM, it frees your claim. The lead frees the claim of
+    /// another session of its user with `--session`, for example a
+    /// session that is gone or that does not answer. Then the next
+    /// session can claim the item. The subcommands make a release of
+    /// riff: cut, publish, status and approve.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Release {
         /// The thread. The default is your repository thread.
         #[arg(long, short)]
@@ -247,7 +250,10 @@ enum Command {
         #[arg(long)]
         session: Option<String>,
         /// The work item, for example issue-12.
-        item: String,
+        #[arg(required = true)]
+        item: Option<String>,
+        #[command(subcommand)]
+        cycle: Option<ReleaseCommand>,
     },
     /// Show the tokens and the models of an issue
     ///
@@ -914,6 +920,68 @@ impl From<VerdictArg> for riff::pr::Verdict {
             VerdictArg::Fail => Self::Fail,
         }
     }
+}
+
+/// The release cycle, the subcommands of `riff release`
+/// (01M58B0HZYMAK1B2AJMWKHCXG0).
+#[derive(Subcommand)]
+enum ReleaseCommand {
+    /// Make the release pull request from origin/main
+    ///
+    /// It sets the version in Cargo.toml, plugin.json and Cargo.lock,
+    /// runs deploy/release-check.sh, and pushes the branch
+    /// release-vX.Y.Z. The pull request has the label release, the
+    /// current wave, auto-merge on, and the items of each wave since the
+    /// last release. It says Part of #N for the release issue. It
+    /// refuses a version that is not newer than the last release, and
+    /// refuses while the version on origin/main has no published release.
+    Cut {
+        /// The new version, for example 3.3.0.
+        version: String,
+        /// The version on origin/main that gets no release. Only with
+        /// --reason.
+        #[arg(long, requires = "reason", value_name = "VERSION")]
+        skip: Option<String>,
+        /// Why the version of --skip gets no release. It goes into the
+        /// pull request and into the GitHub release.
+        #[arg(long, requires = "skip", value_name = "TEXT")]
+        reason: Option<String>,
+        /// The reason of the level, in one line for a person. It follows
+        /// the level line.
+        #[arg(long, value_name = "TEXT")]
+        why: Option<String>,
+    },
+    /// Tag the release, and make the GitHub release
+    ///
+    /// Only the owner or an admin of the riff in a terminal, or the lead
+    /// of one, with a gh of an admin of the repository. A riff with no
+    /// sign-in has no roles. It refuses in a worker and in a container
+    /// session.
+    /// It checks first: the pull request "Release vX.Y.Z" with the label
+    /// release merged with riff/verify passed, its merge commit is on
+    /// origin/main, Cargo.toml there has X.Y.Z, the tag does not exist,
+    /// and the riff is paused. Then it pushes only the annotated tag, and
+    /// makes the release, marked as the latest.
+    Publish {
+        /// The release tag, for example v3.3.0.
+        tag: String,
+    },
+    /// Show the release cycle
+    ///
+    /// The version on origin/main, the last published release, a merged
+    /// release that is not published, and each CI run that waits for the
+    /// environment production.
+    Status,
+    /// Approve the deploy of a release to production
+    ///
+    /// Only a person in a plain terminal: it refuses in each agent
+    /// session. It finds the CI run of the tag that waits for the
+    /// environment production, shows the tag, the commit and the run,
+    /// and asks yes or no.
+    Approve {
+        /// The release tag, for example v3.3.0.
+        tag: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2185,6 +2253,13 @@ async fn main() -> Result<()> {
     if let Command::Cloud { command } = &cli.command {
         return cloud(command, &server).await;
     }
+    if let Command::Release {
+        cycle: Some(command),
+        ..
+    } = &cli.command
+    {
+        return release_cycle(command, &server).await;
+    }
     if let Command::Pr {
         command: Pr::Wait { number, every },
     } = &cli.command
@@ -2522,7 +2597,8 @@ async fn main() -> Result<()> {
         Command::Release {
             thread,
             session,
-            item,
+            item: Some(item),
+            cycle: None,
         } => {
             let thread = thread_or_default(thread, &here)?;
             match session {
@@ -2661,6 +2737,7 @@ async fn main() -> Result<()> {
         | Command::Workers { .. }
         | Command::Cloud { .. }
         | Command::ClaudeToken
+        | Command::Release { .. }
         | Command::Image
         | Command::Daemon { .. }
         | Command::Init { .. }
@@ -3418,22 +3495,150 @@ async fn lead_only(server: &str, refusals: &text::LeadOnly) -> Option<String> {
         return Some(refusals.worker.into());
     }
     let id = identity::session_id()?;
-    let lead = async {
-        let here = identity::place(&identity::working_dir()?)?;
-        let api = Api::new(server);
-        let me = identity::agent(&here, &id, api.base())?;
-        let sessions = api.signed_in(Some(&id))?.who(&me, false).await?;
-        anyhow::Ok(
-            sessions
-                .iter()
-                .any(|s| s.uri.who() == me.who() && s.uri.lead()),
-        )
-    };
-    match lead.await {
+    match is_lead(server, &id).await {
         Ok(true) => None,
         Ok(false) => Some(refusals.not_the_lead.into()),
         Err(_) => Some(refusals.lead_unknown.into()),
     }
+}
+
+/// True when the agent session `id` is the lead of its user, as
+/// riff-server sees it.
+async fn is_lead(server: &str, id: &str) -> Result<bool> {
+    Ok(lead_and_role(server, Some(id)).await?.0)
+}
+
+/// Whether the agent session `id` is the lead of its user, and the role
+/// of its user in the riff. With no `id`: the role of the person on this
+/// machine. The role is `None` in a riff with no sign-in, which has no
+/// people (01M58B0JSQMWNCMSNX19536XT8). A user with no row is a member.
+async fn lead_and_role(
+    server: &str,
+    id: Option<&str>,
+) -> Result<(bool, Option<riff_core::wire::PersonRole>)> {
+    use riff_core::wire::PersonRole;
+    let here = identity::place(&identity::working_dir()?)?;
+    let api = Api::new(server);
+    let me = match id {
+        Some(id) => identity::agent(&here, id, api.base())?,
+        None => identity::person(&here, api.base())?,
+    };
+    let who = api.signed_in(id)?.roster(&me, false).await?;
+    let lead = id.is_some()
+        && who
+            .sessions
+            .iter()
+            .any(|s| s.uri.who() == me.who() && s.uri.lead());
+    let role = (!who.people.is_empty()).then(|| {
+        who.people
+            .iter()
+            .find(|p| p.user == me.who().user())
+            .map_or(PersonRole::Member, |p| p.role)
+    });
+    Ok((lead, role))
+}
+
+/// The caller of a command of the release cycle: a worker, a container
+/// session, an agent session, whether it is the lead, and the role of
+/// its user (01M58B0JSQMWNCMSNX19536XT8). riff asks riff-server for the
+/// lead and the role only when `ask_role` is true: for an agent session
+/// with a session ID, and for a person in a terminal.
+async fn release_caller(server: &str, ask_role: bool) -> riff::cycle::Caller {
+    let worker = std::env::var(riff::worker::WORKER).is_ok_and(|v| v == "1");
+    let container = riff::cycle::in_container();
+    let agent = riff::cycle::in_agent();
+    let mut caller = riff::cycle::Caller {
+        worker,
+        container,
+        agent,
+        ..riff::cycle::Caller::default()
+    };
+    let id = identity::session_id();
+    if !ask_role || worker || container || (agent && id.is_none()) {
+        return caller;
+    }
+    match lead_and_role(server, id.as_deref()).await {
+        Ok((lead, role)) => {
+            caller.lead = agent.then_some(lead);
+            caller.role = role;
+        }
+        Err(_) => caller.role_unknown = true,
+    }
+    caller
+}
+
+/// `riff release cut`, `publish`, `status` and `approve`
+/// (01M58B0HZYMAK1B2AJMWKHCXG0 to 01M58B0JSQMWNCMSNX19536XT8).
+async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
+    use riff::cycle::{self, Approved};
+    let here = identity::working_dir()?;
+    let refuse = |why: &str| -> ! {
+        eprintln!("{why}");
+        std::process::exit(1)
+    };
+    match command {
+        ReleaseCommand::Cut {
+            version,
+            skip,
+            reason,
+            why,
+        } => {
+            let version = cycle::version(version)?;
+            let skip = match (skip, reason) {
+                (Some(skip), Some(reason)) => Some(cycle::Skip {
+                    version: cycle::version(skip)?,
+                    reason: reason.clone(),
+                }),
+                _ => None,
+            };
+            let forge = cycle::GitHub::new(pr::Gh::default(), &here)?;
+            let cut = cycle::cut(&forge, version, skip.as_ref(), why.as_deref())?;
+            println!(
+                "The release pull request #{} for issue #{}, with auto-merge on: {}",
+                cut.number, cut.issue, cut.url
+            );
+        }
+        ReleaseCommand::Publish { tag } => {
+            if let Some(why) = release_caller(server, true).await.may_not_publish() {
+                refuse(why);
+            }
+            let paused = riff_paused(server, &here).await;
+            let forge = cycle::GitHub::new(pr::Gh::default(), &here)?;
+            let done = cycle::publish(&forge, tag, paused)?;
+            println!("Published {tag}: {}", done.release);
+            match done.run {
+                Some(run) => println!("The CI run of the tag: {run}"),
+                None => println!(
+                    "GitHub shows no CI run of the tag yet. See: gh run list --workflow CI --branch {tag}"
+                ),
+            }
+            println!(
+                "The deploy waits for the approval of the environment production by a person: \
+                 riff release approve {tag}"
+            );
+        }
+        ReleaseCommand::Status => {
+            let forge = cycle::GitHub::new(pr::Gh::default(), &here)?;
+            print!("{}", cycle::render_status(&cycle::status(&forge)?));
+        }
+        ReleaseCommand::Approve { tag } => {
+            if let Some(why) = release_caller(server, false).await.may_not_approve() {
+                refuse(why);
+            }
+            let forge = cycle::GitHub::new(pr::Gh::default(), &here)?;
+            let answer = &mut std::io::stdin().lock();
+            match cycle::approve(&forge, tag, answer, &mut std::io::stdout())? {
+                Approved::NoRun => println!(
+                    "No CI run of {tag} waits for the environment production. riff changed nothing."
+                ),
+                Approved::No => println!("riff changed nothing."),
+                Approved::Yes(run) => {
+                    println!("Approved: the deploy of {} runs: {}", run.tag, run.url)
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). In a worker, it starts
