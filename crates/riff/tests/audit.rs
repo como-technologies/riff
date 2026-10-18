@@ -432,7 +432,10 @@ async fn the_number_finds_a_wave_with_a_name() {
         assert!(text.ends_with("\nResult: each rule passes.\n"), "{text}");
     }
     let calls = std::fs::read_to_string(machine.bin.path().join("gh.log")).unwrap();
-    assert!(calls.contains("--search milestone:\"Wave 2: Hosts\""), "{calls}");
+    assert!(
+        calls.contains("--search milestone:\"Wave 2: Hosts\""),
+        "{calls}"
+    );
 
     let out = machine.run(&url, &["audit", "--wave", "Wave 9"]).await;
     assert!(!out.status.success());
