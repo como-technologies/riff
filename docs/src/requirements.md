@@ -563,6 +563,15 @@
   number order, then each other milestone by its title. Each line has
   the number of the open and the closed issues of the milestone. riff
   reads them with the `gh` of the machine.
+- **01M58ATZ408RBCX0PM0D0ZCY4B** `riff wave list` marks the current
+  wave, the open wave with the lowest number, with `current`. The line
+  of the current wave names each host whose riff daemon runs its loop:
+  `runs on HOST`. Under the line of each wave come its open issues in
+  the groups of the board of `riff top`: `free`, `held`, `claimed` and
+  `verify`.
+- **01M58ATZ6FA5PJMD3D848CEWBJ** When `riff wave list` cannot read
+  riff-server, it shows the milestones with no groups and no hosts, and
+  one line on stderr says why.
 - **01M509TJTV7TC32EKXW0TEQ5NZ** `riff wave make TITLE` makes a
   milestone. The title is `Wave N`, or `Wave N: NAME`. riff refuses
   each other title, and a number that an open wave has.
@@ -2486,7 +2495,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   facts of `riff who`: the state, the owner and the build. A board of
   the current wave of each repository follows
   (01M42KHN80V49HDDZF953HXDT0): the wave, then one line for each group
-  of its open items, `free`, `claimed` and `verify`
+  of its open items, `free`, `held`, `claimed` and `verify`
   (01M3Z9N6X92KT051P10CKKV7EK). The first line of a
   session has the short session ID, the tag of its role, and its state.
   Under it comes one line for each fact of the detail of the state
@@ -2499,6 +2508,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   is in `verify`, not in `free`. An item with a failed verify is in
   `free`. `riff top` reads the open pull requests with `gh pr list`,
   and keeps them as long as the issues.
+- **01M58ATZ1F42DWNNB24C2HJPEY** The board of `riff top` has the
+  group `held`: each item of the wave that the lead holds, with no claim
+  and no pull request in verify. The reason of each hold follows its
+  items, for example `held: #1003 #1008 (VmLck reading at 19:40 UTC)`.
+  A held item is never in `free`. `riff top` reads the holds from
+  riff-server at each look.
 - **01M588G5K0B58QXD35AA5MTZ6E** When the whole riff or a repository
   is paused, the wave line of its board in `riff top` ends with
   `paused`, and the board has no group `free`.

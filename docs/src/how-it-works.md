@@ -1403,10 +1403,14 @@ view in each UI: see [Design: the UIs of riff](riff-uis.md).
 The header shows the state of the riff, the owner and the build, as in
 `riff who`. A board comes next for each repository with a live
 session, and for the repository where you run `riff top`: the current
-wave with its repository, one line for the `free`
-items, one for the `claimed` items, and one for the items in `verify`.
-An item is in `verify` when a session verifies it, and when no session
-holds it and its pull request waits for a verify or for the merge.
+wave with its repository, one line for the `free` items, one for the
+`held` items, one for the `claimed` items, and one for the items in
+`verify`. An item is in `verify` when a session verifies it, and when
+no session holds it and its pull request waits for a verify or for the
+merge. An item is in `held` when the lead holds it and no session
+claims it: the reason of the hold follows its items. No worker and no
+wave takes a held item, so it is never in `free` (see
+[Hold an item by hand](#hold-an-item-by-hand)).
 
 Under the boards, a tree shows each person, the hosts of the person,
 the repositories on each host, and the sessions in each repository:
@@ -1420,6 +1424,7 @@ blocked  3a3f8d5d issue-8, 32m, the lead gave no answer: which of two designs?
 
 Wave 3 (como-technologies/riff)
   free: #10
+  held: #11 #12 (VmLck reading at 19:40 UTC)
   claimed: #7 #8 #9
 
 Wave 5 (como-technologies/strata)

@@ -16,12 +16,20 @@
 //!
 //! | Command | `gh` calls |
 //! |---|---|
-//! | `riff wave list` (01M509TJRBE2J7HYKKHRJ1ZFR0) | `api repos/{owner}/{repo}/milestones?state=open&per_page=100` |
+//! | `riff wave list` (01M509TJRBE2J7HYKKHRJ1ZFR0) | `api repos/{owner}/{repo}/milestones?state=open&per_page=100`, then `issue list` and `pr list` for the items ([`items`]) |
 //! | `riff wave make TITLE` (01M509TJTV7TC32EKXW0TEQ5NZ) | the list, then `api -X POST repos/{owner}/{repo}/milestones -f title=TITLE` |
 //! | `riff wave rename N NAME` (01M518A0BEQBX9RH9H0CEFYF9Q) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f title=TITLE` |
 //! | `riff wave end N` (01M509TJXE04CTG5D1K751WXJY) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f state=closed` |
 //! | `--wave WAVE` of `riff usage` and `riff audit` (01M588K2M7G0CV3RNJ4N074FTG) | `api repos/OWNER/REPO/milestones?state=all&per_page=100` |
 //!
+//! - `riff wave list` marks the current wave, the first wave, with
+//!   `current`, and names each host whose riff daemon runs its loop.
+//!   Under each wave come its open issues in the groups of the board of
+//!   `riff top` ([`Items`], 01M58ATZ408RBCX0PM0D0ZCY4B). The claims, the
+//!   holds and the facts of the daemons come from riff-server: `who`
+//!   and `plan show`. With no read of riff-server, it shows only the
+//!   milestones, and one line on stderr says why
+//!   (01M58ATZ6FA5PJMD3D848CEWBJ).
 //! - `riff wave make` makes only a wave: its title is `Wave N`, with an
 //!   optional `: NAME`. It refuses a number that an open wave has.
 //! - `riff wave rename N NAME` gives the open wave N the title
@@ -47,12 +55,18 @@
 //!     C -- "some" --> R["refuse"]
 //! ```
 
+use std::collections::BTreeMap;
+
 use anyhow::{Result, bail};
+use riff_client::api::Api;
+use riff_client::sessions::Sessions;
+use riff_client::waves::{Board, Issues, Milestone};
+use riff_core::name::SessionUri;
+use riff_core::wire::{HoldInfo, SessionInfo};
 use serde::Deserialize;
 
 use crate::pr::Gh;
 use crate::text;
-use riff_client::waves::Milestone;
 
 /// An open milestone, as `gh api .../milestones` gives it: a
 /// [`Milestone`] with the texts of the forge made safe.
@@ -267,6 +281,93 @@ pub fn title(gh: &Gh, repo: &str, wave: &str) -> Result<String> {
     find(&milestones, wave)
 }
 
+/// What riff-server adds to `riff wave list`
+/// (01M58ATZ408RBCX0PM0D0ZCY4B): the board of each wave with an open
+/// issue, and each host whose riff daemon runs the loop of the wave of
+/// the repository. The loop runs the current wave.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Items {
+    /// The board of each wave with an open issue, in number order.
+    pub boards: Vec<Board>,
+    /// Each host whose daemon runs the loop, by name.
+    pub hosts: Vec<String>,
+}
+
+impl Items {
+    /// The items of `repo` (`OWNER/REPO`): the boards from its open
+    /// `issues`, the sessions `who` of riff-server and the `holds` of
+    /// its thread, and the hosts from the facts of the daemons in `who`
+    /// ([`riff_client::daemons::hosts`]).
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    /// use riff::waves::Items;
+    /// use riff_client::daemons::{Facts, Wave};
+    /// use riff_client::waves::{Issue, Issues};
+    /// use riff_core::wire::{HoldInfo, MachineInfo, SessionInfo};
+    ///
+    /// let session = |uri: &str, facts: Option<&Facts>| -> SessionInfo {
+    ///     let mut s: SessionInfo = serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap();
+    ///     s.machine = facts.map(|f| MachineInfo { numbers: f.line(), age_secs: 5 });
+    ///     s
+    /// };
+    /// let runs = |repo: &str| Facts {
+    ///     waves: vec![Wave { repo: repo.into(), word: "no free work now".into() }],
+    ///     ..Facts::default()
+    /// };
+    /// let who = vec![
+    ///     session("riff://mike@thelio/o/r?session=d1", Some(&runs("o/r"))),
+    ///     session("riff://mike@pangolin/o/s?session=d2", Some(&runs("o/s"))),
+    ///     session("riff://mike@thelio/o/r?session=a1&claim=issue-12", None),
+    /// ];
+    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()) };
+    /// let issues = Issues::of(vec![issue(12, "Wave 3"), issue(13, "Wave 3"), issue(20, "Wave 4")]);
+    /// let holds = BTreeMap::from([(
+    ///     "issue-13".to_owned(),
+    ///     HoldInfo { reason: "a reading".into(), by: None, at_ms: 0 },
+    /// )]);
+    /// let items = Items::of("o/r", &issues, who, &holds);
+    /// assert_eq!(items.hosts, ["thelio"]);
+    /// let groups: Vec<Vec<String>> = items.boards.iter().map(|b| b.groups(false)).collect();
+    /// assert_eq!(groups, [vec!["held: #13 (a reading)", "claimed: #12"], vec!["free: #20"]]);
+    /// ```
+    pub fn of(
+        repo: &str,
+        issues: &Issues,
+        who: Vec<SessionInfo>,
+        holds: &BTreeMap<String, HoldInfo>,
+    ) -> Items {
+        let mut hosts: Vec<String> = riff_client::daemons::hosts(&who)
+            .into_iter()
+            .filter(|h| h.facts.waves.iter().any(|w| w.repo == repo))
+            .map(|h| h.host)
+            .collect();
+        hosts.sort();
+        hosts.dedup();
+        let sessions = Sessions::new(who, Vec::new());
+        Items {
+            boards: Board::each(repo, issues, &sessions, holds),
+            hosts,
+        }
+    }
+}
+
+/// The items of the repository of `me` (01M58ATZ408RBCX0PM0D0ZCY4B):
+/// its open issues and pull requests from `gh`, and its sessions and
+/// holds from riff-server.
+pub async fn items(api: &Api, me: &SessionUri, gh: &Gh) -> Result<Items> {
+    let Some(thread) = me.default_thread() else {
+        bail!(text::waves_no_repo());
+    };
+    let repo = thread.to_string();
+    let who = api.who(me, false).await?;
+    let holds = api.plan_show(me, &thread).await?.holds;
+    let Some(issues) = crate::top::issues_from_gh(gh, &repo) else {
+        bail!(text::waves_no_issues(&repo));
+    };
+    Ok(Items::of(&repo, &issues, who, &holds))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,6 +560,87 @@ mod tests {
                 text::waves_no_such(wave, &["Wave 27: Cloud", "Wave 28"])
             );
         }
+    }
+
+    /// The list marks the current wave with the host of its loop, and
+    /// shows the groups of each wave: a held item is in `held` with its
+    /// reason, not in `free` (01M58ATZ408RBCX0PM0D0ZCY4B). A daemon of
+    /// another repository runs no loop of this one.
+    #[test]
+    fn the_list_marks_the_current_wave_and_where_its_loop_runs() {
+        use riff_client::daemons::{Facts, Wave};
+        use riff_client::waves::Issue;
+        use riff_core::wire::MachineInfo;
+
+        let session = |uri: &str, facts: Option<Facts>| -> SessionInfo {
+            let mut s: SessionInfo =
+                serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap();
+            s.machine = facts.map(|f| MachineInfo {
+                numbers: f.line(),
+                age_secs: 5,
+            });
+            s
+        };
+        let runs = |repo: &str| Facts {
+            waves: vec![Wave {
+                repo: repo.into(),
+                word: "no free work now".into(),
+            }],
+            ..Facts::default()
+        };
+        let who = vec![
+            session("riff://mike@thelio/o/r?session=d1", Some(runs("o/r"))),
+            session("riff://mike@pangolin/o/s?session=d2", Some(runs("o/s"))),
+            session("riff://mike@thelio/o/r?session=a1&claim=issue-1103", None),
+        ];
+        let issue = |number, wave: &str| Issue {
+            number,
+            title: "t".into(),
+            milestone: Some(wave.into()),
+        };
+        let issues = Issues::of(vec![
+            issue(1003, "Wave 33: Hosts"),
+            issue(1008, "Wave 33: Hosts"),
+            issue(1103, "Wave 33: Hosts"),
+            issue(1106, "Wave 34"),
+        ]);
+        let hold = HoldInfo {
+            reason: "VmLck reading at 19:40 UTC".into(),
+            by: None,
+            at_ms: 0,
+        };
+        let holds = BTreeMap::from([
+            ("issue-1003".to_owned(), hold.clone()),
+            ("issue-1008".to_owned(), hold),
+        ]);
+        let items = Items::of("o/r", &issues, who, &holds);
+        let m = |title: &str, open, closed| Milestone {
+            number: 1,
+            title: title.into(),
+            open_issues: open,
+            closed_issues: closed,
+        };
+        let milestones = in_order(vec![
+            m("Backlog", 61, 4),
+            m("Wave 34", 1, 0),
+            m("Wave 33: Hosts", 3, 21),
+        ]);
+        assert_eq!(
+            text::waves_list(&milestones, Some(&items)),
+            "Wave 33: Hosts  current  runs on thelio  3 open, 21 closed\n  \
+             held: #1003 #1008 (VmLck reading at 19:40 UTC)\n  \
+             claimed: #1103\n\
+             Wave 34  1 open, 0 closed\n  \
+             free: #1106\n\
+             Backlog  61 open, 4 closed"
+        );
+        // With no read of riff-server: the milestones and the mark only.
+        assert_eq!(
+            text::waves_list(&milestones, None),
+            "Wave 33: Hosts  current  3 open, 21 closed\n\
+             Wave 34  1 open, 0 closed\n\
+             Backlog  61 open, 4 closed"
+        );
     }
 
     #[test]

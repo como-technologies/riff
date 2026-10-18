@@ -318,10 +318,13 @@ fn riff_wave_lists_makes_and_ends_the_waves_with_gh() {
 
     let list = riff_wave(&env, bin.path(), &["list"]);
     assert!(list.status.success(), "{}", text(&list));
+    // The folder is in no git repository: no items and no hosts, and
+    // one line on stderr says why (01M58ATZ6FA5PJMD3D848CEWBJ).
     assert_eq!(
         text(&list),
-        "Wave 27: Cloud  0 open, 9 closed\nWave 28  2 open, 0 closed\nBacklog  61 open, 4 \
-         closed\n"
+        "Wave 27: Cloud  current  0 open, 9 closed\nWave 28  2 open, 0 closed\nBacklog  61 \
+         open, 4 closed\nriff: the list has no items and no hosts: this folder is in no git \
+         repository\n"
     );
 
     let made = riff_wave(&env, bin.path(), &["make", "Wave", "29"]);

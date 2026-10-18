@@ -1212,7 +1212,12 @@ enum WaveCommand {
     ///
     /// It shows the waves in number order, then each other open group of
     /// items, for example the backlog. Each line has the number of the
-    /// open and the closed items.
+    /// open and the closed items. The current wave, the open wave with
+    /// the lowest number, has the mark current, and "runs on HOST" for
+    /// each host whose riff daemon runs its loop. Under each wave come
+    /// its open issues in the groups of riff top: free, held (with the
+    /// reason of the lead), claimed and verify. When riff cannot read
+    /// riff-server, it shows only the waves and their numbers.
     List,
     /// Make a wave
     ///
@@ -2187,7 +2192,6 @@ async fn main() -> Result<()> {
     if let Command::Wave { command } = &cli.command {
         let gh = pr::Gh::default();
         let line = match command {
-            WaveCommand::List => Some(text::waves_list(&riff::waves::open(&gh)?)),
             WaveCommand::Make { title } => {
                 let made = riff::waves::make(&gh, &title.join(" "))?;
                 Some(text::waves_made(&made.title))
@@ -2200,7 +2204,7 @@ async fn main() -> Result<()> {
                 let ended = riff::waves::end(&gh, *number)?;
                 Some(text::waves_ended(&ended.title, ended.closed_issues))
             }
-            WaveCommand::Run { .. } | WaveCommand::Stop { .. } => None,
+            WaveCommand::List | WaveCommand::Run { .. } | WaveCommand::Stop { .. } => None,
         };
         if let Some(line) = line {
             println!("{line}");
@@ -2322,10 +2326,10 @@ async fn main() -> Result<()> {
             }
             WaveCommand::Run { host: None } => riff::wave::ask_run(&dir, &here, api.base()).await?,
             WaveCommand::Stop { host: None } => riff::wave::ask_stop(&dir, &here).await?,
-            WaveCommand::List
-            | WaveCommand::Make { .. }
-            | WaveCommand::Rename { .. }
-            | WaveCommand::End { .. } => unreachable!("handled before the identity"),
+            WaveCommand::List => wave_list(&api, &here).await?,
+            WaveCommand::Make { .. } | WaveCommand::Rename { .. } | WaveCommand::End { .. } => {
+                unreachable!("handled before the identity")
+            }
         }
         return Ok(());
     }
@@ -4411,6 +4415,24 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
 /// (01M3NT6WXGCNKW3EQ7MBJDQTR4), and it goes on after a look that
 /// fails: see "A look that fails" in [`riff::top`]
 /// (01M3Z8FXE2DY34ZP75WJE1S8HR).
+/// `riff wave list`: the open milestones from `gh`, with the items and
+/// the hosts of riff-server (01M58ATZ408RBCX0PM0D0ZCY4B). When riff
+/// cannot read them, one line on stderr says why
+/// (01M58ATZ6FA5PJMD3D848CEWBJ).
+async fn wave_list(api: &Api, here: &riff_core::name::Place) -> Result<()> {
+    let gh = pr::Gh::default();
+    let milestones = riff::waves::open(&gh)?;
+    let items = match identity::me(here, api.base()) {
+        Ok(me) => riff::waves::items(api, &me, &gh).await,
+        Err(e) => Err(e),
+    };
+    let items = items
+        .inspect_err(|e| eprintln!("{}", text::waves_no_items(&format!("{e:#}"))))
+        .ok();
+    println!("{}", text::waves_list(&milestones, items.as_ref()));
+    Ok(())
+}
+
 async fn top(
     api: &Api,
     me: &SessionUri,
@@ -4467,6 +4489,7 @@ async fn draw_top(
     };
     let mut issues = std::collections::BTreeMap::new();
     let mut fetched: Option<Instant> = None;
+    let mut holds = std::collections::BTreeMap::new();
     let mut messages = thread
         .as_ref()
         .map(|t| Box::pin(follow(|| api.tail(me, t), STREAM_RETRY)));
@@ -4509,6 +4532,20 @@ async fn draw_top(
             issues = riff_client::waves::Issues::newest_each(std::mem::take(&mut issues), read);
             fetched = Some(Instant::now());
         }
+        // The holds of each board at each good look. A read that fails
+        // keeps the last holds of its repository
+        // (01M58ATZ1F42DWNNB24C2HJPEY).
+        if failed.is_none() {
+            holds.retain(|repo, _| issues.contains_key(repo));
+            for repo in issues.keys() {
+                let Ok(thread) = repo.parse::<ThreadName>() else {
+                    continue;
+                };
+                if let Ok(plan) = api.plan_show(me, &thread).await {
+                    holds.insert(repo.clone(), plan.holds);
+                }
+            }
+        }
         let now = chrono::Local::now();
         let fault = failed.map(|e| text::top_fault(&e.to_string(), api.base(), at, &now));
         let server = riff_client::link::server_build();
@@ -4520,6 +4557,7 @@ async fn draw_top(
             sessions,
             people: &who.people,
             issues: &issues,
+            holds: &holds,
             repo: repo.as_deref(),
             show,
             width: textwrap::termwidth(),

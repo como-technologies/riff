@@ -777,7 +777,8 @@ async fn top_makes_only_read_calls() {
         calls.iter().filter(|c| *c == "/v1/who").count() >= 4,
         "{calls:?}"
     );
-    let reads = ["/v1/riff", "/v1/who", "/v1/tail"];
+    // The holds of the boards are a read too (01M58ATZ1F42DWNNB24C2HJPEY).
+    let reads = ["/v1/riff", "/v1/who", "/v1/plan/show", "/v1/tail"];
     for call in &calls {
         assert!(reads.contains(&call.as_str()), "{call} in {calls:?}");
     }

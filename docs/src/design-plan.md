@@ -348,7 +348,7 @@ The time of the last look is presence, and not in the checkpoint.
 | `riff plan sync` | Reads the forge and sends the plan at once. |
 | `riff plan hold ITEM REASON` | Holds the item. The reply says when a session holds it. |
 | `riff plan free ITEM` | Frees the hold. |
-| `riff top` | The board reads the plan of the server, when the plan is on. A held item is in the column `free`, with `held` and the reason. An item that waits is in the column `free`, with `waits #416`. A stale plan shows `stale` in the heading of the board. |
+| `riff top` | The board reads the plan of the server, when the plan is on. A held item is in the group `held`, with the reason, never in `free`. An item that waits is in the column `free`, with `waits #416`. A stale plan shows `stale` in the heading of the board. |
 | `riff who`, `whoami` | No change. A session shows its claims. |
 | The rollout | With a plan that is on and not stale, the free work comes from the plan of the server: an item of the plan with no claim, no hold, each need done, and no pull request that waits for a verify or for the merge. Else it reads the forge, as today. |
 | The skill | Step 2 of the start routine runs `riff plan` to find a free item. A refused claim names the reason, so the session picks another item. The lead holds an item with the `hold` tool, not with a claim. |

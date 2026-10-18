@@ -94,7 +94,7 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
     )
     .unwrap();
     assert_eq!(issues.titles[&7], "Fix   it");
-    assert_eq!(issues.wave, Some(("Wave 4: N  ew".into(), vec![7])));
+    assert_eq!(issues.wave(), Some(&("Wave 4: N  ew".into(), vec![7])));
 
     // The wave of the end of a wave, in the facts of a compact.
     let wave = riff::compact::forge::released_wave(&gh, "acme/app").unwrap();

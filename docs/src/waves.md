@@ -135,7 +135,10 @@ The waves of riff are its
 
 Run this in a clone of the repository. It shows each open wave in
 number order, then the backlog, with the number of the open and the
-closed items:
+closed items. The current wave has the mark `current` and the hosts
+of its loop. The open items of each wave follow in the groups `free`,
+`held`, `claimed` and `verify` (see
+[See which wave runs, and where](development.md#see-which-wave-runs-and-where)):
 
 ```sh
 riff wave list

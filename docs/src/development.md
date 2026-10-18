@@ -1252,6 +1252,32 @@ for room, and each wave with what it did last. To see the events of a
 session, use `riff daemon events NAME` (see
 [See the events of a session](#see-the-events-of-a-session)).
 
+### See which wave runs, and where
+
+In your clone of the repository:
+
+```sh
+riff wave list
+```
+
+The current wave has the mark `current`, and `runs on HOST` for each
+host whose daemon runs its loop. Under each wave come its open items
+in the groups of the board of `riff top`: `free`, `held`, `claimed`
+and `verify`. A held item has the reason of the lead, and the wave
+does not start it:
+
+```text
+Wave 33: Hosts  current  runs on thelio  3 open, 21 closed
+  held: #1003 #1008 (VmLck reading at 19:40 UTC)
+  claimed: #1103
+Wave 34  1 open, 0 closed
+  free: #1106
+Backlog  61 open, 4 closed
+```
+
+When the wave says "no free work now" while items are open, look at
+the groups: the items are held, claimed or in verify.
+
 ### Stop the wave
 
 In your clone of the repository:

@@ -87,6 +87,7 @@ fn top(sessions: &[SessionInfo]) -> String {
         sessions,
         people: &[],
         issues: &Default::default(),
+        holds: &Default::default(),
         repo: Some("como-technologies/riff"),
         show: &Default::default(),
         width: 200,
