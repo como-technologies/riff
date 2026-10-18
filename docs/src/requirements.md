@@ -2590,6 +2590,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `riff://USER@HOST/-?session=ID#DIRECTORY`.
 - **R49** When a watch starts, it wakes the session once if an addressed
   message is unread.
+- **01M588J4XNV1TXEPMGTKRVY9VK** An unread read of one page also gives
+  each unread message after the page that woke the session, and that
+  no read gave so yet. The `read` tool of `riff mcp` shows them first,
+  in their own part. For R49, such a message is no longer unread: the
+  next watch does not wake for it. The read cursor does not move over
+  it, so a later page shows it again in its place.
 - **R163** `riff-server` records the time of each call of a session.
   `who` is a call too. A keep-alive (R204) is not a call. `who` shows
   each session as `live`, or with the time since its last call, for

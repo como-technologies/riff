@@ -3032,6 +3032,27 @@ riff watch --once
 Without `--once`, `riff watch` prints one line for each wake until
 you stop it.
 
+### One read after a wake shows the message of the wake
+
+A read gives one page of 50 messages of each thread, the oldest unread
+first. The message of a wake can come after many older pages. So the
+page also gives each unread message after it that woke the session.
+The `read` tool shows them first, in their own part:
+
+```text
+Messages to you after this page (the watch does not wake for them again):
+chat
+[327] mike@pangolin to session=193c7051 (verified): Can you look at #1110?
+
+chat
+[128] ann@heron (verified): ...
+More messages follow. Read this thread again. With all, set after to 177.
+```
+
+One read after a wake is enough: the next watch does not wake again
+for the messages of that part. Later pages show them again in their
+place.
+
 ### The watch ends before the limit of a background task
 
 Claude Code stops a background task after 2 hours at most. Its notice

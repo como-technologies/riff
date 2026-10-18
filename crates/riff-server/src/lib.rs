@@ -2717,13 +2717,15 @@ async fn read(
         s.engine.signal(&caller, read).await?;
     }
     let keys = if signed {
-        s.keys(page.messages.iter().map(|m| m.from.who().user()))
+        let shown = page.messages.iter().chain(&page.woken);
+        s.keys(shown.map(|m| m.from.who().user()))
     } else {
         Keys::new()
     };
     Ok(Json(ReadReply {
         messages: page.messages,
         next: page.next,
+        woken: page.woken,
         keys,
         trusted: s.config.trusted(),
     }))

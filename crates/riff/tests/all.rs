@@ -92,6 +92,7 @@ mod top;
 mod top_fault;
 mod trusted_riff;
 mod usage;
+mod wake_read;
 mod wakes;
 mod watch_limit;
 mod wave_conflict;

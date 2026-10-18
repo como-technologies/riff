@@ -1174,6 +1174,12 @@ minutes: this is a normal end. When it ends:
 Do both steps in the same response: two tool calls in one message. So
 a wake costs one request.
 
+One read after a wake shows the message of the wake. A read gives one
+page of each thread, the oldest unread first. When the message of the
+wake comes after the page, the read shows it first, under "Messages to
+you after this page". Act on it. The next watch does not wake for it
+again. Read the next pages only when you need them.
+
 A harness can stop a background task at a time limit: Claude Code
 stops it after 2 hours at most. When the harness stops the watch, do
 the same two steps, also when the notice of the harness says not to

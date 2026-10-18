@@ -1277,6 +1277,25 @@ mod tests {
         }
     }
 
+    /// 01M588J4XNV1TXEPMGTKRVY9VK: the skill says what one read after a
+    /// wake shows, in the words of the read.
+    #[test]
+    fn the_skill_says_what_one_read_after_a_wake_shows() {
+        let skill = text("riff/skills/riff/SKILL.md");
+        let part = &skill[skill.find("## Keep the watch running").unwrap()..];
+        let part = &part[..part.find("\n## Pick up dropped work").unwrap()];
+        let flat = part.split_whitespace().collect::<Vec<_>>().join(" ");
+        let head = crate::text::WOKEN_HEAD;
+        let head = &head[..head.find(" (").unwrap()];
+        for word in [
+            "One read after a wake shows the message of the wake.",
+            &format!("under \"{head}\""),
+            "The next watch does not wake for it again.",
+        ] {
+            assert!(flat.contains(word), "the skill does not say {word:?}");
+        }
+    }
+
     /// 01M3K0AXMCVRST7HYH4DM8B3AN: a worker with no work waits idle.
     #[test]
     fn the_skill_tells_a_worker_with_no_work_to_wait_idle() {

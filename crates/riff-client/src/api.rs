@@ -1463,17 +1463,18 @@ impl Api {
         };
         let mut out = Vec::new();
         for (thread, members) in targets {
-            let (messages, next) = if each_page {
-                (self.read(me, &thread, all).await?, None)
+            let (messages, next, woken) = if each_page {
+                (self.read(me, &thread, all).await?, None, Vec::new())
             } else {
-                self.read_page(me, &thread, all, after).await?
+                self.page(me, &thread, all, after).await?
             };
-            if !messages.is_empty() {
+            if !messages.is_empty() || !woken.is_empty() {
                 out.push(Inbox {
                     thread,
                     members,
                     messages,
                     next,
+                    woken,
                 });
             }
         }
@@ -1532,6 +1533,19 @@ impl Api {
         all: bool,
         after: Option<u64>,
     ) -> Result<(Vec<Checked>, Option<u64>)> {
+        let (messages, next, _) = self.page(me, thread, all, after).await?;
+        Ok((messages, next))
+    }
+
+    /// As [`Api::read_page`], and each unread message after the page
+    /// that woke `me` (01M588J4XNV1TXEPMGTKRVY9VK).
+    async fn page(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        all: bool,
+        after: Option<u64>,
+    ) -> Result<(Vec<Checked>, Option<u64>, Vec<Checked>)> {
         let request = Read {
             me: me.clone(),
             thread: thread.clone(),
@@ -1539,12 +1553,13 @@ impl Api {
             after: after.filter(|_| all),
         };
         let reply = self.call(&request).await?;
-        let messages = reply
-            .messages
-            .into_iter()
-            .map(|message| checked(thread, message, &reply.keys, reply.trusted))
-            .collect();
-        Ok((messages, reply.next))
+        let check = |messages: Vec<Message>| {
+            messages
+                .into_iter()
+                .map(|message| checked(thread, message, &reply.keys, reply.trusted))
+                .collect()
+        };
+        Ok((check(reply.messages), reply.next, check(reply.woken)))
     }
 
     /// Claims a work item. The server refuses a claim of an item that
@@ -2210,6 +2225,9 @@ pub struct Inbox {
     pub messages: Vec<Checked>,
     /// The seq of the last message, when more messages follow.
     pub next: Option<u64>,
+    /// Each unread message after the page that woke `me`, from a read
+    /// of one page (01M588J4XNV1TXEPMGTKRVY9VK).
+    pub woken: Vec<Checked>,
 }
 
 /// A message, and whether the reader proved its sender (R199).
