@@ -770,3 +770,61 @@ async fn the_update_of_a_daemon_that_serves_no_repository_says_why_it_tells_no_l
         "{stdout}"
     );
 }
+
+/// The real `riff daemon` on a host whose home folder is the work tree
+/// of a dotfiles repository, with `update.auto = true`, starts the
+/// update by its own calls to a riff of a newer release. The update
+/// tells the lead in the repository that the daemon serves once, and
+/// the lead of the dotfiles nothing (#1105, 01M58AW5SBG3ZP7149ZY66VTYW).
+/// No other process calls the riff while the update runs: each call
+/// could start the update with its own place.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_daemon_in_a_dotfiles_home_tells_the_lead_of_the_served_repository() {
+    let machine = Machine::new(0).await;
+    assert!(machine.run("lead", &["lead"]).await.status.success());
+    let home = machine.env.home();
+    git_init(&home, "n8behavior/dotfiles");
+    let mut dotfiles = machine.riff("dotfiles-lead", &["lead"]);
+    dotfiles.current_dir(&home);
+    assert!(output(dotfiles).await.status.success());
+    let wave = riff::wave::Wave {
+        repo: "como-technologies/riff".into(),
+        main: machine.repo.path().to_owned(),
+        server: format!("{}/", machine.server),
+        host: "pangolin".into(),
+    };
+    let dir = riff::daemon::dir_in(&machine.env.riff_home());
+    std::fs::create_dir_all(&dir).unwrap();
+    riff::daemon::remote::serve_in_file(&dir, &wave).unwrap();
+    machine.run("w", &["update", "--auto", "on"]).await;
+
+    let mut daemon = machine.riff("", &["daemon"]);
+    daemon
+        .current_dir(&home)
+        .env_remove("RIFF_SESSION")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut daemon = daemon.spawn().unwrap();
+    let state = machine.state();
+    let done = wait_for(Duration::from_secs(40), async || {
+        riff::local::tried(&state).is_some() && !riff::local::updating(&state)
+    })
+    .await;
+    daemon.kill().unwrap();
+    daemon.wait().unwrap();
+    let update_log = std::fs::read_to_string(riff::local::update_log(&state));
+    assert!(done, "the update did not end. update.log: {update_log:?}");
+
+    assert_eq!(log(machine.bin.path(), "cargo"), install(&newer_tag()));
+    let words = format!(
+        "riff on pangolin updated itself from {} to {}.",
+        this_tag(),
+        newer_tag()
+    );
+    let messages = machine.lead_messages("lead").await;
+    assert_eq!(messages.matches(&words).count(), 1, "{messages}");
+    let mut read = machine.riff("dotfiles-lead", &["read", "--all"]);
+    read.current_dir(&home);
+    let others = text(&output(read).await.stdout);
+    assert!(!others.contains(&words), "{others}");
+}

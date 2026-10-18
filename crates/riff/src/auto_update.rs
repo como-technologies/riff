@@ -390,8 +390,8 @@ fn served() -> Vec<Wave> {
 /// (01M58AW5SBG3ZP7149ZY66VTYW): `given`, the place of the process that
 /// started the update, when it is in a repository. Else the place of
 /// each repository that the daemon of this machine serves on `server`,
-/// from `served`, once: the daemon has no place. Empty when there is
-/// none.
+/// from `served`, once: the daemon has no place. A `/` at the end of a
+/// URL does not count. Empty when there is none.
 ///
 /// ```
 /// use riff::auto_update::lead_places;
@@ -407,7 +407,7 @@ fn served() -> Vec<Wave> {
 /// let served = [
 ///     wave("acme/beta", "http://other"),
 ///     wave("acme/alpha", "http://riff"),
-///     wave("acme/gamma", "http://riff"),
+///     wave("acme/gamma", "http://riff/"),
 ///     wave("acme/alpha", "http://riff"),
 /// ];
 /// // A session or a workers host: its own repository.
@@ -430,7 +430,9 @@ pub fn lead_places(given: Option<&Place>, served: &[Wave], server: &str) -> Vec<
         return vec![place.clone()];
     }
     let mut places: Vec<Place> = Vec::new();
-    for wave in served.iter().filter(|wave| wave.server == server) {
+    let server = riff_client::link::base_of(server);
+    let same = |wave: &&Wave| riff_client::link::base_of(&wave.server) == server;
+    for wave in served.iter().filter(same) {
         if let Ok(place) = wave.place(None)
             && !places.contains(&place)
         {
