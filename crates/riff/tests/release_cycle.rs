@@ -498,7 +498,7 @@ async fn publish_tags_the_merge_commit_and_makes_the_release_in_a_paused_riff() 
         .await;
     assert!(!out.status.success());
     assert!(
-        text(&out.stderr).contains("the riff is not paused"),
+        text(&out.stderr).starts_with("Error: riff release publish: "),
         "{}",
         text(&out.stderr)
     );
@@ -621,4 +621,90 @@ fn the_skill_makes_a_release_with_the_riff_commands() {
     for raw in ["gh release", "git tag", "git push origin v"] {
         assert!(!skill.contains(raw), "{raw} in the skill");
     }
+}
+
+/// Signs in `email` with a new device key, kept in the secret files of
+/// the `RIFF_HOME` of `home`. With `allowed`, a person who is no member
+/// joins as a member.
+async fn sign_in(
+    service: &riff_server::Service,
+    url: &str,
+    home: &Isolated,
+    email: &str,
+    allowed: bool,
+) {
+    let dir = home.riff_home().join("secrets");
+    let key = riff_core::dpop::Key::generate();
+    riff_client::secrets::file_set(
+        &dir,
+        &riff_client::device::secret_name(url),
+        &key.to_secret(),
+    )
+    .unwrap();
+    let pair = service
+        .admit(email, allowed, &key.thumbprint())
+        .await
+        .unwrap();
+    let sign_in = riff_client::login::SignIn {
+        user: pair.user,
+        access_token: pair.access_token,
+        refresh_token: pair.refresh_token,
+        expires_at: u64::MAX,
+        riff_id: service.riff_id(),
+    };
+    let json = serde_json::to_string(&sign_in).unwrap();
+    riff_client::secrets::file_set(&dir, &riff_client::login::secret_name(url), &json).unwrap();
+}
+
+/// In a riff with sign-in, the lead of a member is refused; the lead
+/// of the owner passes the guard (01M58B0JSQMWNCMSNX19536XT8).
+#[tokio::test(flavor = "multi_thread")]
+async fn publish_refuses_the_lead_of_a_member() {
+    let (listener, url) = crate::common::listen().await;
+    let service = riff_server::Service::new(riff_server::auth::Config {
+        require_sign_in: true,
+        ..riff_server::auth::Config::new(&url)
+    });
+    let router = service.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let owner = Machine::new().await;
+    sign_in(
+        &service,
+        &url,
+        &owner.env,
+        "mike@comotechnologies.io",
+        false,
+    )
+    .await;
+    let member = Machine::new().await;
+    sign_in(&service, &url, &member.env, "bob@comotechnologies.io", true).await;
+    let lead = [
+        ("RIFF_SESSION", "b1"),
+        ("RIFF_SERVER", url.as_str()),
+        ("RIFF_USER", "bob"),
+    ];
+    member.ok(&lead, &["lead"]).await;
+    let out = member
+        .run(&lead, &["release", "publish", "v3.3.0"], "")
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        text(&out.stderr),
+        format!("{}\n", riff::text::PUBLISH_MEMBER)
+    );
+    assert_eq!(member.log(), "");
+
+    // The control: the lead of the owner passes the guard, and stops at a
+    // later check of publish.
+    let lead = [("RIFF_SESSION", "m1"), ("RIFF_SERVER", url.as_str())];
+    owner.ok(&lead, &["lead"]).await;
+    let out = owner
+        .run(&lead, &["release", "publish", "v3.3.0"], "")
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).starts_with("Error: riff release publish: "),
+        "{}",
+        text(&out.stderr)
+    );
 }

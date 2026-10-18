@@ -953,8 +953,10 @@ enum ReleaseCommand {
     },
     /// Tag the release, and make the GitHub release
     ///
-    /// Only the lead, or a person in a terminal, with a gh of an admin of
-    /// the repository. It refuses in a worker and in a container session.
+    /// Only the lead of the owner or of an admin of the riff, or a person
+    /// in a terminal, with a gh of an admin of the repository. A riff with
+    /// no sign-in has no roles. It refuses in a worker and in a container
+    /// session.
     /// It checks first: the pull request "Release vX.Y.Z" with the label
     /// release merged with riff/verify passed, its merge commit is on
     /// origin/main, Cargo.toml there has X.Y.Z, the tag does not exist,
@@ -3501,32 +3503,57 @@ async fn lead_only(server: &str, refusals: &text::LeadOnly) -> Option<String> {
 /// True when the agent session `id` is the lead of its user, as
 /// riff-server sees it.
 async fn is_lead(server: &str, id: &str) -> Result<bool> {
+    Ok(lead_and_role(server, id).await?.0)
+}
+
+/// Whether the session `id` is the lead of its user, and the role of
+/// its user in the riff: `None` in a riff with no sign-in, which has no
+/// people (01M58B0JSQMWNCMSNX19536XT8). A user with no row is a member.
+async fn lead_and_role(
+    server: &str,
+    id: &str,
+) -> Result<(bool, Option<riff_core::wire::PersonRole>)> {
+    use riff_core::wire::PersonRole;
     let here = identity::place(&identity::working_dir()?)?;
     let api = Api::new(server);
     let me = identity::agent(&here, id, api.base())?;
-    let sessions = api.signed_in(Some(id))?.who(&me, false).await?;
-    Ok(sessions
+    let who = api.signed_in(Some(id))?.roster(&me, false).await?;
+    let lead = who
+        .sessions
         .iter()
-        .any(|s| s.uri.who() == me.who() && s.uri.lead()))
+        .any(|s| s.uri.who() == me.who() && s.uri.lead());
+    let role = (!who.people.is_empty()).then(|| {
+        who.people
+            .iter()
+            .find(|p| p.user == me.who().user())
+            .map_or(PersonRole::Member, |p| p.role)
+    });
+    Ok((lead, role))
 }
 
 /// The caller of a command of the release cycle: a worker, a container
-/// session, an agent session, and whether it is the lead
-/// (01M58B0JSQMWNCMSNX19536XT8). riff asks riff-server for the lead only
-/// when `ask_lead` is true.
+/// session, an agent session, whether it is the lead, and the role of
+/// its user (01M58B0JSQMWNCMSNX19536XT8). riff asks riff-server for the
+/// lead and the role only when `ask_lead` is true.
 async fn release_caller(server: &str, ask_lead: bool) -> riff::cycle::Caller {
     let worker = std::env::var(riff::worker::WORKER).is_ok_and(|v| v == "1");
     let container = riff::cycle::in_container();
     let agent = riff::cycle::in_agent();
-    let lead = match identity::session_id() {
-        Some(id) if ask_lead && agent && !worker && !container => is_lead(server, &id).await.ok(),
-        _ => None,
+    let (lead, role) = match identity::session_id() {
+        Some(id) if ask_lead && agent && !worker && !container => {
+            match lead_and_role(server, &id).await {
+                Ok((lead, role)) => (Some(lead), role),
+                Err(_) => (None, None),
+            }
+        }
+        _ => (None, None),
     };
     riff::cycle::Caller {
         worker,
         container,
         agent,
         lead,
+        role,
     }
 }
 

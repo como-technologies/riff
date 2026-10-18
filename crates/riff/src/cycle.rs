@@ -58,6 +58,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::build::Semver;
+use riff_core::wire::PersonRole;
 use serde::Deserialize;
 
 use crate::pr::{self, Gh};
@@ -743,18 +744,29 @@ pub struct Caller {
     /// For an agent session: `Some(true)` when it is the lead of its
     /// user, `None` when riff cannot tell.
     pub lead: Option<bool>,
+    /// For an agent session: the role of its user in the riff. `None`
+    /// in a riff with no sign-in: it has no people, and it trusts its
+    /// network.
+    pub role: Option<PersonRole>,
 }
 
 impl Caller {
     /// Why this caller may not run `riff release publish`, or `None`. A
-    /// person in a plain terminal may, and the lead may.
+    /// person in a plain terminal may. The lead may when its user is
+    /// the owner or an admin of the riff, or when the riff has no
+    /// sign-in.
     ///
     /// ```
     /// use riff::cycle::Caller;
+    /// use riff_core::wire::PersonRole;
     ///
     /// assert!(Caller::default().may_not_publish().is_none());
     /// let lead = Caller { agent: true, lead: Some(true), ..Caller::default() };
     /// assert!(lead.may_not_publish().is_none());
+    /// let admin = Caller { role: Some(PersonRole::Admin), ..lead };
+    /// assert!(admin.may_not_publish().is_none());
+    /// let member = Caller { role: Some(PersonRole::Member), ..lead };
+    /// assert!(member.may_not_publish().unwrap().contains("owner or of an admin"));
     /// let worker = Caller { worker: true, agent: true, lead: Some(false), ..Caller::default() };
     /// assert!(worker.may_not_publish().unwrap().contains("a worker"));
     /// ```
@@ -767,6 +779,7 @@ impl Caller {
             None
         } else {
             match self.lead {
+                Some(true) if self.role == Some(PersonRole::Member) => Some(text::PUBLISH_MEMBER),
                 Some(true) => None,
                 Some(false) => Some(text::PUBLISH.not_the_lead),
                 None => Some(text::PUBLISH.lead_unknown),
@@ -1693,6 +1706,25 @@ mod tests {
         assert_eq!(container.may_not_publish(), Some(text::PUBLISH_CONTAINER));
         assert_eq!(other.may_not_publish(), Some(text::PUBLISH.not_the_lead));
         assert_eq!(unknown.may_not_publish(), Some(text::PUBLISH.lead_unknown));
+        let lead = |role| Caller {
+            agent: true,
+            lead: Some(true),
+            role,
+            ..Caller::default()
+        };
+        assert_eq!(
+            lead(Some(PersonRole::Member)).may_not_publish(),
+            Some(text::PUBLISH_MEMBER)
+        );
+        for role in [None, Some(PersonRole::Owner), Some(PersonRole::Admin)] {
+            assert_eq!(lead(role).may_not_publish(), None, "{role:?}");
+        }
+        // A member that is not the lead gets the refusal of the lead.
+        let member = Caller {
+            role: Some(PersonRole::Member),
+            ..other
+        };
+        assert_eq!(member.may_not_publish(), Some(text::PUBLISH.not_the_lead));
         for caller in [
             worker,
             container,

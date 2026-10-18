@@ -3717,9 +3717,11 @@ just real-session
 
 #### Publish the release
 
-Only the lead, or a person in a terminal, publishes. `gh` and `git`
-must sign in as an admin of the repository: the ruleset `releases`
-lets only an admin push a release tag. Pause the riff first:
+Only the lead of the owner or of an admin of the riff, or a person in a
+terminal, publishes. A riff with no sign-in has no roles: there each
+lead may. `gh` and `git` must sign in as an admin of the repository: the
+ruleset `releases` lets only an admin push a release tag. Pause the riff
+first:
 
 ```sh
 riff pause --riff

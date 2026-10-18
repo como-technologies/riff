@@ -2021,6 +2021,12 @@ the lead, so riff release publish changed nothing.",
 changed nothing. Check the riff with riff whoami.",
 };
 
+/// The refusal of `riff release publish` in the lead of a member: a
+/// person who is not the owner and not an admin of the riff
+/// (01M58B0JSQMWNCMSNX19536XT8).
+pub const PUBLISH_MEMBER: &str = "riff: only the lead of the owner or of an admin of the riff \
+publishes a release. Your user is a member, so riff release publish changed nothing.";
+
 /// The refusal of `riff release publish` in a container session
 /// (01M58B0JSQMWNCMSNX19536XT8).
 pub const PUBLISH_CONTAINER: &str = "riff: a container session never publishes a release. riff \
