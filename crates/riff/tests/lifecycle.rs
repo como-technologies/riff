@@ -312,6 +312,36 @@ async fn server_names_another_build_and_what_to_run() {
     assert!(stdout.contains("\nRun riff update"), "{stdout}");
 }
 
+/// 01M56Q55SHHJSKJWNHMW79X7HA: `riff update` installs the release of
+/// the server, so the last line asks for it only when the server is
+/// newer. When this riff is newer, it asks for an update of the server.
+#[tokio::test]
+async fn server_asks_for_the_update_of_the_older_side() {
+    let at = |time: &str| Build {
+        time: time.into(),
+        ..other()
+    };
+    let last = |stdout: &str| stdout.lines().last().unwrap_or_default().to_owned();
+    let mut cmd = riff(&["server"]);
+    cmd.env("RIFF_SERVER", fake(at("2999-01-01T00:00:00Z")).await);
+    let stdout = text(&run(cmd).await.stdout);
+    assert_eq!(
+        last(&stdout),
+        "Run riff update, then riff login",
+        "{stdout}"
+    );
+
+    let mut cmd = riff(&["server"]);
+    cmd.env("RIFF_SERVER", fake(at("2000-01-01T00:00:00Z")).await);
+    let stdout = text(&run(cmd).await.stdout);
+    assert_eq!(
+        last(&stdout),
+        "Run riff login. Update riff-server when you can.",
+        "{stdout}"
+    );
+    assert!(!stdout.contains("riff update"), "{stdout}");
+}
+
 #[tokio::test]
 async fn server_names_a_riff_that_does_not_answer() {
     let stdout = text(

@@ -299,6 +299,10 @@ server      https://riff.example.com  (from RIFF_SERVER)
 - When you must act, the last line says what to run, for example
   `Run riff update` or `Run riff login`. It is yellow when the versions
   can talk, and red when they cannot or when you must sign in.
+- It says `Run riff update` only when the server is newer than this
+  `riff`. When this `riff` is newer, it says
+  `Update riff-server when you can.` See
+  [When the builds differ](#when-the-builds-differ).
 
 `localhost`, `127.0.0.1` and `[::1]` with the same port are one riff:
 the riff of this machine. `riff server` shows it once.
@@ -434,7 +438,7 @@ riff: riff-server runs build 0.4.0 7213825ab1c2 2026-09-27T20:10:44Z; this riff 
 Across the bridge, `riff` of the line 3 talks with `riff-server` of
 the line 1, for example after a rollback of the server. Then the
 server is the older side. The note says so, and this machine needs no
-step:
+step. `riff server` says the same:
 
 ```text
 riff: riff-server runs build 1.8.2 7213825ab1c2 2026-10-17T20:10:44Z; this riff runs build 3.0.0 929605821e54 2026-10-18T22:03:01Z. Update riff-server when you can.
