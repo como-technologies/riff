@@ -68,7 +68,7 @@ pub fn new_riff(server: &str) -> String {
     )
 }
 
-/// The note of `riff invite --email` in each repository thread
+/// The note of `riff invite` in each repository thread
 /// (01M3MN14ZCTRVD3T455P6TFK1B). `user` made the change.
 ///
 /// ```
@@ -85,7 +85,7 @@ pub fn invited_news(user: &str, done: &Invited) -> String {
     format!("members: {user} invited {email}. {email} is a member now.")
 }
 
-/// The note of `riff remove --email` in each repository thread
+/// The note of `riff remove` in each repository thread
 /// (01M3MN14ZCTRVD3T455P6TFK1B).
 ///
 /// ```

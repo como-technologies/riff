@@ -169,7 +169,7 @@ async fn the_owner_invites_and_removes_a_person() {
         .unwrap();
     assert_eq!(refused.error, "access_denied");
     let why = refused.error_description.unwrap();
-    assert!(why.contains("riff invite --email bob@gmail.com"), "{why}");
+    assert!(why.contains("riff invite bob@gmail.com"), "{why}");
 
     let (status, body) = invite(&url, &ada, " Bob@Gmail.com").await;
     assert_eq!(status, 200, "{body}");
@@ -548,7 +548,7 @@ async fn a_removal_ends_each_sign_in_of_the_person() {
     }
     let refused = sign_in(&url, &issuer, "bob@gmail.com", None).await;
     let why = refused.err().unwrap().error_description.unwrap();
-    assert!(why.contains("riff invite --email bob@gmail.com"), "{why}");
+    assert!(why.contains("riff invite bob@gmail.com"), "{why}");
 }
 
 /// Only the owner or an admin sets the settings of idle workers. A

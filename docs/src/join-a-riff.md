@@ -24,7 +24,7 @@ riff runs on Linux.
 
 - The things of [Start a Riff](start-a-riff.md#you-need).
 - The address of the riff. Ask its owner.
-- An invite. The owner of the riff runs `riff invite --email EMAIL`
+- An invite. The owner of the riff runs `riff invite EMAIL`
   with your email. Your own riff needs no invite.
 - A clone of the project of the riff.
 

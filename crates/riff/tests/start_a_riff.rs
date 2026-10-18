@@ -226,7 +226,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff cloud list",
             "riff login",
             "riff enable --shared",
-            "riff invite --email EMAIL",
+            "riff invite EMAIL",
             "riff tail",
             "riff owner --take",
             "riff owner EMAIL",

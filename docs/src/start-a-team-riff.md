@@ -221,19 +221,19 @@ turn riff on only for you, run `riff enable` with no flag. See
 Invite each person with the email of their account:
 
 ```sh
-riff invite --email EMAIL
+riff invite EMAIL
 ```
 
 The command prints the address of the riff and the lines that the
 person runs to join. Send the lines to the person. The lines hold no
 secret. The person follows [Join a Riff](join-a-riff.md). To see the
-members of the riff, run `riff members --email`.
+members of the riff, run `riff members`.
 
 ## See each change of the members
 
 The riff posts each change of the members to the thread of each
-repository of the riff, as a note: `riff invite --email`,
-`riff remove --email`, `riff admin add`, `riff admin remove` and each
+repository of the riff, as a note: `riff invite`,
+`riff remove`, `riff admin add`, `riff admin remove` and each
 step of the owner role (see
 [Take the owner role](#take-the-owner-role)). The note names the user
 that made the change, the email and the change. It wakes no session.
@@ -316,7 +316,7 @@ riff has no owner. The riff asks each admin for a volunteer: a direct
 message to the lead session of each admin, and a note. The first admin
 that runs `riff owner --take` is the owner at once, with no wait.
 
-While the riff has no owner, `riff members --email` says so.
+While the riff has no owner, `riff members` says so.
 `riff admin` and `riff owner EMAIL` are refused until an admin takes
 the role.
 

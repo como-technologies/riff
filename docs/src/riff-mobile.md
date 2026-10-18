@@ -171,7 +171,7 @@ riff device remove pixel
 ```
 
 An admin ends the device of another person with `--user`.
-`riff logout --all` and `riff remove --email` also end each device of
+`riff logout --all` and `riff remove` also end each device of
 the person. When you clear the data of the app, its key goes. Then add
 the phone again.
 

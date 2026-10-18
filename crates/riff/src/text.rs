@@ -1617,7 +1617,7 @@ pub fn workers_started(count: u16, window: &str, dir: &std::path::Path) -> Strin
     )
 }
 
-/// The answer to `riff invite --email` (riff-server 1.x): the address of
+/// The answer to `riff invite` (riff-server 1.x): the address of
 /// the riff and the lines that the person runs to join
 /// (01M3MEF4B33Z6WVJMDP29C7SS2). The lines are the ones of "Join a Riff"
 /// in the book, and hold no secret.
@@ -1652,7 +1652,7 @@ pub fn invited(done: &Invited) -> String {
     )
 }
 
-/// The answer to `riff remove --email` (riff-server 1.x).
+/// The answer to `riff remove` (riff-server 1.x).
 ///
 /// ```
 /// use riff_core::wire::Removed;
@@ -1818,7 +1818,7 @@ pub fn members_news(news: &anyhow::Result<Vec<Posted>>) -> String {
     }
 }
 
-/// The line of `riff members --email` for a riff with no owner
+/// The line of `riff members` for a riff with no owner
 /// (01M3Q63NNC6SC03BFCG80M7B4D).
 pub const NO_OWNER: &str =
     "The riff has no owner. An admin takes the owner role with: riff owner --take";

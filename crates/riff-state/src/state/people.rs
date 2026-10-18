@@ -643,7 +643,7 @@ impl Command for Admit {
             return Err(Refused::new(
                 Code::NotMember,
                 format!(
-                    "{email} is not a member of this riff; ask its owner to run: riff invite --email {email}"
+                    "{email} is not a member of this riff; ask its owner to run: riff invite {email}"
                 ),
             ));
         }
@@ -854,9 +854,7 @@ impl Command for PassOwner {
         if !people.members.contains(&email) && !view.is_admin(&email) {
             return Err(Refused::new(
                 Code::NotMember,
-                format!(
-                    "{email} is not a member of this riff; run riff invite --email {email} first"
-                ),
+                format!("{email} is not a member of this riff; run riff invite {email} first"),
             ));
         }
         let mut changes = view.keeps(old);

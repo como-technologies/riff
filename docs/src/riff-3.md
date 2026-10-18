@@ -175,9 +175,9 @@ above. Then start its sessions again.
 The riff of peers of riff 1.6 to 1.8, with its code, its tests and its
 book text (#959): iroh and the use of n0, the key of the daemon, the
 records and their sync, the claims on GitHub, `riff invite USER`,
-`riff join`, `riff leave`, `riff remove USER`, `riff members` with no
-`--email`, the flag `--peers` of `riff run` and of `riff wave run`, and
-the flag `--forge` of `riff release`.
+`riff join`, `riff leave`, `riff remove USER`, the list of member keys
+of `riff members`, the flag `--peers` of `riff run` and of
+`riff wave run`, and the flag `--forge` of `riff release`.
 
 ### What riff 3.0.0 leaves on a machine
 
@@ -204,7 +204,8 @@ the daemon: `daemon` in the data folder of riff.
   the host.
 - Each command of riff-server: `riff who`, `riff chat`, `riff pause`,
   `riff resume`, `riff plan`, `riff claim`, `riff release` and the
-  member commands with `--email`.
+  member commands `riff invite EMAIL`, `riff remove EMAIL` and
+  `riff members`.
 
 ## What sessions share
 
