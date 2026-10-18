@@ -15,6 +15,7 @@
 //! | `riff workers` | Starts, lists and stops the worker sessions of this machine in tmux, with [`terminal`]. Its limit is in [`settings`]. The `riff mcp` of the lead gives free work to the idle workers, and asks the riff daemon to run the wave for the rest, with [`rollout`]. [`monitor`] tells the lead about the health of a machine. |
 //! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], [`release`] for the static binaries of a release, and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
+//! | `riff release cut`, `publish`, `status`, `approve` | The release cycle: the release pull request, the tag, the GitHub release and the approval of the deploy. See [`cycle`]. |
 //! | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request on GitHub, with `gh`. See [`pr`]. |
 //! | `riff denials` | Counts the refusals of auto mode that the hook `PermissionDenied` posts to the riff. See [`denied`]. |
 //! | `riff usage` | Shows the tokens and the models of an issue, of a wave, or of the sessions of this machine. See [`usage`]. |
@@ -90,6 +91,7 @@ pub mod claude_token;
 pub mod cloud;
 pub mod compact;
 pub mod compile_cache;
+pub mod cycle;
 pub mod daemon;
 pub mod deaths;
 pub mod denied;

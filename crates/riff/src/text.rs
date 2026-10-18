@@ -2012,6 +2012,25 @@ lead, so riff workers start started nothing.",
 started nothing. Check the riff with riff whoami.",
 };
 
+/// The refusals of `riff release publish` (01M58B0JSQMWNCMSNX19536XT8).
+pub const PUBLISH: LeadOnly = LeadOnly {
+    worker: "riff: a worker never publishes a release. riff release publish changed nothing.",
+    not_the_lead: "riff: only the lead of your user publishes a release. This session is not \
+the lead, so riff release publish changed nothing.",
+    lead_unknown: "riff: cannot check that this session is the lead, so riff release publish \
+changed nothing. Check the riff with riff whoami.",
+};
+
+/// The refusal of `riff release publish` in a container session
+/// (01M58B0JSQMWNCMSNX19536XT8).
+pub const PUBLISH_CONTAINER: &str = "riff: a container session never publishes a release. riff \
+release publish changed nothing. The lead runs it.";
+
+/// The refusal of `riff release approve` in an agent session
+/// (01M58B0JSQMWNCMSNX19536XT8).
+pub const APPROVE_AGENT: &str = "riff: a session never approves a deploy. riff release approve \
+changed nothing. A person runs it in a plain terminal, outside Claude Code.";
+
 /// The refusal of `riff workers start` when `run` workers fill the
 /// `limit` (01M3JPQT57PJCRBQYJNDVESS04).
 ///

@@ -449,70 +449,34 @@ fn the_book_deploys_a_release_again() {
     );
 }
 
-/// The book how-to makes a release: bump, merge, tag, with the real
-/// commands (01M3N73AW2J3TVSZWFJ88A91PG). The pull request states the
-/// level and the reason, and the notes list what each person runs
-/// (01M3N73EGY4NQDQQP8Y185E9VZ). GitHub generates the rest of the
-/// notes (01M3NB3EWE2V9PCTMNTZAKEXMA). A release of the line 1.x that
-/// the test makes a major is a minor (01M53N7KN4QKZ70W2GNQ3VQWQ9).
+/// The book how-to makes a release with the riff commands
+/// (01M3N73AW2J3TVSZWFJ88A91PG, 01M58B0HZYMAK1B2AJMWKHCXG0). The pull
+/// request states the level, and its body gives the notes, with what
+/// each person runs (01M3N73EGY4NQDQQP8Y185E9VZ). GitHub generates the
+/// rest of the notes (01M3NB3EWE2V9PCTMNTZAKEXMA). A release of the
+/// line 1.x that the test makes a major is a minor
+/// (01M53N7KN4QKZ70W2GNQ3VQWQ9).
 #[test]
 fn the_book_makes_a_release() {
     let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
     let part = &page[page.find("### Make a release\n").unwrap()..];
     let part = &part[..part[4..].find("\n### ").unwrap()];
     for text in [
-        "An admin makes the release",
+        "The lead makes the release",
         "(how-it-works.md#the-test-for-each-release)",
         "\nOn the line 1.x, a release that the test makes a major is a minor.\n",
-        "states the level and the\nreason in one line",
-        "```text\nLevel: minor.",
-        "the commands that each person\nruns",
-        "`riff update --tag v0.2.0`",
-        "gh pr create --title \"Release v0.2.0\" --label release --body-file pr.md\n",
-        "the level line\nof the pull request",
-        "gh release create v0.2.0 --verify-tag --title v0.2.0 --notes-file notes.md --generate-notes\n",
-        "`--notes-start-tag v0.1.0`",
+        "the level line",
+        "the commands that each\nperson runs",
+        "`riff update --tag v3.3.0`",
         "riff workers stop\n",
-        "sed -i 's/^version = \".*\"/version = \"0.2.0\"/' Cargo.toml\n",
-        "sed -i 's/\"version\": \".*\"/\"version\": \"0.2.0\"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json\n",
-        "cargo update --workspace\n",
-        "git tag v0.2.0 origin/main\n",
-        "git push origin v0.2.0\n",
+        "riff release cut 3.3.0\n",
+        "riff pause --riff\nriff release publish v3.3.0\n",
+        "riff release approve v3.3.0\n",
+        "the notes that GitHub makes from the last release",
         "`Release check`",
     ] {
         assert!(part.contains(text), "{text:?} is not in: {part}");
     }
-    let root = tempfile::tempdir().unwrap();
-    fs::copy(
-        deploy().join("../Cargo.toml"),
-        root.path().join("Cargo.toml"),
-    )
-    .unwrap();
-    let bump = Command::new("sh")
-        .arg("-c")
-        .arg("sed -i 's/^version = \".*\"/version = \"0.2.0\"/' Cargo.toml")
-        .current_dir(root.path())
-        .status()
-        .unwrap();
-    assert!(bump.success());
-    let bumped = fs::read_to_string(root.path().join("Cargo.toml")).unwrap();
-    assert!(bumped.contains("\nversion = \"0.2.0\"\n"), "{bumped}");
-    assert!(bumped.contains("tokio = { version = \"1."), "{bumped}");
-    let plugin = root.path().join("plugin.json");
-    fs::copy(
-        deploy().join("../crates/riff/claude-plugin/riff/.claude-plugin/plugin.json"),
-        &plugin,
-    )
-    .unwrap();
-    let bump = Command::new("sh")
-        .arg("-c")
-        .arg("sed -i 's/\"version\": \".*\"/\"version\": \"0.2.0\"/' plugin.json")
-        .current_dir(root.path())
-        .status()
-        .unwrap();
-    assert!(bump.success());
-    let bumped = fs::read_to_string(&plugin).unwrap();
-    assert!(bumped.contains("\"version\": \"0.2.0\""), "{bumped}");
 }
 
 /// Runs `deploy/release-check.sh` with `args`.
