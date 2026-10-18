@@ -1044,6 +1044,33 @@ a scope, or a new item joins the current wave.
 A worker never starts workers, and a session that is not the lead
 cannot: `riff workers start` refuses.
 
+### The daemon of another host
+
+You act on the riff daemon of each host of your user with `--host
+HOST`, through riff-server. You have no SSH to a host. riff waits for
+the reply of the daemon and prints it:
+
+```sh
+riff daemon status --host HOST
+riff daemon limit --sessions N --host HOST
+riff daemon cache SIZE --host HOST
+riff daemon events NAME --host HOST
+riff daemon sweep --host HOST
+riff daemon end NAME --host HOST
+riff daemon restart --host HOST
+riff wave run --host HOST
+riff wave stop --host HOST
+```
+
+- `riff daemon end NAME` ends one session, and frees its item at once.
+- `riff daemon restart` starts the daemon again on the new riff only
+  when it runs no session. `riff daemon status --host HOST` then shows
+  the new build.
+- Change the limit or the compile cache of a host only on the word of
+  your user.
+- When riff says that no daemon serves the repository on HOST, ask
+  your user to run `riff daemon host` once on HOST, in the main clone.
+
 When the `claude` of a worker exits on its own, you get a note
 `worker stopped`. The note needs no step: the free work goes to an idle
 worker or to the wave. When the note names a signal, a kill ended the worker,

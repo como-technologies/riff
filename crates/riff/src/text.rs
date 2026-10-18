@@ -6896,6 +6896,163 @@ pub fn session_mcp_unread(error: &str) -> String {
     format!("riff: {error}. The session starts with the riff MCP server only.")
 }
 
+/// The refusal of the daemon of a host to a request that is not
+/// verified (01M579Z9PZZCVWQKG7V8WZ5KRB).
+///
+/// ```
+/// use riff::daemon::remote::Request;
+/// assert_eq!(
+///     riff::text::daemon_refused_not_verified(&Request::Sweep),
+///     "refused: \"daemon sweep\" is not verified. The daemon acts only on a verified request."
+/// );
+/// ```
+pub fn daemon_refused_not_verified(request: &crate::daemon::remote::Request) -> String {
+    format!("refused: \"{request}\" is not verified. The daemon acts only on a verified request.")
+}
+
+/// The refusal of the daemon of a host to a request of another user, or
+/// of a session that is not the lead of its user in its repository
+/// (01M579Z9PZZCVWQKG7V8WZ5KRB).
+///
+/// ```
+/// use riff::daemon::remote::Request;
+/// let me = "riff://mike@thelio/como-technologies/riff?session=d1".parse()?;
+/// assert_eq!(
+///     riff::text::daemon_refused(&Request::Status, &me),
+///     "refused: \"daemon status\" is not from mike or the lead of mike in \
+///      como-technologies/riff. Only they act on the daemon of thelio."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn daemon_refused(request: &crate::daemon::remote::Request, me: &SessionUri) -> String {
+    let user = me.who().user();
+    format!(
+        "refused: \"{request}\" is not from {user} or the lead of {user} in {}. Only they act on \
+         the daemon of {}.",
+        me.place().repo_text(),
+        me.place().host()
+    )
+}
+
+/// The error when no daemon of the user serves the repository `repo`
+/// on `host`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::no_daemon_host("thelio", "o/r"),
+///     "riff: no daemon of your user on thelio serves o/r. On thelio, run riff daemon host \
+///      in the main clone of o/r."
+/// );
+/// ```
+pub fn no_daemon_host(host: &str, repo: &str) -> String {
+    format!(
+        "riff: no daemon of your user on {host} serves {repo}. On {host}, run riff daemon host \
+         in the main clone of {repo}."
+    )
+}
+
+/// The error when the daemon of `host` gave no reply in `wait`.
+///
+/// ```
+/// use std::time::Duration;
+/// assert_eq!(
+///     riff::text::daemon_no_reply("thelio", Duration::from_secs(600)),
+///     "riff: the daemon of thelio gave no reply in 10m. riff daemon status --host thelio \
+///      shows it."
+/// );
+/// ```
+pub fn daemon_no_reply(host: &str, wait: std::time::Duration) -> String {
+    format!(
+        "riff: the daemon of {host} gave no reply in {}. riff daemon status --host {host} shows \
+         it.",
+        ago(wait.as_secs())
+    )
+}
+
+/// The reply to `riff daemon restart` for the decision `restart` of a
+/// daemon that runs the build `build` (01M579Z9SAN24QGN1VV5C7EHM9).
+///
+/// ```
+/// use riff::daemon::remote::Restart;
+/// assert_eq!(
+///     riff::text::daemon_restart(Restart::Newest, "3.0.1"),
+///     "The riff daemon runs the riff on disk, build 3.0.1. It does not start again."
+/// );
+/// assert_eq!(
+///     riff::text::daemon_restart(Restart::Later(2), "3.0.1"),
+///     "The riff daemon runs an old riff, build 3.0.1, and 2 sessions, starts or jobs. It \
+///      starts again on the new riff after the last one."
+/// );
+/// assert!(riff::text::daemon_restart(Restart::Now, "3.0.1").contains("starts again on the new riff now"));
+/// ```
+pub fn daemon_restart(restart: crate::daemon::remote::Restart, build: &str) -> String {
+    use crate::daemon::remote::Restart;
+    match restart {
+        Restart::Newest => {
+            format!(
+                "The riff daemon runs the riff on disk, build {build}. It does not start again."
+            )
+        }
+        Restart::Later(busy) => format!(
+            "The riff daemon runs an old riff, build {build}, and {busy} sessions, starts or jobs. \
+             It starts again on the new riff after the last one."
+        ),
+        Restart::Now => format!(
+            "The riff daemon runs an old riff, build {build}, and no session. It starts again on \
+             the new riff now: riff daemon status shows its new pid and build."
+        ),
+    }
+}
+
+/// The first line of a reply of `riff daemon events --host` that leaves
+/// out the first `skip` lines.
+pub fn daemon_events_cut(skip: usize) -> String {
+    format!("({skip} earlier lines are not shown.)")
+}
+
+/// The daemon cannot start its session on riff-server for a repository.
+pub fn daemon_host_failed(error: &str) -> String {
+    format!("cannot serve the lead: {error}")
+}
+
+/// The daemon serves the lead of `repo` on `host`
+/// (01M579Z9JE6HY9HG3PWR1RR0RQ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_serves("o/r", "thelio"),
+///     "The riff daemon serves the lead of o/r: riff daemon status --host thelio, and the \
+///      other commands with --host thelio, reach it."
+/// );
+/// ```
+pub fn daemon_serves(repo: &str, host: &str) -> String {
+    format!(
+        "The riff daemon serves the lead of {repo}: riff daemon status --host {host}, and the \
+         other commands with --host {host}, reach it."
+    )
+}
+
+/// The refusal of `riff daemon end` for the lead.
+pub fn daemon_end_lead(name: &str) -> String {
+    format!("The session in the container {name} is the lead. End it in its terminal with /exit.")
+}
+
+/// The item of a session that a person ends is free
+/// (01M579Z9VRD12FRK6DSYVKDHQB).
+pub fn daemon_freed(item: &str) -> String {
+    format!("{item} is free.")
+}
+
+/// The daemon could not free the item of a session that a person ends.
+pub fn daemon_not_freed(item: &str, error: &str) -> String {
+    format!("riff cannot free {item} now: {error}. It goes free at the end of the session.")
+}
+
+/// The daemon stops the container of a session that a person ends.
+pub fn daemon_ends(name: &str) -> String {
+    format!("The riff daemon stops the container {name}.")
+}
+
 /// The first word of a wave.
 pub fn wave_starts() -> String {
     "starts".into()

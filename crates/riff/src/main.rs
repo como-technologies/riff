@@ -1219,12 +1219,24 @@ enum WaveCommand {
     ///
     /// The daemon keeps the wave, also over its own restart, until riff
     /// wave stop. It needs the sign-in of riff, of gh and of claude on
-    /// this machine.
-    Run,
+    /// this machine. With --host, the daemon of HOST runs the wave in its
+    /// own main clone of the repository.
+    Run {
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Start no new session for the wave of this repository
     ///
-    /// The sessions that run go on to their end.
-    Stop,
+    /// The sessions that run go on to their end. With --host, the daemon of
+    /// HOST stops its wave.
+    Stop {
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply.
+        #[arg(long)]
+        host: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1250,7 +1262,12 @@ enum DaemonCommand {
     /// limit of the host, each session, each start that waits for room,
     /// and each wave. It exits with 1 when no daemon answers, and shows
     /// the state of the unit riff.service.
-    Status,
+    Status {
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Show the events of a session of the riff daemon
     ///
     /// It shows each event of the session in the container NAME from its
@@ -1260,6 +1277,10 @@ enum DaemonCommand {
     Events {
         /// The name of the container, for example riff-issue-12-1a2b3c4d.
         name: String,
+        /// Ask the riff daemon of HOST, through riff-server. It shows the
+        /// events so far, at most the last 60 lines, and does not follow.
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Show or set the limit of this host
     ///
@@ -1284,6 +1305,10 @@ enum DaemonCommand {
         /// The memory cap of each new container, in GB, 1 or more.
         #[arg(long, value_name = "GB")]
         memory: Option<u64>,
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply.
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Show, set or empty the compile cache of the sessions
     ///
@@ -1300,6 +1325,10 @@ enum DaemonCommand {
         /// Delete each file of the cache.
         #[arg(long)]
         clear: bool,
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply.
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Remove the folders of the sessions whose work is over, now
     ///
@@ -1310,7 +1339,44 @@ enum DaemonCommand {
     /// a file that is not committed, or a commit that is not pushed,
     /// stays. It prints each folder that it removed, and each folder that
     /// stays with work in its clone, with the reason.
-    Sweep,
+    Sweep {
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply.
+        #[arg(long)]
+        host: Option<String>,
+    },
+    /// End one session of the riff daemon, and free its item
+    ///
+    /// The daemon frees the claim of the session on riff-server, then
+    /// stops its container. riff daemon status shows the names. It
+    /// refuses the lead: end it in its terminal with /exit.
+    End {
+        /// The name of the container, for example riff-issue-12-1a2b3c4d.
+        name: String,
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply.
+        #[arg(long)]
+        host: Option<String>,
+    },
+    /// Start the riff daemon again on the new riff
+    ///
+    /// When the daemon runs an old riff and no session, start that
+    /// waits or job of a wave, it starts again on the riff on disk. Else
+    /// it says why not. riff daemon status shows the new pid and build.
+    Restart {
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply.
+        #[arg(long)]
+        host: Option<String>,
+    },
+    /// Let your lead on another host reach this riff daemon
+    ///
+    /// Run it once in the main clone of a repository. The daemon gets a
+    /// session of its own on riff-server for the repository, and keeps
+    /// it over its restarts. Then the lead runs the daemon commands
+    /// with --host and the name of this host. riff wave run does this
+    /// step too.
+    Host,
     /// Show or change the MCP servers of the sessions of this host
     ///
     /// These are the MCP servers that each new container session of this
@@ -1710,7 +1776,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if let Command::Daemon { command } = &cli.command {
-        return daemon_command(command.as_ref()).await;
+        return daemon_command(command.as_ref(), cli.server.as_deref()).await;
     }
     if let Command::Init { check, yes } = cli.command {
         use riff::first_run::Mode;
@@ -2025,7 +2091,7 @@ async fn main() -> Result<()> {
                 let ended = riff::waves::end(&gh, *number)?;
                 Some(text::waves_ended(&ended.title, ended.closed_issues))
             }
-            WaveCommand::Run | WaveCommand::Stop => None,
+            WaveCommand::Run { .. } | WaveCommand::Stop { .. } => None,
         };
         if let Some(line) = line {
             println!("{line}");
@@ -2135,8 +2201,16 @@ async fn main() -> Result<()> {
     if let Command::Wave { command } = &cli.command {
         let dir = riff::daemon::dir()?;
         match command {
-            WaveCommand::Run => riff::wave::ask_run(&dir, &here, api.base()).await?,
-            WaveCommand::Stop => riff::wave::ask_stop(&dir, &here).await?,
+            WaveCommand::Run { host: Some(host) } => {
+                let request = riff::daemon::remote::Request::WaveRun;
+                ask_daemon(host, &request, &here, api.base()).await?;
+            }
+            WaveCommand::Stop { host: Some(host) } => {
+                let request = riff::daemon::remote::Request::WaveStop;
+                ask_daemon(host, &request, &here, api.base()).await?;
+            }
+            WaveCommand::Run { host: None } => riff::wave::ask_run(&dir, &here, api.base()).await?,
+            WaveCommand::Stop { host: None } => riff::wave::ask_stop(&dir, &here).await?,
             WaveCommand::List
             | WaveCommand::Make { .. }
             | WaveCommand::Rename { .. }
@@ -2786,17 +2860,27 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
     Ok(())
 }
 
-/// `riff daemon` and its subcommands.
-async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
+/// `riff daemon` and its subcommands. With `--host`, riff asks the
+/// daemon of that host through the riff-server of `server`
+/// ([`riff::daemon::remote`]).
+async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -> Result<()> {
+    if let Some((host, request)) = command.and_then(remote_request) {
+        let (server, _) = server_of(server)?;
+        let here = identity::place(&identity::working_dir()?)?;
+        return ask_daemon(host, &request, &here, &server).await;
+    }
+    let Some(command) = command else {
+        return riff::daemon::serve_here().await;
+    };
+    let dir = riff::daemon::dir()?;
     match command {
-        None => riff::daemon::serve_here().await,
-        Some(DaemonCommand::Install) => {
+        DaemonCommand::Install => {
             let manager = riff::service::Systemd::here()?;
             let unit = riff::service::Unit::of_this()?;
             let wait = Duration::from_secs(10);
-            riff::daemon::install(&manager, &unit, &riff::daemon::dir()?, wait).await
+            riff::daemon::install(&manager, &unit, &dir, wait).await
         }
-        Some(DaemonCommand::Uninstall) => {
+        DaemonCommand::Uninstall => {
             let manager = riff::service::Systemd::here()?;
             println!(
                 "{}",
@@ -2804,54 +2888,42 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
             );
             Ok(())
         }
-        Some(DaemonCommand::Status) => {
+        DaemonCommand::Status { .. } => {
             let manager = riff::service::Systemd::here()?;
-            let code = riff::daemon::show_status(&riff::daemon::dir()?, &manager).await;
+            let code = riff::daemon::show_status(&dir, &manager).await;
             if code != 0 {
                 std::process::exit(code);
             }
             Ok(())
         }
-        Some(DaemonCommand::Events { name }) => {
-            let code = riff::daemon::show_events(&riff::daemon::dir()?, name).await?;
+        DaemonCommand::Events { name, .. } => {
+            let code = riff::daemon::show_events(&dir, name).await?;
             if code != 0 {
                 std::process::exit(code);
             }
             Ok(())
         }
-        Some(DaemonCommand::Limit {
-            sessions,
-            floor,
-            cpus,
-            memory,
-        }) => {
-            let change = riff::room::Change {
-                sessions: *sessions,
-                floor_gb: *floor,
-                cpus: *cpus,
-                memory_gb: *memory,
-            };
-            let limit = riff::room::set(&riff::daemon::dir()?, change)?;
+        DaemonCommand::Limit { .. } => {
+            let change = limit_change(command).unwrap_or_default();
+            let limit = riff::room::set(&dir, change)?;
             println!("{}", riff::text::daemon_limit(&limit));
             Ok(())
         }
-        Some(DaemonCommand::Cache { size, clear }) => {
-            let dir = riff::daemon::dir()?;
-            if *clear {
-                if let Some(folder) = riff::compile_cache::folder() {
-                    riff::compile_cache::clear(&folder)?;
-                    println!("{}", riff::text::DAEMON_CACHE_CLEARED);
-                }
-            } else {
-                riff::compile_cache::set(&dir, size.as_deref())?;
-            }
-            println!("{}", riff::compile_cache::shown(&dir));
+        DaemonCommand::Cache { size, clear, .. } => {
+            println!(
+                "{}",
+                riff::compile_cache::change(&dir, size.as_deref(), *clear)?
+            );
             Ok(())
         }
-        Some(DaemonCommand::Sweep) => riff::daemon::ask_sweep(&riff::daemon::dir()?).await,
-        Some(DaemonCommand::Mcp { command }) => {
+        DaemonCommand::Sweep { .. } => riff::daemon::ask_sweep(&dir).await,
+        DaemonCommand::End { name, .. } => riff::daemon::ask_end(&dir, name).await,
+        DaemonCommand::Restart { .. } => {
+            let ask = riff::daemon::Ask::Restart;
+            riff::daemon::ask_done(&dir, ask, |line| println!("{line}")).await
+        }
+        DaemonCommand::Mcp { command } => {
             use riff::session_mcp;
-            let dir = riff::daemon::dir()?;
             let names = match command {
                 None => session_mcp::names(&session_mcp::read(&dir)?),
                 Some(DaemonMcp::Add { name }) => {
@@ -2869,6 +2941,88 @@ async fn daemon_command(command: Option<&DaemonCommand>) -> Result<()> {
             };
             println!("{}", riff::text::session_mcp(&names));
             Ok(())
+        }
+        DaemonCommand::Host => {
+            let (server, _) = server_of(server)?;
+            let work = identity::working_dir()?;
+            let here = identity::place(&work)?;
+            riff::daemon::ask_serve(&dir, &work, &here, &server).await
+        }
+    }
+}
+
+/// The change of `riff daemon limit` from its flags.
+fn limit_change(command: &DaemonCommand) -> Option<riff::room::Change> {
+    let DaemonCommand::Limit {
+        sessions,
+        floor,
+        cpus,
+        memory,
+        ..
+    } = command
+    else {
+        return None;
+    };
+    Some(riff::room::Change {
+        sessions: *sessions,
+        floor_gb: *floor,
+        cpus: *cpus,
+        memory_gb: *memory,
+    })
+}
+
+/// The host and the request of a daemon command with `--host`
+/// (01M579Z9MPS86MX7890T6HV18S).
+fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote::Request)> {
+    use riff::daemon::remote::Request;
+    let (host, request) = match command {
+        DaemonCommand::Status { host } => (host, Request::Status),
+        DaemonCommand::Events { name, host } => (host, Request::Events(name.clone())),
+        DaemonCommand::Limit { host, .. } => (host, Request::Limit(limit_change(command)?)),
+        DaemonCommand::Cache { size, clear, host } => (
+            host,
+            Request::Cache {
+                size: size.clone(),
+                clear: *clear,
+            },
+        ),
+        DaemonCommand::Sweep { host } => (host, Request::Sweep),
+        DaemonCommand::End { name, host } => (host, Request::End(name.clone())),
+        DaemonCommand::Restart { host } => (host, Request::Restart),
+        DaemonCommand::Install
+        | DaemonCommand::Uninstall
+        | DaemonCommand::Host
+        | DaemonCommand::Mcp { .. } => return None,
+    };
+    Some((host.as_deref()?, request))
+}
+
+/// Asks the daemon of `host` for `request` through riff-server, in the
+/// repository of the place `here`, and prints its reply
+/// (01M579Z9MPS86MX7890T6HV18S). It asks as the agent session of this
+/// process, or else as the person. It exits with 1 when the daemon
+/// refused or failed.
+async fn ask_daemon(
+    host: &str,
+    request: &riff::daemon::remote::Request,
+    here: &Place,
+    server: &str,
+) -> Result<()> {
+    let api = Api::new(server);
+    let me = match identity::session_id() {
+        Some(id) => identity::agent(here, &id, api.base())?,
+        None => identity::person(here, api.base())?,
+    };
+    let api = api.signed_in(me.who().session())?;
+    let wait = riff::daemon::remote::REPLY_WAIT;
+    match riff::daemon::remote::ask(&api, &me, host, request, wait).await {
+        Ok(reply) => {
+            println!("{reply}");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            std::process::exit(1);
         }
     }
 }
