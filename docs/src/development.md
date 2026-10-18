@@ -2151,10 +2151,13 @@ verify claim, with its models:
 riff usage 12
 ```
 
-Each issue of a wave with its total, and the sum:
+Each issue of a wave with its total, and the sum. Give the number of
+the wave. The name is not necessary: `3` finds the wave
+`Wave 3: Cloud`. For a wave that riff does not find, it shows an
+error with the open waves.
 
 ```sh
-riff usage --wave "Wave 3"
+riff usage --wave 3
 ```
 
 Each session of this machine, with the tokens of each item. The line
@@ -2221,10 +2224,11 @@ riff usage 12 --total
 
 `riff audit` reads the log of the riff and the forge, and checks that
 the sessions followed the flow of a wave. Only the owner or an admin
-can read the log. Run it in your clone. It needs `gh`.
+can read the log. Run it in your clone. It needs `gh`. Give the number
+of the wave. The name is not necessary.
 
 ```sh
-riff audit --wave "Wave 18"
+riff audit --wave 18
 ```
 
 It prints each rule with `pass`, `fail` or `not checked`. Rule 1 has a

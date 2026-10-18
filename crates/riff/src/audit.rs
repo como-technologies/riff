@@ -227,7 +227,8 @@ impl Rule {
 /// The result of an audit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
-    /// The title of the wave.
+    /// The title of the wave, as the forge has it. [`render`] prints it
+    /// through [`crate::text::forge`].
     pub wave: String,
     /// The start of the span, in milliseconds since the Unix epoch.
     pub from_ms: u64,
@@ -735,7 +736,7 @@ pub fn render(report: &Report, repo: &str) -> String {
     let to = report.to_ms.map_or_else(|| "now".to_owned(), time);
     let mut out = format!(
         "Audit of {} in {repo}, from {} to {to}.\n",
-        report.wave,
+        crate::text::forge(&report.wave),
         time(report.from_ms)
     );
     for rule in &report.rules {

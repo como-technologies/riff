@@ -1574,6 +1574,54 @@ pub fn waves_not_open(number: u64) -> String {
     format!("No open wave has the number {number}. riff wave list shows the open waves.")
 }
 
+/// The refusal of `--wave` of `riff usage` and `riff audit` for a wave
+/// that matches no milestone (01M588K2M7G0CV3RNJ4N074FTG). It names the
+/// open waves.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_no_such("Wave 9", &["Wave 33: Hosts", "Wave 34"]),
+///     "The repository has no wave Wave 9. The open waves: Wave 33: Hosts, Wave 34. Give the \
+///      number of a wave, for example 33 or \"Wave 33\"."
+/// );
+/// assert_eq!(
+///     riff::text::waves_no_such("Sprint 3", &[]),
+///     "The repository has no wave Sprint 3, and no open wave."
+/// );
+/// ```
+pub fn waves_no_such(wave: &str, open: &[&str]) -> String {
+    let wave = forge(wave);
+    let Some(first) = open.first() else {
+        return format!("The repository has no wave {wave}, and no open wave.");
+    };
+    let open: Vec<String> = open.iter().map(|title| forge(title)).collect();
+    let number = hygiene::wave_number(first).unwrap_or(1);
+    format!(
+        "The repository has no wave {wave}. The open waves: {}. Give the number of a wave, for \
+         example {number} or \"Wave {number}\".",
+        open.join(", ")
+    )
+}
+
+/// The refusal of `--wave` for a number that more than one milestone
+/// has (01M588K2M7G0CV3RNJ4N074FTG).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_many("Wave 6", &["Wave 6", "Wave 6: Cloud"]),
+///     "More than one milestone has the number of Wave 6: Wave 6, Wave 6: Cloud. Give the full \
+///      title."
+/// );
+/// ```
+pub fn waves_many(wave: &str, titles: &[&str]) -> String {
+    let titles: Vec<String> = titles.iter().map(|title| forge(title)).collect();
+    format!(
+        "More than one milestone has the number of {}: {}. Give the full title.",
+        forge(wave),
+        titles.join(", ")
+    )
+}
+
 /// The refusal of `riff wave end` for a wave with open items (R216,
 /// R224).
 ///

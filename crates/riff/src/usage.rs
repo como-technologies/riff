@@ -81,7 +81,7 @@
 //! | Command | Shows |
 //! |---|---|
 //! | `riff usage ISSUE` | The comments of the issue with the mark: the total, then each claim, with its models and who wrote its comment (01M3Y1YP3QMKS6B35PJ42KNYXX). |
-//! | `riff usage --wave "Wave N"` | Each issue of the wave with its total, and the sum (01M3Y1YP45VQS5HMJCXKRN3CCR). |
+//! | `riff usage --wave N` | Each issue of the wave with its total, and the sum (01M3Y1YP45VQS5HMJCXKRN3CCR). The number finds the wave, also one with a name ([`crate::waves::title`], 01M588K2M7G0CV3RNJ4N074FTG). |
 //! | `riff usage` | Each session of this machine: the tokens of each item, and `no issue` for the tokens outside each claim (01M3Y1YP4KVHK1DTZ85YNGDG0T). |
 //!
 //! Each person who can write a comment on the issue can write one with
@@ -1459,7 +1459,9 @@ pub fn issue_text(issue: u64, counted: &[Counted]) -> String {
 }
 
 /// The text of `riff usage --wave`: each issue of the wave with its
-/// total, and the sum (01M3Y1YP45VQS5HMJCXKRN3CCR).
+/// total, and the sum (01M3Y1YP45VQS5HMJCXKRN3CCR). `title` is the
+/// title of the milestone ([`crate::waves::title`]): it prints through
+/// [`crate::text::forge`].
 ///
 /// ```
 /// use riff::usage::{Tokens, wave_text};
@@ -1479,7 +1481,11 @@ pub fn wave_text(title: &str, rows: &[(u64, String, Tokens)]) -> String {
         1 => "1 issue".into(),
         n => format!("{n} issues"),
     };
-    let mut out = format!("{title}: {} in {issues}\n", sum.text());
+    let mut out = format!(
+        "{}: {} in {issues}\n",
+        crate::text::forge(title),
+        sum.text()
+    );
     for (number, name, tokens) in rows {
         let _ = writeln!(out, "  #{number} {name}: {} tokens", count(tokens.total()));
     }

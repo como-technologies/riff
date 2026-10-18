@@ -257,8 +257,9 @@ enum Command {
         /// The issue: 12, #12 or issue-12.
         #[arg(conflicts_with = "wave")]
         issue: Option<String>,
-        /// Each issue of this wave, for example "Wave 3".
-        #[arg(long, value_name = "TITLE")]
+        /// Each issue of this wave: its number, for example 3 or "Wave
+        /// 3". The name of the wave is not necessary.
+        #[arg(long, value_name = "WAVE")]
         wave: Option<String>,
         /// Write the total comment of ISSUE again, for example when
         /// `riff pr wait` could not write it.
@@ -714,8 +715,9 @@ enum Command {
     /// that show it. It exits with 1 when a rule fails. Only the owner or
     /// an admin can.
     Audit {
-        /// The wave, for example "Wave 3".
-        #[arg(long, value_name = "TITLE")]
+        /// The wave: its number, for example 3 or "Wave 3". The name of
+        /// the wave is not necessary.
+        #[arg(long, value_name = "WAVE")]
         wave: String,
     },
     /// Make and run riff-server instances on Cloud Run
@@ -2223,9 +2225,11 @@ async fn main() -> Result<()> {
         Command::Audit { wave } => {
             let here = identity::place(&identity::working_dir()?)?;
             let repo = audit::repo_of(&here)?;
+            let gh = pr::Gh::default();
+            let wave = riff::waves::title(&gh, &here.repo_text(), wave)?;
             let log = api.signed_in(None)?.log(&repo).await?;
-            let forge = audit::Forge::read(&pr::Gh::default(), &here.repo_text(), wave)?;
-            let report = audit::audit(wave, &log.records, &forge, audit::now_ms())?;
+            let forge = audit::Forge::read(&gh, &here.repo_text(), &wave)?;
+            let report = audit::audit(&wave, &log.records, &forge, audit::now_ms())?;
             print!("{}", audit::render(&report, &here.repo_text()));
             if report.failed() {
                 std::process::exit(1);
@@ -3578,13 +3582,13 @@ fn usage_text(issue: Option<&str>, wave: Option<&str>, total: bool) -> Result<St
         }
         return Ok(text);
     }
-    let wave = wave.unwrap_or_default();
+    let wave = riff::waves::title(&gh, &thread, wave.unwrap_or_default())?;
     let mut rows = Vec::new();
-    for (number, title) in forge.wave(wave)? {
+    for (number, title) in forge.wave(&wave)? {
         let counted = usage::counted(number, &forge.comments(number)?);
         rows.push((number, title, usage::sum(&counted)));
     }
-    Ok(usage::wave_text(wave, &rows))
+    Ok(usage::wave_text(&wave, &rows))
 }
 
 /// After the merge of pull request `number`: the total of the tokens of

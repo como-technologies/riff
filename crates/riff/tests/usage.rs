@@ -26,8 +26,10 @@ use crate::book;
 
 /// A fake `gh`: it logs each call to `gh.log`, keeps each comment of
 /// the issue N on one line of `comments-N`, and answers
-/// `gh issue list` from the file `wave`. The file `login` names who
-/// writes: the default is `mike`. With the file `down`, each call fails.
+/// `gh issue list` from the file `wave`. It answers the list of the
+/// milestones from the file `milestones`, else with a closed `Wave 2`
+/// and an open `Wave 3: Cloud`. The file `login` names who writes: the
+/// default is `mike`. With the file `down`, each call fails.
 /// A write reads its body from the file after `--input`. With the file
 /// `empty-reply`, the next POST of a total fails as a reply with no body
 /// does, and keeps nothing. With the file `bad-gateway`, each POST of a
@@ -68,6 +70,9 @@ case "$1 $2" in
         done ;;
     esac ;;
 'issue list') cat "$dir/wave" ;;
+'api repos/como-technologies/riff/milestones?state=all&per_page=100')
+    cat "$dir/milestones" 2>/dev/null \
+        || echo '[{"title":"Wave 2","closed_at":"2026-10-01T00:00:00Z"},{"title":"Wave 3: Cloud","closed_at":null}]' ;;
 esac
 exit 0
 "#;
@@ -405,21 +410,39 @@ async fn usage_of_a_wave_lists_each_issue_with_its_total() {
     )
     .unwrap();
 
+    // The number finds the wave with its name (01M588K2M7G0CV3RNJ4N074FTG).
     let shown = machine.ok("s1", &["usage", "--wave", "Wave 3"]).await;
     assert_eq!(
         shown,
-        "Wave 3: 1,010 tokens (input 101, output 202, cache write 303, cache read 404) in 3 issues\n\
+        "Wave 3: Cloud: 1,010 tokens (input 101, output 202, cache write 303, cache read 404) in 3 issues\n\
          \x20 #12 Show the wave: 10 tokens\n\
          \x20 #13 Not started: 0 tokens\n\
          \x20 #14 Fix the tail: 1,000 tokens\n"
     );
     assert!(
-        machine
-            .log()
-            .contains("gh issue list --repo como-technologies/riff --milestone Wave 3 --state all"),
+        machine.log().contains(
+            "gh issue list --repo como-technologies/riff --milestone Wave 3: Cloud --state all"
+        ),
         "{}",
         machine.log()
     );
+    for wave in ["3", "Wave 3: Cloud"] {
+        assert_eq!(machine.ok("s1", &["usage", "--wave", wave]).await, shown);
+    }
+
+    // A wave that matches no milestone is an error that names the open
+    // waves, not a wave with 0 tokens.
+    let none = machine.run("s1", &["usage", "--wave", "Wave 9"]).await;
+    assert!(!none.status.success());
+    assert!(
+        text(&none.stderr).contains(
+            "The repository has no wave Wave 9. The open waves: Wave 3: Cloud. Give the number \
+             of a wave, for example 3 or \"Wave 3\"."
+        ),
+        "{}",
+        text(&none.stderr)
+    );
+    assert!(none.stdout.is_empty());
 
     // An issue and a wave at the same time are refused.
     let both = machine
@@ -544,14 +567,28 @@ async fn usage_takes_only_numbers_and_names_from_a_comment_of_another_person() {
         r#"[{"number":12,"title":"T\u001b]0;TITLE\u0007\nX\u001b[2K"}]"#,
     )
     .unwrap();
+    std::fs::write(
+        machine.bin.path().join("milestones"),
+        r#"[{"title":"Wave 3: C\u001b]0;TITLE\u0007\nloud","closed_at":null}]"#,
+    )
+    .unwrap();
     let wave = machine.ok("s1", &["usage", "--wave", "Wave 3"]).await;
     // A title of the forge has no escape code and no line break
-    // (01M3ZRQY6YQ8QAKZPGWH1XD6WW).
+    // (01M3ZRQY6YQ8QAKZPGWH1XD6WW). gh gets the title of the milestone
+    // as the forge has it, so it matches.
     assert!(
         wave.contains("  #12 T X: 18,446,744,073,709,551,615 tokens\n"),
         "{wave:?}"
     );
+    assert!(wave.starts_with("Wave 3: C loud: "), "{wave:?}");
     assert_eq!(wave.lines().count(), 2, "{wave}");
+    assert!(
+        machine
+            .log()
+            .contains("--milestone Wave 3: C\u{1b}]0;TITLE\u{7}\nloud --state all"),
+        "{:?}",
+        machine.log()
+    );
 }
 
 #[tokio::test]
@@ -855,7 +892,7 @@ fn the_book_shows_how_to_see_the_tokens_of_an_issue() {
     let commands = book::commands_of_part("development.md", "See the tokens of an issue");
     for command in [
         "riff usage 12",
-        "riff usage --wave \"Wave 3\"",
+        "riff usage --wave 3",
         "riff usage",
         "riff usage 12 --total",
     ] {
