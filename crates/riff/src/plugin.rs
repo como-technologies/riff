@@ -43,7 +43,7 @@
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
 //! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, how a verifier runs a control, what to do after a refusal of the auto mode check, selectors, claims, `move` and the restart of the watch. |
-//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). The tool hooks, `riff hook tool` and `riff hook tool --done`, and the stop hook write the newest fact of the session (see [`crate::activity`]). The prompt hook, `riff hook prompt`, writes the time of the last prompt of the person. |
+//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, gives a worker a fresh context when it asked for one (see [`crate::next`]). The tool hooks, `riff hook tool` and `riff hook tool --done`, and the stop hook write the newest fact of the session (see [`crate::activity`]). The prompt hook, `riff hook prompt`, writes the time of the last prompt of the person. The denied hook, `riff hook denied`, posts each refusal of auto mode to the thread `denials` (see [`crate::denied`]). |
 //! | `riff/commands/leave.md`, `riff/commands/join.md` | The commands `/riff:leave` and `/riff:join`. They tell the session to call the `leave` or the `join` tool (see [`crate::leave`]). |
 //!
 //! ```
@@ -451,6 +451,17 @@ mod tests {
             assert_eq!(hook[0]["matcher"], "*", "each tool runs the hook");
             assert_eq!(hook[0]["hooks"][0]["command"], command);
         }
+    }
+
+    /// 01M57XY3Q6HEYQG27FE0CEQ7HB.
+    #[test]
+    fn the_denied_hook_is_riff_hook_denied_for_each_tool() {
+        let hooks = json("riff/hooks/hooks.json");
+        let denied = &hooks["hooks"]["PermissionDenied"];
+        assert_eq!(denied.as_array().unwrap().len(), 1);
+        assert_eq!(denied[0]["matcher"], "*", "each tool runs the hook");
+        assert_eq!(denied[0]["hooks"][0]["type"], "command");
+        assert_eq!(denied[0]["hooks"][0]["command"], "riff hook denied");
     }
 
     /// 01M48VDWPDYRPEAXHR1MYDN1M7.

@@ -75,6 +75,7 @@ pub const GROUPS: &[Group] = &[
             "workers",
             "worktrees",
             "audit",
+            "denials",
         ],
     },
     Group {

@@ -898,6 +898,48 @@ pub async fn watch(socket: &Path) -> Result<String> {
     }
 }
 
+/// `riff relay denied --send` (01M57XY3Q6HEYQG27FE0CEQ7HB): takes each
+/// refusal of auto mode of `queue`, and gives them to the daemon on the
+/// socket at `socket` ([`SessionAsk::Denied`]). The daemon posts them as
+/// the session. Each refusal that the daemon did not post goes back to
+/// `queue` (01M57XY42CNR16M5G024PWKANV).
+pub async fn send_denials(socket: &Path, queue: &crate::denied::Queue) -> Result<()> {
+    let denials = queue.take();
+    if denials.is_empty() {
+        return Ok(());
+    }
+    let posted = ask_denied(socket, &denials).await;
+    let posted = posted.as_ref().map_or(0, |n| (*n).min(denials.len()));
+    queue.keep(&denials[posted..])?;
+    if posted < denials.len() {
+        anyhow::bail!(
+            "the daemon posted {posted} of {} records: riff keeps the rest",
+            denials.len()
+        );
+    }
+    Ok(())
+}
+
+/// Gives `denials` to the daemon, and gives the number that it posted.
+async fn ask_denied(socket: &Path, denials: &[crate::denied::Denial]) -> Result<usize> {
+    let conn = connect(socket).await?;
+    let (read, mut write) = conn.into_split();
+    let mut lines = BufReader::new(read).lines();
+    let ask = SessionAsk::Denied {
+        protocol: PROTOCOL,
+        denials: denials.to_vec(),
+    };
+    send(&mut write, &ask).await?;
+    while let Some(line) = lines.next_line().await? {
+        match serde_json::from_str::<Say>(&line) {
+            Ok(Say::Posted { count }) => return Ok(count),
+            Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
+            _ => {}
+        }
+    }
+    anyhow::bail!("the daemon went away")
+}
+
 /// The error answer to the request `id` of `claude`: `message`.
 ///
 /// ```

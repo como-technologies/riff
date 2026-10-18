@@ -76,6 +76,18 @@ flowchart LR
 Claude Code loads the plugin from that directory. After you update
 `riff`, run `riff connect claude` again.
 
+The plugin has these hooks. Each one runs `riff hook` and always exits
+with status 0:
+
+| Hook of Claude Code | Command | What it does |
+|---|---|---|
+| `SessionStart` | `riff hook session-start` | Tells the session to start `riff watch`. |
+| `SessionEnd` | `riff hook session-end` | Tells `riff-server` that the session ended. |
+| `Stop` | `riff hook stop` | Clears the context of a worker that released its last claim. |
+| `PreToolUse`, `PostToolUse` | `riff hook tool`, `riff hook tool --done` | Writes the tool that runs, for `riff who`. |
+| `UserPromptSubmit` | `riff hook prompt` | Writes the time of your last prompt. |
+| `PermissionDenied` | `riff hook denied` | Posts each refusal of auto mode to the riff. See [See the refusals of auto mode](#see-the-refusals-of-auto-mode). |
+
 In a terminal, `riff connect claude` asks one time where you want riff
 on:
 
@@ -1725,6 +1737,74 @@ riff top --by repo
 
 The tree then has the levels repository, person, host, session.
 `--by person` is the default. `--by` works with the other flags.
+
+## See the refusals of auto mode
+
+The auto mode checker of Claude Code can refuse a tool call. riff
+posts each refusal to the thread `denials`, as one note with tags. A
+note wakes no session. So you can count the refusals of each session,
+host and repository, and find the commands and the permission rules
+that cause friction.
+
+```mermaid
+sequenceDiagram
+    participant C as Claude Code
+    participant H as riff hook denied
+    participant S as riff-server
+    C->>H: auto mode refused a tool call
+    H-->>C: exit 0 at once
+    H->>S: a note in the thread denials (detached)
+    Note over H,S: the session leaves the thread after the post
+```
+
+Each session gets the hook: a session with the plugin runs `riff hook
+denied`, and the lead and each container session of the riff daemon
+run `/opt/riff/riff relay denied`. The hook never waits for
+`riff-server`. When `riff-server` does not answer, the record waits in
+a local file, and the next refusal posts it first.
+
+One record is one line, the tags first:
+
+```text
+denied reason=production-deploy tool=Bash head="git push" role=lead user=mike host=pangolin repo=como-technologies/riff session=25456ff6 claim=-: git push origin v3.2.0
+```
+
+| Tag | Value |
+|---|---|
+| `reason` | The rule of the checker as a slug, `no-verdict`, or `checker-unavailable`. |
+| `tool` | The tool. An MCP tool also has `@SERVER`. |
+| `head` | For Bash: the first two words of the command. Else the path, or the first field of the input. |
+| `role` | `lead`, `worker`, `container` or `session`. A subagent adds `+subagent`. |
+| `claim` | The claim of the session, or `-`. |
+
+After the colon comes the command or the input, at most 300
+characters. No secret goes to the riff: riff puts `[secret]` in place
+of each token of the session.
+
+### Count the refusals
+
+`riff denials` counts the records by reason, by tool and head, by
+role and by repository. Then it shows the last 20 records:
+
+```sh
+riff denials
+```
+
+### Count the refusals of a time
+
+`--since` takes a number and a unit: `s`, `m`, `h`, `d` or `w`:
+
+```sh
+riff denials --since 7d
+```
+
+### Get the records as JSON
+
+`--format json` prints each record, with its time and its tags:
+
+```sh
+riff denials --format json
+```
 
 ## When a session ends
 
