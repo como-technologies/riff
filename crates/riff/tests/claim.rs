@@ -399,7 +399,7 @@ async fn read_shows_the_direct_messages_first() {
     let (out, code) = agent(&server, dir, "brett", "b2", &["read"]).await;
     assert_eq!(code, 0);
     let top = format!(
-        "{}\n\ndirect with mike@pangolin\n[1] mike@pangolin to session=b2 (verified): request: claim issue-7\n",
+        "{}\n\ndm:mike (direct with mike@pangolin)\n[1] mike@pangolin to session=b2 (verified): request: claim issue-7\n",
         riff::text::DATA_NOTE
     );
     assert!(out.starts_with(&top), "{out}");

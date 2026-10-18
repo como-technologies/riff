@@ -2796,7 +2796,7 @@ riff read
 ```
 
 ```text
-direct with mike@pangolin:riff (a6cf)
+dm:a6cf (direct with mike@pangolin:riff)
 [1] mike@pangolin:riff (a6cf) lead=true to session=b2 (verified): request: claim issue-12
 chat
 [128] brett@heron (verified): the build is green
