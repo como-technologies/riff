@@ -6895,19 +6895,21 @@ pub fn daemon_no_start(name: &str) -> String {
 }
 
 /// The limit of the host, as `riff daemon limit` and `riff daemon
-/// status` show it.
+/// status` show it: the limit, and the caps of each new container.
 ///
 /// ```
 /// use riff::room::Limit;
 /// assert_eq!(
-///     riff::text::daemon_limit(&Limit { sessions: 3, floor_gb: 8 }),
-///     "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start."
+///     riff::text::daemon_limit(&Limit::default()),
+///     "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start.\n\
+///      Each new container: 8 CPUs and 8 build jobs, and 8 GB of memory."
 /// );
 /// ```
 pub fn daemon_limit(limit: &crate::room::Limit) -> String {
     format!(
-        "The limit of this host: {} live sessions, and {} GB of free memory or more for a start.",
-        limit.sessions, limit.floor_gb
+        "The limit of this host: {} live sessions, and {} GB of free memory or more for a start.\n\
+         Each new container: {} CPUs and {} build jobs, and {} GB of memory.",
+        limit.sessions, limit.floor_gb, limit.cpus, limit.cpus, limit.memory_gb
     )
 }
 

@@ -177,7 +177,7 @@
 //! | No signature | `commit.gpgsign=false` by `GIT_CONFIG_*` | 01M4Z60B89G8YNVMTEPGX7FQCV |
 //! | The Claude folder | with write; the sign-in file of the host with no write | 01M4Z60B86N999JRN7Z1G52PG4, 01M4Z60B869HWDTZMSYPVYACD8 |
 //! | The caches | the volumes `riff-cargo` and `riff-sccache` | 01M4Z60B7RPSQ1ABGVMJSZWS5P |
-//! | The limits | `--memory 8g`, `--cpus 4` | 01M4Z60B7XT7462XMV49GJTVSJ |
+//! | The caps | `--memory`, `--cpus` and `CARGO_BUILD_JOBS`: the defaults, and the daemon puts the caps of the host at the start ([`crate::room::Limit::caps`]) | 01M4Z60B7XT7462XMV49GJTVSJ, 01M56Q4AQ86V99RC8CA1KGCMSZ |
 //! | `claude` | `-p` in stream-json, the riff session ID, the auto mode | 01M4Z60B82FHN2YG9YJHW8XZX1, 01M4Z81ATZK3FX9GRFTM236FE6 |
 //! | The socket of the session | the daemon adds it: its folder at `/run/riff` with write, and `RIFF_SOCKET` | 01M4ZDTVSP0T1YENKAWGKA114D |
 
@@ -200,12 +200,6 @@ use crate::api::{self, Api};
 use crate::daemon::{self, Ask, Ended, Say};
 use crate::runtime::{Bind, Env, SessionSpec, Source};
 use crate::{dropped, home, identity, pr, rollout, session_image, terminal, text};
-
-/// The memory limit of each container (01M4Z60B7XT7462XMV49GJTVSJ).
-pub const MEMORY: &str = "8g";
-
-/// The CPU limit of each container (01M4Z60B7XT7462XMV49GJTVSJ).
-pub const CPUS: u32 = 4;
 
 /// The named volume for all of `CARGO_HOME` (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 pub const CARGO_VOLUME: &str = "riff-cargo";
@@ -342,7 +336,6 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         value("SCCACHE_DIR", &shown(&sccache)),
         value("RUSTC_WRAPPER", "sccache"),
         value("SCCACHE_IDLE_TIMEOUT", "0"),
-        value("CARGO_BUILD_JOBS", &CPUS.to_string()),
     ];
     let command = [
         "claude",
@@ -359,17 +352,19 @@ pub fn spec(facts: &Facts) -> SessionSpec {
     ]
     .map(String::from)
     .to_vec();
-    SessionSpec {
+    let mut spec = SessionSpec {
         name: format!("riff-{}-{}", facts.item, short(&facts.session)),
         image: facts.image.clone(),
         home: home.clone(),
         workdir: facts.clone.clone(),
         binds,
         env,
-        memory: MEMORY.into(),
-        cpus: CPUS,
+        memory: String::new(),
+        cpus: 0,
         command,
-    }
+    };
+    crate::room::Limit::default().caps(&mut spec);
+    spec
 }
 
 /// The first 8 characters of a session ID.
@@ -1825,7 +1820,7 @@ mod tests {
             spec.workdir,
             Path::new("/r/sessions/issue-12-1a2b3c4d/clone")
         );
-        assert_eq!((spec.memory.as_str(), spec.cpus), ("8g", 4));
+        assert_eq!((spec.memory.as_str(), spec.cpus), ("8g", 8));
         assert_eq!(
             variables(&spec),
             [
@@ -1841,7 +1836,7 @@ mod tests {
                 "SCCACHE_DIR=/home/mike/.cache/sccache",
                 "RUSTC_WRAPPER=sccache",
                 "SCCACHE_IDLE_TIMEOUT=0",
-                "CARGO_BUILD_JOBS=4",
+                "CARGO_BUILD_JOBS=8",
             ]
         );
         assert_eq!(

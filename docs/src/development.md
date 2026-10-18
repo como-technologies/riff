@@ -581,10 +581,13 @@ A session runs the tests of riff in its container, not on your
 machine. So a test can pass on your machine and fail in a session.
 `just session-test` runs the tests of `crates/riff` in a container of
 the image that `riff.toml` pins, as a session runs them: with an init
-process, as your user, with a home of its own, and with the limits of a
-session (4 CPUs, 8 GB). It uses podman, else docker. With docker, it
-gives your user an entry in the passwd and group files of the
-container, as podman does. The build goes to `target/session`:
+process, as your user, with a home of its own, and with 4 CPUs and
+8 GB: a runner of the Gate has 4 CPUs. A session gets the caps of its
+host, 8 CPUs and 8 GB by default (see
+[Set the caps of a container](#set-the-caps-of-a-container)). It uses
+podman, else docker. With docker, it gives your user an entry in the
+passwd and group files of the container, as podman does. The build
+goes to `target/session`:
 
 ```sh
 just session-test
@@ -997,7 +1000,9 @@ rm -rf ~/.local/share/riff/sessions/issue-735-7788e301
 - A home of its own in memory. Each other write goes when the
   container ends.
 - The volumes `riff-cargo` and `riff-sccache` for the caches.
-- `--memory 8g` and `--cpus 4`.
+- The caps of the host: `--cpus` and the same number in
+  `CARGO_BUILD_JOBS`, and `--memory`. The defaults are 8 CPUs and
+  8 GB. See [Set the caps of a container](#set-the-caps-of-a-container).
 - The folder of its own socket of the daemon at `/run/riff`, with
   write, and `RIFF_SOCKET=/run/riff/riff.sock`.
 - Your riff binary at `/opt/riff/riff`, with no write. Its
@@ -1176,12 +1181,13 @@ with the reason (see
 
 ### Set the limit of the host
 
-Each container has `--memory 8g` and `--cpus 4`. These do not limit
-the sum. So the daemon keeps one limit for the whole host: the number
-of live sessions, and a floor of free memory. The daemon starts a
-session only when fewer sessions than the limit live, and the free
-memory is at or above the floor. Each other start waits for room, in
-order, also a start of `riff run`. The default is 3 sessions and a
+Each container has its own caps: `--cpus` and `--memory` (see
+[Set the caps of a container](#set-the-caps-of-a-container)). These do
+not limit the sum. So the daemon keeps one limit for the whole host:
+the number of live sessions, and a floor of free memory. The daemon
+starts a session only when fewer sessions than the limit live, and the
+free memory is at or above the floor. Each other start waits for room,
+in order, also a start of `riff run`. The default is 3 sessions and a
 floor of 8 GB.
 
 To see the limit:
@@ -1197,6 +1203,20 @@ riff daemon limit --sessions 2 --floor 12
 ```
 
 The daemon reads the limit at each start: a change counts at once.
+
+### Set the caps of a container
+
+Each new container of the host gets the same caps: its CPUs, which are
+also its build jobs in `CARGO_BUILD_JOBS`, and its memory. The default
+is 8 CPUs and 8 GB. `riff daemon limit` shows them. To set them, for
+example 12 CPUs and 16 GB:
+
+```sh
+riff daemon limit --cpus 12 --memory 16
+```
+
+The values go in `limit.json` with the limit. A new session gets them
+at its start. A session that runs keeps its caps. riff refuses 0.
 
 ### What the wave does
 

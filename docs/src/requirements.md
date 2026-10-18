@@ -5320,7 +5320,11 @@ part when they merge.
   and `LOGNAME` and an entry in its passwd and group files, a home of
   its own and the limits of a session (`--cpus 4`, `--memory 8g`), as a
   session has. In CI, the test parts of the
-  Gate run there (01M515Z3Y7GSFNTJGXJD727MQK).
+  Gate run there (01M515Z3Y7GSFNTJGXJD727MQK). Superseded in part by
+  01M56Q4AVRM8F7Y585TSGD53K3.
+- **01M56Q4AVRM8F7Y585TSGD53K3** `just session-test` keeps `--cpus 4`
+  and `--memory 8g`: a runner of the Gate has 4 CPUs. These are not
+  the caps of a session of the host (01M56Q4AQ86V99RC8CA1KGCMSZ).
 - **01M515Z3Y7GSFNTJGXJD727MQK** The jobs `Tests I/N` of the Gate run
   `deploy/session-test.sh --part I/N`: part I of N of the tests of the
   workspace, in the container of 01M51117NDKF11FNZ915TTQED4, with
@@ -5473,7 +5477,13 @@ part when they merge.
   grant, no session key and no DPoP token.
 - **01M4Z60B7XT7462XMV49GJTVSJ** Each container gets `--memory` and
   `--cpus`. The defaults are `--memory 8g` and `--cpus 4`. `podman stop`
-  ends a session and each of its processes.
+  ends a session and each of its processes. Superseded in part by
+  01M56Q4AQ86V99RC8CA1KGCMSZ.
+- **01M56Q4AQ86V99RC8CA1KGCMSZ** The caps of a container are settings
+  of the host, not constants. Each new container gets `--cpus N`,
+  `CARGO_BUILD_JOBS=N` and `--memory GBg`. The defaults are 8 CPUs and
+  8 GB. The daemon puts the caps in the spec when it starts the
+  session. A session that runs keeps its caps.
 - **01M51117K3WXK35CE67KPRFMA8** Each container of a session starts
   with `podman run --init`. The init of podman (catatonit) is PID 1. It
   reaps each orphan process of the session, and it passes each signal
@@ -5737,6 +5747,12 @@ part when they merge.
   room, so a change counts at once. `riff daemon status` shows the
   limit, each start that waits for room, and each wave with what it did
   last.
+- **01M56Q4ASHTDWVA2MS2CBQ2PAM** `riff daemon limit --cpus N` sets the
+  CPUs and the build jobs of each new container of the host.
+  `--memory GB` sets its memory cap. Both go in `limit.json`. A
+  `limit.json` with no value for one of them gives the default.
+  `riff daemon limit` and `riff daemon status` show both. riff refuses
+  0 for each.
 - **01M4ZV3B6J89KJQ0F14YWTZMJQ** `riff wave run` in a clone asks the
   daemon to run the current wave of the repository of the clone. The
   daemon keeps each wave in `waves.json` in its folder, with the main
