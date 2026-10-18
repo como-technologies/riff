@@ -372,7 +372,6 @@ enum Command {
     /// that the person runs to join. Only the owner or an admin can.
     Invite {
         /// The email that the person signs in with.
-        #[arg(long)]
         email: String,
     },
     /// Remove a member of this riff
@@ -382,18 +381,13 @@ enum Command {
     /// stays.
     Remove {
         /// The email of the person.
-        #[arg(long)]
         email: String,
     },
     /// List who may join this riff
     ///
     /// It lists the owner, the admins, the members and the allowed domains
     /// of the riff of riff-server.
-    Members {
-        /// List the people of the riff of riff-server by their email.
-        #[arg(long, required = true)]
-        email: bool,
-    },
+    Members,
     /// Make a person an admin, or a member again
     ///
     /// An admin can invite and remove members. Only the owner can.
@@ -2216,7 +2210,7 @@ async fn main() -> Result<()> {
             let me = person(&api)?;
             return riff::chat::run(&api.signed_in(None)?, &me, *after).await;
         }
-        Command::Members { .. } => {
+        Command::Members => {
             anstream::print!("{}", view::members(&api.signed_in(None)?.members().await?));
             return Ok(());
         }
@@ -2624,7 +2618,7 @@ async fn main() -> Result<()> {
         | Command::Logout { .. }
         | Command::Invite { .. }
         | Command::Remove { .. }
-        | Command::Members { .. }
+        | Command::Members
         | Command::Audit { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }

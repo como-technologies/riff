@@ -276,7 +276,7 @@ async fn ten_processes_refresh_at_once_and_the_sign_in_stays() {
         expire(&url);
         let children: Vec<_> = (0..10)
             .map(|_| {
-                riff(&url, dir.path(), "m1", &["members", "--email"])
+                riff(&url, dir.path(), "m1", &["members"])
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())
                     .spawn()
@@ -356,7 +356,7 @@ async fn three_processes_with_three_tmpdirs_refresh_one_sign_in_once() {
     for round in 1..=3 {
         expire(&url);
         let children = tmps.iter().enumerate().map(|(i, tmp)| {
-            let mut cmd = riff(&url, dir.path(), &format!("m{i}"), &["members", "--email"]);
+            let mut cmd = riff(&url, dir.path(), &format!("m{i}"), &["members"]);
             cmd.env("TMPDIR", tmp.path());
             let mut cmd = tokio::process::Command::from(cmd);
             cmd.kill_on_drop(true).output()
@@ -376,7 +376,7 @@ async fn three_processes_with_three_tmpdirs_refresh_one_sign_in_once() {
     // works. A new process reads it: this test process keeps the sign-in
     // of its own login (01M54510PS9FDKQKJB0RAH3XG3).
     expire(&url);
-    let cmd = riff(&url, dir.path(), "m0", &["members", "--email"]);
+    let cmd = riff(&url, dir.path(), "m0", &["members"]);
     let out = tokio::process::Command::from(cmd).output().await.unwrap();
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(refreshes.load(Ordering::SeqCst), 4);
@@ -549,12 +549,7 @@ async fn a_sign_in_stays_over_a_restart_of_riff_server() {
     login::login(&Api::new(&url), browser).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let members = || {
-        let mut cmd = riff(
-            &url,
-            dir.path(),
-            "m1",
-            &["members", "--email", "--color", "never"],
-        );
+        let mut cmd = riff(&url, dir.path(), "m1", &["members", "--color", "never"]);
         tokio::task::spawn_blocking(move || cmd.output().unwrap())
     };
     let before = members().await.unwrap();
@@ -583,6 +578,51 @@ async fn a_sign_in_stays_over_a_restart_of_riff_server() {
     assert!(refreshed.status.success(), "{}", text(&refreshed.stderr));
     assert!(!text(&refreshed.stderr).contains("riff login"));
     assert_eq!(stored(&url).user, "ada");
+}
+
+/// The owner runs `riff invite EMAIL`, `riff members` and
+/// `riff remove EMAIL` against riff-server, with no flag `--email`
+/// (01M588J2QAF288ZB3M9PBN71ZS).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_member_commands_take_the_email_as_an_argument() {
+    env();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let config = Config {
+        owner: Some("ada@comotechnologies.io".into()),
+        ..config(&url).await
+    };
+    let service = Service::new(config);
+    let router = service.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    login::login(&Api::new(&url), browser).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        let mut cmd = riff(&url, dir.path(), "m1", args);
+        cmd.args(["--color", "never"]);
+        let out = cmd.output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));
+        text(&out.stdout)
+    };
+
+    let invited = run(&["invite", "bob@gmail.com"]);
+    assert!(
+        invited.starts_with("Invited bob@gmail.com to the riff at "),
+        "{invited}"
+    );
+    let shown = run(&["members"]);
+    assert!(
+        shown.starts_with("owner            ada@comotechnologies.io\n"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("\nmembers          bob@gmail.com\n"),
+        "{shown}"
+    );
+    let removed = run(&["remove", "bob@gmail.com"]);
+    assert!(removed.starts_with("Removed bob@gmail.com"), "{removed}");
+    let shown = run(&["members"]);
+    assert!(shown.contains("\nmembers          none\n"), "{shown}");
 }
 
 /// "Get back into the riff" in the book names the real error texts and

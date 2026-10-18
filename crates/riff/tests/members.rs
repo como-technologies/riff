@@ -173,10 +173,7 @@ async fn the_owner_invites_lists_and_removes() {
         .admit("bob@gmail.com", false, &bob_key)
         .await
         .unwrap_err();
-    assert!(
-        refused.contains("riff invite --email bob@gmail.com"),
-        "{refused}"
-    );
+    assert!(refused.contains("riff invite bob@gmail.com"), "{refused}");
 }
 
 #[tokio::test]

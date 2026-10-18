@@ -5341,9 +5341,10 @@ part when they merge.
   `--peers` of `riff run` and of `riff wave run`, and the flag
   `--forge` of `riff release`. The forms with `--email` of
   `riff invite`, `riff remove` and `riff members` stay, and act on
-  riff-server. `riff daemon status`, `riff view` and `riff top` show no
-  key, no riff of peers and no peer link. With no `--host`, they show
-  no session of another daemon.
+  riff-server (superseded by 01M588J2QAF288ZB3M9PBN71ZS).
+  `riff daemon status`, `riff view` and `riff top` show no key, no riff
+  of peers and no peer link. With no `--host`, they show no session of
+  another daemon.
 - **01M53NGW9FH02EM74GKY829808** The re-cut supersedes each requirement
   of Wave B (#803), and each requirement of the riff of peers in "Data
   and peers": the log of peers, the keys of the members, the claims on
@@ -6948,7 +6949,10 @@ requirement of Wave B (01M53NGW9FH02EM74GKY829808).
   riff-server 1.x stay with the flag `--email`:
   `riff invite --email EMAIL`, `riff remove --email EMAIL` and
   `riff members --email`. Superseded by Wave C
-  (01M51R8G06XMJF3GAP7MFW06R0).
+  (01M51R8G06XMJF3GAP7MFW06R0), and by 01M588J2QAF288ZB3M9PBN71ZS.
+- **01M588J2QAF288ZB3M9PBN71ZS** The member commands of riff-server take
+  the email as an argument, with no flag: `riff invite EMAIL`,
+  `riff remove EMAIL` and `riff members`. They have no flag `--email`.
 - **01M521J6CEJB24QFN17077KG9S** An invite string is `riff1-` and the
   base32 (RFC 4648, lower case, no padding) of these bytes: the riff ID
   (32 bytes), the secret (32 bytes), the end time in milliseconds since

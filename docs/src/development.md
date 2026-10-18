@@ -2602,7 +2602,7 @@ A member needs no allowed domain, so a person with a personal Google
 account can join. Only the owner or an admin can invite:
 
 ```sh
-riff invite --email bob@gmail.com
+riff invite bob@gmail.com
 ```
 
 It prints the address of the riff (the `--public-url` of the server)
@@ -2616,7 +2616,7 @@ It removes the member and ends each sign-in of that person, on each
 device. Only the owner or an admin can remove. The owner stays:
 
 ```sh
-riff remove --email bob@gmail.com
+riff remove bob@gmail.com
 ```
 
 A person of an allowed domain can still sign in after a removal. To
@@ -2661,7 +2661,7 @@ It shows each person once, with the highest role: owner, then admin,
 then member:
 
 ```sh
-riff members --email
+riff members
 ```
 
 ```text
@@ -4089,7 +4089,7 @@ the stage admits. Invite it on the stage, as the owner of the stage:
 
 ```sh
 . deploy/cloud/stage.env
-riff invite --server "$CLOUD_URL" --email TEST_EMAIL
+riff invite --server "$CLOUD_URL" TEST_EMAIL
 ```
 
 Get a refresh token of the test account for the sign-in client of the
@@ -4206,7 +4206,7 @@ riff update --auto on
 In the terminal of `ann`, invite `bob`, and resume the riff:
 
 ```sh
-riff invite --email BOB_EMAIL
+riff invite BOB_EMAIL
 riff resume
 ```
 

@@ -132,8 +132,8 @@ fn riff_help_of_a_command_shows_the_long_text() {
 }
 
 /// 01M53NGW6F5HP1DZ9QRGP50MGT: the help has no command and no flag of
-/// the riff of peers. The member commands show only their forms with
-/// `--email`, on riff-server.
+/// the riff of peers. The member commands take the email as an argument,
+/// with no flag `--email` (01M588J2QAF288ZB3M9PBN71ZS).
 #[test]
 fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
     let help = riff(&["--help"]);
@@ -151,11 +151,21 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
             .unwrap();
         assert!(!out.status.success(), "riff {name} --help: {out:?}");
     }
-    for name in ["invite", "remove", "members"] {
+    for (name, usage) in [
+        ("invite", "Usage: riff invite [OPTIONS] <EMAIL>"),
+        ("remove", "Usage: riff remove [OPTIONS] <EMAIL>"),
+        ("members", "Usage: riff members [OPTIONS]"),
+    ] {
         let help = riff(&[name, "--help"]);
-        let usage = format!("Usage: riff {name} [OPTIONS] --email");
-        assert!(help.lines().any(|l| l.starts_with(&usage)), "{help}");
-        for word in ["USER", "--host", "key", "riff daemon", "invite string"] {
+        assert!(help.lines().any(|l| l == usage), "{help}");
+        for word in [
+            "USER",
+            "--host",
+            "--email",
+            "key",
+            "riff daemon",
+            "invite string",
+        ] {
             assert!(!help.contains(word), "riff {name} --help: {word}: {help}");
         }
     }

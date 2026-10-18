@@ -226,7 +226,7 @@ async fn an_account_from_another_domain_is_refused() {
     let error: TokenError = reply.json().await.unwrap();
     assert_eq!(error.error, "access_denied");
     let why = error.error_description.unwrap();
-    assert!(why.contains("riff invite --email ada@gmail.com"), "{why}");
+    assert!(why.contains("riff invite ada@gmail.com"), "{why}");
     // No sign-in started.
     assert_eq!(service.tokens().revoke_user("ada"), 0);
 }
