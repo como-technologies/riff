@@ -16,9 +16,12 @@
 #   (01M3MRMB0AJVPD952AQYD7X1RN).
 # - The ruleset `release-branches` on the branches `release/**` of the
 #   older release lines: a change needs a pull request with 0 approvals
-#   and the checks Gate and Hygiene. No force push, no deletion, no
-#   bypass. The checks do not stop the push that makes a new branch of
-#   a line (01M4YJ6KGBPTCSVMFQCDKACZPV).
+#   and the checks Gate, Hygiene and riff/verify, as on `main`. No
+#   force push, no deletion, no bypass. The checks do not stop the push
+#   that makes a new branch of a line (01M4YJ6KGBPTCSVMFQCDKACZPV).
+#
+# Run it from a checkout of `main` only (01M56H9Q0757ESXMJEDM16Z7AT): an
+# older copy on a branch `release/**` can remove a check.
 set -euo pipefail
 
 REPO="${1:-como-technologies/riff}"
@@ -128,11 +131,12 @@ ruleset release-branches <<'JSON'
         "do_not_enforce_on_create": true,
         "required_status_checks": [
           { "context": "Gate" },
-          { "context": "Hygiene" }
+          { "context": "Hygiene" },
+          { "context": "riff/verify" }
         ]
       }
     }
   ]
 }
 JSON
-echo "Set up $REPO: auto-merge, squash only, the checks Gate, Hygiene and riff/verify on main, Gate and Hygiene on release/**, release tags only by an admin."
+echo "Set up $REPO: auto-merge, squash only, the checks Gate, Hygiene and riff/verify on main and on release/**, release tags only by an admin."

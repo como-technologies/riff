@@ -635,9 +635,12 @@
   `release/**`, as on `main`. A push to it does not deploy. The
   command `just github` makes the ruleset `release-branches` on
   `release/**`: a change needs a pull request with 0 approvals and the
-  checks `Gate` and `Hygiene`. No force push, no deletion, no bypass
-  actor. The checks do not stop the push that makes a new branch of a
-  line.
+  checks `Gate`, `Hygiene` and `riff/verify`, as on `main`. No force
+  push, no deletion, no bypass actor. The checks do not stop the push
+  that makes a new branch of a line.
+- **01M56H9Q0757ESXMJEDM16Z7AT** Our user runs `just github` from a
+  checkout of `main` only. The `deploy/github.sh` of `main` sets each
+  ruleset, also the ruleset `release-branches`.
 - **01M4YTW8788K4XYTEMRSXDH7B9** The GitHub release of the line that
   the shared riff runs is marked "Latest". A release of another line is
   not, also when its version is higher.
