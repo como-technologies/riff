@@ -1748,10 +1748,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   is the server of `riff`. When the person must act, the last line says
   what to run: yellow when the versions can talk, red when they cannot
   or when the person must sign in. `--color` works as in `riff tail`.
-- **01M56Q55SHHJSKJWNHMW79X7HA** The last line of `riff server` says
-  `riff update` only when the server runs a newer build than `riff`.
-  When `riff` is newer, it says "Update riff-server when you can.", or
-  "Update riff-server." when the versions cannot talk.
+- **01M56Q55SHHJSKJWNHMW79X7HA** The last line of `riff server` and
+  the note of each `riff` process say `riff update` only when the
+  server runs a newer build than `riff`. When `riff` is newer, also on
+  the same line, they say "Update riff-server when you can.", or
+  `riff server` says "Update riff-server." when the versions cannot
+  talk.
 - **01M3Q5V313XQN86BA2PBTXHEZC** Each `riff` command that shows facts
   or a list has one look. Facts are `key  value` lines, aligned. A
   list is a table with a header row. A row shows a short session ID
@@ -4679,8 +4681,9 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `riff-server runs build X; this riff runs build Y. Run riff update
   when you can.` When `riff` is on the line before the server, the
   note names the next line of the server that refuses it, and ends
-  `Run riff update soon.` `riff server` shows both builds and that the
-  versions can talk.
+  `Run riff update soon.` When `riff` is newer, the note names the
+  older side (01M56Q55SHHJSKJWNHMW79X7HA). `riff server` shows both
+  builds and that the versions can talk.
 - **01M3JEE7TPZMNK7X6JXJ7GWFPP** When the versions cannot talk, the
   start hook gives the session the error, and tells it to tell its
   user at once and not to use the riff.

@@ -39,6 +39,27 @@ fn riff_0_3_2_and_riff_server_0_4_0_talk_with_the_update_note() {
     assert!(!compatible(&server, &riff));
 }
 
+/// 01M56Q55SHHJSKJWNHMW79X7HA: on the same line, a newer riff tells
+/// you to update the server, not riff.
+#[test]
+fn riff_0_4_3_and_riff_server_0_4_0_note_the_older_server() {
+    let (riff, server) = (build("0.4.3"), build("0.4.0"));
+    assert!(compatible(&riff, &server));
+    assert_eq!(
+        other_build(&riff, &server),
+        "riff-server runs build 0.4.0 c040 2026-09-28T12:00:00Z; this riff runs build 0.4.3 \
+         c043 2026-09-28T12:00:00Z. Update riff-server when you can."
+    );
+    // The same version from an older commit is the older side too.
+    let older = Build {
+        time: "2026-09-27T12:00:00Z".into(),
+        commit: "old".into(),
+        ..build("0.4.3")
+    };
+    assert!(other_build(&riff, &older).ends_with(" Update riff-server when you can."));
+    assert!(other_build(&older, &riff).ends_with(" Run riff update when you can."));
+}
+
 #[test]
 fn riff_0_2_0_and_riff_server_0_4_0_refuse_with_the_error_and_the_link() {
     let (riff, server) = (build("0.2.0"), build("0.4.0"));

@@ -600,17 +600,26 @@ fn and_list(items: &[String]) -> String {
 /// and goes on. When `riff` is on an earlier line than the server, the
 /// note says that the next line of the server refuses it. When `riff`
 /// is on a later line, across the [`BRIDGE`], the server is the older
-/// side, and the note says to update it.
+/// side, and the note says to update it. On the same line, the note
+/// names the older side ([`Build::older_than`]), as `riff server` does
+/// (01M56Q55SHHJSKJWNHMW79X7HA).
 ///
 /// ```
 /// use riff_core::build::{Build, other_build};
 ///
+/// // The same line, and the server is newer.
 /// let server: Build = "0.4.3 aaaa 2026-09-27T10:00:00Z".parse().unwrap();
 /// let riff: Build = "0.4.0 bbbb 2026-09-27T11:00:00Z".parse().unwrap();
 /// assert_eq!(
 ///     other_build(&riff, &server),
 ///     "riff-server runs build 0.4.3 aaaa 2026-09-27T10:00:00Z; this riff runs build \
 ///      0.4.0 bbbb 2026-09-27T11:00:00Z. Run riff update when you can."
+/// );
+/// // The same line, and this riff is newer.
+/// assert_eq!(
+///     other_build(&server, &riff),
+///     "riff-server runs build 0.4.0 bbbb 2026-09-27T11:00:00Z; this riff runs build \
+///      0.4.3 aaaa 2026-09-27T10:00:00Z. Update riff-server when you can."
 /// );
 /// let riff: Build = "0.3.2 cccc 2026-09-20T11:00:00Z".parse().unwrap();
 /// assert_eq!(
@@ -630,6 +639,9 @@ fn and_list(items: &[String]) -> String {
 pub fn other_build(riff: &Build, server: &Build) -> String {
     let head = format!("riff-server runs build {server}; this riff runs build {riff}.");
     match (riff.semver(), server.semver()) {
+        (Some(r), Some(s)) if r.same_line(s) && server.older_than(riff) => {
+            format!("{head} Update riff-server when you can.")
+        }
         (Some(r), Some(s)) if !r.same_line(s) && r > s => {
             format!("{head} Update riff-server when you can.")
         }

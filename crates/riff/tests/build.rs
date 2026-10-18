@@ -303,6 +303,18 @@ async fn another_patch_of_the_line_works_and_notes_it_once() {
     works_and_notes_once(theirs, &note).await;
 }
 
+/// 01M56Q55SHHJSKJWNHMW79X7HA: a server of the same version from an
+/// older commit is the older side, and the note says to update it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_older_server_of_the_same_line_works_with_the_server_note() {
+    let theirs = at(this());
+    let note = format!(
+        "riff-server runs build {theirs}; this riff runs build {VERSION}. Update riff-server \
+         when you can."
+    );
+    works_and_notes_once(theirs, &note).await;
+}
+
 /// 01M3MX1E1EY1M7JGNCN6FCEVQK: a server of the line after this riff
 /// talks with it, and the note says to update soon.
 #[tokio::test(flavor = "multi_thread")]
@@ -887,6 +899,10 @@ fn the_book_shows_the_real_notes_and_error() {
         other_build(
             &b("0.4.0 929605821e54 2026-09-27T22:03:01Z"),
             &b("0.4.3 7213825ab1c2 2026-09-27T20:10:44Z"),
+        ),
+        other_build(
+            &b("0.4.3 929605821e54 2026-09-27T22:03:01Z"),
+            &b("0.4.0 7213825ab1c2 2026-09-27T20:10:44Z"),
         ),
         other_build(&b("0.3.2 929605821e54 2026-09-20T22:03:01Z"), &server),
         other_build(
