@@ -7206,10 +7206,17 @@ pub fn daemon_restart(restart: crate::daemon::remote::Restart, build: &str) -> S
     }
 }
 
-/// The first line of a reply of `riff daemon events --host` that leaves
-/// out the first `skip` lines.
-pub fn daemon_events_cut(skip: usize) -> String {
-    format!("({skip} earlier lines are not shown.)")
+/// The daemon of `host` gave a reply that this riff cannot read: it
+/// runs another riff.
+///
+/// ```
+/// assert!(riff::text::daemon_no_page("thelio").contains("riff daemon restart --host thelio"));
+/// ```
+pub fn daemon_no_page(host: &str) -> String {
+    format!(
+        "riff: this riff cannot read the reply of the daemon of {host}: it runs another riff. \
+         Update riff on both hosts, then run riff daemon restart --host {host}."
+    )
 }
 
 /// The daemon cannot start its session on riff-server for a repository.
@@ -8074,6 +8081,23 @@ pub fn view_wave(wave: &crate::daemon::WaveShown) -> String {
 /// `riff view`: the session has no takeover.
 pub fn view_no_takeover(name: &str) -> String {
     format!("The session in {name} is the lead: Enter attaches to it.")
+}
+
+/// `riff view --host`: the note at the start.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::view_of_host("thelio"),
+///     "The riff daemon of thelio, through riff-server. Enter and t work only on thelio."
+/// );
+/// ```
+pub fn view_of_host(host: &str) -> String {
+    format!("The riff daemon of {host}, through riff-server. Enter and t work only on {host}.")
+}
+
+/// `riff view --host`: the note after Enter or `t`.
+pub fn view_on_host(host: &str) -> String {
+    format!("Enter and t work only on {host}: run riff view there.")
 }
 
 /// A job of a wave: the daemon sent the verify request of the pull

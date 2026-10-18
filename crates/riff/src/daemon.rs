@@ -5607,4 +5607,176 @@ mod tests {
         assert_eq!(units.calls(), ["rewrite"]);
         assert_eq!(units.exe(), Some(riff));
     }
+
+    /// Two fake hosts, `a` and `b`, whose daemons serve the repository
+    /// on one riff-server, and the lead on `a`.
+    struct Hosts {
+        api: riff_client::api::Api,
+        lead: SessionUri,
+        a: Here,
+        b: Here,
+    }
+
+    const REPO: &str = "como-technologies/riff";
+
+    async fn hosts() -> Hosts {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, riff_server::router()).await.unwrap();
+        });
+        let server = format!("http://{addr}");
+        let api = riff_client::api::Api::new(&server);
+        let place = crate::identity::place_from_text(&format!("a/{REPO}")).unwrap();
+        let user = crate::identity::person(&place, &server).unwrap();
+        let lead = SessionUri::new(
+            riff_core::name::Who::new(user.who().user(), Some("l1")).unwrap(),
+            place,
+        );
+        api.register(&lead).await.unwrap();
+        api.lead(&lead).await.unwrap();
+        let mut both = Vec::new();
+        for host in ["a", "b"] {
+            let here = Here::new(Fake::default().with_image(IMAGE)).await;
+            let wave = crate::wave::Wave {
+                repo: REPO.into(),
+                main: here.root.path().to_owned(),
+                server: server.clone(),
+                host: host.into(),
+            };
+            let served = remote::Served {
+                wave,
+                session: format!("daemon-{host}"),
+            };
+            tokio::spawn(remote::serve(here.dir.clone(), served));
+            both.push(here);
+        }
+        let b = both.pop().unwrap();
+        let a = both.pop().unwrap();
+        let hosts = Hosts { api, lead, a, b };
+        for host in ["a", "b"] {
+            until_async(|| async {
+                let who = hosts.api.who(&hosts.lead, false).await.unwrap();
+                remote::find(&who, hosts.lead.who().user(), REPO, host).is_some()
+            })
+            .await;
+        }
+        hosts
+    }
+
+    /// Waits until `done` is true.
+    async fn until_async<F: std::future::Future<Output = bool>>(mut done: impl FnMut() -> F) {
+        let start = std::time::Instant::now();
+        while !done().await {
+            assert!(start.elapsed() < Duration::from_secs(30), "timed out");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// 01M57D4FX5VHQR150QTDS6BA1C, 01M57D4G1TS8BHJF5A8PW2D79C: the lead
+    /// on `a` follows a session of `b` up to its end. It gets the same
+    /// lines as `riff daemon events` on `b`, and no secret.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_lead_follows_the_events_of_a_session_of_another_host_with_no_secret() {
+        let h = hosts().await;
+        let (client, name) =
+            h.b.started(h.b.start("riff-issue-12-1a2b3c4d", "issue-12"))
+                .await;
+        drop(client);
+        let socket = session_dir(&h.b.dir, &name);
+        let (mut relay, _) = Relay::connect(&socket, 1, false).await;
+        relay.event(1, TURN[0]).await;
+        relay.event(2, TURN[1]).await;
+
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let follow = {
+            let (api, lead, name, lines) =
+                (h.api.clone(), h.lead.clone(), name.clone(), lines.clone());
+            tokio::spawn(async move {
+                let show = |line: &str| lines.lock().unwrap().push(line.to_owned());
+                remote::follow_events(&api, &lead, "b", &name, show).await
+            })
+        };
+        // The lines of `riff daemon events` on b: with no secret.
+        let scrub = Scrub::new(["gho_secret1".to_owned()]);
+        let mut view = crate::run::View::default();
+        let mut on_b = |line: &str| view.shown(&scrub.clean(line));
+        let first: Vec<String> = TURN[..2].iter().flat_map(|l| on_b(l)).collect();
+        until_async(|| async { lines.lock().unwrap().len() >= first.len() }).await;
+        relay.event(3, TURN[2]).await;
+        relay.exit(4, 0).await;
+        let failed = follow.await.unwrap().unwrap();
+        assert!(!failed);
+
+        let mut want = first;
+        want.extend(on_b(TURN[2]));
+        want.push(text::daemon_session_ends(&name, Some(0)));
+        let got = lines.lock().unwrap().clone();
+        assert_eq!(got, want);
+        assert!(got.iter().all(|l| !l.contains("gho_secret1")), "{got:?}");
+
+        // The daemon of a owns no such session.
+        let none = remote::follow_events(&h.api, &h.lead, "a", &name, |_| {}).await;
+        assert_eq!(
+            none.unwrap_err().to_string(),
+            text::daemon_no_session(&name)
+        );
+    }
+
+    /// 01M57D4FTP2NXAE18XFRXCJ79H, 01M57D4FZGCVE62AP4MVG59HM4: the status
+    /// of the daemon of `b` comes to the lead in their direct thread.
+    /// Another user does not read it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_view_of_another_host_comes_in_a_direct_thread_that_no_other_user_reads() {
+        let h = hosts().await;
+        let (_client, name) =
+            h.b.started(h.b.start("riff-issue-12-1a2b3c4d", "issue-12"))
+                .await;
+        let status = remote::state(&h.api, &h.lead, "b").await.unwrap();
+        assert_eq!(status.dir, h.b.dir);
+        assert!(status.sessions.iter().any(|s| s.name == name));
+        let empty = remote::state(&h.api, &h.lead, "a").await.unwrap();
+        assert_eq!(empty.dir, h.a.dir);
+        assert!(empty.sessions.is_empty());
+
+        let brett: SessionUri = format!("riff://brett@k/{REPO}?session=b1").parse().unwrap();
+        h.api.register(&brett).await.unwrap();
+        let threads = h.api.threads(&brett).await.unwrap();
+        assert!(threads.iter().all(|t| !t.thread.is_direct()), "{threads:?}");
+        let repo = brett.default_thread().unwrap();
+        let read = h.api.read(&brett, &repo, true).await.unwrap_or_default();
+        assert!(
+            read.iter().all(|m| !m.message.body.contains(&name)),
+            "{read:?}"
+        );
+        let mine = h.api.threads(&h.lead).await.unwrap();
+        assert!(mine.iter().any(|t| t.thread.is_direct()), "{mine:?}");
+    }
+
+    /// 01M57D4FX5VHQR150QTDS6BA1C: with no new event, the page is empty
+    /// after the hold, and starts after the same event.
+    #[tokio::test]
+    async fn a_page_with_no_new_event_ends_after_the_hold() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        drop(client);
+        let socket = session_dir(&here.dir, &name);
+        let (mut relay, _) = Relay::connect(&socket, 1, false).await;
+        relay.event(1, TURN[0]).await;
+        let hold = Duration::from_millis(200);
+        let page = remote::page(&here.dir, &name, 0, hold).await.unwrap();
+        assert_eq!(page.last, 1);
+        assert!(!page.lines.is_empty());
+        let empty = remote::page(&here.dir, &name, 1, hold).await.unwrap();
+        assert_eq!(
+            empty,
+            remote::Page {
+                lines: Vec::new(),
+                last: 1,
+                end: None
+            }
+        );
+    }
 }

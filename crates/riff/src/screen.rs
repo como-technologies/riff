@@ -21,6 +21,11 @@
 //! `riff-client` ([`Sessions`], 01M56Y8KD05JH2J7AMK636WGT7). The view
 //! shows no session of another daemon (01M53NGW6F5HP1DZ9QRGP50MGT).
 //!
+//! `riff view --host HOST` ([`view_host`]) draws the same view from the
+//! status of the daemon of HOST, through riff-server
+//! (01M57D4FZGCVE62AP4MVG59HM4). Enter and `t` give a note there
+//! ([`on_key_of_host`]).
+//!
 //! [`Screen`] holds the state of the view, and [`Screen::on_key`] turns
 //! a key into an [`Action`]: both have no terminal, so a test checks
 //! them, and draws the view on the `TestBackend` of ratatui. [`view`]
@@ -53,10 +58,12 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Row as TableRow, Table, TableState};
 
-use crate::daemon::{self, Status};
+use crate::daemon::{self, Status, remote};
 use crate::runtime::Runtime;
 use crate::text;
+use riff_client::api::Api;
 use riff_client::sessions::{Live, Phase, Sessions};
+use riff_core::name::SessionUri;
 use riff_core::wire::SessionInfo;
 
 /// How often the view asks the daemon for its status.
@@ -417,6 +424,70 @@ pub async fn view(dir: &Path, runtime: &impl Runtime) -> Result<()> {
         };
         next = tokio::time::Instant::now();
     };
+    ratatui::restore();
+    shown
+}
+
+/// The key of the person in the view of another host: Enter and `t`
+/// work only on that host, so they give a note (01M57D4FZGCVE62AP4MVG59HM4).
+///
+/// ```
+/// use riff::screen::{Action, Key, Screen, on_key_of_host};
+///
+/// let mut screen = Screen::default();
+/// assert_eq!(on_key_of_host(&mut screen, Key::Quit, "thelio"), Some(Action::Quit));
+/// assert_eq!(on_key_of_host(&mut screen, Key::Takeover, "thelio"), None);
+/// assert_eq!(screen.shown_note(), Some(riff::text::view_on_host("thelio").as_str()));
+/// ```
+pub fn on_key_of_host(screen: &mut Screen, key: Key, host: &str) -> Option<Action> {
+    match key {
+        Key::Enter | Key::Takeover => {
+            screen.note(text::view_on_host(host));
+            None
+        }
+        key => screen.on_key(key),
+    }
+}
+
+/// `riff view --host HOST`: shows the daemon of `host` through
+/// riff-server until the person ends the view
+/// (01M57D4FZGCVE62AP4MVG59HM4). A task asks the daemon for its status
+/// each [`remote::VIEW_EVERY`], so a slow reply holds up no key.
+pub async fn view_host(api: &Api, me: &SessionUri, host: &str) -> Result<()> {
+    let (send, mut statuses) = tokio::sync::mpsc::channel(1);
+    let (api, me, of) = (api.clone(), me.clone(), host.to_owned());
+    let asks = tokio::spawn(async move {
+        loop {
+            let status = remote::state(&api, &me, &of).await;
+            if send
+                .send(status.map_err(|e| format!("{e:#}")))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            tokio::time::sleep(remote::VIEW_EVERY).await;
+        }
+    });
+    let mut screen = Screen::default();
+    screen.note(text::view_of_host(host));
+    let mut terminal = ratatui::try_init()?;
+    let shown = loop {
+        while let Ok(status) = statuses.try_recv() {
+            screen.set(status);
+        }
+        if let Err(e) = terminal.draw(|frame| screen.draw(frame, crate::run::now_ms())) {
+            break Err(e.into());
+        }
+        let key = match next_key().await {
+            Ok(key) => key,
+            Err(e) => break Err(e),
+        };
+        if let Some(Action::Quit) = key.and_then(|key| on_key_of_host(&mut screen, key, host)) {
+            break Ok(());
+        }
+    };
+    asks.abort();
     ratatui::restore();
     shown
 }

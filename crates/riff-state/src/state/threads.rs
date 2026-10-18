@@ -253,6 +253,15 @@ impl View<'_> {
         let [selector] = to else {
             return Err("a direct message needs exactly one selector".into());
         };
+        // A session sends a direct message to the person of its own
+        // user (01M57D4FR8TPY47WPT9G66H4PE).
+        let person = Selector {
+            user: Some(from.user().to_owned()),
+            ..Selector::default()
+        };
+        if from.session().is_some() && *selector == person {
+            return Who::new(from.user(), None).map_err(|e| e.to_string());
+        }
         let to_lead = selector.lead == Some(true);
         if selector.session.is_none() && !to_lead {
             return Err("a direct message needs a selector with a session or lead=true".into());
@@ -363,6 +372,10 @@ impl View<'_> {
         now: Instant,
     ) -> (Vec<Change>, Vec<Selector>) {
         let (mut woken, unmatched) = self.selected(from, &message.to, thread.is_direct(), now);
+        // Only the two sessions of a direct thread join it.
+        if thread.is_direct() {
+            woken.retain(|who| thread.peer(who).is_some());
+        }
         let threads = self.riff.threads();
         let mut changes: Vec<Change> = woken
             .iter()

@@ -639,12 +639,17 @@ enum Command {
     ///
     /// It shows each session with its item, its state, its age and its
     /// last step, the limit of this host, each start that waits for room
-    /// and the waves of the daemon. It shows no session of another
-    /// machine. It draws them again each second. Up and Down select a session. Enter attaches to
-    /// the lead: Ctrl-P Ctrl-Q detaches and comes back here. t takes over
-    /// the selected session of this machine, as riff takeover does: it
-    /// stops the turn at once. q ends the view; the sessions go on.
-    View,
+    /// and the waves of the daemon. It draws them again each second. Up
+    /// and Down select a session. Enter attaches to the lead: Ctrl-P
+    /// Ctrl-Q detaches and comes back here. t takes over the selected
+    /// session of this machine, as riff takeover does: it stops the turn
+    /// at once. q ends the view; the sessions go on.
+    View {
+        /// Show the riff daemon of HOST, through riff-server. riff asks it
+        /// each 3 seconds. Enter and t work only on HOST.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Take over a session of the riff daemon in your terminal
     ///
     /// riff stops the turn of the session at once, also in the middle of
@@ -1278,7 +1283,7 @@ enum DaemonCommand {
         /// The name of the container, for example riff-issue-12-1a2b3c4d.
         name: String,
         /// Ask the riff daemon of HOST, through riff-server. It shows the
-        /// events so far, at most the last 60 lines, and does not follow.
+        /// same events, and follows them up to the end of the session.
         #[arg(long)]
         host: Option<String>,
     },
@@ -1799,8 +1804,14 @@ async fn main() -> Result<()> {
     {
         return relay_command(terminal, session, command).await;
     }
-    if let Command::View = cli.command {
+    if let Command::View { host: None } = cli.command {
         return view_command().await;
+    }
+    if let Command::View { host: Some(host) } = &cli.command {
+        let (server, _) = server_of(cli.server.as_deref())?;
+        let here = identity::place(&identity::working_dir()?)?;
+        let (api, me) = daemon_asker(&here, &server)?;
+        return riff::screen::view_host(&api, &me, host).await;
     }
     if let Command::Takeover { name, at_end } = &cli.command {
         let code = riff::takeover::here(name, *at_end).await?;
@@ -2514,7 +2525,7 @@ async fn main() -> Result<()> {
             command:
                 Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. } | LeadCommand::Start),
         }
-        | Command::View
+        | Command::View { .. }
         | Command::Takeover { .. }
         | Command::Pr {
             command: Pr::Wait { .. },
@@ -2864,6 +2875,15 @@ async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Re
 /// daemon of that host through the riff-server of `server`
 /// ([`riff::daemon::remote`]).
 async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -> Result<()> {
+    if let Some(DaemonCommand::Events {
+        name,
+        host: Some(host),
+    }) = command
+    {
+        let (server, _) = server_of(server)?;
+        let here = identity::place(&identity::working_dir()?)?;
+        return daemon_events(host, name, &here, &server).await;
+    }
     if let Some((host, request)) = command.and_then(remote_request) {
         let (server, _) = server_of(server)?;
         let here = identity::place(&identity::working_dir()?)?;
@@ -2977,7 +2997,8 @@ fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote
     use riff::daemon::remote::Request;
     let (host, request) = match command {
         DaemonCommand::Status { host } => (host, Request::Status),
-        DaemonCommand::Events { name, host } => (host, Request::Events(name.clone())),
+        // `daemon_command` follows the events of another host.
+        DaemonCommand::Events { .. } => return None,
         DaemonCommand::Limit { host, .. } => (host, Request::Limit(limit_change(command)?)),
         DaemonCommand::Cache { size, clear, host } => (
             host,
@@ -2997,10 +3018,22 @@ fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote
     Some((host.as_deref()?, request))
 }
 
+/// The client and the caller of a request to the daemon of another
+/// host, in the repository of the place `here`: the agent session of
+/// this process, or else the person.
+fn daemon_asker(here: &Place, server: &str) -> Result<(Api, SessionUri)> {
+    let api = Api::new(server);
+    let me = match identity::session_id() {
+        Some(id) => identity::agent(here, &id, api.base())?,
+        None => identity::person(here, api.base())?,
+    };
+    let api = api.signed_in(me.who().session())?;
+    Ok((api, me))
+}
+
 /// Asks the daemon of `host` for `request` through riff-server, in the
 /// repository of the place `here`, and prints its reply
-/// (01M579Z9MPS86MX7890T6HV18S). It asks as the agent session of this
-/// process, or else as the person. It exits with 1 when the daemon
+/// (01M579Z9MPS86MX7890T6HV18S). It exits with 1 when the daemon
 /// refused or failed.
 async fn ask_daemon(
     host: &str,
@@ -3008,18 +3041,30 @@ async fn ask_daemon(
     here: &Place,
     server: &str,
 ) -> Result<()> {
-    let api = Api::new(server);
-    let me = match identity::session_id() {
-        Some(id) => identity::agent(here, &id, api.base())?,
-        None => identity::person(here, api.base())?,
-    };
-    let api = api.signed_in(me.who().session())?;
+    let (api, me) = daemon_asker(here, server)?;
     let wait = riff::daemon::remote::REPLY_WAIT;
     match riff::daemon::remote::ask(&api, &me, host, request, wait).await {
         Ok(reply) => {
             println!("{reply}");
             Ok(())
         }
+        Err(e) => {
+            eprintln!("{e:#}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `riff daemon events NAME --host HOST`: follows the session NAME of
+/// the daemon of `host` up to its end, as on that host
+/// (01M57D4FX5VHQR150QTDS6BA1C). It exits with 1 when the session
+/// failed, or the daemon refused.
+async fn daemon_events(host: &str, name: &str, here: &Place, server: &str) -> Result<()> {
+    let (api, me) = daemon_asker(here, server)?;
+    let show = |line: &str| println!("{line}");
+    match riff::daemon::remote::follow_events(&api, &me, host, name, show).await {
+        Ok(false) => Ok(()),
+        Ok(true) => std::process::exit(1),
         Err(e) => {
             eprintln!("{e:#}");
             std::process::exit(1);

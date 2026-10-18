@@ -684,6 +684,21 @@ fn a_direct_message_goes_to_the_direct_thread_of_the_two_sessions() {
         ]);
 }
 
+/// 01M57D4FR8TPY47WPT9G66H4PE: a session sends a direct message to the
+/// person of its own user. No other session of the user joins it.
+#[test]
+fn a_direct_message_to_the_person_of_the_own_user_goes_to_their_direct_thread() {
+    let direct = ThreadName::direct(ann().who(), person().who());
+    let sender = ann().with_lead(true);
+    given(&team())
+        .live(&[ann2()])
+        .when(&ann(), post(&ann(), None, &["user=ann"], "re 4"))
+        .then(&[
+            joined(&ann(), &direct),
+            posted(&direct, message(sender, 1, &["user=ann"], "re 4"), &[]),
+        ]);
+}
+
 #[test]
 fn a_direct_message_to_a_gone_session_is_refused() {
     given(&team())

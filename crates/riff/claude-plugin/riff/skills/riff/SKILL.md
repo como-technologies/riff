@@ -1062,6 +1062,9 @@ riff wave run --host HOST
 riff wave stop --host HOST
 ```
 
+- `riff daemon events NAME --host HOST` follows the session up to its
+  end. Run it as a background task, and stop it when you have seen
+  enough.
 - `riff daemon end NAME` ends one session, and frees its item at once.
 - `riff daemon restart` starts the daemon again on the new riff only
   when it runs no session. `riff daemon status --host HOST` then shows

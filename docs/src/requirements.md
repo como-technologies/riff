@@ -2936,6 +2936,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   to the lead while its lead holds (R9, R125), also while the lead is
   gone (R206). So after a start of `riff-server`, the lead gets it
   before it calls again.
+- **01M57D4FR8TPY47WPT9G66H4PE** A session can send a direct message to
+  the person of its own user: a post with one selector that names only
+  that user. The direct thread is the thread of the session and the
+  person. Only those two read it, and no other session joins it.
 - **R79** `riff read` shows the unread messages of the threads of the
   person. It joins the person to the thread of the directory first.
   `--thread` reads one thread. `--all` shows each kept message. It
@@ -5296,8 +5300,8 @@ part when they merge.
   `--forge` of `riff release`. The forms with `--email` of
   `riff invite`, `riff remove` and `riff members` stay, and act on
   riff-server. `riff daemon status`, `riff view` and `riff top` show no
-  key, no riff of peers, no peer link and no session of another
-  daemon.
+  key, no riff of peers and no peer link. With no `--host`, they show
+  no session of another daemon.
 - **01M53NGW9FH02EM74GKY829808** The re-cut supersedes each requirement
   of Wave B (#803), and each requirement of the riff of peers in "Data
   and peers": the log of peers, the keys of the members, the claims on
@@ -5736,12 +5740,29 @@ part when they merge.
   limit`, `riff daemon cache`, `riff daemon events`, `riff daemon
   sweep`, `riff daemon end`, `riff daemon restart`, `riff wave run` and
   `riff wave stop` take `--host HOST`. With it, riff posts the request
-  as a message to the session of the daemon of HOST in the thread of
-  the repository. The
-  daemon does it as the command does on HOST, and posts the reply as a
+  as a direct message to the session of the daemon of HOST. The daemon
+  does it as the command does on HOST, and posts the reply as a direct
   note to the sender. riff prints the reply, and exits with 1 when the
-  daemon refused or failed. `riff daemon events --host` shows the
-  events so far, at most the last 60 lines.
+  daemon refused or failed.
+- **01M57D4FTP2NXAE18XFRXCJ79H** Each request to the daemon of another
+  host and each reply go in the direct thread of the sender and the
+  daemon. No other session and no other user reads them. A person in a
+  terminal gets the reply in the direct thread of the person.
+- **01M57D4FX5VHQR150QTDS6BA1C** `riff daemon events NAME --host HOST`
+  shows the same lines as `riff daemon events NAME` on HOST: each event
+  from the start of the session, then each new event, then the end.
+  riff asks for one page after the other: each page has the lines of
+  the events after the last event of the page before, at most 200
+  lines. With no new event, the daemon holds a request for at most 20
+  seconds. riff exits with 1 when the session failed.
+- **01M57D4G1TS8BHJF5A8PW2D79C** The events of a session go over the
+  wire only from the events that the daemon keeps: the daemon took each
+  secret out of each event before it kept it. So no secret leaves the
+  host.
+- **01M57D4FZGCVE62AP4MVG59HM4** `riff view --host HOST` shows the view
+  of `riff view` for the daemon of HOST, through riff-server. riff asks
+  the daemon of HOST for its status each 3 seconds. Enter and `t` work
+  only on HOST: in the view of another host they show a note.
 - **01M579Z9PZZCVWQKG7V8WZ5KRB** The daemon of a host acts only on a
   verified request from its person, or from the lead of its person in
   its repository. It replies to each other request with a refusal, and
