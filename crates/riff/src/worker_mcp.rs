@@ -174,7 +174,7 @@ pub fn config(names: &[String], riff: &Path, person: &Map<String, Value>) -> (Va
 pub fn write(dir: &Path, config: &Value) -> Result<PathBuf> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    crate::local::make_dir(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     let path = dir.join(FILE);
     let new = dir.join(format!("{FILE}.{}", std::process::id()));
     let mut file = std::fs::OpenOptions::new()
