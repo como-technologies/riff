@@ -690,6 +690,50 @@ async fn the_board_of_a_paused_repository_has_no_free_items() {
     );
 }
 
+/// A person with no session runs `riff wave list` in the clone: the
+/// repository comes from the folder, as in `riff top`, so the list
+/// shows the items of the current wave in the groups of the board
+/// (01M58ATZ408RBCX0PM0D0ZCY4B).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_sees_the_groups_of_the_wave_in_riff_wave_list() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    let issue =
+        |n: u64| format!(r#"{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}}}"#);
+    let wave = r#"[{"number":3,"title":"Wave 3","open_issues":3,"closed_issues":1}]"#;
+    script(
+        bin.path(),
+        "gh",
+        &format!(
+            "case \"$1\" in\n  api) echo '{wave}' ;;\n  pr) echo '[]' ;;\n  *) echo '[{}, {}, {}]' ;;\nesac",
+            issue(12),
+            issue(13),
+            issue(14),
+        ),
+    );
+    live(&server, "pangolin", "a1").await;
+    for args in [
+        &["lead"][..],
+        &["resume", "--riff"],
+        &["claim", "issue-12"],
+        &["plan", "hold", "issue-13", "a reading at 19:40 UTC"],
+    ] {
+        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
+    }
+
+    let mut list = riff(&server, dir, None, bin.path(), &["wave", "list"]);
+    list.env_remove("RIFF_SESSION")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
+    let list = output(list).await;
+    assert_eq!(
+        list,
+        "Wave 3  current  3 open, 1 closed\n  free: #14\n  held: #13 (a reading at 19:40 UTC)\n  \
+         claimed: #12\n"
+    );
+}
+
 /// The `gh` calls of `riff top` share the token of one read
 /// (01M54510SFK1Z9VPFYBYYSV10F): one `gh auth token`, then the token in
 /// `GH_TOKEN` of each call.

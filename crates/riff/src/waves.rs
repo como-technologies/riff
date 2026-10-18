@@ -61,7 +61,7 @@ use anyhow::{Result, bail};
 use riff_client::api::Api;
 use riff_client::sessions::Sessions;
 use riff_client::waves::{Board, Issues, Milestone};
-use riff_core::name::SessionUri;
+use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{HoldInfo, SessionInfo};
 use serde::Deserialize;
 
@@ -352,11 +352,16 @@ impl Items {
     }
 }
 
-/// The items of the repository of `me` (01M58ATZ408RBCX0PM0D0ZCY4B):
-/// its open issues and pull requests from `gh`, and its sessions and
-/// holds from riff-server.
-pub async fn items(api: &Api, me: &SessionUri, gh: &Gh) -> Result<Items> {
-    let Some(thread) = me.default_thread() else {
+/// The items of the repository `thread`, the repository of the folder
+/// (01M58ATZ408RBCX0PM0D0ZCY4B): its open issues and pull requests from
+/// `gh`, and its sessions and holds from riff-server. `me` reads them.
+pub async fn items(
+    api: &Api,
+    me: &SessionUri,
+    thread: Option<ThreadName>,
+    gh: &Gh,
+) -> Result<Items> {
+    let Some(thread) = thread else {
         bail!(text::waves_no_repo());
     };
     let repo = thread.to_string();

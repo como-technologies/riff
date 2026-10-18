@@ -4408,22 +4408,16 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
     anstream::eprintln!("{error}riff: the stream of {thread} ended.{error:#}");
 }
 
-/// Draws [`riff::top::Top`] once, or again every
-/// [`riff::top::REFRESH`] and after each message of `thread` until
-/// stopped (01M3NB54P1RBHTA5TKXP8BMY3K). It makes only read calls
-/// (01M3NB589WMPRSAR43BSG9SP41). Until stopped, it runs a new binary
-/// (01M3NT6WXGCNKW3EQ7MBJDQTR4), and it goes on after a look that
-/// fails: see "A look that fails" in [`riff::top`]
-/// (01M3Z8FXE2DY34ZP75WJE1S8HR).
 /// `riff wave list`: the open milestones from `gh`, with the items and
-/// the hosts of riff-server (01M58ATZ408RBCX0PM0D0ZCY4B). When riff
-/// cannot read them, one line on stderr says why
-/// (01M58ATZ6FA5PJMD3D848CEWBJ).
+/// the hosts of riff-server (01M58ATZ408RBCX0PM0D0ZCY4B). As in
+/// [`top`], the repository comes from the folder `here`, also for a
+/// person with no session. When riff cannot read them, one line on
+/// stderr says why (01M58ATZ6FA5PJMD3D848CEWBJ).
 async fn wave_list(api: &Api, here: &riff_core::name::Place) -> Result<()> {
     let gh = pr::Gh::default();
     let milestones = riff::waves::open(&gh)?;
     let items = match identity::me(here, api.base()) {
-        Ok(me) => riff::waves::items(api, &me, &gh).await,
+        Ok(me) => riff::waves::items(api, &me, here.default_thread(), &gh).await,
         Err(e) => Err(e),
     };
     let items = items
@@ -4433,6 +4427,13 @@ async fn wave_list(api: &Api, here: &riff_core::name::Place) -> Result<()> {
     Ok(())
 }
 
+/// Draws [`riff::top::Top`] once, or again every
+/// [`riff::top::REFRESH`] and after each message of `thread` until
+/// stopped (01M3NB54P1RBHTA5TKXP8BMY3K). It makes only read calls
+/// (01M3NB589WMPRSAR43BSG9SP41). Until stopped, it runs a new binary
+/// (01M3NT6WXGCNKW3EQ7MBJDQTR4), and it goes on after a look that
+/// fails: see "A look that fails" in [`riff::top`]
+/// (01M3Z8FXE2DY34ZP75WJE1S8HR).
 async fn top(
     api: &Api,
     me: &SessionUri,
