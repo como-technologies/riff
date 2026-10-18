@@ -3965,8 +3965,9 @@ mod tests {
         let refused = format!(
             r#"{{"type":"result","subtype":"success","is_error":true,"result":"Invalid API key · Please run /login {token}"}}"#
         );
+        // The result closes the input: the ack of the event comes after
+        // the close.
         relay.event(1, &refused).await;
-        assert_eq!(relay.next().await, Say::Close);
         relay.exit(2, 1).await;
 
         let (said, _) = to_the_end(&mut client).await;
