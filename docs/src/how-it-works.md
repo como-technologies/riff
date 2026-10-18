@@ -2986,8 +2986,9 @@ riff post --to claim=issue-1066 "Use the new error type of #1063."
 ```
 
 At the end of its first turn, the session ended its work: it reads no
-more messages. A message to it after that gets an answer from the
-daemon, in a direct message to you:
+more messages. Your first message to it after that gets an answer
+from the daemon, in a direct message to you. Your later messages get
+no answer:
 
 ```text
 riff: the session b7d0 ended its work, and does not read your message 9 in como-technologies/riff. Start a new session for the work.

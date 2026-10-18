@@ -190,7 +190,8 @@
 //! After the close, the session ended its work. The daemon tells the
 //! sender of each wake that the session does not read the message
 //! ([`World::refuse`], [`text::wake_refused`],
-//! 01M5792DRA12JD032F3H8JVC0Z). After the end of the session on
+//! 01M5792DRA12JD032F3H8JVC0Z), once for each sender
+//! (01M57AVKBHFVYJBRT0W2ZTAJDK). After the end of the session on
 //! riff-server, riff-server refuses a `riff tell` to it. The lead waits
 //! for its wakes itself: `riff relay watch`.
 //!
@@ -2566,16 +2567,18 @@ impl<R: Runtime + 'static> Daemon<R> {
 
 /// Gives the session `owned` each wake of riff-server from `world`, until
 /// the task ends: while the input of `claude` is open, as one input
-/// each; after the close, as a refusal to the sender
-/// (01M5792DP1KZR2XGSCMRWDHCGZ, 01M5792DRA12JD032F3H8JVC0Z). A new watch
-/// of riff-server gives the newest unread wake again: the session gets
-/// it once.
+/// each; after the close, as a refusal to the sender, once for each
+/// sender (01M5792DP1KZR2XGSCMRWDHCGZ, 01M5792DRA12JD032F3H8JVC0Z,
+/// 01M57AVKBHFVYJBRT0W2ZTAJDK). So two closed sessions do not refuse
+/// the refusals of each other with no end. A new watch of riff-server
+/// gives the newest unread wake again: the session gets it once.
 async fn give_wakes(world: Arc<dyn World>, owned: Arc<Owned>) {
     let record = owned.lock().record.clone();
     let (to, mut wakes) = mpsc::unbounded_channel();
     let watch = world.wakes(&record, to);
     tokio::pin!(watch);
     let mut seen = BTreeSet::new();
+    let mut refused = BTreeSet::new();
     loop {
         let wake = tokio::select! {
             () = &mut watch => return,
@@ -2595,7 +2598,7 @@ async fn give_wakes(world: Arc<dyn World>, owned: Arc<Owned>) {
             }
             given
         };
-        if !given {
+        if !given && refused.insert(wake.from.to_string()) {
             world.refuse(&record, &wake).await;
         }
     }
@@ -4695,6 +4698,37 @@ mod tests {
         assert_eq!(
             record_of(&here.dir, &name).inputs,
             [user_line("Do it."), line, eight]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_closed_session_refuses_each_sender_once() {
+        let (here, server) = with_server().await;
+        let (_client, name, mut relay) = a_worker(&here).await;
+        until(|| server.watches() == 1).await;
+        relay.event(2, TURN[2]).await;
+        assert_eq!(phase_of(&here.dir, &name).await, Phase::Ends);
+
+        // Another closed session refuses each refusal: each one is a
+        // new wake from it. The session refuses it once, so the two
+        // do not refuse each other with no end.
+        for seq in 9..12 {
+            server.wake_all(&a_wake(seq));
+        }
+        // A wake from another sender gets its own refusal.
+        let other = Wake {
+            from: me("riff-issue-13-5e6f7a8b"),
+            ..a_wake(12)
+        };
+        server.wake_all(&other);
+        until(|| server.said().len() == 2).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            server.said(),
+            [
+                "refuse riff-issue-12-1a2b3c4d-session 9",
+                "refuse riff-issue-12-1a2b3c4d-session 12",
+            ]
         );
     }
 

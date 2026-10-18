@@ -6326,6 +6326,8 @@ part when they merge.
   message that the session ended its work and does not read the
   message. After the end of the session on riff-server, a `riff tell`
   to it fails.
+- **01M57AVKBHFVYJBRT0W2ZTAJDK** The daemon refuses each sender at most
+  one time for each session.
 - **01M4Z60B828HF30H7H017WPXGS** The relay sends the events of `claude`
   to the daemon: `system/init` at the start of each turn, each tool call
   and its result, each retry, `system/permission_denied`,
