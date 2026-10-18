@@ -179,8 +179,11 @@ The lead does these steps for you when it plans the waves. They are
 
 ### See the open items of a wave
 
+`gh` needs the full title of the milestone, as `riff wave list` shows
+it. `"Wave 6"` does not find the wave `Wave 6: Cloud`:
+
 ```sh
-gh issue list --milestone "Wave 2"
+gh issue list --milestone "Wave 6: Cloud"
 ```
 
 ### Move an item to the backlog

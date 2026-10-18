@@ -1150,14 +1150,21 @@ mod tests {
         let forge = &forge[..forge.find("\n## ").unwrap()];
         for command in [
             "`riff wave list`",
-            "`gh issue list --milestone \"Wave 2\"`",
+            "`gh issue list --milestone \"Wave 5: Cloud\"`",
             "`gh issue list --search no:milestone`",
             "`riff wave make \"Wave 6\"`",
-            "`gh issue edit 12 --milestone \"Wave 3\"`",
+            "`gh issue edit 12 --milestone \"Wave 5: Cloud\"`",
             "`riff wave end 6`",
         ] {
             assert!(forge.contains(command), "no {command:?} in {forge}");
         }
+        // 01M588K2M7G0CV3RNJ4N074FTG: gh needs the full title of a wave
+        // with a name.
+        let flat = forge.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("`gh` takes the full title of the milestone"),
+            "{forge}"
+        );
         // 01M509TJNREVNYR9MNN4P9P4RA: no step of the waves calls the API
         // of the forge itself.
         assert!(!forge.contains("gh api"), "{forge}");

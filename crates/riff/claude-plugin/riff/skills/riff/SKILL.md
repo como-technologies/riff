@@ -201,15 +201,18 @@ This is the only part of the skill that is special to one forge.
   a wave, when its user schedules the item.
 - An open wave is an open milestone. To end a wave, close its
   milestone. Close it only when it has no open issue.
+- A `riff` command takes the number of a wave. `gh` takes the full
+  title of the milestone, as `riff wave list` shows it: `"Wave 5"`
+  does not find `Wave 5: Cloud`.
 
 | To | Run |
 |---|---|
 | See the open waves, with their items | `riff wave list` |
-| See the open items of a wave | `gh issue list --milestone "Wave 2"` |
+| See the open items of a wave | `gh issue list --milestone "Wave 5: Cloud"` |
 | See the open items with no wave | `gh issue list --search no:milestone` |
 | Make a wave | `riff wave make "Wave 6"` |
 | Rename a wave, and keep its number | `riff wave rename 6 "Cloud"` |
-| Put an item in a wave | `gh issue edit 12 --milestone "Wave 3"` |
+| Put an item in a wave | `gh issue edit 12 --milestone "Wave 5: Cloud"` |
 | Move an item to the backlog | `gh issue edit 12 --milestone Backlog` |
 | See the items in the backlog | `gh issue list --milestone Backlog` |
 | End a wave | `riff wave end 6` |

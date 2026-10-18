@@ -20,6 +20,7 @@
 //! | `riff wave make TITLE` (01M509TJTV7TC32EKXW0TEQ5NZ) | the list, then `api -X POST repos/{owner}/{repo}/milestones -f title=TITLE` |
 //! | `riff wave rename N NAME` (01M518A0BEQBX9RH9H0CEFYF9Q) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f title=TITLE` |
 //! | `riff wave end N` (01M509TJXE04CTG5D1K751WXJY) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f state=closed` |
+//! | `--wave WAVE` of `riff usage` and `riff audit` (01M588K2M7G0CV3RNJ4N074FTG) | `api repos/OWNER/REPO/milestones?state=all&per_page=100` |
 //!
 //! - `riff wave make` makes only a wave: its title is `Wave N`, with an
 //!   optional `: NAME`. It refuses a number that an open wave has.
@@ -31,6 +32,10 @@
 //!   milestone. It refuses a wave with an open item: a wave ends only
 //!   when each of its items is closed (R216, R224). On GitHub an open
 //!   pull request of the wave is an open item of its milestone.
+//! - `--wave` takes the number of the wave, `33` or `Wave 33`, as each
+//!   other step does ([`title`]). `gh issue list --milestone` matches
+//!   only the full title, for example `Wave 33: Hosts`, so riff finds
+//!   it first, in the open and the closed milestones.
 //!
 //! ```mermaid
 //! flowchart LR
@@ -193,6 +198,75 @@ pub fn end(gh: &Gh, number: u64) -> Result<Milestone> {
     )
 }
 
+/// The full title of the wave `wave`, from `milestones`: the title of
+/// each milestone, open and closed, and whether it is open
+/// (01M588K2M7G0CV3RNJ4N074FTG). `wave` is the number of the wave, `33`
+/// or `Wave 33`, or a full title. A title that is the same wins. Else
+/// the number of `wave` finds the wave, with its name or with none. It
+/// refuses a wave that matches no milestone, and names the open waves.
+///
+/// ```
+/// use riff::waves::find;
+///
+/// let milestones = [("Wave 32", false), ("Wave 33: Hosts", true), ("Backlog", true)];
+/// for wave in ["33", "Wave 33", "Wave 33: Hosts", " Wave 33 "] {
+///     assert_eq!(find(&milestones, wave).unwrap(), "Wave 33: Hosts");
+/// }
+/// assert_eq!(find(&milestones, "Wave 32").unwrap(), "Wave 32");
+/// assert_eq!(find(&milestones, "Backlog").unwrap(), "Backlog");
+/// assert_eq!(
+///     find(&milestones, "Wave 3").unwrap_err().to_string(),
+///     riff::text::waves_no_such("Wave 3", &["Wave 33: Hosts"])
+/// );
+/// ```
+pub fn find(milestones: &[(&str, bool)], wave: &str) -> Result<String> {
+    let wave = wave.trim();
+    if let Some((title, _)) = milestones.iter().find(|(title, _)| *title == wave) {
+        return Ok((*title).to_owned());
+    }
+    let number = wave.parse().ok().or_else(|| wave_number(wave));
+    let of_number: Vec<&str> = milestones
+        .iter()
+        .map(|(title, _)| *title)
+        .filter(|title| number.is_some() && wave_number(title) == number)
+        .collect();
+    match of_number[..] {
+        [title] => Ok(title.to_owned()),
+        [] => {
+            let mut open: Vec<(u64, &str)> = milestones
+                .iter()
+                .filter(|(_, open)| *open)
+                .filter_map(|(title, _)| wave_number(title).map(|n| (n, *title)))
+                .collect();
+            open.sort();
+            let open: Vec<&str> = open.into_iter().map(|(_, title)| title).collect();
+            bail!(text::waves_no_such(wave, &open))
+        }
+        _ => bail!(text::waves_many(wave, &of_number)),
+    }
+}
+
+/// The full title of the wave `wave` in `repo` (`OWNER/REPO`), with
+/// [`find`] over each milestone, open and closed. The title is as the
+/// forge has it, so `gh` matches it: print it through
+/// [`text::forge`].
+pub fn title(gh: &Gh, repo: &str, wave: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Any {
+        title: String,
+        closed_at: Option<String>,
+    }
+    let all: Vec<Any> = gh.json(&[
+        "api",
+        &format!("repos/{repo}/milestones?state=all&per_page=100"),
+    ])?;
+    let milestones: Vec<(&str, bool)> = all
+        .iter()
+        .map(|m| (m.title.as_str(), m.closed_at.is_none()))
+        .collect();
+    find(&milestones, wave)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,9 +278,17 @@ mod tests {
         {"number":33,"title":"Wave 28","open_issues":2,"closed_issues":0},
         {"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}]"#;
 
+    /// Each milestone of the repository `o/r` of the fake `gh`, open and
+    /// closed: [`OPEN`] and a closed wave with a name.
+    const ALL: &str = r#"[{"number":10,"title":"Backlog","closed_at":null},
+        {"number":33,"title":"Wave 28","closed_at":null},
+        {"number":32,"title":"Wave 27: Cloud","closed_at":null},
+        {"number":31,"title":"Wave 26: Old","closed_at":"2026-10-01T00:00:00Z"}]"#;
+
     /// A fake `gh` in `dir`. It writes each call to `dir/calls`, one line
-    /// each. It answers the list with [`OPEN`], and a POST, a PATCH of a
-    /// title or another PATCH with a milestone.
+    /// each. It answers the list with [`OPEN`], the list of `o/r` with
+    /// [`ALL`], and a POST, a PATCH of a title or another PATCH with a
+    /// milestone.
     ///
     /// A child `sh` writes the file, so this process never holds a write
     /// fd of it. A child that another test thread starts gets a copy of
@@ -218,11 +300,13 @@ mod tests {
         let script = format!(
             "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/calls\"\ncase \"$*\" in\n\
              'api repos/{{owner}}/{{repo}}/milestones?state=open&per_page=100') printf '%s' '{}' ;;\n\
+             'api repos/o/r/milestones?state=all&per_page=100') printf '%s' '{}' ;;\n\
              'api -X POST '*) printf '%s' '{{\"number\":34,\"title\":\"Wave 29\",\"open_issues\":0,\"closed_issues\":0}}' ;;\n\
              'api -X PATCH '*'-f title='*) printf '%s' '{{\"number\":33,\"title\":\"Wave 28: Fixes\",\"open_issues\":2,\"closed_issues\":0}}' ;;\n\
              'api -X PATCH '*) printf '%s' '{{\"number\":32,\"title\":\"Wave 27: Cloud\",\"open_issues\":0,\"closed_issues\":9}}' ;;\n\
              *) exit 1 ;;\nesac\n",
-            OPEN.replace('\n', "")
+            OPEN.replace('\n', ""),
+            ALL.replace('\n', "")
         );
         let out = std::process::Command::new("sh")
             .args(["-c", "printf '%s' \"$1\" > \"$0\" && chmod 755 \"$0\""])
@@ -342,5 +426,51 @@ mod tests {
         let error = rename(&fake_gh(dir.path()), 26, "Old").unwrap_err();
         assert_eq!(error.to_string(), text::waves_not_open(26));
         assert_eq!(calls(dir.path()), [LIST]);
+    }
+
+    const ALL_LIST: &str = "api repos/o/r/milestones?state=all&per_page=100";
+
+    #[test]
+    fn title_finds_a_wave_with_a_name_by_its_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = fake_gh(dir.path());
+        for wave in ["Wave 27", "27", "Wave 27: Cloud"] {
+            assert_eq!(title(&gh, "o/r", wave).unwrap(), "Wave 27: Cloud");
+        }
+        assert_eq!(title(&gh, "o/r", "Wave 28").unwrap(), "Wave 28");
+        assert_eq!(calls(dir.path()), [ALL_LIST; 4]);
+    }
+
+    #[test]
+    fn title_finds_a_closed_wave() {
+        let dir = tempfile::tempdir().unwrap();
+        let found = title(&fake_gh(dir.path()), "o/r", "Wave 26").unwrap();
+        assert_eq!(found, "Wave 26: Old");
+    }
+
+    #[test]
+    fn title_refuses_a_wave_that_no_milestone_has_and_names_the_open_waves() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = fake_gh(dir.path());
+        for wave in ["Wave 3", "3", "Sprint 3"] {
+            let error = title(&gh, "o/r", wave).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                text::waves_no_such(wave, &["Wave 27: Cloud", "Wave 28"])
+            );
+        }
+    }
+
+    #[test]
+    fn find_refuses_a_number_of_more_than_one_milestone() {
+        let milestones = [("Wave 6", false), ("Wave 6: Cloud", true)];
+        let error = find(&milestones, "6").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            text::waves_many("6", &["Wave 6", "Wave 6: Cloud"])
+        );
+        // The full title still finds each one.
+        assert_eq!(find(&milestones, "Wave 6").unwrap(), "Wave 6");
+        assert_eq!(find(&milestones, "Wave 6: Cloud").unwrap(), "Wave 6: Cloud");
     }
 }

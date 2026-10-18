@@ -407,6 +407,49 @@ async fn a_good_wave_passes_each_rule() {
     assert!(calls.contains("--search milestone:\"Wave 2\""), "{calls}");
 }
 
+/// The wave has a name. `--wave` with its number finds it, and a wave
+/// that matches no milestone is an error that names the open waves
+/// (01M588K2M7G0CV3RNJ4N074FTG).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_number_finds_a_wave_with_a_name() {
+    let machine = Machine::new();
+    for file in ["milestones.json", "issues.json"] {
+        let path = machine.bin.path().join(file);
+        let named = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("\"Wave 2\"", "\"Wave 2: Hosts\"");
+        std::fs::write(&path, named).unwrap();
+    }
+    let (_service, url) = server(good(), &machine.env).await;
+    for wave in ["Wave 2", "2", "Wave 2: Hosts"] {
+        let out = machine.run(&url, &["audit", "--wave", wave]).await;
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert!(out.status.success(), "{wave}: {text}");
+        assert!(
+            text.starts_with("Audit of Wave 2: Hosts in como-technologies/riff, from "),
+            "{text}"
+        );
+        assert!(text.ends_with("\nResult: each rule passes.\n"), "{text}");
+    }
+    let calls = std::fs::read_to_string(machine.bin.path().join("gh.log")).unwrap();
+    assert!(
+        calls.contains("--search milestone:\"Wave 2: Hosts\""),
+        "{calls}"
+    );
+
+    let out = machine.run(&url, &["audit", "--wave", "Wave 9"]).await;
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(
+            "The repository has no wave Wave 9. The open waves: Wave 2: Hosts, Wave 3. Give the \
+             number of a wave, for example 2 or \"Wave 2\"."
+        ),
+        "{stderr}"
+    );
+}
+
 /// The log of a later server has a kind that this build does not know.
 /// `riff audit` skips that record, and the good wave still passes each
 /// rule (01M43GSMZKCMET3DG07K538EDD).
@@ -628,5 +671,5 @@ async fn the_log_has_only_the_records_of_the_repository_and_no_body() {
 fn the_book_has_the_how_to() {
     let page = book::page("development.md");
     assert!(page.contains("\n## Check that a wave followed the rules\n"));
-    assert!(book::commands_in(&page).contains(&"riff audit --wave \"Wave 18\"".to_owned()));
+    assert!(book::commands_in(&page).contains(&"riff audit --wave 18".to_owned()));
 }

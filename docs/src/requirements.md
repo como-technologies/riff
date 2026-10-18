@@ -438,7 +438,7 @@
   the shared server, tells its user to update each machine, and tells
   the sessions to run their checks after the release. When each item is
   closed, the lead ends the wave.
-- **01M3ZWRC6H0P7EF6CMECCYZ2RC** `riff audit --wave TITLE` checks
+- **01M3ZWRC6H0P7EF6CMECCYZ2RC** `riff audit --wave WAVE` checks
   that a wave followed the rules, from the log of the riff and from
   the forge. It changes nothing. It checks seven rules: (1) each item
   of the wave has a claim, a pull request, a verify by another session,
@@ -559,6 +559,15 @@
   milestone of the wave with the number N. riff refuses when no open
   wave has the number, and when the milestone has an open issue or an
   open pull request. Then it closes nothing.
+- **01M588K2M7G0CV3RNJ4N074FTG** `--wave WAVE` of `riff usage` and
+  `riff audit` takes the number of the wave, `N` or `Wave N`, or a full
+  title. riff finds the milestone in the open and the closed milestones
+  of the repository: the milestone with the same title, else the one
+  milestone `Wave N` or `Wave N: NAME`. riff refuses a wave that
+  matches no milestone, and names the open waves. It refuses a number
+  of more than one milestone, and names them. Then it shows no tokens
+  and checks no rule. The skill says that `gh` takes only the full
+  title.
 - **01M3Q5QE2EWGKVD57Y6YCWA4BR** The rollout of workers
   (01M3Q5QE01DB0FJQJWFKR450KQ) reads its free work with `gh`. The
   current wave is the open milestone `Wave N` with the lowest N. A free
@@ -769,7 +778,7 @@
   counts for nothing. A comment of another person never replaces a
   report: it counts as a report of that person. A sum past the largest
   number stays at the largest number, and fails nothing.
-- **01M3Y1YP45VQS5HMJCXKRN3CCR** `riff usage --wave TITLE` lists each
+- **01M3Y1YP45VQS5HMJCXKRN3CCR** `riff usage --wave WAVE` lists each
   issue of the wave, open and closed, with its total, and shows the
   sum.
 - **01M3Y1YP4KVHK1DTZ85YNGDG0T** `riff usage` with no issue and no
