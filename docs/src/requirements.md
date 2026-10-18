@@ -5707,8 +5707,9 @@ part when they merge.
 - **01M579Z9MPS86MX7890T6HV18S** `riff daemon status`, `riff daemon
   limit`, `riff daemon cache`, `riff daemon events`, `riff daemon
   sweep`, `riff daemon end`, `riff daemon restart`, `riff wave run` and
-  `riff wave stop` take `--host HOST`. With it, riff posts the request as a message to the
-  session of the daemon of HOST in the thread of the repository. The
+  `riff wave stop` take `--host HOST`. With it, riff posts the request
+  as a message to the session of the daemon of HOST in the thread of
+  the repository. The
   daemon does it as the command does on HOST, and posts the reply as a
   note to the sender. riff prints the reply, and exits with 1 when the
   daemon refused or failed. `riff daemon events --host` shows the
