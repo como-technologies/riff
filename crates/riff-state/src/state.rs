@@ -4752,6 +4752,7 @@ mod tests {
         state.end(&api(), now);
         let d = request(&mut state);
         assert_eq!(woken(&d), [docs().who().clone()]);
+        assert_eq!(d.woken, woken(&d), "the Woke line names each wake");
         assert!(d.unmatched.is_empty());
 
         state.claim(&docs(), &repo(), "issue-12", now).unwrap();
@@ -4764,6 +4765,32 @@ mod tests {
         state.release(&docs(), &repo(), "issue-12", now).unwrap();
         let d = request(&mut state);
         assert_eq!(woken(&d), [api().who().clone()], "a live lead wakes alone");
+    }
+
+    /// 01M58AQX46RH9KFP91QAFS43N7.
+    #[test]
+    fn a_lead_that_posts_to_its_own_lead_selector_wakes_no_free_session() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        assert!(is_lead(&state, &api(), now));
+        for sel in [
+            "user=mike,lead=true",
+            "user=mike,repo=como-technologies/riff,lead=true",
+        ] {
+            let d = post(&mut state, &api(), "x", &[sel], "an answer");
+            assert!(woken(&d).is_empty(), "{sel} woke {:?}", woken(&d));
+            assert!(d.woken.is_empty(), "the Woke line names no session");
+            assert!(d.unmatched.is_empty(), "the sender matches {sel}");
+        }
+        let d = post(
+            &mut state,
+            &api(),
+            "x",
+            &["user=mike,lead=true", "user=brett"],
+            "hi",
+        );
+        assert_eq!(woken(&d), [tests().who().clone()]);
+        assert_eq!(d.woken, woken(&d));
     }
 
     #[test]

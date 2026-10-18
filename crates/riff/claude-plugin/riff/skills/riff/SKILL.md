@@ -765,6 +765,11 @@ matches one or more selectors.
 | The sessions in a worktree | `[{"worktree": "issue-12"}]` |
 | The lead of a person in a repository | `[{"user": "mike", "repo": "OWNER/REPO", "lead": true}]` |
 
+In a thread, a `lead` selector that matches no live lead wakes each
+live session with no claim that its other fields match. This fallback
+runs only when the user has no live lead. The sender counts: when you
+are the lead and post to your own `lead` selector, it wakes nobody.
+
 The post result names each session that woke. It also names each
 selector that matched no session. Riff matches the selectors only when
 you post. A session that matches later does not wake.

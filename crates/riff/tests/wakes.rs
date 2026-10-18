@@ -7,7 +7,8 @@
 //! question and the request to it.
 //!
 //! A verify request to the lead of the author reaches a free session
-//! when that lead is gone (01M3JY1TBPQHH6WPPBTF42T64H).
+//! when that lead is gone (01M3JY1TBPQHH6WPPBTF42T64H), but not when the
+//! lead itself posts (01M58AQX46RH9KFP91QAFS43N7).
 
 use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
@@ -269,4 +270,25 @@ async fn a_verify_request_with_no_live_lead_wakes_a_free_session() {
     let woken = verify_request(&riff).await;
     let woken: Vec<_> = woken.iter().map(SessionUri::who).collect();
     assert_eq!(woken, [free.who()], "only the session with no claim wakes");
+}
+
+/// 01M58AQX46RH9KFP91QAFS43N7: the sender counts as the live lead.
+#[tokio::test]
+async fn a_lead_that_posts_to_its_own_lead_wakes_no_free_session() {
+    let riff = riff().await;
+    let free = uri("riff://mike@thelio/como-technologies/riff?session=f4");
+    riff.api.register(&free).await.unwrap();
+    let posted = riff
+        .api
+        .post(
+            &riff.lead,
+            Some(&repo()),
+            &[selector("user=mike,lead=true")],
+            "an answer in chat",
+            Kind::Message,
+        )
+        .await
+        .unwrap();
+    assert!(posted.woken.is_empty(), "woke {:?}", posted.woken);
+    assert!(posted.unmatched.is_empty(), "{:?}", posted.unmatched);
 }

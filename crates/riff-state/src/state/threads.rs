@@ -317,7 +317,9 @@ impl View<'_> {
 
     /// Each live session other than `from` that `to` selects, and each
     /// selector that matched no session. In a direct thread, a lead
-    /// that holds counts as live (01M56P1T2AZCP48RJBM01RRRZ4).
+    /// that holds counts as live (01M56P1T2AZCP48RJBM01RRRZ4). A lead
+    /// that posts to its own `lead=true` selector is that live lead: the
+    /// selector wakes no free session in its place.
     fn selected(
         &self,
         from: &Who,
@@ -337,7 +339,9 @@ impl View<'_> {
                 .filter(|who| selector.matches(&self.uri(who, now)))
                 .cloned()
                 .collect();
-            if matched.is_empty() && selector.lead == Some(true) {
+            // The sender counts as the live lead (01M58AQX46RH9KFP91QAFS43N7).
+            let to_sender = selector.lead == Some(true) && selector.matches(&self.uri(from, now));
+            if matched.is_empty() && selector.lead == Some(true) && !to_sender {
                 let free = Selector {
                     lead: None,
                     ..selector.clone()
@@ -352,7 +356,7 @@ impl View<'_> {
                     .cloned()
                     .collect();
             }
-            if matched.is_empty() {
+            if matched.is_empty() && !to_sender {
                 unmatched.push(selector.clone());
             }
             woken.extend(matched);

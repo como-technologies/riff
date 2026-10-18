@@ -3034,6 +3034,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   reaches a free session of the author's user when that user has no
   live lead. With a live lead, it wakes only the lead. The skill and
   the book say so.
+- **01M58AQX46RH9KFP91QAFS43N7** The sender of a post counts as a live
+  session for the fallback of 01M3JY1TBPQHH6WPPBTF42T64H. A lead that
+  posts to its own `lead=true` selector wakes no other session for that
+  selector, and the post result names no unmatched selector for it.
+  The skill and the book say so.
 - **01M3JPMQJCC3F19QAJ84EKMVKA** The skill and the start hook tell a
   session to call `read` and start the watch again in the same
   response, so that a wake costs one request.
