@@ -74,7 +74,9 @@ pub mod time;
 pub use program::{
     copy_program, file_name, program_writers, program_writes, write_program, writes_a_program,
 };
-pub use time::{HANG, Late, PRESSURE_LIMIT, Span, in_time, stall};
+pub use time::{
+    HANG, Late, PRESSURE_DIR, PRESSURE_LIMIT, Pressure, RESOURCES, Span, in_time, stall,
+};
 
 /// The prefixes of the variables that the helper removes: riff and the
 /// agent tool read them.
