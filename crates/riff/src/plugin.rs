@@ -600,9 +600,11 @@ mod tests {
         assert!(!flat(skill).contains("claim again and go on"));
     }
 
-    /// 01M5084K79M5XJT3MP8FFVQKDX: a check calls the riff of a new build
-    /// by its path in the one folder of the check, and runs its
-    /// `riff init` with `--yes`.
+    /// 01M5084K79M5XJT3MP8FFVQKDX, 01M56P380A5PXGMVJVCSD8KBRG: a check
+    /// builds riff with one `riff build`, also in a worktree, calls the
+    /// riff of the build by its path in the one folder of the check, and
+    /// runs its `riff init` with `--yes`. The skill names no git step in
+    /// the clone of the check: worktree isolation refuses it.
     #[test]
     fn the_skill_says_how_a_check_calls_a_new_build() {
         let skill = text("riff/skills/riff/SKILL.md");
@@ -610,18 +612,26 @@ mod tests {
         for words in [
             "Build it in the clone `~/.cache/riff/check`, outside `.claude/worktrees`. One check \
              at a time on a machine uses it.",
+            "Do no git step in the clone yourself: Claude Code refuses a git step of a session \
+             in a worktree that targets another folder.",
             "Call the riff of the build by its path, with no variable and no prefix",
             "When the check runs `riff init` of the build, add `--yes`.",
         ] {
             assert!(flat.contains(words), "{words}");
         }
         for line in [
-            "\ngit clone -q https://github.com/OWNER/REPO.git ~/.cache/riff/check\n",
-            "\njust --justfile ~/.cache/riff/check/justfile static\n",
+            "\nriff build\n",
             "\n~/.cache/riff/check/target/static/release/riff daemon install\n",
         ] {
             assert!(skill.contains(line), "{line}");
         }
+        for line in skill.lines() {
+            assert!(
+                !(line.starts_with("git ") && line.contains(".cache/riff/check")),
+                "{line}"
+            );
+        }
+        assert!(!skill.contains("--justfile ~/.cache/riff/check"));
         assert!(!skill.contains(".cache/riff/checks"));
     }
 

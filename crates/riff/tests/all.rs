@@ -14,6 +14,7 @@ mod behind;
 mod broken_main;
 mod build;
 mod chat;
+mod check_build;
 mod claim;
 mod claim_end;
 mod clear;

@@ -417,6 +417,37 @@ with no optimization, so the build is faster. Its binaries are in
 just static dev
 ```
 
+### Build riff for a check
+
+A check after a merge can need a new build of riff, for example of
+the daemon. Build it in the one check clone of the machine,
+`~/.cache/riff/check`. Run this command in a clone or a worktree of
+the repository:
+
+```sh
+riff build
+```
+
+When the folder is not there, riff clones the `origin` of your folder
+into it. Then it fetches `origin`, puts the clone on the default
+branch, and runs `just static`. It prints the path of the riff of the
+build. A session in a worktree cannot run git steps in the check
+clone: Claude Code refuses them. `riff build` is one riff command, so
+the session can run it.
+
+Call the riff of the build by its full path. A permission rule of
+`riff init` allows this path:
+
+```sh
+~/.cache/riff/check/target/static/release/riff daemon install
+```
+
+To use another `just`, give its path:
+
+```sh
+riff build --just ~/bin/just
+```
+
 ### Keep the crates of the static build in a folder
 
 The static build keeps the crates that it downloads in the volume

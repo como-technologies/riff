@@ -553,6 +553,20 @@ enum Command {
         #[arg(long, value_name = "SHA")]
         commit: Option<String>,
     },
+    /// Build riff of the default branch in the check clone
+    ///
+    /// A check after a merge can need a new build of riff. riff builds it
+    /// in the one check clone of the machine, ~/.cache/riff/check. When
+    /// the folder is not there, riff clones the origin of the repository
+    /// of this folder into it. Then it fetches origin, puts the clone on
+    /// the default branch, and runs just static. It prints the path of
+    /// the riff of the build. A session in a worktree runs this command
+    /// in place of git steps on the check clone.
+    Build {
+        /// The just command.
+        #[arg(long, default_value = "just")]
+        just: std::path::PathBuf,
+    },
     /// Tidy the worktrees of this clone
     ///
     /// riff decides by facts, not by the word of an agent.
@@ -1884,6 +1898,15 @@ async fn main() -> Result<()> {
     if let Command::Setup { check } = cli.command {
         return setup(check);
     }
+    if let Command::Build { just } = &cli.command {
+        let home = std::env::var_os("HOME")
+            .filter(|h| !h.is_empty())
+            .context("riff cannot find your home: HOME is not set")?;
+        let check = riff::check::dir(std::path::Path::new(&home));
+        let riff = riff::check::build(&identity::working_dir()?, &check, just)?;
+        println!("{}", riff.display());
+        return Ok(());
+    }
     if let Command::Enable { place } | Command::Disable { place } = &cli.command {
         let on = matches!(cli.command, Command::Enable { .. });
         println!("{}", text::enabled(&set_enabled(place.place(), on)?, on));
@@ -2338,6 +2361,7 @@ async fn main() -> Result<()> {
         | Command::Statusline
         | Command::Connect { .. }
         | Command::Setup { .. }
+        | Command::Build { .. }
         | Command::Enable { .. }
         | Command::Disable { .. }
         | Command::Server

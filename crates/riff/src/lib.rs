@@ -76,6 +76,7 @@ pub mod auto_update;
 pub mod binary;
 pub mod catch_up;
 pub mod chat;
+pub mod check;
 pub mod cloud;
 pub mod compact;
 pub mod daemon;

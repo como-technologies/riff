@@ -6007,6 +6007,13 @@ part when they merge.
   no variable and no prefix. A rule of the user place allows that path,
   with `~` and with the full path of the home. The check runs `riff
   init` of the build with `--yes`.
+- **01M56P380A5PXGMVJVCSD8KBRG** `riff build` makes the build of a
+  check in `~/.cache/riff/check`. When the folder is not there, it
+  clones the `origin` of the repository of its folder into it. Then it
+  fetches `origin`, puts the clone on the default branch and runs `just
+  static`. It prints the path of the riff of the build. The skill tells
+  a check to run `riff build`, and names no git step in the clone: a
+  session in a worktree runs no git step in another folder.
 - **01M509TJNREVNYR9MNN4P9P4RA** Each allow rule of the table names its
   program and its words. Its only `*` is at its end, after a space. No
   allow rule names a path of the API of the forge: the steps of the
