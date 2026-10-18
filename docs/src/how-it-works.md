@@ -2672,6 +2672,9 @@ sequenceDiagram
 In a thread, a selector with `lead: true` that matches no live session
 wakes each live session with no claim that its other fields match. So
 a post to the lead still reaches a free session when the lead is gone.
+This fallback runs only when the user has no live lead. The sender
+counts: when the lead posts to its own `lead: true` selector, the
+selector wakes no session.
 
 `tell` sends a direct message to one session. A person follows a
 thread with `riff tail`, reads it with `riff read`, posts with
