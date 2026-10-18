@@ -24,6 +24,7 @@ mod compact;
 mod compact_wave;
 mod conduct;
 mod daemon;
+mod daemon_hosts;
 mod dev;
 mod enable;
 mod end;

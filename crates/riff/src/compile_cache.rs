@@ -14,6 +14,9 @@
 //! | `riff daemon cache SIZE` | sets the most size in [`CACHE_FILE`] (01M57818168N3AQGE3G5GDYDDD) |
 //! | `riff daemon cache --clear` | deletes each file in the volume ([`clear`], 01M5781A4PRTTYRHH5GJ1GHN7G) |
 //!
+//! Each of them also takes `--host HOST`: the daemon of that host does
+//! it ([`change`], [`crate::daemon::remote`]).
+//!
 //! `riff daemon status` shows the same line ([`crate::text::daemon_cache`],
 //! 01M5781930TF6XBX7ME7RAMX2X).
 //!
@@ -164,6 +167,32 @@ pub fn set(dir: &Path, size: Option<&str>) -> Result<Setting> {
     };
     setting.write(dir)?;
     Ok(setting)
+}
+
+/// `riff daemon cache` with its argument, on this host or for the
+/// daemon of a host with `--host`: empties the volume with `clear`, or
+/// sets the most `size` in the folder `dir` of the daemon. It gives the
+/// text to show: the line of [`shown`] last.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let shown = riff::compile_cache::change(dir.path(), Some("12G"), false)?;
+/// assert!(shown.contains("at most 12G"));
+/// assert!(riff::compile_cache::change(dir.path(), Some("12GB"), false).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn change(dir: &Path, size: Option<&str>, clear: bool) -> Result<String> {
+    let mut lines = Vec::new();
+    if clear {
+        if let Some(folder) = folder() {
+            self::clear(&folder)?;
+            lines.push(crate::text::DAEMON_CACHE_CLEARED.to_owned());
+        }
+    } else {
+        set(dir, size)?;
+    }
+    lines.push(shown(dir));
+    Ok(lines.join("\n"))
 }
 
 /// The folder of the volume [`SCCACHE_VOLUME`] on the host, or `None`

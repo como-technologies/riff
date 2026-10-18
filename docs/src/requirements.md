@@ -5698,6 +5698,35 @@ part when they merge.
   event of the live session in the container `NAME` from its start, as
   `riff run` shows them, and each new event until the end. Ctrl-C ends
   the view. The session goes on.
+- **01M579Z9JE6HY9HG3PWR1RR0RQ** The daemon of a host has a session of
+  its own on riff-server for each repository that it serves. It serves
+  a repository after `riff daemon host` or `riff wave run` in its main
+  clone. It keeps each one in `served.json` in its folder, with its
+  session ID, and serves with the same session after its own restart.
+  Its status is `daemon host: pid P, build B, N sessions`.
+- **01M579Z9MPS86MX7890T6HV18S** `riff daemon status`, `riff daemon
+  limit`, `riff daemon cache`, `riff daemon events`, `riff daemon
+  sweep`, `riff daemon end`, `riff daemon restart`, `riff wave run` and
+  `riff wave stop` take `--host HOST`. With it, riff posts the request as a message to the
+  session of the daemon of HOST in the thread of the repository. The
+  daemon does it as the command does on HOST, and posts the reply as a
+  note to the sender. riff prints the reply, and exits with 1 when the
+  daemon refused or failed. `riff daemon events --host` shows the
+  events so far, at most the last 60 lines.
+- **01M579Z9PZZCVWQKG7V8WZ5KRB** The daemon of a host acts only on a
+  verified request from its person, or from the lead of its person in
+  its repository. It replies to each other request with a refusal, and
+  changes nothing: another user, and a session that is not the lead,
+  for example a worker.
+- **01M579Z9SAN24QGN1VV5C7EHM9** `riff daemon restart` starts the
+  daemon again on the new riff on disk only when it runs an old riff
+  and no session, no start waits and no job of a wave runs. Else it
+  says why not. It asks systemd 5 seconds after the reply. `riff
+  daemon status` shows the new pid and build.
+- **01M579Z9VRD12FRK6DSYVKDHQB** `riff daemon end NAME` ends one
+  session of the daemon: the daemon frees its item on riff-server at
+  once, ends its session there, then stops its container. It refuses
+  the lead.
 
 ### riff relay
 

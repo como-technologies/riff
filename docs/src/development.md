@@ -1166,8 +1166,10 @@ The claims on riff-server keep the two machines from one item: each
 item runs on one machine only. The limit of the containers of each
 machine is the limit of its daemon (see
 [Set the limit of the host](#set-the-limit-of-the-host)). To stop the
-wave of that machine, run `riff wave stop` there. For workers in tmux
-on a second machine, `riff workers host` stays: see
+wave of that machine, run `riff wave stop` there. Your lead can do
+each of these steps from its own machine with `--host` (see
+[Manage the daemon of another host](#manage-the-daemon-of-another-host)).
+For workers in tmux on a second machine, `riff workers host` stays: see
 [Offer workers from another machine](how-it-works.md#offer-workers-from-another-machine).
 
 ### See the wave
@@ -1287,7 +1289,116 @@ riff daemon cache --clear
 ```
 
 The clear keeps the volume. You can clear while sessions run: their
-builds compile what they do not find, and fill the cache again.
+builds compile what they do not find, and fill the cache again. Add
+`--host HOST` to do each step on another host (see
+[Manage the daemon of another host](#manage-the-daemon-of-another-host)).
+
+### End one container session
+
+To end one session of the daemon, and free its item at once:
+
+```sh
+riff daemon end riff-issue-12-1a2b3c4d
+```
+
+`riff daemon status` shows the names. The daemon frees the claim of
+the session on riff-server, then stops its container. The item is free
+work again at once. riff refuses the lead: end it in its terminal with
+`/exit`. Add `--host HOST` to end a session on another host (see
+[Manage the daemon of another host](#manage-the-daemon-of-another-host)).
+
+### Manage the daemon of another host
+
+Your lead can act on the daemon of each of your hosts, with no SSH.
+The daemon of a host has a session of its own on riff-server for each
+repository that it serves. The lead asks it through riff-server, and
+the reply comes back to the lead.
+
+```mermaid
+sequenceDiagram
+    participant L as lead on pangolin
+    participant S as riff-server
+    participant D as riff daemon on thelio
+    L->>S: riff daemon limit --sessions 4 --host thelio
+    S->>D: wake: the request
+    D->>D: the same step as riff daemon limit on thelio
+    D->>S: a note to the lead: the reply
+    S-->>L: riff prints the reply
+```
+
+Do this once on the other host, in the main clone of the repository:
+
+```sh
+riff daemon host
+```
+
+`riff wave run` on that host does it too. The daemon keeps it over its
+restarts.
+
+Then, from the lead, or from a terminal of yours in the clone of the
+repository, add `--host` and the name of the host. To see the daemon,
+its sessions and its waves:
+
+```sh
+riff daemon status --host thelio
+```
+
+To show or set its limit and caps:
+
+```sh
+riff daemon limit --sessions 4 --host thelio
+```
+
+To see the events of one of its sessions so far, at most the last 60
+lines:
+
+```sh
+riff daemon events riff-issue-12-1a2b3c4d --host thelio
+```
+
+To remove its folders whose work is over:
+
+```sh
+riff daemon sweep --host thelio
+```
+
+To show, set or empty its compile cache:
+
+```sh
+riff daemon cache --host thelio
+riff daemon cache 20G --host thelio
+riff daemon cache --clear --host thelio
+```
+
+To end one of its sessions, and free its item at once:
+
+```sh
+riff daemon end riff-issue-12-1a2b3c4d --host thelio
+```
+
+To run, or stop, the wave of the repository on that host. The daemon
+uses its own main clone there:
+
+```sh
+riff wave run --host thelio
+riff wave stop --host thelio
+```
+
+A stop and a new run clear the spent starts of each item.
+
+To start the daemon again on the new riff after `riff update` there:
+
+```sh
+riff daemon restart --host thelio
+```
+
+The daemon starts again only when it runs no session. Else it says
+that it starts again after its last session. Then `riff daemon status
+--host thelio` shows its new pid and build.
+
+riff waits for the reply, prints it, and exits with 1 when the daemon
+refused or failed. The daemon acts only for you and your lead. It
+refuses a worker session and another user.
 
 ### What the wave does
 

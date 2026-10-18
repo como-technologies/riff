@@ -110,6 +110,9 @@
 //! | [`Ask::WaveStop`] | [`Say::Done`] when the daemon ran the wave, or [`Say::Failed`] |
 //! | [`Ask::Takeover`] | [`Say::Line`] while the turn stops or ends, [`Say::Held`], then [`Say::Done`] after the go on, or [`Say::Failed`] |
 //! | [`Ask::Sweep`] | [`Say::Line`] for each folder that the daemon removed, and for each folder whose work is over that it kept, or one line that it removed none, then [`Say::Done`] ([`sweep`]) |
+//! | [`Ask::End`] | [`Say::Line`] for the free item and the stop, then [`Say::Done`], or [`Say::Failed`] ([`Daemon::end_session`]) |
+//! | [`Ask::Restart`] | [`Say::Line`] with the decision, then [`Say::Done`] ([`Daemon::restart_now`]) |
+//! | [`Ask::Serve`] | [`Say::Line`], then [`Say::Done`] when the daemon serves the lead of the repository ([`remote`]), or [`Say::Failed`] |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
 //! [`Then::Stop`]: the daemon stops the container. When `riff` closes the
@@ -314,6 +317,7 @@ use crate::text;
 use crate::wave::{Job, Wave, World};
 use riff_client::sessions::{Live, Phase};
 
+pub mod remote;
 pub mod sweep;
 
 /// The version of the protocol between `riff` and the daemon, and
@@ -321,6 +325,10 @@ pub mod sweep;
 /// ([`Ask::Wave`], [`Ask::WaveStop`]). Version 4 adds the sessions with a
 /// terminal, the takeover and the watch of a session.
 pub const PROTOCOL: u32 = 4;
+
+/// The wait of `riff daemon restart` before the ask to systemd: the
+/// reply to the lead of another host goes first.
+pub const RESTART_DELAY: Duration = Duration::from_secs(5);
 
 /// The first protocol of a relay that takes [`Say::Hold`].
 pub const TAKEOVER_PROTOCOL: u32 = 4;
@@ -649,6 +657,21 @@ pub enum Ask {
     /// holds no work of its own (01M53NJ5Y2CMY5MWF9328KW7DE,
     /// 01M53S7WAXD46YPN0DR96XSTMG, [`Daemon::sweep`]).
     Sweep,
+    /// `riff daemon end NAME`: free the item of the session in the
+    /// container `name` and stop it ([`Daemon::end_session`]).
+    End {
+        /// The name of its container.
+        name: String,
+    },
+    /// `riff daemon restart`: start again on the new riff when no
+    /// session runs ([`Daemon::restart_now`]).
+    Restart,
+    /// `riff daemon host`: serve the lead of the repository of `wave`
+    /// ([`Daemon::serve_repo`]).
+    Serve {
+        /// The repository, its main clone, its riff-server and this host.
+        wave: Wave,
+    },
 }
 
 /// A session to start. It holds the values of the host and the
@@ -1320,6 +1343,13 @@ pub struct Daemon<R> {
     /// The folders of the sessions: the jobs that run, and one sweep at
     /// a time ([`sweep`]).
     folders: Arc<sweep::Folders>,
+    /// The new start on a new riff, for the lead of another host. With
+    /// none, the daemon has no session on riff-server: a test
+    /// ([`remote`]).
+    again: Option<Arc<remote::Again>>,
+    /// The task of the session on riff-server of each repository that
+    /// the daemon serves ([`remote::serve`]).
+    serving: Mutex<BTreeMap<String, (remote::Served, JoinHandle<()>)>>,
 }
 
 /// A wave that runs in the daemon.
@@ -1370,6 +1400,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             waves: Mutex::new(BTreeMap::new()),
             changed: Notify::new(),
             folders: Arc::default(),
+            again: None,
+            serving: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -1402,6 +1434,94 @@ impl<R: Runtime + 'static> Daemon<R> {
     pub fn with_world(mut self, world: Arc<dyn World>) -> Self {
         self.world = world;
         self
+    }
+
+    /// The daemon with a session on riff-server for each repository that
+    /// it serves, and the new start of `again` ([`remote`]).
+    #[must_use]
+    pub fn with_again(mut self, again: remote::Again) -> Self {
+        self.again = Some(Arc::new(again));
+        self
+    }
+
+    /// Serves the lead of the repository of `wave` from now on: it keeps
+    /// it in [`remote::SERVED_FILE`], and starts its session on
+    /// riff-server, or starts it again with the new facts of `wave`
+    /// (01M579Z9JE6HY9HG3PWR1RR0RQ).
+    pub fn serve_repo(&self, wave: &Wave) -> Result<()> {
+        let served = remote::serve_in_file(&self.dir, wave)?;
+        self.spawn_served(served);
+        Ok(())
+    }
+
+    /// Starts the session on riff-server of each repository of
+    /// [`remote::SERVED_FILE`].
+    pub fn serve_repos(&self) {
+        match remote::read_served(&self.dir) {
+            Ok(served) => served.into_values().for_each(|s| self.spawn_served(s)),
+            Err(e) => eprintln!("riff daemon: {e:#}"),
+        }
+    }
+
+    /// Starts the session of `served`, when it does not run with the
+    /// same facts.
+    fn spawn_served(&self, served: remote::Served) {
+        if self.again.is_none() {
+            return;
+        }
+        let mut serving = self.serving.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((old, task)) = serving.get(&served.wave.repo) {
+            if *old == served && !task.is_finished() {
+                return;
+            }
+            task.abort();
+        }
+        let task = tokio::spawn(remote::serve(self.dir.clone(), served.clone()));
+        serving.insert(served.wave.repo.clone(), (served, task));
+    }
+
+    /// `riff daemon restart`: when the daemon runs an old riff and is
+    /// idle ([`Status::busy`]), it asks systemd to start it again after
+    /// [`RESTART_DELAY`], so the reply reaches the lead of another host
+    /// first (01M579Z9SAN24QGN1VV5C7EHM9). It gives the line of the
+    /// decision.
+    pub async fn restart_now(&self) -> String {
+        let status = self.status().await;
+        let old = self.again.as_ref().is_some_and(|again| (again.old)());
+        let decided = remote::Restart::of(old, status.busy());
+        if decided == remote::Restart::Now
+            && let Some(again) = self.again.clone()
+        {
+            tokio::spawn(async move {
+                tokio::time::sleep(RESTART_DELAY).await;
+                if let Err(e) = (again.restart)() {
+                    let error = text::daemon_no_restart(&format!("{e:#}"));
+                    eprintln!("riff daemon: {error}");
+                }
+            });
+        }
+        text::daemon_restart(decided, &status.build)
+    }
+
+    /// Ends the session in the container `name` for a person: it frees
+    /// the item of the session on riff-server at once, then stops the
+    /// container (01M579Z9VRD12FRK6DSYVKDHQB). It refuses the lead: a
+    /// person ends it in its terminal. It gives a line for each step.
+    pub async fn end_session(&self, name: &str) -> Result<Vec<String>> {
+        let Some(owned) = self.lock().get(name).cloned() else {
+            bail!("{}", text::daemon_no_session(name));
+        };
+        let record = owned.lock().record.clone();
+        if record.terminal {
+            bail!("{}", text::daemon_end_lead(name));
+        }
+        let item = &record.live.item;
+        let freed = match self.world.free(&record).await {
+            Ok(()) => text::daemon_freed(item),
+            Err(e) => text::daemon_not_freed(item, &format!("{e:#}")),
+        };
+        owned.stop.notify_one();
+        Ok(vec![freed, text::daemon_ends(name)])
     }
 
     /// The folder of the daemon.
@@ -1677,9 +1797,12 @@ impl<R: Runtime + 'static> Daemon<R> {
                 Ok(Ask::Follow { name, after }) => self.follow(&name, after, lines, &out),
                 Ok(Ask::Wave { wave }) => {
                     let repo = wave.repo.clone();
-                    out.say(match self.run_wave(wave) {
+                    out.say(match self.run_wave(wave.clone()) {
                         Ok(()) => {
                             println!("{}", text::wave_runs(&repo));
+                            if let Err(e) = self.serve_repo(&wave) {
+                                eprintln!("riff daemon: {e:#}");
+                            }
                             Say::Done
                         }
                         Err(e) => Say::Failed {
@@ -1712,6 +1835,22 @@ impl<R: Runtime + 'static> Daemon<R> {
                         swept.push(text::SWEPT_NONE.into());
                     }
                     say_lines(&out, Ok(swept));
+                }
+                Ok(Ask::End { name }) => {
+                    let ended = self.end_session(&name).await;
+                    if let Ok(lines) = &ended {
+                        lines.iter().for_each(|line| println!("{line}"));
+                    }
+                    say_lines(&out, ended);
+                }
+                Ok(Ask::Restart) => {
+                    let line = self.restart_now().await;
+                    println!("{line}");
+                    say_lines(&out, Ok(vec![line]));
+                }
+                Ok(Ask::Serve { wave }) => {
+                    let line = text::daemon_serves(&wave.repo, &wave.host);
+                    say_lines(&out, self.serve_repo(&wave).map(|()| vec![line]));
                 }
                 Err(error) => out.say(Say::Failed { error }),
             }
@@ -2740,7 +2879,8 @@ pub async fn serve_here() -> Result<()> {
         let listener = listen(&dir).await?;
         let mut term = signal(SignalKind::terminate())?;
         let mut int = signal(SignalKind::interrupt())?;
-        let daemon = Arc::new(Daemon::new(crate::podman::Podman, dir.clone())?);
+        let daemon = Daemon::new(crate::podman::Podman, dir.clone())?.with_again(again_here());
+        let daemon = Arc::new(daemon);
         let status = daemon.status().await;
         println!(
             "{}",
@@ -2748,6 +2888,7 @@ pub async fn serve_here() -> Result<()> {
         );
         daemon.recover().await;
         daemon.run_waves();
+        daemon.serve_repos();
         daemon.sweep_every();
         // The steps of an update of this release: the rules of Claude
         // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
@@ -2779,6 +2920,59 @@ pub async fn serve_here() -> Result<()> {
     {
         bail!("{}", text::DAEMON_LINUX_ONLY)
     }
+}
+
+/// The new start of the daemon of this machine on a new riff, for
+/// `riff daemon restart` ([`remote::Again`]): systemd, as
+/// [`Daemon::restart_when_old`] does. With no systemd, it never runs an
+/// old riff.
+#[cfg(target_os = "linux")]
+fn again_here() -> remote::Again {
+    match crate::service::Systemd::here() {
+        Ok(manager) => {
+            let manager = Arc::new(manager);
+            let old = manager.clone();
+            remote::Again {
+                old: Box::new(move || old_here(&*old)),
+                restart: Box::new(move || crate::service::ServiceManager::try_restart(&*manager)),
+            }
+        }
+        Err(_) => remote::Again {
+            old: Box::new(|| false),
+            restart: Box::new(|| bail!("{}", text::DAEMON_LINUX_ONLY)),
+        },
+    }
+}
+
+/// `riff daemon host`: asks the daemon in the folder `dir` to serve the
+/// lead of the repository of the place `here`, on the riff-server
+/// `server`, with the main clone of the folder `work`
+/// (01M579Z9JE6HY9HG3PWR1RR0RQ). It prints each line of the daemon.
+pub async fn ask_serve(
+    dir: &Path,
+    work: &Path,
+    here: &riff_core::name::Place,
+    server: &str,
+) -> Result<()> {
+    if here.default_thread().is_none() {
+        bail!("{}", text::RUN_NO_REPO);
+    }
+    let (main, _) = crate::run::main_clone(work)?;
+    let wave = Wave {
+        repo: here.repo_text(),
+        main,
+        server: server.to_owned(),
+        host: here.host().to_owned(),
+    };
+    ask_done(dir, Ask::Serve { wave }, |line| println!("{line}")).await
+}
+
+/// `riff daemon end NAME`: asks the daemon in the folder `dir` to free
+/// the item of the session in the container `name` and to stop it
+/// (01M579Z9VRD12FRK6DSYVKDHQB). It prints each line of the daemon.
+pub async fn ask_end(dir: &Path, name: &str) -> Result<()> {
+    let ask = Ask::End { name: name.into() };
+    ask_done(dir, ask, |line| println!("{line}")).await
 }
 
 /// `riff daemon status`: shows the daemon in the folder `dir` and its
@@ -4333,6 +4527,13 @@ mod tests {
             Box::pin(async move { self.note(format!("leave {}", record.live.session)) })
         }
 
+        fn free<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, Result<()>> {
+            Box::pin(async move {
+                self.note(format!("free {}", record.live.item));
+                Ok(())
+            })
+        }
+
         fn wake<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, Result<String>> {
             Box::pin(async move { Ok(format!("a wake of {}", record.live.item)) })
         }
@@ -4475,6 +4676,108 @@ mod tests {
         until(|| server.said().len() == 2).await;
         assert_eq!(server.said()[1], "leave riff-lead-o-r-session");
         assert!(status(&here.dir).await.unwrap().sessions.is_empty());
+    }
+
+    /// 01M579Z9VRD12FRK6DSYVKDHQB: `riff daemon end NAME` frees the item
+    /// of the session on riff-server first, then stops its container.
+    /// The session ends. The daemon refuses the lead, and a session that
+    /// it does not own.
+    #[tokio::test]
+    async fn an_end_frees_the_item_at_once_and_stops_the_container() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let (mut client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let mut lines = Vec::new();
+        let ask = Ask::End { name: name.clone() };
+        ask_done(&here.dir, ask, |line| lines.push(line.to_owned()))
+            .await
+            .unwrap();
+        assert_eq!(
+            lines,
+            [text::daemon_freed("issue-12"), text::daemon_ends(&name)]
+        );
+        assert_eq!(server.said(), ["free issue-12"]);
+        let (_, end) = to_the_end(&mut client).await;
+        assert!(matches!(end, Some(Say::Ended(Ended { failed: true, .. }))));
+        assert!(here.fake.calls().contains(&format!("stop {name}")));
+        assert!(status(&here.dir).await.unwrap().sessions.is_empty());
+
+        let gone = ask_done(&here.dir, Ask::End { name: name.clone() }, |_| {}).await;
+        assert_eq!(
+            gone.unwrap_err().to_string(),
+            text::daemon_no_session(&name)
+        );
+        let mut start = here.start("riff-lead-o-r", "lead");
+        start.terminal = true;
+        let (_lead, lead) = here.started(start).await;
+        let refused = ask_done(&here.dir, Ask::End { name: lead.clone() }, |_| {}).await;
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            text::daemon_end_lead(&lead)
+        );
+        assert!(!server.said().contains(&"free lead".to_owned()));
+    }
+
+    /// 01M579Z9SAN24QGN1VV5C7EHM9: a daemon that runs the riff on disk
+    /// does not start again for `riff daemon restart`, and says so.
+    #[tokio::test]
+    async fn a_restart_of_a_daemon_on_the_riff_on_disk_does_nothing() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let mut lines = Vec::new();
+        ask_done(&here.dir, Ask::Restart, |line| lines.push(line.to_owned()))
+            .await
+            .unwrap();
+        let build = Build::this().to_string();
+        assert_eq!(
+            lines,
+            [text::daemon_restart(remote::Restart::Newest, &build)]
+        );
+    }
+
+    /// 01M579Z9SAN24QGN1VV5C7EHM9: a daemon on an old riff starts again
+    /// only when it runs no session, after the reply.
+    #[tokio::test]
+    async fn a_restart_on_an_old_riff_waits_for_the_last_session() {
+        let root = tempfile::tempdir().unwrap();
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = asked.clone();
+        let again = remote::Again {
+            old: Box::new(|| true),
+            restart: Box::new(move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }),
+        };
+        let dir = dir_in(root.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        let none = crate::room::Change {
+            sessions: Some(0),
+            ..crate::room::Change::default()
+        };
+        crate::room::set(&dir, none).unwrap();
+        let daemon = Daemon::new(Fake::default(), dir).unwrap().with_again(again);
+        let build = Build::this().to_string();
+        // A start that waits for room.
+        let room = daemon.room().clone();
+        let waits = tokio::spawn(async move { room.admit("a start", || 0, |_| {}).await });
+        until(|| daemon.room().waiting().len() == 1).await;
+        assert_eq!(
+            daemon.restart_now().await,
+            text::daemon_restart(remote::Restart::Later(1), &build)
+        );
+        waits.abort();
+        let _ = waits.await;
+        assert_eq!(
+            daemon.restart_now().await,
+            text::daemon_restart(remote::Restart::Now, &build)
+        );
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
+        tokio::time::sleep(RESTART_DELAY + Duration::from_secs(1)).await;
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     /// The result of a turn that an interrupt stopped, as `claude -p`

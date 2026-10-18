@@ -220,8 +220,16 @@ pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
 /// start a container runs no wave (01M558EYAJFZK7Y822NVWGBS9H). The git
 /// steps of the pin block, so they run on a thread that may block: they
 /// stop no task of `riff mcp`.
-pub async fn ask(
+pub async fn ask(dir: &Path, here: &Place, server: &str, show: impl FnMut(&str)) -> Result<String> {
+    ask_with(dir, identity::working_dir()?, here, server, show).await
+}
+
+/// [`ask`] for the clone of the folder `work`: the daemon of a host
+/// asks it for the lead of another host, in its main clone
+/// ([`crate::daemon::remote`]).
+pub async fn ask_with(
     dir: &Path,
+    work: PathBuf,
     here: &Place,
     server: &str,
     mut show: impl FnMut(&str),
@@ -229,7 +237,6 @@ pub async fn ask(
     if here.default_thread().is_none() {
         bail!("{}", text::RUN_NO_REPO);
     }
-    let work = identity::working_dir()?;
     let (main, image, lines) = blocking(move || {
         let (main, _) = run::main_clone(&work)?;
         let mut lines = Vec::new();
@@ -494,6 +501,11 @@ pub trait World: Send + Sync {
     /// Ends the session of `record` on riff-server, and stops its
     /// keep-alive: the end of the lead.
     fn leave<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, ()>;
+
+    /// Frees the item of the session of `record` on riff-server at once,
+    /// ends that session, and stops its keep-alive: a person ends the
+    /// session ([`crate::daemon::Ask::End`], 01M579Z9VRD12FRK6DSYVKDHQB).
+    fn free<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<()>>;
 
     /// Waits for the next wake of the session of `record` on riff-server,
     /// and gives its line, as `riff watch --once` prints it.
@@ -1315,6 +1327,21 @@ impl World for Live {
         })
     }
 
+    fn free<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let api = Api::new(&record.server).signed_in(Some(&record.live.session))?;
+            let thread = record
+                .me
+                .default_thread()
+                .ok_or_else(|| anyhow!("{}", text::RUN_NO_REPO))?;
+            api.release(&record.me, &thread, &record.live.item).await?;
+            if let Some(task) = lock(&self.alive).remove(&record.live.session) {
+                task.abort();
+            }
+            api.end(&record.me).await
+        })
+    }
+
     fn wake<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<String>> {
         Box::pin(async move {
             use futures::StreamExt;
@@ -1580,6 +1607,10 @@ mod tests {
 
         fn leave<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, ()> {
             Box::pin(async {})
+        }
+
+        fn free<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, Result<()>> {
+            Box::pin(async { Ok(()) })
         }
 
         fn wake<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, Result<String>> {
