@@ -1341,8 +1341,17 @@ see its size now and its most size:
 riff daemon cache
 ```
 
-`riff daemon status` shows the same line. To set the most size, for
-example 20G:
+`riff daemon status` shows the same line. The size is the size on the
+disk of each file in the folder of the volume. riff counts 1GB as
+1024³ bytes, the same as the most size: sccache reads `40G` as 40 ×
+1024³ bytes. `podman system df -v` counts 1GB as 1000³ bytes, so its
+number is about 7% larger: for example 8.3GB where riff shows 7.7GB.
+
+In rootless podman, the folders of the volume can belong to a user of
+the container. Then riff reads them with `podman unshare du`. When
+riff cannot read the size, the line says so and gives the reason.
+
+To set the most size, for example 20G:
 
 ```sh
 riff daemon cache 20G
@@ -1357,9 +1366,11 @@ To delete each file of the cache:
 riff daemon cache --clear
 ```
 
-The clear keeps the volume. You can clear while sessions run: their
-builds compile what they do not find, and fill the cache again. Add
-`--host HOST` to do each step on another host (see
+The clear keeps the volume. When you may not delete a file of the
+volume, riff deletes it with `podman unshare`. When that fails too,
+the clear fails and gives the reason. You can clear while sessions
+run: their builds compile what they do not find, and fill the cache
+again. Add `--host HOST` to do each step on another host (see
 [Manage the daemon of another host](#manage-the-daemon-of-another-host)).
 
 ### End one container session

@@ -22,6 +22,7 @@ mod cli;
 mod cloud;
 mod compact;
 mod compact_wave;
+mod compile_cache;
 mod conduct;
 mod daemon;
 mod daemon_hosts;
