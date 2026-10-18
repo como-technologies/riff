@@ -115,7 +115,9 @@
 //!   cursors, its memberships, its claims, its lead, and each direct
 //!   thread whose two sessions are gone.
 //! - When a watch starts, [`State::missed`] gives one wake for the
-//!   newest unread message that woke the session (R49).
+//!   newest unread message that woke the session (R49). An unread page
+//!   also gives each message after it that woke the session, and the
+//!   watch does not wake for it again (01M588J4XNV1TXEPMGTKRVY9VK).
 //! - `who` lists each session with the time since its last call. A
 //!   keep-alive is not a call (R163).
 //! - A session is gone when it ended ([`State::end`]), or when it had no
@@ -488,6 +490,9 @@ pub struct Page {
     /// The seq of the last message of the page, when more messages
     /// follow.
     pub next: Option<u64>,
+    /// Each unread message after the page that woke the reader, and
+    /// that no read showed yet (01M588J4XNV1TXEPMGTKRVY9VK).
+    pub woken: Vec<Message>,
 }
 
 impl State {
@@ -2531,7 +2536,9 @@ impl State {
     /// The wake for the newest unread message that woke `who`, if there
     /// is one. A watch sends it when it starts. A session that must
     /// clear its context gets none: the wake waits until its start with
-    /// a fresh context (01M3X9XBMB3R718Z81BYXTHMZ0).
+    /// a fresh context (01M3X9XBMB3R718Z81BYXTHMZ0). A message that a
+    /// read showed after its page is not unread here
+    /// (01M588J4XNV1TXEPMGTKRVY9VK).
     pub fn missed(&self, who: &Who) -> Option<Wake> {
         if self.must_clear(who) {
             return None;
@@ -2542,7 +2549,7 @@ impl State {
             .iter()
             .filter(|(thread, _)| may_read(who, thread))
             .filter_map(|(thread, t)| {
-                let read = self.presence.cursor(who, thread);
+                let read = self.presence.seen_woken(who, thread);
                 t.messages
                     .iter()
                     .rev()
@@ -2791,6 +2798,38 @@ impl State {
     /// assert_eq!(page.messages.len(), 3);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
+    ///
+    /// An unread page also gives each message after it that woke the
+    /// reader ([`Page::woken`]). The read marks it as seen for the
+    /// watch: [`State::missed`] gives no wake for it. Later pages still
+    /// show it in its place (01M588J4XNV1TXEPMGTKRVY9VK):
+    ///
+    /// ```
+    /// # use std::time::Instant;
+    /// # use riff_core::name::SessionUri;
+    /// # use riff_core::selector::Selector;
+    /// # use riff_core::wire::Post;
+    /// # use riff_state::state::State;
+    /// # let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse()?;
+    /// # let bob: SessionUri = "riff://bob@kite/acme/app?session=b1".parse()?;
+    /// # let now = Instant::now();
+    /// # let mut state = State::default();
+    /// # let thread = ann.default_thread().unwrap();
+    /// state.register(&bob, now);
+    /// for body in ["one", "two"] {
+    ///     state.post(Post::new(&ann, Some(thread.clone()), vec![], body), now, 0).unwrap();
+    /// }
+    /// let to: Selector = "session=b1".parse().unwrap();
+    /// state.post(Post::new(&ann, Some(thread.clone()), vec![to], "bob?"), now, 0).unwrap();
+    /// assert!(state.missed(bob.who()).is_some());
+    /// let page = state.read_page(&bob, &thread, false, None, 1, now).unwrap();
+    /// assert_eq!(page.messages[0].body, "one");
+    /// assert_eq!(page.woken[0].body, "bob?");
+    /// assert!(state.missed(bob.who()).is_none());
+    /// let page = state.read_page(&bob, &thread, false, None, 1, now).unwrap();
+    /// assert_eq!((page.messages[0].body.as_str(), page.woken.len()), ("two", 0));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
     pub fn read_page(
         &mut self,
         me: &SessionUri,
@@ -2845,6 +2884,19 @@ impl State {
             .messages
             .iter()
             .any(|m| (cursor + 1..=from).contains(&m.message.seq) && m.message.from.who() != who);
+        // An unread page also gives each message after it that woke the
+        // reader and that no read showed (01M588J4XNV1TXEPMGTKRVY9VK).
+        let seen = self.presence.seen_woken(who, thread);
+        let woken: Vec<Message> = match next {
+            Some(end) if !all => t
+                .messages
+                .iter()
+                .filter(|m| m.message.seq > end.max(seen) && m.woken.contains(who))
+                .filter(|m| m.message.from.who() != who)
+                .map(|m| m.message.clone())
+                .collect(),
+            _ => Vec::new(),
+        };
         let read = t
             .messages
             .back()
@@ -2853,8 +2905,16 @@ impl State {
                 thread: thread.clone(),
                 seq: next.unwrap_or(last.message.seq),
                 all,
+                woken: woken.last().map_or(0, |m| m.seq),
             });
-        Ok((Page { messages, next }, read))
+        Ok((
+            Page {
+                messages,
+                next,
+                woken,
+            },
+            read,
+        ))
     }
 
     /// Takes a claim if nobody holds it, or if its holder stopped more than
@@ -3427,6 +3487,38 @@ mod tests {
         assert_eq!(state.missed(&b).unwrap().thread, thread("design"));
         state.read(&tests(), &thread("design"), false, now).unwrap();
         assert!(state.missed(&b).is_none());
+    }
+
+    #[test]
+    fn a_page_shows_each_message_after_it_that_woke_the_reader_once() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let b = tests().who().clone();
+        for n in 0..200 {
+            post(&mut state, &api(), "chat", &[], &format!("old {n}"));
+        }
+        post(&mut state, &api(), "chat", &["session=b2"], "first");
+        post(&mut state, &docs(), "chat", &["session=b2"], "second");
+        let first = state
+            .read_page(&tests(), &thread("chat"), false, None, PAGE, now)
+            .unwrap();
+        assert_eq!(first.messages.len(), PAGE);
+        let bodies: Vec<&str> = first.woken.iter().map(|m| m.body.as_str()).collect();
+        assert_eq!(bodies, ["first", "second"]);
+        assert!(state.missed(&b).is_none());
+        // The next page shows no addressed message twice in its part.
+        let next = state
+            .read_page(&tests(), &thread("chat"), false, None, PAGE, now)
+            .unwrap();
+        assert!(next.woken.is_empty());
+        // A new addressed message wakes the watch again.
+        post(&mut state, &api(), "chat", &["session=b2"], "third");
+        assert_eq!(state.missed(&b).unwrap().thread, thread("chat"));
+        // A read of all gives no such part.
+        let all = state
+            .read_page(&tests(), &thread("chat"), true, Some(0), PAGE, now)
+            .unwrap();
+        assert!(all.woken.is_empty());
     }
 
     #[test]

@@ -586,6 +586,7 @@ mod tests {
         c.trip(&ReadReply {
             messages: vec![message()],
             next: Some(1),
+            woken: vec![message()],
             keys: keys(),
             trusted: true,
         });

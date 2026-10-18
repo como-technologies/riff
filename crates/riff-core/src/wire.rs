@@ -1514,6 +1514,11 @@ pub struct ReadReply {
     /// [`Read::after`] to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<u64>,
+    /// In an unread read: each message after the page that woke `me`
+    /// and that no read showed yet. The read marks it as seen, so the
+    /// next watch does not wake for it (01M588J4XNV1TXEPMGTKRVY9VK).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub woken: Vec<Message>,
     /// The keys of the user of each sender, to verify the messages.
     #[serde(default, skip_serializing_if = "Keys::is_empty")]
     pub keys: Keys,

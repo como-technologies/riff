@@ -203,6 +203,9 @@ pub struct Thread {
     pub lines: Vec<Line>,
     /// The seq of the last line, when more messages follow.
     pub next: Option<u64>,
+    /// Each unread line after the page that woke the reader
+    /// (01M588J4XNV1TXEPMGTKRVY9VK).
+    pub woken: Vec<Line>,
 }
 
 impl Thread {
@@ -216,11 +219,11 @@ impl Thread {
     /// let me: SessionUri = "riff://brett@heron?session=b1".parse()?;
     /// let mike: SessionUri = "riff://mike@pangolin?session=a1".parse()?;
     /// let thread = "o/r".parse()?;
-    /// let inbox = Inbox { thread, members: vec![], messages: vec![], next: Some(4) };
+    /// let inbox = Inbox { thread, members: vec![], messages: vec![], next: Some(4), woken: vec![] };
     /// let t = Thread::of(&inbox, &me);
     /// assert_eq!((t.other, t.next), (None, Some(4)));
     /// let direct = ThreadName::direct(me.who(), mike.who());
-    /// let inbox = Inbox { thread: direct, members: vec![me.clone(), mike.clone()], messages: vec![], next: None };
+    /// let inbox = Inbox { thread: direct, members: vec![me.clone(), mike.clone()], messages: vec![], next: None, woken: vec![] };
     /// assert_eq!(Thread::of(&inbox, &me).other, Some(mike));
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
@@ -242,6 +245,11 @@ impl Thread {
                 .map(|c| Line::of(c, &inbox.thread))
                 .collect(),
             next: inbox.next,
+            woken: inbox
+                .woken
+                .iter()
+                .map(|c| Line::of(c, &inbox.thread))
+                .collect(),
         }
     }
 }
@@ -270,6 +278,7 @@ mod tests {
                 .map(|message| Checked { message, verified })
                 .collect(),
             next: Some(2),
+            woken: vec![],
         }
     }
 
