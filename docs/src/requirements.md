@@ -2916,6 +2916,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   The sender does not need the session ID of the lead. When the user
   has no other session as the lead there, the `tell` fails and tells
   the sender to ask its own user.
+- **01M56P1T2AZCP48RJBM01RRRZ4** A direct message with `lead=true` goes
+  to the lead while its lead holds (R9, R125), also while the lead is
+  gone (R206). So after a start of `riff-server`, the lead gets it
+  before it calls again.
 - **R79** `riff read` shows the unread messages of the threads of the
   person. It joins the person to the thread of the directory first.
   `--thread` reads one thread. `--all` shows each kept message. It
@@ -4763,6 +4767,9 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the lead of the user gets one direct message from the person: the
   host, the old release and the new release. After a failed update,
   the message holds the error, and the old binaries stay.
+- **01M56P1T4KK03MF7EK5CC0YZNB** When the direct message to the lead
+  after an update in the background fails, the update tries it again
+  every 5 seconds, for at most 2 minutes. The lead gets it once.
 - **01M53NEE7W0ZC8B7EV9ET6QHBB** The update in the background prints
   no note that `riff-server` runs another build
   (01M3MX1E8M9TKBN90P4DYKH3H8): it installs that build. So no line of

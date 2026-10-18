@@ -245,7 +245,10 @@ pub(super) fn wake(thread: &ThreadName, message: &Message) -> Wake {
 }
 
 impl View<'_> {
-    /// Finds the one session that a direct message goes to (R179).
+    /// Finds the one session that a direct message goes to (R179). A
+    /// lead gets it while its lead holds, also while it is gone, for
+    /// example after a load before it calls again
+    /// (01M56P1T2AZCP48RJBM01RRRZ4).
     fn direct_target(&self, from: &Who, to: &[Selector], now: Instant) -> Result<Who, String> {
         let [selector] = to else {
             return Err("a direct message needs exactly one selector".into());
@@ -259,7 +262,7 @@ impl View<'_> {
             .sessions
             .keys()
             .filter(|who| *who != from && selector.matches(&self.uri(who, now)))
-            .partition(|who| !self.gone(who, now));
+            .partition(|who| !self.gone(who, now) || (to_lead && self.holds(who, now)));
         match matched[..] {
             [who] => Ok(who.clone()),
             [] if !gone.is_empty() && !to_lead => Err(format!(
@@ -304,11 +307,13 @@ impl View<'_> {
     }
 
     /// Each live session other than `from` that `to` selects, and each
-    /// selector that matched no session.
+    /// selector that matched no session. In a direct thread, a lead
+    /// that holds counts as live (01M56P1T2AZCP48RJBM01RRRZ4).
     fn selected(
         &self,
         from: &Who,
         to: &[Selector],
+        direct: bool,
         now: Instant,
     ) -> (BTreeSet<Who>, Vec<Selector>) {
         let mut woken = BTreeSet::new();
@@ -316,9 +321,10 @@ impl View<'_> {
         let sessions = &self.presence.sessions;
         let live = |who: &&Who| *who != from && !self.gone(who, now);
         for selector in to {
+            let to_lead = direct && selector.lead == Some(true);
             let mut matched: Vec<Who> = sessions
                 .keys()
-                .filter(live)
+                .filter(|who| live(who) || (*who != from && to_lead && self.holds(who, now)))
                 .filter(|who| selector.matches(&self.uri(who, now)))
                 .cloned()
                 .collect();
@@ -356,7 +362,7 @@ impl View<'_> {
         message: Message,
         now: Instant,
     ) -> (Vec<Change>, Vec<Selector>) {
-        let (mut woken, unmatched) = self.selected(from, &message.to, now);
+        let (mut woken, unmatched) = self.selected(from, &message.to, thread.is_direct(), now);
         let threads = self.riff.threads();
         let mut changes: Vec<Change> = woken
             .iter()

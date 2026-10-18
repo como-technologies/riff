@@ -4709,6 +4709,27 @@ mod tests {
     }
 
     #[test]
+    fn a_direct_message_goes_to_the_lead_after_a_load_before_it_calls() {
+        let now = Instant::now();
+        let state = setup(now);
+        let mut loaded = State::load(Some(through_json(&state, now)), [], now, T0);
+        let later = now + GONE;
+        assert!(is_lead(&loaded, &api(), later));
+        let person = person_of(&api());
+        let d = loaded
+            .post(Post::new(&person, None, mike_lead(), "updated"), later, 0)
+            .unwrap();
+        assert_eq!(woken(&d), [api().who().clone()]);
+
+        let after = now + CLAIM_GRACE;
+        let error = loaded
+            .post(Post::new(&person, None, mike_lead(), "updated"), after, 0)
+            .err()
+            .unwrap();
+        assert!(error.contains("Ask your own user"), "{error}");
+    }
+
+    #[test]
     fn a_stopped_lead_is_no_lead_until_it_comes_back() {
         let now = Instant::now();
         let mut state = setup(now);
