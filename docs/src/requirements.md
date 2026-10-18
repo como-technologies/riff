@@ -2443,6 +2443,9 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   is in `verify`, not in `free`. An item with a failed verify is in
   `free`. `riff top` reads the open pull requests with `gh pr list`,
   and keeps them as long as the issues.
+- **01M588G5K0B58QXD35AA5MTZ6E** When the whole riff or a repository
+  is paused, the wave line of its board in `riff top` ends with
+  `paused`, and the board has no group `free`.
 - **01M3WNHCD659FH3Z5VYYH69WWR** The first line of a session in
   `riff top` names its worktree after the short session ID:
   `#WORKTREE`, or nothing in the main worktree. The session is under

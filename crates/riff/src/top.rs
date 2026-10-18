@@ -649,7 +649,9 @@ impl Top<'_> {
     ///   verify claim, and for an item with no claim whose pull request
     ///   waits for a verify or for the merge. Only a claim in that
     ///   repository counts. A repository with no issues has no board,
-    ///   and no error line.
+    ///   and no error line. When the whole riff or the repository is
+    ///   paused, the wave line ends with `paused` and the board has no
+    ///   group `free` (01M588G5K0B58QXD35AA5MTZ6E).
     /// - The tree has four levels: person, host, repository, session.
     ///   With [`By::Repo`](riff_client::sessions::By::Repo) the
     ///   repository comes first: repository, person, host, session.
@@ -889,8 +891,16 @@ impl Top<'_> {
             };
             lines.push(Line::new("", vec![]));
             let wave = format!("{} ({})", safe(&board.wave), safe(&repo));
-            lines.push(Line::new("", vec![(wave, BOLD)]));
-            lines.extend(board_lines(&board));
+            let mut head = vec![(wave, BOLD)];
+            let paused = self.pauses.riff.is_some()
+                || repo
+                    .parse()
+                    .is_ok_and(|thread| self.pauses.repository(&thread).is_some());
+            if paused {
+                head.push(("paused".to_owned(), WARNING));
+            }
+            lines.push(Line::new("", head));
+            lines.extend(board_lines(&board, paused));
         }
         lines.push(Line::new("", vec![]));
         let people = self.sessions.people(self.people, self.owner);
@@ -1115,15 +1125,16 @@ fn block_line(s: &SessionInfo) -> String {
 
 /// The lines of `board`: one line for each group of its open items that
 /// is not empty, `free`, `claimed` and `verify` ([`Board`],
-/// 01M3Z9N6X92KT051P10CKKV7EK).
-fn board_lines(board: &Board) -> Vec<Line> {
+/// 01M3Z9N6X92KT051P10CKKV7EK). A `paused` board has no group `free`:
+/// nobody can claim its items (01M588G5K0B58QXD35AA5MTZ6E).
+fn board_lines(board: &Board, paused: bool) -> Vec<Line> {
     [
         ("free", &board.free),
         ("claimed", &board.claimed),
         ("verify", &board.verify),
     ]
     .into_iter()
-    .filter(|(_, items)| !items.is_empty())
+    .filter(|(name, items)| !items.is_empty() && (!paused || *name != "free"))
     .map(|(name, items)| {
         let items: Vec<String> = items.iter().map(|n| format!("#{n}")).collect();
         let line = format!("{name}: {}", items.join(" "));
@@ -1184,11 +1195,22 @@ mod tests {
         show: &Show,
         machines: &[Host],
     ) -> String {
+        let running = riff_core::wire::RiffState::Running.into();
+        shown_paused(sessions, issues, show, machines, &running)
+    }
+
+    /// [`shown_with`] with the pauses `pauses`.
+    fn shown_paused(
+        sessions: &[SessionInfo],
+        issues: &BTreeMap<String, Issues>,
+        show: &Show,
+        machines: &[Host],
+        pauses: &RiffReply,
+    ) -> String {
         let sessions = &Sessions::new(sessions.to_vec(), Vec::new());
         let owner = RiffOwner::NoSignIn;
-        let running = riff_core::wire::RiffState::Running.into();
         let top = Top {
-            pauses: &running,
+            pauses,
             owner: &owner,
             server: None,
             sessions,
@@ -1404,6 +1426,64 @@ mod tests {
         assert!(!text.contains("(o/strata)"), "{text}");
         assert!(!text.to_lowercase().contains("error"), "{text}");
         assert!(text.contains("├─ b1  #issue-88  busy"), "{text}");
+    }
+
+    /// Two free items of strata and one of riff, with a claim in each.
+    fn boards_with_free_items() -> BTreeMap<String, Issues> {
+        let wave = |numbers: &[u64]| {
+            let issues: Vec<String> = numbers
+                .iter()
+                .map(|n| {
+                    format!(
+                        r#"{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 9"}}}}"#
+                    )
+                })
+                .collect();
+            parse_issues(&format!("[{}]", issues.join(","))).unwrap()
+        };
+        BTreeMap::from([
+            ("o/riff".to_owned(), wave(&[7, 10])),
+            ("o/strata".to_owned(), wave(&[88, 355, 356])),
+        ])
+    }
+
+    /// The board of a paused repository says `paused` on its wave line
+    /// and has no group `free`. The board of a repository that runs
+    /// keeps its group `free` (01M588G5K0B58QXD35AA5MTZ6E).
+    #[test]
+    fn the_board_of_a_paused_repository_says_paused_and_has_no_free_items() {
+        let pauses = RiffReply {
+            repositories: vec![riff_core::wire::RepositoryPause {
+                repository: "o/strata".parse().unwrap(),
+                pause: riff_core::wire::PauseInfo::default(),
+            }],
+            ..riff_core::wire::RiffState::Running.into()
+        };
+        let issues = boards_with_free_items();
+        let text = shown_paused(&riff_of_two(), &issues, &Show::default(), &[], &pauses);
+        assert!(
+            text.contains(
+                "\n\nWave 9 (o/riff)\n  free: #10\n  claimed: #7\n\nWave 9 (o/strata)  paused\n  claimed: #88\n\n"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("#355"), "{text}");
+    }
+
+    /// A pause of the whole riff marks each board `paused`, with no
+    /// group `free` (01M588G5K0B58QXD35AA5MTZ6E).
+    #[test]
+    fn a_pause_of_the_riff_marks_each_board_paused_with_no_free_items() {
+        let pauses = riff_core::wire::RiffState::Paused.into();
+        let issues = boards_with_free_items();
+        let text = shown_paused(&riff_of_two(), &issues, &Show::default(), &[], &pauses);
+        assert!(
+            text.contains(
+                "\n\nWave 9 (o/riff)  paused\n  claimed: #7\n\nWave 9 (o/strata)  paused\n  claimed: #88\n\n"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("free:"), "{text}");
     }
 
     /// `--user`, `--host` and `--repo` show only their sessions, also
