@@ -2024,7 +2024,7 @@ mod tests {
             api.start(&me, StartReason::Process, true).await.unwrap();
             let dir = tempfile::tempdir().unwrap();
             let record = Record {
-                live: crate::daemon::Live {
+                live: riff_client::sessions::Live {
                     name: "riff-issue-12".into(),
                     session: session.into(),
                     item: "issue-12".into(),

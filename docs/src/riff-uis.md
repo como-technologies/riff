@@ -65,9 +65,11 @@ flowchart TB
 - `riff-client` holds the client of riff-server (#997): the sign-in,
   the tokens, the API calls and the watch stream. Its modules are
   `api`, `link`, `login`, `device`, `secrets` and `marks`. The browser
-  step of `riff login` stays in the crate `riff`. The models of the
-  views move into `riff-client` next (#998). It holds no terminal code.
-  It builds for Linux, for Android and for WebAssembly (#999).
+  step of `riff login` stays in the crate `riff`. `riff-client` holds
+  no terminal code. It builds for Linux, for Android and for
+  WebAssembly (#999).
+- `riff-client` holds the models of the views (#998), as plain data
+  with serde. See [The models of the views](#the-models-of-the-views).
 - A part that is not the same on each platform is a trait that each UI
   gives: `riff_client::platform::Platform`. An example is the store of
   the tokens and of the device key: the OS keyring on a machine, and
@@ -76,6 +78,33 @@ flowchart TB
 - The socket of the riff daemon stays in the crate `riff`. A terminal
   UI gives the container sessions of the daemon of its machine to the
   sessions model of `riff-client`.
+
+## The models of the views
+
+`riff-client` makes each model from the replies of riff-server, and
+from what the UI gives. A UI only draws a model: the plain lines, the
+colors and the ratatui widgets stay in the crate `riff`.
+
+| Model | Module | Holds | Drawn by |
+|---|---|---|---|
+| The sessions | `sessions` | The sessions of riff-server and the container sessions of the riff daemon, one entry for each session ID | `riff top`, `riff view` |
+| The threads | `threads` | One line for each message: the sender, the receivers, the mark `verified`, the kind and the body | `riff read`, `riff tail`, `riff chat` |
+| The waves | `waves` | The open issues, the board of the current wave, the open milestones | `riff top`, `riff wave list` |
+| The machines | `machines` | The numbers of each host: the limit, the workers, the machine, the disk and the monitor | `riff top`, `riff workers` |
+
+```mermaid
+flowchart LR
+    S["riff-server"] --> M["riff-client:<br/>the models"]
+    D["the riff daemon<br/>of this machine"] -- "the container sessions" --> R["riff"]
+    G["gh: the forge"] --> R
+    R -- "what the UI gives" --> M
+    M --> V["riff draws:<br/>plain lines, colors, widgets"]
+```
+
+A container session that is also a session of riff-server is one entry
+of the sessions model, with the state of its container. Today `riff top`
+gives the model no container session, and `riff view` gives it no
+session of riff-server. So each command prints what it printed before.
 
 ## One sessions view
 

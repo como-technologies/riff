@@ -7451,6 +7451,29 @@ that builds it merges.
 - **01M56S4M2NMATA3XZAMPSRAW8X** The browser step of `riff login` (the
   local port of the OAuth redirect) stays in the crate `riff`.
   `riff-client` swaps the ID token of the provider for a riff sign-in.
+- **01M56Y8KAPHJMSK89ZW1PA8B0E** `riff-client` holds the models of the
+  views as plain data with serde: the sessions, the threads, the waves
+  and the machines. It makes each model from the replies of
+  riff-server, and from what the UI gives: the container sessions of
+  its riff daemon, and the reads of the forge. A UI only draws a
+  model. The plain lines, the colors and the ratatui widgets stay in
+  the crate `riff`.
+- **01M56Y8KD05JH2J7AMK636WGT7** The sessions model has one entry for
+  each session ID: a session of riff-server, a container session of
+  the riff daemon of this machine, or both. An entry with both has the
+  state of its container. `riff top` gives the model no container
+  session, and `riff view` gives it no session of riff-server. Each
+  draws its part of the model.
+- **01M56Y8KF7EDWHX1JE5RA0XMCW** The machines model holds the numbers
+  that a host tells in its status line: the limit, the floor, the
+  workers, and the numbers of its machine, its disk and its monitor.
+  `riff-client` writes and reads that line. The reads of this machine
+  (`/proc`, the disk, the settings and tmux) stay in the crate `riff`.
+- **01M56Y8KHD61NXC57V7H546KWW** The threads model has one line for
+  each message: its number, its time, its sender, its receivers with
+  the mark of the whole thread, the mark `verified`, the lead mark of a
+  verified lead, its kind and its body. `riff read`, `riff tail` and
+  `riff chat` draw these lines.
 - **01M54216VVY6072F2X2PM2Z0DQ** The CLI, the TUI, the MCP server and
   each graphical UI use `riff-client` for each call to riff-server.
 - **01M54216YKW1X70KDV4TQCQJTE** The graphical UIs (the phone app, the

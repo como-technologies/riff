@@ -856,7 +856,7 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 /// (01M493Z063SSTAJS2KNDFBTEBJ).
 ///
 /// ```
-/// use riff::machine::Machine;
+/// use riff_client::machines::Machine;
 ///
 /// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
 /// assert_eq!(plain(riff::view::host_heading("pangolin", 1, 1, None, 4, 0)), "pangolin  limit 1  runs 1");
@@ -894,7 +894,7 @@ pub fn host_heading(
     host: &str,
     limit: u16,
     runs: usize,
-    machine: Option<&crate::machine::Machine>,
+    machine: Option<&riff_client::machines::Machine>,
     floor: u32,
     deaths: usize,
 ) -> String {
@@ -1055,7 +1055,7 @@ pub fn workers_tmp(root: &Path, bytes: u64, path: &Path) -> String {
 /// gives no line.
 ///
 /// ```
-/// use riff::disk::Disk;
+/// use riff_client::machines::Disk;
 ///
 /// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
 /// assert_eq!(plain(riff::view::disk_line(Some(&Disk { free_gb: 200, total_gb: 455 }))), "disk 200GB free of 455GB (43%)\n");
@@ -1065,7 +1065,7 @@ pub fn workers_tmp(root: &Path, bytes: u64, path: &Path) -> String {
 /// );
 /// assert_eq!(riff::view::disk_line(None), "");
 /// ```
-pub fn disk_line(disk: Option<&crate::disk::Disk>) -> String {
+pub fn disk_line(disk: Option<&riff_client::machines::Disk>) -> String {
     let Some(disk) = disk else {
         return String::new();
     };
@@ -1089,7 +1089,7 @@ pub fn disk_line(disk: Option<&crate::disk::Disk>) -> String {
 /// tells no numbers gives no line.
 ///
 /// ```
-/// use riff::monitor::{Jobs, Kill, Numbers};
+/// use riff_client::machines::{Jobs, Kill, Numbers};
 ///
 /// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
 /// let jobs = Jobs::Pool { size: 20, used: 3 };
@@ -1118,7 +1118,7 @@ pub fn disk_line(disk: Option<&crate::disk::Disk>) -> String {
 /// );
 /// assert_eq!(riff::view::monitor_line(None, None), "");
 /// ```
-pub fn monitor_line(numbers: Option<&crate::monitor::Numbers>, ago: Option<u64>) -> String {
+pub fn monitor_line(numbers: Option<&riff_client::machines::Numbers>, ago: Option<u64>) -> String {
     let Some(n) = numbers else {
         return String::new();
     };

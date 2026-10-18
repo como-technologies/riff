@@ -39,7 +39,7 @@
 //! ```
 //!
 //! A workers host tells its count in its status
-//! ([`crate::host::HostStatus`]), so the rollout of the lead on another
+//! ([`riff_client::machines::HostStatus`]), so the rollout of the lead on another
 //! machine sees it.
 
 use std::io::{Read, Seek, Write};

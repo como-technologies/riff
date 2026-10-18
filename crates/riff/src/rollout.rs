@@ -194,13 +194,13 @@ use riff_core::selector::Selector;
 use riff_core::wire::{Idle, Kind, RiffState, SessionInfo};
 use serde::Deserialize;
 
-use crate::disk::Disk;
 use crate::host;
-use crate::machine::Machine;
 use crate::pr::Gh;
 use crate::terminal::{Terminal, Tmux, WorkerPane};
 use crate::{identity, settings, text, usage, worker};
 use riff_client::api::Api;
+use riff_client::machines::Disk;
+use riff_client::machines::Machine;
 
 /// How often a rollout that is off looks at its setting again.
 pub const OFF_WAIT: Duration = Duration::from_secs(10);
@@ -235,7 +235,7 @@ impl Place {
     /// (01M493YZZEW1FTDBNA090WT2AG).
     ///
     /// ```
-    /// use riff::disk::Disk;
+    /// use riff_client::machines::Disk;
     /// use riff::rollout::Place;
     ///
     /// let place = Place { host: "pangolin".into(), session: None, limit: 2, workers: 0, floor: 4, deaths: 0, machine: None, disk: None };
@@ -407,7 +407,7 @@ impl View {
 /// tie, the first one wins.
 ///
 /// ```
-/// use riff::machine::Machine;
+/// use riff_client::machines::Machine;
 /// use riff::rollout::{Place, pick};
 ///
 /// let place = |host: &str, cores, workers| Place {
@@ -2036,8 +2036,8 @@ impl<M: Fn() -> SessionUri + Send + Sync> Env for Live<M> {
                 workers: here.len(),
                 floor: settings::workers_floor(&settings)?,
                 deaths: crate::deaths::here(),
-                machine: Some(Machine::here()),
-                disk: identity::main_worktree(&dir).and_then(|main| Disk::here(&main)),
+                machine: Some(crate::machine::here()),
+                disk: identity::main_worktree(&dir).and_then(|main| crate::disk::here(&main)),
             });
             panes.extend(here);
         }

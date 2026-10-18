@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use riff::disk::Disk;
 use riff::identity;
 use riff_client::api::Api;
+use riff_client::machines::Disk;
 use riff_core::name::{SessionUri, Who};
 use riff_core::wire::RiffState;
 
@@ -419,7 +419,7 @@ async fn under_the_low_mark_no_worker_starts_and_the_lead_gets_one_note() {
     let who = r.api.who(&r.lead, false).await.unwrap();
     let status = who
         .iter()
-        .find_map(|s| riff::host::HostStatus::parse(&s.status.as_ref()?.status.step))
+        .find_map(|s| riff_client::machines::HostStatus::parse(&s.status.as_ref()?.status.step))
         .unwrap();
     assert_eq!(status.disk, Some(low));
 }

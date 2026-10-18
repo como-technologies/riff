@@ -171,9 +171,6 @@ pub const WORKERS_NICE: u8 = 10;
 /// The most that `workers.nice` can be: the lowest priority of Unix.
 pub const NICE_MAX: u8 = 19;
 
-/// The default of `workers.floor`, in GB.
-pub const WORKERS_FLOOR: u32 = 4;
-
 /// The compile jobs and the test threads of one worker: `workers.jobs`
 /// (01M3WFYZRK5CT22GJW6ZHYT9CC). 0 when the file or the key is missing:
 /// riff makes the number from the machine
@@ -248,7 +245,8 @@ pub fn set_workers_memory(path: &Path, gb: u32) -> Result<()> {
 }
 
 /// The available memory in GB under which riff starts no new worker:
-/// `workers.floor` (01M3WFZ01PTAYYKG3T5CFA2W4D). [`WORKERS_FLOOR`] when
+/// `workers.floor` (01M3WFZ01PTAYYKG3T5CFA2W4D).
+/// [`riff_client::machines::WORKERS_FLOOR`] when
 /// the file or the key is missing. 0 turns the floor off.
 ///
 /// ```
@@ -260,7 +258,7 @@ pub fn set_workers_memory(path: &Path, gb: u32) -> Result<()> {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn workers_floor(path: &Path) -> Result<u32> {
-    number(path, "floor", WORKERS_FLOOR)
+    number(path, "floor", riff_client::machines::WORKERS_FLOOR)
 }
 
 /// Sets `workers.floor`. It keeps each other key.

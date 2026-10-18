@@ -369,7 +369,7 @@ fn claim(c: &str, title: &dyn Fn(u64) -> Option<String>) -> String {
     } else {
         "working on"
     };
-    match crate::top::issue_of(c) {
+    match riff_client::waves::issue_of(c) {
         Some(n) => match title(n) {
             Some(t) => format!("{verb} #{n} {}", safe(&t)),
             None => format!("{verb} #{n}"),

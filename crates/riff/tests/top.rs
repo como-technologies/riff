@@ -427,7 +427,7 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
     // The host never registers: its watch makes it known.
     let h1 = uri("h1");
     live_at(&server, h1.clone()).await;
-    let host = riff::host::HostStatus {
+    let host = riff_client::machines::HostStatus {
         limit: 2,
         floor: 4,
         deaths: 0,
@@ -1333,7 +1333,7 @@ async fn top_on_each_machine_shows_the_numbers_of_both_machines() {
         assert!(waited < std::time::Duration::from_secs(60), "{who:?}");
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     };
-    let status = riff::host::HostStatus::parse(&sent.numbers).unwrap();
+    let status = riff_client::machines::HostStatus::parse(&sent.numbers).unwrap();
     assert_eq!(status.limit, 2, "{}", sent.numbers);
     assert_eq!(status.workers, [("%3".to_owned(), "c3".to_owned())]);
     assert!(status.monitor.is_some_and(|m| !m.on), "{}", sent.numbers);
@@ -1350,11 +1350,11 @@ async fn top_on_each_machine_shows_the_numbers_of_both_machines() {
     }
     let h1 = uri("thelio", "h1");
     live_at(&server, h1.clone()).await;
-    let thelio = riff::host::HostStatus {
+    let thelio = riff_client::machines::HostStatus {
         limit: 3,
         floor: 4,
         deaths: 0,
-        machine: riff::machine::Machine::parse(
+        machine: riff_client::machines::Machine::parse(
             "cpu 32x5800MHz (now 4100MHz), mem 128GB, 100GB available, load 3.00",
         ),
         disk: None,

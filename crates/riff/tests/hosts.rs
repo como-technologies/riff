@@ -771,11 +771,11 @@ async fn the_lead_counts_the_workers_that_the_status_of_a_host_does_not_list() {
     api.set_riff(&lead, RiffState::Running).await.unwrap();
     let full = session(&main, "mike", "c", "c1");
     api.register(&full).await.unwrap();
-    let status = riff::host::HostStatus {
+    let status = riff_client::machines::HostStatus {
         limit: 30,
         floor: 4,
         deaths: 12,
-        machine: riff::machine::Machine::parse(
+        machine: riff_client::machines::Machine::parse(
             "cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 1.50",
         ),
         disk: None,

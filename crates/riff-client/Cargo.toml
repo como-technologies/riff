@@ -1,6 +1,6 @@
 [package]
 name = "riff-client"
-description = "The client of riff-server: the sign-in, the tokens, the API calls and the watch stream"
+description = "The client of riff-server: the sign-in, the tokens, the API calls, the watch stream and the models of the views"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -329,7 +329,7 @@ async fn the_monitor_tells_the_lead_once_at_a_limit_and_once_when_good() {
     r.until("the kill in the status of the host", || async {
         let who = r.api.who(&r.lead, false).await.ok()?;
         who.iter()
-            .find_map(|s| riff::host::HostStatus::parse(&s.status.as_ref()?.status.step))
+            .find_map(|s| riff_client::machines::HostStatus::parse(&s.status.as_ref()?.status.step))
             .and_then(|status| status.monitor)
             .and_then(|n| n.kill)
             .filter(|k| k.at == at && k.by == "systemd-oomd")

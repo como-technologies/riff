@@ -186,12 +186,12 @@ use anyhow::{Result, bail};
 use futures::StreamExt;
 use riff_core::name::SessionUri;
 use riff_core::selector::Selector;
-use riff_core::wire::{Kind, STATUS_CHARS, SessionInfo, Status};
+use riff_core::wire::{Kind, SessionInfo, Status};
 
 use crate::binary::{Follow, with_last};
-use crate::disk::Disk;
-use crate::machine::Machine;
-use crate::monitor::Numbers;
+
+use riff_client::machines::{HostStatus, LONG_ID, Machine};
+
 use crate::reap::{self, Reaper, Watched};
 use crate::rollout::{Change, Effect};
 use crate::terminal::{self, Terminal, Tmux, WorkerPane};
@@ -199,16 +199,6 @@ use crate::{identity, local, settings, text, worker};
 use riff_client::api::{Api, Checked, follow};
 use riff_client::link::STREAM_RETRY;
 use riff_client::secrets;
-
-/// The start of the status of a host.
-pub const MARK: &str = "workers host";
-
-/// The characters of the session ID of a worker in the status of a host.
-pub const LONG_ID: usize = 8;
-
-/// The characters of the session ID of a worker in the status of a host
-/// that has no room for [`LONG_ID`] (01M517W4NP2WKSRCK52ZBVWBD3).
-pub const SHORT_ID: usize = 4;
 
 /// How often a host sets its status again, so that it shows the workers
 /// that ended.
@@ -218,323 +208,55 @@ pub const REFRESH: Duration = Duration::from_secs(30);
 /// a signal.
 pub const END_WAIT: Duration = Duration::from_secs(1);
 
-/// What the status of a host tells: its limit, its floor of available
-/// memory (01M3WFZ01PTAYYKG3T5CFA2W4D), the numbers of its machine
-/// (01M3Q5QE4SQ8VYN2PSF42KB3QJ), and the pane and short session ID of
-/// each worker.
-///
-/// ```
-/// use riff::disk::Disk;
-/// use riff::host::HostStatus;
-/// use riff::machine::Machine;
-/// use riff::monitor::{Jobs, Numbers};
-///
-/// let none = HostStatus { limit: 2, floor: 4, deaths: 0, machine: None, disk: None, monitor: None, more: 0, workers: vec![] };
-/// assert_eq!(none.line(), "workers host: limit 2, floor 4GB, no workers");
-/// let two = HostStatus {
-///     limit: 3,
-///     floor: 4,
-///     deaths: 0,
-///     machine: Some(Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
-///     disk: None,
-///     monitor: None,
-///     more: 0,
-///     workers: vec![("%3".into(), "1a2b3c4d".into()), ("%4".into(), "5e6f7a8b".into())],
-/// };
-/// assert_eq!(
-///     two.line(),
-///     "workers host: limit 3, floor 4GB, cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, \
-///      load 1.50, workers: %3 1a2b3c4d, %4 5e6f7a8b",
-/// );
-/// assert_eq!(HostStatus::parse(&two.line()), Some(two.clone()));
-/// assert_eq!(HostStatus::parse(&none.line()), Some(none.clone()));
-/// assert_eq!(HostStatus::parse("idle: waits for work"), None);
-///
-/// // The disk of the host (01M41A11GHP78E2VYN14JSE27P).
-/// let disk = Some(Disk { free_gb: 16, total_gb: 455 });
-/// let with_disk = HostStatus { disk, ..two.clone() };
-/// assert!(with_disk.line().contains(", load 1.50, disk 16GB free of 455GB (3%), workers: %3"));
-/// assert_eq!(HostStatus::parse(&with_disk.line()), Some(with_disk.clone()));
-/// let only_disk = HostStatus { disk, ..none.clone() };
-/// assert_eq!(only_disk.line(), "workers host: limit 2, floor 4GB, disk 16GB free of 455GB (3%), no workers");
-/// assert_eq!(HostStatus::parse(&only_disk.line()), Some(only_disk.clone()));
-///
-/// // The numbers of the monitor come after the disk
-/// // (01M421QPX01BB15GJXHFYRETTX).
-/// // The pool of build jobs, or the jobs of each worker
-/// // (01M515PDFZZXQ9ZCQE7SQ6KB8G).
-/// let jobs = Jobs::Pool { size: 10, used: 3 };
-/// let monitor = Some(Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs, kill: None });
-/// let with_monitor = HostStatus { monitor: monitor.clone(), ..with_disk.clone() };
-/// assert!(with_monitor.line().contains(
-///     "(3%), monitor on, load5 9.80 of 12.00, 8 cores, pool 10 (3 in use), workers: %3"
-/// ));
-/// assert_eq!(HostStatus::parse(&with_monitor.line()), Some(with_monitor));
-/// let monitor = monitor.map(|n| Numbers { jobs: Jobs::Fixed(2), ..n });
-/// let only_monitor = HostStatus { monitor, ..none.clone() };
-/// assert_eq!(
-///     only_monitor.line(),
-///     "workers host: limit 2, floor 4GB, monitor on, load5 9.80 of 12.00, 8 cores, jobs 2, no workers"
-/// );
-/// assert_eq!(HostStatus::parse(&only_monitor.line()), Some(only_monitor));
-///
-/// // A host of the release before: no floor, no available memory
-/// // (01M407J917F9AH072C8DE80CRJ).
-/// let old = HostStatus::parse(
-///     "workers host: limit 3, cpu 16x4500MHz, mem 32GB, load 1.50, workers: %3 1a2b3c4d",
-/// )
-/// .unwrap();
-/// assert_eq!((old.limit, old.floor), (3, riff::settings::WORKERS_FLOOR));
-/// assert_eq!(old.machine.map(|m| m.avail_gb), Some(32));
-/// assert_eq!(old.workers, [("%3".to_owned(), "1a2b3c4d".to_owned())]);
-/// assert!(HostStatus::parse("workers host: limit 2, no workers").is_some());
-///
-/// // The deaths of the last hour come after the floor, when there are
-/// // any (01M493YZZEW1FTDBNA090WT2AG).
-/// let dying = HostStatus { deaths: 4, ..with_disk.clone() };
-/// assert!(dying.line().starts_with("workers host: limit 3, floor 4GB, deaths 4, cpu 16x4500MHz"));
-/// assert_eq!(HostStatus::parse(&dying.line()), Some(dying));
-/// let only_deaths = HostStatus { deaths: 1, ..none.clone() };
-/// assert_eq!(only_deaths.line(), "workers host: limit 2, floor 4GB, deaths 1, no workers");
-/// assert_eq!(HostStatus::parse(&only_deaths.line()), Some(only_deaths));
-///
-/// // At most 400 characters at each size (01M517W4NP2WKSRCK52ZBVWBD3).
-/// // With no room for 8 characters of each session ID, the line has 4.
-/// // With no room for 4, it lists the first workers and counts the
-/// // others.
-/// let line = |n: u16| {
-///     let workers = (0..n).map(|i| (format!("%{}", 100 + i), format!("{i:04}abcd"))).collect();
-///     HostStatus { limit: 30, workers, ..with_disk.clone() }.line()
-/// };
-/// assert!(line(10).ends_with("workers: %100 0000abcd, %101 0001abcd, %102 0002abcd, %103 0003abcd, \
-///     %104 0004abcd, %105 0005abcd, %106 0006abcd, %107 0007abcd, %108 0008abcd, %109 0009abcd"));
-/// assert!(line(20).ends_with("workers: %100 0000, %101 0001, %102 0002, %103 0003, %104 0004, \
-///     %105 0005, %106 0006, %107 0007, %108 0008, %109 0009, %110 0010, %111 0011, %112 0012, \
-///     %113 0013, %114 0014, %115 0015, %116 0016, %117 0017, %118 0018, %119 0019"));
-/// let thirty = line(30);
-/// assert!(thirty.len() <= 400 && thirty.ends_with(", %122 0022, 7 more"), "{thirty}");
-/// let parsed = HostStatus::parse(&thirty).unwrap();
-/// assert_eq!((parsed.workers.len(), parsed.more, parsed.runs()), (23, 7, 30));
-/// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct HostStatus {
-    pub limit: u16,
-    /// The available memory in GB under which the host starts no
-    /// worker.
-    pub floor: u32,
-    /// The deaths of its workers in the last hour ([`crate::deaths`]).
-    pub deaths: usize,
-    /// The numbers of the machine. `None` from a host that does not
-    /// tell them.
-    pub machine: Option<Machine>,
-    /// The disk of the main clone (01M41A11GHP78E2VYN14JSE27P). `None`
-    /// from a host that does not tell it.
-    pub disk: Option<Disk>,
-    /// The numbers of the monitor (01M421QPX01BB15GJXHFYRETTX). `None`
-    /// from a host that does not tell them.
-    pub monitor: Option<Numbers>,
-    /// The pane and the first 8 characters of the session ID of each
-    /// worker that the status lists: the first 4 when the line has no
-    /// room for 8 (01M517W4NP2WKSRCK52ZBVWBD3).
-    pub workers: Vec<(String, String)>,
-    /// The workers that the status does not list, as the line has no
-    /// room for them (01M517W4NP2WKSRCK52ZBVWBD3).
-    pub more: usize,
+/// The status of a host with `panes` on `machine`
+/// ([`HostStatus`], 01M3Q5QE4SQ8VYN2PSF42KB3QJ).
+pub fn status_of(limit: u16, floor: u32, machine: Machine, panes: &[WorkerPane]) -> HostStatus {
+    HostStatus {
+        limit,
+        floor,
+        deaths: 0,
+        machine: Some(machine),
+        disk: None,
+        monitor: None,
+        workers: panes
+            .iter()
+            .map(|w| (w.pane.clone(), w.session.chars().take(LONG_ID).collect()))
+            .collect(),
+        more: 0,
+    }
 }
 
-impl HostStatus {
-    /// The status of a host with `panes` on `machine`.
-    pub fn of(limit: u16, floor: u32, machine: Machine, panes: &[WorkerPane]) -> Self {
-        HostStatus {
-            limit,
-            floor,
-            deaths: 0,
-            machine: Some(machine),
-            disk: None,
-            monitor: None,
-            workers: panes
-                .iter()
-                .map(|w| (w.pane.clone(), w.session.chars().take(LONG_ID).collect()))
-                .collect(),
-            more: 0,
-        }
-    }
+/// The status of this machine with `panes`: the settings, the numbers
+/// of the machine and of its monitor, and the disk of the clone `main`.
+pub fn status_here(main: Option<&Path>, panes: &[WorkerPane]) -> Result<HostStatus> {
+    let settings = settings::path()?;
+    let machine = crate::machine::here();
+    let mut status = status_of(
+        settings::workers_limit(&settings)?,
+        settings::workers_floor(&settings)?,
+        machine,
+        panes,
+    );
+    status.disk = main.and_then(crate::disk::here);
+    status.deaths = crate::deaths::here();
+    let workers = u16::try_from(panes.len()).unwrap_or(u16::MAX);
+    status.monitor = Some(crate::monitor::numbers_here(&settings, &machine, workers)?);
+    Ok(status)
+}
 
-    /// The workers of the host: the listed ones and the
-    /// [`more`](Self::more).
-    pub fn runs(&self) -> usize {
-        self.workers.len() + self.more
+/// The status of this machine with its worker panes, when it runs
+/// workers: its limit of workers is more than 0. The disk is the one of
+/// the main clone of `dir`. `riff top` shows it for its own machine
+/// (01M515KST9Z0B4B1D4HJV3Y2CM), and the `riff mcp` of the lead sends it
+/// to the server (01M515KSWVGCBS76AWZV74TJQ3).
+pub fn of_this_machine(dir: Option<&Path>) -> Option<HostStatus> {
+    let limit = settings::workers_limit(&settings::path().ok()?).ok()?;
+    if limit == 0 {
+        return None;
     }
-
-    /// The status of this machine with `panes`: the settings, the
-    /// numbers of the machine and of its monitor, and the disk of the
-    /// clone `main`.
-    pub fn here(main: Option<&Path>, panes: &[WorkerPane]) -> Result<Self> {
-        let settings = settings::path()?;
-        let machine = Machine::here();
-        let mut status = HostStatus::of(
-            settings::workers_limit(&settings)?,
-            settings::workers_floor(&settings)?,
-            machine,
-            panes,
-        );
-        status.disk = main.and_then(Disk::here);
-        status.deaths = crate::deaths::here();
-        let workers = u16::try_from(panes.len()).unwrap_or(u16::MAX);
-        status.monitor = Some(Numbers::here(&settings, &machine, workers)?);
-        Ok(status)
-    }
-
-    /// The status of this machine with its worker panes, when it runs
-    /// workers: its limit of workers is more than 0. The disk is the one
-    /// of the main clone of `dir`. `riff top` shows it for its own
-    /// machine (01M515KST9Z0B4B1D4HJV3Y2CM), and the `riff mcp` of the
-    /// lead sends it to the server (01M515KSWVGCBS76AWZV74TJQ3).
-    pub fn of_this_machine(dir: Option<&Path>) -> Option<Self> {
-        let limit = settings::workers_limit(&settings::path().ok()?).ok()?;
-        if limit == 0 {
-            return None;
-        }
-        let panes = Tmux::machine().worker_panes().unwrap_or_default();
-        let main = dir.and_then(identity::main_worktree);
-        HostStatus::here(main.as_deref(), &panes).ok()
-    }
-
-    /// The status line. It has at most [`STATUS_CHARS`] characters at
-    /// each size (01M517W4NP2WKSRCK52ZBVWBD3). When the workers do not
-    /// fit, each gets the first [`SHORT_ID`] characters of its session
-    /// ID. When they still do not fit, the line lists the first ones and
-    /// ends with the count of the others: `N more`.
-    pub fn line(&self) -> String {
-        let machine = self.machine.map(|m| format!("{m}, ")).unwrap_or_default();
-        let disk = self.disk.map(|d| format!("{d}, ")).unwrap_or_default();
-        let monitor = self
-            .monitor
-            .as_ref()
-            .map(|n| format!("{n}, "))
-            .unwrap_or_default();
-        let deaths = match self.deaths {
-            0 => String::new(),
-            n => format!("deaths {n}, "),
-        };
-        let head = format!(
-            "{MARK}: limit {}, floor {}GB, {deaths}{machine}{disk}{monitor}",
-            self.limit, self.floor
-        );
-        if self.runs() == 0 {
-            return format!("{head}no workers");
-        }
-        let line = |listed: usize, id: usize| {
-            let mut workers: Vec<String> = self.workers[..listed]
-                .iter()
-                .map(|(pane, short)| {
-                    format!("{pane} {}", short.chars().take(id).collect::<String>())
-                })
-                .collect();
-            let more = self.runs() - listed;
-            if more > 0 {
-                workers.push(format!("{more} more"));
-            }
-            format!("{head}workers: {}", workers.join(", "))
-        };
-        let fits = |line: &String| line.chars().count() <= STATUS_CHARS;
-        let all = self.workers.len();
-        std::iter::once((all, LONG_ID))
-            .chain((0..=all).rev().map(|listed| (listed, SHORT_ID)))
-            .map(|(listed, id)| line(listed, id))
-            .find(fits)
-            .unwrap_or_else(|| line(0, SHORT_ID))
-    }
-
-    /// The host status in a status step, or `None` for another status.
-    pub fn parse(step: &str) -> Option<Self> {
-        let rest = step.strip_prefix(MARK)?.strip_prefix(": limit ")?;
-        let (limit, rest) = rest.split_once(", ")?;
-        let limit = limit.parse().ok()?;
-        // A host of the release before tells no floor
-        // (01M407J917F9AH072C8DE80CRJ).
-        let (floor, mut rest) = match rest.strip_prefix("floor ") {
-            Some(rest) => {
-                let (floor, rest) = rest.split_once("GB, ")?;
-                (floor.parse().ok()?, rest)
-            }
-            None => (crate::settings::WORKERS_FLOOR, rest),
-        };
-        let mut deaths = 0;
-        if let Some(after) = rest.strip_prefix("deaths ") {
-            let (count, after) = after.split_once(", ")?;
-            deaths = count.parse().ok()?;
-            rest = after;
-        }
-        // The disk comes after the numbers of the machine
-        // (01M41A11GHP78E2VYN14JSE27P). A host of the release before
-        // tells none.
-        let mut disk = None;
-        let without;
-        if let Some(at) = rest.find("disk ") {
-            let end = at + rest[at..].find(", ")?;
-            disk = Some(Disk::parse(&rest[at..end])?);
-            without = format!("{}{}", &rest[..at], &rest[end + 2..]);
-            rest = &without;
-        }
-        // The numbers of the monitor come after the disk
-        // (01M421QPX01BB15GJXHFYRETTX). A host of the release before
-        // tells none.
-        let mut monitor = None;
-        let without_monitor;
-        if let Some(at) = rest.find("monitor ") {
-            let end = at
-                + rest[at..]
-                    .find(", no workers")
-                    .or_else(|| rest[at..].find(", workers: "))?;
-            monitor = Some(Numbers::parse(&rest[at..end])?);
-            without_monitor = format!("{}{}", &rest[..at], &rest[end + 2..]);
-            rest = &without_monitor;
-        }
-        let mut machine = None;
-        if rest.starts_with("cpu ") {
-            let end = rest
-                .find(", no workers")
-                .or_else(|| rest.find(", workers: "))?;
-            machine = Some(Machine::parse(&rest[..end])?);
-            rest = &rest[end + 2..];
-        }
-        if rest == "no workers" {
-            return Some(HostStatus {
-                limit,
-                floor,
-                deaths,
-                machine,
-                disk,
-                monitor,
-                workers: Vec::new(),
-                more: 0,
-            });
-        }
-        let mut listed: Vec<&str> = rest.strip_prefix("workers: ")?.split(", ").collect();
-        let mut more = 0;
-        if let Some(count) = listed.last().and_then(|w| w.strip_suffix(" more")) {
-            more = count.parse().ok()?;
-            listed.pop();
-        }
-        let workers = listed
-            .into_iter()
-            .map(|w| {
-                w.split_once(' ')
-                    .map(|(pane, short)| (pane.to_owned(), short.to_owned()))
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some(HostStatus {
-            limit,
-            floor,
-            deaths,
-            machine,
-            disk,
-            monitor,
-            workers,
-            more,
-        })
-    }
+    let panes = Tmux::machine().worker_panes().unwrap_or_default();
+    let main = dir.and_then(identity::main_worktree);
+    status_here(main.as_deref(), &panes).ok()
 }
 
 /// A request of the lead to a host.
@@ -901,7 +623,7 @@ fn stop_on_signal(session: Arc<OnceLock<(Api, SessionUri)>>) -> Result<()> {
 impl Host {
     /// Sets the status: the limit and the workers of the machine.
     async fn set_status(&self) -> Result<()> {
-        let status = HostStatus::here(Some(&self.main), &self.tmux.worker_panes()?)?;
+        let status = status_here(Some(&self.main), &self.tmux.worker_panes()?)?;
         let status = Status {
             step: status.line(),
         };

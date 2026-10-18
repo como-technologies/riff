@@ -12,6 +12,7 @@ use riff::look::{self, MainWatch, Notifier, PullWatch};
 use riff::pr::Gh;
 use riff::top::Top;
 use riff_client::api::Api;
+use riff_client::sessions::Sessions;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{RiffOwner, RiffState, SessionInfo, SessionState, Waits};
 
@@ -77,6 +78,7 @@ async fn info(api: &Api, lead: &SessionUri, me: &SessionUri) -> SessionInfo {
 
 /// The board of `riff top`, with no color.
 fn top(sessions: &[SessionInfo]) -> String {
+    let sessions = &Sessions::new(sessions.to_vec(), Vec::new());
     let running = RiffState::Running.into();
     let top = Top {
         pauses: &running,

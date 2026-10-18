@@ -41,13 +41,13 @@
 //! - The temp folder of a worker whose pane died with its wrapper goes
 //!   away at the next tidy ([`crate::temp::sweep`],
 //!   01M41VAGVR2PPVAYDN0SWK2F02).
-//! - Under [`crate::disk::LOW_PERCENT`], `riff workers start`, the
+//! - Under [`riff_client::machines::LOW_PERCENT`], `riff workers start`, the
 //!   rollout and a workers host start no worker on the machine
 //!   (01M41A11DX1QRP48YPTDNT67W4). The lead gets one note when the
 //!   disk goes under the mark ([`Guard`]), not one at each look.
 //!
 //! ```
-//! use riff::disk::Disk;
+//! use riff_client::machines::Disk;
 //! use riff::tidy::Guard;
 //!
 //! let mut guard = Guard::default();
@@ -67,10 +67,10 @@ use riff_core::name::SessionUri;
 use riff_core::selector::Selector;
 use riff_core::wire::Kind;
 
-use crate::disk::Disk;
 use crate::worktrees::{self, Tree};
 use crate::{identity, text};
 use riff_client::api::Api;
+use riff_client::machines::Disk;
 
 /// The time between two tidies (01M41A118QPQKFAAHGQFFX4F3B).
 pub const EVERY: Duration = Duration::from_secs(600);
@@ -90,7 +90,7 @@ pub fn every() -> Duration {
 }
 
 /// The state of the disk at the look before, so that the lead gets one
-/// note when the disk goes under [`crate::disk::LOW_PERCENT`].
+/// note when the disk goes under [`riff_client::machines::LOW_PERCENT`].
 #[derive(Debug, Default)]
 pub struct Guard {
     low: bool,
@@ -150,7 +150,7 @@ pub async fn tidy(
     let host = me.place().host().to_owned();
     let repo = me.place().repo_text();
     let mut notes = Vec::new();
-    if Disk::here(&main).is_some_and(|d| d.tight()) {
+    if crate::disk::here(&main).is_some_and(|d| d.tight()) {
         let who = api.who(me, false).await?;
         let trimmed = {
             let (main, here, host, repo) =
@@ -164,11 +164,15 @@ pub async fn tidy(
             .await?
         };
         if !trimmed.is_empty() {
-            notes.push(text::targets_removed(&host, Disk::here(&main), &trimmed));
+            notes.push(text::targets_removed(
+                &host,
+                crate::disk::here(&main),
+                &trimmed,
+            ));
         }
         lines.extend(trimmed);
     }
-    let disk = Disk::here(&main);
+    let disk = crate::disk::here(&main);
     if guard.crossed(disk)
         && let Some(disk) = disk
     {

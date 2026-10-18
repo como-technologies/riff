@@ -66,7 +66,6 @@
 //! assert_eq!(watch.step(&look(9.0, 8), &limits), [Event::MemoryGood { avail_gb: 8, floor: 4 }]);
 //! ```
 
-use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -77,9 +76,9 @@ use riff_core::wire::Kind;
 use serde::{Deserialize, Serialize};
 
 use crate::limits::{Cores, Limits as JobLimits};
-use crate::machine::Machine;
 use crate::{jobserver, local, settings, text};
 use riff_client::api::Api;
+use riff_client::machines::{Jobs, Kill, Machine, Numbers};
 
 /// The variable that names a directory to read in place of `/proc`,
 /// for tests: its files `loadavg` and `meminfo`.
@@ -88,24 +87,13 @@ pub const PROC: &str = "RIFF_PROC";
 /// The name of the file of the last look in the local directory.
 pub const SAVED: &str = "monitor.json";
 
-/// One kill of a process by `systemd-oomd` or by the kernel.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Kill {
-    /// The time of the kill, in seconds since 1970.
-    pub at: u64,
-    /// `systemd-oomd` or `kernel`.
-    pub by: String,
-    /// What was killed: the scope of `systemd-oomd`, or the process of
-    /// the kernel. Empty in a status.
-    pub what: String,
-}
-
 /// The kills in `journal`, the text of `journalctl -o short-unix`, that
 /// came after `after` (seconds since 1970). Each other line is not a
 /// kill.
 ///
 /// ```
-/// use riff::monitor::{Kill, kills};
+/// use riff::monitor::kills;
+/// use riff_client::machines::Kill;
 ///
 /// let journal = "\
 /// 1727980000.120000 pangolin systemd-oomd[812]: Killed /user.slice/app.slice/tmux-spawn-f089.scope due to memory pressure\n\
@@ -217,7 +205,7 @@ fn avail_here(machine: &Machine) -> u32 {
         return machine.avail_gb;
     };
     let meminfo = std::fs::read_to_string(dir.join("meminfo")).unwrap_or_default();
-    Machine::from_proc(
+    crate::machine::from_proc(
         machine.cores,
         &crate::machine::Cpufreq::default(),
         "",
@@ -345,222 +333,66 @@ impl Saved {
     }
 }
 
-/// The jobs of the workers of a machine that the monitor tells
-/// (01M515PDFZZXQ9ZCQE7SQ6KB8G): the pool of build jobs with its tokens
-/// in use, or the fixed share of each worker with no pool.
+/// The jobs of a machine with `limits`, the state of its `pool`
+/// ([`jobserver::state`]), and the `workers` that run
+/// (01M515PDFZZXQ9ZCQE7SQ6KB8G). A pool that a worker holds shows. With
+/// no worker, the pool of the settings shows, with no token in use. When
+/// workers run with no pool, each has the fixed share: the setting
+/// `workers.jobs` turns the pool off, or riff could not make it
+/// (01M3ZGZMRHXRBP762QPVCV0YX8).
 ///
 /// ```
-/// use riff::monitor::Jobs;
+/// use riff::jobserver::State;
+/// use riff::limits::Limits;
+/// use riff::monitor::jobs_of;
+/// use riff_client::machines::Jobs;
 ///
-/// let pool = Jobs::Pool { size: 20, used: 3 };
-/// assert_eq!(pool.to_string(), "pool 20 (3 in use)");
-/// assert_eq!(pool.short(), "pool 20");
-/// assert_eq!(Jobs::parse("pool 20 (3 in use)"), Some(pool));
-/// assert_eq!(Jobs::Fixed(2).to_string(), "jobs 2");
-/// assert_eq!(Jobs::Fixed(2).short(), "jobs 2");
-/// assert_eq!(Jobs::parse("jobs 2"), Some(Jobs::Fixed(2)));
-/// assert_eq!(Jobs::parse("pool 20"), None);
-/// assert_eq!(Jobs::parse("jobs two"), None);
+/// let limits = Limits { jobs: 1, tokens: 20, counted: 10, nice: 10 };
+/// let held = State { size: 20, free: 17, counted: 10, workers: 3 };
+/// assert_eq!(jobs_of(&limits, Some(held), 3), Jobs::Pool { size: 20, used: 3 });
+/// assert_eq!(jobs_of(&limits, None, 0), Jobs::Pool { size: 20, used: 0 });
+/// assert_eq!(jobs_of(&limits, None, 3), Jobs::Fixed(1), "riff could not make the pool");
+/// let fixed = Limits { jobs: 6, tokens: 0, ..limits };
+/// assert_eq!(jobs_of(&fixed, None, 0), Jobs::Fixed(6));
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Jobs {
-    /// The pool of the machine ([`crate::jobserver`]): its tokens, and
-    /// the tokens that are not in the pool now.
-    Pool { size: u16, used: u16 },
-    /// The jobs and test threads of each worker with no pool
-    /// ([`crate::limits::jobs`]).
-    Fixed(u16),
-}
-
-impl Jobs {
-    /// The jobs of a machine with `limits`, the state of its `pool`
-    /// ([`jobserver::state`]), and the `workers` that run. A pool that a
-    /// worker holds shows. With no worker, the pool of the settings
-    /// shows, with no token in use. When workers run with no pool, each
-    /// has the fixed share: the setting `workers.jobs` turns the pool
-    /// off, or riff could not make it (01M3ZGZMRHXRBP762QPVCV0YX8).
-    ///
-    /// ```
-    /// use riff::jobserver::State;
-    /// use riff::limits::Limits;
-    /// use riff::monitor::Jobs;
-    ///
-    /// let limits = Limits { jobs: 1, tokens: 20, counted: 10, nice: 10 };
-    /// let held = State { size: 20, free: 17, counted: 10, workers: 3 };
-    /// assert_eq!(Jobs::of(&limits, Some(held), 3), Jobs::Pool { size: 20, used: 3 });
-    /// assert_eq!(Jobs::of(&limits, None, 0), Jobs::Pool { size: 20, used: 0 });
-    /// assert_eq!(Jobs::of(&limits, None, 3), Jobs::Fixed(1), "riff could not make the pool");
-    /// let fixed = Limits { jobs: 6, tokens: 0, ..limits };
-    /// assert_eq!(Jobs::of(&fixed, None, 0), Jobs::Fixed(6));
-    /// ```
-    pub fn of(limits: &JobLimits, pool: Option<jobserver::State>, workers: u16) -> Jobs {
-        match pool {
-            Some(pool) => Jobs::Pool {
-                size: pool.size,
-                used: pool.size.saturating_sub(pool.free),
-            },
-            None if limits.tokens > 0 && workers == 0 => Jobs::Pool {
-                size: limits.tokens,
-                used: 0,
-            },
-            None => Jobs::Fixed(limits.jobs),
-        }
-    }
-
-    /// The jobs in the form of their [`fmt::Display`], or `None` for
-    /// another text.
-    pub fn parse(text: &str) -> Option<Jobs> {
-        if let Some(jobs) = text.strip_prefix("jobs ") {
-            return jobs.parse().ok().map(Jobs::Fixed);
-        }
-        let (size, used) = text
-            .strip_prefix("pool ")?
-            .strip_suffix(" in use)")?
-            .split_once(" (")?;
-        Some(Jobs::Pool {
-            size: size.parse().ok()?,
-            used: used.parse().ok()?,
-        })
-    }
-
-    /// The jobs with no tokens in use, for a line with little room:
-    /// `pool 20` or `jobs 2`.
-    pub fn short(&self) -> String {
-        match self {
-            Jobs::Pool { size, .. } => format!("pool {size}"),
-            Jobs::Fixed(jobs) => format!("jobs {jobs}"),
-        }
+pub fn jobs_of(limits: &JobLimits, pool: Option<jobserver::State>, workers: u16) -> Jobs {
+    match pool {
+        Some(pool) => Jobs::Pool {
+            size: pool.size,
+            used: pool.size.saturating_sub(pool.free),
+        },
+        None if limits.tokens > 0 && workers == 0 => Jobs::Pool {
+            size: limits.tokens,
+            used: 0,
+        },
+        None => Jobs::Fixed(limits.jobs),
     }
 }
 
-impl fmt::Display for Jobs {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Jobs::Pool { size, used } => write!(f, "pool {size} ({used} in use)"),
-            Jobs::Fixed(jobs) => write!(f, "jobs {jobs}"),
-        }
-    }
-}
-
-/// The numbers of the monitor that a machine tells, after the numbers
-/// of [`Machine`] (01M421QPX01BB15GJXHFYRETTX): the monitor on or off,
-/// the 5-minute load and its limit, the physical cores, the jobs
-/// ([`Jobs`]), and the last kill. A workers host puts them in its
-/// status ([`crate::host::HostStatus`]).
-///
-/// ```
-/// use riff::monitor::{Jobs, Kill, Numbers};
-///
-/// let n = Numbers {
-///     on: true,
-///     load5: 9.8,
-///     limit: 12.0,
-///     physical: 8,
-///     jobs: Jobs::Pool { size: 10, used: 3 },
-///     kill: Some(Kill { at: 1727980000, by: "systemd-oomd".into(), what: String::new() }),
-/// };
-/// assert_eq!(
-///     n.to_string(),
-///     "monitor on, load5 9.80 of 12.00, 8 cores, pool 10 (3 in use), kill 1727980000 systemd-oomd",
-/// );
-/// assert_eq!(Numbers::parse(&n.to_string()), Some(n.clone()));
-/// let off = Numbers { on: false, kill: None, jobs: Jobs::Fixed(2), ..n };
-/// assert_eq!(off.to_string(), "monitor off, load5 9.80 of 12.00, 8 cores, jobs 2");
-/// assert_eq!(Numbers::parse(&off.to_string()), Some(off));
-/// assert_eq!(Numbers::parse("disk 16GB free of 455GB"), None);
-/// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct Numbers {
-    /// `monitor.on` of the machine.
-    pub on: bool,
-    pub load5: f64,
-    /// The limit of the 5-minute load.
-    pub limit: f64,
-    /// The physical cores.
-    pub physical: u16,
-    /// The pool of the machine, or the jobs of each worker.
-    pub jobs: Jobs,
-    /// The last kill that the monitor saw. Its `what` is empty.
-    pub kill: Option<Kill>,
-}
-
-impl Numbers {
-    /// The numbers of this machine: the settings file `path`, `machine`,
-    /// the `workers` that run, and the last look in the local
-    /// directory.
-    pub fn here(path: &Path, machine: &Machine, workers: u16) -> Result<Numbers> {
-        let monitor = settings::monitor(path)?;
-        let cores = Cores::here(machine);
-        let physical = cores.physical;
-        let local = local::dir();
-        let saved = local.as_deref().and_then(Saved::read);
-        let pool = local
-            .as_deref()
-            .and_then(|dir| jobserver::state(&jobserver::dir(dir)));
-        Ok(Numbers {
-            on: monitor.on,
-            load5: load_here(machine).1,
-            limit: monitor.load * f64::from(physical),
-            physical,
-            jobs: Jobs::of(&JobLimits::of(path, &cores, workers)?, pool, workers),
-            kill: saved.and_then(|s| s.kill).map(|k| Kill {
-                what: String::new(),
-                ..k
-            }),
-        })
-    }
-
-    /// The numbers in a status, or `None` for another text.
-    pub fn parse(text: &str) -> Option<Numbers> {
-        let rest = text.strip_prefix("monitor ")?;
-        let (on, rest) = rest.split_once(", load5 ")?;
-        let on = match on {
-            "on" => true,
-            "off" => false,
-            _ => return None,
-        };
-        let (load5, rest) = rest.split_once(" of ")?;
-        let (limit, rest) = rest.split_once(", ")?;
-        let (physical, rest) = rest.split_once(" cores, ")?;
-        let (jobs, kill) = match rest.split_once(", kill ") {
-            Some((jobs, kill)) => {
-                let (at, by) = kill.split_once(' ')?;
-                let kill = Kill {
-                    at: at.parse().ok()?,
-                    by: by.to_owned(),
-                    what: String::new(),
-                };
-                (jobs, Some(kill))
-            }
-            None => (rest, None),
-        };
-        Some(Numbers {
-            on,
-            load5: load5.parse().ok()?,
-            limit: limit.parse().ok()?,
-            physical: physical.parse().ok()?,
-            jobs: Jobs::parse(jobs)?,
-            kill,
-        })
-    }
-}
-
-impl fmt::Display for Numbers {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "monitor {}, load5 {:.2} of {:.2}, {} cores, {}",
-            if self.on { "on" } else { "off" },
-            self.load5,
-            self.limit,
-            self.physical,
-            self.jobs
-        )?;
-        if let Some(kill) = &self.kill {
-            write!(f, ", kill {} {}", kill.at, kill.by)?;
-        }
-        Ok(())
-    }
+/// The numbers of the monitor of this machine
+/// ([`Numbers`], 01M421QPX01BB15GJXHFYRETTX): the settings file `path`,
+/// `machine`, the `workers` that run, and the last look in the local
+/// directory.
+pub fn numbers_here(path: &Path, machine: &Machine, workers: u16) -> Result<Numbers> {
+    let monitor = settings::monitor(path)?;
+    let cores = Cores::here(machine);
+    let physical = cores.physical;
+    let local = local::dir();
+    let saved = local.as_deref().and_then(Saved::read);
+    let pool = local
+        .as_deref()
+        .and_then(|dir| jobserver::state(&jobserver::dir(dir)));
+    Ok(Numbers {
+        on: monitor.on,
+        load5: load_here(machine).1,
+        limit: monitor.load * f64::from(physical),
+        physical,
+        jobs: jobs_of(&JobLimits::of(path, &cores, workers)?, pool, workers),
+        kill: saved.and_then(|s| s.kill).map(|k| Kill {
+            what: String::new(),
+            ..k
+        }),
+    })
 }
 
 /// The time now, in seconds since 1970.
@@ -638,7 +470,7 @@ impl Monitor {
             self.other = false;
             self.since = self.since.max(now_secs());
         }
-        let machine = Machine::here();
+        let machine = crate::machine::here();
         let (load1, load5) = load_here(&machine);
         let since = self.since;
         let found = tokio::task::spawn_blocking(move || journal(since))
@@ -798,12 +630,12 @@ mod tests {
     /// of the monitor and a kill reads back.
     #[test]
     fn a_status_with_a_kill_reads_back() {
-        let status = crate::host::HostStatus {
+        let status = riff_client::machines::HostStatus {
             limit: 2,
             floor: 4,
             deaths: 0,
             machine: Machine::parse("cpu 8x3000MHz, mem 64GB, 60GB available, load 0.50"),
-            disk: Some(crate::disk::Disk {
+            disk: Some(riff_client::machines::Disk {
                 free_gb: 50,
                 total_gb: 455,
             }),
@@ -823,7 +655,7 @@ mod tests {
             workers: vec![],
         };
         assert_eq!(
-            crate::host::HostStatus::parse(&status.line()),
+            riff_client::machines::HostStatus::parse(&status.line()),
             Some(status.clone()),
             "{}",
             status.line()
@@ -837,14 +669,14 @@ mod tests {
     /// ID, and the count of the others.
     #[test]
     fn a_status_of_each_size_fits() {
-        let full = |workers: u16| crate::host::HostStatus {
+        let full = |workers: u16| riff_client::machines::HostStatus {
             limit: workers,
             floor: 16,
             deaths: 12,
             machine: Machine::parse(
                 "cpu 128x5883MHz (now 5800MHz), mem 1024GB, 1000GB available, load 133.20",
             ),
-            disk: Some(crate::disk::Disk {
+            disk: Some(riff_client::machines::Disk {
                 free_gb: 1000,
                 total_gb: 4000,
             }),
@@ -878,7 +710,7 @@ mod tests {
                 "{} characters: {line}",
                 line.chars().count()
             );
-            let parsed = crate::host::HostStatus::parse(&line).expect(&line);
+            let parsed = riff_client::machines::HostStatus::parse(&line).expect(&line);
             assert_eq!(parsed.runs(), usize::from(workers), "{line}");
             assert_eq!(parsed.monitor, status.monitor, "{line}");
             for ((pane, short), (want_pane, want_short)) in
@@ -896,9 +728,9 @@ mod tests {
             forms.into_iter().collect::<Vec<_>>(),
             [
                 (0, false),
-                (crate::host::SHORT_ID, false),
-                (crate::host::SHORT_ID, true),
-                (crate::host::LONG_ID, false)
+                (riff_client::machines::SHORT_ID, false),
+                (riff_client::machines::SHORT_ID, true),
+                (riff_client::machines::LONG_ID, false)
             ]
         );
     }

@@ -96,7 +96,7 @@ use serde::Deserialize;
 
 use crate::pr::Gh;
 use crate::rollout;
-use crate::top::wave_number;
+use riff_client::waves::wave_number;
 
 /// A wave of the forge: a milestone `Wave N`.
 #[derive(Clone, Debug, PartialEq, Eq)]
