@@ -459,7 +459,10 @@ pub struct Kept {
     pub at_ms: u64,
     /// The build of that riff-server.
     pub build: Option<String>,
-    /// The part of the status line that came from the answer.
+    /// True when the session is a lead.
+    pub lead: bool,
+    /// The words of the status line that came from the answer
+    /// ([`crate::text::statusline_answer`]).
     pub line: String,
 }
 
@@ -472,7 +475,7 @@ pub struct Kept {
 ///
 /// let run = tempfile::tempdir()?;
 /// let (url, keep) = ("http://127.0.0.1:7878", Duration::from_secs(10));
-/// let kept = Kept { server: url.into(), at_ms: 1_000, build: None, line: "riff a6cf".into() };
+/// let kept = Kept { server: url.into(), at_ms: 1_000, build: None, lead: true, line: "lead".into() };
 /// keep_statusline(run.path(), "a6cf", &kept)?;
 /// assert_eq!(kept_statusline(run.path(), "a6cf", url, 10_999, keep), Some(kept));
 /// // Too old, another server, another session: nothing.

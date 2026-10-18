@@ -402,7 +402,8 @@ impl Tools {
             server: self.api.base().to_owned(),
             at_ms: crate::activity::now_ms(),
             build: riff_client::link::server_build().map(|b| b.to_string()),
-            line: text::statusline(id, reply.session.as_ref()),
+            lead: reply.session.as_ref().is_some_and(|s| s.uri.lead()),
+            line: text::statusline_answer(reply.session.as_ref()),
         };
         if let Err(e) = crate::local::keep_statusline(dir, id, &kept) {
             eprintln!("riff: cannot keep the status line: {e}");

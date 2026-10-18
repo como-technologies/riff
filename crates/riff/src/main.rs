@@ -4125,10 +4125,20 @@ async fn statusline(server: &str) -> String {
             STATUSLINE_KEEP,
         )
     });
-    let (mut line, build) = match kept {
-        Some(kept) => (kept.line, kept.build.and_then(|b| b.parse().ok())),
+    let (lead, answer, build) = match kept {
+        Some(kept) => (
+            kept.lead,
+            kept.line,
+            kept.build.and_then(|b| b.parse().ok()),
+        ),
         None => statusline_of(server, &id, dir.as_deref(), now).await,
     };
+    let here = if lead {
+        statusline_here(dir.as_deref())
+    } else {
+        text::Here::default()
+    };
+    let mut line = text::statusline_kept(&id, lead, &answer, &here);
     if let Some(tag) = build.and_then(|build| update_tag(&build)) {
         line = format!("{line} {}", text::update_tag(&tag));
     }
@@ -4141,14 +4151,15 @@ async fn statusline(server: &str) -> String {
 }
 
 /// The part of the status line of the session `id` that comes from the
-/// answer of `server`, and the build of the server. A good answer is
+/// answer of `server`: lead or not, and the words of
+/// [`text::statusline_answer`]. And the build of the server. A good answer is
 /// kept in `dir` (01M53TZ0RBSJQ9ZZRXKMBM5R3E).
 async fn statusline_of(
     server: &str,
     id: &str,
     dir: Option<&std::path::Path>,
     now: u64,
-) -> (String, Option<Build>) {
+) -> (bool, String, Option<Build>) {
     let find = async {
         let here = identity::place(&identity::working_dir()?)?;
         let api = Api::new(server).one_try(STATUSLINE_WAIT);
@@ -4164,17 +4175,39 @@ async fn statusline_of(
     };
     let answered = matches!(found, Ok(Ok(_)));
     let info = found.ok().and_then(Result::ok).flatten();
-    let line = text::statusline(id, info.as_ref());
+    let lead = info.as_ref().is_some_and(|info| info.uri.lead());
+    let line = text::statusline_answer(info.as_ref());
     if let Some(dir) = dir.filter(|_| answered) {
         let kept = local::Kept {
             server: riff_client::link::base_of(server).to_owned(),
             at_ms: now,
             build: build.as_ref().map(Build::to_string),
+            lead,
             line: line.clone(),
         };
         let _ = local::keep_statusline(dir, id, &kept);
     }
-    (line, build)
+    (lead, line, build)
+}
+
+/// The local facts of the status line of a lead
+/// (01M58ASFT4VBG13X5TXPHS67AQ): the build of the `riff mcp` of the
+/// session, else of this riff, and the repository of the working
+/// folder. It reads only local files.
+fn statusline_here(dir: Option<&std::path::Path>) -> text::Here {
+    let build = dir
+        .and_then(local::recorded_build_above)
+        .flatten()
+        .unwrap_or_else(Build::this);
+    let repo = identity::working_dir()
+        .and_then(|dir| identity::place(&dir))
+        .ok()
+        .and_then(|place| place.default_thread())
+        .map(|thread| thread.to_string());
+    text::Here {
+        build: Some(build.version),
+        repo,
+    }
 }
 
 /// The tag of the status line for a riff of `server`
