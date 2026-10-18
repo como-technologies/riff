@@ -66,12 +66,19 @@
 //! replaces the binaries only after a good build, so a failed update
 //! keeps the old ones. The update stops no session, and changes no
 //! sign-in and no device key (01M3N7JJNPPJNTXFDTEY4MSDVJ).
+//!
+//! A start of `riff-server` can refuse the message to the lead for a
+//! short time. So the update tries again after an error, each
+//! [`TELL_EVERY`], for [`TELL_FOR`] ([`tell_until`],
+//! 01M56P1T4KK03MF7EK5CC0YZNB).
 
+use std::future::Future;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use riff_core::build::Build;
@@ -310,7 +317,8 @@ pub async fn run(
         }
     };
     println!("riff: {body}");
-    if let Err(e) = crate::worker::tell_lead(place, server, &body).await {
+    let tell = || crate::worker::tell_lead(place, server, &body);
+    if let Err(e) = tell_until(tell, TELL_EVERY, TELL_FOR).await {
         println!("riff: cannot tell the lead: {e:#}");
     }
     done.map(|_| ())
@@ -394,4 +402,97 @@ pub fn tag(
     } else {
         Tag::Available(release)
     })
+}
+
+/// The time between two tries of the message to the lead.
+pub const TELL_EVERY: Duration = Duration::from_secs(5);
+
+/// The time for which the update tries the message to the lead.
+pub const TELL_FOR: Duration = Duration::from_secs(2 * 60);
+
+/// Calls `tell` until it succeeds, each `every`, for at most `max`
+/// (01M56P1T4KK03MF7EK5CC0YZNB). Gives the last error when no try
+/// succeeds. So a start of `riff-server` does not lose the message.
+///
+/// ```
+/// use std::cell::Cell;
+/// use std::time::Duration;
+/// use riff::auto_update::tell_until;
+///
+/// # tokio::runtime::Builder::new_current_thread().enable_time().build()?.block_on(async {
+/// let tries = Cell::new(0);
+/// let tell = || {
+///     tries.set(tries.get() + 1);
+///     let n = tries.get();
+///     async move { if n < 3 { anyhow::bail!("refused") } else { Ok(()) } }
+/// };
+/// tell_until(tell, Duration::ZERO, Duration::from_secs(1)).await?;
+/// assert_eq!(tries.get(), 3);
+/// # anyhow::Ok(())
+/// # })?;
+/// # anyhow::Ok(())
+/// ```
+pub async fn tell_until<F, T>(mut tell: F, every: Duration, max: Duration) -> Result<()>
+where
+    F: FnMut() -> T,
+    T: Future<Output = Result<()>>,
+{
+    let end = tokio::time::Instant::now() + max;
+    loop {
+        match tell().await {
+            Ok(()) => return Ok(()),
+            Err(e) if tokio::time::Instant::now() + every > end => return Err(e),
+            Err(e) => {
+                println!("riff: cannot tell the lead yet, it tries again: {e:#}");
+                tokio::time::sleep(every).await;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    /// A `tell` that fails `fails` times, then succeeds. It counts the
+    /// tries and the messages that arrived.
+    fn flaky<'a>(
+        fails: usize,
+        tries: &'a Cell<usize>,
+        told: &'a Cell<usize>,
+    ) -> impl FnMut() -> std::future::Ready<Result<()>> + 'a {
+        move || {
+            tries.set(tries.get() + 1);
+            std::future::ready(if tries.get() <= fails {
+                Err(anyhow::anyhow!("no other session is the lead"))
+            } else {
+                told.set(told.get() + 1);
+                Ok(())
+            })
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_tell_tries_again_and_the_lead_gets_the_message_once() {
+        let (tries, told) = (Cell::new(0), Cell::new(0));
+        tell_until(flaky(1, &tries, &told), TELL_EVERY, TELL_FOR)
+            .await
+            .unwrap();
+        assert_eq!((tries.get(), told.get()), (2, 1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_tries_stop_after_the_bound() {
+        let (tries, told) = (Cell::new(0), Cell::new(0));
+        let start = tokio::time::Instant::now();
+        let error = tell_until(flaky(usize::MAX, &tries, &told), TELL_EVERY, TELL_FOR)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("lead"), "{error}");
+        assert!(start.elapsed() <= TELL_FOR);
+        assert_eq!(tries.get(), 25);
+        assert_eq!(told.get(), 0);
+    }
 }
