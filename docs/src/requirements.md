@@ -5994,6 +5994,13 @@ part when they merge.
   volume. It works while sessions run. Each session has
   `SCCACHE_IGNORE_SERVER_IO_ERROR=1`, and a build compiles each file
   that the clear deleted.
+- **01M588JW2KS6EVX1SE49686FQ7** `riff daemon cache` and `riff daemon
+  status` show the size on the disk of each file in the volume
+  `riff-sccache`. When the person cannot read a folder of the volume
+  (rootless podman), riff reads it with `podman unshare`. When riff
+  cannot read it, it says so, and never shows 0. `riff daemon cache
+  --clear` also deletes with `podman unshare` when the person may not,
+  and fails with the reason when it cannot delete.
 - **01M57840K7SNPS243CYMYNYVFX** `riff daemon mcp` shows the MCP
   servers of each new container session of the host. The default is
   `riff` only. `riff daemon mcp add NAME` copies the server NAME from

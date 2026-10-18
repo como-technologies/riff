@@ -7055,26 +7055,34 @@ pub fn daemon_limit(limit: &crate::room::Limit) -> String {
 
 /// The compile cache of the container sessions, as `riff daemon cache`
 /// and `riff daemon status` show it (01M5781930TF6XBX7ME7RAMX2X): the
-/// size of the volume now, or `None` when podman has no volume yet, and
-/// the most size.
+/// size of the volume now, or `None` when podman has no volume yet, or
+/// the reason when riff cannot read the size
+/// (01M588JW2KS6EVX1SE49686FQ7), and the most size.
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::daemon_cache("40G", Some(2_684_354_560)),
+///     riff::text::daemon_cache("40G", Some(Ok(2_684_354_560))),
 ///     "The compile cache of the container sessions: 2.5GB now, at most 40G, in the volume riff-sccache.\n\
 ///      Set it with: riff daemon cache SIZE. Empty it with: riff daemon cache --clear"
 /// );
 /// assert!(riff::text::daemon_cache("40G", None).starts_with(
 ///     "The compile cache of the container sessions: no volume riff-sccache yet, at most 40G.\n"
 /// ));
+/// assert!(riff::text::daemon_cache("40G", Some(Err("cannot read /v".into()))).starts_with(
+///     "The compile cache of the container sessions: riff cannot read the size of the volume \
+///      riff-sccache (cannot read /v), at most 40G.\n"
+/// ));
 /// ```
-pub fn daemon_cache(size: &str, now: Option<u64>) -> String {
+pub fn daemon_cache(size: &str, now: Option<Result<u64, String>>) -> String {
     let volume = crate::run::SCCACHE_VOLUME;
     let head = match now {
-        Some(bytes) => format!(
+        Some(Ok(bytes)) => format!(
             "{} now, at most {size}, in the volume {volume}",
             size_words(bytes)
         ),
+        Some(Err(why)) => {
+            format!("riff cannot read the size of the volume {volume} ({why}), at most {size}")
+        }
         None => format!("no volume {volume} yet, at most {size}"),
     };
     format!(
