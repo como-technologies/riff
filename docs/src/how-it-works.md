@@ -422,10 +422,20 @@ riff-server  v0.7.0  (f45be4d, 2026-09-29)  another build; the versions can talk
 
 ### When the builds differ
 
-`riff` works. Each `riff` process tells you once:
+`riff` works. Each `riff` process tells you once which side is older.
+`riff server` gives the same advice on its last line. When the server
+is newer, the note says to update riff:
 
 ```text
 riff: riff-server runs build 0.4.3 7213825ab1c2 2026-09-27T20:10:44Z; this riff runs build 0.4.0 929605821e54 2026-09-27T22:03:01Z. Run riff update when you can.
+```
+
+When this riff is newer on the same line, for example while a deploy
+runs or after a rollback of the server, the server is the older side.
+This machine needs no step:
+
+```text
+riff: riff-server runs build 0.4.0 7213825ab1c2 2026-09-27T20:10:44Z; this riff runs build 0.4.3 929605821e54 2026-09-27T22:03:01Z. Update riff-server when you can.
 ```
 
 When `riff` is on the line before the server, the next line of the
@@ -437,14 +447,13 @@ riff: riff-server runs build 0.4.0 7213825ab1c2 2026-09-27T20:10:44Z; this riff 
 
 Across the bridge, `riff` of the line 3 talks with `riff-server` of
 the line 1, for example after a rollback of the server. Then the
-server is the older side. The note says so, and this machine needs no
-step. `riff server` says the same:
+server is the older side too:
 
 ```text
 riff: riff-server runs build 1.8.2 7213825ab1c2 2026-10-17T20:10:44Z; this riff runs build 3.0.0 929605821e54 2026-10-18T22:03:01Z. Update riff-server when you can.
 ```
 
-In each other case, update riff on this machine when you can:
+When the note says "Run riff update", update riff on this machine:
 
 ```sh
 riff update
