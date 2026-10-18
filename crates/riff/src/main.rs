@@ -1939,10 +1939,12 @@ async fn main() -> Result<()> {
             )
             .await;
         }
-        println!(
-            "{}",
-            lifecycle::update(cargo, claude, tag.as_deref(), &server, DEFAULT_SERVER).await?
-        );
+        let words =
+            lifecycle::update(cargo, claude, tag.as_deref(), &server, DEFAULT_SERVER).await?;
+        for line in lifecycle::daemon_after_update().await {
+            println!("{line}");
+        }
+        println!("{words}");
         return Ok(());
     }
     if let Command::Hook {

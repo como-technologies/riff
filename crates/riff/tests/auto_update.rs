@@ -702,3 +702,44 @@ async fn a_release_with_no_cargo_is_tried_once() {
         Some(newer_tag().as_str())
     );
 }
+
+/// The update in the background of each path on a host tells the lead
+/// once (#1105): a session in a worktree, `riff workers host` in the
+/// main clone, and the daemon, which runs outside each repository and
+/// tells the lead in a repository that it serves
+/// (01M3N7JJKBME6VSNTHD8VPN3K9, 01M58AW5SBG3ZP7149ZY66VTYW).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_update_of_each_path_on_a_host_tells_the_lead_once() {
+    let session = "pangolin/como-technologies/riff#issue-12";
+    let workers_host = "pangolin/como-technologies/riff";
+    let daemon = "pangolin/-";
+    for place in [session, workers_host, daemon] {
+        let machine = Machine::new(0).await;
+        assert!(machine.run("lead", &["lead"]).await.status.success());
+        let wave = riff::wave::Wave {
+            repo: "como-technologies/riff".into(),
+            main: machine.repo.path().to_owned(),
+            server: machine.server.clone(),
+            host: "pangolin".into(),
+        };
+        let dir = riff::daemon::dir_in(&machine.env.riff_home());
+        std::fs::create_dir_all(&dir).unwrap();
+        riff::daemon::remote::serve_in_file(&dir, &wave).unwrap();
+        let tag = newer_tag();
+        let args = ["--place", place, "update", "--background", "--tag", &tag];
+        let mut update = machine.riff("", &args);
+        // The update runs in the local files of riff, outside each
+        // repository.
+        update
+            .current_dir(machine.env.home())
+            .env_remove("RIFF_SESSION");
+        let out = output(update).await;
+        assert!(out.status.success(), "{place}: {}", text(&out.stderr));
+        let messages = machine.lead_messages("lead").await;
+        let words = format!(
+            "riff on pangolin updated itself from {} to {tag}.",
+            this_tag()
+        );
+        assert_eq!(messages.matches(&words).count(), 1, "{place}: {messages}");
+    }
+}

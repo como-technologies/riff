@@ -712,12 +712,14 @@ sequenceDiagram
     participant S as the riff
     participant U as riff update, in the background
     participant L as your lead
+    participant D as riff daemon
     P->>S: call
     S-->>P: reply, release v0.4.0 (newer)
     P->>U: start: riff update --tag v0.4.0
     U->>U: take the update lock of the machine
     U->>U: install v0.4.0, update the plugin
     U->>L: "riff on pangolin updated itself from v0.3.0 to v0.4.0."
+    U->>D: start again on the new riff
 ```
 
 - One update runs at a time on the machine. Each release gets one
@@ -754,6 +756,24 @@ sequenceDiagram
 
 The output of the update is in `update.log`, in
 [the local folder](#the-local-folder) of riff.
+
+#### Which process tells your lead
+
+The first riff process on the machine that sees the new release
+starts the update. That update, `riff update --background`, tells
+your lead once. It tells the lead of a repository:
+
+| The process that starts the update | The repository of the message |
+|---|---|
+| A session, or a `riff` command in a clone | The repository of the session or the clone |
+| `riff workers host` | The repository of its main clone |
+| The riff daemon | A repository that the daemon serves on the same riff (see `riff daemon host`) |
+
+The update tells your lead first. Then it starts the daemon again on
+the new riff. The daemon does not start again while the update runs:
+a new start of the daemon stops the update that the daemon started.
+When the message to your lead fails, `update.log` says why, in the
+line `riff: cannot tell the lead`.
 
 #### Each step of an update
 
