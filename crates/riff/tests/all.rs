@@ -20,6 +20,7 @@ mod clear;
 mod cli;
 mod cloud;
 mod compact;
+mod compact_wave;
 mod conduct;
 mod daemon;
 mod dev;

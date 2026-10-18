@@ -3672,6 +3672,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   input came to the lead for the quiet time and its input line is
   empty; the last message of the lead does not end with a question; and
   riff did not compact the lead for this wave already.
+- **01M56P28EH72XA0F5S1B3ZP4Q5** The last done wave of the compact is
+  the wave that just ended: the wave with the highest number that has a
+  closed item, with no open item in it or in a wave before it. When an
+  item of a later wave closes, no wave just ended, so a later pause of
+  the lead, for example for a release, gives no handoff ask and no
+  compact.
 - **01M3Q88G6PM8KM5PR875PZXTRZ** Before it compacts, riff tells the
   lead, as its person, to post a handoff note to the repository thread,
   with a body that starts with `handoff: Wave N`. riff compacts only

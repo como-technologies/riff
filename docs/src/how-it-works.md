@@ -5883,9 +5883,9 @@ point: the end of a wave. You do nothing. riff does it only when all of
 these are true:
 
 1. The riff is paused.
-2. The last done wave has no open item, and its release is out: the
-   release item is closed, the release pull request is merged, and the
-   CI run of the tag passed.
+2. A wave just ended: it has no open item, and no item of a later
+   wave closed yet. Its release is out: the release item is closed, the
+   release pull request is merged, and the CI run of the tag passed.
 3. No session holds a claim, and no pull request of a wave is open.
 4. The turn of the lead ended, and it has no unread message.
 5. Nobody typed in the pane of the lead for the quiet time (default 1
@@ -5912,6 +5912,11 @@ thread: the state, the next wave and the open decisions. After the
 note, riff types `/compact` into the pane of the lead. The instructions
 tell the compact what to keep. When the lead does not run in tmux, riff
 tells the lead to ask you to run `/compact`.
+
+So riff asks for a handoff only in the time between the end of a wave
+(its last item closed, or `riff wave end N`) and the first closed item
+of the next wave. A pause in the middle of the next wave, for example
+for a release, gives no ask.
 
 See the setting of this machine:
 
