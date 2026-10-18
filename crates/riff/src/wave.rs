@@ -619,6 +619,13 @@ pub trait World: Send + Sync {
     fn finish<'a>(&'a self, record: &'a Record, ended: Ended)
     -> BoxFuture<'a, Result<Vec<String>>>;
 
+    /// The marks of this machine and the `gh` of the repository `repo`:
+    /// the daemon reports the tokens of each container session with them
+    /// ([`usage::Meter::session_ended`]). `None` counts nothing.
+    fn meter(&self, _repo: &str) -> Option<usage::Meter> {
+        None
+    }
+
     /// The fate of the folder of a session of the issue `issue` of the
     /// repository `repo`, from the forge ([`Fate::of`]).
     fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>>;
@@ -1583,6 +1590,13 @@ impl World for Live {
             };
             self.end(&api, &record.me, &thread, &record.live.item).await;
             done
+        })
+    }
+
+    fn meter(&self, repo: &str) -> Option<usage::Meter> {
+        Some(usage::Meter {
+            dir: crate::local::marks()?,
+            gh: sweep::gh(repo),
         })
     }
 

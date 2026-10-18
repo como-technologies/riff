@@ -747,6 +747,15 @@
   no issue, or a thread that is no repository, the sum stays in the
   marks of the machine, and the result of the release says why. A
   claim with no tokens gets no comment.
+- **01M588N85Z94PX1ZP0BDXTPX83** At the end of a container session,
+  the riff daemon puts the sum of its claim on the issue of its item,
+  as a release does: for a work claim and for a verify claim. The
+  claim counts from the start of the container to its end. The report
+  never fails or delays the end of the session. The daemon log has its
+  line.
+- **01M588N8AYSGVWFW05A5RV976H** The daemon reads the transcripts of a
+  container session in the Claude folder of the session:
+  `claude/projects/*/SESSION.jsonl`, with the riff session ID.
 - **01M3Y1YP3QMKS6B35PJ42KNYXX** `riff usage ISSUE` sums the comments
   of the issue with the mark. It counts a claim one time: of two
   comments of one person for one claim, the later one counts. It shows

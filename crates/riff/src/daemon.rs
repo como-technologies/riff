@@ -158,6 +158,12 @@
 //! container ends (01M4ZHT03MAH0B5Q4S6GZC5JRP). A [`Then::Stop`] stops
 //! the container: the relay gives `claude` the SIGTERM.
 //!
+//! At the end of each session but the lead, the daemon sums the tokens
+//! of its claim from the transcripts in its Claude folder, and puts the
+//! sum on the issue of its item in the background
+//! ([`crate::usage::Meter::session_ended`], 01M588N85Z94PX1ZP0BDXTPX83).
+//! The marks and the `gh` come from [`World::meter`].
+//!
 //! The daemon keeps each line that it says about a session, for example
 //! why it stops the container. A new follower gets each one in its place
 //! among the events (01M57GCZXZZRPGGWC5HZS49DGM). After the end, the
@@ -363,8 +369,8 @@ use crate::room::{Limit, Room, Slot};
 use crate::run::{Scrub, user_line};
 use crate::runtime::{Bind, End, Env, Runtime, SessionSpec, Source};
 use crate::session_relay::Up;
-use crate::text;
 use crate::wave::{Job, Wave, World};
+use crate::{text, usage};
 use riff_client::sessions::{Live, Phase};
 
 pub mod facts;
@@ -2557,11 +2563,47 @@ impl<R: Runtime + 'static> Daemon<R> {
         if record.terminal {
             let world = self.world.clone();
             tokio::spawn(async move { world.leave(&record).await });
+        } else {
+            self.count_tokens(&record);
         }
         let followers = self.close(&owned, ended);
         for out in followers {
             out.say(Say::Ended(ended));
         }
+    }
+
+    /// Puts the tokens of the ended container session of `record` on the
+    /// issue of its item, from its transcripts in its Claude folder
+    /// (01M588N85Z94PX1ZP0BDXTPX83). It sums the claim at once, and
+    /// writes the comment in the background: the end of the session never
+    /// waits for `gh`, and never fails by the report
+    /// (01M3Y1YP39VFX6GH33H7B8A8KR). The line of the report goes to the
+    /// log of the daemon.
+    fn count_tokens(&self, record: &Record) {
+        let Some(thread) = record.me.default_thread().map(|t| t.to_string()) else {
+            return;
+        };
+        let Some(meter) = self.world.meter(&thread) else {
+            return;
+        };
+        let live = record.live.clone();
+        let transcripts = usage::transcripts_in(&record.folder.join("claude"), &live.session);
+        let claim = (thread.as_str(), live.item.as_str());
+        let from_ms = u64::try_from(live.since_ms).unwrap_or(0);
+        let Some(ended) =
+            meter.session_ended(&live.session, claim, from_ms, &transcripts, usage::now_ms())
+        else {
+            return;
+        };
+        tokio::task::spawn_blocking(move || {
+            let line = match ended {
+                Ok(claim) => {
+                    usage::reported(&claim, &usage::report(&meter.gh, &live.session, &claim))
+                }
+                Err(e) => format!("riff cannot count the tokens of {}: {e}.", live.item),
+            };
+            println!("riff daemon: {}: {line}", live.name);
+        });
     }
 
     /// Ends the ownership of the session `owned`, which ended as `ended`:
@@ -4738,6 +4780,8 @@ mod tests {
         gh: Option<crate::pr::Gh>,
         gate: Option<Arc<tokio::sync::Semaphore>>,
         watches: Mutex<Vec<mpsc::UnboundedSender<Wake>>>,
+        /// The marks and the `gh` of [`World::meter`].
+        meter: Option<(PathBuf, crate::pr::Gh)>,
     }
 
     impl Server {
@@ -4754,6 +4798,15 @@ mod tests {
             Server {
                 gh: Some(gh),
                 ..Server::default()
+            }
+        }
+
+        /// The same forge, with the marks in `dir` and `gh` for the tokens
+        /// of each container session.
+        pub(super) fn with_meter(self, dir: &Path, gh: crate::pr::Gh) -> Server {
+            Server {
+                meter: Some((dir.to_owned(), gh)),
+                ..self
             }
         }
 
@@ -4855,6 +4908,11 @@ mod tests {
                 self.note(format!("finished {}", record.live.item));
                 Ok(Vec::new())
             })
+        }
+
+        fn meter(&self, _: &str) -> Option<crate::usage::Meter> {
+            let (dir, gh) = self.meter.clone()?;
+            Some(crate::usage::Meter { dir, gh })
         }
 
         fn fate<'a>(
@@ -5237,6 +5295,147 @@ mod tests {
                 failed: false
             }))
         );
+    }
+
+    /// A fake `gh` in `dir`: a POST of a comment adds its body to the
+    /// file `posted`. With `down`, each call notes itself in the file
+    /// `tried` and fails.
+    fn usage_gh(dir: &Path, down: bool) -> crate::pr::Gh {
+        let script = match down {
+            true => {
+                "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/tried\"\necho 'you are not logged in' >&2\nexit 1\n"
+            }
+            false => concat!(
+                "#!/bin/sh\n",
+                "if [ \"$1 $2 $3\" = \"api -X POST\" ]; then cat \"$7\" >> \"$(dirname \"$0\")/posted\"; fi\n",
+            ),
+        };
+        crate::pr::Gh::at(isolated::write_program(dir.join("gh"), script))
+    }
+
+    /// Runs one turn of the container session `name` of `item` on a
+    /// daemon with the marks in `marks` and `gh`: `claude` writes one
+    /// reply with tokens in the transcript of the session, in its Claude
+    /// folder. Gives how the session ended.
+    async fn a_session_with_tokens(
+        name: &str,
+        item: &str,
+        marks: &Path,
+        gh: crate::pr::Gh,
+    ) -> Ended {
+        let server = Arc::new(Server::default().with_meter(marks, gh));
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let start = here.start(name, item);
+        let project = start.folder.join("claude/projects/-data-clone");
+        let transcript = project.join(format!("{}.jsonl", start.session));
+        let (mut client, name) = here.started(start).await;
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 0, false).await;
+        assert!(matches!(relay.next().await, Say::Input { .. }));
+        std::fs::create_dir_all(&project).unwrap();
+        // A reply counts from the start of the claim to before its end.
+        std::thread::sleep(Duration::from_millis(5));
+        let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let reply = serde_json::json!({
+            "type": "assistant",
+            "timestamp": at,
+            "message": {
+                "id": "m1",
+                "model": "claude-opus-5-5",
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 20,
+                    "cache_creation_input_tokens": 300,
+                    "cache_read_input_tokens": 4000,
+                },
+            },
+        });
+        std::fs::write(&transcript, format!("{reply}\n")).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        for (seq, line) in (1..).zip(TURN) {
+            relay.event(seq, line).await;
+        }
+        relay.exit(4, 0).await;
+        match to_the_end(&mut client).await.1 {
+            Some(Say::Ended(ended)) => ended,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// 01M588N85Z94PX1ZP0BDXTPX83: at the end of a container session,
+    /// the daemon puts the tokens of its claim on the issue, as one
+    /// comment, for a work claim and for a verify claim.
+    #[tokio::test]
+    async fn the_end_of_a_container_session_puts_the_tokens_of_its_claim_on_the_issue() {
+        use crate::usage::Kind;
+        let claims = [
+            ("issue-12", Kind::Work, "work"),
+            ("verify-issue-12", Kind::Verify, "verify"),
+        ];
+        for (item, of, kind) in claims {
+            let (bin, marks) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+            let gh = usage_gh(bin.path(), false);
+            let name = format!("riff-{item}-1a2b3c4d");
+            let ended = a_session_with_tokens(&name, item, marks.path(), gh).await;
+            assert!(!ended.failed);
+            let posted = bin.path().join("posted");
+            until(|| posted.exists()).await;
+            // The fake keeps the body that `gh api --input` sends.
+            let sent: Value =
+                serde_json::from_str(&std::fs::read_to_string(&posted).unwrap()).unwrap();
+            let comment = sent["body"].as_str().unwrap().to_owned();
+            let report = crate::usage::Report::parse(&comment).expect(&comment);
+            assert_eq!(report.item, item);
+            assert_eq!(report.kind, of);
+            // The first 8 characters of the session ID.
+            let short = &name[..8];
+            assert_eq!(report.session, short);
+            assert_eq!(
+                report.models["claude-opus-5-5"],
+                crate::usage::Tokens {
+                    input: 1,
+                    output: 20,
+                    cache_write: 300,
+                    cache_read: 4000
+                }
+            );
+            assert!(comment.starts_with(&format!("riff usage: {item}, {kind}, session {short}, ")));
+            assert_eq!(comment.matches("riff:usage").count(), 1, "{comment}");
+        }
+    }
+
+    /// 01M3Y1YP39VFX6GH33H7B8A8KR: a `gh` that fails does not fail the
+    /// end of a container session. The sum stays in the marks.
+    #[tokio::test]
+    async fn a_gh_that_fails_keeps_the_tokens_of_a_container_session_in_the_marks() {
+        let (bin, marks) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let gh = usage_gh(bin.path(), true);
+        let ended =
+            a_session_with_tokens("riff-issue-12-1a2b3c4d", "issue-12", marks.path(), gh).await;
+        assert_eq!(
+            ended,
+            Ended {
+                code: Some(0),
+                failed: false
+            }
+        );
+        let session = "riff-issue-12-1a2b3c4d-session";
+        until(|| {
+            crate::usage::load(marks.path(), session)
+                .claims
+                .iter()
+                .any(|c| c.to_ms.is_some())
+        })
+        .await;
+        let claims = crate::usage::load(marks.path(), session).claims;
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].item, "issue-12");
+        assert_eq!(claims[0].thread, "como-technologies/riff");
+        assert_eq!(crate::usage::total(&claims[0].models).total(), 4321);
+        // The daemon tried gh, and wrote no comment.
+        until(|| bin.path().join("tried").exists()).await;
+        assert!(!bin.path().join("posted").exists());
     }
 
     /// The record of the session `name` on disk.
