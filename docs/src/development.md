@@ -280,7 +280,7 @@ not compare the wall clock with a tight limit. It measures a
 
 ```mermaid
 flowchart LR
-    W[wall time over the limit] --> C{CPU pressure 10 % or more?}
+    W[wall time over the limit] --> C{CPU, IO or memory pressure 10 % or more?}
     C -- yes --> S[slow under load: pass until 60 s]
     C -- no --> F[fail]
 ```
@@ -302,8 +302,8 @@ while !log().contains("listens on") {
 ```
 
 When a check passes only because of the load, the test prints one
-line `slow under load` with the CPU pressure. To see it, run the test
-with its output:
+line `slow under load` with the highest pressure: CPU, IO or memory.
+To see it, run the test with its output:
 
 ```sh
 cargo test -p riff --test all hosts:: -- --nocapture 2>&1 | grep 'slow under load'

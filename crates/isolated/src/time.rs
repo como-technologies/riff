@@ -9,7 +9,7 @@
 //!
 //! | To check | Use | It fails when |
 //! |---|---|---|
-//! | A wait for a fact: a line, a message, a file | [`Span::within`], [`in_time`] | the wall clock passes the limit and the CPU pressure is low, or the wall clock passes [`HANG`] |
+//! | A wait for a fact: a line, a message, a file | [`Span::within`], [`in_time`] | the wall clock passes the limit and the pressure is low, or the wall clock passes [`HANG`] |
 //! | A step that returns at once | [`Span::within`] after the step | the same |
 //!
 //! A check never passes on a low CPU time: a step that waits, for a
@@ -17,12 +17,15 @@
 //! [`Span::cpu`] goes in the message of a failed check, so the log
 //! shows whether the step computed or waited.
 //!
-//! The CPU pressure is the share of the wall time of the span in which
-//! a task of the machine waited for a CPU: the `some` line of
-//! `/proc/pressure/cpu`. When it is [`PRESSURE_LIMIT`] or more, the
-//! span is slow under load: a check prints `slow under load` one time,
-//! and passes until [`HANG`]. A system with no pressure file has no
-//! load, so the plain limit holds.
+//! The pressure of a resource is the share of the wall time of the span
+//! in which a task of the machine waited for it: the `some` line of its
+//! file in `/proc/pressure`. A span reads each of [`RESOURCES`]: the
+//! CPU, the IO and the memory. A step that waits for a busy disk uses no
+//! CPU time, and the CPU pressure stays low (01M56QW660NSKW0HC5W518EZZQ).
+//! When the highest pressure is [`PRESSURE_LIMIT`] or more, the span is
+//! slow under load: a check prints `slow under load` one time, and
+//! passes until [`HANG`]. A system with no pressure file has no load, so
+//! the plain limit holds.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -30,7 +33,7 @@
 //!     B -- yes --> P[pass]
 //!     B -- no --> H{wall under HANG?}
 //!     H -- no --> F[fail: a hang]
-//!     H -- yes --> L{CPU pressure over the limit?}
+//!     H -- yes --> L{CPU, IO or memory pressure over the limit?}
 //!     L -- yes --> S[print slow under load, pass]
 //!     L -- no --> F2[fail: the logic is slow]
 //! ```
@@ -51,20 +54,39 @@ use nix::sys::resource::{UsageWho, getrusage};
 /// hang, also under load (01M49HCWH5HR0GPKHXKYZTXPW3).
 pub const HANG: Duration = Duration::from_secs(60);
 
-/// The CPU pressure from which a span is slow under load: a task of the
-/// machine waited for a CPU in 10 % of the wall time.
+/// The pressure from which a span is slow under load: a task of the
+/// machine waited for a resource in 10 % of the wall time.
 pub const PRESSURE_LIMIT: f64 = 0.10;
 
-/// The file of the CPU pressure of the machine.
-pub const PRESSURE_FILE: &str = "/proc/pressure/cpu";
+/// The dir of the pressure files of the machine.
+pub const PRESSURE_DIR: &str = "/proc/pressure";
+
+/// The resources whose pressure a span reads: the name of the file in
+/// [`PRESSURE_DIR`], and the name in a message.
+pub const RESOURCES: [(&str, &str); 3] = [("cpu", "CPU"), ("io", "IO"), ("memory", "memory")];
+
+/// The highest pressure of a span, and its resource.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pressure {
+    /// The name of the resource in a message, from [`RESOURCES`].
+    pub resource: &'static str,
+    /// The share of the wall time in which a task waited, from 0 to 1.
+    pub share: f64,
+}
+
+impl std::fmt::Display for Pressure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} pressure {:.0} %", self.resource, self.share * 100.0)
+    }
+}
 
 /// A span of time in a test, from [`Span::start`].
 #[derive(Debug)]
 pub struct Span {
     wall: Instant,
     cpu: Duration,
-    file: PathBuf,
-    stall: Option<Duration>,
+    dir: PathBuf,
+    stalls: [Option<Duration>; RESOURCES.len()],
     told: AtomicBool,
 }
 
@@ -77,18 +99,18 @@ impl Default for Span {
 impl Span {
     /// Starts a span now.
     pub fn start() -> Span {
-        Span::with_pressure_file(PRESSURE_FILE)
+        Span::with_pressure_dir(PRESSURE_DIR)
     }
 
-    /// Starts a span that reads the CPU pressure from `file`, for a
-    /// test of the helper.
-    pub fn with_pressure_file(file: impl AsRef<Path>) -> Span {
-        let file = file.as_ref().to_owned();
+    /// Starts a span that reads the pressure files in `dir`, for a test
+    /// of the helper.
+    pub fn with_pressure_dir(dir: impl AsRef<Path>) -> Span {
+        let dir = dir.as_ref().to_owned();
         Span {
-            stall: stall_in(&file),
+            stalls: stalls_in(&dir),
             cpu: cpu_now(),
             wall: Instant::now(),
-            file,
+            dir,
             told: AtomicBool::new(false),
         }
     }
@@ -117,41 +139,53 @@ impl Span {
         cpu_now().saturating_sub(self.cpu)
     }
 
-    /// The CPU pressure since the start: the share of the wall time in
-    /// which a task of the machine waited for a CPU, from 0 to 1. `None`
-    /// when the system has no pressure file.
+    /// The highest pressure since the start, of each of [`RESOURCES`]
+    /// that has a file: the share of the wall time in which a task of
+    /// the machine waited for the resource. `None` when the system has
+    /// no pressure file.
     ///
     /// ```
     /// let dir = tempfile::tempdir()?;
-    /// let file = dir.path().join("cpu");
     /// let line = |total: u64| format!("some avg10=0.00 avg60=0.00 avg300=0.00 total={total}\n");
-    /// std::fs::write(&file, line(1_000_000))?;
-    /// let span = isolated::Span::with_pressure_file(&file);
+    /// std::fs::write(dir.path().join("cpu"), line(1_000_000))?;
+    /// std::fs::write(dir.path().join("io"), line(1_000_000))?;
+    /// let span = isolated::Span::with_pressure_dir(dir.path());
     /// std::thread::sleep(std::time::Duration::from_millis(100));
-    /// // A task waited for a CPU for 1 s, more than the wall time.
-    /// std::fs::write(&file, line(2_000_000))?;
-    /// assert_eq!(span.pressure(), Some(1.0));
+    /// // A task waited for IO for 1 s, more than the wall time. No task
+    /// // waited for a CPU.
+    /// std::fs::write(dir.path().join("io"), line(2_000_000))?;
+    /// let pressure = span.pressure().unwrap();
+    /// assert_eq!((pressure.resource, pressure.share), ("IO", 1.0));
+    /// assert_eq!(pressure.to_string(), "IO pressure 100 %");
     /// assert!(span.under_load());
     ///
-    /// let none = isolated::Span::with_pressure_file(dir.path().join("none"));
+    /// let none = isolated::Span::with_pressure_dir(dir.path().join("none"));
     /// assert_eq!(none.pressure(), None);
     /// assert!(!none.under_load());
     /// # Ok::<(), std::io::Error>(())
     /// ```
-    pub fn pressure(&self) -> Option<f64> {
-        let stalled = stall_in(&self.file)?.saturating_sub(self.stall?);
+    pub fn pressure(&self) -> Option<Pressure> {
         let wall = self.wall().as_secs_f64();
-        Some(if wall > 0.0 {
-            (stalled.as_secs_f64() / wall).min(1.0)
-        } else {
-            0.0
-        })
+        RESOURCES
+            .iter()
+            .zip(stalls_in(&self.dir))
+            .zip(self.stalls)
+            .filter_map(|(((_, resource), now), start)| {
+                let stalled = now?.saturating_sub(start?).as_secs_f64();
+                let share = if wall > 0.0 {
+                    (stalled / wall).min(1.0)
+                } else {
+                    0.0
+                };
+                Some(Pressure { resource, share })
+            })
+            .max_by(|a, b| a.share.total_cmp(&b.share))
     }
 
-    /// True when the CPU pressure since the start is [`PRESSURE_LIMIT`]
-    /// or more.
+    /// True when the highest pressure since the start is
+    /// [`PRESSURE_LIMIT`] or more.
     pub fn under_load(&self) -> bool {
-        self.pressure().is_some_and(|p| p >= PRESSURE_LIMIT)
+        self.pressure().is_some_and(|p| p.share >= PRESSURE_LIMIT)
     }
 
     /// True while a wait for a fact is in time: the wall time is under
@@ -164,7 +198,7 @@ impl Span {
     /// let dir = tempfile::tempdir()?;
     /// let file = dir.path().join("cpu");
     /// std::fs::write(&file, "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")?;
-    /// let span = isolated::Span::with_pressure_file(&file);
+    /// let span = isolated::Span::with_pressure_dir(dir.path());
     /// assert!(span.within(Duration::from_secs(1)));
     /// std::thread::sleep(Duration::from_millis(20));
     /// // No load: the limit holds.
@@ -188,14 +222,13 @@ impl Span {
         let Some(pressure) = self.pressure() else {
             return false;
         };
-        if pressure < PRESSURE_LIMIT {
+        if pressure.share < PRESSURE_LIMIT {
             return false;
         }
         if !self.told.swap(true, Ordering::Relaxed) {
             eprintln!(
                 "slow under load: {wall:.1?} over the limit {limit:?}, \
-                 CPU pressure {:.0} %, CPU time {:.1?}",
-                pressure * 100.0,
+                 {pressure}, CPU time {:.1?}",
                 self.cpu()
             );
         }
@@ -210,15 +243,16 @@ pub struct Late {
     pub limit: Duration,
     /// The wall time of the wait.
     pub wall: Duration,
-    /// The CPU pressure of the wait, when the system has a pressure file.
-    pub pressure: Option<f64>,
+    /// The highest pressure of the wait, when the system has a pressure
+    /// file.
+    pub pressure: Option<Pressure>,
 }
 
 impl std::fmt::Display for Late {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "no result in {:.1?} (limit {:?}", self.wall, self.limit)?;
         match self.pressure {
-            Some(p) => write!(f, ", CPU pressure {:.0} %)", p * 100.0),
+            Some(p) => write!(f, ", {p})"),
             None => write!(f, ")"),
         }
     }
@@ -277,9 +311,9 @@ fn duration(t: nix::sys::time::TimeVal) -> Duration {
     Duration::from_secs(t.tv_sec().max(0) as u64) + Duration::from_micros(t.tv_usec().max(0) as u64)
 }
 
-/// The total stall time of the `some` line of a pressure file.
-fn stall_in(file: &Path) -> Option<Duration> {
-    stall(&std::fs::read_to_string(file).ok()?)
+/// The total stall time of each of [`RESOURCES`] in `dir`.
+fn stalls_in(dir: &Path) -> [Option<Duration>; RESOURCES.len()] {
+    RESOURCES.map(|(file, _)| stall(&std::fs::read_to_string(dir.join(file)).ok()?))
 }
 
 /// The total stall time of the `some` line of a pressure text, in
@@ -297,4 +331,38 @@ pub fn stall(text: &str) -> Option<Duration> {
         .split_whitespace()
         .find_map(|field| field.strip_prefix("total="))?;
     total.parse().ok().map(Duration::from_micros)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(total: u64) -> String {
+        format!("some avg10=0.00 avg60=0.00 avg300=0.00 total={total}\nfull total=0\n")
+    }
+
+    #[test]
+    fn the_pressure_is_the_highest_of_the_resources() {
+        let dir = tempfile::tempdir().unwrap();
+        for (file, _) in RESOURCES {
+            std::fs::write(dir.path().join(file), line(0)).unwrap();
+        }
+        let span = Span::with_pressure_dir(dir.path());
+        std::thread::sleep(Duration::from_millis(50));
+        std::fs::write(dir.path().join("cpu"), line(1_000)).unwrap();
+        std::fs::write(dir.path().join("memory"), line(10_000_000)).unwrap();
+        let pressure = span.pressure().unwrap();
+        assert_eq!((pressure.resource, pressure.share), ("memory", 1.0));
+    }
+
+    #[test]
+    fn a_resource_with_no_file_does_not_count() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("io"), line(0)).unwrap();
+        let span = Span::with_pressure_dir(dir.path());
+        std::fs::write(dir.path().join("cpu"), line(10_000_000)).unwrap();
+        let pressure = span.pressure().unwrap();
+        assert_eq!(pressure.resource, "IO");
+        assert!(!span.under_load());
+    }
 }
