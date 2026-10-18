@@ -1215,11 +1215,9 @@ impl Tools {
     /// while this session is the lead (01M421QPKWPX00X24F8V6DT8Z3). See
     /// [`crate::monitor`]. After each look, also with the monitor off,
     /// it sends the numbers of this machine to the server when its limit
-    /// of workers is more than 0 ([`HostStatus::of_this_machine`],
+    /// of workers is more than 0 ([`crate::host::of_this_machine`],
     /// 01M515KSWVGCBS76AWZV74TJQ3). So `riff top` on each machine shows
     /// them, also with no `riff workers host` here.
-    ///
-    /// [`HostStatus::of_this_machine`]: crate::host::HostStatus::of_this_machine
     pub fn monitor(&self) -> tokio::task::JoinHandle<()> {
         let tools = self.clone();
         tokio::spawn(async move {
@@ -1259,7 +1257,7 @@ impl Tools {
     /// read of tmux and of the disk can block.
     async fn send_numbers(&self, me: &SessionUri) {
         let dir = self.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        let read = move || crate::host::HostStatus::of_this_machine(Some(&dir));
+        let read = move || crate::host::of_this_machine(Some(&dir));
         let Ok(Some(numbers)) = tokio::task::spawn_blocking(read).await else {
             return;
         };

@@ -760,9 +760,10 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::daemon::tests::{Here, IMAGE, Server, until};
-    use crate::daemon::{Ask, Live, QUIET_LIMIT, Record, ask_done};
+    use crate::daemon::{Ask, QUIET_LIMIT, Record, ask_done};
     use crate::runtime::Fake;
     use crate::wave::{Job, Wave, Work, World};
+    use riff_client::sessions::Live;
 
     /// A daemon whose world gives the fate of each issue of `fates`.
     async fn here(fates: &[(u64, Fate)]) -> (Here, Arc<Server>) {

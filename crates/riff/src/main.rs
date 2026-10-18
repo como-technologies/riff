@@ -15,6 +15,7 @@ use riff::{
 };
 use riff_client::api::{self, Api, DEFAULT_SERVER, PauseScope, follow};
 use riff_client::link::STREAM_RETRY;
+use riff_client::sessions::Sessions;
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
@@ -736,7 +737,7 @@ enum ByArg {
     Repo,
 }
 
-impl From<ByArg> for riff::top::By {
+impl From<ByArg> for riff_client::sessions::By {
     fn from(by: ByArg) -> Self {
         match by {
             ByArg::Person => Self::Person,
@@ -2337,7 +2338,7 @@ async fn main() -> Result<()> {
             repo,
             by,
         } => {
-            let show = riff::top::Show {
+            let show = riff_client::sessions::Show {
                 user,
                 host,
                 repo,
@@ -2513,7 +2514,7 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             if let Some(jobs) = jobs {
                 settings::set_workers_jobs(&path, *jobs)?;
             }
-            let cores = riff::limits::Cores::here(&riff::machine::Machine::here());
+            let cores = riff::limits::Cores::here(&riff::machine::here());
             let dir = riff::local::dir().map(|dir| riff::jobserver::dir(&dir));
             let workers = dir.as_deref().map_or(0, riff::jobserver::workers);
             let limits = riff::limits::Limits::of(&path, &cores, workers)?;
@@ -2548,7 +2549,7 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
                 settings::set_workers_memory(&path, *gb)?;
             }
             let setting = settings::workers_memory(&path)?;
-            let machine = riff::machine::Machine::here();
+            let machine = riff::machine::here();
             anstream::println!(
                 "{}",
                 view::workers_memory(
@@ -2568,7 +2569,7 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
                 "{}",
                 view::workers_floor(
                     settings::workers_floor(&path)?,
-                    riff::machine::Machine::here().avail_gb,
+                    riff::machine::here().avail_gb,
                     &path
                 )
             );
@@ -2637,7 +2638,7 @@ async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<
             if let Some(load) = load {
                 settings::set_monitor_load(&path, *load)?;
             }
-            let machine = riff::machine::Machine::here();
+            let machine = riff::machine::here();
             let saved = local::dir().and_then(|dir| riff::monitor::Saved::read(&dir));
             anstream::print!(
                 "{}",
@@ -3211,7 +3212,7 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
     let host = me
         .as_ref()
         .map_or_else(|_| identity::this_host(), |me| me.place().host().to_owned());
-    let machine = riff::machine::Machine::here();
+    let machine = riff::machine::here();
     anstream::println!(
         "{}",
         view::host_heading(
@@ -3223,8 +3224,8 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
             riff::deaths::here()
         )
     );
-    let disk = identity::main_worktree(&identity::working_dir()?)
-        .and_then(|main| riff::disk::Disk::here(&main));
+    let disk =
+        identity::main_worktree(&identity::working_dir()?).and_then(|main| riff::disk::here(&main));
     anstream::print!("{}", view::disk_line(disk.as_ref()));
     if let Ok(root) = riff::temp::root(&settings)
         && root.is_dir()
@@ -3239,7 +3240,7 @@ async fn list_workers(long: bool, server: &str) -> Result<()> {
         view::cache_line(cache.as_ref().map(|c| (c, stats.as_ref())))
     );
     let workers = u16::try_from(panes.len()).unwrap_or(u16::MAX);
-    let numbers = riff::monitor::Numbers::here(&settings, &machine, workers)?;
+    let numbers = riff::monitor::numbers_here(&settings, &machine, workers)?;
     let ago = local::dir()
         .and_then(|dir| riff::monitor::Saved::read(&dir))
         .map(|s| riff::monitor::now_secs().saturating_sub(s.at));
@@ -3880,11 +3881,12 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
             }
             Err(_) => continue,
         };
-        let at = i64::try_from(checked.message.at_ms)
+        let line = riff_client::threads::Line::of(&checked, thread);
+        let at = i64::try_from(line.at_ms)
             .ok()
             .and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single())
             .unwrap_or_else(chrono::Local::now);
-        let block = text::block(&checked, &at, last_day, textwrap::termwidth());
+        let block = text::block(&line, &at, last_day, textwrap::termwidth());
         last_day = Some(at.date_naive());
         anstream::println!("{block}");
     }
@@ -3902,7 +3904,7 @@ async fn top(
     api: &Api,
     me: &SessionUri,
     thread: Option<ThreadName>,
-    show: &riff::top::Show,
+    show: &riff_client::sessions::Show,
     once: bool,
 ) -> Result<()> {
     if once {
@@ -3917,10 +3919,10 @@ async fn top(
 /// The loop of [`top`].
 /// The numbers of the machine of `riff top`, when it runs workers: its
 /// limit of workers is more than 0 (01M515KST9Z0B4B1D4HJV3Y2CM).
-fn machine_here(me: &SessionUri) -> Option<riff::top::Machine> {
+fn machine_here(me: &SessionUri) -> Option<riff_client::machines::Host> {
     let dir = identity::working_dir().ok();
-    let status = riff::host::HostStatus::of_this_machine(dir.as_deref())?;
-    Some(riff::top::Machine {
+    let status = riff::host::of_this_machine(dir.as_deref())?;
+    Some(riff_client::machines::Host {
         user: me.who().user().to_owned(),
         host: me.place().host().to_owned(),
         status,
@@ -3931,7 +3933,7 @@ async fn draw_top(
     api: &Api,
     me: &SessionUri,
     thread: Option<ThreadName>,
-    show: &riff::top::Show,
+    show: &riff_client::sessions::Show,
     once: bool,
 ) -> Result<()> {
     use std::io::{IsTerminal, Write};
@@ -3946,7 +3948,7 @@ async fn draw_top(
             repos
                 .into_iter()
                 .map(|repo| {
-                    let issues = riff::top::Issues::from_gh(&gh, &repo);
+                    let issues = riff::top::issues_from_gh(&gh, &repo);
                     (repo, issues)
                 })
                 .collect::<Vec<_>>()
@@ -3966,7 +3968,10 @@ async fn draw_top(
             let pauses = api.pauses(me).await?;
             let mut who = api.roster(me, false).await?;
             riff::state::fill(&mut who.sessions, pauses.state);
-            anyhow::Ok((pauses, who))
+            // `riff top` asks no riff daemon: the model has no container
+            // session (01M53NGW6F5HP1DZ9QRGP50MGT, 01M56Y8KD05JH2J7AMK636WGT7).
+            let sessions = Sessions::new(std::mem::take(&mut who.sessions), Vec::new());
+            anyhow::Ok((pauses, who, sessions))
         };
         // Each call of a look has the budget of a short command
         // (01M4A803Z4Q0KX6NT1KC6QR43H).
@@ -3982,26 +3987,26 @@ async fn draw_top(
             Err(e) => return Err(e),
         };
         // A fault with no good look ended the loop above.
-        let Some(((pauses, who), at)) = &last else {
+        let Some(((pauses, who, sessions), at)) = &last else {
             continue;
         };
         if fetched.is_none_or(|t| t.elapsed() >= riff::top::ISSUES_TTL) {
             // A `gh` that fails keeps the last issues of its repository
             // (01M3ZC09FA9DZPTHK31XECZ566).
-            let repos = riff::top::board_repos(&who.sessions, show, repo.as_deref());
+            let repos = riff_client::waves::board_repos(sessions, show, repo.as_deref());
             let read = fetch(repos).await?;
-            issues = riff::top::Issues::newest_each(std::mem::take(&mut issues), read);
+            issues = riff_client::waves::Issues::newest_each(std::mem::take(&mut issues), read);
             fetched = Some(Instant::now());
         }
         let now = chrono::Local::now();
         let fault = failed.map(|e| text::top_fault(&e.to_string(), api.base(), at, &now));
         let server = riff_client::link::server_build();
-        let machines = riff::top::machines(&who.sessions, machine_here(me));
+        let machines = riff_client::machines::machines(sessions, machine_here(me));
         let top = riff::top::Top {
             pauses,
             owner: &who.owner,
             server: server.as_ref(),
-            sessions: &who.sessions,
+            sessions,
             people: &who.people,
             issues: &issues,
             repo: repo.as_deref(),

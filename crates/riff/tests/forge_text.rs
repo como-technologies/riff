@@ -10,7 +10,7 @@ use std::path::Path;
 
 use riff::pr::{Gh, Verdict};
 use riff::rollout::{Milestone, Pull};
-use riff::top::Issues;
+use riff::top::parse_issues;
 
 /// The bad part of each text: it sets the title of the terminal,
 /// clears the line, and breaks the line.
@@ -88,7 +88,7 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
     );
 
     // The board of `riff top`: titles, the wave and the verifies.
-    let issues = Issues::parse(
+    let issues = parse_issues(
         &r#"[{"number":7,"title":"FixBAD it","milestone":{"title":"Wave 4: NBADew"}}]"#
             .replace("BAD", BAD),
     )

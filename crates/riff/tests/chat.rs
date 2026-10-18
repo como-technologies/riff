@@ -442,7 +442,7 @@ async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
     let thread = riff::chat::thread();
     let read = api.read(&lead_of("ann"), &thread, true).await.unwrap();
     let action = read.iter().find(|c| c.message.body == "/me waves").unwrap();
-    let shown = riff::text::message(action, &thread);
+    let shown = riff::text::message(&riff_client::threads::Line::of(action, &thread));
     assert!(shown.ends_with(": * brett@heron waves"), "{shown}");
 
     // On the wire, an action is a plain message: no new kind and no new

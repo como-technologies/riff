@@ -62,9 +62,10 @@ use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
 use crate::binary::{Follow, with_last, with_place};
 use crate::catch_up::{self, Seen, Start};
 use crate::style::{DIM, WARNING, styled};
-use crate::text::{ACTION, action_text, lost_messages, safe};
-use riff_client::api::{Api, Checked};
+use crate::text::{lost_messages, safe};
+use riff_client::api::Api;
 use riff_client::link::STREAM_RETRY;
+use riff_client::threads::{ACTION, Line, Sender};
 
 /// The name of the chat thread.
 pub const THREAD: &str = riff_core::name::CHAT;
@@ -196,47 +197,9 @@ pub fn unknown(name: &str) -> String {
     )
 }
 
-/// The name of the sender of a chat line, and true for a session. A
-/// person is `USER@HOST`. A verified lead is `USER's lead`. Each other
-/// session is `USER` and the first 8 characters of its session ID.
-///
-/// ```
-/// use riff_client::api::Checked;
-/// use riff_core::wire::{Kind, Message};
-///
-/// let from = |uri: &str, verified| Checked {
-///     message: Message {
-///         seq: 1,
-///         from: uri.parse().unwrap(),
-///         to: vec![],
-///         body: "hi".into(),
-///         at_ms: 0,
-///         kind: Kind::Message,
-///         sig: None,
-///         payload: None,
-///     },
-///     verified,
-/// };
-/// let lead = "riff://mike@thelio/o/r?session=4e54d4e5-c891&lead=true";
-/// let person = riff::chat::sender(&from("riff://mike@thelio", true));
-/// assert_eq!(person, ("mike@thelio".to_owned(), false));
-/// assert_eq!(riff::chat::sender(&from(lead, true)), ("mike's lead".to_owned(), true));
-/// assert_eq!(riff::chat::sender(&from(lead, false)), ("mike 4e54d4e5".to_owned(), true));
-/// ```
-pub fn sender(c: &Checked) -> (String, bool) {
-    let from = &c.message.from;
-    let user = from.who().user();
-    let name = match from.who().session() {
-        None => return (safe(&format!("{user}@{}", from.place().host())), false),
-        Some(_) if c.verified && from.lead() => format!("{user}'s lead"),
-        Some(id) => format!("{user} {}", id.chars().take(8).collect::<String>()),
-    };
-    (safe(&name), true)
-}
-
-/// One chat line for people. A date line comes first when the day of
+/// One chat line ([`Line`]) for people. A date line comes first when the day of
 /// `at` is not `last_day`. Then the time, the sender and the body: a
-/// person as `<USER@HOST>`, a session as `[NAME]` (see [`sender`]), and
+/// person as `<USER@HOST>`, a session as `[NAME]` (see [`Line::sender`]), and
 /// an action as `* NAME TEXT`. Each more line of the body is indented.
 /// The line has ANSI styles: print it through `anstream`. It removes
 /// each escape sequence from the body and the sender.
@@ -244,6 +207,7 @@ pub fn sender(c: &Checked) -> (String, bool) {
 /// ```
 /// use chrono::TimeZone;
 /// use riff_client::api::Checked;
+/// use riff_client::threads::Line;
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let message = Message {
@@ -258,12 +222,13 @@ pub fn sender(c: &Checked) -> (String, bool) {
 /// };
 /// let c = Checked { message, verified: true };
 /// let at = chrono::Utc.with_ymd_and_hms(2026, 9, 28, 14, 13, 0).unwrap();
+/// let chat = "chat".parse()?;
 /// let plain = |c: &Checked| {
-///     let line = riff::chat::line(c, &at, Some(at.date_naive()));
+///     let line = riff::chat::line(&Line::of(c, &chat), &at, Some(at.date_naive()));
 ///     anstream::adapter::strip_str(&line).to_string()
 /// };
 /// assert_eq!(plain(&c), "14:13 <mike@thelio> hi all");
-/// let first = riff::chat::line(&c, &at, None);
+/// let first = riff::chat::line(&Line::of(&c, &chat), &at, None);
 /// assert!(anstream::adapter::strip_str(&first).to_string().starts_with("2026-09-28\n14:13"));
 ///
 /// // A lead looks different from its person.
@@ -275,18 +240,18 @@ pub fn sender(c: &Checked) -> (String, bool) {
 /// assert_eq!(plain(&Checked { message: waves, verified: true }), "14:13 * mike@thelio waves");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn line<Tz: TimeZone>(c: &Checked, at: &DateTime<Tz>, last_day: Option<NaiveDate>) -> String
+pub fn line<Tz: TimeZone>(m: &Line, at: &DateTime<Tz>, last_day: Option<NaiveDate>) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
-    let m = &c.message;
     let mut out = String::new();
     if last_day != Some(at.date_naive()) {
         let _ = writeln!(out, "{}", styled(DIM, &at.format("%Y-%m-%d").to_string()));
     }
-    let (name, session) = sender(c);
+    let Sender { name, session } = m.sender();
+    let name = safe(&name);
     let name = styled(crate::style::session(&m.from), &name);
-    let (who, body) = match (action_text(&m.body), session) {
+    let (who, body) = match (m.action(), session) {
         (Some(text), _) => (format!("* {name}"), text),
         (None, false) => (format!("<{name}>"), m.body.as_str()),
         (None, true) => (format!("[{name}]"), m.body.as_str()),
@@ -352,7 +317,7 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
             .read_page(me, thread, true, Some(seq.saturating_sub(1)))
             .await?;
         if let Some(last) = read.first().filter(|c| c.message.seq == seq) {
-            day.line(last);
+            day.line(&Line::of(last, thread));
         }
     }
     // Connected first, then read: no line falls between the two
@@ -399,7 +364,7 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
                     screen.warn(&line);
                 }
                 match item {
-                    Ok(Seen::Message(c)) => screen.print(&day.line(&c)),
+                    Ok(Seen::Message(c)) => screen.print(&day.line(&Line::of(&c, thread))),
                     Ok(Seen::Lost(n)) => screen.warn(&styled(WARNING, &lost_messages(n))),
                     Err(_) => {}
                 }
@@ -582,13 +547,13 @@ fn clear_typed(line: &str) {
 struct Day(Option<NaiveDate>);
 
 impl Day {
-    /// The line of `c`, with a date line when its day is new.
-    fn line(&mut self, c: &Checked) -> String {
-        let at = i64::try_from(c.message.at_ms)
+    /// The chat line of `l`, with a date line when its day is new.
+    fn line(&mut self, l: &Line) -> String {
+        let at = i64::try_from(l.at_ms)
             .ok()
             .and_then(|ms| Local.timestamp_millis_opt(ms).single())
             .unwrap_or_else(Local::now);
-        let line = line(c, &at, self.0);
+        let line = line(l, &at, self.0);
         self.0 = Some(at.date_naive());
         line
     }

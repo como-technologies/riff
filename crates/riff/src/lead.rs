@@ -148,7 +148,8 @@ pub fn spec(facts: &Facts, repo: &str) -> SessionSpec {
 /// True when the daemon of `status` runs the session `name`.
 ///
 /// ```
-/// use riff::daemon::{Live, Phase, Status};
+/// use riff::daemon::Status;
+/// use riff_client::sessions::{Live, Phase};
 ///
 /// let live = Live {
 ///     name: "riff-lead-o-r".into(),

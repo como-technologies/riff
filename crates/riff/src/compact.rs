@@ -59,7 +59,7 @@ use serde::Deserialize;
 use crate::next::{Agent, ClaudeCode};
 use crate::pr::Gh;
 use crate::terminal::{Terminal, Tmux};
-use crate::top::wave_number;
+use riff_client::waves::wave_number;
 
 /// The start of the body of a handoff note.
 pub const HANDOFF: &str = "handoff:";

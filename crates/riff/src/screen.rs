@@ -17,8 +17,9 @@
 //! ```
 //!
 //! Each row is a session that the daemon of this machine owns
-//! ([`Row`]). The view shows no session of another daemon
-//! (01M53NGW6F5HP1DZ9QRGP50MGT).
+//! ([`Row`]): a container session of the sessions model of
+//! `riff-client` ([`Sessions`], 01M56Y8KD05JH2J7AMK636WGT7). The view
+//! shows no session of another daemon (01M53NGW6F5HP1DZ9QRGP50MGT).
 //!
 //! [`Screen`] holds the state of the view, and [`Screen::on_key`] turns
 //! a key into an [`Action`]: both have no terminal, so a test checks
@@ -52,9 +53,11 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Row as TableRow, Table, TableState};
 
-use crate::daemon::{self, Live, Phase, Status};
+use crate::daemon::{self, Status};
 use crate::runtime::Runtime;
 use crate::text;
+use riff_client::sessions::{Live, Phase, Sessions};
+use riff_core::wire::SessionInfo;
 
 /// How often the view asks the daemon for its status.
 pub const LOOK_EVERY: Duration = Duration::from_secs(1);
@@ -115,6 +118,9 @@ impl Row<'_> {
 pub struct Screen {
     /// The last status of the daemon, or why no daemon answers.
     status: Option<Result<Status, String>>,
+    /// The sessions model of the last status ([`Sessions`]): the view
+    /// draws its container sessions.
+    sessions: Sessions,
     /// The selected row of the sessions.
     selected: usize,
     /// A line for the person, after an action.
@@ -123,8 +129,22 @@ pub struct Screen {
 
 impl Screen {
     /// Takes the status of the daemon: `Err` says why no daemon answers.
-    /// The selection stays in the rows.
+    /// The selection stays in the rows. `riff view` asks no riff-server:
+    /// the model has no session of the server (01M53NGW6F5HP1DZ9QRGP50MGT).
     pub fn set(&mut self, status: Result<Status, String>) {
+        self.show(status, Vec::new());
+    }
+
+    /// Takes the status of the daemon and `server`, the sessions of
+    /// riff-server, in one sessions model (01M56Y8KD05JH2J7AMK636WGT7).
+    /// The view draws the container sessions of the model: a container
+    /// session that is also on the server is one row.
+    pub fn show(&mut self, status: Result<Status, String>, server: Vec<SessionInfo>) {
+        let containers = status
+            .as_ref()
+            .map(|s| s.sessions.clone())
+            .unwrap_or_default();
+        self.sessions = Sessions::new(server, containers);
         self.status = Some(status);
         let rows = self.rows().len();
         self.selected = self.selected.min(rows.saturating_sub(1));
@@ -186,10 +206,7 @@ impl Screen {
     /// The rows of the view, in order: the sessions of the daemon of
     /// this machine, each lead first, then the others, each by its name.
     pub fn rows(&self) -> Vec<Row<'_>> {
-        let Some(Ok(status)) = &self.status else {
-            return Vec::new();
-        };
-        let mut here: Vec<&Live> = status.sessions.iter().collect();
+        let mut here: Vec<&Live> = self.sessions.containers().collect();
         here.sort_by_key(|s| (s.phase != Phase::Terminal, s.name.clone()));
         here.into_iter().map(Row).collect()
     }
@@ -544,6 +561,85 @@ mod tests {
             text::view_waiting(&["riff-issue-13-2b3c4d5e".into()])
         );
         assert_eq!(lines[7], "a note");
+    }
+
+    /// 01M56Y8KD05JH2J7AMK636WGT7: one sessions model holds a session of
+    /// riff-server, a container session of the daemon, and one entry for
+    /// a container session that is on riff-server too. `riff top --once`
+    /// draws the sessions on the server and `riff view` the containers:
+    /// each draws the shared session once.
+    #[test]
+    fn riff_top_and_riff_view_draw_one_sessions_model() {
+        let on_server = |uri: &str, container: bool| -> SessionInfo {
+            serde_json::from_value(serde_json::json!({
+                "uri": uri, "live": true, "container": container, "state": "busy",
+            }))
+            .unwrap()
+        };
+        let in_container = |name: &str, item: &str, id: &str, phase: Phase| Live {
+            session: id.into(),
+            ..live(name, item, phase, "")
+        };
+        let server = vec![
+            on_server("riff://mike@thelio/o/r?session=aaaa1111&lead=true", false),
+            on_server(
+                "riff://mike@thelio/o/r?session=bbbb2222&claim=issue-12",
+                true,
+            ),
+        ];
+        let containers = vec![
+            in_container(
+                "riff-issue-12-bbbb2222",
+                "issue-12",
+                "bbbb2222",
+                Phase::Holds,
+            ),
+            in_container(
+                "riff-issue-13-cccc3333",
+                "issue-13",
+                "cccc3333",
+                Phase::Works,
+            ),
+        ];
+        let mut screen = Screen::default();
+        screen.show(Ok(status(containers)), server.clone());
+        let model = &screen.sessions;
+        let ids: Vec<Option<&str>> = model.entries.iter().map(|e| e.id()).collect();
+        assert_eq!(ids, [Some("aaaa1111"), Some("bbbb2222"), Some("cccc3333")]);
+        assert_eq!(model.entries[1].phase(), Some(Phase::Holds));
+        assert!(model.entries[1].server.is_some());
+
+        // `riff view`: the two containers, one row each.
+        let lines = drawn(&screen, 110, 8);
+        let count = |text: &str| lines.iter().filter(|l| l.contains(text)).count();
+        assert_eq!(count("riff-issue-12-bbbb2222"), 1, "{lines:#?}");
+        assert_eq!(count("riff-issue-13-cccc3333"), 1, "{lines:#?}");
+        assert_eq!(count("aaaa1111"), 0, "{lines:#?}");
+
+        // `riff top --once`: the two sessions on the server, one row each,
+        // as with no container session.
+        let top_of = |sessions: &Sessions| {
+            let running = riff_core::wire::RiffState::Running.into();
+            let top = crate::top::Top {
+                pauses: &running,
+                owner: &riff_core::wire::RiffOwner::NoSignIn,
+                server: None,
+                sessions,
+                people: &[],
+                issues: &Default::default(),
+                repo: None,
+                show: &Default::default(),
+                width: 100,
+                fault: None,
+                machines: &[],
+            };
+            anstream::adapter::strip_str(&top.view()).to_string()
+        };
+        let text = top_of(model);
+        assert_eq!(text.matches("aaaa1111").count(), 1, "{text}");
+        assert_eq!(text.matches("bbbb2222").count(), 1, "{text}");
+        assert!(!text.contains("cccc3333"), "{text}");
+        assert_eq!(text, top_of(&Sessions::new(server, Vec::new())));
     }
 
     /// 01M53NGW6F5HP1DZ9QRGP50MGT: the view shows no session of another

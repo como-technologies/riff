@@ -15,10 +15,10 @@ use crate::plugin::{Connected, Statusline};
 use crate::pr::{Reported, Verdict};
 use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::selector::Selector;
 
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
-use riff_client::api::{Checked, Claimed, Inbox, Told};
+use riff_client::api::{Claimed, Inbox, Told};
+use riff_client::threads::{Line, Thread};
 use riff_core::wire::{
     AdminSet, FreeReply, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed,
     PauseInfo, Posted, ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState,
@@ -1409,7 +1409,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 /// closed items (01M509TJRBE2J7HYKKHRJ1ZFR0).
 ///
 /// ```
-/// use riff::waves::Milestone;
+/// use riff_client::waves::Milestone;
 ///
 /// let m = |title: &str, open, closed| Milestone {
 ///     number: 3,
@@ -1423,7 +1423,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 /// );
 /// assert_eq!(riff::text::waves_list(&[]), "The repository has no open wave.");
 /// ```
-pub fn waves_list(milestones: &[crate::waves::Milestone]) -> String {
+pub fn waves_list(milestones: &[riff_client::waves::Milestone]) -> String {
     if milestones.is_empty() {
         return "The repository has no open wave.".into();
     }
@@ -2527,16 +2527,18 @@ pub fn released_for(thread: &ThreadName, item: &str, holder: &str) -> String {
     format!("You released {item} in {thread} for the session {holder}. The item is free.")
 }
 
-/// One message of `thread`. The sender is short: its [`name`], and
-/// `lead=true` for a lead (01M3JPK85FT5CCQPF3WDCXSMDF). The start of its
-/// session ID lets an agent reply with `tell`. `who` gives the full
-/// URI. A post to each session of the repository of the thread shows
-/// `to all`. A status request says so. The line says whether the
-/// reader verified the sender (R199). The sender of a message that is
-/// not verified never shows as the lead (R200).
+/// One line of a thread ([`riff_client::threads::Line`]). The sender is
+/// short: its [`name`], and `lead=true` for a lead
+/// (01M3JPK85FT5CCQPF3WDCXSMDF). The start of its session ID lets an
+/// agent reply with `tell`. `who` gives the full URI. A post to each
+/// session of the repository of the thread shows `to all`. A status
+/// request says so. The line says whether the reader verified the
+/// sender (R199). The sender of a message that is not verified never
+/// shows as the lead (R200).
 ///
 /// ```
 /// use riff_client::api::Checked;
+/// use riff_client::threads::Line;
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let thread = "como-technologies/riff".parse()?;
@@ -2550,89 +2552,67 @@ pub fn released_for(thread: &ThreadName, item: &str, holder: &str) -> String {
 ///     sig: None,
 ///     payload: None,
 /// };
+/// let line = |m: &Checked| riff::text::message(&Line::of(m, &thread));
 /// let mut m = Checked { message, verified: true };
 /// assert_eq!(
-///     riff::text::message(&m, &thread),
+///     line(&m),
 ///     "[2] mike@pangolin:riff#api (a6cf) lead=true to claim=issue-6 (verified): ready"
 /// );
 /// m.verified = false;
 /// assert_eq!(
-///     riff::text::message(&m, &thread),
+///     line(&m),
 ///     "[2] mike@pangolin:riff#api (a6cf) to claim=issue-6 (not verified): ready"
 /// );
 /// m.message.kind = Kind::Status;
 /// m.message.body = String::new();
 /// assert_eq!(
-///     riff::text::message(&m, &thread),
+///     line(&m),
 ///     "[2] mike@pangolin:riff#api (a6cf) to claim=issue-6 (not verified) asks for your status."
 /// );
 /// m.message.kind = Kind::Note;
 /// m.message.body = "done: issue-6 merged".into();
 /// assert_eq!(
-///     riff::text::message(&m, &thread),
+///     line(&m),
 ///     "[2] mike@pangolin:riff#api (a6cf) to claim=issue-6 (not verified) note: done: issue-6 merged"
 /// );
 /// m.message.to = vec!["repo=como-technologies/riff".parse()?];
-/// assert!(riff::text::message(&m, &thread).contains("(a6cf) to all (not verified)"));
+/// assert!(line(&m).contains("(a6cf) to all (not verified)"));
 /// // A kind of a later build shows as a message, with its text
 /// // (01M3XSF90E9JYYTC13D9THY4WE).
 /// m.message.kind = Kind::Other;
-/// assert!(riff::text::message(&m, &thread).ends_with("(not verified): done: issue-6 merged"));
+/// assert!(line(&m).ends_with("(not verified): done: issue-6 merged"));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn message(c: &Checked, thread: &ThreadName) -> String {
-    let m = &c.message;
-    let all = Selector {
-        repo: Some(thread.to_string()),
-        ..Selector::default()
-    };
-    let to: Vec<String> =
-        m.to.iter()
-            .map(|s| {
-                if *s == all {
-                    "all".to_owned()
-                } else {
-                    s.to_string()
-                }
-            })
-            .collect();
+pub fn message(line: &Line) -> String {
+    let to: Vec<String> = line
+        .to
+        .iter()
+        .map(|to| match to.all {
+            true => "all".to_owned(),
+            false => to.selector.to_string(),
+        })
+        .collect();
     let to = if to.is_empty() {
         String::new()
     } else {
         format!(" to {}", to.join(" or "))
     };
-    let (lead, mark) = if c.verified {
-        (m.from.lead(), "verified")
+    let mark = if line.verified {
+        "verified"
     } else {
-        (false, "not verified")
+        "not verified"
     };
-    let lead = if lead { " lead=true" } else { "" };
-    let head = format!("[{}] {}{lead}{to} ({mark})", m.seq, name(&m.from));
-    match (m.kind, m.body.is_empty()) {
-        (Kind::Message | Kind::Other, _) => match action(&m.from, &m.body) {
+    let lead = if line.lead { " lead=true" } else { "" };
+    let head = format!("[{}] {}{lead}{to} ({mark})", line.seq, name(&line.from));
+    match (line.kind, line.body.is_empty()) {
+        (Kind::Message | Kind::Other, _) => match action(&line.from, &line.body) {
             Some(action) => format!("{head}: {action}"),
-            None => format!("{head}: {}", m.body),
+            None => format!("{head}: {}", line.body),
         },
         (Kind::Status, true) => format!("{head} asks for your status."),
-        (Kind::Status, false) => format!("{head} asks for your status: {}", m.body),
-        (Kind::Note, _) => format!("{head} note: {}", m.body),
+        (Kind::Status, false) => format!("{head} asks for your status: {}", line.body),
+        (Kind::Note, _) => format!("{head} note: {}", line.body),
     }
-}
-
-/// The start of the body of an action line of the chat, as `/me` in
-/// IRC (01M3NJD37CNQX580YC24S7K6ES). An action is a plain message, so
-/// each riff shows it, also an older one.
-pub const ACTION: &str = "/me ";
-
-/// The text of an action line: the body after [`ACTION`]. `None` for
-/// each other body.
-///
-/// ```
-/// assert_eq!(riff::text::action_text("/me waves"), Some("waves"));
-/// assert_eq!(riff::text::action_text("hi /me"), None);
-/// ```
-pub fn action_text(body: &str) -> Option<&str> {
-    body.strip_prefix(ACTION)
 }
 
 /// An action line of the chat as plain text: `* USER@HOST TEXT`.
@@ -2645,7 +2625,7 @@ pub fn action_text(body: &str) -> Option<&str> {
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn action(from: &SessionUri, body: &str) -> Option<String> {
-    let text = action_text(body)?;
+    let text = riff_client::threads::action_text(body)?;
     Some(format!(
         "* {}@{} {text}",
         from.who().user(),
@@ -2654,7 +2634,8 @@ pub fn action(from: &SessionUri, body: &str) -> Option<String> {
 }
 
 /// The answer to a read. It starts with [`DATA_NOTE`], then shows each
-/// thread under its label.
+/// thread of the threads model ([`Thread`]) under its label, and each of
+/// its lines ([`message`]).
 ///
 /// ```
 /// use riff_client::api::{Checked, Inbox};
@@ -2715,10 +2696,14 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
         return "No unread messages.".into();
     }
     let mut out = format!("{DATA_NOTE}\n\n");
-    for t in list {
-        let _ = writeln!(out, "{}", label(&t.thread, &t.members, me));
-        for m in &t.messages {
-            let _ = writeln!(out, "{}", message(m, &t.thread));
+    for t in list.iter().map(|inbox| Thread::of(inbox, me)) {
+        let label = match &t.other {
+            Some(other) => format!("direct with {}", name(other)),
+            None => t.name.to_string(),
+        };
+        let _ = writeln!(out, "{label}");
+        for line in &t.lines {
+            let _ = writeln!(out, "{}", message(line));
         }
         if let Some(next) = t.next {
             let _ = writeln!(
@@ -2758,7 +2743,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 /// `riff workers host`. Each other session has no kind.
 ///
 /// ```
-/// use riff::host::HostStatus;
+/// use riff_client::machines::HostStatus;
 /// use riff::text::SessionKind;
 /// use riff_core::wire::{SessionInfo, Status, StatusInfo};
 ///
@@ -2843,11 +2828,11 @@ impl SessionKind {
 }
 
 /// True when `s` is the session of `riff workers host`: its status is
-/// the status of a host ([`crate::host::HostStatus`]).
+/// the status of a host ([`riff_client::machines::HostStatus`]).
 fn is_host(s: &SessionInfo) -> bool {
     s.status
         .as_ref()
-        .is_some_and(|st| crate::host::HostStatus::parse(&st.status.step).is_some())
+        .is_some_and(|st| riff_client::machines::HostStatus::parse(&st.status.step).is_some())
 }
 
 /// The tags of a row of `riff who` and `riff top`: the role of a
@@ -3494,7 +3479,7 @@ pub fn lost_messages(n: u64) -> String {
     format!("riff: {what} lost. The server keeps only the last messages of a thread.")
 }
 
-/// A message for people, as `riff tail` shows it
+/// A line of a thread ([`Line`]) for people, as `riff tail` shows it
 /// (01M3JDCA6R894JG6SDJ2R7AFMN). It has ANSI styles: print it through
 /// `anstream`, which removes them when the output has no color.
 ///
@@ -3509,6 +3494,7 @@ pub fn lost_messages(n: u64) -> String {
 /// ```
 /// use chrono::{FixedOffset, TimeZone};
 /// use riff_client::api::Checked;
+/// use riff_client::threads::Line;
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let message = Message {
@@ -3521,10 +3507,11 @@ pub fn lost_messages(n: u64) -> String {
 ///     sig: None,
 ///     payload: None,
 /// };
-/// let c = Checked { message, verified: true };
+/// let thread = "como-technologies/riff".parse()?;
+/// let line = Line::of(&Checked { message, verified: true }, &thread);
 /// let utc = FixedOffset::east_opt(0).unwrap();
-/// let at = utc.timestamp_millis_opt(c.message.at_ms as i64).unwrap();
-/// let text = riff::text::block(&c, &at, None, 80);
+/// let at = utc.timestamp_millis_opt(line.at_ms as i64).unwrap();
+/// let text = riff::text::block(&line, &at, None, 80);
 /// assert_eq!(
 ///     anstream::adapter::strip_str(&text).to_string(),
 ///     "2026-09-21\n\
@@ -3532,12 +3519,12 @@ pub fn lost_messages(n: u64) -> String {
 ///      ready. I pushed the fix to main."
 /// );
 /// // The same day: no date line.
-/// let text = riff::text::block(&c, &at, Some(at.date_naive()), 80);
+/// let text = riff::text::block(&line, &at, Some(at.date_naive()), 80);
 /// assert!(anstream::adapter::strip_str(&text).to_string().starts_with("14:13"));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn block<Tz: TimeZone>(
-    c: &Checked,
+    m: &Line,
     at: &DateTime<Tz>,
     last_day: Option<NaiveDate>,
     width: usize,
@@ -3545,7 +3532,6 @@ pub fn block<Tz: TimeZone>(
 where
     Tz::Offset: std::fmt::Display,
 {
-    let m = &c.message;
     let mut out = String::new();
     if last_day != Some(at.date_naive()) {
         let _ = writeln!(out, "{}", styled(DIM, &at.format("%Y-%m-%d").to_string()));
@@ -3556,18 +3542,18 @@ where
         styled(DIM, &at.format("%H:%M").to_string()),
         styled(crate::style::session(&m.from), &safe(&name(&m.from)))
     );
-    if c.verified && m.from.lead() {
+    if m.lead {
         let _ = write!(out, " {}", styled(BOLD, "lead"));
     }
     if !m.to.is_empty() {
-        let to: Vec<String> = m.to.iter().map(|s| safe(&s.to_string())).collect();
+        let to: Vec<String> = m.to.iter().map(|t| safe(&t.selector.to_string())).collect();
         let _ = write!(
             out,
             "  {}",
             styled(MUTED, &format!("→ {}", to.join(" or ")))
         );
     }
-    let mark = if c.verified {
+    let mark = if m.verified {
         styled(DIM, "verified")
     } else {
         styled(WARNING, "not verified")
@@ -5052,7 +5038,7 @@ pub const TARGET_REMOVED: &str =
 /// (01M41A11BB4HAD8595DNSBAZ0D).
 ///
 /// ```
-/// use riff::disk::Disk;
+/// use riff_client::machines::Disk;
 ///
 /// let disk = Some(Disk { free_gb: 90, total_gb: 455 });
 /// assert_eq!(
@@ -5061,12 +5047,16 @@ pub const TARGET_REMOVED: &str =
 ///      no live owner, now disk 90GB free of 455GB (19%): /r/.claude/worktrees/issue-1: removed"
 /// );
 /// ```
-pub fn targets_removed(host: &str, disk: Option<crate::disk::Disk>, lines: &[String]) -> String {
+pub fn targets_removed(
+    host: &str,
+    disk: Option<riff_client::machines::Disk>,
+    lines: &[String],
+) -> String {
     let now = disk.map(|d| format!(", now {d}")).unwrap_or_default();
     format!(
         "{host}: the disk was under {}% free. riff removed the target of {} worktree(s) with \
          no live owner{now}: {}",
-        crate::disk::TIGHT_PERCENT,
+        riff_client::machines::TIGHT_PERCENT,
         lines.len(),
         lines.join(" | ")
     )
@@ -5076,7 +5066,7 @@ pub fn targets_removed(host: &str, disk: Option<crate::disk::Disk>, lines: &[Str
 /// (01M41A11DX1QRP48YPTDNT67W4).
 ///
 /// ```
-/// use riff::disk::Disk;
+/// use riff_client::machines::Disk;
 ///
 /// assert_eq!(
 ///     riff::text::disk_low("pangolin", &Disk { free_gb: 16, total_gb: 455 }),
@@ -5084,11 +5074,11 @@ pub fn targets_removed(host: &str, disk: Option<crate::disk::Disk>, lines: &[Str
 ///      more is free. riff worktrees clean removes the worktrees of merged pull requests."
 /// );
 /// ```
-pub fn disk_low(host: &str, disk: &crate::disk::Disk) -> String {
+pub fn disk_low(host: &str, disk: &riff_client::machines::Disk) -> String {
     format!(
         "{host}: {disk}, under {}%. riff starts no worker here until more is free. riff \
          worktrees clean removes the worktrees of merged pull requests.",
-        crate::disk::LOW_PERCENT
+        riff_client::machines::LOW_PERCENT
     )
 }
 
@@ -5096,20 +5086,20 @@ pub fn disk_low(host: &str, disk: &crate::disk::Disk) -> String {
 /// (01M41A11DX1QRP48YPTDNT67W4).
 ///
 /// ```
-/// use riff::disk::Disk;
+/// use riff_client::machines::Disk;
 ///
 /// assert_eq!(
 ///     riff::text::low_disk(&Disk { free_gb: 16, total_gb: 455 }),
 ///     "disk 16GB free of 455GB (3%), under 5%."
 /// );
 /// ```
-pub fn low_disk(disk: &crate::disk::Disk) -> String {
-    format!("{disk}, under {}%.", crate::disk::LOW_PERCENT)
+pub fn low_disk(disk: &riff_client::machines::Disk) -> String {
+    format!("{disk}, under {}%.", riff_client::machines::LOW_PERCENT)
 }
 
 /// The refusal of `riff workers start` when the disk is low
 /// (01M41A11DX1QRP48YPTDNT67W4).
-pub fn workers_disk_low(disk: &crate::disk::Disk) -> String {
+pub fn workers_disk_low(disk: &riff_client::machines::Disk) -> String {
     format!(
         "riff: {} riff workers start started nothing. riff worktrees clean removes the \
          worktrees of merged pull requests.",
@@ -5172,7 +5162,8 @@ pub fn clock(at: u64) -> String {
 /// cores.
 ///
 /// ```
-/// use riff::monitor::{Event, Kill};
+/// use riff::monitor::Event;
+/// use riff_client::machines::Kill;
 /// use riff::text::{clock, monitor_event};
 ///
 /// let over = Event::LoadOver { load5: 13.2, limit: 12.0 };
@@ -6053,7 +6044,8 @@ pub const DAEMON_NO_HELLO: &str =
 /// 01M501PADKZNRHBZD9XPMJGW06).
 ///
 /// ```
-/// use riff::daemon::{Live, Phase, Status, WaveShown};
+/// use riff::daemon::{Status, WaveShown};
+/// use riff_client::sessions::{Live, Phase};
 /// use riff::room::Limit;
 ///
 /// let mut status = Status {
@@ -7426,8 +7418,8 @@ pub fn view_daemon(status: &crate::daemon::Status) -> String {
 }
 
 /// `riff view`: the word of a phase of a session.
-pub fn phase_word(phase: crate::daemon::Phase) -> &'static str {
-    use crate::daemon::Phase;
+pub fn phase_word(phase: riff_client::sessions::Phase) -> &'static str {
+    use riff_client::sessions::Phase;
     match phase {
         Phase::Works => "works",
         Phase::Ends => "ends",
@@ -7467,6 +7459,7 @@ pub fn run_lead_noted(item: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use riff_client::api::Checked;
 
     /// 01M56Q55SHHJSKJWNHMW79X7HA
     #[test]
@@ -7512,8 +7505,9 @@ mod tests {
             message,
             verified: false,
         };
+        let line = Line::of(&c, &"como-technologies/riff".parse().unwrap());
         let at = chrono::DateTime::from_timestamp_millis(0).unwrap();
-        let text = block(&c, &at, Some(at.date_naive()), 80);
+        let text = block(&line, &at, Some(at.date_naive()), 80);
         let sender = crate::style::session(&c.message.from);
         assert!(text.contains(&format!("{sender}ann@heron:riff (77e0){sender:#}")));
         assert!(text.contains(&format!("{WARNING}not verified{WARNING:#}")));
@@ -7541,8 +7535,9 @@ mod tests {
             message,
             verified: true,
         };
+        let line = Line::of(&c, &"chat".parse().unwrap());
         let at = chrono::DateTime::from_timestamp_millis(0).unwrap();
-        let text = block(&c, &at, Some(at.date_naive()), 80);
+        let text = block(&line, &at, Some(at.date_naive()), 80);
         let plain = anstream::adapter::strip_str(&text).to_string();
         assert!(plain.ends_with("\n       one\n\n       two"), "{plain:?}");
     }

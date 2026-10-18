@@ -1301,7 +1301,7 @@ async fn a_change_on_a_host_and_on_the_server_tells_the_lead() {
     let host = SessionUri::new(Who::new("mike", Some("h1")).unwrap(), place);
     let _watch = lead.api.watch(&host).await.unwrap();
     let status = |limit| Status {
-        step: riff::host::HostStatus {
+        step: riff_client::machines::HostStatus {
             limit,
             floor: 4,
             deaths: 0,
@@ -1478,7 +1478,7 @@ impl Host {
                     && s.uri.place().host() == "b"
                     && s.status
                         .as_ref()
-                        .is_some_and(|st| st.status.step.starts_with(riff::host::MARK))
+                        .is_some_and(|st| st.status.step.starts_with(riff_client::machines::MARK))
             });
             if up {
                 return host;
@@ -1601,7 +1601,7 @@ async fn four_deaths_in_an_hour_stop_the_replacement_on_a_host() {
         let deaths = who
             .iter()
             .filter(|s| s.uri.place().host() == "b")
-            .find_map(|s| riff::host::HostStatus::parse(&s.status.as_ref()?.status.step))
+            .find_map(|s| riff_client::machines::HostStatus::parse(&s.status.as_ref()?.status.step))
             .map(|status| status.deaths);
         if deaths == Some(4) {
             break;

@@ -13,7 +13,7 @@
 //! | Jobs and test threads of one worker with no pool | `riff workers run` | (physical cores - 1) / workers, 1 or more ([`jobs`]) | `workers.jobs` |
 //! | Priority | `riff workers run` | nice 10 | `workers.nice` |
 //! | Memory and CPU share of all workers | `riff workers start` | 3/4 of the memory ([`memory`]), CPU weight [`CPU_WEIGHT`] | `workers.memory` |
-//! | Available memory for a new worker | `riff workers start`, the rollout | 4 GB ([`crate::machine::Machine::low`]) | `workers.floor` |
+//! | Available memory for a new worker | `riff workers start`, the rollout | 4 GB ([`riff_client::machines::Machine::low`]) | `workers.floor` |
 //!
 //! ```mermaid
 //! flowchart TD
@@ -87,8 +87,8 @@ use std::process::Command;
 
 use anyhow::Result;
 
-use crate::machine::Machine;
 use crate::settings;
+use riff_client::machines::Machine;
 
 /// The variables that give a build and a test run their number of
 /// jobs with no pool: the compile jobs of cargo and the test threads of

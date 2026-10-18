@@ -312,6 +312,7 @@ use crate::runtime::{Bind, End, Env, Runtime, SessionSpec, Source};
 use crate::session_relay::Up;
 use crate::text;
 use crate::wave::{Job, Wave, World};
+use riff_client::sessions::{Live, Phase};
 
 pub mod sweep;
 
@@ -732,47 +733,6 @@ pub enum SessionAsk {
         /// [`PROTOCOL`] of the relay.
         protocol: u32,
     },
-}
-
-/// What a session does now, as `riff view` shows it
-/// (01M501PADKZNRHBZD9XPMJGW06).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Phase {
-    /// A turn of `claude` runs.
-    #[default]
-    Works,
-    /// After the result of the turn: `claude` ends, or waits for its
-    /// background tasks.
-    Ends,
-    /// A takeover waits for the end of the turn.
-    Holds,
-    /// `claude` ended for a takeover: a person has the session.
-    Taken,
-    /// A session with a terminal: the lead.
-    Terminal,
-}
-
-/// A session that the daemon owns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Live {
-    /// The name of its container.
-    pub name: String,
-    /// The riff session ID.
-    pub session: String,
-    /// The work item.
-    pub item: String,
-    /// The image.
-    pub image: String,
-    /// The start, in milliseconds since the epoch.
-    pub since_ms: i64,
-    /// What the session does now.
-    #[serde(default)]
-    pub phase: Phase,
-    /// The last step of the session in a few words: the last line that
-    /// `riff run` shows of its events ([`crate::run::event_lines`]).
-    #[serde(default)]
-    pub last: String,
 }
 
 /// The state of the daemon.

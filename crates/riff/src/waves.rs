@@ -47,18 +47,33 @@ use serde::Deserialize;
 
 use crate::pr::Gh;
 use crate::text;
+use riff_client::waves::Milestone;
 
-/// An open milestone, as `gh api .../milestones` gives it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct Milestone {
-    /// The number of the milestone on GitHub, not of the wave.
-    pub number: u64,
+/// An open milestone, as `gh api .../milestones` gives it: a
+/// [`Milestone`] with the texts of the forge made safe.
+#[derive(Deserialize)]
+struct Forge {
+    number: u64,
     #[serde(deserialize_with = "crate::text::forge_de")]
-    pub title: String,
-    /// Its open issues and pull requests.
-    pub open_issues: u64,
-    /// Its closed issues and pull requests.
-    pub closed_issues: u64,
+    title: String,
+    open_issues: u64,
+    closed_issues: u64,
+}
+
+impl From<Forge> for Milestone {
+    fn from(m: Forge) -> Milestone {
+        Milestone {
+            number: m.number,
+            title: m.title,
+            open_issues: m.open_issues,
+            closed_issues: m.closed_issues,
+        }
+    }
+}
+
+/// The milestone in the answer of `gh args`.
+fn milestone(gh: &Gh, args: &[&str]) -> Result<Milestone> {
+    gh.json::<Forge>(args).map(Milestone::from)
 }
 
 pub use hygiene::wave_number;
@@ -67,7 +82,8 @@ pub use hygiene::wave_number;
 /// order, then each other milestone by its title.
 ///
 /// ```
-/// use riff::waves::{Milestone, in_order};
+/// use riff::waves::in_order;
+/// use riff_client::waves::Milestone;
 ///
 /// let m = |title: &str| Milestone { number: 1, title: title.into(), open_issues: 0, closed_issues: 0 };
 /// let list = in_order(vec![m("Backlog"), m("Wave 10"), m("Wave 9: Cloud")]);
@@ -90,11 +106,11 @@ pub fn in_order(mut milestones: Vec<Milestone>) -> Vec<Milestone> {
 /// The open milestones of the repository, in the order of
 /// [`in_order`] (01M509TJRBE2J7HYKKHRJ1ZFR0).
 pub fn open(gh: &Gh) -> Result<Vec<Milestone>> {
-    let open = gh.json(&[
+    let open: Vec<Forge> = gh.json(&[
         "api",
         "repos/{owner}/{repo}/milestones?state=open&per_page=100",
     ])?;
-    Ok(in_order(open))
+    Ok(in_order(open.into_iter().map(Milestone::from).collect()))
 }
 
 /// Makes the wave `title` (01M509TJTV7TC32EKXW0TEQ5NZ). It refuses a
@@ -109,14 +125,17 @@ pub fn make(gh: &Gh, title: &str) -> Result<Milestone> {
     {
         bail!(text::waves_is_there(&there.title));
     }
-    gh.json(&[
-        "api",
-        "-X",
-        "POST",
-        "repos/{owner}/{repo}/milestones",
-        "-f",
-        &format!("title={title}"),
-    ])
+    milestone(
+        gh,
+        &[
+            "api",
+            "-X",
+            "POST",
+            "repos/{owner}/{repo}/milestones",
+            "-f",
+            &format!("title={title}"),
+        ],
+    )
 }
 
 /// Gives the open wave with the number `number` the title
@@ -134,14 +153,17 @@ pub fn rename(gh: &Gh, number: u64, name: &str) -> Result<(Milestone, Milestone)
     else {
         bail!(text::waves_not_open(number));
     };
-    let renamed = gh.json(&[
-        "api",
-        "-X",
-        "PATCH",
-        &format!("repos/{{owner}}/{{repo}}/milestones/{}", wave.number),
-        "-f",
-        &format!("title={title}"),
-    ])?;
+    let renamed = milestone(
+        gh,
+        &[
+            "api",
+            "-X",
+            "PATCH",
+            &format!("repos/{{owner}}/{{repo}}/milestones/{}", wave.number),
+            "-f",
+            &format!("title={title}"),
+        ],
+    )?;
     Ok((wave, renamed))
 }
 
@@ -158,14 +180,17 @@ pub fn end(gh: &Gh, number: u64) -> Result<Milestone> {
     if wave.open_issues > 0 {
         bail!(text::waves_open_items(&wave.title, wave.open_issues));
     }
-    gh.json(&[
-        "api",
-        "-X",
-        "PATCH",
-        &format!("repos/{{owner}}/{{repo}}/milestones/{}", wave.number),
-        "-f",
-        "state=closed",
-    ])
+    milestone(
+        gh,
+        &[
+            "api",
+            "-X",
+            "PATCH",
+            &format!("repos/{{owner}}/{{repo}}/milestones/{}", wave.number),
+            "-f",
+            "state=closed",
+        ],
+    )
 }
 
 #[cfg(test)]

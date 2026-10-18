@@ -90,7 +90,6 @@ use riff_core::name::Place;
 use tokio::signal::unix::{SignalKind, signal};
 
 use crate::limits::{self, Limits};
-use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
 use crate::{
     enable, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp, worker_mcp,
@@ -233,7 +232,7 @@ pub async fn run(claude: &Path, args: &[String], server: &str) -> Result<i32> {
         .as_deref()
         .and_then(|dir| jobserver::Member::join(dir).ok());
     let workers = dir.as_deref().map_or(0, jobserver::workers);
-    let cores = limits::Cores::here(&Machine::here());
+    let cores = limits::Cores::here(&crate::machine::here());
     let limit = Limits::of(&settings::path()?, &cores, workers)?;
     let slice = std::env::var(limits::SLICE_VAR)
         .ok()
@@ -511,14 +510,14 @@ pub fn start(
     if start == 0 {
         return Ok(Err(text::workers_full(limit, run)));
     }
-    let machine = Machine::here();
+    let machine = crate::machine::here();
     let floor = settings::workers_floor(&settings)?;
     if machine.low(floor) {
         return Ok(Err(text::workers_low(machine.avail_gb, floor)));
     }
     let main = identity::main_worktree(dir)
         .ok_or_else(|| anyhow::anyhow!("run it in a git repository"))?;
-    if let Some(disk) = crate::disk::Disk::here(&main).filter(|d| d.low()) {
+    if let Some(disk) = crate::disk::here(&main).filter(|d| d.low()) {
         return Ok(Err(text::workers_disk_low(&disk)));
     }
     let fresh = hygiene::fast_forward(&main).line();

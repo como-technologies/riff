@@ -11,7 +11,7 @@
 //! flowchart TB
 //!     R["riff<br/>the CLI, riff mcp, the hooks,<br/>the riff daemon"] --> C
 //!     R -- "its platform: the OS keyring,<br/>the local folders, the terminal" --> P
-//!     C["riff-client<br/>the sign-in, the tokens,<br/>the API calls, the watch stream"] --> P["platform<br/>the parts that each UI gives"]
+//!     C["riff-client<br/>the sign-in, the tokens,<br/>the API calls, the watch stream,<br/>the models of the views"] --> P["platform<br/>the parts that each UI gives"]
 //!     C --> K["riff-core<br/>the model that the clients<br/>and riff-server share"]
 //!     C -- "HTTPS" --> S["riff-server"]
 //!     S --> K
@@ -30,6 +30,10 @@
 //! | [`files`] | The files in the local folders: mode 0700 for a folder, 0600 for a file. |
 //! | [`text`] | The words of the errors and of the notes of the client. |
 //! | [`platform`] | The trait of the parts that each UI gives. |
+//! | [`sessions`] | The sessions model: the tree of `riff top` and the rows of `riff view`. |
+//! | [`threads`] | The threads model: the lines of `riff read`, `riff tail` and `riff chat`. |
+//! | [`waves`] | The waves model: the board of `riff top` and the waves of `riff wave list`. |
+//! | [`machines`] | The machines model: the numbers of each host in `riff top` and `riff workers`. |
 //!
 //! # What a UI gives
 //!
@@ -48,6 +52,21 @@
 //! The browser step of `riff login` (the local port of the OAuth
 //! redirect) and the socket of the riff daemon stay in `riff`.
 //!
+//! # The models of the views
+//!
+//! Each model is plain data with serde (01M56Y8KAPHJMSK89ZW1PA8B0E).
+//! The crate makes it from the replies of riff-server, and from what
+//! the UI gives: the container sessions of its riff daemon, and the
+//! reads of the forge. A UI only draws a model: the plain lines, the
+//! colors and the widgets stay in the UI.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     S["riff-server"] --> M["the models:<br/>sessions, threads,<br/>waves, machines"]
+//!     U["the UI: the riff daemon,<br/>the forge, this machine"] --> M
+//!     M --> D["the UI draws:<br/>plain lines, colors, widgets"]
+//! ```
+//!
 //! # No terminal code
 //!
 //! The crate depends on no crate of the terminal: no ratatui, no
@@ -60,7 +79,11 @@ pub mod device;
 pub mod files;
 pub mod link;
 pub mod login;
+pub mod machines;
 pub mod marks;
 pub mod platform;
 pub mod secrets;
+pub mod sessions;
 pub mod text;
+pub mod threads;
+pub mod waves;
