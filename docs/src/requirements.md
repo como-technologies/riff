@@ -5752,9 +5752,20 @@ part when they merge.
   shows the same lines as `riff daemon events NAME` on HOST: each event
   from the start of the session, then each new event, then the end.
   riff asks for one page after the other: each page has the lines of
-  the events after the last event of the page before, at most 200
+  the events after the last event of the page before, and the lines of
+  the daemon after the last line of the page before, at most 200
   lines. With no new event, the daemon holds a request for at most 20
-  seconds. riff exits with 1 when the session failed.
+  seconds. A session that ends between two pages ends the follow with
+  its end, as on HOST. riff exits with 1 when the session failed.
+- **01M57GCZVJAHAMPEYY1T6GA48P** After the end of a session, the daemon
+  keeps its end for 5 minutes: the events, the lines of the daemon
+  about the session, and how it ended. A follow of the session in that
+  time gets the events after its number, the lines and the end, as a
+  follow that stayed.
+- **01M57GCZXZZRPGGWC5HZS49DGM** The daemon keeps each line that it
+  says about a session, for example why it stops the container. A new
+  follow gets each line in its place among the events. `riff daemon
+  events --host` shows each line one time.
 - **01M57D4G1TS8BHJF5A8PW2D79C** The events of a session go over the
   wire only from the events that the daemon keeps: the daemon took each
   secret out of each event before it kept it. So no secret leaves the

@@ -105,7 +105,7 @@
 //! | [`Ask::Status`] | [`Say::Status`] |
 //! | [`Ask::Image`] | [`Say::Line`] for a pull, then [`Say::Done`] or [`Say::Failed`] |
 //! | [`Ask::Start`] | [`Say::Started`], each [`Say::Event`] and [`Say::Stderr`], then [`Say::Ended`] or [`Say::Failed`] |
-//! | [`Ask::Follow`] | each [`Say::Event`] after a number, then as [`Ask::Start`] |
+//! | [`Ask::Follow`] | each [`Say::Event`] after a number, and each [`Say::Line`] of the daemon about the session in its place, then as [`Ask::Start`]. For a session that ended in the last [`KEEP_END`]: then [`Say::Ended`] |
 //! | [`Ask::Wave`] | [`Say::Done`] when the daemon runs the wave, or [`Say::Failed`] |
 //! | [`Ask::WaveStop`] | [`Say::Done`] when the daemon ran the wave, or [`Say::Failed`] |
 //! | [`Ask::Takeover`] | [`Say::Line`] while the turn stops or ends, [`Say::Held`], then [`Say::Done`] after the go on, or [`Say::Failed`] |
@@ -156,6 +156,15 @@
 //! A session ends when the daemon has the exit of the relay, or when its
 //! container ends (01M4ZHT03MAH0B5Q4S6GZC5JRP). A [`Then::Stop`] stops
 //! the container: the relay gives `claude` the SIGTERM.
+//!
+//! The daemon keeps each line that it says about a session, for example
+//! why it stops the container. A new follower gets each one in its place
+//! among the events (01M57GCZXZZRPGGWC5HZS49DGM). After the end, the
+//! daemon keeps the end of the session for [`KEEP_END`]: the log of its
+//! events, its lines and how it ended (01M57GCZVJAHAMPEYY1T6GA48P). A
+//! follow in that time gets them, as a follower that stayed. So `riff
+//! daemon events --host` gets the end of a session that ended between
+//! two pages ([`remote`]).
 //!
 //! `claude -p` does not end while one of its background tasks runs. The
 //! end of each task starts a new turn. So a session can stay up after
@@ -407,10 +416,10 @@ const LOOK_EVERY: Duration = Duration::from_secs(30);
 /// a session: a `just ci` can take 15 minutes.
 pub const QUIET_LIMIT: Duration = Duration::from_secs(30 * 60);
 
-/// How long the daemon keeps the end of a session after the end
-/// ([`Gone`], 01M57GCZVJAHAMPEYY1T6GA48P). It is longer than the gap
-/// between two pages of `riff daemon events --host`
-/// ([`remote::follow_events`]).
+/// How long the daemon keeps the end of a session after the end: its
+/// events, its lines and how it ended (01M57GCZVJAHAMPEYY1T6GA48P). It
+/// is longer than the gap between two pages of `riff daemon events
+/// --host` ([`remote::follow_events`]).
 pub const KEEP_END: Duration = Duration::from_secs(5 * 60);
 
 /// The end of a session whose container did not start.

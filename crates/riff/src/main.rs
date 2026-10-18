@@ -1277,8 +1277,10 @@ enum DaemonCommand {
     ///
     /// It shows each event of the session in the container NAME from its
     /// start, as riff run does, and each new event until the session
-    /// ends. riff daemon status shows the names. Ctrl-C ends the view:
-    /// the session goes on.
+    /// ends. It also shows the lines of the daemon about the session.
+    /// The daemon keeps the end of a session for 5 minutes. riff daemon
+    /// status shows the names. Ctrl-C ends the view: the session goes
+    /// on.
     Events {
         /// The name of the container, for example riff-issue-12-1a2b3c4d.
         name: String,

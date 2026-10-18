@@ -891,9 +891,14 @@ riff daemon events riff-issue-12-1a2b3c4d
 ```
 
 `riff daemon events` shows each event from the start of the session,
-and each new event until the session ends. Press Ctrl-C to stop the
-view: the session goes on. The file `events.jsonl` in the folder of
-the session also has each event, with no secret.
+and each new event until the session ends. It also shows the lines of
+the daemon, for example why it stops the session. Press Ctrl-C to stop
+the view: the session goes on. The file `events.jsonl` in the folder
+of the session also has each event, with no secret.
+
+The daemon keeps the end of a session for 5 minutes. In that time,
+`riff daemon events` shows the events and the end of a session that
+ended.
 
 ### Remove the folders of old sessions
 
@@ -1488,10 +1493,11 @@ them on that host:
 riff daemon events riff-issue-12-1a2b3c4d --host thelio
 ```
 
-It shows each event from the start of the session, then each new
-event, up to the end of the session. Ctrl-C ends it: the session goes
-on. It exits with 1 when the session failed. The events have no secret:
-the daemon took each secret out before it kept them.
+It shows the same lines as `riff daemon events` on that host (see
+[See the events of a session](#see-the-events-of-a-session)), up to
+the end of the session. Ctrl-C ends it: the session goes on. It exits
+with 1 when the session failed. The events have no secret: the daemon
+took each secret out before it kept them.
 
 To watch the sessions of that host, as `riff view` shows them there:
 
