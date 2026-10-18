@@ -5822,6 +5822,12 @@ part when they merge.
   its repository. It replies to each other request with a refusal, and
   changes nothing: another user, and a session that is not the lead,
   for example a worker.
+- **01M588QXAGD3B8BTK7N17M29WM** The refusal of the daemon of a host
+  names its cause: the user of the request when it is another user,
+  else the session of the request, which is not the lead of its user in
+  the repository of the daemon. The help of each `--host` flag that
+  asks the daemon or the workers host of another host says who can use
+  the flag, with the same words as the book.
 - **01M579Z9SAN24QGN1VV5C7EHM9** `riff daemon restart` starts the
   daemon again on the new riff on disk only when it runs an old riff
   and no session, no start waits and no job of a wave runs. Else it

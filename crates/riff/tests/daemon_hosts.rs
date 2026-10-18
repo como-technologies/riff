@@ -372,7 +372,8 @@ async fn each_daemon_command_with_host_reaches_the_daemon_of_that_host() {
 
 /// 01M579Z9PZZCVWQKG7V8WZ5KRB: the person acts on the daemon of a host
 /// from a terminal. A worker session and another user get the refusal,
-/// and change nothing.
+/// and change nothing. 01M588QXAGD3B8BTK7N17M29WM: the refusal names
+/// the session or the user, and the cause.
 #[tokio::test(flavor = "multi_thread")]
 async fn only_the_person_and_the_lead_act_on_the_daemon() {
     let r = riff().await;
@@ -397,7 +398,26 @@ async fn only_the_person_and_the_lead_act_on_the_daemon() {
         .await;
     assert!(!out.status.success(), "{out:?}");
     assert!(
-        text(&out.stderr).contains("refused: \"daemon limit --sessions 1\" is not from mike"),
+        text(&out.stderr).contains(
+            "refused: \"daemon limit --sessions 1\" comes from the session w1 of mike, which is \
+             not the lead of mike in"
+        ),
+        "{out:?}"
+    );
+    // A status only reads, and gets the same refusal.
+    let out =
+        r.a.run(&r.main, &["daemon", "status", "--host", "b"], Some("w1"))
+            .await;
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        text(&out.stderr).contains(
+            "refused: \"daemon status\" comes from the session w1 of mike, which is not the \
+             lead of mike in"
+        ),
+        "{out:?}"
+    );
+    assert!(
+        text(&out.stderr).contains("Only mike and the lead act on the daemon of b."),
         "{out:?}"
     );
 
@@ -427,11 +447,9 @@ async fn only_the_person_and_the_lead_act_on_the_daemon() {
             .find_map(|m| remote::read_reply(&m.message.body, posted.seq))
     })
     .await;
-    assert!(
-        reply
-            .unwrap_err()
-            .contains("refused: \"daemon limit --sessions 2\" is not from mike"),
-    );
+    assert!(reply.unwrap_err().contains(
+        "refused: \"daemon limit --sessions 2\" comes from the session b1 of brett, not from mike."
+    ),);
     let saved = std::fs::read_to_string(r.b.dir().join("limit.json")).unwrap();
     assert!(saved.contains("\"sessions\":6"), "{saved}");
 }

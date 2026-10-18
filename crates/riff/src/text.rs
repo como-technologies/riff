@@ -7112,29 +7112,72 @@ pub fn daemon_refused_not_verified(request: &crate::daemon::remote::Request) -> 
     format!("refused: \"{request}\" is not verified. The daemon acts only on a verified request.")
 }
 
-/// The refusal of the daemon of a host to a request of another user, or
-/// of a session that is not the lead of its user in its repository
-/// (01M579Z9PZZCVWQKG7V8WZ5KRB).
+/// The refusal of the daemon `me` of a host to the request of `from`:
+/// another user, or a session that is not the lead of its user in its
+/// repository (01M579Z9PZZCVWQKG7V8WZ5KRB). It names the cause
+/// (01M588QXAGD3B8BTK7N17M29WM).
 ///
 /// ```
 /// use riff::daemon::remote::Request;
+/// use riff_core::name::SessionUri;
 /// let me = "riff://mike@thelio/como-technologies/riff?session=d1".parse()?;
+/// let from = |uri: &str| uri.parse::<SessionUri>().unwrap();
+/// let worker = from("riff://mike@thelio/como-technologies/riff?session=193c7051-73d6");
 /// assert_eq!(
-///     riff::text::daemon_refused(&Request::Status, &me),
-///     "refused: \"daemon status\" is not from mike or the lead of mike in \
-///      como-technologies/riff. Only they act on the daemon of thelio."
+///     riff::text::daemon_refused(&Request::Status, &worker, &me),
+///     "refused: \"daemon status\" comes from the session 193c7051 of mike, which is not the \
+///      lead of mike in como-technologies/riff. Only mike and the lead act on the daemon of \
+///      thelio."
 /// );
+/// let brett = from("riff://brett@kadomony/como-technologies/riff?session=b1&lead=true");
+/// assert_eq!(
+///     riff::text::daemon_refused(&Request::Sweep, &brett, &me),
+///     "refused: \"daemon sweep\" comes from the session b1 of brett, not from mike. Only mike \
+///      and the lead of mike in como-technologies/riff act on the daemon of thelio."
+/// );
+/// let person = from("riff://brett@kadomony/como-technologies/riff");
+/// assert!(riff::text::daemon_refused(&Request::Sweep, &person, &me)
+///     .starts_with("refused: \"daemon sweep\" comes from brett, not from mike."));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn daemon_refused(request: &crate::daemon::remote::Request, me: &SessionUri) -> String {
-    let user = me.who().user();
-    format!(
-        "refused: \"{request}\" is not from {user} or the lead of {user} in {}. Only they act on \
-         the daemon of {}.",
-        me.place().repo_text(),
-        me.place().host()
-    )
+pub fn daemon_refused(
+    request: &crate::daemon::remote::Request,
+    from: &SessionUri,
+    me: &SessionUri,
+) -> String {
+    let (user, repo, host) = (me.who().user(), me.place().repo_text(), me.place().host());
+    let sender = match from.who().session() {
+        Some(id) => format!(
+            "the session {} of {}",
+            crate::run::short(id),
+            from.who().user()
+        ),
+        None => from.who().user().to_owned(),
+    };
+    if from.who().user() == user {
+        format!(
+            "refused: \"{request}\" comes from {sender}, which is not the lead of {user} in \
+             {repo}. Only {user} and the lead act on the daemon of {host}."
+        )
+    } else {
+        format!(
+            "refused: \"{request}\" comes from {sender}, not from {user}. Only {user} and the lead \
+             of {user} in {repo} act on the daemon of {host}."
+        )
+    }
 }
+
+/// Who can use `--host` on the daemon commands, `riff wave run` and
+/// stop, and `riff view`: the same words in the help of each flag and
+/// in the book (01M588QXAGD3B8BTK7N17M29WM).
+pub const DAEMON_HOST_WHO: &str = "Only you in a terminal and your lead in this repository can \
+use --host. The daemon of HOST refuses each other session, for example a worker.";
+
+/// Who can use `--host` on `riff workers start`, stop and monitor: the
+/// same words in the help of each flag and in the book
+/// (01M588QXAGD3B8BTK7N17M29WM).
+pub const WORKERS_HOST_WHO: &str = "Only your lead in this repository can use --host. riff \
+refuses it in each other session, for example a worker, and in a terminal.";
 
 /// The error when no daemon of the user serves the repository `repo`
 /// on `host`.
