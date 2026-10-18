@@ -2021,11 +2021,17 @@ the lead, so riff release publish changed nothing.",
 changed nothing. Check the riff with riff whoami.",
 };
 
-/// The refusal of `riff release publish` in the lead of a member: a
-/// person who is not the owner and not an admin of the riff
+/// The refusal of `riff release publish` for a member, in a terminal
+/// or in its lead: a person who is not the owner and not an admin of the
+/// riff
 /// (01M58B0JSQMWNCMSNX19536XT8).
-pub const PUBLISH_MEMBER: &str = "riff: only the lead of the owner or of an admin of the riff \
-publishes a release. Your user is a member, so riff release publish changed nothing.";
+pub const PUBLISH_MEMBER: &str = "riff: only the owner or an admin of the riff, or the lead of \
+one, publishes a release. Your user is a member, so riff release publish changed nothing.";
+
+/// The refusal of `riff release publish` in a terminal when riff cannot
+/// ask riff-server for the role of the person (01M58B0JSQMWNCMSNX19536XT8).
+pub const PUBLISH_ROLE_UNKNOWN: &str = "riff: cannot check your role in the riff, so riff release \
+publish changed nothing. Check the riff with riff whoami.";
 
 /// The refusal of `riff release publish` in a container session
 /// (01M58B0JSQMWNCMSNX19536XT8).

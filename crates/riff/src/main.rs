@@ -953,9 +953,9 @@ enum ReleaseCommand {
     },
     /// Tag the release, and make the GitHub release
     ///
-    /// Only the lead of the owner or of an admin of the riff, or a person
-    /// in a terminal, with a gh of an admin of the repository. A riff with
-    /// no sign-in has no roles. It refuses in a worker and in a container
+    /// Only the owner or an admin of the riff in a terminal, or the lead
+    /// of one, with a gh of an admin of the repository. A riff with no
+    /// sign-in has no roles. It refuses in a worker and in a container
     /// session.
     /// It checks first: the pull request "Release vX.Y.Z" with the label
     /// release merged with riff/verify passed, its merge commit is on
@@ -3503,25 +3503,30 @@ async fn lead_only(server: &str, refusals: &text::LeadOnly) -> Option<String> {
 /// True when the agent session `id` is the lead of its user, as
 /// riff-server sees it.
 async fn is_lead(server: &str, id: &str) -> Result<bool> {
-    Ok(lead_and_role(server, id).await?.0)
+    Ok(lead_and_role(server, Some(id)).await?.0)
 }
 
-/// Whether the session `id` is the lead of its user, and the role of
-/// its user in the riff: `None` in a riff with no sign-in, which has no
+/// Whether the agent session `id` is the lead of its user, and the role
+/// of its user in the riff. With no `id`: the role of the person on this
+/// machine. The role is `None` in a riff with no sign-in, which has no
 /// people (01M58B0JSQMWNCMSNX19536XT8). A user with no row is a member.
 async fn lead_and_role(
     server: &str,
-    id: &str,
+    id: Option<&str>,
 ) -> Result<(bool, Option<riff_core::wire::PersonRole>)> {
     use riff_core::wire::PersonRole;
     let here = identity::place(&identity::working_dir()?)?;
     let api = Api::new(server);
-    let me = identity::agent(&here, id, api.base())?;
-    let who = api.signed_in(Some(id))?.roster(&me, false).await?;
-    let lead = who
-        .sessions
-        .iter()
-        .any(|s| s.uri.who() == me.who() && s.uri.lead());
+    let me = match id {
+        Some(id) => identity::agent(&here, id, api.base())?,
+        None => identity::person(&here, api.base())?,
+    };
+    let who = api.signed_in(id)?.roster(&me, false).await?;
+    let lead = id.is_some()
+        && who
+            .sessions
+            .iter()
+            .any(|s| s.uri.who() == me.who() && s.uri.lead());
     let role = (!who.people.is_empty()).then(|| {
         who.people
             .iter()
@@ -3534,27 +3539,30 @@ async fn lead_and_role(
 /// The caller of a command of the release cycle: a worker, a container
 /// session, an agent session, whether it is the lead, and the role of
 /// its user (01M58B0JSQMWNCMSNX19536XT8). riff asks riff-server for the
-/// lead and the role only when `ask_lead` is true.
-async fn release_caller(server: &str, ask_lead: bool) -> riff::cycle::Caller {
+/// lead and the role only when `ask_role` is true: for an agent session
+/// with a session ID, and for a person in a terminal.
+async fn release_caller(server: &str, ask_role: bool) -> riff::cycle::Caller {
     let worker = std::env::var(riff::worker::WORKER).is_ok_and(|v| v == "1");
     let container = riff::cycle::in_container();
     let agent = riff::cycle::in_agent();
-    let (lead, role) = match identity::session_id() {
-        Some(id) if ask_lead && agent && !worker && !container => {
-            match lead_and_role(server, &id).await {
-                Ok((lead, role)) => (Some(lead), role),
-                Err(_) => (None, None),
-            }
-        }
-        _ => (None, None),
-    };
-    riff::cycle::Caller {
+    let mut caller = riff::cycle::Caller {
         worker,
         container,
         agent,
-        lead,
-        role,
+        ..riff::cycle::Caller::default()
+    };
+    let id = identity::session_id();
+    if !ask_role || worker || container || (agent && id.is_none()) {
+        return caller;
     }
+    match lead_and_role(server, id.as_deref()).await {
+        Ok((lead, role)) => {
+            caller.lead = agent.then_some(lead);
+            caller.role = role;
+        }
+        Err(_) => caller.role_unknown = true,
+    }
+    caller
 }
 
 /// `riff release cut`, `publish`, `status` and `approve`

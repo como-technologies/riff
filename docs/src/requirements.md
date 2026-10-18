@@ -7708,9 +7708,11 @@ items of Wave C that end riff-server in the Backlog
 - **01M58B0JSQMWNCMSNX19536XT8** `riff release publish` refuses, and
   changes nothing, in a worker, in a container session, and in an
   agent session that is not the lead of its user, also when riff
-  cannot ask riff-server, and in the lead of a member: a user that is
-  not the owner and not an admin of the riff. A riff with no sign-in
-  has no roles, so there each lead may. `riff release approve` refuses
+  cannot ask riff-server, and for a member, in a terminal or in its
+  lead: a user that is not the owner and not an admin of the riff. In a
+  terminal it also refuses when riff cannot ask riff-server for the
+  role. A riff with no sign-in has no roles, so there each person and
+  each lead may. `riff release approve` refuses
   in each agent session: a worker, a container session, a process with
   a session ID, and a process under Claude Code (`CLAUDECODE`), also a
   `!` command.

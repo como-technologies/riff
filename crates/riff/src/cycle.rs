@@ -11,7 +11,7 @@
 //! | Command | Who | What |
 //! |---|---|---|
 //! | `riff release cut X.Y.Z` | a lead or a worker | the release pull request from `origin/main` ([`cut`], 01M58B0HZYMAK1B2AJMWKHCXG0) |
-//! | `riff release publish vX.Y.Z` | the lead, or a person, with a `gh` of an admin | the tag and the GitHub release ([`publish`], 01M58B0JABCET719T3HFB19NDW) |
+//! | `riff release publish vX.Y.Z` | the owner or an admin of the riff, or its lead, with a `gh` of an admin | the tag and the GitHub release ([`publish`], 01M58B0JABCET719T3HFB19NDW) |
 //! | `riff release status` | each session | the version on `origin/main`, the last release, what waits ([`status`], 01M58B0JEYNAW67NS226FMX5XH) |
 //! | `riff release approve vX.Y.Z` | a person in a terminal | the approval of the environment `production` ([`approve`], 01M58B0JMFQ5E40TWTQ48MPSGK) |
 //!
@@ -744,16 +744,19 @@ pub struct Caller {
     /// For an agent session: `Some(true)` when it is the lead of its
     /// user, `None` when riff cannot tell.
     pub lead: Option<bool>,
-    /// For an agent session: the role of its user in the riff. `None`
-    /// in a riff with no sign-in: it has no people, and it trusts its
-    /// network.
+    /// The role of its user in the riff: of the agent session, or else
+    /// of the person in the terminal. `None` in a riff with no sign-in: it
+    /// has no people, and it trusts its network.
     pub role: Option<PersonRole>,
+    /// True when riff could not ask riff-server for the role of the
+    /// person in the terminal.
+    pub role_unknown: bool,
 }
 
 impl Caller {
     /// Why this caller may not run `riff release publish`, or `None`. A
-    /// person in a plain terminal may. The lead may when its user is
-    /// the owner or an admin of the riff, or when the riff has no
+    /// person in a plain terminal, or the lead of its user, may when the
+    /// user is the owner or an admin of the riff, or when the riff has no
     /// sign-in.
     ///
     /// ```
@@ -761,12 +764,14 @@ impl Caller {
     /// use riff_core::wire::PersonRole;
     ///
     /// assert!(Caller::default().may_not_publish().is_none());
+    /// let person = Caller { role: Some(PersonRole::Member), ..Caller::default() };
+    /// assert!(person.may_not_publish().unwrap().contains("owner or an admin"));
     /// let lead = Caller { agent: true, lead: Some(true), ..Caller::default() };
     /// assert!(lead.may_not_publish().is_none());
     /// let admin = Caller { role: Some(PersonRole::Admin), ..lead };
     /// assert!(admin.may_not_publish().is_none());
     /// let member = Caller { role: Some(PersonRole::Member), ..lead };
-    /// assert!(member.may_not_publish().unwrap().contains("owner or of an admin"));
+    /// assert!(member.may_not_publish().unwrap().contains("owner or an admin"));
     /// let worker = Caller { worker: true, agent: true, lead: Some(false), ..Caller::default() };
     /// assert!(worker.may_not_publish().unwrap().contains("a worker"));
     /// ```
@@ -776,7 +781,13 @@ impl Caller {
         } else if self.container {
             Some(text::PUBLISH_CONTAINER)
         } else if !self.agent {
-            None
+            if self.role_unknown {
+                Some(text::PUBLISH_ROLE_UNKNOWN)
+            } else if self.role == Some(PersonRole::Member) {
+                Some(text::PUBLISH_MEMBER)
+            } else {
+                None
+            }
         } else {
             match self.lead {
                 Some(true) if self.role == Some(PersonRole::Member) => Some(text::PUBLISH_MEMBER),
@@ -1719,6 +1730,26 @@ mod tests {
         for role in [None, Some(PersonRole::Owner), Some(PersonRole::Admin)] {
             assert_eq!(lead(role).may_not_publish(), None, "{role:?}");
         }
+        // A person in a terminal: the role decides.
+        let person = |role| Caller {
+            role,
+            ..Caller::default()
+        };
+        assert_eq!(
+            person(Some(PersonRole::Member)).may_not_publish(),
+            Some(text::PUBLISH_MEMBER)
+        );
+        for role in [None, Some(PersonRole::Owner), Some(PersonRole::Admin)] {
+            assert_eq!(person(role).may_not_publish(), None, "{role:?}");
+        }
+        let unknown_role = Caller {
+            role_unknown: true,
+            ..Caller::default()
+        };
+        assert_eq!(
+            unknown_role.may_not_publish(),
+            Some(text::PUBLISH_ROLE_UNKNOWN)
+        );
         // A member that is not the lead gets the refusal of the lead.
         let member = Caller {
             role: Some(PersonRole::Member),

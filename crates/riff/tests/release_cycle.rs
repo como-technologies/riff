@@ -498,7 +498,7 @@ async fn publish_tags_the_merge_commit_and_makes_the_release_in_a_paused_riff() 
         .await;
     assert!(!out.status.success());
     assert!(
-        text(&out.stderr).starts_with("Error: riff release publish: "),
+        text(&out.stderr).contains("the riff is not paused"),
         "{}",
         text(&out.stderr)
     );
@@ -656,10 +656,11 @@ async fn sign_in(
     riff_client::secrets::file_set(&dir, &riff_client::login::secret_name(url), &json).unwrap();
 }
 
-/// In a riff with sign-in, the lead of a member is refused; the lead
-/// of the owner passes the guard (01M58B0JSQMWNCMSNX19536XT8).
+/// In a riff with sign-in, a member is refused in a terminal and in its
+/// lead; the owner and its lead pass the guard
+/// (01M58B0JSQMWNCMSNX19536XT8).
 #[tokio::test(flavor = "multi_thread")]
-async fn publish_refuses_the_lead_of_a_member() {
+async fn publish_refuses_a_member_and_the_lead_of_a_member() {
     let (listener, url) = crate::common::listen().await;
     let service = riff_server::Service::new(riff_server::auth::Config {
         require_sign_in: true,
@@ -694,12 +695,36 @@ async fn publish_refuses_the_lead_of_a_member() {
     );
     assert_eq!(member.log(), "");
 
+    // The member in a terminal, with no session: the same refusal.
+    let person = [("RIFF_SERVER", url.as_str()), ("RIFF_USER", "bob")];
+    let out = member
+        .run(&person, &["release", "publish", "v3.3.0"], "")
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        text(&out.stderr),
+        format!("{}\n", riff::text::PUBLISH_MEMBER)
+    );
+    assert_eq!(member.log(), "");
+
     // The control: the lead of the owner passes the guard, and stops at a
     // later check of publish.
     let lead = [("RIFF_SESSION", "m1"), ("RIFF_SERVER", url.as_str())];
     owner.ok(&lead, &["lead"]).await;
     let out = owner
         .run(&lead, &["release", "publish", "v3.3.0"], "")
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).starts_with("Error: riff release publish: "),
+        "{}",
+        text(&out.stderr)
+    );
+
+    // The owner in a terminal passes the guard too.
+    let person = [("RIFF_SERVER", url.as_str())];
+    let out = owner
+        .run(&person, &["release", "publish", "v3.3.0"], "")
         .await;
     assert_eq!(out.status.code(), Some(1));
     assert!(
