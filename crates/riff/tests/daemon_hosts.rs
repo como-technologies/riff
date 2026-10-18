@@ -515,18 +515,23 @@ impl Riff {
 }
 
 /// 01M57D3F50347RD8ED79KEA9V7, 01M57D3F7FXTPZB3M72Z1DQ1T7,
-/// 01M57D3F9SWMKP22WNRPRY3X5T, 01M57D3FGV57W96A7SWTEFRCGW: the daemon of
+/// 01M57D3F9SWMKP22WNRPRY3X5T, 01M57D3FGV57W96A7SWTEFRCGW,
+/// 01M58B7HA8CRCW0MJ17QP3R5QG: the daemon of
 /// each host sends its facts, and `riff who` and `riff top` of the lead
 /// show each fact for the right host.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_who_and_riff_top_show_the_facts_of_each_host() {
     let r = riff_with(300, 600).await;
+    // A token on b only (01M58B7HA8CRCW0MJ17QP3R5QG).
+    riff::claude_token::store(&r.b.dir(), "sk-ant-oat01-secret1").unwrap();
     let out = r.lead(&["daemon", "limit", "--sessions", "5"], "b").await;
     assert!(out.status.success(), "{out:?}");
     let who = until("the facts of each host in riff who", || async {
         let out = r.a.run(&r.main, &["who"], Some("l1")).await;
         let who = text(&out.stdout);
-        let fresh = who.contains("sessions 0/5") && who.matches("claude ").count() == 2;
+        let fresh = who.contains("sessions 0/5")
+            && who.contains("claude token set")
+            && who.contains("claude token not set");
         (out.status.success() && fresh).then_some(who)
     })
     .await;
@@ -540,9 +545,25 @@ async fn riff_who_and_riff_top_show_the_facts_of_each_host() {
     let build = riff_core::build::Build::this().to_string();
     let build: Vec<&str> = build.split_whitespace().take(2).collect();
     let build = build.join(" ");
-    for (host, part, cores, free, limit, left) in [
-        ("a", &a, 16, 100, "sessions 0/", "claude 4h"),
-        ("b", &b, 32, 300, "sessions 0/5", "claude 9h"),
+    for (host, part, cores, free, limit, left, token) in [
+        (
+            "a",
+            &a,
+            16,
+            100,
+            "sessions 0/",
+            "claude 4h",
+            "claude token not set",
+        ),
+        (
+            "b",
+            &b,
+            32,
+            300,
+            "sessions 0/5",
+            "claude 9h",
+            "claude token set",
+        ),
     ] {
         assert!(part.contains(&format!("daemon {build}")), "{host}: {part}");
         assert!(part.contains(limit), "{host}: {part}");
@@ -560,8 +581,10 @@ async fn riff_who_and_riff_top_show_the_facts_of_each_host() {
         // The gh of a test has no sign-in.
         assert!(part.contains("gh off"), "{host}: {part}");
         assert!(part.contains(left), "{host}: {part}");
+        assert!(part.contains(token), "{host}: {part}");
     }
     assert!(!a.contains("sessions 0/5"), "{a}");
+    assert!(!who.contains("sk-ant-oat01-secret1"), "{who}");
 
     let out =
         r.a.run(&r.main, &["top", "--once", "--host", "b"], Some("l1"))

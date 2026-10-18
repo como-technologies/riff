@@ -730,6 +730,18 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
+    /// Keep the token of claude setup-token for the containers
+    ///
+    /// Run claude setup-token on this machine first, and sign in at the
+    /// browser. Then run riff claude-token in a terminal, and paste the
+    /// token. riff reads it from stdin with no echo, and keeps it in the
+    /// folder of the riff daemon, mode 0600. The daemon gives each new
+    /// container session the token in CLAUDE_CODE_OAUTH_TOKEN, and binds
+    /// no sign-in file of claude. So a session starts also when the
+    /// sign-in of claude on this machine ends soon. Run it again for a
+    /// new token. It refuses when stdin is not a terminal: an agent
+    /// session cannot run it.
+    ClaudeToken,
     /// Print the session image of this repository
     ///
     /// It reads the key image in the table [session] of riff.toml, at the
@@ -1857,6 +1869,10 @@ async fn main() -> Result<()> {
         }
         _ => {}
     }
+    if let Command::ClaudeToken = cli.command {
+        println!("{}", riff::claude_token::run(&riff::daemon::dir()?)?);
+        return Ok(());
+    }
     if let Command::Image = cli.command {
         let dir = std::env::current_dir().context("cannot read the current folder")?;
         println!("{}", riff::session_image::of_folder(&dir)?);
@@ -2638,6 +2654,7 @@ async fn main() -> Result<()> {
         | Command::Update { .. }
         | Command::Workers { .. }
         | Command::Cloud { .. }
+        | Command::ClaudeToken
         | Command::Image
         | Command::Daemon { .. }
         | Command::Init { .. }

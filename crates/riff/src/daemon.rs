@@ -865,6 +865,11 @@ pub struct Status {
     /// An old daemon gives none.
     #[serde(default)]
     pub mcp: Vec<String>,
+    /// The token of `claude setup-token` for the sessions
+    /// (01M58B7HA8CRCW0MJ17QP3R5QG). An old daemon gives
+    /// [`Token::Unknown`](riff_client::daemons::Token::Unknown).
+    #[serde(default)]
+    pub claude_token: riff_client::daemons::Token,
 }
 
 impl Status {
@@ -1107,6 +1112,8 @@ enum Note {
 struct Owned {
     /// The name of its container.
     name: String,
+    /// The folder of the daemon.
+    dir: PathBuf,
     /// The folder of its socket.
     socket: PathBuf,
     /// Its [`Record`] on disk.
@@ -1271,6 +1278,23 @@ impl Owned {
         Self::tell(state, &Say::Line { text });
     }
 
+    /// `claude` of the session refused its sign-in. With a token set, the
+    /// daemon marks the token refused, so that it starts no new session,
+    /// and says why in the lines of the session
+    /// (01M58B7H7HD0H48A0C79F8M4CR).
+    fn token_refused(&self, state: &mut SessionState) {
+        if !crate::claude_token::set(&self.dir) {
+            return;
+        }
+        if !crate::claude_token::refused(&self.dir) {
+            if let Err(e) = crate::claude_token::refuse(&self.dir) {
+                eprintln!("riff daemon: {e:#}");
+            }
+            eprintln!("riff daemon: {}: {}", self.name, text::CLAUDE_TOKEN_REFUSED);
+        }
+        Self::say_line(state, text::CLAUDE_TOKEN_REFUSED.to_owned());
+    }
+
     /// Takes the event `seq` of the relay, and gives the number of
     /// events that the daemon has. The daemon takes only the next event:
     /// it has each one before it.
@@ -1291,6 +1315,9 @@ impl Owned {
             .and_then(|e| crate::run::event_lines(e).pop())
         {
             state.last_step = step;
+        }
+        if event.as_ref().is_some_and(crate::claude_token::refusal) {
+            self.token_refused(&mut state);
         }
         if let Some(event) = event
             && event["type"] == "result"
@@ -1834,6 +1861,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             mcp: crate::session_mcp::read(&self.dir)
                 .map(|servers| crate::session_mcp::names(&servers))
                 .unwrap_or_default(),
+            claude_token: crate::claude_token::state(&self.dir),
         }
     }
 
@@ -2166,6 +2194,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         private_dir(&self.dir.join(LIVE))?;
         let (notes, noted) = mpsc::unbounded_channel();
         let owned = Arc::new(Owned {
+            dir: self.dir.clone(),
             socket: session_dir(&self.dir, &name),
             record_path: record_path(&self.dir, &name),
             name: name.clone(),
@@ -3917,6 +3946,49 @@ mod tests {
             [1, 2, 3]
         );
         assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 3);
+    }
+
+    /// 01M58B7H7HD0H48A0C79F8M4CR: `claude` refuses the token. The daemon
+    /// marks it refused, says why in the lines of the session, and the
+    /// next host check fails. The value of the token is in no event.
+    #[tokio::test]
+    async fn a_refused_token_is_marked_said_and_stops_each_new_start() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let token = "sk-ant-oat01-secret1";
+        crate::claude_token::store(&here.dir, token).unwrap();
+        let mut start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        start.secrets.push(token.into());
+        let (mut client, name) = here.started(start).await;
+        let socket = session_dir(&here.dir, &name);
+        let (mut relay, _) = Relay::connect(&socket, 0, false).await;
+        assert!(matches!(relay.next().await, Say::Input { .. }));
+        let refused = format!(
+            r#"{{"type":"result","subtype":"success","is_error":true,"result":"Invalid API key · Please run /login {token}"}}"#
+        );
+        relay.event(1, &refused).await;
+        assert_eq!(relay.next().await, Say::Close);
+        relay.exit(2, 1).await;
+
+        let (said, _) = to_the_end(&mut client).await;
+        let lines: Vec<&str> = said
+            .iter()
+            .filter_map(|s| match s {
+                Say::Line { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(lines.contains(&text::CLAUDE_TOKEN_REFUSED), "{said:?}");
+        assert!(events(&said).iter().all(|(_, l)| !l.contains(token)));
+        assert!(crate::claude_token::refused(&here.dir));
+        assert_eq!(
+            status(&here.dir).await.unwrap().claude_token,
+            riff_client::daemons::Token::Refused
+        );
+        let credentials = here.dir.join("none.json");
+        assert!(matches!(
+            crate::run::claude_of(&here.dir, &credentials, 0),
+            Err(crate::run::HostFault::TokenRefused)
+        ));
     }
 
     /// The daemon acks no line that it lacks: it closes the connection,

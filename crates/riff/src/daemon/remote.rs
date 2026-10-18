@@ -979,6 +979,11 @@ impl Session {
             eprintln!("riff daemon: {repo}: cannot send the facts: {e:#}");
         }
         let host = &self.served.wave.host;
+        // With a token, the sign-in of claude does not stop a start
+        // (01M58B7HCXKZF39DCF6KV84JRV).
+        if facts.claude_token.set() {
+            return;
+        }
         let note = match short.look(&facts.claude) {
             None => return,
             Some(Said::Short(minutes)) => text::daemon_claude_short(host, minutes),

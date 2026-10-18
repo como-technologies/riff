@@ -15,12 +15,15 @@
 //! - from the host: the load, the free memory, the disk of the session
 //!   folders, the version of podman, and the session image that the
 //!   repository pins ([`look`]);
-//! - the sign-ins of riff, `gh` and `claude` (01M57D3FGV57W96A7SWTEFRCGW).
+//! - the sign-ins of riff, `gh` and `claude` (01M57D3FGV57W96A7SWTEFRCGW),
+//!   and whether the token of `riff claude-token` is set
+//!   (01M58B7HA8CRCW0MJ17QP3R5QG).
 //!
 //! At each look, the session also tells the lead of its repository, with
 //! one note each time:
 //!
-//! - when the sign-in of `claude` has less than
+//! - when no token of `riff claude-token` is set
+//!   (01M58B7HCXKZF39DCF6KV84JRV), and the sign-in of `claude` has less than
 //!   [`SHORT_MINUTES`](riff_client::daemons::SHORT_MINUTES) left, the step
 //!   for the person, and when it comes back ([`Short`],
 //!   01M57D3FC5PB5EQ6Y38Y5R2DBB);
@@ -98,6 +101,7 @@ pub fn every() -> Duration {
 ///     "limit": {"sessions": 4, "floor_gb": 8, "cpus": 8, "memory_gb": 8},
 ///     "waiting": ["riff-issue-13-2b3c4d5e"],
 ///     "waves": [{"repo": "o/r", "word": "started issue-12"}],
+///     "claude_token": "set",
 /// }))?;
 /// let facts = of_status(&status);
 /// assert_eq!((facts.build.as_str(), facts.limit, facts.floor_gb), ("3.1.0", 4, 8));
@@ -105,6 +109,7 @@ pub fn every() -> Duration {
 /// assert_eq!(facts.sessions[0].last, "> Bash: just check");
 /// assert_eq!(facts.waiting, ["riff-issue-13-2b3c4d5e"]);
 /// assert_eq!(facts.waves[0].word, "started issue-12");
+/// assert_eq!(facts.claude_token, riff_client::daemons::Token::Set);
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 pub fn of_status(status: &Status) -> Facts {
@@ -133,6 +138,7 @@ pub fn of_status(status: &Status) -> Facts {
                 word: w.word.clone(),
             })
             .collect(),
+        claude_token: status.claude_token,
         ..Facts::default()
     }
 }

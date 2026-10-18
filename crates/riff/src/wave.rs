@@ -1284,20 +1284,18 @@ impl Live {
             clone,
             objects: common.join("objects"),
             claude,
-            credentials: host.credentials.clone(),
+            sign_in: host.claude.sign_in(),
             gitconfig: existing(host.home.join(".gitconfig")),
             gh_config: existing(host.home.join(".config/gh")),
         };
-        let secrets = std::iter::once(host.gh_token.clone())
-            .chain(host.sign_in.secrets.iter().cloned())
-            .collect();
+        let secrets = host.secrets();
         Ok(Start {
             session: session.to_owned(),
             item,
             folder,
             spec: run::spec(&facts),
             start,
-            values: vec![("GH_TOKEN".to_owned(), host.gh_token.clone())],
+            values: host.values(),
             secrets,
             server: wave.server.clone(),
             me: me.clone(),
@@ -1800,6 +1798,8 @@ mod tests {
         refusals: Vec<String>,
         /// Each item whose claim riff-server refused.
         refused: Vec<String>,
+        /// `claude` refused the token of the host.
+        token_refused: bool,
         /// The minutes that the sign-in of `claude` on the host has
         /// left. `None`: many.
         minutes: Option<i64>,
@@ -1823,6 +1823,9 @@ mod tests {
     impl Forge {
         /// The fault of the host now.
         fn host(&self) -> Result<(), run::HostFault> {
+            if self.token_refused {
+                return Err(run::HostFault::TokenRefused);
+            }
             match self.minutes.and_then(run::HostFault::of_minutes) {
                 Some(fault) => Err(fault),
                 None => Ok(()),
@@ -2392,6 +2395,35 @@ mod tests {
         here.forge().minutes = Some(60);
         here.until(3, |h| h.running("issue-1").is_some()).await;
         here.until(3, |h| h.running("issue-2").is_some()).await;
+        assert_eq!(here.forge().told.len(), 1, "{:?}", here.forge().told);
+    }
+
+    /// 01M58B7H7HD0H48A0C79F8M4CR: `claude` refused the token of the
+    /// host. No item starts, no start counts, and the lead gets one
+    /// message with the step. A new token starts the items.
+    #[tokio::test]
+    async fn a_refused_token_starts_nothing_and_the_lead_hears_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        here.forge().token_refused = true;
+        here.run();
+        let why = run::HostFault::TokenRefused.wave_text();
+        let word = text::wave_host_word(&why);
+        here.until(0, |h| h.daemon.waves_shown()[0].word == word)
+            .await;
+        here.idle(0).await;
+        {
+            let forge = here.forge();
+            assert!(forge.starts.is_empty(), "{forge:?}");
+            assert_eq!(forge.told, [text::wave_host_waits("o/r", &why)]);
+            assert!(
+                forge.told[0].contains("riff claude-token"),
+                "{:?}",
+                forge.told
+            );
+        }
+        here.forge().token_refused = false;
+        here.until(3, |h| h.running("issue-1").is_some()).await;
         assert_eq!(here.forge().told.len(), 1, "{:?}", here.forge().told);
     }
 

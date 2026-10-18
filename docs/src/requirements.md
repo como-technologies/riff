@@ -6670,10 +6670,38 @@ part when they merge.
   riff gives podman only the name of the variable
   (`-e CLAUDE_CODE_OAUTH_TOKEN`), so the value is in no command line.
   riff keeps the token in its own folder, with mode 0600, and never in a
-  log, a message or a clone. Until this works, riff binds
+  log, a message or a clone. Only on a host with no token, riff binds
   `~/.claude/.credentials.json` into the Claude folder of the session
   with no write, and starts no session while the access token has less
-  than 60 minutes left.
+  than 60 minutes left (01M58B7H50RCG2VXXV9XX5Y7HM).
+- **01M58B7GZT7WFSBBG1XWJHR4MH** `riff claude-token` reads the token
+  from stdin, with no echo. It refuses when stdin is not a terminal, so
+  an agent session cannot run it. It keeps the token in the file
+  `claude-token` in the folder of the daemon, with mode 0600, in the
+  place of the old one. The token goes through no riff-server, no
+  message, no log and no clone.
+- **01M58B7H2HMYT6VTY0B8T2G0KW** When a token is set, the daemon starts
+  each container with `-e CLAUDE_CODE_OAUTH_TOKEN` and binds no
+  `.credentials.json`. The value goes in the environment of podman, and
+  the scrub of the session takes it out of each event.
+- **01M58B7H50RCG2VXXV9XX5Y7HM** When a token is set, the daemon,
+  `riff run` and `riff lead start` do not read the sign-in file of
+  `claude`, and have no rule of 60 minutes. When no token is set, the
+  bind and the rule of 60 minutes hold.
+- **01M58B7H7HD0H48A0C79F8M4CR** When `claude` in a session refuses the
+  token, the daemon writes the mark `claude-token-refused` beside the
+  token, and says it in the lines of the session. While the mark is
+  there, each start fails with the step for the person, so the wave
+  starts no new session and the lead gets one message
+  (01M57A7A1W2K9440WZA1QZ3M9T). `riff claude-token` removes the mark.
+- **01M58B7HA8CRCW0MJ17QP3R5QG** `riff daemon status` and the part
+  `Hosts` of `riff who` show `claude token`: `set`, `refused` or
+  `not set`, and never the value. With no token, `riff daemon status`
+  gives the step: run `claude setup-token`, then `riff claude-token`,
+  on this machine.
+- **01M58B7HCXKZF39DCF6KV84JRV** When a token is set, the daemon posts
+  no note for the sign-in of `claude` (01M57D3FC5PB5EQ6Y38Y5R2DBB), and
+  the facts of the host do not warn about its minutes left.
 - **01M4Z60B874MBWZWDP8YDEM3HR** riff trusts the clone of each session
   in its own Claude folder, as the person trusts the main clone: the
   `.claude.json` of the folder has

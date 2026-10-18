@@ -118,7 +118,7 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 ///     clone: "/d/riff/leads/o-r/clone".into(),
 ///     objects: "/src/r/.git/objects".into(),
 ///     claude: "/d/riff/leads/o-r/claude".into(),
-///     credentials: "/home/mike/.claude/.credentials.json".into(),
+///     sign_in: riff::run::ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
 ///     gitconfig: None,
 ///     gh_config: None,
 /// };
@@ -346,7 +346,7 @@ pub async fn start_with(
         clone,
         objects: common.join("objects"),
         claude,
-        credentials: host.credentials.clone(),
+        sign_in: host.claude.sign_in(),
         gitconfig: existing(host.home.join(".gitconfig")),
         gh_config: existing(host.home.join(".config/gh")),
     };
@@ -356,10 +356,8 @@ pub async fn start_with(
         folder,
         spec: spec(&facts, &repo),
         start: text::lead_start(&repo),
-        values: vec![("GH_TOKEN".to_owned(), host.gh_token.clone())],
-        secrets: std::iter::once(host.gh_token.clone())
-            .chain(host.sign_in.secrets.iter().cloned())
-            .collect(),
+        values: host.values(),
+        secrets: host.secrets(),
         server: server.to_owned(),
         me: me.clone(),
         terminal: true,

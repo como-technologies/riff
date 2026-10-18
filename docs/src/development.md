@@ -761,12 +761,14 @@ flowchart LR
    riff init
    ```
 
-2. Sign in to `gh`, and run `claude` once on this machine, so that its
-   sign-in has 60 minutes or more left:
+2. Sign in to `gh`:
 
    ```sh
    gh auth status
    ```
+
+   Then give the sessions a sign-in of `claude`: see
+   [Give the container sessions a long-lived sign-in of claude](#give-the-container-sessions-a-long-lived-sign-in-of-claude).
 
 3. Give your clone an HTTPS `origin`. The clone of the session takes
    the URL of `origin` from your clone. The container has no SSH
@@ -777,6 +779,65 @@ flowchart LR
    git remote get-url origin
    git remote set-url origin https://github.com/OWNER/REPO.git
    ```
+
+### Give the container sessions a long-lived sign-in of claude
+
+Do this one time on each machine that runs the riff daemon. First get
+a long-lived token of `claude`. It opens the browser: sign in there.
+It prints the token:
+
+```sh
+claude setup-token
+```
+
+Then give the token to riff, in a terminal on the same machine. Paste
+the token, and press Enter. riff shows no echo:
+
+```sh
+riff claude-token
+```
+
+riff keeps the token in the folder of the riff daemon
+(`~/.local/share/riff/daemon/claude-token`), with mode 0600. The
+token goes to no riff-server, no message, no log and no clone. An
+agent session cannot run `riff claude-token`: it refuses when stdin is
+not a terminal.
+
+```mermaid
+flowchart LR
+    P["claude setup-token"] -->|"paste"| R["riff claude-token"]
+    R --> F[("daemon/claude-token, mode 0600")]
+    F --> D["riff daemon"]
+    D -->|"-e CLAUDE_CODE_OAUTH_TOKEN"| C["each new container session"]
+```
+
+The daemon gives each new container session the token in
+`CLAUDE_CODE_OAUTH_TOKEN`. podman gets only the name of the variable.
+With a token, a session starts also when the sign-in of `claude` on
+the machine ends soon.
+
+With no token, the daemon binds your `~/.claude/.credentials.json`
+into each container with no write. A container cannot refresh that
+sign-in, so the daemon starts no session while it has less than 60
+minutes left. See
+[When the sign-in of claude ends soon](#when-the-sign-in-of-claude-ends-soon).
+
+To see whether a token is set:
+
+```sh
+riff daemon status
+```
+
+It shows `claude token: set.`, `claude token: not set.` with the step,
+or `claude token: refused.`. The part `Hosts` of `riff who` shows
+`claude token set`, `not set` or `refused` for each host. riff never
+shows the value.
+
+When `claude` refuses the token, because it ended or you revoked it,
+the session fails with the words `claude refused the token of riff
+claude-token`. The daemon starts no new session, and your lead gets one
+message. Run `claude setup-token` and `riff claude-token` again. The
+wave starts the work by itself at its next look.
 
 ### Run an item
 
@@ -984,8 +1045,11 @@ rm -rf ~/.local/share/riff/sessions/issue-735-7788e301
 - Your `~/.gitconfig` and `~/.config/gh`, with no write.
 - Your token of `gh` in `GH_TOKEN`. riff gives podman only the name of
   the variable, so the token is in no command line.
-- A Claude folder of its own, and your sign-in of `claude` with no
-  write. `claude` runs in the auto permission mode.
+- A Claude folder of its own. `claude` runs in the auto permission
+  mode.
+- The token of `riff claude-token` in `CLAUDE_CODE_OAUTH_TOKEN`, by
+  name only. With no token, your sign-in file of `claude` with no
+  write.
 - The first-run answers of `claude` in the `.claude.json` of that
   Claude folder: the onboarding, your theme from `~/.claude.json`, and
   the trust of the clone. So a takeover asks no first-run question. See
@@ -1150,13 +1214,13 @@ To start the rebase of the same commit again, see
 
 ### When the sign-in of claude ends soon
 
-A session needs the sign-in of `claude` on the machine with 60
-minutes or more left. When it has less, the wave starts no item, and
-no start of an item counts. The wave waits, and looks again each
-minute. Your lead gets one message:
+With no token of `riff claude-token`, a session needs the sign-in of
+`claude` on the machine with 60 minutes or more left. When it has
+less, the wave starts no item, and no start of an item counts. The
+wave waits, and looks again each minute. Your lead gets one message:
 
 ```text
-The riff daemon starts no session for the wave of como-technologies/riff now: The sign-in of claude on this machine ends in 42 minutes. A session needs 60 minutes or more. Run claude on this machine to refresh it. No start of an item counts. The wave looks again each minute, and starts the work by itself when the fact is good. See it: riff daemon status
+The riff daemon starts no session for the wave of como-technologies/riff now: The sign-in of claude on this machine ends in 42 minutes. A session needs 60 minutes or more. Run claude on this machine to refresh it. To end this rule, run claude setup-token, then riff claude-token, on this machine. No start of an item counts. The wave looks again each minute, and starts the work by itself when the fact is good. See it: riff daemon status
 ```
 
 The same occurs when the sign-in of `gh` fails. To refresh the
@@ -1169,6 +1233,9 @@ claude
 You do not have to run `riff wave run` again. At its next look, the
 wave starts the work. While it waits, `riff daemon status` shows the
 wave with the words `waits for this machine` and the reason.
+
+To end this rule, give the sessions a token: see
+[Give the container sessions a long-lived sign-in of claude](#give-the-container-sessions-a-long-lived-sign-in-of-claude).
 
 ### Start a spent item again
 

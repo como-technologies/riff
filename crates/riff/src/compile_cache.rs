@@ -477,7 +477,7 @@ mod tests {
             clone: "/c".into(),
             objects: "/o".into(),
             claude: "/cl".into(),
-            credentials: "/cr".into(),
+            sign_in: crate::run::ClaudeSignIn::Token,
             gitconfig: None,
             gh_config: None,
         });

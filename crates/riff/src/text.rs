@@ -5899,6 +5899,74 @@ pub fn run_no_sign_in(path: &Path) -> String {
     )
 }
 
+/// The step for the person that sets the token of the container
+/// sessions (01M58B7HA8CRCW0MJ17QP3R5QG).
+pub const CLAUDE_TOKEN_STEP: &str =
+    "Run claude setup-token, then riff claude-token, on this machine.";
+
+/// The ask of `riff claude-token`.
+pub const CLAUDE_TOKEN_ASK: &str = "Paste the token of claude setup-token, then press Enter: ";
+
+/// `riff claude-token` with no terminal on stdin
+/// (01M58B7GZT7WFSBBG1XWJHR4MH).
+pub const CLAUDE_TOKEN_NO_TERMINAL: &str = "riff claude-token reads the token in a terminal only. \
+     Run it yourself, in a terminal on this machine. An agent session cannot run it.";
+
+/// `riff claude-token` read no token.
+pub const CLAUDE_TOKEN_BAD: &str = "riff claude-token read no token. Paste the one line that \
+     claude setup-token prints, with no space in it.";
+
+/// `claude` refused the token of `riff claude-token`
+/// (01M58B7H7HD0H48A0C79F8M4CR).
+///
+/// ```
+/// let text = riff::text::CLAUDE_TOKEN_REFUSED;
+/// assert!(text.contains("claude setup-token") && text.contains("riff claude-token"), "{text}");
+/// ```
+pub const CLAUDE_TOKEN_REFUSED: &str = "claude refused the token of riff claude-token: it ended, \
+     or it was revoked. The daemon starts no session until a new token is set. Run claude \
+     setup-token, then riff claude-token, on this machine.";
+
+/// `riff claude-token` kept the token in the file `path`.
+///
+/// ```
+/// let text = riff::text::claude_token_kept("/d/claude-token".as_ref());
+/// assert!(text.starts_with("riff keeps the token in /d/claude-token (mode 0600)."), "{text}");
+/// ```
+pub fn claude_token_kept(path: &Path) -> String {
+    format!(
+        "riff keeps the token in {} (mode 0600). Each new container session signs in with it. \
+         See it: riff daemon status",
+        path.display()
+    )
+}
+
+/// The line of the token in `riff daemon status`
+/// (01M58B7HA8CRCW0MJ17QP3R5QG). It never holds the value.
+///
+/// ```
+/// use riff_client::daemons::Token;
+/// use riff::text::daemon_claude_token;
+///
+/// assert_eq!(daemon_claude_token(Token::Set), "claude token: set.");
+/// assert!(daemon_claude_token(Token::NotSet).starts_with("claude token: not set. Run claude setup-token"));
+/// assert!(daemon_claude_token(Token::Refused).starts_with("claude token: refused. claude refused"));
+/// assert_eq!(daemon_claude_token(Token::Unknown), "");
+/// ```
+pub fn daemon_claude_token(token: riff_client::daemons::Token) -> String {
+    use riff_client::daemons::Token;
+    match token {
+        Token::Unknown => String::new(),
+        Token::Set => "claude token: set.".to_owned(),
+        Token::NotSet => format!(
+            "claude token: not set. {CLAUDE_TOKEN_STEP} Until then, the sessions use the \
+             sign-in of claude on this machine, and none starts with less than {} minutes left.",
+            crate::run::MIN_MINUTES
+        ),
+        Token::Refused => format!("claude token: refused. {CLAUDE_TOKEN_REFUSED}"),
+    }
+}
+
 /// The access token of `claude` ends too soon (01M4Z60B869HWDTZMSYPVYACD8).
 ///
 /// ```
@@ -5907,7 +5975,8 @@ pub fn run_no_sign_in(path: &Path) -> String {
 pub fn run_sign_in_ends(minutes: i64) -> String {
     format!(
         "The sign-in of claude ends in {minutes} minutes. riff run needs {} minutes or more. \
-         Run claude on this machine to refresh it, then run riff run again.",
+         Run claude on this machine to refresh it, then run riff run again. To end this rule, \
+         run claude setup-token, then riff claude-token, on this machine.",
         crate::run::MIN_MINUTES
     )
 }
@@ -6337,6 +6406,7 @@ pub const DAEMON_NO_HELLO: &str =
 /// let note = riff::text::daemon_claude_short("thelio", 100);
 /// assert!(note.starts_with("The sign-in of claude on thelio ends in 100 minutes."), "{note}");
 /// assert!(note.contains("run claude on thelio"), "{note}");
+/// assert!(note.ends_with("then riff claude-token, on thelio."), "{note}");
 /// assert!(riff::text::daemon_claude_short("thelio", 0).contains("ended, or is missing"));
 /// ```
 pub fn daemon_claude_short(host: &str, minutes: i64) -> String {
@@ -6348,7 +6418,8 @@ pub fn daemon_claude_short(host: &str, minutes: i64) -> String {
     format!(
         "The sign-in of claude on {host} {state}. The daemon of {host} starts no session with \
          less than {} minutes left. Ask the person to run claude on {host}, and to sign in when \
-         claude asks.",
+         claude asks. To end this rule, ask the person to run claude setup-token, then riff \
+         claude-token, on {host}.",
         crate::run::MIN_MINUTES
     )
 }
@@ -6434,7 +6505,7 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 /// sign-in that is off or short, low memory or disk.
 ///
 /// ```
-/// use riff_client::daemons::{Facts, Image, Session, Sign, Wave};
+/// use riff_client::daemons::{Facts, Image, Session, Sign, Token, Wave};
 /// use riff_client::machines::{Disk, Machine};
 /// use riff_client::sessions::Phase;
 ///
@@ -6457,6 +6528,7 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 ///     riff: Sign::On,
 ///     gh: Sign::On,
 ///     claude: Sign::Left { minutes: 90 },
+///     claude_token: Token::NotSet,
 ///     ..Facts::default()
 /// };
 /// let plain: Vec<String> = riff::text::daemon_facts(&facts)
@@ -6468,7 +6540,7 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 ///     [
 ///         "daemon 3.1.0 d2ae080  sessions 1/4  floor 8GB",
 ///         "load 1.5/16 threads  24GB avail  disk 200GB free (43%)  podman 5.2.1  image here",
-///         "riff on  gh on  claude 1h30m left",
+///         "riff on  gh on  claude 1h30m left  claude token not set",
 ///         "wave o/r: started issue-12",
 ///         "riff-issue-12-1a2b3c4d  issue-12  works  > Bash: just check",
 ///         "waits: riff-issue-13-2b3c4d5e",
@@ -6480,10 +6552,15 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 ///     .filter(|(_, style)| *style == riff::style::WARNING)
 ///     .map(|(t, _)| t)
 ///     .collect();
-/// assert_eq!(warned, ["claude 1h30m left"]);
+/// assert_eq!(warned, ["claude 1h30m left", "claude token not set"]);
+/// // With a token, the minutes of claude do not warn.
+/// let token = Facts { claude_token: Token::Set, ..facts.clone() };
+/// let warned = riff::text::daemon_facts(&token).into_iter().flatten()
+///     .filter(|(_, style)| *style == riff::style::WARNING).count();
+/// assert_eq!(warned, 0);
 /// let bare = riff::text::daemon_facts(&Facts { build: "3.1.0".into(), ..Facts::default() });
 /// let words: Vec<&str> = bare[1..3].iter().flatten().map(|(t, _)| t.as_str()).collect();
-/// assert_eq!(words, ["no podman", "no session image", "riff ?", "gh ?", "claude ?"]);
+/// assert_eq!(words, ["no podman", "no session image", "riff ?", "gh ?", "claude ?", "claude token ?"]);
 /// ```
 pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, anstyle::Style)>> {
     let plain = anstyle::Style::new;
@@ -6522,10 +6599,21 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
     let sign = |name: &str, sign: &riff_client::daemons::Sign| {
         (format!("{name} {}", sign_word(sign)), warn(sign.short()))
     };
+    let token = facts.claude_token;
+    // With a token, the minutes of the sign-in of claude stop no start
+    // (01M58B7HCXKZF39DCF6KV84JRV).
+    let claude = (
+        format!("claude {}", sign_word(&facts.claude)),
+        warn(facts.claude.short() && !token.set()),
+    );
     let signs = vec![
         sign("riff", &facts.riff),
         sign("gh", &facts.gh),
-        sign("claude", &facts.claude),
+        claude,
+        (
+            format!("claude token {}", token.word()),
+            warn(token.warns()),
+        ),
     ];
     let mut lines = vec![head, host, signs];
     for wave in &facts.waves {
@@ -6572,6 +6660,7 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
 ///     waves: vec![],
 ///     jobs: 0,
 ///     mcp: vec![],
+///     claude_token: riff_client::daemons::Token::NotSet,
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -6580,6 +6669,10 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
 /// assert!(!text.contains("key") && !text.contains("Its riff") && !text.contains("peer"), "{text}");
 /// // An old daemon does not say its MCP servers.
 /// assert!(!text.contains("MCP"), "{text}");
+/// assert!(text.contains(
+///     "claude token: not set. Run claude setup-token, then riff claude-token, on this machine."
+/// ), "{text}");
+/// status.claude_token = riff_client::daemons::Token::Set;
 /// status.mcp = vec!["riff".into(), "docs".into()];
 /// status.sessions.push(Live {
 ///     name: "riff-issue-12-1a2b3c4d".into(),
@@ -6600,6 +6693,7 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
 /// assert!(text.contains("The MCP servers of each new session: riff, docs.\n"));
 /// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
+/// assert!(text.contains("claude token: set.\n"), "{text}");
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -6612,6 +6706,10 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     );
     if let Some(limit) = &status.limit {
         let _ = writeln!(out, "{}", daemon_limit(limit));
+    }
+    let token = daemon_claude_token(status.claude_token);
+    if !token.is_empty() {
+        let _ = writeln!(out, "{token}");
     }
     if !status.mcp.is_empty() {
         let _ = writeln!(out, "{}", session_mcp(&status.mcp));
@@ -7189,6 +7287,7 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 ///     waves: vec![],
 ///     jobs: 0,
 ///     mcp: vec![],
+///     claude_token: Default::default(),
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");
@@ -7718,13 +7817,15 @@ pub fn wave_job_failed(item: &str, error: &str) -> String {
 /// assert_eq!(
 ///     riff::text::wave_sign_in_ends(42),
 ///     "The sign-in of claude on this machine ends in 42 minutes. A session needs 60 minutes \
-///      or more. Run claude on this machine to refresh it."
+///      or more. Run claude on this machine to refresh it. To end this rule, run claude \
+///      setup-token, then riff claude-token, on this machine."
 /// );
 /// ```
 pub fn wave_sign_in_ends(minutes: i64) -> String {
     format!(
         "The sign-in of claude on this machine ends in {minutes} minutes. A session needs {} \
-         minutes or more. Run claude on this machine to refresh it.",
+         minutes or more. Run claude on this machine to refresh it. To end this rule, run \
+         claude setup-token, then riff claude-token, on this machine.",
         crate::run::MIN_MINUTES
     )
 }

@@ -105,6 +105,69 @@ impl Sign {
     }
 }
 
+/// The long-lived token of `claude setup-token` that the daemon gives
+/// each container session (01M58B7HA8CRCW0MJ17QP3R5QG). The facts never
+/// hold its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Token {
+    /// The daemon did not say: it is older.
+    #[default]
+    Unknown,
+    /// No token is set: the daemon binds the sign-in file of `claude`.
+    NotSet,
+    /// A token is set.
+    Set,
+    /// A token is set, and `claude` refused it.
+    Refused,
+}
+
+impl Token {
+    /// The word of the state.
+    ///
+    /// ```
+    /// use riff_client::daemons::Token;
+    ///
+    /// assert_eq!(Token::Set.word(), "set");
+    /// assert_eq!(Token::NotSet.word(), "not set");
+    /// assert_eq!(Token::Refused.word(), "refused");
+    /// assert_eq!(Token::Unknown.word(), "?");
+    /// ```
+    pub fn word(self) -> &'static str {
+        match self {
+            Token::Unknown => "?",
+            Token::NotSet => "not set",
+            Token::Set => "set",
+            Token::Refused => "refused",
+        }
+    }
+
+    /// True when a token is set, also a refused one: the sessions do not
+    /// use the sign-in file of `claude`.
+    ///
+    /// ```
+    /// use riff_client::daemons::Token;
+    ///
+    /// assert!(Token::Set.set() && Token::Refused.set());
+    /// assert!(!Token::NotSet.set() && !Token::Unknown.set());
+    /// ```
+    pub fn set(self) -> bool {
+        matches!(self, Token::Set | Token::Refused)
+    }
+
+    /// True when the person must act: no token, or a refused one.
+    ///
+    /// ```
+    /// use riff_client::daemons::Token;
+    ///
+    /// assert!(Token::NotSet.warns() && Token::Refused.warns());
+    /// assert!(!Token::Set.warns() && !Token::Unknown.warns());
+    /// ```
+    pub fn warns(self) -> bool {
+        matches!(self, Token::NotSet | Token::Refused)
+    }
+}
+
 /// A container session of the daemon.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
@@ -179,6 +242,9 @@ pub struct Facts {
     /// The sign-in of `claude`.
     #[serde(default)]
     pub claude: Sign,
+    /// The long-lived token of `claude setup-token`.
+    #[serde(default)]
+    pub claude_token: Token,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -355,6 +421,7 @@ mod tests {
             riff: Sign::On,
             gh: Sign::Off,
             claude: Sign::Left { minutes: 90 },
+            claude_token: Token::Set,
         };
         assert_eq!(Facts::parse(&facts.line()), Some(facts.clone()));
         assert!(!facts.line().contains('\n'));
