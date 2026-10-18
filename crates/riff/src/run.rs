@@ -921,28 +921,85 @@ pub(crate) struct Host {
     pub(crate) credentials: PathBuf,
 }
 
+/// A fact of the host that stops each start of a session, whatever the
+/// item (01M57A7A1W2K9440WZA1QZ3M9T). Its text is the text of `riff
+/// run`. [`HostFault::wave_text`] is the text of a wave.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostFault {
+    /// The sign-in of `claude` has less than [`MIN_MINUTES`] left: the
+    /// minutes that it has.
+    SignInEnds(i64),
+    /// Another fact is missing: the text that says the fix.
+    Missing(String),
+}
+
+impl HostFault {
+    /// The fault of a sign-in of `claude` with `minutes` left, or `None`
+    /// when it has [`MIN_MINUTES`] or more.
+    ///
+    /// ```
+    /// use riff::run::HostFault;
+    ///
+    /// assert_eq!(HostFault::of_minutes(42), Some(HostFault::SignInEnds(42)));
+    /// assert_eq!(HostFault::of_minutes(60), None);
+    /// ```
+    pub fn of_minutes(minutes: i64) -> Option<HostFault> {
+        (minutes < MIN_MINUTES).then_some(HostFault::SignInEnds(minutes))
+    }
+
+    /// The text for the lead of a wave. The wave tries again by itself,
+    /// so the text does not tell the person to run `riff run`.
+    ///
+    /// ```
+    /// use riff::run::HostFault;
+    ///
+    /// let text = HostFault::SignInEnds(42).wave_text();
+    /// assert!(text.contains("ends in 42 minutes"), "{text}");
+    /// assert!(!text.contains("riff run"), "{text}");
+    /// assert!(HostFault::SignInEnds(42).to_string().contains("riff run again"));
+    /// ```
+    pub fn wave_text(&self) -> String {
+        match self {
+            HostFault::SignInEnds(minutes) => text::wave_sign_in_ends(*minutes),
+            HostFault::Missing(text) => text.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for HostFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HostFault::SignInEnds(minutes) => f.write_str(&text::run_sign_in_ends(*minutes)),
+            HostFault::Missing(text) => f.write_str(text),
+        }
+    }
+}
+
+impl std::error::Error for HostFault {}
+
 /// Reads the [`Host`] facts, with `gh` in the folder `main`. A fact
-/// that is missing is an error that says the fix.
-pub(crate) fn host_facts(main: &Path) -> Result<Host> {
+/// that is missing is a [`HostFault`] that says the fix.
+pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
+    let missing = HostFault::Missing;
     let gh_token = output("gh", main, &["auth", "token"])
-        .map_err(|e| anyhow!("{}: {e:#}", text::RUN_NO_GH))?;
+        .map_err(|e| missing(format!("{}: {e:#}", text::RUN_NO_GH)))?;
     let home = std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("set HOME"))?;
+        .ok_or_else(|| missing("set HOME".into()))?;
     let user = std::env::var("USER")
         .ok()
         .filter(|u| !u.is_empty())
-        .ok_or_else(|| anyhow!("set USER"))?;
+        .ok_or_else(|| missing("set USER".into()))?;
     let claude_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|d| !d.is_empty())
         .map_or_else(|| home.join(".claude"), PathBuf::from);
     let credentials = claude_dir.join(".credentials.json");
     let file = std::fs::read_to_string(&credentials)
-        .with_context(|| text::run_no_sign_in(&credentials))?;
-    let sign_in = sign_in(&file, now_ms())?;
-    if sign_in.minutes < MIN_MINUTES {
-        bail!("{}", text::run_sign_in_ends(sign_in.minutes));
+        .map_err(|e| missing(format!("{}: {e}", text::run_no_sign_in(&credentials))))?;
+    let sign_in = sign_in(&file, now_ms()).map_err(|e| missing(format!("{e:#}")))?;
+    if let Some(fault) = HostFault::of_minutes(sign_in.minutes) {
+        return Err(fault);
     }
     Ok(Host {
         gh_token,

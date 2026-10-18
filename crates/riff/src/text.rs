@@ -5541,7 +5541,7 @@ pub fn cloud_status(s: &crate::cloud::Settings, facts: &crate::cloud::Facts) -> 
 pub const RUN_NO_REPO: &str = "riff run works only in a git clone.";
 
 /// `riff run` with no sign-in of `gh`.
-pub const RUN_NO_GH: &str = "riff run needs the sign-in of gh. Run: gh auth login";
+pub const RUN_NO_GH: &str = "riff needs the sign-in of gh. Run: gh auth login";
 
 /// `riff run` with an item that is not an issue.
 pub fn run_not_an_issue(item: &str) -> String {
@@ -5604,7 +5604,7 @@ pub fn run_no_image(image: &str) -> String {
 /// No sign-in file of `claude`.
 pub fn run_no_sign_in(path: &Path) -> String {
     format!(
-        "riff run cannot read the sign-in of claude in {}. Run claude on this machine, and \
+        "riff cannot read the sign-in of claude in {}. Run claude on this machine, and \
          sign in.",
         path.display()
     )
@@ -6913,6 +6913,61 @@ pub fn wave_job_failed(item: &str, error: &str) -> String {
         "The riff daemon could not start {item} for the wave: {error}. It tries again at its \
          next look."
     )
+}
+
+/// The sign-in of `claude` on the host of a wave ends in `minutes`
+/// (01M57A7A1W2K9440WZA1QZ3M9T).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_sign_in_ends(42),
+///     "The sign-in of claude on this machine ends in 42 minutes. A session needs 60 minutes \
+///      or more. Run claude on this machine to refresh it."
+/// );
+/// ```
+pub fn wave_sign_in_ends(minutes: i64) -> String {
+    format!(
+        "The sign-in of claude on this machine ends in {minutes} minutes. A session needs {} \
+         minutes or more. Run claude on this machine to refresh it.",
+        crate::run::MIN_MINUTES
+    )
+}
+
+/// The word of a wave that waits for a fact of the host, for the reason
+/// `why`.
+///
+/// ```
+/// assert_eq!(riff::text::wave_host_word("set HOME"), "waits for this machine: set HOME");
+/// ```
+pub fn wave_host_word(why: &str) -> String {
+    format!("waits for this machine: {why}")
+}
+
+/// The message to the lead when the wave of `repo` starts to wait for a
+/// fact of the host, for the reason `why` (01M57A7A1W2K9440WZA1QZ3M9T).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_host_waits("o/r", "set HOME"),
+///     "The riff daemon starts no session for the wave of o/r now: set HOME. No start of an \
+///      item counts. The wave looks again each minute, and starts the work by itself when the \
+///      fact is good. See it: riff daemon status"
+/// );
+/// ```
+pub fn wave_host_waits(repo: &str, why: &str) -> String {
+    let why = why.trim_end_matches('.');
+    format!(
+        "The riff daemon starts no session for the wave of {repo} now: {why}. No start of an \
+         item counts. The wave looks again each minute, and starts the work by itself when the \
+         fact is good. See it: riff daemon status"
+    )
+}
+
+/// riff found a fault of the host before the start of `item` of the wave
+/// of `repo`: the start does not count.
+pub fn wave_host_fault(repo: &str, item: &str, why: &str) -> String {
+    let why = why.trim_end_matches('.');
+    format!("The wave of {repo}: riff did not start {item}: {why}. The start does not count.")
 }
 
 /// An item of a wave started `starts` times.

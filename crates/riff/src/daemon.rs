@@ -1326,6 +1326,8 @@ struct Running {
     task: JoinHandle<()>,
     /// The items of its jobs that the daemon does not own yet.
     taken: Arc<Mutex<std::collections::BTreeSet<String>>>,
+    /// The starts of each item in this run of the wave.
+    starts: crate::wave::Starts,
     /// What it did last.
     word: Arc<Mutex<String>>,
 }
@@ -1536,22 +1538,33 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// Starts the loop of `wave`, when it does not run.
     /// A loop that runs with other facts of the wave, for example
     /// another main clone, starts again with the new facts. Its jobs go
-    /// on.
+    /// on. A loop that runs with the same facts goes on, and the starts
+    /// of each item go back to 0 (01M57A7A48A70Y7PTD95A3MBYC).
     fn spawn_wave(self: &Arc<Self>, wave: Wave) {
         let mut running = self.waves_lock();
         let taken = match running.get(&wave.repo) {
-            Some(old) if old.wave == wave && !old.task.is_finished() => return,
+            Some(old) if old.wave == wave && !old.task.is_finished() => {
+                old.starts
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clear();
+                drop(running);
+                self.tell_changed();
+                return;
+            }
             Some(old) => {
                 old.task.abort();
                 old.taken.clone()
             }
             None => Arc::new(Mutex::new(std::collections::BTreeSet::new())),
         };
+        let starts = crate::wave::Starts::default();
         let word = Arc::new(Mutex::new(text::wave_starts()));
         let task = tokio::spawn(crate::wave::run(
             self.clone(),
             wave.clone(),
             taken.clone(),
+            starts.clone(),
             word.clone(),
         ));
         running.insert(
@@ -1560,6 +1573,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 wave,
                 task,
                 taken,
+                starts,
                 word,
             },
         );
@@ -4181,6 +4195,13 @@ mod tests {
 
         fn image<'a>(&'a self, _: &'a Wave) -> crate::wave::BoxFuture<'a, Result<String>> {
             Box::pin(async { bail!("no wave in this test") })
+        }
+
+        fn host<'a>(
+            &'a self,
+            _: &'a Wave,
+        ) -> crate::wave::BoxFuture<'a, Result<(), crate::run::HostFault>> {
+            Box::pin(async { Ok(()) })
         }
 
         fn begin<'a>(

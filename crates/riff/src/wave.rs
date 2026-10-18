@@ -20,6 +20,7 @@
 //!     A["wait for room (crate::room)"] --> S["sweep: the clone of each item whose work is over goes"]
 //!     S --> L["look: the pause, the claims, the holds,<br/>the free work of gh, the Gate of each waiting pull request"]
 //!     L --> P{"pick"}
+//!     P -- "an item, and a fact of the host fails" --> W
 //!     P -- "no work" --> W["give the room back; wait for an end, or LOOK_EVERY"] --> A
 //!     P -- "an item" --> J["a job: claim, clone, start, wait for the end,<br/>the steps after the end, release"]
 //!     J -.-> A
@@ -43,6 +44,14 @@
 //! - an item that started [`STARTS`] times in this run of the wave. The
 //!   lead gets one message for it. A start whose claim riff-server
 //!   refused for a pause does not count (01M558EYCXPFW8CJV3XJ7HK3NR).
+//!   `riff wave run` on the wave clears the starts
+//!   (01M57A7A48A70Y7PTD95A3MBYC);
+//! - any item while a fact of the host fails ([`World::host`]): the
+//!   sign-in of `gh`, or the sign-in of `claude` with less than
+//!   [`run::MIN_MINUTES`] left. No item can start then, so no start
+//!   counts. The wave waits, and looks again at [`LOOK_EVERY`]. The lead
+//!   gets one message when the wave starts to wait, and `riff daemon
+//!   status` shows the reason (01M57A7A1W2K9440WZA1QZ3M9T).
 //!
 //! # A job
 //!
@@ -453,6 +462,10 @@ pub trait World: Send + Sync {
     /// of its main clone ([`session_image::merged`]).
     fn image<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<String>>;
 
+    /// The facts of the host that no item changes (as `riff run` checks them):
+    /// the fault of the first that fails (01M57A7A1W2K9440WZA1QZ3M9T).
+    fn host<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<(), run::HostFault>>;
+
     /// The steps before the start: the checks, the claim, the clone and
     /// the start text. `None` when another session holds the item, or
     /// the item is held. Each other refusal of the claim, for example
@@ -523,19 +536,21 @@ fn running<R: Runtime + 'static>(
 }
 
 /// The loop of the wave `wave` in `daemon`, until the daemon stops it.
-/// `taken` holds the items of its jobs before the start, and `word` what
-/// it did last.
+/// `taken` holds the items of its jobs before the start, `starts` the
+/// starts of each item, and `word` what it did last.
 pub(crate) async fn run<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     wave: Wave,
     taken: Arc<Mutex<BTreeSet<String>>>,
+    starts: Starts,
     word: Arc<Mutex<String>>,
 ) {
     let say = |text: String| *lock(&word) = text;
-    // The starts of each item. A job takes back the start of a claim
-    // that riff-server refused for a pause.
-    let starts: Starts = Arc::default();
+    // The spent items that the lead heard of.
     let mut told: BTreeSet<String> = BTreeSet::new();
+    // True while the wave waits for a fact of the host: the lead heard
+    // of it.
+    let mut waits = false;
     loop {
         let slot = daemon
             .room()
@@ -552,18 +567,37 @@ pub(crate) async fn run<R: Runtime + 'static>(
         let next = match world.look(&wave).await {
             Ok(look) => {
                 let spent: Vec<String> = spent(&look, &lock(&starts)).cloned().collect();
+                // `riff wave run` cleared the starts of these items.
+                told.retain(|item| lock(&starts).get(item).is_some_and(|n| *n >= STARTS));
                 for item in spent {
                     if told.insert(item.clone()) {
                         world.tell(&wave, &text::wave_spent(&item, STARTS)).await;
                     }
                 }
                 let next = pick(&look, &running(&daemon, &wave, &taken), &lock(&starts));
-                say(match &next {
+                // A fault of the host stops each item: the wave waits,
+                // and no start counts (01M57A7A1W2K9440WZA1QZ3M9T).
+                let fault = match &next {
+                    Some(_) => world.host(&wave).await.err(),
+                    None => None,
+                };
+                match &fault {
+                    Some(fault) if !waits => {
+                        waits = true;
+                        let body = text::wave_host_waits(&wave.repo, &fault.wave_text());
+                        world.tell(&wave, &body).await;
+                    }
+                    Some(_) => {}
+                    None if next.is_some() => waits = false,
+                    None => {}
+                }
+                say(match (&next, &fault) {
                     _ if look.paused => text::WAVE_PAUSED.into(),
-                    Some(work) => text::wave_started(&work.item()),
-                    None => text::WAVE_NO_WORK.into(),
+                    (Some(_), Some(fault)) => text::wave_host_word(&fault.wave_text()),
+                    (Some(work), None) => text::wave_started(&work.item()),
+                    (None, _) => text::WAVE_NO_WORK.into(),
                 });
-                next
+                next.filter(|_| fault.is_none())
             }
             Err(e) => {
                 say(text::wave_no_look(&format!("{e:#}")));
@@ -590,8 +624,9 @@ pub(crate) async fn run<R: Runtime + 'static>(
 }
 
 /// The starts of each item in one run of a wave, shared by its loop and
-/// its jobs.
-type Starts = Arc<Mutex<BTreeMap<String, u32>>>;
+/// its jobs. `riff wave run` on a wave that runs clears them
+/// (01M57A7A48A70Y7PTD95A3MBYC).
+pub(crate) type Starts = Arc<Mutex<BTreeMap<String, u32>>>;
 
 /// True when `error` is a refusal of riff-server for a pause: the riff
 /// or the repository is paused.
@@ -601,9 +636,18 @@ fn paused(error: &anyhow::Error) -> bool {
         .is_some_and(|refusal| refusal.code.as_deref() == Some("paused"))
 }
 
+/// Takes back one start of `item` in `starts`.
+fn take_back(starts: &Starts, item: &str) {
+    if let Some(count) = lock(starts).get_mut(item) {
+        *count = count.saturating_sub(1);
+    }
+}
+
 /// One job of the wave `wave`: the work `work` in the room of `slot`. A
 /// claim that riff-server refused for a pause takes back its start in
-/// `starts`, and tells the lead nothing (01M558EYCXPFW8CJV3XJ7HK3NR).
+/// `starts`, and tells the lead nothing (01M558EYCXPFW8CJV3XJ7HK3NR). So
+/// does a fault of the host that came after the look of the loop
+/// (01M57A7A1W2K9440WZA1QZ3M9T): the next look waits for it.
 async fn job<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     wave: Wave,
@@ -621,9 +665,12 @@ async fn job<R: Runtime + 'static>(
         Ok(None) => println!("{}", text::wave_not_claimed(&wave.repo, &item)),
         Err(e) if paused(&e) => {
             println!("{}", text::wave_claim_paused(&wave.repo, &item));
-            if let Some(count) = lock(&starts).get_mut(&item) {
-                *count = count.saturating_sub(1);
-            }
+            take_back(&starts, &item);
+        }
+        Err(ref e) if let Some(fault) = e.downcast_ref::<run::HostFault>() => {
+            let why = fault.wave_text();
+            println!("{}", text::wave_host_fault(&wave.repo, &item, &why));
+            take_back(&starts, &item);
         }
         Err(e) => {
             let error = format!("{e:#}");
@@ -1193,6 +1240,15 @@ impl World for Live {
         }))
     }
 
+    fn host<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<(), run::HostFault>> {
+        let main = wave.main.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || run::host_facts(&main).map(drop))
+                .await
+                .unwrap_or_else(|e| Err(run::HostFault::Missing(e.to_string())))
+        })
+    }
+
     fn begin<'a>(
         &'a self,
         wave: &'a Wave,
@@ -1202,7 +1258,7 @@ impl World for Live {
         Box::pin(async move {
             let item = work.item();
             let main = wave.main.clone();
-            let host = blocking(move || run::host_facts(&main)).await?;
+            let host = blocking(move || Ok(run::host_facts(&main)?)).await?;
             let milestone = match work {
                 Work::Build { issue } => {
                     let (repo, issue) = (wave.repo.clone(), *issue);
@@ -1413,6 +1469,23 @@ mod tests {
         refusals: Vec<String>,
         /// Each item whose claim riff-server refused.
         refused: Vec<String>,
+        /// The minutes that the sign-in of `claude` on the host has
+        /// left. `None`: many.
+        minutes: Option<i64>,
+        /// The number of the next steps before the start that fail for
+        /// a sign-in of `claude` that ends soon, after the check of the
+        /// host passed.
+        late_faults: usize,
+    }
+
+    impl Forge {
+        /// The fault of the host now.
+        fn host(&self) -> Result<(), run::HostFault> {
+            match self.minutes.and_then(run::HostFault::of_minutes) {
+                Some(fault) => Err(fault),
+                None => Ok(()),
+            }
+        }
     }
 
     /// A fake [`World`]: a forge in memory, a claim that fails for a
@@ -1462,6 +1535,11 @@ mod tests {
             Box::pin(async { Ok(IMAGE.into()) })
         }
 
+        fn host<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<(), run::HostFault>> {
+            let host = lock(&self.forge).host();
+            Box::pin(async move { host })
+        }
+
         fn begin<'a>(
             &'a self,
             _: &'a Wave,
@@ -1473,6 +1551,13 @@ mod tests {
                 let mut forge = lock(&self.forge);
                 if forge.holds.contains(&item) || forge.claims.contains_key(&item) {
                     return Ok(None);
+                }
+                // As `run::host_facts` in the steps of `Live`.
+                forge.host()?;
+                if forge.late_faults > 0 {
+                    forge.late_faults -= 1;
+                    forge.refused.push(item);
+                    return Err(run::HostFault::SignInEnds(42).into());
                 }
                 if !forge.refusals.is_empty() {
                     let code = forge.refusals.remove(0);
@@ -1879,6 +1964,84 @@ mod tests {
         let count = |text: &str| forge.told.iter().filter(|t| *t == text).count();
         assert_eq!(count(&failed), STARTS as usize, "{:?}", forge.told);
         assert_eq!(count(&spent), 1, "{:?}", forge.told);
+    }
+
+    /// 01M57A7A1W2K9440WZA1QZ3M9T: the sign-in of `claude` on the host
+    /// ends in 42 minutes. No item starts, no start counts, and the lead
+    /// gets one message. When the sign-in has 60 minutes or more, the
+    /// wave starts the item.
+    #[tokio::test]
+    async fn a_sign_in_that_ends_soon_spends_no_start_and_the_lead_hears_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        here.forge().minutes = Some(42);
+        here.run();
+        let why = run::HostFault::SignInEnds(42).wave_text();
+        let word = text::wave_host_word(&why);
+        here.until(0, |h| h.daemon.waves_shown()[0].word == word)
+            .await;
+        // Many looks, and a sign-in with one minute less: still one
+        // message.
+        here.idle(0).await;
+        here.forge().minutes = Some(41);
+        here.idle(0).await;
+        {
+            let forge = here.forge();
+            assert!(forge.starts.is_empty(), "{forge:?}");
+            assert!(forge.refused.is_empty(), "{forge:?}");
+            assert_eq!(forge.told, [text::wave_host_waits("o/r", &why)]);
+            assert!(!forge.told[0].contains("riff run "), "{:?}", forge.told);
+        }
+        here.forge().minutes = Some(60);
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.until(3, |h| h.running("issue-2").is_some()).await;
+        assert_eq!(here.forge().told.len(), 1, "{:?}", here.forge().told);
+    }
+
+    /// 01M57A7A1W2K9440WZA1QZ3M9T: the sign-in ends soon after the check
+    /// of the host of the loop, more times than [`STARTS`]. Such a start
+    /// does not count, and the lead hears nothing of it.
+    #[tokio::test]
+    async fn a_fault_of_the_host_in_a_job_is_no_start_of_the_item() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        let faults = STARTS as usize + 1;
+        here.forge().late_faults = faults;
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        let forge = here.forge();
+        assert_eq!(forge.refused, vec!["issue-1"; faults]);
+        assert_eq!(forge.starts.len(), 1);
+        assert!(forge.told.is_empty(), "{:?}", forge.told);
+    }
+
+    /// 01M57A7A48A70Y7PTD95A3MBYC: a spent item starts again after a
+    /// second `riff wave run`, and the lead hears of it again when it is
+    /// spent again.
+    #[tokio::test]
+    async fn a_second_wave_run_clears_the_spent_starts() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().no_pull = true;
+        here.run();
+        let mut n = 0;
+        let mut once = async |here: &Here| {
+            for _ in 0..STARTS {
+                n += 1;
+                here.until(3, |h| h.running("issue-1").is_some()).await;
+                here.end("issue-1").await;
+                here.until(3, |h| h.forge().finished.len() == n).await;
+            }
+            here.idle(3).await;
+        };
+        once(&here).await;
+        assert_eq!(here.forge().starts.len(), 3);
+        here.run();
+        once(&here).await;
+        let forge = here.forge();
+        assert_eq!(forge.starts.len(), 6, "{forge:?}");
+        let spent = text::wave_spent("issue-1", STARTS);
+        assert_eq!(forge.told, [spent.clone(), spent]);
     }
 
     #[tokio::test]
