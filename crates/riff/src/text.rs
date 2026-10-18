@@ -2869,8 +2869,9 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 
 /// The kind of a session in `riff who` and `riff top`
 /// (01M510MG2YSETB2CCAS8XDHPZ0): the first that matches of the lead, a
-/// session in a container, a worker in tmux, and the session of
-/// `riff workers host`. Each other session has no kind.
+/// session in a container, a worker in tmux, the session of
+/// `riff workers host`, and the session of the riff daemon
+/// (01M589HH6HCWYJP1ZC7MRAXZ6E). Each other session has no kind.
 ///
 /// ```
 /// use riff_client::machines::HostStatus;
@@ -2913,6 +2914,13 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 /// host.status = Some(StatusInfo { status, age_secs: 1, stale: false });
 /// assert_eq!(SessionKind::of(&host), Some(SessionKind::Host));
 /// assert_eq!(SessionKind::Host.word(), "host");
+///
+/// // The session of the riff daemon says so in its status.
+/// let mut daemon = row("riff://mike@thelio/o/r?session=d1", false, false);
+/// let status = Status { step: riff::daemon::remote::status_line(812, "3.2.0", 0) };
+/// daemon.status = Some(StatusInfo { status, age_secs: 1, stale: false });
+/// assert_eq!(SessionKind::of(&daemon), Some(SessionKind::Daemon));
+/// assert_eq!(SessionKind::Daemon.word(), "daemon");
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SessionKind {
@@ -2920,15 +2928,17 @@ pub enum SessionKind {
     Container,
     Worker,
     Host,
+    Daemon,
 }
 
 impl SessionKind {
     /// Each kind, in the order of the counts of `riff top`.
-    pub const ALL: [SessionKind; 4] = [
+    pub const ALL: [SessionKind; 5] = [
         SessionKind::Lead,
         SessionKind::Container,
         SessionKind::Worker,
         SessionKind::Host,
+        SessionKind::Daemon,
     ];
 
     /// The kind of `s`, or `None`.
@@ -2941,6 +2951,8 @@ impl SessionKind {
             Some(SessionKind::Worker)
         } else if is_host(s) {
             Some(SessionKind::Host)
+        } else if crate::daemon::remote::is_daemon(s) {
+            Some(SessionKind::Daemon)
         } else {
             None
         }
@@ -2953,6 +2965,7 @@ impl SessionKind {
             SessionKind::Container => "container",
             SessionKind::Worker => "worker",
             SessionKind::Host => "host",
+            SessionKind::Daemon => "daemon",
         }
     }
 }
@@ -2967,9 +2980,11 @@ fn is_host(s: &SessionInfo) -> bool {
 
 /// The tags of a row of `riff who` and `riff top`: the role of a
 /// session, `lead` or `worker` (01M3NT4M159EHN5W8JRTQ417N4), `container`
-/// in place of `worker` for a session in a container, and `host` for
-/// the session of `riff workers host` (01M510MG2YSETB2CCAS8XDHPZ0). The
-/// lead in a container has `lead container`. The tag `owner` is on the
+/// in place of `worker` for a session in a container, `host` for the
+/// session of `riff workers host` (01M510MG2YSETB2CCAS8XDHPZ0), and
+/// `daemon` for the session of the riff daemon
+/// (01M589HH6HCWYJP1ZC7MRAXZ6E). The lead in a container has
+/// `lead container`. The tag `owner` is on the
 /// row of the owner as a person, with no session
 /// (01M3Q63NK0AHM25MB258B0K8XP).
 ///
@@ -3014,6 +3029,12 @@ fn is_host(s: &SessionInfo) -> bool {
 /// let step = "workers host: limit 10, floor 4GB, no workers".into();
 /// host.status = Some(StatusInfo { status: Status { step }, age_secs: 1, stale: false });
 /// assert_eq!(tags(&host, &owner), ["host"]);
+///
+/// // The session of the riff daemon.
+/// let mut daemon = row("riff://mike@thelio/o/r?session=d1", false);
+/// let step = riff::daemon::remote::status_line(812, "3.2.0", 0);
+/// daemon.status = Some(StatusInfo { status: Status { step }, age_secs: 1, stale: false });
+/// assert_eq!(tags(&daemon, &owner), ["daemon"]);
 /// ```
 pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
     let mut tags = Vec::new();
@@ -3030,6 +3051,9 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
     }
     if is_host(s) {
         tags.push(SessionKind::Host.word());
+    }
+    if crate::daemon::remote::is_daemon(s) {
+        tags.push(SessionKind::Daemon.word());
     }
     tags
 }
@@ -8412,5 +8436,70 @@ mod tests {
         let load = &daemon_facts(&facts)[1][0];
         assert_eq!(load.0, "load 30.0/32 threads");
         assert_eq!(load.1, anstyle::Style::new(), "30 is under 32");
+    }
+
+    /// An idle session at `uri` for 2 hours, with the current `step`.
+    fn idle_with(uri: &str, step: &str) -> SessionInfo {
+        let status = riff_core::wire::Status { step: step.into() };
+        SessionInfo {
+            uri: uri.parse().unwrap(),
+            live: true,
+            idle_secs: 0,
+            status: Some(StatusInfo {
+                status,
+                age_secs: 25,
+                stale: false,
+            }),
+            worker: false,
+            container: false,
+            binary: None,
+            stopping: false,
+            claims_secs: 7200,
+            must_clear: false,
+            fresh_secs: None,
+            state: Some(riff_core::wire::SessionState::Idle),
+            work: None,
+            waits: None,
+            blocked: None,
+            step: None,
+            machine: None,
+        }
+    }
+
+    /// 01M589HH6HCWYJP1ZC7MRAXZ6E, 01M589HH8Z1TCYDCZHQQHTYWMK: the
+    /// session of the riff daemon has the kind and the tag `daemon`. It
+    /// and the session of `riff workers host` take no claims, so their
+    /// rows do not say `ready for work`.
+    #[test]
+    fn the_daemon_session_has_its_kind_and_no_row_of_a_host_says_ready_for_work() {
+        let step = crate::daemon::remote::status_line(249_637, "3.2.0", 0);
+        let daemon = idle_with("riff://mike@thelio/o/riff?session=002d404c", &step);
+        let host = idle_with(
+            "riff://mike@thelio/o/riff?session=5e5b594c",
+            "workers host: limit 10, floor 4GB, no workers",
+        );
+        let plain = idle_with("riff://mike@thelio/o/riff?session=9c0d1e2f", "tests");
+        assert_eq!(SessionKind::of(&daemon), Some(SessionKind::Daemon));
+        assert_eq!(SessionKind::of(&host), Some(SessionKind::Host));
+        assert_eq!(SessionKind::of(&plain), None);
+        // The lead comes first: a lead with the status of a daemon is
+        // the lead.
+        let lead = SessionInfo {
+            uri: daemon.uri.with_lead(true),
+            ..daemon.clone()
+        };
+        assert_eq!(SessionKind::of(&lead), Some(SessionKind::Lead));
+
+        let me = "riff://mike@pangolin/o/riff?session=a1".parse().unwrap();
+        let out = who(&[daemon, host, plain], &RiffOwner::NoSignIn, &me);
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[0].contains("(002d404c) idle daemon  riff://"), "{out}");
+        assert_eq!(lines[1], "  hosts containers for 2h", "{out}");
+        assert_eq!(lines[2], format!("  25s ago: {step}"), "{out}");
+        assert!(lines[3].contains("(5e5b594c) idle host  riff://"), "{out}");
+        assert_eq!(lines[4], "  hosts workers for 2h", "{out}");
+        assert!(lines[6].contains("(9c0d1e2f) idle  riff://"), "{out}");
+        assert_eq!(lines[7], "  ready for work for 2h", "{out}");
+        assert_eq!(out.matches("ready for work").count(), 1, "{out}");
     }
 }

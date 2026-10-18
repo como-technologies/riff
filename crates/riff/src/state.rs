@@ -15,7 +15,7 @@
 //! | `must clear` | yellow | `must clear its context before its next claim` (01M3X9XC99KY4RQY36A7CYWY11) |
 //! | `waiting` | cyan | the claims, then what they wait for: `waits for a verify of PR #418` (01M41FZP9A50CH4A2VX344DW49). A lead: `waiting for mike: REASON` (01M48VDSB4CHQS9P6XVDJ6FMKS) |
 //! | `busy` | green | `working on #N`, or `reviewing #N` for a verify claim, then the work, then the step. A lead in a turn: the work, then the step |
-//! | `idle` | dim | `ready for work` with the time, then a current step. The lead: `monitoring work` |
+//! | `idle` | dim | `ready for work` with the time, then a current step. The lead: `monitoring work`. The session of `riff workers host`: `hosts workers`. The session of the riff daemon: `hosts containers` (01M589HH8Z1TCYDCZHQQHTYWMK) |
 //!
 //! A long step (`riff step start NAME`) comes after the detail of each
 //! state but `offline`: `live window for 12m`, or in red `live window
@@ -54,7 +54,7 @@
 use riff_core::wire::{Activity, RiffState, SessionInfo, SessionState, StatusInfo, StepInfo};
 
 use crate::style::{DIM, ERROR, GOOD, MUTED, WAITING, WARNING};
-use crate::text::{ago, safe};
+use crate::text::{SessionKind, ago, safe};
 
 /// The color of a state: `blocked` red, `waiting` cyan, `busy` green,
 /// `idle` dim, `offline` grey, `paused` and `must clear` yellow.
@@ -116,7 +116,9 @@ pub fn work(activity: &Activity) -> String {
 /// The detail of the state of `s`: one line for each fact, each with
 /// its style. `title` gives the title of an issue, when riff knows it.
 /// An idle lead takes no claims, so it shows `monitoring work`, not
-/// `ready for work`.
+/// `ready for work`. The session of `riff workers host` and the session
+/// of the riff daemon take no claims either: they show `hosts workers`
+/// and `hosts containers` ([`SessionKind`], 01M589HH8Z1TCYDCZHQQHTYWMK).
 ///
 /// ```
 /// use riff::state::detail;
@@ -229,6 +231,20 @@ pub fn work(activity: &Activity) -> String {
 /// s.worker = false;
 /// assert_eq!(plain(&s), ["ready for work for 5m", "2m ago: plan the wave"]);
 ///
+/// // The session of `riff workers host` and the session of the riff
+/// // daemon take no claims (01M589HH8Z1TCYDCZHQQHTYWMK).
+/// (s.must_clear, s.fresh_secs) = (false, None);
+/// s.status = Some(step("workers host: limit 10, floor 4GB, no workers", false));
+/// assert_eq!(
+///     plain(&s),
+///     ["hosts workers for 5m", "2m ago: workers host: limit 10, floor 4GB, no workers"]
+/// );
+/// s.status = Some(step(&riff::daemon::remote::status_line(812, "3.2.0", 0), false));
+/// assert_eq!(
+///     plain(&s),
+///     ["hosts containers for 5m", "2m ago: daemon host: pid 812, build 3.2.0, 0 sessions"]
+/// );
+///
 /// // A lead that waits for its person, with a long step
 /// // (01M48VDSB4CHQS9P6XVDJ6FMKS, 01M48VDGTD40P8RBZMS0XB5M9N).
 /// s.uri = "riff://mike@thelio/o/r?session=l1&lead=true".parse()?;
@@ -316,10 +332,11 @@ pub fn detail(
             lines.extend(s.status.as_ref().map(step));
         }
         SessionState::Idle => {
-            let what = if s.uri.lead() {
-                "monitoring work"
-            } else {
-                "ready for work"
+            let what = match SessionKind::of(s) {
+                Some(SessionKind::Lead) => "monitoring work",
+                Some(SessionKind::Host) => "hosts workers",
+                Some(SessionKind::Daemon) => "hosts containers",
+                _ => "ready for work",
             };
             lines.push((format!("{what} for {}", ago(s.claims_secs)), plain));
             lines.extend(current(s).map(step));

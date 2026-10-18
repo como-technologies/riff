@@ -394,10 +394,12 @@ async fn a_worker_of_another_host_shows_worker() {
 }
 
 /// A fake server with each kind of session: the lead, a worker in tmux,
-/// a session in a container and the session of `riff workers host`.
-/// Each one has its tag in `riff top` and `riff who`, and the line of a
-/// host counts each kind (01M510MG2YSETB2CCAS8XDHPZ0,
-/// 01M510MG5J92PYDWZSDQS8HMWK). The session in a container has no
+/// a session in a container, the session of `riff workers host` and the
+/// session of the riff daemon. Each one has its tag in `riff top` and
+/// `riff who`, and the line of a host counts each kind
+/// (01M510MG2YSETB2CCAS8XDHPZ0, 01M510MG5J92PYDWZSDQS8HMWK,
+/// 01M589HH6HCWYJP1ZC7MRAXZ6E). The idle host and daemon do not say
+/// `ready for work` (01M589HH8Z1TCYDCZHQQHTYWMK). The session in a container has no
 /// watch: the keep-alive of the daemon makes it live, and the end of
 /// its container makes it gone (01M510MG0CKDXAKF6YJ768K7E8).
 #[tokio::test(flavor = "multi_thread")]
@@ -439,6 +441,11 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
     };
     let step = riff_core::wire::Status { step: host.line() };
     api.status(&h1, &step).await.unwrap();
+    // The daemon says so in its status (01M589HH6HCWYJP1ZC7MRAXZ6E).
+    let d1 = uri("d1");
+    live_at(&server, d1.clone()).await;
+    let step = riff::daemon::remote::status_line(812, "3.2.0", 0);
+    api.status(&d1, &riff_core::wire::Status { step }).await.unwrap();
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
@@ -447,13 +454,17 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
     assert_eq!(session(&top, "a1")[0], "│  └─ a1  lead  idle", "{top}");
     for (id, head) in [
         ("c1", "   ├─ c1  #issue-12  container  busy"),
+        ("d1", "   ├─ d1  daemon  idle"),
         ("h1", "   ├─ h1  host  idle"),
         ("w1", "   └─ w1  worker  idle"),
     ] {
         assert_eq!(session(&top, id)[0], head, "{top}");
     }
+    // The daemon and the host take no claims (01M589HH8Z1TCYDCZHQQHTYWMK).
+    assert_eq!(session(&top, "d1")[1], "   │    hosts containers for Ns", "{top}");
+    assert_eq!(session(&top, "h1")[1], "   │    hosts workers for Ns", "{top}");
     // A pipe has 80 columns: riff cuts the end of the line with `…`.
-    let host_line = "└─ thelio  › riff  3 sessions: 1 container, 1 worker, 1 host; 1 busy, ";
+    let host_line = "└─ thelio  › riff  4 sessions: 1 container, 1 worker, 1 host, 1 daemon; ";
     assert!(rows(&top).iter().any(|r| r.starts_with(host_line)), "{top}");
 
     let who = ["who", "--color", "never"];
@@ -466,6 +477,7 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
     };
     for (id, state, tag) in [
         ("c1", "busy", "container"),
+        ("d1", "idle", "daemon"),
         ("h1", "idle", "host"),
         ("w1", "idle", "worker"),
     ] {
@@ -473,13 +485,15 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
         let words: Vec<&str> = line.split_whitespace().collect();
         assert_eq!(words[2..4], [state, tag], "{id}: {who}");
     }
+    assert!(line("d1").contains("  hosts containers for "), "{who}");
+    assert!(line("h1").contains("  hosts workers for "), "{who}");
 
     // The daemon ends the session at the end of its container: gone.
     api.end(&c1).await.unwrap();
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(!top.contains("─ c1  "), "{top}");
-    let host_line = "└─ thelio  › riff  2 sessions: 1 worker, 1 host; 2 idle";
+    let host_line = "└─ thelio  › riff  3 sessions: 1 worker, 1 host, 1 daemon; 3 idle";
     assert!(rows(&top).iter().any(|r| r == host_line), "{top}");
 }
 
