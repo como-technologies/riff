@@ -513,12 +513,19 @@ async fn top_once_ends_with_the_error_when_a_connection_fails() {
     let mut gate = Gate::start().await;
     gate.open(Mode::Break).await;
     let (repo, bin) = (repo(), bin());
-    let mut cmd = top(&gate.url(), repo.path(), bin.path(), &["--once"]);
+    let url = gate.url();
+    let mut cmd = top(&url, repo.path(), bin.path(), &["--once"]);
     let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
         .await
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "{stderr}");
-    assert!(stderr.contains("cannot reach riff-server at"), "{stderr}");
+    // The last try gets only the end of the budget. On a slow machine
+    // it can end with no reply in time, not with a cut: each error
+    // names the server.
+    assert!(
+        stderr.contains(&format!("riff-server at {url}")),
+        "{stderr}"
+    );
     assert!(!String::from_utf8_lossy(&out.stdout).contains(FAULT));
 }
