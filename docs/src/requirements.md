@@ -6312,7 +6312,20 @@ part when they merge.
   `--verbose`, under `riff relay`. One `claude` process holds the whole
   session. The daemon sends each wake as a message. The relay writes it
   as one line on stdin, and keeps stdin open between the wakes. No
-  session runs with `--bare`.
+  session runs with `--bare`. Superseded in part by
+  01M5792DP1KZR2XGSCMRWDHCGZ.
+- **01M5792DP1KZR2XGSCMRWDHCGZ** While a worker or a verifier runs, the
+  daemon watches its wakes on riff-server. Each `riff tell` to it and
+  each message that wakes it is a wake. The input of `claude` is open
+  from the start until the `result` of the first turn, and closes
+  there. While it is open, the daemon gives each wake as one input:
+  the line of `riff watch --once`. During a takeover, the wake waits
+  for the go on. The daemon gives each wake once.
+- **01M5792DRA12JD032F3H8JVC0Z** For each wake of a worker or a verifier
+  after its input closed, the daemon tells the sender in a direct
+  message that the session ended its work and does not read the
+  message. After the end of the session on riff-server, a `riff tell`
+  to it fails.
 - **01M4Z60B828HF30H7H017WPXGS** The relay sends the events of `claude`
   to the daemon: `system/init` at the start of each turn, each tool call
   and its result, each retry, `system/permission_denied`,

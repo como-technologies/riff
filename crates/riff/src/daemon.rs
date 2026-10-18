@@ -174,6 +174,44 @@
 //!     D->>C: stop the container
 //! ```
 //!
+//! # The wakes of a session
+//!
+//! A worker or a verifier gets each `riff tell` to it and each message
+//! that wakes it, as a session in tmux does
+//! (01M5792DP1KZR2XGSCMRWDHCGZ). While the session runs, the daemon
+//! watches its wakes on riff-server ([`World::wakes`]). While the input
+//! of `claude` is open, from the start until the first `result`, the
+//! daemon gives each wake as one input: the line of `riff watch --once`
+//! ([`text::wake_line`]) on the stdin of `claude`.
+//! During a takeover, the wake waits, and `claude` gets it after the go
+//! on. A new watch of riff-server gives the newest unread wake again:
+//! the daemon gives each wake once.
+//!
+//! After the close, the session ended its work. The daemon tells the
+//! sender of each wake that the session does not read the message
+//! ([`World::refuse`], [`text::wake_refused`],
+//! 01M5792DRA12JD032F3H8JVC0Z). After the end of the session on
+//! riff-server, riff-server refuses a `riff tell` to it. The lead waits
+//! for its wakes itself: `riff relay watch`.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant L as lead
+//!     participant E as riff-server
+//!     participant D as riff daemon
+//!     participant C as riff relay and claude -p
+//!     D->>E: watch the wakes of the session
+//!     D->>C: the start text
+//!     L->>E: riff tell SESSION "..."
+//!     E-->>D: wake
+//!     D->>C: the wake line, as one input
+//!     C->>D: result
+//!     D->>C: close the input
+//!     L->>E: riff tell SESSION "..."
+//!     E-->>D: wake
+//!     D->>E: tell the lead: the session ended its work
+//! ```
+//!
 //! # The lead
 //!
 //! The lead is a session with a terminal (01M4Z60B81RTZT71PN5HV0GZHX,
@@ -288,7 +326,7 @@
 //! unit, it starts again on it as for an old riff. So a new release
 //! needs no `riff init`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -298,6 +336,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::build::Build;
 use riff_core::name::SessionUri;
+use riff_core::wire::Wake;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -1039,6 +1078,9 @@ struct SessionState {
     last_step: String,
     /// True after the end of the ownership: its record is gone.
     ended: bool,
+    /// The input of each wake during a takeover: `claude` gets them
+    /// after the go on.
+    waiting: Vec<String>,
 }
 
 impl SessionState {
@@ -1073,6 +1115,38 @@ impl SessionState {
             relay.say(Say::GoOn);
             relay.say(Say::Input { line });
         }
+        self.give_waiting();
+    }
+
+    /// Gives `claude` the input `line`: the relay writes it on its stdin.
+    fn give(&mut self, line: String) {
+        self.record.inputs.push(line.clone());
+        if let Some(relay) = &self.relay {
+            relay.say(Say::Input { line });
+        }
+    }
+
+    /// Gives `claude` the input of each wake of the takeover.
+    fn give_waiting(&mut self) {
+        for line in std::mem::take(&mut self.waiting) {
+            self.give(line);
+        }
+    }
+
+    /// Gives `claude` the wake `wake` as one input, while its input is
+    /// open. During a takeover, the input waits for the go on. False
+    /// when the input closed: the session ended its work
+    /// (01M5792DP1KZR2XGSCMRWDHCGZ).
+    fn wake(&mut self, wake: &Wake) -> bool {
+        let line = user_line(&text::wake_line(wake));
+        if self.record.takeover || self.held {
+            self.waiting.push(line);
+        } else if self.record.closed {
+            return false;
+        } else {
+            self.give(line);
+        }
+        true
     }
 
     /// The session as `riff daemon status` shows it.
@@ -1210,6 +1284,12 @@ impl Owned {
                 state.record.inputs.push(line.clone());
                 out.say(Say::Input { line });
                 state.record.closed = false;
+            }
+            if gone_on {
+                for line in std::mem::take(&mut state.waiting) {
+                    state.record.inputs.push(line.clone());
+                    out.say(Say::Input { line });
+                }
             }
             if state.record.closed && !closed && !gone_on {
                 out.say(Say::Close);
@@ -1785,6 +1865,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 taker: None,
                 last_step: String::new(),
                 ended: false,
+                waiting: Vec::new(),
             }),
             notes,
             stop: Notify::new(),
@@ -2063,6 +2144,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     ) {
         let mut end = end.map(|end| Box::pin(end.wait()));
         let mut stopped = false;
+        // The lead waits for its wakes itself: `riff relay watch`.
+        let wakes = (!owned.lock().record.terminal)
+            .then(|| tokio::spawn(give_wakes(self.world.clone(), owned.clone())));
         let (code, exited) = loop {
             // Each event moves the end of the quiet: a new turn after a
             // task of claude ended is no quiet.
@@ -2133,6 +2217,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                 }
             }
         };
+        if let Some(wakes) = wakes {
+            wakes.abort();
+        }
         let (failed, record) = {
             let state = owned.lock();
             (state.record.failed, state.record.clone())
@@ -2473,6 +2560,43 @@ impl<R: Runtime + 'static> Daemon<R> {
                 }
                 Err(e) => eprintln!("riff daemon: {name}: {e:#}"),
             }
+        }
+    }
+}
+
+/// Gives the session `owned` each wake of riff-server from `world`, until
+/// the task ends: while the input of `claude` is open, as one input
+/// each; after the close, as a refusal to the sender
+/// (01M5792DP1KZR2XGSCMRWDHCGZ, 01M5792DRA12JD032F3H8JVC0Z). A new watch
+/// of riff-server gives the newest unread wake again: the session gets
+/// it once.
+async fn give_wakes(world: Arc<dyn World>, owned: Arc<Owned>) {
+    let record = owned.lock().record.clone();
+    let (to, mut wakes) = mpsc::unbounded_channel();
+    let watch = world.wakes(&record, to);
+    tokio::pin!(watch);
+    let mut seen = BTreeSet::new();
+    loop {
+        let wake = tokio::select! {
+            () = &mut watch => return,
+            wake = wakes.recv() => match wake {
+                Some(wake) => wake,
+                None => return,
+            },
+        };
+        if !seen.insert((wake.thread.to_string(), wake.seq)) {
+            continue;
+        }
+        let given = {
+            let mut state = owned.lock();
+            let given = state.wake(&wake);
+            if let Err(e) = owned.save(&state) {
+                eprintln!("riff daemon: {e:#}");
+            }
+            given
+        };
+        if !given {
+            world.refuse(&record, &wake).await;
         }
     }
 }
@@ -4102,7 +4226,9 @@ mod tests {
     }
 
     /// The riff-server of the lead, as the test plays it: it notes each
-    /// keep-alive and each end, and gives a wake at once. No wave runs.
+    /// keep-alive and each end, and gives a wake at once. It gives each
+    /// wake of [`Server::wake_all`] to the watch of each worker, and
+    /// notes each refusal. No wave runs.
     /// The forge gives the fate of the folders of each issue of `fates`,
     /// and [`Fate::Stays`](sweep::Fate::Stays) for each other issue. With
     /// `gh`, the fate comes from that `gh` ([`sweep::fate_on`]). With
@@ -4114,6 +4240,7 @@ mod tests {
         comments: Mutex<Vec<(String, u64, u64, String)>>,
         gh: Option<crate::pr::Gh>,
         gate: Option<Arc<tokio::sync::Semaphore>>,
+        watches: Mutex<Vec<mpsc::UnboundedSender<Wake>>>,
     }
 
     impl Server {
@@ -4156,6 +4283,26 @@ mod tests {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone()
+        }
+
+        /// The number of the watches of the workers.
+        pub(super) fn watches(&self) -> usize {
+            self.watches
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .len()
+        }
+
+        /// Gives `wake` to each watch of a worker.
+        pub(super) fn wake_all(&self, wake: &Wake) {
+            for to in self
+                .watches
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+            {
+                let _ = to.send(wake.clone());
+            }
         }
 
         fn note(&self, line: String) {
@@ -4250,6 +4397,28 @@ mod tests {
 
         fn wake<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, Result<String>> {
             Box::pin(async move { Ok(format!("a wake of {}", record.live.item)) })
+        }
+
+        fn wakes<'a>(
+            &'a self,
+            _: &'a Record,
+            to: mpsc::UnboundedSender<Wake>,
+        ) -> crate::wave::BoxFuture<'a, ()> {
+            self.watches
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(to);
+            Box::pin(std::future::pending())
+        }
+
+        fn refuse<'a>(
+            &'a self,
+            record: &'a Record,
+            wake: &'a Wake,
+        ) -> crate::wave::BoxFuture<'a, ()> {
+            Box::pin(async move {
+                self.note(format!("refuse {} {}", record.live.session, wake.seq));
+            })
         }
     }
 
@@ -4460,6 +4629,124 @@ mod tests {
     /// The record of the session `name` on disk.
     fn record_of(dir: &Path, name: &str) -> Record {
         serde_json::from_str(&std::fs::read_to_string(record_path(dir, name)).unwrap()).unwrap()
+    }
+
+    /// A daemon on the fake runtime with the riff-server of the test.
+    async fn with_server() -> (Here, Arc<Server>) {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        (here, server)
+    }
+
+    /// The wake of the message `seq` of the lead in the thread of the
+    /// repository.
+    fn a_wake(seq: u64) -> Wake {
+        Wake {
+            thread: "como-technologies/riff".parse().unwrap(),
+            seq,
+            from: "riff://mike@thelio/como-technologies/riff?session=lead"
+                .parse()
+                .unwrap(),
+            kind: riff_core::wire::Kind::Message,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_wake_during_the_turn_reaches_the_worker_and_a_wake_after_the_result_gets_a_refusal()
+    {
+        let (here, server) = with_server().await;
+        let (_client, name, mut relay) = a_worker(&here).await;
+        until(|| server.watches() == 1).await;
+
+        // During the turn: the wake is one input on the stdin of claude.
+        server.wake_all(&a_wake(7));
+        let line = user_line(&text::wake_line(&a_wake(7)));
+        assert_eq!(relay.next().await, Say::Input { line: line.clone() });
+        assert_eq!(
+            record_of(&here.dir, &name).inputs,
+            [user_line("Do it."), line.clone()]
+        );
+
+        // A new watch of riff-server gives the same wake again: claude
+        // gets it once.
+        server.wake_all(&a_wake(7));
+        server.wake_all(&a_wake(8));
+        let eight = user_line(&text::wake_line(&a_wake(8)));
+        assert_eq!(
+            relay.next().await,
+            Say::Input {
+                line: eight.clone()
+            }
+        );
+
+        // A relay that connects again gets no wake twice.
+        drop(relay);
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 3, false).await;
+        relay.event(2, TURN[2]).await;
+
+        // After the result, the input is closed: the sender gets the
+        // refusal, and claude gets no input.
+        assert_eq!(phase_of(&here.dir, &name).await, Phase::Ends);
+        server.wake_all(&a_wake(9));
+        until(|| server.said().iter().any(|s| s.starts_with("refuse"))).await;
+        assert_eq!(server.said(), ["refuse riff-issue-12-1a2b3c4d-session 9"]);
+        assert_eq!(
+            record_of(&here.dir, &name).inputs,
+            [user_line("Do it."), line, eight]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wake_during_a_takeover_reaches_the_worker_after_the_go_on() {
+        let (here, server) = with_server().await;
+        let (_client, name, mut relay) = a_worker(&here).await;
+        until(|| server.watches() == 1).await;
+        let (mut taker, _) = take_over(&here.dir, &name).await;
+        assert_eq!(relay.next().await, Say::Hold { interrupt: true });
+        relay.event(2, STOPPED).await;
+        relay.send(&Up::Held).await;
+        assert!(matches!(next_of(&mut taker).await, Some(Say::Held { .. })));
+
+        // The terminal of the person holds claude: the wake waits.
+        server.wake_all(&a_wake(7));
+        until(|| owned_waiting(&here, &name) == 1).await;
+        taker.go_on().await.unwrap();
+        assert_eq!(relay.next().await, Say::GoOn);
+        let go_on = user_line(text::TAKEOVER_GO_ON);
+        let wake = user_line(&text::wake_line(&a_wake(7)));
+        assert_eq!(
+            relay.next().await,
+            Say::Input {
+                line: go_on.clone()
+            }
+        );
+        assert_eq!(relay.next().await, Say::Input { line: wake.clone() });
+        assert_eq!(
+            record_of(&here.dir, &name).inputs,
+            [user_line("Do it."), go_on, wake]
+        );
+        assert!(server.said().is_empty(), "{:?}", server.said());
+    }
+
+    /// The number of wakes of the session `name` that wait for the go on.
+    fn owned_waiting(here: &Here, name: &str) -> usize {
+        here.daemon
+            .lock()
+            .get(name)
+            .map_or(0, |o| o.lock().waiting.len())
+    }
+
+    #[tokio::test]
+    async fn the_daemon_watches_no_wake_of_the_lead() {
+        let (here, server) = with_server().await;
+        let mut start = here.start("riff-lead-o-r", "lead");
+        start.terminal = true;
+        let (mut client, _) = here.started(start).await;
+        assert_eq!(client.next().await.unwrap(), Some(Say::Done));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(server.watches(), 0);
     }
 
     #[tokio::test]
