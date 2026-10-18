@@ -160,7 +160,8 @@ enum Command {
     Read {
         /// Read only this thread. It need not be one of your threads. A
         /// direct thread of yours is dm:PEER: the session ID of the other
-        /// session or its start, as riff read shows it.
+        /// side or its start, or the user of a person, as riff read shows
+        /// it.
         #[arg(long, short)]
         thread: Option<String>,
         /// Show the full history, not only the unread messages.

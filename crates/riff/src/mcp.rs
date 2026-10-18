@@ -279,7 +279,8 @@ pub struct WhoArgs {
 pub struct ReadArgs {
     /// The thread. Leave it out to read the unread messages of all your
     /// threads. A direct thread of yours is `dm:` and the session ID of
-    /// the other session or its start, as `threads` shows it.
+    /// the other side or its start, or the user of a person, as
+    /// `threads` shows it.
     thread: Option<String>,
     /// True returns the full history, not only the unread messages.
     all: Option<bool>,
