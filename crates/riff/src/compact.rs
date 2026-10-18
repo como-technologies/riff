@@ -111,7 +111,7 @@ impl Blocker {
 pub struct Facts {
     /// The riff is paused.
     pub paused: bool,
-    /// The last done wave with its release out ([`done_wave`],
+    /// The wave that just ended, with its release out ([`done_wave`],
     /// [`Release`]).
     pub wave: Option<String>,
     /// A session in the repository holds a claim, or a pull request of a
@@ -328,9 +328,12 @@ pub struct Milestone {
     pub closed_issues: u64,
 }
 
-/// The last done wave: the wave with the highest number that has items,
-/// none of them open, and no open wave before it. On GitHub an open pull
-/// request of the wave is an open item of its milestone.
+/// The wave that just ended: the wave with the highest number that has
+/// closed items, when none of its items is open and no wave before it is
+/// open (01M56P28EH72XA0F5S1B3ZP4Q5). On GitHub an open pull request of
+/// the wave is an open item of its milestone. A wave stops being the
+/// one that just ended when an item of a later wave closes: a later
+/// pause, for example for a release, gives no wave.
 ///
 /// ```
 /// use riff::compact::{done_wave, Milestone};
@@ -339,8 +342,9 @@ pub struct Milestone {
 /// let waves = [m("Wave 12", 0, 15), m("Wave 13", 0, 9), m("Wave 14", 3, 0), m("Backlog", 7, 1)];
 /// assert_eq!(done_wave(&waves).as_deref(), Some("Wave 13"));
 ///
+/// // Wave 13 runs: Wave 12 ended long ago.
 /// let open = [m("Wave 12", 0, 15), m("Wave 13", 1, 8)];
-/// assert_eq!(done_wave(&open).as_deref(), Some("Wave 12"));
+/// assert_eq!(done_wave(&open), None);
 ///
 /// let gap = [m("Wave 12", 1, 15), m("Wave 13", 0, 9)];
 /// assert_eq!(done_wave(&gap), None);
@@ -351,15 +355,11 @@ pub fn done_wave(milestones: &[Milestone]) -> Option<String> {
         .filter_map(|m| Some((wave_number(&m.title)?, m)))
         .collect();
     waves.sort_by_key(|(n, _)| *n);
-    let first_open = waves
+    let last = waves.iter().rposition(|(_, m)| m.closed_issues > 0)?;
+    waves[..=last]
         .iter()
-        .position(|(_, m)| m.open_issues > 0)
-        .unwrap_or(waves.len());
-    waves[..first_open]
-        .iter()
-        .rev()
-        .find(|(_, m)| m.closed_issues > 0)
-        .map(|(_, m)| m.title.clone())
+        .all(|(_, m)| m.open_issues == 0)
+        .then(|| waves[last].1.title.clone())
 }
 
 /// The release of a wave: its issue `Release vX.Y.Z`.
@@ -420,9 +420,9 @@ pub mod forge {
         milestone: Option<Title>,
     }
 
-    /// The last done wave with its release out: its issue
-    /// `Release vX.Y.Z` is closed, its pull request is merged, and the CI
-    /// run of its tag passed, so the deploy is done.
+    /// The wave that just ended ([`done_wave`]), with its release out:
+    /// its issue `Release vX.Y.Z` is closed, its pull request is merged,
+    /// and the CI run of its tag passed, so the deploy is done.
     pub fn released_wave(gh: &Gh, repo: &str) -> Result<Option<String>> {
         let milestones: Vec<Milestone> = gh.json(&[
             "api",
@@ -1072,6 +1072,32 @@ mod tests {
         let notes = [note];
         assert_eq!(handoff_note(&notes, lead.who(), "Wave 1"), None);
         assert_eq!(handoff_note(&notes, lead.who(), "Wave 13"), Some(5));
+    }
+
+    /// Wave 30 ended in the morning, and Wave 31 ran. A pause of the
+    /// lead in Wave 31, for a release, is no end of Wave 30 (#1051).
+    #[test]
+    fn a_pause_in_the_next_wave_asks_for_no_handoff() {
+        let m = |title: &str, open, closed| Milestone {
+            title: title.into(),
+            open_issues: open,
+            closed_issues: closed,
+        };
+        let mid_release = [m("Wave 30", 0, 29), m("Wave 31", 1, 30), m("Wave 32", 3, 0)];
+        let facts = Facts {
+            wave: done_wave(&mid_release),
+            ..ready()
+        };
+        assert_eq!(decide(&facts), Step::Wait(Blocker::WaveOpen));
+
+        let ended = [m("Wave 30", 0, 29), m("Wave 31", 0, 31), m("Wave 32", 3, 0)];
+        let facts = Facts {
+            wave: done_wave(&ended),
+            record: Record::done("Wave 30"),
+            note: None,
+            ..ready()
+        };
+        assert_eq!(decide(&facts), Step::AskHandoff("Wave 31".into()));
     }
 
     #[test]
