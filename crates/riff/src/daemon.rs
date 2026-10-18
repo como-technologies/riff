@@ -5924,6 +5924,33 @@ mod tests {
         );
     }
 
+    /// 01M57GCZXZZRPGGWC5HZS49DGM: a replay gives each line of the
+    /// daemon after the event before it, and only the lines that came
+    /// after the event `after`.
+    #[test]
+    fn a_replay_gives_each_line_of_the_daemon_in_its_place() {
+        let log = "e1\ne2\ne3\n";
+        let lines = [(1, "A".to_owned()), (2, "B".to_owned())];
+        let shown = |after: u64| {
+            let (out, mut said) = Out::keep();
+            replay(&out, log, 3, after, &lines);
+            drop(out);
+            let mut shown = Vec::new();
+            while let Ok(say) = said.try_recv() {
+                shown.push(match say {
+                    Say::Event { line, .. } => line,
+                    Say::Line { text } => text,
+                    other => panic!("{other:?}"),
+                });
+            }
+            shown
+        };
+        assert_eq!(shown(0), ["e1", "A", "e2", "B", "e3"]);
+        assert_eq!(shown(1), ["A", "e2", "B", "e3"]);
+        assert_eq!(shown(2), ["B", "e3"]);
+        assert_eq!(shown(3), Vec::<String>::new());
+    }
+
     /// Waits until the daemon in the folder `dir` runs no session.
     async fn until_no_session(dir: &Path) {
         let start = std::time::Instant::now();

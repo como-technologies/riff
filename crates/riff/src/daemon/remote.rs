@@ -305,13 +305,11 @@ impl FromStr for Request {
                 after: after.parse().map_err(|_| ())?,
                 notes: 0,
             }),
-            ["daemon", "events", name, "--after", after, "--notes", notes] => {
-                Ok(Request::Events {
-                    name: name.to_owned(),
-                    after: after.parse().map_err(|_| ())?,
-                    notes: notes.parse().map_err(|_| ())?,
-                })
-            }
+            ["daemon", "events", name, "--after", after, "--notes", notes] => Ok(Request::Events {
+                name: name.to_owned(),
+                after: after.parse().map_err(|_| ())?,
+                notes: notes.parse().map_err(|_| ())?,
+            }),
             ["daemon", "sweep"] => Ok(Request::Sweep),
             ["daemon", "end", name] => Ok(Request::End(name.to_owned())),
             ["daemon", "restart"] => Ok(Request::Restart),
@@ -805,7 +803,9 @@ pub async fn page(
                     }
                 }
             }
-            // The daemon gives each line of its own again, in its place.
+            // The follow starts at the event 0, so the daemon gives each
+            // line of its own from the first one, in its place: `said`
+            // counts the lines of the session.
             Some(Say::Line { text }) => {
                 said += 1;
                 if said > notes {
