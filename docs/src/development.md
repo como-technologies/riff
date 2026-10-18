@@ -3283,28 +3283,18 @@ The tag deploys the patch as each release tag does.
 
 ### Retire a release line
 
-`riff update` installs the release that GitHub marks Latest, not the
-highest tag (see [Releases](how-it-works.md#releases)). GitHub never
-marks a prerelease Latest. So to retire a line, an admin makes each
-GitHub release of the line a prerelease, with a first line in its notes
-that says that the line is retired and names the issue. One command
-does it with the `gh` of your machine, in a clone of the repository.
-For example, for the line 1.x, retired in #961:
+The GitHub releases of a retired line stay normal releases. Do not make
+them prereleases, and do not change their notes. The line 1.x retired
+after riff 3.0.0 (#961), and its releases are normal releases.
 
-```sh
-riff retire 1.x --issue 961
-```
+`riff update` installs the release that GitHub marks Latest (see
+[Releases](how-it-works.md#releases)). The first release of the new
+line becomes Latest, as each new release does. A patch of the retired
+line is not the latest: see
+[Make a patch of an older release](#make-a-patch-of-an-older-release).
 
-It prints one line for each release of the line. It keeps the release
-that GitHub marks Latest, and each draft. When the Latest release is of
-the line, make a release of another line the Latest first. Then run the
-command again. A second run changes nothing.
-
-Run it in a terminal, or let the lead run it. A worker and an agent
-session that is not the lead cannot: riff refuses, and changes nothing.
-
-Check that the release of the line that the shared riff runs is the
-Latest, and that each release of the retired line is a prerelease:
+Check that GitHub marks the release of the line that the shared riff
+runs Latest:
 
 ```sh
 gh release list --repo como-technologies/riff

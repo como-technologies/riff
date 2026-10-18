@@ -1828,26 +1828,19 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   GitHub, with no sign-in. With `RIFF_RELEASES`, it reads the file
   `latest` there, in the form of the reply of the API. When it finds no
   Latest release, it installs nothing and names `--tag`.
-- **01M510MPTKK285C9Z2TW54M5P7** Each GitHub release of a retired line
-  is a prerelease, so GitHub never marks it "Latest". The first line of
-  its notes says that the line is retired, and names the issue that
-  retired it. The line 2.x is retired (#706): its one GitHub release,
-  `v2.0.1`, is a prerelease. The tag `v2.0.0` has no GitHub release.
-- **01M550XYBAW5QYXEMQ49Z34M4N** `riff retire LINE --issue N` retires
-  the release line LINE in one step, with the `gh` of the machine. Each
-  GitHub release with a tag `vLINE.Y.Z` becomes a prerelease, and the
-  first line of its notes is `**Retired.** The line LINE.x is retired
-  (#N). Do not install this release.` The old notes stay under it. It
-  keeps the release that GitHub marks "Latest" and each draft as they
-  are, and says so. A prerelease whose notes start with `**Retired.**`
-  is retired already, so a second run changes nothing. It prints one
-  line for each release of the line and the count that it retired. It
-  fails, and changes nothing, when no release has a tag of the line.
-- **01M553AWMXYAG7CJGW7M30XDZ8** `riff retire` refuses, and calls no
-  `gh`, in a worker (`RIFF_WORKER=1`) and in an agent session that is
-  not the lead of its user. It uses the check of `riff workers start`
-  (01M3JPQT79FE47518Z8DFFQYYG). A person in a plain terminal and the
-  lead can run it.
+- **01M510MPTKK285C9Z2TW54M5P7** Replaced by 01M56N6KSMFJ46PW99Z80GF9DM.
+- **01M56N6KSMFJ46PW99Z80GF9DM** The GitHub releases of a retired line
+  stay normal releases. When a line retires, no release of it becomes a
+  prerelease, and its notes do not change. The line 1.x retired after
+  riff 3.0.0 (#961): its 12 GitHub releases are normal releases, and
+  GitHub marks `v3.0.0` "Latest". The line 2.x retired before this rule
+  (#706): its one GitHub release, `v2.0.1`, is a prerelease. The tag
+  `v2.0.0` has no GitHub release.
+- **01M550XYBAW5QYXEMQ49Z34M4N** Replaced by 01M56N6KVZRGT3W7CEK05DHR57.
+- **01M553AWMXYAG7CJGW7M30XDZ8** Replaced by 01M56N6KVZRGT3W7CEK05DHR57.
+- **01M56N6KVZRGT3W7CEK05DHR57** riff has no command that retires a
+  release line. `riff --help` lists no `retire`, and `riff retire`
+  fails: riff does not know the command.
 - **01M3MRMAY3P1K151RGAP9K6GSH** The deploy takes a release tag as its
   input. It checks out that tag and deploys only it. It refuses an
   input that is not a tag `vX.Y.Z` of the version of the crates.
@@ -1966,7 +1959,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   each write of `riff cloud` (`riff cloud WRITE ...`) as a second layer.
   A write with a global flag before it passes these rules, and the check
   in code refuses it. Each session can run the reads of `riff cloud`:
-  `list`, `status` and `log`.
+  `list`, `status` and `log`. Superseded in part by
+  01M56N6KVZRGT3W7CEK05DHR57: riff has no `riff retire`.
 - **01M4262E0QJHCZXNH7EFG7FXN2** The CI deploy job deploys with
   `riff cloud deploy shared TAG --confirm shared`, from the riff of the
   tag. Superseded by 3.0 (01M4Z60B7E6X53NBJ01R95RYGE).
@@ -5188,7 +5182,8 @@ part when they merge.
   itself (01M3N7JJEKZMN1E5NJQRK2QYVB). Then the line 1.x retires: each
   GitHub release of riff 1.x becomes a prerelease with a first line
   that says that the line is retired (#795). No patch of riff 1.x comes
-  after riff 3.0.0.
+  after riff 3.0.0. Superseded in part by 01M56N6KSMFJ46PW99Z80GF9DM:
+  the releases of riff 1.x stay normal releases.
 - **01M53NGVXEMBTJ8E4K3MHPQ7W9** riff-server 3.0.0 serves the API of
   riff 1.x. So a machine of riff 1.x works until it takes riff 3.0.0.
   Superseded in part by 01M55FCZNNZGKM4EKAXZQFTDWR: only from riff

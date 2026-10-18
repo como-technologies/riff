@@ -601,8 +601,9 @@ runs it. `riff server` shows the release of `riff` and of each riff.
 
 When the riff names no release, `riff update` installs the release
 that GitHub marks "Latest": the release of the line that the shared
-riff runs. It is not always the highest tag. A release of a retired
-line, for example `v2.0.1`, is a prerelease, and GitHub never marks it
+riff runs. It is not always the highest tag: GitHub never marks a
+prerelease Latest, for example `v2.0.1` of the retired line 2.x. The
+releases of the retired line 1.x are normal releases, older than the
 Latest. See the Latest release:
 
 ```sh

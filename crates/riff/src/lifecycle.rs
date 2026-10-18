@@ -41,8 +41,8 @@
 //! riff of `riff` answers with no build that this riff can read, for
 //! example after a change of the build header, it also installs the
 //! Latest release, and says so (01M3N73Y9DMVMCV0PJE1R8YCFH). The Latest
-//! release is not always the highest tag: a release of a retired line is
-//! never Latest ([`release::latest`](crate::release::latest)):
+//! release is not always the highest tag: a prerelease is never Latest
+//! ([`release::latest`](crate::release::latest)):
 //!
 //! ```mermaid
 //! sequenceDiagram
