@@ -3269,6 +3269,9 @@ pub async fn show_events(dir: &Path, name: &str) -> Result<i32> {
 /// SIGINT. It takes up each session that runs ([`Daemon::recover`]).
 /// The stop stops no session (01M4ZDTVH57VE77YT20G65A4BQ).
 pub async fn serve_here() -> Result<()> {
+    // Its working folder can be the work tree of another repository
+    // (01M58AW5SBG3ZP7149ZY66VTYW).
+    crate::auto_update::no_place();
     #[cfg(target_os = "linux")]
     {
         use tokio::signal::unix::{SignalKind, signal};

@@ -4927,10 +4927,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   every 5 seconds, for at most 2 minutes. The lead gets it once.
 - **01M58AW5SBG3ZP7149ZY66VTYW** The update in the background tells
   the lead in the repository of the process that started it: a
-  session, or `riff workers host`. When that process is outside each
-  repository, for example the daemon, the update tells the lead in a
-  repository that the daemon of the machine serves on the same
-  riff-server.
+  session, or `riff workers host`. The daemon never takes a place
+  from its working folder, and starts the update with no place. An
+  update with no place, or with a place outside each repository,
+  tells the lead in each repository whose wave the daemon of the
+  machine runs on the same riff-server. With no such repository, it
+  tells no lead, and its log says why.
 - **01M58AVFM0D62R48HKK8CFY4VW** The update in the background tells
   the lead before its step for the daemon
   (01M517BTDRKDXD3X84P6AEAF7P, 01M517BTJ9EV4ZGPYRB6HXJJC9). A new start

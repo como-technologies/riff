@@ -761,13 +761,19 @@ The output of the update is in `update.log`, in
 
 The first riff process on the machine that sees the new release
 starts the update. That update, `riff update --background`, tells
-your lead once. It tells the lead of a repository:
+your lead once in each repository of the message:
 
 | The process that starts the update | The repository of the message |
 |---|---|
 | A session, or a `riff` command in a clone | The repository of the session or the clone |
 | `riff workers host` | The repository of its main clone |
-| The riff daemon | A repository that the daemon serves on the same riff (see `riff daemon host`) |
+| The riff daemon | Each repository whose wave the daemon runs on the same riff (`riff wave run` or `riff daemon host` in its main clone) |
+
+The riff daemon has no repository of its own. Its working folder can
+be in the work tree of another repository, for example a home folder
+that is a dotfiles repository. The daemon does not use that
+repository. When the daemon serves no repository, the update tells no
+lead, and `update.log` says why.
 
 The update tells your lead first. Then it starts the daemon again on
 the new riff. The daemon does not start again while the update runs:
