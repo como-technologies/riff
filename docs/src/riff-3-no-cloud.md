@@ -269,8 +269,8 @@ other entry, and says what it removed. So no hook of riff 1.x runs
 after the update. With `update.auto` on, your consent to the update is
 the consent to this step.
 
-Then the line 1.x retires. Each GitHub release of riff 1.x becomes a
-prerelease, so `riff update` never installs it again.
+Then the line 1.x retires. Its GitHub releases stay normal releases.
+`riff update` installs the Latest release, of the new line.
 
 ## Go back
 

@@ -167,6 +167,62 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
     assert!(!help.contains("--forge"), "{help}");
 }
 
+/// 01M56N6KVZRGT3W7CEK05DHR57: riff has no command that retires a
+/// release line. The help lists no `retire`, and `riff retire` fails.
+#[test]
+fn riff_has_no_command_that_retires_a_line() {
+    let help = riff(&["--help"]);
+    assert!(
+        !help.lines().any(|l| l.trim_start().starts_with("retire ")),
+        "{help}"
+    );
+    for args in [
+        &["retire", "1.x", "--issue", "961"][..],
+        &["retire", "--help"],
+        &["help", "retire"],
+    ] {
+        let out = Isolated::shared().riff().args(args).output().unwrap();
+        assert!(!out.status.success(), "riff {args:?}: {out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            stderr.contains("unrecognized subcommand 'retire'"),
+            "riff {args:?}: {stderr}"
+        );
+    }
+}
+
+/// 01M56N6KSMFJ46PW99Z80GF9DM, 01M56N6KVZRGT3W7CEK05DHR57: the book
+/// names no `riff retire`. The how-to "Retire a release line" and
+/// `riff-3.md` say that the releases of a retired line stay normal
+/// releases, and the how-to edits no release.
+#[test]
+fn the_book_keeps_the_releases_of_a_retired_line_normal() {
+    for name in ["development.md", "riff-3.md"] {
+        assert!(!book::page(name).contains("riff retire"), "{name}");
+    }
+    let page = book::page("development.md");
+    let start = page
+        .find("\n### Retire a release line\n")
+        .expect("development.md has \"### Retire a release line\"");
+    let rest = &page[start + 1..];
+    let howto = rest[4..].find("\n##").map_or(rest, |end| &rest[..end + 4]);
+    // The words, with no line breaks of the wrap.
+    let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words(howto).contains("The GitHub releases of a retired line stay normal releases."),
+        "{howto}"
+    );
+    assert_eq!(
+        book::commands_in(howto),
+        ["gh release list --repo como-technologies/riff"]
+    );
+    let line = book::part("riff-3.md", "riff 3.0.0 and the line 1.x");
+    assert!(
+        words(&line).contains("Its GitHub releases stay normal releases"),
+        "{line}"
+    );
+}
+
 /// 01M53NGW6F5HP1DZ9QRGP50MGT, 01M53NGVE839TRH7XB7CDPQNZE: `riff view`
 /// shows only the sessions of this machine, and `riff lead start` asks
 /// the riff daemon to run the wave when none runs.

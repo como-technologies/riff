@@ -48,10 +48,11 @@
 //! release that GitHub marks "Latest" ([`latest`],
 //! 01M510MPR1S0EQNRK2195XTXG5): the release of the line that the shared
 //! riff runs (01M4YTW8788K4XYTEMRSXDH7B9). It is not always the highest
-//! tag. A release of a retired line, for example `v2.0.1`, is a
-//! prerelease, and GitHub never marks a prerelease "Latest"
-//! (01M510MPTKK285C9Z2TW54M5P7). riff asks the API of GitHub with no
-//! sign-in, and reads the tag of the reply ([`tag_of`]).
+//! tag: GitHub never marks a prerelease "Latest", for example `v2.0.1`
+//! of the retired line 2.x. The releases of the retired line 1.x are
+//! normal releases, older than the Latest (01M56N6KSMFJ46PW99Z80GF9DM).
+//! riff asks the API of GitHub with no sign-in, and reads the tag of the
+//! reply ([`tag_of`]).
 //!
 //! The variable [`RELEASES`] names another place of the release files:
 //! a URL, or a folder, for example of a mirror. There the file
@@ -653,9 +654,8 @@ pub fn tag_of(reply: &[u8]) -> Result<String, String> {
 
 /// The tag of the release that GitHub marks "Latest"
 /// (01M510MPR1S0EQNRK2195XTXG5), from [`Source::latest_place`] of
-/// [`RELEASES`]. It is never a release of a retired line, also when its
-/// tag is higher (01M510MPTKK285C9Z2TW54M5P7). An error names
-/// `riff update --tag`.
+/// [`RELEASES`]. It is never a prerelease, also when its tag is higher.
+/// An error names `riff update --tag`.
 pub async fn latest() -> Result<String> {
     let source = Source::of(std::env::var(RELEASES).ok().as_deref());
     let place = source.latest_place();

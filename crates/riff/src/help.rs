@@ -79,7 +79,7 @@ pub const GROUPS: &[Group] = &[
     },
     Group {
         heading: "Host a riff",
-        commands: &["cloud", "retire"],
+        commands: &["cloud"],
     },
     Group {
         heading: "Containers",

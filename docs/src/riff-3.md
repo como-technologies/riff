@@ -130,12 +130,12 @@ flowchart LR
   itself with `update.auto` on. Then it works while it takes 3.0.0. A
   rollback of riff-server from 3.0.0 to 1.8.2 needs no step on a
   machine. See [Builds](how-it-works.md#builds).
-- After riff 3.0.0, each GitHub release of riff 1.x becomes a
-  prerelease that says that the line is retired. No patch of 1.x comes
-  after 3.0.0.
+- After riff 3.0.0, the line 1.x is retired. Its GitHub releases stay
+  normal releases, with their notes. GitHub marks 3.0.0 Latest. No
+  patch of 1.x comes after 3.0.0.
 - The build items: the end of the riff of peers (#959), the rollout
-  that runs the wave of the daemon (#960), the command that retires a
-  line (#795), and the live check of 3.0.0 (#961).
+  that runs the wave of the daemon (#960), and the live check of 3.0.0
+  (#961).
 
 ### Take riff 1.8.2 before riff 3.0.0
 

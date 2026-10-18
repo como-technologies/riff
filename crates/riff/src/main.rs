@@ -694,24 +694,6 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
-    /// Retire a release line on GitHub
-    ///
-    /// Each GitHub release of the line becomes a prerelease, and the first
-    /// line of its notes says that the line is retired and names the issue.
-    /// GitHub never marks a prerelease Latest, so riff update never
-    /// installs it. riff keeps the release that GitHub marks Latest, and
-    /// each draft. It uses the gh of this machine, in the repository of
-    /// this folder. It prints what it changed. A second run changes nothing.
-    /// A person in a terminal or the lead runs it: it refuses in a worker
-    /// and in an agent session that is not the lead.
-    Retire {
-        /// The line, for example 1.x or 1.
-        #[arg(value_parser = riff::retire::parse_line)]
-        line: u64,
-        /// The issue that retires the line, for example 961.
-        #[arg(long)]
-        issue: u64,
-    },
     /// Print the session image of this repository
     ///
     /// It reads the key image in the table [session] of riff.toml, at the
@@ -1964,18 +1946,6 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     }
-    if let Command::Retire { line, issue } = &cli.command {
-        // The check comes before each call of gh
-        // (01M553AWMXYAG7CJGW7M30XDZ8).
-        if let Some(why) = lead_only(&server, &text::RETIRE).await {
-            eprintln!("{why}");
-            std::process::exit(1);
-        }
-        let gh = pr::Gh::default().with_one_token();
-        let done = riff::retire::retire(&gh, *line, *issue)?;
-        println!("{}", text::retire_done(*line, &done));
-        return Ok(());
-    }
     let api = Api::new(&server);
     match &cli.command {
         Command::Login => {
@@ -2398,7 +2368,6 @@ async fn main() -> Result<()> {
         | Command::Admin { .. }
         | Command::Owner { .. }
         | Command::Run { .. }
-        | Command::Retire { .. }
         | Command::Wave { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
@@ -2944,8 +2913,8 @@ async fn riff_paused(url: &str, here: &std::path::Path) -> Option<bool> {
 }
 
 /// Why this process may not run the command of `refusals`, or `None`
-/// when it may (01M558C4VZ2PSMEYPAZBRYW1VV). `riff workers start`,
-/// `riff retire` and the writes of `riff cloud` use it.
+/// when it may (01M558C4VZ2PSMEYPAZBRYW1VV). `riff workers start` and
+/// the writes of `riff cloud` use it.
 /// A person in a plain terminal may. A worker may not. An agent session
 /// may only when it is the lead.
 async fn lead_only(server: &str, refusals: &text::LeadOnly) -> Option<String> {
