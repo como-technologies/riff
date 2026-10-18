@@ -2306,7 +2306,13 @@ A check that needs a removed record is `not checked`, with the reason:
   fails.
 - Rule 1 for a release after a verify request, when the start of the
   session is not in the kept records.
-- Rule 7 for a request from a user with no lead in the kept records.
+- Rule 2 and rule 3 for a claim of a session whose fresh start
+  (`process` or `clear`) is not in the kept records. The session can
+  hold a removed claim, or owe a clear.
+- Rule 4 when the kept records have no pause of the riff, or no pause
+  of the repository.
+- Rule 6 for a claim, and rule 7 for a request, of a user with no lead
+  in the kept records.
 
 The error of a log that does not read never tells you to delete the
 state. Only a server that cannot load its state at a start says so.

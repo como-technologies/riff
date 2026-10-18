@@ -55,7 +55,10 @@
 //!   forge that is missing still fails.
 //! - Rule 1 for a release after a verify request by a session whose
 //!   start is gone.
-//! - Rule 7 for a request from a user with no lead in the kept records.
+//! - Rule 2 and rule 3 for a claim of a session whose fresh start is
+//!   gone: it can hold a gone claim, or owe a clear.
+//! - Rule 4 when the pause of the riff or of the repository is gone.
+//! - Rule 6 and rule 7 for a user with no lead in the kept records.
 //!
 //! # Example
 //!
@@ -107,7 +110,7 @@ use std::fmt::Write;
 use anyhow::{Result, bail};
 use riff_core::name::{Place, ThreadName, Who};
 use riff_core::record::{By, Change, Posted, Record, Scope};
-use riff_core::wire::{Pruned, RiffState, StartReason};
+use riff_core::wire::{Pruned, RiffState};
 use serde::Deserialize;
 
 use crate::pr::Gh;
@@ -335,6 +338,16 @@ struct Replay {
     /// The pause of the riff and of the repository.
     riff_paused: bool,
     repo_paused: bool,
+    /// The sessions with a fresh start in the records. A fresh start
+    /// frees each claim and ends the need to clear, so the records have
+    /// each later claim and release of the session.
+    fresh: BTreeSet<Who>,
+    /// The users with a `lead_set` in the records.
+    lead_set: BTreeSet<String>,
+    /// True when the records have a `pause_set` of the riff, and of the
+    /// repository.
+    riff_pause_set: bool,
+    repo_pause_set: bool,
 }
 
 /// What rule 1 finds for an item in the whole log.
@@ -363,7 +376,9 @@ struct Item {
 /// `pruned` says which records the log no longer keeps
 /// (01M588N3R2VP12A8X4EASX0BJ4). The rules 2 to 7 are not checked when
 /// the span starts before the oldest kept record. Rule 1 does not check
-/// the log facts of an item with no claim in the kept records.
+/// the log facts of an item with no claim in the kept records. A check
+/// of the rules 2 to 7 whose state can be in a gone record is not
+/// checked.
 pub fn audit(
     title: &str,
     records: &[Record],
@@ -438,7 +453,13 @@ pub fn audit(
             Change::Claimed(c) => {
                 let who = c.session.who();
                 if checked {
-                    check_claim(&mut rules, &state, forge, record, who, &c.item, &authors);
+                    let claim = Claim {
+                        record,
+                        who,
+                        item: &c.item,
+                        pruned: pruned.is_some(),
+                    };
+                    check_claim(&mut rules, &state, forge, &claim, &authors);
                 }
                 if let Some(n) = work_item(&c.item) {
                     items
@@ -494,8 +515,9 @@ pub fn audit(
             Change::SessionStarted(s) => {
                 let who = s.session.who();
                 state.workers.insert(who.clone(), s.worker);
-                if matches!(s.reason, StartReason::Clear | StartReason::Process) {
+                if s.reason.is_fresh() {
                     state.must_clear.remove(who);
+                    state.fresh.insert(who.clone());
                 }
             }
             Change::SessionForgotten(f) => {
@@ -506,6 +528,7 @@ pub fn audit(
             Change::LeadSet(m) => {
                 let who = m.session.who();
                 state.leads.insert(who.user().to_owned(), who.clone());
+                state.lead_set.insert(who.user().to_owned());
             }
             Change::LeftThread(m) => {
                 let who = m.session.who();
@@ -514,8 +537,14 @@ pub fn audit(
             Change::PauseSet(set) => {
                 let paused = set.state == RiffState::Paused;
                 match set.scope {
-                    Scope::Riff => state.riff_paused = paused,
-                    Scope::Repository(_) => state.repo_paused = paused,
+                    Scope::Riff => {
+                        state.riff_paused = paused;
+                        state.riff_pause_set = true;
+                    }
+                    Scope::Repository(_) => {
+                        state.repo_paused = paused;
+                        state.repo_pause_set = true;
+                    }
                     Scope::Other => {}
                 }
             }
@@ -645,16 +674,32 @@ fn item_flow(n: u64, item: &Item, forge: &Forge, pruned: Option<Pruned>) -> (Ver
     }
 }
 
-/// The rules 2 to 6 at a claim in the span.
+/// A claim in the span.
+struct Claim<'a> {
+    record: &'a Record,
+    who: &'a Who,
+    item: &'a str,
+    /// True after a prune: the replay does not see the gone records.
+    pruned: bool,
+}
+
+/// The rules 2 to 6 at a claim in the span. After a prune, a check that
+/// can need a gone record is not checked (01M588N3R2VP12A8X4EASX0BJ4).
 fn check_claim(
     rules: &mut [Rule],
     state: &Replay,
     forge: &Forge,
-    record: &Record,
-    who: &Who,
-    item: &str,
+    claim: &Claim,
     authors: &BTreeMap<u64, BTreeSet<Who>>,
 ) {
+    let Claim {
+        record,
+        who,
+        item,
+        pruned,
+    } = *claim;
+    // The replay sees each claim and each release of this session.
+    let seen = !pruned || state.fresh.contains(who);
     let at = record.envelope.written_at_ms;
     let position = record.envelope.position;
     let claim = format!("{item} at record {position} by {}", name(who));
@@ -675,7 +720,9 @@ fn check_claim(
         if author {
             why.push(format!("it is an author of issue-{n}"));
         }
-        if why.is_empty() {
+        if why.is_empty() && !seen {
+            rules[1].add(Verdict::NotChecked, format!("{claim}: {}", gone_start(who)));
+        } else if why.is_empty() {
             rules[1].add(Verdict::Pass, claim.clone());
         } else {
             rules[1].add(Verdict::Fail, format!("{claim}: {}.", why.join("; ")));
@@ -689,6 +736,9 @@ fn check_claim(
             Verdict::Fail,
             format!("{claim}: no clear after its last release at record {release}."),
         ),
+        None if !seen => {
+            rules[2].add(Verdict::NotChecked, format!("{claim}: {}", gone_start(who)));
+        }
         None => rules[2].add(Verdict::Pass, claim.clone()),
     }
 
@@ -700,6 +750,16 @@ fn check_claim(
             "the repository"
         };
         rules[3].add(Verdict::Fail, format!("{claim}: {what} was paused."));
+    } else if pruned && !(state.riff_pause_set && state.repo_pause_set) {
+        let what = if state.riff_pause_set {
+            "the repository"
+        } else {
+            "the riff"
+        };
+        rules[3].add(
+            Verdict::NotChecked,
+            format!("{claim}: no pause of {what} is in the records that the log keeps."),
+        );
     } else {
         rules[3].add(Verdict::Pass, claim.clone());
     }
@@ -721,10 +781,27 @@ fn check_claim(
                 Verdict::Fail,
                 format!("{claim}: it was the lead of {}.", who.user()),
             );
+        } else if pruned && !state.lead_set.contains(who.user()) {
+            rules[5].add(
+                Verdict::NotChecked,
+                format!(
+                    "{claim}: {} has no lead in the records that the log keeps.",
+                    who.user()
+                ),
+            );
         } else {
             rules[5].add(Verdict::Pass, claim);
         }
     }
+}
+
+/// Why a check of a session with no fresh start in the kept records is
+/// not checked: the session can hold a gone claim, or owe a clear.
+fn gone_start(who: &Who) -> String {
+    format!(
+        "the fresh start of {} is not in the records that the log keeps.",
+        name(who)
+    )
 }
 
 /// Rule 5 for a claim of the issue `n` at `at`: its verdict, and why
@@ -1101,7 +1178,7 @@ mod tests {
     use super::*;
     use riff_core::record::Envelope;
     use riff_core::record::{Claimed, Member, PauseSet, Released, SessionStarted};
-    use riff_core::wire::Message;
+    use riff_core::wire::{Message, StartReason};
 
     const WAVE: &str = "Wave 2";
 
@@ -1556,13 +1633,109 @@ mod tests {
                  keeps."
             )]
         );
-        for rule in &report.rules[1..6] {
-            assert_eq!(rule.verdict(), Verdict::Pass, "{rule:?}");
-        }
+        // The fresh starts of w1 and w2 are kept. No pause and no lead
+        // are kept.
+        let verdicts: Vec<Verdict> = report.rules[1..6].iter().map(Rule::verdict).collect();
+        assert_eq!(
+            verdicts,
+            [
+                Verdict::Pass,
+                Verdict::Pass,
+                Verdict::NotChecked,
+                Verdict::Pass,
+                Verdict::NotChecked
+            ]
+        );
         // With no prune, the same records fail rule 7.
         assert_eq!(
             fails(&records, 7),
             ["request at record 13 from ann/l1: ann had no lead."]
+        );
+    }
+
+    #[test]
+    fn after_a_prune_a_claim_that_needs_a_gone_record_is_not_checked() {
+        // The lead, a claim of w2, a release of w3 that must clear and a
+        // pause are before record 5, the oldest kept record.
+        let gone = [
+            lead(1, "l1"),
+            claim(2, "w2", "issue-5"),
+            release(3, "w3", "issue-4", true),
+            pause(4, RiffState::Paused),
+        ];
+        let kept = vec![
+            started(5, "w1", StartReason::Process),
+            claim(10, "l1", "issue-8"),
+            claim(11, "w2", "verify-issue-7"),
+            claim(12, "w3", "issue-7"),
+        ];
+        let whole: Vec<Record> = gone.iter().chain(&kept).cloned().collect();
+        let report = audit(WAVE, &whole, None, &forge(), 100_000).unwrap();
+        for n in [2, 3, 4, 6] {
+            assert_eq!(report.rules[n - 1].verdict(), Verdict::Fail, "rule {n}");
+        }
+        let pruned = Some(Pruned {
+            first: 5,
+            first_ms: 4_000,
+        });
+        let report = audit(WAVE, &kept, pruned, &forge(), 100_000).unwrap();
+        for n in [2, 3, 4, 6] {
+            assert_eq!(
+                report.rules[n - 1].verdict(),
+                Verdict::NotChecked,
+                "rule {n}"
+            );
+        }
+        assert_eq!(
+            texts(&report.rules[1]),
+            [(
+                Verdict::NotChecked,
+                "verify-issue-7 at record 11 by ann/w2: the fresh start of ann/w2 is not in the \
+                 records that the log keeps."
+            )]
+        );
+        assert_eq!(
+            texts(&report.rules[3])[0],
+            (
+                Verdict::NotChecked,
+                "issue-8 at record 10 by ann/l1: no pause of the riff is in the records that the \
+                 log keeps."
+            )
+        );
+        assert_eq!(
+            texts(&report.rules[5])[0],
+            (
+                Verdict::NotChecked,
+                "issue-8 at record 10 by ann/l1: ann has no lead in the records that the log \
+                 keeps."
+            )
+        );
+
+        // A fresh start, a lead and a pause of each scope in the kept
+        // records: the audit checks again.
+        let repo = PauseSet {
+            scope: Scope::Repository("acme/app".parse().unwrap()),
+            state: RiffState::Running,
+        };
+        let seen = vec![
+            started(5, "w2", StartReason::Process),
+            started(6, "w3", StartReason::Clear),
+            started(6, "l1", StartReason::Process),
+            lead(7, "l1"),
+            pause(8, RiffState::Running),
+            record(9, "lead", Change::PauseSet(repo)),
+        ];
+        let records: Vec<Record> = seen.into_iter().chain(kept).collect();
+        let report = audit(WAVE, &records, pruned, &forge(), 100_000).unwrap();
+        for n in [2, 3, 4] {
+            assert_eq!(report.rules[n - 1].verdict(), Verdict::Pass, "rule {n}");
+        }
+        assert_eq!(
+            texts(&report.rules[5])[0],
+            (
+                Verdict::Fail,
+                "issue-8 at record 10 by ann/l1: it was the lead of ann."
+            )
         );
     }
 }

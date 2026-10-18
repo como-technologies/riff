@@ -470,7 +470,10 @@
   before the oldest kept record; rule 1 for the facts of the log of an
   item with no claim in the kept records; rule 1 for a release after a
   verify request by a session whose start is gone; rule 7 for a request
-  from a user with no lead in the kept records.
+  from a user with no lead in the kept records; rule 2 and rule 3 for a
+  claim of a session with no fresh start in the kept records; rule 4
+  when the kept records have no pause of the riff or of the repository;
+  rule 6 for a claim of a user with no lead in the kept records.
 - **01M43GSGB9ZFHSG0Q83Y50FEGW** A lead holds an item of its repository
   with a reason, and frees it again: `riff plan hold ITEM REASON`,
   `riff plan free ITEM`, and the tools `hold` and `free`. The server
