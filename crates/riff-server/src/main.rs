@@ -360,7 +360,7 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
             Err(e) => {
                 // The text names the object and the fix
                 // (01M3MMXYS1V8CA89D2XHKPR6C4).
-                tracing::error!("riff-server stops: {e}");
+                tracing::error!("riff-server stops: {}", e.at_start());
                 std::process::exit(1);
             }
         },

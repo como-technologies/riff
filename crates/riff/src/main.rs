@@ -2251,7 +2251,7 @@ async fn main() -> Result<()> {
             let wave = riff::waves::title(&gh, &here.repo_text(), wave)?;
             let log = api.signed_in(None)?.log(&repo).await?;
             let forge = audit::Forge::read(&gh, &here.repo_text(), &wave)?;
-            let report = audit::audit(&wave, &log.records, &forge, audit::now_ms())?;
+            let report = audit::audit(&wave, &log.records, log.pruned, &forge, audit::now_ms())?;
             print!("{}", audit::render(&report, &here.repo_text()));
             if report.failed() {
                 std::process::exit(1);
