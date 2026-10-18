@@ -271,7 +271,7 @@ other key. Then start Claude Code again. The rules of riff:
 |---|---|
 | `mcp__plugin_riff_riff`, `mcp__riff` | the riff tools |
 | `Bash(riff)`, `Bash(riff *)` | each `riff` command |
-| `Bash(~/.cache/riff/check/target/static/release/riff *)`, and the same rule with the full path of your home | the riff of a new build in a check |
+| `Bash(~/.cache/riff/check/target/static/release/riff *)`, and the same rule with the full path of your home | the riff of a new build in a check: see [Build riff for a check](development.md#build-riff-for-a-check) |
 
 Each rule names its program and its words. Its only `*` is at its
 end, after a space. So a rule allows only the steps that it names. The

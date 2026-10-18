@@ -328,21 +328,18 @@ worktree.
 
 A check after a merge can need a new build of riff, for example of
 the daemon. Build it in the clone `~/.cache/riff/check`, outside
-`.claude/worktrees`. One check at a time on a machine uses it. When
-the folder is not there, clone the repository into it:
+`.claude/worktrees`. One check at a time on a machine uses it. Do no
+git step in the clone yourself: Claude Code refuses a git step of a
+session in a worktree that targets another folder. Run one riff
+command:
 
 ```sh
-git clone -q https://github.com/OWNER/REPO.git ~/.cache/riff/check
+riff build
 ```
 
-Then put the clone on the default branch, and build it:
-
-```sh
-git -C ~/.cache/riff/check fetch -q origin
-
-git -C ~/.cache/riff/check checkout -q --detach origin/main
-just --justfile ~/.cache/riff/check/justfile static
-```
+riff clones the repository into the folder when it is not there,
+fetches `origin`, puts the clone on the default branch, and runs
+`just static`. It prints the path of the riff of the build.
 
 Call the riff of the build by its path, with no variable and no
 prefix, for example:
