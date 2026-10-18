@@ -1754,7 +1754,7 @@ three rulesets:
 - `main`: a change needs a pull request and the checks `Gate`,
   `Hygiene` and `riff/verify`.
 - `release-branches` on the branches `release/**`: a change needs a
-  pull request and the checks `Gate` and `Hygiene`. See
+  pull request and the checks `Gate`, `Hygiene` and `riff/verify`. See
   [Make a patch of an older release](#make-a-patch-of-an-older-release).
 - `releases` on the tags `v*`: only the repository admin role can
   create, move or delete a release tag.
@@ -3231,7 +3231,10 @@ git switch --no-track -c release-1.x origin/release/1.x
 just github
 ```
 
-Each change goes in by a pull request to the branch, as on `main`:
+Each change goes in by a pull request to the branch, as on `main`.
+The pull request waits for its verify, as one to `main` does: it
+merges only when the checks `Gate`, `Hygiene` and `riff/verify` pass.
+Turn on auto-merge at once:
 
 ```sh
 git fetch origin

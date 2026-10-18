@@ -286,7 +286,8 @@ fn just_github_lets_only_an_admin_make_a_release_tag() {
 }
 
 /// 01M4YJ6KGBPTCSVMFQCDKACZPV: a change to a branch `release/**` needs a
-/// pull request and the checks Gate and Hygiene. No actor can bypass it.
+/// pull request and the checks Gate, Hygiene and riff/verify, as on
+/// `main`. No actor can bypass it.
 #[test]
 fn just_github_protects_the_release_branches() {
     let (out, log) = setup(None);
@@ -319,7 +320,19 @@ fn just_github_protects_the_release_branches() {
     let checks = rule("required_status_checks")["parameters"].clone();
     assert_eq!(
         checks["required_status_checks"],
-        serde_json::json!([{ "context": "Gate" }, { "context": "Hygiene" }])
+        serde_json::json!([{ "context": "Gate" }, { "context": "Hygiene" }, { "context": "riff/verify" }])
+    );
+    // The same checks as on `main`.
+    let main = ruleset(&log, "main");
+    let main_checks = main["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["type"] == "required_status_checks")
+        .unwrap();
+    assert_eq!(
+        checks["required_status_checks"],
+        main_checks["parameters"]["required_status_checks"]
     );
     // The checks do not stop the push that makes a new branch of a line.
     assert_eq!(checks["do_not_enforce_on_create"], true);
