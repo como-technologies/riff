@@ -3649,7 +3649,7 @@ where
 /// (01M56Q55SHHJSKJWNHMW79X7HA):
 ///
 /// ```
-/// use riff::api::Probe;
+/// use riff_client::api::Probe;
 /// use riff::lifecycle::{Seen, Source, View};
 /// use riff_core::build::Build;
 ///
