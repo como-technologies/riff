@@ -4693,10 +4693,17 @@ mod tests {
             .unwrap();
         assert!(error.contains("Ask your own user"), "{error}");
         let error = state
-            .post(Post::new(&api(), None, to(&["user=mike"]), "who?"), now, 0)
+            .post(Post::new(&api(), None, to(&["user=brett"]), "who?"), now, 0)
             .err()
             .unwrap();
         assert!(error.contains("session or lead=true"), "{error}");
+        // The own user names the person (01M57D4FR8TPY47WPT9G66H4PE).
+        let d = state
+            .post(Post::new(&api(), None, to(&["user=mike"]), "you"), now, 0)
+            .unwrap();
+        assert!(woken(&d).is_empty());
+        let person = Who::new("mike", None).unwrap();
+        assert_eq!(d.tailed.thread, ThreadName::direct(api().who(), &person));
         let error = state
             .post(
                 Post::new(&docs(), None, to(&["lead=true"]), "which?"),

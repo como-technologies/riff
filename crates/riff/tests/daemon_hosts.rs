@@ -405,12 +405,12 @@ async fn only_the_person_and_the_lead_act_on_the_daemon() {
     let brett = session(&r.main, "brett", "k", "b1");
     r.api.register(&brett).await.unwrap();
     let daemon = r.daemon_of("b").await;
-    let thread = brett.default_thread().unwrap();
+    // A direct message, as riff sends it (01M57D4FTP2NXAE18XFRXCJ79H).
     let posted = r
         .api
         .post(
             &brett,
-            Some(&thread),
+            None,
             &[Selector::session(&daemon)],
             "daemon limit --sessions 2",
             Kind::Message,
@@ -418,7 +418,11 @@ async fn only_the_person_and_the_lead_act_on_the_daemon() {
         .await
         .unwrap();
     let reply = until("the reply to brett", || async {
-        let read = r.api.read_after(&brett, &thread, posted.seq).await.ok()?;
+        let read = r
+            .api
+            .read_after(&brett, &posted.thread, posted.seq)
+            .await
+            .ok()?;
         read.iter()
             .find_map(|m| remote::read_reply(&m.message.body, posted.seq))
     })
@@ -578,4 +582,48 @@ async fn a_short_sign_in_of_claude_is_one_note_to_the_lead() {
     tokio::time::sleep(Duration::from_millis(LOOK_MS * 10)).await;
     assert_eq!(r.notes(back).await.len(), 1);
     assert_eq!(r.notes(short).await.len(), 1);
+}
+
+/// 01M57D4FTP2NXAE18XFRXCJ79H, 01M57D4FR8TPY47WPT9G66H4PE: the person
+/// on `a` asks the daemon of `b` from a terminal, and gets the reply in
+/// the direct thread of the person. The thread of the repository has no
+/// reply, so another user in it reads none.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_replies_of_a_daemon_go_only_to_the_person_and_the_lead() {
+    let r = riff().await;
+    let none = "riff-issue-9-00000000";
+    let out =
+        r.a.run(&r.main, &["daemon", "events", none, "--host", "b"], None)
+            .await;
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        text(&out.stderr).contains(&format!("owns no session in the container {none}")),
+        "{out:?}"
+    );
+    let out = r.lead(&["daemon", "status"], "b").await;
+    assert!(out.status.success(), "{out:?}");
+
+    let brett = session(&r.main, "brett", "k", "b1");
+    r.api.register(&brett).await.unwrap();
+    let thread = brett.default_thread().unwrap();
+    let read = r.api.read(&brett, &thread, true).await.unwrap_or_default();
+    assert!(
+        read.iter()
+            .all(|m| !m.message.body.contains("the daemon of b")),
+        "{read:?}"
+    );
+    let threads = r.api.threads(&brett).await.unwrap();
+    assert!(threads.iter().all(|t| !t.thread.is_direct()), "{threads:?}");
+    // The lead has its direct thread with the daemon of b.
+    let daemon = r.daemon_of("b").await;
+    let direct = riff_core::name::ThreadName::direct(
+        r.lead.who(),
+        &Who::new("mike", Some(&daemon)).unwrap(),
+    );
+    let read = r.api.read(&r.lead, &direct, true).await.unwrap();
+    assert!(
+        read.iter()
+            .any(|m| m.message.body.contains("the daemon of b: done")),
+        "{read:?}"
+    );
 }

@@ -223,16 +223,18 @@ fn the_book_keeps_the_releases_of_a_retired_line_normal() {
     );
 }
 
-/// 01M53NGW6F5HP1DZ9QRGP50MGT, 01M53NGVE839TRH7XB7CDPQNZE: `riff view`
-/// shows only the sessions of this machine, and `riff lead start` asks
-/// the riff daemon to run the wave when none runs.
+/// 01M53NGW6F5HP1DZ9QRGP50MGT, 01M57D4FZGCVE62AP4MVG59HM4,
+/// 01M53NGVE839TRH7XB7CDPQNZE: `riff view` shows the sessions of this
+/// machine, or with `--host` of another host through riff-server, and
+/// `riff lead start` asks the riff daemon to run the wave when none
+/// runs.
 #[test]
 fn the_help_of_view_and_lead_start_says_what_they_do_in_riff_3() {
     // The words, with no line breaks of the wrap.
     let words = |args: &[&str]| riff(args).split_whitespace().collect::<Vec<_>>().join(" ");
     let view = words(&["view", "--help"]);
     assert!(
-        view.contains("It shows no session of another machine."),
+        view.contains("Show the riff daemon of HOST, through riff-server."),
         "{view}"
     );
     for word in ["other machines", "offline"] {

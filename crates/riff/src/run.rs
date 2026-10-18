@@ -1271,16 +1271,26 @@ impl View {
         }
     }
 
-    /// Shows one line of the output of the session: the lines of its
-    /// event, or the line itself when it is not JSON.
+    /// Shows one line of the output of the session ([`View::shown`]).
     pub fn show(&mut self, line: &str) {
+        for shown in self.shown(line) {
+            println!("{shown}");
+        }
+    }
+
+    /// The lines that the terminal shows for one line of the output of
+    /// the session: the lines of its event, or the line itself when it
+    /// is not JSON.
+    ///
+    /// ```
+    /// let mut view = riff::run::View::default();
+    /// assert_eq!(view.shown("not json"), ["not json"]);
+    /// assert!(view.shown(r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#).is_empty());
+    /// ```
+    pub fn shown(&mut self, line: &str) -> Vec<String> {
         match serde_json::from_str::<Value>(line) {
-            Ok(event) => {
-                for shown in self.lines(&event) {
-                    println!("{shown}");
-                }
-            }
-            Err(_) => println!("{line}"),
+            Ok(event) => self.lines(&event),
+            Err(_) => vec![line.to_owned()],
         }
     }
 }

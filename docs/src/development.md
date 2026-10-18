@@ -891,9 +891,14 @@ riff daemon events riff-issue-12-1a2b3c4d
 ```
 
 `riff daemon events` shows each event from the start of the session,
-and each new event until the session ends. Press Ctrl-C to stop the
-view: the session goes on. The file `events.jsonl` in the folder of
-the session also has each event, with no secret.
+and each new event until the session ends. It also shows the lines of
+the daemon, for example why it stops the session. Press Ctrl-C to stop
+the view: the session goes on. The file `events.jsonl` in the folder
+of the session also has each event, with no secret.
+
+The daemon keeps the end of a session for 5 minutes. In that time,
+`riff daemon events` shows the events and the end of a session that
+ended.
 
 ### Remove the folders of old sessions
 
@@ -1386,7 +1391,7 @@ sequenceDiagram
     L->>S: riff daemon limit --sessions 4 --host thelio
     S->>D: wake: the request
     D->>D: the same step as riff daemon limit on thelio
-    D->>S: a note to the lead: the reply
+    D->>S: a direct note to the lead: the reply
     S-->>L: riff prints the reply
 ```
 
@@ -1413,12 +1418,8 @@ To show or set its limit and caps:
 riff daemon limit --sessions 4 --host thelio
 ```
 
-To see the events of one of its sessions so far, at most the last 60
-lines:
-
-```sh
-riff daemon events riff-issue-12-1a2b3c4d --host thelio
-```
+To see the events and the view of its sessions, see
+[See a session on another host](#see-a-session-on-another-host).
 
 To remove its folders whose work is over:
 
@@ -1462,7 +1463,50 @@ that it starts again after its last session. Then `riff daemon status
 
 riff waits for the reply, prints it, and exits with 1 when the daemon
 refused or failed. The daemon acts only for you and your lead. It
-refuses a worker session and another user.
+refuses a worker session and another user. Each request and each reply
+is a direct message: no other session and no other user reads it.
+
+### See a session on another host
+
+Your lead, or you in a terminal, can see the sessions of the daemon of
+another host, with no SSH. Do the step `riff daemon host` of
+[Manage the daemon of another host](#manage-the-daemon-of-another-host)
+on that host first. Then run each command in the clone of the
+repository.
+
+```mermaid
+sequenceDiagram
+    participant L as lead on pangolin
+    participant S as riff-server
+    participant D as riff daemon on thelio
+    L->>S: daemon events NAME --after 12
+    S->>D: wake: the request
+    D->>D: the events after 12, with no secret
+    D->>S: a direct note: the page of events
+    S-->>L: riff prints the lines, and asks for the next page
+```
+
+To follow the events of one session, as `riff daemon events` shows
+them on that host:
+
+```sh
+riff daemon events riff-issue-12-1a2b3c4d --host thelio
+```
+
+It shows the same lines as `riff daemon events` on that host (see
+[See the events of a session](#see-the-events-of-a-session)), up to
+the end of the session. Ctrl-C ends it: the session goes on. It exits
+with 1 when the session failed. The events have no secret: the daemon
+took each secret out before it kept them.
+
+To watch the sessions of that host, as `riff view` shows them there:
+
+```sh
+riff view --host thelio
+```
+
+The view asks the daemon of the host each 3 seconds. Enter and `t`
+work only on that host: run `riff view` or `riff takeover` there.
 
 ### What the wave does
 
@@ -1609,10 +1653,11 @@ riff view
 The view shows each session of the daemon of this machine: its
 container, its item, its state, its age and its last step. It also
 shows the daemon, the limit of the host, each start that waits for
-room, and each wave. It draws them again each second. It shows no
-session of another machine. A later release merges `riff view` and
-`riff top` into one sessions view in each UI: see
-[Design: the UIs of riff](riff-uis.md).
+room, and each wave. It draws them again each second. To see another
+host, see
+[See a session on another host](#see-a-session-on-another-host). A
+later release merges `riff view` and `riff top` into one sessions view
+in each UI: see [Design: the UIs of riff](riff-uis.md).
 
 | Key | Does |
 |---|---|
