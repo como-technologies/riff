@@ -78,6 +78,59 @@ fn script(dir: &Path, name: &str, body: &str) {
     isolated::write_program(&path, format!("#!/bin/sh\n{body}\n"));
 }
 
+/// A fake `gh` in `dir`: the open milestone Wave 3 with 1 closed issue,
+/// its open issues `numbers`, and no pull request.
+fn wave_gh(dir: &Path, numbers: &[u64]) {
+    let issues: Vec<String> = numbers
+        .iter()
+        .map(|n| format!(r#"{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}}}"#))
+        .collect();
+    let wave = format!(
+        r#"[{{"number":3,"title":"Wave 3","open_issues":{},"closed_issues":1}}]"#,
+        numbers.len()
+    );
+    script(
+        dir,
+        "gh",
+        &format!(
+            "case \"$1\" in\n  api) echo '{wave}' ;;\n  pr) echo '[]' ;;\n  *) echo '[{}]' ;;\nesac",
+            issues.join(", "),
+        ),
+    );
+}
+
+/// A riff-server that needs a sign-in, and the sign-in of its owner,
+/// the person brett, in the secret files of the `RIFF_HOME` `home`.
+async fn start_server_with_sign_in(home: &Path) -> (riff_server::Service, String) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let service = riff_server::Service::new(riff_server::auth::Config {
+        require_sign_in: true,
+        ..riff_server::auth::Config::new(&url)
+    });
+    let router = service.router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let secrets = home.join("secrets");
+    let key = riff_core::dpop::Key::generate();
+    let name = riff_client::device::secret_name(&url);
+    riff_client::secrets::file_set(&secrets, &name, &key.to_secret()).unwrap();
+    let pair = service
+        .admit("brett@comotechnologies.io", false, &key.thumbprint())
+        .await
+        .unwrap();
+    let sign_in = riff_client::login::SignIn {
+        user: pair.user,
+        access_token: pair.access_token,
+        refresh_token: pair.refresh_token,
+        expires_at: u64::MAX,
+        riff_id: service.riff_id(),
+    };
+    let name = riff_client::login::secret_name(&url);
+    let json = serde_json::to_string(&sign_in).unwrap();
+    riff_client::secrets::file_set(&secrets, &name, &json).unwrap();
+    (service, url)
+}
+
 /// `riff ARGS` in `dir` through a pipe, as the agent session `session`
 /// of mike, or as the person brett, with `path` as `PATH`.
 fn riff(server: &str, dir: &Path, session: Option<&str>, path: &Path, args: &[&str]) -> Command {
@@ -690,6 +743,59 @@ async fn the_board_of_a_paused_repository_has_no_free_items() {
     );
 }
 
+/// A person with no session runs `riff wave list` in the clone: the
+/// repository comes from the folder, as in `riff top`, so the list
+/// shows the items of the current wave in the groups of the board
+/// (01M58ATZ408RBCX0PM0D0ZCY4B).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_sees_the_groups_of_the_wave_in_riff_wave_list() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    wave_gh(bin.path(), &[12, 13, 14]);
+    live(&server, "pangolin", "a1").await;
+    for args in [
+        &["lead"][..],
+        &["resume", "--riff"],
+        &["claim", "issue-12"],
+        &["plan", "hold", "issue-13", "a reading at 19:40 UTC"],
+    ] {
+        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
+    }
+
+    let mut list = riff(&server, dir, None, bin.path(), &["wave", "list"]);
+    list.env_remove("RIFF_SESSION")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
+    let list = output(list).await;
+    assert_eq!(
+        list,
+        "Wave 3  current  3 open, 1 closed\n  free: #14\n  held: #13 (a reading at 19:40 UTC)\n  \
+         claimed: #12\n"
+    );
+}
+
+/// Against a riff-server that needs a sign-in, the calls of `riff wave
+/// list` carry the token of the person, so the list shows the groups of
+/// the wave (01M58ATZ408RBCX0PM0D0ZCY4B). With no token, the server
+/// refuses the calls, and the list has only the milestones.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_wave_list_signs_in_to_a_riff_server_that_needs_a_sign_in() {
+    let dir = repo();
+    let dir = dir.path();
+    let (_service, server) = start_server_with_sign_in(dir).await;
+    let bin = bin(false);
+    wave_gh(bin.path(), &[12]);
+
+    let mut list = riff(&server, dir, None, bin.path(), &["wave", "list"]);
+    list.env_remove("RIFF_SESSION")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
+    assert_eq!(
+        output(list).await,
+        "Wave 3  current  1 open, 1 closed\n  free: #12\n"
+    );
+}
+
 /// The `gh` calls of `riff top` share the token of one read
 /// (01M54510SFK1Z9VPFYBYYSV10F): one `gh auth token`, then the token in
 /// `GH_TOKEN` of each call.
@@ -777,7 +883,8 @@ async fn top_makes_only_read_calls() {
         calls.iter().filter(|c| *c == "/v1/who").count() >= 4,
         "{calls:?}"
     );
-    let reads = ["/v1/riff", "/v1/who", "/v1/tail"];
+    // The holds of the boards are a read too (01M58ATZ1F42DWNNB24C2HJPEY).
+    let reads = ["/v1/riff", "/v1/who", "/v1/plan/show", "/v1/tail"];
     for call in &calls {
         assert!(reads.contains(&call.as_str()), "{call} in {calls:?}");
     }

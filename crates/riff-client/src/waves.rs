@@ -9,11 +9,14 @@
 //! verify, and the open milestones ([`Milestone`]) to this model. The
 //! model is plain data with serde:
 //!
-//! - [`Issues`]: the title of each open issue of a repository, the
-//!   current wave, and the items in verify.
-//! - [`Board`]: the board of the current wave of a repository, from its
-//!   [`Issues`] and the claims of the sessions of riff-server: `free`,
-//!   `claimed` and `verify` (01M3Z9N6X92KT051P10CKKV7EK).
+//! - [`Issues`]: the title of each open issue of a repository, its
+//!   waves, the current wave first, and the items in verify.
+//! - [`Board`]: the board of a wave of a repository, from its
+//!   [`Issues`], the claims of the sessions of riff-server and the holds
+//!   of the lead: `free`, `held`, `claimed` and `verify`
+//!   (01M3Z9N6X92KT051P10CKKV7EK, 01M58ATZ1F42DWNNB24C2HJPEY).
+//!   `riff top` shows the board of the current wave, `riff wave list`
+//!   the board of each wave (01M58ATZ408RBCX0PM0D0ZCY4B).
 //! - [`Milestone`]: an open milestone, a line of `riff wave list`
 //!   (01M509TJRBE2J7HYKKHRJ1ZFR0).
 //!
@@ -21,31 +24,40 @@
 //! flowchart LR
 //!     G["the forge, through the UI:<br/>the open issues and pull requests"] --> I["Issues"]
 //!     S["riff-server: who"] -- "the claims" --> B["Board"]
+//!     H["riff-server: plan show"] -- "the holds" --> B
 //!     I --> B
-//!     B --> T["riff top: the board"]
+//!     B --> T["riff top: the board of the current wave"]
+//!     B --> W
 //!     M["the forge: the open milestones"] --> L["Milestone"] --> W["riff wave list"]
 //! ```
 //!
 //! ```
+//! use std::collections::BTreeMap;
 //! use riff_client::sessions::Sessions;
 //! use riff_client::waves::{Board, Issue, Issues};
-//! use riff_core::wire::SessionInfo;
+//! use riff_core::wire::{HoldInfo, SessionInfo};
 //!
 //! let issue = |number, title: &str| Issue { number, title: title.into(), milestone: Some("Wave 3".into()) };
-//! let issues = Issues::of(vec![issue(12, "Claimed"), issue(13, "Free"), issue(14, "Asked")])
+//! let issues = Issues::of(vec![issue(12, "Claimed"), issue(13, "Free"), issue(14, "Asked"), issue(15, "Held")])
 //!     .with_verify([14]);
 //! let claim: SessionInfo = serde_json::from_value(serde_json::json!({
 //!     "uri": "riff://mike@thelio/o/r?session=a1&claim=issue-12", "live": true,
 //! }))?;
-//! let board = Board::of("o/r", &issues, &Sessions::new(vec![claim], vec![])).unwrap();
+//! let holds = BTreeMap::from([(
+//!     "issue-15".to_owned(),
+//!     HoldInfo { reason: "a reading".into(), by: None, at_ms: 0 },
+//! )]);
+//! let board = Board::of("o/r", &issues, &Sessions::new(vec![claim], vec![]), &holds).unwrap();
 //! assert_eq!(board.wave, "Wave 3");
 //! assert_eq!((board.free, board.claimed, board.verify), (vec![13], vec![12], vec![14]));
+//! assert_eq!(board.held, [(15, "a reading".to_owned())]);
 //! # Ok::<(), serde_json::Error>(())
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use riff_core::name::Repo;
+use riff_core::wire::HoldInfo;
 use serde::{Deserialize, Serialize};
 
 use crate::sessions::{Sessions, Show};
@@ -65,9 +77,10 @@ pub struct Issue {
 pub struct Issues {
     /// The title of each open issue, by number.
     pub titles: BTreeMap<u64, String>,
-    /// The current wave: the open `Wave N` milestone with the lowest N,
-    /// and its open issues.
-    pub wave: Option<(String, Vec<u64>)>,
+    /// Each wave with an open issue, in number order: the title of its
+    /// milestone and its open issues. The first is the current wave
+    /// ([`Issues::wave`]).
+    pub waves: Vec<(String, Vec<u64>)>,
     /// The issues whose pull request waits for a verify or for the
     /// merge (01M3Z9N6X92KT051P10CKKV7EK).
     pub verify: BTreeSet<u64>,
@@ -92,7 +105,9 @@ impl Issues {
     ///     issue(5, "New", None),
     /// ]);
     /// assert_eq!(issues.titles[&12], "Show the wave");
-    /// assert_eq!(issues.wave, Some(("Wave 9: Cloud".into(), vec![9])));
+    /// assert_eq!(issues.wave(), Some(&("Wave 9: Cloud".into(), vec![9])));
+    /// let titles: Vec<&str> = issues.waves.iter().map(|(t, _)| t.as_str()).collect();
+    /// assert_eq!(titles, ["Wave 9: Cloud", "Wave 10", "Wave 11"]);
     /// ```
     pub fn of(list: Vec<Issue>) -> Issues {
         let mut waves: BTreeMap<u64, (String, Vec<u64>)> = BTreeMap::new();
@@ -107,15 +122,24 @@ impl Issues {
                 wave.1.push(issue.number);
             }
         }
-        let wave = waves.into_values().next().map(|(title, mut items)| {
-            items.sort_unstable();
-            (title, items)
-        });
+        let waves = waves
+            .into_values()
+            .map(|(title, mut items)| {
+                items.sort_unstable();
+                (title, items)
+            })
+            .collect();
         Issues {
             titles: list.into_iter().map(|i| (i.number, i.title)).collect(),
-            wave,
+            waves,
             verify: BTreeSet::new(),
         }
+    }
+
+    /// The current wave: the `Wave N` milestone with the lowest N and an
+    /// open issue, and its open issues.
+    pub fn wave(&self) -> Option<&(String, Vec<u64>)> {
+        self.waves.first()
     }
 
     /// These issues with `verify`, the issues whose pull request waits
@@ -254,16 +278,19 @@ pub fn board_repos(sessions: &Sessions, show: &Show, here: Option<&str>) -> BTre
     repos
 }
 
-/// The board of the current wave of a repository: each open item of
-/// the wave in one group (01M3Z9N6X92KT051P10CKKV7EK).
+/// The board of a wave of a repository: each open item of the wave in
+/// one group (01M3Z9N6X92KT051P10CKKV7EK, 01M58ATZ1F42DWNNB24C2HJPEY).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Board {
     /// `OWNER/REPO`.
     pub repo: String,
     /// The title of the wave.
     pub wave: String,
-    /// The items with no claim, and no pull request in verify.
+    /// The items with no claim, no pull request in verify and no hold.
     pub free: Vec<u64>,
+    /// The items with no claim and no pull request in verify that the
+    /// lead holds, each with the reason of its hold.
+    pub held: Vec<(u64, String)>,
     /// The items with a claim that is not a verify claim.
     pub claimed: Vec<u64>,
     /// The items with a verify claim, and the items with no claim whose
@@ -273,16 +300,80 @@ pub struct Board {
 }
 
 impl Board {
-    /// The board of `repo` with its `issues` and the claims of the
-    /// sessions on riff-server. Only a claim in `repo` counts: an issue
-    /// of another repository can have the same number. `None` when the
-    /// repository has no current wave.
-    pub fn of(repo: &str, issues: &Issues, sessions: &Sessions) -> Option<Board> {
-        let (wave, items) = issues.wave.as_ref()?;
+    /// The board of the current wave of `repo` ([`Issues::wave`]), with
+    /// its `issues`, the claims of the sessions on riff-server and the
+    /// `holds` of its repository thread. `None` when the repository has
+    /// no current wave. See [`Board::each`].
+    pub fn of(
+        repo: &str,
+        issues: &Issues,
+        sessions: &Sessions,
+        holds: &BTreeMap<String, HoldInfo>,
+    ) -> Option<Board> {
+        let (wave, items) = issues.wave()?;
+        Some(Board::wave(repo, wave, items, issues, sessions, holds))
+    }
+
+    /// The board of each wave of `repo` with an open issue, in number
+    /// order. Only a claim in `repo` counts: an issue of another
+    /// repository can have the same number. A claim wins over a hold: a
+    /// session can claim a held item. A hold names its item, `issue-N`.
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    /// use riff_client::sessions::Sessions;
+    /// use riff_client::waves::{Board, Issue, Issues};
+    /// use riff_core::wire::{HoldInfo, SessionInfo};
+    ///
+    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()) };
+    /// let issues = Issues::of(vec![
+    ///     issue(12, "Wave 3"), issue(13, "Wave 3"), issue(14, "Wave 3"), issue(20, "Wave 4"),
+    /// ]);
+    /// let claim: SessionInfo = serde_json::from_value(serde_json::json!({
+    ///     "uri": "riff://mike@thelio/o/r?session=a1&claim=issue-12", "live": true,
+    /// }))?;
+    /// let hold = |reason: &str| HoldInfo { reason: reason.into(), by: None, at_ms: 0 };
+    /// let holds = BTreeMap::from([
+    ///     ("issue-12".to_owned(), hold("later")),
+    ///     ("issue-13".to_owned(), hold("a reading at 19:40 UTC")),
+    /// ]);
+    /// let boards = Board::each("o/r", &issues, &Sessions::new(vec![claim], vec![]), &holds);
+    /// assert_eq!(boards.len(), 2);
+    /// let (now, next) = (&boards[0], &boards[1]);
+    /// assert_eq!(now.wave, "Wave 3");
+    /// assert_eq!(now.claimed, [12], "a claim wins over a hold");
+    /// assert_eq!(now.held, [(13, "a reading at 19:40 UTC".to_owned())]);
+    /// assert_eq!(now.free, [14], "a held item is never free");
+    /// assert_eq!((next.wave.as_str(), next.free.as_slice()), ("Wave 4", &[20][..]));
+    /// # Ok::<(), serde_json::Error>(())
+    /// ```
+    pub fn each(
+        repo: &str,
+        issues: &Issues,
+        sessions: &Sessions,
+        holds: &BTreeMap<String, HoldInfo>,
+    ) -> Vec<Board> {
+        issues
+            .waves
+            .iter()
+            .map(|(wave, items)| Board::wave(repo, wave, items, issues, sessions, holds))
+            .collect()
+    }
+
+    /// The board of the wave `wave` with its open `items`.
+    fn wave(
+        repo: &str,
+        wave: &str,
+        items: &[u64],
+        issues: &Issues,
+        sessions: &Sessions,
+        holds: &BTreeMap<String, HoldInfo>,
+    ) -> Board {
         let mut board = Board {
             repo: repo.to_owned(),
-            wave: wave.clone(),
+            wave: wave.to_owned(),
             free: Vec::new(),
+            held: Vec::new(),
             claimed: Vec::new(),
             verify: Vec::new(),
         };
@@ -293,18 +384,79 @@ impl Board {
                 .flat_map(|s| s.uri.claims().iter())
                 .filter(|c| issue_of(c) == Some(n))
                 .collect();
-            let group = if claims.iter().any(|c| c.starts_with("verify-"))
+            if claims.iter().any(|c| c.starts_with("verify-"))
                 || (claims.is_empty() && issues.verify.contains(&n))
             {
-                &mut board.verify
-            } else if claims.is_empty() {
-                &mut board.free
+                board.verify.push(n);
+            } else if !claims.is_empty() {
+                board.claimed.push(n);
+            } else if let Some(hold) = holds.get(&format!("issue-{n}")) {
+                board.held.push((n, hold.reason.clone()));
             } else {
-                &mut board.claimed
-            };
-            group.push(n);
+                board.free.push(n);
+            }
         }
-        Some(board)
+        board
+    }
+
+    /// One line for each group of the board that is not empty, in the
+    /// order `free`, `held`, `claimed`, `verify`. With `paused`, no
+    /// group `free`: nobody can claim its items
+    /// (01M588G5K0B58QXD35AA5MTZ6E). The reason of each hold follows its
+    /// items (01M58ATZ1F42DWNNB24C2HJPEY). The reason is text of the
+    /// lead: the UI makes it safe.
+    ///
+    /// ```
+    /// use riff_client::waves::Board;
+    ///
+    /// let board = Board {
+    ///     repo: "o/r".into(),
+    ///     wave: "Wave 3".into(),
+    ///     free: vec![14, 15],
+    ///     held: vec![(12, "a reading".into()), (13, "a reading".into()), (16, "later".into())],
+    ///     claimed: vec![],
+    ///     verify: vec![17],
+    /// };
+    /// assert_eq!(board.groups(false), [
+    ///     "free: #14 #15",
+    ///     "held: #12 #13 (a reading), #16 (later)",
+    ///     "verify: #17",
+    /// ]);
+    /// assert_eq!(board.groups(true), ["held: #12 #13 (a reading), #16 (later)", "verify: #17"]);
+    /// ```
+    pub fn groups(&self, paused: bool) -> Vec<String> {
+        let list = |items: &[u64]| {
+            let items: Vec<String> = items.iter().map(|n| format!("#{n}")).collect();
+            items.join(" ")
+        };
+        let mut reasons: Vec<(&str, Vec<u64>)> = Vec::new();
+        for (n, reason) in &self.held {
+            match reasons.iter_mut().find(|(r, _)| r == reason) {
+                Some((_, items)) => items.push(*n),
+                None => reasons.push((reason, vec![*n])),
+            }
+        }
+        let held: Vec<String> = reasons
+            .iter()
+            .map(|(reason, items)| format!("{} ({reason})", list(items)))
+            .collect();
+        [
+            (
+                "free",
+                if paused {
+                    String::new()
+                } else {
+                    list(&self.free)
+                },
+            ),
+            ("held", held.join(", ")),
+            ("claimed", list(&self.claimed)),
+            ("verify", list(&self.verify)),
+        ]
+        .into_iter()
+        .filter(|(_, items)| !items.is_empty())
+        .map(|(name, items)| format!("{name}: {items}"))
+        .collect()
     }
 }
 
@@ -347,7 +499,8 @@ mod tests {
     fn the_board_comes_from_a_reply_of_who() {
         let who: Vec<SessionInfo> = serde_json::from_str(WHO).unwrap();
         let sessions = Sessions::new(who, vec![]);
-        let board = Board::of("o/r", &issues(), &sessions).unwrap();
+        let none = BTreeMap::new();
+        let board = Board::of("o/r", &issues(), &sessions, &none).unwrap();
         assert_eq!(
             board.free,
             [14, 16],
@@ -355,7 +508,46 @@ mod tests {
         );
         assert_eq!(board.claimed, [12]);
         assert_eq!(board.verify, [13, 15]);
-        assert_eq!(Board::of("o/r", &Issues::default(), &sessions), None);
+        assert!(board.held.is_empty());
+        assert_eq!(Board::of("o/r", &Issues::default(), &sessions, &none), None);
+    }
+
+    /// A held item with no claim and no pull request in verify is in
+    /// `held` with its reason, never in `free`. A claim and a verify win
+    /// over a hold. A hold of another name holds nothing
+    /// (01M58ATZ1F42DWNNB24C2HJPEY).
+    #[test]
+    fn a_held_item_is_in_held_and_never_free() {
+        let who: Vec<SessionInfo> = serde_json::from_str(WHO).unwrap();
+        let sessions = Sessions::new(who, vec![]);
+        let hold = |reason: &str| HoldInfo {
+            reason: reason.into(),
+            by: None,
+            at_ms: 1,
+        };
+        let holds: BTreeMap<String, HoldInfo> = [
+            ("issue-12", "claimed anyway"),
+            ("issue-14", "VmLck reading at 19:40 UTC"),
+            ("issue-15", "in verify"),
+            ("verify-issue-16", "not this item"),
+        ]
+        .into_iter()
+        .map(|(item, reason)| (item.to_owned(), hold(reason)))
+        .collect();
+        let board = Board::of("o/r", &issues(), &sessions, &holds).unwrap();
+        assert_eq!(board.free, [16]);
+        assert_eq!(board.held, [(14, "VmLck reading at 19:40 UTC".to_owned())]);
+        assert_eq!(board.claimed, [12]);
+        assert_eq!(board.verify, [13, 15]);
+        assert_eq!(
+            board.groups(false),
+            [
+                "free: #16",
+                "held: #14 (VmLck reading at 19:40 UTC)",
+                "claimed: #12",
+                "verify: #13 #15"
+            ]
+        );
     }
 
     #[test]

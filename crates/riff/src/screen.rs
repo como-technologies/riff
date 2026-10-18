@@ -699,6 +699,7 @@ mod tests {
                 sessions,
                 people: &[],
                 issues: &Default::default(),
+                holds: &Default::default(),
                 repo: None,
                 show: &Default::default(),
                 width: 100,

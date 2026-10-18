@@ -38,6 +38,13 @@
 //! them in `verify`, not in `free` (01M3Z9N6X92KT051P10CKKV7EK). When
 //! that call fails, the board counts only the claims.
 //!
+//! The lead holds an item so that no worker claims it. At each look
+//! `riff top` reads the holds of each board from riff-server
+//! ([`riff_client::api::Api::plan_show`]). A held item with no claim and
+//! no pull request in verify is in `held`, with the reason of its hold,
+//! not in `free` (01M58ATZ1F42DWNNB24C2HJPEY). A read that fails keeps
+//! the last holds.
+//!
 //! The rows are a tree with four levels: person, host, repository,
 //! session (01M3NT4M5D36KTZ5XZMDP6QFQT, 01M42KHN33M4K13GKTX2WM6CMM).
 //! `riff top --by repo` puts the repository first. A row with one row
@@ -76,7 +83,7 @@
 //!     participant S as riff-server
 //!     T->>G: issue list, pr list of each repository (each ISSUES_TTL)
 //!     loop each REFRESH, and each message of the thread
-//!         T->>S: riff, who
+//!         T->>S: riff, who, plan show of each board
 //!         T->>T: draw the table in place
 //!     end
 //! ```
@@ -149,7 +156,9 @@ use riff_client::sessions::{Group, Level, PersonRow, Sessions, Show, blocked, ou
 use riff_client::waves::{Board, Issue, Issues, board_repos};
 use riff_core::build::Build;
 use riff_core::name::Repo;
-use riff_core::wire::{Person, PersonRole, RiffOwner, RiffReply, SessionInfo, SessionState};
+use riff_core::wire::{
+    HoldInfo, Person, PersonRole, RiffOwner, RiffReply, SessionInfo, SessionState,
+};
 use serde::Deserialize;
 
 use crate::state;
@@ -214,7 +223,7 @@ pub fn issue_args(repo: &str) -> Vec<String> {
 /// ]"#;
 /// let issues = parse_issues(json).unwrap();
 /// assert_eq!(issues.titles[&12], "Show the wave");
-/// assert_eq!(issues.wave, Some(("Wave 9: Cloud".into(), vec![9])));
+/// assert_eq!(issues.wave(), Some(&("Wave 9: Cloud".into(), vec![9])));
 /// assert_eq!(parse_issues("not json"), None);
 /// ```
 pub fn parse_issues(json: &str) -> Option<Issues> {
@@ -300,6 +309,10 @@ pub struct Top<'a> {
     /// ([`Issues::newest_each`]). A repository with no `gh` read has
     /// none.
     pub issues: &'a BTreeMap<String, Issues>,
+    /// The holds of the lead in each repository, by `OWNER/REPO` and
+    /// item, from riff-server at each look (01M58ATZ1F42DWNNB24C2HJPEY).
+    /// A repository with no read has none.
+    pub holds: &'a BTreeMap<String, BTreeMap<String, HoldInfo>>,
     /// The repository of the working directory, `OWNER/REPO`, for its
     /// pause. `None` outside git.
     pub repo: Option<&'a str>,
@@ -649,7 +662,8 @@ impl Top<'_> {
     ///   [`Top::repo`], that has issues ([`board_repos`],
     ///   01M42KHN80V49HDDZF953HXDT0): the current wave
     ///   with its repository, then one line for each group of its open
-    ///   items: `free`, `claimed`, and `verify` for an item with a
+    ///   items: `free`, `held` with the reason of each hold
+    ///   (01M58ATZ1F42DWNNB24C2HJPEY), `claimed`, and `verify` for an item with a
     ///   verify claim, and for an item with no claim whose pull request
     ///   waits for a verify or for the merge. Only a claim in that
     ///   repository counts. A repository with no issues has no board,
@@ -696,7 +710,7 @@ impl Top<'_> {
     /// use riff::top::{Top, parse_issues, with_pulls};
     /// use riff_client::sessions::{By, Sessions, Show};
     /// use riff_core::wire::{
-    ///     BlockedInfo, Person, PersonRole, RiffOwner, RiffState, SessionInfo, SessionState, Status,
+    ///     BlockedInfo, HoldInfo, Person, PersonRole, RiffOwner, RiffState, SessionInfo, SessionState, Status,
     ///     StatusInfo,
     /// };
     ///
@@ -758,7 +772,8 @@ impl Top<'_> {
     ///     r#"[{"number": 12, "title": "Show the wave in the board of riff top", "milestone": {"title": "Wave 3"}},
     ///         {"number": 13, "title": "Later", "milestone": {"title": "Wave 3"}},
     ///         {"number": 14, "title": "Free", "milestone": {"title": "Wave 3"}},
-    ///         {"number": 15, "title": "Asked", "milestone": {"title": "Wave 3"}}]"#,
+    ///         {"number": 15, "title": "Asked", "milestone": {"title": "Wave 3"}},
+    ///         {"number": 16, "title": "Held", "milestone": {"title": "Wave 3"}}]"#,
     /// )
     /// .unwrap();
     /// // The author of #15 asked for a verify and released the item.
@@ -767,6 +782,9 @@ impl Top<'_> {
     ///     r#"[{"number": 40, "headRefName": "worktree-issue-15", "isDraft": false, "statusCheckRollup": []}]"#,
     /// );
     /// let issues = BTreeMap::from([("o/r".to_owned(), issues)]);
+    /// // The lead holds #16.
+    /// let hold = HoldInfo { reason: "a reading at 19:40 UTC".into(), by: None, at_ms: 0 };
+    /// let holds = BTreeMap::from([("o/r".to_owned(), BTreeMap::from([("issue-16".to_owned(), hold)]))]);
     /// let owner = RiffOwner::Owner { user: "mike".into(), email: "m@x.io".into() };
     /// let running = RiffState::Running.into();
     /// let all = Show::default();
@@ -778,6 +796,7 @@ impl Top<'_> {
     ///     sessions: &sessions,
     ///     people: &people,
     ///     issues: &issues,
+    ///     holds: &holds,
     ///     repo: Some("o/r"),
     ///     show: &all,
     ///     width: 80,
@@ -791,7 +810,7 @@ impl Top<'_> {
     ///     "{text}"
     /// );
     /// // o/s has no issues: no board, and no error line.
-    /// assert!(text.contains("\n\nWave 3 (o/r)\n  free: #14\n  claimed: #12\n  verify: #13 #15\n\n"), "{text}");
+    /// assert!(text.contains("\n\nWave 3 (o/r)\n  free: #14\n  held: #16 (a reading at 19:40 UTC)\n  claimed: #12\n  verify: #13 #15\n\n"), "{text}");
     /// assert!(!text.contains("o/s"), "{text}");
     /// let tree: Vec<&str> = text.rsplit("\n\n").next().unwrap().lines().collect();
     /// assert_eq!(tree, [
@@ -885,12 +904,16 @@ impl Top<'_> {
         for s in blocks {
             lines.push(Line::new("", vec![(block_line(s), ERROR)]));
         }
+        let no_holds = BTreeMap::new();
         for repo in board_repos(self.sessions, self.show, self.repo) {
-            let Some(board) = self
-                .issues
-                .get(&repo)
-                .and_then(|i| Board::of(&repo, i, self.sessions))
-            else {
+            let Some(board) = self.issues.get(&repo).and_then(|i| {
+                Board::of(
+                    &repo,
+                    i,
+                    self.sessions,
+                    self.holds.get(&repo).unwrap_or(&no_holds),
+                )
+            }) else {
                 continue;
             };
             lines.push(Line::new("", vec![]));
@@ -1128,23 +1151,16 @@ fn block_line(s: &SessionInfo) -> String {
 }
 
 /// The lines of `board`: one line for each group of its open items that
-/// is not empty, `free`, `claimed` and `verify` ([`Board`],
-/// 01M3Z9N6X92KT051P10CKKV7EK). A `paused` board has no group `free`:
+/// is not empty, `free`, `held`, `claimed` and `verify`
+/// ([`Board::groups`], 01M3Z9N6X92KT051P10CKKV7EK,
+/// 01M58ATZ1F42DWNNB24C2HJPEY). A `paused` board has no group `free`:
 /// nobody can claim its items (01M588G5K0B58QXD35AA5MTZ6E).
 fn board_lines(board: &Board, paused: bool) -> Vec<Line> {
-    [
-        ("free", &board.free),
-        ("claimed", &board.claimed),
-        ("verify", &board.verify),
-    ]
-    .into_iter()
-    .filter(|(name, items)| !items.is_empty() && (!paused || *name != "free"))
-    .map(|(name, items)| {
-        let items: Vec<String> = items.iter().map(|n| format!("#{n}")).collect();
-        let line = format!("{name}: {}", items.join(" "));
-        Line::new("  ", vec![(line, anstyle::Style::new())])
-    })
-    .collect()
+    board
+        .groups(paused)
+        .into_iter()
+        .map(|group| Line::new("  ", vec![(safe(&group), anstyle::Style::new())]))
+        .collect()
 }
 
 /// The short session ID of `riff who`.
@@ -1211,6 +1227,18 @@ mod tests {
         machines: &[Host],
         pauses: &RiffReply,
     ) -> String {
+        shown_held(sessions, issues, show, machines, pauses, &BTreeMap::new())
+    }
+
+    /// [`shown_paused`] with the holds `holds`.
+    fn shown_held(
+        sessions: &[SessionInfo],
+        issues: &BTreeMap<String, Issues>,
+        show: &Show,
+        machines: &[Host],
+        pauses: &RiffReply,
+        holds: &BTreeMap<String, BTreeMap<String, HoldInfo>>,
+    ) -> String {
         let sessions = &Sessions::new(sessions.to_vec(), Vec::new());
         let owner = RiffOwner::NoSignIn;
         let top = Top {
@@ -1220,6 +1248,7 @@ mod tests {
             sessions,
             people: &[],
             issues,
+            holds,
             repo: None,
             show,
             width: 100,
@@ -1544,6 +1573,62 @@ mod tests {
         assert!(!text.contains("#355"), "{text}");
     }
 
+    /// The holds of strata: #355 and #356 with one reason, #88 with a
+    /// claim. riff has none.
+    fn holds_of_strata() -> BTreeMap<String, BTreeMap<String, HoldInfo>> {
+        let hold = |reason: &str| HoldInfo {
+            reason: reason.into(),
+            by: None,
+            at_ms: 0,
+        };
+        let holds = ["issue-355", "issue-356"]
+            .map(|item| (item.to_owned(), hold("VmLck reading at 19:40 UTC")))
+            .into_iter()
+            .chain([("issue-88".to_owned(), hold("claimed anyway"))])
+            .collect();
+        BTreeMap::from([("o/strata".to_owned(), holds)])
+    }
+
+    /// A held item with no claim is in `held` with the reason of its
+    /// hold, never in `free`. A claim wins over a hold. A paused board
+    /// keeps its group `held` (01M58ATZ1F42DWNNB24C2HJPEY).
+    #[test]
+    fn the_board_shows_the_held_items_with_their_reason_and_never_free() {
+        let issues = boards_with_free_items();
+        let running = riff_core::wire::RiffState::Running.into();
+        let holds = holds_of_strata();
+        let text = shown_held(
+            &riff_of_two(),
+            &issues,
+            &Show::default(),
+            &[],
+            &running,
+            &holds,
+        );
+        assert!(
+            text.contains(
+                "\n\nWave 9 (o/riff)\n  free: #10\n  claimed: #7\n\nWave 9 (o/strata)\n  held: #355 #356 (VmLck reading at 19:40 UTC)\n  claimed: #88\n\n"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("free: #355"), "{text}");
+        let paused = riff_core::wire::RiffState::Paused.into();
+        let text = shown_held(
+            &riff_of_two(),
+            &issues,
+            &Show::default(),
+            &[],
+            &paused,
+            &holds,
+        );
+        assert!(
+            text.contains(
+                "\nWave 9 (o/strata)  paused\n  held: #355 #356 (VmLck reading at 19:40 UTC)\n"
+            ),
+            "{text}"
+        );
+    }
+
     /// A pause of the whole riff marks each board `paused`, with no
     /// group `free` (01M588G5K0B58QXD35AA5MTZ6E).
     #[test]
@@ -1652,13 +1737,13 @@ mod tests {
             {"number": 2, "title": "c", "milestone": {"title": "Wave 9"}}
         ]"#;
         let issues = parse_issues(json).unwrap();
-        assert_eq!(issues.wave, Some(("Wave 9".into(), vec![2, 3])));
+        assert_eq!(issues.wave(), Some(&("Wave 9".into(), vec![2, 3])));
     }
 
     #[test]
     fn no_wave_milestone_gives_no_wave() {
         let issues = parse_issues(r#"[{"number": 1, "title": "a", "milestone": null}]"#);
-        assert_eq!(issues.unwrap().wave, None);
+        assert_eq!(issues.unwrap().wave(), None);
     }
 
     /// A `gh` that fails keeps the last issues, and a `gh` that works

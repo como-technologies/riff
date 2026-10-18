@@ -1474,10 +1474,14 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 }
 
 /// The lines of `riff wave list`: each open milestone with its open and
-/// closed items (01M509TJRBE2J7HYKKHRJ1ZFR0).
+/// closed items (01M509TJRBE2J7HYKKHRJ1ZFR0). The current wave, the
+/// first wave, has the mark `current`, and the hosts of its loop. With
+/// the `items` of riff-server, the groups of the board of each wave
+/// follow its line (01M58ATZ408RBCX0PM0D0ZCY4B).
 ///
 /// ```
-/// use riff_client::waves::Milestone;
+/// use riff::waves::Items;
+/// use riff_client::waves::{Board, Milestone};
 ///
 /// let m = |title: &str, open, closed| Milestone {
 ///     number: 3,
@@ -1485,26 +1489,95 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///     open_issues: open,
 ///     closed_issues: closed,
 /// };
+/// let milestones = [m("Wave 27: Cloud", 3, 20), m("Wave 28", 1, 0), m("Backlog", 61, 4)];
 /// assert_eq!(
-///     riff::text::waves_list(&[m("Wave 27: Cloud", 3, 20), m("Backlog", 61, 4)]),
-///     "Wave 27: Cloud  3 open, 20 closed\nBacklog  61 open, 4 closed"
+///     riff::text::waves_list(&milestones, None),
+///     "Wave 27: Cloud  current  3 open, 20 closed\nWave 28  1 open, 0 closed\nBacklog  61 open, 4 closed"
 /// );
-/// assert_eq!(riff::text::waves_list(&[]), "The repository has no open wave.");
+/// let board = |wave: &str, free: Vec<u64>, held: Vec<(u64, String)>, claimed: Vec<u64>| Board {
+///     repo: "o/r".into(),
+///     wave: wave.into(),
+///     free,
+///     held,
+///     claimed,
+///     verify: vec![],
+/// };
+/// let items = Items {
+///     boards: vec![
+///         board("Wave 27: Cloud", vec![], vec![(7, "a reading at 19:40 UTC".into()), (8, "a reading at 19:40 UTC".into())], vec![9]),
+///         board("Wave 28", vec![30], vec![], vec![]),
+///     ],
+///     hosts: vec!["thelio".into()],
+/// };
+/// assert_eq!(
+///     riff::text::waves_list(&milestones, Some(&items)),
+///     "Wave 27: Cloud  current  runs on thelio  3 open, 20 closed\n\
+///      \x20 held: #7 #8 (a reading at 19:40 UTC)\n\
+///      \x20 claimed: #9\n\
+///      Wave 28  1 open, 0 closed\n\
+///      \x20 free: #30\n\
+///      Backlog  61 open, 4 closed"
+/// );
+/// assert_eq!(riff::text::waves_list(&[], None), "The repository has no open wave.");
 /// ```
-pub fn waves_list(milestones: &[riff_client::waves::Milestone]) -> String {
+pub fn waves_list(
+    milestones: &[riff_client::waves::Milestone],
+    items: Option<&crate::waves::Items>,
+) -> String {
     if milestones.is_empty() {
         return "The repository has no open wave.".into();
     }
-    milestones
+    let current = milestones
         .iter()
-        .map(|m| {
-            format!(
-                "{}  {} open, {} closed",
-                m.title, m.open_issues, m.closed_issues
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .find(|m| crate::waves::wave_number(&m.title).is_some());
+    let mut lines = Vec::new();
+    for m in milestones {
+        let mut line = m.title.clone();
+        if current.is_some_and(|c| std::ptr::eq(c, m)) {
+            line.push_str("  current");
+            if let Some(items) = items.filter(|i| !i.hosts.is_empty()) {
+                let _ = write!(line, "  runs on {}", safe(&items.hosts.join(", ")));
+            }
+        }
+        let _ = write!(line, "  {} open, {} closed", m.open_issues, m.closed_issues);
+        lines.push(line);
+        let board = items.and_then(|i| i.boards.iter().find(|b| b.wave == m.title));
+        for group in board.map(|b| b.groups(false)).unwrap_or_default() {
+            lines.push(format!("  {}", safe(&group)));
+        }
+    }
+    lines.join("\n")
+}
+
+/// The line on stderr of `riff wave list` when it cannot read the items
+/// of riff-server (01M58ATZ6FA5PJMD3D848CEWBJ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_no_items("cannot reach riff-server"),
+///     "riff: the list has no items and no hosts: cannot reach riff-server"
+/// );
+/// ```
+pub fn waves_no_items(why: &str) -> String {
+    format!("riff: the list has no items and no hosts: {}", safe(why))
+}
+
+/// The cause when the folder of `riff wave list` has no repository.
+///
+/// ```
+/// assert_eq!(riff::text::waves_no_repo(), "this folder is in no git repository");
+/// ```
+pub fn waves_no_repo() -> String {
+    "this folder is in no git repository".into()
+}
+
+/// The cause when `gh` gives no open issues of `repo`.
+///
+/// ```
+/// assert_eq!(riff::text::waves_no_issues("o/r"), "gh gave no open issues of o/r");
+/// ```
+pub fn waves_no_issues(repo: &str) -> String {
+    format!("gh gave no open issues of {}", safe(repo))
 }
 
 /// The answer to `riff wave make` (01M509TJTV7TC32EKXW0TEQ5NZ).
