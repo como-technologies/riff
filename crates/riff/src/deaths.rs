@@ -161,13 +161,14 @@ pub struct Recorded {
 /// assert_eq!(riff::deaths::count_in(dir.path(), at(3611)), 1);
 /// ```
 pub fn record(dir: &Path, session: &str, now: u64) -> Result<Recorded> {
-    std::fs::create_dir_all(dir)?;
-    let mut file = std::fs::OpenOptions::new()
+    crate::local::make_dir(dir)?;
+    let mut file = crate::local::options()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
         .open(dir.join(FILE))?;
+    crate::local::private(&file)?;
     file.lock()?;
     let mut text = String::new();
     file.read_to_string(&mut text)?;

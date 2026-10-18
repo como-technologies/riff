@@ -727,8 +727,8 @@ sequenceDiagram
   riff on pangolin put the static riff and riff-server of v1.4.1 in place of a build that is not static.
   ```
 
-The output of the update is in `update.log`, in the local files of
-riff: `$XDG_RUNTIME_DIR/riff`, else `~/.local/state/riff`.
+The output of the update is in `update.log`, in
+[the local folder](#the-local-folder) of riff.
 
 #### Each step of an update
 
@@ -2426,8 +2426,9 @@ sequenceDiagram
 
 - `riff mcp` does not restart after `/clear`. It keeps the old ID, and
   the riff tools act as that ID.
-- `riff mcp` writes its ID to a file in `$XDG_RUNTIME_DIR/riff` (or
-  `~/.local/state/riff`). It locks the file while it runs.
+- `riff mcp` writes its ID to a file in
+  [the local folder](#the-local-folder). It locks the file while it
+  runs.
 - `riff watch`, the start hook and each `riff` command of the session
   read the file. So each part of the session uses the old ID.
 - The watch from before `/clear` keeps running. The start hook tells
@@ -2440,6 +2441,43 @@ run:
 
 ```sh
 riff who
+```
+
+## The local folder
+
+riff keeps the files of this machine in its local folder: the session
+ID of each `riff mcp`, the locks, the last status line, the log of
+the update. The folder is the first of these that is set:
+
+1. `$RIFF_HOME/state`
+2. `$XDG_RUNTIME_DIR/riff`, for example `/run/user/1000/riff`
+3. `$XDG_STATE_HOME/riff`
+4. `~/.local/state/riff`
+
+The mark of a leave is never in `$XDG_RUNTIME_DIR`: the system clears
+that folder at a logout.
+
+The folder is private. riff makes it with mode 0700, and each file in
+it with mode 0600. Each riff process fixes a wider mode at its start.
+When it cannot, it says why:
+
+```text
+riff cannot make /home/a/.local/state/riff private (mode 0700, each file 0600): Operation not permitted. Other users can maybe read it.
+```
+
+### See the local folder and its mode
+
+```sh
+ls -ld "$XDG_RUNTIME_DIR/riff" ~/.local/state/riff
+```
+
+### Make the local folder private by hand
+
+Use this when riff says that it cannot. A file of another user in the
+folder is one cause: remove it.
+
+```sh
+chmod -R go-rwx "$XDG_RUNTIME_DIR/riff" ~/.local/state/riff
 ```
 
 ## A message

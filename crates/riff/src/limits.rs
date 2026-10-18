@@ -281,10 +281,7 @@ pub fn once(said: Option<&Path>, line: Option<String>) -> Option<String> {
     };
     let first = said.is_none_or(|said| !said.exists());
     if let Some(said) = said {
-        if let Some(dir) = said.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(said, "");
+        let _ = crate::local::write(said, "");
     }
     first.then_some(line)
 }

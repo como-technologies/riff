@@ -1597,6 +1597,10 @@ async fn main() -> Result<()> {
     let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
     use_color(cli.color);
+    // The local folder is private (01M56RB1FZ575KQYHW9FF716CZ).
+    if let Err(line) = local::secure_here() {
+        eprintln!("{line}");
+    }
     // Each entry of the plugin does nothing where riff is off
     // (01M3XY2ST8R67SKTXJECAYJZRX). A `riff mcp` that an update started
     // again serves a session that runs: it goes on.

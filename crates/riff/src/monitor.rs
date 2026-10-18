@@ -337,7 +337,7 @@ impl Saved {
 
     /// Writes the look to `dir`. A reader never sees a part of it.
     fn write(&self, dir: &Path) -> Result<()> {
-        std::fs::create_dir_all(dir)?;
+        crate::local::make_dir(dir)?;
         let mut new = tempfile::NamedTempFile::new_in(dir)?;
         std::io::Write::write_all(&mut new, serde_json::to_string(self)?.as_bytes())?;
         new.persist(dir.join(SAVED)).map_err(|e| e.error)?;

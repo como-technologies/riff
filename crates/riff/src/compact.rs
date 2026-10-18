@@ -311,10 +311,7 @@ impl Record {
 
     /// Writes the record to `path`.
     pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(path, self.text())?;
+        crate::local::write(path, self.text())?;
         Ok(())
     }
 }

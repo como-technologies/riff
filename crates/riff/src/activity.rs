@@ -168,14 +168,13 @@ pub fn path(dir: &Path, session: &str) -> PathBuf {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn write(dir: &Path, session: &str, fact: &Fact, at_ms: u64) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
     let saved = Saved {
         fact: fact.clone(),
         at_ms,
     };
     let path = path(dir, session);
     let new = path.with_extension("new");
-    std::fs::write(&new, serde_json::to_vec(&saved)?)?;
+    crate::local::write(&new, serde_json::to_vec(&saved)?)?;
     std::fs::rename(new, path)
 }
 
@@ -213,10 +212,9 @@ fn prompt_path(dir: &Path, session: &str) -> PathBuf {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn prompted(dir: &Path, session: &str, at_ms: u64) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)?;
     let path = prompt_path(dir, session);
     let new = path.with_extension("new");
-    std::fs::write(&new, at_ms.to_string())?;
+    crate::local::write(&new, at_ms.to_string())?;
     std::fs::rename(new, path)
 }
 
