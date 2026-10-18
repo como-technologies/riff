@@ -5204,6 +5204,17 @@ part when they merge.
   the item (01M4ZV3B6PSRH40EYQEVYH2MBA), and the lead gets no message
   for it. Each other refusal counts, and the lead gets the message of a
   failed start.
+- **01M57A7A1W2K9440WZA1QZ3M9T** Before each start of a wave, the
+  daemon checks the facts of the host that no item changes: the
+  sign-in of `gh`, and the sign-in of `claude` with 60 minutes or more
+  left (01M4Z81B3A324KKE8M8Z71TM4M). When a fact fails, the wave starts
+  no item, and no start of an item counts. It waits, as it waits for
+  room, and looks again. The lead gets one message when the wave starts
+  to wait, with the step for the person. `riff daemon status` shows
+  the wave as waiting, with the reason.
+- **01M57A7A48A70Y7PTD95A3MBYC** `riff wave run` on a wave that the
+  daemon runs clears the starts of each item of the wave
+  (01M4ZV3B6PSRH40EYQEVYH2MBA). A spent item then starts again.
 - **01M53NGVH8A19QS3CQ79ENVVXT** A second machine of a person takes work
   in containers when its daemon runs the wave of the repository:
   `riff wave run` in a clone on that machine. The claims on riff-server

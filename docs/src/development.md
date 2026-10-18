@@ -1117,6 +1117,42 @@ daemon runs no wave.
 The daemon keeps the wave, also over its own restart, until you stop
 it. The rollout of your lead runs it for you: see the next how-to.
 
+### When the sign-in of claude ends soon
+
+A session needs the sign-in of `claude` on the machine with 60
+minutes or more left. When it has less, the wave starts no item, and
+no start of an item counts. The wave waits, and looks again each
+minute. Your lead gets one message:
+
+```text
+The riff daemon starts no session for the wave of como-technologies/riff now: The sign-in of claude on this machine ends in 42 minutes. A session needs 60 minutes or more. Run claude on this machine to refresh it. No start of an item counts. The wave looks again each minute, and starts the work by itself when the fact is good. See it: riff daemon status
+```
+
+The same occurs when the sign-in of `gh` fails. To refresh the
+sign-in, run `claude` on that machine, and then end it:
+
+```sh
+claude
+```
+
+You do not have to run `riff wave run` again. At its next look, the
+wave starts the work. While it waits, `riff daemon status` shows the
+wave with the words `waits for this machine` and the reason.
+
+### Start a spent item again
+
+The wave starts one item at most 3 times in a run of the wave. Then
+your lead gets a message, and the wave starts no more session for the
+item. When you fixed the cause, run this in your clone of the
+repository:
+
+```sh
+riff wave run
+```
+
+The wave goes on, and the starts of each item go back to 0. The
+sessions that run go on.
+
 ### Let the rollout of the lead run the wave
 
 You need no command for this. When the current wave has free work, the
@@ -1414,7 +1450,12 @@ first free work:
    item, and the Gate of the head commit is done. The verify is a new
    session: an author never verifies its own item.
 4. It starts one item at most 3 times in a run of the wave. Then your
-   lead gets a message, and the item waits for you.
+   lead gets a message, and the item waits for you (see
+   [Start a spent item again](#start-a-spent-item-again)).
+5. It starts nothing while a fact of the machine fails: the sign-in of
+   `gh`, or the sign-in of `claude` with 60 minutes or more left. No
+   start counts (see
+   [When the sign-in of claude ends soon](#when-the-sign-in-of-claude-ends-soon)).
 
 For each item, the daemon does the steps of `riff run` itself: a
 worker session, the claim, the clone and the start. After the end of
