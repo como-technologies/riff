@@ -966,11 +966,11 @@ async fn the_probe_takes_a_front_end_error_as_an_outage() {
         StatusCode::TOO_MANY_REQUESTS,
     ] {
         let url = behind_a_front_end(2, status).await;
-        let api = riff::api::Api::new(&url);
+        let api = riff_client::api::Api::new(&url);
         let error = api.probe(Duration::from_secs(3)).await.unwrap_err();
-        let outage = error.downcast_ref::<riff::api::Outage>();
+        let outage = error.downcast_ref::<riff_client::api::Outage>();
         assert!(outage.is_some_and(|o| o.status == status), "{error:#}");
-        assert!(riff::api::passes(&error), "{error:#}");
+        assert!(riff_client::api::passes(&error), "{error:#}");
         let error = riff::lifecycle::server_release(&url).await.unwrap_err();
         assert!(
             format!("{error:#}").contains("riff update --tag"),
