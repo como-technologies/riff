@@ -51,6 +51,11 @@
 //! The files are in [`dir`]. A reader looks for `mcp-PID` of each
 //! process above it, nearest first, up to [`MAX_DEPTH`] processes.
 //!
+//! The folder is private: mode 0700, and each file in it mode 0600
+//! (01M56RB1DQ396DQ75Q23G87C28). A writer uses [`write()`], [`make_dir`]
+//! or [`options`]. Each riff process gives a wider mode 0700 or 0600 at
+//! its start ([`secure_here`]).
+//!
 //! # An agent inside a session
 //!
 //! A Bash command of a session can start a second agent, for example
@@ -82,6 +87,7 @@
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -146,6 +152,138 @@ pub fn dir_from(
         .map(|d| d.join("riff"))
 }
 
+/// Makes the folder `dir` with mode 0700, also each folder above it
+/// that it makes. A `dir` that exists gets mode 0700
+/// (01M56RB1DQ396DQ75Q23G87C28).
+///
+/// ```
+/// use std::os::unix::fs::PermissionsExt;
+///
+/// let run = tempfile::tempdir()?;
+/// let dir = run.path().join("riff");
+/// riff::local::make_dir(&dir)?;
+/// assert_eq!(std::fs::metadata(&dir)?.permissions().mode() & 0o777, 0o700);
+/// std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))?;
+/// riff::local::make_dir(&dir)?;
+/// assert_eq!(std::fs::metadata(&dir)?.permissions().mode() & 0o777, 0o700);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn make_dir(dir: &Path) -> io::Result<()> {
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
+    set_mode(dir, 0o700)
+}
+
+/// The options to open a file in the local folder: mode 0600 for a new
+/// file. [`private`] gives the mode to a file that exists.
+pub fn options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.mode(0o600);
+    options
+}
+
+/// Gives the open `file` mode 0600, when its mode differs.
+pub fn private(file: &File) -> io::Result<()> {
+    if file.metadata()?.permissions().mode() & 0o777 != 0o600 {
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+/// Writes `contents` to the file `path` with mode 0600. It makes the
+/// folder of the file with [`make_dir`].
+///
+/// ```
+/// use std::os::unix::fs::PermissionsExt;
+///
+/// let run = tempfile::tempdir()?;
+/// let path = run.path().join("riff/statusline-a6cf");
+/// riff::local::write(&path, "x")?;
+/// assert_eq!(std::fs::read_to_string(&path)?, "x");
+/// assert_eq!(std::fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn write(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        make_dir(dir)?;
+    }
+    let mut file = options()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    private(&file)?;
+    file.write_all(contents.as_ref())
+}
+
+/// Gives the local folders of riff ([`dir`] and [`marks`]) mode 0700,
+/// and each file in them mode 0600 (01M56RB1FZ575KQYHW9FF716CZ). Each
+/// riff process calls it at its start. A folder that does not exist
+/// stays so. The error names the folder that riff cannot fix.
+pub fn secure_here() -> Result<(), String> {
+    for dir in [dir(), marks()].into_iter().flatten() {
+        if dir.exists() {
+            secure(&dir).map_err(|e| crate::text::local_mode(&dir, &e.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Gives `dir` and each folder in it mode 0700, and each other file in
+/// it mode 0600. A link stays as it is.
+///
+/// ```
+/// use std::os::unix::fs::PermissionsExt;
+///
+/// let run = tempfile::tempdir()?;
+/// let (top, pool) = (run.path(), run.path().join("jobserver"));
+/// let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+/// let set = |p: &std::path::Path, m| std::fs::set_permissions(p, std::fs::Permissions::from_mode(m));
+/// std::fs::create_dir_all(&pool)?;
+/// std::fs::write(top.join("activity-a6cf"), "{}")?;
+/// std::fs::write(pool.join("size"), "4")?;
+/// set(top, 0o775)?;
+/// set(&pool, 0o775)?;
+/// set(&top.join("activity-a6cf"), 0o664)?;
+/// set(&pool.join("size"), 0o644)?;
+/// riff::local::secure(top)?;
+/// assert_eq!(mode(top), 0o700);
+/// assert_eq!(mode(&pool), 0o700);
+/// assert_eq!(mode(&top.join("activity-a6cf")), 0o600);
+/// assert_eq!(mode(&pool.join("size")), 0o600);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn secure(dir: &Path) -> io::Result<()> {
+    set_mode(dir, 0o700)?;
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let done = if kind.is_dir() {
+            secure(&entry.path())
+        } else if kind.is_symlink() {
+            Ok(())
+        } else {
+            set_mode(&entry.path(), 0o600)
+        };
+        match done {
+            // Another process removed it.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            other => other?,
+        }
+    }
+    Ok(())
+}
+
+/// Gives `path` the mode `mode`, when its mode differs.
+fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
+    if std::fs::metadata(path)?.permissions().mode() & 0o777 != mode {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+    }
+    Ok(())
+}
+
 /// Records `session` as the session of the agent process `agent`, and
 /// holds the record while the result lives. `None` when a live process
 /// holds the record of `agent` already. It also records the build of
@@ -156,12 +294,12 @@ pub fn record(dir: &Path, agent: u32, session: &str) -> io::Result<Option<Held>>
     };
     file.set_len(0)?;
     file.write_all(session.as_bytes())?;
-    std::fs::write(
-        dir.join(format!("build-{agent}")),
+    write(
+        &dir.join(format!("build-{agent}")),
         riff_core::build::VERSION,
     )?;
     if let Some(start) = started(agent) {
-        std::fs::write(dir.join(format!("start-{agent}")), start.to_string())?;
+        write(&dir.join(format!("start-{agent}")), start.to_string())?;
     }
     Ok(Some(Held(file)))
 }
@@ -305,7 +443,7 @@ pub fn first_tell(dir: &Path, agent: u32, inode: u64) -> bool {
 /// True the first time that `file` gets `key`: it keeps `key`.
 fn first(file: &Path, key: &str) -> bool {
     let told = std::fs::read_to_string(file).is_ok_and(|t| t.trim() == key);
-    !told && std::fs::write(file, key).is_ok()
+    !told && write(file, key).is_ok()
 }
 
 /// Keeps the mark that the session of the agent process `agent` has no
@@ -337,7 +475,7 @@ pub fn set_no_tools(dir: &Path, agent: u32, none: bool) -> io::Result<()> {
     if none {
         let start = started(agent).unwrap_or_default();
         let now = crate::activity::now_ms();
-        return std::fs::write(file, format!("{start} {now}"));
+        return write(&file, format!("{start} {now}"));
     }
     match std::fs::remove_file(file) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -476,9 +614,8 @@ pub fn kept_statusline(
 
 /// Keeps the answer of riff-server to the status line of `session`.
 pub fn keep_statusline(dir: &Path, session: &str, kept: &Kept) -> io::Result<()> {
-    std::fs::create_dir_all(dir)?;
     let text = serde_json::to_string(kept).map_err(io::Error::other)?;
-    std::fs::write(statusline_file(dir, session), text)
+    write(&statusline_file(dir, session), text)
 }
 
 fn statusline_file(dir: &Path, session: &str) -> PathBuf {
@@ -560,8 +697,7 @@ pub fn tried(dir: &Path) -> Option<String> {
 
 /// Records `tag` as the release that the update of riff by itself tries.
 pub fn set_tried(dir: &Path, tag: &str) -> io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(dir.join("update-tried"), tag)
+    write(&dir.join("update-tried"), tag)
 }
 
 /// The log of the update of riff by itself.
@@ -592,9 +728,8 @@ pub fn set_rules_added(dir: &Path) -> io::Result<String> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    std::fs::create_dir_all(dir)?;
     let mark = now.to_string();
-    std::fs::write(dir.join("rules-added"), &mark)?;
+    write(&dir.join("rules-added"), &mark)?;
     Ok(mark)
 }
 
@@ -615,8 +750,7 @@ pub fn rules_sync(dir: &Path) -> Option<String> {
 
 /// Records `line` as the line of the last sync of the rules.
 pub fn set_rules_sync(dir: &Path, line: &str) -> io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(dir.join("rules-sync"), line)
+    write(&dir.join("rules-sync"), line)
 }
 
 /// The first step of an update that only a person can do, with its fix
@@ -642,10 +776,7 @@ pub fn needs_you(dir: &Path) -> Option<String> {
 pub fn set_needs_you(dir: &Path, line: Option<&str>) -> io::Result<()> {
     let path = dir.join("needs-you");
     match line {
-        Some(line) => {
-            std::fs::create_dir_all(dir)?;
-            std::fs::write(path, line)
-        }
+        Some(line) => write(&path, line),
         None => match std::fs::remove_file(path) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
@@ -697,8 +828,7 @@ pub fn marks_from(state: Option<OsString>, home: Option<OsString>) -> Option<Pat
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn leave(dir: &Path, session: &str) -> io::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(left_file(dir, session), "")
+    write(&left_file(dir, session), "")
 }
 
 /// Removes the mark of [`leave`]. A session with no mark is in the
@@ -763,14 +893,15 @@ pub fn monitor_lock(dir: &Path) -> io::Result<Option<Held>> {
 /// the lock.
 fn lock(path: &Path) -> io::Result<Option<Held>> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        make_dir(dir)?;
     }
-    let file = OpenOptions::new()
+    let file = options()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(path)?;
+    private(&file)?;
     match file.try_lock() {
         Ok(()) => Ok(Some(Held(file))),
         Err(TryLockError::WouldBlock) => Ok(None),
@@ -928,6 +1059,25 @@ mod tests {
         drop(record_when_free(run.path(), 42, "a-long-session"));
         let _held = record_when_free(run.path(), 42, "b");
         assert_eq!(recorded(run.path(), 42).as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn a_lock_and_a_record_are_private_and_a_link_keeps_its_target() {
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let run = tempfile::tempdir().unwrap();
+        let dir = run.path().join("riff");
+        let _held = record_when_free(&dir, 42, "a6cf");
+        assert_eq!(mode(&dir), 0o700);
+        for file in ["mcp-42", "build-42"] {
+            assert_eq!(mode(&dir.join(file)), 0o600, "{file}");
+        }
+        // A link in the folder: its target outside keeps its mode.
+        let outside = run.path().join("outside");
+        std::fs::write(&outside, "").unwrap();
+        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("link")).unwrap();
+        secure(&dir).unwrap();
+        assert_eq!(mode(&outside), 0o644);
     }
 
     #[test]

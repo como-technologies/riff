@@ -136,7 +136,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
-use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -144,6 +143,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::local;
 use crate::pr::Gh;
 use crate::text;
 
@@ -520,18 +520,19 @@ pub fn sessions(dir: &Path) -> Vec<String> {
 /// Changes the marks of `session` in `dir` with `change`, under a lock:
 /// a hook, `riff mcp` and a command can write at the same time.
 fn change<T>(dir: &Path, session: &str, change: impl FnOnce(&mut Ledger) -> T) -> io::Result<T> {
-    std::fs::create_dir_all(dir)?;
+    local::make_dir(dir)?;
     let path = ledger_file(dir, session);
-    let lock = OpenOptions::new()
+    let lock = local::options()
         .write(true)
         .create(true)
         .truncate(false)
         .open(path.with_extension("lock"))?;
+    local::private(&lock)?;
     lock.lock()?;
     let mut ledger = load(dir, session);
     let out = change(&mut ledger);
     let new = path.with_extension("new");
-    std::fs::write(&new, serde_json::to_string(&ledger)?)?;
+    local::write(&new, serde_json::to_string(&ledger)?)?;
     std::fs::rename(new, path)?;
     Ok(out)
 }

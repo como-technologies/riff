@@ -530,8 +530,7 @@ pub fn mark(dir: &Path, session: &str) -> std::io::Result<()> {
     let (Some(boot), Some(start)) = (boot(), own_start()) else {
         return Ok(());
     };
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(context_file(dir, session), format!("{boot} {start}\n"))
+    crate::local::write(&context_file(dir, session), format!("{boot} {start}\n"))
 }
 
 /// The start of the context of the worker `session` from [`mark`], or

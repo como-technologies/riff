@@ -2343,6 +2343,25 @@ pub fn nice_above(here: u8, nice: u8) -> String {
     )
 }
 
+/// What a riff process says at its start when it cannot give its local
+/// folder `dir` mode 0700, or a file in it mode 0600
+/// (01M56RB1FZ575KQYHW9FF716CZ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::local_mode("/home/a/.local/state/riff".as_ref(), "Permission denied"),
+///     "riff cannot make /home/a/.local/state/riff private (mode 0700, each file 0600): \
+///      Permission denied. Other users can maybe read it.",
+/// );
+/// ```
+pub fn local_mode(dir: &Path, why: &str) -> String {
+    format!(
+        "riff cannot make {} private (mode 0700, each file 0600): {why}. Other users can \
+         maybe read it.",
+        dir.display()
+    )
+}
+
 /// What `riff workers start` says one time when riff cannot make the
 /// pool of build jobs (01M3ZGZMRHXRBP762QPVCV0YX8).
 ///

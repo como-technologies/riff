@@ -446,12 +446,13 @@ pub fn over_limit(panes: &[WorkerPane], pane: &str, limit: u16) -> Option<usize>
 async fn end_over_limit(api: &Api, me: &SessionUri, pane: &str) -> Result<bool> {
     let limit = settings::workers_limit(&settings::path()?)?;
     let dir = local::dir().context("no HOME: riff has no local dir")?;
-    std::fs::create_dir_all(&dir)?;
-    let lock = std::fs::OpenOptions::new()
+    local::make_dir(&dir)?;
+    let lock = local::options()
         .create(true)
         .truncate(false)
         .write(true)
         .open(dir.join(LIMIT_LOCK))?;
+    local::private(&lock)?;
     lock.lock()?;
     let tmux = Tmux::machine();
     let Some(runs) = over_limit(&tmux.worker_panes()?, pane, limit) else {
@@ -519,12 +520,13 @@ pub fn stop_old_context(agent: &dyn Agent, me: &SessionUri) -> Vec<crate::worklo
 /// (01M43STEE72Q9TD8ZNFS3273M3). The lock ends with the file handle.
 pub fn clear_lock(session: &str) -> Result<std::fs::File> {
     let dir = local::dir().context("no HOME: riff has no local dir")?;
-    std::fs::create_dir_all(&dir)?;
-    let lock = std::fs::OpenOptions::new()
+    local::make_dir(&dir)?;
+    let lock = local::options()
         .create(true)
         .truncate(false)
         .write(true)
         .open(dir.join(format!("clear-{session}.lock")))?;
+    local::private(&lock)?;
     lock.lock()?;
     Ok(lock)
 }

@@ -47,6 +47,7 @@ mod limits;
 mod link;
 mod link_limits;
 mod linked;
+mod local_mode;
 mod login;
 mod logout;
 mod look;

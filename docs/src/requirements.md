@@ -2299,6 +2299,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   So `/clear` does not change the riff session ID. The file is in
   `$XDG_RUNTIME_DIR/riff`, else `$XDG_STATE_HOME/riff`, else
   `~/.local/state/riff`. A file with no lock does not count.
+- **01M56RB1DQ396DQ75Q23G87C28** The local folder of riff is private.
+  riff makes it with mode 0700, and each file in it with mode 0600, in
+  each place: `$RIFF_HOME/state`, `$XDG_RUNTIME_DIR/riff`,
+  `$XDG_STATE_HOME/riff` and `~/.local/state/riff`.
+- **01M56RB1FZ575KQYHW9FF716CZ** At its start, each riff process gives
+  each local folder of riff that exists mode 0700, and each file in it
+  mode 0600. When it cannot, it says why on stderr, and goes on.
 - **01M517N75C0Z5BAFQAWRN3YTYB** An agent that runs inside a riff
   session is not a riff session, for example a `claude -p` that a Bash
   command of the session starts. riff knows it by a live record of

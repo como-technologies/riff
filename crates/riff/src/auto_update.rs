@@ -239,13 +239,14 @@ fn on(path: &Path) -> bool {
 /// place of this process (01M3NT2Q0RNM9PVHT42V459624). Its output goes
 /// to the log in `dir`.
 fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
-    std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    local::make_dir(dir).with_context(|| format!("cannot make {}", dir.display()))?;
     let path = local::update_log(dir);
-    let log = std::fs::OpenOptions::new()
+    let log = local::options()
         .create(true)
         .append(true)
         .open(&path)
         .with_context(|| format!("cannot open {}", path.display()))?;
+    local::private(&log).with_context(|| format!("cannot set the mode of {}", path.display()))?;
     let exe = crate::binary::this_on_disk().context("cannot find the riff binary")?;
     let mut command = Command::new(exe);
     if let Some(place) = here() {

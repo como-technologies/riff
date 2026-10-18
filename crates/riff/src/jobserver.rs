@@ -207,11 +207,13 @@ pub fn fifo_of(makeflags: &str) -> Option<PathBuf> {
 }
 
 fn open_lock(path: &Path) -> io::Result<File> {
-    OpenOptions::new()
+    let file = crate::local::options()
         .create(true)
         .truncate(false)
         .write(true)
-        .open(path)
+        .open(path)?;
+    crate::local::private(&file)?;
+    Ok(file)
 }
 
 fn lock(path: &Path, arg: FlockArg) -> io::Result<Flock<File>> {
@@ -282,7 +284,7 @@ impl Pool {
     /// a new pipe with `size` tokens for `counted` workers. Else it joins
     /// the pool, with the size and the count of that pool.
     pub fn hold(dir: &Path, size: u16, counted: u16) -> io::Result<Pool> {
-        std::fs::create_dir_all(dir)?;
+        crate::local::make_dir(dir)?;
         let _init = lock(&dir.join(INIT), FlockArg::LockExclusive)?;
         let path = dir.join(FIFO);
         let hold = open_lock(&dir.join(HOLD))?;
@@ -293,8 +295,8 @@ impl Pool {
                     _ => {}
                 }
                 nix::unistd::mkfifo(&path, Mode::S_IRUSR | Mode::S_IWUSR)?;
-                std::fs::write(dir.join(SIZE), size.to_string())?;
-                std::fs::write(dir.join(COUNTED), counted.to_string())?;
+                crate::local::write(&dir.join(SIZE), size.to_string())?;
+                crate::local::write(&dir.join(COUNTED), counted.to_string())?;
                 (hold, size, counted, true)
             }
             Err((file, Errno::EWOULDBLOCK)) => {
@@ -399,7 +401,7 @@ impl Member {
     /// Puts this worker in the workers of the pool in `dir`.
     pub fn join(dir: &Path) -> io::Result<Member> {
         let workers = dir.join(WORKERS);
-        std::fs::create_dir_all(&workers)?;
+        crate::local::make_dir(&workers)?;
         let since = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -592,7 +594,7 @@ pub fn check(local: Option<&Path>) -> Option<String> {
     let said = local.join(SAID);
     let made = (|| -> io::Result<()> {
         let dir = dir(local);
-        std::fs::create_dir_all(&dir)?;
+        crate::local::make_dir(&dir)?;
         let test = dir.join(format!("check-{}", std::process::id()));
         let _ = std::fs::remove_file(&test);
         nix::unistd::mkfifo(&test, Mode::S_IRUSR | Mode::S_IWUSR)?;
@@ -605,8 +607,7 @@ pub fn check(local: Option<&Path>) -> Option<String> {
         }
         Err(e) => {
             let first = !said.exists();
-            let _ = std::fs::create_dir_all(local);
-            let _ = std::fs::write(&said, "");
+            let _ = crate::local::write(&said, "");
             first.then(|| crate::text::no_jobserver(&e.to_string()))
         }
     }

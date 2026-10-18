@@ -486,15 +486,23 @@ pub fn lock_path(server: &str) -> Result<PathBuf> {
 /// closes.
 async fn refresh_lock(server: &str) -> Result<std::fs::File> {
     let path = lock_path(server)?;
+    // The temp folder of a test is not the local folder: it keeps its
+    // mode.
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+        let made = if secrets::own_store() {
+            std::fs::create_dir_all(dir)
+        } else {
+            local::make_dir(dir)
+        };
+        made.with_context(|| format!("cannot make {}", dir.display()))?;
     }
-    let file = std::fs::OpenOptions::new()
+    let file = local::options()
         .create(true)
         .truncate(false)
         .write(true)
         .open(&path)
         .with_context(|| format!("cannot open {}", path.display()))?;
+    local::private(&file).with_context(|| format!("cannot set the mode of {}", path.display()))?;
     tokio::task::spawn_blocking(move || file.lock().map(|()| file))
         .await?
         .with_context(|| format!("cannot lock {}", path.display()))
