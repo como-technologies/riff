@@ -445,7 +445,9 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
     let d1 = uri("d1");
     live_at(&server, d1.clone()).await;
     let step = riff::daemon::remote::status_line(812, "3.2.0", 0);
-    api.status(&d1, &riff_core::wire::Status { step }).await.unwrap();
+    api.status(&d1, &riff_core::wire::Status { step })
+        .await
+        .unwrap();
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
@@ -461,8 +463,16 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
         assert_eq!(session(&top, id)[0], head, "{top}");
     }
     // The daemon and the host take no claims (01M589HH8Z1TCYDCZHQQHTYWMK).
-    assert_eq!(session(&top, "d1")[1], "   │    hosts containers for Ns", "{top}");
-    assert_eq!(session(&top, "h1")[1], "   │    hosts workers for Ns", "{top}");
+    assert_eq!(
+        session(&top, "d1")[1],
+        "   │    hosts containers for Ns",
+        "{top}"
+    );
+    assert_eq!(
+        session(&top, "h1")[1],
+        "   │    hosts workers for Ns",
+        "{top}"
+    );
     // A pipe has 80 columns: riff cuts the end of the line with `…`.
     let host_line = "└─ thelio  › riff  4 sessions: 1 container, 1 worker, 1 host, 1 daemon; ";
     assert!(rows(&top).iter().any(|r| r.starts_with(host_line)), "{top}");

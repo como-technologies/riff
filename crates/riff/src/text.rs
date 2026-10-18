@@ -8493,7 +8493,10 @@ mod tests {
         let me = "riff://mike@pangolin/o/riff?session=a1".parse().unwrap();
         let out = who(&[daemon, host, plain], &RiffOwner::NoSignIn, &me);
         let lines: Vec<&str> = out.lines().collect();
-        assert!(lines[0].contains("(002d404c) idle daemon  riff://"), "{out}");
+        assert!(
+            lines[0].contains("(002d404c) idle daemon  riff://"),
+            "{out}"
+        );
         assert_eq!(lines[1], "  hosts containers for 2h", "{out}");
         assert_eq!(lines[2], format!("  25s ago: {step}"), "{out}");
         assert!(lines[3].contains("(5e5b594c) idle host  riff://"), "{out}");

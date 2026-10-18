@@ -1269,7 +1269,21 @@ brett@heron:riff (77e0)            blocked            which of two designs? (1m 
   `lead container`.
 - `host`: the session of `riff workers host` on a machine. It starts
   and stops the workers of that machine. Its status has the numbers
-  of the machine.
+  of the machine. It takes no claims, so when it is idle it shows
+  `hosts workers`, not `ready for work`.
+- `daemon`: the session of the riff daemon on a machine, after
+  `riff daemon host` or `riff wave run`. It runs the sessions in
+  containers. Its status starts with `daemon host:`. It takes no
+  claims, so when it is idle it shows `hosts containers`, not
+  `ready for work`.
+
+The rows of a daemon and of a host on thelio:
+
+```text
+SESSION                      STATE  ROLE    DETAIL
+mike@thelio:riff (002d404c)  idle   daemon  hosts containers for 2h  25s ago: daemon host: pid 249637, build 3.2.0, 0 sessions
+mike@thelio:riff (5e5b594c)  idle   host    hosts workers for 2h  14s ago: workers host: limit 10, floor 4GB, no workers
+```
 
 The owner is a person, not a session. So no session has the tag
 `owner`. Only a line with no session, a person on the command line of
@@ -1435,7 +1449,7 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
    │  │    monitoring work for 2h
    │  │    5m ago: plan the next wave
    │  ├─ 6e7f8a9b  ↑  host  idle
-   │  │    ready for work for 3h
+   │  │    hosts workers for 3h
    │  │    1m ago: workers host: limit 2, floor 4GB, no workers
    │  └─ 8f1c2d3e  offline
    │       seen 4m ago
@@ -1459,9 +1473,9 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
   sessions, then the `busy`, `idle` and `blocked` sessions and the
   claims. A count of 0 is not shown.
 - A host line also counts each kind of session, before the states:
-  `leads`, `containers`, `workers` and `hosts`. A session counts
-  once, as the first kind that matches. A session with none of these
-  tags has no kind. In the example, thelio has 5 sessions: 2 leads, 1
+  `leads`, `containers`, `workers`, `hosts` and `daemons`. A session
+  counts once, as the first kind that matches. A session with none of
+  these tags has no kind. In the example, thelio has 5 sessions: 2 leads, 1
   host, and 2 sessions with no kind. After the kinds, a host line
   counts the sessions that run an old riff: `1 to update`. See
   [Update a session that runs an old riff](#update-a-session-that-runs-an-old-riff).
@@ -1475,8 +1489,8 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 - A session: the first line has the short session ID, the mark `↑`
   when the session runs an old riff, the worktree of
   the session (`#issue-7` in the worktree `issue-7`, nothing in the
-  main worktree), its tags (`lead`, `worker`, `container` or
-  `host`), and the state of the session in its color. Under it comes
+  main worktree), its tags (`lead`, `worker`, `container`, `host` or
+  `daemon`), and the state of the session in its color. Under it comes
   one line for each fact of the detail of the state. See
   [The state of a session](#the-state-of-a-session). A lead is the
   lead of the repository on the line above it.
@@ -3566,7 +3580,7 @@ matches wins:
 | `must clear` | yellow | a worker released its last claim | `must clear its context before its next claim` |
 | `waiting` | cyan | each claim waits for a verify, a merge, or an item of its `Needs:` line that is open and has no comment `Merged in #`. Or the lead waits for its person | the claims, then `waits for a verify of PR #418`, `waits for the merge of PR #418` or `waits for #12`. The lead: `waiting for mike: REASON` |
 | `busy` | green | the session holds a claim. Or the lead is in a turn | `working on #7`, or `reviewing #7` for a verify claim, then the work, then the step |
-| `idle` | dim | each other session | `ready for work for 6m`, or `monitoring work for 6m` for the lead, then a current step |
+| `idle` | dim | each other session | `ready for work for 6m`, then a current step. The lead: `monitoring work for 6m`. The session of `riff workers host`: `hosts workers for 6m`. The session of the riff daemon: `hosts containers for 6m` |
 
 The work is the newest fact of the hooks: `runs Bash: run just ci for
 12m`, `works, 5s ago` between two tools, or `turn ended 5m ago`.

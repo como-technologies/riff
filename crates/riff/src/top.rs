@@ -1367,11 +1367,17 @@ mod tests {
         };
         let daemon = crate::daemon::remote::status_line(249_637, "3.2.0", 0);
         let sessions = [
-            info("riff://mike@pangolin/o/riff?session=a1&lead=true", SessionState::Idle),
+            info(
+                "riff://mike@pangolin/o/riff?session=a1&lead=true",
+                SessionState::Idle,
+            ),
             SessionInfo {
                 container: true,
                 worker: true,
-                ..info("riff://mike@thelio/o/riff?session=c1&claim=issue-12", SessionState::Busy)
+                ..info(
+                    "riff://mike@thelio/o/riff?session=c1&claim=issue-12",
+                    SessionState::Busy,
+                )
             },
             SessionInfo {
                 worker: true,
@@ -1389,9 +1395,17 @@ mod tests {
             let at = rows.iter().position(|r| r.ends_with(head)).unwrap();
             rows[at + 1].trim_start_matches(['│', ' ']).to_owned()
         };
-        assert_eq!(after("─ d1  daemon  idle"), "hosts containers for 0s", "{text}");
+        assert_eq!(
+            after("─ d1  daemon  idle"),
+            "hosts containers for 0s",
+            "{text}"
+        );
         assert_eq!(after("─ h1  host  idle"), "hosts workers for 0s", "{text}");
-        assert_eq!(after("─ w1  worker  idle"), "ready for work for 0s", "{text}");
+        assert_eq!(
+            after("─ w1  worker  idle"),
+            "ready for work for 0s",
+            "{text}"
+        );
         assert_eq!(text.matches("ready for work").count(), 1, "{text}");
     }
 
