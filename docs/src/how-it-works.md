@@ -4779,9 +4779,9 @@ riff workers limit 4
 When the memory gets short, the pool slows the builds down by itself
 (see
 [The pool and the memory pressure](#the-pool-and-the-memory-pressure)).
-`riff workers` shows the cores, the memory and the available memory of
-the machine. When the number does not fit, set fewer jobs (see
-[Set the jobs of a worker](#set-the-jobs-of-a-worker)). Each worker
+`riff workers` shows the hardware threads, the memory and the
+available memory of the machine. When the number does not fit, set
+fewer jobs (see [Set the jobs of a worker](#set-the-jobs-of-a-worker)). Each worker
 also has a worktree with its own build files. In the riff repository,
 they take 23 to 44 GB of disk for each worker.
 
@@ -4836,7 +4836,7 @@ When you lower the limit, the workers that run go on (see
 [Limit the workers of a machine](#limit-the-workers-of-a-machine)). Then
 more workers run than the pool counts. Each worker after the count
 keeps one token out of the pool, and gives it back when other workers
-end. So 4 workers with a limit of 2 do not get twice the cores:
+end. So 4 workers with a limit of 2 do not get twice the jobs:
 
 ```text
 pool for 2 workers = 16 - 2 - 2 = 12 tokens
@@ -5340,9 +5340,9 @@ rollout gives neither.
 Each machine tells six numbers: its hardware threads, its CPU speed, its
 clock now, its memory, its available memory and its 1-minute load
 average. The CPU speed is the cap of the clock: the lowest
-`scaling_max_freq` of the cores. A cap or a power profile lowers it.
-The clock now is the mean of `scaling_cur_freq` of the cores. From
-them riff makes a score: the number of workers in tmux that the
+`scaling_max_freq` of the logical CPUs. A cap or a power profile
+lowers it. The clock now is the mean of `scaling_cur_freq` of the
+logical CPUs. From them riff makes a score: the number of workers in tmux that the
 machine runs well. One worker needs one hardware thread and 2 GB of
 memory. A thread at 3000 MHz counts 1:
 

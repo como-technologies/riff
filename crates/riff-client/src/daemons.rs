@@ -361,6 +361,16 @@ mod tests {
     }
 
     #[test]
+    fn the_facts_of_a_3_2_0_daemon_give_the_threads() {
+        let old = r#"daemon facts: {"build":"3.2.0","limit":8,"floor_gb":8,"machine":{"cores":32,"mhz":5883,"now_mhz":3848,"mem_gb":124,"avail_gb":117,"load":0.1}}"#;
+        let facts = Facts::parse(old).unwrap();
+        let machine = facts.machine.unwrap();
+        assert_eq!(machine.threads, 32);
+        assert_eq!((machine.mhz, machine.avail_gb), (5883, 117));
+        assert!(facts.line().contains(r#""cores":32"#));
+    }
+
+    #[test]
     fn a_line_with_no_room_lists_fewer_starts_that_wait() {
         let facts = Facts {
             waiting: (0..400)

@@ -116,6 +116,9 @@ pub struct Machine {
     /// The hardware threads: the logical CPUs that the kernel runs at
     /// one time. A core with two threads counts 2. The physical cores
     /// are in [`Numbers::physical`].
+    // The key `cores` is the wire name of 3.x: the daemon facts of
+    // each host carry it (01M3N73ECKSDSH6820AKW9J8F7).
+    #[serde(rename = "cores")]
     pub threads: u16,
     /// The most speed of one core, in MHz: the cap of the clock.
     pub mhz: u32,
