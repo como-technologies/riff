@@ -28,13 +28,30 @@
 //!
 //! `riff daemon events NAME --host HOST` follows the session as on HOST
 //! (01M57D4FX5VHQR150QTDS6BA1C). It asks for one [`Page`] after the
-//! other: `daemon events NAME --after N` gives the lines of each event
-//! after the event N, at most [`PAGE_LINES`]. The daemon draws them as
-//! `riff daemon events` draws them on HOST, from the same events: the
-//! daemon took each secret out of each event before it kept it
-//! (01M57D4G1TS8BHJF5A8PW2D79C). When no event comes, the daemon holds
-//! the request for at most [`EVENT_HOLD`]. The last page has the end of
-//! the session.
+//! other: `daemon events NAME --after N --notes K` gives the lines of
+//! each event after the event N, and each line of the daemon after its
+//! line K, for example why it stops the container
+//! (01M57GCZXZZRPGGWC5HZS49DGM), at most [`PAGE_LINES`]. The daemon
+//! draws them as `riff daemon events` draws them on HOST, from the same
+//! events: the daemon took each secret out of each event before it kept
+//! it (01M57D4G1TS8BHJF5A8PW2D79C). When no event comes, the daemon
+//! holds the request for at most [`EVENT_HOLD`]. The last page has the
+//! end of the session. No follower is on the session between two pages,
+//! so the session can end there. The daemon keeps the end of a session
+//! for [`KEEP_END`](super::KEEP_END) (01M57GCZVJAHAMPEYY1T6GA48P): the
+//! next page gets the events and the end.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant L as riff daemon events --host thelio
+//!     participant D as riff daemon on thelio
+//!     L->>D: daemon events NAME --after 0
+//!     D-->>L: events to 12 (no event for 500 ms)
+//!     Note over D: event 13, then the end: no follower
+//!     D->>D: keep the end: events 1 to 13, the lines, ended: done
+//!     L->>D: daemon events NAME --after 12
+//!     D-->>L: events to 13, ended: done
+//! ```
 //!
 //! `riff view --host HOST` draws the view of `riff view` from the
 //! status of the daemon of HOST ([`Request::State`],
@@ -201,6 +218,7 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 ///     "daemon state",
 ///     "daemon events riff-issue-12-1a2b3c4d",
 ///     "daemon events riff-issue-12-1a2b3c4d --after 7",
+///     "daemon events riff-issue-12-1a2b3c4d --after 7 --notes 1",
 ///     "daemon sweep",
 ///     "daemon end riff-issue-12-1a2b3c4d",
 ///     "daemon restart",
@@ -215,6 +233,7 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 /// assert!("daemon limit --sessions x".parse::<Request>().is_err());
 /// assert!("daemon end".parse::<Request>().is_err());
 /// assert!("daemon events n --after x".parse::<Request>().is_err());
+/// assert!("daemon events n --after 7 --notes x".parse::<Request>().is_err());
 /// assert!("daemon cache 20G --clear".parse::<Request>().is_err());
 /// assert!("workers start 2".parse::<Request>().is_err());
 /// ```
@@ -234,12 +253,16 @@ pub enum Request {
     /// `riff view`: the status of the daemon, as JSON.
     State,
     /// `riff daemon events NAME`: the [`Page`] of the events of the
-    /// session NAME after the event `after`.
+    /// session NAME after the event `after`, and of the lines of the
+    /// daemon after the line `notes`.
     Events {
         /// The name of the container.
         name: String,
         /// The last event that the caller has: 0 for none.
         after: u64,
+        /// The number of lines of the daemon that the caller has
+        /// ([`Page::notes`]).
+        notes: u64,
     },
     /// `riff daemon sweep`.
     Sweep,
@@ -275,11 +298,20 @@ impl FromStr for Request {
             ["daemon", "events", name] => Ok(Request::Events {
                 name: name.to_owned(),
                 after: 0,
+                notes: 0,
             }),
             ["daemon", "events", name, "--after", after] => Ok(Request::Events {
                 name: name.to_owned(),
                 after: after.parse().map_err(|_| ())?,
+                notes: 0,
             }),
+            ["daemon", "events", name, "--after", after, "--notes", notes] => {
+                Ok(Request::Events {
+                    name: name.to_owned(),
+                    after: after.parse().map_err(|_| ())?,
+                    notes: notes.parse().map_err(|_| ())?,
+                })
+            }
             ["daemon", "sweep"] => Ok(Request::Sweep),
             ["daemon", "end", name] => Ok(Request::End(name.to_owned())),
             ["daemon", "restart"] => Ok(Request::Restart),
@@ -332,8 +364,19 @@ impl fmt::Display for Request {
             } => write!(f, "daemon cache {size}"),
             Request::Cache { .. } => write!(f, "daemon cache"),
             Request::State => write!(f, "daemon state"),
-            Request::Events { name, after: 0 } => write!(f, "daemon events {name}"),
-            Request::Events { name, after } => write!(f, "daemon events {name} --after {after}"),
+            Request::Events {
+                name,
+                after: 0,
+                notes: 0,
+            } => write!(f, "daemon events {name}"),
+            Request::Events {
+                name,
+                after,
+                notes: 0,
+            } => write!(f, "daemon events {name} --after {after}"),
+            Request::Events { name, after, notes } => {
+                write!(f, "daemon events {name} --after {after} --notes {notes}")
+            }
             Request::Sweep => write!(f, "daemon sweep"),
             Request::End(name) => write!(f, "daemon end {name}"),
             Request::Restart => write!(f, "daemon restart"),
@@ -586,7 +629,7 @@ pub async fn answer(
         Request::State => super::status(dir)
             .await
             .and_then(|status| Ok(serde_json::to_string(&status)?)),
-        Request::Events { name, after } => page(dir, name, *after, EVENT_HOLD)
+        Request::Events { name, after, notes } => page(dir, name, (*after, *notes), EVENT_HOLD)
             .await
             .map(|page| page.to_string()),
         Request::Sweep => lines_of(dir, Ask::Sweep).await,
@@ -636,21 +679,28 @@ async fn lines_of(dir: &Path, ask: Ask) -> Result<String> {
 /// ```
 /// use riff::daemon::remote::Page;
 ///
-/// let page = Page { lines: vec!["> Bash: just check".into()], last: 7, end: None };
+/// let page = Page { lines: vec!["> Bash: just check".into()], last: 7, notes: 0, end: None };
 /// let text = page.to_string();
 /// assert_eq!(text, "events to 7\n> Bash: just check");
 /// assert_eq!(text.parse::<Page>(), Ok(page));
-/// let ended = Page { lines: vec![], last: 9, end: Some(true) };
-/// assert_eq!(ended.to_string(), "events to 9, ended: failed");
+/// let ended = Page { lines: vec![], last: 9, notes: 1, end: Some(true) };
+/// assert_eq!(ended.to_string(), "events to 9, notes 1, ended: failed");
 /// assert_eq!(ended.to_string().parse::<Page>(), Ok(ended));
 /// assert!("Sessions: none.".parse::<Page>().is_err());
+/// assert!("events to 9, notes x".parse::<Page>().is_err());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
-    /// The lines of the events, as `riff daemon events` shows them.
+    /// The lines of the events and of the daemon, as `riff daemon
+    /// events` shows them.
     pub lines: Vec<String>,
     /// The last event of the page: the next page starts after it.
     pub last: u64,
+    /// The number of lines of the daemon about the session
+    /// ([`Say::Line`]) up to the end of the page: the next page starts
+    /// after them. So each line shows one time
+    /// (01M57GCZXZZRPGGWC5HZS49DGM).
+    pub notes: u64,
     /// The end of the session: true when it failed. `None` while it
     /// runs.
     pub end: Option<bool>,
@@ -659,6 +709,9 @@ pub struct Page {
 impl fmt::Display for Page {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "events to {}", self.last)?;
+        if self.notes > 0 {
+            write!(f, ", notes {}", self.notes)?;
+        }
         match self.end {
             Some(true) => write!(f, ", ended: failed")?,
             Some(false) => write!(f, ", ended: done")?,
@@ -681,28 +734,40 @@ impl FromStr for Page {
             .ok_or(())?
             .strip_prefix("events to ")
             .ok_or(())?;
-        let (last, end) = match head.split_once(", ended: ") {
-            Some((last, "failed")) => (last, Some(true)),
-            Some((last, "done")) => (last, Some(false)),
+        let (head, end) = match head.split_once(", ended: ") {
+            Some((head, "failed")) => (head, Some(true)),
+            Some((head, "done")) => (head, Some(false)),
             Some(_) => return Err(()),
             None => (head, None),
+        };
+        let (last, notes) = match head.split_once(", notes ") {
+            Some((last, notes)) => (last, notes.parse().map_err(|_| ())?),
+            None => (head, 0),
         };
         Ok(Page {
             lines: lines.map(str::to_owned).collect(),
             last: last.parse().map_err(|_| ())?,
+            notes,
             end,
         })
     }
 }
 
 /// The [`Page`] of the events of the session `name` of the daemon in
-/// the folder `dir`, after the event `after`. The daemon follows the
-/// session from its start, and draws each event with one
-/// [`View`](crate::run::View), as `riff daemon events` does: so each
-/// line is the same as on this host. The page ends at the end of the
-/// session, after [`PAGE_LINES`] lines, after [`EVENT_GAP`] with no new
-/// event, or after `hold` with no event after `after`.
-pub async fn page(dir: &Path, name: &str, after: u64, hold: Duration) -> Result<Page> {
+/// the folder `dir`, after the event and the line of the daemon of
+/// `after`. The daemon follows the session from its start, and draws
+/// each event with one [`View`](crate::run::View), as `riff daemon
+/// events` does: so each line is the same as on this host. The page ends
+/// at the end of the session, after [`PAGE_LINES`] lines, after
+/// [`EVENT_GAP`] with no new event, or after `hold` with no new event.
+/// A session that ended after the page before gives its end: the daemon
+/// keeps it ([`super::KEEP_END`]).
+pub async fn page(
+    dir: &Path,
+    name: &str,
+    (after, notes): (u64, u64),
+    hold: Duration,
+) -> Result<Page> {
     let mut client = super::Client::connect(dir).await?;
     client
         .ask(Ask::Follow {
@@ -714,9 +779,10 @@ pub async fn page(dir: &Path, name: &str, after: u64, hold: Duration) -> Result<
     let mut page = Page {
         lines: Vec::new(),
         last: after,
+        notes,
         end: None,
     };
-    let (mut seen, mut new) = (0, false);
+    let (mut said, mut new) = (0, false);
     let until = tokio::time::Instant::now() + hold;
     loop {
         let wait = if new {
@@ -730,7 +796,6 @@ pub async fn page(dir: &Path, name: &str, after: u64, hold: Duration) -> Result<
         match next? {
             Some(Say::Event { seq, line }) => {
                 let shown = view.shown(&line);
-                seen = seq;
                 if seq > after {
                     page.lines.extend(shown);
                     page.last = seq;
@@ -740,9 +805,14 @@ pub async fn page(dir: &Path, name: &str, after: u64, hold: Duration) -> Result<
                     }
                 }
             }
-            Some(Say::Line { text }) if seen >= after => {
-                page.lines.push(text);
-                new = true;
+            // The daemon gives each line of its own again, in its place.
+            Some(Say::Line { text }) => {
+                said += 1;
+                if said > notes {
+                    page.lines.push(text);
+                    page.notes = said;
+                    new = true;
+                }
             }
             Some(Say::Ended(ended)) => {
                 page.lines.push(text::daemon_session_ends(name, ended.code));
@@ -768,11 +838,12 @@ pub async fn follow_events(
     name: &str,
     mut show: impl FnMut(&str),
 ) -> Result<bool> {
-    let mut after = 0;
+    let (mut after, mut notes) = (0, 0);
     loop {
         let request = Request::Events {
             name: name.to_owned(),
             after,
+            notes,
         };
         let text = ask(api, me, host, &request, REPLY_WAIT).await?;
         let page: Page = text
@@ -784,7 +855,7 @@ pub async fn follow_events(
         if let Some(failed) = page.end {
             return Ok(failed);
         }
-        after = page.last;
+        (after, notes) = (page.last, page.notes);
     }
 }
 

@@ -407,6 +407,18 @@ const LOOK_EVERY: Duration = Duration::from_secs(30);
 /// a session: a `just ci` can take 15 minutes.
 pub const QUIET_LIMIT: Duration = Duration::from_secs(30 * 60);
 
+/// How long the daemon keeps the end of a session after the end
+/// ([`Gone`], 01M57GCZVJAHAMPEYY1T6GA48P). It is longer than the gap
+/// between two pages of `riff daemon events --host`
+/// ([`remote::follow_events`]).
+pub const KEEP_END: Duration = Duration::from_secs(5 * 60);
+
+/// The end of a session whose container did not start.
+const START_FAILED: Ended = Ended {
+    code: None,
+    failed: true,
+};
+
 /// The variable that gives the quiet limit of a `riff daemon` in
 /// milliseconds. Only a test sets it.
 ///
@@ -1107,9 +1119,16 @@ struct SessionState {
     last_step: String,
     /// True after the end of the ownership: its record is gone.
     ended: bool,
+    /// How the session ended, from the take of its followers: a later
+    /// follower gets it at once.
+    end: Option<Ended>,
     /// The input of each wake during a takeover: `claude` gets them
     /// after the go on.
     waiting: Vec<String>,
+    /// Each line of the daemon about the session ([`Say::Line`]), with
+    /// the number of events before it: a new follower gets each one in
+    /// its place (01M57GCZXZZRPGGWC5HZS49DGM).
+    lines: Vec<(u64, String)>,
 }
 
 impl SessionState {
@@ -1215,6 +1234,13 @@ impl Owned {
         }
     }
 
+    /// Says the line `text` of the daemon about the session to each
+    /// `riff` that follows it, and keeps it for each later follower.
+    fn say_line(state: &mut SessionState, text: String) {
+        state.lines.push((state.seq, text.clone()));
+        Self::tell(state, &Say::Line { text });
+    }
+
     /// Takes the event `seq` of the relay, and gives the number of
     /// events that the daemon has. The daemon takes only the next event:
     /// it has each one before it.
@@ -1259,24 +1285,23 @@ impl Owned {
         seq
     }
 
-    /// Follows the session on `out`: each event after `after`, then each
-    /// new one.
+    /// Follows the session on `out`: each event after `after` and each
+    /// line of the daemon in its place ([`replay`]), then each new one.
+    /// After the take of the followers, it says the end at once.
     fn follow(&self, out: Out, after: u64) -> Result<()> {
         let mut state = self.lock();
-        if after < state.seq {
+        let log = if after < state.seq {
             let events = state.record.folder.join(EVENTS);
-            let text = std::fs::read_to_string(&events)
-                .with_context(|| format!("cannot read {}", events.display()))?;
-            for (seq, line) in (1..=state.seq).zip(text.lines()) {
-                if seq > after {
-                    out.say(Say::Event {
-                        seq,
-                        line: line.to_owned(),
-                    });
-                }
-            }
+            std::fs::read_to_string(&events)
+                .with_context(|| format!("cannot read {}", events.display()))?
+        } else {
+            String::new()
+        };
+        replay(&out, &log, state.seq, after, &state.lines);
+        match state.end {
+            Some(ended) => out.say(Say::Ended(ended)),
+            None => state.followers.push(out),
         }
-        state.followers.push(out);
         Ok(())
     }
 
@@ -1401,6 +1426,54 @@ fn lines_of(path: &Path) -> u64 {
     })
 }
 
+/// Says on `out` each event of the log `log` after the event `after`,
+/// up to the event `seq`, and each line of `lines` that came after the
+/// event `after`, in its place (01M57GCZXZZRPGGWC5HZS49DGM).
+fn replay(out: &Out, log: &str, seq: u64, after: u64, lines: &[(u64, String)]) {
+    let mut lines = lines.iter().filter(|(at, _)| *at >= after).peekable();
+    for (n, line) in (1..=seq).zip(log.lines()) {
+        while let Some((_, text)) = lines.next_if(|(at, _)| *at < n) {
+            out.say(Say::Line { text: text.clone() });
+        }
+        if n > after {
+            out.say(Say::Event {
+                seq: n,
+                line: line.to_owned(),
+            });
+        }
+    }
+    for (_, text) in lines {
+        out.say(Say::Line { text: text.clone() });
+    }
+}
+
+/// The end of a session, which the daemon keeps for [`KEEP_END`] after
+/// the end (01M57GCZVJAHAMPEYY1T6GA48P). A follow that comes after the
+/// end, for example the next page of `riff daemon events --host`, gets
+/// what a follower that stayed got. The folder of the session can go at
+/// its end, so the daemon keeps the log itself.
+struct Gone {
+    /// The log of the events, with no secret.
+    log: String,
+    /// The number of events.
+    seq: u64,
+    /// Each line of the daemon about the session.
+    lines: Vec<(u64, String)>,
+    /// How the session ended.
+    ended: Ended,
+    /// The time of the end.
+    at: tokio::time::Instant,
+}
+
+impl Gone {
+    /// Says on `out` each event after `after`, each line in its place,
+    /// then the end.
+    fn follow(&self, out: &Out, after: u64) {
+        replay(out, &self.log, self.seq, after, &self.lines);
+        out.say(Say::Ended(self.ended));
+    }
+}
+
 /// The daemon: the sessions of this machine, on the runtime `R`.
 pub struct Daemon<R> {
     runtime: R,
@@ -1414,6 +1487,10 @@ pub struct Daemon<R> {
     /// The quiet limit of each session ([`QUIET_LIMIT`]).
     quiet: Duration,
     live: Mutex<BTreeMap<String, Arc<Owned>>>,
+    /// The end of each session that ended in the last `keep_end`.
+    gone: Mutex<BTreeMap<String, Gone>>,
+    /// How long the daemon keeps the end of a session ([`KEEP_END`]).
+    keep_end: Duration,
     /// The limit of the host, and the starts that wait for room.
     room: Arc<Room>,
     /// The forge and the riff of the waves ([`crate::wave::Live`]).
@@ -1482,6 +1559,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             any_relay: crate::release::takes_dynamic(),
             quiet: quiet_limit(),
             live: Mutex::new(BTreeMap::new()),
+            gone: Mutex::new(BTreeMap::new()),
+            keep_end: KEEP_END,
             room,
             world: Arc::new(crate::wave::Live::default()),
             waves: Mutex::new(BTreeMap::new()),
@@ -1498,6 +1577,14 @@ impl<R: Runtime + 'static> Daemon<R> {
     #[must_use]
     pub fn with_quiet(mut self, quiet: Duration) -> Self {
         self.quiet = quiet;
+        self
+    }
+
+    /// The daemon that keeps the end of a session for `keep` in place of
+    /// [`KEEP_END`], for a test.
+    #[must_use]
+    pub fn with_keep_end(mut self, keep: Duration) -> Self {
+        self.keep_end = keep;
         self
     }
 
@@ -1854,6 +1941,10 @@ impl<R: Runtime + 'static> Daemon<R> {
         self.live.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    fn gone_lock(&self) -> MutexGuard<'_, BTreeMap<String, Gone>> {
+        self.gone.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Answers each connection of `listener` until `stop` ends. The stop
     /// stops no session (01M4ZDTW00B7N6T9P3MK066KA7).
     pub async fn serve(
@@ -2062,7 +2153,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                 taker: None,
                 last_step: String::new(),
                 ended: false,
+                end: None,
                 waiting: Vec::new(),
+                lines: Vec::new(),
             }),
             notes,
             stop: Notify::new(),
@@ -2260,7 +2353,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             let end = match self.runtime.start_terminal(&spec, &values).await {
                 Ok(end) => end,
                 Err(e) => {
-                    self.close(&owned);
+                    self.close(&owned, START_FAILED);
                     println!("{}", text::daemon_session_failed(&name));
                     out.say(Say::Failed {
                         error: format!("{e:#}"),
@@ -2280,7 +2373,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let running = match self.runtime.start(&spec, &values).await {
             Ok(running) => running,
             Err(e) => {
-                self.close(&owned);
+                self.close(&owned, START_FAILED);
                 println!("{}", text::daemon_session_failed(&name));
                 out.say(Say::Failed {
                     error: format!("{e:#}"),
@@ -2314,12 +2407,18 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// Follows the live session `name` on `out`: each event after
     /// `after`, then as [`Daemon::start`]. A [`Then::Stop`] on `from`
-    /// stops it.
+    /// stops it. A session that ended in the last `keep_end` gives its
+    /// end ([`Gone`]).
     fn follow(&self, name: &str, after: u64, from: Lines<BufReader<OwnedReadHalf>>, out: &Out) {
-        let Some(owned) = self.lock().get(name).cloned() else {
-            out.say(Say::Failed {
-                error: text::daemon_no_session(name),
-            });
+        // A session is in `gone` before it leaves `live` ([`Daemon::close`]).
+        let live = self.lock().get(name).cloned();
+        let Some(owned) = live else {
+            match self.gone_lock().get(name) {
+                Some(gone) if gone.at.elapsed() < self.keep_end => gone.follow(out, after),
+                _ => out.say(Say::Failed {
+                    error: text::daemon_no_session(name),
+                }),
+            }
             return;
         };
         if let Err(e) = owned.follow(out.clone(), after) {
@@ -2369,7 +2468,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                         stopped = true;
                         let line = text::daemon_quiet(&owned.name, self.quiet);
                         println!("{line}");
-                        Owned::tell(&mut owned.lock(), &Say::Line { text: line });
+                        Owned::say_line(&mut owned.lock(), line);
                         let _ = self.runtime.stop(&owned.name).await;
                     }
                 }
@@ -2435,15 +2534,17 @@ impl<R: Runtime + 'static> Daemon<R> {
             let world = self.world.clone();
             tokio::spawn(async move { world.leave(&record).await });
         }
-        let followers = self.close(&owned);
+        let followers = self.close(&owned, ended);
         for out in followers {
             out.say(Say::Ended(ended));
         }
     }
 
-    /// Ends the ownership of the session `owned`: its socket, its folder
-    /// and its record go. It gives the connections that followed it.
-    fn close(&self, owned: &Owned) -> Vec<Out> {
+    /// Ends the ownership of the session `owned`, which ended as `ended`:
+    /// its socket, its folder and its record go. The daemon keeps its end
+    /// for `keep_end` ([`Gone`]). It gives the connections that followed
+    /// it.
+    fn close(&self, owned: &Owned, ended: Ended) -> Vec<Out> {
         // From now on, no step writes its record again.
         owned.lock().ended = true;
         if let Some(door) = owned
@@ -2456,9 +2557,27 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
         let _ = std::fs::remove_dir_all(&owned.socket);
         let _ = std::fs::remove_file(&owned.record_path);
+        let (gone, followers) = {
+            let mut state = owned.lock();
+            state.end = Some(ended);
+            let events = state.record.folder.join(EVENTS);
+            let gone = Gone {
+                log: std::fs::read_to_string(events).unwrap_or_default(),
+                seq: state.seq,
+                lines: state.lines.clone(),
+                ended,
+                at: tokio::time::Instant::now(),
+            };
+            (gone, std::mem::take(&mut state.followers))
+        };
+        {
+            let mut kept = self.gone_lock();
+            kept.retain(|_, gone| gone.at.elapsed() < self.keep_end);
+            kept.insert(owned.name.clone(), gone);
+        }
         self.lock().remove(&owned.name);
         self.tell_changed();
-        std::mem::take(&mut owned.lock().followers)
+        followers
     }
 
     /// Makes the folder of the socket of the session `owned`, and
@@ -3236,6 +3355,7 @@ mod tests {
         pub(super) dir: PathBuf,
         pub(super) fake: Fake,
         quiet: Duration,
+        keep_end: Duration,
         world: Option<Arc<dyn World>>,
         pub(super) daemon: Arc<Daemon<Fake>>,
         stop: Option<oneshot::Sender<()>>,
@@ -3261,7 +3381,7 @@ mod tests {
     async fn serve_in(
         fake: &Fake,
         dir: &Path,
-        quiet: Duration,
+        (quiet, keep_end): (Duration, Duration),
         world: Option<Arc<dyn World>>,
     ) -> Served {
         let listener = listen(dir).await.unwrap();
@@ -3269,6 +3389,7 @@ mod tests {
         let mut daemon = Daemon::new(fake.clone(), dir.to_owned())
             .unwrap()
             .with_quiet(quiet)
+            .with_keep_end(keep_end)
             .with_relay(static_riff(dir));
         if let Some(world) = world {
             daemon = daemon.with_world(world);
@@ -3298,14 +3419,26 @@ mod tests {
             quiet: Duration,
             world: Option<Arc<dyn World>>,
         ) -> Here {
+            Here::with_keep_end(fake, (quiet, KEEP_END), world).await
+        }
+
+        /// A daemon on `fake` with the quiet limit and the keep of the
+        /// end of a session of `times`, and the riff-server of `world`.
+        async fn with_keep_end(
+            fake: Fake,
+            times: (Duration, Duration),
+            world: Option<Arc<dyn World>>,
+        ) -> Here {
             let root = tempfile::tempdir().unwrap();
             let dir = dir_in(root.path());
-            let (daemon, stop, served) = serve_in(&fake, &dir, quiet, world.clone()).await;
+            let (daemon, stop, served) = serve_in(&fake, &dir, times, world.clone()).await;
+            let (quiet, keep_end) = times;
             Here {
                 root,
                 dir,
                 fake,
                 quiet,
+                keep_end,
                 world,
                 daemon,
                 stop: Some(stop),
@@ -3316,8 +3449,9 @@ mod tests {
         /// Stops the daemon, and starts a new one in the same folder.
         async fn restart(&mut self) {
             self.stop().await;
+            let times = (self.quiet, self.keep_end);
             let (daemon, stop, served) =
-                serve_in(&self.fake, &self.dir, self.quiet, self.world.clone()).await;
+                serve_in(&self.fake, &self.dir, times, self.world.clone()).await;
             self.daemon = daemon;
             self.stop = Some(stop);
             self.served = served;
@@ -5766,17 +5900,138 @@ mod tests {
         let (mut relay, _) = Relay::connect(&socket, 1, false).await;
         relay.event(1, TURN[0]).await;
         let hold = Duration::from_millis(200);
-        let page = remote::page(&here.dir, &name, 0, hold).await.unwrap();
+        let page = remote::page(&here.dir, &name, (0, 0), hold).await.unwrap();
         assert_eq!(page.last, 1);
         assert!(!page.lines.is_empty());
-        let empty = remote::page(&here.dir, &name, 1, hold).await.unwrap();
+        let empty = remote::page(&here.dir, &name, (1, 0), hold).await.unwrap();
         assert_eq!(
             empty,
             remote::Page {
                 lines: Vec::new(),
                 last: 1,
+                notes: 0,
                 end: None
             }
+        );
+    }
+
+    /// Waits until the daemon in the folder `dir` runs no session.
+    async fn until_no_session(dir: &Path) {
+        let start = std::time::Instant::now();
+        while !status(dir).await.unwrap().sessions.is_empty() {
+            assert!(start.elapsed() < Duration::from_secs(5), "timed out");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// 01M57D4FX5VHQR150QTDS6BA1C, 01M57GCZVJAHAMPEYY1T6GA48P: the
+    /// session ends between two pages, while no follower is on it. The
+    /// next page gives the events after the page before and the end, not
+    /// an error.
+    #[tokio::test]
+    async fn a_session_that_ends_between_two_pages_gives_the_end_on_the_next_page() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        drop(client);
+        let socket = session_dir(&here.dir, &name);
+        let (mut relay, _) = Relay::connect(&socket, 1, false).await;
+        relay.event(1, TURN[0]).await;
+        let hold = Duration::from_millis(200);
+        let first = remote::page(&here.dir, &name, (0, 0), hold).await.unwrap();
+        assert_eq!((first.last, first.end), (1, None));
+
+        relay.event(2, TURN[2]).await;
+        relay.exit(3, 0).await;
+        until_no_session(&here.dir).await;
+        let next = remote::page(&here.dir, &name, (1, 0), hold).await.unwrap();
+        let mut view = crate::run::View::default();
+        view.shown(TURN[0]);
+        let mut want = view.shown(TURN[2]);
+        want.push(text::daemon_session_ends(&name, Some(0)));
+        assert_eq!(
+            next,
+            remote::Page {
+                lines: want,
+                last: 2,
+                notes: 0,
+                end: Some(false)
+            }
+        );
+    }
+
+    /// 01M57GCZXZZRPGGWC5HZS49DGM: the daemon stops a quiet session while
+    /// no follower is on it. A later follow gets the line of the stop in
+    /// its place, and the page with the line shows it one time.
+    #[tokio::test]
+    async fn a_line_of_the_daemon_with_no_follower_comes_to_a_later_follow() {
+        let quiet = Duration::from_millis(300);
+        let here = Here::with_quiet(Fake::default().with_image(IMAGE), quiet).await;
+        let (client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        drop(client);
+        let socket = session_dir(&here.dir, &name);
+        let (mut relay, _) = Relay::connect(&socket, 1, false).await;
+        relay.event(1, TURN[0]).await;
+        relay.event(2, TURN[2]).await;
+        until_no_session(&here.dir).await;
+        let stop = text::daemon_quiet(&name, quiet);
+        let ended = Ended {
+            code: None,
+            failed: true,
+        };
+
+        // The host: riff daemon events NAME.
+        let mut follow = Client::connect(&here.dir).await.unwrap();
+        follow
+            .ask(Ask::Follow {
+                name: name.clone(),
+                after: 0,
+            })
+            .await
+            .unwrap();
+        let (said, end) = to_the_end(&mut follow).await;
+        assert_eq!(events(&said).len(), 2);
+        assert_eq!(said.last(), Some(&Say::Line { text: stop.clone() }));
+        assert_eq!(end, Some(Say::Ended(ended)));
+
+        // Another host: the line shows on the page after the event 2.
+        let hold = Duration::from_millis(200);
+        let page = remote::page(&here.dir, &name, (2, 0), hold).await.unwrap();
+        let end_line = text::daemon_session_ends(&name, None);
+        assert_eq!(page.lines, [stop, end_line.clone()]);
+        assert_eq!((page.last, page.notes, page.end), (2, 1, Some(true)));
+        let again = remote::page(&here.dir, &name, (2, 1), hold).await.unwrap();
+        assert_eq!(again.lines, [end_line]);
+    }
+
+    /// 01M57GCZVJAHAMPEYY1T6GA48P: after the keep, the daemon owns no
+    /// such session.
+    #[tokio::test]
+    async fn the_daemon_forgets_the_end_of_a_session_after_the_keep() {
+        let keep = Duration::from_millis(300);
+        let fake = Fake::default().with_image(IMAGE);
+        let here = Here::with_keep_end(fake, (QUIET_LIMIT, keep), None).await;
+        let (client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        drop(client);
+        let socket = session_dir(&here.dir, &name);
+        let (mut relay, _) = Relay::connect(&socket, 1, false).await;
+        relay.event(1, TURN[0]).await;
+        relay.exit(2, 0).await;
+        until_no_session(&here.dir).await;
+
+        let hold = Duration::from_millis(100);
+        let kept = remote::page(&here.dir, &name, (0, 0), hold).await.unwrap();
+        assert_eq!(kept.end, Some(false));
+        tokio::time::sleep(keep).await;
+        let none = remote::page(&here.dir, &name, (0, 0), hold).await;
+        assert_eq!(
+            none.unwrap_err().to_string(),
+            text::daemon_no_session(&name)
         );
     }
 }
