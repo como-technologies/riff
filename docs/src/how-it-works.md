@@ -2800,7 +2800,9 @@ como-technologies/riff
 [2527] mike@pangolin:riff (a6cf) lead=true to all (verified): Wave 34 starts
 ```
 
-The `read` tool of an agent session shows the same order.
+The `read` tool of an agent session shows the same order. Only its
+part of the messages to you after a page comes before it. See
+[One read after a wake shows the message of the wake](#one-read-after-a-wake-shows-the-message-of-the-wake).
 
 ### A message that came before the start of a session
 

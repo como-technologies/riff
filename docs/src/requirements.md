@@ -1597,7 +1597,7 @@
 - **01M58AG7Z2PETHBZG7X9QD8PK5** A read with no thread shows each
   direct thread first, then the other threads in the order of the list
   of the server. `riff read` and the `read` tool of `riff mcp` do the
-  same.
+  same. Only the part of 01M588J4XNV1TXEPMGTKRVY9VK comes before them.
 - **01M3TBZBZVH907QD359AB8TBSX** Each hour, a timer of `riff-server`
   writes a `session_forgotten` record for each session with no sign of
   life for 30 days. It does not run in the first 3 minutes after a

@@ -266,7 +266,9 @@ impl Thread {
 ///
 /// let me: SessionUri = "riff://brett@heron?session=b1".parse()?;
 /// let mike: SessionUri = "riff://mike@pangolin?session=a1".parse()?;
-/// let inbox = |thread: ThreadName| Inbox { thread, members: vec![], messages: vec![], next: None };
+/// let inbox = |thread: ThreadName| Inbox {
+///     thread, members: vec![], messages: vec![], next: None, woken: vec![],
+/// };
 /// let direct = ThreadName::direct(me.who(), mike.who());
 /// let mut list = [inbox("chat".parse()?), inbox("o/r".parse()?), inbox(direct.clone())];
 /// direct_first(&mut list);
@@ -359,6 +361,7 @@ mod tests {
                 members: vec![me.clone(), lead.clone()],
                 messages: messages.collect(),
                 next: (count == 50).then_some(count),
+                woken: vec![],
                 thread,
             }
         };
