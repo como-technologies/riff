@@ -128,7 +128,7 @@ use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
 use crate::link::{self, Budget, Limits, Link, Outcome, Reply, WaitLine};
-use crate::{device, login, marks, secrets, text};
+use crate::{device, login, marks, secrets, text, threads};
 
 /// A change of the members that `riff-server` made, and the posts of
 /// its note (01M3MN14ZCTRVD3T455P6TFK1B). The change stands also when
@@ -1418,6 +1418,18 @@ impl Api {
         }
     }
 
+    /// The thread that `given` names for a read of `me`
+    /// (01M58AJE14M9TPTQE4E8R9PA9M): a thread name, or `dm:PEER` for a
+    /// direct thread of `me`. Only a name with `dm:` asks the server for
+    /// the threads of `me`. See [`threads::named`].
+    pub async fn thread_to_read(&self, me: &SessionUri, given: &str) -> Result<ThreadName> {
+        if !given.starts_with(threads::DIRECT) {
+            return Ok(given.parse()?);
+        }
+        let list = self.threads(me).await?;
+        threads::named(given, &list, me.who()).map_err(anyhow::Error::msg)
+    }
+
     /// The unread messages (or all of them) of one thread. With no
     /// thread, those of each thread that `me` joined, each direct
     /// thread first ([`direct_first`](crate::threads::direct_first)).
@@ -1454,6 +1466,17 @@ impl Api {
         each_page: bool,
     ) -> Result<Vec<Inbox>> {
         let targets = match thread {
+            // The label of a direct thread names its other member.
+            Some(t) if t.is_direct() => {
+                let members = self
+                    .threads(me)
+                    .await?
+                    .into_iter()
+                    .find(|i| i.thread == *t)
+                    .map(|i| i.members)
+                    .unwrap_or_default();
+                vec![(t.clone(), members)]
+            }
             Some(t) => vec![(t.clone(), Vec::new())],
             None => self
                 .threads(me)

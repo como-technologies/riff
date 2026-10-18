@@ -3059,6 +3059,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   person. It joins the person to the thread of the directory first.
   `--thread` reads one thread. `--all` shows each kept message. It
   reads each page (01M3TBZBX140GJWCV5GZ73Q5Z5).
+- **01M58AJE14M9TPTQE4E8R9PA9M** A session names one of its direct
+  threads `dm:PEER`. PEER is the session ID of the other side or the
+  start of it, or the user of a person. `threads` and `read` show
+  each direct thread as `dm:PEER (direct with SHORT)`, with the first
+  8 characters of the session ID. The `thread` of the `read` tool and
+  `riff read --thread` take this name or this label. riff looks for
+  PEER only in the threads of the caller, so a session reads only its
+  own direct threads. The line of a next page names the thread.
 - **R185** A post has a kind: `message` (the default), `status` or
   `note`. A post of kind `status` is a status request. It wakes the
   sessions that its selectors match, as each post does. A person sends

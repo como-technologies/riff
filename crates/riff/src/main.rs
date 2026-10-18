@@ -158,7 +158,10 @@ enum Command {
     ///
     /// You join the thread of your repository first.
     Read {
-        /// Read only this thread. It need not be one of your threads.
+        /// Read only this thread. It need not be one of your threads. A
+        /// direct thread of yours is dm:PEER: the session ID of the other
+        /// side or its start, or the user of a person, as riff read shows
+        /// it.
         #[arg(long, short)]
         thread: Option<String>,
         /// Show the full history, not only the unread messages.
@@ -2430,7 +2433,10 @@ async fn main() -> Result<()> {
             if let Some(repo) = here.default_thread() {
                 api.join(&me, &repo).await?;
             }
-            let thread = thread.map(|t| t.parse::<ThreadName>()).transpose()?;
+            let thread = match thread {
+                Some(t) => Some(api.thread_to_read(&me, &t).await?),
+                None => None,
+            };
             let inbox = api.inbox(&me, thread.as_ref(), all).await?;
             println!("{}", text::inbox(&inbox, &me).trim_end());
         }

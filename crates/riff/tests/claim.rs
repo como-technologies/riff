@@ -399,7 +399,7 @@ async fn read_shows_the_direct_messages_first() {
     let (out, code) = agent(&server, dir, "brett", "b2", &["read"]).await;
     assert_eq!(code, 0);
     let top = format!(
-        "{}\n\ndirect with mike@pangolin\n[1] mike@pangolin to session=b2 (verified): request: claim issue-7\n",
+        "{}\n\ndm:mike (direct with mike@pangolin)\n[1] mike@pangolin to session=b2 (verified): request: claim issue-7\n",
         riff::text::DATA_NOTE
     );
     assert!(out.starts_with(&top), "{out}");
@@ -459,15 +459,30 @@ async fn tell_sends_a_direct_message_to_a_session() {
     );
     assert_eq!(code, 0);
 
+    let direct = "dm:mike (direct with mike@pangolin)\n\
+                  [1] mike@pangolin to session=b2 (verified): are you there?\n\
+                  [2] mike@pangolin to session=b2 (verified): and now?\n";
     let (out, _) = agent(&server, dir, "brett", "b2", &["read"]).await;
+    assert!(out.ends_with(direct), "{out}");
+
+    // The read marked them as read. The name of the direct thread reads
+    // its history again (01M58AJE14M9TPTQE4E8R9PA9M), and the person of
+    // the other side reads it by the session ID of the agent.
+    let again = ["read", "--thread", "dm:mike", "--all"];
+    let (out, code) = agent(&server, dir, "brett", "b2", &again).await;
+    assert!(out.ends_with(direct), "{out}");
+    assert_eq!(code, 0);
+    let (out, code) = riff(&server, dir, "mike", &["read", "-t", "dm:b2", "--all"]).await;
     assert!(
-        out.ends_with(
-            "direct with mike@pangolin\n\
-             [1] mike@pangolin to session=b2 (verified): are you there?\n\
-             [2] mike@pangolin to session=b2 (verified): and now?\n"
-        ),
+        out.contains("dm:b2 (direct with brett@pangolin:riff)\n"),
         "{out}"
     );
+    assert!(out.contains("and now?"), "{out}");
+    assert_eq!(code, 0);
+    // Another session has no such direct thread.
+    let (out, code) = agent(&server, dir, "ann", "c3", &again).await;
+    assert!(!out.contains("and now?"), "{out}");
+    assert_ne!(code, 0);
 
     let (_, code) = riff(
         &server,

@@ -268,14 +268,44 @@ pub fn name(uri: &SessionUri) -> String {
     }
 }
 
-/// A readable label for a thread. A direct thread shows the other session.
+/// A readable label for a thread. A direct thread shows its name
+/// `dm:PEER` for `me` and the other session (01M58AJE14M9TPTQE4E8R9PA9M).
+///
+/// ```
+/// use riff_core::name::{SessionUri, ThreadName};
+///
+/// let me: SessionUri = "riff://brett@heron/o/r?session=b7d0".parse()?;
+/// let lead: SessionUri = "riff://mike@pangolin/o/r?session=25456ff6-479e#api".parse()?;
+/// let direct = ThreadName::direct(me.who(), lead.who());
+/// assert_eq!(
+///     riff::text::label(&direct, &[me.clone(), lead.clone()], &me),
+///     "dm:25456ff6 (direct with mike@pangolin:r#api)"
+/// );
+/// assert_eq!(riff::text::label(&"chat".parse()?, &[], &me), "chat");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
 pub fn label(thread: &ThreadName, members: &[SessionUri], me: &SessionUri) -> String {
     if thread.is_direct() {
         let other = members.iter().find(|m| m.who() != me.who()).unwrap_or(me);
-        format!("direct with {}", name(other))
+        direct_label(thread, other, me)
     } else {
         thread.to_string()
     }
+}
+
+/// The label of the direct thread `thread` of `me` with `other`.
+fn direct_label(thread: &ThreadName, other: &SessionUri, me: &SessionUri) -> String {
+    format!(
+        "{} (direct with {})",
+        thread_to_read(thread, me),
+        other.short()
+    )
+}
+
+/// The name that `me` gives to read `thread` again: `dm:PEER` for a
+/// direct thread (01M58AJE14M9TPTQE4E8R9PA9M).
+fn thread_to_read(thread: &ThreadName, me: &SessionUri) -> String {
+    riff_client::threads::direct_name(thread, me.who()).unwrap_or_else(|| thread.to_string())
 }
 
 /// The one line that `riff watch` prints to wake a session. A status
@@ -2775,7 +2805,35 @@ pub fn action(from: &SessionUri, body: &str) -> Option<String> {
 ///     woken: vec![],
 /// };
 /// assert!(riff::text::inbox(&[inbox], &me).ends_with(
-///     "More messages follow. Read this thread again. With all, set after to 1.\n"
+///     "More messages follow. Read the thread chat again. With all, set after to 1.\n"
+/// ));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+///
+/// A direct thread shows its name `dm:PEER`, and the next page names it
+/// (01M58AJE14M9TPTQE4E8R9PA9M):
+///
+/// ```
+/// # use riff_client::api::{Checked, Inbox};
+/// # use riff_core::name::{SessionUri, ThreadName};
+/// # use riff_core::wire::Message;
+/// let me: SessionUri = "riff://brett@heron/o/r?session=b7d0".parse()?;
+/// let lead: SessionUri = "riff://mike@pangolin/o/r?session=25456ff6-479e".parse()?;
+/// # let message = Message {
+/// #     seq: 1, from: lead.clone(), to: vec![], body: "request: claim issue-12".into(),
+/// #     at_ms: 0, kind: Default::default(), sig: None, payload: None,
+/// # };
+/// let inbox = Inbox {
+///     thread: ThreadName::direct(me.who(), lead.who()),
+///     members: vec![me.clone(), lead.clone()],
+///     messages: vec![Checked { message, verified: true }],
+///     next: Some(1),
+///     woken: vec![],
+/// };
+/// let text = riff::text::inbox(&[inbox], &me);
+/// assert!(text.contains("\ndm:25456ff6 (direct with mike@pangolin:r)\n[1] "), "{text}");
+/// assert!(text.ends_with(
+///     "More messages follow. Read the thread dm:25456ff6 again. With all, set after to 1.\n"
 /// ));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
@@ -2813,7 +2871,7 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
     }
     let threads: Vec<Thread> = list.iter().map(|inbox| Thread::of(inbox, me)).collect();
     let label = |t: &Thread| match &t.other {
-        Some(other) => format!("direct with {}", name(other)),
+        Some(other) => direct_label(&t.name, other, me),
         None => t.name.to_string(),
     };
     let mut out = format!("{DATA_NOTE}\n\n");
@@ -2838,7 +2896,8 @@ pub fn inbox(list: &[Inbox], me: &SessionUri) -> String {
         if let Some(next) = t.next {
             let _ = writeln!(
                 out,
-                "More messages follow. Read this thread again. With all, set after to {next}."
+                "More messages follow. Read the thread {} again. With all, set after to {next}.",
+                thread_to_read(&t.name, me)
             );
         }
     }

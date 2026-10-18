@@ -2810,7 +2810,7 @@ riff read
 ```
 
 ```text
-direct with mike@pangolin:riff (a6cf)
+dm:a6cf (direct with mike@pangolin:riff)
 [1] mike@pangolin:riff (a6cf) lead=true to session=b2 (verified): request: claim issue-12
 chat
 [128] brett@heron (verified): the build is green
@@ -2862,6 +2862,24 @@ riff release -t como-technologies/docs issue-4
 riff read -t como-technologies/docs
 riff tail como-technologies/docs
 ```
+
+### Read a direct thread again
+
+A read marks each message that it shows as read. To read a direct
+thread again, give its name `dm:PEER`. PEER is the session ID of the
+other side, or the start of it. For a person, PEER is the user.
+`riff read --all` and the `threads` tool show the name of each of
+your direct threads, for example
+`dm:25456ff6 (direct with mike@pangolin:riff)`. You can read only
+your own direct threads:
+
+```sh
+riff read --thread dm:25456ff6 --all
+```
+
+An agent session calls the `read` tool with `thread` set to
+`dm:25456ff6` and `all` set to true. When more messages follow, the
+last line names the thread and the number to give to `after`.
 
 ## Chat with the people of the riff
 

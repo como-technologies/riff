@@ -253,7 +253,7 @@ async fn the_tools_carry_a_conversation() {
         "{read}"
     );
     assert!(
-        read.contains("direct with mike@pangolin:riff#api (a1)"),
+        read.contains("dm:a1 (direct with mike@pangolin:riff#api)"),
         "{read}"
     );
     assert!(read.contains("ping"), "{read}");
@@ -330,7 +330,7 @@ async fn a_worker_asks_the_lead_and_gets_the_answer() {
     );
     let (read, _) = call(&first, "read", serde_json::json!({})).await;
     assert!(
-        read.contains("direct with mike@pangolin:riff#docs (c3)"),
+        read.contains("dm:c3 (direct with mike@pangolin:riff#docs)"),
         "{read}"
     );
     assert!(read.contains("merge now?"), "{read}");
@@ -378,9 +378,10 @@ async fn a_tell_to_a_new_worker_stays_unread_until_a_read_shows_it() {
             .await
             .unwrap();
     }
-    let direct = "direct with mike@pangolin:riff#api (a1)";
-    let more =
-        format!("More messages follow. Read this thread again. With all, set after to {PAGE}.");
+    let direct = "dm:a1 (direct with mike@pangolin:riff#api)";
+    let more = format!(
+        "More messages follow. Read the thread {repo} again. With all, set after to {PAGE}."
+    );
 
     let w1 = connect(
         &api,
@@ -449,12 +450,74 @@ async fn the_first_read_shows_the_direct_message_at_the_top() {
 
     let (read, _) = call(&worker, "read", serde_json::json!({})).await;
     let top = format!(
-        "{}\n\ndirect with mike@pangolin:riff#api (a1)\n[1] ",
+        "{}\n\ndm:a1 (direct with mike@pangolin:riff#api)\n[1] ",
         riff::text::DATA_NOTE
     );
     assert!(read.starts_with(&top), "{read}");
     assert!(read.contains("request: claim issue-7"), "{read}");
     assert!(read.contains("como-technologies/riff\n[1] "), "{read}");
+}
+
+/// A session reads its direct thread again by the name that `threads`
+/// shows, after a read marked each message as read, and a long one page
+/// by page with the step that its "More messages follow" line names
+/// (#1111, 01M58AJE14M9TPTQE4E8R9PA9M). Another session cannot read it.
+#[tokio::test]
+async fn a_session_reads_its_direct_thread_again_by_its_name() {
+    use riff_state::state::PAGE;
+    let api = start_server().await;
+    let lead = connect(&api, MIKE).await;
+    let worker = connect(
+        &api,
+        "riff://mike@pangolin/como-technologies/riff?session=w1",
+    )
+    .await;
+    for n in 1..=PAGE + 2 {
+        let tell = serde_json::json!({ "session": "w1", "body": format!("request {n}") });
+        call(&lead, "tell", tell).await;
+    }
+    loop {
+        let (read, _) = call(&worker, "read", serde_json::json!({})).await;
+        if read == "No unread messages." {
+            break;
+        }
+    }
+
+    let direct = "dm:a1 (direct with mike@pangolin:riff#api)";
+    let (threads, _) = call(&worker, "threads", serde_json::json!({})).await;
+    assert!(
+        threads.contains(&format!("{direct}: 2 members, 0 unread")),
+        "{threads}"
+    );
+    let more = format!(
+        "More messages follow. Read the thread dm:a1 again. With all, set after to {PAGE}.\n"
+    );
+    for name in ["dm:a1", direct] {
+        let args = serde_json::json!({ "thread": name, "all": true });
+        let (page, is_error) = call(&worker, "read", args).await;
+        assert!(!is_error, "{page}");
+        assert!(page.contains(&format!("{direct}\n[1] ")), "{page}");
+        assert!(
+            page.contains(": request 1\n") && page.ends_with(&more),
+            "{page}"
+        );
+    }
+    let next = serde_json::json!({ "thread": "dm:a1", "all": true, "after": PAGE });
+    let (page, is_error) = call(&worker, "read", next).await;
+    assert!(!is_error, "{page}");
+    assert!(
+        page.contains(&format!(": request {}\n", PAGE + 2)) && !page.contains("More messages"),
+        "{page}"
+    );
+
+    let brett = connect(&api, BRETT).await;
+    let args = serde_json::json!({ "thread": "dm:a1", "all": true });
+    let (refused, is_error) = call(&brett, "read", args).await;
+    assert!(is_error, "{refused}");
+    assert!(
+        refused.contains("you have no direct thread dm:a1"),
+        "{refused}"
+    );
 }
 
 #[tokio::test]
