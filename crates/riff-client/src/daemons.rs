@@ -158,7 +158,7 @@ pub struct Facts {
     /// The waves that the daemon runs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub waves: Vec<Wave>,
-    /// The cores, the memory and the load of the host.
+    /// The hardware threads, the memory and the load of the host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<Machine>,
     /// The disk of the session folders.
@@ -336,7 +336,7 @@ mod tests {
                 word: "started issue-12".into(),
             }],
             machine: Some(Machine {
-                cores: 16,
+                threads: 16,
                 mhz: 4500,
                 now_mhz: 4400,
                 mem_gb: 32,

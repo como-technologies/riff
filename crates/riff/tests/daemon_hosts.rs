@@ -568,9 +568,9 @@ async fn riff_who_and_riff_top_show_the_facts_of_each_host() {
             .await;
     assert!(out.status.success(), "{out:?}");
     let top = text(&out.stdout);
-    assert!(top.contains("load 0.5/32"), "{top}");
+    assert!(top.contains("load 0.5/32 threads"), "{top}");
     assert!(top.contains("sessions 0/5"), "{top}");
-    assert!(!top.contains("load 0.5/16"), "{top}");
+    assert!(!top.contains("load 0.5/16 threads"), "{top}");
 }
 
 /// 01M57D3FC5PB5EQ6Y38Y5R2DBB: the lead gets one note when the sign-in

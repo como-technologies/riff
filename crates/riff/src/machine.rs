@@ -1,10 +1,10 @@
 //! The reads of the numbers of this machine, for the placement of
-//! workers: the cores, the clock, the memory and the load.
+//! workers: the hardware threads, the clock, the memory and the load.
 //!
 //! # Design
 //!
 //! Each machine that runs workers tells six numbers
-//! (01M3Q5QE4SQ8VYN2PSF42KB3QJ): its CPU cores, its CPU speed, its
+//! (01M3Q5QE4SQ8VYN2PSF42KB3QJ): its hardware threads, its CPU speed, its
 //! clock now, its memory, the memory that is available now, and its
 //! 1-minute load average. The CPU speed is the cap of the clock, not the
 //! limit of the hardware: a cap or a power profile lowers it
@@ -95,8 +95,9 @@ fn mean(mhz: &[u32]) -> Option<u32> {
 }
 
 /// The numbers of this machine. On Linux, riff reads `/proc` and
-/// `/sys`. A number that riff cannot read gets a safe value: the
-/// cores that Rust sees, [`BASE_MHZ`], 2 GB for each core, all of the
+/// `/sys`, and the hardware threads that Rust sees. A number that riff
+/// cannot read gets a safe value:
+/// [`BASE_MHZ`], 2 GB for each thread, all of the
 /// memory available, and no load. The variable [`MACHINE`] replaces them, in the form of
 /// [`Machine::parse`], so that a test does not depend on the load of
 /// the machine that runs it. For tests, [`CPU_SYS`] names the
@@ -109,10 +110,10 @@ pub fn here() -> Machine {
     let read = |path: &Path| std::fs::read_to_string(path).unwrap_or_default();
     let env_or =
         |key: &str, path: &str| std::env::var_os(key).map_or_else(|| path.into(), PathBuf::from);
-    let cores = std::thread::available_parallelism()
+    let threads = std::thread::available_parallelism()
         .map_or(1, |n| u16::try_from(n.get()).unwrap_or(u16::MAX));
     from_proc(
-        cores,
+        threads,
         &Cpufreq::read(&env_or(CPU_SYS, "/sys/devices/system/cpu")),
         &read(&env_or(crate::limits::CPUINFO, "/proc/cpuinfo")),
         &read(Path::new("/proc/meminfo")),
@@ -148,7 +149,7 @@ pub fn here() -> Machine {
 ///     "MemTotal:       32505856 kB\nMemAvailable:   25165824 kB\n",
 ///     "0.50 0.40 0.30 2/3145 201397\n",
 /// );
-/// assert_eq!(m, Machine { cores: 16, mhz: 3000, now_mhz: 2990, mem_gb: 31, avail_gb: 24, load: 0.5 });
+/// assert_eq!(m, Machine { threads: 16, mhz: 3000, now_mhz: 2990, mem_gb: 31, avail_gb: 24, load: 0.5 });
 ///
 /// // No cap files: the old order, `cpuinfo_max_freq` first.
 /// let hardware = Cpufreq { hardware: "5883197\n".into(), ..Cpufreq::default() };
@@ -158,14 +159,14 @@ pub fn here() -> Machine {
 /// // Then the most `cpu MHz`. The clock now is their mean.
 /// let cpuinfo = "cpu MHz\t: 2400.0\ncpu MHz\t: 3100.5\n";
 /// let m = from_proc(8, &Cpufreq::default(), cpuinfo, "", "");
-/// assert_eq!(m, Machine { cores: 8, mhz: 3100, now_mhz: 2750, mem_gb: 16, avail_gb: 16, load: 0.0 });
+/// assert_eq!(m, Machine { threads: 8, mhz: 3100, now_mhz: 2750, mem_gb: 16, avail_gb: 16, load: 0.0 });
 ///
 /// // Then BASE_MHZ.
 /// let m = from_proc(4, &Cpufreq::default(), "", "", "");
 /// assert_eq!((m.mhz, m.now_mhz), (BASE_MHZ, BASE_MHZ));
 /// ```
 pub fn from_proc(
-    cores: u16,
+    threads: u16,
     freq: &Cpufreq,
     cpuinfo: &str,
     meminfo: &str,
@@ -191,13 +192,13 @@ pub fn from_proc(
             .and_then(|kb| kb.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
             .map(|kb| u32::try_from(kb / 1024 / 1024).unwrap_or(u32::MAX))
     };
-    let mem_gb = gb("MemTotal:").unwrap_or(u32::from(cores) * 2);
+    let mem_gb = gb("MemTotal:").unwrap_or(u32::from(threads) * 2);
     let load = loadavg
         .split_whitespace()
         .next()
         .and_then(|l| l.parse().ok());
     Machine {
-        cores,
+        threads,
         mhz,
         now_mhz: mean(&mhz_of(&freq.now))
             .or_else(|| mean(&seen))
@@ -242,7 +243,7 @@ mod tests {
     #[test]
     fn here_reads_sane_numbers() {
         let m = here();
-        assert!(m.cores >= 1);
+        assert!(m.threads >= 1);
         assert!(m.mhz > 0);
         assert!(m.now_mhz > 0);
         assert!(m.mem_gb > 0);

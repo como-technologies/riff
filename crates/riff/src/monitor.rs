@@ -206,7 +206,7 @@ fn avail_here(machine: &Machine) -> u32 {
     };
     let meminfo = std::fs::read_to_string(dir.join("meminfo")).unwrap_or_default();
     crate::machine::from_proc(
-        machine.cores,
+        machine.threads,
         &crate::machine::Cpufreq::default(),
         "",
         &meminfo,

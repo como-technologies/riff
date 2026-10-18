@@ -1303,7 +1303,7 @@ riff top --host thelio
 Hosts:
 mike@thelio (12s ago)
   daemon 3.1.0 d2ae080  sessions 1/4  floor 8GB
-  load 1.5/32  100GB avail  disk 300GB free (75%)  podman 5.2.1  image here
+  load 1.5/32 threads  100GB avail  disk 300GB free (75%)  podman 5.2.1  image here
   riff on  gh on  claude 1h30m left
   wave como-technologies/riff: started issue-12
   riff-issue-12-1a2b3c4d  issue-12  works  > Bash: just check
@@ -1312,9 +1312,11 @@ mike@thelio (12s ago)
 
 - The first line: the riff build of the daemon, the live sessions
   against the limit, and the floor of free memory.
-- The second line: the load against the cores, the free memory, the
-  disk of the session folders, the version of podman, and the session
-  image of the repository.
+- The second line: the 1-minute load against the hardware threads, the
+  free memory, the disk of the session folders, the version of podman,
+  and the session image of the repository. The hardware threads are
+  the logical CPUs: thelio has 16 cores with 2 threads each, so 32.
+  The load is yellow when it is more than the threads.
 - The third line: the sign-ins on the host. `claude` shows the time
   left. riff and `gh` show `on` or `off`. `?` means that riff cannot
   read it.
@@ -1415,7 +1417,7 @@ brett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim
      working on #88 Split the store
 mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 ├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims
-│  │  load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10
+│  │  load5 9.8 of 12  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10
 │  │  last kill 14:03:12 by systemd-oomd
 │  ├─ 5b1e2a90  #issue-7  worker  busy
 │  │    working on #7 Fix the help
@@ -1500,8 +1502,13 @@ The table of each state, its color and its detail is in
 [The state of a session](#the-state-of-a-session).
 
 - A machine that runs workers: under its host comes a line of
-  numbers. `load 13.2 9.8/8` is the load average of 1 and 5 minutes,
-  and the physical cores. `3000MHz now 2990` is the cap of the clock
+  numbers. `load5 9.8 of 12` is the 5-minute load average and the
+  limit of the monitor: 1.5 times the physical cores (see
+  [Watch the health of a machine](#watch-the-health-of-a-machine)). A
+  host with no monitor numbers shows `load 13.2/16 threads`: the
+  1-minute load against the hardware threads, as in
+  [See the facts of each host](#see-the-facts-of-each-host).
+  `3000MHz now 2990` is the cap of the clock
   and the clock now. `20GB avail/4` is the available memory and the
   floor. `workers 3/4` is the workers and the limit. `pool 10` is the
   tokens of the pool of build jobs, or `jobs 2` the jobs of each
@@ -5330,17 +5337,17 @@ rollout gives neither.
 
 #### The score of a machine
 
-Each machine tells six numbers: its CPU cores, its CPU speed, its
+Each machine tells six numbers: its hardware threads, its CPU speed, its
 clock now, its memory, its available memory and its 1-minute load
 average. The CPU speed is the cap of the clock: the lowest
 `scaling_max_freq` of the cores. A cap or a power profile lowers it.
 The clock now is the mean of `scaling_cur_freq` of the cores. From
 them riff makes a score: the number of workers in tmux that the
-machine runs well. One worker needs one core and 2 GB of memory. A
-core at 3000 MHz counts 1:
+machine runs well. One worker needs one hardware thread and 2 GB of
+memory. A thread at 3000 MHz counts 1:
 
 ```text
-score = min(cores, memory GB / 2) × MHz / 3000
+score = min(threads, memory GB / 2) × MHz / 3000
 ```
 
 The score counts the cap, not the clock now. So a machine with a cap
@@ -5348,7 +5355,7 @@ of 3000 MHz gets fewer workers than the same machine with no cap.
 `riff workers` shows both, for example `cpu 16x3000MHz (now 2990MHz)`.
 
 The score less the workers that run there is the free capacity. A
-machine whose load average is more than its cores, or whose available
+machine whose load average is more than its threads, or whose available
 memory is less than its floor, has no room (see
 [Set the memory that a new worker needs](#set-the-memory-that-a-new-worker-needs)).
 While the rollout is off, the message of a higher limit names the
