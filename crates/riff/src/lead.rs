@@ -162,7 +162,7 @@ pub fn spec(facts: &Facts, repo: &str) -> SessionSpec {
 /// };
 /// let status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![live],
-///     limit: None, waiting: vec![], waves: vec![], jobs: 0,
+///     limit: None, waiting: vec![], waves: vec![], jobs: 0, mcp: vec![],
 /// };
 /// assert!(riff::lead::runs(&status, "riff-lead-o-r"));
 /// assert!(!riff::lead::runs(&status, "riff-lead-o-other"));

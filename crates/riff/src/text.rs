@@ -6058,12 +6058,16 @@ pub const DAEMON_NO_HELLO: &str =
 ///     waiting: vec![],
 ///     waves: vec![],
 ///     jobs: 0,
+///     mcp: vec![],
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
 /// assert!(text.contains("Sessions: none.\n"));
 /// // No key, no riff of peers and no peer link (01M53NGW6F5HP1DZ9QRGP50MGT).
 /// assert!(!text.contains("key") && !text.contains("Its riff") && !text.contains("peer"), "{text}");
+/// // An old daemon does not say its MCP servers.
+/// assert!(!text.contains("MCP"), "{text}");
+/// status.mcp = vec!["riff".into(), "docs".into()];
 /// status.sessions.push(Live {
 ///     name: "riff-issue-12-1a2b3c4d".into(),
 ///     session: "1a2b3c4d-0000".into(),
@@ -6080,6 +6084,7 @@ pub const DAEMON_NO_HELLO: &str =
 ///     "  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m  works: > Bash: just check\n"
 /// ));
 /// assert!(text.contains("The limit of this host: 3 live sessions, and 8 GB"));
+/// assert!(text.contains("The MCP servers of each new session: riff, docs.\n"));
 /// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
 /// ```
@@ -6094,6 +6099,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     );
     if let Some(limit) = &status.limit {
         let _ = writeln!(out, "{}", daemon_limit(limit));
+    }
+    if !status.mcp.is_empty() {
+        let _ = writeln!(out, "{}", session_mcp(&status.mcp));
     }
     if status.sessions.is_empty() {
         out.push_str("Sessions: none.\n");
@@ -6667,6 +6675,7 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 ///     waiting: vec![],
 ///     waves: vec![],
 ///     jobs: 0,
+///     mcp: vec![],
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");
@@ -6794,6 +6803,65 @@ pub fn daemon_cache(size: &str, now: Option<u64>) -> String {
 /// `riff daemon cache --clear` emptied the volume.
 pub const DAEMON_CACHE_CLEARED: &str =
     "riff deleted each file of the compile cache of the container sessions.";
+
+/// The MCP servers of each new container session of the host, as
+/// `riff daemon mcp` and `riff daemon status` show them
+/// (01M57840K7SNPS243CYMYNYVFX).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::session_mcp(&["riff".into(), "docs".into()]),
+///     "The MCP servers of each new session: riff, docs.\n\
+///      Change them with: riff daemon mcp add NAME, or riff daemon mcp remove NAME."
+/// );
+/// ```
+pub fn session_mcp(names: &[String]) -> String {
+    format!(
+        "The MCP servers of each new session: {}.\n\
+         Change them with: riff daemon mcp add NAME, or riff daemon mcp remove NAME.",
+        names.join(", ")
+    )
+}
+
+/// The refusal of `riff daemon mcp remove riff`.
+pub const SESSION_MCP_KEEPS_RIFF: &str =
+    "a session needs the riff MCP server, so riff stays in each session";
+
+/// The refusal of `riff daemon mcp add NAME` for a name that the MCP
+/// config of the person does not have (01M57840NN08NA4PH0YR81PDGT).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::session_mcp_unknown("unifi"),
+///     "no MCP server unifi in your Claude Code config. `claude mcp list` shows the names."
+/// );
+/// ```
+pub fn session_mcp_unknown(name: &str) -> String {
+    format!("no MCP server {name} in your Claude Code config. `claude mcp list` shows the names.")
+}
+
+/// The refusal of `riff daemon mcp add NAME` for a stdio server whose
+/// program is not in the session image (01M57840NN08NA4PH0YR81PDGT).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::session_mcp_no_program("npm", "npx"),
+///     "riff refuses the MCP server npm: it runs npx, and the session image has no npx. \
+///      Add npx to the session image, or use a server with a URL."
+/// );
+/// ```
+pub fn session_mcp_no_program(name: &str, program: &str) -> String {
+    format!(
+        "riff refuses the MCP server {name}: it runs {program}, and the session image has no \
+         {program}. Add {program} to the session image, or use a server with a URL."
+    )
+}
+
+/// The warning of the daemon when it cannot read the MCP servers of the
+/// sessions: the session starts with riff only.
+pub fn session_mcp_unread(error: &str) -> String {
+    format!("riff: {error}. The session starts with the riff MCP server only.")
+}
 
 /// The first word of a wave.
 pub fn wave_starts() -> String {

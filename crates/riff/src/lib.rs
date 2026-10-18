@@ -135,6 +135,7 @@ pub mod sccache;
 pub mod screen;
 pub mod service;
 pub mod session_image;
+pub mod session_mcp;
 pub mod session_relay;
 pub mod settings;
 pub mod smoke;

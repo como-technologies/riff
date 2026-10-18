@@ -5803,6 +5803,23 @@ part when they merge.
   volume. It works while sessions run. Each session has
   `SCCACHE_IGNORE_SERVER_IO_ERROR=1`, and a build compiles each file
   that the clear deleted.
+- **01M57840K7SNPS243CYMYNYVFX** `riff daemon mcp` shows the MCP
+  servers of each new container session of the host. The default is
+  `riff` only. `riff daemon mcp add NAME` copies the server NAME from
+  the MCP config of the person into `mcp.json` in the folder of the
+  daemon, readable only by the person. `riff daemon mcp remove NAME`
+  takes it out. `riff` always stays. `riff daemon status` shows the
+  list.
+- **01M57840NN08NA4PH0YR81PDGT** `riff daemon mcp add NAME` refuses a
+  name that the MCP config of the person does not have. It refuses a
+  stdio server whose program is not in the session image of the
+  repository of the current folder, and names the program.
+- **01M57840R2HNXGP9B2ENSKTWD3** The daemon gives each new container
+  session the servers of `mcp.json` in a variable whose value is in no
+  spec and in no command line. The relay adds them to the MCP config of
+  `claude`, beside `riff`, and gives `claude` no such variable. Each
+  value of the `env` and the `headers` of a server is a secret that no
+  event shows.
 - **01M4ZV3B6J89KJQ0F14YWTZMJQ** `riff wave run` in a clone asks the
   daemon to run the current wave of the repository of the clone. The
   daemon keeps each wave in `waves.json` in its folder, with the main

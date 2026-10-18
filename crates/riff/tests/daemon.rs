@@ -586,6 +586,81 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
         .unwrap();
 }
 
+/// `riff daemon mcp` shows the MCP servers of each new session of the
+/// host, and changes them. riff stays. `riff daemon status` shows them
+/// (01M57840K7SNPS243CYMYNYVFX). riff refuses a name that the config
+/// of the person does not have, and a stdio server that it cannot find
+/// in the session image (01M57840NN08NA4PH0YR81PDGT).
+#[tokio::test]
+async fn riff_daemon_mcp_shows_and_changes_the_mcp_servers_of_the_sessions() {
+    let here = Here::new();
+    let config = here.env.home().join("claude");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join(".claude.json"),
+        r#"{"mcpServers": {
+            "docs": {"type": "http", "url": "https://d", "headers": {"Authorization": "Bearer t1"}},
+            "npm": {"command": "riff-no-such-program"}
+        }}"#,
+    )
+    .unwrap();
+    // No git repository: riff cannot find the session image.
+    let folder = tempfile::tempdir().unwrap();
+    let mcp = |args: &[&str]| {
+        let mut all = vec!["daemon", "mcp"];
+        all.extend(args);
+        let mut cmd = here.command(false, &all);
+        cmd.env("CLAUDE_CONFIG_DIR", &config)
+            .current_dir(folder.path());
+        tokio::task::spawn_blocking(move || cmd.output().unwrap())
+    };
+    let only = "The MCP servers of each new session: riff.\n\
+                Change them with: riff daemon mcp add NAME, or riff daemon mcp remove NAME.\n";
+    let out = mcp(&[]).await.unwrap();
+    assert_eq!(text(&out.stdout), only);
+
+    let out = mcp(&["add", "docs"]).await.unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).starts_with("The MCP servers of each new session: riff, docs.\n"));
+    let file = here.env.riff_home().join("daemon/mcp.json");
+    let saved = std::fs::read_to_string(&file).unwrap();
+    assert!(saved.contains("https://d"), "{saved}");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    let out = mcp(&["add", "nope"]).await.unwrap();
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stderr).contains("no MCP server nope"),
+        "{}",
+        text(&out.stderr)
+    );
+    let out = mcp(&["add", "npm"]).await.unwrap();
+    assert!(!out.status.success());
+    let out = mcp(&["remove", "riff"]).await.unwrap();
+    assert!(!out.status.success());
+    assert!(text(&out.stderr).contains(riff::text::SESSION_MCP_KEEPS_RIFF));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), saved);
+
+    let mut daemon = here.daemon("daemon.out").await;
+    let out = here.run(false, &["daemon", "status"]).await;
+    let status = text(&out.stdout);
+    assert!(
+        status.contains("The MCP servers of each new session: riff, docs.\n"),
+        "{status}"
+    );
+    term(daemon.id());
+    tokio::task::spawn_blocking(move || daemon.wait().unwrap())
+        .await
+        .unwrap();
+
+    let out = mcp(&["remove", "docs"]).await.unwrap();
+    assert_eq!(text(&out.stdout), only);
+}
+
 /// A fake `gh` for the sweep of the folders of the sessions. It logs
 /// `GH_REPO` and each call to `bin/gh.log`. On the forge:
 ///

@@ -1017,6 +1017,9 @@ rm -rf ~/.local/share/riff/sessions/issue-735-7788e301
   refuses `claim`, `release`, `leave`, `move` and the tools of the
   lead. `riff run` or the daemon does the claim, the release and the
   verify request.
+- The other MCP servers that you chose for the sessions of the host.
+  See
+  [Choose the MCP servers of the container sessions](#choose-the-mcp-servers-of-the-container-sessions).
 
 A commit of the session has your git identity, no signature, and a
 `Riff-Session:` trailer. The table of what sessions share is on the
@@ -1035,6 +1038,45 @@ flowchart LR
     S["a session of the daemon: post, read, tell, status"] --> D["the riff daemon"]
     D -- "as the worker session of the item" --> R["your riff-server: the lead of your user sees it"]
     R -- "a message to the session" --> W["riff relay watch of that session wakes"]
+```
+
+### Choose the MCP servers of the container sessions
+
+Each container session of the host loads only the `riff` MCP server.
+To give each new session one more server, name a server of your Claude
+Code config. `claude mcp list` shows the names. Run `add` in a clone
+of the repository: riff looks for the program of a stdio server in the
+session image of that repository, and refuses the server when the
+image does not have it. A server with a URL needs no program.
+
+```sh
+riff daemon mcp add docs
+```
+
+To see the servers:
+
+```sh
+riff daemon mcp
+```
+
+To take a server away:
+
+```sh
+riff daemon mcp remove docs
+```
+
+`riff` always stays. riff copies the config of the server into
+`mcp.json` in the folder of the daemon, which only you can read. After
+a change of the server in your Claude Code config, add it again. A
+session that runs keeps its servers. `riff daemon status` shows the
+list. A value of the `env` or the `headers` of a server is a secret:
+no event of the session shows it.
+
+```mermaid
+flowchart LR
+    C["your Claude Code config"] -- "riff daemon mcp add NAME" --> F[("mcp.json")]
+    F -- "each new session" --> D["the riff daemon"]
+    D --> R["riff relay: claude gets riff and NAME"]
 ```
 
 ## Let riff run the wave
