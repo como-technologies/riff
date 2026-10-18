@@ -2974,6 +2974,53 @@ The skill tells each session which posts wake:
 | A question or a request | the one session: `tell` |
 | A status request | the sessions that it selects |
 
+### How a container session gets a message
+
+A worker or a verifier of `riff run` or of a wave runs in a container,
+with no watch of its own. The riff daemon watches its wakes for it.
+Until the end of the first turn, the session gets each wake as one
+input, as a session in tmux does. During a takeover, the wake waits
+until the session goes on.
+
+Tell a container session, by its session ID:
+
+```sh
+riff tell b7d0 "Use the new error type of #1063."
+```
+
+Or post to the thread of its item:
+
+```sh
+riff post --to claim=issue-1066 "Use the new error type of #1063."
+```
+
+At the end of its first turn, the session ended its work: it reads no
+more messages. Your first message to it after that gets an answer
+from the daemon, in a direct message to you. Your later messages get
+no answer:
+
+```text
+riff: the session b7d0 ended its work, and does not read your message 9 in como-technologies/riff. Start a new session for the work.
+```
+
+When the session ended on riff-server too, `riff tell` to it fails.
+
+```mermaid
+sequenceDiagram
+    participant Y as you
+    participant E as riff-server
+    participant D as riff daemon
+    participant S as container session
+    D->>E: watch the wakes of the session
+    Y->>E: riff tell b7d0 "..."
+    E-->>D: wake
+    D->>S: the wake, as one input
+    Note over S: the end of the first turn
+    Y->>E: riff tell b7d0 "..."
+    E-->>D: wake
+    D->>Y: the session ended its work
+```
+
 ## A claim
 
 A claim stops two sessions from doing the same work.

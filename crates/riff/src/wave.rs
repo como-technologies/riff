@@ -112,7 +112,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri, ThreadName};
-use riff_core::wire::{HoldInfo, Kind, PullState, RiffState, StartReason, WORKER_ALIVE_EVERY};
+use riff_core::wire::{
+    HoldInfo, Kind, PullState, RiffState, StartReason, WORKER_ALIVE_EVERY, Wake,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -498,6 +500,19 @@ pub trait World: Send + Sync {
     /// Waits for the next wake of the session of `record` on riff-server,
     /// and gives its line, as `riff watch --once` prints it.
     fn wake<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<String>>;
+
+    /// Sends each wake of the session of `record` on riff-server to `to`,
+    /// until `to` closes: the wakes of a worker and of a verifier
+    /// ([`crate::daemon`], 01M5792DP1KZR2XGSCMRWDHCGZ).
+    fn wakes<'a>(
+        &'a self,
+        record: &'a Record,
+        to: mpsc::UnboundedSender<Wake>,
+    ) -> BoxFuture<'a, ()>;
+
+    /// Tells the sender of `wake` that the session of `record` ended its
+    /// work and does not read the message (01M5792DRA12JD032F3H8JVC0Z).
+    fn refuse<'a>(&'a self, record: &'a Record, wake: &'a Wake) -> BoxFuture<'a, ()>;
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -1332,6 +1347,49 @@ impl World for Live {
         })
     }
 
+    fn wakes<'a>(
+        &'a self,
+        record: &'a Record,
+        to: mpsc::UnboundedSender<Wake>,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            use futures::StreamExt;
+            let api = match Api::new(&record.server).signed_in(Some(&record.live.session)) {
+                Ok(api) => api,
+                Err(e) => {
+                    eprintln!("riff daemon: {}: {e:#}", record.live.name);
+                    return;
+                }
+            };
+            let me = &record.me;
+            let wakes = api::follow(|| api.watch(me), WAKE_RETRY);
+            tokio::pin!(wakes);
+            while let Some(wake) = wakes.next().await {
+                match wake {
+                    Ok(wake) => {
+                        if to.send(wake).is_err() {
+                            return;
+                        }
+                    }
+                    Err(e) => eprintln!("riff daemon: {}: {e:#}", record.live.name),
+                }
+            }
+        })
+    }
+
+    fn refuse<'a>(&'a self, record: &'a Record, wake: &'a Wake) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let body = text::wake_refused(&record.live.session, wake);
+            let told = async {
+                let api = Api::new(&record.server).signed_in(Some(&record.live.session))?;
+                api.tell(&record.me, &wake.from.to_string(), &body).await
+            };
+            if let Err(e) = told.await {
+                eprintln!("riff daemon: {}: {e:#}", record.live.name);
+            }
+        })
+    }
+
     fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             if lock(&self.told).get(&wave.repo).is_some_and(|t| t == body) {
@@ -1584,6 +1642,14 @@ mod tests {
 
         fn wake<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, Result<String>> {
             Box::pin(std::future::pending())
+        }
+
+        fn wakes<'a>(&'a self, _: &'a Record, _: mpsc::UnboundedSender<Wake>) -> BoxFuture<'a, ()> {
+            Box::pin(std::future::pending())
+        }
+
+        fn refuse<'a>(&'a self, _: &'a Record, _: &'a Wake) -> BoxFuture<'a, ()> {
+            Box::pin(async {})
         }
     }
 

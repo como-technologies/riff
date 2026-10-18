@@ -321,6 +321,39 @@ pub fn wake_line(wake: &Wake) -> String {
     }
 }
 
+/// The direct message of the daemon to the sender of `wake`, when the
+/// input of the container session `session` closed: the session ended
+/// its work and does not read the message (01M5792DRA12JD032F3H8JVC0Z).
+///
+/// ```
+/// use riff_core::wire::{Kind, Wake};
+///
+/// let wake = Wake {
+///     thread: "como-technologies/riff".parse()?,
+///     seq: 7,
+///     from: "riff://mike@pangolin/como-technologies/riff?session=a6cf#lead".parse()?,
+///     kind: Kind::Message,
+/// };
+/// assert_eq!(
+///     riff::text::wake_refused("b7d0", &wake),
+///     "riff: the session b7d0 ended its work, and does not read your message 7 in \
+///      como-technologies/riff. Start a new session for the work."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn wake_refused(session: &str, wake: &Wake) -> String {
+    let place = if wake.thread.is_direct() {
+        "a direct message".to_owned()
+    } else {
+        wake.thread.to_string()
+    };
+    format!(
+        "riff: the session {session} ended its work, and does not read your message {} in \
+         {place}. Start a new session for the work.",
+        wake.seq
+    )
+}
+
 /// The answer to a claim. When another session has the item, or a lead
 /// holds it, it is the text of the server, which names the holder or
 /// the hold (01M3WRD9JBQMNN96TXJH8EAJ3W, 01M43GSGPJ69TPWPA4935WR8RW). A
