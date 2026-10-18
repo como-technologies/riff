@@ -3885,6 +3885,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   worker when you have work for it. The server stops idle workers past
   the limit. The skill does not say that workers wait idle until the
   lead ends them. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+- **01M588G6V79FPSFY6AZGW7GTBN** The skill and the book say that the
+  limit of idle workers is a setting of the riff, by default 1 on each
+  host, and that `riff workers idle` shows it. They name no fixed
+  number as the limit.
 - **01M3Q5A1483TGCQYB1Q9CCP5BP** The book has the how-to "The server
   stops idle workers", with `riff workers idle` in a `sh` block, and
   the how-to "Stop one worker on another machine". Superseded by 3.0
