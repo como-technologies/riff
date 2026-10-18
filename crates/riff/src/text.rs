@@ -8445,7 +8445,7 @@ mod tests {
             uri: uri.parse().unwrap(),
             live: true,
             idle_secs: 0,
-            status: Some(StatusInfo {
+            status: Some(riff_core::wire::StatusInfo {
                 status,
                 age_secs: 25,
                 stale: false,
@@ -8485,7 +8485,7 @@ mod tests {
         // The lead comes first: a lead with the status of a daemon is
         // the lead.
         let lead = SessionInfo {
-            uri: daemon.uri.with_lead(true),
+            uri: daemon.uri.clone().with_lead(true),
             ..daemon.clone()
         };
         assert_eq!(SessionKind::of(&lead), Some(SessionKind::Lead));

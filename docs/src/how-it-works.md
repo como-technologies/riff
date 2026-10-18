@@ -1475,9 +1475,9 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 - A host line also counts each kind of session, before the states:
   `leads`, `containers`, `workers`, `hosts` and `daemons`. A session
   counts once, as the first kind that matches. A session with none of
-  these tags has no kind. In the example, thelio has 5 sessions: 2 leads, 1
-  host, and 2 sessions with no kind. After the kinds, a host line
-  counts the sessions that run an old riff: `1 to update`. See
+  these tags has no kind. In the example, thelio has 5 sessions: 2
+  leads, 1 host, and 2 sessions with no kind. After the kinds, a host
+  line counts the sessions that run an old riff: `1 to update`. See
   [Update a session that runs an old riff](#update-a-session-that-runs-an-old-riff).
 - A line with only one line under it takes that line, after a `›`. In
   the example, brett has one host and one repository, so the person,
