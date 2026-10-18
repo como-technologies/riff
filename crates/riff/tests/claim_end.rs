@@ -13,7 +13,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 
 use isolated::Isolated;
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Freed, RiffState, StartReason, Wake};
 use riff_state::owner::server_uri;

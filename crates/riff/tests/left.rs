@@ -11,9 +11,9 @@ use std::process::{Command as Git, Output, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use riff::api::{Api, Left};
 use riff::mcp::Tools;
 use riff::rollout::{Env, Live};
+use riff_client::api::{Api, Left};
 use riff_core::name::SessionUri;
 use riff_core::wire::RiffState;
 use riff_server::Service;
@@ -203,7 +203,10 @@ async fn each_entry(server: &str, dir: &Path) {
         let out = riff(server, dir, Some(ID), "", args).await;
         assert!(!out.status.success(), "{args:?}: {out:?}");
         let err = stderr(&out);
-        assert!(err.contains(riff::text::LEFT_COMMAND), "{args:?}: {err}");
+        assert!(
+            err.contains(riff_client::text::LEFT_COMMAND),
+            "{args:?}: {err}"
+        );
     }
     // These commands ask the server before the check of the leave in
     // `main`. Only the client stops them.
@@ -235,7 +238,7 @@ async fn a_session_that_left_sends_no_request_from_any_entry_until_it_joins() {
 
     let api = client(&server, dir.path());
     api.leave_riff(&me()).await.unwrap();
-    assert!(riff::local::left(&marks(dir.path()), ID));
+    assert!(riff_client::marks::left(&marks(dir.path()), ID));
     assert!(!who(&server, dir.path()).await.contains(ID));
 
     calls.lock().unwrap().clear();
@@ -257,7 +260,7 @@ async fn a_session_that_left_sends_no_request_from_any_entry_until_it_joins() {
     // A join brings the session back, with the same session ID.
     let api = client(&server, dir.path());
     api.join_riff(&me(), false).await.unwrap();
-    assert!(!riff::local::left(&marks(dir.path()), ID));
+    assert!(!riff_client::marks::left(&marks(dir.path()), ID));
     assert!(who(&server, dir.path()).await.contains(ID));
     let input = format!(r#"{{"session_id":"{ID}"}}"#);
     let line = riff(&server, dir.path(), None, &input, &["statusline"]).await;
@@ -347,5 +350,5 @@ async fn a_leave_with_no_server_keeps_no_mark() {
         .leave_riff(&me())
         .await
         .unwrap_err();
-    assert!(error.to_string().contains(riff::text::LEAVE_NO_MARK));
+    assert!(error.to_string().contains(riff_client::text::LEAVE_NO_MARK));
 }

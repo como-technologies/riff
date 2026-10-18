@@ -7443,6 +7443,14 @@ that builds it merges.
   the store of the tokens and of the device key. The socket of the riff
   daemon stays in the crate `riff`. A terminal UI gives the container
   sessions of its daemon to the sessions model of `riff-client`.
+- **01M56S4M0BSV0KP825XSDNNXNX** A UI gives its platform parts to
+  `riff-client` one time, at its start. The store of the tokens and of
+  the device key is a store of `keyring-core`. A process that gives no
+  platform gets the defaults: no OS keyring, no local folder, and plain
+  lines on stderr.
+- **01M56S4M2NMATA3XZAMPSRAW8X** The browser step of `riff login` (the
+  local port of the OAuth redirect) stays in the crate `riff`.
+  `riff-client` swaps the ID token of the provider for a riff sign-in.
 - **01M54216VVY6072F2X2PM2Z0DQ** The CLI, the TUI, the MCP server and
   each graphical UI use `riff-client` for each call to riff-server.
 - **01M54216YKW1X70KDV4TQCQJTE** The graphical UIs (the phone app, the

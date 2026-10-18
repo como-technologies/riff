@@ -7,14 +7,14 @@ use anyhow::{Context, Result};
 use chrono::TimeZone;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
-use riff::api::{self, Api, DEFAULT_SERVER, PauseScope, Reconnect, follow};
-use riff::link::STREAM_RETRY;
 use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
     activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, lifecycle,
     local, login, mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view,
     worker,
 };
+use riff_client::api::{self, Api, DEFAULT_SERVER, PauseScope, follow};
+use riff_client::link::STREAM_RETRY;
 use riff_core::build::{Build, Mismatch};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
@@ -1618,6 +1618,7 @@ enum Tool {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    riff::platform::install();
     let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
     use_color(cli.color);
@@ -1992,12 +1993,12 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         Command::Logout { all: false, .. } => {
-            let had = login::logout(api.base())?;
+            let had = riff_client::login::logout(api.base())?;
             println!("{}", text::signed_out(had, api.base()));
             return Ok(());
         }
         Command::Logout { all: true, user } => {
-            let done = login::logout_all(&api, user.as_deref()).await?;
+            let done = riff_client::login::logout_all(&api, user.as_deref()).await?;
             println!("{}", text::revoked(&done));
             return Ok(());
         }
@@ -2107,7 +2108,7 @@ async fn main() -> Result<()> {
                 println!("{}", text::WATCH_LEFT);
                 return Ok(());
             }
-            _ => anyhow::bail!(text::LEFT_COMMAND),
+            _ => anyhow::bail!(riff_client::text::LEFT_COMMAND),
         }
     }
     let api = api.signed_in(me.who().session())?;
@@ -3643,7 +3644,13 @@ async fn statusline(server: &str) -> String {
     let dir = local::dir();
     let now = riff::activity::now_ms();
     let kept = dir.as_deref().and_then(|dir| {
-        local::kept_statusline(dir, &id, riff::link::base_of(server), now, STATUSLINE_KEEP)
+        local::kept_statusline(
+            dir,
+            &id,
+            riff_client::link::base_of(server),
+            now,
+            STATUSLINE_KEEP,
+        )
     });
     let (mut line, build) = match kept {
         Some(kept) => (kept.line, kept.build.and_then(|b| b.parse().ok())),
@@ -3680,14 +3687,14 @@ async fn statusline_of(
     // (01M3NJCWDN5APKZ3Z53XQR8P0B).
     let build = match &found {
         Ok(Err(e)) => e.downcast_ref::<Mismatch>().and_then(|m| m.server.clone()),
-        _ => riff::link::server_build(),
+        _ => riff_client::link::server_build(),
     };
     let answered = matches!(found, Ok(Ok(_)));
     let info = found.ok().and_then(Result::ok).flatten();
     let line = text::statusline(id, info.as_ref());
     if let Some(dir) = dir.filter(|_| answered) {
         let kept = local::Kept {
-            server: riff::link::base_of(server).to_owned(),
+            server: riff_client::link::base_of(server).to_owned(),
             at_ms: now,
             build: build.as_ref().map(Build::to_string),
             line: line.clone(),
@@ -3858,7 +3865,7 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
     let shown = std::sync::Arc::new(std::sync::Mutex::new(Shown::new(Start::New)));
     let mut stream = Box::pin(follow_thread(api, me, thread, shown, STREAM_RETRY));
-    let mut link = Reconnect::default();
+    let mut link = riff::view::Reconnect::default();
     let mut last_day = None;
     while let Some(item) = stream.next().await {
         if let Some(line) = link.line(&item) {
@@ -3988,7 +3995,7 @@ async fn draw_top(
         }
         let now = chrono::Local::now();
         let fault = failed.map(|e| text::top_fault(&e.to_string(), api.base(), at, &now));
-        let server = riff::link::server_build();
+        let server = riff_client::link::server_build();
         let machines = riff::top::machines(&who.sessions, machine_here(me));
         let top = riff::top::Top {
             pauses,

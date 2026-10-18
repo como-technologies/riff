@@ -88,7 +88,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use riff_core::name::SessionUri;
 
-use crate::api::Api;
+use riff_client::api::Api;
 
 /// The mark of the pane with `riff tail`.
 pub const TAIL: &str = "tail";

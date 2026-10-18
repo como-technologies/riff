@@ -67,10 +67,10 @@ use riff_core::name::SessionUri;
 use riff_core::selector::Selector;
 use riff_core::wire::Kind;
 
-use crate::api::Api;
 use crate::disk::Disk;
 use crate::worktrees::{self, Tree};
 use crate::{identity, text};
+use riff_client::api::Api;
 
 /// The time between two tidies (01M41A118QPQKFAAHGQFFX4F3B).
 pub const EVERY: Duration = Duration::from_secs(600);

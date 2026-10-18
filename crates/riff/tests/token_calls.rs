@@ -9,8 +9,8 @@ use crate::common;
 use std::sync::{Arc, Mutex};
 
 use common::{CLIENT, FakeProvider, browser};
-use riff::api::Api;
 use riff::login;
+use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use riff_server::Service;
 use riff_server::auth::{Config, TOKEN_PATH};
@@ -88,20 +88,34 @@ async fn a_session_does_not_repeat_a_refused_refresh() {
     service.tokens().revoke_user("ada");
     take(&replies);
     let error = client.who(&me, false).await.unwrap_err();
-    assert!(format!("{error:#}").contains(login::ENDED), "{error:#}");
+    assert!(
+        format!("{error:#}").contains(riff_client::login::ENDED),
+        "{error:#}"
+    );
     assert_eq!(take(&replies), [400, 400]);
-    assert!(login::stored(api.base()).unwrap().unwrap().ended());
+    assert!(
+        riff_client::login::stored(api.base())
+            .unwrap()
+            .unwrap()
+            .ended()
+    );
 
     for _ in 0..10 {
         let error = client.who(&me, false).await.unwrap_err();
-        assert!(format!("{error:#}").contains(login::ENDED), "{error:#}");
+        assert!(
+            format!("{error:#}").contains(riff_client::login::ENDED),
+            "{error:#}"
+        );
     }
     assert_eq!(take(&replies), [0u16; 0]);
 
     // A new process of the machine sends no token call.
     let other = api.clone().signed_in(Some("t2")).unwrap();
     let error = other.register(&session("t2")).await.unwrap_err();
-    assert!(format!("{error:#}").contains(login::ENDED), "{error:#}");
+    assert!(
+        format!("{error:#}").contains(riff_client::login::ENDED),
+        "{error:#}"
+    );
     assert_eq!(take(&replies), [0u16; 0]);
 
     login::login(&api, browser).await.unwrap();
@@ -173,19 +187,28 @@ async fn a_person_does_not_repeat_a_refused_refresh() {
     service.tokens().revoke_user("ada");
     take(&replies);
     let error = person.members().await.unwrap_err();
-    assert!(format!("{error:#}").contains(login::ENDED), "{error:#}");
+    assert!(
+        format!("{error:#}").contains(riff_client::login::ENDED),
+        "{error:#}"
+    );
     assert_eq!(take(&replies), [400]);
 
     for _ in 0..10 {
         let error = person.members().await.unwrap_err();
-        assert!(format!("{error:#}").contains(login::ENDED), "{error:#}");
+        assert!(
+            format!("{error:#}").contains(riff_client::login::ENDED),
+            "{error:#}"
+        );
     }
-    let error = login::access_token(&api).await.unwrap_err();
-    assert_eq!(error.to_string(), login::ENDED);
+    let error = riff_client::login::access_token(&api).await.unwrap_err();
+    assert_eq!(error.to_string(), riff_client::login::ENDED);
     assert_eq!(take(&replies), [0u16; 0]);
 
     // The sign-in keeps its user, so `riff` still knows who the person is.
-    assert_eq!(login::user(api.base()).unwrap().as_deref(), Some("ada"));
+    assert_eq!(
+        riff_client::login::user(api.base()).unwrap().as_deref(),
+        Some("ada")
+    );
 
     login::login(&api, browser).await.unwrap();
     person.members().await.unwrap();
@@ -197,7 +220,7 @@ async fn a_person_does_not_repeat_a_refused_refresh() {
 async fn an_error_that_is_no_refusal_keeps_the_sign_in() {
     let (_service, api, _replies) = start().await;
     let sign_in = login::login(&api, browser).await.unwrap();
-    let expired = login::SignIn {
+    let expired = riff_client::login::SignIn {
         expires_at: 0,
         ..sign_in
     };
@@ -206,9 +229,11 @@ async fn an_error_that_is_no_refusal_keeps_the_sign_in() {
     let held = tokio::net::TcpSocket::new_v4().unwrap();
     held.bind("127.0.0.1:0".parse().unwrap()).unwrap();
     let down = format!("http://{}", held.local_addr().unwrap());
-    login::store(&down, &expired).unwrap();
-    login::access_token(&Api::new(&down)).await.unwrap_err();
-    assert_eq!(login::stored(&down).unwrap(), Some(expired));
+    riff_client::login::store(&down, &expired).unwrap();
+    riff_client::login::access_token(&Api::new(&down))
+        .await
+        .unwrap_err();
+    assert_eq!(riff_client::login::stored(&down).unwrap(), Some(expired));
 }
 
 /// `riff connect claude` signs in again when the sign-in ended.
@@ -221,7 +246,12 @@ async fn ensure_signs_in_again_after_the_sign_in_ended() {
     service.tokens().revoke_user("ada");
     let person = api.clone().signed_in(None).unwrap();
     person.members().await.unwrap_err();
-    assert!(login::stored(api.base()).unwrap().unwrap().ended());
+    assert!(
+        riff_client::login::stored(api.base())
+            .unwrap()
+            .unwrap()
+            .ended()
+    );
 
     let fresh = login::ensure(&api, browser).await.unwrap().unwrap();
     assert!(!fresh.ended());

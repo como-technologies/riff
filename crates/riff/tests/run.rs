@@ -1521,8 +1521,8 @@ async fn riff_run_sends_the_verify_request_and_the_release_when_the_server_answe
     let child = machine
         .command(None, &["run", "issue-12", "--image", IMAGE])
         .env("RIFF_SERVER", &proxy.url)
-        .env(riff::link::BUDGET_VAR, "1000")
-        .env(riff::link::TRY_VAR, "300")
+        .env(riff_client::link::BUDGET_VAR, "1000")
+        .env(riff_client::link::TRY_VAR, "300")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

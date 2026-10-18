@@ -41,7 +41,8 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use riff_core::name::{Place, Repo, SessionUri, Who, sanitize};
 
-use crate::{local, login};
+use crate::local;
+use riff_client::login;
 
 /// The environment variables that hold the session ID, in order.
 pub const SESSION_VARS: [&str; 2] = ["RIFF_SESSION", "CLAUDE_CODE_SESSION_ID"];

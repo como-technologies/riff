@@ -14,7 +14,7 @@ use std::process::{Command, Output};
 use crate::book;
 
 use isolated::Isolated;
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, Who};
 
 /// The folder of the settings files of the repository.

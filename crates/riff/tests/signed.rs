@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
-use riff::api::Api;
-use riff::login::{self, SignIn};
 use riff::text;
+use riff_client::api::Api;
+use riff_client::login::{self, SignIn};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -48,7 +48,7 @@ async fn start_on(store: Arc<dyn Store>) -> (Service, Api) {
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let api = Api::new(&url);
-    let jkt = riff::device::key(api.base()).unwrap().thumbprint();
+    let jkt = riff_client::device::key(api.base()).unwrap().thumbprint();
     // The sign-in of a person, as the provider does it: the log knows
     // the person, so the sign-in and its key stay after a restart.
     let pair = service
@@ -227,7 +227,7 @@ async fn a_call_does_not_wait_on_the_token_of_a_watch_that_its_task_does_not_pol
     let (_service, api) = start_on(Arc::new(Memory::default())).await;
     let me = uri(OTHER);
     let client = api.clone().signed_in(me.who().session()).unwrap();
-    let mut wakes = Box::pin(riff::api::follow(
+    let mut wakes = Box::pin(riff_client::api::follow(
         || client.watch(&me),
         Duration::from_secs(5),
     ));

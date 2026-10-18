@@ -2311,7 +2311,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// host and no claim ([`crate::mcp::CONTAINER_TOOLS`],
     /// 01M4ZV3B6T2KB09WJ59F07HXET).
     pub fn tools_of(&self, record: &Record) -> Result<crate::mcp::Tools> {
-        let api = crate::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
+        let api =
+            riff_client::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
         let tools = crate::mcp::Tools::new(api, record.me.clone()).as_worker(!record.terminal);
         Ok(if record.terminal {
             tools.in_lead_container()
@@ -2920,7 +2921,7 @@ mod tests {
         world: Option<Arc<dyn World>>,
     ) -> Served {
         let listener = listen(dir).await.unwrap();
-        crate::secrets::mock_store();
+        riff_client::secrets::mock_store();
         let mut daemon = Daemon::new(fake.clone(), dir.to_owned())
             .unwrap()
             .with_quiet(quiet)
@@ -3677,7 +3678,7 @@ mod tests {
         // A daemon binds its own binary: the test binary, which is not
         // static with glibc.
         let root = tempfile::tempdir().unwrap();
-        crate::secrets::mock_store();
+        riff_client::secrets::mock_store();
         let own = Daemon::new(Fake::default(), dir_in(root.path())).unwrap();
         assert_eq!(own.relay_bin, own_binary().unwrap());
         if cfg!(target_env = "gnu") && !crate::release::takes_dynamic() {
@@ -3743,7 +3744,7 @@ mod tests {
 
         let fake = Fake::default().with_image(IMAGE).with_no_answer();
         let listener = listen(&dir).await.unwrap();
-        crate::secrets::mock_store();
+        riff_client::secrets::mock_store();
         let daemon = Arc::new(Daemon::new(fake, dir.clone()).unwrap());
         daemon.recover().await;
         tokio::spawn(daemon.serve(listener, std::future::pending()));
@@ -3825,7 +3826,7 @@ mod tests {
         }
 
         let listener = listen(&dir).await.unwrap();
-        crate::secrets::mock_store();
+        riff_client::secrets::mock_store();
         let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()).unwrap());
         daemon.recover().await;
         tokio::spawn(daemon.serve(listener, std::future::pending()));
@@ -3942,7 +3943,7 @@ mod tests {
         let running = fake.start(&spec, &[]).await.unwrap();
 
         let listener = listen(&dir).await.unwrap();
-        crate::secrets::mock_store();
+        riff_client::secrets::mock_store();
         let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()).unwrap());
         daemon.recover().await;
         tokio::spawn(daemon.serve(listener, std::future::pending()));

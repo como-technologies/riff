@@ -3,7 +3,7 @@
 //! reports back, and a blocked session gets a new item. A question goes
 //! only to the lead of the user of its sender.
 
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Kind, RiffState, Status};
 
@@ -145,7 +145,7 @@ async fn a_blocked_session_tells_the_lead_and_gets_a_new_item() {
     // One command: the block, and the message that wakes the lead.
     assert_eq!(
         api.blocked(&b, "issue-7 needs issue-5").await.unwrap(),
-        riff::api::Told::Lead
+        riff_client::api::Told::Lead
     );
 
     let reports = direct(&api, &lead).await;

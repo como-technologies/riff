@@ -117,7 +117,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::api::{self, Api};
 use crate::daemon::sweep::{self, Fate, InJob};
 use crate::daemon::{Daemon, Ended, Out, Record, Say, Start};
 use crate::pr::Verdict;
@@ -125,6 +124,7 @@ use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
 use crate::{identity, pr, rollout, session_image, terminal, text};
+use riff_client::api::{self, Api};
 
 /// The file of the waves that the daemon runs, in its folder.
 pub const WAVES_FILE: &str = "waves.json";
@@ -1613,7 +1613,7 @@ mod tests {
             let memory: crate::room::Memory =
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
             let relay = root.path().join("static-riff");
-            crate::secrets::mock_store();
+            riff_client::secrets::mock_store();
             let daemon = Daemon::new(fake.clone(), dir.clone())
                 .unwrap()
                 .with_memory(memory)

@@ -576,7 +576,7 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
 
     // With a watch, each session is live, so who shows its state and
     // its step (01M3QB6CJ1XCQG5B1BVR8AF3B4).
-    let api = riff::api::Api::new(&server);
+    let api = riff_client::api::Api::new(&server);
     let uri = |id: &str| -> riff_core::name::SessionUri {
         format!("riff://mike@pangolin/como-technologies/riff?session={id}")
             .parse()

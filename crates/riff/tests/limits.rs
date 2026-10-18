@@ -9,7 +9,7 @@ use isolated::Isolated;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::SessionUri;
 
 const LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=lead1";

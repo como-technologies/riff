@@ -15,6 +15,7 @@ repository = "https://github.com/como-technologies/riff"
 [workspace.dependencies]
 riff-core = { path = "crates/riff-core" }
 riff-state = { path = "crates/riff-state" }
+riff-client = { path = "crates/riff-client" }
 hygiene = { path = "crates/hygiene" }
 
 # ── Server and client ──

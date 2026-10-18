@@ -24,9 +24,10 @@ use common::{CLIENT, FakeProvider, browser};
 use futures::future::BoxFuture;
 use isolated::Isolated;
 use keyring_core::api::{CredentialApi, CredentialPersistence, CredentialStoreApi};
-use riff::api::Api;
-use riff::login::{self, SignIn};
-use riff::secrets;
+use riff::login;
+use riff_client::api::Api;
+use riff_client::login::SignIn;
+use riff_client::secrets;
 use riff_core::name::SessionUri;
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -245,7 +246,7 @@ fn text(out: &[u8]) -> String {
 /// [`secrets::KEYRING_WAIT`] (#460).
 fn stored(url: &str) -> SignIn {
     let dir = env().riff_home().join("secrets");
-    let json = secrets::file_get(&dir, &login::secret_name(url))
+    let json = secrets::file_get(&dir, &riff_client::login::secret_name(url))
         .unwrap()
         .unwrap();
     serde_json::from_str(&json).unwrap()
@@ -260,7 +261,7 @@ fn expire(url: &str) {
         ..stored(url)
     };
     let json = serde_json::to_string(&expired).unwrap();
-    secrets::file_set(&dir, &login::secret_name(url), &json).unwrap();
+    secrets::file_set(&dir, &riff_client::login::secret_name(url), &json).unwrap();
 }
 
 /// 10 `riff` processes of one machine refresh the sign-in at the same
@@ -413,7 +414,9 @@ async fn a_watch_goes_on_after_riff_login() {
     let watch = std::sync::Mutex::new(watch);
     let read = || std::fs::read_to_string(&err).unwrap_or_default();
     assert!(
-        wait_for(Duration::from_secs(20), || read().contains(login::ENDED)).await,
+        wait_for(Duration::from_secs(20), || read()
+            .contains(riff_client::login::ENDED))
+        .await,
         "{}",
         read()
     );
@@ -438,7 +441,12 @@ async fn a_watch_goes_on_after_riff_login() {
     let _ = watch.lock().unwrap().kill();
     assert!(woke && status.is_some_and(|s| s.success()), "{}", read());
     assert!(!std::fs::read_to_string(&out).unwrap().is_empty());
-    assert_eq!(read().matches(login::ENDED).count(), 1, "{}", read());
+    assert_eq!(
+        read().matches(riff_client::login::ENDED).count(),
+        1,
+        "{}",
+        read()
+    );
 }
 
 /// The tools of a running `riff mcp` say that the sign-in ended, and
@@ -487,7 +495,7 @@ async fn the_tools_go_on_after_riff_login() {
 
     service.tokens().revoke_user("ada");
     let (text, failed) = who().await;
-    assert!(failed && text.contains(login::ENDED), "{text}");
+    assert!(failed && text.contains(riff_client::login::ENDED), "{text}");
 
     login::login(&api, browser).await.unwrap();
     let (text, failed) = who().await;
@@ -592,15 +600,15 @@ fn the_book_says_how_to_get_back_in() {
     let part = &rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)];
     let ended = format!(
         "{}: {}",
-        login::ENDED,
-        riff::api::TokenRefused {
+        riff_client::login::ENDED,
+        riff_client::api::TokenRefused {
             error: "invalid_grant".into(),
             description: None
         }
     );
     // The error of each later call (01M3W947QF6PFBWR28ZVXCVQHG).
-    let ended_before = format!("| `{}` |", login::ENDED);
-    let new_riff = riff::text::new_riff("URL");
+    let ended_before = format!("| `{}` |", riff_client::login::ENDED);
+    let new_riff = riff_client::text::new_riff("URL");
     let new_riff = new_riff.split(" (").next().unwrap();
     for text in [
         ended.as_str(),

@@ -76,10 +76,10 @@ use riff_core::selector::Selector;
 use riff_core::wire::Kind;
 use serde::{Deserialize, Serialize};
 
-use crate::api::Api;
 use crate::limits::{Cores, Limits as JobLimits};
 use crate::machine::Machine;
 use crate::{jobserver, local, settings, text};
+use riff_client::api::Api;
 
 /// The variable that names a directory to read in place of `/proc`,
 /// for tests: its files `loadavg` and `meminfo`.

@@ -239,7 +239,7 @@ async fn the_status_line_shows_the_answer_that_riff_mcp_kept() {
     let me = format!("riff://mike@pangolin/como-technologies/riff?session={ID}")
         .parse()
         .unwrap();
-    let tools = riff::mcp::Tools::new(riff::api::Api::new(&server), me)
+    let tools = riff::mcp::Tools::new(riff_client::api::Api::new(&server), me)
         .with_statusline(Some(dir.path().join("state")));
     tools.keep_statusline().await;
     calls.lock().unwrap().clear();

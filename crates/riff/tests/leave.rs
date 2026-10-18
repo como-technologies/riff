@@ -5,8 +5,8 @@
 use std::path::Path;
 use std::process::Command;
 
-use riff::api::Api;
 use riff::mcp::Tools;
+use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
@@ -141,7 +141,7 @@ async fn a_leave_pushes_the_work_frees_the_claims_and_a_join_comes_back() {
         "{left}"
     );
     assert!(left.contains("freed your claims: issue-12"), "{left}");
-    assert!(riff::local::left(run.path(), "a1"));
+    assert!(riff_client::marks::left(run.path(), "a1"));
 
     // The WIP commit is on the remote, with the file.
     let remote = root.path().join("remote.git");
@@ -188,7 +188,7 @@ async fn a_leave_pushes_the_work_frees_the_claims_and_a_join_comes_back() {
     assert!(!error, "{joined}");
     assert!(joined.contains("session=a1"), "{joined}");
     assert!(joined.contains("riff watch --once"), "{joined}");
-    assert!(!riff::local::left(run.path(), "a1"));
+    assert!(!riff_client::marks::left(run.path(), "a1"));
     let (who, _) = call(&b, "who", json!({})).await;
     assert!(lists(&who, "a1"), "{who}");
     let (told, error) = call(&b, "tell", json!({ "session": "a1", "body": "hi" })).await;

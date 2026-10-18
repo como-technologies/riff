@@ -112,10 +112,10 @@ use riff_core::selector::Selector;
 use riff_core::wire::{ItemFact, Kind, PullFact, PullState, Unanswered};
 use serde::Deserialize;
 
-use crate::api::Api;
 use crate::pr::{CheckRun, GATE, Gate, Gh, gate_state};
 use crate::rollout::{BROKEN_MAIN, Issue, Milestone, Pull, Verify, claims, current_wave, needs};
 use crate::text;
+use riff_client::api::Api;
 
 /// The time between two looks.
 pub const LOOK_EVERY: Duration = Duration::from_secs(60);

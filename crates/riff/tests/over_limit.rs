@@ -13,8 +13,8 @@ use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
-use riff::api::Api;
 use riff::identity;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, Who};
 use riff_core::wire::{RiffState, StartReason};
 use riff_server::Service;

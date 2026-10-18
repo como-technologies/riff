@@ -914,7 +914,8 @@ async fn the_daemon_makes_no_key_and_no_riff_and_leaves_the_state_of_the_riff_of
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, bytes).unwrap();
     }
-    let key = riff::secrets::file_of(&here.secrets(), &format!("daemon-key {}", dir.display()));
+    let key =
+        riff_client::secrets::file_of(&here.secrets(), &format!("daemon-key {}", dir.display()));
     std::fs::create_dir_all(key.parent().unwrap()).unwrap();
     std::fs::write(&key, "a key of riff 1.8").unwrap();
     let peer_state = || {

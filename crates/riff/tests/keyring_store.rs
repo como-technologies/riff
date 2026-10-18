@@ -25,10 +25,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use keyring_core::api::CredentialStoreApi;
-use riff::device;
 use riff::keyring_store;
-use riff::login::{self, SignIn};
-use riff::secrets::{self, SERVICE};
+use riff_client::device;
+use riff_client::login::{self, SignIn};
+use riff_client::secrets::{self, SERVICE};
 use riff_core::dpop::Key;
 
 /// The variable that names the check of the child.
@@ -147,6 +147,8 @@ fn child() {
     let Ok(check) = std::env::var(CHILD) else {
         return;
     };
+    // The OS store is a part of the platform of riff, as in `riff` itself.
+    riff::platform::install();
     let keyring = Keyring::start();
     match check.as_str() {
         "plain" => plain(),

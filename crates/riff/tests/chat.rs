@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use isolated::{Isolated, Span, in_time};
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use riff_core::wire::Kind;
 use riff_server::Service;
@@ -71,7 +71,7 @@ impl Client {
             loop {
                 let line = stderr.next_line().await.unwrap();
                 match line {
-                    Some(line) if line.contains(riff::link::WAITING) => continue,
+                    Some(line) if line.contains(riff_client::link::WAITING) => continue,
                     line => break line,
                 }
             }
@@ -835,7 +835,7 @@ async fn a_cut_stream_shows_no_error_and_loses_no_line() {
     while let Ok(Some(line)) = mike.stderr.next_line().await {
         warned.push(line);
     }
-    assert_eq!(warned, [riff::api::RECONNECTING, riff::api::BACK]);
+    assert_eq!(warned, [riff::view::RECONNECTING, riff::view::BACK]);
 }
 
 /// `riff tail` connects again at once after a cut, with no error line
@@ -966,9 +966,9 @@ async fn a_front_end_error_with_no_build_is_no_version_error() {
     }
     // At most the short lines of a cut or a wait: no version error.
     let short = [
-        riff::api::RECONNECTING,
-        riff::api::BACK,
-        riff::link::WAITING,
+        riff::view::RECONNECTING,
+        riff::view::BACK,
+        riff_client::link::WAITING,
     ];
     assert!(
         warned.iter().all(|l| short.contains(&l.as_str())),

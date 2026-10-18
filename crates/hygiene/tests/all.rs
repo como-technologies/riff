@@ -8,5 +8,6 @@ mod cli;
 mod gate;
 mod part;
 mod stress;
+mod terminal;
 mod test_files;
 mod tracked;

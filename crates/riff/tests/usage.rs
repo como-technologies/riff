@@ -13,10 +13,10 @@ use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
 use isolated::Isolated;
-use riff::api::Api;
 use riff::mcp::Tools;
 use riff::pr::Gh;
 use riff::usage::Meter;
+use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use rmcp::model::CallToolRequestParams;
 use rmcp::{ServiceExt, service::RunningService};

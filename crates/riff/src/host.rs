@@ -93,7 +93,7 @@
 //! can block its own task: a call to the OS keyring, or `tmux`. The
 //! signal task still runs, ends the session of the host, and ends the
 //! process (01M3NBV405PVYHKTMQ5VN87FYN). A keyring call waits at most
-//! [`crate::secrets::KEYRING_WAIT`].
+//! [`riff_client::secrets::KEYRING_WAIT`].
 //!
 //! Then it prints one line with its host, its limit, the lead that it
 //! serves and the repository (01M3NBV4294DS3WZFEKR7M3PNF). It holds the
@@ -120,10 +120,10 @@
 //! # Calls to the server
 //!
 //! Each call of the host to the server has the budget of a short
-//! command, [`crate::link::SHORT_BUDGET`] (01M3WN72M02P3J24ACCHTMNSFY,
+//! command, [`riff_client::link::SHORT_BUDGET`] (01M3WN72M02P3J24ACCHTMNSFY,
 //! 01M4A803Z4Q0KX6NT1KC6QR43H): the status, the read of the requests,
 //! the reply, the end of a session, and the calls for a worker that
-//! died. A try with no reply in [`crate::link::TRY_WAIT`] gets a new
+//! died. A try with no reply in [`riff_client::link::TRY_WAIT`] gets a new
 //! try, with the same call ID. When the budget ends with no reply, the
 //! host says so on its output and goes on. It sets its status again at
 //! the next [`REFRESH`]. When the read of the requests failed, it reads
@@ -142,7 +142,7 @@
 //! ```
 //!
 //! The watch of the host has a connection of its own, so no call waits
-//! behind it (see [`crate::link`]).
+//! behind it (see [`riff_client::link`]).
 //!
 //! # A change of the settings
 //!
@@ -156,13 +156,13 @@
 //!
 //! # A locked keyring
 //!
-//! Each [`crate::secrets::KEYRING_RETRY`] the host reads the sign-in of
+//! Each [`riff_client::secrets::KEYRING_RETRY`] the host reads the sign-in of
 //! its server from the OS keyring. When the keyring locks, or does not
 //! answer, the host says one line and posts one note to the lead. It
 //! says no new line while the keyring stays locked. When the keyring
 //! answers again, it says one line, posts one note, and goes on with no
 //! new start (01M4385CEWGCP31DP5PAMPXZ97). See
-//! [`crate::secrets::Gate`].
+//! [`riff_client::secrets::Gate`].
 //!
 //! # A new binary
 //!
@@ -188,16 +188,17 @@ use riff_core::name::SessionUri;
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, STATUS_CHARS, SessionInfo, Status};
 
-use crate::api::{Api, Checked, Reconnect, follow};
 use crate::binary::{Follow, with_last};
 use crate::disk::Disk;
-use crate::link::STREAM_RETRY;
 use crate::machine::Machine;
 use crate::monitor::Numbers;
 use crate::reap::{self, Reaper, Watched};
 use crate::rollout::{Change, Effect};
 use crate::terminal::{self, Terminal, Tmux, WorkerPane};
-use crate::{identity, local, secrets, settings, text, worker};
+use crate::{identity, local, settings, text, worker};
+use riff_client::api::{Api, Checked, follow};
+use riff_client::link::STREAM_RETRY;
+use riff_client::secrets;
 
 /// The start of the status of a host.
 pub const MARK: &str = "workers host";
@@ -603,7 +604,7 @@ impl fmt::Display for Request {
 /// its repository (01M3N7AKDE7DEA6NXS9ZMECRMH).
 ///
 /// ```
-/// use riff::api::Checked;
+/// use riff_client::api::Checked;
 /// use riff::host::{Request, judge};
 /// use riff_core::wire::Message;
 ///
@@ -761,7 +762,7 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     let _ = session.set((host.api.clone(), host.me.clone()));
     let mut wakes = Box::pin(follow(|| host.api.watch(&host.me), STREAM_RETRY));
     let mut refresh = tokio::time::interval(REFRESH);
-    let mut link = Reconnect::default();
+    let mut link = crate::view::Reconnect::default();
     let mut update = std::pin::pin!(binary.new_one());
     let mut following = true;
     let mut reaper = Reaper::default();
@@ -778,7 +779,7 @@ pub async fn serve(dir: &Path, claude: &Path, server: &str, resume: Option<&str>
     // The riff of the host, for riff top (01M514C11BPE93PJT4221PYVHS).
     let (api, me) = (host.api.clone(), host.me.clone());
     let alive = tokio::spawn(async move {
-        crate::api::keep_alive_of_host(&api, &me, riff_core::wire::ALIVE_EVERY).await;
+        riff_client::api::keep_alive_of_host(&api, &me, riff_core::wire::ALIVE_EVERY).await;
     });
     let _alive = AbortOnDrop(alive);
     // The OS keyring (01M4385CEWGCP31DP5PAMPXZ97).
@@ -1015,7 +1016,7 @@ impl Host {
         }
         // The read of the sign-in needs an unlocked keyring. A read
         // blocks for at most `KEYRING_WAIT`: keep it off the runtime.
-        let name = crate::login::secret_name(self.api.base());
+        let name = riff_client::login::secret_name(self.api.base());
         let refused = tokio::task::spawn_blocking(move || secrets::refuses(&name))
             .await
             .unwrap_or(false);
@@ -1023,7 +1024,7 @@ impl Host {
         let note = match gate.look(now, refused) {
             None => return,
             Some(secrets::Said::Locked) => {
-                eprintln!("riff: {}", text::keyring_locked(host));
+                eprintln!("riff: {}", riff_client::text::keyring_locked(host));
                 text::host_keyring_locked(host)
             }
             Some(secrets::Said::Back) => {

@@ -10,8 +10,9 @@ use std::time::Instant;
 
 use axum::Router;
 use common::{CLIENT, FakeProvider, browser};
-use riff::api::Api;
-use riff::login::{self, SignIn};
+use riff::login;
+use riff_client::api::Api;
+use riff_client::login::SignIn;
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
@@ -48,7 +49,7 @@ async fn start_on(listener: tokio::net::TcpListener) -> (Service, Api) {
 
 /// The thumbprint of the device key of this machine for the server.
 fn jkt(api: &Api) -> String {
-    riff::device::key(api.base()).unwrap().thumbprint()
+    riff_client::device::key(api.base()).unwrap().thumbprint()
 }
 
 #[tokio::test]
@@ -62,18 +63,24 @@ async fn login_signs_in_and_keeps_the_sign_in() {
             .check(&sign_in.access_token, &jkt(&api), Instant::now()),
         Ok("ada".to_owned())
     );
-    assert_eq!(login::stored(api.base()).unwrap(), Some(sign_in.clone()));
-    assert_eq!(login::user(api.base()).unwrap().as_deref(), Some("ada"));
+    assert_eq!(
+        riff_client::login::stored(api.base()).unwrap(),
+        Some(sign_in.clone())
+    );
+    assert_eq!(
+        riff_client::login::user(api.base()).unwrap().as_deref(),
+        Some("ada")
+    );
 
     // A live access token comes from the keyring as it is.
     assert_eq!(
-        login::access_token(&api).await.unwrap(),
+        riff_client::login::access_token(&api).await.unwrap(),
         sign_in.access_token
     );
 
-    assert!(login::logout(api.base()).unwrap());
-    assert_eq!(login::stored(api.base()).unwrap(), None);
-    let error = login::access_token(&api).await.unwrap_err();
+    assert!(riff_client::login::logout(api.base()).unwrap());
+    assert_eq!(riff_client::login::stored(api.base()).unwrap(), None);
+    let error = riff_client::login::access_token(&api).await.unwrap_err();
     assert!(error.to_string().contains("run riff login"), "{error}");
 }
 
@@ -85,21 +92,21 @@ async fn an_old_access_token_is_refreshed() {
         expires_at: 0,
         ..first.clone()
     };
-    login::store(api.base(), &old).unwrap();
+    riff_client::login::store(api.base(), &old).unwrap();
 
-    let fresh = login::access_token(&api).await.unwrap();
+    let fresh = riff_client::login::access_token(&api).await.unwrap();
     assert_ne!(fresh, first.access_token);
     assert_eq!(
         service.tokens().check(&fresh, &jkt(&api), Instant::now()),
         Ok("ada".to_owned())
     );
-    let kept = login::stored(api.base()).unwrap().unwrap();
+    let kept = riff_client::login::stored(api.base()).unwrap().unwrap();
     assert_eq!(kept.access_token, fresh);
     assert_ne!(kept.refresh_token, first.refresh_token);
 }
 
 /// A kept sign-in with an expired access token, so that the next
-/// [`login::access_token`] refreshes it.
+/// [`riff_client::login::access_token`] refreshes it.
 fn expired(sign_in: SignIn) -> SignIn {
     SignIn {
         expires_at: 0,
@@ -111,11 +118,11 @@ fn expired(sign_in: SignIn) -> SignIn {
 /// refresh token was used before the last refresh.
 async fn refresh_twice(api: &Api) -> SignIn {
     let first = login::login(api, browser).await.unwrap();
-    login::store(api.base(), &expired(first.clone())).unwrap();
-    login::access_token(api).await.unwrap();
-    let second = login::stored(api.base()).unwrap().unwrap();
-    login::store(api.base(), &expired(second)).unwrap();
-    login::access_token(api).await.unwrap();
+    riff_client::login::store(api.base(), &expired(first.clone())).unwrap();
+    riff_client::login::access_token(api).await.unwrap();
+    let second = riff_client::login::stored(api.base()).unwrap().unwrap();
+    riff_client::login::store(api.base(), &expired(second)).unwrap();
+    riff_client::login::access_token(api).await.unwrap();
     first
 }
 
@@ -125,13 +132,13 @@ async fn a_used_refresh_token_ends_the_sign_in() {
     let first = refresh_twice(&api).await;
 
     // Someone replays the old refresh token after the next refresh.
-    login::store(api.base(), &expired(first)).unwrap();
-    let error = login::access_token(&api).await.unwrap_err();
+    riff_client::login::store(api.base(), &expired(first)).unwrap();
+    let error = riff_client::login::access_token(&api).await.unwrap_err();
     assert_eq!(
         format!("{error:#}"),
         format!(
             "{}: riff-server refused the token request: invalid_grant",
-            login::ENDED
+            riff_client::login::ENDED
         )
     );
 }
@@ -142,11 +149,11 @@ async fn a_used_refresh_token_ends_the_sign_in() {
 async fn a_refresh_token_again_before_the_next_refresh_keeps_the_sign_in() {
     let (service, api) = start().await;
     let first = login::login(&api, browser).await.unwrap();
-    login::store(api.base(), &expired(first.clone())).unwrap();
-    login::access_token(&api).await.unwrap();
+    riff_client::login::store(api.base(), &expired(first.clone())).unwrap();
+    riff_client::login::access_token(&api).await.unwrap();
     // The reply of that refresh got lost: the keyring holds the old pair.
-    login::store(api.base(), &expired(first)).unwrap();
-    let fresh = login::access_token(&api).await.unwrap();
+    riff_client::login::store(api.base(), &expired(first)).unwrap();
+    let fresh = riff_client::login::access_token(&api).await.unwrap();
     assert_eq!(
         service.tokens().check(&fresh, &jkt(&api), Instant::now()),
         Ok("ada".to_owned())
@@ -159,7 +166,7 @@ async fn a_refresh_token_again_before_the_next_refresh_keeps_the_sign_in() {
 async fn a_call_with_an_ended_sign_in_says_to_run_riff_login() {
     let (_, api) = start().await;
     let first = refresh_twice(&api).await;
-    login::store(api.base(), &expired(first)).unwrap();
+    riff_client::login::store(api.base(), &expired(first)).unwrap();
 
     assert!(api.has_sign_in().await.unwrap());
     let me = "riff://ada@pangolin/como-technologies/riff"
@@ -194,7 +201,9 @@ async fn ensure_signs_in_only_when_needed() {
 #[tokio::test]
 async fn logout_all_with_no_sign_in_at_a_riff_with_sign_in_says_riff_login() {
     let (_, api) = start().await;
-    let error = login::logout_all(&api, None).await.unwrap_err();
+    let error = riff_client::login::logout_all(&api, None)
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("run riff login"), "{error}");
 }
 
@@ -213,12 +222,14 @@ async fn a_server_starts_with_no_old_sign_in_at_its_url() {
         expires_at: u64::MAX,
         riff_id: Some("the-riff-of-an-earlier-test".into()),
     };
-    login::store(&url, &old).unwrap();
+    riff_client::login::store(&url, &old).unwrap();
 
     let (_, api) = start_on(listener).await;
     assert_eq!(api.base(), url);
-    assert_eq!(login::stored(&url).unwrap(), None);
-    let error = login::logout_all(&api, None).await.unwrap_err();
+    assert_eq!(riff_client::login::stored(&url).unwrap(), None);
+    let error = riff_client::login::logout_all(&api, None)
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("run riff login"), "{error}");
 }
 
@@ -236,7 +247,7 @@ async fn login_says_that_another_account_holds_the_user() {
             .contains("access_denied: the user ada belongs to another account"),
         "{error}"
     );
-    assert_eq!(login::stored(api.base()).unwrap(), None);
+    assert_eq!(riff_client::login::stored(api.base()).unwrap(), None);
 }
 
 #[tokio::test]
@@ -322,8 +333,11 @@ async fn a_new_riff_at_the_same_url_asks_for_riff_login() {
     front.serve(&new);
     let person = api.clone().signed_in(None).unwrap();
     let error = person.who(&ada(), false).await.unwrap_err();
-    assert_eq!(format!("{error:#}"), riff::text::new_riff(api.base()));
-    assert_eq!(login::stored(api.base()).unwrap(), None);
+    assert_eq!(
+        format!("{error:#}"),
+        riff_client::text::new_riff(api.base())
+    );
+    assert_eq!(riff_client::login::stored(api.base()).unwrap(), None);
 
     // The next command has no sign-in, and no error about it.
     let next = api.clone().signed_in(None).unwrap();
@@ -365,7 +379,7 @@ async fn a_restart_on_the_same_store_keeps_the_sign_in() {
     front.serve(&new);
     let person = api.clone().signed_in(None).unwrap();
     person.who(&ada(), false).await.unwrap();
-    let kept = login::stored(api.base()).unwrap().unwrap();
+    let kept = riff_client::login::stored(api.base()).unwrap().unwrap();
     assert_eq!(kept.riff_id, sign_in.riff_id);
 }
 
@@ -381,11 +395,14 @@ async fn a_sign_in_from_before_the_riff_id_is_old() {
         riff_id: None,
         ..sign_in
     };
-    login::store(api.base(), &old).unwrap();
+    riff_client::login::store(api.base(), &old).unwrap();
 
     let person = api.clone().signed_in(None).unwrap();
     let error = person.who(&ada(), false).await.unwrap_err();
-    assert_eq!(format!("{error:#}"), riff::text::new_riff(api.base()));
+    assert_eq!(
+        format!("{error:#}"),
+        riff_client::text::new_riff(api.base())
+    );
     let next = api.clone().signed_in(None).unwrap();
     next.who(&ada(), false).await.unwrap();
 }

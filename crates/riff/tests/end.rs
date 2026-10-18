@@ -8,8 +8,8 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use riff::api::Api;
 use riff::mcp::Tools;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
@@ -75,7 +75,7 @@ async fn the_keep_alive_of_a_watch_is_a_sign_of_life() {
     api.end(&me).await.unwrap();
     assert!(!shown(&api).await.contains(&"e5".to_owned()));
 
-    let alive = riff::api::keep_alive(&api, &me, Duration::from_millis(100));
+    let alive = riff_client::api::keep_alive(&api, &me, Duration::from_millis(100));
     let _ = tokio::time::timeout(Duration::from_millis(1_000), alive).await;
     assert!(shown(&api).await.contains(&"e5".to_owned()));
 }

@@ -37,7 +37,7 @@ use anyhow::Result;
 use futures::{Stream, StreamExt};
 use riff_core::name::{SessionUri, ThreadName};
 
-use crate::api::{Api, Checked, Refusal, follow};
+use riff_client::api::{Api, Checked, Refusal, follow};
 
 /// Where a client starts in a thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

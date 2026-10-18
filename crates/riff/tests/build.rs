@@ -959,7 +959,7 @@ async fn a_success_or_client_error_with_no_build_is_still_a_mismatch() {
         .unwrap();
     for status in [StatusCode::OK, StatusCode::NOT_FOUND] {
         let router = axum::Router::new().fallback(move || async move { (status, "{}") });
-        let api = riff::api::Api::new(&serve(router).await);
+        let api = riff_client::api::Api::new(&serve(router).await);
         let error = api.who(&me, false).await.unwrap_err();
         let mismatch = error.downcast_ref::<riff_core::build::Mismatch>();
         assert!(

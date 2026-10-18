@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use riff::api::Api;
-use riff::link::{Limits, SHORT_BUDGET};
 use riff::mcp::Tools;
+use riff_client::api::Api;
+use riff_client::link::{Limits, SHORT_BUDGET};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{CALL_HEADER, Call, Kind};
 use rmcp::model::CallToolRequestParams;
@@ -208,7 +208,10 @@ async fn a_call_with_no_reply_ends_after_its_budget() {
         span.wall()
     );
     assert!(span.within(Duration::from_secs(10)), "{:?}", span.wall());
-    assert_eq!(error.to_string(), riff::text::no_reply(&url, fast().budget));
+    assert_eq!(
+        error.to_string(),
+        riff_client::text::no_reply(&url, fast().budget)
+    );
     let tries = seen.ids.lock().unwrap().len();
     assert!(tries >= 2, "{tries} tries");
     assert_eq!(seen.accepts.load(Ordering::SeqCst), tries);
@@ -302,7 +305,7 @@ async fn a_tool_call_with_the_server_away_ends_after_its_budget() {
         let (text, error) = isolated::in_time(WAIT, call(&client, "who")).await.unwrap();
         assert!(error, "{text}");
         assert!(
-            text.contains(&riff::text::no_reply(&url, fast().budget)),
+            text.contains(&riff_client::text::no_reply(&url, fast().budget)),
             "{text}"
         );
         assert!(span.within(Duration::from_secs(10)), "{:?}", span.wall());

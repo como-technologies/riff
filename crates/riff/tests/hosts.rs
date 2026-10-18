@@ -14,8 +14,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use riff::api::Api;
 use riff::identity;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, Who};
 use riff_core::wire::{RiffState, Status};
 
@@ -508,7 +508,7 @@ async fn a_host_tells_the_lead_when_its_keyring_locks_and_answers_again() {
     let b = Machine::new("b", api.base());
     b.limit(1);
     let mut cmd = b.riff(&main, &["host", "--claude", "true"], None);
-    cmd.env(riff::secrets::RETRY_VAR, "1");
+    cmd.env(riff_client::secrets::RETRY_VAR, "1");
     let mut host = b.host_with(cmd);
     let host_id = host_session(&api, &lead, "b").await;
 
@@ -991,7 +991,7 @@ fn the_book_says_what_to_do_when_the_keyring_is_locked() {
     let book = std::fs::read_to_string(root.join("../../docs/src/development.md")).unwrap();
     let how = &book[book.find("### When the keyring is locked").unwrap()..];
     let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
-    let line = riff::text::keyring_locked("pangolin");
+    let line = riff_client::text::keyring_locked("pangolin");
     let back = riff::text::host_keyring_back("pangolin");
     for text in [
         line.as_str(),
@@ -1118,7 +1118,7 @@ async fn ctrl_c_stops_a_host_that_tries_again() {
     let mut host = b.host(&main);
     until("the host tries again", || async {
         b.host_output()
-            .contains(riff::api::RECONNECTING)
+            .contains(riff::view::RECONNECTING)
             .then_some(())
     })
     .await;
@@ -1225,8 +1225,8 @@ async fn the_host_reads_no_input() {
 }
 
 /// The sign-in of a pair from the server.
-fn signed(pair: riff_core::wire::TokenReply) -> riff::login::SignIn {
-    riff::login::SignIn {
+fn signed(pair: riff_core::wire::TokenReply) -> riff_client::login::SignIn {
+    riff_client::login::SignIn {
         user: pair.user,
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
@@ -1239,7 +1239,12 @@ fn signed(pair: riff_core::wire::TokenReply) -> riff::login::SignIn {
 /// `dir`, the secret files of a `RIFF_HOME`.
 fn sign_in_files(service: &riff_server::Service, url: &str, dir: &Path) {
     let key = riff_core::dpop::Key::generate();
-    riff::secrets::file_set(dir, &riff::device::secret_name(url), &key.to_secret()).unwrap();
+    riff_client::secrets::file_set(
+        dir,
+        &riff_client::device::secret_name(url),
+        &key.to_secret(),
+    )
+    .unwrap();
     let pair = service
         .tokens()
         .sign_in(
@@ -1249,7 +1254,7 @@ fn sign_in_files(service: &riff_server::Service, url: &str, dir: &Path) {
         )
         .unwrap();
     let json = serde_json::to_string(&signed(pair)).unwrap();
-    riff::secrets::file_set(dir, &riff::login::secret_name(url), &json).unwrap();
+    riff_client::secrets::file_set(dir, &riff_client::login::secret_name(url), &json).unwrap();
 }
 
 /// A host against a server with sign-in shows in `riff who`, answers a
@@ -1270,14 +1275,14 @@ async fn a_host_works_against_a_server_with_sign_in() {
     // The lead runs in this process, with its sign-in in the mock store.
     crate::common::mock_keyring();
     let person = Api::new(&url);
-    let jkt = riff::device::key(&url).unwrap().thumbprint();
+    let jkt = riff_client::device::key(&url).unwrap().thumbprint();
     // Only the owner or an admin resumes the whole riff: the first
     // person that signs in is the owner.
     let pair = service
         .admit("mike@comotechnologies.io", false, &jkt)
         .await
         .unwrap();
-    riff::login::store(&url, &signed(pair)).unwrap();
+    riff_client::login::store(&url, &signed(pair)).unwrap();
 
     let root = tempfile::tempdir().unwrap();
     let main = repository(root.path());
@@ -1337,7 +1342,7 @@ async fn hold_the_first_read(
 }
 
 /// A try of a call of the host that gets no reply ends after
-/// [`riff::link::TRY_WAIT`], and the call gets a new try in its budget
+/// [`riff_client::link::TRY_WAIT`], and the call gets a new try in its budget
 /// (01M3WN72M02P3J24ACCHTMNSFY, 01M4A8041F8EK1VYDE4C9QG8N8). So the host
 /// reads the request of the lead with no error, and goes on. Before, the
 /// host waited for the reply with no end: it started no worker, set no
@@ -1387,7 +1392,7 @@ fn the_book_says_what_a_host_does_with_no_reply() {
     let how = &how[..how[4..].find("\n### ").map_or(how.len(), |n| n + 4)];
     let line = format!(
         "riff: cannot read the requests: {}",
-        riff::text::no_reply("https://riff.example.com", riff::link::SHORT_BUDGET)
+        riff_client::text::no_reply("https://riff.example.com", riff_client::link::SHORT_BUDGET)
     );
     let refresh = format!("Each {} seconds", riff::host::REFRESH.as_secs());
     for words in [

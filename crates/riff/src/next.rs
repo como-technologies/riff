@@ -154,10 +154,10 @@ use riff_core::selector::Selector;
 use riff_core::wire::Kind;
 use serde::Deserialize;
 
-use crate::api::{Api, LEAD};
 use crate::hygiene;
 use crate::terminal::{Terminal, Tmux, WorkerPane};
 use crate::{local, settings};
+use riff_client::api::{Api, LEAD};
 
 /// How many times [`check`] sends its keep-alive, when the call fails.
 pub const ASKS: u32 = 5;

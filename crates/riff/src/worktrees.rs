@@ -874,7 +874,7 @@ pub fn owner_in(
 /// the lead when it saved work (01M3ZV0TKSHNW5QC2NG1XTJEJB). Returns
 /// the lines to print.
 pub async fn clean_here(
-    api: &crate::api::Api,
+    api: &riff_client::api::Api,
     me: &riff_core::name::SessionUri,
     dir: &Path,
 ) -> Result<Vec<String>> {
@@ -919,7 +919,7 @@ pub async fn clean_here(
 pub async fn clean_as_person(dir: &Path, server: &str) -> Result<Vec<String>> {
     let here = crate::identity::place(dir)?;
     let me = crate::identity::person(&here, server)?;
-    let api = crate::api::Api::new(server).signed_in(None)?;
+    let api = riff_client::api::Api::new(server).signed_in(None)?;
     clean_here(&api, &me, dir).await
 }
 

@@ -6,8 +6,8 @@ use isolated::Isolated;
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
-use riff::api::Api;
 use riff::identity;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::wire::{Kind, RiffState};
 

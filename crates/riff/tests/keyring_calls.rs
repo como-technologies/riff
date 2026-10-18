@@ -153,12 +153,17 @@ async fn signed_in_server(machine: &Machine, expired: bool) -> String {
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let key = Key::generate();
     let files = machine.secrets();
-    riff::secrets::file_set(&files, &riff::device::secret_name(&url), &key.to_secret()).unwrap();
+    riff_client::secrets::file_set(
+        &files,
+        &riff_client::device::secret_name(&url),
+        &key.to_secret(),
+    )
+    .unwrap();
     let pair = service
         .admit("mike@comotechnologies.io", true, &key.thumbprint())
         .await
         .unwrap();
-    let sign_in = riff::login::SignIn {
+    let sign_in = riff_client::login::SignIn {
         user: pair.user,
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
@@ -166,7 +171,7 @@ async fn signed_in_server(machine: &Machine, expired: bool) -> String {
         riff_id: service.riff_id(),
     };
     let json = serde_json::to_string(&sign_in).unwrap();
-    riff::secrets::file_set(&files, &riff::login::secret_name(&url), &json).unwrap();
+    riff_client::secrets::file_set(&files, &riff_client::login::secret_name(&url), &json).unwrap();
     url
 }
 
@@ -177,8 +182,8 @@ fn input(extra: &str) -> String {
 
 fn names(url: &str) -> (String, String) {
     (
-        riff::login::secret_name(url),
-        riff::device::secret_name(url),
+        riff_client::login::secret_name(url),
+        riff_client::device::secret_name(url),
     )
 }
 

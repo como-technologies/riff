@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use isolated::{Isolated, Span, in_time};
-use riff::api::Api;
 use riff::mcp::Tools;
+use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;

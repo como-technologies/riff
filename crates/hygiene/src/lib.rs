@@ -1,7 +1,8 @@
 //! Issue hygiene of this repository: the form of a pull request, and of
 //! a commit on `main`. The module [`book`] checks the book, [`wrap`]
 //! checks the wrap of its pages, [`blank`] finds two blank lines in a
-//! row, and [`ci`] picks the checks that `just ci` runs.
+//! row, [`ci`] picks the checks that `just ci` runs, and [`terminal`]
+//! finds the crates of the terminal in the dependencies of a crate.
 //!
 //! # Design
 //!
@@ -67,6 +68,7 @@ pub mod blank;
 pub mod book;
 pub mod ci;
 pub mod part;
+pub mod terminal;
 pub mod wrap;
 
 /// A milestone, as `gh --json milestone` gives it.

@@ -10,9 +10,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use riff::api::Api;
 use riff::look::{self, MainWatch, PullWatch};
 use riff::pr::Gh;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Kind, RiffState};
 

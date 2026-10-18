@@ -22,8 +22,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use riff::api::{Api, PauseScope};
 use riff::identity;
+use riff_client::api::{Api, PauseScope};
 use riff_core::name::{Place, SessionUri, Who};
 use riff_core::wire::{RiffState, StartReason, Status};
 

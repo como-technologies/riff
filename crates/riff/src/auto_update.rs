@@ -274,7 +274,7 @@ fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
 /// stops at once when another update holds the lock, or when `tag` was
 /// tried. When its working directory is missing, it stops before it
 /// records the try (01M3NT2PYFHPB0C19Q2QB2AE6W). `riff` passes
-/// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
+/// [`DEFAULT_SERVER`](riff_client::api::DEFAULT_SERVER) as `local`.
 pub async fn run(
     cargo: &Path,
     claude: &Path,

@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use riff::api::{Api, follow};
-use riff::link::Limits;
+use riff_client::api::{Api, follow};
+use riff_client::link::Limits;
 use riff_core::name::SessionUri;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};

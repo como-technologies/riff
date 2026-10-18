@@ -240,7 +240,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
         email: "bob@gmail.com".into(),
         address: "URL".into(),
     };
-    let note = riff::text::invited_news("ada", &invited);
+    let note = riff_client::text::invited_news("ada", &invited);
     assert!(page("start-a-team-riff.md").contains(&note), "{note}");
 }
 

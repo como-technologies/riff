@@ -59,12 +59,12 @@ use tokio::sync::mpsc;
 
 use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
 
-use crate::api::{Api, Checked, Reconnect};
 use crate::binary::{Follow, with_last, with_place};
 use crate::catch_up::{self, Seen, Start};
-use crate::link::STREAM_RETRY;
 use crate::style::{DIM, WARNING, styled};
 use crate::text::{ACTION, action_text, lost_messages, safe};
+use riff_client::api::{Api, Checked};
+use riff_client::link::STREAM_RETRY;
 
 /// The name of the chat thread.
 pub const THREAD: &str = riff_core::name::CHAT;
@@ -201,7 +201,7 @@ pub fn unknown(name: &str) -> String {
 /// session is `USER` and the first 8 characters of its session ID.
 ///
 /// ```
-/// use riff::api::Checked;
+/// use riff_client::api::Checked;
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let from = |uri: &str, verified| Checked {
@@ -243,7 +243,7 @@ pub fn sender(c: &Checked) -> (String, bool) {
 ///
 /// ```
 /// use chrono::TimeZone;
-/// use riff::api::Checked;
+/// use riff_client::api::Checked;
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let message = Message {
@@ -318,7 +318,7 @@ where
 /// (01M3NT6WXGCNKW3EQ7MBJDQTR4).
 ///
 /// While `riff-server` starts again, it shows the line
-/// [`crate::link::WAITING`] above the prompt, and keeps its screen
+/// [`riff_client::link::WAITING`] above the prompt, and keeps its screen
 /// (01M3THEE5V3RFHF9QTA8MA8QDF).
 ///
 /// It sends the typed lines from a task of their own, in their order
@@ -365,7 +365,7 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
     let (screen, mut input) = Screen::start()?;
     let _ = lines.set(screen.lines.clone());
     let (send, posts) = posts(api, me, thread, screen.lines.clone());
-    let mut link = Reconnect::default();
+    let mut link = crate::view::Reconnect::default();
     let follow = Follow::this();
     let update = follow.new_one();
     tokio::pin!(update);

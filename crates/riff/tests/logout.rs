@@ -7,9 +7,9 @@ use crate::common;
 
 use std::time::Instant;
 
-use riff::api::Api;
-use riff::login::{self, SignIn};
 use riff::text;
+use riff_client::api::Api;
+use riff_client::login::{self, SignIn};
 use riff_core::dpop::Key;
 use riff_core::wire::TokenReply;
 use riff_server::Service;
@@ -47,7 +47,7 @@ async fn serve(config: impl FnOnce(&str) -> Config) -> (Service, Api) {
 
 /// The device key of this machine for the server of `api`.
 fn this_device(api: &Api) -> String {
-    riff::device::key(api.base()).unwrap().thumbprint()
+    riff_client::device::key(api.base()).unwrap().thumbprint()
 }
 
 /// Keeps `pair` as the sign-in of this device at `service`.
@@ -147,5 +147,8 @@ async fn a_token_from_another_device_cannot_log_out() {
 async fn logout_all_needs_a_sign_in() {
     let (_, api) = serve(Config::new).await;
     let error = login::logout_all(&api, None).await.unwrap_err();
-    assert_eq!(error.to_string(), text::nobody_signs_in(api.base()));
+    assert_eq!(
+        error.to_string(),
+        riff_client::text::nobody_signs_in(api.base())
+    );
 }

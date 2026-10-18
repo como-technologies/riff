@@ -54,14 +54,23 @@
 //!
 //! See [`text::wake_line`] for the line.
 //!
+//! ## The client of riff-server
+//!
+//! Each call to riff-server goes through the crate [`riff_client`]: the
+//! sign-in, the tokens, the API calls and the watch stream. `riff` gives
+//! it the parts of this machine with [`platform`]: the OS keyring, the
+//! local folders and the lines on the terminal. The browser step of
+//! `riff login` stays in [`login`].
+//!
 //! ## Secrets
 //!
 //! `riff` keeps the person tokens and the device key only in the OS
-//! keyring, through [`secrets`]. Each request with a token carries a
-//! proof from the device key of the machine (see [`device`]). `riff
-//! mcp` and `riff watch` each hold a session token in memory; it acts
-//! only as their session (see [`api`]). The tests and `just dev` give
-//! riff a home of its own, with its secrets in files (see [`home`]).
+//! keyring, through [`riff_client::secrets`]. Each request with a token
+//! carries a proof from the device key of the machine (see
+//! [`riff_client::device`]). `riff mcp` and `riff watch` each hold a
+//! session token in memory; it acts only as their session (see
+//! [`riff_client::api`]). The tests and `just dev` give riff a home of
+//! its own, with its secrets in files (see [`home`]).
 //!
 //! ## Messages are advice
 //!
@@ -70,7 +79,6 @@
 //! user. Each other message is advice (R10).
 
 pub mod activity;
-pub mod api;
 pub mod audit;
 pub mod auto_update;
 pub mod binary;
@@ -81,7 +89,6 @@ pub mod cloud;
 pub mod compact;
 pub mod daemon;
 pub mod deaths;
-pub mod device;
 pub mod disk;
 pub mod dropped;
 pub mod enable;
@@ -102,7 +109,6 @@ pub mod lead;
 pub mod leave;
 pub mod lifecycle;
 pub mod limits;
-pub mod link;
 pub mod local;
 pub mod login;
 pub mod look;
@@ -111,6 +117,7 @@ pub mod mcp;
 pub mod monitor;
 pub mod next;
 pub mod permissions;
+pub mod platform;
 pub mod plugin;
 #[cfg(target_os = "linux")]
 pub mod podman;
@@ -125,7 +132,6 @@ pub mod run;
 pub mod runtime;
 pub mod sccache;
 pub mod screen;
-pub mod secrets;
 pub mod service;
 pub mod session_image;
 pub mod session_relay;

@@ -6,8 +6,8 @@ use crate::common;
 
 use std::time::Instant;
 
-use riff::api::Api;
-use riff::login::{self, SignIn};
+use riff_client::api::Api;
+use riff_client::login::{self, SignIn};
 use riff_core::name::SessionUri;
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -23,7 +23,7 @@ async fn start(expires_at: u64) -> (Service, Api) {
     let router = service.router();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let api = Api::new(&url);
-    let jkt = riff::device::key(api.base()).unwrap().thumbprint();
+    let jkt = riff_client::device::key(api.base()).unwrap().thumbprint();
     let pair = service
         .tokens()
         .sign_in("mike@comotechnologies.io", &jkt, Instant::now())
