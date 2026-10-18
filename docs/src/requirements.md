@@ -568,7 +568,8 @@
   of the current wave names each host whose riff daemon runs its loop:
   `runs on HOST`. Under the line of each wave come its open issues in
   the groups of the board of `riff top`: `free`, `held`, `claimed` and
-  `verify`.
+  `verify`. riff reads riff-server with the sign-in of the caller, as
+  `riff top` does.
 - **01M58ATZ6FA5PJMD3D848CEWBJ** When `riff wave list` cannot read
   riff-server, it shows the milestones with no groups and no hosts, and
   one line on stderr says why.

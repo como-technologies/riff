@@ -4411,15 +4411,19 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
 /// `riff wave list`: the open milestones from `gh`, with the items and
 /// the hosts of riff-server (01M58ATZ408RBCX0PM0D0ZCY4B). As in
 /// [`top`], the repository comes from the folder `here`, also for a
-/// person with no session. When riff cannot read them, one line on
+/// person with no session, and each call carries the token of the
+/// caller (`Api::signed_in`). When riff cannot read them, one line on
 /// stderr says why (01M58ATZ6FA5PJMD3D848CEWBJ).
 async fn wave_list(api: &Api, here: &riff_core::name::Place) -> Result<()> {
     let gh = pr::Gh::default();
     let milestones = riff::waves::open(&gh)?;
-    let items = match identity::me(here, api.base()) {
-        Ok(me) => riff::waves::items(api, &me, here.default_thread(), &gh).await,
-        Err(e) => Err(e),
-    };
+    let items = async {
+        let me = identity::me(here, api.base())?;
+        // A riff-server with sign-in takes no call with no token.
+        let api = api.clone().signed_in(me.who().session())?;
+        riff::waves::items(&api, &me, here.default_thread(), &gh).await
+    }
+    .await;
     let items = items
         .inspect_err(|e| eprintln!("{}", text::waves_no_items(&format!("{e:#}"))))
         .ok();
