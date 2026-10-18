@@ -1779,6 +1779,17 @@ mod tests {
         /// a sign-in of `claude` that ends soon, after the check of the
         /// host passed.
         late_faults: usize,
+        /// The head commit of the pull request of each issue, else
+        /// `cN`.
+        heads: BTreeMap<u64, String>,
+        /// The issues whose pull request has a conflict with `main`.
+        conflicting: BTreeSet<u64>,
+        /// The issues whose pull request has auto-merge off.
+        manual: BTreeSet<u64>,
+        /// A rebase ends with no push.
+        no_push: bool,
+        /// The work of each claim of a session, in order.
+        works: Vec<Work>,
     }
 
     impl Forge {
@@ -1787,6 +1798,37 @@ mod tests {
             match self.minutes.and_then(run::HostFault::of_minutes) {
                 Some(fault) => Err(fault),
                 None => Ok(()),
+            }
+        }
+
+        /// The head commit of the pull request of `issue`.
+        fn head(&self, issue: u64) -> String {
+            self.heads
+                .get(&issue)
+                .cloned()
+                .unwrap_or_else(|| format!("c{issue}"))
+        }
+
+        /// The open pull requests, as `gh` gives them.
+        fn open(&self) -> rollout::Open {
+            let pulls = self.pulls.iter().map(|(n, pr)| rollout::Pull {
+                number: 40 + n,
+                branch: branch_of(*n),
+                head: self.head(*n),
+                checks: match pr {
+                    Pr::Asked => Vec::new(),
+                    Pr::Passed => vec![rollout::Check::verify("SUCCESS")],
+                },
+                mergeable: Some(match self.conflicting.contains(n) {
+                    true => "CONFLICTING".into(),
+                    false => "MERGEABLE".into(),
+                }),
+                auto_merge: !self.manual.contains(n),
+                ..rollout::Pull::default()
+            });
+            rollout::Open {
+                pulls: pulls.collect(),
+                ..rollout::Open::default()
             }
         }
     }
@@ -1813,9 +1855,10 @@ mod tests {
                     .iter()
                     .filter(|n| !forge.pulls.contains_key(n) && !claimed(&format!("issue-{n}")))
                     .map(|n| format!("issue-{n}"));
+                let (free, conflicts) = rebases(&forge.open(), verifies.chain(builds).collect());
                 Ok(Look {
                     paused: false,
-                    free: verifies.chain(builds).collect(),
+                    free,
                     claims: forge.claims.keys().cloned().collect(),
                     holds: forge.holds.clone(),
                     pulls: forge
@@ -1824,12 +1867,13 @@ mod tests {
                         .map(|n| {
                             let waiting = Waiting {
                                 pull: 40 + n,
-                                commit: format!("c{n}"),
+                                commit: forge.head(*n),
                                 gate_done: true,
                             };
                             (*n, waiting)
                         })
                         .collect(),
+                    conflicts,
                 })
             })
         }
@@ -1877,6 +1921,7 @@ mod tests {
                 let session = format!("{:08x}", forge.sessions);
                 forge.claims.insert(item.clone(), session.clone());
                 forge.starts.push((item.clone(), session.clone()));
+                forge.works.push(work.clone());
                 let name = format!("riff-{item}-{session}");
                 let folder = match forge.git {
                     true => self.root.join("sessions").join(format!("{item}-{session}")),
@@ -1940,6 +1985,15 @@ mod tests {
                     Work::Build { .. } if forge.no_pull => None,
                     Work::Build { issue } => forge.pulls.insert(issue, Pr::Asked),
                     Work::Verify { issue, .. } => forge.pulls.insert(issue, Pr::Passed),
+                    Work::Rebase { .. } if forge.no_push => None,
+                    // The push of the rebase: a new head with no conflict
+                    // and no verify.
+                    Work::Rebase { issue, .. } => {
+                        let head = format!("{}r", forge.head(issue));
+                        forge.heads.insert(issue, head);
+                        forge.conflicting.remove(&issue);
+                        forge.pulls.insert(issue, Pr::Asked)
+                    }
                 };
                 forge.claims.remove(&record.live.item);
                 forge.finished.push(record.live.item.clone());
@@ -2359,6 +2413,120 @@ mod tests {
         assert_eq!(forge.told, [spent.clone(), spent]);
     }
 
+    /// The wave of the item 1, whose pull request #41 has the verify
+    /// `pr`, auto-merge on and a conflict with `main` at `c1`.
+    async fn conflict(pr: Pr) -> Here {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().pulls.insert(1, pr);
+        here.forge().conflicting.insert(1);
+        here
+    }
+
+    fn rebase(commit: &str) -> Work {
+        Work::Rebase {
+            issue: 1,
+            pull: 41,
+            commit: commit.into(),
+        }
+    }
+
+    /// 01M57FJ3WWMQSDBFRRHXN3SMFQ: a pull request with a passed verify
+    /// and a conflict gets one rebase for its head. The same head gets no
+    /// second session. A new head with a conflict is a new conflict.
+    #[tokio::test]
+    async fn a_passed_pull_request_with_a_conflict_gets_one_rebase_for_each_head() {
+        let here = conflict(Pr::Passed).await;
+        here.forge().no_push = true;
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().works, [rebase("c1")]);
+        here.end("issue-1").await;
+        here.until(3, |h| h.forge().finished == ["issue-1"]).await;
+        here.idle(3).await;
+        {
+            let forge = here.forge();
+            assert_eq!(
+                forge.works,
+                [rebase("c1")],
+                "the same head: no second session"
+            );
+            assert!(forge.told.is_empty(), "{:?}", forge.told);
+        }
+        // main moves again, and a person pushed a new head with a conflict.
+        here.forge().heads.insert(1, "c1b".into());
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().works, [rebase("c1"), rebase("c1b")]);
+    }
+
+    /// 01M57FJ3WWMQSDBFRRHXN3SMFQ: the conflict of a pull request with
+    /// auto-merge off gets no rebase: no merge waits for it.
+    #[tokio::test]
+    async fn a_pull_request_with_auto_merge_off_gets_no_rebase() {
+        let here = conflict(Pr::Passed).await;
+        here.forge().manual.insert(1);
+        here.run();
+        here.idle(3).await;
+        let forge = here.forge();
+        assert!(forge.works.is_empty(), "{forge:?}");
+    }
+
+    /// 01M57FJ3WWMQSDBFRRHXN3SMFQ: a pull request that waits for a verify
+    /// and has a conflict gets the rebase, not the verify of the old head.
+    /// After the push, a new session verifies the new head: it wrote
+    /// neither side.
+    #[tokio::test]
+    async fn the_rebase_comes_before_the_verify_and_a_new_session_verifies_the_new_head() {
+        let here = conflict(Pr::Asked).await;
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.end("issue-1").await;
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        let forge = here.forge();
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1r".into(),
+        };
+        assert_eq!(forge.works, [rebase("c1"), verify]);
+        let [(_, rebaser), (_, verifier)] = &forge.starts[..] else {
+            panic!("{forge:?}");
+        };
+        assert_ne!(rebaser, verifier, "the verify is a new session");
+    }
+
+    /// 01M57FJ3WWMQSDBFRRHXN3SMFQ, 01M558EYCXPFW8CJV3XJ7HK3NR: a claim of
+    /// the rebase that riff-server refused for a pause is no start: after
+    /// the pause, the rebase of the same head starts.
+    #[tokio::test]
+    async fn a_rebase_refused_for_a_pause_starts_after_the_pause() {
+        let here = conflict(Pr::Passed).await;
+        here.forge().refusals = vec!["paused".into(); 2];
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        let forge = here.forge();
+        assert_eq!(forge.refused, ["issue-1", "issue-1"]);
+        assert_eq!(forge.works, [rebase("c1")]);
+    }
+
+    /// 01M57FJ3WWMQSDBFRRHXN3SMFQ, 01M57A7A48A70Y7PTD95A3MBYC: `riff wave
+    /// run` clears the start of a rebase too: the same head starts again.
+    #[tokio::test]
+    async fn a_second_wave_run_starts_the_rebase_of_the_same_head_again() {
+        let here = conflict(Pr::Passed).await;
+        here.forge().no_push = true;
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.end("issue-1").await;
+        here.until(3, |h| h.forge().finished.len() == 1).await;
+        here.idle(3).await;
+        assert_eq!(here.forge().works.len(), 1);
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().works, [rebase("c1"), rebase("c1")]);
+    }
+
     #[tokio::test]
     async fn a_stop_of_the_wave_starts_no_new_session_and_the_sessions_go_on() {
         let free = Arc::new(AtomicU64::new(64));
@@ -2561,17 +2729,29 @@ esac
         /// Runs [`after_build`] with `gh`, and gives each message that the
         /// lead can read, with its kind.
         async fn after_build(&self, gh: pr::Gh) -> Vec<(Kind, String)> {
-            after_build(gh, &self.api, &self.record, &self.wave, 12)
+            self.after(gh, None).await.1
+        }
+
+        /// [`Built::after_build`] after the rebase of the head commit
+        /// `conflict`, with the line of each step.
+        async fn after(
+            &self,
+            gh: pr::Gh,
+            conflict: Option<&str>,
+        ) -> (Vec<String>, Vec<(Kind, String)>) {
+            let lines = after_build(gh, &self.api, &self.record, &self.wave, 12, conflict)
                 .await
                 .unwrap();
             let thread = self.wave.thread().unwrap();
-            self.api
+            let got = self
+                .api
                 .read(&self.lead, &thread, true)
                 .await
                 .unwrap()
                 .into_iter()
                 .map(|c| (c.message.kind, c.message.body))
-                .collect()
+                .collect();
+            (lines, got)
         }
     }
 
@@ -2645,5 +2825,60 @@ esac
         ))
         .unwrap();
         assert!(book.contains(&format!("\n{note}\n")), "{note}");
+    }
+
+    /// 01M57FJ3Z8AFDY9G0KTAYZJESY: the rebase session ended, and the pull
+    /// request still has the head with the conflict: the lead gets a
+    /// message, and no verify request. "Run the wave" in the book shows
+    /// the same message.
+    #[tokio::test]
+    async fn a_rebase_with_no_push_tells_the_lead_and_sends_no_verify_request() {
+        let riff = Built::new().await;
+        let (lines, got) = riff.after(riff.gh(false), Some("1a2b3c4d5e")).await;
+        assert_eq!(lines[1], text::run_lead_told("issue-12"));
+        let message = text::wave_not_rebased(
+            "issue-12",
+            40,
+            "worktree-issue-12",
+            "1a2b3c4d5e",
+            "9f8e7d6c",
+        );
+        assert_eq!(got, [(Kind::Message, message.clone())]);
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/development.md"
+        ))
+        .unwrap();
+        let run_the_wave = book
+            .split("\n### Run the wave\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n### ").next())
+            .expect("the how-to Run the wave");
+        assert!(
+            run_the_wave.contains(&format!("\n{message}\n")),
+            "{message}"
+        );
+    }
+
+    /// 01M57FJ3Z8AFDY9G0KTAYZJESY: the rebase pushed a new head: the lead
+    /// gets the verify request of the new head.
+    #[tokio::test]
+    async fn a_rebase_that_pushed_sends_the_verify_request_of_the_new_head() {
+        let riff = Built::new().await;
+        let (lines, got) = riff.after(riff.gh(false), Some("0ld0ld0ld0")).await;
+        assert_eq!(lines[1], text::run_verify_sent("issue-12", 40));
+        assert_eq!(
+            got,
+            [(
+                Kind::Message,
+                text::wave_verify_request(
+                    "issue-12",
+                    40,
+                    "worktree-issue-12",
+                    "1a2b3c4",
+                    "9f8e7d6c"
+                )
+            )]
+        );
     }
 }

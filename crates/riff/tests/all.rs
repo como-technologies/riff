@@ -93,6 +93,7 @@ mod trusted_riff;
 mod usage;
 mod wakes;
 mod watch_limit;
+mod wave_conflict;
 mod waves;
 mod who;
 mod wip;
