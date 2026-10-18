@@ -915,6 +915,11 @@ pub struct BlockedInfo {
 /// of a [`SetBlocked`].
 pub const STATUS_CHARS: usize = 400;
 
+/// The most characters in the numbers of a [`SetMachine`]: the facts of
+/// the daemon of a host are longer than a status
+/// (01M57D3F50347RD8ED79KEA9V7).
+pub const MACHINE_CHARS: usize = 4000;
+
 /// What a session does now, in its own words: its current step. The
 /// words help a person. They make no state: a block is [`SetBlocked`]
 /// (01M41FZPGEK4TNPSM2051W4VMS).
@@ -945,16 +950,20 @@ impl Status {
 /// line break, or with more than [`STATUS_CHARS`] characters. `what`
 /// names the text in the error.
 fn one_line(what: &str, text: &str) -> Result<(), String> {
+    line_of(what, text, STATUS_CHARS)
+}
+
+/// Refuses a text that is empty, has a line break, or has more than
+/// `most` characters.
+fn line_of(what: &str, text: &str, most: usize) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err(format!("the {what} is empty"));
     }
     if text.chars().any(char::is_control) {
         return Err(format!("the {what} must be one line"));
     }
-    if text.chars().count() > STATUS_CHARS {
-        return Err(format!(
-            "the {what} has more than {STATUS_CHARS} characters"
-        ));
+    if text.chars().count() > most {
+        return Err(format!("the {what} has more than {most} characters"));
     }
     Ok(())
 }
@@ -1074,8 +1083,9 @@ impl SetStep {
 /// `POST /v1/machine`: the numbers of the machine of `me`
 /// (01M515KSWVGCBS76AWZV74TJQ3). The `riff mcp` of the lead sends them
 /// for its machine, which has no `riff workers host`. The numbers are
-/// the text of the status of a workers host: riff-server keeps the
-/// text and does not read it. It is a signal, like a status.
+/// the text of the status of a workers host. The daemon of a host sends
+/// its facts in the same way (01M57D3F50347RD8ED79KEA9V7). riff-server
+/// keeps the text and does not read it. It is a signal, like a status.
 ///
 /// ```
 /// use riff_core::wire::SetMachine;
@@ -1084,7 +1094,9 @@ impl SetStep {
 /// let set = |numbers: &str| SetMachine { me: me.clone(), numbers: numbers.into() };
 /// assert!(set("workers host: limit 2, floor 4GB, no workers").check().is_ok());
 /// assert_eq!(set(" ").check().unwrap_err(), "the text of the numbers is empty");
-/// assert!(set(&"x".repeat(401)).check().is_err());
+/// assert!(set(&"x".repeat(4000)).check().is_ok());
+/// assert!(set(&"x".repeat(4001)).check().is_err());
+/// assert!(set("two\nlines").check().is_err());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -1095,9 +1107,9 @@ pub struct SetMachine {
 
 impl SetMachine {
     /// Refuses numbers that are not one line of at most
-    /// [`STATUS_CHARS`] characters.
+    /// [`MACHINE_CHARS`] characters.
     pub fn check(&self) -> Result<(), String> {
-        one_line("text of the numbers", &self.numbers)
+        line_of("text of the numbers", &self.numbers, MACHINE_CHARS)
     }
 }
 

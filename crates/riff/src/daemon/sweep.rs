@@ -582,6 +582,10 @@ pub struct Swept {
     pub line: String,
     /// True when the folder stays.
     pub kept: bool,
+    /// The repository of the folder, when it stays because its clone
+    /// holds work that is not on `origin`: the lead gets a note
+    /// (01M57D3FEJPHD962GW0H82N8E6).
+    pub work: Option<String>,
 }
 
 impl<R: Runtime + 'static> Daemon<R> {
@@ -635,7 +639,10 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// Sweeps as [`Daemon::sweep`], and gives the lines for the log of
     /// the daemon: each removed folder, and each kept folder with a new
     /// reason. A folder that stays for the same reason as at an earlier
-    /// sweep gets no new line (01M53S7WAXD46YPN0DR96XSTMG).
+    /// sweep gets no new line (01M53S7WAXD46YPN0DR96XSTMG). A new line of
+    /// a folder that stays because its clone holds work that is not on
+    /// `origin` is also a note for the lead of its repository
+    /// (01M57D3FEJPHD962GW0H82N8E6).
     pub async fn sweep_news(&self, repo: Option<&str>) -> Vec<String> {
         let swept = self.sweep(repo).await;
         let mut said = self.folders.said();
@@ -648,6 +655,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                     return None;
                 } else {
                     said.insert(swept.folder, swept.line.clone());
+                }
+                if let Some(repo) = &swept.work {
+                    self.news.push(repo, text::daemon_kept_work(&swept.line));
                 }
                 Some(swept.line)
             })
@@ -677,11 +687,12 @@ impl<R: Runtime + 'static> Daemon<R> {
         if only.is_some_and(|only| only != repo) {
             return Ok(None);
         }
-        let kept = |line: String| {
+        let kept = |line: String, work: Option<String>| {
             Some(Swept {
                 folder: folder.to_owned(),
                 line,
                 kept: true,
+                work,
             })
         };
         // A fault of the forge, for example a `gh` with no answer in
@@ -700,14 +711,17 @@ impl<R: Runtime + 'static> Daemon<R> {
         };
         let fate = match forge.await {
             Ok(fate) => fate,
-            Err(e) => return Ok(kept(text::swept_forge_failed(folder, &format!("{e:#}")))),
+            Err(e) => {
+                let line = text::swept_forge_failed(folder, &format!("{e:#}"));
+                return Ok(kept(line, None));
+            }
         };
         let Some(over) = text::swept_why(issue, &fate) else {
             return Ok(None);
         };
         let clone = folder.join("clone");
         if let Some(why) = blocking(move || Ok(Local::of(&clone).why())).await? {
-            return Ok(kept(text::swept_kept(folder, &over, &why)));
+            return Ok(kept(text::swept_kept(folder, &over, &why), Some(repo)));
         }
         let gone = folder.to_owned();
         blocking(move || {
@@ -721,6 +735,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             folder: folder.to_owned(),
             line: text::swept(folder, &over),
             kept: false,
+            work: None,
         }))
     }
 
@@ -1029,7 +1044,13 @@ pub(crate) mod tests {
             here.daemon.sweep_news(None).await,
             std::slice::from_ref(&one)
         );
+        // One note for the lead of the repository (01M57D3FEJPHD962GW0H82N8E6).
+        assert_eq!(here.daemon.news.take("o/r"), [text::daemon_kept_work(&one)]);
         assert!(here.daemon.sweep_news(None).await.is_empty());
+        assert!(
+            here.daemon.news.take("o/r").is_empty(),
+            "one note, not one at each sweep"
+        );
         assert_eq!(
             lines(here.daemon.sweep(None).await),
             [one],
@@ -1082,11 +1103,13 @@ esac
                     folder: hangs.clone(),
                     line: text::swept_forge_failed(&hangs, &text::gh_no_answer(call, limit)),
                     kept: true,
+                    work: None,
                 },
                 Swept {
                     folder: closed.clone(),
                     line: text::swept(&closed, "the pull request #42 closed with no merge"),
                     kept: false,
+                    work: None,
                 },
             ]
         );

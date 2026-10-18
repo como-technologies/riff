@@ -1274,6 +1274,63 @@ In a terminal, `riff who` has the colors of `riff tail`: each session
 has the same color in both. `running` is green and `paused` is yellow.
 A blocked status is red. The `who` tool of a session stays plain.
 
+### See the facts of each host
+
+The riff daemon of each host sends the facts of its host to the riff
+server each 30 seconds. It does so after `riff daemon host` or
+`riff wave run` in the main clone on that host. `riff who` shows them
+in its last part, `Hosts`. `riff top` shows them under the row of the
+host:
+
+```sh
+riff who
+riff top --host thelio
+```
+
+```text
+Hosts:
+mike@thelio (12s ago)
+  daemon 3.1.0 d2ae080  sessions 1/4  floor 8GB
+  load 1.5/32  100GB avail  disk 300GB free (75%)  podman 5.2.1  image here
+  riff on  gh on  claude 1h30m left
+  wave como-technologies/riff: started issue-12
+  riff-issue-12-1a2b3c4d  issue-12  works  > Bash: just check
+  waits: riff-issue-13-2b3c4d5e
+```
+
+- The first line: the riff build of the daemon, the live sessions
+  against the limit, and the floor of free memory.
+- The second line: the load against the cores, the free memory, the
+  disk of the session folders, the version of podman, and the session
+  image of the repository.
+- The third line: the sign-ins on the host. `claude` shows the time
+  left. riff and `gh` show `on` or `off`. `?` means that riff cannot
+  read it.
+- Then the state of each wave, each live session with its item, phase
+  and last step, and the starts that wait for room.
+
+A fact in yellow needs the person: no podman, no session image, a
+sign-in that is off or has less than 2 hours left, low memory or a
+full disk. A host whose daemon sent no facts for 3 minutes shows
+none.
+
+The daemon also posts a note to the lead:
+
+- one note when the sign-in of `claude` on the host has less than 2
+  hours left, with the step for the person, and one note when it is
+  back;
+- one note when it keeps the folder of a session whose work is over,
+  because its clone has work that is not on `origin`.
+
+```mermaid
+flowchart LR
+    D["riff daemon on thelio"] -->|"each 30 s: the facts"| S[riff server]
+    D -->|"a note: a short sign-in, a kept folder"| S
+    S --> W["riff who: Hosts"]
+    S --> T["riff top: under the host"]
+    S --> L["the lead"]
+```
+
 ### Show the URI of each session
 
 The table shows a short name. To see the full URI of each session in

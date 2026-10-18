@@ -1070,6 +1070,14 @@ riff wave stop --host HOST
   your user.
 - When riff says that no daemon serves the repository on HOST, ask
   your user to run `riff daemon host` once on HOST, in the main clone.
+- `riff who` ends with `Hosts`: the facts of the daemon of each host.
+  They are the build, the limit, the sessions, the waves, the load,
+  the memory, the disk, podman, the image and the sign-ins. Read them
+  before you act on a host.
+- A note from a daemon that the sign-in of `claude` on HOST is short
+  needs your user: tell your user the step in the note. A note that a
+  sweep kept a folder with work that is not on `origin` needs a look
+  at that work.
 
 When the `claude` of a worker exits on its own, you get a note
 `worker stopped`. The note needs no step: the free work goes to an idle

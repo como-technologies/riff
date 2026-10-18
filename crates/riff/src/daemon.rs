@@ -357,6 +357,7 @@ use crate::text;
 use crate::wave::{Job, Wave, World};
 use riff_client::sessions::{Live, Phase};
 
+pub mod facts;
 pub mod remote;
 pub mod sweep;
 
@@ -1431,6 +1432,9 @@ pub struct Daemon<R> {
     /// The task of the session on riff-server of each repository that
     /// the daemon serves ([`remote::serve`]).
     serving: Mutex<BTreeMap<String, (remote::Served, JoinHandle<()>)>>,
+    /// The notes for the lead of each repository that a session of
+    /// [`remote::serve`] sends ([`facts::News`]).
+    news: facts::News,
 }
 
 /// A wave that runs in the daemon.
@@ -1485,6 +1489,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             folders: Arc::default(),
             again: None,
             serving: Mutex::new(BTreeMap::new()),
+            news: facts::News::default(),
         })
     }
 
@@ -1559,7 +1564,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
             task.abort();
         }
-        let task = tokio::spawn(remote::serve(self.dir.clone(), served.clone()));
+        let news = self.news.clone();
+        let task = tokio::spawn(remote::serve(self.dir.clone(), served.clone(), news));
         serving.insert(served.wave.repo.clone(), (served, task));
     }
 

@@ -1,16 +1,17 @@
 //! The lead manages the daemon of another host (#1063,
-//! 01M579Z9JE6HY9HG3PWR1RR0RQ to 01M579Z9VRD12FRK6DSYVKDHQB). Two fake
-//! hosts, `a` and `b`, each with a `riff daemon` of its own home, serve
-//! the same repository on one riff-server. The lead runs on `a`. Each
-//! daemon command with `--host` reaches the daemon of the host that it
-//! names, and only that one.
+//! 01M579Z9JE6HY9HG3PWR1RR0RQ to 01M579Z9VRD12FRK6DSYVKDHQB), and sees
+//! the facts of each host (#1065, 01M57D3F50347RD8ED79KEA9V7 to
+//! 01M57D3FGV57W96A7SWTEFRCGW). Two fake hosts, `a` and `b`, each with a
+//! `riff daemon` of its own home, serve the same repository on one
+//! riff-server. The lead runs on `a`. Each daemon command with `--host`
+//! reaches the daemon of the host that it names, and only that one.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use isolated::Isolated;
-use riff::daemon::remote;
+use riff::daemon::{facts, remote};
 use riff_client::api::Api;
 use riff_core::name::{SessionUri, Who};
 use riff_core::selector::Selector;
@@ -18,6 +19,10 @@ use riff_core::wire::{Kind, RiffState};
 
 /// The bound of each wait. It only ends a test that hangs.
 const WAIT: Duration = Duration::from_secs(60);
+
+/// The time between two looks of each daemon at its facts, in
+/// milliseconds.
+const LOOK_MS: u64 = 200;
 
 /// One host: its own riff home and its daemon.
 struct Host {
@@ -38,14 +43,27 @@ impl Host {
     }
 
     /// `riff ARGS` of mike on this host in `dir`, as the session
-    /// `session`, or as the person.
+    /// `session`, or as the person. Each host has numbers of its own:
+    /// its machine and its disk. Its daemon sends its facts each
+    /// [`LOOK_MS`].
     fn riff(&self, dir: &Path, args: &[&str], session: Option<&str>) -> Command {
         let mut cmd = self.env.riff();
+        let (cores, free) = if self.name == "a" {
+            (16, 100)
+        } else {
+            (32, 300)
+        };
         cmd.args(args)
             .current_dir(dir)
             .env("RIFF_SERVER", &self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", self.name)
+            .env(
+                "RIFF_MACHINE",
+                format!("cpu {cores}x3000MHz, mem 64GB, 60GB available, load 0.50"),
+            )
+            .env("RIFF_DISK", format!("disk {free}GB free of 400GB"))
+            .env(facts::EVERY_VAR, LOOK_MS.to_string())
             .env_remove("CLAUDE_CODE_SESSION_ID")
             .env_remove("RIFF_WORKER");
         match session {
@@ -171,6 +189,12 @@ struct Riff {
 }
 
 async fn riff() -> Riff {
+    riff_with(300, 300).await
+}
+
+/// As [`riff`], with a sign-in of claude on `a` and on `b` that ends in
+/// these minutes.
+async fn riff_with(a_minutes: i64, b_minutes: i64) -> Riff {
     let api = start_server().await;
     let root = tempfile::tempdir().unwrap();
     let main = repository(root.path());
@@ -179,6 +203,8 @@ async fn riff() -> Riff {
     api.set_riff(&lead, RiffState::Running).await.unwrap();
     let mut a = Host::new("a", api.base());
     let mut b = Host::new("b", api.base());
+    a.claude_ends_in(a_minutes);
+    b.claude_ends_in(b_minutes);
     for host in [&mut a, &mut b] {
         host.start().await;
         // The person serves the lead from the main clone, once.
@@ -432,4 +458,124 @@ async fn a_new_daemon_serves_with_the_same_session() {
             .map(|p| p.split(',').next().unwrap().to_owned())
     };
     assert_ne!(pid(&old), pid(&new), "{old}\n{new}");
+}
+
+impl Host {
+    /// Writes the sign-in file of `claude` of this host: it ends in
+    /// `minutes`.
+    fn claude_ends_in(&self, minutes: i64) {
+        let dir = self.env.home().join(".claude");
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let at = i64::try_from(now).unwrap() + minutes * 60_000;
+        let file = format!(
+            r#"{{"claudeAiOauth":{{"accessToken":"sk-a","refreshToken":"sk-r","expiresAt":{at}}}}}"#
+        );
+        std::fs::write(dir.join(".credentials.json"), file).unwrap();
+    }
+}
+
+impl Riff {
+    /// The bodies of the notes of the daemons to the lead that start
+    /// with `start`.
+    async fn notes(&self, start: &str) -> Vec<String> {
+        let thread = self.lead.default_thread().unwrap();
+        let read = self.api.read_after(&self.lead, &thread, 0).await.unwrap();
+        read.into_iter()
+            .filter(|m| m.message.kind == Kind::Note)
+            .map(|m| m.message.body)
+            .filter(|body| body.starts_with(start))
+            .collect()
+    }
+}
+
+/// 01M57D3F50347RD8ED79KEA9V7, 01M57D3F7FXTPZB3M72Z1DQ1T7,
+/// 01M57D3F9SWMKP22WNRPRY3X5T, 01M57D3FGV57W96A7SWTEFRCGW: the daemon of
+/// each host sends its facts, and `riff who` and `riff top` of the lead
+/// show each fact for the right host.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_who_and_riff_top_show_the_facts_of_each_host() {
+    let r = riff_with(300, 600).await;
+    let out = r.lead(&["daemon", "limit", "--sessions", "5"], "b").await;
+    assert!(out.status.success(), "{out:?}");
+    let who = until("the facts of each host in riff who", || async {
+        let out = r.a.run(&r.main, &["who"], Some("l1")).await;
+        let who = text(&out.stdout);
+        let fresh = who.contains("sessions 0/5") && who.matches("claude ").count() == 2;
+        (out.status.success() && fresh).then_some(who)
+    })
+    .await;
+    let part = |host: &str| {
+        let start = who.find(&format!("mike@{host} (")).unwrap();
+        let rest = &who[start..];
+        let end = rest[1..].find("mike@").map_or(rest.len(), |at| at + 1);
+        rest[..end].to_owned()
+    };
+    let (a, b) = (part("a"), part("b"));
+    let build = riff_core::build::Build::this().to_string();
+    let build: Vec<&str> = build.split_whitespace().take(2).collect();
+    let build = build.join(" ");
+    for (host, part, cores, free, limit, left) in [
+        ("a", &a, 16, 100, "sessions 0/", "claude 4h"),
+        ("b", &b, 32, 300, "sessions 0/5", "claude 9h"),
+    ] {
+        assert!(part.contains(&format!("daemon {build}")), "{host}: {part}");
+        assert!(part.contains(limit), "{host}: {part}");
+        assert!(
+            part.contains(&format!("load 0.5/{cores}")),
+            "{host}: {part}"
+        );
+        assert!(part.contains("60GB avail"), "{host}: {part}");
+        assert!(
+            part.contains(&format!("disk {free}GB free")),
+            "{host}: {part}"
+        );
+        assert!(part.contains("no session image"), "{host}: {part}");
+        assert!(part.contains("riff on"), "{host}: {part}");
+        // The gh of a test has no sign-in.
+        assert!(part.contains("gh off"), "{host}: {part}");
+        assert!(part.contains(left), "{host}: {part}");
+    }
+    assert!(!a.contains("sessions 0/5"), "{a}");
+
+    let out =
+        r.a.run(&r.main, &["top", "--once", "--host", "b"], Some("l1"))
+            .await;
+    assert!(out.status.success(), "{out:?}");
+    let top = text(&out.stdout);
+    assert!(top.contains("load 0.5/32"), "{top}");
+    assert!(top.contains("sessions 0/5"), "{top}");
+    assert!(!top.contains("load 0.5/16"), "{top}");
+}
+
+/// 01M57D3FC5PB5EQ6Y38Y5R2DBB: the lead gets one note when the sign-in
+/// of claude on a host has less than 2 hours left, not one at each look,
+/// and one note when it comes back.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_short_sign_in_of_claude_is_one_note_to_the_lead() {
+    let r = riff_with(300, 30).await;
+    let short = "The sign-in of claude on b ends in";
+    until("the note of the short sign-in", || async {
+        (!r.notes(short).await.is_empty()).then_some(())
+    })
+    .await;
+    // Many looks later: still one note.
+    tokio::time::sleep(Duration::from_millis(LOOK_MS * 10)).await;
+    let notes = r.notes(short).await;
+    assert_eq!(notes.len(), 1, "{notes:#?}");
+    assert!(notes[0].contains("run claude on b"), "{notes:#?}");
+    assert!(r.notes("The sign-in of claude on a").await.is_empty());
+
+    r.b.claude_ends_in(600);
+    let back = "The sign-in of claude on b is back";
+    until("the note of the sign-in that came back", || async {
+        (!r.notes(back).await.is_empty()).then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(LOOK_MS * 10)).await;
+    assert_eq!(r.notes(back).await.len(), 1);
+    assert_eq!(r.notes(short).await.len(), 1);
 }

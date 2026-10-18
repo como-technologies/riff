@@ -977,6 +977,20 @@ impl std::fmt::Display for HostFault {
 
 impl std::error::Error for HostFault {}
 
+/// The sign-in file of `claude` for the home `home`: in
+/// `CLAUDE_CONFIG_DIR`, else in `.claude` of the home.
+///
+/// ```
+/// let path = riff::run::credentials_in(std::path::Path::new("/home/mike"));
+/// assert!(path.ends_with(".credentials.json"));
+/// ```
+pub fn credentials_in(home: &Path) -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|d| !d.is_empty())
+        .map_or_else(|| home.join(".claude"), PathBuf::from)
+        .join(".credentials.json")
+}
+
 /// Reads the [`Host`] facts, with `gh` in the folder `main`. A fact
 /// that is missing is a [`HostFault`] that says the fix.
 pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
@@ -991,10 +1005,7 @@ pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
         .ok()
         .filter(|u| !u.is_empty())
         .ok_or_else(|| missing("set USER".into()))?;
-    let claude_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .filter(|d| !d.is_empty())
-        .map_or_else(|| home.join(".claude"), PathBuf::from);
-    let credentials = claude_dir.join(".credentials.json");
+    let credentials = credentials_in(&home);
     let file = std::fs::read_to_string(&credentials)
         .map_err(|e| missing(format!("{}: {e}", text::run_no_sign_in(&credentials))))?;
     let sign_in = sign_in(&file, now_ms()).map_err(|e| missing(format!("{e:#}")))?;
