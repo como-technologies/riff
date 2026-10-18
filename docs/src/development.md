@@ -2290,7 +2290,7 @@ riff often starts after record 1. The audit then reads the records
 that the log keeps, and says where they start:
 
 ```sh
-riff audit --wave "Wave 33"
+riff audit --wave 33
 ```
 
 ```text
