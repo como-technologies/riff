@@ -38,7 +38,10 @@ it. Requirements and rustdoc do not count: they are for agents.
 
 ## Writing
 
-- Use ASD-STE100: short sentences, active voice, plain words.
+- Use ASD-STE100: short sentences, active voice, plain words. Use
+  natural tenses for things in time: "I will tell you" for a future
+  action, "it failed" for a past event. Never the present tense for a
+  future action.
 - Less is more. Say each thing in one place only.
 - Explain how things work with mermaid diagrams.
 - Keep "Start a Riff" short and current. It is for a person who knows
