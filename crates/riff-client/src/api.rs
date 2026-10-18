@@ -58,9 +58,10 @@
 //!
 //! Each call of a gone session brings it back (R207). So a session that
 //! left the riff makes no request (01M3MEEFETT9A0DRWBKQTG77Z2). The
-//! leave is a mark on this machine: the file `left-ID` in
-//! [`local::marks`]. The client of a session reads the mark before each
-//! request, in the one function that sends each request
+//! leave is a mark on this machine: the file `left-ID` in the folder of
+//! [`Platform::marks`](crate::platform::Platform::marks) (see
+//! [`crate::marks`]). The client of a session reads the mark before
+//! each request, in the one function that sends each request
 //! (`Api::send_with`, 01M3XQVJXWBC3DKAVWBPXPSGZS). A request of a
 //! session with the mark fails with [`Left`], and nothing goes to the
 //! server. So the status line, each hook, the watch, each tool and each
@@ -107,7 +108,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use futures::{Stream, StreamExt};
-use riff_core::build::{self, Build, Mismatch};
+use riff_core::build::{self, Build};
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
@@ -127,7 +128,7 @@ use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
 use crate::link::{self, Budget, Limits, Link, Outcome, Reply, WaitLine};
-use crate::{device, local, login, secrets, text};
+use crate::{device, login, marks, secrets, text};
 
 /// A change of the members that `riff-server` made, and the posts of
 /// its note (01M3MN14ZCTRVD3T455P6TFK1B). The change stands also when
@@ -145,7 +146,7 @@ pub struct Changed<T> {
 /// this machine (R133). `RIFF_SERVER` names another server.
 ///
 /// ```
-/// assert_eq!(riff::api::DEFAULT_SERVER, "http://127.0.0.1:7878");
+/// assert_eq!(riff_client::api::DEFAULT_SERVER, "http://127.0.0.1:7878");
 /// ```
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:7878";
 
@@ -160,7 +161,7 @@ pub const DEFAULT_PORT: u16 = 7878;
 /// end.
 ///
 /// ```
-/// use riff::api::server_url;
+/// use riff_client::api::server_url;
 ///
 /// assert_eq!(server_url("first").unwrap(), "http://first:7878");
 /// assert_eq!(server_url("first:9000").unwrap(), "http://first:9000");
@@ -169,7 +170,7 @@ pub const DEFAULT_PORT: u16 = 7878;
 /// assert_eq!(server_url("::1").unwrap(), "http://[::1]:7878");
 /// assert_eq!(server_url("fe80::2").unwrap(), "http://[fe80::2]:7878");
 /// assert_eq!(server_url("https://riff.example.com/").unwrap(), "https://riff.example.com");
-/// assert_eq!(server_url(riff::api::DEFAULT_SERVER).unwrap(), riff::api::DEFAULT_SERVER);
+/// assert_eq!(server_url(riff_client::api::DEFAULT_SERVER).unwrap(), riff_client::api::DEFAULT_SERVER);
 /// assert!(server_url("").is_err());
 /// assert!(server_url("first:port").is_err());
 /// ```
@@ -231,7 +232,7 @@ pub enum Told {
 ///     let item: anyhow::Result<u32> = Ok(n);
 ///     async move { anyhow::Ok(futures::stream::iter([item])) }
 /// };
-/// let items = riff::api::follow(connect, Duration::from_secs(5)).take(3);
+/// let items = riff_client::api::follow(connect, Duration::from_secs(5)).take(3);
 /// let items: Vec<u32> = items.map(Result::unwrap).collect().await;
 /// assert_eq!(items, [1, 2, 3]);
 /// # }
@@ -293,57 +294,6 @@ where
     )
 }
 
-/// The line of [`Reconnect`] while a connect fails.
-pub const RECONNECTING: &str = "(reconnecting…)";
-
-/// The line of [`Reconnect`] when a stream is back after a failed connect.
-pub const BACK: &str = "(back)";
-
-/// What a person sees of a stream that [`follow`] follows
-/// (01M3NK7VHXB0PAR8VH8GQQA06K). A server that ends a long poll is
-/// normal, so a reconnect shows nothing. Only a failed connect shows one
-/// short dim line, [`RECONNECTING`], and the next item [`BACK`]. A server
-/// that riff cannot talk to ([`Mismatch`]) shows its error in red.
-///
-/// ```
-/// use riff::api::{BACK, RECONNECTING, Reconnect};
-///
-/// let plain = |line: Option<String>| line.map(|l| anstream::adapter::strip_str(&l).to_string());
-/// let mut link = Reconnect::default();
-/// assert_eq!(link.line(&anyhow::Ok(1)), None);
-/// let cut: anyhow::Result<u32> = Err(anyhow::anyhow!("error decoding response body"));
-/// assert_eq!(plain(link.line(&cut)).as_deref(), Some(RECONNECTING));
-/// assert_eq!(link.line(&cut), None);
-/// assert_eq!(plain(link.line(&anyhow::Ok(2))).as_deref(), Some(BACK));
-/// assert_eq!(link.line(&anyhow::Ok(3)), None);
-/// ```
-#[derive(Debug, Default)]
-pub struct Reconnect {
-    lost: bool,
-}
-
-impl Reconnect {
-    /// The line to show before `item`, with its style, if any.
-    pub fn line<T>(&mut self, item: &Result<T>) -> Option<String> {
-        use crate::style::{DIM, ERROR, styled};
-        match (item, self.lost) {
-            (Ok(_), true) => {
-                self.lost = false;
-                Some(styled(DIM, BACK))
-            }
-            (Ok(_), false) | (Err(_), true) => None,
-            (Err(e), false) => {
-                self.lost = true;
-                Some(if e.downcast_ref::<Mismatch>().is_some() {
-                    styled(ERROR, &format!("riff: {e:#}"))
-                } else {
-                    styled(DIM, RECONNECTING)
-                })
-            }
-        }
-    }
-}
-
 /// What a server that answers tells about itself: see [`Api::probe`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Probe {
@@ -358,7 +308,7 @@ pub struct Probe {
 /// What a pause or a resume names (01M3XAHZBGSSJB3YX23K88W01K).
 ///
 /// ```
-/// use riff::api::PauseScope;
+/// use riff_client::api::PauseScope;
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
 /// let riff = "como-technologies/riff".parse()?;
@@ -411,7 +361,8 @@ pub struct Api {
     /// (01M4A803Z4Q0KX6NT1KC6QR43H).
     budget: Budget,
     auth: Option<Arc<Auth>>,
-    /// Where the client shows [`crate::link::WAITING`]. `None` is stderr.
+    /// Where the client shows [`crate::link::WAITING`]. `None` is the
+    /// platform.
     waits: Option<WaitLine>,
     /// The mark of the leave of the session of this client. `None` for
     /// a person, and for a client that no session uses.
@@ -420,7 +371,7 @@ pub struct Api {
 
 /// Where the mark of the leave of one session is.
 struct Mark {
-    /// A directory as [`local::marks`].
+    /// A directory as [`Platform::marks`](crate::platform::Platform::marks).
     dir: PathBuf,
     session: String,
 }
@@ -480,7 +431,7 @@ impl Api {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use riff::api::Api;
+    /// use riff_client::api::Api;
     ///
     /// let one = Api::new("http://127.0.0.1:7878");
     /// let two = Api::new("http://127.0.0.1:7878");
@@ -506,8 +457,8 @@ impl Api {
     ///
     /// ```
     /// use std::time::Duration;
-    /// use riff::api::Api;
-    /// use riff::link::Limits;
+    /// use riff_client::api::Api;
+    /// use riff_client::link::Limits;
     ///
     /// let fast = Limits { try_wait: Duration::from_millis(200), ..Limits::default() };
     /// let api = Api::new("http://127.0.0.1:7878").with_limits(fast);
@@ -530,7 +481,7 @@ impl Api {
     ///
     /// ```
     /// use std::time::Duration;
-    /// use riff::{api::Api, link::Budget};
+    /// use riff_client::{api::Api, link::Budget};
     ///
     /// let api = Api::new("http://127.0.0.1:7878");
     /// assert_eq!(api.budget(), Budget::Short);
@@ -561,16 +512,17 @@ impl Api {
 
     /// The same client for the session `session`, with the mark of its
     /// leave in `dir`. See "A session that left the riff" in the module
-    /// doc. [`Api::signed_in`] calls it with [`local::marks`].
+    /// doc. [`Api::signed_in`] calls it with the folder of
+    /// [`Platform::marks`](crate::platform::Platform::marks).
     ///
     /// ```
     /// # #[tokio::main(flavor = "current_thread")] async fn main() -> anyhow::Result<()> {
-    /// use riff::api::{Api, Left};
+    /// use riff_client::api::{Api, Left};
     ///
     /// let marks = tempfile::tempdir()?;
     /// let api = Api::new("http://127.0.0.1:1").for_session(marks.path(), "a6cf");
     /// assert!(!api.left());
-    /// riff::local::leave(marks.path(), "a6cf")?;
+    /// riff_client::marks::leave(marks.path(), "a6cf")?;
     /// assert!(api.left());
     ///
     /// // No request goes out: the error is the leave, not the connect.
@@ -593,7 +545,7 @@ impl Api {
     pub fn left(&self) -> bool {
         self.mark
             .as_ref()
-            .is_some_and(|mark| local::left(&mark.dir, &mark.session))
+            .is_some_and(|mark| marks::left(&mark.dir, &mark.session))
     }
 
     /// The same client with no mark: only for the end call of a leave.
@@ -609,7 +561,7 @@ impl Api {
     /// (01M3THEE5V3RFHF9QTA8MA8QDF).
     ///
     /// ```
-    /// let api = riff::api::Api::new("http://127.0.0.1:7878").waits_to(|line| println!("{line}"));
+    /// let api = riff_client::api::Api::new("http://127.0.0.1:7878").waits_to(|line| println!("{line}"));
     /// assert_eq!(api.base(), "http://127.0.0.1:7878");
     /// ```
     pub fn waits_to(mut self, show: impl Fn(&str) + Send + Sync + 'static) -> Self {
@@ -726,7 +678,7 @@ impl Api {
     /// without a sign-in ([`Api::for_session`],
     /// 01M3XQVJXWBC3DKAVWBPXPSGZS).
     pub fn signed_in(mut self, session: Option<&str>) -> Result<Self> {
-        if let (Some(dir), Some(session)) = (local::marks(), session) {
+        if let (Some(dir), Some(session)) = (crate::platform::get().marks(), session) {
             self = self.for_session(&dir, session);
         }
         if !secrets::has_keyring() || login::stored(self.base())?.is_none() {
@@ -1113,7 +1065,7 @@ impl Api {
             activity,
             prompt_secs,
             container: false,
-            binary: Some(crate::binary::this_riff()),
+            binary: Some(crate::platform::get().binary()),
         };
         self.call(&alive).await
     }
@@ -1129,14 +1081,14 @@ impl Api {
             activity: None,
             prompt_secs: None,
             container: true,
-            binary: Some(crate::binary::this_riff()),
+            binary: Some(crate::platform::get().binary()),
         };
         self.call(&alive).await
     }
 
     /// A keep-alive that names `binary` as the riff of `me`
     /// (01M514C11BPE93PJT4221PYVHS): `riff workers host` names its own
-    /// riff ([`crate::binary::this_riff`]).
+    /// riff ([`Platform::binary`](crate::platform::Platform::binary)).
     pub async fn alive_as(&self, me: &SessionUri, binary: RiffBinary) -> Result<AliveReply> {
         let alive = Alive {
             me: me.clone(),
@@ -1269,11 +1221,11 @@ impl Api {
         let Some(mark) = &self.mark else {
             bail!(text::LEAVE_NO_MARK);
         };
-        local::leave(&mark.dir, &mark.session)
+        marks::leave(&mark.dir, &mark.session)
             .with_context(|| format!("cannot write the mark of the leave in {:?}", mark.dir))?;
         let ended = self.unmarked().end(me).await;
         if ended.is_err() {
-            let _ = local::join(&mark.dir, &mark.session);
+            let _ = marks::join(&mark.dir, &mark.session);
         }
         ended
     }
@@ -1283,7 +1235,7 @@ impl Api {
     /// a worker or not.
     pub async fn join_riff(&self, me: &SessionUri, worker: bool) -> Result<()> {
         if let Some(mark) = &self.mark {
-            local::join(&mark.dir, &mark.session).with_context(|| {
+            marks::join(&mark.dir, &mark.session).with_context(|| {
                 format!("cannot remove the mark of the leave in {:?}", mark.dir)
             })?;
         }
@@ -1534,7 +1486,7 @@ impl Api {
 
     /// Each kept message of one thread after the seq `after`, checked
     /// like [`Api::read`]. It reads each page. `riff tail` and
-    /// `riff chat` read with it after a break (see [`crate::catch_up`]).
+    /// `riff chat` read with it after a break (see `riff::catch_up`).
     pub async fn read_after(
         &self,
         me: &SessionUri,
@@ -1715,7 +1667,7 @@ impl Api {
 
     /// The plan of the repository thread `thread` and its holds, as `me`
     /// sees them: a query (01M4A4Z1NKPDBXV2PRZCG86G6A). A wave of the
-    /// riff daemon starts no held item ([`crate::wave`]).
+    /// riff daemon starts no held item (`riff::wave`).
     pub async fn plan_show(&self, me: &SessionUri, thread: &ThreadName) -> Result<PlanReply> {
         self.call(&PlanShow {
             me: me.clone(),
@@ -2078,7 +2030,7 @@ enum Check {
 /// (01M3XQVJXWBC3DKAVWBPXPSGZS). The text names `/riff:join`.
 ///
 /// ```
-/// assert_eq!(riff::api::Left.to_string(), riff::text::LEFT_COMMAND);
+/// assert_eq!(riff_client::api::Left.to_string(), riff_client::text::LEFT_COMMAND);
 /// ```
 #[derive(Debug)]
 pub struct Left;
@@ -2094,7 +2046,7 @@ impl std::error::Error for Left {}
 /// `riff-server` refused a token request, with an OAuth error.
 ///
 /// ```
-/// let refused = riff::api::TokenRefused { error: "invalid_grant".into(), description: None };
+/// let refused = riff_client::api::TokenRefused { error: "invalid_grant".into(), description: None };
 /// assert_eq!(refused.to_string(), "riff-server refused the token request: invalid_grant");
 /// assert!(refused.ended());
 /// ```
@@ -2129,7 +2081,7 @@ impl std::error::Error for TokenRefused {}
 /// the budget of a call: see [`link::outcome`].
 ///
 /// ```
-/// let outage = riff::api::Outage {
+/// let outage = riff_client::api::Outage {
 ///     base: "http://127.0.0.1:7878".into(),
 ///     status: reqwest::StatusCode::BAD_GATEWAY,
 /// };
@@ -2166,8 +2118,8 @@ impl std::error::Error for Outage {}
 ///
 /// let base = "http://127.0.0.1:7878";
 /// let wait = Duration::from_secs(20);
-/// let error = riff::api::NoReply { base: base.into(), wait };
-/// assert_eq!(error.to_string(), riff::text::no_reply(base, wait));
+/// let error = riff_client::api::NoReply { base: base.into(), wait };
+/// assert_eq!(error.to_string(), riff_client::text::no_reply(base, wait));
 /// ```
 #[derive(Debug)]
 pub struct NoReply {
@@ -2193,12 +2145,13 @@ impl std::error::Error for NoReply {}
 ///
 /// False for each other error, for example no sign-in, a refused token
 /// ([`TokenRefused`]), a refused call ([`Refusal`]), a session that left
-/// ([`Left`]) or a version that riff cannot talk to ([`Mismatch`]). A
-/// new try gives the same error, so the command ends with its text.
+/// ([`Left`]) or a version that riff cannot talk to
+/// ([`Mismatch`](riff_core::build::Mismatch)). A new try gives the same
+/// error, so the command ends with its text.
 ///
 /// ```
 /// use std::time::Duration;
-/// use riff::api::{Api, Left, NoReply, Outage, TokenRefused, passes};
+/// use riff_client::api::{Api, Left, NoReply, Outage, TokenRefused, passes};
 ///
 /// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() {
@@ -2214,7 +2167,7 @@ impl std::error::Error for NoReply {}
 /// let refused = TokenRefused { error: "invalid_grant".into(), description: None };
 /// assert!(!passes(&refused.into()));
 /// assert!(!passes(&Left.into()));
-/// assert!(!passes(&anyhow::anyhow!(riff::text::no_sign_in(base, false))));
+/// assert!(!passes(&anyhow::anyhow!(riff_client::text::no_sign_in(base, false))));
 /// # }
 /// ```
 pub fn passes(error: &anyhow::Error) -> bool {
@@ -2263,7 +2216,7 @@ pub struct Checked {
 /// (`trusted`) is verified (R212).
 ///
 /// ```
-/// use riff::api::checked;
+/// use riff_client::api::checked;
 /// use riff_core::wire::{Keys, Message};
 ///
 /// let message = Message {
@@ -2292,7 +2245,7 @@ pub fn checked(thread: &ThreadName, message: Message, keys: &Keys, trusted: bool
 /// reply, and the code of the refusal when the server names one.
 ///
 /// ```
-/// let refusal = riff::api::Refusal {
+/// let refusal = riff_client::api::Refusal {
 ///     op: "claim".into(),
 ///     status: reqwest::StatusCode::CONFLICT,
 ///     code: Some("paused".into()),
@@ -2387,7 +2340,7 @@ pub async fn keep_alive_of_host(api: &Api, me: &SessionUri, every: Duration) {
     loop {
         tick.tick().await;
         // A hung request must not stop the next keep-alive.
-        let alive = api.alive_as(me, crate::binary::this_riff());
+        let alive = api.alive_as(me, crate::platform::get().binary());
         let _ = tokio::time::timeout(every, alive).await;
     }
 }

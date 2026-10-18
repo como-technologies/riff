@@ -17,8 +17,8 @@ use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 
-use crate::api::{Checked, Claimed, Inbox, Told};
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
+use riff_client::api::{Checked, Claimed, Inbox, Told};
 use riff_core::wire::{
     AdminSet, FreeReply, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed,
     PauseInfo, Posted, ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState,
@@ -57,7 +57,7 @@ that watch ends.";
 ///     top_fault(&fault, base, &last, &now),
 ///     "riff: no good look since 21:35:07: cannot reach riff-server"
 /// );
-/// let slow = riff::text::no_reply(base, riff::link::SHORT_BUDGET);
+/// let slow = riff_client::text::no_reply(base, riff_client::link::SHORT_BUDGET);
 /// let line = top_fault(&slow, base, &last, &now);
 /// assert_eq!(line, "riff: no good look since 21:35:07: riff-server gave no reply in 60 seconds");
 /// assert!(line.len() <= 80);
@@ -177,16 +177,6 @@ your work: ";
 /// The start of the refusal of the `leave` tool when the leave itself
 /// fails (01M3XQVK05FAT3PR43W8RNEYHY).
 pub const LEAVE_FAILED: &str = "You are still in the riff. The leave failed: ";
-
-/// The end of the refusal of the `leave` tool when riff has no
-/// directory for the mark of the leave (01M3XQVK05FAT3PR43W8RNEYHY).
-pub const LEAVE_NO_MARK: &str = "riff has no directory for the mark of the leave: set HOME";
-
-/// The refusal of a `riff` command that acts as a session that left the
-/// riff, and of each request of such a session
-/// (01M3MEEFETT9A0DRWBKQTG77Z2, 01M3XQVJXWBC3DKAVWBPXPSGZS).
-pub const LEFT_COMMAND: &str = "this session left the riff. Run /riff:join in the session to \
-join again";
 
 /// The one line of a watch in a session that left the riff
 /// (01M3MEEFETT9A0DRWBKQTG77Z2).
@@ -338,7 +328,7 @@ pub fn wake_line(wake: &Wake) -> String {
 /// warning.
 ///
 /// ```
-/// use riff::api::Claimed;
+/// use riff_client::api::Claimed;
 ///
 /// let thread = "como-technologies/riff".parse()?;
 /// let mine = Claimed { granted: true, holder: None, held: None, warning: None };
@@ -565,42 +555,6 @@ pub fn build_line(server: Option<&Build>) -> String {
     }
 }
 
-/// The riff, or the repository `repository`: the subject of a pause.
-fn pause_subject(repository: Option<&ThreadName>) -> String {
-    match repository {
-        Some(repository) => format!("The repository {repository}"),
-        None => "The riff".to_owned(),
-    }
-}
-
-/// The message that wakes the sessions after a pause or a resume
-/// (01M3JCG3YD7C2Y3V0QJPF082YH): of the repository `repository`, or of
-/// the whole riff.
-///
-/// ```
-/// use riff_core::wire::RiffState;
-///
-/// assert!(riff::text::riff_news(None, RiffState::Paused).contains("\"Pause\""));
-/// assert!(riff::text::riff_news(None, RiffState::Running).contains("from where you stopped"));
-/// let strata = "como-technologies/strata".parse()?;
-/// let news = riff::text::riff_news(Some(&strata), RiffState::Paused);
-/// assert!(news.starts_with("The repository como-technologies/strata is paused. Stop"), "{news}");
-/// # Ok::<(), riff_core::name::NameError>(())
-/// ```
-pub fn riff_news(repository: Option<&ThreadName>, state: RiffState) -> String {
-    let subject = pause_subject(repository);
-    match state {
-        RiffState::Paused => format!(
-            "{subject} is paused. Stop at your next step and wait: see \"Pause\" in the riff \
-             skill."
-        ),
-        RiffState::Running => format!(
-            "{subject} is running again. Go on from where you stopped. A session with no work \
-             follows the start routine."
-        ),
-    }
-}
-
 /// The answer to `riff pause` and `riff resume`: the new state of the
 /// repository `repository` or of the whole riff, the sessions that
 /// woke, and each pause that still stops work
@@ -640,7 +594,7 @@ pub fn riff_set(
     reply: &RiffReply,
     posted: &[Posted],
 ) -> String {
-    let subject = pause_subject(repository);
+    let subject = riff_client::text::pause_subject(repository);
     let mut out = if reply.changed {
         let mut out = format!("{subject} is {state} now.");
         let names: Vec<String> = posted.iter().flat_map(|p| &p.woken).map(name).collect();
@@ -1630,24 +1584,6 @@ pub fn workers_started(count: u16, window: &str, dir: &std::path::Path) -> Strin
     )
 }
 
-/// The error when the server is a new riff: the sign-in of this machine
-/// is for a riff that is gone (01M3JNVBRS35B3CD67367JF7SJ). riff removed
-/// it.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::new_riff("http://h:7878"),
-///     "This riff is new. Run riff login. \
-///      (riff removed the old sign-in of this machine for http://h:7878.)"
-/// );
-/// ```
-pub fn new_riff(server: &str) -> String {
-    format!(
-        "This riff is new. Run riff login. \
-         (riff removed the old sign-in of this machine for {server}.)"
-    )
-}
-
 /// The answer to `riff invite --email` (riff-server 1.x): the address of
 /// the riff and the lines that the person runs to join
 /// (01M3MEF4B33Z6WVJMDP29C7SS2). The lines are the ones of "Join a Riff"
@@ -1808,85 +1744,6 @@ pub fn owner_denied(denied: &OwnerDenied) -> String {
     format!(
         "{} stays the owner. The riff tells {}.",
         denied.owner, denied.admin
-    )
-}
-
-/// The note of `riff invite --email` in each repository thread
-/// (01M3MN14ZCTRVD3T455P6TFK1B). `user` made the change.
-///
-/// ```
-/// use riff_core::wire::Invited;
-///
-/// let done = Invited { email: "bob@gmail.com".into(), address: "https://r.io".into() };
-/// assert_eq!(
-///     riff::text::invited_news("ada", &done),
-///     "members: ada invited bob@gmail.com. bob@gmail.com is a member now."
-/// );
-/// ```
-pub fn invited_news(user: &str, done: &Invited) -> String {
-    let email = &done.email;
-    format!("members: {user} invited {email}. {email} is a member now.")
-}
-
-/// The note of `riff remove --email` in each repository thread
-/// (01M3MN14ZCTRVD3T455P6TFK1B).
-///
-/// ```
-/// use riff_core::wire::Removed;
-///
-/// let done = Removed { email: "bob@gmail.com".into(), sign_ins: 2 };
-/// assert_eq!(
-///     riff::text::removed_news("ada", &done),
-///     "members: ada removed bob@gmail.com. bob@gmail.com is not a member now."
-/// );
-/// ```
-pub fn removed_news(user: &str, done: &Removed) -> String {
-    let email = &done.email;
-    format!("members: {user} removed {email}. {email} is not a member now.")
-}
-
-/// The note of `riff admin add` and `riff admin remove` in each
-/// repository thread (01M3MN14ZCTRVD3T455P6TFK1B).
-///
-/// ```
-/// use riff_core::wire::AdminSet;
-///
-/// let added = AdminSet { email: "bob@gmail.com".into(), admin: true };
-/// assert_eq!(
-///     riff::text::admin_news("ada", &added),
-///     "members: ada made bob@gmail.com an admin."
-/// );
-/// let removed = AdminSet { email: "bob@gmail.com".into(), admin: false };
-/// assert_eq!(
-///     riff::text::admin_news("ada", &removed),
-///     "members: ada made bob@gmail.com a member again, not an admin."
-/// );
-/// ```
-pub fn admin_news(user: &str, done: &AdminSet) -> String {
-    let email = &done.email;
-    if done.admin {
-        format!("members: {user} made {email} an admin.")
-    } else {
-        format!("members: {user} made {email} a member again, not an admin.")
-    }
-}
-
-/// The note of `riff owner` in each repository thread
-/// (01M3MN14ZCTRVD3T455P6TFK1B).
-///
-/// ```
-/// use riff_core::wire::OwnerPassed;
-///
-/// let done = OwnerPassed { owner: "bob@gmail.com".into(), admin: "ada@gmail.com".into() };
-/// assert_eq!(
-///     riff::text::owner_news("ada", &done),
-///     "members: ada passed the owner role to bob@gmail.com. ada@gmail.com stays an admin."
-/// );
-/// ```
-pub fn owner_news(user: &str, done: &OwnerPassed) -> String {
-    format!(
-        "members: {user} passed the owner role to {}. {} stays an admin.",
-        done.owner, done.admin
     )
 }
 
@@ -2539,52 +2396,6 @@ pub fn signed_out(had: bool, server: &str) -> String {
     }
 }
 
-/// The error at a riff with no sign-in, when a client of this machine
-/// has an old sign-in for it (R226). `kept` is true while the keyring
-/// still holds that sign-in. It is false when the sign-in was removed
-/// after this process started.
-///
-/// ```
-/// let server = "http://127.0.0.1:7878";
-/// assert_eq!(
-///     riff::text::no_sign_in(server, true),
-///     "riff-server at http://127.0.0.1:7878 has no sign-in, but this machine \
-///      has an old sign-in for it. Run riff logout, then try again."
-/// );
-/// assert_eq!(
-///     riff::text::no_sign_in(server, false),
-///     "riff-server at http://127.0.0.1:7878 has no sign-in. This process \
-///      started with an old sign-in of this machine. Start your agent \
-///      session again, or run the command again."
-/// );
-/// ```
-pub fn no_sign_in(server: &str, kept: bool) -> String {
-    if kept {
-        format!(
-            "riff-server at {server} has no sign-in, but this machine has an old \
-             sign-in for it. Run riff logout, then try again."
-        )
-    } else {
-        format!(
-            "riff-server at {server} has no sign-in. This process started with an \
-             old sign-in of this machine. Start your agent session again, or run the \
-             command again."
-        )
-    }
-}
-
-/// The error of `riff logout --all` at a riff with no sign-in (R227).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::nobody_signs_in("http://127.0.0.1:7878"),
-///     "riff-server at http://127.0.0.1:7878 has no sign-in. Nobody is signed in to it."
-/// );
-/// ```
-pub fn nobody_signs_in(server: &str) -> String {
-    format!("riff-server at {server} has no sign-in. Nobody is signed in to it.")
-}
-
 /// The warning of `riff connect claude` when it cannot check the sign-in
 /// or the sign-in fails. The plugin is installed.
 ///
@@ -2725,7 +2536,7 @@ pub fn released_for(thread: &ThreadName, item: &str, holder: &str) -> String {
 /// not verified never shows as the lead (R200).
 ///
 /// ```
-/// use riff::api::Checked;
+/// use riff_client::api::Checked;
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let thread = "como-technologies/riff".parse()?;
@@ -2846,7 +2657,7 @@ pub fn action(from: &SessionUri, body: &str) -> Option<String> {
 /// thread under its label.
 ///
 /// ```
-/// use riff::api::{Checked, Inbox};
+/// use riff_client::api::{Checked, Inbox};
 /// use riff_core::wire::Message;
 ///
 /// let me = "riff://brett@heron".parse()?;
@@ -2880,7 +2691,7 @@ pub fn action(from: &SessionUri, body: &str) -> Option<String> {
 /// A page with more messages after it says how to read the next page:
 ///
 /// ```
-/// # use riff::api::{Checked, Inbox};
+/// # use riff_client::api::{Checked, Inbox};
 /// # use riff_core::name::SessionUri;
 /// # use riff_core::wire::Message;
 /// # let me: SessionUri = "riff://brett@heron".parse()?;
@@ -3371,7 +3182,7 @@ pub fn status_set(status: &riff_core::wire::Status) -> String {
 /// second stop.
 ///
 /// ```
-/// use riff::api::Told;
+/// use riff_client::api::Told;
 ///
 /// let told = riff::text::blocked_set("which design?", Told::Lead);
 /// assert_eq!(told, "You are blocked: which design? The lead has the reason.");
@@ -3406,7 +3217,7 @@ pub fn blocked_set(reason: &str, told: Told) -> String {
 /// who got the message of a failed step (01M48VDS663X064YS5ZGCCZSTB).
 ///
 /// ```
-/// use riff::api::Told;
+/// use riff_client::api::Told;
 /// use riff_core::wire::StepChange;
 ///
 /// let start = StepChange::Start { name: "live window".into() };
@@ -3697,7 +3508,7 @@ pub fn lost_messages(n: u64) -> String {
 ///
 /// ```
 /// use chrono::{FixedOffset, TimeZone};
-/// use riff::api::Checked;
+/// use riff_client::api::Checked;
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let message = Message {
@@ -3793,7 +3604,7 @@ where
 /// `--color never` and a pipe get no escape codes.
 ///
 /// ```
-/// use riff::api::Probe;
+/// use riff_client::api::Probe;
 /// use riff::lifecycle::{Seen, Source, View};
 /// use riff_core::build::Build;
 ///
@@ -3868,7 +3679,7 @@ where
 /// come under its sign-in line:
 ///
 /// ```
-/// use riff::api::Probe;
+/// use riff_client::api::Probe;
 /// use riff::lifecycle::{Seen, Source, View};
 /// use riff_core::build::Build;
 /// use riff_core::wire::{CheckpointFacts, FactError, ServerFacts};
@@ -4583,23 +4394,6 @@ offers no workers. Set a limit first, for example: riff workers limit 2";
 pub const HOST_STOPPED: &str =
     "riff workers host stopped. Its workers still run. riff workers stop ends them.";
 
-/// The line of a locked OS keyring on `host`, or of one that does not
-/// answer (01M4385CCATXC0B8HV1XD6EFWG). See [`crate::secrets::Locked`].
-///
-/// ```
-/// assert_eq!(
-///     riff::text::keyring_locked("pangolin"),
-///     "the OS keyring of pangolin is locked or does not answer: unlock it at the desktop. \
-///      gh uses the same keyring, so gh stops too"
-/// );
-/// ```
-pub fn keyring_locked(host: &str) -> String {
-    format!(
-        "the OS keyring of {host} is locked or does not answer: unlock it at the desktop. \
-         gh uses the same keyring, so gh stops too"
-    )
-}
-
 /// The note of a workers host to the lead when its keyring locks
 /// (01M4385CEWGCP31DP5PAMPXZ97).
 ///
@@ -4615,8 +4409,8 @@ pub fn host_keyring_locked(host: &str) -> String {
     format!(
         "keyring: {}. The workers of {host} cannot get a new token. The host looks again \
          each {} seconds.",
-        keyring_locked(host),
-        crate::secrets::KEYRING_RETRY.as_secs()
+        riff_client::text::keyring_locked(host),
+        riff_client::secrets::KEYRING_RETRY.as_secs()
     )
 }
 
@@ -4631,28 +4425,6 @@ pub fn host_keyring_locked(host: &str) -> String {
 /// ```
 pub fn host_keyring_back(host: &str) -> String {
     format!("keyring: the OS keyring of {host} answers again. The host goes on.")
-}
-
-/// The error of a call that got no reply from the server at `base` in
-/// `wait` (01M3WN72M02P3J24ACCHTMNSFY).
-///
-/// ```
-/// use std::time::Duration;
-///
-/// assert_eq!(
-///     riff::text::no_reply("http://127.0.0.1:7878", Duration::from_secs(20)),
-///     "riff-server at http://127.0.0.1:7878 gave no reply in 20 seconds"
-/// );
-/// assert_eq!(
-///     riff::text::no_reply("http://127.0.0.1:7878", Duration::from_millis(10)),
-///     "riff-server at http://127.0.0.1:7878 gave no reply in 0.01 seconds"
-/// );
-/// ```
-pub fn no_reply(base: &str, wait: std::time::Duration) -> String {
-    format!(
-        "riff-server at {base} gave no reply in {} seconds",
-        wait.as_secs_f64()
-    )
 }
 
 /// The first line of `riff workers host` (01M3NBV4294DS3WZFEKR7M3PNF).

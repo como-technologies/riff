@@ -5,8 +5,9 @@
 use crate::common;
 
 use common::{CLIENT, FakeProvider, REFRESH};
-use riff::api::Api;
-use riff::{login, smoke};
+use riff::smoke;
+use riff_client::api::Api;
+use riff_client::login;
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};

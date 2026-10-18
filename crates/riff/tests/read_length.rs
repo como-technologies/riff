@@ -3,8 +3,8 @@
 //! (01M3JPK82PN4F706MCHDH771MW), and each sender is short
 //! (01M3JPK85FT5CCQPF3WDCXSMDF).
 
-use riff::api::Api;
 use riff::text;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, RiffState};

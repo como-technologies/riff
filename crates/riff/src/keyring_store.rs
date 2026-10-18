@@ -2,7 +2,7 @@
 //!
 //! # Design
 //!
-//! [`secrets`](crate::secrets) keeps each secret in the default store of
+//! [`secrets`](riff_client::secrets) keeps each secret in the default store of
 //! `keyring-core`. On Linux and BSD, riff sets this store: a store of the
 //! Secret Service, for example GNOME Keyring or KWallet, through the
 //! `secret-service` crate. On each other OS, riff sets the store of the
@@ -268,14 +268,14 @@ mod tests {
     /// the store of the `keyring` crate, and this store finds its items.
     #[test]
     fn the_item_has_the_attributes_and_the_label_of_the_keyring_crate() {
-        let name = crate::login::secret_name("https://riff.example");
-        let attributes = attributes(crate::secrets::SERVICE, &name);
+        let name = riff_client::login::secret_name("https://riff.example");
+        let attributes = attributes(riff_client::secrets::SERVICE, &name);
         assert_eq!(
             attributes,
             HashMap::from([("service", "riff"), ("username", name.as_str())])
         );
         assert_eq!(
-            label(crate::secrets::SERVICE, &name),
+            label(riff_client::secrets::SERVICE, &name),
             "keyring:sign-in https://riff.example@riff"
         );
         assert_eq!(CONTENT_TYPE, "application/octet-stream");

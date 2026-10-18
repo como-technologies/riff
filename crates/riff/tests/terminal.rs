@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use riff::api::Api;
 use riff::identity;
 use riff::terminal::{self, Program, Tmux};
+use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use riff_core::wire::{RiffState, Status};
 

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::SessionUri;
 
 const LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=lead1";
@@ -634,7 +634,7 @@ async fn the_watch_of_a_worker_with_no_riff_mcp_stops_its_wrapper() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pause_and_a_resume_give_one_note_and_the_stop_holds() {
     use futures::StreamExt;
-    use riff::api::PauseScope;
+    use riff_client::api::PauseScope;
     use riff_core::wire::RiffState;
 
     let api = start_server().await;

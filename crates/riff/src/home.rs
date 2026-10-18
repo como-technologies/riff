@@ -5,7 +5,7 @@
 //! Without `RIFF_HOME`, riff keeps its files where the person has them:
 //! the settings in [`settings`](crate::settings), the local files in
 //! [`local`](crate::local), and the secrets in the OS keyring (see
-//! [`secrets`](crate::secrets)).
+//! [`secrets`](riff_client::secrets)).
 //!
 //! With `RIFF_HOME=DIR`, riff keeps each of them under `DIR`, and never
 //! opens the OS keyring:

@@ -5,7 +5,7 @@
 //!
 //! `riff` finds its server only in `--server` or `RIFF_SERVER`. With
 //! neither, it uses the riff of this machine,
-//! [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER). riff keeps no chosen
+//! [`DEFAULT_SERVER`](riff_client::api::DEFAULT_SERVER). riff keeps no chosen
 //! server in a file (01M3K0Q7X3FEKWZK0B3854C4RV). A person sets
 //! `RIFF_SERVER` in the profile of the shell, so each new session uses
 //! it.
@@ -86,8 +86,8 @@ use anyhow::{Context, Result, bail};
 use riff_core::build::Build;
 use riff_core::wire::ServerFacts;
 
-use crate::api::{Api, Probe};
-use crate::login;
+use riff_client::api::{Api, Probe};
+use riff_client::login;
 
 /// The longest time that `riff server` and `riff update` wait for each
 /// riff-server.
@@ -150,7 +150,7 @@ fn seen(url: &str, answer: Result<Probe, String>) -> Seen {
 
 /// Looks at the riff at `server`, from `source`, and at the riff of
 /// this machine at `local` when it is another riff (see [`same_riff`]).
-/// `riff` passes [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
+/// `riff` passes [`DEFAULT_SERVER`](riff_client::api::DEFAULT_SERVER) as `local`.
 ///
 /// ```standalone_crate
 /// # #[tokio::main(flavor = "current_thread")]
@@ -368,7 +368,7 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// an old riff with
 /// [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
 /// words for the person. `riff` passes
-/// [`DEFAULT_SERVER`](crate::api::DEFAULT_SERVER) as `local`.
+/// [`DEFAULT_SERVER`](riff_client::api::DEFAULT_SERVER) as `local`.
 pub async fn update(
     cargo: &Path,
     claude: &Path,
@@ -495,7 +495,7 @@ fn run(command: &mut Command, name: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::DEFAULT_SERVER;
+    use riff_client::api::DEFAULT_SERVER;
 
     #[test]
     fn a_path_after_the_host_does_not_hide_loopback() {

@@ -8,10 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use isolated::Isolated;
-use riff::api::Api;
 use riff::look::{self, MainWatch, Notifier, PullWatch};
 use riff::pr::Gh;
 use riff::top::Top;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{RiffOwner, RiffState, SessionInfo, SessionState, Waits};
 
@@ -452,7 +452,7 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
         )
         .await
     };
-    let bodies = |inbox: Vec<riff::api::Inbox>| -> Vec<String> {
+    let bodies = |inbox: Vec<riff_client::api::Inbox>| -> Vec<String> {
         inbox
             .into_iter()
             .flat_map(|i| i.messages)
@@ -463,7 +463,7 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     // One command: the block, and the first wake of the lead.
     assert_eq!(
         api.blocked(&worker, "which design?").await.unwrap(),
-        riff::api::Told::Lead
+        riff_client::api::Told::Lead
     );
     let first = bodies(api.inbox(&lead, None, false).await.unwrap());
     assert_eq!(first, ["blocked: which design?"]);

@@ -7,8 +7,8 @@
 use std::time::Duration;
 
 use futures::StreamExt;
-use riff::api::Api;
 use riff::text;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_server::Service;
 use riff_server::auth::Config;

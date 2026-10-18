@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use futures::StreamExt;
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, Status};

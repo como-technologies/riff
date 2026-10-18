@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use riff_core::wire::{RiffBinary, StartReason};
 

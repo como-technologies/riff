@@ -166,7 +166,7 @@ async fn a_blocked_session_is_red() {
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
     output(riff(&server, dir, Some("b2"), &blocked)).await;
     // A watch makes b2 live, so its state is blocked.
-    let api = riff::api::Api::new(&server);
+    let api = riff_client::api::Api::new(&server);
     let b2 = uri("b2");
     let _watch = api.watch(&b2).await.unwrap();
 
@@ -237,7 +237,7 @@ async fn the_state_of_a_lead_comes_from_its_facts() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
-    let api = riff::api::Api::new(&server);
+    let api = riff_client::api::Api::new(&server);
     let a1 = uri("a1");
     output(riff(&server, dir, Some("a1"), &["lead"])).await;
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
@@ -293,7 +293,7 @@ async fn a_long_step_shows_and_a_failed_step_wakes_the_lead() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
-    let api = riff::api::Api::new(&server);
+    let api = riff_client::api::Api::new(&server);
     output(riff(&server, dir, Some("a1"), &["lead"])).await;
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
     let (a1, b2) = (uri("a1"), uri("b2"));

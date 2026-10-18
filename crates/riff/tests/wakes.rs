@@ -9,7 +9,7 @@
 //! A verify request to the lead of the author reaches a free session
 //! when that lead is gone (01M3JY1TBPQHH6WPPBTF42T64H).
 
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, RiffState};

@@ -137,7 +137,7 @@ fn a_leave_holds_over_clear() {
     });
 
     // The leave tool writes the record.
-    local::leave(&files(run.path()), "old").unwrap();
+    riff_client::marks::leave(&files(run.path()), "old").unwrap();
     let span = isolated::Span::start();
     let out = watch.wait_with_output().unwrap();
     assert!(span.within(Duration::from_secs(1)), "{:?}", span.wall());
@@ -172,7 +172,7 @@ fn a_leave_holds_over_clear() {
         .unwrap();
     assert!(!who.status.success());
     let err = String::from_utf8_lossy(&who.stderr);
-    assert!(err.contains(riff::text::LEFT_COMMAND), "{err}");
+    assert!(err.contains(riff_client::text::LEFT_COMMAND), "{err}");
 
     let mut line = riff(run.path(), "new", &["statusline"])
         .stdin(Stdio::piped())

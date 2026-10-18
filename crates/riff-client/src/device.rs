@@ -10,9 +10,9 @@
 //!
 //! ```standalone_crate
 //! # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-//! let key = riff::device::key("http://127.0.0.1:7878")?;
+//! let key = riff_client::device::key("http://127.0.0.1:7878")?;
 //! // The same server gives the same key.
-//! let again = riff::device::key("http://127.0.0.1:7878")?;
+//! let again = riff_client::device::key("http://127.0.0.1:7878")?;
 //! assert_eq!(again.thumbprint(), key.thumbprint());
 //! # Ok::<(), anyhow::Error>(())
 //! ```

@@ -62,13 +62,17 @@ flowchart TB
   the session URIs, the selectors, the wire types of the HTTP API, the
   device keys and the DPoP proofs, the signed messages, the records of
   the log and the build check.
-- `riff-client` comes in riff 3.1. The client of riff-server and the
-  models of the views move into it, out of the crate `riff`. It holds
-  no terminal code. It builds for Linux, for Android and for
-  WebAssembly.
+- `riff-client` holds the client of riff-server (#997): the sign-in,
+  the tokens, the API calls and the watch stream. Its modules are
+  `api`, `link`, `login`, `device`, `secrets` and `marks`. The browser
+  step of `riff login` stays in the crate `riff`. The models of the
+  views move into `riff-client` next (#998). It holds no terminal code.
+  It builds for Linux, for Android and for WebAssembly (#999).
 - A part that is not the same on each platform is a trait that each UI
-  gives. An example is the store of the tokens and of the device key:
-  the OS keyring on a machine, and the Keystore on Android.
+  gives: `riff_client::platform::Platform`. An example is the store of
+  the tokens and of the device key: the OS keyring on a machine, and
+  the Keystore on Android. `riff` gives its parts at its start: the OS
+  keyring, its local folders, and its lines on the terminal.
 - The socket of the riff daemon stays in the crate `riff`. A terminal
   UI gives the container sessions of the daemon of its machine to the
   sessions model of `riff-client`.

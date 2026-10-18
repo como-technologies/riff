@@ -325,7 +325,7 @@ flowchart TD
 - The codes `on_hold`, `not_in_wave`, `needs_open` and `stale_base`
   are new. Each one has the status 409, as `held`. A client of 1.0.0
   shows the reason of a code that it does not know: "claim failed (409
-  Conflict): REASON" (`crate::api`). A new client treats the three
+  Conflict): REASON" (`riff_client::api`). A new client treats the three
   codes of a claim as `held`: not granted, with the reason, exit 1.
   P2 tests both.
 

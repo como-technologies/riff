@@ -89,7 +89,6 @@ use anyhow::{Context, Result};
 use riff_core::name::Place;
 use tokio::signal::unix::{SignalKind, signal};
 
-use crate::api::Api;
 use crate::limits::{self, Limits};
 use crate::machine::Machine;
 use crate::terminal::{self, Program, Terminal, WorkerPane};
@@ -97,6 +96,7 @@ use crate::{
     enable, hygiene, identity, jobserver, local, settings, temp, text, worker_lsp, worker_mcp,
     workload,
 };
+use riff_client::api::Api;
 
 /// The variable that marks a worker session.
 pub const WORKER: &str = "RIFF_WORKER";
@@ -388,7 +388,7 @@ pub(crate) async fn tell_lead(place: Option<&Place>, server: &str, body: &str) -
     let place = identity::here(place)?;
     let me = identity::person(&place, server)?;
     let api = Api::new(server).signed_in(None)?;
-    api.tell(&me, crate::api::LEAD, body).await?;
+    api.tell(&me, riff_client::api::LEAD, body).await?;
     Ok(())
 }
 

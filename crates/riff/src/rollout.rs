@@ -194,13 +194,13 @@ use riff_core::selector::Selector;
 use riff_core::wire::{Idle, Kind, RiffState, SessionInfo};
 use serde::Deserialize;
 
-use crate::api::Api;
 use crate::disk::Disk;
 use crate::host;
 use crate::machine::Machine;
 use crate::pr::Gh;
 use crate::terminal::{Terminal, Tmux, WorkerPane};
 use crate::{identity, settings, text, usage, worker};
+use riff_client::api::Api;
 
 /// How often a rollout that is off looks at its setting again.
 pub const OFF_WAIT: Duration = Duration::from_secs(10);

@@ -8,8 +8,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use riff::api::Api;
-use riff::link::WAITING;
+use riff_client::api::Api;
+use riff_client::link::WAITING;
 use riff_core::name::SessionUri;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;

@@ -49,7 +49,7 @@
 //! A session that left the riff makes no call (see [`crate::leave`]).
 //! Each tool except `join` refuses, and the keep-alive, the rollout and
 //! the reap wait. The client of the tools refuses each request too
-//! ([`crate::api`], 01M3XQVJXWBC3DKAVWBPXPSGZS).
+//! ([`riff_client::api`], 01M3XQVJXWBC3DKAVWBPXPSGZS).
 //!
 //! After `riff update`, `riff mcp` runs the new binary in place at the
 //! first moment with no request in flight, with no end call, so that
@@ -146,10 +146,10 @@ use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::api::{Api, PauseScope};
 use crate::binary::{Follow, with_last, with_place};
 use crate::usage::{self, Meter};
 use crate::{dropped, identity, leave, relay, text};
+use riff_client::api::{Api, PauseScope};
 
 /// The hidden option that gives a new `riff mcp` the client of its
 /// connection after an update (01M3NT6WZTKAFKGDWGCFKC8TB5): the
@@ -401,7 +401,7 @@ impl Tools {
         let kept = crate::local::Kept {
             server: self.api.base().to_owned(),
             at_ms: crate::activity::now_ms(),
-            build: crate::link::server_build().map(|b| b.to_string()),
+            build: riff_client::link::server_build().map(|b| b.to_string()),
             line: text::statusline(id, reply.session.as_ref()),
         };
         if let Err(e) = crate::local::keep_statusline(dir, id, &kept) {
@@ -519,7 +519,7 @@ your repository) and who set it."
             Ok(pauses) => format!(
                 "{}\n{}",
                 text::riff_state(&pauses, now.default_thread().as_ref()),
-                text::build_line(crate::link::server_build().as_ref())
+                text::build_line(riff_client::link::server_build().as_ref())
             ),
             Err(e) => format!("riff cannot read the state of the riff: {e:#}"),
         };
@@ -541,7 +541,7 @@ your repository) and who set it."
         Ok(format!(
             "{}\n{owner}{}\n{}",
             text::riff_state(&pauses, me.default_thread().as_ref()),
-            text::build_line(crate::link::server_build().as_ref()),
+            text::build_line(riff_client::link::server_build().as_ref()),
             text::who(&who.sessions, &who.owner, &me)
         ))
     }

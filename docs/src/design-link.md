@@ -61,14 +61,14 @@ flowchart LR
 
 ## 1. One link
 
-The link is the module `link` of the crate `riff`. `link::of(base)`
-gives the one link of a server in the process: a map by the URL of
-the server. So each `Api` of one server shares one link, one HTTP
-client and one state. `Api` keeps its typed methods (`who`, `post`,
-`claim` and the others), and each method goes through the link. Only
-the link talks to `riff-server`. The client of the sign-in provider in
-`login` is not a client of `riff-server`, and its faults do not change
-the state.
+The link is the module `link` of the crate `riff-client`.
+`link::of(base)` gives the one link of a server in the process: a map
+by the URL of the server. So each `Api` of one server shares one link,
+one HTTP client and one state. `Api` keeps its typed methods (`who`,
+`post`, `claim` and the others), and each method goes through the
+link. Only the link talks to `riff-server`. The client of the sign-in
+provider in `login` of the crate `riff` is not a client of
+`riff-server`, and its faults do not change the state.
 
 | Part | What it does |
 |---|---|

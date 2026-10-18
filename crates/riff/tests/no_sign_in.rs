@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use axum::Router;
-use riff::api::Api;
-use riff::login::{self, SignIn};
-use riff::text;
+use riff_client::api::Api;
+use riff_client::login::{self, SignIn};
+use riff_client::text;
 use riff_core::name::SessionUri;
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -57,7 +57,7 @@ async fn restart_with_no_sign_in(expired: bool) -> String {
     let url = front.url.clone();
     let first = Service::new(Config::new(&url));
     front.serve(&first);
-    let jkt = riff::device::key(&url).unwrap().thumbprint();
+    let jkt = riff_client::device::key(&url).unwrap().thumbprint();
     let pair = first
         .tokens()
         .sign_in("mike@comotechnologies.io", &jkt, Instant::now())

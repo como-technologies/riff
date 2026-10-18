@@ -53,11 +53,11 @@ use anyhow::{Result, bail};
 use riff_core::name::{Place, SessionUri};
 use riff_core::wire::StartReason;
 
-use crate::api::Api;
 use crate::daemon::{self, Ask, Say, Status};
 use crate::run::{self, Facts};
 use crate::runtime::{Runtime, SessionSpec};
 use crate::{identity, session_image, terminal, text};
+use riff_client::api::Api;
 
 /// The work item of the lead in the daemon.
 pub const ITEM: &str = "lead";

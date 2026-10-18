@@ -8,8 +8,8 @@ use isolated::Isolated;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use riff::api::Api;
 use riff::mcp::Tools;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::RiffState;
 use rmcp::ServiceExt;

@@ -18,9 +18,9 @@ use std::time::{Duration, Instant};
 
 use book::{commands_of_part, each_is_real, page};
 use isolated::Isolated;
-use riff::api::Api;
-use riff::login::{self, SignIn};
 use riff::text;
+use riff_client::api::Api;
+use riff_client::login::{self, SignIn};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Kind, RiffOwner, TokenReply};
 use riff_server::Service;
@@ -83,7 +83,7 @@ async fn people(service: &Service, api: &Api) -> Vec<TokenReply> {
 
 /// Signs in `email` on this device, as the provider sign-in does.
 async fn sign_in(service: &Service, api: &Api, email: &str) -> TokenReply {
-    let jkt = riff::device::key(api.base()).unwrap().thumbprint();
+    let jkt = riff_client::device::key(api.base()).unwrap().thumbprint();
     let pair = service.admit(email, false, &jkt).await.unwrap();
     let sign_in = SignIn {
         user: pair.user.clone(),

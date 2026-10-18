@@ -10,7 +10,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use futures::StreamExt;
-use riff::api::{Api, follow};
+use riff_client::api::{Api, follow};
 use riff_core::name::SessionUri;
 use riff_core::wire::{RiffState, Status};
 

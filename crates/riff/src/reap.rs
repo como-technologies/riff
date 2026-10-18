@@ -62,9 +62,9 @@ use std::time::Duration;
 use riff_core::name::SessionUri;
 use riff_core::wire::SessionInfo;
 
-use crate::api::Api;
 use crate::terminal::{Terminal, Tmux, WorkerPane};
 use crate::text;
+use riff_client::api::Api;
 
 /// The time between two looks at the worker panes.
 pub const EVERY: Duration = Duration::from_secs(5);

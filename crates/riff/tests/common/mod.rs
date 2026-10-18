@@ -38,7 +38,7 @@ pub fn mock_keyring() {
 pub fn fresh_url(listener: &tokio::net::TcpListener) -> String {
     mock_keyring();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    login::logout(&url).unwrap();
+    riff_client::login::logout(&url).unwrap();
     url
 }
 

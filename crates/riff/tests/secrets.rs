@@ -1,7 +1,7 @@
 //! The secrets of `riff` live in the keyring store, and only there.
 
 use keyring_core::Entry;
-use riff::secrets::{self, SERVICE};
+use riff_client::secrets::{self, SERVICE};
 
 #[test]
 fn secrets_round_trip_through_the_keyring_store() {

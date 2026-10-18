@@ -6,9 +6,10 @@ use crate::common;
 use isolated::Isolated;
 
 use keyring_core::{Entry, Error, mock};
-use riff::api::Api;
-use riff::login::{self, SignIn};
-use riff::{identity, secrets};
+use riff::identity;
+use riff_client::api::Api;
+use riff_client::login::{self, SignIn};
+use riff_client::secrets;
 use riff_core::name::SessionUri;
 
 fn uri(text: &str) -> SessionUri {

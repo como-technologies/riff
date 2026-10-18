@@ -15,7 +15,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -196,7 +196,10 @@ fn top(server: &str, dir: &Path, path: &Path, args: &[&str]) -> Command {
         .args(args)
         .current_dir(dir)
         .env("RIFF_SERVER", server)
-        .env(riff::link::BUDGET_VAR, BUDGET.as_millis().to_string())
+        .env(
+            riff_client::link::BUDGET_VAR,
+            BUDGET.as_millis().to_string(),
+        )
         .env("RIFF_HOST", "pangolin")
         .env("RIFF_HOME", dir)
         .env("RIFF_USER", "mike")
@@ -361,7 +364,7 @@ async fn stays_open(away: Option<Mode>) {
     // busy machine, the last try of a cut or of a refused connect can
     // also end with no reply.
     let url = gate.url();
-    let slow = riff::text::no_reply(&url, BUDGET);
+    let slow = riff_client::text::no_reply(&url, BUDGET);
     let faults = match away {
         Some(Mode::Hang) => vec![slow],
         _ => vec![format!("cannot reach riff-server at {url}"), slow],

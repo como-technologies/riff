@@ -107,10 +107,10 @@
 //! Wi-Fi drops or gets a new address. So after one good look, a look
 //! that fails does not end `riff top`
 //! (01M3Z8FXE2DY34ZP75WJE1S8HR), when a new try can repair the fault
-//! ([`crate::api::passes`]). Each call of a look has the budget of a
-//! short command, [`crate::link::SHORT_BUDGET`]
+//! ([`riff_client::api::passes`]). Each call of a look has the budget of a
+//! short command, [`riff_client::link::SHORT_BUDGET`]
 //! (01M4A803Z4Q0KX6NT1KC6QR43H), and the link makes new connections
-//! after a fault ([`crate::link::Link::swap`]). When a look fails,
+//! after a fault ([`riff_client::link::Link::swap`]). When a look fails,
 //! `riff top` keeps the last table, shows [`Top::fault`] as its first
 //! line, and looks again at its interval. The line goes at the next
 //! good look. When a call of the look gets no reply in its budget, the

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use isolated::Isolated;
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::record::{
@@ -239,12 +239,17 @@ async fn serve(
 async fn sign_in(service: &Service, url: &str, home: &Isolated, email: &str, allowed: bool) {
     let dir = home.riff_home().join("secrets");
     let key = Key::generate();
-    riff::secrets::file_set(&dir, &riff::device::secret_name(url), &key.to_secret()).unwrap();
+    riff_client::secrets::file_set(
+        &dir,
+        &riff_client::device::secret_name(url),
+        &key.to_secret(),
+    )
+    .unwrap();
     let pair = service
         .admit(email, allowed, &key.thumbprint())
         .await
         .unwrap();
-    let sign_in = riff::login::SignIn {
+    let sign_in = riff_client::login::SignIn {
         user: pair.user,
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
@@ -252,7 +257,7 @@ async fn sign_in(service: &Service, url: &str, home: &Isolated, email: &str, all
         riff_id: service.riff_id(),
     };
     let json = serde_json::to_string(&sign_in).unwrap();
-    riff::secrets::file_set(&dir, &riff::login::secret_name(url), &json).unwrap();
+    riff_client::secrets::file_set(&dir, &riff_client::login::secret_name(url), &json).unwrap();
 }
 
 /// A clone of `como-technologies/riff`, and the fake `gh` with the
@@ -592,19 +597,19 @@ async fn the_log_has_only_the_records_of_the_repository_and_no_body() {
         }),
     ));
     let (service, url) = server(records, &home).await;
-    let jkt = riff::device::key(&url).unwrap().thumbprint();
+    let jkt = riff_client::device::key(&url).unwrap().thumbprint();
     let pair = service
         .admit("mike@comotechnologies.io", false, &jkt)
         .await
         .unwrap();
-    let sign_in = riff::login::SignIn {
+    let sign_in = riff_client::login::SignIn {
         user: pair.user,
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
         expires_at: u64::MAX,
         riff_id: service.riff_id(),
     };
-    riff::login::store(&url, &sign_in).unwrap();
+    riff_client::login::store(&url, &sign_in).unwrap();
     let api = Api::new(&url).signed_in(None).unwrap();
     let log = api.log(&thread()).await.unwrap();
     assert_eq!(log.records.len(), good().len());

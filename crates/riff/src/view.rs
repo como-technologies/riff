@@ -28,12 +28,63 @@
 use std::fmt::Write;
 use std::path::Path;
 
-use riff_core::build::Build;
+use riff_core::build::{Build, Mismatch};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{MembersReply, PauseInfo, RiffOwner, RiffReply, SessionInfo};
 
 use crate::style::{BOLD, DIM, ERROR, GOOD, WARNING, styled};
 use crate::text::{self, safe};
+
+/// The line of [`Reconnect`] while a connect fails.
+pub const RECONNECTING: &str = "(reconnecting…)";
+
+/// The line of [`Reconnect`] when a stream is back after a failed connect.
+pub const BACK: &str = "(back)";
+
+/// What a person sees of a stream that
+/// [`follow`](riff_client::api::follow) follows (01M3NK7VHXB0PAR8VH8GQQA06K). A server that ends a long poll is
+/// normal, so a reconnect shows nothing. Only a failed connect shows one
+/// short dim line, [`RECONNECTING`], and the next item [`BACK`]. A server
+/// that riff cannot talk to
+/// ([`Mismatch`]) shows its error in red.
+///
+/// ```
+/// use riff::view::{BACK, RECONNECTING, Reconnect};
+///
+/// let plain = |line: Option<String>| line.map(|l| anstream::adapter::strip_str(&l).to_string());
+/// let mut link = Reconnect::default();
+/// assert_eq!(link.line(&anyhow::Ok(1)), None);
+/// let cut: anyhow::Result<u32> = Err(anyhow::anyhow!("error decoding response body"));
+/// assert_eq!(plain(link.line(&cut)).as_deref(), Some(RECONNECTING));
+/// assert_eq!(link.line(&cut), None);
+/// assert_eq!(plain(link.line(&anyhow::Ok(2))).as_deref(), Some(BACK));
+/// assert_eq!(link.line(&anyhow::Ok(3)), None);
+/// ```
+#[derive(Debug, Default)]
+pub struct Reconnect {
+    lost: bool,
+}
+
+impl Reconnect {
+    /// The line to show before `item`, with its style, if any.
+    pub fn line<T>(&mut self, item: &anyhow::Result<T>) -> Option<String> {
+        match (item, self.lost) {
+            (Ok(_), true) => {
+                self.lost = false;
+                Some(styled(DIM, BACK))
+            }
+            (Ok(_), false) | (Err(_), true) => None,
+            (Err(e), false) => {
+                self.lost = true;
+                Some(if e.downcast_ref::<Mismatch>().is_some() {
+                    styled(ERROR, &format!("riff: {e:#}"))
+                } else {
+                    styled(DIM, RECONNECTING)
+                })
+            }
+        }
+    }
+}
 
 /// `text` in `style`, or nothing when `text` is empty: so a line has no
 /// spaces at its end.
@@ -577,7 +628,7 @@ pub fn whoami(me: &SessionUri, state: Result<RiffReply, String>) -> String {
             let (facts, act) = state_facts(&pauses, me.default_thread().as_ref());
             rows.extend(facts);
             action = act;
-            rows.extend(build_facts(crate::link::server_build().as_ref()));
+            rows.extend(build_facts(riff_client::link::server_build().as_ref()));
         }
         Err(e) => rows.push(("riff", styled(ERROR, &format!("unknown: {}", safe(&e))))),
     }
@@ -713,7 +764,7 @@ pub fn who(
             rows.push(("owner", format!("{} ({})", safe(user), safe(email))));
         }
     }
-    rows.extend(build_facts(crate::link::server_build().as_ref()));
+    rows.extend(build_facts(riff_client::link::server_build().as_ref()));
     let mut out = facts(&rows);
     out.push('\n');
     if sessions.is_empty() {

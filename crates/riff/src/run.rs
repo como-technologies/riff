@@ -90,7 +90,7 @@
 //! The verify request and the release have the budget [`END_BUDGET`],
 //! not the short budget of a command (01M4ZQVVGQYXTAVRB69C7YPC3Y). A
 //! call with no reply, or with a fault, tries again with the waits of
-//! the link ([`crate::link`]) while the budget lasts. So a new instance
+//! the link ([`riff_client::link`]) while the budget lasts. So a new instance
 //! of riff-server at the end of a run drops neither. A new instance
 //! starts, loads the state, and waits 15 s for the lease before it
 //! serves; the old one replies 503 in that time. A cold start or a long
@@ -196,10 +196,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::signal::unix::{SignalKind, signal};
 
-use crate::api::{self, Api};
 use crate::daemon::{self, Ask, Ended, Say};
 use crate::runtime::{Bind, Env, SessionSpec, Source};
 use crate::{dropped, home, identity, pr, rollout, session_image, terminal, text};
+use riff_client::api::{self, Api};
 
 /// The named volume for all of `CARGO_HOME` (01M4Z60B7RPSQ1ABGVMJSZWS5P).
 pub const CARGO_VOLUME: &str = "riff-cargo";
@@ -219,7 +219,7 @@ pub const HIDDEN: &str = "[secret]";
 ///
 /// ```
 /// use std::time::Duration;
-/// use riff::link::SHORT_BUDGET;
+/// use riff_client::link::SHORT_BUDGET;
 ///
 /// assert_eq!(riff::run::END_BUDGET, Duration::from_secs(600));
 /// assert!(riff::run::END_BUDGET > SHORT_BUDGET);

@@ -33,10 +33,10 @@
 //! | Call | Budget |
 //! |---|---|
 //! | A short command, a tool call of `riff mcp`, a post of `riff chat`, a look of `riff top`, a call of `riff workers host` | [`SHORT_BUDGET`] |
-//! | The start hook | [`crate::hook::STATE_WAIT`] |
+//! | The start hook | `riff::hook::STATE_WAIT` |
 //! | The status line | `STATUSLINE_WAIT`, with one try ([`Budget::OneTry`]) |
-//! | The end of a session | [`crate::mcp::END_WAIT`] |
-//! | The verify request and the release of `riff run` | [`crate::run::END_BUDGET`] |
+//! | The end of a session | `riff::mcp::END_WAIT` |
+//! | The verify request and the release of `riff run` | `riff::run::END_BUDGET` |
 //! | The open of a stream | [`SHORT_BUDGET`]; then the stream has no limit, and [`crate::api::follow`] connects again |
 //!
 //! # One rule for a new try
@@ -113,8 +113,6 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use riff_core::build::{self, Build, Mismatch};
 
-use crate::auto_update;
-
 /// The limit of each connect, of a call or a stream
 /// (01M48RW9E8NS2FPHFHG2S10R7A).
 pub const CONNECT_WAIT: Duration = Duration::from_secs(5);
@@ -163,7 +161,7 @@ pub const WAITING: &str = "(waits for riff-server…)";
 ///
 /// ```
 /// use std::time::Duration;
-/// use riff::link::{Limits, CONNECT_WAIT, FIRST_WAIT, MOST_WAIT, SHORT_BUDGET, STREAM_IDLE, TRY_WAIT};
+/// use riff_client::link::{Limits, CONNECT_WAIT, FIRST_WAIT, MOST_WAIT, SHORT_BUDGET, STREAM_IDLE, TRY_WAIT};
 ///
 /// let limits = Limits::default();
 /// assert_eq!(limits.connect, CONNECT_WAIT);
@@ -193,7 +191,7 @@ pub struct Limits {
 /// process in milliseconds. Only a test sets it.
 ///
 /// ```
-/// assert_eq!(riff::link::BUDGET_VAR, "RIFF_LINK_BUDGET_MS");
+/// assert_eq!(riff_client::link::BUDGET_VAR, "RIFF_LINK_BUDGET_MS");
 /// ```
 pub const BUDGET_VAR: &str = "RIFF_LINK_BUDGET_MS";
 
@@ -202,7 +200,7 @@ pub const BUDGET_VAR: &str = "RIFF_LINK_BUDGET_MS";
 /// sets it.
 ///
 /// ```
-/// assert_eq!(riff::link::TRY_VAR, "RIFF_LINK_TRY_MS");
+/// assert_eq!(riff_client::link::TRY_VAR, "RIFF_LINK_TRY_MS");
 /// ```
 pub const TRY_VAR: &str = "RIFF_LINK_TRY_MS";
 
@@ -232,7 +230,7 @@ impl Default for Limits {
 ///
 /// ```
 /// use std::time::Duration;
-/// use riff::link::{Budget, Limits, SHORT_BUDGET};
+/// use riff_client::link::{Budget, Limits, SHORT_BUDGET};
 ///
 /// let limits = Limits::default();
 /// assert_eq!(Budget::Short.time(&limits), SHORT_BUDGET);
@@ -274,7 +272,7 @@ impl Budget {
 ///
 /// ```
 /// use std::time::Duration;
-/// use riff::link::{Limits, waits};
+/// use riff_client::link::{Limits, waits};
 ///
 /// let limits = Limits::default();
 /// let waits: Vec<Duration> = waits(&limits).take(8).collect();
@@ -313,10 +311,10 @@ fn random_below(most: Duration) -> Duration {
 /// (01M4A8048J60YSVNVYF2432KE8).
 ///
 /// ```
-/// let id = riff::link::call_id();
+/// let id = riff_client::link::call_id();
 /// assert_eq!(id.len(), 22);
 /// assert!(id.bytes().all(|b| b.is_ascii_graphic()));
-/// assert_ne!(id, riff::link::call_id());
+/// assert_ne!(id, riff_client::link::call_id());
 /// ```
 pub fn call_id() -> String {
     let mut bytes = [0; 16];
@@ -341,7 +339,7 @@ pub enum Outcome {
 ///
 /// ```
 /// use reqwest::StatusCode;
-/// use riff::link::{Outcome, outcome};
+/// use riff_client::link::{Outcome, outcome};
 ///
 /// assert_eq!(outcome(StatusCode::OK, true), Outcome::Reply);
 /// for front in [502, 503, 504, 429] {
@@ -369,7 +367,7 @@ pub fn outcome(status: reqwest::StatusCode, has_build: bool) -> Outcome {
 /// or `::1`.
 ///
 /// ```
-/// use riff::link::loopback;
+/// use riff_client::link::loopback;
 ///
 /// assert!(loopback("http://127.0.0.1:7878"));
 /// assert!(loopback("http://localhost:7878"));
@@ -441,10 +439,10 @@ static SERVER_BUILD: Mutex<Option<Build>> = Mutex::new(None);
 /// ```
 /// use std::sync::Arc;
 ///
-/// let one = riff::link::of("http://127.0.0.1:7878");
-/// let two = riff::link::of("http://127.0.0.1:7878/");
+/// let one = riff_client::link::of("http://127.0.0.1:7878");
+/// let two = riff_client::link::of("http://127.0.0.1:7878/");
 /// assert!(Arc::ptr_eq(&one, &two));
-/// assert!(!Arc::ptr_eq(&one, &riff::link::of("http://127.0.0.1:7879")));
+/// assert!(!Arc::ptr_eq(&one, &riff_client::link::of("http://127.0.0.1:7879")));
 /// ```
 pub fn of(base: &str) -> Arc<Link> {
     with(base, Limits::default())
@@ -454,8 +452,8 @@ pub fn of(base: &str) -> Arc<Link> {
 /// ([`Link::base`]): with no `/` at the end.
 ///
 /// ```
-/// assert_eq!(riff::link::base_of("http://127.0.0.1:7878/"), "http://127.0.0.1:7878");
-/// assert_eq!(riff::link::base_of("http://127.0.0.1:7878"), "http://127.0.0.1:7878");
+/// assert_eq!(riff_client::link::base_of("http://127.0.0.1:7878/"), "http://127.0.0.1:7878");
+/// assert_eq!(riff_client::link::base_of("http://127.0.0.1:7878"), "http://127.0.0.1:7878");
 /// ```
 pub fn base_of(url: &str) -> &str {
     url.trim_end_matches('/')
@@ -583,16 +581,20 @@ impl Link {
         tokio::time::sleep(wait).await;
     }
 
-    /// Shows [`WAITING`] with `show`, or on stderr, when the waits of a
-    /// call add up to [`LINE_AFTER`], one time for each gap.
+    /// Shows [`WAITING`] with `show`, or with the platform
+    /// ([`Platform::show_wait`]), when the waits of a call add up to
+    /// [`LINE_AFTER`], one time for each gap.
+    ///
+    /// [`Platform::show_wait`]: crate::platform::Platform::show_wait
     fn show_wait(&self, waited: Duration, show: Option<&WaitLine>) {
         if waited < LINE_AFTER || self.wait_shown.swap(true, Ordering::SeqCst) {
             return;
         }
-        let line = crate::style::styled(crate::style::DIM, WAITING);
+        let platform = crate::platform::get();
+        let line = platform.dim(WAITING);
         match show {
             Some(show) => show(&line),
-            None => anstream::eprintln!("{line}"),
+            None => platform.show_wait(&line),
         }
     }
 
@@ -601,11 +603,15 @@ impl Link {
     /// (01M3MX1E65XGWDZ062PQ9YXQ5T). For a reply with no build, the error
     /// names its status and URL (01M3QCMJ9F1GRTRRSB4AW9TC3D). The error
     /// is a [`Mismatch`]. Another build that it can talk to goes on, with
-    /// one note on stderr for each link (01M3MX1E8M9TKBN90P4DYKH3H8), and
-    /// no note in the update in the background
-    /// ([`auto_update::in_background`], 01M53NEE7W0ZC8B7EV9ET6QHBB). A
-    /// newer release at the server can start the update of riff by itself
-    /// ([`auto_update::begin`]).
+    /// one note for each link (01M3MX1E8M9TKBN90P4DYKH3H8): the platform
+    /// shows it ([`Platform::other_build`]). `riff` shows no note in the
+    /// update in the background (01M53NEE7W0ZC8B7EV9ET6QHBB). The build of
+    /// each reply goes to the platform ([`Platform::server_build`]): in
+    /// `riff`, a newer release at the server can start the update of riff
+    /// by itself.
+    ///
+    /// [`Platform::other_build`]: crate::platform::Platform::other_build
+    /// [`Platform::server_build`]: crate::platform::Platform::server_build
     pub fn check_build(
         &self,
         status: reqwest::StatusCode,
@@ -615,15 +621,12 @@ impl Link {
         let this = Build::this();
         let server = Build::from_header(headers.get(build::HEADER).map(|v| v.as_bytes()));
         if let Some(server) = &server {
-            auto_update::begin(&self.base, server);
+            crate::platform::get().server_build(&self.base, server);
         }
         match server {
             Some(server) if build::compatible(&this, &server) => {
-                if !server.matches(&this)
-                    && !auto_update::in_background()
-                    && !self.noted.swap(true, Ordering::Relaxed)
-                {
-                    eprintln!("riff: {}", build::other_build(&this, &server));
+                if !server.matches(&this) && !self.noted.swap(true, Ordering::Relaxed) {
+                    crate::platform::get().other_build(&build::other_build(&this, &server));
                 }
                 if let Ok(mut seen) = SERVER_BUILD.lock() {
                     *seen = Some(server);

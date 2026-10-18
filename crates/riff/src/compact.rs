@@ -886,7 +886,8 @@ async fn wait_quiet(transcript: Option<&Path>, quiet: Duration) {
 /// `None` when riff compacts no lead on this machine, the session is
 /// not the lead, or another check acts now.
 pub async fn run(check: &Check, server: &str) -> Result<Option<Step>> {
-    use crate::{api::Api, identity, local, settings, worker};
+    use crate::{identity, local, settings, worker};
+    use riff_client::api::Api;
     use riff_core::wire::RiffState;
 
     let settings = settings::path()?;

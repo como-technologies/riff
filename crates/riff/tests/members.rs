@@ -12,9 +12,9 @@ use crate::common;
 
 use std::time::Instant;
 
-use riff::api::{Api, PauseScope};
-use riff::login::{self, SignIn};
 use riff::text;
+use riff_client::api::{Api, PauseScope};
+use riff_client::login::{self, SignIn};
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{Kind, PersonRole, RiffState, TokenReply};
@@ -66,7 +66,7 @@ async fn serve(config: impl FnOnce(&str) -> Config) -> (Service, Api) {
 
 /// Signs in `email` on this device, as the provider sign-in does.
 async fn sign_in(service: &Service, api: &Api, email: &str) -> TokenReply {
-    let jkt = riff::device::key(api.base()).unwrap().thumbprint();
+    let jkt = riff_client::device::key(api.base()).unwrap().thumbprint();
     let pair = service.admit(email, false, &jkt).await.unwrap();
     let sign_in = SignIn {
         user: pair.user.clone(),
@@ -203,7 +203,10 @@ async fn a_member_cannot_invite() {
 async fn members_needs_a_sign_in() {
     let (_, api) = start_with_no_sign_in().await;
     let error = api.members().await.unwrap_err();
-    assert_eq!(error.to_string(), text::nobody_signs_in(api.base()));
+    assert_eq!(
+        error.to_string(),
+        riff_client::text::nobody_signs_in(api.base())
+    );
 }
 
 #[tokio::test]

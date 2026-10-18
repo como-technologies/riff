@@ -1379,7 +1379,7 @@ mod tests {
         let dir = dir_in(root.path());
         let fake = Fake::default().with_registry(IMAGE);
         let listener = listen(&dir).await.unwrap();
-        crate::secrets::mock_store();
+        riff_client::secrets::mock_store();
         let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()).unwrap());
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let served = tokio::spawn(daemon.serve(listener, async {
@@ -1649,7 +1649,7 @@ mod tests {
         let dir = dir_in(root.path());
         let fake = Fake::default();
         let listener = listen(&dir).await.unwrap();
-        crate::secrets::mock_store();
+        riff_client::secrets::mock_store();
         let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()).unwrap());
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let served = tokio::spawn(daemon.serve(listener, async {

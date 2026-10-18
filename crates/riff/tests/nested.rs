@@ -14,7 +14,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use isolated::Isolated;
-use riff::api::Api;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::RiffState;
 use rmcp::ServiceExt;

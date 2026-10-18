@@ -12,8 +12,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use riff::api::{Api, PauseScope};
 use riff::text;
+use riff_client::api::{Api, PauseScope};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::record::By;
 use riff_core::wire::{Posted, RiffState};
@@ -206,7 +206,7 @@ async fn a_pause_of_one_repository_stops_and_wakes_only_its_sessions() {
     let news = api.read(&strata_worker, &strata(), false).await.unwrap();
     assert_eq!(
         news[0].message.body,
-        text::riff_news(Some(&strata()), RiffState::Paused)
+        riff_client::text::riff_news(Some(&strata()), RiffState::Paused)
     );
 
     // The resume wakes the same sessions, and the claim works.

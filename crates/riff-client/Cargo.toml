@@ -1,0 +1,32 @@
+[package]
+name = "riff-client"
+description = "The client of riff-server: the sign-in, the tokens, the API calls and the watch stream"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+# 01M54216PBE319RASGNMY9F0MR: no crate of the terminal. The test
+# `riff_client_has_no_terminal_crate` of the crate hygiene checks it.
+[dependencies]
+riff-core.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+futures.workspace = true
+gethostname.workspace = true
+getrandom.workspace = true
+keyring-core.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+isolated = { path = "../isolated" }
+axum.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

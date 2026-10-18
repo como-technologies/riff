@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use isolated::Isolated;
-use riff::login::{SignIn, secret_name};
-use riff::secrets;
+use riff_client::login::{SignIn, secret_name};
+use riff_client::secrets;
 
 /// The variable that makes this test binary run [`child_runs_riff`].
 const CHILD: &str = "ISOLATION_CHILD";

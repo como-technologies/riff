@@ -8,8 +8,8 @@ use std::process::Command as Git;
 
 use futures::StreamExt;
 use isolated::Isolated;
-use riff::api::Api;
 use riff::mcp::Tools;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;

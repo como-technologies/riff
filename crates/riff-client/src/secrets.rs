@@ -16,11 +16,11 @@
 //! which server it is for, so one machine can use two servers.
 //!
 //! The module uses the default store of `keyring-core`. When no store is
-//! set, the first call sets the store of the OS. On Linux and BSD, that
-//! is the store of riff, [`keyring_store`](crate::keyring_store): it
-//! opens plain sessions of the Secret Service (01M556QPPRSQ91HDED128G2X7G).
-//! A test sets the mock store of `keyring-core` first, so tests never
-//! touch the real keyring.
+//! set, the first call sets the store of the OS with
+//! [`Platform::open_store`](crate::platform::Platform::open_store). On
+//! Linux and BSD, `riff` gives its own store: it opens plain sessions of
+//! the Secret Service (01M556QPPRSQ91HDED128G2X7G). A test sets the mock
+//! store of `keyring-core` first, so tests never touch the real keyring.
 //!
 //! The default store is global to the process, and rustdoc can run the
 //! merged doc tests of a crate as threads of one process. So a doc test
@@ -28,9 +28,9 @@
 //! `standalone_crate`: it runs in a process of its own, as the example
 //! below does. The unit test
 //! `each_doc_test_that_sets_the_store_is_a_crate_of_its_own` checks
-//! each file of `crates/riff/src` (01M514XARN6564BBWHWWYVCH9K). Each
-//! unit test that uses the keyring calls `mock_store` of this module
-//! first. It sets the mock store one time for the process, so no unit
+//! each file of `crates/riff-client/src` and of `crates/riff/src`
+//! (01M514XARN6564BBWHWWYVCH9K). Each unit test that uses the keyring
+//! calls [`mock_store`] of this module first. It sets the mock store one time for the process, so no unit
 //! test replaces the store that another test wrote to. The unit test
 //! `the_unit_tests_set_the_store_in_one_place` checks it
 //! (01M517P9MTBWPN0FQRMXEJ9JG5).
@@ -108,7 +108,7 @@
 //!
 //! ```standalone_crate
 //! # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-//! use riff::secrets;
+//! use riff_client::secrets;
 //!
 //! let name = "refresh http://127.0.0.1:7878";
 //! assert_eq!(secrets::get(name)?, None);
@@ -155,7 +155,7 @@ pub fn retry() -> Duration {
 /// (01M4385CCATXC0B8HV1XD6EFWG).
 ///
 /// ```
-/// use riff::secrets::{Locked, is_locked};
+/// use riff_client::secrets::{Locked, is_locked};
 ///
 /// let locked = Locked { host: "pangolin".into() };
 /// assert_eq!(
@@ -176,7 +176,7 @@ impl Locked {
     /// The keyring of this machine.
     pub fn here() -> Self {
         Locked {
-            host: crate::identity::this_host(),
+            host: crate::platform::get().host(),
         }
     }
 }
@@ -199,7 +199,7 @@ pub fn is_locked(error: &anyhow::Error) -> bool {
 ///
 /// ```
 /// use std::time::{Duration, Instant};
-/// use riff::secrets::{Gate, Said};
+/// use riff_client::secrets::{Gate, Said};
 ///
 /// let mut gate = Gate::default();
 /// let start = Instant::now();
@@ -285,7 +285,7 @@ pub fn get(name: &str) -> Result<Option<String>> {
 ///
 /// ```standalone_crate
 /// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-/// use riff::secrets;
+/// use riff_client::secrets;
 ///
 /// secrets::set("k", "v-1")?;
 /// assert_eq!(secrets::kept("k")?.as_deref(), Some("v-1"));
@@ -446,39 +446,18 @@ fn log(call: &str, name: &str) {
 static OS_STORE: AtomicBool = AtomicBool::new(false);
 
 /// Sets the store of the OS keyring as the default store of
-/// `keyring-core`, one time for the process, and gives the result.
+/// `keyring-core` with [`Platform::open_store`], one time for the
+/// process, and gives the result.
+///
+/// [`Platform::open_store`]: crate::platform::Platform::open_store
 fn os_store() -> &'static keyring_core::Result<()> {
-    static STATUS: LazyLock<keyring_core::Result<()>> = LazyLock::new(set_os_store);
+    static STATUS: LazyLock<keyring_core::Result<()>> =
+        LazyLock::new(|| crate::platform::get().open_store());
     let status = &*STATUS;
     if status.is_ok() {
         OS_STORE.store(true, Ordering::SeqCst);
     }
     status
-}
-
-/// Sets the store of riff with plain sessions of the Secret Service
-/// (01M556QPPRSQ91HDED128G2X7G).
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
-))]
-fn set_os_store() -> keyring_core::Result<()> {
-    let store = crate::keyring_store::Store::new()?;
-    keyring_core::set_default_store(store);
-    Ok(())
-}
-
-/// Sets the store of the `keyring` crate: the Keychain of macOS, or the
-/// Credential Manager of Windows.
-#[cfg(not(all(
-    unix,
-    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
-)))]
-fn set_os_store() -> keyring_core::Result<()> {
-    keyring::Entry::store_status()
-        .as_ref()
-        .map(|_| ())
-        .map_err(|e| Error::PlatformFailure(e.to_string().into()))
 }
 
 /// True when this process set the store of its secrets itself, before
@@ -489,9 +468,9 @@ fn set_os_store() -> keyring_core::Result<()> {
 /// that has not opened a keyring yet.
 ///
 /// ```standalone_crate
-/// assert!(!riff::secrets::own_store());
+/// assert!(!riff_client::secrets::own_store());
 /// keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-/// assert!(riff::secrets::own_store());
+/// assert!(riff_client::secrets::own_store());
 /// ```
 pub fn own_store() -> bool {
     files().is_none()
@@ -504,7 +483,7 @@ pub fn own_store() -> bool {
 ///
 /// ```
 /// use std::time::Duration;
-/// use riff::secrets::in_time;
+/// use riff_client::secrets::in_time;
 ///
 /// assert_eq!(in_time(Duration::from_secs(5), || 7).unwrap(), 7);
 /// let slow = in_time(Duration::from_millis(10), || std::thread::sleep(Duration::from_secs(5)));
@@ -530,10 +509,11 @@ pub fn in_time<T: Send + 'static>(
     })
 }
 
-/// The directory of the secret files: `$RIFF_HOME/secrets`, or `None`
-/// without `RIFF_HOME`.
+/// The directory of the secret files: `$RIFF_HOME/secrets` in `riff`
+/// ([`Platform::secret_files`](crate::platform::Platform::secret_files)),
+/// or `None`.
 fn files() -> Option<PathBuf> {
-    crate::home::dir().map(|home| home.join("secrets"))
+    crate::platform::get().secret_files()
 }
 
 /// The file of the secret `name` in `dir`: the name in hex. A name
@@ -543,7 +523,7 @@ fn files() -> Option<PathBuf> {
 ///
 /// ```
 /// # use std::path::Path;
-/// use riff::secrets::{LONGEST_FILE, file_of};
+/// use riff_client::secrets::{LONGEST_FILE, file_of};
 ///
 /// let file = file_of(Path::new("/s"), "access http://a");
 /// assert_eq!(file, Path::new("/s/61636365737320687474703a2f2f61"));
@@ -571,7 +551,7 @@ pub const LONGEST_FILE: usize = 255;
 /// Returns the secret `name` from the files in `dir`.
 ///
 /// ```
-/// use riff::secrets::{file_get, file_set, file_delete};
+/// use riff_client::secrets::{file_get, file_set, file_delete};
 ///
 /// let dir = tempfile::tempdir()?;
 /// let dir = dir.path().join("secrets");
@@ -662,11 +642,11 @@ fn file_locked(error: anyhow::Error) -> anyhow::Error {
     }
 }
 
-/// Sets the mock store of `keyring_core` for the unit tests of riff, one
-/// time for the process (01M517P9MTBWPN0FQRMXEJ9JG5). Each unit test
-/// that uses the keyring calls it first.
-#[cfg(test)]
-pub(crate) fn mock_store() {
+/// Sets the mock store of `keyring_core` for the unit tests of
+/// `riff-client` and of `riff`, one time for the process
+/// (01M517P9MTBWPN0FQRMXEJ9JG5). Each unit test that uses the keyring
+/// calls it first. Only a test calls it.
+pub fn mock_store() {
     static MOCK: std::sync::Once = std::sync::Once::new();
     MOCK.call_once(|| keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap()));
 }
@@ -768,7 +748,7 @@ mod tests {
         let error = get("unit locked").unwrap_err();
         assert!(is_locked(&error), "{error:#}");
         let text = format!("{error:#}");
-        let host = crate::identity::this_host();
+        let host = crate::platform::get().host();
         assert!(
             text.starts_with(&format!("the OS keyring of {host} is locked")),
             "{text}"
@@ -858,12 +838,23 @@ mod tests {
         }
     }
 
+    /// The folders of the code that shares the default store of
+    /// `keyring_core`: the sources of `riff-client` and of `riff`, the
+    /// one crate that uses it in the workspace.
+    fn source_dirs() -> [PathBuf; 2] {
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        [crates.join("riff-client/src"), crates.join("riff/src")]
+    }
+
     #[test]
     fn each_doc_test_that_sets_the_store_is_a_crate_of_its_own() {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut files = Vec::new();
-        rust_files(&src, &mut files);
-        assert!(files.contains(&src.join("secrets.rs")), "{files:?}");
+        for src in source_dirs() {
+            rust_files(&src, &mut files);
+        }
+        let [client, riff] = source_dirs();
+        assert!(files.contains(&client.join("secrets.rs")), "{files:?}");
+        assert!(files.contains(&riff.join("lib.rs")), "{files:?}");
         let mut shared = Vec::new();
         for file in &files {
             let text = std::fs::read_to_string(file).unwrap();
@@ -895,37 +886,46 @@ mod tests {
     }
 
     /// 01M517P9MTBWPN0FQRMXEJ9JG5: only [`mock_store`] sets the store
-    /// in the code of riff for the unit tests. Two setters, for example a
-    /// `Once` in each of two test modules, replace the store that a test
-    /// of the other wrote to, and that test finds no entry. The one other
-    /// setter is `set_os_store` (01M556QPPRSQ91HDED128G2X7G).
+    /// in the code of `riff-client` and `riff` for the unit tests. Two
+    /// setters, for example a `Once` in each of two test modules, replace
+    /// the store that a test of the other wrote to, and that test finds
+    /// no entry. The one other setter is the `open_store` of the platform
+    /// of `riff` (01M556QPPRSQ91HDED128G2X7G).
     #[test]
     fn the_unit_tests_set_the_store_in_one_place() {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut files = Vec::new();
-        rust_files(&src, &mut files);
         let mut setters = Vec::new();
-        for file in &files {
-            let text = std::fs::read_to_string(file).unwrap();
-            let lines: Vec<&str> = text.lines().collect();
-            for line in store_setters(&text) {
-                let name = file.strip_prefix(&src).unwrap().display();
-                setters.push(format!("{name}:{line}: {}", lines[line - 1].trim()));
+        for src in source_dirs() {
+            let mut files = Vec::new();
+            rust_files(&src, &mut files);
+            let crates = src.parent().unwrap().parent().unwrap();
+            for file in &files {
+                let text = std::fs::read_to_string(file).unwrap();
+                let lines: Vec<&str> = text.lines().collect();
+                for line in store_setters(&text) {
+                    let name = file.strip_prefix(crates).unwrap().display();
+                    setters.push(format!("{name}:{line}: {}", lines[line - 1].trim()));
+                }
             }
         }
         // In two parts, so that these lines are no setters.
         let set = concat!("keyring_core::set_default_store", "(");
         let mock = format!("MOCK.call_once(|| {set}keyring_core::mock::Store::new().unwrap()));");
         let os = format!("{set}store);");
-        let mut texts: Vec<&str> = setters
-            .iter()
-            .filter(|s| s.starts_with("secrets.rs:"))
-            .filter_map(|s| s.split_once(": ").map(|(_, text)| text))
-            .collect();
-        texts.sort();
+        let texts = |file: &str| -> Vec<String> {
+            setters
+                .iter()
+                .filter(|s| s.starts_with(&format!("{file}:")))
+                .filter_map(|s| s.split_once(": ").map(|(_, text)| text.to_owned()))
+                .collect()
+        };
         assert_eq!(
-            texts,
-            [mock.as_str(), os.as_str()],
+            texts("riff-client/src/secrets.rs"),
+            [mock],
+            "call secrets::mock_store: {setters:?}"
+        );
+        assert_eq!(
+            texts("riff/src/platform.rs"),
+            [os],
             "call secrets::mock_store: {setters:?}"
         );
         assert_eq!(setters.len(), 2, "call secrets::mock_store: {setters:?}");
@@ -956,7 +956,7 @@ mod tests {
             "/// # keyring_core::set_default_store(c);\n",
             "/// ```\n",
             "/// ```\n",
-            "/// riff::secrets::get(\"k\")?;\n",
+            "/// riff_client::secrets::get(\"k\")?;\n",
             "/// ```\n",
             "/// ```rust, standalone_crate\n",
             "/// # keyring_core::set_default_store(d);\n",

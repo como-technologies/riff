@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use riff::api::Api;
 use riff::disk::Disk;
 use riff::identity;
+use riff_client::api::Api;
 use riff_core::name::{SessionUri, Who};
 use riff_core::wire::RiffState;
 
