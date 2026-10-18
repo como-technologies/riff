@@ -14,6 +14,9 @@
 //!   01M3NJD37CNQX580YC24S7K6ES) has [`Line::action`].
 //! - [`Thread`]: the lines of one thread of a read, and the other member
 //!   of a direct thread, for its label.
+//! - [`direct_name`] and [`named`]: the name `dm:PEER` of a direct
+//!   thread, that a reader types to read it again
+//!   (01M58AJE14M9TPTQE4E8R9PA9M).
 //!
 //! `riff read` draws a [`Thread`] for each thread, `riff tail` a block
 //! for each [`Line`], and `riff chat` a chat line for each [`Line`]. The
@@ -53,9 +56,9 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use riff_core::name::{SessionUri, ThreadName};
+use riff_core::name::{NameError, SessionUri, ThreadName, Who};
 use riff_core::selector::Selector;
-use riff_core::wire::Kind;
+use riff_core::wire::{Kind, ThreadInfo};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{Checked, Inbox};
@@ -184,7 +187,7 @@ impl Line {
                 };
             }
             Some(_) if self.lead => format!("{user}'s lead"),
-            Some(id) => format!("{user} {}", id.chars().take(8).collect::<String>()),
+            Some(id) => format!("{user} {}", id.chars().take(ID_CHARS).collect::<String>()),
         };
         Sender {
             name,
@@ -278,6 +281,109 @@ impl Thread {
 /// ```
 pub fn direct_first(list: &mut [Inbox]) {
     list.sort_by_key(|inbox| !inbox.thread.is_direct());
+}
+
+/// The characters of a session ID that a sender and a direct thread
+/// show.
+const ID_CHARS: usize = 8;
+
+/// The start of the name of a direct thread for its reader: `dm:PEER`
+/// (01M58AJE14M9TPTQE4E8R9PA9M).
+pub const DIRECT: &str = "dm:";
+
+/// The name of the direct thread `thread` for its member `me`: [`DIRECT`]
+/// and the first 8 characters of the session ID of the other member, or
+/// the user of a person. `None` when `thread` is not a direct thread of
+/// `me` (01M58AJE14M9TPTQE4E8R9PA9M).
+///
+/// ```
+/// use riff_client::threads::direct_name;
+/// use riff_core::name::{ThreadName, Who};
+///
+/// let me = Who::new("brett", Some("b7d0"))?;
+/// let lead = Who::new("mike", Some("25456ff6-479e"))?;
+/// let person = Who::new("mike", None)?;
+/// let name = |thread: &ThreadName| direct_name(thread, &me);
+/// assert_eq!(name(&ThreadName::direct(&me, &lead)).unwrap(), "dm:25456ff6");
+/// assert_eq!(name(&ThreadName::direct(&person, &me)).unwrap(), "dm:mike");
+/// assert_eq!(name(&ThreadName::direct(&lead, &person)), None);
+/// assert_eq!(name(&"chat".parse()?), None);
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn direct_name(thread: &ThreadName, me: &Who) -> Option<String> {
+    let peer = thread.peer(me)?;
+    Some(match peer.session() {
+        Some(id) => format!("{DIRECT}{}", id.chars().take(ID_CHARS).collect::<String>()),
+        None => format!("{DIRECT}{}", peer.user()),
+    })
+}
+
+/// The thread that `given` names for a read of `me`, one of `threads`:
+/// the threads of `me` (01M58AJE14M9TPTQE4E8R9PA9M). A name with no
+/// [`DIRECT`] is a plain thread name. `dm:PEER` names the direct thread
+/// of `me` with the session whose ID is PEER or starts with it, or with
+/// the person whose user is PEER. The text after a space does not
+/// count, so the label of `threads` works too. A direct thread of two
+/// other sessions is never found.
+///
+/// ```
+/// use riff_client::threads::named;
+/// use riff_core::name::{ThreadName, Who};
+/// use riff_core::wire::ThreadInfo;
+///
+/// let me = Who::new("brett", Some("b7d0"))?;
+/// let lead = Who::new("mike", Some("25456ff6-479e"))?;
+/// let direct = ThreadName::direct(&me, &lead);
+/// let info = |thread: &ThreadName| ThreadInfo { thread: thread.clone(), members: vec![], unread: 0 };
+/// let threads = [info(&"chat".parse()?), info(&direct)];
+/// assert_eq!(named("dm:25456ff6", &threads, &me), Ok(direct.clone()));
+/// assert_eq!(named("dm:2545", &threads, &me), Ok(direct.clone()));
+/// assert_eq!(named("dm:25456ff6 (direct with mike@pangolin:riff)", &threads, &me), Ok(direct));
+/// assert_eq!(named("chat", &threads, &me), Ok("chat".parse()?));
+/// assert!(named("dm:77e0", &threads, &me).unwrap_err().contains("no direct thread dm:77e0"));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn named(given: &str, threads: &[ThreadInfo], me: &Who) -> Result<ThreadName, String> {
+    let Some(rest) = given.strip_prefix(DIRECT) else {
+        return given.parse().map_err(|e: NameError| e.to_string());
+    };
+    let key = rest.split_whitespace().next().unwrap_or_default();
+    let mine: Vec<(&ThreadName, Who)> = threads
+        .iter()
+        .filter_map(|t| Some((&t.thread, t.thread.peer(me)?)))
+        .collect();
+    let id = |peer: &Who| peer.session().unwrap_or(peer.user()).to_owned();
+    let exact: Vec<_> = mine
+        .iter()
+        .filter(|(thread, peer)| {
+            thread.to_string() == given || (!key.is_empty() && id(peer) == key)
+        })
+        .collect();
+    let found: Vec<_> = if exact.is_empty() {
+        mine.iter()
+            .filter(|(_, peer)| {
+                !key.is_empty() && peer.session().is_some_and(|s| s.starts_with(key))
+            })
+            .collect()
+    } else {
+        exact
+    };
+    match found.as_slice() {
+        [(thread, _)] => Ok((*thread).clone()),
+        [] => Err(format!(
+            "you have no direct thread {DIRECT}{key}. The threads tool and riff read --all show \
+             the name of each of your direct threads"
+        )),
+        _ => Err(format!(
+            "{DIRECT}{key} names more than one of your direct threads: {}. Give more of the \
+             session ID",
+            found
+                .iter()
+                .map(|(_, peer)| format!("{DIRECT}{}", id(peer)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -388,6 +494,70 @@ mod tests {
         let first = Thread::of(&list[0], &me);
         assert_eq!(first.other, Some(lead.clone()));
         assert_eq!(first.lines[0].body, format!("{direct} 1"));
+    }
+
+    fn who(user: &str, session: Option<&str>) -> Who {
+        Who::new(user, session).unwrap()
+    }
+
+    fn info(thread: ThreadName) -> ThreadInfo {
+        ThreadInfo {
+            thread,
+            members: vec![],
+            unread: 0,
+        }
+    }
+
+    #[test]
+    fn a_session_finds_only_its_own_direct_threads() {
+        let (me, ann, bob) = (
+            who("brett", Some("b7d0")),
+            who("ann", Some("a1b2")),
+            who("bob", Some("c3d4")),
+        );
+        let theirs = ThreadName::direct(&ann, &bob);
+        let threads = [info(theirs.clone()), info(ThreadName::direct(&me, &ann))];
+        let refused = named("dm:c3d4", &threads, &me).unwrap_err();
+        assert!(refused.contains("no direct thread dm:c3d4"), "{refused}");
+        assert!(named(&theirs.to_string(), &threads, &me).is_err());
+        assert_eq!(
+            named("dm:a1", &threads, &me),
+            Ok(ThreadName::direct(&me, &ann))
+        );
+        assert!(named("dm:", &threads, &me).is_err());
+    }
+
+    #[test]
+    fn a_direct_thread_goes_by_its_name_its_label_or_its_wire_name() {
+        let me = who("brett", Some("b7d0"));
+        let person = who("mike", None);
+        let thread = ThreadName::direct(&me, &person);
+        let threads = [info(thread.clone())];
+        for given in [
+            "dm:mike",
+            "dm:mike (direct with mike@pangolin)",
+            &thread.to_string(),
+        ] {
+            assert_eq!(named(given, &threads, &me), Ok(thread.clone()), "{given}");
+        }
+        assert_eq!(direct_name(&thread, &me).unwrap(), "dm:mike");
+    }
+
+    #[test]
+    fn a_start_of_two_session_ids_is_refused_and_a_whole_id_wins() {
+        let me = who("brett", Some("b7d0"));
+        let (a, b) = (who("mike", Some("ab12")), who("mike", Some("ab")));
+        let threads = [
+            info(ThreadName::direct(&me, &a)),
+            info(ThreadName::direct(&me, &b)),
+        ];
+        assert_eq!(
+            named("dm:ab", &threads, &me),
+            Ok(ThreadName::direct(&me, &b))
+        );
+        let refused = named("dm:a", &threads, &me).unwrap_err();
+        assert!(refused.contains("dm:ab12, dm:ab"), "{refused}");
+        assert!(refused.contains("Give more"), "{refused}");
     }
 
     #[test]

@@ -277,7 +277,9 @@ pub struct WhoArgs {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ReadArgs {
-    /// The thread. Leave it out to read the unread messages of all your threads.
+    /// The thread. Leave it out to read the unread messages of all your
+    /// threads. A direct thread of yours is `dm:` and the session ID of
+    /// the other session or its start, as `threads` shows it.
     thread: Option<String>,
     /// True returns the full history, not only the unread messages.
     all: Option<bool>,
@@ -684,7 +686,10 @@ your user, and the next prompt of your user ends it."
     #[tool(description = "Read unread messages. Leave out the thread to read all your threads.")]
     async fn read(&self, Parameters(a): Parameters<ReadArgs>) -> ToolResult {
         let me = self.here()?;
-        let thread = a.thread.map(|t| self.thread(Some(t))).transpose()?;
+        let thread = match a.thread {
+            Some(t) => Some(self.api.thread_to_read(&me, &t).await.map_err(err)?),
+            None => None,
+        };
         let inbox = self
             .api
             .inbox_page(&me, thread.as_ref(), a.all.unwrap_or(false), a.after)
