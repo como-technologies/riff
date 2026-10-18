@@ -377,7 +377,9 @@ async fn read_shows_the_direct_messages_first() {
     agent(&server, dir, "brett", "b2", &["read"]).await;
     let api = riff_client::api::Api::new(&server);
     let mike: riff_core::name::SessionUri =
-        "riff://mike@pangolin/como-technologies/riff?session=a1".parse().unwrap();
+        "riff://mike@pangolin/como-technologies/riff?session=a1"
+            .parse()
+            .unwrap();
     api.register(&mike).await.unwrap();
     let thread = mike.default_thread().unwrap();
     for n in 1..=60 {
@@ -386,7 +388,13 @@ async fn read_shows_the_direct_messages_first() {
             .await
             .unwrap();
     }
-    riff(&server, dir, "mike", &["tell", "b2", "request: claim issue-7"]).await;
+    riff(
+        &server,
+        dir,
+        "mike",
+        &["tell", "b2", "request: claim issue-7"],
+    )
+    .await;
 
     let (out, code) = agent(&server, dir, "brett", "b2", &["read"]).await;
     assert_eq!(code, 0);
