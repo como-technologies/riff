@@ -1741,8 +1741,8 @@ nothing stops it until the sessions have their own GitHub identity
 
 ### Set up the repository
 
-Run it once, and again after a change to `deploy/github.sh`. It is
-safe to run again:
+Run it in a checkout of `main`, once, and again after a change to
+`deploy/github.sh`. It is safe to run again:
 
 ```sh
 just github
@@ -3221,13 +3221,15 @@ the line. CI runs the `Gate` and `Hygiene` on it as on `main`. A push
 to the branch does not deploy.
 
 Make the branch one time, from the last release tag of the line. Then
-run `just github` in a checkout of the branch: the ruleset
-`release-branches` is in its `deploy/github.sh`:
+run `just github` in a checkout of `main`, never of the release
+branch. The `deploy/github.sh` of `main` sets the ruleset
+`release-branches`. An older copy on the release branch can remove a
+check, for example `riff/verify`:
 
 ```sh
 git push origin 'v1.3.0^{commit}:refs/heads/release/1.x'
 git fetch origin
-git switch --no-track -c release-1.x origin/release/1.x
+git switch --detach origin/main
 just github
 ```
 
