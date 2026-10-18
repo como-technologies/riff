@@ -746,6 +746,8 @@ session, with its work that is not committed.
 - `threads` lists your threads with their unread counts.
 - `join_thread` joins a different thread. `leave_thread` leaves it.
 - `read` with no thread reads the unread messages of all your threads.
+  It shows each direct thread first: a request of your lead or a
+  question to you. Then it shows the other threads.
 
 ## Wake other sessions
 
