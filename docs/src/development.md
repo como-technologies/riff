@@ -555,7 +555,8 @@ process, as your user, with a home of its own, and with 4 CPUs and
 host, 8 CPUs and 8 GB by default (see
 [Set the caps of a container](#set-the-caps-of-a-container)). It uses
 podman, else docker. With docker, it gives your user an entry in the
-passwd and group files of the container, as podman does. The build goes to `target/session`:
+passwd and group files of the container, as podman does. The build
+goes to `target/session`:
 
 ```sh
 just session-test
@@ -1154,8 +1155,8 @@ Each container has its own caps: `--cpus` and `--memory` (see
 not limit the sum. So the daemon keeps one limit for the whole host:
 the number of live sessions, and a floor of free memory. The daemon
 starts a session only when fewer sessions than the limit live, and the
-free memory is at or above the floor. Each other start waits for room, in
-order, also a start of `riff run`. The default is 3 sessions and a
+free memory is at or above the floor. Each other start waits for room,
+in order, also a start of `riff run`. The default is 3 sessions and a
 floor of 8 GB.
 
 To see the limit:
