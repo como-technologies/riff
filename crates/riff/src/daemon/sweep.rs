@@ -339,7 +339,10 @@ pub fn lock_of(folder: &Path) -> PathBuf {
 /// open to the end: the sweep keeps the folder while the lock is held
 /// ([`held`]).
 ///
-/// ```
+/// The doc test is a `standalone_crate`: it runs in a process of its
+/// own, so no fork of another doc test holds the lock after the drop.
+///
+/// ```standalone_crate
 /// use riff::daemon::sweep::{held, hold};
 ///
 /// let sessions = tempfile::tempdir()?;
@@ -369,6 +372,11 @@ pub fn hold(folder: &Path) -> std::io::Result<File> {
 /// True when a `riff run` holds the lock of the folder `folder`
 /// ([`hold`]). No lock file is no lock. A lock that riff cannot read
 /// counts as held: the folder stays.
+///
+/// A lock can stay held for a short time after the drop of the file of
+/// [`hold`]. A fork copies each open file into the child, with its
+/// lock, and the copy closes only when the child calls `exec`. Then the
+/// folder stays, and the next sweep removes it.
 pub fn held(folder: &Path) -> bool {
     let file = match File::open(lock_of(folder)) {
         Ok(file) => file,
@@ -877,6 +885,8 @@ pub(crate) mod tests {
 
         // The lock and the job end: the next sweep removes their folders.
         drop((lock, job));
+        // A fork of another test can hold the lock until its `exec`.
+        until(|| !held(&locked)).await;
         let swept = here.daemon.sweep(None).await;
         assert_eq!(swept.len(), 2, "{swept:?}");
         assert!(!locked.exists() && !lock_of(&locked).exists());
@@ -1200,5 +1210,19 @@ esac
             .await
             .unwrap();
         assert_eq!(said, [text::SWEPT_NONE]);
+    }
+
+    /// The doc test of `hold` checks the lock after the drop. A fork of
+    /// another doc test of the same process can hold the lock then. So
+    /// the doc test runs in a process of its own.
+    #[test]
+    fn the_doc_test_of_hold_is_a_crate_of_its_own() {
+        let text = include_str!("sweep.rs");
+        let at = text.find("\npub fn hold(").unwrap();
+        let doc = &text[..at];
+        let fence = doc.rfind("/// ```").unwrap();
+        let open = doc[..fence].rfind("/// ```").unwrap();
+        let tag = doc[open..].lines().next().unwrap();
+        assert_eq!(tag, "/// ```standalone_crate");
     }
 }
