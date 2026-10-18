@@ -7711,7 +7711,8 @@ items of Wave C that end riff-server in the Backlog
   as the latest. It prints the URL of the CI run of the tag, and says
   that the deploy waits for the approval of `production` by a person.
   When GitHub refuses the push of the tag, it says so, names the
-  ruleset of the tags, and deletes the local tag.
+  ruleset of the tags, and deletes the local tag. Superseded in part
+  by 01M58KMM1BHX3YY81BPZG04JSX and 01M58KMKZ2EG8NZG4F085S6NQX.
 - **01M58B0JEYNAW67NS226FMX5XH** `riff release status` shows, for each
   session: the version on `origin/main`, the last published release
   tag, a merged release pull request whose version has no published
@@ -7720,7 +7721,8 @@ items of Wave C that end riff-server in the Backlog
   the CI run of the tag that waits for the environment `production`,
   shows the tag, the commit and the run, asks yes or no, and on yes
   approves it with the comment `Release vX.Y.Z`. With no waiting run,
-  it says so and changes nothing.
+  it says so and changes nothing. Superseded in part by
+  01M58KMM3NFGJRW4CCV50KJQB2.
 - **01M58B0JSQMWNCMSNX19536XT8** `riff release publish` refuses, and
   changes nothing, in a worker, in a container session, and in an
   agent session that is not the lead of its user, also when riff
@@ -7734,6 +7736,83 @@ items of Wave C that end riff-server in the Backlog
   `!` command.
   The lead skill makes each release with these commands, and has no
   tag line and no `gh release` line.
+
+### The release cycle
+
+- **01M58KMKR33P1FSCFDQRZ56A8P** Each wave with a change that a person
+  sees since the last release tag ends with one release. Each step of
+  the cycle is a riff command: `riff release cut`, `publish`,
+  `status`, `approve`, `check`, `retry` and `rollback`, `just
+  real-session`, and `riff wave end`. No session skips a release: only
+  a person skips one.
+- **01M58KMKTE2XC35CNJBFKZWAXF** `riff release status` shows the state
+  of the current release: the open release pull request, else the
+  version on `origin/main`. The states are `cut`, `merged`, `tested`,
+  `published`, `waiting`, `deploying`, `deployed`, `checked`, `failed`
+  and `rolled back`. A closed release issue, or a passed check on it,
+  is `checked`. A rollback on it is `rolled back`.
+- **01M58KMKWRKSV1DR42FRH2K43X** Each command of the release cycle
+  prints the next step in a line `next: …`, also in a refusal.
+- **01M58KMKZ2EG8NZG4F085S6NQX** `just real-session` sets the commit
+  status `riff/real-session` of the commit `HEAD` of its clone:
+  `success` after a pass, `failure` after a failed step, none after a
+  signal. `riff release publish` refuses while no commit from the merge
+  commit of the release pull request to `origin/main` has a pass, and
+  tags the newest commit with a pass.
+- **01M58KMM1BHX3YY81BPZG04JSX** `riff release publish` does not need a
+  paused riff. After the release, it posts a chat line to the owner in
+  `riff chat`: the version, the CI run, and `riff release approve
+  vX.Y.Z`.
+- **01M58KMM3NFGJRW4CCV50KJQB2** HUMAN GATE 1: on yes, `riff release
+  approve` pauses the whole riff, which tells each other lead, and then
+  approves the deploy. While a deploy waits for the approval,
+  `riff release cut` refuses, the riff is not paused, and the watch of
+  the lead reminds the owner in `riff chat` each 4 hours.
+- **01M58KMM5ZPAQ289S2YJVQ5WW6** `riff release check vX.Y.Z` refuses
+  while the job `Deploy` of the newest CI run of the tag did not end.
+  After a pass of the job, it checks: `riff server` shows the build; the
+  Cloud Run log after the start of the job has no run of 503 longer
+  than 20 s, no 500 of riff-server, no 401 or 429 of the token store,
+  and no line "riff-server serves" of an older revision after the new
+  one; each host of the part `Hosts` of `riff who` has the build. It
+  writes the result on the release issue. When each check passes, it
+  closes the release issue and resumes the whole riff. After a failed
+  job, it files an issue with the failed jobs and the run in the
+  current wave, writes it on the release issue, and resumes the riff.
+- **01M58KMM8CV9731AWGVZQBB80D** `riff release retry vX.Y.Z` runs the
+  failed jobs of the newest CI run of the tag again. It refuses a run
+  that did not fail.
+- **01M58KMMAPJ33CQWR8GRX62GMR** HUMAN GATE 2: `riff release rollback
+  vPREV` starts the CI workflow on `main` with the input `tag=vPREV`,
+  and writes `riff release rollback vPREV` on the release issue of the
+  newest release. It refuses a tag that is not a published release
+  older than the newest one. The run by hand has the name
+  `Deploy vPREV`, so `riff release approve vPREV` and `riff release
+  check vPREV` find it.
+- **01M58KMMCZCE7HDNVT9PVHVZX2** In a repository with
+  `deploy/release-check.sh`, `riff wave end N` refuses while a merged
+  pull request of the wave, other than a release pull request, is in a
+  release tag with no checked release, and names the next step. It
+  refuses while one is in no release tag, unless `--no-release TEXT`
+  is given: then riff writes "No release: TEXT" in the description of
+  the wave.
+- **01M58KMMF9WMH39ZMD0MKGRVZB** `riff init` writes the permission
+  rules of the lead for `riff release cut`, `publish`, `status`,
+  `check`, `retry` and `rollback`, and no rule that names `approve`.
+  `publish`, `check`, `retry` and `rollback` refuse a worker, a
+  container session, an agent session that is not the lead, and a
+  member, as `publish` does (01M58B0JSQMWNCMSNX19536XT8).
+- **01M58KMMHH70JEMBX3EYT9H3WM** The watch of the lead looks at the
+  release cycle each 5 minutes, in a clone with
+  `deploy/release-check.sh`. Each new state of the current release
+  wakes the lead with the state and the next step. The first look
+  after a start only learns the state.
+- **01M58KMMKZ8T11KT3R3Z7D0RE1** HUMAN GATE 3: `riff release cut
+  --skip` refuses in each agent session, and for a member.
+- **01M58KMMP9FKRFYX58ESVRSZQX** When riff cannot read the Cloud Run
+  log or ask the shared riff, `riff release check` names each check
+  that it could not do, says `gcloud auth login` for the log, and
+  changes nothing but the comment on the release issue.
 
 ### The real-session test
 

@@ -2012,36 +2012,51 @@ lead, so riff workers start started nothing.",
 started nothing. Check the riff with riff whoami.",
 };
 
-/// The refusals of `riff release publish` (01M58B0JSQMWNCMSNX19536XT8).
-pub const PUBLISH: LeadOnly = LeadOnly {
-    worker: "riff: a worker never publishes a release. riff release publish changed nothing.",
-    not_the_lead: "riff: only the lead of your user publishes a release. This session is not \
-the lead, so riff release publish changed nothing.",
-    lead_unknown: "riff: cannot check that this session is the lead, so riff release publish \
-changed nothing. Check the riff with riff whoami.",
-};
-
-/// The refusal of `riff release publish` for a member, in a terminal
-/// or in its lead: a person who is not the owner and not an admin of the
-/// riff
-/// (01M58B0JSQMWNCMSNX19536XT8).
-pub const PUBLISH_MEMBER: &str = "riff: only the owner or an admin of the riff, or the lead of \
-one, publishes a release. Your user is a member, so riff release publish changed nothing.";
-
-/// The refusal of `riff release publish` in a terminal when riff cannot
-/// ask riff-server for the role of the person (01M58B0JSQMWNCMSNX19536XT8).
-pub const PUBLISH_ROLE_UNKNOWN: &str = "riff: cannot check your role in the riff, so riff release \
-publish changed nothing. Check the riff with riff whoami.";
-
-/// The refusal of `riff release publish` in a container session
-/// (01M58B0JSQMWNCMSNX19536XT8).
-pub const PUBLISH_CONTAINER: &str = "riff: a container session never publishes a release. riff \
-release publish changed nothing. The lead runs it.";
-
-/// The refusal of `riff release approve` in an agent session
-/// (01M58B0JSQMWNCMSNX19536XT8).
-pub const APPROVE_AGENT: &str = "riff: a session never approves a deploy. riff release approve \
-changed nothing. A person runs it in a plain terminal, outside Claude Code.";
+/// The refusal of the command `riff release COMMAND` for `refusal`
+/// (01M58B0JSQMWNCMSNX19536XT8, 01M58KMMF9WMH39ZMD0MKGRVZB).
+///
+/// ```
+/// use riff::cycle::Refusal;
+///
+/// assert_eq!(
+///     riff::text::release_refused("check", Refusal::Worker),
+///     "riff: a worker never runs riff release check. riff release check changed nothing. The \
+///      lead runs it."
+/// );
+/// ```
+pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String {
+    use crate::cycle::Refusal;
+    let step = format!("riff release {command}");
+    match refusal {
+        Refusal::Worker => {
+            format!("riff: a worker never runs {step}. {step} changed nothing. The lead runs it.")
+        }
+        Refusal::Container => format!(
+            "riff: a container session never runs {step}. {step} changed nothing. The lead runs \
+             it."
+        ),
+        Refusal::NotTheLead => format!(
+            "riff: only the lead of your user runs {step}. This session is not the lead, so \
+             {step} changed nothing."
+        ),
+        Refusal::LeadUnknown => format!(
+            "riff: cannot check that this session is the lead, so {step} changed nothing. Check \
+             the riff with riff whoami."
+        ),
+        Refusal::Member => format!(
+            "riff: only the owner or an admin of the riff, or the lead of one, runs {step}. Your \
+             user is a member, so {step} changed nothing."
+        ),
+        Refusal::RoleUnknown => format!(
+            "riff: cannot check your role in the riff, so {step} changed nothing. Check the riff \
+             with riff whoami."
+        ),
+        Refusal::Agent => format!(
+            "riff: a session never runs {step}. {step} changed nothing. A person runs it in a \
+             plain terminal, outside Claude Code."
+        ),
+    }
+}
 
 /// The refusal of `riff workers start` when `run` workers fill the
 /// `limit` (01M3JPQT57PJCRBQYJNDVESS04).

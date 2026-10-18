@@ -170,6 +170,20 @@ images. It tells you each step that needs you. See
 [See each step of an update](how-it-works.md#see-each-step-of-an-update)
 for `riff update --check`.
 
+## Approve a release
+
+The owner or an admin of a riff that deploys its own server gives the
+human gates of each release: the deploy, a rollback and a skip. The
+lead tells you in `riff chat` when a deploy waits. Approve it in a
+plain terminal, outside Claude Code:
+
+```sh
+riff release approve v3.3.0
+```
+
+See [The release cycle](development.md#the-release-cycle) for each
+gate.
+
 ## Get ready for riff 3.0
 
 riff 3 runs each work item in a container of its own on your
@@ -272,6 +286,7 @@ other key. Then start Claude Code again. The rules of riff:
 | `mcp__plugin_riff_riff`, `mcp__riff` | the riff tools |
 | `Bash(riff)`, `Bash(riff *)` | each `riff` command |
 | `Bash(~/.cache/riff/check/target/static/release/riff *)`, and the same rule with the full path of your home | the riff of a new build in a check: see [Build riff for a check](development.md#build-riff-for-a-check) |
+| `Bash(riff release cut *)`, `Bash(riff release publish *)`, `Bash(riff release status)`, `Bash(riff release check *)`, `Bash(riff release retry *)`, `Bash(riff release rollback *)` | the steps of the lead in the release cycle: see [The release cycle](development.md#the-release-cycle). No rule names `riff release approve`: only you approve |
 
 Each rule names its program and its words. Its only `*` is at its
 end, after a space. So a rule allows only the steps that it names. The
@@ -286,6 +301,7 @@ its steps. The lead in a container calls its riff by the path
 |---|---|
 | `Bash(/opt/riff/riff relay watch)` | the wakes of the lead |
 | `Bash(/opt/riff/riff wave *)` | the steps of the waves of the lead |
+| `Bash(/opt/riff/riff release status)`, `Bash(/opt/riff/riff release cut *)` | the steps of the release cycle of the lead in a container |
 
 When the auto mode check still refuses a step of riff, the session
 writes the step on its issue and tells your lead. The fix is a new

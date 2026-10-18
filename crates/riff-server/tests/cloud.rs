@@ -437,16 +437,19 @@ fn the_book_deploys_at_the_end_of_a_wave() {
     assert!(!part.contains("gh workflow run"), "{part}");
 }
 
-/// The book how-to deploys again or rolls back with the real input
-/// name of the workflow.
+/// The book how-to deploys again or rolls back with the riff commands
+/// (01M58KMM8CV9731AWGVZQBB80D, 01M58KMMAPJ33CQWR8GRX62GMR).
 #[test]
 fn the_book_deploys_a_release_again() {
     let part = book_part("### Deploy a release again, or roll back\n");
-    assert!(part.contains("```sh\n"), "{part}");
-    assert!(
-        part.contains("gh workflow run CI --ref main -f tag=v0.2.0"),
-        "{part}"
-    );
+    for command in [
+        "```sh\nriff release retry v3.3.0\n```",
+        "```sh\nriff release rollback v3.2.0\n```",
+        "```sh\nriff release approve v3.2.0\n```",
+    ] {
+        assert!(part.contains(command), "{command}: {part}");
+    }
+    assert!(!part.contains("gh workflow run"), "{part}");
 }
 
 /// The book how-to makes a release with the riff commands
@@ -468,11 +471,10 @@ fn the_book_makes_a_release() {
         "the level line",
         "the commands that each\nperson runs",
         "`riff update --tag v3.3.0`",
-        "riff workers stop\n",
         "riff release cut 3.3.0\n",
-        "riff pause --riff\nriff release publish v3.3.0\n",
+        "tag. The riff runs on:\n\n```sh\nriff release publish v3.3.0\n",
         "riff release approve v3.3.0\n",
-        "the notes that GitHub makes from the last release",
+        "the notes that GitHub\nmakes from the last release",
         "`Release check`",
     ] {
         assert!(part.contains(text), "{text:?} is not in: {part}");

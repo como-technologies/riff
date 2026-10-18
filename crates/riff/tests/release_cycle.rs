@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use isolated::Isolated;
+use riff::cycle::Refusal;
 
 use crate::book;
 
@@ -147,6 +148,9 @@ impl Machine {
                  'pr list --state merged --label release'*) printf '%s\n' '[]' ;;\n\
                  'pr create'*) printf '%s\n' 'https://github.com/como-technologies/riff/pull/1140' ;;\n\
                  'run list --workflow CI --status waiting'*) printf '%s\n' '[]' ;;\n\
+                 'pr list --state open --label release'*) printf '%s\n' '[]' ;;\n\
+                 'run list --workflow CI --limit'*) printf '%s\n' '[]' ;;\n\
+                 'api repos/{{owner}}/{{repo}}/commits/'*) printf '%s\n' '{{\"statuses\":[]}}' ;;\n\
                  esac\nexit 0\n"
             ),
         );
@@ -213,7 +217,7 @@ async fn cut_pushes_the_branch_and_opens_the_release_pull_request() {
     assert_eq!(
         out,
         "The release pull request #1140 for issue #7, with auto-merge on: \
-         https://github.com/como-technologies/riff/pull/1140\n"
+         https://github.com/como-technologies/riff/pull/1140\nnext: wait for the verify and the merge of pull request #1140\n"
     );
     let branch = git(&machine.origin(), &["show", "release-v3.3.0:Cargo.toml"]);
     assert!(branch.contains("version = \"3.3.0\""), "{branch}");
@@ -349,7 +353,7 @@ async fn status_shows_the_versions_and_a_run_that_waits() {
         out,
         "version on origin/main: 3.2.0\nlast release: v3.2.0\nmerged, not published: none\n\
          waits for production: v3.2.0 https://github.com/como-technologies/riff/actions/runs/9. \
-         A person runs: riff release approve v3.2.0\n"
+         A person runs: riff release approve v3.2.0\nrelease: v3.2.0 published\nnext: wait for the CI run of the tag v3.2.0\n"
     );
 }
 
@@ -361,6 +365,7 @@ const WAITS: &str = "*'-X POST'*) printf '%s\n' 'HTTP/2.0 200 OK' ;;\n\
 async fn approve_shows_the_run_asks_and_approves_with_a_comment() {
     let machine = Machine::new().await;
     machine.fake_gh(WAITS);
+    machine.ok(&[], &["resume", "--riff"]).await;
     let out = machine
         .run(&[], &["release", "approve", "v3.3.0"], "yes\n")
         .await;
@@ -371,6 +376,13 @@ async fn approve_shows_the_run_asks_and_approves_with_a_comment() {
             "tag: v3.3.0\ncommit: abc\nrun: https://github.com/como-technologies/riff/actions/runs/9\n\
              Approve the deploy of v3.3.0 to production? (yes or no) "
         ),
+        "{shown}"
+    );
+    // The pause comes first, and only for the deploy
+    // (01M58KMM3NFGJRW4CCV50KJQB2).
+    assert!(shown.contains("The riff is paused now."), "{shown}");
+    assert!(
+        shown.ends_with("next: the lead runs riff release check v3.3.0 after the deploy\n"),
         "{shown}"
     );
     let log = machine.log();
@@ -418,7 +430,10 @@ async fn approve_refuses_each_agent_session() {
         assert_eq!(out.status.code(), Some(1), "{vars:?}");
         assert_eq!(
             text(&out.stderr),
-            format!("{}\n", riff::text::APPROVE_AGENT)
+            format!(
+                "{}\n",
+                riff::text::release_refused("approve", riff::cycle::Refusal::Agent)
+            )
         );
     }
     assert_eq!(machine.log(), "");
@@ -427,25 +442,28 @@ async fn approve_refuses_each_agent_session() {
 #[tokio::test]
 async fn publish_refuses_a_worker_a_container_and_a_session_that_is_not_the_lead() {
     let machine = Machine::new().await;
-    let cases: [(&[(&str, &str)], &str); 4] = [
+    let cases: [(&[(&str, &str)], String); 4] = [
         (
             &[("RIFF_WORKER", "1"), ("RIFF_SESSION", "w1")],
-            riff::text::PUBLISH.worker,
+            riff::text::release_refused("publish", Refusal::Worker),
         ),
         (
             &[
                 ("RIFF_SOCKET", "/run/riff/riff.sock"),
                 ("RIFF_SESSION", "c1"),
             ],
-            riff::text::PUBLISH_CONTAINER,
+            riff::text::release_refused("publish", Refusal::Container),
         ),
-        (&[("RIFF_SESSION", "s2")], riff::text::PUBLISH.not_the_lead),
+        (
+            &[("RIFF_SESSION", "s2")],
+            riff::text::release_refused("publish", Refusal::NotTheLead),
+        ),
         (
             &[
                 ("RIFF_SESSION", "s3"),
                 ("RIFF_SERVER", "http://127.0.0.1:9"),
             ],
-            riff::text::PUBLISH.lead_unknown,
+            riff::text::release_refused("publish", Refusal::LeadUnknown),
         ),
     ];
     for (vars, want) in cases {
@@ -458,8 +476,29 @@ async fn publish_refuses_a_worker_a_container_and_a_session_that_is_not_the_lead
     assert_eq!(machine.log(), "");
 }
 
-/// origin/main with the merged release pull request of 3.3.0, and a gh
-/// that knows it.
+impl Machine {
+    /// The cases of `gh` for the merged release pull request of 3.3.0
+    /// with the merge commit `merge`. With `tested`, the real-session
+    /// test passed on it.
+    fn release_cases(&self, merge: &str, tested: bool) -> String {
+        let real = if tested {
+            r#"{"statuses":[{"context":"riff/real-session","state":"success"}]}"#
+        } else {
+            r#"{"statuses":[]}"#
+        };
+        format!(
+            "'pr list --state merged --label release'*) printf '%s\n' '[{{\"number\":1140,\"title\":\"Release v3.3.0\",\"url\":\"https://github.com/como-technologies/riff/pull/1140\",\"body\":\"Refs #7\\n\\nPart of #7: the release pull request.\\n\\nLevel: minor, 3.3.0.\\n\\nIssue: #7\\nMilestone: Wave 34\\n\",\"mergeCommit\":{{\"oid\":\"{merge}\"}},\"headRefOid\":\"h1\"}}]' ;;\n\
+             'api repos/{{owner}}/{{repo}}/commits/h1/status') printf '%s\n' '{{\"statuses\":[{{\"context\":\"riff/verify\",\"state\":\"success\"}}]}}' ;;\n\
+             'api repos/{{owner}}/{{repo}}/commits/{merge}/status') printf '%s\n' '{real}' ;;\n\
+             'api repos/{{owner}}/{{repo}} --jq .permissions.admin') echo true ;;\n\
+             'release create'*) printf '%s\n' 'https://github.com/como-technologies/riff/releases/tag/v3.3.0' ;;\n\
+             'run list --workflow CI --branch v3.3.0'*) printf '%s\n' '[{{\"databaseId\":9,\"url\":\"https://github.com/como-technologies/riff/actions/runs/9\"}}]' ;;"
+        )
+    }
+}
+
+/// origin/main with the merged release pull request of 3.3.0, tested by
+/// the real-session test, and a gh that knows it.
 async fn merged_release() -> (Machine, String) {
     let machine = Machine::new().await;
     let clone = machine.clone();
@@ -476,29 +515,26 @@ async fn merged_release() -> (Machine, String) {
     let merge = machine.head();
     // A local tag that publish must not push.
     git(&clone, &["tag", "v9.9.9"]);
-    machine.fake_gh(&format!(
-        "'pr list --state merged --label release'*) printf '%s\n' '[{{\"number\":1140,\"title\":\"Release v3.3.0\",\"url\":\"https://github.com/como-technologies/riff/pull/1140\",\"body\":\"Refs #7\\n\\nPart of #7: the release pull request.\\n\\nLevel: minor, 3.3.0.\\n\\nIssue: #7\\nMilestone: Wave 34\\n\",\"mergeCommit\":{{\"oid\":\"{merge}\"}},\"headRefOid\":\"h1\"}}]' ;;\n\
-         'api repos/{{owner}}/{{repo}}/commits/h1/status') printf '%s\n' '{{\"statuses\":[{{\"context\":\"riff/verify\",\"state\":\"success\"}}]}}' ;;\n\
-         'api repos/{{owner}}/{{repo}} --jq .permissions.admin') echo true ;;\n\
-         'release create'*) printf '%s\n' 'https://github.com/como-technologies/riff/releases/tag/v3.3.0' ;;\n\
-         'run list --workflow CI --branch v3.3.0'*) printf '%s\n' '[{{\"databaseId\":9,\"url\":\"https://github.com/como-technologies/riff/actions/runs/9\"}}]' ;;"
-    ));
+    machine.fake_gh(&machine.release_cases(&merge, true));
     (machine, merge)
 }
 
 #[tokio::test]
-async fn publish_tags_the_merge_commit_and_makes_the_release_in_a_paused_riff() {
+async fn publish_tags_the_tested_merge_commit_in_a_running_riff_and_tells_the_chat() {
     let (machine, merge) = merged_release().await;
     let lead = [("RIFF_SESSION", "s1")];
     machine.ok(&lead, &["lead"]).await;
-    // The riff runs: publish refuses.
-    machine.ok(&lead, &["resume", "--riff"]).await;
+    // The real-session test did not run: publish refuses.
+    machine.fake_gh(&machine.release_cases(&merge, false));
     let out = machine
         .run(&lead, &["release", "publish", "v3.3.0"], "")
         .await;
     assert!(!out.status.success());
     assert!(
-        text(&out.stderr).contains("the riff is not paused"),
+        text(&out.stderr).contains(&format!(
+            "no commit from the merge commit {merge} to origin/main has the status \
+             riff/real-session. next: just real-session on origin/main"
+        )),
         "{}",
         text(&out.stderr)
     );
@@ -508,14 +544,27 @@ async fn publish_tags_the_merge_commit_and_makes_the_release_in_a_paused_riff() 
             .all(|t| t != "v3.3.0")
     );
 
-    machine.ok(&lead, &["pause", "--riff"]).await;
+    // The riff runs: only the approval of the deploy pauses it.
+    machine.fake_gh(&machine.release_cases(&merge, true));
     let out = machine.ok(&lead, &["release", "publish", "v3.3.0"]).await;
     assert_eq!(
         out,
         "Published v3.3.0: https://github.com/como-technologies/riff/releases/tag/v3.3.0\n\
          The CI run of the tag: https://github.com/como-technologies/riff/actions/runs/9\n\
-         The deploy waits for the approval of the environment production by a person: riff \
-         release approve v3.3.0\n"
+         riff told the riff in riff chat.\n\
+         next: wait for the jobs of the CI run; then a person runs riff release approve v3.3.0 \
+         in a terminal\n"
+    );
+    let chat = machine
+        .ok(&lead, &["read", "--thread", "chat", "--all"])
+        .await;
+    assert!(
+        chat.contains(
+            "riff release v3.3.0 is published. Its deploy waits for your approval: \
+             https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: riff \
+             release approve v3.3.0"
+        ),
+        "{chat}"
     );
     let tags = git(&machine.origin(), &["tag"]);
     assert_eq!(tags, "v3.2.0\nv3.3.0", "only the new tag is pushed");
@@ -549,7 +598,6 @@ async fn publish_refuses_a_version_that_is_not_on_main() {
     let (machine, _) = merged_release().await;
     let lead = [("RIFF_SESSION", "s1")];
     machine.ok(&lead, &["lead"]).await;
-    machine.ok(&lead, &["pause", "--riff"]).await;
     let out = machine
         .run(&lead, &["release", "publish", "v3.4.0"], "")
         .await;
@@ -563,48 +611,418 @@ async fn publish_refuses_a_version_that_is_not_on_main() {
     assert!(!machine.log().contains("release create"));
 }
 
-/// The book: "Make a release" uses only the riff commands, each with its
-/// own heading and a `sh` block, and no raw tag or release line.
-#[test]
-fn the_book_makes_a_release_with_the_riff_commands() {
-    let page = book::page("development.md");
-    let start = page.find("\n### Make a release\n").unwrap();
-    let rest = &page[start + 1..];
-    let end = rest
-        .find("\n### Make a patch of an older release\n")
-        .unwrap();
-    let part = &rest[..end];
-    for command in [
-        "riff release cut 3.3.0",
-        "riff release publish v3.3.0",
-        "riff release status",
-        "riff release approve v3.3.0",
-    ] {
-        assert!(
-            book::commands_in(part).iter().any(|c| c == command),
-            "{command}"
-        );
-    }
-    for heading in [
-        "#### Cut the release pull request",
-        "#### Publish the release",
-        "#### See the release cycle",
-        "#### Approve the deploy",
-    ] {
-        assert!(part.contains(&format!("\n{heading}\n")), "{heading}");
-    }
-    for raw in ["gh api", "git tag", "gh release"] {
-        assert!(!part.contains(raw), "{raw} in Make a release");
-    }
-    let commands: Vec<String> = book::commands_in(part)
-        .into_iter()
-        .filter(|c| c.starts_with("riff release") && !c.contains('"'))
-        .collect();
-    book::each_is_real(&commands);
+/// The tag of the build of this riff-server: the checks after a deploy
+/// compare it with the release.
+fn this_tag() -> String {
+    format!("v{}", env!("CARGO_PKG_VERSION"))
 }
 
-/// The skill makes each release with the riff commands, and has no tag
-/// line and no `gh release` line.
+/// The cases of `gh` for the CI run 9 of `tag`, whose job `Deploy`
+/// ended with `conclusion`.
+fn deployed(tag: &str, conclusion: &str) -> String {
+    format!(
+        "'run list --workflow CI --limit'*) printf '%s\n' '[{{\"databaseId\":9,\"headBranch\":\"{tag}\",\"headSha\":\"abc\",\"url\":\"https://github.com/como-technologies/riff/actions/runs/9\",\"displayTitle\":\"Release\",\"status\":\"completed\",\"conclusion\":\"{conclusion}\"}}]' ;;\n\
+         'run view 9 --json jobs') printf '%s\n' '{{\"jobs\":[{{\"name\":\"Release check\",\"status\":\"completed\",\"conclusion\":\"success\"}},{{\"name\":\"Deploy\",\"status\":\"completed\",\"conclusion\":\"{conclusion}\",\"startedAt\":\"2026-10-18T20:00:00Z\"}}]}}' ;;\n\
+         'run rerun 9 --failed') echo ;;\n\
+         'workflow run'*) echo ;;\n\
+         'issue comment'*) echo ;;\n\
+         'issue close'*) echo ;;"
+    )
+}
+
+impl Machine {
+    /// The cloud settings `shared` of this repository, and a fake
+    /// `gcloud` that logs each call and finds no line in the log.
+    fn shared_cloud(&self) {
+        let dir = self.clone().join("deploy/cloud");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(
+            top().join("deploy/cloud/shared.env"),
+            dir.join("shared.env"),
+        )
+        .unwrap();
+        isolated::write_program(
+            self.bin().join("gcloud"),
+            "#!/bin/sh\necho \"gcloud $*\" >> \"$(dirname \"$0\")/gcloud.log\"\nexit 0\n",
+        );
+    }
+}
+
+/// The checks after the deploy pass: riff writes the result on the
+/// release issue, closes it, and resumes the riff
+/// (01M58KMM5ZPAQ289S2YJVQ5WW6).
+#[tokio::test]
+async fn check_passes_closes_the_release_issue_and_resumes_the_riff() {
+    let machine = Machine::new().await;
+    let tag = this_tag();
+    machine.fake_gh(&deployed(&tag, "success"));
+    machine.shared_cloud();
+    let lead = [("RIFF_SESSION", "s1")];
+    machine.ok(&lead, &["lead"]).await;
+    machine.ok(&lead, &["pause", "--riff"]).await;
+    let out = machine.ok(&lead, &["release", "check", &tag]).await;
+    assert!(
+        out.starts_with(&format!(
+            "riff release check {tag}: passed\n\n- riff server shows the build: passed\n"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains("- each host takes the build: passed\n"),
+        "{out}"
+    );
+    assert!(out.contains("riff closed the release issue #7.\n"), "{out}");
+    assert!(out.contains("The riff is running now."), "{out}");
+    let log = machine.log();
+    assert!(
+        log.contains(&format!(
+            "gh issue comment 7 --body-file -\nriff release check {tag}: passed"
+        )),
+        "{log}"
+    );
+    assert!(log.contains("gh issue close 7"), "{log}");
+    let gcloud = std::fs::read_to_string(machine.bin().join("gcloud.log")).unwrap();
+    assert_eq!(gcloud.lines().count(), 4, "{gcloud}");
+    assert!(
+        gcloud.contains("timestamp>=\"2026-10-18T20:00:00Z\" AND httpRequest.status=503"),
+        "{gcloud}"
+    );
+}
+
+/// With no cloud settings, check names each check of the log that it
+/// could not do, and keeps the riff and the issue as they are
+/// (01M58KMMP9FKRFYX58ESVRSZQX).
+#[tokio::test]
+async fn check_names_the_checks_that_it_could_not_do() {
+    let machine = Machine::new().await;
+    let tag = this_tag();
+    machine.fake_gh(&deployed(&tag, "success"));
+    let lead = [("RIFF_SESSION", "s1")];
+    machine.ok(&lead, &["lead"]).await;
+    let out = machine.ok(&lead, &["release", "check", &tag]).await;
+    assert!(
+        out.starts_with(&format!("riff release check {tag}: unknown\n")),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "- no 500 of riff-server: riff could not check it: riff cannot read the Cloud Run log"
+        ),
+        "{out}"
+    );
+    assert!(!machine.log().contains("issue close"), "{}", machine.log());
+}
+
+/// After a failed job `Deploy`, check files an issue with the log and
+/// resumes the riff: the old revision still serves.
+#[tokio::test]
+async fn check_after_a_failed_deploy_files_an_issue_and_resumes_the_riff() {
+    let machine = Machine::new().await;
+    machine.fake_gh(&deployed("v3.3.0", "failure"));
+    let lead = [("RIFF_SESSION", "s1")];
+    machine.ok(&lead, &["lead"]).await;
+    machine.ok(&lead, &["pause", "--riff"]).await;
+    let out = machine.ok(&lead, &["release", "check", "v3.3.0"]).await;
+    assert!(
+        out.starts_with(
+            "The deploy of v3.3.0 failed: https://github.com/como-technologies/riff/actions/runs/9. \
+             The old revision still serves. The issue: #7\n"
+        ),
+        "{out}"
+    );
+    assert!(out.contains("The riff is running now."), "{out}");
+    let log = machine.log();
+    assert!(
+        log.contains(
+            "gh issue create --title The deploy of v3.3.0 failed --milestone Wave 34: Release \
+             --body-file -\nThe CI run https://github.com/como-technologies/riff/actions/runs/9 \
+             of v3.3.0 failed."
+        ),
+        "{log}"
+    );
+    assert!(log.contains("The failed jobs: Deploy."), "{log}");
+}
+
+#[tokio::test]
+async fn retry_runs_the_failed_jobs_again() {
+    let machine = Machine::new().await;
+    machine.fake_gh(&deployed("v3.3.0", "failure"));
+    let lead = [("RIFF_SESSION", "s1")];
+    machine.ok(&lead, &["lead"]).await;
+    let out = machine.ok(&lead, &["release", "retry", "v3.3.0"]).await;
+    assert_eq!(
+        out,
+        "The failed jobs of https://github.com/como-technologies/riff/actions/runs/9 run again.\n\
+         next: a person runs riff release approve v3.3.0 in a terminal\n"
+    );
+    assert!(machine.log().contains("gh run rerun 9 --failed"));
+
+    // A run that passed: retry refuses.
+    machine.fake_gh(&deployed("v3.3.0", "success"));
+    let out = machine
+        .run(&lead, &["release", "retry", "v3.3.0"], "")
+        .await;
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stderr).contains("did not fail"),
+        "{}",
+        text(&out.stderr)
+    );
+}
+
+/// HUMAN GATE 2: rollback starts the deploy of the older release, which
+/// waits for a person (01M58KMMAPJ33CQWR8GRX62GMR).
+#[tokio::test]
+async fn rollback_starts_the_deploy_of_an_older_release() {
+    let machine = Machine::new().await;
+    machine.fake_gh(&deployed("v3.2.0", "success"));
+    let lead = [("RIFF_SESSION", "s1")];
+    machine.ok(&lead, &["lead"]).await;
+    let out = machine.ok(&lead, &["release", "rollback", "v3.0.0"]).await;
+    assert_eq!(
+        out,
+        "The deploy of v3.0.0 to replace v3.2.0 started.\n\
+         next: a person runs riff release approve v3.0.0 in a terminal\n"
+    );
+    let log = machine.log();
+    assert!(
+        log.contains("gh workflow run CI --ref main -f tag=v3.0.0"),
+        "{log}"
+    );
+    assert!(
+        log.contains("gh issue comment 7 --body-file -\nriff release rollback v3.0.0\n"),
+        "{log}"
+    );
+    let out = machine
+        .run(&lead, &["release", "rollback", "v3.2.0"], "")
+        .await;
+    assert!(
+        text(&out.stderr).contains("v3.2.0 is not a published release older than v3.2.0"),
+        "{}",
+        text(&out.stderr)
+    );
+}
+
+/// The steps of the lead refuse a worker, a container session and a
+/// session that is not the lead (01M58KMMF9WMH39ZMD0MKGRVZB).
+#[tokio::test]
+async fn check_retry_and_rollback_refuse_a_worker_a_container_and_another_session() {
+    let machine = Machine::new().await;
+    machine.fake_gh(&deployed("v3.3.0", "failure"));
+    for command in ["check", "retry", "rollback"] {
+        for (vars, refusal) in [
+            (
+                &[("RIFF_WORKER", "1"), ("RIFF_SESSION", "w1")][..],
+                Refusal::Worker,
+            ),
+            (
+                &[
+                    ("RIFF_SOCKET", "/run/riff/riff.sock"),
+                    ("RIFF_SESSION", "c1"),
+                ],
+                Refusal::Container,
+            ),
+            (&[("RIFF_SESSION", "s2")], Refusal::NotTheLead),
+        ] {
+            let out = machine.run(vars, &["release", command, "v3.0.0"], "").await;
+            assert_eq!(out.status.code(), Some(1), "{command} {vars:?}");
+            assert_eq!(
+                text(&out.stderr),
+                format!("{}\n", riff::text::release_refused(command, refusal)),
+                "{command} {vars:?}"
+            );
+        }
+    }
+    assert_eq!(machine.log(), "");
+}
+
+/// HUMAN GATE 3: only a person skips a version
+/// (01M58KMMKZ8T11KT3R3Z7D0RE1).
+#[tokio::test]
+async fn cut_with_a_skip_refuses_each_agent_session() {
+    let machine = Machine::new().await;
+    for vars in [&[("RIFF_SESSION", "s1")][..], &[("CLAUDECODE", "1")]] {
+        let out = machine
+            .run(
+                vars,
+                &[
+                    "release", "cut", "3.4.0", "--skip", "3.3.0", "--reason", "x",
+                ],
+                "",
+            )
+            .await;
+        assert_eq!(out.status.code(), Some(1), "{vars:?}");
+        assert_eq!(
+            text(&out.stderr),
+            format!(
+                "{}\n",
+                riff::text::release_refused("cut --skip", Refusal::Agent)
+            )
+        );
+    }
+    assert_eq!(machine.log(), "");
+}
+
+/// `riff wave end N` refuses while a merged item of the wave is in no
+/// release. With `--no-release`, the reason goes into the wave
+/// (01M58KMMCZCE7HDNVT9PVHVZX2).
+#[tokio::test]
+async fn wave_end_refuses_a_wave_with_no_release() {
+    let machine = Machine::new().await;
+    machine.fake_gh("'api -X PATCH'*) printf '%s\n' '{\"number\":40,\"title\":\"Wave 34: Release\",\"open_issues\":0,\"closed_issues\":2}' ;;");
+    let out = machine.run(&[], &["wave", "end", "34"], "").await;
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stderr).contains(
+            "riff wave end 34: these merged pull requests of the wave are in no release: #41. \
+             next: riff release cut X.Y.Z."
+        ),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(!machine.log().contains("-X PATCH"), "{}", machine.log());
+
+    let out = machine
+        .run(
+            &[],
+            &["wave", "end", "34", "--no-release", "only the book changed"],
+            "",
+        )
+        .await;
+    let log = machine.log();
+    assert!(
+        log.contains(r#"{"description":"No release: only the book changed"}"#),
+        "{log}"
+    );
+    // The wave has open items, so the end refuses after the gate.
+    assert!(!out.status.success());
+    assert!(text(&out.stderr).contains("open"), "{}", text(&out.stderr));
+}
+
+/// The text of `page` from the heading `heading` to the next heading of
+/// the same level or higher.
+fn section(page: &str, heading: &str) -> String {
+    let level = heading.split(' ').next().unwrap();
+    let start = page
+        .find(&format!("\n{heading}\n"))
+        .unwrap_or_else(|| panic!("{heading}"));
+    let rest = &page[start + 1..];
+    let end = rest[heading.len()..]
+        .match_indices("\n#")
+        .find(|(i, _)| {
+            let hashes = rest[heading.len() + i + 1..]
+                .chars()
+                .take_while(|c| *c == '#')
+                .count();
+            hashes <= level.len()
+        })
+        .map_or(rest.len(), |(i, _)| heading.len() + i);
+    rest[..end].to_owned()
+}
+
+/// The book: "The release cycle" has the diagram, the table of the
+/// gates, and a how-to with its own heading and a `sh` block for each
+/// command of the cycle (01M58KMKR33P1FSCFDQRZ56A8P). "Make a release",
+/// "Approve the deploy of a release" and "Deploy a release again, or
+/// roll back" use only riff commands. Each riff command is real.
+#[test]
+fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command() {
+    let page = book::page("development.md");
+    let cycle = section(&page, "### The release cycle");
+    for text in [
+        "```mermaid\nflowchart TD\n",
+        "HUMAN GATE 1: riff release approve vX.Y.Z",
+        "HUMAN GATE 2: riff release approve vPREV",
+        "| Gate | Who | Command | With no answer |",
+        "| HUMAN GATE 3: skip |",
+        "| Log access |",
+        "`deploying`, `deployed`,\n`checked`, `failed` or `rolled back`",
+    ] {
+        assert!(cycle.contains(text), "{text} in The release cycle");
+    }
+    let make = section(&page, "### Make a release");
+    let again = section(&page, "### Deploy a release again, or roll back");
+    let approve = section(&page, "### Approve the deploy of a release");
+    for (heading, command, part) in [
+        (
+            "#### See the state of the release",
+            "riff release status",
+            &cycle,
+        ),
+        (
+            "#### Check the release after the deploy",
+            "riff release check v3.3.0",
+            &cycle,
+        ),
+        (
+            "#### End the wave of the release",
+            "riff wave end 34",
+            &cycle,
+        ),
+        (
+            "#### Cut the release pull request",
+            "riff release cut 3.3.0",
+            &make,
+        ),
+        (
+            "#### Skip a version",
+            "riff release cut 3.4.0 --skip 3.3.0 --reason \"the push of the tag was refused\"",
+            &make,
+        ),
+        ("#### Test the merged release", "just real-session", &make),
+        (
+            "#### Publish the release",
+            "riff release publish v3.3.0",
+            &make,
+        ),
+        (
+            "#### Approve the deploy",
+            "riff release approve v3.3.0",
+            &make,
+        ),
+        (
+            "#### Run a failed deploy again",
+            "riff release retry v3.3.0",
+            &again,
+        ),
+        (
+            "#### Roll back to an older release",
+            "riff release rollback v3.2.0",
+            &again,
+        ),
+    ] {
+        let how_to = section(part, heading);
+        assert!(
+            book::commands_in(&how_to).iter().any(|c| c == command),
+            "{command} in {heading}"
+        );
+    }
+    for part in [&make, &again, &approve] {
+        for raw in ["gh api", "git tag", "gh release", "gh workflow", "gh run"] {
+            assert!(!part.contains(raw), "{raw} in a how-to of a release");
+        }
+    }
+    let commands: Vec<String> = [&cycle, &make, &again]
+        .iter()
+        .flat_map(|p| book::commands_in(p))
+        .filter(|c| {
+            (c.starts_with("riff release") || c.starts_with("riff wave")) && !c.contains('"')
+        })
+        .collect();
+    assert!(commands.len() >= 9, "{commands:?}");
+    book::each_is_real(&commands);
+    // Start a Riff links the owner to the human gates.
+    let start = book::part("start-a-riff.md", "Approve a release");
+    assert!(
+        start.contains("(development.md#the-release-cycle)"),
+        "{start}"
+    );
+    assert!(book::commands_in(&start).contains(&"riff release approve v3.3.0".to_owned()));
+}
+
+/// The skill drives the release cycle only with the riff commands, and
+/// has no tag line, no `gh release`, no `gh api` and no `gh workflow`
+/// line.
 #[test]
 fn the_skill_makes_a_release_with_the_riff_commands() {
     let skill =
@@ -615,10 +1033,21 @@ fn the_skill_makes_a_release_with_the_riff_commands() {
         "riff release publish",
         "riff release status",
         "riff release approve",
+        "riff release check",
+        "riff release retry",
+        "riff release rollback",
+        "just real-session",
+        "riff wave end N --no-release TEXT",
     ] {
         assert!(skill.contains(command), "{command}");
     }
-    for raw in ["gh release", "git tag", "git push origin v"] {
+    for raw in [
+        "gh release",
+        "git tag",
+        "git push origin v",
+        "gh api",
+        "gh workflow",
+    ] {
         assert!(!skill.contains(raw), "{raw} in the skill");
     }
 }
@@ -691,7 +1120,10 @@ async fn publish_refuses_a_member_and_the_lead_of_a_member() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(
         text(&out.stderr),
-        format!("{}\n", riff::text::PUBLISH_MEMBER)
+        format!(
+            "{}\n",
+            riff::text::release_refused("publish", Refusal::Member)
+        )
     );
     assert_eq!(member.log(), "");
 
@@ -703,7 +1135,10 @@ async fn publish_refuses_a_member_and_the_lead_of_a_member() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(
         text(&out.stderr),
-        format!("{}\n", riff::text::PUBLISH_MEMBER)
+        format!(
+            "{}\n",
+            riff::text::release_refused("publish", Refusal::Member)
+        )
     );
     assert_eq!(member.log(), "");
 

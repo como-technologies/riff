@@ -61,6 +61,11 @@
 //! and a signal 130. A second signal ends the test at once, with no more
 //! clean-up.
 //!
+//! After a pass or a failed step, the test sets the commit status
+//! [`STATUS_CONTEXT`] of the commit `HEAD` of its clone: `success` or
+//! `failure` ([`status_args`], 01M58KMKZ2EG8NZG4F085S6NQX). `riff release
+//! publish` tags only a commit with a pass. A signal sets no status.
+//!
 //! # The scratch item
 //!
 //! The issue is in the milestone [`MILESTONE`], so the rollout of the
@@ -1491,6 +1496,60 @@ impl Riff {
     }
 }
 
+/// The commit status of the result of the test
+/// (01M58KMKZ2EG8NZG4F085S6NQX). `riff release publish` refuses a release
+/// with no pass of it.
+///
+/// ```
+/// assert_eq!(real_session::STATUS_CONTEXT, riff::cycle::REAL_SESSION);
+/// ```
+pub const STATUS_CONTEXT: &str = "riff/real-session";
+
+/// The `gh` arguments that set the status [`STATUS_CONTEXT`] of `commit`:
+/// `success` on a pass, else `failure`, with `description` cut to the
+/// 140 characters of GitHub.
+///
+/// ```
+/// let args = real_session::status_args("abc", true, "issue #5, pull request #6");
+/// assert_eq!(args[..4], ["api", "-X", "POST", "repos/{owner}/{repo}/statuses/abc"]);
+/// assert!(args.contains(&"state=success".to_owned()));
+/// assert!(args.contains(&"context=riff/real-session".to_owned()));
+/// let long = "x".repeat(300);
+/// let args = real_session::status_args("abc", false, &long);
+/// assert!(args.contains(&"state=failure".to_owned()));
+/// assert_eq!(args.last().unwrap().len(), "description=".len() + 140);
+/// ```
+pub fn status_args(commit: &str, passed: bool, description: &str) -> Vec<String> {
+    let state = if passed { "success" } else { "failure" };
+    let description: String = description.chars().take(140).collect();
+    vec![
+        "api".into(),
+        "-X".into(),
+        "POST".into(),
+        format!("repos/{{owner}}/{{repo}}/statuses/{commit}"),
+        "-f".into(),
+        format!("state={state}"),
+        "-f".into(),
+        format!("context={STATUS_CONTEXT}"),
+        "-f".into(),
+        format!("description={description}"),
+    ]
+}
+
+/// Sets the status [`STATUS_CONTEXT`] of the commit `HEAD` of the clone
+/// of the test. A failure is a warning: the test result stays.
+fn set_status(passed: bool, description: &str, stop: &AtomicBool) {
+    let reported = output("git", &["rev-parse", "HEAD"], stop).and_then(|commit| {
+        let args = status_args(&commit, passed, description);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        output("gh", &args, stop).map(|_| commit)
+    });
+    match reported {
+        Ok(commit) => println!("real-session: the status {STATUS_CONTEXT} of {commit} is set"),
+        Err(e) => eprintln!("real-session: warning: cannot set the status {STATUS_CONTEXT}: {e}"),
+    }
+}
+
 /// What the test made, for the clean-up.
 #[derive(Debug, Default)]
 struct Made {
@@ -1518,11 +1577,17 @@ pub fn run(options: &Options, stop: &AtomicBool) -> u8 {
     match result {
         Ok(summary) => {
             println!("real-session: PASS: {summary}");
+            set_status(true, &summary, stop);
             0
         }
         Err(failure) => {
             eprintln!("real-session: FAIL at {failure}");
-            if stop.load(Ordering::SeqCst) { 130 } else { 1 }
+            if stop.load(Ordering::SeqCst) {
+                130
+            } else {
+                set_status(false, &format!("FAIL at {failure}"), stop);
+                1
+            }
         }
     }
 }

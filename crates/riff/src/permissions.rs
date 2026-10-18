@@ -84,6 +84,14 @@
 //! | `Bash({HOME}/.cache/riff/check/target/static/release/riff *)` | allow | worker | user | the same riff, by its full path |
 //! | `Bash(/opt/riff/riff relay watch)` | allow | lead | session | the wakes of the lead in a container |
 //! | `Bash(/opt/riff/riff wave *)` | allow | lead | session | the steps of the waves of the lead in a container |
+//! | `Bash(riff release cut *)` | allow | lead | user | the release pull request (01M58KMMF9WMH39ZMD0MKGRVZB) |
+//! | `Bash(riff release publish *)` | allow | lead | user | the tag and the GitHub release |
+//! | `Bash(riff release status)` | allow | lead | user | the state of the release cycle |
+//! | `Bash(riff release check *)` | allow | lead | user | the checks after the deploy |
+//! | `Bash(riff release retry *)` | allow | lead | user | the failed jobs of a deploy again |
+//! | `Bash(riff release rollback *)` | allow | lead | user | the deploy of an older release |
+//! | `Bash(/opt/riff/riff release status)` | allow | lead | session | the state of the release cycle, in a container |
+//! | `Bash(/opt/riff/riff release cut *)` | allow | lead | session | the release pull request, in a container |
 //! | `Bash(gh pr create *)` | allow | worker | project, user, session | open the pull request |
 //! | `Bash(gh pr merge --auto --squash *)` | allow | worker | project, user, session | turn on auto-merge |
 //! | `Bash(gh pr comment *)` | allow | worker, verifier | project, user | write a comment on a pull request |
@@ -101,7 +109,8 @@
 //! | `Bash(git push *:refs/heads/{BRANCH})` | deny | lead, worker, verifier | project | the same |
 //! | `Bash(git push *:refs/heads/{BRANCH} *)` | deny | lead, worker, verifier | project | the same |
 //! | `Bash(gh pr merge *--admin*)` | deny | lead, worker, verifier | project | never merge as an admin |
-//! | `Bash(gh workflow run *)` | person | - | - | an admin makes a release, deploys it again or rolls it back |
+//! | `Bash(gh workflow run *)` | person | - | - | only by hand: `riff release rollback` deploys an older release |
+//! | `Bash(riff release approve *)` | person | - | - | the approval of a deploy: no rule, the guard of riff refuses each session |
 //!
 //! When the auto mode check refuses a step, the session writes the step
 //! on the issue of its item, and tells the lead. The fix is a new row of
@@ -334,6 +343,14 @@ pub const TABLE: &[Row] = {
         ),
         allow("Bash(/opt/riff/riff relay watch)", &[Lead], &[Session]),
         allow("Bash(/opt/riff/riff wave *)", &[Lead], &[Session]),
+        allow("Bash(riff release cut *)", &[Lead], &[User]),
+        allow("Bash(riff release publish *)", &[Lead], &[User]),
+        allow("Bash(riff release status)", &[Lead], &[User]),
+        allow("Bash(riff release check *)", &[Lead], &[User]),
+        allow("Bash(riff release retry *)", &[Lead], &[User]),
+        allow("Bash(riff release rollback *)", &[Lead], &[User]),
+        allow("Bash(/opt/riff/riff release status)", &[Lead], &[Session]),
+        allow("Bash(/opt/riff/riff release cut *)", &[Lead], &[Session]),
         allow("Bash(gh pr create *)", &[Worker], &[Project, User, Session]),
         allow(
             "Bash(gh pr merge --auto --squash *)",
@@ -361,6 +378,12 @@ pub const TABLE: &[Row] = {
         deny("Bash(gh pr merge *--admin*)"),
         Row {
             rule: "Bash(gh workflow run *)",
+            kind: Kind::Person,
+            roles: &[],
+            places: &[],
+        },
+        Row {
+            rule: "Bash(riff release approve *)",
             kind: Kind::Person,
             roles: &[],
             places: &[],
@@ -1542,6 +1565,47 @@ mod tests {
             );
             assert!(line.starts_with(&want), "{line}\nis not\n{want}");
         }
+    }
+
+    /// 01M58KMMF9WMH39ZMD0MKGRVZB: `riff init` writes a rule for each step
+    /// of the lead in the release cycle, and no rule that names `approve`.
+    /// The guard of riff refuses `approve` in each session.
+    #[test]
+    fn riff_init_writes_the_release_steps_of_the_lead_and_none_for_approve() {
+        let user = user_rules(Some(Path::new("/home/mike")));
+        for step in [
+            "riff release cut 3.3.0",
+            "riff release publish v3.3.0",
+            "riff release status",
+            "riff release check v3.3.0",
+            "riff release retry v3.3.0",
+            "riff release rollback v3.2.0",
+        ] {
+            let own = user
+                .allow
+                .iter()
+                .any(|r| r != "Bash(riff *)" && matches(r, step));
+            assert!(own, "{step}");
+        }
+        let session = session_rules();
+        for step in [
+            "/opt/riff/riff release status",
+            "/opt/riff/riff release cut 3.3.0",
+        ] {
+            assert!(session.allow.iter().any(|r| matches(r, step)), "{step}");
+        }
+        for rules in [&user, &session] {
+            assert!(
+                !rules.allow.iter().any(|r| r.contains("approve")),
+                "{rules:?}"
+            );
+        }
+        assert!(
+            !session
+                .allow
+                .iter()
+                .any(|r| matches(r, "/opt/riff/riff release approve v3.3.0"))
+        );
     }
 
     #[test]
