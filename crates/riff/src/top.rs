@@ -320,13 +320,16 @@ pub struct Top<'a> {
 }
 
 /// The parts of the line of the numbers of a machine in `riff top`
-/// (01M421QPZ9E01PQ62PDBH378SJ): the load average of 1 and 5 minutes
-/// against the physical cores, the cap of the clock and the clock now,
-/// the available memory against the floor, the workers against the
-/// limit, and the pool of build jobs or the jobs of each worker, with
-/// no tokens in use ([`riff_client::machines::Jobs::short`],
+/// (01M421QPZ9E01PQ62PDBH378SJ): the 5-minute load against the limit of
+/// the monitor (01M588HSXQ2KWX0V8RYM65CPFR), the cap of the clock and
+/// the clock now, the available memory against the floor, the workers
+/// against the limit, and the pool of build jobs or the jobs of each
+/// worker, with no tokens in use ([`riff_client::machines::Jobs::short`],
 /// 01M515PDFZZXQ9ZCQE7SQ6KB8G). A number over its limit has the warning
-/// style. A host that tells fewer numbers gets fewer parts.
+/// style. A host with no numbers of the monitor shows the 1-minute load
+/// against the hardware threads, as the facts of the daemon do
+/// ([`crate::text::load_part`]). A host that tells fewer numbers gets
+/// fewer parts.
 ///
 /// ```
 /// use riff_client::machines::HostStatus;
@@ -337,31 +340,32 @@ pub struct Top<'a> {
 /// let plain = |parts: Vec<(String, anstyle::Style)>| {
 ///     parts.into_iter().map(|(t, _)| t).collect::<Vec<_>>().join("  ")
 /// };
-/// let jobs = Jobs::Pool { size: 10, used: 3 };
+/// // 16 physical cores, 32 hardware threads: the limit is 1.5 × 16.
+/// let jobs = Jobs::Pool { size: 20, used: 3 };
 /// let status = HostStatus {
-///     limit: 4,
+///     limit: 10,
 ///     floor: 4,
 ///     deaths: 0,
-///     machine: Some(Machine { cores: 16, mhz: 3000, now_mhz: 2990, mem_gb: 31, avail_gb: 20, load: 13.2 }),
+///     machine: Some(Machine { threads: 32, mhz: 5883, now_mhz: 3848, mem_gb: 124, avail_gb: 117, load: 0.1 }),
 ///     disk: None,
-///     monitor: Some(Numbers { on: true, load5: 9.8, limit: 12.0, physical: 8, jobs, kill: None }),
+///     monitor: Some(Numbers { on: true, load5: 0.1, limit: 24.0, physical: 16, jobs, kill: None }),
 ///     more: 0,
-///     workers: vec![("%3".into(), "1a2b3c4d".into()); 3],
+///     workers: vec![("%3".into(), "1a2b3c4d".into())],
 /// };
 /// assert_eq!(
 ///     plain(numbers(&status)),
-///     "load 13.2 9.8/8  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10"
+///     "load5 0.1 of 24  5883MHz now 3848  117GB avail/4  workers 1/10  pool 20"
 /// );
 /// // No pool: the jobs of each worker.
 /// let fixed = HostStatus {
 ///     monitor: status.monitor.clone().map(|n| Numbers { jobs: Jobs::Fixed(2), ..n }),
 ///     ..status.clone()
 /// };
-/// assert!(plain(numbers(&fixed)).ends_with("  workers 3/4  jobs 2"));
+/// assert!(plain(numbers(&fixed)).ends_with("  workers 1/10  jobs 2"));
 /// // Over the limits: the warning style.
 /// let over = HostStatus {
 ///     machine: status.machine.map(|m| Machine { avail_gb: 3, ..m }),
-///     monitor: status.monitor.clone().map(|n| Numbers { load5: 12.5, ..n }),
+///     monitor: status.monitor.clone().map(|n| Numbers { load5: 24.5, ..n }),
 ///     ..status.clone()
 /// };
 /// let warned: Vec<String> = numbers(&over)
@@ -369,14 +373,14 @@ pub struct Top<'a> {
 ///     .filter(|(_, style)| *style == riff::style::WARNING)
 ///     .map(|(t, _)| t)
 ///     .collect();
-/// assert_eq!(warned, ["load 13.2 12.5/8", "3GB avail/4"]);
+/// assert_eq!(warned, ["load5 24.5 of 24", "3GB avail/4"]);
 /// // The line of a big machine fits in 80 columns under its host.
 /// let big = HostStatus {
 ///     limit: 10,
-///     machine: Some(Machine { cores: 64, mhz: 5883, now_mhz: 5800, mem_gb: 256, avail_gb: 200, load: 33.2 }),
+///     machine: Some(Machine { threads: 64, mhz: 5883, now_mhz: 5800, mem_gb: 256, avail_gb: 200, load: 33.2 }),
 ///     monitor: Some(Numbers {
 ///         on: true,
-///         load5: 28.4,
+///         load5: 128.4,
 ///         limit: 48.0,
 ///         physical: 32,
 ///         jobs: Jobs::Pool { size: 52, used: 52 },
@@ -386,9 +390,10 @@ pub struct Top<'a> {
 ///     ..status.clone()
 /// };
 /// assert!(6 + plain(numbers(&big)).len() <= 80, "{}", plain(numbers(&big)));
-/// // A host of the release before tells no numbers of the monitor.
+/// // A host of the release before tells no numbers of the monitor: the
+/// // same load part as the facts of the daemon.
 /// let old = HostStatus { monitor: None, ..status };
-/// assert_eq!(plain(numbers(&old)), "load 13.2/16  3000MHz now 2990  20GB avail/4  workers 3/4");
+/// assert_eq!(plain(numbers(&old)), "load 0.1/32 threads  5883MHz now 3848  117GB avail/4  workers 1/10");
 /// ```
 pub fn numbers(status: &HostStatus) -> Vec<(String, anstyle::Style)> {
     let style = |over: bool| {
@@ -397,14 +402,13 @@ pub fn numbers(status: &HostStatus) -> Vec<(String, anstyle::Style)> {
     let mut parts = Vec::new();
     let monitor = status.monitor.as_ref();
     if let Some(m) = &status.machine {
-        let (load, over) = match monitor {
+        parts.push(match monitor {
             Some(n) => (
-                format!("load {:.1} {:.1}/{}", m.load, n.load5, n.physical),
-                n.load5 > n.limit,
+                format!("load5 {:.1} of {}", n.load5, n.limit),
+                style(n.load5 > n.limit),
             ),
-            None => (format!("load {:.1}/{}", m.load, m.cores), m.busy()),
-        };
-        parts.push((load, style(over)));
+            None => crate::text::load_part(m),
+        });
         parts.push((
             format!("{}MHz now {}", m.mhz, m.now_mhz),
             anstyle::Style::new(),
@@ -1604,5 +1608,77 @@ mod tests {
         assert_eq!(issues, wave(10));
         // With no `gh` from the start, there are no issues.
         assert_eq!(Issues::newest(None, None), None);
+    }
+
+    /// 01M588HSV1APXX4TQ1J1VRZCBF, 01M588HSXQ2KWX0V8RYM65CPFR: thelio has
+    /// 16 cores and 32 threads. The facts of its daemon and its line of
+    /// numbers name one base, the threads, and each load part says its
+    /// limit.
+    #[test]
+    fn the_two_load_lines_of_a_host_name_their_base() {
+        use riff_client::daemons::Facts;
+        use riff_client::machines::{Jobs, Machine, Numbers};
+        let machine = Machine {
+            threads: 32,
+            mhz: 5883,
+            now_mhz: 3848,
+            mem_gb: 124,
+            avail_gb: 117,
+            load: 0.1,
+        };
+        let facts = Facts {
+            machine: Some(machine),
+            ..Facts::default()
+        };
+        let daemon = &crate::text::daemon_facts(&facts)[1][0];
+        assert_eq!(daemon.0, "load 0.1/32 threads");
+        let monitor = Numbers {
+            on: true,
+            load5: 0.1,
+            limit: 24.0,
+            physical: 16,
+            jobs: Jobs::Pool { size: 20, used: 0 },
+            kill: None,
+        };
+        let status = HostStatus {
+            limit: 10,
+            floor: 4,
+            deaths: 0,
+            machine: Some(machine),
+            disk: None,
+            monitor: Some(monitor),
+            more: 0,
+            workers: vec![],
+        };
+        assert_eq!(numbers(&status)[0].0, "load5 0.1 of 24");
+        let none = HostStatus {
+            monitor: None,
+            ..status.clone()
+        };
+        assert_eq!(numbers(&none)[0], *daemon, "one part on one base");
+        // The same rule: over the threads, both are yellow.
+        let busy = Machine {
+            load: 32.5,
+            ..machine
+        };
+        let facts = Facts {
+            machine: Some(busy),
+            ..facts
+        };
+        let none = HostStatus {
+            machine: Some(busy),
+            ..none
+        };
+        assert_eq!(crate::text::daemon_facts(&facts)[1][0].1, WARNING);
+        assert_eq!(numbers(&none)[0].1, WARNING);
+        // Over 24 but under 32: only the monitor limit is over.
+        let load5 = HostStatus {
+            monitor: Some(Numbers {
+                load5: 25.0,
+                ..status.monitor.clone().unwrap()
+            }),
+            ..status
+        };
+        assert_eq!(numbers(&load5)[0].1, WARNING);
     }
 }

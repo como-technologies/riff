@@ -902,7 +902,7 @@ pub fn detail_cell(s: &SessionInfo) -> String {
 ///
 /// let plain = |s: String| anstream::adapter::strip_str(&s).to_string();
 /// assert_eq!(plain(riff::view::host_heading("pangolin", 1, 1, None, 4, 0)), "pangolin  limit 1  runs 1");
-/// let m = Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 };
+/// let m = Machine { threads: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 };
 /// assert_eq!(
 ///     plain(riff::view::host_heading("pangolin", 1, 1, Some(&m), 4, 0)),
 ///     "pangolin  limit 1  runs 1  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 1.50  score 24.0"

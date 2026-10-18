@@ -4624,7 +4624,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   and the pool or the jobs (01M515PDFZZXQ9ZCQE7SQ6KB8G). A number over
   its limit has the warning style. The line fits in 80 columns. A
   second line shows the time and the cause of the last kill. The
-  sources of the numbers are in 01M515KST9Z0B4B1D4HJV3Y2CM.
+  sources of the numbers are in 01M515KST9Z0B4B1D4HJV3Y2CM. The load
+  part is superseded by 01M588HSXQ2KWX0V8RYM65CPFR.
 - **01M515KST9Z0B4B1D4HJV3Y2CM** `riff top` on each machine shows the
   numbers of each machine that runs workers. The first source of a
   machine wins: the status of its live workers host; for the machine
@@ -5895,6 +5896,18 @@ part when they merge.
   sign-in of `claude`. The sign-ins of riff and `gh` refresh or have no
   end: the facts say `on` or `off` for each, or `?` when riff cannot
   read it.
+- **01M588HSV1APXX4TQ1J1VRZCBF** The facts of a daemon show the
+  1-minute load of the host against its hardware threads, the logical
+  CPUs, with the word `threads`: `load 1.5/32 threads`. The load has
+  the warning style when it is more than the threads. The line of
+  numbers of `riff top` shows the same part for a host that tells no
+  numbers of the monitor. The word `cores` names only the physical
+  cores.
+- **01M588HSXQ2KWX0V8RYM65CPFR** The line of numbers of `riff top`
+  shows the 5-minute load against the limit of the monitor:
+  `load5 9.8 of 12`. It has the warning style when the load is over
+  the limit. This supersedes the load part of
+  01M421QPZ9E01PQ62PDBH378SJ.
 
 ### riff relay
 

@@ -6246,6 +6246,28 @@ pub fn sign_word(sign: &riff_client::daemons::Sign) -> String {
     }
 }
 
+/// The 1-minute load of a machine against its hardware threads
+/// (01M588HSV1APXX4TQ1J1VRZCBF), with the warning style when the load
+/// is more than the threads ([`riff_client::machines::Machine::busy`]).
+///
+/// ```
+/// use riff_client::machines::Machine;
+///
+/// // 16 physical cores, 2 threads per core.
+/// let thelio = Machine { threads: 32, mhz: 5883, now_mhz: 3848, mem_gb: 124, avail_gb: 117, load: 0.1 };
+/// assert_eq!(riff::text::load_part(&thelio), ("load 0.1/32 threads".to_owned(), anstyle::Style::new()));
+/// let busy = Machine { load: 33.0, ..thelio };
+/// assert_eq!(riff::text::load_part(&busy).1, riff::style::WARNING);
+/// ```
+pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style) {
+    let style = if m.busy() {
+        WARNING
+    } else {
+        anstyle::Style::new()
+    };
+    (format!("load {:.1}/{} threads", m.load, m.threads), style)
+}
+
 /// The lines of the facts of the daemon of a host in `riff who` and
 /// `riff top` (01M57D3F7FXTPZB3M72Z1DQ1T7, 01M57D3F9SWMKP22WNRPRY3X5T):
 /// each line is its parts, each with its style. A fact that needs the
@@ -6269,7 +6291,7 @@ pub fn sign_word(sign: &riff_client::daemons::Sign) -> String {
 ///     }],
 ///     waiting: vec!["riff-issue-13-2b3c4d5e".into()],
 ///     waves: vec![Wave { repo: "o/r".into(), word: "started issue-12".into() }],
-///     machine: Some(Machine { cores: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
+///     machine: Some(Machine { threads: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
 ///     disk: Some(Disk { free_gb: 200, total_gb: 455 }),
 ///     podman: Some("5.2.1".into()),
 ///     image: Some(Image { name: "ghcr.io/o/riff-session".into(), here: true }),
@@ -6286,7 +6308,7 @@ pub fn sign_word(sign: &riff_client::daemons::Sign) -> String {
 ///     plain,
 ///     [
 ///         "daemon 3.1.0 d2ae080  sessions 1/4  floor 8GB",
-///         "load 1.5/16  24GB avail  disk 200GB free (43%)  podman 5.2.1  image here",
+///         "load 1.5/16 threads  24GB avail  disk 200GB free (43%)  podman 5.2.1  image here",
 ///         "riff on  gh on  claude 1h30m left",
 ///         "wave o/r: started issue-12",
 ///         "riff-issue-12-1a2b3c4d  issue-12  works  > Bash: just check",
@@ -6319,7 +6341,7 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
     ];
     let mut host = Vec::new();
     if let Some(m) = &facts.machine {
-        host.push((format!("load {:.1}/{}", m.load, m.cores), warn(m.busy())));
+        host.push(load_part(m));
         let floor = u32::try_from(facts.floor_gb).unwrap_or(u32::MAX);
         host.push((format!("{}GB avail", m.avail_gb), warn(m.low(floor))));
     }
@@ -8369,5 +8391,26 @@ mod tests {
         assert_eq!(ago(3599), "59m");
         assert_eq!(ago(3 * 3600 + 5), "3h");
         assert_eq!(ago(5 * 86_400), "5d");
+    }
+
+    /// 01M588HSV1APXX4TQ1J1VRZCBF: 16 cores with 2 threads each give
+    /// a base of 32 threads, and the word says so.
+    #[test]
+    fn the_load_of_the_daemon_facts_counts_the_threads() {
+        let machine = riff_client::machines::Machine {
+            threads: 32,
+            mhz: 5883,
+            now_mhz: 3848,
+            mem_gb: 124,
+            avail_gb: 117,
+            load: 30.0,
+        };
+        let facts = riff_client::daemons::Facts {
+            machine: Some(machine),
+            ..Default::default()
+        };
+        let load = &daemon_facts(&facts)[1][0];
+        assert_eq!(load.0, "load 30.0/32 threads");
+        assert_eq!(load.1, anstyle::Style::new(), "30 is under 32");
     }
 }
