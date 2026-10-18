@@ -31,6 +31,20 @@
 //! does not count as tried (01M3NT2PYFHPB0C19Q2QB2AE6W). Each other
 //! failure counts, so one release gets at most one install.
 //!
+//! Each process that talks to the riff can start the update: a session,
+//! `riff workers host` in the main clone, or the daemon. The update
+//! tells the lead in the repository of that process. The daemon has no
+//! place: its working folder can be the work tree of another
+//! repository, for example a home folder that is a dotfiles repository.
+//! So the daemon calls [`no_place`], and starts the update with no
+//! place. That update tells the lead in each repository whose wave the
+//! daemon runs ([`lead_places`], 01M58AW5SBG3ZP7149ZY66VTYW). The update of the daemon runs in the
+//! unit of the daemon, and a new start of the unit stops it. So the
+//! update tells the lead first, and then asks the daemon to start again
+//! (01M58AVFM0D62R48HKK8CFY4VW). The daemon does not start again while
+//! the update holds the lock ([`crate::daemon::update_waits`],
+//! 01M58AW9YR84SKSYBYBJ6V7TNJ).
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant P as riff process
@@ -38,12 +52,14 @@
 //!     participant U as riff update in the background
 //!     participant C as cargo
 //!     participant L as lead
+//!     participant D as riff daemon
 //!     P->>S: call
 //!     S-->>P: reply, riff-build: 0.4.0 (newer)
 //!     P->>U: start: riff update --tag v0.4.0
 //!     U->>U: take the update lock, record v0.4.0
 //!     U->>C: install --tag v0.4.0 riff riff-server
 //!     U->>L: tell: the host, v0.3.0, v0.4.0, or the error
+//!     U->>D: start again with the new riff
 //! ```
 //!
 //! A machine that comes from an older riff can have a build of the
@@ -84,6 +100,7 @@ use anyhow::{Context, Result};
 use riff_core::build::Build;
 use riff_core::name::Place;
 
+use crate::wave::Wave;
 use crate::{identity, lifecycle, local, release, settings, text};
 
 /// True in the update in the background ([`in_background`]).
@@ -95,6 +112,17 @@ static OFF: AtomicBool = AtomicBool::new(false);
 /// say how it went (01M53NEE7W0ZC8B7EV9ET6QHBB).
 pub fn in_background() -> bool {
     OFF.load(Ordering::Relaxed)
+}
+
+/// True in the daemon ([`no_place`]).
+static NO_PLACE: AtomicBool = AtomicBool::new(false);
+
+/// Marks this process as one with no place: the daemon. Its update in
+/// the background gets no place, also when the working folder of the
+/// daemon is in the work tree of a repository
+/// (01M58AW5SBG3ZP7149ZY66VTYW).
+pub fn no_place() {
+    NO_PLACE.store(true, Ordering::Relaxed);
 }
 
 /// The release that this process started an update for.
@@ -112,9 +140,13 @@ pub fn remember(place: &Place) {
     }
 }
 
-/// The place of this process: the one that [`remember`] keeps, else the
-/// place of the working directory. `None` when neither is known.
+/// The place of this process: `None` after [`no_place`]. Else the one
+/// that [`remember`] keeps, else the place of the working directory.
+/// `None` when neither is known.
 fn here() -> Option<Place> {
+    if NO_PLACE.load(Ordering::Relaxed) {
+        return None;
+    }
     let kept = HERE.lock().ok().and_then(|here| here.clone());
     kept.or_else(|| identity::place(&identity::working_dir().ok()?).ok())
 }
@@ -269,8 +301,10 @@ fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
 
 /// The update in the background (01M3N7JJH0SXXQYYBAHWPCNQGX): takes
 /// the update lock, records the try of `tag` ([`mark`]), runs
-/// [`lifecycle::update`], and tells the lead of the user in the
-/// repository of `place` the result (01M3N7JJKBME6VSNTHD8VPN3K9). It
+/// [`lifecycle::update`], tells the lead of the user in the repository
+/// of `place`, or with no `place` in each repository that the daemon
+/// serves ([`lead_places`]), the result (01M3N7JJKBME6VSNTHD8VPN3K9),
+/// and then runs [`lifecycle::daemon_after_update`]. It
 /// stops at once when another update holds the lock, or when `tag` was
 /// tried. When its working directory is missing, it stops before it
 /// records the try (01M3NT2PYFHPB0C19Q2QB2AE6W). `riff` passes
@@ -318,11 +352,94 @@ pub async fn run(
         }
     };
     println!("riff: {body}");
-    let tell = || crate::worker::tell_lead(place, server, &body);
-    if let Err(e) = tell_until(tell, TELL_EVERY, TELL_FOR).await {
-        println!("riff: cannot tell the lead: {e:#}");
+    // Never the working directory: it is the local files of riff
+    // (01M58AW5SBG3ZP7149ZY66VTYW).
+    let leads = lead_places(place, &served(), server);
+    if leads.is_empty() {
+        println!(
+            "riff: cannot tell the lead: {}",
+            text::no_lead_place(server)
+        );
+    }
+    for lead in &leads {
+        let tell = || crate::worker::tell_lead(Some(lead), server, &body);
+        if let Err(e) = tell_until(tell, TELL_EVERY, TELL_FOR).await {
+            println!("riff: cannot tell the lead in {}: {e:#}", lead.repo_text());
+        }
+    }
+    // The start of the daemon again stops each process of its unit: so
+    // after the message (01M58AVFM0D62R48HKK8CFY4VW).
+    if done.is_ok() {
+        for line in lifecycle::daemon_after_update().await {
+            println!("{line}");
+        }
     }
     done.map(|_| ())
+}
+
+/// The repositories that the daemon of this machine serves. None when
+/// it serves none, or its file cannot be read.
+fn served() -> Vec<Wave> {
+    let served = crate::daemon::dir().and_then(|dir| crate::daemon::remote::read_served(&dir));
+    served
+        .map(|served| served.into_values().map(|s| s.wave).collect())
+        .unwrap_or_default()
+}
+
+/// The places whose leads the update in the background tells
+/// (01M58AW5SBG3ZP7149ZY66VTYW): `given`, the place of the process that
+/// started the update, when it is in a repository. Else the place of
+/// each repository that the daemon of this machine serves on `server`,
+/// from `served`, once: the daemon has no place. A `/` at the end of a
+/// URL does not count. Empty when there is none.
+///
+/// ```
+/// use riff::auto_update::lead_places;
+/// use riff::identity::place_from_text;
+/// use riff::wave::Wave;
+///
+/// let wave = |repo: &str, server: &str| Wave {
+///     repo: repo.into(),
+///     main: "/src/riff".into(),
+///     server: server.into(),
+///     host: "thelio".into(),
+/// };
+/// let served = [
+///     wave("acme/beta", "http://other"),
+///     wave("acme/alpha", "http://riff"),
+///     wave("acme/gamma", "http://riff/"),
+///     wave("acme/alpha", "http://riff"),
+/// ];
+/// // A session or a workers host: its own repository.
+/// let session = place_from_text("thelio/acme/gamma#issue-7")?;
+/// assert_eq!(lead_places(Some(&session), &served, "http://riff"), [session]);
+/// // The daemon: each repository that it serves on the same riff.
+/// let both = [
+///     place_from_text("thelio/acme/alpha")?,
+///     place_from_text("thelio/acme/gamma")?,
+/// ];
+/// assert_eq!(lead_places(None, &served, "http://riff"), both);
+/// let outside = place_from_text("thelio/-")?;
+/// assert_eq!(lead_places(Some(&outside), &served, "http://riff"), both);
+/// assert!(lead_places(None, &served[..1], "http://riff").is_empty());
+/// assert!(lead_places(None, &[], "http://riff").is_empty());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn lead_places(given: Option<&Place>, served: &[Wave], server: &str) -> Vec<Place> {
+    if let Some(place) = given.filter(|p| p.default_thread().is_some()) {
+        return vec![place.clone()];
+    }
+    let mut places: Vec<Place> = Vec::new();
+    let server = riff_client::link::base_of(server);
+    let same = |wave: &&Wave| riff_client::link::base_of(&wave.server) == server;
+    for wave in served.iter().filter(same) {
+        if let Ok(place) = wave.place(None)
+            && !places.contains(&place)
+        {
+            places.push(place);
+        }
+    }
+    places
 }
 
 /// What the status line says about a newer release of `riff-server`

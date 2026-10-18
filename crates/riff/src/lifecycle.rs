@@ -362,13 +362,15 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// [`text::latest_instead`](crate::text::latest_instead) and installs
 /// the Latest release. Then it updates the plugin with the new
 /// `riff connect claude --claude CLAUDE`, which gets no terminal and so
-/// asks nothing. Then the riff daemon runs the new riff
-/// ([`crate::daemon::after_update`]). On a machine with a limit of workers it installs
+/// asks nothing. On a machine with a limit of workers it installs
 /// the pinned `sccache` ([`crate::sccache::ensure`]). Then it looks for
 /// an old riff with
 /// [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
 /// words for the person. `riff` passes
 /// [`DEFAULT_SERVER`](riff_client::api::DEFAULT_SERVER) as `local`.
+/// Then the caller runs [`daemon_after_update`], so the update in the
+/// background tells the lead before the daemon starts again
+/// (01M58AVFM0D62R48HKK8CFY4VW).
 pub async fn update(
     cargo: &Path,
     claude: &Path,
@@ -409,11 +411,6 @@ pub async fn update(
             .current_dir(&dir),
         "riff connect claude",
     )?;
-    // The riff daemon of this machine runs the new riff
-    // (01M517BTDRKDXD3X84P6AEAF7P). A failed step fails no update.
-    for line in daemon_after_update().await {
-        println!("{line}");
-    }
     // The compile cache of the workers of this machine
     // (01M4923963S666V9YWTZ46ZZ50). A failed install fails no update.
     let workers = crate::settings::path().and_then(|path| crate::settings::workers_limit(&path));
@@ -437,11 +434,12 @@ pub async fn update(
     Ok(crate::text::updated(old.as_deref()))
 }
 
-/// The step of [`update`] for the riff daemon of this machine
-/// ([`crate::daemon::after_update`]), with the `riff` on `PATH`. It does
-/// nothing with `RIFF_HOME` or `RIFF_DATA` set. It gives an error as a
-/// line.
-async fn daemon_after_update() -> Vec<String> {
+/// The step after [`update`] for the riff daemon of this machine
+/// ([`crate::daemon::after_update`], 01M517BTDRKDXD3X84P6AEAF7P), with
+/// the `riff` on `PATH`: the daemon runs the new riff. It does nothing
+/// with `RIFF_HOME` or `RIFF_DATA` set. It gives an error as a line: a
+/// failed step fails no update.
+pub async fn daemon_after_update() -> Vec<String> {
     if !crate::run::machine_data() {
         return Vec::new();
     }

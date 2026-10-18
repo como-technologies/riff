@@ -555,9 +555,10 @@ pub fn stale(unit: Option<&crate::service::Unit>, own: &Path, replaced: bool) ->
 /// ([`crate::update_steps::unit_written`], 01M51QFPQ68JHS08TWXNNWZ0D7),
 /// and the unit of `manager` runs it (01M517BTP6BAGTRBYWPX9GPVE0). The
 /// daemon of a `RIFF_HOME` or a `RIFF_DATA` is never the daemon of the
-/// unit ([`crate::run::machine_data`]).
+/// unit ([`crate::run::machine_data`]). While an update of riff runs
+/// ([`update_waits`]), it waits (01M58AW9YR84SKSYBYBJ6V7TNJ).
 fn old_here(manager: &impl crate::service::ServiceManager) -> bool {
-    if !crate::run::machine_data() {
+    if !crate::run::machine_data() || crate::local::dir().is_some_and(|dir| update_waits(&dir)) {
         return false;
     }
     let Ok(own) = own_binary() else {
@@ -567,6 +568,27 @@ fn old_here(manager: &impl crate::service::ServiceManager) -> bool {
     let replaced = crate::binary::replaced(Path::new("/proc/self/exe"));
     (stale(unit.as_ref(), &own, replaced) || crate::update_steps::unit_written())
         && manager.main_pid().ok().flatten() == Some(std::process::id())
+}
+
+/// True while an update of riff holds the update lock in the local
+/// files `dir` of riff. Then the daemon does not start again: its new
+/// start stops each process of its unit, also the update that it
+/// started, before that update tells the lead
+/// (01M58AW9YR84SKSYBYBJ6V7TNJ).
+///
+/// ```standalone_crate
+/// use riff::daemon::update_waits;
+///
+/// let dir = tempfile::tempdir()?;
+/// assert!(!update_waits(dir.path()));
+/// let lock = riff::local::update(dir.path())?.expect("free");
+/// assert!(update_waits(dir.path()));
+/// drop(lock);
+/// assert!(!update_waits(dir.path()));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn update_waits(dir: &Path) -> bool {
+    crate::local::updating(dir)
 }
 
 /// The step of `riff update` for the daemon of this machine, whose
@@ -3276,6 +3298,9 @@ pub async fn show_events(dir: &Path, name: &str) -> Result<i32> {
 /// SIGINT. It takes up each session that runs ([`Daemon::recover`]).
 /// The stop stops no session (01M4ZDTVH57VE77YT20G65A4BQ).
 pub async fn serve_here() -> Result<()> {
+    // Its working folder can be the work tree of another repository
+    // (01M58AW5SBG3ZP7149ZY66VTYW).
+    crate::auto_update::no_place();
     #[cfg(target_os = "linux")]
     {
         use tokio::signal::unix::{SignalKind, signal};

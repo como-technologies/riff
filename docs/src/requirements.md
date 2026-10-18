@@ -4960,6 +4960,22 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M56P1T4KK03MF7EK5CC0YZNB** When the direct message to the lead
   after an update in the background fails, the update tries it again
   every 5 seconds, for at most 2 minutes. The lead gets it once.
+- **01M58AW5SBG3ZP7149ZY66VTYW** The update in the background tells
+  the lead in the repository of the process that started it: a
+  session, or `riff workers host`. The daemon never takes a place
+  from its working folder, and starts the update with no place. An
+  update with no place, or with a place outside each repository,
+  tells the lead in each repository whose wave the daemon of the
+  machine runs on the same riff-server. With no such repository, it
+  tells no lead, and its log says why.
+- **01M58AVFM0D62R48HKK8CFY4VW** The update in the background tells
+  the lead before its step for the daemon
+  (01M517BTDRKDXD3X84P6AEAF7P, 01M517BTJ9EV4ZGPYRB6HXJJC9). A new start
+  of the unit stops the update that the daemon started, so the message
+  goes first.
+- **01M58AW9YR84SKSYBYBJ6V7TNJ** The daemon does not ask systemd to
+  start it again (01M517BTP6BAGTRBYWPX9GPVE0) while an update of riff
+  holds the update lock of the machine.
 - **01M53NEE7W0ZC8B7EV9ET6QHBB** The update in the background prints
   no note that `riff-server` runs another build
   (01M3MX1E8M9TKBN90P4DYKH3H8): it installs that build. So no line of

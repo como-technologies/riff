@@ -5028,6 +5028,24 @@ pub fn auto_update_failed(host: &str, old: &str, new: &str, error: &str, tried: 
     )
 }
 
+/// Why the update in the background tells no lead: it has no place, and
+/// the daemon of the machine serves no repository on `server`
+/// (01M58AW5SBG3ZP7149ZY66VTYW).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::no_lead_place("http://riff"),
+///     "the update has no repository, and the daemon of this machine serves \
+///      no repository on http://riff: run riff wave run or riff daemon host in a main clone"
+/// );
+/// ```
+pub fn no_lead_place(server: &str) -> String {
+    format!(
+        "the update has no repository, and the daemon of this machine serves \
+         no repository on {server}: run riff wave run or riff daemon host in a main clone"
+    )
+}
+
 /// The line before riff installs `sccache` (01M4923963S666V9YWTZ46ZZ50).
 ///
 /// ```

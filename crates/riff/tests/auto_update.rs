@@ -55,21 +55,7 @@ async fn server_of(build: Build) -> String {
 /// is `como-technologies/riff`.
 fn repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    for args in [
-        &["init", "-q"][..],
-        &[
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/como-technologies/riff.git",
-        ],
-    ] {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .status();
-        assert!(status.unwrap().success());
-    }
+    git_init(dir.path(), "como-technologies/riff");
     dir
 }
 
@@ -701,4 +687,144 @@ async fn a_release_with_no_cargo_is_tried_once() {
         riff::local::tried(&machine.state()).as_deref(),
         Some(newer_tag().as_str())
     );
+}
+
+/// Makes `dir` a git work tree with the GitHub origin `owner/name`.
+fn git_init(dir: &Path, repo: &str) {
+    let origin = format!("https://github.com/{repo}.git");
+    for args in [&["init", "-q"][..], &["remote", "add", "origin", &origin]] {
+        let status = Command::new("git").args(args).current_dir(dir).status();
+        assert!(status.unwrap().success());
+    }
+}
+
+/// The update in the background of each path on a host tells the lead
+/// once (#1105): a session in a worktree, `riff workers host` in the
+/// main clone, and the daemon. The daemon starts the update with no
+/// place, and its working folder is a home folder that is the work tree
+/// of a dotfiles repository. The update tells the lead in the
+/// repository that the daemon serves, not the lead of the dotfiles
+/// (01M3N7JJKBME6VSNTHD8VPN3K9, 01M58AW5SBG3ZP7149ZY66VTYW).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_update_of_each_path_on_a_host_tells_the_lead_once() {
+    let session = Some("pangolin/como-technologies/riff#issue-12");
+    let workers_host = Some("pangolin/como-technologies/riff");
+    let daemon = None;
+    for place in [session, workers_host, daemon] {
+        let machine = Machine::new(0).await;
+        assert!(machine.run("lead", &["lead"]).await.status.success());
+        let home = machine.env.home();
+        git_init(&home, "n8behavior/dotfiles");
+        let mut dotfiles = machine.riff("dotfiles-lead", &["lead"]);
+        dotfiles.current_dir(&home);
+        assert!(output(dotfiles).await.status.success());
+        let wave = riff::wave::Wave {
+            repo: "como-technologies/riff".into(),
+            main: machine.repo.path().to_owned(),
+            server: machine.server.clone(),
+            host: "pangolin".into(),
+        };
+        let dir = riff::daemon::dir_in(&machine.env.riff_home());
+        std::fs::create_dir_all(&dir).unwrap();
+        riff::daemon::remote::serve_in_file(&dir, &wave).unwrap();
+        let tag = newer_tag();
+        let mut args = vec![];
+        if let Some(place) = place {
+            args.extend(["--place", place]);
+        }
+        args.extend(["update", "--background", "--tag", &tag]);
+        let mut update = machine.riff("", &args);
+        update.current_dir(&home).env_remove("RIFF_SESSION");
+        let out = output(update).await;
+        assert!(out.status.success(), "{place:?}: {}", text(&out.stderr));
+        let words = format!(
+            "riff on pangolin updated itself from {} to {tag}.",
+            this_tag()
+        );
+        let messages = machine.lead_messages("lead").await;
+        assert_eq!(messages.matches(&words).count(), 1, "{place:?}: {messages}");
+        let mut read = machine.riff("dotfiles-lead", &["read", "--all"]);
+        read.current_dir(&home);
+        let others = text(&output(read).await.stdout);
+        assert!(!others.contains(&words), "{place:?}: {others}");
+    }
+}
+
+/// The update of the daemon on a host whose daemon serves no
+/// repository tells no lead, and its log says why
+/// (01M58AW5SBG3ZP7149ZY66VTYW).
+#[tokio::test(flavor = "multi_thread")]
+async fn the_update_of_a_daemon_that_serves_no_repository_says_why_it_tells_no_lead() {
+    let machine = Machine::new(0).await;
+    let home = machine.env.home();
+    git_init(&home, "n8behavior/dotfiles");
+    let tag = newer_tag();
+    let mut update = machine.riff("", &["update", "--background", "--tag", &tag]);
+    update.current_dir(&home).env_remove("RIFF_SESSION");
+    let out = output(update).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let why = riff::text::no_lead_place(&machine.server);
+    let stdout = text(&out.stdout);
+    assert!(
+        stdout.contains(&format!("riff: cannot tell the lead: {why}")),
+        "{stdout}"
+    );
+}
+
+/// The real `riff daemon` on a host whose home folder is the work tree
+/// of a dotfiles repository, with `update.auto = true`, starts the
+/// update by its own calls to a riff of a newer release. The update
+/// tells the lead in the repository that the daemon serves once, and
+/// the lead of the dotfiles nothing (#1105, 01M58AW5SBG3ZP7149ZY66VTYW).
+/// No other process calls the riff while the update runs: each call
+/// could start the update with its own place.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_daemon_in_a_dotfiles_home_tells_the_lead_of_the_served_repository() {
+    let machine = Machine::new(0).await;
+    assert!(machine.run("lead", &["lead"]).await.status.success());
+    let home = machine.env.home();
+    git_init(&home, "n8behavior/dotfiles");
+    let mut dotfiles = machine.riff("dotfiles-lead", &["lead"]);
+    dotfiles.current_dir(&home);
+    assert!(output(dotfiles).await.status.success());
+    let wave = riff::wave::Wave {
+        repo: "como-technologies/riff".into(),
+        main: machine.repo.path().to_owned(),
+        server: format!("{}/", machine.server),
+        host: "pangolin".into(),
+    };
+    let dir = riff::daemon::dir_in(&machine.env.riff_home());
+    std::fs::create_dir_all(&dir).unwrap();
+    riff::daemon::remote::serve_in_file(&dir, &wave).unwrap();
+    machine.run("w", &["update", "--auto", "on"]).await;
+
+    let mut daemon = machine.riff("", &["daemon"]);
+    daemon
+        .current_dir(&home)
+        .env_remove("RIFF_SESSION")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut daemon = daemon.spawn().unwrap();
+    let state = machine.state();
+    let done = wait_for(Duration::from_secs(40), async || {
+        riff::local::tried(&state).is_some() && !riff::local::updating(&state)
+    })
+    .await;
+    daemon.kill().unwrap();
+    daemon.wait().unwrap();
+    let update_log = std::fs::read_to_string(riff::local::update_log(&state));
+    assert!(done, "the update did not end. update.log: {update_log:?}");
+
+    assert_eq!(log(machine.bin.path(), "cargo"), install(&newer_tag()));
+    let words = format!(
+        "riff on pangolin updated itself from {} to {}.",
+        this_tag(),
+        newer_tag()
+    );
+    let messages = machine.lead_messages("lead").await;
+    assert_eq!(messages.matches(&words).count(), 1, "{messages}");
+    let mut read = machine.riff("dotfiles-lead", &["read", "--all"]);
+    read.current_dir(&home);
+    let others = text(&output(read).await.stdout);
+    assert!(!others.contains(&words), "{others}");
 }
