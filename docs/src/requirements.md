@@ -8296,6 +8296,21 @@ that builds it merges.
   notes (`text::lead_moved`). The daemon then makes the new session the
   lead (R177) and replies with its session ID. Only the person and the
   lead of the person act on it.
+- **01M5A5HXKZTDP5M5HY2FHCEBZA** A session of a wave that ends with no
+  open pull request leaves one record as a note in the thread `ends` on
+  riff-server (`ends::post`). The first line has the tags `item`,
+  `session`, `code`, `failed` and `denied`, then a colon and the reason
+  in words. The lines after it are the last 50 lines of its output, each
+  with no secret and at most 300 characters. The session leaves the
+  thread after the post. A session with an open pull request leaves no
+  record.
+- **01M5A5HXP9X3AXTS6N3A57DMQM** `riff session why ITEM` reads the
+  thread `ends` and shows the last record of ITEM, and how many records
+  it has. It works in a container: the lead reads the cause there, with
+  no look at the host. An item with no record says so.
+- **01M5A5HXRH4PFQDFA7XPFFRHWS** The message "started N times" to the
+  lead names the reason of the last end of the item, and sends the lead
+  to `riff session why ITEM`.
 
 ## Open
 

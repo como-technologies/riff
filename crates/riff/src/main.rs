@@ -265,6 +265,11 @@ enum Command {
         #[arg(long, value_enum, default_value = "text")]
         format: DenialsFormat,
     },
+    /// Find out about the sessions of a wave
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
     /// Make this session the lead of your user
     ///
     /// Each person has one lead in each repository. The other sessions of
@@ -1309,6 +1314,20 @@ enum PlanCommand {
 }
 
 #[derive(Subcommand)]
+enum SessionCommand {
+    /// Show why a session ended with no pull request
+    ///
+    /// The riff daemon leaves one record in the thread ends when a
+    /// session of a wave ends with no open pull request: its exit code or
+    /// signal, the tool calls that auto mode denied, and the last 50
+    /// lines of its output. The lead reads it here, also in a container.
+    Why {
+        /// The item, for example issue-1203.
+        item: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum LeadCommand {
     /// Start the lead of this repository in a container
     ///
@@ -1845,6 +1864,12 @@ async fn main() -> Result<()> {
             };
             let inbox = api.inbox(&me, thread.as_ref(), all).await?;
             println!("{}", text::inbox(&inbox, &me).trim_end());
+        }
+        Command::Session {
+            command: SessionCommand::Why { item },
+        } => {
+            let records = riff::ends::read(&api, &me).await?;
+            println!("{}", riff::ends::why(&item, &records));
         }
         Command::Denials { since, format } => {
             let span = since.as_deref().map(riff::denied::since).transpose()?;

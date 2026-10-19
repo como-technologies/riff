@@ -14,6 +14,7 @@
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //! | `riff release cut`, `publish`, `status`, `approve` | The release cycle: the release pull request, the tag, the GitHub release and the approval of the deploy. See [`cycle`]. |
 //! | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request on GitHub, with `gh`. See [`pr`]. |
+//! | `riff session why` | Shows why a session of a wave ended with no pull request. See [`ends`]. |
 //! | `riff denials` | Counts the refusals of auto mode that the hook `PermissionDenied` posts to the riff. See [`denied`]. |
 //! | `riff usage` | Shows the tokens and the models of an issue, of a wave, or of the sessions of this machine. See [`usage`]. |
 //! | `riff audit` | Checks from the log and from `gh` that a wave followed the rules. See [`audit`]. |
@@ -69,6 +70,7 @@ pub mod daemon;
 pub mod denied;
 pub mod disk;
 pub mod dropped;
+pub mod ends;
 
 pub mod first_run;
 pub mod help;

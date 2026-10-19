@@ -1252,12 +1252,30 @@ wave with the words `waits for this machine` and the reason.
 To end this rule, give the sessions a token: see
 [Give the container sessions a long-lived sign-in of claude](#give-the-container-sessions-a-long-lived-sign-in-of-claude).
 
+### See why a session ended with no pull request
+
+A session of a wave can end with no open pull request. The daemon then
+leaves one record in the thread `ends` on riff-server: the exit code, or
+the signal, the tool calls that auto mode denied, and the last 50 lines
+of the output. You and your lead read it from any machine, also from a
+container:
+
+```sh
+riff session why issue-1203
+```
+
+It shows the last record of the item, and how many sessions of the item
+ended with no pull request. The message "started 3 times" to your lead
+names the same reason. A session that ends with an open pull request
+leaves no record.
+
 ### Start a spent item again
 
 The wave starts one item at most 3 times in a run of the wave. Then
 your lead gets a message, and the wave starts no more session for the
-item. When you fixed the cause, run this in your clone of the
-repository:
+item. Read the cause first: [See why a session ended with no pull
+request](#see-why-a-session-ended-with-no-pull-request). When you fixed
+it, run this in your clone of the repository:
 
 ```sh
 riff wave run

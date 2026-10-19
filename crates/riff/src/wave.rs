@@ -736,7 +736,11 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 told.retain(|item| lock(&starts).get(item).is_some_and(|n| *n >= STARTS));
                 for item in spent {
                     if told.insert(item.clone()) {
-                        world.tell(&wave, &text::wave_spent(&item, STARTS)).await;
+                        let reason = daemon
+                            .last_end(&item)
+                            .unwrap_or_else(|| text::WAVE_END_UNKNOWN.to_owned());
+                        let body = text::wave_spent(&item, STARTS, &reason);
+                        world.tell(&wave, &body).await;
                     }
                 }
                 let next = pick(&look, &running(&daemon, &wave, &taken), &lock(&starts));
@@ -839,6 +843,7 @@ async fn job<R: Runtime + 'static>(
         Err(e) => {
             let error = format!("{e:#}");
             eprintln!("riff daemon: {}: {item}: {error}", wave.repo);
+            daemon.note_end(&item, text::wave_no_start(&error));
             daemon
                 .world()
                 .tell(&wave, &text::wave_job_failed(&item, &error))
@@ -925,6 +930,9 @@ pub(crate) async fn finish<R: Runtime + 'static>(
     ended: Ended,
     held: InJob,
 ) -> Vec<String> {
+    // The reason of the end, for the lead that reads "started N times".
+    let end = crate::ends::End::of(&record, ended, &crate::run::Scrub::new([]));
+    daemon.note_end(&record.live.item, end.reason());
     let lines = daemon.world().finish(&record, ended).await;
     drop(held);
     daemon.tell_changed();
@@ -1030,6 +1038,7 @@ async fn after_build(
     wave: &Wave,
     issue: u64,
     conflict: Option<&str>,
+    ended: Ended,
 ) -> Result<Vec<String>> {
     let branch = branch_of(issue);
     let (view, at) = (gh.clone(), branch.clone());
@@ -1086,7 +1095,15 @@ async fn after_build(
                 _ => text::run_lead_noted(item),
             });
         }
-        None => lines.push(text::run_no_pull(&branch)),
+        None => {
+            lines.push(text::run_no_pull(&branch));
+            // A fault of the post does not hide the note to the lead.
+            let scrub = crate::run::Scrub::new(crate::session_relay::secrets_here());
+            let end = crate::ends::End::of(record, ended, &scrub);
+            if let Err(e) = crate::ends::post(api, me, &end).await {
+                eprintln!("riff daemon: {}: {e:#}", record.live.name);
+            }
+        }
     }
     api.post(me, Some(&thread), &to, &body, kind).await?;
     Ok(lines)
@@ -1584,11 +1601,11 @@ impl World for Live {
             let done = match &job.work {
                 Work::Build { issue } => {
                     let gh = pr::Gh::for_repo(&wave.repo);
-                    after_build(gh, &api, record, wave, *issue, None).await
+                    after_build(gh, &api, record, wave, *issue, None, ended).await
                 }
                 Work::Rebase { issue, commit, .. } => {
                     let gh = pr::Gh::for_repo(&wave.repo);
-                    after_build(gh, &api, record, wave, *issue, Some(commit)).await
+                    after_build(gh, &api, record, wave, *issue, Some(commit), ended).await
                 }
                 Work::Verify { pull, commit, .. } => {
                     after_verify(&api, record, wave, *pull, commit).await
@@ -2304,6 +2321,11 @@ mod tests {
         assert_ne!(author, verifier, "the verify is a new session");
     }
 
+    /// The reason of the end of a session that the fake daemon stops.
+    fn stopped() -> String {
+        "no exit code: a signal, or the container ended before its relay".into()
+    }
+
     #[tokio::test]
     async fn an_item_starts_at_most_three_times_and_the_lead_hears_of_it() {
         let free = Arc::new(AtomicU64::new(64));
@@ -2320,7 +2342,10 @@ mod tests {
         here.idle(3).await;
         let forge = here.forge();
         assert_eq!(forge.starts.len(), 3);
-        assert_eq!(forge.told, [text::wave_spent("issue-1", STARTS)]);
+        assert_eq!(
+            forge.told,
+            [text::wave_spent("issue-1", STARTS, &stopped())]
+        );
     }
 
     /// 01M558EYCXPFW8CJV3XJ7HK3NR: riff-server refuses the claim of each
@@ -2349,7 +2374,8 @@ mod tests {
         let here = Here::new(&[1], 3, free).await;
         here.forge().refusals = vec!["must_clear".into(); STARTS as usize];
         here.run();
-        let spent = text::wave_spent("issue-1", STARTS);
+        let reason = text::wave_no_start("claim failed (409 Conflict): refused: must_clear");
+        let spent = text::wave_spent("issue-1", STARTS, &reason);
         here.until(3, |h| h.forge().told.contains(&spent)).await;
         here.until(3, |h| h.forge().told.len() == STARTS as usize + 1)
             .await;
@@ -2469,7 +2495,7 @@ mod tests {
         once(&here).await;
         let forge = here.forge();
         assert_eq!(forge.starts.len(), 6, "{forge:?}");
-        let spent = text::wave_spent("issue-1", STARTS);
+        let spent = text::wave_spent("issue-1", STARTS, &stopped());
         assert_eq!(forge.told, [spent.clone(), spent]);
     }
 
@@ -2799,9 +2825,20 @@ esac
             gh: pr::Gh,
             conflict: Option<&str>,
         ) -> (Vec<String>, Vec<(Kind, String)>) {
-            let lines = after_build(gh, &self.api, &self.record, &self.wave, 12, conflict)
-                .await
-                .unwrap();
+            let lines = after_build(
+                gh,
+                &self.api,
+                &self.record,
+                &self.wave,
+                12,
+                conflict,
+                Ended {
+                    code: Some(1),
+                    failed: true,
+                },
+            )
+            .await
+            .unwrap();
             let thread = self.wave.thread().unwrap();
             let got = self
                 .api
@@ -2813,6 +2850,50 @@ esac
                 .collect();
             (lines, got)
         }
+    }
+
+    /// 01M5A5HXKZTDP5M5HY2FHCEBZA: a build that ends with no open pull
+    /// request leaves a record in the thread `ends`: its reason and the
+    /// last lines of its output. `riff session why` reads it.
+    #[tokio::test]
+    async fn a_build_with_no_pull_request_leaves_the_reason_of_its_end() {
+        let built = Built::new().await;
+        std::fs::write(
+            built.dir.path().join(crate::daemon::EVENTS),
+            "{\"type\":\"assistant\"}\nlast line of the output\n",
+        )
+        .unwrap();
+        let gh = pr::Gh::at(isolated::write_program(
+            built.dir.path().join("gh"),
+            "#!/bin/sh\nexit 1\n",
+        ));
+        let (lines, got) = built.after(gh, None).await;
+        assert_eq!(lines, [text::run_no_pull("worktree-issue-12")]);
+        assert_eq!(got.len(), 1, "only the note to the lead: {got:?}");
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        let [record] = &records[..] else {
+            panic!("one record: {records:?}");
+        };
+        assert_eq!(record.tag("item"), "issue-12");
+        assert_eq!(record.tag("session"), "9f8e7d6c");
+        assert_eq!(record.reason, "exit code 1");
+        assert_eq!(
+            record.tail,
+            ["{\"type\":\"assistant\"}", "last line of the output"]
+        );
+        let shown = crate::ends::why("issue-12", &records);
+        assert!(shown.contains("ended: exit code 1."), "{shown}");
+    }
+
+    /// 01M5A5HXKZTDP5M5HY2FHCEBZA: a build with an open pull request
+    /// leaves no record.
+    #[tokio::test]
+    async fn a_build_with_a_pull_request_leaves_no_record_of_its_end() {
+        let built = Built::new().await;
+        let gh = built.gh(false);
+        built.after_build(gh).await;
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        assert!(records.is_empty(), "{records:?}");
     }
 
     /// With no hold and no label, the lead gets the verify request
