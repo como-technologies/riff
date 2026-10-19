@@ -346,7 +346,6 @@ mod tests {
             worker: true,
             container: true,
             binary: Some(binary()),
-            stopping: true,
             claims_secs: 6,
             must_clear: true,
             fresh_secs: Some(7),
@@ -412,10 +411,7 @@ mod tests {
             container: true,
             binary: Some(binary()),
         });
-        c.trip(&AliveReply {
-            stop: true,
-            clear: true,
-        });
+        c.trip(&AliveReply { clear: true });
         c.trip(&End { me: me() });
         c.trip(&WhoRequest {
             me: me(),

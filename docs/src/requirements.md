@@ -1657,7 +1657,8 @@
   the unread messages of other sessions up to `after`, so it keeps the
   cursor. Those messages stay unread: the next unread read shows them,
   and the idle stop sees each request among them
-  (01M49KT28N4B07P4G80Z74GRAH). For example, the `read` tool with no
+  (01M49KT28N4B07P4G80Z74GRAH, superseded by
+  01M59BRGZT6J45BWKPM9XGEPEJ). For example, the `read` tool with no
   thread gives `after` to each thread, so a direct message that came
   after the first page of a long repository thread stays unread.
 - **01M58AG7Z2PETHBZG7X9QD8PK5** A read with no thread shows each
@@ -3992,10 +3993,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   or the end of its watch at a wake, takes the ask back. So a worker
   that the lead wakes, or that claims work, goes on. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by 4.0 (01M59BRGZT6J45BWKPM9XGEPEJ).
 - **01M3XAHZMN8P0PRD0Q7881TEF9** The rule for idle workers is for each
   user, host and repository. An idle worker in one repository does not
   stop the idle worker of the same user and host in another
   repository. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by 4.0 (01M59BRGZT6J45BWKPM9XGEPEJ).
 - **01M3Q5A0QZTSTXHHNYCE8HFJSB** The reply to a keep-alive tells a
   worker that the server asks it to stop. `riff mcp` in a worker sends
   a keep-alive each 10 seconds. On the ask, it sends SIGTERM to the
@@ -4004,6 +4007,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   message, so the pane closes. `riff mcp` sends the end call, so the
   session leaves `riff who`. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by 4.0 (01M59BRGZT6J45BWKPM9XGEPEJ).
 - **01M3Q5A0TF9K49V8Z1ZY9NDF74** The riff keeps the settings of idle
   workers: `per_host` (default 1) and `after_secs` (default 60, at
   least 1). The server saves them. `riff workers idle` shows them.
@@ -4011,37 +4015,44 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   with sign-in, only the owner or an admin sets them. In a riff with no
   sign-in, each person can. The change goes as the person, also from
   the shell of an agent session (01M3XA87NXAP6TEMB34QJ28HVP). Superseded
-  by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+  by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6). Superseded by
+  riff 4.0 (01M59BRGZT6J45BWKPM9XGEPEJ).
 - **01M3Q5A0WRQT4SGPSD0CQFF011** For each worker that the server asks
   to stop, the server posts a note to the repository thread of the
   worker, to the lead of its user: the short session ID, the host, the
   idle time and the setting `per_host`. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by 4.0 (01M59BRGZT6J45BWKPM9XGEPEJ).
 - **01M4385Z039RCFSKWFPWZAETTX** The server posts the note of
   01M3Q5A0WRQT4SGPSD0CQFF011 only for the first ask after the last
   change of the claims of the worker. A wake that takes the ask back,
   for example a pause or a resume, does not give a second note when
   the server asks again. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by 4.0 (01M59BRGZT6J45BWKPM9XGEPEJ).
 - **01M4385Z2QAMEED30JYE81SMBY** When a worker still shows life 60
   seconds after the first ask to stop, while the ask holds, the server
   posts one more note to the lead: the short session ID, the host, the
   time since the ask, why riff could not stop it, and the command
   `riff workers stop ID` to stop it. It posts this note one time for
   each first ask. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by 4.0 (01M59BRGZT6J45BWKPM9XGEPEJ).
 - **01M49KT28N4B07P4G80Z74GRAH** The server does not ask an idle
   worker to stop while it has an unread direct message from the lead
   of its user that starts with `request:`. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by 4.0 (01M59BRGZT6J45BWKPM9XGEPEJ).
 - **01M49KT3JXZATXMA4WNTR9BJCK** The note of 01M4385Z2QAMEED30JYE81SMBY
   names the first line of each unread request of the lead to the
   worker (01M49KT28N4B07P4G80Z74GRAH), so that the lead can give it
   to another session. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by 4.0 (01M59BRGZT6J45BWKPM9XGEPEJ).
 - **01M4385Z5BN03E6HTEB5GQVZ8X** `riff watch` in a worker
   (`RIFF_WORKER=1` and `RIFF_WORKER_WRAPPER` set) sends its keep-alive
   each 10 seconds. When the reply asks the worker to stop, it prints
   one line, sends SIGTERM to the wrapper and ends. So a worker whose
   `riff mcp` ended also stops. Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+  Superseded by 4.0 (01M59BRGZT6J45BWKPM9XGEPEJ).
 - **01M3Q5A0Z5DK0YV1MWTM4AQD5Z** `riff workers stop PANE --host HOST`
   asks the workers host on HOST to stop only the worker in PANE. PANE
   can also be the session ID of the worker, or its first 4 or more
@@ -5515,6 +5526,12 @@ part when they merge.
   host, no pool of build jobs, no monitor of workers, and no clear,
   reap or stop of a worker pane. `riff top` has no row for a worker in
   tmux. The daemon runs all work in containers.
+- **01M59BRGZT6J45BWKPM9XGEPEJ** riff 4.0 stops no idle worker. The
+  server has no idle stop: no ask to stop in the reply to a keep-alive,
+  no note to the lead for it, and no hold for an unread request. A
+  message that starts with `request:` is a plain message. The settings
+  of idle workers stay in the log so that an old record reads, and they
+  do nothing. See #887.
 - **01M53NGVTE186GE5E48E68N0BY** The last minor release of riff 1.x ends
   Wave 30: 1.8.0. riff 3.0.0 releases when each build item of the
   re-cut merged. Its tag deploys it to riff-server, as each release.

@@ -387,11 +387,6 @@ impl Activity {
 /// The reply to [`Alive`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AliveReply {
-    /// True when the server asks this idle worker to stop
-    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN). A call of the session since the ask,
-    /// or the end of its watch at a wake, takes it back.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub stop: bool,
     /// True when the session is a worker that must clear its context
     /// before its next claim (01M3X9XB37TQCXWPNFZRMRGJB4). The reply to its last release
     /// said so too.
@@ -639,10 +634,6 @@ pub struct SessionInfo {
     /// riff (01M514C11BPE93PJT4221PYVHS).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary: Option<RiffBinary>,
-    /// True when the server asked this idle worker to stop
-    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub stopping: bool,
     /// The seconds since the claims of the session last changed: a
     /// claim, a release, a new start, or the start of `riff-server`. A
     /// worker with no claim is idle for this time
@@ -2354,9 +2345,9 @@ pub struct SetIdle {
     pub after_secs: Option<u64>,
 }
 
-/// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74): the server
-/// keeps at most `per_host` idle workers on each host, and stops each
-/// other worker that is idle for `after_secs` seconds.
+/// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74). The server
+/// stops no worker for them since riff 4.0: the log and the checkpoint
+/// keep them so that an old record still reads.
 ///
 /// ```
 /// use riff_core::wire::Idle;

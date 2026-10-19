@@ -145,7 +145,6 @@ pub fn work(activity: &Activity) -> String {
 ///     worker: true,
 ///     container: false,
 ///     binary: None,
-///     stopping: false,
 ///     claims_secs: 300,
 ///     must_clear: false,
 ///     fresh_secs: None,

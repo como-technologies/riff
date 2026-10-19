@@ -2163,8 +2163,7 @@ before it.
 The `read` tool with no thread gives `after` to each thread. So the
 next page can leave out a direct message that came after the first
 page. That page keeps the message unread. The next unread read shows
-it, and the server does not stop an idle worker with an unread request
-of its lead:
+it:
 
 ```mermaid
 sequenceDiagram
@@ -3398,10 +3397,9 @@ riff tell 77e0a1b2-3c4d-4e5f-8a9b-0c1d2e3f4a5b "request: claim task-iroh-listene
 The session claims `task-iroh-listener` before it starts, and releases
 it when the task ends. While it holds the claim, it is busy: riff
 gives it no free work (see
-[riff starts the work by itself](#riff-starts-the-work-by-itself)), and
-the server does not stop it as idle. When a request names no claim,
-the session claims a `task-NAME` of its own. `riff who` shows the
-session as `working on task-iroh-listener`.
+[riff starts the work by itself](#riff-starts-the-work-by-itself)). When
+a request names no claim, the session claims a `task-NAME` of its
+own. `riff who` shows the session as `working on task-iroh-listener`.
 
 ### When a message of the lead counts
 
