@@ -43,7 +43,7 @@
 //! |---|---|
 //! | `riff/.mcp.json` | The riff tools, from `riff mcp`. |
 //! | `riff/skills/riff/SKILL.md` | How to use riff: the rules, the start routine, waves, the pause, how the lead conducts, the check of the acceptance criteria, how a verifier runs a control, what to do after a refusal of the auto mode check, selectors, claims, `move` and the restart of the watch. |
-//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The stop hook, `riff hook stop`, starts the check of the compact of the lead (see [`crate::compact`]). The tool hooks, `riff hook tool` and `riff hook tool --done`, and the stop hook write the newest fact of the session (see [`crate::activity`]). The prompt hook, `riff hook prompt`, writes the time of the last prompt of the person. The denied hook, `riff hook denied`, posts each refusal of auto mode to the thread `denials` (see [`crate::denied`]). |
+//! | `riff/hooks/hooks.json` | The start hook, `riff hook session-start`. It tells the session to start `riff watch` (see [`crate::hook`]). The end hook, `riff hook session-end`, tells the server that the session ended. The tool hooks, `riff hook tool` and `riff hook tool --done`, and the stop hook, `riff hook stop`, write the newest fact of the session (see [`crate::activity`]). The prompt hook, `riff hook prompt`, writes the time of the last prompt of the person. The denied hook, `riff hook denied`, posts each refusal of auto mode to the thread `denials` (see [`crate::denied`]). |
 //! | `riff/commands/leave.md`, `riff/commands/join.md` | The commands `/riff:leave` and `/riff:join`. They tell the session to call the `leave` or the `join` tool (see [`crate::leave`]). |
 //!
 //! ```
@@ -960,7 +960,7 @@ mod tests {
             "`ExitWorktree`",
             "`discard_changes`",
             "If you made the worktree with `EnterWorktree` in this context",
-            "call `ExitWorktree` with action `keep`, then run `riff worktrees clean` in the main worktree",
+            "call `ExitWorktree` with action `keep`, then remove the worktree and its branch from the main worktree",
             "you made it before the clear of your context.",
             "Never remove a worktree of another live session",
         ] {

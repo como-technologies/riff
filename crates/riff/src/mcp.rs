@@ -35,9 +35,7 @@
 //!
 //! The `riff mcp` of the lead also runs the free work of the wave by
 //! itself: it asks the riff daemon to run the wave (see
-//! [`crate::rollout`]). Each
-//! 10 minutes it tidies the worktrees and the disk of its machine (see
-//! [`crate::tidy`]).
+//! [`crate::rollout`]).
 //!
 //! A keep-alive is not a call: `who` still shows the time since the
 //! last call (R204). After the end call, the session leaves `who`, and
@@ -1114,42 +1112,6 @@ impl Tools {
         tokio::spawn(crate::look::run(self.api.clone(), move || tools.me(), None))
     }
 
-    /// Tidies the clone of this machine each [`crate::tidy::every`], for
-    /// as long as the tools run, while this session is the lead
-    /// (01M41A118QPQKFAAHGQFFX4F3B): the worktrees of merged pull
-    /// requests and the disk. See [`crate::tidy`].
-    pub fn tidy(&self) -> tokio::task::JoinHandle<()> {
-        let tools = self.clone();
-        tokio::spawn(async move {
-            let mut timer = crate::tidy::timer();
-            let mut guard = crate::tidy::Guard::default();
-            loop {
-                timer.tick().await;
-                if tools.left() {
-                    continue;
-                }
-                let me = tools.me();
-                let lead = match tools.api.who(&me, false).await {
-                    Ok(sessions) => sessions
-                        .iter()
-                        .any(|s| s.uri.who() == me.who() && s.uri.lead()),
-                    Err(_) => false,
-                };
-                if !lead {
-                    continue;
-                }
-                let Ok(dir) = crate::identity::working_dir() else {
-                    continue;
-                };
-                if let Err(e) =
-                    crate::tidy::tidy_as_person(&dir, tools.api.base(), &mut guard).await
-                {
-                    eprintln!("riff: cannot tidy the worktrees: {e:#}");
-                }
-            }
-        })
-    }
-
     /// Tells the server that the session ended (R205). It waits at most
     /// [`END_WAIT`].
     pub async fn end(&self) {
@@ -1453,7 +1415,7 @@ impl Background {
     fn start(tools: &Tools, worker: bool) -> Self {
         let mut tasks = vec![tools.keep_alive()];
         if !worker {
-            tasks.extend([tools.rollout(), tools.tidy(), tools.look()]);
+            tasks.extend([tools.rollout(), tools.look()]);
         }
         Self(tasks)
     }

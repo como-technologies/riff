@@ -2072,9 +2072,7 @@ branch: its own worktree, or the worktree of an item whose steps after
 the merge it does. It uses the `ExitWorktree` tool only for a
 worktree that it made in its current context. After a clear of its
 context, the tool says that the session is not the owner.
-Then the session runs `riff worktrees clean` in the main worktree
-(see
-[Clean the worktrees of sessions that ended](#clean-the-worktrees-of-sessions-that-ended)).
+Then the session removes the worktree with `git worktree remove`.
 
 ## How a session works on an item
 
@@ -3743,34 +3741,9 @@ sequenceDiagram
 The `riff mcp` of the lead looks each minute. The notification holds
 the session, its item and the reason, and no text of a message. It
 needs a desktop: a display and `notify-send`, as on GNOME. A machine
-with no desktop gets no notification, and nothing fails.
-
-### Set the wake time of a block
-
-The time is a setting of the machine of the lead. The default is 15
-minutes. Run this on the machine of the lead:
-
-```sh
-riff lead blocked --wake 30
-```
-
-```text
-lead.wake  30  (/home/mike/.config/riff/config.toml)
-lead.notify  true  (/home/mike/.config/riff/config.toml)
-A block with no answer for 30 minutes wakes the lead again. After 30 minutes more, riff top shows "the lead gave no answer", and a desktop notification tells you. Turn it off with: riff lead blocked --notify off
-```
-
-Run `riff lead blocked` with no flag to see the settings. The keys are
-`lead.wake` and `lead.notify` in the settings file.
-
-### Turn off the desktop notification
-
-```sh
-riff lead blocked --notify off
-```
-
-`riff top` still shows `the lead gave no answer`. Turn the
-notification on again with `riff lead blocked --notify on`.
+with no desktop gets no notification, and nothing fails. The keys
+`lead.wake` (minutes, 15 by default) and `lead.notify` (true by
+default) are in the settings file of the machine of the lead.
 
 ### See what the lead does
 
@@ -4856,124 +4829,3 @@ See the entries that auto mode uses in your own session:
 ```sh
 claude auto-mode config
 ```
-
-### Clean the worktrees of sessions that ended
-
-A session that ends leaves its worktree in `.claude/worktrees`, often
-with a lock. riff decides by facts what to do with each one. Run it in
-the main worktree:
-
-```sh
-riff worktrees clean
-```
-
-| Facts | riff does |
-|---|---|
-| a lock whose process is gone | unlocks it, then goes on |
-| a lock of a live process, or a lock with no process ID | keeps it |
-| a live session of `riff who` works in it | keeps it |
-| a live session of `riff who` on this machine holds its item, also when the session works in another worktree | keeps it |
-| a running process has its program or its working directory in it, for example a shell or a check build that a systemd unit runs | keeps it |
-| work that is not committed, and no live owner | commits it as WIP, pushes its branch, and posts a note to the lead |
-| clean, and its `HEAD` is on the default branch of `origin`: no commit of its own | removes it and its branch |
-| clean, and a merged pull request has its `HEAD` as head, also when the branch is gone | removes it and its branch |
-| clean, its pull request merged with another head, and each of its commits is in the merge | removes it and its branch |
-| clean, its pull request merged with another head, and a commit is not in the merge | keeps it, and names the commit |
-| clean, detached, and its commit is on `origin` | removes it |
-| each other case | keeps it |
-
-It prints one line for each worktree, with what it did and why:
-
-```text
-/home/mike/src/riff/.claude/worktrees/issue-12: unlocked: the process of its lock is gone; removed with its branch worktree-issue-12: its pull request #40 is merged
-/home/mike/src/riff/.claude/worktrees/verify-issue-14-a6cf: removed: its commit is the head of the merged pull request #41
-/home/mike/src/riff/.claude/worktrees/issue-805: removed with its branch worktree-issue-805: each of its commits is in the merged pull request #817
-/home/mike/src/riff/.claude/worktrees/issue-822: kept: its commit 1a2b3c4 is not in the merged pull request #835
-/home/mike/src/riff/.claude/worktrees/issue-13: kept: a live session works in it
-/home/mike/src/riff/.claude/worktrees/issue-756: kept: a live session holds its item issue-756
-/home/mike/src/riff/.claude/worktrees/live-712: kept: the running process 4242 (riff) uses it
-```
-
-The item of a worktree is its name, for example `issue-756`. The
-verify worktree `verify-issue-12-a6cf` is of the claim
-`verify-issue-12` of the session whose ID starts with `a6cf`. riff
-reads each running process of your user in `/proc`. A program that a
-new build deleted still counts. When a process keeps a worktree that
-you do not use, stop that process. The next clean removes the
-worktree.
-
-A session on another machine can rebase the branch of an item and
-push it. The pull request then merges with another head, and the
-worktree of the first author stays at the old head. riff compares the
-commits of that worktree with the merge by their patches, as
-`git cherry` does. A commit of the default branch is in the merge
-too. When the clone does not have the head of the pull request, riff
-fetches it from `origin`. When riff keeps such a worktree, the commit
-that it names is work that only this worktree has.
-
-The `riff mcp` of the lead runs it each 10 minutes. So the worktree of
-a merged pull request goes away within 10 minutes of the merge, with
-no session and no person. riff never touches a worktree outside
-`.claude/worktrees`: a person made it.
-
-### riff compacts the lead at the end of a wave
-
-The lead keeps its context over many waves. riff compacts it at a safe
-point: the end of a wave. You do nothing. riff does it only when all of
-these are true:
-
-1. The riff is paused.
-2. A wave just ended: it has no open item, and no item of a later
-   wave closed yet. Its release is out: the release item is closed, the
-   release pull request is merged, and the CI run of the tag passed.
-3. No session holds a claim, and no pull request of a wave is open.
-4. The turn of the lead ended, and it has no unread message.
-5. Nobody typed in the pane of the lead for the quiet time (default 1
-   minute), and its input line is empty. riff never types into a
-   half-written prompt.
-6. The last message of the lead does not ask you a question.
-7. riff did not compact the lead for this wave already. When two
-   checks run at the same time, only one acts.
-
-```mermaid
-sequenceDiagram
-    participant L as lead
-    participant R as riff (Stop hook)
-    participant T as tmux pane of the lead
-    L->>R: the turn ends
-    R->>L: tell: post a handoff note
-    L->>R: note "handoff: Wave 13 ..." and the turn ends
-    R->>T: /compact with instructions
-    T->>L: the lead reads the note and starts its watch again
-```
-
-First riff asks the lead to post a handoff note to the repository
-thread: the state, the next wave and the open decisions. After the
-note, riff types `/compact` into the pane of the lead. The instructions
-tell the compact what to keep. When the lead does not run in tmux, riff
-tells the lead to ask you to run `/compact`.
-
-So riff asks for a handoff only in the time between the end of a wave
-(its last item closed, or `riff wave end N`) and the first closed item
-of the next wave. A pause in the middle of the next wave, for example
-for a release, gives no ask.
-
-See the setting of this machine:
-
-```sh
-riff lead compact
-```
-
-Turn it off, or on again:
-
-```sh
-riff lead compact off
-riff lead compact on
-```
-
-Change the quiet time, in seconds:
-
-```sh
-riff lead compact --quiet 120
-```
-

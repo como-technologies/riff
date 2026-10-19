@@ -214,61 +214,6 @@ pub fn auto_update(on: bool, path: &Path) -> String {
     setting("update.auto", &on.to_string(), path, hint)
 }
 
-/// `riff lead compact` (01M3Q88GBSRJRP4VGVDV3EJZ4R).
-///
-/// ```
-/// let on = riff::view::lead_compact(true, 60, "/h/config.toml".as_ref());
-/// let plain = anstream::adapter::strip_str(&on).to_string();
-/// assert_eq!(
-///     plain,
-///     "lead.compact  true  (/h/config.toml)\n\
-///      lead.quiet  60  (/h/config.toml)\n\
-///      At the end of a wave, riff compacts the lead after 60 seconds with no input. \
-///      Turn it off with: riff lead compact off"
-/// );
-/// let off = riff::view::lead_compact(false, 60, "/h/config.toml".as_ref());
-/// assert!(off.contains("Turn it on with: riff lead compact on"), "{off}");
-/// ```
-pub fn lead_compact(on: bool, quiet: u64, path: &Path) -> String {
-    let hint = if on {
-        format!(
-            "At the end of a wave, riff compacts the lead after {quiet} seconds with no input. \
-             Turn it off with: riff lead compact off"
-        )
-    } else {
-        "riff does not compact the lead. Turn it on with: riff lead compact on".to_owned()
-    };
-    let file = format!("({})", path.display());
-    format!(
-        "lead.compact  {on}  {}\n{}",
-        styled(DIM, &file),
-        setting("lead.quiet", &quiet.to_string(), path, &hint)
-    )
-}
-
-/// `riff lead blocked` (01M41FZQ545HQ9Q75CSKX8HF8H,
-/// 01M41FZQKZKW131Z8822G31T5G).
-///
-/// ```
-/// let text = riff::view::lead_blocked(15, true, std::path::Path::new("/c.toml"));
-/// let plain = anstream::adapter::strip_str(&text).to_string();
-/// assert!(plain.starts_with("lead.wake  15  (/c.toml)\nlead.notify  true  (/c.toml)\n"), "{plain}");
-/// assert!(plain.contains("riff lead blocked --notify off"), "{plain}");
-/// ```
-pub fn lead_blocked(wake: u64, notify: bool, path: &Path) -> String {
-    let file = styled(DIM, &format!("({})", path.display()));
-    let what = if notify {
-        "and a desktop notification tells you. Turn it off with: riff lead blocked --notify off"
-    } else {
-        "and riff sends no desktop notification. Turn it on with: riff lead blocked --notify on"
-    };
-    format!(
-        "lead.wake  {wake}  {file}\nlead.notify  {notify}  {file}\nA block with no answer for \
-         {wake} minutes wakes the lead again. After {wake} minutes more, riff top shows \"the lead \
-         gave no answer\", {what}"
-    )
-}
-
 /// The facts of the build: `riff` and, when the server of the last call
 /// runs another build, `riff-server` in yellow
 /// (01M3JEE7WT04BKX377VW5GDSPY).
