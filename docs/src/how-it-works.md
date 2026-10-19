@@ -3129,6 +3129,40 @@ riff watch --once
 Without `--once`, `riff watch` prints one line for each wake until
 you stop it.
 
+### Wake the lead in a container with no restart
+
+The lead in a container does not start its watch again. It starts one
+watch that never ends, with the Monitor tool of Claude Code. The watch
+prints one line for each wake. Monitor turns each line into a
+notification, so the lead wakes. The lead starts the watch once, at the
+start of its session. The riff daemon sends each wake once, also two
+messages in a row.
+
+```mermaid
+sequenceDiagram
+    participant L as lead (Monitor)
+    participant W as riff relay watch --follow
+    participant D as riff daemon
+    participant E as riff-server
+    L->>W: start once
+    W->>D: follow
+    E-->>D: message 417
+    D-->>W: one line
+    W-->>L: the line wakes the lead
+    E-->>D: message 418
+    D-->>W: one line
+    W-->>L: the line wakes the lead
+```
+
+Inside the container of the lead, the command is:
+
+```sh
+/opt/riff/riff relay watch --follow
+```
+
+A worker or a verifier does nothing: the daemon puts each wake in its
+input.
+
 ### One read after a wake shows the message of the wake
 
 A read gives one page of 50 messages of each thread, the oldest unread

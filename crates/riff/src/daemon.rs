@@ -134,6 +134,7 @@
 //! | [`SessionAsk::Relay`] | relays the session ([`crate::session_relay`]) |
 //! | [`SessionAsk::Mcp`] | serves the riff tools of the session that only talk, on its riff-server ([`Daemon::tools_of`]) |
 //! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session, from riff-server ([`World::wake`]) |
+//! | [`SessionAsk::Follow`] | says [`Say::Line`] at each wake of the session, until the relay leaves ([`World::wakes`]) |
 //! | [`SessionAsk::Denied`] | posts the refusals of auto mode of the session, and says [`Say::Posted`] ([`Daemon::post_denials`]) |
 //!
 //! # A session
@@ -844,6 +845,12 @@ pub enum SessionAsk {
     },
     /// Wait for the next wake of the session: `riff relay watch`.
     Watch {
+        /// [`PROTOCOL`] of the relay.
+        protocol: u32,
+    },
+    /// Say each wake of the session until the relay leaves:
+    /// `riff relay watch --follow`.
+    Follow {
         /// [`PROTOCOL`] of the relay.
         protocol: u32,
     },
@@ -2769,6 +2776,32 @@ impl<R: Runtime + 'static> Daemon<R> {
                         Err(e) => Say::Failed { error: format!("{e:#}") },
                     }),
                     () = gone => {}
+                }
+                drop(out);
+                let _ = written.await;
+            }
+            Ok(SessionAsk::Follow { .. }) => {
+                let (out, written) = writer(write);
+                let record = owned.lock().record.clone();
+                let (to, mut wakes) = mpsc::unbounded_channel();
+                let watch = self.world.wakes(&record, to);
+                tokio::pin!(watch);
+                // The wait ends when the relay leaves.
+                let gone = async { while let Ok(Some(_)) = lines.next_line().await {} };
+                tokio::pin!(gone);
+                let mut seen = BTreeSet::new();
+                loop {
+                    tokio::select! {
+                        () = &mut watch => break,
+                        () = &mut gone => break,
+                        wake = wakes.recv() => match wake {
+                            Some(wake) if seen.insert((wake.thread.to_string(), wake.seq)) => {
+                                out.say(Say::Line { text: text::wake_line(&wake) });
+                            }
+                            Some(_) => {}
+                            None => break,
+                        },
+                    }
                 }
                 drop(out);
                 let _ = written.await;
@@ -5589,6 +5622,37 @@ mod tests {
         }
     }
 
+    /// 01M59235BBXEKPZBRH23C39574: one `riff relay watch --follow` gets
+    /// two wakes in a row, and each wake once, with no restart.
+    #[tokio::test]
+    async fn a_follow_of_the_lead_gets_two_wakes_in_a_row_with_no_restart() {
+        let (here, server) = with_server().await;
+        let mut start = here.start("riff-lead-o-r", "lead");
+        start.terminal = true;
+        let (_client, name) = here.started(start).await;
+        let socket = session_dir(&here.dir, &name);
+        let conn = connect_in(&socket, SOCKET).await.unwrap();
+        let (read, mut write) = conn.into_split();
+        let ask = serde_json::to_string(&SessionAsk::Follow { protocol: PROTOCOL }).unwrap();
+        write
+            .write_all(format!("{ask}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut lines = BufReader::new(read).lines();
+        until(|| server.watches() == 1).await;
+        server.wake_all(&a_wake(417));
+        server.wake_all(&a_wake(417));
+        server.wake_all(&a_wake(418));
+        for seq in [417, 418] {
+            let line = lines.next_line().await.unwrap().unwrap();
+            assert_eq!(
+                serde_json::from_str::<Say>(&line).unwrap(),
+                Say::Line {
+                    text: text::wake_line(&a_wake(seq))
+                }
+            );
+        }
+    }
     #[tokio::test]
     async fn a_wake_during_the_turn_reaches_the_worker_and_a_wake_after_the_result_gets_a_refusal()
     {

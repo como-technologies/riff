@@ -299,7 +299,7 @@ its steps. The lead in a container calls its riff by the path
 
 | Rules | Allow |
 |---|---|
-| `Bash(/opt/riff/riff relay watch)` | the wakes of the lead |
+| `Bash(/opt/riff/riff relay watch)`, `Bash(/opt/riff/riff relay watch --follow)` | the wakes of the lead |
 | `Bash(/opt/riff/riff wave *)` | the steps of the waves of the lead |
 | `Bash(/opt/riff/riff release status)`, `Bash(/opt/riff/riff release cut *)` | the steps of the release cycle of the lead in a container |
 

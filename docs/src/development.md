@@ -1769,9 +1769,11 @@ The lead gets the riff tools that talk, and the tools of a lead:
 `lead`, `hold`, `free`, `pause` and `resume`. They act on your
 riff-server (see
 [The riff tools of a session](#the-riff-tools-of-a-session)). It gets
-its wakes from `/opt/riff/riff relay watch`, a background task that
-ends at each wake. The instructions of its riff tools tell it to run
-that task. It plans the waves with `/opt/riff/riff wave`: see
+its wakes from `/opt/riff/riff relay watch --follow`, one watch that
+never ends, in the Monitor tool. The instructions of its riff tools tell
+it to start that watch once. See
+[Wake the lead in a container with no restart](how-it-works.md#wake-the-lead-in-a-container-with-no-restart).
+It plans the waves with `/opt/riff/riff wave`: see
 [Waves](waves.md). To make it the lead of your user, tell it to call the
 riff tool `lead`.
 

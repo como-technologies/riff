@@ -8405,17 +8405,15 @@ pub fn wave_asked(repo: &str) -> String {
 ///
 /// ```
 /// let text = riff::text::MCP_LEAD;
-/// assert!(text.contains("`/opt/riff/riff relay watch`"));
+/// assert!(text.contains("`/opt/riff/riff relay watch --follow`"));
+/// assert!(!text.contains("start it again at once"));
 /// assert!(text.contains("`/opt/riff/riff wave list`"));
 /// ```
 pub const MCP_LEAD: &str = "riff connects your session with the agent sessions of other \
 people. You are the lead of your user, in a container with a terminal. The riff daemon of this \
 machine runs the sessions of the wave: one container for each item and each verify. Do not claim \
 work. Your riff tools act on riff-server: `whoami`, `who`, `threads`, `read`, `post`, `tell`, \
-`status` and `blocked`, and the lead tools `lead`, `hold`, `free`, `pause` and `resume`. To get \
-your wakes, run `/opt/riff/riff relay watch` with the Bash tool as a background task: it ends at \
-the next wake, with one line. When it ends, call `read` with no thread, and start it again at \
-once, in the same response. You plan the waves of the repository. To see them, run \
+`status` and `blocked`, and the lead tools `lead`, `hold`, `free`, `pause` and `resume`. To get your wakes, start `/opt/riff/riff relay watch --follow` once with the Monitor tool, at the start of your session. It never ends: it prints one line for each wake, and each line wakes you. When a line comes, call `read` with no thread. Do not start it again. You plan the waves of the repository. To see them, run \
 `/opt/riff/riff wave list`. To make, rename or end a wave, run `/opt/riff/riff wave make`, \
 `/opt/riff/riff wave rename` or `/opt/riff/riff wave end`. To put an item in a wave, run \
 `gh issue edit N --milestone \"Wave M\"`. Sessions talk in threads. A post wakes only the \
@@ -8444,13 +8442,13 @@ pub fn not_in_the_lead_container(tool: &str) -> String {
 /// ```
 /// let text = riff::text::lead_start("o/r");
 /// assert!(text.contains("You are the lead of o/r"));
-/// assert!(text.contains("/opt/riff/riff relay watch"));
+/// assert!(text.contains("/opt/riff/riff relay watch --follow"));
 /// ```
 pub fn lead_start(repo: &str) -> String {
     format!(
         "You are the lead of {repo} in riff, in a container with a terminal. The person attaches \
          to you with riff view or riff lead start. Call the riff tools whoami and read. Then start \
-         /opt/riff/riff relay watch as a background task, as the instructions of the riff tools \
+         /opt/riff/riff relay watch --follow once with the Monitor tool, as the instructions of the riff tools \
          say. Then tell your person in two lines what the thread says, and wait for the person."
     )
 }
