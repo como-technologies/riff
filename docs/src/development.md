@@ -2044,17 +2044,25 @@ just real-session --gate-wait 3600
 
 ## Add a requirement
 
-Each requirement in `docs/src/requirements.md` has an ID. A new
-requirement gets a new ID from this command:
+Each requirement in `docs/src/requirements.md` has an ID. Add a new
+requirement with this command. Give the heading of the section and
+the text:
 
 ```sh
-just rid
+just req "Sessions" "A session does this thing."
 ```
 
-It prints a new ID of 26 digits and capital letters. Write the new
-requirement as `- **ID** text`, with that ID. Cite it by the same ID in
-code, tests and commits. Two people who add requirements at the same
-time never get the same ID. So nobody has to agree on a number first.
+The command prints a new ID of 26 digits and capital letters. It wraps
+the text at 72 characters and writes the requirement after the last
+requirement of the section. It never writes inside another
+requirement. Cite the requirement by the same ID in code, tests and
+commits. Two people who add requirements at the same time never get
+the same ID. So nobody has to agree on a number first.
+
+`just ci` fails with `block-end` when a requirement does not end with a
+full stop. A new requirement in the middle of an old one causes this.
+
+To get only an ID, run `just rid`.
 
 The old IDs `R1` to `R232` stay. Never give a new requirement the next
 `R` number, and never renumber a requirement.

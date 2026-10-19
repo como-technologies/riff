@@ -7712,6 +7712,14 @@ items of Wave C that end riff-server in the Backlog
   service, the GCS bucket, the Secret Manager entries and the GitHub App
   of riff go. Mike decides when. Superseded by Wave C
   (01M51R8HK0VPBD4W6CKACWC1WW).
+- **01M5940ES080P07A5NGWWRWF1Z** A new requirement goes into
+  docs/src/requirements.md with `just req SECTION "text"`, never by a
+  hand edit. The command takes the heading of the section, gets an ID
+  like `just rid`, wraps the text at 72 characters, and writes it after
+  the last requirement of the section. The check `block-end` of
+  `reqs::check` fails when a requirement block, its first line and the
+  indented lines under it, does not end with a full stop. The start text
+  of a container session and CLAUDE.md say to use the command.
 
 ### The release commands
 
