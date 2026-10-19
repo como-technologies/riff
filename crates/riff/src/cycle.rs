@@ -136,10 +136,13 @@ pub fn version(text: &str) -> Result<Semver> {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn tag_version(tag: &str) -> Result<Semver> {
-    let Some(rest) = tag.strip_prefix('v') else {
-        bail!("\"{tag}\" is not a release tag vX.Y.Z, for example v3.3.0.");
+    let refused = || {
+        anyhow!(
+            "\"{tag}\" is not a release tag vX.Y.Z, for example v3.3.0. next: riff release status"
+        )
     };
-    version(rest).map_err(|_| anyhow!("\"{tag}\" is not a release tag vX.Y.Z, for example v3.3.0."))
+    let rest = tag.strip_prefix('v').ok_or_else(refused)?;
+    version(rest).map_err(|_| refused())
 }
 
 /// The tag of a version: `vX.Y.Z`.
@@ -575,11 +578,15 @@ pub fn stage(forge: &dyn Forge, version: Semver) -> Result<Option<Stage>> {
     let issue = forge.issue_of(&title)?;
     let comments = issue.as_ref().map(|i| i.comments.as_slice()).unwrap_or(&[]);
     let passed = check_mark(&tag, "passed");
+    let failed = check_mark(&tag, "failed");
+    // Only a check that ran decides: a failed deploy and an unknown
+    // result leave the state to the CI run of the tag.
     let last_check = comments
         .iter()
         .rev()
-        .find(|c| c.starts_with(&check_mark(&tag, "")))
-        .map(|c| c.starts_with(&passed));
+        .filter_map(|c| c.lines().next())
+        .find(|l| *l == passed || *l == failed)
+        .map(|l| l == passed);
     let rolled_back = comments
         .iter()
         .any(|c| c.starts_with("riff release rollback v"));
@@ -822,13 +829,16 @@ pub fn cut(forge: &dyn Forge, new: Semver, skip: Option<&Skip>, why: Option<&str
     let releases = forge.releases()?;
     let Some(last) = last(&releases) else {
         bail!(
-            "riff release cut: the forge has no published release. Make the first release by hand."
+            "riff release cut: the forge has no published release. next: a person makes the \
+             first release by hand"
         );
     };
     if new <= last {
         bail!(
-            "riff release cut: {new} is not newer than the last release {}. Give a version after {last}.",
-            tag(last)
+            "riff release cut: {new} is not newer than the last release {}. Give a version after \
+             {last}. next: riff release cut {}",
+            tag(last),
+            patch_after(last)
         );
     }
     let main = forge.main_version()?;
@@ -836,20 +846,21 @@ pub fn cut(forge: &dyn Forge, new: Semver, skip: Option<&Skip>, why: Option<&str
         match skip {
             Some(skip) if skip.version == main && !skip.reason.trim().is_empty() => {}
             Some(skip) if skip.version != main => bail!(
-                "riff release cut: --skip {} is not the version on origin/main: {main}.",
+                "riff release cut: --skip {} is not the version on origin/main: {main}. next: \
+                 riff release cut {new} --skip {main} --reason TEXT",
                 skip.version
             ),
             _ => bail!(
                 "riff release cut: the version {main} on origin/main has no published release. \
-                 Publish it first: riff release publish {}. To go on with no release {main}, give \
-                 --skip {main} --reason TEXT.",
+                 To go on with no release {main}, give --skip {main} --reason TEXT. next: riff \
+                 release publish {}",
                 tag(main)
             ),
         }
     } else if let Some(skip) = skip {
         bail!(
             "riff release cut: --skip {} names no version to skip: the version {main} on \
-             origin/main has its release.",
+             origin/main has its release. next: riff release cut {new}",
             skip.version
         );
     }
@@ -876,7 +887,8 @@ pub fn cut(forge: &dyn Forge, new: Semver, skip: Option<&Skip>, why: Option<&str
     if !errors.is_empty() {
         let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
         bail!(
-            "riff release cut: the pull request breaks issue hygiene:\n{}",
+            "riff release cut: the pull request breaks issue hygiene:\n{}\nnext: fix the release \
+             issue #{issue}, then riff release cut {new}",
             lines.join("\n")
         );
     }
@@ -965,18 +977,20 @@ pub fn publish(forge: &dyn Forge, tag_text: &str) -> Result<Published> {
     let Some(pr) = forge.release_pr(&title)? else {
         bail!(
             "riff release publish: no merged pull request \"{title}\" with the label {LABEL}. \
-             Make it with riff release cut {version}."
+             next: riff release cut {version}"
         );
     };
     if !forge.verify_passed(&pr.head)? {
         bail!(
-            "riff release publish: the check riff/verify of pull request #{} did not pass.",
+            "riff release publish: the check riff/verify of pull request #{} did not pass. \
+             next: riff release status",
             pr.number
         );
     }
     if !forge.on_main(&pr.merge)? {
         bail!(
-            "riff release publish: the merge commit {} of pull request #{} is not on origin/main.",
+            "riff release publish: the merge commit {} of pull request #{} is not on \
+             origin/main. next: riff release status",
             pr.merge,
             pr.number
         );
@@ -984,9 +998,9 @@ pub fn publish(forge: &dyn Forge, tag_text: &str) -> Result<Published> {
     let Some(commit) = tested(forge, &pr.merge)? else {
         if forge.real_session(&pr.merge)? == Some(false) {
             bail!(
-                "riff release publish: the real-session test failed on the merge commit {}. File \
-                 the bug in the wave, and run just real-session again on origin/main after its fix \
-                 merges.",
+                "riff release publish: the real-session test failed on the merge commit {}. \
+                 next: file the bug in the wave, then just real-session on origin/main after its \
+                 fix merges",
                 pr.merge
             );
         }
@@ -999,16 +1013,20 @@ pub fn publish(forge: &dyn Forge, tag_text: &str) -> Result<Published> {
     let main = forge.main_version()?;
     if main != version {
         bail!(
-            "riff release publish: Cargo.toml on origin/main has the version {main}, not {version}."
+            "riff release publish: Cargo.toml on origin/main has the version {main}, not \
+             {version}. next: riff release status"
         );
     }
     if forge.tag_exists(&tag)? {
-        bail!("riff release publish: the tag {tag} exists on GitHub already.");
+        bail!(
+            "riff release publish: the tag {tag} exists on GitHub already. next: riff release status"
+        );
     }
     if !forge.admin()? {
         bail!(
             "riff release publish: the account of gh is not an admin of the repository, so the \
-             ruleset of the tags refuses its push. Sign in to gh as an admin."
+             ruleset of the tags refuses its push. next: gh auth login as an admin, then riff \
+             release publish {tag}"
         );
     }
     let since = last(&forge.releases()?).map(self::tag);
@@ -1525,7 +1543,8 @@ pub fn retry(forge: &dyn Forge, tag_text: &str) -> Result<Deploy> {
     };
     if deploy.state != DeployState::Failed {
         bail!(
-            "riff release retry: the CI run {} of {tag} did not fail. riff changed nothing.",
+            "riff release retry: the CI run {} of {tag} did not fail. riff changed nothing. \
+             next: riff release status",
             deploy.url
         );
     }
@@ -1551,12 +1570,14 @@ pub fn rollback(forge: &dyn Forge, tag_text: &str) -> Result<RolledBack> {
     let to = tag_version(tag_text)?;
     let releases = forge.releases()?;
     let Some(from) = last(&releases) else {
-        bail!("riff release rollback: the forge has no published release.");
+        bail!(
+            "riff release rollback: the forge has no published release. next: riff release status"
+        );
     };
     if !releases.contains(&to) || to >= from {
         bail!(
             "riff release rollback: {} is not a published release older than {}. riff changed \
-             nothing.",
+             nothing. next: riff release status",
             tag(to),
             tag(from)
         );
@@ -2775,7 +2796,7 @@ mod tests {
         for old in ["3.2.0", "3.1.0"] {
             let error = cut(&forge, v(old), None, None).unwrap_err().to_string();
             assert!(
-                error.contains("is not newer than the last release v3.2.0"),
+                error.contains("is not newer than the last release v3.2.0. Give a version after 3.2.0. next: riff release cut 3.2.1"),
                 "{error}"
             );
         }
@@ -2791,7 +2812,10 @@ mod tests {
             error.contains("the version 3.3.0 on origin/main has no published release"),
             "{error}"
         );
-        assert!(error.contains("riff release publish v3.3.0"), "{error}");
+        assert!(
+            error.contains("next: riff release publish v3.3.0"),
+            "{error}"
+        );
         let other = Skip {
             version: v("3.1.0"),
             reason: "x".into(),
@@ -2800,7 +2824,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("--skip 3.1.0 is not the version on origin/main"),
+            error.contains("--skip 3.1.0 is not the version on origin/main: 3.3.0. next: riff release cut 3.4.0 --skip 3.3.0 --reason TEXT"),
             "{error}"
         );
         assert!(forge.log().is_empty());
@@ -2851,6 +2875,10 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("names no version to skip"), "{error}");
+        assert!(
+            error.contains("has its release. next: riff release cut 3.3.0"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2945,12 +2973,18 @@ mod tests {
         for (forge, want) in cases {
             let error = publish(&forge, "v3.3.0").unwrap_err().to_string();
             assert!(error.contains(want), "{want}: {error}");
+            assert!(error.contains(". next: "), "{error}");
             assert!(forge.log().is_empty(), "{want}");
         }
         let error = publish(&Fake::ready("3.3.0"), "3.3.0")
             .unwrap_err()
             .to_string();
-        assert!(error.contains("is not a release tag"), "{error}");
+        assert!(
+            error.contains(
+                "is not a release tag vX.Y.Z, for example v3.3.0. next: riff release status"
+            ),
+            "{error}"
+        );
     }
 
     fn run(tag: &str) -> Waiting {
@@ -2992,6 +3026,8 @@ mod tests {
             deploy: d,
             ..Fake::ready("3.3.0")
         };
+        let failed_deploy = "riff release check v3.3.0: failed deploy\n\nThe CI run x failed.";
+        let unknown = check_text("v3.3.0", &[("a", Verdict::Unknown("no log".into()))]);
         let cases: Vec<(Fake, State, &str)> = vec![
             (
                 Fake {
@@ -3045,6 +3081,62 @@ mod tests {
                 State::Failed,
                 "riff release retry v3.3.0, or riff release rollback v3.2.0",
             ),
+            // After a failed deploy and riff release check, the CI run
+            // decides: before, while and after riff release retry.
+            (
+                Fake {
+                    issue: Some(issue(true, &[failed_deploy])),
+                    ..tagged(Some(deploy(DeployState::Failed)))
+                },
+                State::Failed,
+                "riff release retry v3.3.0, or riff release rollback v3.2.0",
+            ),
+            (
+                Fake {
+                    issue: Some(issue(true, &[failed_deploy])),
+                    ..tagged(Some(deploy(DeployState::Waiting)))
+                },
+                State::Waiting,
+                "a person runs riff release approve v3.3.0 in a terminal",
+            ),
+            (
+                Fake {
+                    issue: Some(issue(true, &[failed_deploy])),
+                    ..tagged(Some(deploy(DeployState::Running)))
+                },
+                State::Deploying,
+                "wait for the deploy: https://github.com/o/r/actions/runs/9",
+            ),
+            (
+                Fake {
+                    issue: Some(issue(true, &[failed_deploy])),
+                    ..tagged(Some(deploy(DeployState::Passed)))
+                },
+                State::Deployed,
+                "riff release check v3.3.0",
+            ),
+            // A check that riff could not do changes no state.
+            (
+                Fake {
+                    issue: Some(issue(true, &[unknown.as_str()])),
+                    ..tagged(Some(deploy(DeployState::Passed)))
+                },
+                State::Deployed,
+                "riff release check v3.3.0",
+            ),
+            // The newest check that ran decides.
+            (
+                Fake {
+                    issue: Some(issue(
+                        true,
+                        &["riff release check v3.3.0: failed\n\n- x", unknown.as_str()],
+                    )),
+                    ..tagged(Some(deploy(DeployState::Passed)))
+                },
+                State::Failed,
+                "fix forward with riff release cut 3.3.1, or roll back with riff release \
+                 rollback v3.2.0",
+            ),
             (
                 Fake {
                     issue: Some(issue(true, &["riff release check v3.3.0: failed\n\n- x"])),
@@ -3085,6 +3177,32 @@ mod tests {
             assert_eq!(next(&stage), step, "{state:?}");
         }
         assert_eq!(stage(&Fake::new(), v("3.4.0")).unwrap(), None);
+    }
+
+    /// Each refusal of the guard names the next step
+    /// (01M58KMKWRKSV1DR42FRH2K43X).
+    #[test]
+    fn each_refusal_of_the_guard_has_a_next_line() {
+        let cases = [
+            (Refusal::Worker, "next: the lead runs riff release cut"),
+            (Refusal::Container, "next: the lead runs riff release cut"),
+            (Refusal::NotTheLead, "next: the lead runs riff release cut"),
+            (Refusal::LeadUnknown, "next: riff whoami"),
+            (
+                Refusal::Member,
+                "next: the owner or an admin of the riff runs riff release cut",
+            ),
+            (Refusal::RoleUnknown, "next: riff whoami"),
+            (
+                Refusal::Agent,
+                "next: a person runs riff release cut in a plain terminal, outside Claude Code",
+            ),
+        ];
+        for (refusal, step) in cases {
+            let text = crate::text::release_refused("cut", refusal);
+            assert!(text.ends_with(step), "{text}");
+            assert!(text.contains("changed nothing"), "{text}");
+        }
     }
 
     #[test]
@@ -3360,7 +3478,10 @@ mod tests {
                 ..Fake::new()
             };
             let error = retry(&forge, "v3.3.0").unwrap_err().to_string();
-            assert!(error.contains("did not fail"), "{error}");
+            assert!(
+                error.contains("did not fail. riff changed nothing. next: riff release status"),
+                "{error}"
+            );
             assert!(forge.log().is_empty());
         }
         let error = retry(&Fake::new(), "v3.3.0").unwrap_err().to_string();
@@ -3393,7 +3514,7 @@ mod tests {
             };
             let error = rollback(&forge, bad).unwrap_err().to_string();
             assert!(
-                error.contains("is not a published release older than v3.3.0"),
+                error.contains("is not a published release older than v3.3.0. riff changed nothing. next: riff release status"),
                 "{error}"
             );
             assert!(forge.log().is_empty());

@@ -3878,7 +3878,9 @@ the tag, the commit and the run, and asks yes or no. With `yes`, it
 pauses the whole riff, which tells each other lead, then approves the
 run with the comment `Release v3.3.0`. The pause is only for the
 deploy: `riff release check` resumes the riff. When no run waits, riff
-says so and changes nothing.
+says so and changes nothing. When the approval fails, the riff stays
+paused: run `riff release approve v3.3.0` again, or
+`riff resume --riff`.
 
 ### Make a patch of an older release
 

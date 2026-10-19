@@ -294,8 +294,8 @@ async fn cut_refuses_an_old_version_and_a_version_on_main_with_no_release() {
     assert!(!out.status.success());
     assert!(
         text(&out.stderr).contains(
-            "the version 3.3.0 on origin/main has no published release. Publish it first: riff \
-             release publish v3.3.0. To go on with no release 3.3.0, give --skip 3.3.0 --reason TEXT."
+            "the version 3.3.0 on origin/main has no published release. To go on with no release \
+             3.3.0, give --skip 3.3.0 --reason TEXT. next: riff release publish v3.3.0"
         ),
         "{}",
         text(&out.stderr)
@@ -718,11 +718,20 @@ async fn check_names_the_checks_that_it_could_not_do() {
 #[tokio::test]
 async fn check_after_a_failed_deploy_files_an_issue_and_resumes_the_riff() {
     let machine = Machine::new().await;
-    machine.fake_gh(&deployed("v3.3.0", "failure"));
+    // The release issue has the comment of the check: the CI run still
+    // decides the state and the next step.
+    machine.fake_gh(&format!(
+        "{}\n'issue list'*) printf '%s\\n' '[{{\"number\":7,\"title\":\"Release v3.3.0\",\"state\":\"OPEN\",\"comments\":[{{\"body\":\"riff release check v3.3.0: failed deploy\\n\\nThe CI run failed.\"}}]}}]' ;;",
+        deployed("v3.3.0", "failure")
+    ));
     let lead = [("RIFF_SESSION", "s1")];
     machine.ok(&lead, &["lead"]).await;
     machine.ok(&lead, &["pause", "--riff"]).await;
     let out = machine.ok(&lead, &["release", "check", "v3.3.0"]).await;
+    assert!(
+        out.contains("next: riff release retry v3.3.0, or riff release rollback v3.2.0\n"),
+        "{out}"
+    );
     assert!(
         out.starts_with(
             "The deploy of v3.3.0 failed: https://github.com/como-technologies/riff/actions/runs/9. \

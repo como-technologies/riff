@@ -2013,49 +2013,58 @@ started nothing. Check the riff with riff whoami.",
 };
 
 /// The refusal of the command `riff release COMMAND` for `refusal`
-/// (01M58B0JSQMWNCMSNX19536XT8, 01M58KMMF9WMH39ZMD0MKGRVZB).
+/// (01M58B0JSQMWNCMSNX19536XT8, 01M58KMMF9WMH39ZMD0MKGRVZB), with its
+/// line `next:` (01M58KMKWRKSV1DR42FRH2K43X).
 ///
 /// ```
 /// use riff::cycle::Refusal;
 ///
 /// assert_eq!(
 ///     riff::text::release_refused("check", Refusal::Worker),
-///     "riff: a worker never runs riff release check. riff release check changed nothing. The \
-///      lead runs it."
+///     "riff: a worker never runs riff release check. riff release check changed nothing. \
+///      next: the lead runs riff release check"
 /// );
 /// ```
 pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String {
     use crate::cycle::Refusal;
     let step = format!("riff release {command}");
-    match refusal {
-        Refusal::Worker => {
-            format!("riff: a worker never runs {step}. {step} changed nothing. The lead runs it.")
-        }
-        Refusal::Container => format!(
-            "riff: a container session never runs {step}. {step} changed nothing. The lead runs \
-             it."
+    let (why, next) = match refusal {
+        Refusal::Worker => (
+            format!("riff: a worker never runs {step}. {step} changed nothing."),
+            format!("the lead runs {step}"),
         ),
-        Refusal::NotTheLead => format!(
-            "riff: only the lead of your user runs {step}. This session is not the lead, so \
-             {step} changed nothing."
+        Refusal::Container => (
+            format!("riff: a container session never runs {step}. {step} changed nothing."),
+            format!("the lead runs {step}"),
         ),
-        Refusal::LeadUnknown => format!(
-            "riff: cannot check that this session is the lead, so {step} changed nothing. Check \
-             the riff with riff whoami."
+        Refusal::NotTheLead => (
+            format!(
+                "riff: only the lead of your user runs {step}. This session is not the lead, so \
+                 {step} changed nothing."
+            ),
+            format!("the lead runs {step}"),
         ),
-        Refusal::Member => format!(
-            "riff: only the owner or an admin of the riff, or the lead of one, runs {step}. Your \
-             user is a member, so {step} changed nothing."
+        Refusal::LeadUnknown => (
+            format!("riff: cannot check that this session is the lead, so {step} changed nothing."),
+            "riff whoami".to_owned(),
         ),
-        Refusal::RoleUnknown => format!(
-            "riff: cannot check your role in the riff, so {step} changed nothing. Check the riff \
-             with riff whoami."
+        Refusal::Member => (
+            format!(
+                "riff: only the owner or an admin of the riff, or the lead of one, runs {step}. \
+                 Your user is a member, so {step} changed nothing."
+            ),
+            format!("the owner or an admin of the riff runs {step}"),
         ),
-        Refusal::Agent => format!(
-            "riff: a session never runs {step}. {step} changed nothing. A person runs it in a \
-             plain terminal, outside Claude Code."
+        Refusal::RoleUnknown => (
+            format!("riff: cannot check your role in the riff, so {step} changed nothing."),
+            "riff whoami".to_owned(),
         ),
-    }
+        Refusal::Agent => (
+            format!("riff: a session never runs {step}. {step} changed nothing."),
+            format!("a person runs {step} in a plain terminal, outside Claude Code"),
+        ),
+    };
+    format!("{why} next: {next}")
 }
 
 /// The refusal of `riff workers start` when `run` workers fill the

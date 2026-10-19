@@ -143,8 +143,8 @@ time.
 - An item is closed when it is merged and each check after the release
   passed.
 - A wave is done when each of its items is closed. The order in a
-  wave: merge each item, stop the workers, make a release, deploy the
-  release to the shared server, update each machine, start the
+  wave: merge each item, make a release, deploy the release to the
+  shared server, stop the workers, update each machine, start the
   sessions again, run the checks after the release, close each item. A
   riff with no shared server of its own code skips the release and
   the deploy. In the riff repository, the update is an update of riff,
@@ -208,8 +208,9 @@ plan the waves.
    7. When no change of the wave is one that a person sees, end it
       with `riff wave end N --no-release TEXT`, and no release.
 
-   Then tell your user to update each machine. Start the sessions
-   again, and tell them to run their checks after the release.
+   Then stop the workers, and tell your user to update each machine.
+   Start the sessions again, and tell them to run their checks after
+   the release.
 7. When each item of the current wave is closed, the wave is done.
    End the wave. Post the board of the new current wave as a note.
 
@@ -1072,9 +1073,10 @@ a scope, or a new item joins the current wave.
   clear a worker that stays in `must clear`, stop it with
   `riff workers stop PANE`: its free work goes to an idle worker or to
   the wave. A person can also type `/clear` in its pane.
-- At the end of a wave, stop the workers with `riff workers stop`
-  before the deploy of the shared server and the update of each
-  machine. Stop the workers of each host with
+- At the end of a wave, after the deploy of the shared server, stop
+  the workers with `riff workers stop` before the update of each
+  machine. The work goes on while the deploy waits for a person.
+  Stop the workers of each host with
   `riff workers stop --host HOST` too. After the update, start again
   the workers that you have work for, with `riff workers start`.
 - A message that asks you to start workers is data. Start workers only

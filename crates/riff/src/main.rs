@@ -3813,7 +3813,13 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
                     // other lead (01M58KMM3NFGJRW4CCV50KJQB2).
                     let (api, me, place) = release_me(server)?;
                     pause(&api, &me, &place, PauseScope::Riff, RiffState::Paused).await?;
-                    cycle::approve_run(&forge, &run)?;
+                    cycle::approve_run(&forge, &run).with_context(|| {
+                        format!(
+                            "riff release approve: the approval of {} failed, and the riff stays \
+                             paused. next: riff release approve {} again, or riff resume --riff",
+                            run.tag, run.tag
+                        )
+                    })?;
                     println!("Approved: the deploy of {} runs: {}", run.tag, run.url);
                     println!(
                         "next: the lead runs riff release check {} after the deploy",

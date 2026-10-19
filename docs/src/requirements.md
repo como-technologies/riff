@@ -421,7 +421,8 @@
   sessions again, run the checks after the release, close each item. A
   riff with no shared server of its own code skips the release and the
   deploy. Then the lead ends the wave. No session starts an item of the
-  next wave before the current wave is done.
+  next wave before the current wave is done. Superseded in part by
+  01M58Q03ZBVVXAQ2WZ8EJ5FWS4.
 - **R217** The lead plans the waves. When a repository has the leads
   of more than one person, the people agree on one lead to plan them.
 - **R218** A person or a session can add a work item at any time, with
@@ -7813,6 +7814,12 @@ items of Wave C that end riff-server in the Backlog
   log or ask the shared riff, `riff release check` names each check
   that it could not do, says `gcloud auth login` for the log, and
   changes nothing but the comment on the release issue.
+- **01M58Q03ZBVVXAQ2WZ8EJ5FWS4** The order in a wave: merge each item,
+  make a release, deploy the release to the shared server, stop the
+  workers, update each machine, start the sessions again, run the
+  checks after the release, close each item. The work goes on while the
+  deploy waits for a person. The lead stops the workers after the
+  deploy, before the update of each machine.
 
 ### The real-session test
 

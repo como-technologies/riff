@@ -59,9 +59,10 @@ flowchart LR
 A wave is done when each of its items is closed. An item is closed
 when it is merged and each check after the release passed. Some items
 have a check that needs the merged code on each machine. The order in
-a wave: merge each item, stop the workers, make a release, deploy the
-release to the shared server, update each machine, start the sessions
-again, run the checks after the release, close each item. A riff with no
+a wave: merge each item, make a release, deploy the release to the
+shared server, stop the workers, update each machine, start the
+sessions again, run the checks after the release, close each item.
+The work goes on while the deploy waits for a person. A riff with no
 shared server of its own code skips the release and the deploy. In
 the riff repository, the update is
 [Update riff](start-a-riff.md#update-riff).
