@@ -1618,8 +1618,14 @@ enum RelayCommand {
     Mcp,
     /// Wait for the next wake of the session, and print its line
     ///
-    /// The lead runs it as a background task: it ends at the next wake.
-    Watch,
+    /// Without a flag, it ends at the next wake. With --follow, it never ends: it
+    /// prints one line for each wake, so the Monitor tool of Claude Code wakes
+    /// the session at each line. The lead runs that once.
+    Watch {
+        /// Print one line for each wake, and keep running.
+        #[arg(long)]
+        follow: bool,
+    },
     /// Run the PermissionDenied hook of the session
     ///
     /// It reads the hook input on stdin, keeps one record with no secret
@@ -3419,8 +3425,11 @@ async fn relay_command(
             let socket = riff::session_relay::socket_here()?;
             riff::session_relay::mcp(&socket, tokio::io::stdin(), tokio::io::stdout()).await
         }
-        Some(RelayCommand::Watch) => {
+        Some(RelayCommand::Watch { follow }) => {
             let socket = riff::session_relay::socket_here()?;
+            if follow {
+                return riff::session_relay::follow(&socket, |line| println!("{line}")).await;
+            }
             println!("{}", riff::session_relay::watch(&socket).await?);
             Ok(())
         }

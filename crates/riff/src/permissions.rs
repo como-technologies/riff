@@ -83,6 +83,7 @@
 //! | `Bash(~/.cache/riff/check/target/static/release/riff *)` | allow | worker | user | the riff of a new build in a check (01M5084K79M5XJT3MP8FFVQKDX) |
 //! | `Bash({HOME}/.cache/riff/check/target/static/release/riff *)` | allow | worker | user | the same riff, by its full path |
 //! | `Bash(/opt/riff/riff relay watch)` | allow | lead | session | the wakes of the lead in a container |
+//! | `Bash(/opt/riff/riff relay watch --follow)` | allow | lead | session | the wakes of the lead, one watch that never ends |
 //! | `Bash(/opt/riff/riff wave *)` | allow | lead | session | the steps of the waves of the lead in a container |
 //! | `Bash(riff wave move *)` | allow | lead | user | move items to another wave or to the Backlog (01M592406KTHSXHTWQWA3RN6Q2) |
 //! | `Bash(riff wave end *)` | allow | lead | user | end a wave, also with --move-open-to-backlog |
@@ -346,6 +347,11 @@ pub const TABLE: &[Row] = {
             &[User],
         ),
         allow("Bash(/opt/riff/riff relay watch)", &[Lead], &[Session]),
+        allow(
+            "Bash(/opt/riff/riff relay watch --follow)",
+            &[Lead],
+            &[Session],
+        ),
         allow("Bash(/opt/riff/riff wave *)", &[Lead], &[Session]),
         allow("Bash(riff wave move *)", &[Lead], &[User]),
         allow("Bash(riff wave end *)", &[Lead], &[User]),

@@ -898,6 +898,36 @@ pub async fn watch(socket: &Path) -> Result<String> {
     }
 }
 
+/// `riff relay watch --follow` (01M59235BBXEKPZBRH23C39574): gives the
+/// line of each wake of the session to `emit`, as the daemon says it on
+/// the socket at `socket` ([`SessionAsk::Follow`]), and never ends. While
+/// the daemon is away, it tries the socket again each [`RETRY`].
+pub async fn follow(socket: &Path, mut emit: impl FnMut(&str)) -> Result<()> {
+    loop {
+        let Ok(conn) = connect(socket).await else {
+            tokio::time::sleep(RETRY).await;
+            continue;
+        };
+        let (read, mut write) = conn.into_split();
+        let mut lines = BufReader::new(read).lines();
+        if send(&mut write, &SessionAsk::Follow { protocol: PROTOCOL })
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        while let Ok(Some(line)) = lines.next_line().await {
+            match serde_json::from_str::<Say>(&line) {
+                Ok(Say::Line { text }) => emit(&text),
+                Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
+                _ => {}
+            }
+        }
+        // The daemon went away: wait for the next one.
+        tokio::time::sleep(RETRY).await;
+    }
+}
+
 /// `riff relay denied --send` (01M57XY3Q6HEYQG27FE0CEQ7HB): takes each
 /// refusal of auto mode of `queue`, and gives them to the daemon on the
 /// socket at `socket` ([`SessionAsk::Denied`]). The daemon posts them as
