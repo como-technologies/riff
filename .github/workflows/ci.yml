@@ -1,4 +1,8 @@
 name: CI
+# A run by hand with the input tag has the name "Deploy vX.Y.Z", so riff
+# release approve and riff release check find the tag of a rollback
+# (01M58KMMAPJ33CQWR8GRX62GMR). Each other run keeps its default name.
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' && format('Deploy {0}', inputs.tag) || '' }}
 
 on:
   # main, and each branch release/MAJOR.x of an older release line

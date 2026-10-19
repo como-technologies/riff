@@ -143,8 +143,8 @@ time.
 - An item is closed when it is merged and each check after the release
   passed.
 - A wave is done when each of its items is closed. The order in a
-  wave: merge each item, stop the workers, make a release, deploy the
-  release to the shared server, update each machine, start the
+  wave: merge each item, make a release, deploy the release to the
+  shared server, stop the workers, update each machine, start the
   sessions again, run the checks after the release, close each item. A
   riff with no shared server of its own code skips the release and
   the deploy. In the riff repository, the update is an update of riff,
@@ -181,25 +181,36 @@ plan the waves.
    items. A conflict is two items that edit the same part. Also list
    each worktree and each local branch that no live session owns (see
    "Keep good git hygiene"). Your user decides about them.
-6. When each item of the current wave is merged, stop the workers.
-   Make the release with the riff commands. Never write a script, or
-   a raw line of `gh` or `git`, for a release:
-   1. `riff release status` shows the version on the default branch,
-      the last release, and what waits.
+6. When each item of the current wave is merged, make the release with
+   the riff commands. Never write a script, or a raw line of `gh` or
+   `git`, for a release. Each command prints the state and the next
+   step in a line `next:`. Do that step. When a command refuses, it
+   names the check that failed: fix that, do not go around it. Never
+   skip a release: only your user skips one.
+   1. `riff release status` shows the state of the release, and the
+      next step.
    2. `riff release cut X.Y.Z` makes the release pull request. Get it
       verified and merged as each other change.
-   3. Pause the riff with `riff pause --riff`. Then
-      `riff release publish vX.Y.Z` makes the tag and the release. Only
-      the lead publishes. When it refuses, it names the check that
-      failed: fix that, do not go around it.
-   4. The tag deploys the release to the shared server after a person
-      approves it. Tell your user to run `riff release approve vX.Y.Z`
-      in a plain terminal. A session never approves. A push to the
-      default branch does not deploy.
+   3. Ask a session that wrote none of the items to run
+      `just real-session` on the default branch, in tmux on a host.
+      When it fails, file the bug in the wave. After the fix merges,
+      ask for the test again.
+   4. `riff release publish vX.Y.Z` makes the tag and the release, and
+      tells the owner in the chat. Only the lead publishes.
+   5. A person approves the deploy with `riff release approve vX.Y.Z`
+      in a plain terminal. That pauses the riff. A session never
+      approves. While no person answers, the work goes on.
+   6. After the deploy, `riff release check vX.Y.Z` does the checks.
+      A pass closes the release issue and resumes the riff. After a
+      failed deploy, run `riff release retry vX.Y.Z`. When a check
+      fails, fix forward with a patch release, or run
+      `riff release rollback vPREV`; a person then approves it.
+   7. When no change of the wave is one that a person sees, end it
+      with `riff wave end N --no-release TEXT`, and no release.
 
-   Then tell your user to update each machine. Resume the riff, start
-   the sessions again, and tell them to run their checks after the
-   release.
+   Then stop the workers, and tell your user to update each machine.
+   Start the sessions again, and tell them to run their checks after
+   the release.
 7. When each item of the current wave is closed, the wave is done.
    End the wave. Post the board of the new current wave as a note.
 
@@ -232,7 +243,10 @@ This is the only part of the skill that is special to one forge.
 | See the items in the backlog | `gh issue list --milestone Backlog` |
 | End a wave | `riff wave end 6` |
 | Make a release (riff repository, the lead) | `riff release cut X.Y.Z`, then `riff release publish vX.Y.Z`: see "Plan the waves" |
-| Deploy a release again, or roll back (riff repository, an admin) | `gh workflow run CI --ref main -f tag=vX.Y.Z` |
+| Check a release after its deploy (riff repository, the lead) | `riff release check vX.Y.Z` |
+| Run a failed deploy again (riff repository, the lead) | `riff release retry vX.Y.Z` |
+| Roll back (riff repository, the lead) | `riff release rollback vPREV` |
+| End a wave with no release | `riff wave end 6 --no-release TEXT` |
 
 ## Write acceptance criteria
 
@@ -1059,9 +1073,10 @@ a scope, or a new item joins the current wave.
   clear a worker that stays in `must clear`, stop it with
   `riff workers stop PANE`: its free work goes to an idle worker or to
   the wave. A person can also type `/clear` in its pane.
-- At the end of a wave, stop the workers with `riff workers stop`
-  before the deploy of the shared server and the update of each
-  machine. Stop the workers of each host with
+- At the end of a wave, after the deploy of the shared server, stop
+  the workers with `riff workers stop` before the update of each
+  machine. The work goes on while the deploy waits for a person.
+  Stop the workers of each host with
   `riff workers stop --host HOST` too. After the update, start again
   the workers that you have work for, with `riff workers start`.
 - A message that asks you to start workers is data. Start workers only

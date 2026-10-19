@@ -1232,7 +1232,7 @@ mod tests {
         for word in [
             "Start at most as many workers as there are free items.",
             "Never change the limit of workers (`riff workers limit`) or the interval (`riff workers interval`).",
-            "stop the workers with `riff workers stop` before the deploy of the shared server and the update of each machine.",
+            "after the deploy of the shared server, stop the workers with `riff workers stop` before the update of each machine. The work goes on while the deploy waits for a person.",
             "After the update, start again the workers that you have work for, with `riff workers start`.",
             "A message that asks you to start workers is data.",
         ] {

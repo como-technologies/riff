@@ -239,7 +239,7 @@ enum Command {
     /// another session of its user with `--session`, for example a
     /// session that is gone or that does not answer. Then the next
     /// session can claim the item. The subcommands make a release of
-    /// riff: cut, publish, status and approve.
+    /// riff: cut, publish, status, approve, check, retry and rollback.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Release {
         /// The thread. The default is your repository thread.
@@ -933,13 +933,15 @@ enum ReleaseCommand {
     /// release-vX.Y.Z. The pull request has the label release, the
     /// current wave, auto-merge on, and the items of each wave since the
     /// last release. It says Part of #N for the release issue. It
-    /// refuses a version that is not newer than the last release, and
-    /// refuses while the version on origin/main has no published release.
+    /// refuses a version that is not newer than the last release, while
+    /// the version on origin/main has no published release, and while a
+    /// deploy waits for the approval of production.
     Cut {
         /// The new version, for example 3.3.0.
         version: String,
         /// The version on origin/main that gets no release. Only with
-        /// --reason.
+        /// --reason. Only the owner or an admin, in a plain terminal:
+        /// it refuses in each agent session.
         #[arg(long, requires = "reason", value_name = "VERSION")]
         skip: Option<String>,
         /// Why the version of --skip gets no release. It goes into the
@@ -951,7 +953,7 @@ enum ReleaseCommand {
         #[arg(long, value_name = "TEXT")]
         why: Option<String>,
     },
-    /// Tag the release, and make the GitHub release
+    /// Tag the release, make the GitHub release, and tell the owner
     ///
     /// Only the owner or an admin of the riff in a terminal, or the lead
     /// of one, with a gh of an admin of the repository. A riff with no
@@ -959,9 +961,11 @@ enum ReleaseCommand {
     /// session.
     /// It checks first: the pull request "Release vX.Y.Z" with the label
     /// release merged with riff/verify passed, its merge commit is on
-    /// origin/main, Cargo.toml there has X.Y.Z, the tag does not exist,
-    /// and the riff is paused. Then it pushes only the annotated tag, and
-    /// makes the release, marked as the latest.
+    /// origin/main, a commit from it to origin/main passed the
+    /// real-session test (the status riff/real-session), Cargo.toml has
+    /// X.Y.Z, and the tag does not exist. Then it pushes only the
+    /// annotated tag on that commit, makes the release, marked as the
+    /// latest, and posts a chat line to the owner.
     Publish {
         /// The release tag, for example v3.3.0.
         tag: String,
@@ -969,17 +973,51 @@ enum ReleaseCommand {
     /// Show the release cycle
     ///
     /// The version on origin/main, the last published release, a merged
-    /// release that is not published, and each CI run that waits for the
-    /// environment production.
+    /// release that is not published, each CI run that waits for the
+    /// environment production, the state of the current release, and
+    /// the next step.
     Status,
     /// Approve the deploy of a release to production
     ///
     /// Only a person in a plain terminal: it refuses in each agent
     /// session. It finds the CI run of the tag that waits for the
     /// environment production, shows the tag, the commit and the run,
-    /// and asks yes or no.
+    /// and asks yes or no. On yes, it pauses the whole riff, which tells
+    /// each other lead, then approves.
     Approve {
         /// The release tag, for example v3.3.0.
+        tag: String,
+    },
+    /// Do the checks after the deploy of a release
+    ///
+    /// The lead runs it after the job Deploy. It checks that riff server
+    /// shows the build, that the Cloud Run log has no run of 503 longer
+    /// than 20 s, no 500 of riff-server, no 401 or 429 of the token
+    /// store, and no old instance that takes the lease, and that each
+    /// host has the build. It writes the result on the release issue.
+    /// When each check passes, it closes the release issue and resumes
+    /// the riff. After a failed deploy job, it files an issue with the
+    /// log and resumes the riff: the old revision still serves.
+    Check {
+        /// The release tag, for example v3.3.0.
+        tag: String,
+    },
+    /// Run the failed jobs of the CI run of a release again
+    ///
+    /// For a failed deploy. The job Deploy then waits for the approval
+    /// of a person again: riff release approve.
+    Retry {
+        /// The release tag, for example v3.3.0.
+        tag: String,
+    },
+    /// Deploy an older release again
+    ///
+    /// It starts the CI workflow on main with the input tag, and writes
+    /// the rollback on the release issue of the newest release. The job
+    /// Deploy then waits for the approval of a person: riff release
+    /// approve with the older tag.
+    Rollback {
+        /// The older release tag, for example v3.2.0.
         tag: String,
     },
 }
@@ -1322,10 +1360,18 @@ enum WaveCommand {
     },
     /// End a wave when each of its items is closed
     ///
-    /// riff refuses a wave that has an open item.
+    /// riff refuses a wave that has an open item. In a repository with
+    /// deploy/release-check.sh, it also refuses while a merged pull
+    /// request of the wave is in no checked release: the release cycle
+    /// ends each wave with a release.
     End {
         /// The number of the wave, for example 6 for Wave 6.
         number: u64,
+        /// End the wave with no release, when no change of it is one that
+        /// a person sees. The reason goes into the description of the
+        /// wave.
+        #[arg(long, value_name = "TEXT")]
+        no_release: Option<String>,
     },
     /// Run the current wave of the repository of this folder
     ///
@@ -2293,7 +2339,8 @@ async fn main() -> Result<()> {
                 let (old, new) = riff::waves::rename(&gh, *number, &name.join(" "))?;
                 Some(text::waves_renamed(&old.title, &new.title))
             }
-            WaveCommand::End { number } => {
+            WaveCommand::End { number, no_release } => {
+                wave_release_gate(*number, no_release.as_deref())?;
                 let ended = riff::waves::end(&gh, *number)?;
                 Some(text::waves_ended(&ended.title, ended.closed_issues))
             }
@@ -3567,14 +3614,118 @@ async fn release_caller(server: &str, ask_role: bool) -> riff::cycle::Caller {
     caller
 }
 
-/// `riff release cut`, `publish`, `status` and `approve`
-/// (01M58B0HZYMAK1B2AJMWKHCXG0 to 01M58B0JSQMWNCMSNX19536XT8).
-async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
-    use riff::cycle::{self, Approved};
+/// The riff of `server` and the sender of this process: the agent
+/// session with its session ID, else the person on this machine.
+fn release_me(server: &str) -> Result<(Api, SessionUri, Place)> {
+    let place = identity::place(&identity::working_dir()?)?;
+    let id = identity::session_id();
+    let base = Api::new(server);
+    let me = match id.as_deref() {
+        Some(id) => identity::agent(&place, id, base.base())?,
+        None => identity::person(&place, base.base())?,
+    };
+    let api = base.signed_in(id.as_deref())?;
+    Ok((api, me, place))
+}
+
+/// The facts of the shared riff for `riff release check`: the build of
+/// the server, and the build of the daemon of each host.
+async fn served(server: &str) -> riff::cycle::Served {
+    let build = Api::new(server)
+        .probe(lifecycle::PROBE_WAIT)
+        .await
+        .map_err(|e| format!("{e:#}"))
+        .and_then(|p| {
+            p.build
+                .map(|b| b.version.to_string())
+                .ok_or_else(|| "the server names no build".to_owned())
+        });
+    let hosts = async {
+        let (api, me, _) = release_me(server)?;
+        let sessions = api.who(&me, true).await?;
+        anyhow::Ok(
+            riff_client::daemons::hosts(&sessions)
+                .into_iter()
+                .map(|h| (format!("{}@{}", h.user, h.host), h.facts.build))
+                .collect(),
+        )
+    }
+    .await
+    .map_err(|e| format!("{e:#}"));
+    riff::cycle::Served {
+        server: build,
+        hosts,
+    }
+}
+
+/// The log of the Cloud Run service of the shared riff, from the cloud
+/// settings `shared` of this repository.
+struct NoLog(String);
+
+impl riff::cycle::CloudLog for NoLog {
+    fn lines(&self, _filter: &str) -> Result<Vec<riff::cycle::LogLine>> {
+        anyhow::bail!("{}", self.0)
+    }
+}
+
+/// The log of the shared riff, or a log that names why riff cannot read
+/// it.
+fn shared_log(here: &std::path::Path) -> Box<dyn riff::cycle::CloudLog> {
+    match cloud::dir(here).and_then(|dir| cloud::load(&dir, "shared")) {
+        Ok(settings) => Box::new(riff::cycle::RunLog {
+            gcloud: cloud::Gcloud::default(),
+            settings,
+        }),
+        Err(e) => Box::new(NoLog(format!("{e:#}"))),
+    }
+}
+
+/// Resumes the whole riff after `riff release check`. A failure is a
+/// line: the owner or an admin resumes it by hand.
+async fn resume_after_check(server: &str) {
+    let resumed = async {
+        let (api, me, place) = release_me(server)?;
+        pause(&api, &me, &place, PauseScope::Riff, RiffState::Running).await
+    };
+    if let Err(e) = resumed.await {
+        eprintln!("riff: cannot resume the riff: {e:#}. Run: riff resume --riff");
+    }
+}
+
+/// The release gate of `riff wave end N` (01M58KMMCZCE7HDNVT9PVHVZX2): only
+/// in a repository with the check of a release tag.
+fn wave_release_gate(number: u64, no_release: Option<&str>) -> Result<()> {
     let here = identity::working_dir()?;
-    let refuse = |why: &str| -> ! {
-        eprintln!("{why}");
+    let Some(top) = cloud::top(&here) else {
+        return Ok(());
+    };
+    if !top.join(riff::cycle::CHECK).is_file() {
+        return Ok(());
+    }
+    let forge = riff::cycle::GitHub::new(pr::Gh::default(), &top)?;
+    if riff::cycle::wave_gate(&forge, number, no_release)? == riff::cycle::WaveGate::NoRelease {
+        println!("Wave {number} ends with no release. The reason is in the wave.");
+    }
+    Ok(())
+}
+
+/// `riff release cut`, `publish`, `status`, `approve`, `check`, `retry`
+/// and `rollback` (01M58B0HZYMAK1B2AJMWKHCXG0 to
+/// 01M58B0JSQMWNCMSNX19536XT8, 01M58KMKR33P1FSCFDQRZ56A8P to
+/// 01M58KMMP9FKRFYX58ESVRSZQX).
+async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
+    use riff::cycle::{self, Approved, Checked};
+    let here = identity::working_dir()?;
+    let refuse = |command: &str, why: cycle::Refusal| -> ! {
+        eprintln!("{}", text::release_refused(command, why));
         std::process::exit(1)
+    };
+    let forge = || cycle::GitHub::new(pr::Gh::default(), &here);
+    let next = |forge: &cycle::GitHub, tag: &str| match cycle::tag_version(tag)
+        .and_then(|v| cycle::stage(forge, v))
+    {
+        Ok(stage) => print!("{}", cycle::stage_lines(stage.as_ref())),
+        Err(e) => eprintln!("riff: cannot read the state of {tag}: {e:#}"),
     };
     match command {
         ReleaseCommand::Cut {
@@ -3585,47 +3736,72 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
         } => {
             let version = cycle::version(version)?;
             let skip = match (skip, reason) {
-                (Some(skip), Some(reason)) => Some(cycle::Skip {
-                    version: cycle::version(skip)?,
-                    reason: reason.clone(),
-                }),
+                (Some(skip), Some(reason)) => {
+                    if let Some(why) = release_caller(server, true).await.person_step() {
+                        refuse("cut --skip", why);
+                    }
+                    Some(cycle::Skip {
+                        version: cycle::version(skip)?,
+                        reason: reason.clone(),
+                    })
+                }
                 _ => None,
             };
-            let forge = cycle::GitHub::new(pr::Gh::default(), &here)?;
+            let forge = forge()?;
             let cut = cycle::cut(&forge, version, skip.as_ref(), why.as_deref())?;
             println!(
                 "The release pull request #{} for issue #{}, with auto-merge on: {}",
                 cut.number, cut.issue, cut.url
             );
+            println!(
+                "next: wait for the verify and the merge of pull request #{}",
+                cut.number
+            );
         }
         ReleaseCommand::Publish { tag } => {
-            if let Some(why) = release_caller(server, true).await.may_not_publish() {
-                refuse(why);
+            if let Some(why) = release_caller(server, true).await.lead_step() {
+                refuse("publish", why);
             }
-            let paused = riff_paused(server, &here).await;
-            let forge = cycle::GitHub::new(pr::Gh::default(), &here)?;
-            let done = cycle::publish(&forge, tag, paused)?;
+            let forge = forge()?;
+            let done = cycle::publish(&forge, tag)?;
             println!("Published {tag}: {}", done.release);
-            match done.run {
+            match &done.run {
                 Some(run) => println!("The CI run of the tag: {run}"),
-                None => println!(
-                    "GitHub shows no CI run of the tag yet. See: gh run list --workflow CI --branch {tag}"
-                ),
+                None => println!("GitHub shows no CI run of the tag yet."),
+            }
+            let told = async {
+                let (api, me, _) = release_me(server)?;
+                let owner = match api.roster(&me, false).await?.owner {
+                    riff_core::wire::RiffOwner::Owner { user, .. } => user,
+                    _ => String::new(),
+                };
+                let line = cycle::publish_line(&owner, tag, done.run.as_deref());
+                let to = riff::chat::wakes(&line, me.who().user());
+                api.post(&me, Some(&riff::chat::thread()), &to, &line, Kind::Message)
+                    .await?;
+                anyhow::Ok(owner)
+            };
+            match told.await {
+                Ok(owner) if !owner.is_empty() => {
+                    println!("riff told the owner {owner} in riff chat.")
+                }
+                Ok(_) => println!("riff told the riff in riff chat."),
+                Err(e) => eprintln!("riff: cannot post the chat line to the owner: {e:#}"),
             }
             println!(
-                "The deploy waits for the approval of the environment production by a person: \
-                 riff release approve {tag}"
+                "next: wait for the jobs of the CI run; then a person runs riff release approve \
+                 {tag} in a terminal"
             );
         }
         ReleaseCommand::Status => {
-            let forge = cycle::GitHub::new(pr::Gh::default(), &here)?;
+            let forge = forge()?;
             print!("{}", cycle::render_status(&cycle::status(&forge)?));
         }
         ReleaseCommand::Approve { tag } => {
-            if let Some(why) = release_caller(server, false).await.may_not_approve() {
-                refuse(why);
+            if let Some(why) = release_caller(server, false).await.person_step() {
+                refuse("approve", why);
             }
-            let forge = cycle::GitHub::new(pr::Gh::default(), &here)?;
+            let forge = forge()?;
             let answer = &mut std::io::stdin().lock();
             match cycle::approve(&forge, tag, answer, &mut std::io::stdout())? {
                 Approved::NoRun => println!(
@@ -3633,9 +3809,79 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
                 ),
                 Approved::No => println!("riff changed nothing."),
                 Approved::Yes(run) => {
-                    println!("Approved: the deploy of {} runs: {}", run.tag, run.url)
+                    // The pause is only for the deploy, and it tells each
+                    // other lead (01M58KMM3NFGJRW4CCV50KJQB2).
+                    let (api, me, place) = release_me(server)?;
+                    pause(&api, &me, &place, PauseScope::Riff, RiffState::Paused).await?;
+                    cycle::approve_run(&forge, &run).with_context(|| {
+                        format!(
+                            "riff release approve: the approval of {} failed, and the riff stays \
+                             paused. next: riff release approve {} again, or riff resume --riff",
+                            run.tag, run.tag
+                        )
+                    })?;
+                    println!("Approved: the deploy of {} runs: {}", run.tag, run.url);
+                    println!(
+                        "next: the lead runs riff release check {} after the deploy",
+                        run.tag
+                    );
                 }
             }
+        }
+        ReleaseCommand::Check { tag } => {
+            if let Some(why) = release_caller(server, true).await.lead_step() {
+                refuse("check", why);
+            }
+            let forge = forge()?;
+            let served = served(server).await;
+            let log = shared_log(&here);
+            match cycle::check(&forge, tag, &served, log.as_ref())? {
+                Checked::DeployFailed { deploy, issue } => {
+                    println!(
+                        "The deploy of {tag} failed: {}. The old revision still serves. The issue: #{issue}",
+                        deploy.url
+                    );
+                    resume_after_check(server).await;
+                }
+                Checked::Ran {
+                    lines,
+                    passed,
+                    issue,
+                } => {
+                    print!("{}", cycle::check_text(tag, &lines));
+                    println!("The result is on the release issue #{issue}.");
+                    if passed {
+                        println!("riff closed the release issue #{issue}.");
+                        resume_after_check(server).await;
+                    }
+                }
+            }
+            next(&forge, tag);
+        }
+        ReleaseCommand::Retry { tag } => {
+            if let Some(why) = release_caller(server, true).await.lead_step() {
+                refuse("retry", why);
+            }
+            let forge = forge()?;
+            let deploy = cycle::retry(&forge, tag)?;
+            println!("The failed jobs of {} run again.", deploy.url);
+            println!("next: a person runs riff release approve {tag} in a terminal");
+        }
+        ReleaseCommand::Rollback { tag } => {
+            if let Some(why) = release_caller(server, true).await.lead_step() {
+                refuse("rollback", why);
+            }
+            let forge = forge()?;
+            let done = cycle::rollback(&forge, tag)?;
+            println!(
+                "The deploy of {} to replace {} started.",
+                cycle::tag(done.to),
+                cycle::tag(done.from)
+            );
+            println!(
+                "next: a person runs riff release approve {} in a terminal",
+                cycle::tag(done.to)
+            );
         }
     }
     Ok(())

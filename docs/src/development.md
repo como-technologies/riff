@@ -3618,55 +3618,141 @@ can push a release tag: the ruleset `releases` makes this so (see
 installs the release that the shared server runs, so the tag and the
 deploy make a release current.
 
-```mermaid
-flowchart LR
-    M[each item of the wave merged] --> S[stop the workers]
-    S --> V[make a release:<br/>bump, merge, tag]
-    V --> C[CI: Release check]
-    C --> D[CI: Deploy]
-    D --> U[riff update on each machine]
-    U --> R[start the sessions again]
-```
+### The release cycle
 
-### Make a release
-
-The lead makes the release with four riff commands, when each item of
-the wave is merged. A person only approves the deploy. No session
-writes a script, or a raw line of `gh` or `git`, for a release.
+Each wave with a change that a person sees since the last release tag
+ends with one release. The lead does each step with a riff command.
+No session writes a release step by hand, and no session skips a
+release: only a person skips one. Each command prints the state of the
+release and the next step, for example
+`next: riff release publish v3.3.0`.
 
 ```mermaid
-sequenceDiagram
-    participant L as the lead
-    participant G as GitHub
-    participant P as a person
-    L->>G: riff release cut 3.3.0
-    G->>G: verify, Gate, merge of "Release v3.3.0"
-    L->>G: riff release publish v3.3.0
-    G->>G: CI of the tag: Release check, Static riff
-    G-->>P: the job Deploy waits for production
-    P->>G: riff release approve v3.3.0
+flowchart TD
+    A[Last item of the wave merges] --> B{Change that a person sees since the last tag?}
+    B -- no --> Z[riff wave end N --no-release TEXT: the reason in the wave]
+    B -- yes --> C[riff release cut X.Y.Z: release pull request]
+    C --> D{Verify by another session}
+    D -- FAIL --> D1[Fix on the release branch] --> D
+    D -- PASS --> E[Auto-merge]
+    E --> F{just real-session on origin/main}
+    F -- FAIL --> F1[Bug issue in the wave, fix merges] --> F
+    F -- PASS --> G[riff release publish vX.Y.Z: tag, GitHub release, chat line to the owner]
+    G --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z (pauses the riff, approves production)"}}
+    H -- no answer --> H1[Waits. Work goes on. The next cut refuses. Reminder in chat each 4 h]
+    H1 --> H
+    H -- approved --> I{Deploy job}
+    I -- FAIL --> I1[Old revision still serves. riff release check files the issue and resumes the riff. riff release retry vX.Y.Z] --> H
+    I -- PASS --> J{riff release check vX.Y.Z}
+    J -- PASS --> K[riff resumes. Release issue closes. riff wave end N. Next wave starts]
+    J -- FAIL --> L{Lead: fix forward or roll back}
+    L -- fix forward --> L1[Issue, patch release X.Y.Z+1: the same cycle] --> C
+    L -- roll back --> M{{"HUMAN GATE 2: riff release approve vPREV of riff release rollback vPREV"}}
+    M --> N[Old release deployed. riff release check vPREV. riff resumes. Issue with the facts]
 ```
 
-Pick the version with
-[The test for each release](how-it-works.md#the-test-for-each-release).
-On the line 1.x, a release that the test makes a major is a minor.
+The gates:
 
-#### See the release cycle
+| Gate | Who | Command | With no answer |
+|---|---|---|---|
+| Verify | a session that did not write the change | the verify of riff | the release pull request waits |
+| Real session | a session that wrote none of the items, in tmux on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses |
+| HUMAN GATE 1: deploy | the owner or an admin, in a terminal | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
+| HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
+| HUMAN GATE 3: skip | the owner or an admin, in a terminal | `riff release cut --skip VERSION --reason TEXT` | no skip |
+| Log access | a person, when the sign-in of `gcloud` is gone | `gcloud auth login` | `riff release check` says which check it could not do |
+
+`riff release status` shows the state of the current release: `cut`,
+`merged`, `tested`, `published`, `waiting`, `deploying`, `deployed`,
+`checked`, `failed` or `rolled back`. The watch of the lead wakes the
+lead at each change of the state. While a deploy waits for a person,
+it reminds the owner in `riff chat` each 4 hours.
+
+The lead may run `riff release cut`, `publish`, `status`, `check`,
+`retry` and `rollback`: `riff init` writes the permission rules of
+Claude Code for them (see
+[Let riff set the permissions of Claude Code](start-a-riff.md#let-riff-set-the-permissions-of-claude-code)).
+It writes no rule for `approve`. `publish`, `check`, `retry` and
+`rollback` refuse a worker, a container session, a session that is not
+the lead, and the lead of a member. `approve` and `cut --skip` refuse
+each agent session.
+
+#### See the state of the release
 
 Each session can see the version on `origin/main`, the last published
-release, a merged release that is not published, and each CI run that
-waits for the approval of `production`:
+release, a merged release that is not published, each CI run that waits
+for the approval of `production`, the state of the current release, and
+the next step:
 
 ```sh
 riff release status
 ```
 
-#### Cut the release pull request
+#### Check the release after the deploy
 
-A lead or a worker cuts the release. Stop the workers first:
+The lead runs the checks after the job `Deploy` ends:
 
 ```sh
-riff workers stop
+riff release check v3.3.0
+```
+
+riff checks that:
+
+- `riff server` shows the build of the release;
+- the Cloud Run log has no run of 503 longer than 20 s, no 500 of
+  `riff-server`, and no 401 or 429 of the token store;
+- no old instance takes the lease;
+- each host has the build: the part `Hosts` of `riff who`.
+
+riff writes the result on the release issue. When each check passes,
+riff closes the release issue and resumes the riff. When a check
+fails, the lead fixes forward with a patch release, or rolls back.
+When the job `Deploy` failed, the old revision still serves: riff files
+an issue with the failed jobs and the run, and resumes the riff.
+
+riff reads the log with the `gcloud` of your machine and the cloud
+settings `shared` (see
+[Read the log of the server](#read-the-log-of-the-server)). When the
+sign-in of `gcloud` is gone, riff says which check it could not do. A
+person signs in again, and the lead runs `riff release check` again:
+
+```sh
+gcloud auth login
+```
+
+#### End the wave of the release
+
+After the check passes, end the wave:
+
+```sh
+riff wave end 34
+```
+
+In the riff repository, `riff wave end` refuses while a merged pull
+request of the wave is in no checked release, and names the next step.
+When no change of the wave is one that a person sees, end it with no
+release. The reason goes into the description of the wave:
+
+```sh
+riff wave end 34 --no-release "Only the tests changed."
+```
+
+### Make a release
+
+The lead makes the release with riff commands, when each item of the
+wave is merged. A person only approves the deploy. No session writes a
+script, or a raw line of `gh` or `git`, for a release. See
+[The release cycle](#the-release-cycle) for each state and each gate.
+
+Pick the version with
+[The test for each release](how-it-works.md#the-test-for-each-release).
+On the line 1.x, a release that the test makes a major is a minor.
+
+#### Cut the release pull request
+
+A lead or a worker cuts the release:
+
+```sh
 riff release cut 3.3.0
 ```
 
@@ -3689,10 +3775,16 @@ riff release cut 3.3.0 --why "Old and new sessions work together, but a new sess
 ```
 
 riff refuses a version that is not newer than the last release. It
+refuses while a deploy waits for the approval of `production`. It
 also refuses while the version on `origin/main` has no published
-release: publish that release first. To go on with no release of that
-version, give the version and the reason. The reason goes into the
-pull request and into the GitHub release:
+release: publish that release first.
+
+#### Skip a version
+
+Only the owner or an admin skips a version, in a plain terminal: the
+command refuses in each agent session (HUMAN GATE 3). Give the version
+and the reason. The reason goes into the pull request and into the
+GitHub release:
 
 ```sh
 riff release cut 3.4.0 --skip 3.3.0 --reason "the push of the tag was refused"
@@ -3704,10 +3796,13 @@ person runs, for example `riff update --tag v3.3.0` when the old
 `riff` cannot read the new server. Edit the body on GitHub, or with
 `gh pr edit`.
 
-Get the pull request verified and merged as each other change. Then
-run the real-session test on the merge commit, on a machine with
-podman (see [Run the real-session test](#run-the-real-session-test)).
-It must pass before the release:
+#### Test the merged release
+
+Get the pull request verified and merged as each other change. Then a
+session that wrote none of the items runs the real-session test on
+`origin/main`, in tmux on a machine with podman (see
+[Run the real-session test](#run-the-real-session-test)). The test
+sets the commit status `riff/real-session` of the commit:
 
 ```sh
 git fetch origin
@@ -3715,16 +3810,18 @@ git switch --detach origin/main
 just real-session
 ```
 
+When the test fails, file the bug in the wave. After its fix merges,
+run the test again on the new `origin/main`.
+
 #### Publish the release
 
 Only the owner or an admin of the riff, in a terminal or by the lead,
 publishes. A riff with no sign-in has no roles: there each person and
 each lead may. `gh` and `git` must sign in as an admin of the
 repository: the ruleset `releases` lets only an admin push a release
-tag. Pause the riff first:
+tag. The riff runs on:
 
 ```sh
-riff pause --riff
 riff release publish v3.3.0
 ```
 
@@ -3734,15 +3831,18 @@ riff checks each fact first, and names the check that fails:
   and its check `riff/verify` passed;
 - its merge commit is on `origin/main`, and `Cargo.toml` there has the
   version 3.3.0;
-- the tag `v3.3.0` does not exist on GitHub;
-- the riff is paused.
+- a commit from the merge commit to `origin/main` has the status
+  `riff/real-session` with a pass;
+- the tag `v3.3.0` does not exist on GitHub.
 
-Then riff makes the annotated tag on the merge commit, and pushes only
-that tag. It makes the GitHub release: the notes of the pull request,
-then the notes that GitHub makes from the last release, marked as the
-latest. The GitHub releases are the changelog of riff. riff prints the
-URL of the CI run of the tag. It refuses in a worker, in a container
-session, and in a session that is not the lead.
+Then riff makes the annotated tag on the newest commit with a pass of
+the real-session test, and pushes only that tag. It makes the GitHub
+release: the notes of the pull request, then the notes that GitHub
+makes from the last release, marked as the latest. The GitHub releases
+are the changelog of riff. riff prints the URL of the CI run of the
+tag, and posts a chat line to the owner in `riff chat`: the version,
+the run, and `riff release approve v3.3.0`. It refuses in a worker, in
+a container session, and in a session that is not the lead.
 
 The installed riff can be older than the release. For the first
 release with these commands, run `publish` from a build of the merge
@@ -3764,9 +3864,10 @@ environment `production`. See
 
 #### Approve the deploy
 
-A person, an admin, approves the deploy in a plain terminal. Exit each
-Claude Code session first: the command refuses in each agent session,
-also in a `!` command of Claude Code:
+A person, the owner or an admin, approves the deploy in a plain
+terminal (HUMAN GATE 1). Exit each Claude Code session first: the
+command refuses in each agent session, also in a `!` command of Claude
+Code:
 
 ```sh
 riff release approve v3.3.0
@@ -3774,8 +3875,12 @@ riff release approve v3.3.0
 
 riff finds the CI run of the tag that waits for `production`. It shows
 the tag, the commit and the run, and asks yes or no. With `yes`, it
-approves the run with the comment `Release v3.3.0`. When no run waits,
-it says so and changes nothing.
+pauses the whole riff, which tells each other lead, then approves the
+run with the comment `Release v3.3.0`. The pause is only for the
+deploy: `riff release check` resumes the riff. When no run waits, riff
+says so and changes nothing. When the approval fails, the riff stays
+paused: run `riff release approve v3.3.0` again, or
+`riff resume --riff`.
 
 ### Make a patch of an older release
 
@@ -3876,8 +3981,7 @@ image and deploys it. A tag that is not `vX.Y.Z` does not deploy. One
 deploy runs at a time.
 
 The job `Deploy` runs in the GitHub environment `production`. It waits
-for the approval of the owner. Approve it in the GitHub app or on the
-page of the run. See
+for the approval of the owner, with `riff release approve`. See
 [Approve the deploy of a release](#approve-the-deploy-of-a-release).
 
 Then update each machine: each person runs `riff update`, or has
@@ -3919,8 +4023,8 @@ riff cloud log shared --limit 1000 --filter 'timestamp>="START" AND textPayload:
 
 The owner approves each deploy to the shared riff with
 `riff release approve` in a plain terminal: see
-[Approve the deploy](#approve-the-deploy). The GitHub app and the page
-of the run also approve it.
+[Approve the deploy](#approve-the-deploy). Do not approve in the GitHub
+app or on the page of the run: they do not pause the riff.
 
 #### Let only an approved job deploy
 
@@ -4063,24 +4167,47 @@ gcloud storage rm 'gs://como-riff-state/log/**' 'gs://como-riff-state/checkpoint
 
 ### Deploy a release again, or roll back
 
-Run the CI workflow on `main` with the input `tag`. Use it to deploy a
-release again, or to deploy an older release. The gate runs first.
-The job refuses an input that is not a release tag:
+The lead runs these commands. Each deploy waits for the approval of a
+person, as each release does (see
+[Approve the deploy](#approve-the-deploy)).
+Then the lead runs `riff release check` with the tag that deploys.
+
+#### Run a failed deploy again
+
+When the CI run of a release tag failed, run its failed jobs again:
 
 ```sh
-gh workflow run CI --ref main -f tag=v0.2.0
+riff release retry v3.3.0
 ```
+
+riff refuses a run that did not fail. The job `Deploy` then waits for
+`riff release approve v3.3.0`.
+
+#### Roll back to an older release
+
+When the checks after the deploy fail and no fix forward is near, the
+lead deploys an older release:
+
+```sh
+riff release rollback v3.2.0
+```
+
+riff starts the CI workflow on `main` with the input `tag`, and writes
+the rollback on the release issue of the newest release. The gate runs
+first. The job refuses an input that is not a release tag. Then the
+job `Deploy` waits for the approval of a person (HUMAN GATE 2):
+
+```sh
+riff release approve v3.2.0
+```
+
+riff refuses a tag that is not a published release older than the
+newest one. After the deploy, the lead runs
+`riff release check v3.2.0`, and files an issue with the facts.
 
 A rollback to a release with no call ID loses the calls that the
 server keeps. For 24 hours after it, a command that `riff` sends again
 can run two times: for example, a post can show two times.
-
-See the deploys by hand, and watch the last one:
-
-```sh
-gh run list --workflow CI --event workflow_dispatch
-gh run watch
-```
 
 ### Name the owner of the cloud riff
 

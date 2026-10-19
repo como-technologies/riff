@@ -530,6 +530,20 @@ impl Queue {
         file.write_all(text.as_bytes())
     }
 
+    /// Waits until no other send holds the lock of the file. The lock
+    /// ends when the guard drops, or when the process ends.
+    fn wait_turn(&self) -> std::io::Result<std::fs::File> {
+        if let Some(dir) = self.path.parent() {
+            riff_client::files::make_dir(dir)?;
+        }
+        let file = riff_client::files::options()
+            .create(true)
+            .append(true)
+            .open(self.path.with_extension("lock"))?;
+        file.lock()?;
+        Ok(file)
+    }
+
     /// Takes each denial of the file, oldest first, and empties the file.
     /// It moves the file first, so two sends never take the same denial.
     /// A line that is not a denial goes.
@@ -574,8 +588,11 @@ pub async fn post(api: &Api, me: &SessionUri, lines: &[String]) -> usize {
 /// The send of a session on the host: it takes each denial of the
 /// local file and posts it as the session `me` on `api`. It asks
 /// riff-server for the lead mark and the claim of the session first.
-/// Each denial that did not go goes back to the file.
+/// Each denial that did not go goes back to the file. Two sends of one
+/// machine run one after the other: a send that fails puts its
+/// denials back before the next send takes the file.
 pub async fn send_here(api: &Api, me: &SessionUri, queue: &Queue) -> Result<usize> {
+    let _turn = queue.wait_turn()?;
     let denials = queue.take();
     if denials.is_empty() {
         return Ok(0);
