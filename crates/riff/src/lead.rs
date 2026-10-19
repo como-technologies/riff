@@ -130,10 +130,17 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 ///     ["claude", "--session-id", facts.session.as_str(), "--permission-mode", "auto"]
 /// );
 /// assert!(!spec.command.iter().any(|a| a == "-p"));
+/// assert!(spec.env.iter().any(|e| matches!(e, riff::runtime::Env::Value(n, v) if n == "RIFF_CHECK" && v == "/home/mike/.riff-check")));
 /// ```
 pub fn spec(facts: &Facts, repo: &str) -> SessionSpec {
     let mut spec = run::spec(facts);
     spec.name = name_of(repo);
+    // The folder `~/.cache` of the container belongs to root, because
+    // of the bind of the compile cache: `riff build` needs another one.
+    spec.env.push(crate::runtime::Env::Value(
+        crate::check::VAR.into(),
+        spec.home.join(".riff-check").to_string_lossy().into_owned(),
+    ));
     spec.command = vec![
         "claude".into(),
         "--session-id".into(),

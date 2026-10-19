@@ -3842,6 +3842,12 @@ tag. The riff runs on:
 riff release publish v3.3.0
 ```
 
+The lead in a container (`riff lead start`) publishes too, with the
+same line. A work session in a container never publishes. The lead in
+a container builds the riff of main with `riff build` in its own
+folder `RIFF_CHECK`, and its riff commands know their user from
+`RIFF_USER`: the daemon sets both.
+
 riff checks each fact first, and names the check that fails:
 
 - the pull request "Release v3.3.0" with the label `release` merged,

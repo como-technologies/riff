@@ -855,6 +855,14 @@ pub enum SessionAsk {
         /// The refusals, oldest first, with no secret.
         denials: Vec<crate::denied::Denial>,
     },
+    /// Who runs a command of the release cycle in this session: the
+    /// lead, or a work session. The socket of the session tells the
+    /// daemon which one asks, so a work session cannot pose as the lead
+    /// (01M59269HHZ5C82DR3RG3QHAM3).
+    Caller {
+        /// [`PROTOCOL`] of the session.
+        protocol: u32,
+    },
 }
 
 /// The state of the daemon.
@@ -1017,6 +1025,17 @@ pub enum Say {
     Posted {
         /// The number of refusals.
         count: usize,
+    },
+    /// To `riff release`: the session on this socket, as the daemon
+    /// knows it.
+    Caller {
+        /// True for the lead: the session with a terminal.
+        lead: bool,
+        /// The role of the user of the session in the riff. `None` in a
+        /// riff with no sign-in.
+        role: Option<riff_core::wire::PersonRole>,
+        /// True when the daemon could not ask riff-server for the role.
+        role_unknown: bool,
     },
     /// The ask failed.
     Failed {
@@ -2421,6 +2440,14 @@ impl<R: Runtime + 'static> Daemon<R> {
             SOCKET_VAR.into(),
             in_session().to_string_lossy().into_owned(),
         ));
+        // The riff commands of the session know their user without the
+        // keyring, which a container has not.
+        spec.env
+            .retain(|e| !matches!(e, Env::Value(name, _) if name == "RIFF_USER"));
+        spec.env.push(Env::Value(
+            "RIFF_USER".into(),
+            record.me.who().user().to_owned(),
+        ));
         let relay: &[&str] = if terminal {
             &[RELAY_BIN, "relay", "--terminal", "--"]
         } else {
@@ -2757,6 +2784,13 @@ impl<R: Runtime + 'static> Daemon<R> {
                 drop(out);
                 let _ = written.await;
             }
+            Ok(SessionAsk::Caller { .. }) => {
+                let (out, written) = writer(write);
+                let record = owned.lock().record.clone();
+                out.say(self.caller_of(&record).await);
+                drop(out);
+                let _ = written.await;
+            }
             Ok(SessionAsk::Watch { .. }) => {
                 let (out, written) = writer(write);
                 let record = owned.lock().record.clone();
@@ -2820,6 +2854,35 @@ impl<R: Runtime + 'static> Daemon<R> {
         } else {
             tools.in_container()
         })
+    }
+
+    /// The facts of the session of `record` for the commands of the
+    /// release cycle: whether it is the lead (the session with a
+    /// terminal), and the role of its user in the riff.
+    async fn caller_of(&self, record: &Record) -> Say {
+        let lead = record.terminal;
+        let roster = async {
+            let api =
+                riff_client::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
+            api.roster(&record.me, false).await
+        };
+        match roster.await {
+            Ok(who) => Say::Caller {
+                lead,
+                role: (!who.people.is_empty()).then(|| {
+                    who.people
+                        .iter()
+                        .find(|p| p.user == record.me.who().user())
+                        .map_or(riff_core::wire::PersonRole::Member, |p| p.role)
+                }),
+                role_unknown: false,
+            },
+            Err(_) => Say::Caller {
+                lead,
+                role: None,
+                role_unknown: true,
+            },
+        }
     }
 
     /// Posts each refusal of auto mode of `denials` as the session of
@@ -3778,6 +3841,28 @@ mod tests {
         serde_json::from_str(&line).unwrap()
     }
 
+    /// Asks the socket of a session in the folder `dir` whether it is the
+    /// lead, for the release cycle.
+    async fn lead_in(dir: &Path) -> bool {
+        let conn = connect_in(dir, SOCKET).await.unwrap();
+        let (read, mut write) = conn.into_split();
+        let ask = serde_json::to_string(&SessionAsk::Caller { protocol: PROTOCOL }).unwrap();
+        write
+            .write_all(format!("{ask}\n").as_bytes())
+            .await
+            .unwrap();
+        let line = BufReader::new(read)
+            .lines()
+            .next_line()
+            .await
+            .unwrap()
+            .unwrap();
+        match serde_json::from_str(&line).unwrap() {
+            Say::Caller { lead, .. } => lead,
+            other => panic!("{other:?}"),
+        }
+    }
+
     /// The events of `said`.
     fn events(said: &[Say]) -> Vec<(u64, String)> {
         said.iter()
@@ -4285,6 +4370,13 @@ mod tests {
                 name: name.clone(),
             };
             assert_eq!(who_in(&own, PROTOCOL).await, who);
+            // A work session is no lead, and knows its user.
+            assert!(!lead_in(&own).await);
+            assert!(
+                spec.env
+                    .iter()
+                    .any(|e| matches!(e, Env::Value(n, _) if n == "RIFF_USER"))
+            );
             assert_eq!(who_in(&own, PROTOCOL - 1).await, who);
             assert!(matches!(
                 who_in(&own, PROTOCOL + 2).await,
@@ -5220,6 +5312,8 @@ mod tests {
         // The daemon starts it with a terminal: the relay runs claude in
         // its own place.
         assert_eq!(here.fake.calls(), ["terminal riff-lead-o-r"]);
+        // Its socket says that it is the lead.
+        assert!(lead_in(&session_dir(&here.dir, &name)).await);
         let spec = here.fake.spec(&name).unwrap();
         assert_eq!(
             spec.command,

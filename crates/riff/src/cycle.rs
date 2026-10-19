@@ -1687,6 +1687,10 @@ pub struct Caller {
     pub worker: bool,
     /// A container session: it has the socket of the riff daemon.
     pub container: bool,
+    /// A container session that the daemon says is the lead: it has a
+    /// terminal. A work session cannot be one, because the daemon
+    /// answers by the socket of the session (01M59269HHZ5C82DR3RG3QHAM3).
+    pub lead_container: bool,
     /// An agent session: it has a session ID, or runs under Claude Code.
     pub agent: bool,
     /// For an agent session: `Some(true)` when it is the lead of its
@@ -1747,7 +1751,7 @@ impl Caller {
     pub fn lead_step(&self) -> Option<Refusal> {
         if self.worker {
             Some(Refusal::Worker)
-        } else if self.container {
+        } else if self.container && !self.lead_container {
             Some(Refusal::Container)
         } else if !self.agent {
             if self.role_unknown {
@@ -1759,6 +1763,7 @@ impl Caller {
             }
         } else {
             match self.lead {
+                Some(true) if self.role_unknown => Some(Refusal::RoleUnknown),
                 Some(true) if self.role == Some(PersonRole::Member) => Some(Refusal::Member),
                 Some(true) => None,
                 Some(false) => Some(Refusal::NotTheLead),
@@ -3663,6 +3668,34 @@ mod tests {
         for caller in [worker, container, other, unknown, lead(None)] {
             assert_eq!(caller.person_step(), Some(Refusal::Agent));
         }
+    }
+
+    #[test]
+    fn the_lead_container_passes_the_guard_of_the_lead_and_not_that_of_a_person() {
+        let lead = |role, role_unknown| Caller {
+            container: true,
+            lead_container: true,
+            agent: true,
+            lead: Some(true),
+            role,
+            role_unknown,
+            ..Caller::default()
+        };
+        for role in [None, Some(PersonRole::Owner), Some(PersonRole::Admin)] {
+            assert_eq!(lead(role, false).lead_step(), None, "{role:?}");
+        }
+        assert_eq!(
+            lead(Some(PersonRole::Member), false).lead_step(),
+            Some(Refusal::Member)
+        );
+        assert_eq!(lead(None, true).lead_step(), Some(Refusal::RoleUnknown));
+        assert_eq!(lead(None, false).person_step(), Some(Refusal::Agent));
+        // A work container is no lead container.
+        let work = Caller {
+            lead_container: false,
+            ..lead(None, false)
+        };
+        assert_eq!(work.lead_step(), Some(Refusal::Container));
     }
 
     #[test]

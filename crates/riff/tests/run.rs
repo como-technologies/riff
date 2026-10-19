@@ -664,6 +664,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "SCCACHE_CACHE_SIZE=40G",
         "-e",
         "RIFF_SOCKET=/run/riff/riff.sock",
+        "-e",
+        "RIFF_USER=mike",
         "-w",
         &c,
         PINNED,

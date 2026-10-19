@@ -7767,8 +7767,19 @@ items of Wave C that end riff-server in the Backlog
   in each agent session: a worker, a container session, a process with
   a session ID, and a process under Claude Code (`CLAUDECODE`), also a
   `!` command.
+  The words "in a container session" for `publish` are superseded by
+  01M59269HHZ5C82DR3RG3QHAM3.
   The lead skill makes each release with these commands, and has no
   tag line and no `gh release` line.
+- **01M59269HHZ5C82DR3RG3QHAM3** `riff release publish`, `check`,
+  `retry` and `rollback` allow the lead of the owner or of an admin
+  in a container (`riff lead start`). The daemon tells the lead from
+  a work session by the socket of the session: only the session with
+  a terminal is the lead, and a work session cannot forge that. A
+  work session in a container is still refused. The container of the
+  lead has `RIFF_USER`, so the riff commands find their user without
+  a keyring, and `RIFF_CHECK` names a folder that it can write for
+  `riff build`.
 
 ### The release cycle
 

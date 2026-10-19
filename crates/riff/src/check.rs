@@ -43,6 +43,26 @@ pub fn dir(home: &Path) -> PathBuf {
     home.join(".cache/riff/check")
 }
 
+/// The variable that names the check clone, when `~/.cache` is not
+/// writable: the lead in a container has it (01M59269HHZ5C82DR3RG3QHAM3).
+pub const VAR: &str = "RIFF_CHECK";
+
+/// The check clone: the folder in `value` of [`VAR`], else [`dir`].
+///
+/// ```
+/// use std::path::Path;
+///
+/// let home = Path::new("/home/mike");
+/// assert_eq!(riff::check::dir_from(None, home), home.join(".cache/riff/check"));
+/// assert_eq!(riff::check::dir_from(Some("".into()), home), home.join(".cache/riff/check"));
+/// assert_eq!(riff::check::dir_from(Some("/c".into()), home), Path::new("/c"));
+/// ```
+pub fn dir_from(value: Option<std::ffi::OsString>, home: &Path) -> PathBuf {
+    value
+        .filter(|v| !v.is_empty())
+        .map_or_else(|| dir(home), PathBuf::from)
+}
+
 /// The riff of the build in the clone `check`.
 pub fn riff_of(check: &Path) -> PathBuf {
     check.join("target/static/release/riff")

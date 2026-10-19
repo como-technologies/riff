@@ -2298,7 +2298,10 @@ async fn main() -> Result<()> {
         let home = std::env::var_os("HOME")
             .filter(|h| !h.is_empty())
             .context("riff cannot find your home: HOME is not set")?;
-        let check = riff::check::dir(std::path::Path::new(&home));
+        let check = riff::check::dir_from(
+            std::env::var_os(riff::check::VAR),
+            std::path::Path::new(&home),
+        );
         let riff = riff::check::build(&identity::working_dir()?, &check, just)?;
         println!("{}", riff.display());
         return Ok(());
@@ -3636,7 +3639,24 @@ async fn release_caller(server: &str, ask_role: bool) -> riff::cycle::Caller {
         ..riff::cycle::Caller::default()
     };
     let id = identity::session_id();
-    if !ask_role || worker || container || (agent && id.is_none()) {
+    if container && !worker {
+        // The daemon knows by the socket of the session whether it is
+        // the lead (01M59269HHZ5C82DR3RG3QHAM3).
+        if let Ok(socket) = riff::session_relay::socket_here()
+            && let Ok(riff::daemon::Say::Caller {
+                lead: true,
+                role,
+                role_unknown,
+            }) = riff::session_relay::ask_caller(&socket).await
+        {
+            caller.lead_container = true;
+            caller.lead = Some(true);
+            caller.role = role;
+            caller.role_unknown = role_unknown;
+        }
+        return caller;
+    }
+    if !ask_role || worker || (agent && id.is_none()) {
         return caller;
     }
     match lead_and_role(server, id.as_deref()).await {
