@@ -7708,6 +7708,13 @@ items of Wave C that end riff-server in the Backlog
   for the release issue, never `Closes #N`. riff makes the release
   issue in the current wave when there is none. It refuses a version
   that is not newer than the last published release.
+- **01M593FVJRTCGD1RPWXYJP5BNH** The release issue that `riff release
+  cut` files has two parts. "Done when" is the release: published,
+  deployed, and checked after the deploy. "Verify of the release pull
+  request" is the verify of the pull request: only the change of the
+  version, the format of the body, and the Gate. The issue lists the
+  steps after the merge apart. The verify of a pull request with the
+  label `release` reads that part, and not the line "Done when".
 - **01M58B0J4VQ61ER69Q09JYP7CG** `riff release cut` refuses while the
   version on `origin/main` is newer than the last published release
   and has no published release. Only `--skip VERSION --reason TEXT`
