@@ -2970,8 +2970,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   release and a new start of the session also end its block.
 - **01M41FZQ545HQ9Q75CSKX8HF8H** The `riff mcp` of the lead looks at the
   blocks of the sessions of its user in its repository each minute,
-  with `lead.wake` minutes of the machine of the lead (default 15,
-  `riff lead blocked --wake MINUTES`). A block with no answer for that
+  with `lead.wake` minutes of the machine of the lead (default 15).
+  A block with no answer for that
   time gets a second wake of the lead: a message of the server,
   `blocked: SESSION (ITEM) has no answer after N minutes: REASON`. Only
   the lead can look.
@@ -2983,8 +2983,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `riff mcp` of the lead shows one desktop notification with
   `notify-send`: the short session ID, its claims and the reason, and
   no text of a message. A machine with no display or no `notify-send`
-  gets none, and nothing fails. `lead.notify` turns it off (`riff lead
-  blocked --notify off`). It is on by default.
+  gets none, and nothing fails. `lead.notify` turns it off. It is on by
+  default.
 - **01M41FZR4XRP55M409YBCPTHPH** `riff top` has one red line for each
   blocked session before the board: `blocked`, the short session ID,
   its claims, the time that it waits, `the lead gave no answer` when
@@ -3858,6 +3858,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   nothing when the session is not the lead. Only one check acts at a
   time: it holds a lock from the load of the record of the wave to its
   save. A check that cannot take the lock does nothing.
+  Superseded by 01M59BTTH6ZATH7R2PFC6NGHJK.
 - **01M3Q88G45ERD0XJNYNB5C1RVN** riff compacts the lead only when all
   of these are true: the riff is paused; the last done wave has no open
   item, and its release is out (its release item is closed, its release
@@ -3867,16 +3868,19 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   input came to the lead for the quiet time and its input line is
   empty; the last message of the lead does not end with a question; and
   riff did not compact the lead for this wave already.
+  Superseded by 01M59BTTH6ZATH7R2PFC6NGHJK.
 - **01M56P28EH72XA0F5S1B3ZP4Q5** The last done wave of the compact is
   the wave that just ended: the wave with the highest number that has a
   closed item, with no open item in it or in a wave before it. When an
   item of a later wave closes, no wave just ended, so a later pause of
   the lead, for example for a release, gives no handoff ask and no
   compact.
+  Superseded by 01M59BTTH6ZATH7R2PFC6NGHJK.
 - **01M3Q88G6PM8KM5PR875PZXTRZ** Before it compacts, riff tells the
   lead, as its person, to post a handoff note to the repository thread,
   with a body that starts with `handoff: Wave N`. riff compacts only
   after the lead posted that note.
+  Superseded by 01M59BTTH6ZATH7R2PFC6NGHJK.
 - **01M3Q88G98MKH364WEQGT4ZE7A** In tmux, riff types `/compact` with
   instructions into the pane of the lead. The instructions say what to
   keep, name the handoff note, and tell the lead to read and start its
@@ -3885,6 +3889,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3Q88GBSRJRP4VGVDV3EJZ4R** `riff lead compact` shows and sets the
   compact of the lead on this machine: on or off (`lead.compact`, on by
   default), and the quiet time in seconds (`lead.quiet`, default 60).
+  Superseded by 01M59BTTH6ZATH7R2PFC6NGHJK.
 - **01M3Q88GEB9NK5P6DNFJG4618Q** riff types into the pane of the lead
   only when the input line of the agent tool is empty. When riff cannot
   find the input line, it types nothing. The check of the input line is
@@ -7479,6 +7484,11 @@ items of Wave C that end riff-server in the Backlog
   (`riff setup`) and the session place stay. Superseded by the re-cut
   (01M53NGVMD2PGEC0P9S3X4CTHT, 01M53NGVQDKCTNMG54YDFE22T2,
   01M53NGWN190T2MYB1EZAD36VB).
+- **01M59BTTH6ZATH7R2PFC6NGHJK** riff 4.0 has no `riff worktrees`, no
+  `riff lead compact`, no `riff lead blocked`, no tidy of the worktrees
+  of a host, and no compact of the lead. The tidy of the folders of
+  container sessions stays (the sweep of the riff daemon). `lead.wake`
+  and `lead.notify` stay as keys of the settings file.
 - **01M51R8G59KA4WFCD7CBAYP5DN** After Wave C, riff has these commands:
   `riff init`, `riff daemon`, `riff run`, `riff wave`,
   `riff lead start`, `riff view`, `riff takeover`, `riff image`,

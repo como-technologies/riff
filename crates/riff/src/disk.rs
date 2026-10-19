@@ -18,8 +18,7 @@
 //! ```
 //!
 //! A workers host tells its disk in its status, and `riff workers` shows
-//! it for each machine (01M41A11GHP78E2VYN14JSE27P). See
-//! [`crate::tidy`].
+//! it for each machine (01M41A11GHP78E2VYN14JSE27P).
 //!
 //! ```
 //! use riff_client::machines::Disk;

@@ -195,7 +195,6 @@ the daemon: `daemon` in the data folder of riff.
 ### What stays in riff 3.0.0
 
 - riff-server, `riff cloud`, the sign-in, the deploy and the stage.
-- `riff worktrees`.
 - The plugin of Claude Code, its skill and its hooks, `riff connect`,
   `riff enable`, `riff disable` and the status line, for a session on
   the host.

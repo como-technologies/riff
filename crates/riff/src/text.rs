@@ -4683,40 +4683,6 @@ pub fn worker_new_rules(host: &str, pane: &str) -> String {
     )
 }
 
-/// The note to the lead after `riff worktrees clean` saved work that
-/// no live session owned (01M3ZV0TKSHNW5QC2NG1XTJEJB).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::worktrees_saved(&["/r/wt: saved: a WIP commit on worktree-issue-12"]),
-///     "riff worktrees clean saved work that no live session owned. The next session of \
-///      the item goes on from the branch: /r/wt: saved: a WIP commit on worktree-issue-12"
-/// );
-/// ```
-pub fn worktrees_saved(lines: &[&str]) -> String {
-    format!(
-        "riff worktrees clean saved work that no live session owned. The next session of the \
-         item goes on from the branch: {}",
-        lines.join(" | ")
-    )
-}
-
-/// The line for the temp folder of a worker that ended, after a tidy
-/// deleted it (01M41VAGVR2PPVAYDN0SWK2F02).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::temp_removed("/h/.cache/riff/tmp/w1".as_ref()),
-///     "/h/.cache/riff/tmp/w1: deleted the temp folder of a worker that ended"
-/// );
-/// ```
-pub fn temp_removed(dir: &std::path::Path) -> String {
-    format!(
-        "{}: deleted the temp folder of a worker that ended",
-        dir.display()
-    )
-}
-
 /// A disk use in words: MB under 1 GB, else GB with one decimal.
 ///
 /// ```
@@ -4754,79 +4720,6 @@ pub fn size_words(bytes: u64) -> String {
 /// (01M41A11BB4HAD8595DNSBAZ0D).
 pub const TARGET_REMOVED: &str =
     "removed its target: the disk is tight, and no live session owns it";
-
-/// The note to the lead after riff removed build folders
-/// (01M41A11BB4HAD8595DNSBAZ0D).
-///
-/// ```
-/// use riff_client::machines::Disk;
-///
-/// let disk = Some(Disk { free_gb: 90, total_gb: 455 });
-/// assert_eq!(
-///     riff::text::targets_removed("pangolin", disk, &["/r/.claude/worktrees/issue-1: removed".into()]),
-///     "pangolin: the disk was under 15% free. riff removed the target of 1 worktree(s) with \
-///      no live owner, now disk 90GB free of 455GB (19%): /r/.claude/worktrees/issue-1: removed"
-/// );
-/// ```
-pub fn targets_removed(
-    host: &str,
-    disk: Option<riff_client::machines::Disk>,
-    lines: &[String],
-) -> String {
-    let now = disk.map(|d| format!(", now {d}")).unwrap_or_default();
-    format!(
-        "{host}: the disk was under {}% free. riff removed the target of {} worktree(s) with \
-         no live owner{now}: {}",
-        riff_client::machines::TIGHT_PERCENT,
-        lines.len(),
-        lines.join(" | ")
-    )
-}
-
-/// The note to the lead when the disk of `host` goes under the low mark
-/// (01M41A11DX1QRP48YPTDNT67W4).
-///
-/// ```
-/// use riff_client::machines::Disk;
-///
-/// assert_eq!(
-///     riff::text::disk_low("pangolin", &Disk { free_gb: 16, total_gb: 455 }),
-///     "pangolin: disk 16GB free of 455GB (3%), under 5%. riff starts no worker here until \
-///      more is free. riff worktrees clean removes the worktrees of merged pull requests."
-/// );
-/// ```
-pub fn disk_low(host: &str, disk: &riff_client::machines::Disk) -> String {
-    format!(
-        "{host}: {disk}, under {}%. riff starts no worker here until more is free. riff \
-         worktrees clean removes the worktrees of merged pull requests.",
-        riff_client::machines::LOW_PERCENT
-    )
-}
-
-/// Why a machine starts no worker: its disk is low
-/// (01M41A11DX1QRP48YPTDNT67W4).
-///
-/// ```
-/// use riff_client::machines::Disk;
-///
-/// assert_eq!(
-///     riff::text::low_disk(&Disk { free_gb: 16, total_gb: 455 }),
-///     "disk 16GB free of 455GB (3%), under 5%."
-/// );
-/// ```
-pub fn low_disk(disk: &riff_client::machines::Disk) -> String {
-    format!("{disk}, under {}%.", riff_client::machines::LOW_PERCENT)
-}
-
-/// The refusal of `riff workers start` when the disk is low
-/// (01M41A11DX1QRP48YPTDNT67W4).
-pub fn workers_disk_low(disk: &riff_client::machines::Disk) -> String {
-    format!(
-        "riff: {} riff workers start started nothing. riff worktrees clean removes the \
-         worktrees of merged pull requests.",
-        low_disk(disk)
-    )
-}
 
 /// The line of a monitor that does not look: another monitor holds the
 /// lock of the machine (01M421QQ1K7EFDV2PVPTSTE5FK).

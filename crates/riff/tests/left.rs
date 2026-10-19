@@ -182,8 +182,6 @@ async fn each_entry(server: &str, dir: &Path) {
     assert!(hook.status.success(), "{hook:?}");
     let hook = riff(server, dir, None, &format!("{{{id}}}"), &["hook", "stop"]).await;
     assert!(hook.status.success(), "{hook:?}");
-    let hook = riff(server, dir, None, "", &["hook", "compact", "--session", ID]).await;
-    assert!(hook.status.success(), "{hook:?}");
 
     let watch = riff(server, dir, Some(ID), "", &["watch", "--once"]).await;
     assert!(watch.status.success(), "{watch:?}");

@@ -585,11 +585,6 @@ enum Command {
         #[arg(long, default_value = "just")]
         just: std::path::PathBuf,
     },
-    /// Tidy the worktrees of this clone
-    ///
-    /// riff decides by facts, not by the word of an agent.
-    #[command(subcommand)]
-    Worktrees(WorktreesCommand),
     /// Get this machine ready for riff run: check, install, pull
     ///
     /// The first run of riff 3.0 on a machine. It checks rootless podman:
@@ -1395,19 +1390,6 @@ enum RelayCommand {
 }
 
 #[derive(Subcommand)]
-enum WorktreesCommand {
-    /// Tidy the worktrees that no live session owns
-    ///
-    /// For each linked worktree: it unlocks a lock whose process is gone.
-    /// It removes a clean worktree whose pull request is merged with its
-    /// HEAD, and its branch. It removes a clean detached worktree whose
-    /// commit is on origin. It commits the work of a worktree with no
-    /// live owner as WIP, pushes its branch, and posts a note to your
-    /// lead. It keeps each other worktree, and says why.
-    Clean,
-}
-
-#[derive(Subcommand)]
 enum WatchCommand {
     /// Show or set the longest wait of riff watch --once
     ///
@@ -1463,37 +1445,6 @@ enum LeadCommand {
     /// When no wave of this repository runs, riff first asks the riff
     /// daemon to run the wave: the lead in a container has no rollout.
     Start,
-    /// Show or set how riff compacts the lead at the end of a wave
-    ///
-    /// When the riff is paused, the wave and its release are done, and
-    /// the lead and its person are idle, riff asks the lead for a handoff
-    /// note, then types /compact into its tmux pane. It is on by default.
-    /// It is in $XDG_CONFIG_HOME/riff/config.toml, keys lead.compact and
-    /// lead.quiet.
-    Compact {
-        /// Turn it on or off. Leave it out to show the setting.
-        switch: Option<Switch>,
-        /// The seconds with no input in the pane of the lead before riff
-        /// compacts it. The default is 60.
-        #[arg(long)]
-        quiet: Option<u64>,
-    },
-    /// Show or set what riff does when a block gets no answer
-    ///
-    /// riff wakes the lead again after the wake time with no answer.
-    /// After the wake time once more, riff top shows "the lead gave no
-    /// answer", and a desktop notification tells you, when this machine
-    /// has a desktop. It is in $XDG_CONFIG_HOME/riff/config.toml, keys
-    /// lead.wake and lead.notify.
-    Blocked {
-        /// The minutes with no answer before riff wakes the lead again.
-        /// The default is 15.
-        #[arg(long, value_name = "MINUTES")]
-        wake: Option<u64>,
-        /// Turn the desktop notification on or off. It is on by default.
-        #[arg(long)]
-        notify: Option<Switch>,
-    },
     /// Move the lead of this repository to another host
     ///
     /// riff asks the old lead to write its handover to the notes of the
@@ -1619,22 +1570,6 @@ enum HookEvent {
         #[arg(long)]
         session: String,
     },
-    /// Check whether riff compacts the lead now
-    ///
-    /// The Stop hook starts it, detached, in each session that is not a
-    /// worker.
-    #[command(hide = true)]
-    Compact {
-        /// The session ID of the agent tool.
-        #[arg(long)]
-        session: String,
-        /// The transcript of the session.
-        #[arg(long)]
-        transcript: Option<std::path::PathBuf>,
-        /// The tmux pane of the session.
-        #[arg(long)]
-        pane: Option<String>,
-    },
     /// Report the tokens of each claim that a start or an end freed
     ///
     /// It ends each open claim in the marks of the session. The start
@@ -1662,9 +1597,7 @@ impl HookEvent {
             | HookEvent::Tool { .. }
             | HookEvent::Prompt
             | HookEvent::Denied => true,
-            HookEvent::Compact { .. } | HookEvent::Usage { .. } | HookEvent::DeniedSend { .. } => {
-                false
-            }
+            HookEvent::Usage { .. } | HookEvent::DeniedSend { .. } => false,
         }
     }
 }
@@ -1958,25 +1891,6 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if let Command::Hook {
-        event:
-            HookEvent::Compact {
-                session,
-                transcript,
-                pane,
-            },
-    } = cli.command
-    {
-        let check = riff::compact::Check {
-            session,
-            transcript,
-            pane,
-        };
-        if let Err(e) = riff::compact::run(&check, &server).await {
-            eprintln!("riff: cannot check the compact of the lead: {e:#}");
-        }
-        return Ok(());
-    }
-    if let Command::Hook {
         event: HookEvent::Usage { session, before },
     } = &cli.command
     {
@@ -1987,36 +1901,6 @@ async fn main() -> Result<()> {
     }
     if let Command::Usage { issue, wave, total } = &cli.command {
         print!("{}", usage_text(issue.as_deref(), wave.as_deref(), *total)?);
-        return Ok(());
-    }
-    if let Command::Lead {
-        command: Some(LeadCommand::Compact { switch, quiet }),
-    } = &cli.command
-    {
-        let path = settings::path()?;
-        if let Some(switch) = switch {
-            settings::set_lead_compact(&path, matches!(switch, Switch::On))?;
-        }
-        if let Some(quiet) = quiet {
-            settings::set_lead_quiet(&path, *quiet)?;
-        }
-        let (on, quiet) = (settings::lead_compact(&path)?, settings::lead_quiet(&path)?);
-        anstream::println!("{}", view::lead_compact(on, quiet, &path));
-        return Ok(());
-    }
-    if let Command::Lead {
-        command: Some(LeadCommand::Blocked { wake, notify }),
-    } = &cli.command
-    {
-        let path = settings::path()?;
-        if let Some(wake) = wake {
-            settings::set_lead_wake(&path, *wake)?;
-        }
-        if let Some(notify) = notify {
-            settings::set_lead_notify(&path, matches!(notify, Switch::On))?;
-        }
-        let (wake, notify) = (settings::lead_wake(&path)?, settings::lead_notify(&path)?);
-        anstream::println!("{}", view::lead_blocked(wake, notify, &path));
         return Ok(());
     }
     if let Command::Watch {
@@ -2070,12 +1954,6 @@ async fn main() -> Result<()> {
     if let Command::Enable { place } | Command::Disable { place } = &cli.command {
         let on = matches!(cli.command, Command::Enable { .. });
         println!("{}", text::enabled(&set_enabled(place.place(), on)?, on));
-        return Ok(());
-    }
-    if let Command::Worktrees(WorktreesCommand::Clean) = &cli.command {
-        for line in riff::worktrees::clean_as_person(&identity::working_dir()?, &server).await? {
-            println!("{line}");
-        }
         return Ok(());
     }
     if let Command::Cloud { command } = &cli.command {
@@ -2609,16 +2487,8 @@ async fn main() -> Result<()> {
         | Command::Daemon { .. }
         | Command::Init { .. }
         | Command::Relay { .. }
-        | Command::Worktrees(_)
         | Command::Lead {
-            command:
-                Some(
-                    LeadCommand::Compact { .. }
-                    | LeadCommand::Blocked { .. }
-                    | LeadCommand::Start
-                    | LeadCommand::Notes { .. }
-                    | LeadCommand::Move { .. },
-                ),
+            command: Some(LeadCommand::Start | LeadCommand::Notes { .. } | LeadCommand::Move { .. }),
         }
         | Command::View { .. }
         | Command::Takeover { .. }
@@ -3504,9 +3374,8 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
     Ok(())
 }
 
-/// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). In a session that is not
-/// a worker, it starts the check of the compact of the lead
-/// (01M3Q88G1K7N2EMPBA07X069A7). It never fails.
+/// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It counts the usage of the
+/// session. It never fails.
 fn stop_hook() {
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
@@ -3516,11 +3385,6 @@ fn stop_hook() {
     };
     activity::run(activity::Hook::Stop, &stdin, Some(id.clone()));
     count_usage(&id, input.transcript_path.as_deref(), false);
-    if !identity::is_worker()
-        && let Err(e) = start_compact_check(&id, input.transcript_path.as_deref())
-    {
-        eprintln!("riff: cannot check the compact of the lead: {e:#}");
-    }
 }
 
 /// Records the transcript of the session `id`. With `ends`, it starts
@@ -3669,32 +3533,6 @@ fn total_after_merge(number: u64) -> Result<String> {
         &thread.to_string(),
         issue,
     )
-}
-
-/// Starts `riff hook compact` for the session `id`, detached, so that
-/// the Stop hook returns at once (01M3Q88G1K7N2EMPBA07X069A7). It starts
-/// nothing when `lead.compact` is off, or the session left the riff.
-fn start_compact_check(id: &str, transcript: Option<&std::path::Path>) -> Result<()> {
-    use std::os::unix::process::CommandExt;
-    if !settings::lead_compact(&settings::path()?)? || local::left_here(id) {
-        return Ok(());
-    }
-    let mut cmd = std::process::Command::new(std::env::current_exe()?);
-    cmd.args(["hook", "compact", "--session", id]);
-    if let Some(transcript) = transcript {
-        cmd.arg("--transcript").arg(transcript);
-    }
-    if std::env::var_os("TMUX").is_some_and(|t| !t.is_empty())
-        && let Ok(pane) = std::env::var("TMUX_PANE")
-    {
-        cmd.args(["--pane", &pane]);
-    }
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .process_group(0)
-        .spawn()?;
-    Ok(())
 }
 
 /// The scope of `riff pause` and `riff resume` from the flags `--riff`

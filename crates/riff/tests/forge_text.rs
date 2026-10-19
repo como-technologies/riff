@@ -96,10 +96,6 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
     assert_eq!(issues.titles[&7], "Fix   it");
     assert_eq!(issues.wave(), Some(&("Wave 4: N  ew".into(), vec![7])));
 
-    // The wave of the end of a wave, in the facts of a compact.
-    let wave = riff::compact::forge::released_wave(&gh, "acme/app").unwrap();
-    assert_eq!(wave.as_deref(), Some("Wave 3: N  ew"));
-
     // `riff pr wait`: the merge commit.
     let merged = riff::pr::wait(&gh, 40, std::time::Duration::ZERO).unwrap();
     assert_eq!(merged, "9f8e  7d6c");

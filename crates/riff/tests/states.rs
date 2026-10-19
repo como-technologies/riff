@@ -536,30 +536,6 @@ fn a_machine_with_no_desktop_gets_no_notification() {
     assert!(!notifier.here());
 }
 
-/// `riff lead blocked` shows and sets the wake time and the notification
-/// (01M41FZQ545HQ9Q75CSKX8HF8H, 01M41FZQKZKW131Z8822G31T5G).
-#[tokio::test(flavor = "multi_thread")]
-async fn riff_lead_blocked_shows_and_sets_the_settings() {
-    let server = start_server().await;
-    let dir = tempfile::tempdir().unwrap();
-    let show = |args: &[&str]| {
-        let out = riff_cmd(&server, dir.path(), "l1")
-            .args(args)
-            .env("NO_COLOR", "1")
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{out:?}");
-        String::from_utf8_lossy(&out.stdout).into_owned()
-    };
-    let shown = show(&["lead", "blocked"]);
-    assert!(shown.starts_with("lead.wake  15  ("), "{shown}");
-    assert!(shown.contains("\nlead.notify  true  ("), "{shown}");
-    let set = show(&["lead", "blocked", "--wake", "30", "--notify", "off"]);
-    assert!(set.starts_with("lead.wake  30  ("), "{set}");
-    assert!(set.contains("\nlead.notify  false  ("), "{set}");
-    assert!(set.contains("riff lead blocked --notify on"), "{set}");
-}
-
 /// `riff blocked REASON` sets the block and wakes the lead, in one
 /// command (01M41FZPGEK4TNPSM2051W4VMS).
 #[tokio::test(flavor = "multi_thread")]

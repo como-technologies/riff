@@ -25,8 +25,6 @@
 //! |---|---|---|
 //! | `workers.tmp` | `~/.cache/riff/tmp` | The folder of the temp folders of the workers (see [`temp`](crate::temp), 01M41VAGJC69S9R2TD1B1EQ4W4). |
 //! | `workers.cache` | `40G` | The most size of the compile cache of the workers (see [`sccache`](crate::sccache), 01M49237BM12PVBERD6JXDSX5V). |
-//! | `lead.compact` | true | riff compacts the lead at the end of a wave (see [`compact`](crate::compact)). |
-//! | `lead.quiet` | 60 | The seconds with no input in the pane of the lead before riff compacts it. |
 //! | `lead.wake` | 15 | The minutes that a block waits for an answer before riff wakes the lead again, and again before riff tells the person (see [`crate::look`], 01M41FZQ545HQ9Q75CSKX8HF8H). |
 //! | `lead.notify` | true | riff shows a block with no answer of the lead in a desktop notification on the machine of the lead (01M41FZQKZKW131Z8822G31T5G). |
 //! | `watch.limit` | 6000 | The longest time in seconds that `riff watch --once` waits for a wake. 0: no limit (01M3Z64J08GW6N1H42AR2FZQZ4). |
@@ -162,66 +160,6 @@ pub fn set_update_auto(path: &Path, auto: bool) -> Result<()> {
     set(path, "update", "auto", value(auto))
 }
 
-/// True when riff compacts the lead at the end of a wave: `lead.compact`
-/// (01M3Q88GBSRJRP4VGVDV3EJZ4R). True when the file or the key is
-/// missing.
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert!(riff::settings::lead_compact(&path)?);
-/// riff::settings::set_lead_compact(&path, false)?;
-/// assert!(!riff::settings::lead_compact(&path)?);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn lead_compact(path: &Path) -> Result<bool> {
-    let doc = read(path)?;
-    let Some(compact) = doc.get("lead").and_then(|l| l.get("compact")) else {
-        return Ok(true);
-    };
-    compact
-        .as_bool()
-        .with_context(|| format!("lead.compact in {} is not true or false", path.display()))
-}
-
-/// Sets `lead.compact`. It keeps each other key.
-pub fn set_lead_compact(path: &Path, compact: bool) -> Result<()> {
-    set(path, "lead", "compact", value(compact))
-}
-
-/// The quiet time before riff compacts the lead: `lead.quiet`, in
-/// seconds (01M3Q88GBSRJRP4VGVDV3EJZ4R). [`LEAD_QUIET`] when the file or
-/// the key is missing.
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::lead_quiet(&path)?, 60);
-/// riff::settings::set_lead_quiet(&path, 90)?;
-/// assert_eq!(riff::settings::lead_quiet(&path)?, 90);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn lead_quiet(path: &Path) -> Result<u64> {
-    let doc = read(path)?;
-    let Some(quiet) = doc.get("lead").and_then(|l| l.get("quiet")) else {
-        return Ok(LEAD_QUIET);
-    };
-    let Some(quiet) = quiet.as_integer() else {
-        bail!("lead.quiet in {} is not a number", path.display());
-    };
-    u64::try_from(quiet)
-        .with_context(|| format!("lead.quiet in {} is out of range", path.display()))
-}
-
-/// Sets `lead.quiet`. It keeps each other key.
-pub fn set_lead_quiet(path: &Path, secs: u64) -> Result<()> {
-    let secs = i64::try_from(secs).context("the quiet time is too long")?;
-    set(path, "lead", "quiet", value(secs))
-}
-
-/// The default quiet time, in seconds.
-pub const LEAD_QUIET: u64 = 60;
-
 /// The minutes that a block waits for an answer before riff wakes the
 /// lead again: `lead.wake` (01M41FZQ545HQ9Q75CSKX8HF8H). [`LEAD_WAKE`]
 /// when the file or the key is missing. 0 is 1 minute.
@@ -230,8 +168,6 @@ pub const LEAD_QUIET: u64 = 60;
 /// let dir = tempfile::tempdir()?;
 /// let path = dir.path().join("config.toml");
 /// assert_eq!(riff::settings::lead_wake(&path)?, 15);
-/// riff::settings::set_lead_wake(&path, 30)?;
-/// assert_eq!(riff::settings::lead_wake(&path)?, 30);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn lead_wake(path: &Path) -> Result<u64> {
@@ -247,12 +183,6 @@ pub fn lead_wake(path: &Path) -> Result<u64> {
     Ok(wake.max(1))
 }
 
-/// Sets `lead.wake`. It keeps each other key.
-pub fn set_lead_wake(path: &Path, minutes: u64) -> Result<()> {
-    let minutes = i64::try_from(minutes).context("the wake time is too long")?;
-    set(path, "lead", "wake", value(minutes))
-}
-
 /// The default of `lead.wake`, in minutes.
 pub const LEAD_WAKE: u64 = 15;
 
@@ -265,8 +195,6 @@ pub const LEAD_WAKE: u64 = 15;
 /// let dir = tempfile::tempdir()?;
 /// let path = dir.path().join("config.toml");
 /// assert!(riff::settings::lead_notify(&path)?);
-/// riff::settings::set_lead_notify(&path, false)?;
-/// assert!(!riff::settings::lead_notify(&path)?);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn lead_notify(path: &Path) -> Result<bool> {
@@ -277,11 +205,6 @@ pub fn lead_notify(path: &Path) -> Result<bool> {
     notify
         .as_bool()
         .with_context(|| format!("lead.notify in {} is not true or false", path.display()))
-}
-
-/// Sets `lead.notify`. It keeps each other key.
-pub fn set_lead_notify(path: &Path, notify: bool) -> Result<()> {
-    set(path, "lead", "notify", value(notify))
 }
 
 /// The default of `watch.limit`, in seconds: 100 minutes

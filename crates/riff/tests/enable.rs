@@ -1009,7 +1009,6 @@ async fn each_hook(machine: &Machine, server: &str, dir: &Path) -> String {
     for args in [
         &["hook", "session-end"][..],
         &["hook", "stop"][..],
-        &["hook", "compact", "--session", ID][..],
         &["statusline"][..],
     ] {
         let out = entry(machine, server, dir, &input, args).await;

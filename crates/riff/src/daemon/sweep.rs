@@ -33,7 +33,7 @@
 //! name has no issue, or whose clone has no `origin`.
 //!
 //! The fate looks only at the forge. So before riff removes a folder, it
-//! looks at the clone too, as `riff worktrees clean` does
+//! looks at the clone too
 //! ([`Local::of`], 01M53S7WAXD46YPN0DR96XSTMG). The folder stays when the
 //! clone has a file that is not committed, or a commit that no branch of
 //! `origin` has: a session that ended before it pushed its work, on a
@@ -411,7 +411,7 @@ pub enum Local {
 
 impl Local {
     /// The work of the clone `clone` that is not on `origin`, as
-    /// `riff worktrees clean` and the claim of an item count it: `git
+    /// the claim of an item counts it: `git
     /// status --porcelain`, and `git rev-list HEAD --branches --not
     /// --remotes=origin`.
     ///
