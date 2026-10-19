@@ -741,7 +741,8 @@ enum Command {
     /// Run claude setup-token on this machine first, and sign in at the
     /// browser. Then run riff claude-token in a terminal, and paste the
     /// token. riff reads it from stdin with no echo, and keeps it in the
-    /// folder of the riff daemon, mode 0600. The daemon gives each new
+    /// OS keyring, in no file. It removes the old file of riff 3.3.0.
+    /// The daemon gives each new
     /// container session the token in CLAUDE_CODE_OAUTH_TOKEN, and binds
     /// no sign-in file of claude. So a session starts also when the
     /// sign-in of claude on this machine ends soon. Run it again for a

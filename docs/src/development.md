@@ -797,16 +797,17 @@ the token, and press Enter. riff shows no echo:
 riff claude-token
 ```
 
-riff keeps the token in the folder of the riff daemon
-(`~/.local/share/riff/daemon/claude-token`), with mode 0600. The
-token goes to no riff-server, no message, no log and no clone. An
-agent session cannot run `riff claude-token`: it refuses when stdin is
-not a terminal.
+riff keeps the token in the OS keyring, under the name
+`claude setup-token`, and in no file. If riff 3.3.0 kept the token in
+`~/.local/share/riff/daemon/claude-token`, `riff claude-token`
+removes that file and says so. The token goes to no riff-server, no
+message, no log and no clone. An agent session cannot run `riff
+claude-token`: it refuses when stdin is not a terminal.
 
 ```mermaid
 flowchart LR
     P["claude setup-token"] -->|"paste"| R["riff claude-token"]
-    R --> F[("daemon/claude-token, mode 0600")]
+    R --> F[("OS keyring")]
     F --> D["riff daemon"]
     D -->|"-e CLAUDE_CODE_OAUTH_TOKEN"| C["each new container session"]
 ```
@@ -829,8 +830,9 @@ riff daemon status
 ```
 
 It shows `claude token: set.`, `claude token: not set.` with the step,
-or `claude token: refused.`. The part `Hosts` of `riff who` shows
-`claude token set`, `not set` or `refused` for each host. riff never
+`claude token: refused.` or `claude token: keyring locked.`. The part
+`Hosts` of `riff who` shows `claude token set`, `not set`, `refused`
+or `keyring locked` for each host. riff never
 shows the value.
 
 When `claude` refuses the token, because it ended or you revoked it,
@@ -838,6 +840,21 @@ the session fails with the words `claude refused the token of riff
 claude-token`. The daemon starts no new session, and your lead gets one
 message. Run `claude setup-token` and `riff claude-token` again. The
 wave starts the work by itself at its next look.
+
+### A locked keyring stops the sessions of the daemon
+
+The daemon reads the token from the OS keyring at each container
+start. When the keyring is locked, or does not answer, the daemon
+starts no session. It does not use the sign-in of `claude` on the
+machine. Your lead gets one message. Unlock the keyring at the desktop
+(`gh` uses the same keyring, so `gh` stops too). The wave starts the
+work by itself at its next look. Check it:
+
+```sh
+riff daemon status
+```
+
+It shows `claude token: keyring locked.` until the keyring answers.
 
 ### Run an item
 

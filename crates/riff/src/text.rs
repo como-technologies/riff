@@ -6073,17 +6073,39 @@ pub const CLAUDE_TOKEN_REFUSED: &str = "claude refused the token of riff claude-
      or it was revoked. The daemon starts no session until a new token is set. Run claude \
      setup-token, then riff claude-token, on this machine.";
 
-/// `riff claude-token` kept the token in the file `path`.
+/// `riff claude-token` kept the token in the OS keyring. `old` is the old
+/// file of riff 3.3.0 that it removed.
 ///
 /// ```
-/// let text = riff::text::claude_token_kept("/d/claude-token".as_ref());
-/// assert!(text.starts_with("riff keeps the token in /d/claude-token (mode 0600)."), "{text}");
+/// let text = riff::text::claude_token_kept(None);
+/// assert!(text.starts_with("riff keeps the token in the OS keyring."), "{text}");
+/// let old = std::path::Path::new("/d/claude-token");
+/// let text = riff::text::claude_token_kept(Some(old));
+/// assert!(text.contains("It removed the old file /d/claude-token."), "{text}");
 /// ```
-pub fn claude_token_kept(path: &Path) -> String {
+pub fn claude_token_kept(old: Option<&Path>) -> String {
+    let removed = old.map_or_else(String::new, |old| {
+        format!(" It removed the old file {}.", old.display())
+    });
     format!(
-        "riff keeps the token in {} (mode 0600). Each new container session signs in with it. \
-         See it: riff daemon status",
-        path.display()
+        "riff keeps the token in the OS keyring.{removed} Each new container session signs in \
+         with it. See it: riff daemon status"
+    )
+}
+
+/// The daemon cannot read the token of `claude` from the OS keyring of
+/// `host`: it starts no session (01M58XZF928T82YAMF4DSJBKBF).
+///
+/// ```
+/// let text = riff::text::claude_token_locked("thelio");
+/// assert!(text.contains("OS keyring of thelio is locked"), "{text}");
+/// assert!(text.contains("starts no session"), "{text}");
+/// ```
+pub fn claude_token_locked(host: &str) -> String {
+    format!(
+        "riff cannot read the token of claude: {} The daemon starts no session, and does not use \
+         the sign-in of claude on this machine, until the keyring answers.",
+        riff_client::text::keyring_locked(host)
     )
 }
 
@@ -6097,6 +6119,7 @@ pub fn claude_token_kept(path: &Path) -> String {
 /// assert_eq!(daemon_claude_token(Token::Set), "claude token: set.");
 /// assert!(daemon_claude_token(Token::NotSet).starts_with("claude token: not set. Run claude setup-token"));
 /// assert!(daemon_claude_token(Token::Refused).starts_with("claude token: refused. claude refused"));
+/// assert!(daemon_claude_token(Token::Locked).starts_with("claude token: keyring locked. Unlock"));
 /// assert_eq!(daemon_claude_token(Token::Unknown), "");
 /// ```
 pub fn daemon_claude_token(token: riff_client::daemons::Token) -> String {
@@ -6110,6 +6133,9 @@ pub fn daemon_claude_token(token: riff_client::daemons::Token) -> String {
             crate::run::MIN_MINUTES
         ),
         Token::Refused => format!("claude token: refused. {CLAUDE_TOKEN_REFUSED}"),
+        Token::Locked => "claude token: keyring locked. Unlock the OS keyring at the desktop. The \
+             daemon starts no session until the keyring answers."
+            .to_owned(),
     }
 }
 

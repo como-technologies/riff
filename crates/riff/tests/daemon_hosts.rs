@@ -523,7 +523,9 @@ impl Riff {
 async fn riff_who_and_riff_top_show_the_facts_of_each_host() {
     let r = riff_with(300, 600).await;
     // A token on b only (01M58B7HA8CRCW0MJ17QP3R5QG).
-    riff::claude_token::store(&r.b.dir(), "sk-ant-oat01-secret1").unwrap();
+    let secrets = r.b.env.riff_home().join("secrets");
+    riff_client::secrets::file_set(&secrets, riff::claude_token::NAME, "sk-ant-oat01-secret1")
+        .unwrap();
     let out = r.lead(&["daemon", "limit", "--sessions", "5"], "b").await;
     assert!(out.status.success(), "{out:?}");
     let who = until("the facts of each host in riff who", || async {

@@ -1060,12 +1060,16 @@ impl Claude {
 }
 
 /// The sign-in of `claude` for the sessions of the daemon in the folder
-/// `daemon`, at the time `now_ms`: the token of `riff claude-token` when
-/// it is set, with no rule of [`MIN_MINUTES`]. Else the sign-in file
-/// `credentials`, with the rule (01M58B7H50RCG2VXXV9XX5Y7HM). A token
-/// that `claude` refused is a fault (01M58B7H7HD0H48A0C79F8M4CR).
+/// `daemon`, at the time `now_ms`: the token of `riff claude-token` in
+/// the OS keyring when it is set, with no rule of [`MIN_MINUTES`]. Else
+/// the sign-in file `credentials`, with the rule
+/// (01M58B7H50RCG2VXXV9XX5Y7HM). A token that `claude` refused is a
+/// fault (01M58B7H7HD0H48A0C79F8M4CR). A keyring that is locked, or that
+/// does not answer, is a fault too, with no fall back to the file
+/// (01M58XZF928T82YAMF4DSJBKBF).
 ///
-/// ```
+/// ```standalone_crate
+/// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
 /// use riff::run::{Claude, HostFault, claude_of};
 ///
 /// let dir = tempfile::tempdir()?;
@@ -1077,16 +1081,26 @@ impl Claude {
 /// assert!(matches!(claude_of(&daemon, &credentials, 0), Err(HostFault::SignInEnds(10))));
 /// riff::claude_token::store(&daemon, "sk-ant-oat01-x")?;
 /// assert!(matches!(claude_of(&daemon, &credentials, 0), Ok(Claude::Token(t)) if t == "sk-ant-oat01-x"));
+/// std::fs::create_dir_all(&daemon)?;
 /// riff::claude_token::refuse(&daemon)?;
 /// assert!(matches!(claude_of(&daemon, &credentials, 0), Err(HostFault::TokenRefused)));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn claude_of(daemon: &Path, credentials: &Path, now_ms: i64) -> Result<Claude, HostFault> {
-    if let Some(token) = crate::claude_token::load(daemon) {
-        if crate::claude_token::refused(daemon) {
-            return Err(HostFault::TokenRefused);
+    match crate::claude_token::load() {
+        Ok(Some(token)) => {
+            if crate::claude_token::refused(daemon) {
+                return Err(HostFault::TokenRefused);
+            }
+            return Ok(Claude::Token(token));
         }
-        return Ok(Claude::Token(token));
+        Ok(None) => {}
+        Err(e) => {
+            return Err(match e.downcast_ref::<riff_client::secrets::Locked>() {
+                Some(locked) => HostFault::KeyringLocked(locked.host.clone()),
+                None => HostFault::Missing(format!("{e:#}")),
+            });
+        }
     }
     let missing = HostFault::Missing;
     let file = std::fs::read_to_string(credentials)
@@ -1112,6 +1126,10 @@ pub enum HostFault {
     /// `claude` refused the token of `riff claude-token`
     /// (01M58B7H7HD0H48A0C79F8M4CR).
     TokenRefused,
+    /// The OS keyring of the host is locked, or does not answer: the
+    /// host. The daemon cannot read the token
+    /// (01M58XZF928T82YAMF4DSJBKBF).
+    KeyringLocked(String),
     /// Another fact is missing: the text that says the fix.
     Missing(String),
 }
@@ -1147,6 +1165,7 @@ impl HostFault {
         match self {
             HostFault::SignInEnds(minutes) => text::wave_sign_in_ends(*minutes),
             HostFault::TokenRefused => text::CLAUDE_TOKEN_REFUSED.to_owned(),
+            HostFault::KeyringLocked(host) => text::claude_token_locked(host),
             HostFault::Missing(text) => text.clone(),
         }
     }
@@ -1157,6 +1176,7 @@ impl std::fmt::Display for HostFault {
         match self {
             HostFault::SignInEnds(minutes) => f.write_str(&text::run_sign_in_ends(*minutes)),
             HostFault::TokenRefused => f.write_str(text::CLAUDE_TOKEN_REFUSED),
+            HostFault::KeyringLocked(host) => f.write_str(&text::claude_token_locked(host)),
             HostFault::Missing(text) => f.write_str(text),
         }
     }
@@ -1947,6 +1967,7 @@ mod tests {
 
     #[test]
     fn a_token_starts_a_session_with_10_minutes_left_and_no_token_does_not() {
+        let _token = crate::claude_token::test_token();
         let dir = tempfile::tempdir().unwrap();
         let credentials = dir.path().join(".credentials.json");
         let file =
@@ -1964,6 +1985,24 @@ mod tests {
         // With no sign-in file at all, the token still holds.
         std::fs::remove_file(&credentials).unwrap();
         assert!(claude_of(&daemon, &credentials, 0).is_ok());
+    }
+
+    /// 01M58XZF928T82YAMF4DSJBKBF: a locked keyring is a fault of the
+    /// host, also with a sign-in file that would do. The daemon does not
+    /// fall back to the file.
+    #[test]
+    fn a_locked_keyring_stops_the_start_and_does_not_fall_back_to_the_file() {
+        let _token = crate::claude_token::test_token();
+        let dir = tempfile::tempdir().unwrap();
+        let credentials = dir.path().join(".credentials.json");
+        let file = r#"{"claudeAiOauth":{"accessToken":"sk-a","refreshToken":"sk-r","expiresAt":99999999999999}}"#;
+        std::fs::write(&credentials, file).unwrap();
+        let daemon = dir.path().join("daemon");
+        assert!(claude_of(&daemon, &credentials, 0).is_ok());
+        crate::claude_token::test_lock();
+        let fault = claude_of(&daemon, &credentials, 0).err().unwrap();
+        assert!(matches!(fault, HostFault::KeyringLocked(_)), "{fault:?}");
+        assert!(fault.wave_text().contains("is locked"), "{fault}");
     }
 
     fn facts() -> Facts {
