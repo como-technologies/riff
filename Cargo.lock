@@ -1501,7 +1501,7 @@ dependencies = [
 
 [[package]]
 name = "hygiene"
-version = "3.3.0"
+version = "4.0.0"
 dependencies = [
  "isolated",
  "serde",
@@ -1828,7 +1828,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "isolated"
-version = "3.3.0"
+version = "4.0.0"
 dependencies = [
  "assert_cmd",
  "nix 0.31.3",
@@ -2895,7 +2895,7 @@ dependencies = [
 
 [[package]]
 name = "real-session"
-version = "3.3.0"
+version = "4.0.0"
 dependencies = [
  "isolated",
  "riff",
@@ -2965,7 +2965,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reqs"
-version = "3.3.0"
+version = "4.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "tempfile",
@@ -3027,7 +3027,7 @@ dependencies = [
 
 [[package]]
 name = "riff"
-version = "3.3.0"
+version = "4.0.0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -3072,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "riff-client"
-version = "3.3.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3093,7 +3093,7 @@ dependencies = [
 
 [[package]]
 name = "riff-core"
-version = "3.3.0"
+version = "4.0.0"
 dependencies = [
  "base64 0.23.1",
  "getrandom 0.4.3",
@@ -3106,7 +3106,7 @@ dependencies = [
 
 [[package]]
 name = "riff-server"
-version = "3.3.0"
+version = "4.0.0"
 dependencies = [
  "assert_cmd",
  "axum",
@@ -3133,7 +3133,7 @@ dependencies = [
 
 [[package]]
 name = "riff-state"
-version = "3.3.0"
+version = "4.0.0"
 dependencies = [
  "chrono",
  "futures",
