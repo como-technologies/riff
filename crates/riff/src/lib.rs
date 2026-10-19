@@ -97,7 +97,6 @@ pub mod pr;
 pub mod release;
 pub mod rollout;
 pub mod room;
-pub mod rule_sync;
 pub mod run;
 pub mod runtime;
 pub mod sccache;

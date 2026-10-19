@@ -172,11 +172,6 @@ impl Machine {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
     }
-
-    /// The rules that `riff init` writes into the user settings.
-    fn user_rules(&self) -> riff::permissions::Rules {
-        riff::permissions::user_rules(Some(&self.env.home()))
-    }
 }
 
 #[tokio::test]
@@ -184,14 +179,11 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
     let machine = Machine::new();
     std::fs::write(machine.bin.join("no-image"), "").unwrap();
     machine.write_settings(r#"{"model": "opus"}"#);
-    // --yes adds the permission rules with no question
-    // (01M5084K09Z2S7N57315CX2R0F).
     let out = machine.init(&machine.repo, &["--yes"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     let uid = machine.uid;
     let settings = machine.settings();
-    let rules = machine.user_rules();
     for line in [
         "riff checks this machine for riff 3.0:".to_owned(),
         "  pass  podman: podman version 5.7.0".to_owned(),
@@ -201,18 +193,6 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
         ),
         format!("  pass  cgroup v2: user@{uid}.service has cpu and memory"),
         format!("  pass  the session image: {IMAGE}"),
-        format!(
-            "  fail  the rules of Claude Code: {} lacks {} permission rules of riff. Fix: \
-             answer y to the question of riff init, or run riff init --yes",
-            settings.display(),
-            rules.len()
-        ),
-        "  allow Bash(gh issue list *)".to_owned(),
-        format!(
-            "riff added {} permission rules to {}. Start Claude Code again to use them.",
-            rules.len(),
-            settings.display()
-        ),
         format!(
             "riff wrote the unit {}, and started it again.",
             machine.unit().display()
@@ -243,29 +223,19 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
     let log = machine.read("podman.log");
     assert!(log.contains(&format!("podman pull {IMAGE}\n")), "{log}");
     assert_eq!(pulls(&log), 1, "{log}");
-    // The user settings have each rule, and keep their other key.
-    let value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
-    assert_eq!(value["model"], "opus");
+    // 01M5084K09Z2S7N57315CX2R0F: riff init writes no rule into the user
+    // settings.
     assert_eq!(
-        value["permissions"]["allow"],
-        serde_json::json!(rules.allow),
-        "{value}"
+        std::fs::read_to_string(&settings).unwrap(),
+        r#"{"model": "opus"}"#
     );
 
     // A second run keeps the daemon and the settings, and pulls nothing.
-    // It asks nothing: the rules are there.
     let before = std::fs::read_to_string(&settings).unwrap();
     let out = machine.init(&machine.repo, &[]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
-    assert!(
-        stdout.contains(&format!(
-            "  pass  the rules of Claude Code: {} has each permission rule of riff\n",
-            settings.display()
-        )),
-        "{stdout}"
-    );
+    assert!(!stdout.contains("the rules of Claude Code"), "{stdout}");
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), before);
     assert!(
         stdout.contains("The riff daemon of this riff runs already: pid "),
@@ -310,7 +280,6 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
         "  fail  /etc/subgid: riff cannot read /etc/subgid. Fix: ",
         "  fail  cgroup v2: this machine has no cgroup v2. Fix: ",
         "  fail  the session image: ",
-        "  fail  the rules of Claude Code: ",
     ];
     assert_eq!(failed.len(), starts.len(), "{stdout}");
     for (line, start) in failed.iter().zip(starts) {
@@ -335,26 +304,11 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
         stdout.contains("sudo usermod --add-subgids 100000-165535 "),
         "{stdout}"
     );
-    // No terminal: riff asks nothing about the rules, and writes nothing
-    // (01M5084K09Z2S7N57315CX2R0F).
-    assert!(
-        stdout.contains(
-            "riff init asks its question only in a terminal. To add the rules, run: riff init \
-             --yes\n"
-        ),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains(&format!(
-            "riff changed nothing in {}.\n",
-            machine.settings().display()
-        )),
-        "{stdout}"
-    );
+    // riff init writes no user settings (01M5084K09Z2S7N57315CX2R0F).
     assert!(!machine.settings().exists());
     assert!(
         stdout.contains(
-            "7 checks failed. riff installed nothing and pulled nothing. Do each fix, then run \
+            "6 checks failed. riff installed nothing and pulled nothing. Do each fix, then run \
              riff init again."
         ),
         "{stdout}"
@@ -367,14 +321,10 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
 #[tokio::test]
 async fn riff_init_check_changes_nothing() {
     let machine = Machine::new();
-    let rules = machine.user_rules();
-    machine.write_settings(
-        &serde_json::json!({ "permissions": { "allow": rules.allow } }).to_string(),
-    );
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
-    assert_eq!(stdout.matches("  pass  ").count(), 8, "{stdout}");
+    assert_eq!(stdout.matches("  pass  ").count(), 7, "{stdout}");
     assert!(
         stdout.ends_with("Each check passed. riff changed nothing: --check.\n"),
         "{stdout}"
@@ -392,10 +342,6 @@ async fn riff_init_check_changes_nothing() {
 #[tokio::test]
 async fn riff_init_with_the_riff_of_a_plain_cargo_build_fails_one_check() {
     let machine = Machine::new();
-    let rules = machine.user_rules();
-    machine.write_settings(
-        &serde_json::json!({ "permissions": { "allow": rules.allow } }).to_string(),
-    );
     let riff = std::fs::canonicalize(machine.env.riff_path()).unwrap();
     for args in [&["--check"][..], &[]] {
         let mut cmd = machine.init_command(&machine.repo, args);
@@ -432,35 +378,6 @@ async fn riff_init_with_the_riff_of_a_plain_cargo_build_fails_one_check() {
     }
 }
 
-/// 01M5084K09Z2S7N57315CX2R0F: `riff init --check` names each missing
-/// rule, asks nothing and writes nothing.
-#[tokio::test]
-async fn riff_init_check_names_each_missing_rule() {
-    let machine = Machine::new();
-    let text_before = r#"{"permissions": {"allow": ["Bash(riff *)"]}}"#;
-    machine.write_settings(text_before);
-    let out = machine.init(&machine.repo, &["--check"]).await;
-    let stdout = text(&out.stdout);
-    assert_eq!(out.status.code(), Some(1), "{stdout}");
-    let rules = machine.user_rules();
-    for rule in &rules.allow {
-        let line = format!("\n  allow {rule}\n");
-        assert_eq!(
-            stdout.contains(&line),
-            rule != "Bash(riff *)",
-            "{rule}\n{stdout}"
-        );
-    }
-    assert!(!stdout.contains("[y/N]"), "{stdout}");
-    assert!(!stdout.contains("riff changed nothing in"), "{stdout}");
-    assert!(stdout.contains("1 check failed."), "{stdout}");
-    assert_eq!(
-        std::fs::read_to_string(machine.settings()).unwrap(),
-        text_before
-    );
-    assert!(!machine.unit().exists());
-}
-
 /// 01M51QFPYHK0916C5ZN2B55BR0, 01M51QFPW37EXVH4AXH70MSXBT,
 /// 01M51QFPMSG81YRDDGQQ1WJDSQ: `riff update --check` shows each step of
 /// an update, in step or not, with its fix, and changes nothing. A dev
@@ -491,12 +408,6 @@ async fn riff_update_check_shows_each_step_and_changes_nothing() {
         format!(
             "not in step  the riff binary: {}. Fix: riff update",
             text::not_release_releases(&releases)
-        ),
-        format!(
-            "not in step  the rules of Claude Code: {} lacks {} permission rules of riff. Fix: \
-             riff init --yes",
-            machine.settings().display(),
-            machine.user_rules().len()
         ),
         "not in step  the unit of the daemon: no unit of the riff daemon is installed. Fix: riff \
          daemon install"
@@ -550,12 +461,9 @@ async fn riff_update_check_shows_each_step_and_changes_nothing() {
 #[tokio::test]
 async fn riff_init_names_each_wide_rule_and_removes_none_with_no_yes() {
     let machine = Machine::new();
-    let mut rules = machine.user_rules();
-    rules
-        .allow
-        .push("Bash(gh pr merge * --auto --squash)".into());
     machine.write_settings(
-        &serde_json::json!({ "permissions": { "allow": rules.allow } }).to_string(),
+        &serde_json::json!({ "permissions": { "allow": ["Bash(riff *)", "Bash(gh pr merge * --auto --squash)"] } })
+            .to_string(),
     );
     let local = machine.repo.join(".claude/settings.local.json");
     std::fs::create_dir_all(local.parent().unwrap()).unwrap();
@@ -613,41 +521,10 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
         init,
         [
             "riff init",
-            "riff init --yes",
             "riff init",
+            "riff init --yes",
             "riff init --check"
         ]
     );
     each_is_real(&init);
-}
-
-/// "Get ready for riff 3.0" names each rule that `riff init` writes
-/// (01M5084K09Z2S7N57315CX2R0F).
-#[test]
-fn start_a_riff_names_each_rule_that_riff_init_writes() {
-    let book = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/start-a-riff.md"),
-    )
-    .unwrap();
-    let start = book
-        .find("### Let riff set the permissions of Claude Code")
-        .unwrap();
-    let part = &book[start..];
-    let part = &part[..part[4..].find("\n### ").map_or(part.len(), |end| end + 4)];
-    let rules = riff::permissions::user_rules(None);
-    assert!(!rules.allow.is_empty());
-    for rule in &rules.allow {
-        assert!(
-            part.contains(&format!("`{rule}`")),
-            "{rule} is not in\n{part}"
-        );
-    }
-    assert!(part.contains("the same rule with the full path of your home"));
-    // 01M509TJNREVNYR9MNN4P9P4RA: the page names no rule of the API of
-    // the forge, and the place of the `*` of a rule.
-    assert!(!part.contains("gh api"), "{part}");
-    assert!(
-        part.contains("Its only `*` is at its\nend, after a space."),
-        "{part}"
-    );
 }

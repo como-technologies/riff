@@ -13,7 +13,6 @@
 //!
 //! | Step | In step when | Else the daemon |
 //! |---|---|---|
-//! | the rules of Claude Code | the user settings have each rule of riff ([`crate::permissions::user_rules`]) | adds the missing rules ([`crate::rule_sync`]) |
 //! | the unit of the daemon | the unit file is the text that this riff writes for its `ExecStart` and its variables ([`Unit::text`]) | writes it again, and starts again on it when it is idle (01M51QFPQ68JHS08TWXNNWZ0D7) |
 //! | the session image of each wave | podman has the merged pin of the main clone of the wave: the image that `riff.toml` on the default branch of `origin` pins ([`session_image::merged`]) | pulls it (01M51QFPSMDDMFPZXAEYWZYJPV) |
 //!
@@ -23,7 +22,7 @@
 //! GitHub release of its version ([`release::is_release`]). Each step
 //! that changes the machine trusts only GitHub
 //! (01M51QFPMSG81YRDDGQQ1WJDSQ): with `RIFF_RELEASES` set, the gate stays
-//! shut, and its line says why ([`rule_sync::sums_source`]). So a
+//! shut, and its line says why ([`sums_source`]). So a
 //! session cannot build a branch, name its own `SHA256SUMS`, and get the
 //! steps of that branch done. A check build or a dev build changes
 //! nothing.
@@ -40,8 +39,7 @@
 //! flowchart TD
 //!     S["the riff daemon starts"] --> G{"update.auto on, and its binary<br/>is in SHA256SUMS of the<br/>GitHub release of its version?"}
 //!     G -- "no: off, a dev build,<br/>or RIFF_RELEASES set" --> L["it changes nothing:<br/>one line for each step"]
-//!     G -- "yes" --> R["the rules: add the missing rules"]
-//!     R --> U["the unit: write it again,<br/>start again when idle"]
+//!     G -- "yes" --> U["the unit: write it again,<br/>start again when idle"]
 //!     U --> I["the image of each wave: pull it"]
 //!     I --> P["the checks of the machine:<br/>never a change"]
 //!     L --> P
@@ -49,7 +47,7 @@
 //! ```
 //!
 //! `riff update --check` ([`check`]) looks at each step and changes
-//! nothing (01M51QFPYHK0916C5ZN2B55BR0): the binary, the rules, the unit,
+//! nothing (01M51QFPYHK0916C5ZN2B55BR0): the binary, the unit,
 //! the session image of each wave, the image that the working tree of
 //! the current folder pins ([`session_image::of_folder`],
 //! 01M51SVXQK037E20R7WAY66532), and the checks of the machine. It prints one line for each
@@ -70,7 +68,7 @@
 //! );
 //! ```
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
@@ -78,10 +76,9 @@ use riff_core::build::Build;
 
 use crate::first_run::{self, Check};
 use crate::release::{self, Source};
-use crate::rule_sync;
 use crate::runtime::Runtime;
 use crate::service::{ServiceManager, Unit};
-use crate::{lifecycle, local, permissions, session_image, settings, text};
+use crate::{lifecycle, local, session_image, settings, text};
 
 /// A riff binary, and the place of its release files.
 #[derive(Debug, Clone, Copy)]
@@ -91,7 +88,7 @@ pub struct Release<'a> {
     /// The release tag of its version, for example `v1.5.0`.
     pub tag: &'a str,
     /// The place of the release files, or why riff trusts no place
-    /// ([`rule_sync::sums_source`]).
+    /// ([`sums_source`]).
     pub source: &'a Result<Source, String>,
     /// The target of the static binaries of this machine.
     pub target: Option<&'a str>,
@@ -171,10 +168,10 @@ pub async fn gate(auto: bool, release: &Release<'_>) -> Result<Gate> {
 }
 
 /// The trusted place of the release files of this process
-/// ([`rule_sync::sums_source`]): the GitHub releases, or why riff trusts
+/// ([`sums_source`]): the GitHub releases, or why riff trusts
 /// no place. And the release tag of its version.
 fn source_here() -> (Result<Source, String>, String) {
-    let source = rule_sync::sums_source(std::env::var(release::RELEASES).ok().as_deref());
+    let source = sums_source(std::env::var(release::RELEASES).ok().as_deref());
     (source, lifecycle::release_tag(env!("CARGO_PKG_VERSION")))
 }
 
@@ -255,36 +252,28 @@ impl Step {
     }
 }
 
-/// The step of the rules of Claude Code in the user settings at `user`.
-/// It changes nothing: the sync of the rules adds them
-/// ([`rule_sync`], 01M51M3ZHHBE61CEG9T6ENFG18).
+/// The place of `SHA256SUMS` for the release check of the steps
+/// (01M51QARV45MGEKC6KGWX1N5NS): only the GitHub releases. `releases`
+/// is the value of [`release::RELEASES`]. A person or a session can set
+/// it and name a `SHA256SUMS` of their own, so with a value, `Err` says
+/// why the steps change nothing.
 ///
 /// ```
-/// use riff::update_steps::{rules, State};
+/// use riff::release::Source;
+/// use riff::update_steps::sums_source;
 ///
-/// let dir = tempfile::tempdir()?;
-/// let user = dir.path().join("settings.json");
-/// let step = rules(&user, None);
-/// assert!(matches!(&step.state, State::Behind { fix, .. } if fix == "riff init --yes"));
-/// let want = riff::permissions::user_rules(None);
-/// riff::permissions::add(&user, &want)?;
-/// assert!(rules(&user, None).in_step());
-/// # Ok::<(), anyhow::Error>(())
+/// assert_eq!(sums_source(None), Ok(Source::GitHub));
+/// assert_eq!(
+///     sums_source(Some("/srv/riff")),
+///     Err("RIFF_RELEASES is set to /srv/riff, and the sync reads SHA256SUMS only from the \
+///          GitHub release"
+///         .to_owned())
+/// );
 /// ```
-pub fn rules(user: &Path, home: Option<&Path>) -> Step {
-    let want = permissions::user_rules(home);
-    let missing = first_run::Settings::of(user, &want).missing;
-    let state = if missing.is_empty() {
-        State::InStep(text::init_rules_there(user))
-    } else {
-        State::Behind {
-            found: text::init_rules_missing(user, missing.len()),
-            fix: text::STEP_FIX_RULES.to_owned(),
-        }
-    };
-    Step {
-        name: text::INIT_RULES.to_owned(),
-        state,
+pub fn sums_source(releases: Option<&str>) -> Result<Source, String> {
+    match releases {
+        None => Ok(Source::GitHub),
+        Some(place) => Err(text::not_release_releases(place)),
     }
 }
 
@@ -406,11 +395,6 @@ async fn wave_images_here(dir: &Path) -> Vec<(String, Result<String, String>)> {
 
 /// What the steps look at on a machine.
 pub struct Machine<'a, M, R> {
-    /// The user settings of Claude Code, or `None` when riff cannot find
-    /// them.
-    pub user: Option<&'a Path>,
-    /// The home of the person, for `{HOME}` in a rule.
-    pub home: Option<&'a Path>,
     /// The service manager of the unit of the daemon, or `None` when the
     /// daemon has no unit, for example with `RIFF_HOME`.
     pub manager: Option<&'a M>,
@@ -423,19 +407,12 @@ pub struct Machine<'a, M, R> {
     pub checks: Vec<Check>,
 }
 
-/// Each step on `at`, in order: [`rules`], [`unit()`], [`image`] and
+/// Each step on `at`, in order: [`unit()`], [`image`] and
 /// [`machine`]. Only with an open `gate` do the unit and the images
-/// change (01M51QFPJAABDP1V7WFY8NQR60). The sync of the rules runs before
-/// it ([`rule_sync::sync`]).
+/// change (01M51QFPJAABDP1V7WFY8NQR60).
 pub async fn sync<M: ServiceManager, R: Runtime>(gate: &Gate, at: &Machine<'_, M, R>) -> Vec<Step> {
     let change = gate.open();
-    let mut steps = vec![match at.user {
-        Some(user) => rules(user, at.home),
-        None => Step {
-            name: text::INIT_RULES.to_owned(),
-            state: State::Failed(text::INIT_NO_SETTINGS.to_owned()),
-        },
-    }];
+    let mut steps = Vec::new();
     if let Some(manager) = at.manager {
         steps.push(unit(manager, change));
     }
@@ -488,13 +465,6 @@ pub fn unit_written() -> bool {
     UNIT_WRITTEN.load(Ordering::Relaxed)
 }
 
-/// The home of the person, for `{HOME}` in a rule.
-fn home_here() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from)
-}
-
 /// The service manager of the unit of the daemon of this machine. None
 /// with `RIFF_HOME` or `RIFF_DATA`: that daemon is never the daemon of
 /// the unit ([`crate::run::machine_data`]).
@@ -511,13 +481,9 @@ async fn sync_here(
     runtime: &impl Runtime,
     images: Vec<(String, Result<String, String>)>,
 ) -> Vec<Step> {
-    let user = crate::claude_settings::user_settings();
-    let home = home_here();
     let manager = manager_here();
     let facts = first_run::Facts::here(&lifecycle::run_dir());
     let at = Machine {
-        user: user.as_deref(),
-        home: home.as_deref(),
         manager: manager.as_ref(),
         runtime,
         images,
@@ -538,12 +504,10 @@ fn keep_needs_you(steps: &[Step]) {
 
 /// The steps at each start of the riff daemon in the folder `daemon` of
 /// this machine, with `runtime` (01M51QFPJAABDP1V7WFY8NQR60). First the
-/// sync of the rules ([`rule_sync::at_start`]), then the gate and each
-/// step. It logs the gate and each step, and keeps the step that needs
+/// gate, then each step. It logs the gate and each step, and keeps the step that needs
 /// a person. After a write of the unit, the daemon starts again when it
 /// is idle ([`unit_written`]). It never fails the daemon.
 pub async fn at_start(runtime: &impl Runtime, daemon: &Path) {
-    rule_sync::at_start().await;
     let gate = gate_here().await;
     println!("{}", text::steps_gate(&Build::this().to_string(), &gate));
     let steps = sync_here(&gate, runtime, wave_images_here(daemon).await).await;
@@ -600,12 +564,12 @@ pub async fn check(runtime: &impl Runtime, daemon: &Path, here: &Path) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::Mutex;
 
     use anyhow::bail;
 
     use super::*;
-    use crate::rule_sync::Synced;
     use crate::runtime::Fake;
 
     const TARGET: &str = "x86_64-unknown-linux-musl";
@@ -680,12 +644,8 @@ mod tests {
         text.replace("RestartSec=2\n", "RestartSec=9\n")
     }
 
-    /// The user settings: a rule of the person, and no rule of riff.
-    const SETTINGS: &str = r#"{"model": "opus", "permissions": {"allow": ["Read(~/**)"]}}"#;
-
     /// A machine after the update by itself put a new riff in place, in
-    /// a temp folder: user settings with no rule of riff, the riff
-    /// binary, the release files of `v1.5.0` with the SHA-256 of
+    /// a temp folder: the riff binary, the release files of `v1.5.0` with the SHA-256 of
     /// `release`, the unit file of an older release, a wave whose new pin
     /// names [`IMAGE`], and a registry that has it. Its init of podman is
     /// missing: only a person can install it.
@@ -699,7 +659,6 @@ mod tests {
     impl Here {
         fn new(binary: &[u8], release: &[u8]) -> Here {
             let dir = tempfile::tempdir().unwrap();
-            std::fs::write(dir.path().join("settings.json"), SETTINGS).unwrap();
             std::fs::write(dir.path().join("riff"), binary).unwrap();
             let files = dir.path().join("releases/v1.5.0");
             std::fs::create_dir_all(&files).unwrap();
@@ -724,33 +683,22 @@ mod tests {
         /// The release files of the machine, named by `RIFF_RELEASES`.
         fn by_variable(mut self) -> Here {
             let place = self.dir.path().join("releases");
-            self.source = rule_sync::sums_source(Some(&place.display().to_string()));
+            self.source = sums_source(Some(&place.display().to_string()));
             self
         }
 
-        fn settings(&self) -> String {
-            std::fs::read_to_string(self.dir.path().join("settings.json")).unwrap()
-        }
-
         /// What the daemon does at its start with `update.auto` =
-        /// `auto`: the sync of the rules, then the gate and each step.
-        async fn start(&self, auto: bool) -> (Synced, Vec<Step>) {
-            let user = self.dir.path().join("settings.json");
+        /// `auto`: the gate and each step.
+        async fn start(&self, auto: bool) -> Vec<Step> {
             let binary = self.dir.path().join("riff");
-            let facts = rule_sync::Facts {
-                auto,
-                user: &user,
-                home: None,
+            let release = Release {
                 binary: &binary,
                 tag: "v1.5.0",
                 source: &self.source,
                 target: Some(TARGET),
             };
-            let rules = rule_sync::sync(&facts).await.unwrap();
-            let gate = gate(auto, &facts.release()).await.unwrap();
+            let gate = gate(auto, &release).await.unwrap();
             let at = Machine {
-                user: Some(&user),
-                home: None,
                 manager: Some(&self.units),
                 runtime: &self.runtime,
                 images: vec![("o/r".into(), Ok(IMAGE.into()))],
@@ -760,37 +708,31 @@ mod tests {
                     fix: Some("sudo apt install catatonit".into()),
                 }],
             };
-            (rules, sync(&gate, &at).await)
+            sync(&gate, &at).await
         }
     }
 
     /// 01M51QFPJAABDP1V7WFY8NQR60, 01M51QFPQ68JHS08TWXNNWZ0D7,
     /// 01M51QFPSMDDMFPZXAEYWZYJPV, 01M51QFPW37EXVH4AXH70MSXBT: a release
-    /// with a new rule, a new unit and a new image pin brings each one in
+    /// with a new unit and a new image pin brings each one in
     /// step at the start of its daemon. The step of a person stays.
     #[tokio::test]
-    async fn a_release_brings_the_rules_the_unit_and_the_image_in_step() {
+    async fn a_release_brings_the_unit_and_the_image_in_step() {
         let here = Here::new(b"the riff of v1.5.0", b"the riff of v1.5.0");
-        let (rules, steps) = here.start(true).await;
-        assert!(matches!(rules, Synced::Added(_)), "{rules:?}");
+        let steps = here.start(true).await;
         let names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(
             names,
             [
-                text::INIT_RULES,
                 text::STEP_UNIT,
                 "the session image of o/r",
                 "the init of podman"
             ]
         );
-        // The rules: the sync added them.
-        assert!(matches!(steps[0].state, State::InStep(_)), "{steps:?}");
-        let want = permissions::user_rules(None);
-        assert!(permissions::missing(&want, &[&here.settings()]).is_empty());
         // The unit: the text of this riff, with the riff and the
         // variables of the old file.
         assert_eq!(
-            steps[1].state,
+            steps[0].state,
             State::Done(text::step_unit_written(
                 "/home/mike/.config/systemd/user/riff.service".as_ref()
             ))
@@ -798,23 +740,20 @@ mod tests {
         let old = Unit::parse(&old_unit()).unwrap();
         assert_eq!(here.units.text(), Some(old.text().unwrap()));
         // The image of the new pin.
-        assert_eq!(steps[2].state, State::Done(text::step_pulled(IMAGE)));
+        assert_eq!(steps[1].state, State::Done(text::step_pulled(IMAGE)));
         assert_eq!(here.runtime.calls(), [format!("pull {IMAGE}")]);
         // The init of podman needs a person: the daemon only tells.
-        assert!(steps[3].needs_you(), "{steps:?}");
+        assert!(steps[2].needs_you(), "{steps:?}");
         assert_eq!(
             needs_you(&steps).as_deref(),
             Some("the init of podman: sudo apt install catatonit")
         );
 
         // The next start finds each step in step, and changes nothing.
-        let settings = here.settings();
-        let (rules, steps) = here.start(true).await;
-        assert_eq!(rules, Synced::InStep);
-        for step in &steps[..3] {
+        let steps = here.start(true).await;
+        for step in &steps[..2] {
             assert!(matches!(step.state, State::InStep(_)), "{step:?}");
         }
-        assert_eq!(here.settings(), settings);
         assert_eq!(here.units.writes(), 1);
         assert_eq!(here.runtime.calls().len(), 1);
     }
@@ -835,12 +774,8 @@ mod tests {
             ),
             ("auto off", Here::new(release, release), false),
         ] {
-            let (rules, steps) = here.start(auto).await;
-            assert!(
-                matches!(rules, Synced::Off | Synced::NotRelease(_)),
-                "{case}: {rules:?}"
-            );
-            let fixes: Vec<&str> = steps[..3]
+            let steps = here.start(auto).await;
+            let fixes: Vec<&str> = steps[..2]
                 .iter()
                 .map(|step| match &step.state {
                     State::Behind { fix, .. } => fix.as_str(),
@@ -848,12 +783,7 @@ mod tests {
                 })
                 .collect();
             let pull = text::step_fix_image(IMAGE);
-            assert_eq!(
-                fixes,
-                [text::STEP_FIX_RULES, text::STEP_FIX_UNIT, pull.as_str()],
-                "{case}"
-            );
-            assert_eq!(here.settings(), SETTINGS, "{case}");
+            assert_eq!(fixes, [text::STEP_FIX_UNIT, pull.as_str()], "{case}");
             assert_eq!(here.units.text(), Some(old_unit()), "{case}");
             assert_eq!(here.units.writes(), 0, "{case}");
             assert!(here.runtime.calls().is_empty(), "{case}");

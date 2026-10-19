@@ -12,7 +12,6 @@
 //! | Place | riff writes it with | Into |
 //! |---|---|---|
 //! | project | `riff setup` (01M3Q53RNDJBDHVDFHJ9HCX9S1) | `.claude/settings.json` at the top of the repository ([`Project::settings`]) |
-//! | user | `riff init`, after one question (01M5084K09Z2S7N57315CX2R0F) | the user settings of Claude Code: `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` |
 //! | session | the riff daemon, for each session (01M5084K4YQCZF20XA0P2485SG) | the `settings.json` of the own Claude folder of the session ([`crate::run::settings`]) |
 //!
 //! - riff adds only the rules that are missing. It keeps each other rule
@@ -20,18 +19,15 @@
 //! - For `riff setup`, a rule counts as there when the user settings,
 //!   the project settings or the local settings
 //!   (`.claude/settings.local.json`) have it ([`missing`]).
-//! - `riff setup --check` and `riff init --check` change nothing. Each
-//!   names each missing rule.
+//! - `riff setup --check` changes nothing. It names each missing rule.
 //! - The start hook tells the lead when project rules are missing
 //!   (01M3Q53RQGXMYVYGCQQMWA9380).
 //!
 //! ```mermaid
 //! flowchart LR
 //!     T["TABLE"] --> P["project rules"]
-//!     T --> U["user rules"]
 //!     T --> S["session rules"]
 //!     P -- "riff setup" --> PF[".claude/settings.json<br/>of the repository"]
-//!     U -- "riff init" --> UF["~/.claude/settings.json"]
 //!     S -- "the daemon" --> SF["settings.json of<br/>each session"]
 //! ```
 //!
@@ -48,8 +44,7 @@
 //!
 //! # The table
 //!
-//! Each `riff` and `gh` step of the skill matches a rule of the user
-//! place. Each step of the start text of a session of the daemon matches
+//! Each step of the start text of a session of the daemon matches
 //! a rule of the session place for its role. A step that the skill
 //! forbids matches a deny rule. A step of a person has no rule: the auto
 //! mode check judges it. The tests check each step with [`matches()`].
@@ -76,36 +71,24 @@
 //!
 //! | Rule | Kind | Roles | Places | The step |
 //! |---|---|---|---|---|
-//! | `mcp__riff` | allow | lead, worker, verifier | project, user, session | each riff tool of a worker, and of a session of the daemon |
-//! | `Bash(riff)` | allow | lead, worker, verifier | project, user | `riff` |
-//! | `Bash(riff *)` | allow | lead, worker, verifier | project, user | each `riff` command of the skill |
-//! | `Bash(~/.cache/riff/check/target/static/release/riff *)` | allow | worker | user | the riff of a new build in a check (01M5084K79M5XJT3MP8FFVQKDX) |
-//! | `Bash({HOME}/.cache/riff/check/target/static/release/riff *)` | allow | worker | user | the same riff, by its full path |
+//! | `mcp__riff` | allow | lead, worker, verifier | project, session | each riff tool of a worker, and of a session of the daemon |
+//! | `Bash(riff)` | allow | lead, worker, verifier | project | `riff` |
+//! | `Bash(riff *)` | allow | lead, worker, verifier | project | each `riff` command of the skill |
 //! | `Bash(/opt/riff/riff relay watch)` | allow | lead | session | the wakes of the lead in a container |
 //! | `Bash(/opt/riff/riff relay watch --follow)` | allow | lead | session | the wakes of the lead, one watch that never ends |
 //! | `Bash(/opt/riff/riff wave *)` | allow | lead | session | the steps of the waves of the lead in a container |
-//! | `Bash(riff wave move *)` | allow | lead | user | move items to another wave or to the Backlog (01M592406KTHSXHTWQWA3RN6Q2) |
-//! | `Bash(riff wave end *)` | allow | lead | user | end a wave, also with --move-open-to-backlog |
 //! | `Bash(/opt/riff/riff wave move *)` | allow | lead | session | the same, in a container |
 //! | `Bash(/opt/riff/riff wave end *)` | allow | lead | session | the same, in a container |
-//! | `Bash(riff release cut *)` | allow | lead | user | the release pull request (01M58KMMF9WMH39ZMD0MKGRVZB) |
-//! | `Bash(riff release publish *)` | allow | lead | user | the tag and the GitHub release |
-//! | `Bash(riff release status)` | allow | lead | user | the state of the release cycle |
-//! | `Bash(riff release check *)` | allow | lead | user | the checks after the deploy |
-//! | `Bash(riff release retry *)` | allow | lead | user | the failed jobs of a deploy again |
-//! | `Bash(riff release rollback *)` | allow | lead | user | the deploy of an older release |
 //! | `Bash(/opt/riff/riff release status)` | allow | lead | session | the state of the release cycle, in a container |
 //! | `Bash(/opt/riff/riff release cut *)` | allow | lead | session | the release pull request, in a container |
-//! | `Bash(gh pr create *)` | allow | worker | project, user, session | open the pull request |
-//! | `Bash(gh pr merge --auto --squash *)` | allow | worker | project, user, session | turn on auto-merge |
-//! | `Bash(gh pr comment *)` | allow | worker, verifier | project, user | write a comment on a pull request |
-//! | `Bash(gh pr view *)` | allow | lead, worker, verifier | project, user, session | read a pull request |
-//! | `Bash(gh pr checks *)` | allow | verifier | user, session | see the checks of a pull request |
-//! | `Bash(gh issue view *)` | allow | lead, worker, verifier | user, session | read an issue |
-//! | `Bash(gh issue list *)` | allow | lead, worker, verifier | user, session | find the items of a wave |
-//! | `Bash(gh issue create *)` | allow | lead, worker, verifier | user | file an issue |
-//! | `Bash(gh issue comment *)` | allow | worker, verifier | user | write the state on an issue |
-//! | `Bash(gh issue edit *)` | allow | lead, worker, verifier | user, session | write the `Done when:` line of an item |
+//! | `Bash(gh pr create *)` | allow | worker | project, session | open the pull request |
+//! | `Bash(gh pr merge --auto --squash *)` | allow | worker | project, session | turn on auto-merge |
+//! | `Bash(gh pr comment *)` | allow | worker, verifier | project | write a comment on a pull request |
+//! | `Bash(gh pr view *)` | allow | lead, worker, verifier | project, session | read a pull request |
+//! | `Bash(gh pr checks *)` | allow | verifier | session | see the checks of a pull request |
+//! | `Bash(gh issue view *)` | allow | lead, worker, verifier | session | read an issue |
+//! | `Bash(gh issue list *)` | allow | lead, worker, verifier | session | find the items of a wave |
+//! | `Bash(gh issue edit *)` | allow | lead, worker, verifier | session | write the `Done when:` line of an item |
 //! | `Bash(git push * {BRANCH})` | deny | lead, worker, verifier | project | never push to the default branch |
 //! | `Bash(git push * {BRANCH} *)` | deny | lead, worker, verifier | project | the same |
 //! | `Bash(git push *:{BRANCH})` | deny | lead, worker, verifier | project | the same |
@@ -249,9 +232,6 @@ impl Role {
 pub enum Place {
     /// The project settings: `riff setup` (01M3Q53RNDJBDHVDFHJ9HCX9S1).
     Project,
-    /// The user settings of the person: `riff init`
-    /// (01M5084K09Z2S7N57315CX2R0F).
-    User,
     /// The settings of each session of the daemon
     /// (01M5084K4YQCZF20XA0P2485SG).
     Session,
@@ -262,7 +242,6 @@ impl Place {
     pub fn as_str(self) -> &'static str {
         match self {
             Place::Project => "project",
-            Place::User => "user",
             Place::Session => "session",
         }
     }
@@ -328,22 +307,12 @@ const fn deny(rule: &'static str) -> Row {
 /// table in the design of this module shows each row, with the step that
 /// needs it.
 pub const TABLE: &[Row] = {
-    use Place::{Project, Session, User};
+    use Place::{Project, Session};
     use Role::{Lead, Verifier, Worker};
     &[
-        allow("mcp__riff", ALL, &[Project, User, Session]),
-        allow("Bash(riff)", ALL, &[Project, User]),
-        allow("Bash(riff *)", ALL, &[Project, User]),
-        allow(
-            "Bash(~/.cache/riff/check/target/static/release/riff *)",
-            &[Worker],
-            &[User],
-        ),
-        allow(
-            "Bash({HOME}/.cache/riff/check/target/static/release/riff *)",
-            &[Worker],
-            &[User],
-        ),
+        allow("mcp__riff", ALL, &[Project, Session]),
+        allow("Bash(riff)", ALL, &[Project]),
+        allow("Bash(riff *)", ALL, &[Project]),
         allow("Bash(/opt/riff/riff relay watch)", &[Lead], &[Session]),
         allow(
             "Bash(/opt/riff/riff relay watch --follow)",
@@ -351,36 +320,22 @@ pub const TABLE: &[Row] = {
             &[Session],
         ),
         allow("Bash(/opt/riff/riff wave *)", &[Lead], &[Session]),
-        allow("Bash(riff wave move *)", &[Lead], &[User]),
-        allow("Bash(riff wave end *)", &[Lead], &[User]),
         allow("Bash(/opt/riff/riff wave move *)", &[Lead], &[Session]),
         allow("Bash(/opt/riff/riff wave end *)", &[Lead], &[Session]),
-        allow("Bash(riff release cut *)", &[Lead], &[User]),
-        allow("Bash(riff release publish *)", &[Lead], &[User]),
-        allow("Bash(riff release status)", &[Lead], &[User]),
-        allow("Bash(riff release check *)", &[Lead], &[User]),
-        allow("Bash(riff release retry *)", &[Lead], &[User]),
-        allow("Bash(riff release rollback *)", &[Lead], &[User]),
         allow("Bash(/opt/riff/riff release status)", &[Lead], &[Session]),
         allow("Bash(/opt/riff/riff release cut *)", &[Lead], &[Session]),
-        allow("Bash(gh pr create *)", &[Worker], &[Project, User, Session]),
+        allow("Bash(gh pr create *)", &[Worker], &[Project, Session]),
         allow(
             "Bash(gh pr merge --auto --squash *)",
             &[Worker],
-            &[Project, User, Session],
+            &[Project, Session],
         ),
-        allow(
-            "Bash(gh pr comment *)",
-            &[Worker, Verifier],
-            &[Project, User],
-        ),
-        allow("Bash(gh pr view *)", ALL, &[Project, User, Session]),
-        allow("Bash(gh pr checks *)", &[Verifier], &[User, Session]),
-        allow("Bash(gh issue view *)", ALL, &[User, Session]),
-        allow("Bash(gh issue list *)", ALL, &[User, Session]),
-        allow("Bash(gh issue create *)", ALL, &[User]),
-        allow("Bash(gh issue comment *)", &[Worker, Verifier], &[User]),
-        allow("Bash(gh issue edit *)", ALL, &[User, Session]),
+        allow("Bash(gh pr comment *)", &[Worker, Verifier], &[Project]),
+        allow("Bash(gh pr view *)", ALL, &[Project, Session]),
+        allow("Bash(gh pr checks *)", &[Verifier], &[Session]),
+        allow("Bash(gh issue view *)", ALL, &[Session]),
+        allow("Bash(gh issue list *)", ALL, &[Session]),
+        allow("Bash(gh issue edit *)", ALL, &[Session]),
         deny("Bash(git push * {BRANCH})"),
         deny("Bash(git push * {BRANCH} *)"),
         deny("Bash(git push *:{BRANCH})"),
@@ -433,13 +388,10 @@ impl Row {
     /// ```
     /// use riff::permissions::{Facts, TABLE};
     ///
-    /// let row = TABLE.iter().find(|r| r.rule.contains("{HOME}")).unwrap();
+    /// let row = TABLE.iter().find(|r| r.rule == "Bash(git push * {BRANCH})").unwrap();
     /// assert_eq!(row.rule_of(&Facts::default()), None);
-    /// let facts = Facts { home: Some("/home/mike".as_ref()), ..Facts::default() };
-    /// assert_eq!(
-    ///     row.rule_of(&facts).unwrap(),
-    ///     "Bash(/home/mike/.cache/riff/check/target/static/release/riff *)"
-    /// );
+    /// let facts = Facts { branch: Some("main"), ..Facts::default() };
+    /// assert_eq!(row.rule_of(&facts).unwrap(), "Bash(git push * main)");
     /// ```
     pub fn rule_of(&self, facts: &Facts) -> Option<String> {
         fill(self.rule, facts)
@@ -533,29 +485,6 @@ pub fn rules(branch: &str) -> Rules {
         ..Facts::default()
     };
     rules_of(Place::Project, &facts)
-}
-
-/// The rules that `riff init` writes into the user settings of Claude
-/// Code, for the person with the home `home` (01M5084K09Z2S7N57315CX2R0F).
-/// They name no repository and deny nothing, so they hold in each
-/// project of the person.
-///
-/// ```
-/// let rules = riff::permissions::user_rules(Some("/home/mike".as_ref()));
-/// assert!(rules.allow.contains(&"Bash(gh issue list *)".to_owned()));
-/// let check = "Bash(~/.cache/riff/check/target/static/release/riff *)";
-/// assert!(rules.allow.contains(&check.to_owned()));
-/// let full = "Bash(/home/mike/.cache/riff/check/target/static/release/riff *)";
-/// assert!(rules.allow.contains(&full.to_owned()));
-/// assert!(rules.deny.is_empty());
-/// assert!(!riff::permissions::user_rules(None).allow.iter().any(|r| r.contains("/home/")));
-/// ```
-pub fn user_rules(home: Option<&Path>) -> Rules {
-    let facts = Facts {
-        home,
-        ..Facts::default()
-    };
-    rules_of(Place::User, &facts)
 }
 
 /// The rules that the daemon writes into the settings of each session
@@ -1437,7 +1366,7 @@ mod tests {
         assert!(commands.contains(
             &"/home/mike/.cache/riff/check/target/static/release/riffx daemon install".into()
         ));
-        for place in [Place::Project, Place::User, Place::Session] {
+        for place in [Place::Project, Place::Session] {
             let allow = rules_of(place, &facts).allow;
             for command in &commands {
                 let rule = allow.iter().find(|r| matches(r, command));
@@ -1578,25 +1507,10 @@ mod tests {
         }
     }
 
-    /// 01M592406KTHSXHTWQWA3RN6Q2: `riff init` writes a rule for
-    /// `riff wave move` and `riff wave end` of the lead, in a terminal and
-    /// in a container.
+    /// 01M592406KTHSXHTWQWA3RN6Q2: the session place has a rule for
+    /// `riff wave move` and `riff wave end` of the lead.
     #[test]
-    fn riff_init_writes_the_wave_move_and_end_rules_of_the_lead() {
-        let user = user_rules(Some(Path::new("/home/mike")));
-        for (rule, step) in [
-            (
-                "Bash(riff wave move *)",
-                "riff wave move 71 72 --to Backlog",
-            ),
-            (
-                "Bash(riff wave end *)",
-                "riff wave end 6 --move-open-to-backlog",
-            ),
-        ] {
-            assert!(user.allow.iter().any(|r| r == rule), "{rule}");
-            assert!(user.allow.iter().any(|r| matches(r, step)), "{step}");
-        }
+    fn the_session_place_has_the_wave_move_and_end_rules_of_the_lead() {
         let session = session_rules();
         for (rule, step) in [
             (
@@ -1613,26 +1527,11 @@ mod tests {
         }
     }
 
-    /// 01M58KMMF9WMH39ZMD0MKGRVZB: `riff init` writes a rule for each step
-    /// of the lead in the release cycle, and no rule that names `approve`.
-    /// The guard of riff refuses `approve` in each session.
+    /// 01M58KMMF9WMH39ZMD0MKGRVZB: the session place has a rule for the
+    /// release steps of the lead, and no rule that names `approve`. The
+    /// guard of riff refuses `approve` in each session.
     #[test]
-    fn riff_init_writes_the_release_steps_of_the_lead_and_none_for_approve() {
-        let user = user_rules(Some(Path::new("/home/mike")));
-        for step in [
-            "riff release cut 3.3.0",
-            "riff release publish v3.3.0",
-            "riff release status",
-            "riff release check v3.3.0",
-            "riff release retry v3.3.0",
-            "riff release rollback v3.2.0",
-        ] {
-            let own = user
-                .allow
-                .iter()
-                .any(|r| r != "Bash(riff *)" && matches(r, step));
-            assert!(own, "{step}");
-        }
+    fn the_session_place_has_the_release_steps_of_the_lead_and_none_for_approve() {
         let session = session_rules();
         for step in [
             "/opt/riff/riff release status",
@@ -1640,12 +1539,10 @@ mod tests {
         ] {
             assert!(session.allow.iter().any(|r| matches(r, step)), "{step}");
         }
-        for rules in [&user, &session] {
-            assert!(
-                !rules.allow.iter().any(|r| r.contains("approve")),
-                "{rules:?}"
-            );
-        }
+        assert!(
+            !session.allow.iter().any(|r| r.contains("approve")),
+            "{session:?}"
+        );
         assert!(
             !session
                 .allow
@@ -1775,11 +1672,11 @@ mod tests {
 
     /// 01M51V0Q5E7MNPWP9T7TSJFT5W: the refused calls of #897 joined their
     /// steps to a `cd` out of the worktree. Alone, each step matches a
-    /// rule of the user place; the `cd` matches none.
+    /// rule of the session place; the `cd` matches none.
     #[test]
-    fn a_step_alone_matches_a_user_rule_and_a_cd_to_the_scratchpad_matches_none() {
-        let user = user_rules(Some(Path::new("/home/mike")));
-        let allowed = |c: &str| user.allow.iter().any(|r| matches(r, c));
+    fn a_step_alone_matches_a_session_rule_and_a_cd_to_the_scratchpad_matches_none() {
+        let session = session_rules();
+        let allowed = |c: &str| session.allow.iter().any(|r| matches(r, c));
         let scratchpad = "/home/mike/.cache/riff/tmp/e750ad62/scratchpad";
         let refused = format!(
             "cd {scratchpad} && gh issue edit 840 --body-file body-840.md && gh issue edit \

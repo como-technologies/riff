@@ -28,9 +28,8 @@
 //! gets the `PATH` of the shell that installs it, so the daemon finds
 //! the same `podman`, and `XDG_DATA_HOME` when it is set, so the daemon
 //! and `riff` use one folder ([`crate::daemon::dir`]). It also gets
-//! `CLAUDE_CONFIG_DIR` when it is set, so the daemon keeps the rules in
-//! the same user settings of Claude Code as `riff init`
-//! ([`crate::rule_sync`], 01M51M3ZTV61C9BMFT3J1M06NF).
+//! `CLAUDE_CONFIG_DIR` when it is set, so the daemon uses the same Claude
+//! folder as the person (01M51M3ZTV61C9BMFT3J1M06NF).
 //!
 //! After an update of riff, the daemon runs the new riff
 //! ([`crate::daemon::after_update`], [`crate::daemon::Daemon::restart_when_old`]).

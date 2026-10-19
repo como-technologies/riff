@@ -6473,7 +6473,8 @@ part when they merge.
   person. It also checks that each such step of the start text of a
   session of the daemon matches an allow rule of the session place for
   the role of the session. Superseded in part by Wave C
-  (01M51R8G2RZAVZN1432EGZSW0X).
+  (01M51R8G2RZAVZN1432EGZSW0X), and by 4.0 (01M59EWWDC7EBQEG02TVNN81HD):
+  the table has no user place.
 - **01M5084K09Z2S7N57315CX2R0F** `riff init` checks that the user
   settings of Claude Code (`$CLAUDE_CONFIG_DIR/settings.json`, else
   `~/.claude/settings.json`) have each rule of the user place. When
@@ -6483,11 +6484,12 @@ part when they merge.
   fails. `riff init --check` names each missing rule and asks nothing.
   riff adds only the missing rules, and keeps each other rule and key in
   its order. The rules of the user place name no repository and deny
-  nothing.
+  nothing. Superseded by 4.0 (01M59EWWDC7EBQEG02TVNN81HD).
 - **01M5084K2Q3HH4BK7DJMYQD7C1** `riff init` asks its question also
   when another check fails. After a yes, the check of the rules passes.
   When another check still fails, riff installs nothing and pulls
-  nothing.
+  nothing. Superseded by 4.0
+  (01M59EWWDC7EBQEG02TVNN81HD).
 - **01M5084K4YQCZF20XA0P2485SG** The daemon writes the allow rules of
   the session place into the `settings.json` of the own Claude folder
   of each session. The Claude folder of the lead stays between its
@@ -6502,7 +6504,8 @@ part when they merge.
   by its path, `~/.cache/riff/check/target/static/release/riff`, with
   no variable and no prefix. A rule of the user place allows that path,
   with `~` and with the full path of the home. The check runs `riff
-  init` of the build with `--yes`.
+  init` of the build with `--yes`. Superseded in part by 4.0
+  (01M59EWWDC7EBQEG02TVNN81HD): no rule allows the path.
 - **01M56P380A5PXGMVJVCSD8KBRG** `riff build` makes the build of a
   check in `~/.cache/riff/check`. When the folder is not there, it
   clones the `origin` of the repository of its folder into it. Then it
@@ -6540,7 +6543,7 @@ part when they merge.
   writes as `riff init` does, keeps each other rule and key in its
   order, and removes no rule. With `update.auto = false`, it changes
   nothing. `riff update --auto` is the only switch, and it asks no other
-  question.
+  question. Superseded by 4.0 (01M59EWWDC7EBQEG02TVNN81HD).
 - **01M51M3ZKWQYBBPD97R0G9QAX0** A binary is a release when its
   SHA-256 is the line of `riff-TARGET` in `SHA256SUMS` of the GitHub
   release of its version tag. With each other binary, for example a
@@ -6553,7 +6556,8 @@ part when they merge.
 - **01M51M3ZPAEMJ64266QSJBNQ46** The riff daemon logs each rule that
   its sync adds, and one line of the result. It keeps that line in the
   local files of riff. `riff init` and `riff init --check` show whether
-  the sync is on, and that line.
+  the sync is on, and that line. Superseded by 4.0
+  (01M59EWWDC7EBQEG02TVNN81HD).
 - **01M51M3ZTV61C9BMFT3J1M06NF** The unit of the riff daemon gets
   `CLAUDE_CONFIG_DIR` when it is set at the install, so the daemon and
   `riff init` change the same user settings of Claude Code.
@@ -6591,8 +6595,7 @@ part when they merge.
 - **01M51QFPJAABDP1V7WFY8NQR60** The opt-in to the update by itself
   (`update.auto = true`) is the consent of the person for each step of
   an update. At each start, the riff daemon of a release does each step
-  of `riff init` that needs no person and that is not in step: it adds
-  the missing rules of Claude Code (01M51M3ZHHBE61CEG9T6ENFG18), writes
+  of `riff init` that needs no person and that is not in step: it writes
   its unit again (01M51QFPQ68JHS08TWXNNWZ0D7), and pulls the session
   image of each wave (01M51QFPSMDDMFPZXAEYWZYJPV). It logs one line for
   the gate and one line for each step. With `update.auto = false`, or a
@@ -6617,7 +6620,7 @@ part when they merge.
   `needs you: STEP: FIX`, until a later look finds it in step.
 - **01M51QFPYHK0916C5ZN2B55BR0** `riff update --check` shows what the
   riff daemon of this riff does at its next start, and one line for
-  each step of an update: the riff binary, the rules of Claude Code,
+  each step of an update: the riff binary,
   the unit of the daemon, the session image of each wave and of the
   repository of the current folder, and the checks of the machine.
   Each line says `in step`, `not in step`, `needs you` or `failed`,
@@ -7524,6 +7527,12 @@ items of Wave C that end riff-server in the Backlog
   (`riff setup`) and the session place stay. Superseded by the re-cut
   (01M53NGVMD2PGEC0P9S3X4CTHT, 01M53NGVQDKCTNMG54YDFE22T2,
   01M53NGWN190T2MYB1EZAD36VB).
+- **01M59EWWDC7EBQEG02TVNN81HD** riff 4.0 has no user place of the
+  permission rules. `riff init` writes no rule into the user settings of
+  Claude Code, and the riff daemon syncs no rule into them. The table
+  `riff::permissions::TABLE` has the project place and the session place
+  only. `riff init` still names the wide allow rules of the user
+  settings (01M51JCW04FAHZDQ144KDNCCPX).
 - **01M59BTTH6ZATH7R2PFC6NGHJK** riff 4.0 has no `riff worktrees`, no
   `riff lead compact`, no `riff lead blocked`, no tidy of the worktrees
   of a host, and no compact of the lead. The tidy of the folders of

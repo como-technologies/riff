@@ -340,10 +340,8 @@
 //!
 //! At each start, with `update.auto` on, the daemon of a release does
 //! each step of `riff init` that needs no person and that is not in
-//! step ([`crate::update_steps`], 01M51QFPJAABDP1V7WFY8NQR60): it adds
-//! each rule of its release that the user settings of Claude Code lack
-//! ([`crate::rule_sync`], 01M51M3ZHHBE61CEG9T6ENFG18), writes its unit
-//! again, and pulls the session image of each wave. When it wrote its
+//! step ([`crate::update_steps`], 01M51QFPJAABDP1V7WFY8NQR60): it writes
+//! its unit again, and pulls the session image of each wave. When it wrote its
 //! unit, it starts again on it as for an old riff. So a new release
 //! needs no `riff init`.
 
