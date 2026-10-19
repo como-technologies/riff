@@ -7774,6 +7774,8 @@ items of Wave C that end riff-server in the Backlog
   in each agent session: a worker, a container session, a process with
   a session ID, and a process under Claude Code (`CLAUDECODE`), also a
   `!` command.
+  The words "a person only approves" are superseded in part by
+  01M594XQJMXAXY3JXP66Y8EVQ7.
   The words "in a container session" for `publish` are superseded by
   01M59269HHZ5C82DR3RG3QHAM3.
   The lead skill makes each release with these commands, and has no
@@ -8125,6 +8127,19 @@ that builds it merges.
   links #982: the TUI (#994), the phone app (#951), the web UI (#995)
   and the desktop GUI (#996). The build items of a UI come from its
   child design, after Mike signs it off.
+- **01M594XQJMXAXY3JXP66Y8EVQ7** `riff release approve vX.Y.Z` also
+  works for the lead of the owner, also in a container, when
+  riff-server holds a verified message of the owner or of an admin in
+  the thread `chat`, from a person and not a session, that comes after
+  the publish line of `riff release publish vX.Y.Z`, names the
+  version, and says `approve` or `deploy`. Code reads the thread from
+  riff-server. The lead asks no yes or no. The approval comment names
+  the message number. It refuses a message of a session, of another
+  version, before the publish, or of a member, and a worker, a work
+  session in a container, and a session that is not the lead. In a
+  plain terminal it works as before. When the auto mode checker blocks
+  a release command, `riff denials` has a record, and the lead files an
+  issue for it.
 
 ## The notes of the lead
 

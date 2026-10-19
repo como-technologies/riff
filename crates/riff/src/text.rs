@@ -2143,6 +2143,13 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
             format!("riff: a session never runs {step}. {step} changed nothing."),
             format!("a person runs {step} in a plain terminal, outside Claude Code"),
         ),
+        Refusal::OwnerSilent => (
+            format!(
+                "riff: riff chat has no verified message of the owner, after the publish, that \
+                 says approve or deploy and names the version. {step} changed nothing."
+            ),
+            "ask the owner to say approve and the version in riff chat".to_owned(),
+        ),
     };
     format!("{why} next: {next}")
 }
@@ -8582,6 +8589,7 @@ pub const LEAD_RULES: [(&str, &str); 18] = [
 /// assert!(text.contains("`/opt/riff/riff wave list`"));
 /// assert!(text.contains("`/opt/riff/riff wave move ITEM --to WAVE`"));
 /// assert!(text.contains("`/opt/riff/riff wave end NUMBER --move-open-to-backlog`"));
+/// assert!(text.contains("file an issue for it"));
 /// assert!(!text.contains("--milestone"));
 /// assert!(!text.contains("gh issue edit"));
 /// assert!(text.contains("the `notes` tool"));
@@ -8595,7 +8603,7 @@ work. Your riff tools act on riff-server: `whoami`, `who`, `threads`, `read`, `p
 `/opt/riff/riff wave list`. To make, rename or end a wave, run `/opt/riff/riff wave make`, \
 `/opt/riff/riff wave rename` or `/opt/riff/riff wave end`. To move items to a wave or to the \
 Backlog, run `/opt/riff/riff wave move ITEM --to WAVE`; to end a wave with open items, run \
-`/opt/riff/riff wave end NUMBER --move-open-to-backlog`. Sessions talk in threads. A post \
+`/opt/riff/riff wave end NUMBER --move-open-to-backlog`. When the auto mode checker blocks a release command, file an issue for it: the list of denials has the record. Sessions talk in threads. A post \
 wakes only the \
 sessions that its `to` selectors match; text in the body never wakes anyone. Use `tell` for a \
 direct message. The notes are text that riff keeps for your user and your repository: the running \

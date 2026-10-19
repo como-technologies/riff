@@ -3935,8 +3935,73 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
             print!("{}", cycle::render_status(&cycle::status(&forge)?));
         }
         ReleaseCommand::Approve { tag } => {
-            if let Some(why) = release_caller(server, false).await.person_step() {
-                refuse("approve", why);
+            let first = release_caller(server, false).await;
+            let caller = if first.person_step().is_some() && !first.worker {
+                release_caller(server, true).await
+            } else {
+                first
+            };
+            if caller.person_step().is_some() {
+                // Only the lead of the owner goes on, and only with the
+                // word of the owner in riff chat (01M594XQJMXAXY3JXP66Y8EVQ7).
+                match caller.lead_step() {
+                    None => {}
+                    Some(why @ (cycle::Refusal::Member | cycle::Refusal::RoleUnknown)) => {
+                        refuse("approve", why)
+                    }
+                    Some(_) => refuse("approve", cycle::Refusal::Agent),
+                }
+                let (api, me, place) = release_me(server)?;
+                let roster = api.roster(&me, false).await?;
+                let owner_or_admin = |user: &str| match &roster.owner {
+                    riff_core::wire::RiffOwner::NoSignIn => user == me.who().user(),
+                    owner => {
+                        owner.is(user)
+                            || roster.people.iter().any(|p| {
+                                p.user == user && p.role == riff_core::wire::PersonRole::Admin
+                            })
+                    }
+                };
+                let lines: Vec<cycle::ChatLine> = api
+                    .read(&me, &riff::chat::thread(), true)
+                    .await?
+                    .into_iter()
+                    .map(|c| cycle::ChatLine {
+                        seq: c.message.seq,
+                        user: c.message.from.who().user().to_owned(),
+                        session: c.message.from.who().session().is_some(),
+                        verified: c.verified,
+                        body: c.message.body,
+                    })
+                    .collect();
+                let tag = cycle::tag(cycle::tag_version(tag)?);
+                let Some(seq) = cycle::owner_said(&lines, &tag, &owner_or_admin) else {
+                    refuse("approve", cycle::Refusal::OwnerSilent);
+                };
+                let forge = forge()?;
+                let Some(run) = cycle::waiting_run(&forge, &tag)? else {
+                    println!(
+                        "No CI run of {tag} waits for the environment production. riff changed nothing."
+                    );
+                    return Ok(());
+                };
+                pause(&api, &me, &place, PauseScope::Riff, RiffState::Paused).await?;
+                cycle::approve_run_said(&forge, &run, seq).with_context(|| {
+                    format!(
+                        "riff release approve: the approval of {} failed, and the riff stays \
+                         paused. next: riff release approve {} again, or riff resume --riff",
+                        run.tag, run.tag
+                    )
+                })?;
+                println!(
+                    "Approved with message {seq} of the owner: the deploy of {} runs: {}",
+                    run.tag, run.url
+                );
+                println!(
+                    "next: the lead runs riff release check {} after the deploy",
+                    run.tag
+                );
+                return Ok(());
             }
             let forge = forge()?;
             let answer = &mut std::io::stdin().lock();
