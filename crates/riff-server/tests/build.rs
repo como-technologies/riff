@@ -83,6 +83,19 @@ async fn a_riff_of_the_other_line_of_the_bridge_passes_the_check() {
     let others = match this().major {
         1 => ["3.0.0", "3.2.1"],
         3 => ["1.8.2", "1.9.0"],
+        // The bridge ends with the line 4: riff-server 4 refuses riff 1
+        // (01M55FCZNNZGKM4EKAXZQFTDWR). It takes the line 3 as the line
+        // before, in the test above.
+        4 => {
+            for version in ["1.8.2", "1.9.0"] {
+                for path in CALLS {
+                    let (status, _, body) =
+                        call(&url, path, Some(&at(version.parse().unwrap()))).await;
+                    assert_eq!(status, 409, "{version} {path}: {body}");
+                }
+            }
+            return;
+        }
         major => panic!("riff-server {major}.x is on no line of the bridge"),
     };
     for version in others {
