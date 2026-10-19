@@ -7979,6 +7979,21 @@ items of Wave C that end riff-server in the Backlog
   line wakes the session. The model does not start it again. The
   instructions of the lead say so.
 
+- **01M5924C8BTT6CW05Q0YZJ1GCY** `riff release test vX.Y.Z --host HOST`
+  asks the riff daemon of HOST to run the real-session test on the
+  newest commit of `origin/main` for a merged release that no pass
+  covers. The daemon clones `origin`, detaches at the commit, sets the
+  commit status `riff/real-session` to `pending`, replies, and runs
+  `just real-session` in the clone. At the end it sets `success` for
+  exit 0, else `failure`, also after a signal. It runs one test at a
+  time. The daemon acts only on the person and the lead of its user:
+  riff refuses a worker, and the daemon refuses each other session. The
+  daemon is not the author of any item. `riff release status` shows
+  `real-session test: running|passed|failed|none on COMMIT` for a merged
+  release. `just real-session` stays for a person. The check of a
+  reading that a container cannot do, for example the VmLck reading of
+  #1003, is the same mechanism with a name for the check: not built.
+
 ## The UIs
 
 The UIs are the design of #982: one Rust core library, and a child

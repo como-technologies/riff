@@ -1011,6 +1011,21 @@ enum ReleaseCommand {
         /// The release tag, for example v3.3.0.
         tag: String,
     },
+    /// Run the real-session test of a merged release on a host
+    ///
+    /// A container session cannot run just real-session: podman does not
+    /// run inside a container. The lead asks the riff daemon of HOST. It
+    /// clones the newest commit of origin/main, runs the test there, and
+    /// sets the commit status riff/real-session: pending, then success
+    /// or failure. riff release status shows the state. Only you in a
+    /// terminal and your lead can use it. The daemon refuses a worker.
+    Test {
+        /// The release tag, for example v3.3.0.
+        tag: String,
+        /// The host with podman. riff daemon status --host lists them.
+        #[arg(long)]
+        host: String,
+    },
     /// Deploy an older release again
     ///
     /// It starts the CI workflow on main with the input tag, and writes
@@ -3930,6 +3945,16 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
             let deploy = cycle::retry(&forge, tag)?;
             println!("The failed jobs of {} run again.", deploy.url);
             println!("next: a person runs riff release approve {tag} in a terminal");
+        }
+        ReleaseCommand::Test { tag, host } => {
+            if let Some(why) = release_caller(server, false).await.test_step() {
+                refuse("test", why);
+            }
+            let forge = forge()?;
+            let commit = cycle::test_target(&forge, tag)?;
+            let request = riff::daemon::remote::Request::ReleaseTest(commit);
+            ask_daemon(host, &request, &identity::place(&here)?, server).await?;
+            next(&forge, tag);
         }
         ReleaseCommand::Rollback { tag } => {
             if let Some(why) = release_caller(server, true).await.lead_step() {

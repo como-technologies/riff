@@ -984,6 +984,11 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         ),
         ("#### Test the merged release", "just real-session", &make),
         (
+            "#### Test the merged release",
+            "riff release test v3.3.0 --host thelio",
+            &make,
+        ),
+        (
             "#### Publish the release",
             "riff release publish v3.3.0",
             &make,
@@ -1045,6 +1050,7 @@ fn the_skill_makes_a_release_with_the_riff_commands() {
         "riff release cut",
         "riff release publish",
         "riff release status",
+        "riff release test",
         "riff release approve",
         "riff release check",
         "riff release retry",
@@ -1252,5 +1258,25 @@ async fn publish_refuses_a_work_container_a_lead_of_a_member_and_an_unknown_role
             "{answer}"
         );
     }
+    assert_eq!(machine.log(), "");
+}
+
+/// 01M5924C8BTT6CW05Q0YZJ1GCY: a worker never runs `riff release test`,
+/// and nothing runs.
+#[tokio::test]
+async fn test_refuses_a_worker() {
+    let machine = Machine::new().await;
+    let out = machine
+        .run(
+            &[("RIFF_WORKER", "1"), ("RIFF_SESSION", "w1")],
+            &["release", "test", "v3.3.0", "--host", "thelio"],
+            "",
+        )
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        text(&out.stderr),
+        format!("{}\n", riff::text::release_refused("test", Refusal::Worker))
+    );
     assert_eq!(machine.log(), "");
 }

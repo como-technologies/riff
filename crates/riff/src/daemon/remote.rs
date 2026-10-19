@@ -224,6 +224,7 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 ///     "daemon restart",
 ///     "wave run",
 ///     "wave stop",
+///     "release test 0123abc",
 /// ] {
 ///     assert_eq!(body.parse::<Request>().unwrap().to_string(), body);
 /// }
@@ -236,6 +237,7 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 /// assert!("daemon events n --after 7 --notes x".parse::<Request>().is_err());
 /// assert!("daemon cache 20G --clear".parse::<Request>().is_err());
 /// assert!("workers start 2".parse::<Request>().is_err());
+/// assert!("release test main".parse::<Request>().is_err());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
@@ -274,6 +276,9 @@ pub enum Request {
     WaveRun,
     /// `riff wave stop` in the repository.
     WaveStop,
+    /// `riff release test` on the commit: the real-session test
+    /// (01M5924C8BTT6CW05Q0YZJ1GCY).
+    ReleaseTest(String),
 }
 
 impl FromStr for Request {
@@ -315,6 +320,9 @@ impl FromStr for Request {
             ["daemon", "restart"] => Ok(Request::Restart),
             ["wave", "run"] => Ok(Request::WaveRun),
             ["wave", "stop"] => Ok(Request::WaveStop),
+            ["release", "test", commit] if super::release_test::is_commit(commit) => {
+                Ok(Request::ReleaseTest(commit.to_owned()))
+            }
             ["daemon", "limit", ref flags @ ..] => limit_of(flags).map(Request::Limit),
             _ => Err(()),
         }
@@ -380,6 +388,7 @@ impl fmt::Display for Request {
             Request::Restart => write!(f, "daemon restart"),
             Request::WaveRun => write!(f, "wave run"),
             Request::WaveStop => write!(f, "wave stop"),
+            Request::ReleaseTest(commit) => write!(f, "release test {commit}"),
         }
     }
 }
@@ -652,6 +661,13 @@ pub async fn answer(
         Request::End(name) => lines_of(dir, Ask::End { name: name.clone() }).await,
         Request::Restart => lines_of(dir, Ask::Restart).await,
         Request::WaveRun => wave_run(dir, &served.wave).await,
+        Request::ReleaseTest(commit) => {
+            let (dir, served, commit) = (dir.to_owned(), served.clone(), commit.clone());
+            tokio::task::spawn_blocking(move || super::release_test::start(&dir, &served, &commit))
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|done| done)
+        }
         Request::WaveStop => {
             let repo = served.wave.repo.clone();
             lines_of(dir, Ask::WaveStop { repo: repo.clone() })

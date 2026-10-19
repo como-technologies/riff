@@ -191,8 +191,10 @@ plan the waves.
       next step.
    2. `riff release cut X.Y.Z` makes the release pull request. Get it
       verified and merged as each other change.
-   3. Ask a session that wrote none of the items to run
-      `just real-session` on the default branch, in tmux on a host.
+   3. Run `riff release test vX.Y.Z --host HOST`: the riff daemon of a
+      host with podman runs the real-session test on the newest commit
+      of the default branch. `riff release status` shows the result.
+      `just real-session` stays for a person on a host.
       When it fails, file the bug in the wave. After the fix merges,
       ask for the test again.
    4. `riff release publish vX.Y.Z` makes the tag and the release, and
@@ -243,6 +245,7 @@ This is the only part of the skill that is special to one forge.
 | See the items in the backlog | `gh issue list --milestone Backlog` |
 | End a wave | `riff wave end 6` |
 | Make a release (riff repository, the lead) | `riff release cut X.Y.Z`, then `riff release publish vX.Y.Z`: see "Plan the waves" |
+| Run the real-session test on a host (riff repository, the lead) | `riff release test vX.Y.Z --host HOST` |
 | Check a release after its deploy (riff repository, the lead) | `riff release check vX.Y.Z` |
 | Run a failed deploy again (riff repository, the lead) | `riff release retry vX.Y.Z` |
 | Roll back (riff repository, the lead) | `riff release rollback vPREV` |
