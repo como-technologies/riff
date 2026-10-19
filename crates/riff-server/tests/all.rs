@@ -23,6 +23,7 @@ mod log_lines;
 mod log_tools;
 mod me;
 mod members;
+mod notes;
 mod plan;
 mod revoke;
 mod saved;

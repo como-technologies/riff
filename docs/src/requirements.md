@@ -8104,6 +8104,48 @@ that builds it merges.
   and the desktop GUI (#996). The build items of a UI come from its
   child design, after Mike signs it off.
 
+## The notes of the lead
+
+- **01M59258K3TYR09HC4AWHWZPEX** riff-server keeps the notes of the lead
+  for each user and each repository thread: one text, with the record
+  `notes_set` (`thread`, `user`, `text`) and the command `notes`
+  (`POST /v1/notes/set`). A new text replaces the old text. Each change
+  is a record of the log, and the server keeps each old text in the
+  history, also in the checkpoint. The same text makes no record. The
+  text has 64 KiB at most. A longer text gets `bad_request` that says
+  the limit.
+- **01M59258NTXPMWV18TKRKWNTYN** The user of the lead and the owner
+  of the riff read the notes (`POST /v1/notes`, with the history when
+  asked). Another member gets `not_allowed`. The person of the user and
+  a session of the user that is not a worker write the notes of the
+  user. A worker gets `not_allowed`.
+- **01M59258RJ3CG498Z8AVQ5TV5Q** riff refuses a notes text that looks
+  like a token (a known prefix such as `sk-ant-` or `ghp_`, a private
+  key, or a long run of letters and digits with both). The refusal does
+  not repeat the text.
+- **01M59258VCNV9AMGMQTDH936SK** `riff lead notes` shows the notes of
+  the person in the repository thread, with `--history` the old texts,
+  with `--user` the notes of another user (owner only), and with
+  `--thread` another repository thread. `riff lead notes edit` opens
+  `$VISUAL`, `$EDITOR` or `vi` on the notes, and `riff lead notes edit
+  --file FILE` takes the new text from a file (`-` is the standard
+  input).
+- **01M59258Y62VSAHDRRY7765RZJ** The MCP tool `notes` reads the notes
+  of the lead with no `text`, and replaces them with a `text`. It is in
+  `LEAD_TOOLS`, and not in `CONTAINER_TOOLS`: only the lead has notes.
+  The instructions of the lead name each tool of `LEAD_TOOLS`, and a
+  test checks it.
+- **01M592590XREH99ABQF2D2KT6H** The start text of the lead sends it to
+  the notes and to the unread messages at each start, after each resume
+  and after each compaction. It says to keep the running state in the
+  notes and on GitHub, never only in the Claude memory of the host.
+- **01M592593NSC1DE7A653Q8PCPS** The instructions of the lead
+  (`text::MCP_LEAD`) hold each rule of the lead (`text::LEAD_RULES`).
+  No rule stays only in the skill or in the Claude memory of one
+  host, and a test checks each rule. A rule for each agent of the
+  repository goes in `CLAUDE.md` or here. A choice of one person or one
+  host, and the running state, go in the notes of the lead.
+
 ## Open
 
 None.

@@ -19,6 +19,7 @@
 //! - [`dpop`]: device keys and the proofs that bind tokens to them.
 //! - [`signed`]: the signature that each message carries.
 //! - [`record`]: the records of the log of `riff-server`.
+//! - [`notes`]: the checks of the notes of the lead.
 //! - [`build`]: the build of each side, and the check that they match.
 //!
 //! ## Sessions
@@ -77,6 +78,7 @@
 pub mod build;
 pub mod dpop;
 pub mod name;
+pub mod notes;
 pub mod record;
 #[cfg(any(test, feature = "test-support"))]
 pub mod round_trip;

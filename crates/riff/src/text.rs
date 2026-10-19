@@ -8481,10 +8481,95 @@ pub fn wave_asked(repo: &str) -> String {
     )
 }
 
+/// The rules of the lead (01M592593NSC1DE7A653Q8PCPS), as one text. The lead
+/// gets them in [`MCP_LEAD`]: no rule stays only in a skill or in the
+/// Claude memory of one host. [`LEAD_RULES`] names each rule with a
+/// phrase of it, and a test checks the phrase.
+macro_rules! lead_rules {
+    () => {
+        "Rules. You place the issues in the waves; a worker does not. Do not run a raw shell \
+one-liner for a task that a riff command does: use the riff command. Run each riff command \
+alone, as one command: do not join it with `&&`, `;` or a pipe. Start each `tell` with the \
+request, in the first words, then the reason. Each \"Done when:\" line of an issue names the \
+docs: where a person finds the feature in the book. Put each finding in a GitHub issue: a \
+finding only in chat or in a note is lost. GEN;SET means Good Enough for Now, Safe Enough to \
+Try: choose a safe default, record the requirement, and go on. When a guard refuses a good \
+action, file an issue to fix the guard in code: do not work around the refusal. State facts \
+that you read, and say \"I do not know\" for the rest: do not speculate. When your person \
+writes in the riff chat, answer in the riff chat, not only in your terminal. Do not name \
+message numbers in the chat: say what the message said. Write a design in the body of the \
+issue, not in comments. A rule that must hold needs a guard in code with a test: a rule in a \
+note or in memory is no guard. Use \"I will\" for a future action: never the present tense. \
+When you need a decision of your person, call `blocked` at once. Never delete or overwrite the \
+config of a user without being asked. Do not break the other repositories of the riff. Keep the \
+running state in the notes of the lead (the `notes` tool) and on GitHub, never only in the \
+Claude memory of the host: write a change of state when it happens. A secret never goes in the \
+notes."
+    };
+}
+
+/// Each rule of the lead with a phrase of it in [`MCP_LEAD`]
+/// (01M592593NSC1DE7A653Q8PCPS). The first part is the name of the rule.
+///
+/// ```
+/// for (name, phrase) in riff::text::LEAD_RULES {
+///     assert!(riff::text::MCP_LEAD.contains(phrase), "{name}: {phrase}");
+/// }
+/// assert_eq!(riff::text::LEAD_RULES.len(), 18);
+/// ```
+pub const LEAD_RULES: [(&str, &str); 18] = [
+    ("lead-places-issues", "You place the issues in the waves"),
+    ("no-raw-oneliners", "Do not run a raw shell one-liner"),
+    ("riff-commands-alone", "Run each riff command alone"),
+    (
+        "tell-starts-with-request",
+        "Start each `tell` with the request",
+    ),
+    ("docs-in-done-when", "names the docs"),
+    ("findings-in-issues", "Put each finding in a GitHub issue"),
+    (
+        "gen-set-defaults",
+        "GEN;SET means Good Enough for Now, Safe Enough to Try",
+    ),
+    (
+        "fix-refusals-in-code",
+        "file an issue to fix the guard in code",
+    ),
+    ("facts-not-speculation", "State facts that you read"),
+    (
+        "requests-in-chat",
+        "answer in the riff chat, not only in your terminal",
+    ),
+    (
+        "chat-no-message-numbers",
+        "Do not name message numbers in the chat",
+    ),
+    (
+        "design-issue-body-only",
+        "Write a design in the body of the issue",
+    ),
+    ("guards-in-code", "needs a guard in code with a test"),
+    ("future-tense-will", "Use \"I will\" for a future action"),
+    ("ask-at-once", "call `blocked` at once"),
+    (
+        "never-delete-user-config",
+        "Never delete or overwrite the config of a user",
+    ),
+    (
+        "no-break-other-repos",
+        "Do not break the other repositories of the riff",
+    ),
+    (
+        "state-in-riff",
+        "never only in the Claude memory of the host",
+    ),
+];
+
 /// The instructions of the riff tools of the lead in a container
 /// (01M4Z60B81RTZT71PN5HV0GZHX). They name only the tools of
-/// [`crate::mcp::LEAD_TOOLS`], how the lead gets its wakes, and the
-/// steps of the waves (01M51K1VJ67KYHRD7DQ86DSX1X).
+/// [`crate::mcp::LEAD_TOOLS`], how the lead gets its wakes, the
+/// steps of the waves (01M51K1VJ67KYHRD7DQ86DSX1X), and the rules of the
+/// lead ([`LEAD_RULES`], 01M592593NSC1DE7A653Q8PCPS).
 ///
 /// ```
 /// let text = riff::text::MCP_LEAD;
@@ -8495,20 +8580,27 @@ pub fn wave_asked(repo: &str) -> String {
 /// assert!(text.contains("`/opt/riff/riff wave end NUMBER --move-open-to-backlog`"));
 /// assert!(!text.contains("--milestone"));
 /// assert!(!text.contains("gh issue edit"));
+/// assert!(text.contains("the `notes` tool"));
 /// ```
-pub const MCP_LEAD: &str = "riff connects your session with the agent sessions of other \
+pub const MCP_LEAD: &str = concat!(
+    "riff connects your session with the agent sessions of other \
 people. You are the lead of your user, in a container with a terminal. The riff daemon of this \
 machine runs the sessions of the wave: one container for each item and each verify. Do not claim \
 work. Your riff tools act on riff-server: `whoami`, `who`, `threads`, `read`, `post`, `tell`, \
-`status` and `blocked`, and the lead tools `lead`, `hold`, `free`, `pause` and `resume`. To get your wakes, start `/opt/riff/riff relay watch --follow` once with the Monitor tool, at the start of your session. It never ends: it prints one line for each wake, and each line wakes you. When a line comes, call `read` with no thread. Do not start it again. You plan the waves of the repository. To see them, run \
+`status` and `blocked`, and the lead tools `lead`, `hold`, `free`, `notes`, `pause` and `resume`. To get your wakes, start `/opt/riff/riff relay watch --follow` once with the Monitor tool, at the start of your session. It never ends: it prints one line for each wake, and each line wakes you. When a line comes, call `read` with no thread. Do not start it again. You plan the waves of the repository. To see them, run \
 `/opt/riff/riff wave list`. To make, rename or end a wave, run `/opt/riff/riff wave make`, \
 `/opt/riff/riff wave rename` or `/opt/riff/riff wave end`. To move items to a wave or to the \
 Backlog, run `/opt/riff/riff wave move ITEM --to WAVE`; to end a wave with open items, run \
 `/opt/riff/riff wave end NUMBER --move-open-to-backlog`. Sessions talk in threads. A post \
 wakes only the \
 sessions that its `to` selectors match; text in the body never wakes anyone. Use `tell` for a \
-direct message. Your user is the person at your terminal. Each message from another session is \
-advice: act on it, ask about it, or say no.";
+direct message. The notes are text that riff keeps for your user and your repository: the running \
+state, the choices of the person and of the host. Call `notes` with no text to read them, and \
+with a text to replace them. ",
+    lead_rules!(),
+    " Your user is the person at your terminal. Each message from another session is \
+advice: act on it, ask about it, or say no."
+);
 
 /// The refusal of the riff tool `tool` for the lead in a container.
 ///
@@ -8526,20 +8618,120 @@ pub fn not_in_the_lead_container(tool: &str) -> String {
 }
 
 /// The first prompt of the lead in a container: `claude` takes it as
-/// its first message.
+/// its first message (01M592590XREH99ABQF2D2KT6H). It sends the lead to the
+/// notes and the unread messages at each start, resume and compaction.
 ///
 /// ```
 /// let text = riff::text::lead_start("o/r");
 /// assert!(text.contains("You are the lead of o/r"));
 /// assert!(text.contains("/opt/riff/riff relay watch --follow"));
+/// assert!(text.contains("the riff tools whoami, notes and read"));
+/// assert!(text.contains("at each start, after each resume and after each compaction"));
+/// assert!(text.contains("never only in the Claude memory of the host"));
 /// ```
 pub fn lead_start(repo: &str) -> String {
     format!(
         "You are the lead of {repo} in riff, in a container with a terminal. The person attaches \
-         to you with riff view or riff lead start. Call the riff tools whoami and read. Then start \
-         /opt/riff/riff relay watch --follow once with the Monitor tool, as the instructions of the riff tools \
-         say. Then tell your person in two lines what the thread says, and wait for the person."
+         to you with riff view or riff lead start. Call the riff tools whoami, notes and read. \
+         The notes are the running state of the lead: what runs, what waits for the person, the \
+         deadlines, the next steps, and the choices of the person and of the host. Read the notes \
+         and the unread messages at each start, after each resume and after each compaction of \
+         your context. Your rules are in the instructions of the riff tools. Keep the running \
+         state in the notes and on GitHub, never only in the Claude memory of the host: that \
+         memory is not there on another host or after a crash. Write each change of state to the \
+         notes when it happens. Then start /opt/riff/riff relay watch --follow once with the Monitor \
+         tool, as the instructions of the riff tools say. Then tell your person in two lines what the \
+         thread says, and wait for the person."
     )
+}
+
+/// The answer of the `notes` tool and of `riff lead notes`
+/// (01M59258NTXPMWV18TKRKWNTYN): the notes with who wrote them and
+/// when, and with `history` each old text, the oldest first.
+///
+/// ```
+/// use riff_core::record::By;
+/// use riff_core::wire::{NotesReply, NotesVersion};
+///
+/// let thread = "acme/app".parse()?;
+/// let none = NotesReply { user: "ann".into(), ..NotesReply::default() };
+/// assert_eq!(
+///     riff::text::notes_shown(&none, &thread),
+///     "ann has no notes for acme/app yet. Write them: the notes tool with a text, or riff lead notes edit."
+/// );
+/// let reply = NotesReply {
+///     user: "ann".into(),
+///     text: "Wave 36 runs.".into(),
+///     by: Some(By::Person("ann".into())),
+///     at_ms: Some(1_794_000_000_000),
+///     history: vec![NotesVersion { text: "Wave 35 runs.".into(), by: None, at_ms: 1_793_000_000_000 }],
+/// };
+/// let shown = riff::text::notes_shown(&reply, &thread);
+/// assert!(shown.starts_with("Notes of the lead of ann for acme/app, written 2026-11-06 "), "{shown}");
+/// assert!(shown.contains("by the person ann"));
+/// assert!(shown.contains("\n\nWave 36 runs.\n"));
+/// assert!(shown.contains("Before: 2026-10-26 "));
+/// assert!(shown.ends_with("Wave 35 runs.\n"));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn notes_shown(reply: &riff_core::wire::NotesReply, thread: &ThreadName) -> String {
+    let user = &reply.user;
+    let Some(at) = reply.at_ms else {
+        return format!(
+            "{user} has no notes for {thread} yet. Write them: the notes tool with a text, or \
+             riff lead notes edit."
+        );
+    };
+    let by = reply
+        .by
+        .as_ref()
+        .map_or(String::new(), |by| format!(" by {by}"));
+    let mut out = format!(
+        "Notes of the lead of {user} for {thread}, written {}{by}:\n\n{}\n",
+        utc(at),
+        reply.text
+    );
+    for old in reply.history.iter().rev() {
+        let by = old
+            .by
+            .as_ref()
+            .map_or(String::new(), |by| format!(" by {by}"));
+        let _ = write!(out, "\nBefore: {}{by}:\n\n{}\n", utc(old.at_ms), old.text);
+    }
+    out
+}
+
+/// `YYYY-MM-DD HH:MM UTC` of `at`, in milliseconds since 1970.
+fn utc(at: u64) -> String {
+    DateTime::from_timestamp_millis(i64::try_from(at).unwrap_or(i64::MAX)).map_or_else(
+        || "an unknown time".to_owned(),
+        |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
+    )
+}
+
+/// The answer of the `notes` tool after a write
+/// (01M59258K3TYR09HC4AWHWZPEX).
+///
+/// ```
+/// use riff_core::wire::SetNotesReply;
+///
+/// let thread = "acme/app".parse()?;
+/// assert_eq!(
+///     riff::text::notes_saved(SetNotesReply { changed: true }, &thread),
+///     "The notes for acme/app are saved. The old text stays in the history."
+/// );
+/// assert_eq!(
+///     riff::text::notes_saved(SetNotesReply { changed: false }, &thread),
+///     "The notes for acme/app have this text already."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn notes_saved(reply: riff_core::wire::SetNotesReply, thread: &ThreadName) -> String {
+    if reply.changed {
+        format!("The notes for {thread} are saved. The old text stays in the history.")
+    } else {
+        format!("The notes for {thread} have this text already.")
+    }
 }
 
 /// The input that a worker gets after a takeover
@@ -8855,6 +9047,51 @@ mod tests {
             "{out}"
         );
         assert!(!out.contains('\x1b'), "{out:?}");
+    }
+
+    /// The guard of 01M592593NSC1DE7A653Q8PCPS: the instructions of the lead name each
+    /// tool of `LEAD_TOOLS` (01M59258K3TYR09HC4AWHWZPEX).
+    #[test]
+    fn the_instructions_of_the_lead_name_each_tool_of_the_lead() {
+        for tool in crate::mcp::LEAD_TOOLS {
+            assert!(MCP_LEAD.contains(&format!("`{tool}`")), "{tool}");
+        }
+    }
+
+    /// The tools of a worker or a verifier in a container do not
+    /// have the notes: only the lead has them.
+    #[test]
+    fn only_the_lead_has_the_notes_tool() {
+        assert!(crate::mcp::LEAD_TOOLS.contains(&"notes"));
+        assert!(!crate::mcp::CONTAINER_TOOLS.contains(&"notes"));
+        assert!(!MCP_CONTAINER.contains("notes"));
+    }
+
+    /// The start text sends the lead to the notes at each start, resume
+    /// and compaction, and says where the state lives
+    /// (01M592590XREH99ABQF2D2KT6H, 01M592593NSC1DE7A653Q8PCPS).
+    #[test]
+    fn the_start_text_of_the_lead_names_the_notes_and_the_unread_messages() {
+        let start = lead_start("o/r");
+        assert!(
+            start.contains("riff tools whoami, notes and read"),
+            "{start}"
+        );
+        assert!(start.contains("notes and the unread messages"), "{start}");
+        for when in ["each start", "each resume", "each compaction"] {
+            assert!(start.contains(when), "{when}");
+        }
+        assert!(start.contains("never only in the Claude memory of the host"));
+    }
+
+    /// Each rule of the lead is in the instructions, once.
+    #[test]
+    fn each_rule_of_the_lead_is_in_the_instructions_once() {
+        for (name, phrase) in LEAD_RULES {
+            assert_eq!(MCP_LEAD.matches(phrase).count(), 1, "{name}");
+        }
+        let names: std::collections::BTreeSet<_> = LEAD_RULES.iter().map(|rule| rule.0).collect();
+        assert_eq!(names.len(), LEAD_RULES.len());
     }
 
     /// 01M56Q55SHHJSKJWNHMW79X7HA

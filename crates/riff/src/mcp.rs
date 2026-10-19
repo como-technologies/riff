@@ -221,9 +221,9 @@ pub const CONTAINER_TOOLS: [&str; 8] = [
 
 /// The tools of the lead in a container: the tools of
 /// [`CONTAINER_TOOLS`], and the tools of a lead that only talk.
-pub const LEAD_TOOLS: [&str; 13] = [
-    "blocked", "free", "hold", "lead", "pause", "post", "read", "resume", "status", "tell",
-    "threads", "who", "whoami",
+pub const LEAD_TOOLS: [&str; 14] = [
+    "blocked", "free", "hold", "lead", "notes", "pause", "post", "read", "resume", "status",
+    "tell", "threads", "who", "whoami",
 ];
 
 #[derive(Deserialize, JsonSchema)]
@@ -317,6 +317,19 @@ pub struct HoldArgs {
     /// Why the item is held, in 1 to 200 characters. A worker that
     /// claims the item gets it.
     reason: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct NotesArgs {
+    /// The repository thread. Leave it out to use your repository
+    /// thread.
+    thread: Option<String>,
+    /// The whole new text of the notes. It replaces the old text. Leave
+    /// it out to read the notes. 64 KiB at most. Never put a secret in
+    /// it: riff refuses a text that looks like a token.
+    text: Option<String>,
+    /// True reads also the old texts. It has no effect with a text.
+    history: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -786,6 +799,30 @@ does not end a claim. Each other session can still claim the item, with a warnin
         let reply = self.api.free(&me, &thread, &a.item).await.map_err(err)?;
         self.lead_step(&me, format!("freed {}", a.item)).await;
         Ok(text::freed(reply, &thread, &a.item))
+    }
+
+    #[tool(
+        description = "Only the lead: read or write the notes of the lead. The notes are text \
+that riff keeps for your user and your repository: the running state, what waits for the person, \
+and the choices of the person and of the host. Read them at each start, resume and compaction. \
+With `text`, replace the whole text and keep the old text in the history. Without `text`, read \
+the notes; `history` true reads also the old texts. 64 KiB at most. Never put a secret in the \
+notes."
+    )]
+    async fn notes(&self, Parameters(a): Parameters<NotesArgs>) -> ToolResult {
+        let thread = self.thread(a.thread)?;
+        let me = self.here()?;
+        if let Some(body) = a.text {
+            let reply = self.api.notes_set(&me, &thread, &body).await.map_err(err)?;
+            self.lead_step(&me, "wrote the notes".into()).await;
+            return Ok(text::notes_saved(reply, &thread));
+        }
+        let reply = self
+            .api
+            .notes_show(&me, &thread, None, a.history.unwrap_or(false))
+            .await
+            .map_err(err)?;
+        Ok(text::notes_shown(&reply, &thread))
     }
 
     #[tool(

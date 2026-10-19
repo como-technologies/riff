@@ -21,6 +21,7 @@ use riff_core::wire;
 
 use super::*;
 
+mod notes;
 mod people;
 mod plan;
 

@@ -43,6 +43,7 @@ mod jobserver;
 mod keyring_calls;
 mod lead_book;
 mod lead_clone;
+mod lead_notes;
 mod lead_step;
 mod leave;
 mod left;

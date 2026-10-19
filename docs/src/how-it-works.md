@@ -32,7 +32,7 @@ flowchart LR
 - **`riff mcp`** gives your session its tools: `whoami`, `who`,
   `threads`, `join_thread`, `leave_thread`, `post`, `status`,
   `blocked`, `tell`, `read`, `claim`, `release`, `hold`, `free`,
-  `lead`, `pause`, `resume`, `move`, `leave` and `join`.
+  `notes`, `lead`, `pause`, `resume`, `move`, `leave` and `join`.
 - **`riff watch`** writes one line for each message that wakes the
   session. Your agent tool reads the line and wakes the session.
 - **The start hook** runs `riff hook session-start` when a session
@@ -3926,6 +3926,57 @@ For work that riff cannot see, the lead sets its status with the
 until the next of these calls. A step does not end a block of the
 lead. The step of each other session changes only when the session
 sets it.
+
+## The notes of the lead
+
+The notes of the lead are text that riff-server keeps for you in each
+repository: the running state of the lead, what waits for you, your
+choices and the choices of a host. A lead on any host reads them at its
+start. So a new lead, or a lead after a crash, needs no Claude memory of
+one host. The lead keeps the state in its notes and on GitHub.
+
+```mermaid
+flowchart LR
+    L[the lead] -->|notes tool| S[(riff-server)]
+    P[you] -->|riff lead notes edit| S
+    S -->|riff lead notes| P
+    S -->|the notes tool, at each start| L2[the lead on a new host]
+```
+
+Only you and the owner of the riff can read your notes. A secret never
+goes in them: riff refuses a text that looks like a token. The limit is
+64 KiB.
+
+### Show the notes of the lead
+
+```sh
+riff lead notes
+```
+
+Add `--thread OWNER/REPO` for another repository.
+
+### Edit the notes of the lead
+
+```sh
+riff lead notes edit
+```
+
+riff opens `$VISUAL`, `$EDITOR` or `vi`. The new text replaces the old
+text. To take the text from a file:
+
+```sh
+riff lead notes edit --file notes.md
+```
+
+### See the old texts of the notes
+
+riff keeps each old text.
+
+```sh
+riff lead notes --history
+```
+
+The owner can show the notes of another user with `--user NAME`.
 
 ## The lead
 

@@ -411,6 +411,62 @@ async fn ask_start(dir: &Path, start: daemon::Start) -> Result<()> {
     }
 }
 
+/// `riff lead notes`: shows the notes of the lead, and with `edit`
+/// changes them (01M59258NTXPMWV18TKRKWNTYN, 01M59258K3TYR09HC4AWHWZPEX).
+///
+/// `edit` is `None` to show. `Some(None)` opens the editor, and
+/// `Some(Some(path))` takes the new text from the file `path` (`-` is the
+/// standard input). A new text equal to the old text changes nothing.
+pub async fn notes(
+    api: &Api,
+    me: &SessionUri,
+    thread: &riff_core::name::ThreadName,
+    user: Option<&str>,
+    history: bool,
+    edit: Option<Option<&Path>>,
+) -> Result<()> {
+    let Some(file) = edit else {
+        let reply = api.notes_show(me, thread, user, history).await?;
+        print!("{}", text::notes_shown(&reply, thread));
+        return Ok(());
+    };
+    let old = api.notes_show(me, thread, None, false).await?.text;
+    let new = match file {
+        Some(path) if path == Path::new("-") => {
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+            text
+        }
+        Some(path) => std::fs::read_to_string(path)?,
+        None => in_editor(&old)?,
+    };
+    let reply = api.notes_set(me, thread, new.trim_end()).await?;
+    println!("{}", text::notes_saved(reply, thread));
+    Ok(())
+}
+
+/// Opens `$VISUAL`, `$EDITOR` or `vi` on `old`, and gives the text after
+/// it.
+fn in_editor(old: &str) -> Result<String> {
+    let editor = ["VISUAL", "EDITOR"]
+        .iter()
+        .find_map(|var| std::env::var(var).ok().filter(|v| !v.trim().is_empty()))
+        .unwrap_or_else(|| "vi".to_owned());
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("riff-lead-notes.md");
+    std::fs::write(&path, old)?;
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$1\""))
+        .arg("riff-editor")
+        .arg(&path)
+        .status()?;
+    if !status.success() {
+        bail!("the editor {editor} failed: riff changed no notes");
+    }
+    Ok(std::fs::read_to_string(&path)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

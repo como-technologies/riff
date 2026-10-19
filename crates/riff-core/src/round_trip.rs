@@ -668,6 +668,29 @@ mod tests {
                 },
             )]),
         });
+        c.trip(&SetNotes {
+            me: me(),
+            thread: thread(),
+            text: text("Wave 36 runs."),
+        });
+        c.trip(&SetNotesReply { changed: true });
+        c.trip(&NotesShow {
+            me: me(),
+            thread: thread(),
+            user: Some(text("ann")),
+            history: true,
+        });
+        c.trip(&NotesReply {
+            user: text("ann"),
+            text: text("Wave 36 runs."),
+            by: Some(By::Session(who())),
+            at_ms: Some(7),
+            history: vec![NotesVersion {
+                text: text("Wave 35 runs."),
+                by: Some(By::Person(text("ann"))),
+                at_ms: 5,
+            }],
+        });
         c.trip(&Release {
             me: me(),
             thread: thread(),

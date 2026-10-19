@@ -51,6 +51,7 @@
 //! | `owner_set` | It ends the request for the owner role that waits. A record with no email says that the owner is gone. | Yes. |
 //! | `item_held` | It keeps the `by` and the time of the record with the hold: who held the item, and when (01M43GSGB9ZFHSG0Q83Y50FEGW). | Yes. |
 //! | `plan_set` | It keeps the position and the time of the record with the plan (01M4A4Z3QVRC57RE7M43ZRF4T2). | Yes. |
+//! | `notes_set` | It keeps the `by` and the time of the record with the text, and each old text (01M59258K3TYR09HC4AWHWZPEX). | Yes. |
 
 use riff_core::record::{Change, Record};
 
@@ -240,6 +241,7 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         Change::ItemFreed(freed) => riff.plans.freed(freed),
         Change::PlanSet(set) => riff.plans.set(set, record),
         Change::PlanEnded(ended) => riff.plans.ended(ended),
+        Change::NotesSet(set) => riff.plans.notes_set(set, record),
     };
     if let Err(what) = taken {
         tracing::warn!(

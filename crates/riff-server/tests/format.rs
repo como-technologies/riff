@@ -42,6 +42,9 @@
 //!   has nothing left. Its last `plan_set` has no caller. So
 //!   `replayed.json` has a plan and a hold in one repository, and only
 //!   a hold in another.
+//! - `fixtures/3.4.0`: the notes of the lead. `log.jsonl` has three
+//!   `notes_set` records: two texts for one user, and one text for
+//!   another user in another repository. The last has no caller.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -60,8 +63,11 @@ const HOLDS: &str = "1.1.0";
 /// The release of the fixtures of the plan.
 const PLANS: &str = "1.3.0";
 
+/// The release of the fixtures of the notes of the lead.
+const NOTES: &str = "3.4.0";
+
 /// Each release with a directory of its own and a `kinds.json`.
-const RELEASES: [&str; 3] = ["1.0.0", HOLDS, PLANS];
+const RELEASES: [&str; 4] = ["1.0.0", HOLDS, PLANS, NOTES];
 
 fn bytes(name: &str) -> Vec<u8> {
     bytes_of("1.0.0", name)
@@ -181,7 +187,7 @@ fn the_list_of_the_release_has_no_riff_state_set() {
 #[test]
 fn the_fixture_log_has_a_record_of_each_kind() {
     let mut all = BTreeSet::new();
-    for release in [HOLDS, PLANS] {
+    for release in [HOLDS, PLANS, NOTES] {
         let log = records_of(release, "log.jsonl");
         let new: Kinds = serde_json::from_slice(&bytes_of(release, "kinds.json")).unwrap();
         let found = set(log.iter().map(|record| record.change.kind()));
@@ -457,6 +463,41 @@ fn the_log_of_the_plans_gives_its_checkpoint_at_each_position() {
     assert!(full.plans().hold(&lib, "issue-3").is_some());
     let web = "acme/web".parse().unwrap();
     assert!(full.plans().plan(&web).is_none());
+
+    for at in 0..=records.len() {
+        let (before, after) = records.split_at(at);
+        let state = State::replay(before.to_vec(), now, 0);
+        let saved = checkpoint::decode(&written(&state, &expected)).unwrap();
+        let alone = State::load(Some(saved.state.clone()), [], now, 0);
+        assert!(alone.same_log_state(&state), "the checkpoint at {at}");
+        let loaded = State::load(Some(saved.state), after.to_vec(), now, 0);
+        assert!(loaded.same_log_state(&full), "a start from {at}");
+    }
+}
+
+/// The log of the notes: this build writes its bytes, a replay gives
+/// `replayed.json` with the notes and their history, and a load of the
+/// checkpoint at each position gives the state of a replay
+/// (01M59258K3TYR09HC4AWHWZPEX).
+#[test]
+fn the_log_of_the_notes_gives_its_checkpoint_at_each_position() {
+    let records = records_of(NOTES, "log.jsonl");
+    assert_eq!(log::encode(&records), bytes_of(NOTES, "log.jsonl"));
+    let expected = checkpoint::decode(&bytes_of(NOTES, "replayed.json")).unwrap();
+    assert_eq!(
+        checkpoint::encode(&expected),
+        bytes_of(NOTES, "replayed.json")
+    );
+
+    let now = Instant::now();
+    let full = State::replay(records.clone(), now, 0);
+    assert_eq!(written(&full, &expected), bytes_of(NOTES, "replayed.json"));
+    let app = "acme/app".parse().unwrap();
+    let notes = full.plans().notes(&app, "ann").unwrap();
+    assert_eq!(notes.text, "Wave 37 runs. Prefer thelio.");
+    assert_eq!(full.plans().notes_before(&app, "ann").len(), 1);
+    let lib = "acme/lib".parse().unwrap();
+    assert_eq!(full.plans().notes(&lib, "bob").unwrap().by, None);
 
     for at in 0..=records.len() {
         let (before, after) = records.split_at(at);

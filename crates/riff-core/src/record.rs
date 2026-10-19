@@ -307,6 +307,10 @@ changes! {
     /// The server forgets the plan of a repository thread. The holds
     /// stay. New in 1.3.0.
     PlanEnded(PlanEnded) = "plan_ended",
+    /// The notes of the lead of a user in a repository thread: the full
+    /// text replaces the old text, and the old text stays in the
+    /// history (01M59258K3TYR09HC4AWHWZPEX).
+    NotesSet(NotesSet) = "notes_set",
 }
 // ANCHOR_END: record
 
@@ -471,7 +475,8 @@ impl Change {
             | Change::ItemHeld(_)
             | Change::ItemFreed(_)
             | Change::PlanSet(_)
-            | Change::PlanEnded(_) => None,
+            | Change::PlanEnded(_)
+            | Change::NotesSet(_) => None,
         }
     }
 }
@@ -590,6 +595,7 @@ impl Record {
             Change::ItemFreed(freed) => &freed.thread == repo,
             Change::PlanSet(set) => &set.thread == repo,
             Change::PlanEnded(ended) => &ended.thread == repo,
+            Change::NotesSet(set) => &set.thread == repo,
             Change::SettingChanged(_)
             | Change::RiffMade(_)
             | Change::PersonJoined(_)
@@ -814,6 +820,32 @@ pub struct PlanItem {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PlanEnded {
     pub thread: ThreadName,
+}
+
+/// The notes of the lead of one user in one repository thread
+/// (01M59258K3TYR09HC4AWHWZPEX). The text is the whole text: it replaces
+/// the old text. The envelope names who wrote it, and when.
+///
+/// ```
+/// use riff_core::record::{Change, NotesSet};
+///
+/// let set = Change::NotesSet(NotesSet {
+///     thread: "como-technologies/riff".parse()?,
+///     user: "mike".into(),
+///     text: "Prefer thelio for builds.".into(),
+/// });
+/// assert_eq!(
+///     serde_json::to_string(&set).unwrap(),
+///     r#"{"notes_set":{"thread":"como-technologies/riff","user":"mike","text":"Prefer thelio for builds."}}"#
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NotesSet {
+    pub thread: ThreadName,
+    /// The user of the lead.
+    pub user: String,
+    pub text: String,
 }
 
 /// A claim that is free now.
@@ -1259,6 +1291,11 @@ pub fn one_of_each() -> Vec<Change> {
             },
         }),
         Change::PlanEnded(PlanEnded { thread: thread() }),
+        Change::NotesSet(NotesSet {
+            thread: thread(),
+            user: "ann".into(),
+            text: "Wave 36 runs. Mike decides the cut.".into(),
+        }),
     ]
 }
 

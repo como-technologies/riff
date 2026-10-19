@@ -268,7 +268,7 @@ use riff_core::wire::{
     SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
     Waits, Wake,
 };
-use riff_core::wire::{MachineInfo, SetMachine};
+use riff_core::wire::{MachineInfo, NotesReply, SetMachine};
 
 /// A blocked session that the look of the lead found, with its reason
 /// ([`State::look_blocks`]).
@@ -276,6 +276,7 @@ pub type Blocked = (SessionUri, String);
 
 pub mod calls;
 pub mod command;
+pub mod notes;
 pub mod people;
 pub mod plan;
 pub mod presence;
@@ -2346,6 +2347,22 @@ impl State {
         self.written.plans()
     }
 
+    /// The notes of the lead of `user` in `thread`, as the query `notes`
+    /// gives them (01M59258NTXPMWV18TKRKWNTYN). `user` is the user of
+    /// the caller when it is `None`. Only that user and the owner can
+    /// read them.
+    pub fn notes(
+        &self,
+        caller: &Caller,
+        thread: &ThreadName,
+        user: Option<&str>,
+        history: bool,
+    ) -> Result<NotesReply, Refused> {
+        let user = user.unwrap_or_else(|| caller.who().user());
+        notes::may_read(caller, user)?;
+        Ok(notes::reply(self.written.plans(), thread, user, history))
+    }
+
     /// The plan of `thread` and its holds, as the query `plan` gives
     /// them (01M4A4Z1NKPDBXV2PRZCG86G6A).
     pub fn plan(&self, thread: &ThreadName, now: Instant, now_ms: u64) -> PlanReply {
@@ -4288,6 +4305,9 @@ mod tests {
                 "owner_asked": {"email": "cy@acme.io", "due_ms": T0},
                 "signins_ended": {"bob": 1},
                 "plans": {"como-technologies/riff": {
+                    "notes": {"mike": [
+                        {"text": "one", "by": {"person": "mike"}, "at_ms": T0},
+                        {"text": "two", "by": {"session": "mike/a1"}, "at_ms": T0}]},
                     "holds": {"issue-8": {
                         "reason": "waits for mike", "by": {"session": "mike/a1"}, "at_ms": T0}},
                     "plan": {"wave": {"number": 21, "title": "Wave 21"},

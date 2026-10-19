@@ -30,6 +30,7 @@
 //! | `/v1/plan/free` | [`Free`] | [`FreeReply`] | command |
 //! | `/v1/plan` | [`SetPlan`] | [`PlanReply`] | command |
 //! | `/v1/plan/off` | [`PlanOff`] | [`PlanOffReply`] | command |
+//! | `/v1/notes/set` | [`SetNotes`] | [`SetNotesReply`] | command |
 //! | `/v1/status` | [`SetStatus`] | `null` | signal |
 //! | `/v1/blocked` | [`SetBlocked`] | `null` | signal |
 //! | `/v1/step` | [`SetStep`] | `null` | signal |
@@ -43,6 +44,7 @@
 //! | `/v1/riff` | [`RiffQuery`] | [`RiffReply`] | query |
 //! | `/v1/idle` | [`IdleQuery`] | [`Idle`] | query |
 //! | `/v1/plan/show` | [`PlanShow`] | [`PlanReply`] | query |
+//! | `/v1/notes` | [`NotesShow`] | [`NotesReply`] | query |
 //!
 //! `GET /v1/me` gives [`MeReply`]. `GET /v1/server` gives
 //! [`ServerFacts`], also while the server replies 503 to each other
@@ -218,6 +220,8 @@ calls! {
     PlanOff => "/v1/plan/off", PlanOffReply;
     PlanSeen => "/v1/plan/seen", PlanReply;
     PlanShow => "/v1/plan/show", PlanReply;
+    SetNotes => "/v1/notes/set", SetNotesReply;
+    NotesShow => "/v1/notes", NotesReply;
     SetStatus => "/v1/status", ();
     SetBlocked => "/v1/blocked", ();
     SetStep => "/v1/step", ();
@@ -1828,6 +1832,105 @@ pub struct PlanSeen {
 pub struct PlanShow {
     pub me: SessionUri,
     pub thread: ThreadName,
+}
+
+/// `POST /v1/notes/set`: the lead of a user writes the notes of its
+/// repository thread (01M59258K3TYR09HC4AWHWZPEX). The text replaces
+/// the old text, and the old text stays in the history. Only a session
+/// of the user that is not a worker, and the person of the user, can
+/// write them (01M59258NTXPMWV18TKRKWNTYN). The text has at most
+/// [`NOTES_MAX`](crate::notes::NOTES_MAX) bytes, and it looks like no
+/// token (01M59258RJ3CG498Z8AVQ5TV5Q).
+///
+/// ```
+/// use riff_core::wire::{Call, SetNotes};
+///
+/// let set = SetNotes {
+///     me: "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?,
+///     thread: "como-technologies/riff".parse()?,
+///     text: "Prefer thelio for builds.".into(),
+/// };
+/// assert_eq!(SetNotes::PATH, "/v1/notes/set");
+/// assert!(serde_json::to_string(&set).unwrap().contains(r#""text":"Prefer thelio for builds.""#));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SetNotes {
+    pub me: SessionUri,
+    /// The repository thread of the notes.
+    pub thread: ThreadName,
+    pub text: String,
+}
+
+/// The reply to [`SetNotes`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SetNotesReply {
+    /// True when the call made a new text. The same text makes no
+    /// record.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub changed: bool,
+}
+
+/// `POST /v1/notes`: the query for the notes of a lead
+/// (01M59258NTXPMWV18TKRKWNTYN). The user of the lead can read them,
+/// and the owner of the riff. Another member cannot.
+///
+/// ```
+/// use riff_core::wire::{Call, NotesShow};
+///
+/// let show: NotesShow = serde_json::from_str(
+///     r#"{"me":"riff://mike@pangolin/como-technologies/riff?session=a1","thread":"como-technologies/riff"}"#,
+/// ).unwrap();
+/// assert_eq!(show.user, None);
+/// assert!(!show.history);
+/// assert_eq!(NotesShow::PATH, "/v1/notes");
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct NotesShow {
+    pub me: SessionUri,
+    pub thread: ThreadName,
+    /// The user of the lead. Leave it out to read the notes of the
+    /// caller. Only the owner can name another user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    /// True asks also for the old texts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history: bool,
+}
+
+/// One text of the notes, with who wrote it and when.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct NotesVersion {
+    pub text: String,
+    /// The caller of the write. `None` when the record has no cause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<By>,
+    /// The time of the record, in milliseconds since the Unix epoch.
+    pub at_ms: u64,
+}
+
+/// The reply to [`NotesShow`]: the notes now, and with `history` the old
+/// texts, the oldest first. A lead with no notes has an empty text.
+///
+/// ```
+/// use riff_core::wire::NotesReply;
+///
+/// assert_eq!(serde_json::to_string(&NotesReply::default()).unwrap(), r#"{"user":"","text":""}"#);
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct NotesReply {
+    /// The user of the lead.
+    pub user: String,
+    pub text: String,
+    /// Who wrote the text, and when. `None` when there are no notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<By>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_ms: Option<u64>,
+    /// Each text before this one, the oldest first. Empty with no
+    /// `history`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<NotesVersion>,
 }
 
 /// The plan of the server for one repository thread

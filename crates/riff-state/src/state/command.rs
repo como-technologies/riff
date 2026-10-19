@@ -12,6 +12,7 @@
 //! | work | [`super::work`] | [`Claim`](riff_core::wire::Claim), [`Release`](riff_core::wire::Release), [`ReleaseFor`](riff_core::wire::ReleaseFor), [`Lead`](riff_core::wire::Lead) |
 //! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget), [`Import`](super::Import) |
 //! | plan | [`super::plan`] | [`Hold`](riff_core::wire::Hold), [`Free`](riff_core::wire::Free), [`SetPlan`](riff_core::wire::SetPlan), [`PlanOff`](riff_core::wire::PlanOff) |
+//! | notes | [`super::notes`] | [`SetNotes`](riff_core::wire::SetNotes) |
 //! | people | [`super::people`] | [`Admit`](super::Admit), [`Invite`](riff_core::wire::Invite), [`Remove`](riff_core::wire::Remove), [`SetAdmin`](riff_core::wire::SetAdmin), [`PassOwner`](riff_core::wire::PassOwner), [`TakeOwner`](riff_core::wire::TakeOwner), [`DenyOwner`](riff_core::wire::DenyOwner), [`GrantOwner`](super::GrantOwner), [`EndOwner`](super::EndOwner), [`NameOwner`](super::NameOwner), [`Revoke`](riff_core::wire::Revoke) |
 //!
 //! # Who can send a command
@@ -371,6 +372,7 @@ command_kinds! {
     Free = "free",
     Plan = "plan",
     PlanOff = "plan_off",
+    Notes = "notes",
 }
 
 impl CommandKind {
@@ -421,7 +423,8 @@ impl CommandKind {
             | CommandKind::Hold
             | CommandKind::Free
             | CommandKind::Plan
-            | CommandKind::PlanOff => false,
+            | CommandKind::PlanOff
+            | CommandKind::Notes => false,
         }
     }
 
@@ -456,7 +459,8 @@ impl CommandKind {
             | CommandKind::Hold
             | CommandKind::Free
             | CommandKind::Plan
-            | CommandKind::PlanOff => true,
+            | CommandKind::PlanOff
+            | CommandKind::Notes => true,
             CommandKind::Register | CommandKind::End => false,
             CommandKind::Admit
             | CommandKind::Invite
@@ -679,6 +683,11 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // owner or an admin (01M4A4YTWK68JDA0DKXX2HV4FA).
         CommandKind::Plan => (&[Person, Session], Cannot("send plan. Tell the lead.")),
         CommandKind::PlanOff => (&[Person, Session], Cannot("send plan_off. Tell the lead.")),
+        // The notes of the user of the caller (01M59258NTXPMWV18TKRKWNTYN).
+        CommandKind::Notes => (
+            &[Person, Session],
+            Cannot("write the notes of the lead. Tell the lead."),
+        ),
         // Only a person changes the settings and the people.
         CommandKind::SetIdle
         | CommandKind::Invite
@@ -906,6 +915,7 @@ mod tests {
         row(CommandKind::Free,       PS, false, false, true),
         row(CommandKind::Plan,       PS, false, false, true),
         row(CommandKind::PlanOff,    PS, false, false, true),
+        row(CommandKind::Notes,      PS, false, false, true),
     ];
 
     /// The row of `kind` in [`TABLE`].
@@ -977,6 +987,10 @@ mod tests {
             reason(CommandKind::PlanOff),
             "a worker cannot send plan_off. Tell the lead."
         );
+        assert_eq!(
+            reason(CommandKind::Notes),
+            "a worker cannot write the notes of the lead. Tell the lead."
+        );
     }
 
     /// The role that each command of the people needs, in the table of
@@ -1009,7 +1023,7 @@ mod tests {
         use riff_core::wire::{
             Claim, DenyOwner, End, Free, Hold, Invite, Join, Kind, Lead, Leave, PassOwner, Pause,
             PlanOff, Post, Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin,
-            SetIdle, SetPlan, Start, StartReason, TakeOwner,
+            SetIdle, SetNotes, SetPlan, Start, StartReason, TakeOwner,
         };
 
         use crate::state::{
@@ -1100,6 +1114,10 @@ mod tests {
                 )
             }
             CommandKind::PlanOff => of.of(PlanOff { me, thread }, kind),
+            CommandKind::Notes => {
+                let text = "notes".to_owned();
+                of.of(SetNotes { me, thread, text }, kind)
+            }
             CommandKind::Forget => of.of(Forget, kind),
             CommandKind::Import => of.of(Import { changes: vec![] }, kind),
             CommandKind::Admit => {
@@ -1169,7 +1187,7 @@ mod tests {
             }
         }
         // Each kind has one case, and `revoke` has 3.
-        assert_eq!(tried, (32 + 2) * 4 * 2 * 3);
+        assert_eq!(tried, (33 + 2) * 4 * 2 * 3);
     }
 
     #[test]
