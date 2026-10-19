@@ -1560,3 +1560,86 @@ async fn top_on_each_machine_shows_the_numbers_of_both_machines() {
         assert!(!top.contains(riff::text::NO_NUMBERS), "on {host}: {top}");
     }
 }
+
+/// 01M5924014WN63RCHJWGZS4AFZ, 01M592403Q4TNZEDNR76C7NK9M: `riff wave
+/// move` and `riff wave end --move-open-to-backlog` change the milestone
+/// of the items with `gh issue edit`, and refuse an item that a session
+/// claims.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_wave_move_and_end_move_the_items_and_refuse_a_claimed_item() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    script(
+        bin.path(),
+        "gh",
+        &r#"echo "gh $*" >> LOG
+case "$*" in
+  'api repos/{owner}/{repo}/milestones?state=open&per_page=100')
+    echo '[{"number":2,"title":"Backlog","open_issues":9,"closed_issues":0},{"number":3,"title":"Wave 3","open_issues":2,"closed_issues":1},{"number":4,"title":"Wave 4: Next","open_issues":0,"closed_issues":0}]' ;;
+  'api repos/{owner}/{repo}/issues?milestone=3&state=open&per_page=100') echo '[{"number":13},{"number":14}]' ;;
+  'api -X PATCH '*) echo '{"number":3,"title":"Wave 3","open_issues":0,"closed_issues":3}' ;;
+  'issue edit '*) ;;
+  *) exit 1 ;;
+esac"#
+        .replace("LOG", &bin.path().join("gh.log").display().to_string()),
+    );
+    live(&server, "pangolin", "a1").await;
+    for args in [&["lead"][..], &["resume", "--riff"], &["claim", "issue-12"]] {
+        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
+    }
+    let run = |args: &[&str]| {
+        let mut cmd = riff(&server, dir, None, bin.path(), args);
+        cmd.env_remove("RIFF_SESSION")
+            .env_remove("CLAUDE_CODE_SESSION_ID");
+        async move {
+            let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+                .await
+                .unwrap();
+            (
+                out.status.success(),
+                String::from_utf8_lossy(&out.stdout).into_owned()
+                    + &String::from_utf8_lossy(&out.stderr),
+            )
+        }
+    };
+    let log = || std::fs::read_to_string(bin.path().join("gh.log")).unwrap_or_default();
+
+    let (ok, said) = run(&["wave", "move", "13", "14", "--to", "4"]).await;
+    assert!(ok, "{said}");
+    assert_eq!(said, "Moved #13 #14 to Wave 4: Next.\n");
+    let (ok, said) = run(&["wave", "move", "13", "--to", "Backlog"]).await;
+    assert!(ok, "{said}");
+    assert_eq!(said, "Moved #13 to Backlog.\n");
+    let edits: Vec<String> = log()
+        .lines()
+        .filter(|l| l.starts_with("gh issue edit "))
+        .map(Into::into)
+        .collect();
+    assert_eq!(
+        edits,
+        [
+            "gh issue edit 13 --milestone Wave 4: Next",
+            "gh issue edit 14 --milestone Wave 4: Next",
+            "gh issue edit 13 --milestone Backlog",
+        ]
+    );
+
+    let before = log().lines().count();
+    let (ok, said) = run(&["wave", "move", "12", "13", "--to", "4"]).await;
+    assert!(!ok && said.contains("#12 has a claim."), "{said}");
+    let (ok, said) = run(&["wave", "move", "13", "--to", "9"]).await;
+    assert!(!ok && said.contains("No open wave matches 9."), "{said}");
+    assert!(
+        log()
+            .lines()
+            .skip(before)
+            .all(|l| !l.starts_with("gh issue edit "))
+    );
+
+    let (ok, said) = run(&["wave", "end", "3", "--move-open-to-backlog"]).await;
+    assert!(ok, "{said}");
+    assert_eq!(said, "Moved #13 #14 to Backlog. Ended the wave Wave 3.\n");
+    assert!(log().contains("gh api -X PATCH repos/{owner}/{repo}/milestones/3 -f state=closed"));
+}

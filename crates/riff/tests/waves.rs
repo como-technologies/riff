@@ -256,6 +256,9 @@ fn each_riff_command_of_the_page_is_real() {
             r#"riff wave make "Wave 6: Cloud""#,
             r#"riff wave rename 6 "Cloud and sign-in""#,
             "riff wave end 6",
+            "riff wave move 71 72 --to 7",
+            "riff wave move 73 --to Backlog",
+            "riff wave end 6 --move-open-to-backlog",
         ]
     );
     for command in riff {

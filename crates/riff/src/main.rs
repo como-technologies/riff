@@ -1359,12 +1359,29 @@ enum WaveCommand {
         #[arg(required = true)]
         name: Vec<String>,
     },
+    /// Move items to another wave, or to the Backlog
+    ///
+    /// riff runs gh issue edit for each item. It refuses an item that a
+    /// session claims, and a target that no open milestone has. Then it
+    /// moves nothing.
+    Move {
+        /// The numbers of the issues, for example 71 72.
+        #[arg(required = true)]
+        items: Vec<u64>,
+        /// The target: the number of an open wave, for example 7 for
+        /// Wave 7, or Backlog.
+        #[arg(long, value_name = "WAVE|Backlog")]
+        to: String,
+    },
     /// End a wave when each of its items is closed
     ///
     /// riff refuses a wave that has an open item. In a repository with
     /// deploy/release-check.sh, it also refuses while a merged pull
     /// request of the wave is in no checked release: the release cycle
     /// ends each wave with a release.
+    ///
+    /// With --move-open-to-backlog, riff first moves each open item of the
+    /// wave to the Backlog, and refuses an item that a session claims.
     End {
         /// The number of the wave, for example 6 for Wave 6.
         number: u64,
@@ -1373,6 +1390,9 @@ enum WaveCommand {
         /// wave.
         #[arg(long, value_name = "TEXT")]
         no_release: Option<String>,
+        /// Move each open item of the wave to the Backlog, then end the wave.
+        #[arg(long)]
+        move_open_to_backlog: bool,
     },
     /// Run the current wave of the repository of this folder
     ///
@@ -2340,12 +2360,20 @@ async fn main() -> Result<()> {
                 let (old, new) = riff::waves::rename(&gh, *number, &name.join(" "))?;
                 Some(text::waves_renamed(&old.title, &new.title))
             }
-            WaveCommand::End { number, no_release } => {
+            WaveCommand::End {
+                number,
+                no_release,
+                move_open_to_backlog: false,
+            } => {
                 wave_release_gate(*number, no_release.as_deref())?;
                 let ended = riff::waves::end(&gh, *number)?;
                 Some(text::waves_ended(&ended.title, ended.closed_issues))
             }
-            WaveCommand::List | WaveCommand::Run { .. } | WaveCommand::Stop { .. } => None,
+            WaveCommand::List
+            | WaveCommand::Run { .. }
+            | WaveCommand::Stop { .. }
+            | WaveCommand::Move { .. }
+            | WaveCommand::End { .. } => None,
         };
         if let Some(line) = line {
             println!("{line}");
@@ -2468,6 +2496,12 @@ async fn main() -> Result<()> {
             WaveCommand::Run { host: None } => riff::wave::ask_run(&dir, &here, api.base()).await?,
             WaveCommand::Stop { host: None } => riff::wave::ask_stop(&dir, &here).await?,
             WaveCommand::List => wave_list(&api, &here).await?,
+            WaveCommand::Move { items, to } => wave_move(&api, &here, items, to).await?,
+            WaveCommand::End {
+                number,
+                no_release,
+                move_open_to_backlog: true,
+            } => wave_end_moving(&api, &here, *number, no_release.as_deref()).await?,
             WaveCommand::Make { .. } | WaveCommand::Rename { .. } | WaveCommand::End { .. } => {
                 unreachable!("handled before the identity")
             }
@@ -4877,6 +4911,46 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
         anstream::println!("{block}");
     }
     anstream::eprintln!("{error}riff: the stream of {thread} ended.{error:#}");
+}
+
+/// The items of this repository that a session claims, from
+/// riff-server (01M5924014WN63RCHJWGZS4AFZ).
+async fn claimed_here(api: &Api, here: &riff_core::name::Place) -> Result<Vec<u64>> {
+    let me = identity::me(here, api.base())?;
+    // A riff-server with sign-in takes no call with no token.
+    let api = api.clone().signed_in(me.who().session())?;
+    let Some(thread) = here.default_thread() else {
+        anyhow::bail!(text::waves_no_repo());
+    };
+    let who = api.who(&me, false).await?;
+    Ok(riff::waves::claimed(&who, &thread.to_string()))
+}
+
+/// `riff wave move ITEM... --to WAVE` (01M5924014WN63RCHJWGZS4AFZ).
+async fn wave_move(
+    api: &Api,
+    here: &riff_core::name::Place,
+    items: &[u64],
+    to: &str,
+) -> Result<()> {
+    let claimed = claimed_here(api, here).await?;
+    let title = riff::waves::move_items(&pr::Gh::default(), items, to, &claimed)?;
+    println!("{}", text::waves_moved(items, &title));
+    Ok(())
+}
+
+/// `riff wave end N --move-open-to-backlog` (01M592403Q4TNZEDNR76C7NK9M).
+async fn wave_end_moving(
+    api: &Api,
+    here: &riff_core::name::Place,
+    number: u64,
+    no_release: Option<&str>,
+) -> Result<()> {
+    let claimed = claimed_here(api, here).await?;
+    wave_release_gate(number, no_release)?;
+    let (ended, moved) = riff::waves::end_moving_open(&pr::Gh::default(), number, &claimed)?;
+    println!("{}", text::waves_ended_moving(&ended.title, &moved));
+    Ok(())
 }
 
 /// `riff wave list`: the open milestones from `gh`, with the items and

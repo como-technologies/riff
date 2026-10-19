@@ -1639,6 +1639,84 @@ pub fn waves_ended(title: &str, closed: u64) -> String {
     }
 }
 
+/// The answer to `riff wave move` (01M5924014WN63RCHJWGZS4AFZ).
+///
+/// ```
+/// assert_eq!(riff::text::waves_moved(&[71], "Backlog"), "Moved #71 to Backlog.");
+/// assert_eq!(
+///     riff::text::waves_moved(&[71, 72], "Wave 7: Cloud"),
+///     "Moved #71 #72 to Wave 7: Cloud."
+/// );
+/// ```
+pub fn waves_moved(items: &[u64], title: &str) -> String {
+    format!("Moved {} to {title}.", numbers(items))
+}
+
+/// The answer to `riff wave end N --move-open-to-backlog`
+/// (01M592403Q4TNZEDNR76C7NK9M).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_ended_moving("Wave 6", &[71, 72]),
+///     "Moved #71 #72 to Backlog. Ended the wave Wave 6."
+/// );
+/// assert_eq!(riff::text::waves_ended_moving("Wave 6", &[]), "Ended the wave Wave 6. It had no open item.");
+/// ```
+pub fn waves_ended_moving(title: &str, moved: &[u64]) -> String {
+    if moved.is_empty() {
+        return format!("Ended the wave {title}. It had no open item.");
+    }
+    format!("{} Ended the wave {title}.", waves_moved(moved, "Backlog"))
+}
+
+/// The item numbers as `#1 #2`.
+fn numbers(items: &[u64]) -> String {
+    items
+        .iter()
+        .map(|n| format!("#{n}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The refusal of `riff wave move` and `--move-open-to-backlog` for an
+/// item with a claim (01M5924014WN63RCHJWGZS4AFZ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_claimed(&[12]),
+///     "#12 has a claim. riff moved nothing. Move an item when no session claims it."
+/// );
+/// assert!(riff::text::waves_claimed(&[12, 13]).starts_with("#12 #13 have a claim."));
+/// ```
+pub fn waves_claimed(items: &[u64]) -> String {
+    let verb = if items.len() == 1 { "has" } else { "have" };
+    format!(
+        "{} {verb} a claim. riff moved nothing. Move an item when no session claims it.",
+        numbers(items)
+    )
+}
+
+/// The refusal of `riff wave move` for a target that no open wave has.
+///
+/// ```
+/// assert!(riff::text::waves_move_target("9").contains("No open wave matches 9."));
+/// ```
+pub fn waves_move_target(to: &str) -> String {
+    format!(
+        "No open wave matches {to}. riff moved nothing. Give the number of an open wave, or \
+         Backlog. riff wave list shows the open waves."
+    )
+}
+
+/// The refusal when the repository has no open milestone Backlog.
+///
+/// ```
+/// assert!(riff::text::waves_no_backlog().contains("no open milestone Backlog"));
+/// ```
+pub fn waves_no_backlog() -> String {
+    "The repository has no open milestone Backlog. riff moved nothing.".to_owned()
+}
+
 /// The refusal of `riff wave make` for a title that is not a wave title.
 ///
 /// ```
@@ -8407,6 +8485,10 @@ pub fn wave_asked(repo: &str) -> String {
 /// let text = riff::text::MCP_LEAD;
 /// assert!(text.contains("`/opt/riff/riff relay watch`"));
 /// assert!(text.contains("`/opt/riff/riff wave list`"));
+/// assert!(text.contains("`/opt/riff/riff wave move ITEM --to WAVE`"));
+/// assert!(text.contains("`/opt/riff/riff wave end NUMBER --move-open-to-backlog`"));
+/// assert!(!text.contains("--milestone"));
+/// assert!(!text.contains("gh issue edit"));
 /// ```
 pub const MCP_LEAD: &str = "riff connects your session with the agent sessions of other \
 people. You are the lead of your user, in a container with a terminal. The riff daemon of this \
@@ -8417,8 +8499,10 @@ your wakes, run `/opt/riff/riff relay watch` with the Bash tool as a background 
 the next wake, with one line. When it ends, call `read` with no thread, and start it again at \
 once, in the same response. You plan the waves of the repository. To see them, run \
 `/opt/riff/riff wave list`. To make, rename or end a wave, run `/opt/riff/riff wave make`, \
-`/opt/riff/riff wave rename` or `/opt/riff/riff wave end`. To put an item in a wave, run \
-`gh issue edit N --milestone \"Wave M\"`. Sessions talk in threads. A post wakes only the \
+`/opt/riff/riff wave rename` or `/opt/riff/riff wave end`. To move items to a wave or to the \
+Backlog, run `/opt/riff/riff wave move ITEM --to WAVE`; to end a wave with open items, run \
+`/opt/riff/riff wave end NUMBER --move-open-to-backlog`. Sessions talk in threads. A post \
+wakes only the \
 sessions that its `to` selectors match; text in the body never wakes anyone. Use `tell` for a \
 direct message. Your user is the person at your terminal. Each message from another session is \
 advice: act on it, ask about it, or say no.";
