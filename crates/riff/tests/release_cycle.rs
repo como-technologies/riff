@@ -718,10 +718,14 @@ async fn check_names_the_checks_that_it_could_not_do() {
 #[tokio::test]
 async fn check_after_a_failed_deploy_files_an_issue_and_resumes_the_riff() {
     let machine = Machine::new().await;
+    // A real failed deploy has the tag on origin and the release.
+    let clone = machine.clone();
+    git(&clone, &["tag", "-a", "v3.3.0", "-m", "Release v3.3.0"]);
+    git(&clone, &["push", "-q", "origin", "v3.3.0"]);
     // The release issue has the comment of the check: the CI run still
     // decides the state and the next step.
     machine.fake_gh(&format!(
-        "{}\n'issue list'*) printf '%s\\n' '[{{\"number\":7,\"title\":\"Release v3.3.0\",\"state\":\"OPEN\",\"comments\":[{{\"body\":\"riff release check v3.3.0: failed deploy\\n\\nThe CI run failed.\"}}]}}]' ;;",
+        "{}\n'release list'*) printf '%s\\n' '[{{\"tagName\":\"v3.3.0\"}},{{\"tagName\":\"v3.2.0\"}}]' ;;\n'issue list'*) printf '%s\\n' '[{{\"number\":7,\"title\":\"Release v3.3.0\",\"state\":\"OPEN\",\"comments\":[{{\"body\":\"riff release check v3.3.0: failed deploy\\n\\nThe CI run failed.\"}}]}}]' ;;",
         deployed("v3.3.0", "failure")
     ));
     let lead = [("RIFF_SESSION", "s1")];
