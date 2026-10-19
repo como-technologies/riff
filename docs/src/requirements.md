@@ -6731,6 +6731,20 @@ part when they merge.
   `not set`, and never the value. With no token, `riff daemon status`
   gives the step: run `claude setup-token`, then `riff claude-token`,
   on this machine.
+- **01M58XZF928T82YAMF4DSJBKBF** This supersedes
+  01M58B7GZT7WFSBBG1XWJHR4MH, 01M4Z60B869HWDTZMSYPVYACD8 and
+  01M58B7HA8CRCW0MJ17QP3R5QG in part, for the place of the token
+  (R21). `riff claude-token` keeps the token in the OS keyring under
+  the name `claude setup-token`, with `riff_client::secrets::set`, and
+  writes no file for it. It removes the old file `claude-token` of the
+  daemon folder when it is there, and says so. The daemon reads the
+  token from the keyring at each container start, with `KEYRING_WAIT`.
+  A keyring that is locked, or does not answer, starts no container:
+  the wave tells the lead one time, as for the sign-in of riff
+  (01M4385CEWGCP31DP5PAMPXZ97). The daemon never falls back to the
+  sign-in of `claude` on the host then. The mark `claude-token-refused`
+  stays a file. `riff daemon status` and `riff who` show `claude token`:
+  `set`, `not set`, `refused` or `keyring locked`.
 - **01M58B7HCXKZF39DCF6KV84JRV** When a token is set, the daemon posts
   no note for the sign-in of `claude` (01M57D3FC5PB5EQ6Y38Y5R2DBB), and
   the facts of the host do not warn about its minutes left.

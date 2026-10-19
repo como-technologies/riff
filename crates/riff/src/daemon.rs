@@ -1305,7 +1305,7 @@ impl Owned {
     /// and says why in the lines of the session
     /// (01M58B7H7HD0H48A0C79F8M4CR).
     fn token_refused(&self, state: &mut SessionState) {
-        if !crate::claude_token::set(&self.dir) {
+        if !crate::claude_token::held() {
             return;
         }
         if !crate::claude_token::refused(&self.dir) {
@@ -1856,6 +1856,10 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// The state of the daemon.
     pub async fn status(&self) -> Status {
+        let dir = self.dir.clone();
+        let claude_token = tokio::task::spawn_blocking(move || crate::claude_token::state(&dir))
+            .await
+            .unwrap_or_default();
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
@@ -1883,7 +1887,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             mcp: crate::session_mcp::read(&self.dir)
                 .map(|servers| crate::session_mcp::names(&servers))
                 .unwrap_or_default(),
-            claude_token: crate::claude_token::state(&self.dir),
+            claude_token,
         }
     }
 
@@ -3977,7 +3981,9 @@ mod tests {
     /// marks it refused, says why in the lines of the session, and the
     /// next host check fails. The value of the token is in no event.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn a_refused_token_is_marked_said_and_stops_each_new_start() {
+        let _token = crate::claude_token::test_token();
         let here = Here::new(Fake::default().with_image(IMAGE)).await;
         let token = "sk-ant-oat01-secret1";
         crate::claude_token::store(&here.dir, token).unwrap();

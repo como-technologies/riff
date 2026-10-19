@@ -118,6 +118,9 @@ pub enum Token {
     NotSet,
     /// A token is set.
     Set,
+    /// The OS keyring is locked, or does not answer: the daemon cannot
+    /// read the token, and starts no session.
+    Locked,
     /// A token is set, and `claude` refused it.
     Refused,
 }
@@ -131,6 +134,7 @@ impl Token {
     /// assert_eq!(Token::Set.word(), "set");
     /// assert_eq!(Token::NotSet.word(), "not set");
     /// assert_eq!(Token::Refused.word(), "refused");
+    /// assert_eq!(Token::Locked.word(), "keyring locked");
     /// assert_eq!(Token::Unknown.word(), "?");
     /// ```
     pub fn word(self) -> &'static str {
@@ -139,6 +143,7 @@ impl Token {
             Token::NotSet => "not set",
             Token::Set => "set",
             Token::Refused => "refused",
+            Token::Locked => "keyring locked",
         }
     }
 
@@ -148,11 +153,11 @@ impl Token {
     /// ```
     /// use riff_client::daemons::Token;
     ///
-    /// assert!(Token::Set.set() && Token::Refused.set());
+    /// assert!(Token::Set.set() && Token::Refused.set() && Token::Locked.set());
     /// assert!(!Token::NotSet.set() && !Token::Unknown.set());
     /// ```
     pub fn set(self) -> bool {
-        matches!(self, Token::Set | Token::Refused)
+        matches!(self, Token::Set | Token::Refused | Token::Locked)
     }
 
     /// True when the person must act: no token, or a refused one.
@@ -160,11 +165,11 @@ impl Token {
     /// ```
     /// use riff_client::daemons::Token;
     ///
-    /// assert!(Token::NotSet.warns() && Token::Refused.warns());
+    /// assert!(Token::NotSet.warns() && Token::Refused.warns() && Token::Locked.warns());
     /// assert!(!Token::Set.warns() && !Token::Unknown.warns());
     /// ```
     pub fn warns(self) -> bool {
-        matches!(self, Token::NotSet | Token::Refused)
+        matches!(self, Token::NotSet | Token::Refused | Token::Locked)
     }
 }
 
