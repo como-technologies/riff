@@ -27,7 +27,7 @@ fn main() -> ExitCode {
         ["check", root] => run_check(Path::new(root)),
         _ => {
             eprintln!(
-                "usage: reqs rid | reqs req SECTION TEXT | reqs check [ROOT]| reqs check [ROOT]"
+                "usage: reqs rid | reqs req SECTION TEXT | reqs check [ROOT]"
             );
             ExitCode::from(2)
         }
