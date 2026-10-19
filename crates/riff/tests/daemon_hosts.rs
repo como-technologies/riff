@@ -820,7 +820,14 @@ async fn the_daemon_builds_riff_for_the_lead_and_refuses_a_work_session() {
         &r.main,
         &["remote", "add", "origin", &bare.display().to_string()],
     );
-    git(&bare, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&r.main)
+        .args(["symbolic-ref", "HEAD"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8(head.stdout).unwrap();
+    git(&bare, &["symbolic-ref", "HEAD", head.trim()]);
 
     let reply = remote::ask(
         &r.api,
