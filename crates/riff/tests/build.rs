@@ -282,6 +282,8 @@ async fn a_server_of_the_other_line_of_the_bridge_works_with_the_note() {
             "riff-server 4 will refuse riff 1. Run riff update soon.",
         ),
         3 => ("1.8.2", "Update riff-server when you can."),
+        // The line 4 ends the bridge: no server of the other line.
+        4 => return,
         major => panic!("riff {major}.x is on no line of the bridge"),
     };
     let theirs = at(version.parse().unwrap());

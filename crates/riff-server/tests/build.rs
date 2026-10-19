@@ -83,6 +83,8 @@ async fn a_riff_of_the_other_line_of_the_bridge_passes_the_check() {
     let others = match this().major {
         1 => ["3.0.0", "3.2.1"],
         3 => ["1.8.2", "1.9.0"],
+        // The line 4 ends the bridge: it takes only its line and the line 3.
+        4 => return,
         major => panic!("riff-server {major}.x is on no line of the bridge"),
     };
     for version in others {
