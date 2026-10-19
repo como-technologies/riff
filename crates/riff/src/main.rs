@@ -1,6 +1,7 @@
 //! The local client that finds sessions and wakes yours.
 
 use std::io::Read;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -1753,6 +1754,41 @@ enum LeadCommand {
         #[arg(long)]
         notify: Option<Switch>,
     },
+    /// Show or edit the notes of the lead
+    ///
+    /// The notes are text that riff-server keeps for your user and the
+    /// repository: the running state of the lead, what waits for you, and
+    /// your choices. A lead on any host reads them at its start. The lead
+    /// writes them with its notes tool. riff refuses a text over 64 KiB and
+    /// a text that looks like a token. Only you and the owner can read them.
+    Notes {
+        #[command(subcommand)]
+        command: Option<NotesCommand>,
+        /// The repository thread. The default is your repository thread.
+        #[arg(long, short, global = true)]
+        thread: Option<String>,
+        /// Show also each old text, the newest first.
+        #[arg(long)]
+        history: bool,
+        /// Show the notes of this user. Only the owner can show the notes
+        /// of another user.
+        #[arg(long)]
+        user: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum NotesCommand {
+    /// Change the notes of the lead in your editor
+    ///
+    /// riff opens $VISUAL, $EDITOR or vi on the notes. When you save a new
+    /// text, it replaces the old text. The old text stays in the history.
+    Edit {
+        /// Take the new text from this file, and open no editor. - is
+        /// the standard input.
+        #[arg(long, value_name = "FILE")]
+        file: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2506,6 +2542,23 @@ async fn main() -> Result<()> {
         let server = api.base().to_owned();
         return riff::lead::start(api, &here, &server).await;
     }
+    if let Command::Lead {
+        command:
+            Some(LeadCommand::Notes {
+                command,
+                thread,
+                history,
+                user,
+            }),
+    } = &cli.command
+    {
+        let thread = thread_or_default(thread.clone(), &here)?;
+        let me = person(&api)?;
+        let file = command
+            .as_ref()
+            .map(|NotesCommand::Edit { file }| file.as_deref());
+        return riff::lead::notes(&api, &me, &thread, user.as_deref(), *history, file).await;
+    }
     if let Command::Wave { command } = &cli.command {
         let dir = riff::daemon::dir()?;
         match command {
@@ -2851,7 +2904,12 @@ async fn main() -> Result<()> {
         | Command::Worktrees(_)
         | Command::Lead {
             command:
-                Some(LeadCommand::Compact { .. } | LeadCommand::Blocked { .. } | LeadCommand::Start),
+                Some(
+                    LeadCommand::Compact { .. }
+                    | LeadCommand::Blocked { .. }
+                    | LeadCommand::Start
+                    | LeadCommand::Notes { .. },
+                ),
         }
         | Command::View { .. }
         | Command::Takeover { .. }

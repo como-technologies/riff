@@ -1,0 +1,8 @@
+{"format":1,"first":1}
+{"position":1,"written_at_ms":1794000000000,"by":"server","command":"make_riff","change":{"riff_made":{"riff_id":"6f1d2c3b-4a5e-4f60-8b7c-9d0e1f2a3b4c"}}}
+{"position":2,"written_at_ms":1794000001000,"by":{"person":"ann"},"command":"resume","change":{"pause_set":{"scope":"riff","state":"running"}}}
+{"position":3,"written_at_ms":1794000002000,"by":{"session":"ann/a1"},"command":"register","change":{"joined_thread":{"session":"riff://ann@heron/acme/app?session=a1","thread":"acme/app"}}}
+{"position":4,"written_at_ms":1794000002000,"by":{"session":"ann/a1"},"command":"register","change":{"session_started":{"session":"riff://ann@heron/acme/app?session=a1","reason":"process"}}}
+{"position":5,"written_at_ms":1794000003000,"by":{"session":"ann/a1"},"command":"notes","change":{"notes_set":{"thread":"acme/app","user":"ann","text":"Wave 36 runs."}}}
+{"position":6,"written_at_ms":1794000004000,"by":{"person":"ann"},"command":"notes","change":{"notes_set":{"thread":"acme/app","user":"ann","text":"Wave 37 runs. Prefer thelio."}}}
+{"position":7,"written_at_ms":1794000005000,"command":"notes","change":{"notes_set":{"thread":"acme/lib","user":"bob","text":"Bob keeps this."}}}

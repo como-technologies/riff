@@ -239,11 +239,11 @@ use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
     Claim, DenyOwner, End, FactError, Free, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
     ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
-    PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Pruned, Read,
-    ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner,
-    RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetPlan,
-    SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply,
-    TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+    NotesReply, NotesShow, PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post,
+    Pruned, Read, ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume,
+    Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked,
+    SetIdle, SetNotes, SetPlan, SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner,
+    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
@@ -1954,7 +1954,8 @@ impl Service {
             .route(Hold::PATH, post(command::<Hold>))
             .route(Free::PATH, post(command::<Free>))
             .route(SetPlan::PATH, post(command::<SetPlan>))
-            .route(PlanOff::PATH, post(command::<PlanOff>));
+            .route(PlanOff::PATH, post(command::<PlanOff>))
+            .route(SetNotes::PATH, post(command::<SetNotes>));
         // `set_idle` has a router of its own: in a riff with sign-in,
         // its route always has the token check.
         let set_idle = Router::new().route(SetIdle::PATH, post(command::<SetIdle>));
@@ -1974,6 +1975,7 @@ impl Service {
             .route(RiffQuery::PATH, post(riff))
             .route(PlanSeen::PATH, post(plan_seen))
             .route(PlanShow::PATH, post(plan_show))
+            .route(NotesShow::PATH, post(notes_show))
             .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread));
@@ -2794,6 +2796,25 @@ async fn plan_show(
             state.plan(&r.thread, Instant::now(), now_ms())
         })
         .await?;
+    Ok(Json(reply))
+}
+
+/// Reads the notes of a lead: a query (01M59258NTXPMWV18TKRKWNTYN). Only
+/// the user of the lead and the owner can.
+async fn notes_show(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<NotesShow>,
+) -> Reply<NotesReply> {
+    let caller = admit(&s, &proof, &r.me)?;
+    let who = caller.caller().clone();
+    let reply = s
+        .engine
+        .query(&caller, |state| {
+            state.notes(&who, &r.thread, r.user.as_deref(), r.history)
+        })
+        .await?
+        .map_err(Failed::Refused)?;
     Ok(Json(reply))
 }
 

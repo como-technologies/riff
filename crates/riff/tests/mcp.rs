@@ -180,6 +180,7 @@ async fn the_tools_carry_a_conversation() {
             "leave",
             "leave_thread",
             "move",
+            "notes",
             "pause",
             "post",
             "read",
@@ -673,6 +674,7 @@ async fn a_session_in_a_container_gets_only_the_tools_that_talk() {
             "hold",
             serde_json::json!({ "item": "issue-14", "reason": "r" }),
         ),
+        ("notes", serde_json::json!({ "text": "x" })),
     ];
     for (tool, args) in refused {
         let (text, is_error) = call(&mike, tool, args).await;
@@ -1714,4 +1716,104 @@ async fn the_lead_holds_an_item_and_a_worker_cannot_claim_it() {
     assert!(twice.contains("was not on hold"), "{twice}");
     let claimed = api.claim(&worker, &thread, "issue-12").await.unwrap();
     assert!(claimed.granted && claimed.warning.is_none());
+}
+
+/// The case of #1164 (01M59258K3TYR09HC4AWHWZPEX,
+/// 01M59258NTXPMWV18TKRKWNTYN, 01M59258RJ3CG498Z8AVQ5TV5Q,
+/// 01M592590XREH99ABQF2D2KT6H): a lead on a host with no Claude memory
+/// runs from riff alone. Its start text names the notes, the instructions
+/// carry its rules, and the `notes` tool keeps the state, with the
+/// history. A text over the limit and a text with a token are refused.
+/// A worker has no notes tool.
+#[tokio::test]
+async fn a_lead_with_no_memory_gets_its_state_from_the_notes() {
+    let api = start_server().await;
+    let host = connect(&api, MIKE).await;
+    call(&host, "resume", serde_json::json!({ "riff": true })).await;
+
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    let tools = Tools::new(api.clone(), MIKE.parse().unwrap()).in_lead_container();
+    tokio::spawn(async move {
+        tools
+            .serve(server_io)
+            .await
+            .unwrap()
+            .waiting()
+            .await
+            .unwrap();
+    });
+    let lead = ().serve(client_io).await.unwrap();
+
+    let mut listed: Vec<_> = lead
+        .list_all_tools()
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    listed.sort();
+    assert_eq!(listed, riff::mcp::LEAD_TOOLS);
+    let info = lead.peer_info().unwrap();
+    assert_eq!(info.instructions.as_deref(), Some(riff::text::MCP_LEAD));
+    let start = riff::text::lead_start("como-technologies/riff");
+    assert!(start.contains("whoami, notes and read"), "{start}");
+
+    // A lead with no notes.
+    let (none, is_error) = call(&lead, "notes", serde_json::json!({})).await;
+    assert!(!is_error && none.contains("has no notes"), "{none}");
+
+    let write = |text: &str| serde_json::json!({ "text": text });
+    let (saved, is_error) =
+        call(&lead, "notes", write("Wave 36 runs. Mike decides the cut.")).await;
+    assert!(!is_error && saved.contains("are saved"), "{saved}");
+    let (same, _) = call(&lead, "notes", write("Wave 36 runs. Mike decides the cut.")).await;
+    assert!(same.contains("have this text already"), "{same}");
+    call(&lead, "notes", write("Wave 37 runs.")).await;
+
+    let (now, is_error) = call(&lead, "notes", serde_json::json!({})).await;
+    assert!(!is_error, "{now}");
+    assert!(now.contains("Wave 37 runs."), "{now}");
+    assert!(!now.contains("Wave 36"), "{now}");
+    let (all, _) = call(&lead, "notes", serde_json::json!({ "history": true })).await;
+    assert!(
+        all.contains("Wave 37 runs.") && all.contains("Before:"),
+        "{all}"
+    );
+    assert!(all.contains("Wave 36 runs. Mike decides the cut."), "{all}");
+
+    // The refusals.
+    let (secret, is_error) = call(
+        &lead,
+        "notes",
+        write("key ghp_abcdefghijklmnopqrstuvwxyz0123456789"),
+    )
+    .await;
+    assert!(
+        is_error && secret.contains("looks like it has a secret"),
+        "{secret}"
+    );
+    assert!(!secret.contains("ghp_"), "{secret}");
+    let (long, is_error) = call(&lead, "notes", write(&"a".repeat(64 * 1024 + 1))).await;
+    assert!(is_error && long.contains("64 KiB"), "{long}");
+    let (still, _) = call(&lead, "notes", serde_json::json!({})).await;
+    assert!(still.contains("Wave 37 runs."), "{still}");
+
+    // Another user does not read the notes of mike. A worker cannot
+    // write them.
+    let brett: SessionUri = BRETT.parse().unwrap();
+    api.register(&brett).await.unwrap();
+    let thread = brett.default_thread().unwrap();
+    let error = api.notes_show(&brett, &thread, Some("mike"), false).await;
+    let error = format!("{:#}", error.unwrap_err());
+    assert!(error.contains("only mike and the owner"), "{error}");
+    let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1#w1"
+        .parse()
+        .unwrap();
+    api.register_as(&worker, true).await.unwrap();
+    let error = api.notes_set(&worker, &thread, "x").await;
+    let error = format!("{:#}", error.unwrap_err());
+    assert!(
+        error.contains("a worker cannot write the notes of the lead"),
+        "{error}"
+    );
 }

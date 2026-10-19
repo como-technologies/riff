@@ -112,7 +112,8 @@ fn named(change: &Change) -> Option<&SessionUri> {
         | Change::ItemHeld(_)
         | Change::ItemFreed(_)
         | Change::PlanSet(_)
-        | Change::PlanEnded(_) => None,
+        | Change::PlanEnded(_)
+        | Change::NotesSet(_) => None,
     }
 }
 

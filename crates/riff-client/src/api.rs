@@ -117,12 +117,13 @@ use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
     DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
     ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
-    Members, MembersReply, Message, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause,
-    PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release, ReleaseFor,
-    ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery, RiffReply,
-    RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetIdle, SetStatus, SetStep,
-    SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads,
-    TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
+    Members, MembersReply, Message, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed,
+    PassOwner, Pause, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release,
+    ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery,
+    RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetIdle, SetNotes,
+    SetNotesReply, SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange,
+    Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake,
+    WhoReply, WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -1621,6 +1622,43 @@ impl Api {
                 Err(error) => Err(error),
             },
         }
+    }
+
+    /// Writes the notes of the lead of the user of `me` in the repository
+    /// thread `thread` (01M59258K3TYR09HC4AWHWZPEX). The text replaces the
+    /// old text. The server refuses a text over 64 KiB and a text that
+    /// looks like a token (01M59258RJ3CG498Z8AVQ5TV5Q).
+    pub async fn notes_set(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        text: &str,
+    ) -> Result<SetNotesReply> {
+        let set = SetNotes {
+            me: me.clone(),
+            thread: thread.clone(),
+            text: text.to_owned(),
+        };
+        self.call(&set).await
+    }
+
+    /// The notes of the lead of `user` in `thread`, or of the user of
+    /// `me` when `user` is `None`; with `history`, also the old texts
+    /// (01M59258NTXPMWV18TKRKWNTYN). Only that user and the owner can.
+    pub async fn notes_show(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        user: Option<&str>,
+        history: bool,
+    ) -> Result<NotesReply> {
+        let show = NotesShow {
+            me: me.clone(),
+            thread: thread.clone(),
+            user: user.map(str::to_owned),
+            history,
+        };
+        self.call(&show).await
     }
 
     /// Holds `item` of the repository thread `thread` with `reason`, so

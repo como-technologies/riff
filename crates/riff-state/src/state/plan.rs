@@ -69,9 +69,10 @@ use std::time::{Duration, Instant};
 
 use riff_core::name::{ThreadName, check};
 use riff_core::record::{
-    Change, Envelope, ItemFreed, ItemHeld, Plan, PlanEnded, PlanItem, PlanSet, Record,
+    Change, Envelope, ItemFreed, ItemHeld, NotesSet, Plan, PlanEnded, PlanItem, PlanSet, Record,
 };
 pub use riff_core::wire::HoldInfo;
+pub use riff_core::wire::NotesVersion;
 use riff_core::wire::{
     Free, FreeReply, Hold, HoldReply, PlanOff, PlanOffReply, PlanReply, PlanShown, SetPlan,
 };
@@ -106,11 +107,15 @@ struct Part {
     holds: BTreeMap<String, HoldInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     plan: Option<Current>,
+    /// The texts of the notes of each lead, by the user, the oldest
+    /// first: the last is the notes now (01M59258K3TYR09HC4AWHWZPEX).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    notes: BTreeMap<String, Vec<NotesVersion>>,
 }
 
 impl Part {
     fn is_empty(&self) -> bool {
-        self.holds.is_empty() && self.plan.is_none()
+        self.holds.is_empty() && self.plan.is_none() && self.notes.is_empty()
     }
 }
 
@@ -253,6 +258,48 @@ impl Plans {
         }
     }
 
+    /// The notes of the lead of `user` in `thread` now, when it wrote
+    /// some (01M59258K3TYR09HC4AWHWZPEX).
+    pub fn notes(&self, thread: &ThreadName, user: &str) -> Option<&NotesVersion> {
+        self.plans.get(thread)?.notes.get(user)?.last()
+    }
+
+    /// Each text of the notes of `user` in `thread` before the text now,
+    /// the oldest first.
+    pub fn notes_before(&self, thread: &ThreadName, user: &str) -> &[NotesVersion] {
+        let all = self
+            .plans
+            .get(thread)
+            .and_then(|part| part.notes.get(user))
+            .map_or(&[][..], Vec::as_slice);
+        all.split_last().map_or(&[][..], |(_, before)| before)
+    }
+
+    /// The text of the record is the notes of its user now. It keeps the
+    /// `by` and the time of the record, and each old text.
+    pub(super) fn notes_set(
+        &mut self,
+        set: &NotesSet,
+        record: &Record,
+    ) -> Result<(), &'static str> {
+        let NotesSet { thread, user, text } = set;
+        let Envelope {
+            position: _,
+            written_at_ms,
+            by,
+            command: _,
+            call: _,
+        } = &record.envelope;
+        let version = NotesVersion {
+            text: text.clone(),
+            by: by.clone(),
+            at_ms: *written_at_ms,
+        };
+        let part = self.plans.entry(thread.clone()).or_default();
+        part.notes.entry(user.clone()).or_default().push(version);
+        Ok(())
+    }
+
     /// The plans, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
         let Plans { plans } = self;
@@ -377,7 +424,7 @@ pub fn held_text(item: &str, hold: &HoldInfo) -> String {
 }
 
 /// Refuses a thread that is not a repository thread.
-fn repository(thread: &ThreadName) -> Result<(), Refused> {
+pub(super) fn repository(thread: &ThreadName) -> Result<(), Refused> {
     if thread.is_direct() || !thread.to_string().contains('/') {
         return Err(format!("{thread} is not a repository thread: name OWNER/REPO").into());
     }

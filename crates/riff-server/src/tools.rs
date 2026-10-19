@@ -253,6 +253,12 @@ pub fn show(record: &Record) -> String {
             s.plan.done.len()
         ),
         Change::PlanEnded(e) => format!("plan_ended  {}", e.thread),
+        Change::NotesSet(n) => format!(
+            "notes_set  {} in {}: {} bytes",
+            n.user,
+            n.thread,
+            n.text.len()
+        ),
     };
     format!(
         "{}  {}  {facts}  ({})",
@@ -286,6 +292,7 @@ fn thread_of(record: &Record) -> Option<String> {
         Change::ItemFreed(f) => Some(f.thread.to_string()),
         Change::PlanSet(s) => Some(s.thread.to_string()),
         Change::PlanEnded(e) => Some(e.thread.to_string()),
+        Change::NotesSet(n) => Some(n.thread.to_string()),
         Change::PauseSet(s) => match &s.scope {
             Scope::Repository(thread) => Some(thread.to_string()),
             Scope::Riff | Scope::Other => None,
