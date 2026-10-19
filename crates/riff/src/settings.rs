@@ -8,20 +8,8 @@
 //!
 //! ```toml
 //! [workers]
-//! limit = 2
-//! interval = 10
-//! mcp = ["riff", "github"]
-//! jobs = 4
-//! nice = 10
-//! memory = 22
-//! floor = 4
 //! tmp = "/data/riff-tmp"
 //! cache = "40G"
-//!
-//! [monitor]
-//! on = true
-//! every = 15
-//! load = 1.5
 //!
 //! [update]
 //! auto = true
@@ -35,18 +23,8 @@
 //!
 //! | Key | Default | Meaning |
 //! |---|---|---|
-//! | `workers.limit` | 0 | The most workers that `riff workers start` runs on this machine (01M3JPQT35BMR7XMAMMFSCDC2B). |
-//! | `workers.interval` | 10 | The seconds between two looks of the rollout of the lead. 0 turns the rollout off (see [`rollout`](crate::rollout), 01M3Q5QE9H42FQKEDC5G9GKCWD). |
-//! | `workers.mcp` | `["riff"]` | The MCP servers that a worker loads (see [`worker_mcp`](crate::worker_mcp)). |
-//! | `workers.jobs` | 0 | The compile jobs and the test threads of one worker. 0: riff makes the number from the machine (see [`limits`](crate::limits), 01M3WFYZRK5CT22GJW6ZHYT9CC). |
-//! | `workers.nice` | 10 | The nice value of each worker (01M3WFYZTX05CGDP2NQF9B356K). |
-//! | `workers.memory` | 0 | The most memory of all workers of the machine, in GB. 0: riff makes the number from the machine (01M3WFYZX6GVFYW6NTTTKF144R). |
-//! | `workers.floor` | 4 | The available memory in GB under which riff starts no new worker (01M3WFZ01PTAYYKG3T5CFA2W4D). |
 //! | `workers.tmp` | `~/.cache/riff/tmp` | The folder of the temp folders of the workers (see [`temp`](crate::temp), 01M41VAGJC69S9R2TD1B1EQ4W4). |
 //! | `workers.cache` | `40G` | The most size of the compile cache of the workers (see [`sccache`](crate::sccache), 01M49237BM12PVBERD6JXDSX5V). |
-//! | `monitor.on` | false | The monitor of this machine runs (see [`monitor`](crate::monitor), 01M421QPKWPX00X24F8V6DT8Z3). |
-//! | `monitor.every` | 15 | The seconds between two looks of the monitor. |
-//! | `monitor.load` | 1.5 | The 5-minute load over which the monitor tells the lead, for each physical core. |
 //! | `lead.compact` | true | riff compacts the lead at the end of a wave (see [`compact`](crate::compact)). |
 //! | `lead.quiet` | 60 | The seconds with no input in the pane of the lead before riff compacts it. |
 //! | `lead.wake` | 15 | The minutes that a block waits for an answer before riff wakes the lead again, and again before riff tells the person (see [`crate::look`], 01M41FZQ545HQ9Q75CSKX8HF8H). |
@@ -103,169 +81,6 @@ fn read(path: &Path) -> Result<DocumentMut> {
     }
 }
 
-/// The most workers on this machine. 0 when the file or the key is
-/// missing.
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::workers_limit(&path)?, 0);
-/// riff::settings::set_workers_limit(&path, 2)?;
-/// assert_eq!(riff::settings::workers_limit(&path)?, 2);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn workers_limit(path: &Path) -> Result<u16> {
-    let doc = read(path)?;
-    let Some(limit) = doc.get("workers").and_then(|w| w.get("limit")) else {
-        return Ok(0);
-    };
-    let Some(limit) = limit.as_integer() else {
-        bail!("workers.limit in {} is not a number", path.display());
-    };
-    u16::try_from(limit)
-        .with_context(|| format!("workers.limit in {} is out of range", path.display()))
-}
-
-/// Sets the most workers on this machine. It keeps each other key.
-pub fn set_workers_limit(path: &Path, limit: u16) -> Result<()> {
-    set(path, "workers", "limit", value(i64::from(limit)))
-}
-
-/// The default of `workers.interval`, in seconds.
-pub const WORKERS_INTERVAL: u16 = 10;
-
-/// The seconds between two looks of the rollout of the lead:
-/// `workers.interval`, or [`WORKERS_INTERVAL`] when the file or the key
-/// is missing. 0 turns the rollout off (01M3Q5QE9H42FQKEDC5G9GKCWD).
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::workers_interval(&path)?, 10);
-/// riff::settings::set_workers_interval(&path, 30)?;
-/// assert_eq!(riff::settings::workers_interval(&path)?, 30);
-/// riff::settings::set_workers_interval(&path, 0)?;
-/// assert_eq!(riff::settings::workers_interval(&path)?, 0);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn workers_interval(path: &Path) -> Result<u16> {
-    let doc = read(path)?;
-    let Some(interval) = doc.get("workers").and_then(|w| w.get("interval")) else {
-        return Ok(WORKERS_INTERVAL);
-    };
-    let Some(interval) = interval.as_integer() else {
-        bail!("workers.interval in {} is not a number", path.display());
-    };
-    u16::try_from(interval)
-        .with_context(|| format!("workers.interval in {} is out of range", path.display()))
-}
-
-/// Sets `workers.interval`. It keeps each other key.
-pub fn set_workers_interval(path: &Path, seconds: u16) -> Result<()> {
-    set(path, "workers", "interval", value(i64::from(seconds)))
-}
-
-/// The default of `workers.nice`.
-pub const WORKERS_NICE: u8 = 10;
-
-/// The most that `workers.nice` can be: the lowest priority of Unix.
-pub const NICE_MAX: u8 = 19;
-
-/// The compile jobs and the test threads of one worker: `workers.jobs`
-/// (01M3WFYZRK5CT22GJW6ZHYT9CC). 0 when the file or the key is missing:
-/// riff makes the number from the machine
-/// ([`limits::jobs`](crate::limits::jobs)).
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::workers_jobs(&path)?, 0);
-/// riff::settings::set_workers_jobs(&path, 6)?;
-/// assert_eq!(riff::settings::workers_jobs(&path)?, 6);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn workers_jobs(path: &Path) -> Result<u16> {
-    number(path, "jobs", 0)
-}
-
-/// Sets `workers.jobs`. It keeps each other key.
-pub fn set_workers_jobs(path: &Path, jobs: u16) -> Result<()> {
-    set(path, "workers", "jobs", value(i64::from(jobs)))
-}
-
-/// The nice value of each worker: `workers.nice`
-/// (01M3WFYZTX05CGDP2NQF9B356K). [`WORKERS_NICE`] when the file or the
-/// key is missing. A value of more than [`NICE_MAX`] is an error.
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::workers_nice(&path)?, 10);
-/// riff::settings::set_workers_nice(&path, 0)?;
-/// assert_eq!(riff::settings::workers_nice(&path)?, 0);
-/// assert!(riff::settings::set_workers_nice(&path, 20).is_err());
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn workers_nice(path: &Path) -> Result<u8> {
-    let nice: u8 = number(path, "nice", WORKERS_NICE)?;
-    if nice > NICE_MAX {
-        bail!("workers.nice in {} is more than {NICE_MAX}", path.display());
-    }
-    Ok(nice)
-}
-
-/// Sets `workers.nice`. It keeps each other key.
-pub fn set_workers_nice(path: &Path, nice: u8) -> Result<()> {
-    if nice > NICE_MAX {
-        bail!("the nice value is 0 to {NICE_MAX}");
-    }
-    set(path, "workers", "nice", value(i64::from(nice)))
-}
-
-/// The most memory of all workers of the machine, in GB:
-/// `workers.memory` (01M3WFYZX6GVFYW6NTTTKF144R). 0 when the file or the
-/// key is missing: riff makes the number from the machine
-/// ([`limits::memory`](crate::limits::memory)).
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::workers_memory(&path)?, 0);
-/// riff::settings::set_workers_memory(&path, 20)?;
-/// assert_eq!(riff::settings::workers_memory(&path)?, 20);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn workers_memory(path: &Path) -> Result<u32> {
-    number(path, "memory", 0)
-}
-
-/// Sets `workers.memory`. It keeps each other key.
-pub fn set_workers_memory(path: &Path, gb: u32) -> Result<()> {
-    set(path, "workers", "memory", value(i64::from(gb)))
-}
-
-/// The available memory in GB under which riff starts no new worker:
-/// `workers.floor` (01M3WFZ01PTAYYKG3T5CFA2W4D).
-/// [`riff_client::machines::WORKERS_FLOOR`] when
-/// the file or the key is missing. 0 turns the floor off.
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::workers_floor(&path)?, 4);
-/// riff::settings::set_workers_floor(&path, 8)?;
-/// assert_eq!(riff::settings::workers_floor(&path)?, 8);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn workers_floor(path: &Path) -> Result<u32> {
-    number(path, "floor", riff_client::machines::WORKERS_FLOOR)
-}
-
-/// Sets `workers.floor`. It keeps each other key.
-pub fn set_workers_floor(path: &Path, gb: u32) -> Result<()> {
-    set(path, "workers", "floor", value(i64::from(gb)))
-}
-
 /// The root of the temp folders of the workers: `workers.tmp`
 /// (01M41VAGJC69S9R2TD1B1EQ4W4). `None` when the file or the key is
 /// missing: then [`crate::temp::root`] takes the default.
@@ -274,7 +89,7 @@ pub fn set_workers_floor(path: &Path, gb: u32) -> Result<()> {
 /// let dir = tempfile::tempdir()?;
 /// let path = dir.path().join("config.toml");
 /// assert_eq!(riff::settings::workers_tmp(&path)?, None);
-/// riff::settings::set_workers_tmp(&path, "/data/riff-tmp".as_ref())?;
+/// std::fs::write(&path, "[workers]\ntmp = \"/data/riff-tmp\"\n")?;
 /// assert_eq!(riff::settings::workers_tmp(&path)?, Some("/data/riff-tmp".into()));
 /// std::fs::write(&path, "[workers]\ntmp = 3\n")?;
 /// assert!(riff::settings::workers_tmp(&path).is_err());
@@ -291,16 +106,6 @@ pub fn workers_tmp(path: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
-/// Sets `workers.tmp`. It keeps each other key.
-pub fn set_workers_tmp(path: &Path, dir: &Path) -> Result<()> {
-    set(
-        path,
-        "workers",
-        "tmp",
-        value(dir.to_string_lossy().as_ref()),
-    )
-}
-
 /// The most size of the compile cache of the workers: `workers.cache`
 /// (01M49237BM12PVBERD6JXDSX5V). [`crate::sccache::SIZE`] when the
 /// file or the key is missing.
@@ -309,9 +114,8 @@ pub fn set_workers_tmp(path: &Path, dir: &Path) -> Result<()> {
 /// let dir = tempfile::tempdir()?;
 /// let path = dir.path().join("config.toml");
 /// assert_eq!(riff::settings::workers_cache(&path)?, "40G");
-/// riff::settings::set_workers_cache(&path, "20G")?;
+/// std::fs::write(&path, "[workers]\ncache = \"20G\"\n")?;
 /// assert_eq!(riff::settings::workers_cache(&path)?, "20G");
-/// assert!(riff::settings::set_workers_cache(&path, "20GB").is_err());
 /// std::fs::write(&path, "[workers]\ncache = 3\n")?;
 /// assert!(riff::settings::workers_cache(&path).is_err());
 /// # Ok::<(), anyhow::Error>(())
@@ -328,73 +132,6 @@ pub fn workers_cache(path: &Path) -> Result<String> {
             path.display()
         ),
     }
-}
-
-/// Sets `workers.cache`. It keeps each other key.
-pub fn set_workers_cache(path: &Path, size: &str) -> Result<()> {
-    if !crate::sccache::valid_size(size) {
-        bail!("the size of the cache is a number with K, M, G or T, for example 40G");
-    }
-    set(path, "workers", "cache", value(size))
-}
-
-/// The number `workers.KEY`, or `default` when the file or the key is
-/// missing.
-fn number<T: TryFrom<i64>>(path: &Path, key: &str, default: T) -> Result<T> {
-    let doc = read(path)?;
-    let Some(item) = doc.get("workers").and_then(|w| w.get(key)) else {
-        return Ok(default);
-    };
-    let Some(n) = item.as_integer() else {
-        bail!("workers.{key} in {} is not a number", path.display());
-    };
-    T::try_from(n)
-        .ok()
-        .with_context(|| format!("workers.{key} in {} is out of range", path.display()))
-}
-
-/// The MCP servers that a worker loads: `workers.mcp`
-/// (01M3NB5R6X5AV79DQNKKJBH5J8). `riff` is always the first, also when
-/// the file leaves it out. `["riff"]` when the file or the key is
-/// missing.
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::workers_mcp(&path)?, ["riff"]);
-/// riff::settings::set_workers_mcp(&path, &["riff".into(), "github".into()])?;
-/// assert_eq!(riff::settings::workers_mcp(&path)?, ["riff", "github"]);
-/// std::fs::write(&path, "[workers]\nmcp = [\"github\", \"riff\"]\n")?;
-/// assert_eq!(riff::settings::workers_mcp(&path)?, ["riff", "github"]);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn workers_mcp(path: &Path) -> Result<Vec<String>> {
-    let doc = read(path)?;
-    let mut names = vec![RIFF_MCP.to_owned()];
-    let Some(mcp) = doc.get("workers").and_then(|w| w.get("mcp")) else {
-        return Ok(names);
-    };
-    let Some(list) = mcp.as_array() else {
-        bail!("workers.mcp in {} is not a list", path.display());
-    };
-    for name in list {
-        let Some(name) = name.as_str() else {
-            bail!(
-                "workers.mcp in {} holds a value that is not a name",
-                path.display()
-            );
-        };
-        if !names.iter().any(|n| n == name) {
-            names.push(name.to_owned());
-        }
-    }
-    Ok(names)
-}
-
-/// Sets `workers.mcp`. It keeps each other key.
-pub fn set_workers_mcp(path: &Path, names: &[String]) -> Result<()> {
-    let list: toml_edit::Array = names.iter().map(String::as_str).collect();
-    set(path, "workers", "mcp", value(list))
 }
 
 /// The MCP server of riff. Each worker loads it.
@@ -423,94 +160,6 @@ pub fn update_auto(path: &Path) -> Result<bool> {
 /// Sets `update.auto`. It keeps each other key.
 pub fn set_update_auto(path: &Path, auto: bool) -> Result<()> {
     set(path, "update", "auto", value(auto))
-}
-
-/// The default of `monitor.every`, in seconds.
-pub const MONITOR_EVERY: u16 = 15;
-
-/// The default of `monitor.load`: the 5-minute load over which the
-/// monitor tells the lead, for each physical core.
-pub const MONITOR_LOAD: f64 = 1.5;
-
-/// The settings of the monitor of this machine
-/// (01M421QPKWPX00X24F8V6DT8Z3).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Monitor {
-    /// `monitor.on`: the monitor runs. False when the key is missing.
-    pub on: bool,
-    /// `monitor.every`: the seconds between two looks, 1 or more.
-    pub every: u16,
-    /// `monitor.load`: the limit of the 5-minute load for each physical
-    /// core.
-    pub load: f64,
-}
-
-/// The settings of the monitor, with their defaults when the file or a
-/// key is missing.
-///
-/// ```
-/// use riff::settings::{Monitor, monitor};
-///
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(monitor(&path)?, Monitor { on: false, every: 15, load: 1.5 });
-/// riff::settings::set_monitor_on(&path, true)?;
-/// riff::settings::set_monitor_every(&path, 30)?;
-/// riff::settings::set_monitor_load(&path, 2.0)?;
-/// assert_eq!(monitor(&path)?, Monitor { on: true, every: 30, load: 2.0 });
-/// std::fs::write(&path, "[monitor]\nload = 2\n")?;
-/// assert_eq!(monitor(&path)?.load, 2.0);
-/// assert!(riff::settings::set_monitor_every(&path, 0).is_err());
-/// assert!(riff::settings::set_monitor_load(&path, 0.0).is_err());
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn monitor(path: &Path) -> Result<Monitor> {
-    let doc = read(path)?;
-    let table = doc.get("monitor");
-    let key = |k: &str| table.and_then(|t| t.get(k));
-    let bad = |k: &str, what: &str| format!("monitor.{k} in {} is not {what}", path.display());
-    let on = match key("on") {
-        Some(on) => on.as_bool().with_context(|| bad("on", "true or false"))?,
-        None => false,
-    };
-    let every = match key("every") {
-        Some(every) => every
-            .as_integer()
-            .and_then(|n| u16::try_from(n).ok())
-            .filter(|&n| n > 0)
-            .with_context(|| bad("every", "a number of seconds"))?,
-        None => MONITOR_EVERY,
-    };
-    let load = match key("load") {
-        Some(load) => load
-            .as_float()
-            .or_else(|| load.as_integer().map(|n| n as f64))
-            .filter(|&n| n > 0.0)
-            .with_context(|| bad("load", "a number over 0"))?,
-        None => MONITOR_LOAD,
-    };
-    Ok(Monitor { on, every, load })
-}
-
-/// Sets `monitor.on`. It keeps each other key.
-pub fn set_monitor_on(path: &Path, on: bool) -> Result<()> {
-    set(path, "monitor", "on", value(on))
-}
-
-/// Sets `monitor.every`, 1 or more. It keeps each other key.
-pub fn set_monitor_every(path: &Path, seconds: u16) -> Result<()> {
-    if seconds == 0 {
-        bail!("the monitor looks each 1 second or more");
-    }
-    set(path, "monitor", "every", value(i64::from(seconds)))
-}
-
-/// Sets `monitor.load`, more than 0. It keeps each other key.
-pub fn set_monitor_load(path: &Path, load: f64) -> Result<()> {
-    if load.is_nan() || load <= 0.0 {
-        bail!("the load limit of the monitor is a number over 0");
-    }
-    set(path, "monitor", "load", value(load))
 }
 
 /// True when riff compacts the lead at the end of a wave: `lead.compact`
@@ -788,12 +437,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("riff/config.toml");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "# mine\nserver = \"x\"\n\n[workers]\nlimit = 1\n").unwrap();
-        set_workers_limit(&path, 3).unwrap();
+        std::fs::write(&path, "# mine\nserver = \"x\"\n\n[watch]\nlimit = 1\n").unwrap();
+        set_watch_limit(&path, 3).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("# mine"), "{text}");
         assert!(text.contains("server = \"x\""), "{text}");
-        assert_eq!(workers_limit(&path).unwrap(), 3);
+        assert_eq!(watch_limit(&path).unwrap(), 3);
     }
 
     /// A process that reads the settings while riff writes them reads
@@ -803,14 +452,14 @@ mod tests {
     fn a_reader_never_sees_a_part_of_a_write() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        set_workers_limit(&path, 1).unwrap();
+        set_watch_limit(&path, 1).unwrap();
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let reader = {
             let (path, done) = (path.clone(), done.clone());
             std::thread::spawn(move || {
                 let mut reads = 0;
                 while !done.load(std::sync::atomic::Ordering::SeqCst) {
-                    let limit = workers_limit(&path).unwrap();
+                    let limit = watch_limit(&path).unwrap();
                     assert!((1..=2).contains(&limit), "read the limit {limit}");
                     reads += 1;
                 }
@@ -818,7 +467,7 @@ mod tests {
             })
         };
         for i in 0..500 {
-            set_workers_limit(&path, 1 + i % 2).unwrap();
+            set_watch_limit(&path, 1 + i % 2).unwrap();
         }
         done.store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(reader.join().unwrap() > 0);
@@ -831,22 +480,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let real = dir.path().join("dotfiles/riff.toml");
         std::fs::create_dir_all(real.parent().unwrap()).unwrap();
-        std::fs::write(&real, "[workers]\nlimit = 1\n").unwrap();
+        std::fs::write(&real, "[watch]\nlimit = 1\n").unwrap();
         let link = dir.path().join("config.toml");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        set_workers_limit(&link, 3).unwrap();
+        set_watch_limit(&link, 3).unwrap();
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
-        assert_eq!(workers_limit(&real).unwrap(), 3);
+        assert_eq!(watch_limit(&real).unwrap(), 3);
     }
 
     #[test]
     fn a_new_file_gets_its_directory() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a/b/config.toml");
-        set_workers_limit(&path, 2).unwrap();
+        set_watch_limit(&path, 2).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "[workers]\nlimit = 2\n"
+            "[watch]\nlimit = 2\n"
         );
     }
 
@@ -854,74 +503,23 @@ mod tests {
     fn a_bad_limit_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(&path, "[workers]\nlimit = \"two\"\n").unwrap();
-        assert!(workers_limit(&path).is_err());
-        std::fs::write(&path, "[workers]\nlimit = -1\n").unwrap();
-        assert!(workers_limit(&path).is_err());
-        std::fs::write(&path, "workers = 3\n").unwrap();
-        assert!(set_workers_limit(&path, 1).is_err());
+        std::fs::write(&path, "[watch]\nlimit = \"two\"\n").unwrap();
+        assert!(watch_limit(&path).is_err());
+        std::fs::write(&path, "[watch]\nlimit = -1\n").unwrap();
+        assert!(watch_limit(&path).is_err());
+        std::fs::write(&path, "watch = 3\n").unwrap();
+        assert!(set_watch_limit(&path, 1).is_err());
     }
 
     #[test]
-    fn update_auto_keeps_the_workers_limit() {
+    fn update_auto_keeps_the_watch_limit() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        set_workers_limit(&path, 2).unwrap();
+        set_watch_limit(&path, 2).unwrap();
         set_update_auto(&path, true).unwrap();
         set_update_auto(&path, false).unwrap();
-        assert_eq!(workers_limit(&path).unwrap(), 2);
+        assert_eq!(watch_limit(&path).unwrap(), 2);
         assert!(!update_auto(&path).unwrap());
-    }
-
-    #[test]
-    fn workers_mcp_keeps_the_limit() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        set_workers_limit(&path, 2).unwrap();
-        set_workers_mcp(&path, &["riff".into(), "unifi".into()]).unwrap();
-        assert_eq!(workers_limit(&path).unwrap(), 2);
-        assert_eq!(workers_mcp(&path).unwrap(), ["riff", "unifi"]);
-    }
-
-    #[test]
-    fn a_bad_workers_mcp_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(&path, "[workers]\nmcp = \"riff\"\n").unwrap();
-        assert!(workers_mcp(&path).is_err());
-        std::fs::write(&path, "[workers]\nmcp = [1]\n").unwrap();
-        assert!(workers_mcp(&path).is_err());
-    }
-
-    #[test]
-    fn a_bad_number_of_the_limits_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            "[workers]\njobs = \"four\"\nnice = 20\nmemory = -1\nfloor = 1.5\n",
-        )
-        .unwrap();
-        assert!(workers_jobs(&path).is_err());
-        assert!(workers_nice(&path).is_err());
-        assert!(workers_memory(&path).is_err());
-        assert!(workers_floor(&path).is_err());
-    }
-
-    #[test]
-    fn the_limits_keep_the_other_keys() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        set_workers_limit(&path, 3).unwrap();
-        set_workers_jobs(&path, 5).unwrap();
-        set_workers_nice(&path, 5).unwrap();
-        set_workers_memory(&path, 20).unwrap();
-        set_workers_floor(&path, 6).unwrap();
-        assert_eq!(workers_limit(&path).unwrap(), 3);
-        assert_eq!(workers_jobs(&path).unwrap(), 5);
-        assert_eq!(workers_nice(&path).unwrap(), 5);
-        assert_eq!(workers_memory(&path).unwrap(), 20);
-        assert_eq!(workers_floor(&path).unwrap(), 6);
     }
 
     #[test]

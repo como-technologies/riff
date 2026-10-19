@@ -122,10 +122,12 @@ fn a_usage_mark_has_0600_in_a_marks_folder_of_0700() {
 }
 
 #[test]
-fn the_mcp_config_of_the_workers_has_0600_in_a_folder_of_0700() {
+fn the_mcp_config_of_the_sessions_has_0600_in_a_folder_of_0700() {
     let run = tempfile::tempdir().unwrap();
     let dir = run.path().join("riff");
-    let path = riff::worker_mcp::write(&dir, &serde_json::json!({"mcpServers": {}})).unwrap();
+    let path =
+        riff::session_mcp::write_as(&dir, "mcp.json", &serde_json::json!({"mcpServers": {}}))
+            .unwrap();
     assert_eq!(mode(&dir), 0o700);
     assert_eq!(mode(&path), 0o600);
 }

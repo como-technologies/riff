@@ -200,7 +200,7 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use crate::daemon::{self, Ask, Ended, Say};
 use crate::runtime::{Bind, Env, SessionSpec, Source};
-use crate::{dropped, home, identity, pr, rollout, session_image, terminal, text};
+use crate::{dropped, home, identity, pr, rollout, session_image, text};
 use riff_client::api::{self, Api};
 
 /// The named volume for all of `CARGO_HOME` (01M4Z60B7RPSQ1ABGVMJSZWS5P).
@@ -1743,7 +1743,7 @@ pub async fn run_with(
         bail!("{}", text::RUN_NO_REPO);
     };
 
-    let session = terminal::new_session_id();
+    let session = identity::new_session_id();
     let place = Place::new(here.host(), here.repo().clone(), Some(item))?;
     let me: SessionUri = identity::agent(&place, &session, server)?;
     let api = api.signed_in(Some(&session))?;

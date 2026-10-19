@@ -1273,16 +1273,14 @@ starts again too, also for the same commit (see
 ### Let the rollout of the lead run the wave
 
 You need no command for this. When the current wave has free work, the
-rollout of your lead first gives it to each idle worker in tmux. When
-free work is left and no worker is idle, it asks the riff daemon of
-its machine to run the wave of the repository. It asks only when no
-wave of the repository runs there. The rollout starts no worker in
-tmux. `riff lead start` starts the wave too.
+rollout of your lead asks the riff daemon of its machine to run the
+wave of the repository. It asks only when no wave of the repository
+runs there. The rollout starts no worker in tmux. `riff lead start`
+starts the wave too.
 
 ```mermaid
 flowchart LR
-    R["the rollout of the lead"] -- "request: claim ITEM" --> W["an idle worker in tmux"]
-    R -- "free work is left, and no wave runs" --> D["the riff daemon of its machine"]
+    R["the rollout of the lead"] -- "free work waits, and no wave runs" --> D["the riff daemon of its machine"]
     D -- "podman run" --> C["a container for each item"]
 ```
 
@@ -1297,11 +1295,7 @@ reason. For example, no daemon runs, the daemon gives no answer in 5
 seconds, or the daemon cannot start a container of the session image.
 The rollout asks again at its next look (see
 [See why the rollout runs no wave](how-it-works.md#see-why-the-rollout-runs-no-wave)).
-To see how often the rollout looks:
-
-```sh
-riff workers interval
-```
+It looks each 10 seconds.
 
 ### Use a second machine
 
@@ -1322,8 +1316,6 @@ machine is the limit of its daemon (see
 wave of that machine, run `riff wave stop` there. Your lead can do
 each of these steps from its own machine with `--host` (see
 [Manage the daemon of another host](#manage-the-daemon-of-another-host)).
-For workers in tmux on a second machine, `riff workers host` stays: see
-[Offer workers from another machine](how-it-works.md#offer-workers-from-another-machine).
 
 ### See the wave
 
@@ -1376,15 +1368,14 @@ go on to their end.
 ### Keep the wave stopped
 
 The rollout of your lead asks for the wave again at its next look with
-free work. To keep the wave stopped, turn the rollout off on the
-machine of your lead:
+free work. To keep the wave stopped, pause the repository with
+`riff pause`:
 
 ```sh
-riff workers interval 0
+riff pause
 ```
 
-Or pause the repository with `riff pause`. To turn the rollout on
-again, set the interval back, for example `riff workers interval 10`.
+To start the wave again, resume the repository with `riff resume`.
 
 ### Keep an item from the wave
 
@@ -2562,26 +2553,6 @@ The OS keyring can lock, for example after a crash of
 the OS keyring of pangolin is locked or does not answer: unlock it at the desktop. gh uses the same keyring, so gh stops too
 ```
 
-A workers host says the line one time, and the lead gets a note
-`keyring: the OS keyring of pangolin is locked ...`. The host looks at
-the keyring again each 30 seconds. It does not stop.
-
-```mermaid
-sequenceDiagram
-    participant K as OS keyring
-    participant H as riff workers host
-    participant L as lead
-    H->>K: a look each 30 seconds
-    K-->>H: locked
-    H->>L: one note: the keyring is locked
-    H->>K: a look each 30 seconds
-    K-->>H: locked (no new line, no new note)
-    Note over K: a person unlocks it at the desktop
-    H->>K: a look
-    K-->>H: an answer
-    H->>L: one note: the keyring answers again
-```
-
 1. Unlock the keyring at the desktop of the machine. In GNOME, open
    "Passwords and Keys", and unlock the "Login" keyring.
 2. Check that `riff` and `gh` can read it:
@@ -2591,9 +2562,7 @@ sequenceDiagram
    gh auth status
    ```
 
-In 30 seconds the host tells the lead
-`keyring: the OS keyring of pangolin answers again. The host goes on.`
-You do not start the host again.
+Then the next command works.
 
 ### Count the calls to the keyring
 
@@ -4061,9 +4030,9 @@ Then update each machine: each person runs `riff update`, or has
 `riff update --auto on` (see
 [Update riff](start-a-riff.md#update-riff) and
 [Update riff by itself](how-it-works.md#update-riff-by-itself)).
-Start the sessions again. Start the workers again after the update with
-`riff workers start`. Check that `riff` and the shared server run the
-same release:
+Start the sessions again. The rollout of the lead asks for the
+wave again after the update. Check that `riff` and the shared server
+run the same release:
 
 ```sh
 riff server
@@ -4172,32 +4141,32 @@ the log. It needs no flag. See
 
 ```mermaid
 flowchart TD
-    A[agree on the time with the lead of each repository] --> P[pause the whole riff, stop the workers]
+    A[agree on the time with the lead of each repository] --> P[pause the whole riff, stop the wave]
     P --> T[push the tag v1.0.0: the deploy]
     T --> I[the new server imports the old objects, then serves]
     I --> C[check: riff server, the log line of the import]
     C --> U[each machine updates itself: check riff server again]
-    U --> R[resume the whole riff, start the workers]
+    U --> R[resume the whole riff]
     R --> D[after the first wave: delete the old objects]
 ```
 
 1. Agree on the time of the deploy with the lead of each other
    repository of the riff. Post the time in each repository thread.
 2. Pause the whole riff. Each session pushes its work, and keeps its
-   claims. Then stop the workers of your machine. Each machine still
+   claims. Then stop the wave of your machine. Each machine still
    has riff 0.8.0: its `riff pause` pauses the whole riff, and it has
    no `--riff` flag:
 
    ```sh
    riff pause
-   riff workers stop
+   riff wave stop
    ```
 
-   `riff workers` lists each other host with workers. Stop the workers
-   of each one:
+   `riff who` lists each other host with a daemon. Stop the wave of
+   each one:
 
    ```sh
-   riff workers stop --host HOST
+   riff wave stop --host HOST
    ```
 
 3. Make the release (see [Make a release](#make-a-release)). The tag
@@ -4229,18 +4198,11 @@ flowchart TD
    line and `yes, signed in as USER` on the `sign-in` line, the riff
    ID is the one of before.
 6. The whole riff is paused after the import. The owner or an admin
-   resumes it. riff then gives the free work to the idle workers, and
-   asks the riff daemon to run the wave for the rest (see
+   resumes it. riff then asks the riff daemon to run the wave (see
    [riff starts the work by itself](how-it-works.md#riff-starts-the-work-by-itself)):
 
    ```sh
    riff resume --riff
-   ```
-
-   To run workers in tmux, start them with a count:
-
-   ```sh
-   riff workers start 2
    ```
 
 The import changes no old object. Keep them until the first wave after

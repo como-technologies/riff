@@ -161,9 +161,7 @@ async fn posts(api: &Api, lead: &SessionUri) -> Vec<(Kind, String)> {
 
 /// The free work of the rollout, with no claim and no hold.
 fn free_work(gh: &Gh) -> Vec<String> {
-    riff::rollout::free_work(gh, REPO, &HashSet::new(), &HashSet::new())
-        .unwrap()
-        .items
+    riff::rollout::free_work(gh, REPO, &HashSet::new(), &HashSet::new()).unwrap()
 }
 
 /// A failed Gate of a commit of `main` gives one message to the lead with

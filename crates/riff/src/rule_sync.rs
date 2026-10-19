@@ -50,28 +50,11 @@
 //! `riff init` shows whether the sync is on, and that line
 //! (01M51M3ZPAEMJ64266QSJBNQ46).
 //!
-//! # The workers
+//! # The mark
 //!
 //! Claude Code reads its rules only at its start. So each time riff adds
 //! rules to the user settings, here or in `riff init`, it marks the add
-//! ([`mark_added`]). `riff workers run` gives each worker the mark of its
-//! start in [`WORKER_RULES`]. When the mark changed, the worker ends in
-//! place of its next clear, as a worker on an old riff does
-//! ([`crate::next`], 01M51M3ZRKQZ8KDVRGJR3XAY00). Its free work goes to
-//! an idle worker or to the wave of the daemon.
-//!
-//! ```mermaid
-//! sequenceDiagram
-//!     participant W as riff workers run
-//!     participant C as claude of a worker
-//!     participant D as riff daemon
-//!     participant H as riff hook stop
-//!     W->>C: start, RIFF_WORKER_RULES = the mark
-//!     D->>D: add rules, a new mark
-//!     C->>H: the end of the last turn of its item
-//!     H->>H: the mark changed
-//!     H->>W: end the worker, in place of the clear
-//! ```
+//! ([`mark_added`]).
 
 use std::path::{Path, PathBuf};
 
@@ -82,12 +65,6 @@ use crate::permissions::{self, Rules};
 use crate::release::{self, Source};
 use crate::update_steps::{self, Gate, Release};
 use crate::{lifecycle, local, text};
-
-/// The variable with the mark of the last add of rules
-/// ([`local::rules_added`]) at the start of a worker
-/// (01M51M3ZRKQZ8KDVRGJR3XAY00). It is empty when riff had added no
-/// rule.
-pub const WORKER_RULES: &str = "RIFF_WORKER_RULES";
 
 /// What a sync of the rules did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,25 +187,6 @@ impl State {
             last: local.and_then(local::rules_sync),
         }
     }
-}
-
-/// True when riff added rules after the start of a worker
-/// (01M51M3ZRKQZ8KDVRGJR3XAY00): `now`, the mark in the local files,
-/// is not `seen`, the mark of [`WORKER_RULES`] at the start. A worker
-/// with no `seen` started before riff gave the variable.
-///
-/// ```
-/// use riff::rule_sync::new_rules;
-///
-/// assert!(!new_rules(Some(""), None));
-/// assert!(!new_rules(None, None));
-/// assert!(!new_rules(Some("42"), Some("42")));
-/// assert!(new_rules(Some(""), Some("42")));
-/// assert!(new_rules(Some("41"), Some("42")));
-/// assert!(new_rules(None, Some("42")));
-/// ```
-pub fn new_rules(seen: Option<&str>, now: Option<&str>) -> bool {
-    now.is_some_and(|now| seen != Some(now))
 }
 
 /// The sync at each start of the riff daemon of this machine

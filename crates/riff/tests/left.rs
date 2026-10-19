@@ -143,6 +143,7 @@ async fn mcp_for(server: &str, dir: &Path, time: Duration) {
         .env_remove("TMUX_PANE")
         .env_remove("CLAUDE_CODE_SESSION_ID")
         .env("RIFF_HOME", dir)
+        .env(riff::rollout::INTERVAL_VAR, "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -208,13 +209,6 @@ async fn each_entry(server: &str, dir: &Path) {
             "{args:?}: {err}"
         );
     }
-    // These commands ask the server before the check of the leave in
-    // `main`. Only the client stops them.
-    for args in [&["workers"][..], &["workers", "start", "1"][..]] {
-        let out = riff(server, dir, Some(ID), "", args).await;
-        assert!(!stdout(&out).contains(ID), "{args:?}: {out:?}");
-    }
-
     // `riff mcp` with a rollout that looks each second: no register, no
     // look of the rollout, no end call.
     mcp_for(server, dir, Duration::from_millis(2500)).await;
@@ -226,8 +220,6 @@ async fn a_session_that_left_sends_no_request_from_any_entry_until_it_joins() {
     let store = Memory::default();
     let (service, server) = counting_server(store.clone(), calls.clone()).await;
     let dir = repo();
-    let interval = riff(&server, dir.path(), None, "", &["workers", "interval", "1"]).await;
-    assert!(interval.status.success(), "{interval:?}");
     let resume = riff(&server, dir.path(), None, "", &["resume", "--riff"]).await;
     assert!(resume.status.success(), "{resume:?}");
 
@@ -289,11 +281,10 @@ async fn the_tasks_of_riff_mcp_send_no_request_after_a_leave() {
     let rollout = Live {
         api: api.clone(),
         me,
-        tmux: None,
         gh: Arc::new(riff::pr::Gh::default()),
     };
-    // The session is the lead: the rollout sees the settings.
-    assert!(rollout.seen().await.unwrap().is_some());
+    // The session is the lead: the rollout looks.
+    assert!(rollout.look().await.unwrap().is_some());
 
     api.leave_riff(&me()).await.unwrap();
     calls.lock().unwrap().clear();
@@ -302,9 +293,7 @@ async fn the_tasks_of_riff_mcp_send_no_request_after_a_leave() {
     let alive = tools.keep_alive_every(Duration::from_millis(20));
     tokio::time::sleep(Duration::from_millis(200)).await;
     alive.abort();
-    assert!(rollout.seen().await.unwrap().is_none());
-    let look = rollout.look().await.unwrap_err();
-    assert!(look.is::<Left>(), "{look:#}");
+    assert!(rollout.look().await.unwrap().is_none());
     tools.end().await;
     for call in [
         api.alive(&me()).await.map(drop),

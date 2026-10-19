@@ -187,7 +187,7 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
     let mut served = read_served(dir)?;
     let session = served
         .get(&wave.repo)
-        .map_or_else(crate::terminal::new_session_id, |s| s.session.clone());
+        .map_or_else(crate::identity::new_session_id, |s| s.session.clone());
     let entry = Served {
         wave: wave.clone(),
         session,

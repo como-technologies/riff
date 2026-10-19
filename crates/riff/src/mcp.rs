@@ -30,14 +30,12 @@
 //! `riff mcp` looks for the lead mark of its session only after its
 //! register ends (01M3XM68N5M5DKB86W5079X2G9). A query makes the server
 //! know a session, and makes no lead. So a session in `who` with no
-//! lead mark can be a session whose register is not done. The tail
-//! pane, the rollout and the reap all start after the register.
+//! lead mark can be a session whose register is not done. The rollout and
+//! the other tasks start after the register.
 //!
 //! The `riff mcp` of the lead also runs the free work of the wave by
-//! itself: it gives it to the idle workers, and asks the riff daemon to
-//! run the wave for the rest (see [`crate::rollout`]). It ends the
-//! session of a
-//! worker of its machine whose pane is gone (see [`crate::reap`]). Each
+//! itself: it asks the riff daemon to run the wave (see
+//! [`crate::rollout`]). Each
 //! 10 minutes it tidies the worktrees and the disk of its machine (see
 //! [`crate::tidy`]).
 //!
@@ -173,9 +171,6 @@ pub struct Tools {
     /// True in a worker session: each register says so
     /// (01M3NT4M159EHN5W8JRTQ417N4).
     worker: bool,
-    /// The process ID of the `riff workers run` wrapper of a worker. The
-    /// tools stop it when the server asks (01M3Q5A0QZTSTXHHNYCE8HFJSB).
-    wrapper: Option<u32>,
     /// What counts the tokens of each claim of the session
     /// ([`crate::usage`]). `None` counts nothing.
     meter: Option<Arc<Meter>>,
@@ -372,7 +367,6 @@ impl Tools {
             dir: Arc::new(Mutex::new(std::env::current_dir().unwrap_or_default())),
             earlier: false,
             worker: false,
-            wrapper: None,
             meter: None,
             reach: Reach::Host,
             statusline: None,
@@ -468,14 +462,6 @@ impl Tools {
     /// of its own.
     pub fn with_meter(mut self, meter: Option<Meter>) -> Self {
         self.meter = meter.map(Arc::new);
-        self
-    }
-
-    /// Stops the process `wrapper`, the `riff workers run` of this
-    /// worker, when the server asks this idle worker to stop
-    /// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
-    pub fn in_wrapper(mut self, wrapper: Option<u32>) -> Self {
-        self.wrapper = wrapper;
         self
     }
 
@@ -1095,12 +1081,7 @@ impl Tools {
                     })
                     .unwrap_or_default();
                 let alive = tools.api.alive_with(&me, activity, prompt_secs);
-                let reply = tokio::time::timeout(every, alive).await;
-                if let Ok(Ok(reply)) = reply
-                    && reply.stop
-                {
-                    tools.stop_wrapper();
-                }
+                let _ = tokio::time::timeout(every, alive).await;
                 // A new answer for the status line, at most each
                 // STATUSLINE_EVERY (01M547VMMDPB4DXBMWVERF60C4).
                 if kept.is_none_or(|at: tokio::time::Instant| at.elapsed() >= STATUSLINE_EVERY) {
@@ -1111,18 +1092,6 @@ impl Tools {
         })
     }
 
-    /// Sends SIGTERM to the wrapper of this worker. The wrapper stops
-    /// `claude`; then the input of the tools closes, and they end the
-    /// session (01M3Q5A0QZTSTXHHNYCE8HFJSB).
-    fn stop_wrapper(&self) {
-        let Some(pid) = self.wrapper.filter(|_| self.worker) else {
-            eprintln!("riff: {}", crate::text::IDLE_STOP_NO_WRAPPER);
-            return;
-        };
-        eprintln!("riff: {}", crate::text::IDLE_STOP);
-        crate::worker::stop_wrapper(pid);
-    }
-
     /// Runs the rollout for as long as the tools run
     /// (01M3Q5QE01DB0FJQJWFKR450KQ, 01M53NGVE839TRH7XB7CDPQNZE). It acts
     /// only while this session is the lead. See [`crate::rollout`].
@@ -1131,7 +1100,6 @@ impl Tools {
         let env = crate::rollout::Live {
             api: self.api.clone(),
             me: move || tools.me(),
-            tmux: crate::terminal::Tmux::from_env(),
             // The calls of `gh` share one token (01M54510SFK1Z9VPFYBYYSV10F).
             gh: Arc::new(crate::pr::Gh::default().with_one_token()),
         };
@@ -1144,79 +1112,6 @@ impl Tools {
     pub fn look(&self) -> tokio::task::JoinHandle<()> {
         let tools = self.clone();
         tokio::spawn(crate::look::run(self.api.clone(), move || tools.me(), None))
-    }
-
-    /// Looks at the worker panes of this machine each
-    /// [`crate::reap::EVERY`], for as long as the tools run. While this
-    /// session is the lead, it ends the session of a worker whose pane
-    /// is gone, and posts a note to the lead
-    /// (01M3WG2460P4GF7GEVBY92Q33W). So the claims of a killed worker
-    /// are free at once, and the rollout gives the item to an idle
-    /// worker or to the wave of the daemon.
-    /// A session outside tmux looks at nothing. See [`crate::reap`].
-    pub fn reap(&self) -> tokio::task::JoinHandle<()> {
-        use crate::reap::{self, Reaper};
-        let tools = self.clone();
-        let tmux = crate::terminal::Tmux::from_env();
-        tokio::spawn(async move {
-            let Some(tmux) = tmux else { return };
-            let mut reaper = Reaper::default();
-            let mut tick = tokio::time::interval(reap::EVERY);
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                tick.tick().await;
-                // tmux and /proc: keep them off the runtime.
-                let looked = {
-                    let tmux = tmux.clone();
-                    tokio::task::spawn_blocking(move || {
-                        let lost = reap::lost(&mut reaper, &tmux);
-                        (reaper, lost)
-                    })
-                    .await
-                };
-                let Ok((kept, lost)) = looked else { return };
-                reaper = kept;
-                if lost.is_empty() || tools.left() {
-                    continue;
-                }
-                let me = tools.me();
-                let sessions = match tools.api.who(&me, false).await {
-                    Ok(sessions) => sessions,
-                    Err(e) => {
-                        eprintln!("riff: cannot end the session of a lost worker: {e:#}");
-                        continue;
-                    }
-                };
-                let lead = sessions
-                    .iter()
-                    .any(|s| s.uri.who() == me.who() && s.uri.lead());
-                if !lead {
-                    continue;
-                }
-                let reaped = reap::reap(
-                    &tools.api,
-                    &me,
-                    &sessions,
-                    &lost,
-                    reap::journal,
-                    crate::deaths::record_here,
-                )
-                .await;
-                for note in &reaped.notes {
-                    eprintln!("riff: {note}");
-                    if let Err(e) = crate::rollout::note_lead(tools.api.base(), &me, note).await {
-                        eprintln!("riff: cannot post the note of a lost worker: {e:#}");
-                    }
-                }
-                if let Some(alarm) = &reaped.alarm {
-                    eprintln!("riff: {alarm}");
-                    if let Err(e) = crate::rollout::message_lead(tools.api.base(), &me, alarm).await
-                    {
-                        eprintln!("riff: cannot tell the lead: {e:#}");
-                    }
-                }
-            }
-        })
     }
 
     /// Tidies the clone of this machine each [`crate::tidy::every`], for
@@ -1253,61 +1148,6 @@ impl Tools {
                 }
             }
         })
-    }
-
-    /// Runs the monitor of this machine for as long as the tools run,
-    /// while this session is the lead (01M421QPKWPX00X24F8V6DT8Z3). See
-    /// [`crate::monitor`]. After each look, also with the monitor off,
-    /// it sends the numbers of this machine to the server when its limit
-    /// of workers is more than 0 ([`crate::host::of_this_machine`],
-    /// 01M515KSWVGCBS76AWZV74TJQ3). So `riff top` on each machine shows
-    /// them, also with no `riff workers host` here.
-    pub fn monitor(&self) -> tokio::task::JoinHandle<()> {
-        let tools = self.clone();
-        tokio::spawn(async move {
-            let mut monitor = crate::monitor::Monitor::new();
-            loop {
-                tokio::time::sleep(crate::monitor::Monitor::every()).await;
-                let Ok(path) = crate::settings::path() else {
-                    continue;
-                };
-                let on = crate::settings::monitor(&path).is_ok_and(|m| m.on);
-                let runs = crate::settings::workers_limit(&path).is_ok_and(|limit| limit > 0);
-                if !(on || runs) || tools.left() {
-                    continue;
-                }
-                let me = tools.me();
-                let lead = match tools.api.who(&me, false).await {
-                    Ok(sessions) => sessions
-                        .iter()
-                        .any(|s| s.uri.who() == me.who() && s.uri.lead()),
-                    Err(_) => false,
-                };
-                if !lead {
-                    continue;
-                }
-                if on && let Err(e) = monitor.look(&tools.api, &me).await {
-                    eprintln!("riff: the monitor cannot look: {e:#}");
-                }
-                if runs {
-                    tools.send_numbers(&me).await;
-                }
-            }
-        })
-    }
-
-    /// Sends the numbers of this machine as `me`
-    /// (01M515KSWVGCBS76AWZV74TJQ3). It reads them off the runtime: a
-    /// read of tmux and of the disk can block.
-    async fn send_numbers(&self, me: &SessionUri) {
-        let dir = self.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        let read = move || crate::host::of_this_machine(Some(&dir));
-        let Ok(Some(numbers)) = tokio::task::spawn_blocking(read).await else {
-            return;
-        };
-        if let Err(e) = self.api.machine(me, &numbers.line()).await {
-            eprintln!("riff: cannot send the numbers of this machine: {e:#}");
-        }
     }
 
     /// Tells the server that the session ended (R205). It waits at most
@@ -1494,14 +1334,13 @@ pub async fn serve(
     registered: tokio::sync::oneshot::Sender<()>,
 ) -> Result<()> {
     use tokio::signal::unix::{SignalKind, signal};
-    let worker = crate::worker::is_worker();
+    let worker = std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1");
     let (open, gate) = tokio::sync::watch::channel(false);
     let tools = Tools::new(api.clone(), me.clone())
         .with_earlier_work()
         .with_meter(Meter::here())
         .with_statusline(crate::local::dir())
         .as_worker(worker)
-        .in_wrapper(crate::worker::wrapper())
         .after_register(gate);
     // Start even if the server is down: each tool call reports the error.
     let begin = {
@@ -1614,13 +1453,7 @@ impl Background {
     fn start(tools: &Tools, worker: bool) -> Self {
         let mut tasks = vec![tools.keep_alive()];
         if !worker {
-            tasks.extend([
-                tools.monitor(),
-                tools.rollout(),
-                tools.reap(),
-                tools.tidy(),
-                tools.look(),
-            ]);
+            tasks.extend([tools.rollout(), tools.tidy(), tools.look()]);
         }
         Self(tasks)
     }

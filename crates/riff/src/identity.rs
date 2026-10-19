@@ -450,6 +450,49 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// The variable that marks a worker session.
+pub const WORKER: &str = "RIFF_WORKER";
+
+/// True when this process runs in a worker session: `RIFF_WORKER=1`.
+///
+/// ```
+/// assert!(riff::identity::is_worker_value(Some("1")));
+/// assert!(!riff::identity::is_worker_value(Some("0")));
+/// assert!(!riff::identity::is_worker_value(None));
+/// ```
+pub fn is_worker() -> bool {
+    is_worker_value(std::env::var(WORKER).ok().as_deref())
+}
+
+/// [`is_worker`] for the value of `RIFF_WORKER`.
+pub fn is_worker_value(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+/// A new riff session ID for a worker: a random UUID (version 4).
+///
+/// ```
+/// let id = riff::identity::new_session_id();
+/// assert_eq!(id.len(), 36);
+/// assert_eq!(id.as_bytes()[14], b'4');
+/// assert_ne!(id, riff::identity::new_session_id());
+/// ```
+pub fn new_session_id() -> String {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).expect("the OS gives random bytes");
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -20,10 +20,8 @@
 //!
 //! The writes ([`WRITES`]) refuse before each call of `gcloud` in a
 //! worker and in an agent session that is not the lead, with the check
-//! of `riff workers start` (01M558C4VZ2PSMEYPAZBRYW1VV). This check is
-//! the guard. A person in a plain terminal and the lead run them. The
-//! flag settings of a worker deny the plain shape of each write too,
-//! `riff cloud WRITE ...` ([`crate::terminal::worker_settings`]). Each
+//! `lead_only` (01M558C4VZ2PSMEYPAZBRYW1VV). This check is
+//! the guard. A person in a plain terminal and the lead run them. Each
 //! session runs the reads: `list`, `status` and `log`.
 //!
 //! ## Settings

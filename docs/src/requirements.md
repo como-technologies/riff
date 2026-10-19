@@ -381,6 +381,7 @@
   off in the main clone of the repository: `riff workers start`
   starts nothing and names `riff enable`, and the rollout of the lead
   and a workers host start none.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3YCGKKRDNFC338K1JSK30JK** When riff is off in the main clone of
   the lead, the rollout posts one note to the lead: the host, the
   reason and `riff enable`. The next note comes only after riff was on
@@ -2819,6 +2820,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M510MG808MQT08W6VSPKM1A6** A session in a container is never an
   idle worker for the rollout of the lead: it does not count as idle,
   and it gets no request. The daemon gives it its item.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M48VDGTD40P8RBZMS0XB5M9N** A session shows a long step with
   `riff step start NAME`, `riff step done` and `riff step fail
   REASON`. A new start replaces the old step. `riff who` and `riff
@@ -3634,6 +3636,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   line and posts one note to the lead. While it stays locked, the host
   says no new line. When the keyring answers again, the host says one
   line, posts one note to the lead, and goes on with no new start.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M54510M36SZ1C3AE2C8DS585** `riff statusline` with a kept answer
   (01M53TZ0RBSJQ9ZZRXKMBM5R3E), and each `riff hook` event that does
   not talk to riff-server, make no call to the OS keyring.
@@ -3698,13 +3701,16 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   person types a key. Superseded by 3.0 (01M4Z60B81RTZT71PN5HV0GZHX).
 - **01M3JD394YFA3TQRE3E72ZER4Z** A worker starts with no Remote
   Control. The book starts the lead with `claude --remote-control`.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3JV0ZNGKDFMRR9ACT0480V9** `riff workers start` runs each worker
   with the flag settings `{"remoteControlAtStartup":false}`. So a
   worker has no Remote Control, also when the user settings turn on
   `remoteControlAtStartup`.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3MN0D429T4Q80DYBE9S9XR7** `riff workers start` runs each worker
   with the flag settings `{"awaySummaryEnabled":false}` too. So a worker
   shows no recap of Claude Code. The user settings file does not change.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3ZJ1FAF7EJXP9CSET8ZY1K3** `riff workers start` turns off each
   installed plugin with a language server in the flag settings of each
   worker: `"enabledPlugins": {"PLUGIN": false}`. A plugin has a
@@ -3712,6 +3718,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `plugin.json` has `lspServers`. So a worker starts no language
   server, and keeps none for a worktree that is gone. The user settings
   file does not change.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3JD3973J7A9BG8G9EP9TVDP** Outside tmux, `riff workers start`
   says that it needs tmux, starts nothing and exits with status 1.
   Superseded by 3.0 (01M4Z60B81RTZT71PN5HV0GZHX).
@@ -3736,14 +3743,17 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   servers that each worker of the machine loads, in the key
   `workers.mcp`. The default is `["riff"]`. `riff workers mcp add NAME`
   and `riff workers mcp remove NAME` change it. `riff` always stays.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3NB5R92ZC61VW6Y45SJEAY9** `riff workers start` runs each worker
   with `--strict-mcp-config` and an `--mcp-config` file that holds only
   the servers of `workers.mcp`: `riff` as `riff mcp`, and each other
   name from the MCP config of the person. A name that the person does
   not have is left out, with a warning. Only the person can read the
   file. The command line names only the file.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3NB5RB539RGCVXEZN575ERE** The lead never changes `workers.mcp`.
   Only the person does.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3JPQT57PJCRBQYJNDVESS04** `riff workers start N` starts at most
   the limit minus the workers that run on the machine. It says how many
   it started, and when it started fewer, why. Superseded by 3.0
@@ -3752,6 +3762,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   starts nothing in a worker (`RIFF_WORKER=1`), and in an agent session
   that is not the lead of its user. A person in a plain terminal can
   run it.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3JPQT9BA7JVMZPV68FY4MQ6** Each worker gets a new riff session ID
   in `RIFF_SESSION`. Its tmux pane gets the mark `@riff-session` with
   that ID. A worker is a pane with that mark, in any tmux session of
@@ -3883,12 +3894,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   a worker before the fresh context, fast-forward the default branch
   of the main clone to `origin` first (`git fetch` and
   `git merge --ff-only`). `riff workers start` says what it did.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3MNP36TZYN3PE00AZJTJSER** When the main clone is not on the
   default branch, has local changes to tracked files, or has commits
   that `origin` does not have, `riff workers start` and the clear of a
   worker change nothing. `riff workers start` says why, and the clear
   of a worker tells the lead why. A failed step never stops the command
   or the clear.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M49JW9Y8SNT3J242SF646DF4** The fast-forward of the main clone and
   the WIP push of the `leave` tool act only on a dir that is the top of
   a git worktree. For a dir in a repository above it, the fast-forward
@@ -3920,6 +3933,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   01M493YZVZGA7TSRJH6F67VN0H.
 - **01M3JQC8ETHRAWSJPHMKA062SQ** The wrapper sets `RIFF_WORKER=1`. The
   start context of such a session says that it is a worker.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3K0AXMCVRST7HYH4DM8B3AN** A worker with no claim, and no free
   item or verify request, keeps its watch, and ends its turn. It does
   not end its session. A worker does not wait for a verify
@@ -4007,6 +4021,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   limit of idle workers is a setting of the riff, by default 1 on each
   host, and that `riff workers idle` shows it. They name no fixed
   number as the limit.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3Q5A1483TGCQYB1Q9CCP5BP** The book has the how-to "The server
   stops idle workers", with `riff workers idle` in a `sh` block, and
   the how-to "Stop one worker on another machine". Superseded by 3.0
@@ -4397,6 +4412,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   that a kill ended the worker, for example for the memory of the
   workers, and says that its work that is not committed is in its
   worktree.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3WFZ0676C5HJDXCGVZ715K2** The skill tells the lead: never change
   `workers.jobs`, `workers.nice`, `workers.memory` or `workers.floor`.
   Only the user sets them. riff does not watch the memory, and does not
@@ -4685,29 +4701,35 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   A workers host runs it, and the `riff mcp` of the lead runs it while
   its session is the lead. `riff workers monitor` shows and sets the
   settings.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M421QPP5QFBB0YN25HY2MG1Z** The monitor sends the lead one
   message when the 5-minute load goes over `monitor.load` (default
   1.5) times the physical cores, or the available memory goes under
   `workers.floor`, and one message when the number is good again. It
   sends one message for each kill. It sends no message while nothing
   changes. A message names the machine, the number and the limit.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M421QPRF45DQDA8S4PT1Q12V** The monitor only reads and tells. It
   changes no setting and stops no worker.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M421QPTQ8BQ0KMG8F7CRHNMX** `riff workers monitor on --host HOST`
   and `riff workers monitor off --host HOST` ask the workers host on
   HOST to set `monitor.on` on its machine. The host replies with a
   note.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M421QPX01BB15GJXHFYRETTX** `riff workers` shows for each machine
   whether the monitor is on, and its last numbers. A workers host
   tells them in its status: the 5-minute load, its limit, the physical
   cores, the pool or the jobs (01M515PDFZZXQ9ZCQE7SQ6KB8G) and the last
   kill.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M515PDFZZXQ9ZCQE7SQ6KB8G** The monitor numbers show the pool of
   build jobs as `pool SIZE (USED in use)`: when a worker holds the
   pool, its size and the tokens that are not in the pool; when no
   worker runs and the settings give a pool, the size of the pool of
   the next worker and 0. Else they show the fixed share of each worker
   as `jobs N`. `riff top` shows `pool SIZE` with no tokens in use.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M421QPZ9E01PQ62PDBH378SJ** `riff top` shows one line under each
   host that runs workers: the load average of 1 and 5 minutes against
   the physical cores, the cap of the clock and the clock now, the
@@ -4723,6 +4745,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   of `riff top`, that machine, when its limit of workers is more than
   0; the numbers that a live session of the machine sent in the last 3
   minutes.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M515KSWVGCBS76AWZV74TJQ3** The `riff mcp` of the lead sends the
   numbers of its machine to riff-server after each look of its monitor,
   also with the monitor off, while its session is the lead and the
@@ -4730,10 +4753,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   text of the status of a workers host. `POST /v1/machine` is a
   signal: the server keeps the last numbers of each session in memory,
   and `who` shows them with their age.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M515KSZHC9Y2XQSS73PZ27R0** In `riff top`, a host with a live
   worker and no numbers shows the line `no numbers`.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M421QQ1K7EFDV2PVPTSTE5FK** One monitor runs on a machine at a
   time: it holds the lock `monitor.lock` of the local directory.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3ZVS08G1PES6N2MRM9N3PH4** The skill names `riff workers reap`
   and `riff worktrees clean` for orphan processes and stale worktrees.
   No line of the skill tells a session to run `kill`, `pkill`,
@@ -4927,6 +4953,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `riff workers host` runs it in its place, as `riff tail` does, but
   only between two requests of the lead. The new host keeps the
   session of the old one. Its workers go on.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3Q55KMQSSJVQEN86XFB8PSG** Each process that `riff` starts, for
   example a worker pane, runs the `riff` binary on disk. It never runs
   the path of a binary that a new one replaced.
@@ -4936,12 +4963,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `riff workers stop PANE` does. The lead gets a note with the pane and
   the host. riff never ends a worker that holds a claim. The rollout
   starts a new worker on the new riff for the free work.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M51M3ZRKQZ8KDVRGJR3XAY00** When `riff init` or the riff daemon
   adds rules to the user settings of Claude Code, it marks the add in
   the local files of riff. `riff workers run` gives `claude` the mark of
   its start. A worker whose mark is not the last mark ends in place of
   its next clear, as in 01M517BT9WBQ4R79Z9KVY9SG1B. The lead gets a
   note with the pane and the host.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M3JEE7WT04BKX377VW5GDSPY** `riff --version`,
   `riff-server --version`, `riff whoami`, `riff who` and the whoami
   tool show the build.
@@ -5357,6 +5386,7 @@ part when they merge.
   note comes for a new reason, or after a wave runs or an ask works.
   While a wave of the repository runs and no idle worker joined, the
   look makes no call of `gh`.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M5515CCV7WNKVZVAMQ375J0M** While the rollout is on, the message of
   a higher limit says only the change: the rollout starts no worker in
   tmux. While it is off, a higher limit that gives room for free work
@@ -5364,10 +5394,10 @@ part when they merge.
   (01M3X30RA3X08JBJ2JBVCCNEH3). `riff workers interval` and the message
   of a new interval say that the rollout gives free work to the idle
   workers, and runs the wave of the daemon for the rest.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 - **01M5515CFHRA6AJG4GKX0ZV77W** `riff wave stop` stops the wave of the
   daemon until the next look of the rollout with free work. To keep it
-  stopped, a person turns the rollout off with
-  `riff workers interval 0`, or pauses the repository.
+  stopped, a person pauses the repository.
 - **01M5515CJ7QDJ639VGR7SJTE08** When `riff lead start` cannot start the
   wave of the repository, it prints the reason and the step
   `riff wave run`, and it starts the lead.
@@ -5438,6 +5468,13 @@ part when they merge.
   role of a session on the host (`RIFF_WORKER`), the text of the
   workers in the skill of the plugin, and the permission rules of a
   worker. A person starts a worker in tmux with `riff workers start`.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
+- **01M599XR3NMJD9RAJ6ZAMW6KG5** riff 4.0 starts no worker in tmux. The
+  rollout of the lead asks the daemon for the wave, and gives no
+  request to a session in tmux. riff has no `riff workers`, no workers
+  host, no pool of build jobs, no monitor of workers, and no clear,
+  reap or stop of a worker pane. `riff top` has no row for a worker in
+  tmux. The daemon runs all work in containers.
 - **01M53NGVTE186GE5E48E68N0BY** The last minor release of riff 1.x ends
   Wave 30: 1.8.0. riff 3.0.0 releases when each build item of the
   re-cut merged. Its tag deploys it to riff-server, as each release.
@@ -6018,6 +6055,7 @@ part when they merge.
   `load5 9.8 of 12`. It has the warning style when the load is over
   the limit. This supersedes the load part of
   01M421QPZ9E01PQ62PDBH378SJ.
+  Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
 
 ### riff relay
 

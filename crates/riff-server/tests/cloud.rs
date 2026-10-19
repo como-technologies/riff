@@ -433,7 +433,10 @@ fn the_book_deploys_at_the_end_of_a_wave() {
     assert!(part.contains("The release tag deploys itself."), "{part}");
     assert!(part.contains("`riff update`"), "{part}");
     assert!(part.contains("`riff update --auto on`"), "{part}");
-    assert!(part.contains("riff workers start"), "{part}");
+    assert!(
+        part.contains("The rollout of the lead asks for the"),
+        "{part}"
+    );
     assert!(!part.contains("gh workflow run"), "{part}");
 }
 

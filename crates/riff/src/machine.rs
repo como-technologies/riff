@@ -25,6 +25,10 @@ pub const MACHINE: &str = "RIFF_MACHINE";
 /// `/sys/devices/system/cpu`, for tests.
 pub const CPU_SYS: &str = "RIFF_CPU_SYS";
 
+/// The variable that names the file to read in place of
+/// `/proc/cpuinfo`, for tests.
+pub const CPUINFO: &str = "RIFF_CPUINFO";
+
 /// The text of the cpufreq files of Linux, in kHz.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Cpufreq {
@@ -101,7 +105,7 @@ fn mean(mhz: &[u32]) -> Option<u32> {
 /// memory available, and no load. The variable [`MACHINE`] replaces them, in the form of
 /// [`Machine::parse`], so that a test does not depend on the load of
 /// the machine that runs it. For tests, [`CPU_SYS`] names the
-/// directory of the cpufreq files, and [`crate::limits::CPUINFO`]
+/// directory of the cpufreq files, and
 /// the file in place of `/proc/cpuinfo`.
 pub fn here() -> Machine {
     if let Some(m) = std::env::var(MACHINE).ok().and_then(|m| Machine::parse(&m)) {
@@ -115,7 +119,7 @@ pub fn here() -> Machine {
     from_proc(
         threads,
         &Cpufreq::read(&env_or(CPU_SYS, "/sys/devices/system/cpu")),
-        &read(&env_or(crate::limits::CPUINFO, "/proc/cpuinfo")),
+        &read(&env_or(CPUINFO, "/proc/cpuinfo")),
         &read(Path::new("/proc/meminfo")),
         &read(Path::new("/proc/loadavg")),
     )

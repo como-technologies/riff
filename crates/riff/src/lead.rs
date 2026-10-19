@@ -56,7 +56,7 @@ use riff_core::wire::{SessionInfo, StartReason};
 use crate::daemon::{self, Ask, Say, Status};
 use crate::run::{self, Facts};
 use crate::runtime::{Runtime, SessionSpec};
-use crate::{identity, session_image, terminal, text};
+use crate::{identity, session_image, text};
 use riff_client::api::Api;
 
 /// The work item of the lead in the daemon.
@@ -358,7 +358,7 @@ async fn launch(
         &crate::permissions::Trust::of(here.repo(), server),
     )?;
 
-    let session = terminal::new_session_id();
+    let session = identity::new_session_id();
     let place = Place::new(here.host(), here.repo().clone(), None)?;
     let me: SessionUri = identity::agent(&place, &session, server)?;
     let api = api.signed_in(Some(&session))?;
@@ -611,6 +611,16 @@ fn in_editor(old: &str) -> Result<String> {
         bail!("the editor {editor} failed: riff changed no notes");
     }
     Ok(std::fs::read_to_string(&path)?)
+}
+
+/// Sends `body` to the lead of the person in the repository of
+/// `place`, else of this directory, as the person.
+pub(crate) async fn tell_lead(place: Option<&Place>, server: &str, body: &str) -> Result<()> {
+    let place = identity::here(place)?;
+    let me = identity::person(&place, server)?;
+    let api = Api::new(server).signed_in(None)?;
+    api.tell(&me, riff_client::api::LEAD, body).await?;
+    Ok(())
 }
 
 #[cfg(test)]
