@@ -7941,6 +7941,7 @@ items of Wave C that end riff-server in the Backlog
   no key and no riff, and the daemon of the machine has no peer links.
 - **01M4ZCFGKDKH16KGKR5NBEK3Y4** Before each tag, an admin runs
   `just real-session` on the merge commit of the release pull request,
+  on a host with podman. It passes before the tag.
 - **01M59235BBXEKPZBRH23C39574** `riff relay watch --follow` in a
   session asks the daemon, on the socket of the session, for each wake
   of the session. It prints one line for each wake, once for each
@@ -7948,7 +7949,6 @@ items of Wave C that end riff-server in the Backlog
   The lead starts it once with the Monitor tool of Claude Code: each
   line wakes the session. The model does not start it again. The
   instructions of the lead say so.
-  on a host with podman. It passes before the tag.
 
 ## The UIs
 
