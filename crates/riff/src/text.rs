@@ -8657,6 +8657,104 @@ pub fn lead_start(repo: &str) -> String {
     )
 }
 
+/// The first prompt of a lead that `riff lead move` starts (#1163,
+/// 01M596DH8G4A5XQFHJFBX1X379): [`lead_start`], and the handover.
+///
+/// ```
+/// let text = riff::text::lead_moved("o/r");
+/// assert!(text.starts_with(&riff::text::lead_start("o/r")));
+/// assert!(text.contains("The lead before you moved to this host"));
+/// ```
+pub fn lead_moved(repo: &str) -> String {
+    format!(
+        "{} The lead before you moved to this host. Its handover is in the notes: the open \
+         items, what waits for the person, and the next steps. Read it first, and carry on.",
+        lead_start(repo)
+    )
+}
+
+/// The reply of the daemon to `riff lead move`: the lead runs, and is the
+/// lead. The last line has the session ID ([`crate::lead::session_of`]).
+///
+/// ```
+/// let reply = riff::text::lead_taken("o/r", "thelio", "riff-lead-o-r", "1a2b");
+/// assert!(reply.starts_with("The lead of o/r runs on thelio in the container riff-lead-o-r"));
+/// assert!(reply.ends_with("\nsession 1a2b"));
+/// ```
+pub fn lead_taken(repo: &str, host: &str, name: &str, session: &str) -> String {
+    format!(
+        "The lead of {repo} runs on {host} in the container {name}, and is the lead.\nsession {session}"
+    )
+}
+
+/// The direct message to the old lead: write the handover to the notes.
+///
+/// ```
+/// let text = riff::text::lead_handover_ask("thelio");
+/// assert!(text.contains("moves the lead to thelio"));
+/// assert!(text.contains("notes tool"));
+/// ```
+pub fn lead_handover_ask(host: &str) -> String {
+    format!(
+        "Your person moves the lead to {host}. Write your handover now with the notes tool: the \
+         open items, what waits for the person, and the next steps. Keep the rules and the state \
+         that the notes hold already. Write nothing else, and do not start new work."
+    )
+}
+
+/// The direct message to the old lead after the move.
+///
+/// ```
+/// let text = riff::text::lead_moved_away("thelio");
+/// assert!(text.contains("You are not the lead any more"));
+/// assert!(text.contains("thelio"));
+/// ```
+pub fn lead_moved_away(host: &str) -> String {
+    format!(
+        "You are not the lead any more: the lead moved to {host}. Stop all lead work: start no \
+         wave, answer no worker and send no wake. Your person ends this session, or uses it as a \
+         plain session."
+    )
+}
+
+/// `riff lead move`: the refusal for a session that is not the lead.
+pub const LEAD_MOVE_NOT_LEAD: &str =
+    "riff: only the lead moves the lead. This session is not the lead of its repository.";
+
+/// `riff lead move`: the lead is on `host` already.
+pub fn lead_move_same_host(host: &str) -> String {
+    format!("riff: the lead runs on {host} already.")
+}
+
+/// `riff lead move`: the old lead wrote no handover in `wait`. riff
+/// moves the lead with the notes that exist.
+///
+/// ```
+/// use std::time::Duration;
+/// let text = riff::text::lead_move_no_handover(Duration::from_secs(300));
+/// assert!(text.contains("no handover in 5m"));
+/// ```
+pub fn lead_move_no_handover(wait: std::time::Duration) -> String {
+    format!(
+        "riff: the old lead wrote no handover in {}. riff moves the lead with the notes as they are.",
+        ago(wait.as_secs())
+    )
+}
+
+/// `riff lead move`: the end, with where the person attaches.
+///
+/// ```
+/// let text = riff::text::lead_move_done("thelio", "1a2b");
+/// assert!(text.contains("The lead moved to thelio"));
+/// assert!(text.contains("On thelio, run riff lead start or riff view"));
+/// ```
+pub fn lead_move_done(host: &str, session: &str) -> String {
+    format!(
+        "The lead moved to {host}: session {session}. On {host}, run riff lead start or riff \
+         view to attach to it."
+    )
+}
+
 /// The answer of the `notes` tool and of `riff lead notes`
 /// (01M59258NTXPMWV18TKRKWNTYN): the notes with who wrote them and
 /// when, and with `history` each old text, the oldest first.
