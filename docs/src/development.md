@@ -1275,7 +1275,7 @@ starts again too, also for the same commit (see
 You need no command for this. When the current wave has free work, the
 rollout of your lead asks the riff daemon of its machine to run the
 wave of the repository. It asks only when no wave of the repository
-runs there. The rollout starts no worker in tmux. `riff lead start`
+runs there. `riff lead start`
 starts the wave too.
 
 ```mermaid
@@ -1687,8 +1687,8 @@ In riff 3.0 the lead is a session of the riff daemon too: `claude` in
 a container of the session image, with a terminal. conmon, the monitor
 of podman, holds the terminal. So the lead runs on when you close your
 terminal, and when the daemon stops. `riff view` shows each session of
-the daemon, and attaches your terminal to the lead. The lead in a
-container uses no tmux.
+the daemon, and attaches your terminal to the lead. The lead runs
+in a container.
 
 ```mermaid
 flowchart LR

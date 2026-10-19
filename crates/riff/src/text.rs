@@ -4266,8 +4266,7 @@ pub fn verify_post(verdict: Verdict, number: u64, done: &Reported, result: &str)
 }
 
 /// The room for more workers when fewer than `limit` run
-/// (01M493Z063SSTAJS2KNDFBTEBJ). The rollout starts no worker in tmux
-/// (01M53NGVE839TRH7XB7CDPQNZE): a person starts them with
+/// (01M493Z063SSTAJS2KNDFBTEBJ). A person starts them with
 /// `riff workers start`.
 ///
 /// ```
