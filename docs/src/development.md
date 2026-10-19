@@ -711,7 +711,7 @@ installed, the command says so. To use the daemon again, run
 ### Run the daemon in a terminal
 
 With `RIFF_HOME` or `RIFF_DATA` set, `riff daemon install` installs
-nothing, and `riff daemon uninstall` removes nothing. `just dev` sets
+nothing, and `riff daemon uninstall` removes nothing.
 `RIFF_HOME`. `RIFF_DATA` moves only the data folder of riff: the folder
 of the daemon and the session folders. Your settings and your secrets
 stay where they are. The real-session test sets it (see
@@ -2142,7 +2142,7 @@ git diff
 ## Check the wrap of the book
 
 Each prose line of a page in `docs/src` is at most 72 characters. No
-page of the book or of the plugin has two blank lines in a row.
+page of the book has two blank lines in a row.
 `just ci` checks both. To run only these checks:
 
 ```sh
@@ -2156,8 +2156,7 @@ that line shorter.
 
 An error of the rule `blank` names the page and the second blank
 line. Remove that line. The check skips a code block. It reads each
-Markdown file in `docs/src` and in `crates/riff/claude-plugin` and
-their subfolders, also the skill.
+Markdown file in `docs/src` and its subfolders.
 
 ## Check a pull request on GitHub
 
@@ -2215,7 +2214,7 @@ The project settings of Claude Code (`.claude/settings.json`) also
 deny a push to `main` and `gh pr merge --admin` in each session.
 
 Each session uses your GitHub account. So the author of a pull request
-can set `riff/verify` on its own commit. The skill forbids it, but
+can set `riff/verify` on its own commit. The rules forbid it, but
 nothing stops it until the sessions have their own GitHub identity
 (#97).
 
@@ -2575,8 +2574,6 @@ calls:
 flowchart LR
     P[a riff process] -->|first call: one session| K[(OS keyring)]
     P -->|later calls: the kept value| P
-    M[riff mcp] -->|keeps the reply| L[the status line]
-    L -.->|no call| K
     C[riff top, a clean of the worktrees] -->|gh auth token: one time| G[gh]
     G --> K
     C -->|GH_TOKEN| V[each gh call]
@@ -2584,9 +2581,6 @@ flowchart LR
 
 - A process opens the keyring at most one time, and reads each secret
   at most one time. Only a refresh of the sign-in reads it again.
-- The `riff mcp` of a session keeps the reply for its status line. So
-  `riff statusline` makes no call while `riff mcp` runs. A hook that
-  does not talk to riff-server makes no call.
 - The `gh` calls of one clean of the worktrees share one token. So do
   the `gh` calls of `riff top`, and of the rollout and the look of the
   lead: they read it again each 10 minutes.
@@ -2896,57 +2890,24 @@ riff with sign-in is safer: see
 ### Update the local server
 
 Build the new binaries. Stop `riff-server` with Ctrl-C and start it
-again with your settings. Then update the plugin:
+again with your settings:
 
 ```sh
 just install
 riff-server
-riff connect claude
 ```
 
 ### Test a change without the shared riff
 
-We build riff with riff. So each machine has two tracks:
+We build riff with riff. So the installed `riff` and `riff-server` are
+a release. Only `riff update` changes them. The code under test runs
+from its worktree, against a `riff-server` of the same worktree. It
+never talks to the shared riff.
 
-- The installed `riff`, `riff-server` and plugin are a release. Only
-  `riff update` changes them. Your sessions riff with them.
-- The code under test runs from its worktree, against a `riff-server`
-  of the same worktree. It never talks to the shared riff.
-
-```mermaid
-flowchart LR
-    subgraph Release["installed release"]
-        S[your sessions] --> R[shared riff]
-    end
-    subgraph Tree["worktree"]
-        D["just dev session<br/>target/debug/riff"] --> L["riff-server of the tree<br/>127.0.0.1:7900+"]
-    end
-```
-
-Run `just dev` in the worktree:
-
-```sh
-just dev
-```
-
-It builds the workspace, and runs the debug `riff-server` of the tree
-on the first free port from 7900. Its log goes to
-`target/dev-server.log`. Then it starts Claude Code with the plugin of
-the tree and the debug `riff` of the tree. The installed plugin is off
-in that session only. `just dev` sets `RIFF_ON=1`, so riff is on in the
-session with no `riff enable`. When you end Claude Code, `just dev`
-stops the server. It changes nothing that is installed.
-
-- Options after `dev` go to `riff-server`. Do not give `--listen`.
-- In the dev session, `riff server` names the server of the tree and
-  the build of the tree.
-- After a rebuild, end Claude Code and run `just dev` again.
-
-A test run and a dev session never touch the riff of your machine:
-its sign-in, keyring, settings or local files. `just dev` sets
-`RIFF_HOME` to `target/dev-home` of the tree. With `RIFF_HOME`, `riff`
-keeps its settings, local files and secrets in that dir, and never
-opens the OS keyring. `just test` and `just ci` set `RIFF_SERVER` to
+A test run never touches the riff of your machine: its sign-in,
+keyring, settings or local files. With `RIFF_HOME` set, `riff` keeps
+its settings, local files and secrets in that dir, and never opens the
+OS keyring. `just test` and `just ci` set `RIFF_SERVER` to
 `http://127.0.0.1:9`, where nothing listens, so a test reaches neither
 the shared riff nor the riff of your machine. Each test runs `riff`
 and `riff-server` through the helper crate `isolated`: a temp home of
@@ -2963,32 +2924,9 @@ the keyring calls `secrets::mock_store()` first.
 A doc test that drops a lock, and then checks that the lock is free, is
 a `standalone_crate`.
 
-Use a dev session for a live check of new code, for example a new
-plugin command, hook or skill text. It needs no release and no update
-of the machine. A worker never runs `riff update`, `cargo install` of
-riff, `just install` or `riff connect` in a worktree.
-
 A criterion that only the shared riff can test is a check after the
 release. Its item stays open until the release of the wave. See
 [Waves](waves.md).
-
-### Test a debug build with sign-in
-
-`just dev` loads `.env` at the root of its tree, when the file exists.
-So a debug server gets the OAuth client of `.env` (see
-[Keep the settings in .env](#keep-the-settings-in-env)), and requires
-sign-in. Only `just dev` loads `.env`: `just ci` does not.
-
-```sh
-printf 'RIFF_OIDC_CLIENT_ID=%s\nRIFF_OIDC_CLIENT_SECRET=%s\n' ID SECRET > .env
-just dev
-```
-
-In the dev session, sign in to the server of the tree:
-
-```sh
-! riff login
-```
 
 ## Save the state in a bucket
 
@@ -3063,7 +3001,7 @@ stop the server and remove the directory.
 With `--dir`, the port of the server is closed for the first 15
 seconds. Wait for the line `riff-server listens on` in the log before
 you run the first `riff` command. A `riff` that runs already, for
-example `riff watch`, waits through a restart by itself.
+example `riff relay watch`, waits through a restart by itself.
 
 ## The tools of the log
 
@@ -3752,7 +3690,7 @@ riff release cut 3.3.0
 ```
 
 riff makes the branch `release-v3.3.0` from `origin/main`. It sets the
-version in `Cargo.toml`, in the `plugin.json` of the plugin and in
+version in `Cargo.toml` and in
 `Cargo.lock`, and runs `deploy/release-check.sh`. Then it opens the
 pull request "Release v3.3.0" with the label `release` and auto-merge
 on. The release notes leave out the pull requests with this label. The
@@ -3787,7 +3725,7 @@ The release v3.3.0.
 Done when: the release is published, the deploy to the shared riff passed, and the checks after the deploy passed.
 
 Verify of the release pull request. The pull request has the label `release`. Its verify checks only this, and not the steps after the merge:
-- The diff is only the change of the version in `Cargo.toml`, `plugin.json` and `Cargo.lock`.
+- The diff is only the change of the version in `Cargo.toml` and `Cargo.lock`.
 - The format of the body is right.
 - The Gate passed.
 
@@ -3970,7 +3908,6 @@ of the line:
 ```sh
 git switch --no-track -c release-v1.3.1 origin/release/1.x
 sed -i 's/^version = ".*"/version = "1.3.1"/' Cargo.toml
-sed -i 's/"version": ".*"/"version": "1.3.1"/' crates/riff/claude-plugin/riff/.claude-plugin/plugin.json
 cargo update --workspace
 git commit -am "Release v1.3.1"
 git push -u origin HEAD
@@ -4610,7 +4547,7 @@ riff resume
 ### Make the state of a real riff
 
 Each command runs as one session: `RIFF_SESSION` names it. Make a
-lead, a worker with a claim, signed posts, a status request, unread
+lead, signed posts, a status request, unread
 messages and a direct thread, in two repositories.
 
 In the terminal of `ann`, in `~/stage/ann/app`:
@@ -4618,9 +4555,6 @@ In the terminal of `ann`, in `~/stage/ann/app`:
 ```sh
 cd ~/stage/ann/app
 RIFF_SESSION=ann-lead riff lead
-sleep infinity | RIFF_WORKER=1 RIFF_SESSION=ann-w1 riff mcp &
-RIFF_SESSION=ann-w1 riff claim issue-1
-RIFF_SESSION=ann-lead riff tell ann-w1 "request: claim issue-2"
 RIFF_SESSION=ann-lead riff post --kind status --to user=ann
 RIFF_SESSION=ann-lead riff post --to user=bob "a message that bob does not read"
 cd ~/stage/ann/web

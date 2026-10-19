@@ -6,22 +6,17 @@
 //! server with another build in its reply names a version that it can
 //! talk to.
 
-use std::convert::Infallible;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, Output};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::http::HeaderValue;
-use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
-use futures::Stream;
 use isolated::Isolated;
 use riff_core::build::{Build, HEADER, Semver, VERSION};
-use riff_core::wire::{Kind, Message, Tailed};
 
 /// The version of this riff.
 fn this() -> Semver {
@@ -89,59 +84,6 @@ async fn real(build: Build) -> String {
 /// The router of [`real`].
 fn real_router(build: Build) -> axum::Router {
     riff_server::router().layer(axum::middleware::map_response(stamp(Some(build))))
-}
-
-/// A stream with one message, then no end.
-fn one_message() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let message = Message {
-        seq: 1,
-        from: "riff://mike@pangolin/como-technologies/riff?session=a1"
-            .parse()
-            .unwrap(),
-        to: vec![],
-        body: "back again".into(),
-        at_ms: 0,
-        kind: Kind::Message,
-        sig: None,
-        payload: None,
-    };
-    let event = Event::default()
-        .json_data(Tailed {
-            thread: "como-technologies/riff".parse().unwrap(),
-            message,
-            keys: Default::default(),
-            trusted: true,
-        })
-        .unwrap();
-    Sse::new(futures::StreamExt::chain(
-        futures::stream::iter([Ok(event)]),
-        futures::stream::pending(),
-    ))
-}
-
-/// A fake server with a tail stream and a watch stream. While
-/// `other_line` is true, it names a version that this riff cannot talk
-/// to.
-async fn streams(other_line: Arc<AtomicBool>) -> String {
-    serve(streams_router(other_line)).await
-}
-
-/// The router of [`streams`].
-fn streams_router(other_line: Arc<AtomicBool>) -> axum::Router {
-    axum::Router::new()
-        .route("/v1/tail", get(|| async { one_message() }))
-        .route(
-            "/v1/watch",
-            get(|| async { Sse::new(futures::stream::pending::<Result<Event, Infallible>>()) }),
-        )
-        .layer(axum::middleware::map_response(move |r: Response| {
-            let build = if other_line.load(Ordering::SeqCst) {
-                much_newer()
-            } else {
-                Build::this()
-            };
-            stamp(Some(build))(r)
-        }))
 }
 
 fn riff_at(binary: &Path, server: &str, dir: &Path, args: &[&str]) -> Command {
@@ -347,93 +289,12 @@ async fn a_server_of_the_other_line_of_the_bridge_works_with_the_note() {
     works_and_notes_once(theirs, &note).await;
 }
 
-/// 01M3JEE7TPZMNK7X6JXJ7GWFPP
-#[tokio::test(flavor = "multi_thread")]
-async fn the_start_hook_tells_the_session_of_the_mismatch() {
-    let url = fake(Some(older())).await;
-    let dir = tempfile::tempdir().unwrap();
-    let mut cmd = riff(&url, dir.path(), &["hook", "session-start"]);
-    cmd.env_remove("RIFF_SESSION")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped());
-    let out = tokio::task::spawn_blocking(move || {
-        use std::io::Write;
-        let mut child = cmd.spawn().unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(
-                br#"{"session_id":"b2","source":"startup","hook_event_name":"SessionStart"}"#,
-            )
-            .unwrap();
-        child.wait_with_output().unwrap()
-    })
-    .await
-    .unwrap();
-    let out: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let context = out["hookSpecificOutput"]["additionalContext"]
-        .as_str()
-        .unwrap();
-    assert!(context.contains("do not match"), "{context}");
-    assert!(context.contains(VERSION), "{context}");
-    assert!(context.contains("Tell your user now"), "{context}");
-    assert!(!context.contains("riff watch --once"), "{context}");
-}
-
-/// `riff tail` and `riff watch` wait on a version that they cannot talk
-/// to, and go on when the versions can talk again
-/// (01M3MNVTC248YYJJQKFD9H1WY9).
-#[tokio::test(flavor = "multi_thread")]
-async fn tail_and_watch_wait_on_another_line_and_go_on() {
-    let other_line = Arc::new(AtomicBool::new(true));
-    let url = streams(other_line.clone()).await;
-    let tail_dir = tempfile::tempdir().unwrap();
-    let watch_dir = tempfile::tempdir().unwrap();
-    let (mut tail, tail_out, tail_err) = spawn(
-        riff(&url, tail_dir.path(), &["tail", "como-technologies/riff"]),
-        tail_dir.path(),
-    );
-    let (mut watch, _, watch_err) = spawn(
-        riff(&url, watch_dir.path(), &["watch", "--once"]),
-        watch_dir.path(),
-    );
-    let told = |err: &Path| read(err).contains("do not match");
-    assert!(wait_for(WAIT, || told(&tail_err) && told(&watch_err)).await);
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    assert!(tail.try_wait().unwrap().is_none(), "the tail stopped");
-    assert!(watch.try_wait().unwrap().is_none(), "the watch stopped");
-    assert_eq!(read(&tail_err).matches("do not match").count(), 1);
-    assert_eq!(read(&watch_err).matches("do not match").count(), 1);
-
-    other_line.store(false, Ordering::SeqCst);
-    let back = wait_for(WAIT, || read(&tail_out).contains("back again")).await;
-    let _ = (tail.kill(), watch.kill(), tail.wait(), watch.wait());
-    assert!(
-        back,
-        "stdout: {}\nstderr: {}",
-        read(&tail_out),
-        read(&tail_err)
-    );
-}
-
 /// Runs `cmd`, which writes an executable file. This process never
 /// holds a write fd of the file. So a fork of a parallel test cannot
 /// inherit one, and an exec of the file cannot fail with ETXTBSY.
 fn by_child(cmd: &mut Command) {
     let out = cmd.output().unwrap();
     assert!(out.status.success(), "{out:?}");
-}
-
-/// `riff tail` and `riff watch` run the new binary when the file on
-/// disk changes, with the same arguments (01M3MNVTC248YYJJQKFD9H1WY9).
-#[tokio::test(flavor = "multi_thread")]
-async fn tail_and_watch_run_the_new_binary() {
-    let asked = Arc::new(AtomicBool::new(false));
-    let router = streams_router(Arc::new(AtomicBool::new(false)));
-    let url = serve(marked(router, asked.clone())).await;
-    runs_the_new_binary(&url, &asked, &["tail", "como-technologies/riff"]).await;
-    runs_the_new_binary(&url, &asked, &["watch", "--once"]).await;
 }
 
 /// `riff top` runs the new binary the same way
@@ -506,289 +367,12 @@ async fn runs_the_new_binary(url: &str, asked: &AtomicBool, args: &[&str]) {
     assert_eq!(place, "--place", "{line}");
     assert!(rest.starts_with("heron/-#"), "{line}");
     let ran = rest.split_once(' ').unwrap().1;
-    // A watch with `--once` also gives the end of its wait, at most
-    // the default limit from now (01M3Z64J08GW6N1H42AR2FZQZ4).
-    let ran = match ran.split_once(" --until ") {
-        Some((ran, until)) if args.contains(&"--once") => {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            let until: u64 = until.parse().unwrap();
-            let limit = riff::settings::WATCH_LIMIT;
-            assert!((now + limit - 60..=now + limit).contains(&until), "{line}");
-            ran
-        }
-        _ => {
-            assert!(!args.contains(&"--once"), "no --until: {line}");
-            ran
-        }
-    };
     assert_eq!(ran, args.join(" "), "{line}");
     assert!(
         read(&err).contains("a new riff is on disk"),
         "{}",
         read(&err)
     );
-}
-
-/// Puts a copy of `from` at `to` as `cargo install` does: a new file
-/// beside it, then a rename.
-fn install(from: &Path, to: &Path) {
-    let stage = to.with_extension("stage");
-    by_child(Command::new("cp").arg(from).arg(&stage));
-    std::fs::rename(&stage, to).unwrap();
-}
-
-/// A watch whose working directory is gone at an update runs the new
-/// riff in the nearest parent that exists, and keeps watching: the next
-/// post wakes it (01M3NJGD45GF7Y4CZWQ7GRDHZN). The update goes as
-/// `riff update` does it: riff, then riff-server, then
-/// `riff connect claude`.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_watch_in_a_removed_worktree_runs_the_new_riff_and_keeps_watching() {
-    let url = real(Build::this()).await;
-    let root = tempfile::tempdir().unwrap();
-    let (bin, data) = (root.path().join("bin"), root.path().join("data"));
-    let worktrees = root.path().join("repo/.claude/worktrees");
-    let worktree = worktrees.join("issue-12");
-    for dir in [&bin, &data, &worktree] {
-        std::fs::create_dir_all(dir).unwrap();
-    }
-    let isolated = Isolated::shared();
-    install(&isolated.riff_path(), &bin.join("riff"));
-    install(&isolated.riff_server_path(), &bin.join("riff-server"));
-    let mut watch = riff_at(&bin.join("riff"), &url, &worktree, &["watch", "--once"]);
-    watch.env("RIFF_HOME", root.path());
-    let (mut child, out, err) = spawn(watch, root.path());
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert!(child.try_wait().unwrap().is_none(), "{}", read(&err));
-
-    std::fs::remove_dir(&worktree).unwrap();
-    install(&isolated.riff_path(), &bin.join("riff"));
-    install(&isolated.riff_server_path(), &bin.join("riff-server"));
-    let claude = root.path().join("claude");
-    by_child(
-        Command::new("sh")
-            .args([
-                "-c",
-                "printf '#!/bin/sh\\nexit 0\\n' > \"$0\" && chmod 755 \"$0\"",
-            ])
-            .arg(&claude),
-    );
-    let mut connect = riff_at(&bin.join("riff"), &url, root.path(), &["connect", "claude"]);
-    connect
-        .arg("--claude")
-        .arg(&claude)
-        .env("XDG_DATA_HOME", &data)
-        .env("HOME", &data)
-        .env_remove("CLAUDE_CONFIG_DIR");
-    let connected = run(connect).await;
-    assert!(connected.status.success(), "{}", text(&connected.stderr));
-
-    let moved = format!(
-        "riff: the working directory {} is gone. The new riff runs in {}.",
-        worktree.display(),
-        worktrees.display()
-    );
-    let ran = wait_for(WAIT, || read(&err).contains(&moved)).await;
-    assert!(ran, "{}", read(&err));
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    assert!(
-        child.try_wait().unwrap().is_none(),
-        "the new riff stopped: {}",
-        read(&err)
-    );
-
-    let mut tell = riff(&url, root.path(), &["tell", "b2", "wake up"]);
-    tell.env("RIFF_SESSION", "a1").env("RIFF_HOME", &data);
-    let told = run(tell).await;
-    assert!(told.status.success(), "{}", text(&told.stderr));
-    let woke = wait_for(WAIT, || !read(&out).is_empty()).await;
-    let _ = (child.kill(), child.wait());
-    assert!(woke, "no wake: {}", read(&err));
-    assert!(!read(&err).contains("No such file"), "{}", read(&err));
-}
-
-/// Runs `git` in `dir`.
-fn git(dir: &Path, args: &[&str]) {
-    let out = Isolated::shared()
-        .command("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {out:?}");
-}
-
-/// A repository at `dir` with the `origin` `acme/NAME` and one commit.
-fn repo(dir: &Path, name: &str) {
-    std::fs::create_dir_all(dir).unwrap();
-    git(dir, &["init", "-q", "-b", "main"]);
-    let url = format!("https://github.com/acme/{name}.git");
-    git(dir, &["remote", "add", "origin", &url]);
-    git(
-        dir,
-        &[
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "start",
-        ],
-    );
-}
-
-/// A real riff-server that answers 503 until `ready` is true.
-async fn gated(ready: Arc<AtomicBool>) -> String {
-    let router = riff_server::router().layer(axum::middleware::from_fn(
-        move |request: axum::extract::Request, next: axum::middleware::Next| {
-            let ready = ready.load(Ordering::SeqCst);
-            async move {
-                if ready {
-                    next.run(request).await
-                } else {
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()
-                }
-            }
-        },
-    ));
-    serve(router).await
-}
-
-/// The new riff keeps the place of the old one: a worktree of repo
-/// `alpha` inside repo `beta` stays in `alpha` and keeps its worktree
-/// after the update, also when the worktree is gone
-/// (01M3NJGD45GF7Y4CZWQ7GRDHZN). The server answers only after the
-/// update, so it knows only the place that the new riff gives.
-#[tokio::test(flavor = "multi_thread")]
-async fn tail_and_watch_keep_their_place_over_an_update() {
-    let ready = Arc::new(AtomicBool::new(false));
-    let url = gated(ready.clone()).await;
-    let root = tempfile::tempdir().unwrap();
-    let (alpha, beta, bin) = (
-        root.path().join("alpha"),
-        root.path().join("beta"),
-        root.path().join("bin"),
-    );
-    repo(&alpha, "alpha");
-    repo(&beta, "beta");
-    let worktree = beta.join("wt/issue-12");
-    git(
-        &alpha,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "-b",
-            "issue-12",
-            worktree.to_str().unwrap(),
-        ],
-    );
-    std::fs::create_dir_all(&bin).unwrap();
-    install(&Isolated::shared().riff_path(), &bin.join("riff"));
-
-    let mut runs = vec![];
-    for (name, args) in [("tail", &["tail"][..]), ("watch", &["watch", "--once"])] {
-        let logs = root.path().join(name);
-        std::fs::create_dir(&logs).unwrap();
-        let mut cmd = riff_at(&bin.join("riff"), &url, &worktree, args);
-        cmd.env("RIFF_HOME", &logs);
-        runs.push(spawn(cmd, &logs));
-    }
-    // Each riff knows its place when it says its first line: the tail
-    // names its thread, and the watch says that the server does not
-    // answer. Only then does the worktree go (#294).
-    let said = |err: &Path| !read(err).is_empty();
-    let started = wait_for(WAIT, || runs.iter().all(|(_, _, err)| said(err))).await;
-    assert!(started, "{}\n{}", read(&runs[0].2), read(&runs[1].2));
-    std::fs::remove_dir_all(&worktree).unwrap();
-    install(&Isolated::shared().riff_path(), &bin.join("riff"));
-    let moved = |err: &Path| read(err).contains("The new riff runs in");
-    let both = wait_for(WAIT, || runs.iter().all(|(_, _, err)| moved(err))).await;
-    assert!(both, "{}\n{}", read(&runs[0].2), read(&runs[1].2));
-    ready.store(true, Ordering::SeqCst);
-
-    // The new watch has the place in its arguments, not in its
-    // environment. A riff that it starts, with that environment, takes
-    // the place of its own directory.
-    let proc = PathBuf::from(format!("/proc/{}", runs[1].0.id()));
-    let cmdline = || {
-        let bytes = std::fs::read(proc.join("cmdline")).unwrap_or_default();
-        String::from_utf8_lossy(&bytes).replace('\0', " ")
-    };
-    let want = "--place heron/acme/alpha#issue-12 watch --once";
-    let execed = wait_for(WAIT, || cmdline().contains(want)).await;
-    assert!(execed, "{:?}: {}", cmdline(), read(&runs[1].2));
-    let environ = std::fs::read(proc.join("environ")).unwrap();
-    let vars = environ
-        .split(|b| *b == 0)
-        .filter_map(|var| {
-            String::from_utf8_lossy(var)
-                .split_once('=')
-                .map(|(k, v)| (k.to_owned(), v.to_owned()))
-        })
-        .collect::<Vec<_>>();
-    let mut child = Command::new(Isolated::shared().riff_path());
-    child
-        .env_clear()
-        .envs(vars)
-        // No server, so that the watch session stays where it is.
-        .env("RIFF_SERVER", "http://127.0.0.1:9")
-        .current_dir(&beta)
-        .arg("whoami");
-    let whoami = run(child).await;
-    let me = text(&whoami.stdout);
-    assert!(
-        me.contains("riff://brett@heron/acme/beta?session=b2"),
-        "{me}{}",
-        text(&whoami.stderr)
-    );
-
-    let (tail_out, tail_err) = (&runs[0].1, &runs[0].2);
-    let showing = "showing new messages in acme/alpha";
-    let again = wait_for(WAIT, || read(tail_err).matches(showing).count() == 2).await;
-    assert!(again, "{}", read(tail_err));
-    assert!(!read(tail_err).contains("acme/beta"), "{}", read(tail_err));
-    // The tail connects again within one retry, and shows only new
-    // messages. So post until it shows one.
-    let span = isolated::Span::start();
-    while !read(tail_out).contains("alpha two") && span.within(Duration::from_secs(20)) {
-        let mut post = riff(
-            &url,
-            root.path(),
-            &["post", "--thread", "acme/alpha", "alpha two"],
-        );
-        post.env("RIFF_SESSION", "a1").env("RIFF_HOME", root.path());
-        let posted = run(post).await;
-        assert!(posted.status.success(), "{}", text(&posted.stderr));
-        wait_for(Duration::from_secs(2), || {
-            read(tail_out).contains("alpha two")
-        })
-        .await;
-    }
-    assert!(read(tail_out).contains("alpha two"), "{}", read(tail_err));
-
-    let arrived = || async {
-        let mut who = riff(&url, root.path(), &["who"]);
-        who.env("RIFF_SESSION", "a1").env("RIFF_HOME", root.path());
-        text(&run(who).await.stdout)
-    };
-    let mut listed = arrived().await;
-    let span = isolated::Span::start();
-    while !listed.contains("brett@heron:alpha#issue-12") && span.within(Duration::from_secs(15)) {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        listed = arrived().await;
-    }
-    for (child, _, _) in &mut runs {
-        let _ = (child.kill(), child.wait());
-    }
-    assert!(listed.contains("brett@heron:alpha#issue-12"), "{listed}");
-    assert!(!listed.contains("beta"), "{listed}");
 }
 
 /// riff in a removed working directory names it in the error
@@ -856,7 +440,6 @@ fn the_book_says_what_patch_minor_and_major_mean() {
     for minor in [
         "the wire",
         "the saved state of `riff-server`",
-        "the plugin contract",
         "the behavior",
     ] {
         assert!(part.contains(minor), "no {minor:?} in: {part}");

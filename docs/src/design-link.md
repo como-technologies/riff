@@ -12,7 +12,7 @@ the book, and the details go into the rustdoc.
 ## Goals
 
 - One link for each command: `top`, `watch`, `chat`, `tail`, `mcp`,
-  `workers host`, the status line, the hooks and each short command.
+  `workers host` and each short command.
   A command does not connect, try again or show a fault in a way of
   its own.
 - Each call has a time limit. No call waits for ever.
@@ -52,7 +52,7 @@ flowchart LR
         C1[top] --> L
         C2[watch, tail, chat] --> L
         C3[mcp, workers host] --> L
-        C4[a short command, a hook] --> L
+        C4[a short command] --> L
         L["the link of the server:<br/>calls, tries, streams,<br/>heartbeat, state"]
     end
     L -->|"calls: one shared HTTP/2 connection"| S[riff-server]
@@ -86,10 +86,8 @@ The budget belongs to each call. A process gives its calls a default.
 | Call | Budget |
 |---|---|
 | A call of a short command: `claim`, `post`, `who` and each other | `SHORT_BUDGET`, 60 s. |
-| A tool call of `riff mcp`, a post of `chat`, a call of `workers host` | `SHORT_BUDGET`. A tool call must not hold the turn of the agent for ever. |
+| A tool call of `riff relay mcp`, a post of `chat`, a call of `workers host` | `SHORT_BUDGET`. A tool call must not hold the turn of the agent for ever. |
 | A look of `riff top` | `SHORT_BUDGET`. `top` draws the state while a look waits. |
-| The start hook | `STATE_WAIT`, 3 s (R69: each start has its context). |
-| The status line | `STATUSLINE_WAIT`, 2 s, one try. |
 | The end of a session (`mcp`, `workers host`) | `END_WAIT`. |
 | The verify request and the release of `riff run` | `run::END_BUDGET`, 10 min. A new instance of `riff-server` at the end of a run must not drop them. |
 | The heartbeat | Its period. Each tick is one try. The next tick is the new try. |
@@ -276,8 +274,8 @@ the session, as today. An open stream is not a sign of life.
 
 | Process | Heartbeat |
 |---|---|
-| `riff mcp` | Each `ALIVE_EVERY` (60 s). In a worker, each `WORKER_ALIVE_EVERY` (10 s). No heartbeat after a leave. |
-| `riff watch` | Each `ALIVE_EVERY`. |
+| `riff relay mcp` | Each `ALIVE_EVERY` (60 s). In a worker, each `WORKER_ALIVE_EVERY` (10 s). |
+| `riff relay watch` | Each `ALIVE_EVERY`. |
 | `riff workers host` | Each `ALIVE_EVERY`. Today it has none. Its status tells only its numbers. |
 | `riff chat`, `riff tail`, `riff top` of a person | None. |
 
@@ -301,8 +299,8 @@ the session, as today. An open stream is not a sign of life.
 
 ```mermaid
 sequenceDiagram
-    participant M as riff mcp
-    participant W as riff watch
+    participant M as riff relay mcp
+    participant W as riff relay watch
     participant S as riff-server
     loop each ALIVE_EVERY
         M->>S: heartbeat (the newest fact)
@@ -388,10 +386,8 @@ stateDiagram-v2
 - At `refused` for another build, a command that runs until stopped
   waits for a new binary and runs it, as today
   (01M3MNVTC248YYJJQKFD9H1WY9). A refused sign-in ends it.
-- The status line makes one try. When the try fails, it shows
-  `riff: offline`.
-- The lines `(waits for riff-server…)`, `(reconnecting…)`, `(back)` and
-  the fault line of `top` go. The state gives each of them.
+- The lines `(waits for riff-server…)`, `(reconnecting…)`, `(back)`
+  and the fault line of `top` go. The state gives each of them.
 
 ## The parts of the link
 
@@ -434,7 +430,7 @@ and the decisions of the code in `api.rs`), the rustdoc, and the book.
 | L6 (#510) | The call ID on the server: the header `riff-call`, the table of the calls, the result that the writer keeps, `riff-repeat`, the field `call` of the record envelope and of the checkpoint. | none |
 | L2 (#507) | The module `link`: `link::of`, one shared client, the swap after a fault, the budgets, the rule of section 2, the call ID of each command, a new try after each fault. Each command uses it. | L1, L6 |
 | L7 (#511) | The outbox: a command with no reply at the end of its budget waits in the outbox, and the next call or the heartbeat sends it with its call ID. | L2, L5 |
-| L3 (#508) | The state: the text, `text::link_line`, `top` that draws at each change, the line of a short command, the status line, a how-to "When riff-server is not reachable" in the book. | L2 |
+| L3 (#508) | The state: the text, `text::link_line`, `top` that draws at each change, the line of a short command, a how-to "When riff-server is not reachable" in the book. | L2 |
 | L4 (#506) | The read after a break in `tail` and `chat`, and the line of lost messages. | L1 |
 | L5 (#509) | `Link::heartbeat` in `mcp`, `watch` and `workers host`. | L2, #424 |
 
@@ -448,9 +444,9 @@ and the decisions of the code in `api.rs`), the rustdoc, and the book.
    end of its budget waits in the outbox. (link-01-2, link-01-4,
    link-01-14, link-01-15, link-02-4 to link-02-8. The user did not
    take link-03-3 and link-03-4.)
-2. The budget belongs to each call. A tool call of `riff mcp`, a post
-   of `chat` and a look of `top` have `SHORT_BUDGET`. Only the streams
-   have none. (link-01-1, link-02-10, link-03-1.)
+2. The budget belongs to each call. A tool call of `riff relay mcp`, a
+   post of `chat` and a look of `top` have `SHORT_BUDGET`. Only the
+   streams have none. (link-01-1, link-02-10, link-03-1.)
 3. A refused connect ends a call at once only for a call with a
    budget, a loopback address and a server that never replied. It sets
    no state. (link-02-9, link-03-2.)
@@ -459,7 +455,7 @@ and the decisions of the code in `api.rs`), the rustdoc, and the book.
    link-03-10.)
 5. A stream is not a sign of life. `STREAM_IDLE` is 45 s, three
    comments of the server. (link-02-3, link-03-11.)
-6. No state file. The status line makes its own try. (link-01-5,
+6. No state file. (link-01-5,
    link-02-17, link-03-5.)
 7. `tail` and `chat` read after a break from the last `seq` that they
    showed. No cursor on the server, no `Last-Event-ID`. The server ends
@@ -467,7 +463,7 @@ and the decisions of the code in `api.rs`), the rustdoc, and the book.
    link-03-6, link-03-12.)
 8. At `refused` for another build, a command that runs until stopped
    waits for a new binary, as today. (link-01-3.)
-9. The start hook keeps `STATE_WAIT` 3 s. (link-02-11, link-03-8.)
+9. Removed in 4.0 (#1173). (link-02-11, link-03-8.)
 10. A short command shows the line of `down` after 1 s. (link-03-7.)
 11. The heartbeat makes one try at each tick, with the period as its
     limit. Its body comes from a function. (link-01-7, link-02-16,

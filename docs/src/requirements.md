@@ -27,18 +27,20 @@
   the riff in `RIFF_SERVER`, and run `riff connect claude`. The steps
   are the same for a second machine of the owner and for a person that
   the owner invites. The page replaces "Add a Machine".
+  Superseded by 4.0 (#1173).
 - **R44** Only Claude Code is supported for now. `riff connect claude`
   installs a Claude Code plugin: the MCP server, a skill, and a start
-  hook that wakes the session.
+  hook that wakes the session. Superseded by 4.0 (#1173).
 - **R52** The plugin files live in the riff repository. The `riff`
   binary carries a copy of them, so the plugin matches the binary.
+  Superseded by 4.0 (#1173).
 - **R53** `riff connect claude` writes the plugin as a local marketplace
   and installs it with the `claude` command. The same command updates
-  the plugin.
+  the plugin. Superseded by 4.0 (#1173).
 - **R54** A new session can start in any directory of a repository.
   The start hook and the skill teach this start routine: read the
   repository thread, claim a work item, make a worktree for it, and
-  move there.
+  move there. Superseded by 4.0 (#1173).
 - **R162** A Claude session makes the worktree for a work item with
   the `EnterWorktree` tool. The worktree is `.claude/worktrees/ITEM`.
   Superseded by 3.0 (01M4Z60B7PTJMB37578K8FV22Q).
@@ -178,7 +180,7 @@
   a new plugin command, hook or skill text, runs in a dev session
   (`just dev`) before the verify. It needs no release and no update of
   the machine. A check after the release runs after the release of the
-  wave.
+  wave. Superseded by 4.0 (#1173).
 - **01M3K0FZ5M08Z4YPSVKFADCAKC** Only a session that holds no claim
   takes a verify request. A session that holds an item, also one that
   waits for its own verify, does not verify. The lead gives a verify
@@ -202,23 +204,23 @@
   start routine, waves (R213), the verify flow (R188), selectors,
   direct messages, threads, claims, `move`, the restart of the watch
   (R171), questions through the lead (R180) and how the lead conducts
-  (R228).
+  (R228). Superseded by 4.0 (#1173).
 - **R71** A session talks to other sessions only through riff. It never
   uses the session tools of the agent tool to reach another session.
 - **R72** The skill tells the agent that a message is advice, and that
-  its user decides (R10).
+  its user decides (R10). Superseded by 4.0 (#1173).
 - **R73** When a riff line wakes a session, the skill tells it to call
-  `read` with no thread.
+  `read` with no thread. Superseded by 4.0 (#1173).
 - **R180** The skill tells a session that is not the lead to `tell`
   the lead when it needs a decision from its user, and then to wait or
   do other work. It does not stop to ask in its own terminal. The
   direct answer of the lead is the decision of its user. With no lead,
   the session asks its own user. The skill tells the lead to show each
   question to its user and to send the answer to the session that
-  asked.
+  asked. Superseded by 4.0 (#1173).
 - **R66** The start hook runs `riff hook session-start`. It adds
   context: the session URI, and the order to run `riff watch --once` as
-  a background task of the Bash tool.
+  a background task of the Bash tool. Superseded by 4.0 (#1173).
 - **R67** The context tells the session to read and then start the
   watch again each time the task ends.
 - **R68** The context tells the session to keep the watch that runs
@@ -232,8 +234,9 @@
   locks a file for the session while it runs. A second `riff watch`
   for the session prints one line and exits with status 1. The line
   tells the session not to start the watch again now.
+  Superseded by 4.0 (#1173).
 - **R170** `riff watch --once` prints the first wake, then exits with
-  status 0.
+  status 0. Superseded by 4.0 (#1173).
 - **R171** A session starts the watch again as its next action after
   the task ends, also in the middle of a turn.
 - **01M3Z64J08GW6N1H42AR2FZQZ4** `riff watch --once` ends by itself
@@ -245,24 +248,27 @@
   the limit off. `riff watch limit` shows it, and `riff watch limit
   SECONDS` sets it. A watch with no `--once` has no limit. The watch
   that an update of riff starts keeps the end of the wait.
+  Superseded by 4.0 (#1173).
 - **01M3Z64J33EA25B0R5BCBZAHPE** The start hook and the skill say that
   an end of the watch with no wake is a normal end: the session reads
   and starts the watch again in the same response. They say that a
   session does the same when its harness stops the watch at a time
   limit, also when the notice of the harness says not to start the task
   again. Only a line of the watch itself, "Do not start the watch again
-  now", stops a new start.
+  now", stops a new start. Superseded by 4.0 (#1173).
 - **R69** The start hook never stops a session start. It exits with
   status 0, also when riff cannot find the session.
+  Superseded by 4.0 (#1173).
 - **01M3JN21T9C5GX6VX8N032JYWE** The start hook runs `git fetch
   origin` for at most 2 seconds, at the same time as it reads the
   state of the riff. When the default branch of the clone is behind
   `origin`, the context says by how many commits. It tells the session
   to ask its user to pull, through the lead, and names the main
-  worktree. The hook does not pull.
+  worktree. The hook does not pull. Superseded by 4.0 (#1173).
 - **01M3JN21WDXWTHDKXKQ80ZPYPK** With no remote, a remote that cannot
   be reached, or a fetch that takes longer than its limit, the context
   has no such line. The hook still exits with status 0 (R69).
+  Superseded by 4.0 (#1173).
 - **01M3MYQ299XKJE9X9FHWZ7JFM4** At a new start in a linked worktree
   where another live session works, the start context names that
   session and the main worktree. It tells the session not to follow
@@ -277,12 +283,13 @@
   clone of the project with `git pull --ff-only`.
 - **R74** `riff connect claude` writes the plugin to
   `$XDG_DATA_HOME/riff/claude-plugin`. Without `XDG_DATA_HOME`, it uses
-  `~/.local/share/riff/claude-plugin`.
+  `~/.local/share/riff/claude-plugin`. Superseded by 4.0 (#1173).
 - **R75** `riff connect claude` removes the user-scope MCP server entry
   `riff`, if it exists. The plugin gives the riff tools instead.
+  Superseded by 4.0 (#1173).
 - **R76** Replaced by 01M3XY2SNXQJRSH5QX82AFVM2S.
 - **R77** `riff connect claude` does not need a riff session or a git
-  repository. It works in any directory.
+  repository. It works in any directory. Superseded by 4.0 (#1173).
 - **01M3XY2SHGXQR9NVXF7QJBN09T** riff is off in a Claude Code session
   until a person turns it on for the repository of the session. The
   state is the entry `riff@riff` in the key `enabledPlugins` of the
@@ -290,7 +297,7 @@
   this order: the local settings of the repository
   (`.claude/settings.local.json` at its top), its project settings
   (`.claude/settings.json`), the user settings. A directory that is
-  not in a git repository is off.
+  not in a git repository is off. Superseded by 4.0 (#1173).
 - **01M3XY2T2YEV7GT7DKJHSMMHYR** In a linked worktree, riff also reads
   the local settings and the project settings of the main clone. The
   local settings come before the project settings.
@@ -305,6 +312,7 @@
   changes no other file, and says whether riff is on in the working
   directory. With `--global`, the answer of
   01M3XY2SNXQJRSH5QX82AFVM2S becomes `global` or `none`.
+  Superseded by 4.0 (#1173).
 - **01M3YCGKGP3VC93S8FA1G4K3QK** `riff enable` and `riff disable`
   write through a symbolic link, and name the real path of the file
   that they wrote. Before they write the local settings of the main
@@ -312,12 +320,13 @@
   common directory (`git rev-parse --git-common-dir`) is the `.git` of
   that main clone, and the file `gitdir` of the entry of the worktree
   in the main clone names the `.git` file of the tree. If not, the
-  command writes nothing, and says why.
+  command writes nothing, and says why. Superseded by 4.0 (#1173).
 - **01M3ZGT8ST7HCK6J7VZJ09XE0M** The `.git` of a linked worktree is
   the file that the entry of the worktree names, not a symbolic link
   to it. When `TOP/.git` is a symbolic link, `riff enable` and
   `riff disable` write nothing, and say why. The check of the `gitdir`
   file follows no link at the last part of a path.
+  Superseded by 4.0 (#1173).
 - **01M3XY2SNXQJRSH5QX82AFVM2S** `riff connect claude` adds the
   marketplace to Claude Code with the `claude` command on the PATH.
   `--claude PATH` names another one. It installs the plugin in no
@@ -327,7 +336,7 @@
   `--scope repo|global|none` gives the answer with no question. riff
   keeps the answer in its settings, `connect.scope`. With an answer
   there, or with no terminal, it asks nothing and turns riff on
-  nowhere.
+  nowhere. Superseded by 4.0 (#1173).
 - **01M3XY2SR3VJZAKEPC6CBCS292** An update never turns riff on for
   each repository: only the answer `global` writes the entry `true` to
   the user settings. `riff update` asks nothing, also in a terminal:
@@ -344,12 +353,13 @@
   `--scope none`, `riff connect claude` removes that entry, and names
   each repository of the Claude Code state file whose settings have a
   riff permission rule, with the command `riff enable`.
+  Superseded by 4.0 (#1173).
 - **01M3XY2ST8R67SKTXJECAYJZRX** Where riff is off, each entry of the
   plugin does nothing: `riff hook` and `riff statusline` make no call
   to the server, run no `git`, and print nothing. `riff mcp` serves no
   tool, makes no call to the server, and names `riff enable` in its
   instructions. A `riff mcp` that an update starts again serves a
-  session that runs, so it goes on.
+  session that runs, so it goes on. Superseded by 4.0 (#1173).
 - **01M3XY2SWEK0N8MC3MY4TMYTD3** `RIFF_ON=1` turns riff on for the
   processes that have it, also outside a repository. `just dev` and
   the helper crate `isolated` set it. A worker that such a process
@@ -364,19 +374,19 @@
   `riff server` shows `riff on` or `riff off` for the working
   directory, the file that decides, and the command to change it. The
   start context names the file that turned riff on, and
-  `riff disable`.
+  `riff disable`. Superseded by 4.0 (#1173).
 - **01M53NEE536G72QMVXCVTS28ES** When riff is off in the working
   directory, the last line of `riff connect claude` names each
   repository of the Claude Code state file where riff is on: the main
   clone of each project. It says `riff is installed but off` only when
   riff is on in none of them. So the line of an update, which runs in
-  the home directory, is true.
+  the home directory, is true. Superseded by 4.0 (#1173).
 - **01M3XY2T0R2Q39XYX8AYV7T0RK** When the Claude Code state file has
   `plugin:riff:riff` in `disabledMcpServers` of the project, a person
   turned the riff server off there in `/mcp`. The start context then
   says that the session has no riff tools, how to turn the server on,
   and to tell the lead with `riff tell lead`. The status line says it
-  too.
+  too. Superseded by 4.0 (#1173).
 - **01M3XY2T542DCHBN95H9PX4AGQ** riff starts no worker where riff is
   off in the main clone of the repository: `riff workers start`
   starts nothing and names `riff enable`, and the rollout of the lead
@@ -560,6 +570,7 @@
 - **R225** The skill gives a command for each step of the waves: see
   the open waves, see the items of a wave, see the items with no wave,
   make a wave, put an item in a wave and end a wave.
+  Superseded by 4.0 (#1173).
 - **01M509TJRBE2J7HYKKHRJ1ZFR0** `riff wave list` shows the open
   milestones of the repository of the current folder: the waves in
   number order, then each other milestone by its title. Each line has
@@ -764,6 +775,7 @@
 - **01M3NB6G132QG4TAEJ5QPRJNAE** The skill names one `riff` command
   for each step of a pull request: open it, wait for the merge, report
   a verify. It has no `gh` recipe and no shell loop for these steps.
+  Superseded by 4.0 (#1173).
 
 ## Tokens on GitHub
 
@@ -778,6 +790,7 @@
   transcript of the session, and each claim with its start time and
   its end time. The start hook, the Stop hook and the end hook record
   the transcript. A granted claim records the start time.
+  Superseded by 4.0 (#1173).
 - **01M3Y1YP1JAQMJ66K2QXC7766C** Tokens in a time with two claims of
   one session count for the claim that started last.
 - **01M3Y1YP1ZA5TBRA01MKWM3VC6** At the end of a claim, riff puts its
@@ -928,7 +941,7 @@
 - **01M3JCG48QPCNNTKW34FTR0AMR** The start hook and the skill tell a
   session the state of the riff. They tell it to pick a free item only
   when the riff is running. When the hook cannot read the state, it
-  tells the session to call `whoami`.
+  tells the session to call `whoami`. Superseded by 4.0 (#1173).
 - **01M3JCG4AV80MHFP73CWDY5E3M** `riff who`, `riff whoami` and the
   `whoami` tool show the state of the riff.
 
@@ -964,12 +977,14 @@
   its tree (`--plugin-dir`), the installed plugin off, the debug
   `riff` first on `PATH`, and `RIFF_SERVER` set to that server. When
   Claude Code ends, also on Ctrl-C, it stops the server.
+  Superseded by 4.0 (#1173).
 - **01M3MRDESPG8VGMQ1F6KFJXBC5** Each machine has two tracks. The
   installed `riff`, `riff-server` and plugin are a release. Only
   `riff update` changes them, and the sessions riff with them. The
   code under test runs from its worktree, against a `riff-server` of
   the same worktree on a free local port. It never talks to the shared
   riff. `just dev` changes nothing that is installed.
+  Superseded by 4.0 (#1173).
 - **01M3MRDEVR5VPPV6B1BDDVYSBG** A worker never runs `riff update`,
   `cargo install` of riff, `just install` or `riff connect`. The tests
   run the binaries of the worktree with a home of their own, so the
@@ -2225,6 +2240,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   start call, and the claims of the session are free at once. The
   session keeps its ID (R58, R167, R168), its threads, its read cursors
   and its lead. A compaction is not a new start.
+  Superseded by 4.0 (#1173).
 - **01M3JEE1SWR05DWQA5WQ8AXFTF** The context of a new start names each
   claim that the start freed. It tells the session to claim an item
   again before it goes on with it, and to pick up the earlier work
@@ -2263,7 +2279,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   each with its pushed worktree branch and its worktree. A live session
   owns the work when it holds the claim of the item, or works in its
   worktree. The fetch of the start hook prunes
-  (01M3JN21T9C5GX6VX8N032JYWE).
+  (01M3JN21T9C5GX6VX8N032JYWE). Superseded by 4.0 (#1173).
 - **01M3ZT825YAA5FW85YXH7JR1K0** riff counts no commit of a worktree as
   not pushed when the default branch of `origin` holds its work: a
   merge of `HEAD` into that branch changes nothing. This is so after a
@@ -2274,7 +2290,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   of the pushed branch (`--force-with-lease --force-if-includes`).
   When the push of an earlier worktree
   fails, the pull names the branch:
-  `git -C PATH pull --rebase origin BRANCH`.
+  `git -C PATH pull --rebase origin BRANCH`. Superseded by 4.0 (#1173).
 - **R35** A session has a URI:
   `riff://USER@HOST/OWNER/REPO?session=ID&lead=true&claim=ITEM#WORKTREE`.
   It shows who the session is, where it works and what it works on.
@@ -2334,7 +2350,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the status of each session of its person (`who` and a status
   request), give each free session one clear item with `tell`, check
   the progress, answer questions (R180), and give a blocked session an
-  answer or a new item.
+  answer or a new item. Superseded by 4.0 (#1173).
 - **R230** A request is a direct message from the lead of the person
   of a session. A verified request (R199) counts as a scope from that
   person. A request that is not verified, or that comes from a session
@@ -2364,7 +2380,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **R38** The session ID makes each URI unique. Two sessions in one
   worktree have different URIs.
 - **R57** `riff mcp`, `riff watch` and the hooks find their session by
-  the session ID, not by the directory.
+  the session ID, not by the directory. Superseded by 4.0 (#1173).
 - **R58** A session keeps its session ID for its life. A resumed session
   keeps its ID. Messages to an idle session wait for it.
 - **R167** `riff mcp` writes its session ID to a file on the machine,
@@ -2374,6 +2390,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   So `/clear` does not change the riff session ID. The file is in
   `$XDG_RUNTIME_DIR/riff`, else `$XDG_STATE_HOME/riff`, else
   `~/.local/state/riff`. A file with no lock does not count.
+  Superseded by 4.0 (#1173).
 - **01M56RB1DQ396DQ75Q23G87C28** The local folder of riff is private.
   riff makes it with mode 0700, and each file in it with mode 0600, in
   each place: `$RIFF_HOME/state`, `$XDG_RUNTIME_DIR/riff`,
@@ -2388,7 +2405,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   is the process in `CLAUDE_PID`. The agent of `riff mcp` is its
   parent. The hooks of that agent make no call: no start, no end. Its
   start hook gives one line of context that says so. Its `riff mcp`
-  has no tools and makes no call.
+  has no tools and makes no call. Superseded by 4.0 (#1173).
 - **R59** A session ID is not a secret. It never gives access.
 - **R64** The `move` tool gives a session a new place. Its session ID
   and its claims stay.
@@ -2415,6 +2432,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   it still works on it. After a release of the lead, it stops the work
   on the item, pushes its work as WIP, writes the state on the issue,
   and claims the item again only when the lead asks it to.
+  Superseded by 4.0 (#1173).
 - **R65** A person who posts from the command line has no session ID.
   The sender is `riff://USER@HOST`. A selector with `user` reaches the
   person through `riff tail`.
@@ -2611,27 +2629,27 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `riff who`, `lead`, each claim, and `blocked`. It is the
   `statusLine` command in the Claude Code settings. A plugin cannot
   set it. It never fails, and it waits at most 2 seconds for
-  riff-server.
+  riff-server. Superseded by 4.0 (#1173).
 - **01M3T5GFVS8NMA992KHZN4VE17** `riff statusline` calls
   `GET /v1/me`, not `who`. The reply holds only the session of the
   caller: its state, claims and status, and the build of the server.
   The call changes nothing: it is not a call of the session, and it
-  adds no session.
+  adds no session. Superseded by 4.0 (#1173).
 - **01M53TZ0RBSJQ9ZZRXKMBM5R3E** `riff statusline` keeps a good answer
   of riff-server for 10 seconds, for each session and each server. In
   that time, it asks riff-server nothing: no call, so no swap for a
   session token. It makes its tags at each run, from the local files
   and the build of the kept answer. The time is now 90 seconds
-  (01M547VMQ5PCJ1GGC4M0GDCT31).
+  (01M547VMQ5PCJ1GGC4M0GDCT31). Superseded by 4.0 (#1173).
 - **01M547VMMDPB4DXBMWVERF60C4** The `riff mcp` of a session keeps the
   answer of riff-server for the status line of the session: at a
   keep-alive, at most each 30 seconds, and after each call of the tools
   `claim`, `release`, `lead`, `blocked` and `join`. It uses the token
   that it holds, so `riff statusline` shows the line with no call to
-  riff-server and no call to the OS keyring.
+  riff-server and no call to the OS keyring. Superseded by 4.0 (#1173).
 - **01M547VMQ5PCJ1GGC4M0GDCT31** `riff statusline` keeps a good answer
   for 90 seconds: longer than the 60 seconds of the keep-alive of `riff
-  mcp` (R204).
+  mcp` (R204). Superseded by 4.0 (#1173).
 - **01M58ASFT4VBG13X5TXPHS67AQ** The status line of a lead session
   starts with the build of riff and the repository, as `OWNER/REPO`:
   `riff 3.2.0 como-technologies/riff 2a880834 lead issue-78`. The build
@@ -2639,6 +2657,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   repository is the repository of the working folder. Both are local
   facts: the kept answer (01M53TZ0RBSJQ9ZZRXKMBM5R3E) does not hold
   them. The line of each other session does not change.
+  Superseded by 4.0 (#1173).
 - **01M3JFFJEW8BSRBZ9JQPKT0S8Z** `riff connect claude` adds the riff
   status line to the user settings of Claude Code
   (`$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)
@@ -2646,6 +2665,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   and its format, and writes the file only when it changes. When
   another `statusLine` is set, or the settings are not a JSON object,
   it changes nothing and names the manual how-to.
+  Superseded by 4.0 (#1173).
 - **01M3Q53RNDJBDHVDFHJ9HCX9S1** `riff setup` adds the Claude Code
   permission rules of riff work to the project settings,
   `.claude/settings.json` at the top of the repository. Allow: each
@@ -2660,7 +2680,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   exits with status 1 when a rule is missing.
 - **01M3Q53RQGXMYVYGCQQMWA9380** When the project lacks a riff
   permission rule, the start hook of the lead tells the lead to ask
-  its user to run `riff setup`.
+  its user to run `riff setup`. Superseded by 4.0 (#1173).
 - **R41** A session joins the thread `OWNER/REPO` by default.
 - **R42** A cloud session uses the host `cloud`.
 - **R100** A session is a cloud session when `CLAUDE_CODE_REMOTE` is
@@ -2684,10 +2704,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   (01M3TBZBZVH907QD359AB8TBSX), so a resumed session keeps its ID.
 - **R204** `riff mcp` sends a keep-alive to `riff-server` each 60
   seconds while it runs, also while no turn runs.
+  Superseded by 4.0 (#1173).
 - **R205** When `riff mcp` stops (its stdin closes, or it gets SIGTERM,
   SIGINT or SIGHUP), it sends an end call for its session. The
   `SessionEnd` hook `riff hook session-end` sends the same call, except
-  for the reason `clear` (R168).
+  for the reason `clear` (R168). Superseded by 4.0 (#1173).
 - **R206** A session is gone when it ended (R205), or when the server
   got no call and no keep-alive from it for 3 minutes
   (01M3WG240PNMQYZ7TX6Z7ZF6M9). A gone
@@ -2707,6 +2728,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   while it runs. So a session whose process is killed with no end call
   is gone after 3 minutes, and its claims are free after 5 minutes,
   also when a front end holds its watch stream open.
+  Superseded by 4.0 (#1173).
 - **01M3WG243BW7P6E1ME0DFNQF8C** The lead of a user frees the claim of
   another session of that user in its repository, live or gone:
   `riff release ITEM --session ID`, or the `release` tool with
@@ -2777,6 +2799,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the step until the next of these calls. The step
   of a session that is not the lead does not change. The skill tells
   the lead to set its status for work that riff cannot see.
+  Superseded by 4.0 (#1173).
 - **01M3WKCYM623M66ATHCH3QGMKP** The automatic step of the lead shows
   no text of a direct message: the step of a `tell` is `told SESSION`.
   In TEXT, each run of white space or control characters is one space.
@@ -2834,7 +2857,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M48VDS8RKJS9HG3KSEYGBFGV** The state of a lead comes from its
   facts, not from its claims: `busy` while the hooks see a turn that
   runs, with its work; `waiting` while its block holds; `idle` when
-  its turn ended and nothing waits.
+  its turn ended and nothing waits. Superseded by 4.0 (#1173).
 - **01M48VDSB4CHQS9P6XVDJ6FMKS** A lead that waits for its person
   calls `blocked`. It sends no message, and shows `waiting for USER:
   REASON` with its age. A message that wakes the lead is no answer to
@@ -2844,7 +2867,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   hook, `riff hook prompt`. It writes the time of the last prompt of
   the person to a file on the machine, and makes no call. `riff mcp`
   puts its age into each keep-alive. A prompt at or after a block ends
-  the block, for each session.
+  the block, for each session. Superseded by 4.0 (#1173).
 - **01M41FZRF5HEZCDS515CP7DYCV** The work, the block and the facts of
   the items are signals in the memory of `riff-server`, not records of
   the log. A start of `riff-server` loses them, and the clients send
@@ -2859,6 +2882,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   fact. `riff mcp` puts the newest fact, with its age, into each
   keep-alive. `who` gives it as `work`, and shows it as `runs TOOL for
   12m`, `works, 5s ago` or `turn ended 5m ago`.
+  Superseded by 4.0 (#1173).
 - **01M57XY3Q6HEYQG27FE0CEQ7HB** The plugin has a `PermissionDenied`
   hook for each tool: `riff hook denied`. The settings of each
   container session, the lead and each worker of the riff daemon, run
@@ -2997,14 +3021,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   a WIP commit and pushes the branch, as in a pause. On the default
   branch, or when the push fails, the tool refuses and the session
   stays. Then the tool sends the end call (R205): the session leaves
-  `who` and its claims are free.
+  `who` and its claims are free. Superseded by 4.0 (#1173).
 - **01M3MEEFETT9A0DRWBKQTG77Z2** A session that left makes no call to
   `riff-server`, so it stays gone (R207). Each riff tool except `join`
   refuses and names `/riff:join`. `riff mcp` sends no keep-alive and no
   register. `riff watch` stops within 1 second, and says not to start it
   again. The start hook adds no context. The status line shows `(left)`
   after the short session ID. Each `riff` command that acts as the
-  session refuses.
+  session refuses. Superseded by 4.0 (#1173).
 - **01M3MEEFH79XXNZW6DWSPTEW2A** The leave holds for the life of the
   session, also over `/clear` and a resume: `riff` records it in a
   file `left-ID`, the mark of the leave. A new session joins as
@@ -3014,10 +3038,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   call it. The session registers again with the same ID, starts its
   watch and follows the start routine. It becomes the lead only as at
   a start: as the first session of its user, or on the word of its
-  user.
+  user. Superseded by 4.0 (#1173).
 - **01M3MEEFPEYXTZ89XR28E02W7P** The words "leave the riff" and "join
   the riff" of the user of a session do the same as `/riff:leave` and
-  `/riff:join`. The skill says so.
+  `/riff:join`. The skill says so. Superseded by 4.0 (#1173).
 - **01M3MEEFSD4TEQESRDJENCFW7N** The tools that join and leave a thread
   are `join_thread` and `leave_thread`.
 - **01M3XQVJXWBC3DKAVWBPXPSGZS** A leave is a fact of one session on
@@ -3028,6 +3052,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the same check: the status line, each hook, the watch, each command,
   each tool, and the keep-alive, the rollout and the reap of
   `riff mcp`. The rollout of a session that left looks at nothing.
+  Superseded by 4.0 (#1173).
 - **01M3XQVK05FAT3PR43W8RNEYHY** The `leave` tool writes the mark
   before the end call. The end call is the one request that goes out
   with the mark. When the end call fails, the tool removes the mark,
@@ -3038,6 +3063,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `~/.local/state/riff`. It is never in `$XDG_RUNTIME_DIR`, which the
   system clears at a logout. So the leave holds over a restart of the
   machine, of `riff mcp` and of `riff-server`.
+  Superseded by 4.0 (#1173).
 
 ## Threads
 
@@ -3115,7 +3141,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   news are notes. A verify request wakes the lead of the author's user.
   A verify result wakes the holder of the item, and the lead when no
   session holds it (01M3Z9N70J4H79VJN4ZKKH3G6S). A question or a request
-  goes to one session with `tell`.
+  goes to one session with `tell`. Superseded by 4.0 (#1173).
 - **01M3JY1TBPQHH6WPPBTF42T64H** In a thread, a selector with
   `lead=true` that matches no live session matches each live session
   with no claim that its other fields match. So a verify request
@@ -3129,7 +3155,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   The skill and the book say so.
 - **01M3JPMQJCC3F19QAJ84EKMVKA** The skill and the start hook tell a
   session to call `read` and start the watch again in the same
-  response, so that a wake costs one request.
+  response, so that a wake costs one request. Superseded by 4.0 (#1173).
 - **R186** The wake line and `read` show that a message is a status
   request. A session that a status request wakes answers with `status`.
   It does not post a reply.
@@ -3147,6 +3173,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **R187** The skill tells a session to set its status when it changes
   step, and to call `blocked` when it cannot go on with no decision of
   a person. It says what the words of a status are for.
+  Superseded by 4.0 (#1173).
 - **01M3NB5MY93KV9RKZGGSMZW00D** The people of a riff chat in the
   thread `chat` on the riff server. `riff chat` is a line client in
   the style of IRC. It shows the history and each new line with the
@@ -3213,6 +3240,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   other sessions when it helps: share what it found, ask a question,
   or warn about a conflict, for example before two sessions edit the
   same files. Talk needs no lead. Only the lead sends requests.
+  Superseded by 4.0 (#1173).
 - **R11** Messages do not carry secrets.
 - **R195** Each message carries a signature from the device key of
   its sender (R18). A message from the command line (R65) carries the
@@ -3640,6 +3668,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M54510M36SZ1C3AE2C8DS585** `riff statusline` with a kept answer
   (01M53TZ0RBSJQ9ZZRXKMBM5R3E), and each `riff hook` event that does
   not talk to riff-server, make no call to the OS keyring.
+  Superseded by 4.0 (#1173).
 - **01M54510PS9FDKQKJB0RAH3XG3** A `riff` process opens the OS keyring
   at most one time, and reads each secret at most one time. It keeps
   the value for its later calls, and a write or a delete of the process
@@ -3915,6 +3944,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   it makes a worktree, and put the new worktree on the fresh
   `origin` default branch before any change. Rebase on a fresh
   `origin` default branch before each push and each verify request.
+  Superseded by 4.0 (#1173).
 - **01M3MNP3B8YJ699432D4PSFWDB** The skill tells a session: after the
   merge, remove the worktree and its local branch, prune
   (`git fetch --prune`, `git worktree prune`), and check that nothing
@@ -4773,6 +4803,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3ZVS08H3PWV5WDJ31SDZM9G** The skill tells a session: a refusal
   of a raw command never blocks work. When no riff command covers the
   case, the session files an issue for it and tells the lead.
+  Superseded by 4.0 (#1173).
 
 ## Builds
 
@@ -4886,7 +4917,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   builds and that the versions can talk.
 - **01M3JEE7TPZMNK7X6JXJ7GWFPP** When the versions cannot talk, the
   start hook gives the session the error, and tells it to tell its
-  user at once and not to use the riff.
+  user at once and not to use the riff. Superseded by 4.0 (#1173).
 - **01M3MNVTC248YYJJQKFD9H1WY9** On a version that they cannot talk
   to, `riff watch` and `riff tail` do not stop. They print the error
   once, try again every 5 seconds, and go on when the versions can
@@ -4907,7 +4938,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   in flight, with no end call, so that the claims of the session stay.
   It keeps stdin and stdout, so the connection to Claude Code stays.
   The new process answers the next request with no new handshake. No
-  person runs `/mcp`.
+  person runs `/mcp`. Superseded by 4.0 (#1173).
 - **01M43F5F9AQ9S39E1JZF8EBJEH** Before `riff mcp` runs a new
   binary in its place, it runs that binary once as a check, with the
   same arguments and the client of the session. The check does each
@@ -4915,6 +4946,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   check passes does `riff mcp` run the new binary. When the check
   fails, the old process keeps the tools of the session, says the
   error once on stderr, and waits for the next new binary.
+  Superseded by 4.0 (#1173).
 - **01M43F5KH7RE8241T18ZJJH7DV** Replaced by
   01M53QQR7J7DG86SMAERKMYSAF.
 - **01M53QQR7J7DG86SMAERKMYSAF** A `riff mcp` whose client sent no
@@ -4924,19 +4956,19 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   process gives the new one the hidden option `--client modern`, and the
   new process serves the connection with no handshake and no peer
   info. Only a `riff mcp` whose handshake did not end does not run a
-  new binary.
+  new binary. Superseded by 4.0 (#1173).
 - **01M53QQRAJMB24B0804YHPMN18** When the `riff mcp` of a session still
   runs a replaced riff 2 minutes after the new riff came, it cannot
   start again by itself. Then the PostToolUse hook of the session gives
   the session one line, once for each new riff: the tools run the old
   riff, and the fix is `/mcp`, then reconnect `riff`. The reconnect
   frees the claims of the session. A worker gets no line: it ends after
-  its item (01M517BT9WBQ4R79Z9KVY9SG1B).
+  its item (01M517BT9WBQ4R79Z9KVY9SG1B). Superseded by 4.0 (#1173).
 - **01M5512RG2TTTS85VY8CEFF8R4** `riff mcp` answers the MCP handshake
   at once. It does not wait for its `register` to riff-server: the
   register runs beside the handshake, and each tool call waits for the
   end of the register. The keep-alive and the other tasks of
-  `riff mcp` start after the register.
+  `riff mcp` start after the register. Superseded by 4.0 (#1173).
 - **01M5512RKABQ70QPGC48S5F67W** When the riff tools refuse the
   `tools/list` of Claude Code, the session has no riff tools.
   `riff mcp` then keeps a mark for its agent process, and removes it
@@ -4945,11 +4977,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   PostToolUse hook gives it once for each mark. The line says to use
   the riff commands with the Bash tool. It tells a worker to tell its
   lead, and each other session to tell its user to reconnect riff in
-  `/mcp`.
+  `/mcp`. Superseded by 4.0 (#1173).
 - **01M43F5KE7G2A2A9PSVRJPPNET** When the `riff mcp` of a session
   ended and the session goes on, the status line of the session and
   each end of `riff watch` say it in one line, with the fix: reconnect
-  riff in `/mcp`.
+  riff in `/mcp`. Superseded by 4.0 (#1173).
 - **01M3NT6WXGCNKW3EQ7MBJDQTR4** When a new `riff` binary is on disk,
   `riff top` and `riff chat` run it in their place, as `riff tail`
   does. The chat does it between two lines. The new chat shows no
@@ -5049,6 +5081,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   01M3NT6WXGCNKW3EQ7MBJDQTR4 and 01M3NT6WZTKAFKGDWGCFKC8TB5 say.
 - **01M3NJCRVZW5BFQYZ9N185K2D2** `riff mcp` records its build on the
   machine, with its session record, while it runs.
+  Superseded by 4.0 (#1173).
 - **01M3NJCWBFJK03AC64XN04TTH0** Replaced by
   01M3NT6X22A4GNFTNKRYV8Z4N1.
 - **01M3NT6X22A4GNFTNKRYV8Z4N1** When `riff-server` runs a newer
@@ -5057,11 +5090,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   `update.auto = true`, `updating to vX.Y.Z` while the update by itself
   runs or starts; and `vX.Y.Z installed` when the installed riff has
   the release but the session does not yet. Only the release counts,
-  not the commit.
+  not the commit. Superseded by 4.0 (#1173).
 - **01M3NJCWDN5APKZ3Z53XQR8P0B** The tag makes no extra call to
   `riff-server`. It comes from the build in the answer of the status
   line, also an answer that riff cannot talk to. With no answer within
   the wait of the status line, it shows no tag.
+  Superseded by 4.0 (#1173).
 
 ## Code
 
@@ -5122,6 +5156,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M43DKYYEYW3TQ2CKS36VRZ0V** The skill tells a session to look for
   a full check of its own that runs before it starts one, and to wait
   for its end. A run in the background is one task.
+  Superseded by 4.0 (#1173).
 - **01M49HAZ5BZYGAR9PGC089RM3F** Each pushed commit gets one full test
   run: the Gate on GitHub. The forge merges only on a Gate pass. An
   author runs `just check` before a push, not `just ci`. A verifier
@@ -5465,7 +5500,7 @@ part when they merge.
   riff 1.x. Each lead gets its wakes from riff-server. The plugin, its
   skill and its hooks, `riff connect`, `riff enable`, `riff disable`,
   `riff mcp`, `riff watch` and the status line stay in riff 3.0.0, for
-  a session on the host.
+  a session on the host. Superseded by 4.0 (#1173).
 - **01M53NGVQDKCTNMG54YDFE22T2** riff 3.0.0 keeps the workers in tmux
   and each of their parts, as in riff 1.x: `riff workers` and each of
   its subcommands, the workers host, the clear of a worker, the reap,
@@ -5803,6 +5838,11 @@ part when they merge.
   terminal (`podman run -it`). conmon holds its PTY. The ratatui view of
   riff shows the sessions, and attaches to the lead or to a takeover.
   riff 3.0 uses no tmux.
+- **01M59BXNPR3AZ0HAS9GQCZ4PH2** riff has no plugin, no hooks and no
+  commands for a session on the host: `riff connect`, `riff enable`,
+  `riff disable`, `riff watch`, `riff hook`, `riff statusline` and
+  `riff mcp` do not exist. A session runs in a container, and gets its
+  tools from `riff relay mcp`.
 
 ### The riff daemon
 

@@ -213,7 +213,7 @@ pub async fn at_start() {
 
 /// [`run`] with the facts of this machine and process.
 async fn here(build: &str, local: Option<&Path>) -> Result<Vec<String>> {
-    let user = crate::plugin::user_settings().context(text::INIT_NO_SETTINGS)?;
+    let user = crate::claude_settings::user_settings().context(text::INIT_NO_SETTINGS)?;
     let home = std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(PathBuf::from);

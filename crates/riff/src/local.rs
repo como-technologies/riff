@@ -355,7 +355,7 @@ pub fn set_no_tools(dir: &Path, agent: u32, none: bool) -> io::Result<()> {
     let file = dir.join(format!("notools-{agent}"));
     if none {
         let start = started(agent).unwrap_or_default();
-        let now = crate::activity::now_ms();
+        let now = crate::usage::now_ms();
         return write(&file, format!("{start} {now}"));
     }
     match std::fs::remove_file(file) {

@@ -382,79 +382,12 @@ async fn three_processes_with_three_tmpdirs_refresh_one_sign_in_once() {
     assert_eq!(refreshes.load(Ordering::SeqCst), 4);
 }
 
-/// Waits up to `limit` until `test` is true.
-async fn wait_for(limit: Duration, test: impl Fn() -> bool) -> bool {
-    let span = isolated::Span::start();
-    while span.within(limit) {
-        if test() {
-            return true;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    test()
-}
-
-/// A running `riff watch` says once that the sign-in ended, waits, and
-/// goes on after `riff login`, with no restart
-/// (01M3MX4VM8CK1GAGJAM2P29NWH).
-#[tokio::test(flavor = "multi_thread")]
-async fn a_watch_goes_on_after_riff_login() {
-    let (service, url) = server(false).await;
-    let api = Api::new(&url);
-    login::login(&api, browser).await.unwrap();
-    service.tokens().revoke_user("ada");
-
-    let dir = tempfile::tempdir().unwrap();
-    let (out, err) = (dir.path().join("stdout"), dir.path().join("stderr"));
-    let watch = riff(&url, dir.path(), "w1", &["watch", "--once"])
-        .stdout(std::fs::File::create(&out).unwrap())
-        .stderr(std::fs::File::create(&err).unwrap())
-        .spawn()
-        .unwrap();
-    let watch = std::sync::Mutex::new(watch);
-    let read = || std::fs::read_to_string(&err).unwrap_or_default();
-    assert!(
-        wait_for(Duration::from_secs(20), || read()
-            .contains(riff_client::login::ENDED))
-        .await,
-        "{}",
-        read()
-    );
-
-    login::login(&api, browser).await.unwrap();
-    let me: SessionUri = "riff://ada@heron/como-technologies/riff?session=p1"
-        .parse()
-        .unwrap();
-    let person = api.clone().signed_in(Some("p1")).unwrap();
-    person.register(&me).await.unwrap();
-    // The watch connects again within its retry time; then the tell
-    // finds its session and wakes it.
-    let ended = || watch.lock().unwrap().try_wait().unwrap();
-    let woke = wait_for(Duration::from_secs(20), || ended().is_some());
-    let tell = async {
-        while person.tell(&me, "w1", "back in").await.is_err() {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
-    };
-    let (woke, ()) = tokio::join!(woke, tell);
-    let status = ended();
-    let _ = watch.lock().unwrap().kill();
-    assert!(woke && status.is_some_and(|s| s.success()), "{}", read());
-    assert!(!std::fs::read_to_string(&out).unwrap().is_empty());
-    assert_eq!(
-        read().matches(riff_client::login::ENDED).count(),
-        1,
-        "{}",
-        read()
-    );
-}
-
 /// The tools of a running `riff mcp` say that the sign-in ended, and
 /// work again after `riff login`, with no restart
 /// (01M3MX4VM8CK1GAGJAM2P29NWH, 01M3MX4VCEBTY0DN4JMF624WYE).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_tools_go_on_after_riff_login() {
-    use riff::mcp::Tools;
+    use riff::tools::Tools;
     use rmcp::ServiceExt;
     use rmcp::model::CallToolRequestParams;
 

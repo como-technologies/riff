@@ -15,8 +15,16 @@ const HEADINGS: [&str; 5] = [
     "Members:",
 ];
 
-/// The commands that only the plugin runs.
-const PLUMBING: [&str; 4] = ["hook", "mcp", "statusline", "watch"];
+/// The commands of riff 4.0 that do not exist (01M59BXNPR3AZ0HAS9GQCZ4PH2).
+const REMOVED: [&str; 7] = [
+    "connect",
+    "enable",
+    "disable",
+    "watch",
+    "hook",
+    "statusline",
+    "mcp",
+];
 
 /// The stdout of `riff ARGS`, in a terminal of 200 columns.
 fn riff(args: &[&str]) -> String {
@@ -73,7 +81,7 @@ fn the_help_shows_the_groups_in_order() {
     let headings: Vec<_> = groups.iter().map(|(h, _)| h.as_str()).collect();
     assert_eq!(headings, HEADINGS, "{help}");
     let names: Vec<_> = groups.iter().flat_map(|(_, n)| n.clone()).collect();
-    for name in ["connect", "who", "claim", "pr", "verify", "invite"] {
+    for name in ["setup", "who", "claim", "pr", "verify", "invite"] {
         assert!(names.contains(&name.to_owned()), "{name}: {help}");
     }
     let mut unique = names.clone();
@@ -96,18 +104,18 @@ fn the_help_shows_the_groups_in_order() {
 }
 
 #[test]
-fn the_help_hides_the_plumbing() {
+fn the_help_lists_none_of_the_removed_commands() {
     let help = riff(&["--help"]);
-    for name in PLUMBING {
+    for name in REMOVED {
         assert!(
             !help
                 .lines()
                 .any(|l| l.trim_start().starts_with(&format!("{name} "))),
             "{name}: {help}"
         );
-        assert!(!riff(&["help", name]).is_empty(), "riff help {name}");
+        let out = Isolated::shared().riff().args([name]).output().unwrap();
+        assert!(!out.status.success(), "riff {name} exists");
     }
-    assert!(riff(&["help", "hook"]).starts_with("Run a Claude Code hook\n"));
 }
 
 #[test]
@@ -276,9 +284,6 @@ fn the_book_shows_how_to_find_a_command() {
         assert!(part.contains(words), "{words} is not in the book");
         assert!(help.contains(heading));
     }
-    for name in PLUMBING {
-        assert!(part.contains(&format!("`riff {name}`")), "{name}");
-    }
 }
 
 #[test]
@@ -305,7 +310,7 @@ fn riff_with_no_command_names_no_hidden_command() {
         let out = Isolated::shared().riff().args(args).output().unwrap();
         assert_eq!(out.status.code(), Some(2), "riff {args:?}: {out:?}");
         let err = String::from_utf8(out.stderr).unwrap();
-        for name in PLUMBING {
+        for name in REMOVED {
             assert!(!err.contains(name), "riff {args:?}: {name}: {err}");
         }
         assert!(!err.contains("[subcommands:"), "riff {args:?}: {err}");

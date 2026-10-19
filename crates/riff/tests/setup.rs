@@ -71,7 +71,6 @@ fn setup_writes_the_rules_once_and_check_finds_them() {
     let allow = value["permissions"]["allow"].as_array().unwrap();
     let deny = value["permissions"]["deny"].as_array().unwrap();
     for rule in [
-        "mcp__plugin_riff_riff",
         "mcp__riff",
         "Bash(riff)",
         "Bash(riff *)",

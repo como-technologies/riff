@@ -2877,12 +2877,12 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// session is the worker session
     /// of `riff run` or of a wave, which holds the claim of the item. The
     /// session gets only the tools that talk, and act on no folder of the
-    /// host and no claim ([`crate::mcp::CONTAINER_TOOLS`],
+    /// host and no claim ([`crate::tools::CONTAINER_TOOLS`],
     /// 01M4ZV3B6T2KB09WJ59F07HXET).
-    pub fn tools_of(&self, record: &Record) -> Result<crate::mcp::Tools> {
+    pub fn tools_of(&self, record: &Record) -> Result<crate::tools::Tools> {
         let api =
             riff_client::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
-        let tools = crate::mcp::Tools::new(api, record.me.clone()).as_worker(!record.terminal);
+        let tools = crate::tools::Tools::new(api, record.me.clone()).as_worker(!record.terminal);
         Ok(if record.terminal {
             tools.in_lead_container()
         } else {

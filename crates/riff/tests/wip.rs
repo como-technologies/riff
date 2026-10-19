@@ -6,15 +6,13 @@
 
 use isolated::Isolated;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
-use riff::mcp::Tools;
+use riff::tools::Tools;
 use riff_client::api::Api;
-use riff_core::name::{SessionUri, ThreadName};
+use riff_core::name::SessionUri;
 use riff_core::wire::RiffState;
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
-use tokio::io::AsyncWriteExt;
 
 async fn start_server() -> Api {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -45,29 +43,6 @@ fn git(dir: &Path, args: &[&str]) -> String {
     .unwrap();
     assert!(out.status.success(), "git {args:?}: {out:?}");
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
-}
-
-/// Runs the shell `steps` in `dir`.
-fn sh(dir: &Path, steps: &str) {
-    let out = alone(
-        std::process::Command::new("sh")
-            .args(["-ec", steps])
-            .current_dir(dir),
-    )
-    .output()
-    .unwrap();
-    assert!(out.status.success(), "{steps}: {out:?}");
-}
-
-/// The first `sh` block of the section `heading` of the skill.
-fn skill_block(heading: &str) -> String {
-    let skill = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
-    )
-    .unwrap();
-    let part = &skill[skill.find(heading).unwrap()..];
-    let block = part.split("```sh").nth(1).unwrap();
-    block[..block.find("```").unwrap()].to_owned()
 }
 
 /// The `origin` of the riff repository, with one commit in `main`. Its
@@ -113,10 +88,6 @@ fn worktree(clone: &Path, item: &str) -> PathBuf {
     path
 }
 
-fn repo() -> ThreadName {
-    "como-technologies/riff".parse().unwrap()
-}
-
 fn session(host: &str, id: &str) -> SessionUri {
     format!("riff://mike@{host}/como-technologies/riff?session={id}")
         .parse()
@@ -158,109 +129,6 @@ async fn claim(
         String::from_utf8(out.stdout).unwrap(),
         out.status.code().unwrap(),
     )
-}
-
-/// Runs the start hook of Claude Code for a new session `id` on `host`
-/// in `dir`. Returns its context.
-async fn start_hook(api: &Api, home: &Path, dir: &Path, host: &str, id: &str) -> String {
-    let mut hook = Isolated::shared()
-        .tokio_riff()
-        .args(["hook", "session-start"])
-        .current_dir(dir)
-        .env("RIFF_HOME", home)
-        .env("RIFF_USER", "mike")
-        .env("RIFF_HOST", host)
-        .env("RIFF_SERVER", api.base())
-        .env_remove("RIFF_SESSION")
-        .env_remove("RIFF_WORKER")
-        .env_remove("CLAUDE_CODE_SESSION_ID")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let input = format!(r#"{{"session_id":"{id}","source":"startup"}}"#);
-    let mut stdin = hook.stdin.take().unwrap();
-    stdin.write_all(input.as_bytes()).await.unwrap();
-    drop(stdin);
-    let out = hook.wait_with_output().await.unwrap();
-    assert!(out.status.success());
-    let out: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    out["hookSpecificOutput"]["additionalContext"]
-        .as_str()
-        .unwrap()
-        .to_owned()
-}
-
-#[tokio::test]
-async fn a_session_on_another_clone_finds_the_wip_commit_of_a_killed_session() {
-    let api = running_riff().await;
-    let root = tempfile::tempdir().unwrap();
-    let home = root.path().join("home");
-    std::fs::create_dir(&home).unwrap();
-    origin(root.path());
-    let (pangolin, thelio) = (clone(root.path(), "pangolin"), clone(root.path(), "thelio"));
-
-    // The first session claims the item, and pushes its work as WIP
-    // with the steps of the skill before a long run.
-    let first = session("pangolin", "a1");
-    api.register(&first).await.unwrap();
-    assert!(
-        api.claim(&first, &repo(), "issue-12")
-            .await
-            .unwrap()
-            .granted
-    );
-    let work = worktree(&pangolin, "issue-12");
-    std::fs::write(work.join("work.txt"), "half of the work\n").unwrap();
-    sh(&work, &skill_block("### Push your work as WIP"));
-    let commit = git(&work, &["rev-parse", "--short", "HEAD"]);
-    assert!(git(&work, &["log", "-1", "--format=%s"]).starts_with("WIP"));
-    assert_eq!(git(&work, &["status", "--porcelain"]), "");
-
-    // The session is killed: no release, and its machine is gone.
-    std::fs::remove_dir_all(root.path().join("pangolin")).unwrap();
-    let (out, code) = claim(&api, &home, &thelio, "thelio", "b2", "issue-12").await;
-    assert_eq!(code, 1, "the dead session still holds the item: {out}");
-    assert!(!out.contains("Earlier work"), "{out}");
-    // The server frees the claim, as after the end call of its host.
-    api.end(&first).await.unwrap();
-
-    // The second session, on another clone, claims the item and finds
-    // the commit.
-    let (out, code) = claim(&api, &home, &thelio, "thelio", "b2", "issue-12").await;
-    assert_eq!(code, 0, "{out}");
-    let mut lines = out.lines();
-    assert_eq!(
-        lines.next(),
-        Some("You hold issue-12 in como-technologies/riff.")
-    );
-    let line = lines.next().unwrap_or_default();
-    assert!(
-        line.starts_with(&format!(
-            "Earlier work on issue-12: the pushed branch origin/worktree-issue-12 at {commit} \
-             (a WIP commit, "
-        )),
-        "{out}"
-    );
-    assert!(
-        line.ends_with(
-            "Go on from it, and do not start again: see \"Pick up dropped work\" in the riff skill."
-        ),
-        "{out}"
-    );
-
-    // It goes on from the branch, with the step of the skill.
-    let next = worktree(&thelio, "issue-12");
-    git(
-        &next,
-        &["reset", "-q", "--hard", "origin/worktree-issue-12"],
-    );
-    assert_eq!(
-        std::fs::read_to_string(next.join("work.txt")).unwrap(),
-        "half of the work\n"
-    );
-    assert_eq!(git(&next, &["rev-parse", "--short", "HEAD"]), commit);
 }
 
 #[tokio::test]
@@ -352,67 +220,6 @@ async fn the_claim_tool_names_the_earlier_work() {
     let out = claim_tool(tools("c3").with_earlier_work(), "issue-12").await;
     assert!(out.contains("holds issue-12"), "{out}");
     assert!(!out.contains("Earlier work"), "{out}");
-}
-
-#[tokio::test]
-async fn a_new_start_lists_the_earlier_work_that_no_live_session_owns() {
-    let api = running_riff().await;
-    let root = tempfile::tempdir().unwrap();
-    let home = root.path().join("home");
-    std::fs::create_dir(&home).unwrap();
-    origin(root.path());
-    let pangolin = clone(root.path(), "pangolin");
-    for item in ["issue-12", "issue-13"] {
-        let work = worktree(&pangolin, item);
-        std::fs::write(work.join("work.txt"), item).unwrap();
-        sh(&work, &skill_block("### Push your work as WIP"));
-    }
-    // A live session holds issue-13. No session holds issue-12.
-    let owner = session("pangolin", "b2");
-    api.register(&owner).await.unwrap();
-    assert!(
-        api.claim(&owner, &repo(), "issue-13")
-            .await
-            .unwrap()
-            .granted
-    );
-    let _live = Box::pin(api.watch(&owner).await.unwrap());
-
-    // On the same machine, the context names the branch and the
-    // worktree.
-    let context = start_hook(&api, &home, &pangolin, "pangolin", "a1").await;
-    assert!(
-        context.contains("- This clone has earlier work that no live session owns."),
-        "{context}"
-    );
-    let line = context
-        .lines()
-        .find(|l| l.starts_with("  - issue-12: "))
-        .unwrap_or_else(|| panic!("{context}"));
-    assert!(
-        line.contains("the pushed branch origin/worktree-issue-12 at "),
-        "{line}"
-    );
-    assert!(line.contains("(a WIP commit, "), "{line}");
-    assert!(
-        line.contains(&format!(
-            "the worktree {} (each file committed and pushed)",
-            pangolin.join(".claude/worktrees/issue-12").display()
-        )),
-        "{line}"
-    );
-    assert!(!context.contains("  - issue-13"), "{context}");
-
-    // On another clone, it names the branch only.
-    let thelio = clone(root.path(), "thelio");
-    let context = start_hook(&api, &home, &thelio, "thelio", "c3").await;
-    let line = context
-        .lines()
-        .find(|l| l.starts_with("  - issue-12: "))
-        .unwrap_or_else(|| panic!("{context}"));
-    assert!(line.contains("origin/worktree-issue-12"), "{line}");
-    assert!(!line.contains("the worktree"), "{line}");
-    assert!(!context.contains("  - issue-13"), "{context}");
 }
 
 #[test]

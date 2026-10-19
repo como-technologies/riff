@@ -294,24 +294,6 @@ async fn post_wakes_the_holder_of_a_claim() {
 }
 
 #[tokio::test]
-async fn watch_needs_a_session_id() {
-    let server = start_server().await;
-    let dir = repo();
-    let mut cmd = Isolated::shared().assert_riff();
-    cmd.arg("watch")
-        .current_dir(dir.path())
-        .env("RIFF_SERVER", server)
-        .env("RIFF_USER", "mike")
-        .env_remove("RIFF_SESSION")
-        .env_remove("CLAUDE_CODE_SESSION_ID");
-    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
-        .await
-        .unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("no session ID"));
-}
-
-#[tokio::test]
 async fn read_shows_unread_messages_of_the_repository_thread() {
     let server = start_server().await;
     let dir = repo();

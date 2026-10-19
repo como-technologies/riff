@@ -146,7 +146,7 @@
 //! sessions of the host ([`crate::session_mcp`]). [`mcp`] passes each
 //! line between `claude` and the daemon, on the socket of the session ([`SessionAsk::Mcp`]). The
 //! daemon serves the tools as that session (01M4ZHSZV46RF3XDXDTQXWGXRG):
-//! only the tools that talk ([`crate::mcp::CONTAINER_TOOLS`],
+//! only the tools that talk ([`crate::tools::CONTAINER_TOOLS`],
 //! 01M4ZV3B6T2KB09WJ59F07HXET).
 //! When the daemon goes away, each call in flight gets an error, and
 //! each new line waits for the daemon. At a new connection, `riff relay

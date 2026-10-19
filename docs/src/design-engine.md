@@ -570,7 +570,7 @@ stateDiagram-v2
 - The worker mark is a fact of the riff, not of the presence. `handle`
   and `permits` get it from the pending copy, and `who` from the
   written copy.
-- The start hook sends the reason from the `source` of Claude Code:
+- The start sends the reason from the `source` of Claude Code:
   `startup` is `process`, `resume` is `resume`, `clear` is `clear`. It
   sends no start for `compact`: a compaction is no new session, so the
   session keeps its claims and its lead, and a worker in MustClear
@@ -614,7 +614,7 @@ sequenceDiagram
     S-->>W: reply: riff clears your context when your turn ends
     L->>S: tell the worker: request: claim issue-12
     S->>S: posted. The wake waits.
-    W->>W: the turn ends: the Stop hook starts the check
+    W->>W: the turn ends: the check starts
     W->>S: keep-alive
     S-->>W: reply: clear
     W->>W: riff types /clear
@@ -629,7 +629,7 @@ sequenceDiagram
   release. So a step of an item that comes after the release, for
   example the removal of the worktree, runs before the clear.
 - The reply to a keep-alive of a worker in MustClear tells riff to
-  clear its context. The Stop hook of a worker starts a check that
+  clear its context. A check of a worker
   sends one keep-alive, and types the clear when the reply asks for it
   (01M3XV0562D3H3P22CJDBPAZBH, `crates/riff/src/next.rs`). So the
   clear does not depend on the reply to the release, or on a call of
@@ -1144,7 +1144,7 @@ and the refusals in the `post` command and in `Engine::admit`
 
 Other items:
 
-- #353 (riff clears a worker) needs E4. It changes the skill: a
+- #353 (riff clears a worker) needs E4. A
   worker ends its turn after its last release, and runs no command for
   the clear.
 - #354 (`riff audit`) needs E2, E4 and #353.

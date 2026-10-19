@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use riff::mcp::Tools;
+use riff::tools::Tools;
 use riff_client::api::Api;
 use riff_client::link::{Limits, SHORT_BUDGET};
 use riff_core::name::{SessionUri, ThreadName};

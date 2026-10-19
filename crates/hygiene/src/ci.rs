@@ -15,8 +15,7 @@
 //!
 //! A file is text ([`is_text`]) when it is in `docs/` or `design/`, or
 //! when it is a `.md` file outside `crates/`. A `.md` file in `crates/`
-//! is not text: `riff` holds the files of its plugin, and tests read
-//! them.
+//! is not text: tests read them.
 //!
 //! When git cannot compare with BASE, or when no file differs, the
 //! recipe is `ci-full`. `hygiene ci` prints the recipe to stdout and
@@ -135,7 +134,7 @@ impl fmt::Display for Choice {
 /// assert!(is_text("design/reviews/x.md"));
 /// assert!(is_text("CLAUDE.md"));
 /// assert!(!is_text("crates/riff/src/main.rs"));
-/// assert!(!is_text("crates/riff/claude-plugin/riff/skills/riff/SKILL.md"));
+/// assert!(!is_text("crates/riff/README.md"));
 /// assert!(!is_text("justfile"));
 /// ```
 pub fn is_text(path: &str) -> bool {
@@ -363,10 +362,9 @@ mod tests {
     }
 
     #[test]
-    fn a_file_of_the_plugin_is_not_text() {
+    fn a_markdown_file_of_a_crate_is_not_text() {
         for path in [
-            "crates/riff/claude-plugin/riff/skills/riff/SKILL.md",
-            "crates/riff/claude-plugin/riff/commands/join.md",
+            "crates/riff/README.md",
             "Cargo.lock",
             ".github/workflows/ci.yml",
             "documents.rs",

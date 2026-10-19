@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use riff::mcp::Tools;
+use riff::tools::Tools;
 use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use rmcp::model::CallToolRequestParams;

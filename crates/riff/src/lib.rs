@@ -7,11 +7,9 @@
 //!
 //! | Mode | Job |
 //! |---|---|
-//! | `riff mcp` | Serves the tools in [`mcp`] to one agent session over stdio. |
-//! | `riff watch` | Keeps a watch stream open and prints one line for each wake. With `--once`, it exits after the first wake. |
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff lead`, `riff who`, `riff whoami` | Commands for people. |
-//! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
+//! | `riff relay mcp`, `riff relay watch` | The tools and the wakes of a session in a container. See [`tools`], [`session_relay`]. |
 //! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], [`release`] for the static binaries of a release, and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //! | `riff release cut`, `publish`, `status`, `approve` | The release cycle: the release pull request, the tag, the GitHub release and the approval of the deploy. See [`cycle`]. |
@@ -32,29 +30,6 @@
 //! A granted claim and a new start show the earlier work on an item:
 //! its pushed branch and its worktree (see [`dropped`]).
 //!
-//! The Claude Code plugin is in [`plugin`]. Its start hook runs
-//! `riff hook session-start` (see [`hook`]). riff is off in a session
-//! until a person turns it on for the repository, with `riff enable`
-//! (see [`enable`]).
-//!
-//! `riff mcp` and `riff watch` run as two processes for one session. They
-//! agree on the session because both read its session ID from the
-//! environment (see [`identity`]). After `/clear`, the environment has a
-//! new ID, but `riff mcp` keeps the old one. So `riff mcp` records its ID
-//! on the machine, and the other processes of the session use it (see
-//! [`local`]). The session can move; the server keeps its place, so a
-//! watch that started in the old place still works.
-//!
-//! ## Wake line
-//!
-//! An agent tool wakes a session when a watched command prints a line
-//! or exits. Claude Code runs `riff watch --once` as a background task,
-//! and wakes the session when it exits (see [`hook`]). So `riff watch`
-//! prints exactly one line for each wake and nothing else on stdout. Errors go
-//! to stderr. The line tells the agent what to do next:
-//!
-//! See [`text::wake_line`] for the line.
-//!
 //! ## The client of riff-server
 //!
 //! Each call to riff-server goes through the crate [`riff_client`]: the
@@ -68,9 +43,9 @@
 //! `riff` keeps the person tokens and the device key only in the OS
 //! keyring, through [`riff_client::secrets`]. Each request with a token
 //! carries a proof from the device key of the machine (see
-//! [`riff_client::device`]). `riff mcp` and `riff watch` each hold a
+//! [`riff_client::device`]). `riff relay mcp` and `riff relay watch` each hold a
 //! session token in memory; it acts only as their session (see
-//! [`riff_client::api`]). The tests and `just dev` give riff a home of
+//! [`riff_client::api`]). The tests give riff a home of
 //! its own, with its secrets in files (see [`home`]).
 //!
 //! ## Messages are advice
@@ -79,13 +54,13 @@
 //! that only a verified message of the lead of its user counts as its
 //! user. Each other message is advice (R10).
 
-pub mod activity;
 pub mod audit;
 pub mod auto_update;
 pub mod binary;
 pub mod catch_up;
 pub mod chat;
 pub mod check;
+pub mod claude_settings;
 pub mod claude_token;
 pub mod cloud;
 pub mod compile_cache;
@@ -94,11 +69,11 @@ pub mod daemon;
 pub mod denied;
 pub mod disk;
 pub mod dropped;
-pub mod enable;
+
 pub mod first_run;
 pub mod help;
 pub mod home;
-pub mod hook;
+
 pub mod identity;
 #[cfg(all(
     unix,
@@ -112,14 +87,13 @@ pub mod local;
 pub mod login;
 pub mod look;
 pub mod machine;
-pub mod mcp;
 pub mod permissions;
 pub mod platform;
-pub mod plugin;
+pub mod tools;
+
 #[cfg(target_os = "linux")]
 pub mod podman;
 pub mod pr;
-pub mod relay;
 pub mod release;
 pub mod rollout;
 pub mod room;

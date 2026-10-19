@@ -4,12 +4,10 @@
 //! # Design
 //!
 //! One blank line ends a paragraph. A second blank line adds nothing,
-//! and a diff that adds it is noise. So no Markdown file of the book or
-//! of the plugin has two blank lines in a row
+//! and a diff that adds it is noise. So no Markdown file of the book
+//! has two blank lines in a row
 //! (01M51K1VMWTNZGD6PT1BYDGWM3). `just wrap` runs `hygiene blank
-//! docs/src crates/riff/claude-plugin`: each `.md` file in each folder
-//! and its subfolders. The skill is not in the wrap check: its front
-//! matter is one long line.
+//! docs/src`: each `.md` file in the folder and its subfolders.
 //!
 //! The rule `blank` finds each blank line after a blank line. It skips
 //! a code block: the text of a block is an example, as it is. A line

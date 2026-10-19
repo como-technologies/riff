@@ -5,42 +5,25 @@
 ```mermaid
 flowchart LR
     subgraph M["Your machine"]
-        S1[agent session] -- MCP --> C1["riff mcp"]
-        W1["riff watch"] -- wakes --> S1
+        S1["agent session<br/>in a container"] -- MCP --> C1["riff relay mcp"]
+        W1["riff relay watch"] -- wakes --> S1
         L["riff-server<br/>in a terminal"]
-    end
-    subgraph N["A second machine"]
-        S2[agent session] -- MCP --> C2["riff mcp"]
-    end
-    subgraph G["Google Cloud, off for now"]
-        E["riff-server<br/>Cloud Run, one instance"]
-        B[("Cloud Storage<br/>state")]
     end
     C1 -- "HTTP, loopback" --> L
     L -- wakes --> W1
-    C2 -- "HTTP, your network" --> L
-    C1 -. HTTPS .-> E
-    E -- save and load --> B
 ```
 
 - **`riff-server`** is the central service. It holds the live sessions,
-  the threads, the claims and the leads. Now it runs on your machine, in
+  the threads, the claims and the leads. It runs on your machine, in
   a terminal (see [Start a Riff](start-a-riff.md)). It listens on
   loopback. A riff with sign-in listens on your network, so that other
-  machines join it (see [Join a Riff](join-a-riff.md)). The shared
-  server on Cloud Run is off.
-- **`riff mcp`** gives your session its tools: `whoami`, `who`,
-  `threads`, `join_thread`, `leave_thread`, `post`, `status`,
-  `blocked`, `tell`, `read`, `claim`, `release`, `hold`, `free`,
-  `notes`, `lead`, `pause`, `resume`, `move`, `leave` and `join`.
-- **`riff watch`** writes one line for each message that wakes the
-  session. Your agent tool reads the line and wakes the session.
-- **The start hook** runs `riff hook session-start` when a session
-  starts. It tells the session to run `riff watch --once` as a
-  background task. See [Wake a session](#wake-a-session).
-- **The end hook** runs `riff hook session-end` when a session ends.
-  It tells `riff-server` that the session left. See
-  [When a session ends](#when-a-session-ends).
+  machines join it (see [Join a Riff](join-a-riff.md)).
+- **`riff relay mcp`** gives a session in a container its tools:
+  `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and
+  `blocked`.
+- **`riff relay watch`** writes one line for each message that wakes the
+  session. Your agent tool reads the line and wakes the session. See
+  [Wake a session](#wake-a-session).
 
 ## Find a command
 
@@ -54,209 +37,7 @@ riff --help
 riff help invite
 ```
 
-The plugin runs `riff hook`, `riff mcp`, `riff statusline` and
-`riff watch`. `riff --help` does not list them, but `riff help hook`
-shows the text of `riff hook`. `riff-server --help` lists the settings
-of the server.
-
-## Connect
-
-`riff connect claude` adds the riff plugin to Claude Code. The plugin
-gives a session the riff tools, the riff skill, a start hook and an
-end hook. riff stays off in a session until you turn it on for the
-repository of the session.
-
-```mermaid
-flowchart LR
-    B[riff binary] -- writes --> D["~/.local/share/riff/claude-plugin"]
-    D -- "claude plugin marketplace add" --> M[marketplace riff]
-    M -- "riff enable" --> P["plugin riff@riff<br/>on in a repository"]
-```
-
-Claude Code loads the plugin from that directory. After you update
-`riff`, run `riff connect claude` again.
-
-The plugin has these hooks. Each one runs `riff hook` and always exits
-with status 0:
-
-| Hook of Claude Code | Command | What it does |
-|---|---|---|
-| `SessionStart` | `riff hook session-start` | Tells the session to start `riff watch`. |
-| `SessionEnd` | `riff hook session-end` | Tells `riff-server` that the session ended. |
-| `Stop` | `riff hook stop` | Clears the context of a worker that released its last claim. |
-| `PreToolUse`, `PostToolUse` | `riff hook tool`, `riff hook tool --done` | Writes the tool that runs, for `riff who`. |
-| `UserPromptSubmit` | `riff hook prompt` | Writes the time of your last prompt. |
-| `PermissionDenied` | `riff hook denied` | Posts each refusal of auto mode to the riff. See [See the refusals of auto mode](#see-the-refusals-of-auto-mode). |
-
-In a terminal, `riff connect claude` asks one time where you want riff
-on:
-
-```text
-Where do you want riff on?
-  1) Only in this repository (default)
-  2) In each repository on this machine
-  3) Not now: I run `riff enable` later
-Your choice [1]:
-```
-
-riff keeps your answer, and asks no more. With no terminal, it asks
-nothing and changes nothing. `riff update` asks nothing too, also in a
-terminal: an update never turns riff on in more repositories, and
-never turns it off. On a machine where a release up to v0.8.0 turned
-riff on in each repository, the command asks nothing and keeps that.
-The last line of the command says where riff is on, and the command
-to change it. Where riff is off, it names each repository of Claude
-Code where riff is on. It says `riff is installed but off` only when
-riff is on in none.
-
-### Turn riff on or off for a repository
-
-riff is off in a Claude Code session until you turn it on for the
-repository. Where riff is off, it does nothing: no call to the riff,
-no `git`, no text in the session, no tools, and an empty status line.
-A directory that is not in a git repository is always off.
-
-Run this in the repository:
-
-```sh
-riff enable
-```
-
-Then start a new Claude Code session there. To turn riff off again:
-
-```sh
-riff disable
-```
-
-`riff disable` changes only this repository. A session that runs
-keeps riff until it ends. To take it out now, run `/riff:leave` in it.
-
-`riff enable` writes one entry to a settings file of Claude Code:
-
-```json
-{
-  "enabledPlugins": {
-    "riff@riff": true
-  }
-}
-```
-
-Each other byte of the file stays. When the file is a symbolic link,
-riff writes the file that the link names, and shows its path.
-
-| Flag | File | Who gets riff |
-|---|---|---|
-| none, or `--local` | `.claude/settings.local.json` at the top of the repository | Only you, in this repository. |
-| `--shared` | `.claude/settings.json` at the top of the repository | Each person of the team who has riff, after you commit the file. |
-| `--global` | The user settings, `~/.claude/settings.json` | You, in each repository on this machine. |
-
-The first file that has the entry decides, in the order local,
-shared, global:
-
-```mermaid
-flowchart TD
-    G{in a git repository?} -- no --> OFF[riff is off]
-    G -- yes --> L{"local settings<br/>have the entry?"}
-    L -- yes --> V[its value decides]
-    L -- no --> S{"shared settings<br/>have the entry?"}
-    S -- yes --> V
-    S -- no --> U{"user settings<br/>have the entry?"}
-    U -- yes --> V
-    U -- no --> OFF
-```
-
-git does not track the local settings, so a linked worktree does not
-have them. In a linked worktree, riff reads the settings of the main
-clone too, and `riff enable` writes the local settings of the main
-clone. It asks git for the main clone first, and writes nothing when
-git does not know the worktree. It also writes nothing when the `.git`
-of the worktree is a symbolic link: git makes a file there, not a
-link.
-
-### Turn riff on for the team
-
-`--shared` writes the entry to the project settings. Commit the file.
-Then each person who ran `riff connect claude` has riff in each clone:
-
-```sh
-riff enable --shared
-```
-
-A person who does not want riff in a clone runs `riff disable` there.
-It writes `false` to the local settings of that clone.
-
-### Turn riff on in each repository
-
-`--global` turns riff on in each repository on this machine:
-
-```sh
-riff enable --global
-```
-
-`riff disable --global` takes that away. To keep riff out of one
-repository, run `riff disable` there.
-
-### Choose where riff is on with no question
-
-`--scope` answers the question of `riff connect claude`, for a script:
-
-```sh
-riff connect claude --scope repo
-riff connect claude --scope global
-riff connect claude --scope none
-```
-
-### See whether riff is on here
-
-`riff server` shows it in the line `repository`, with the file that
-decides and the command to change it:
-
-```sh
-riff server
-```
-
-```text
-repository  riff off. To turn it on: riff enable
-```
-
-### After an update from a release before the opt-in
-
-A release up to v0.8.0 turned riff on in each repository: it wrote the
-entry to the user settings. An update keeps that choice, and asks
-nothing, in a terminal and with no terminal. riff stays on in each
-repository of the machine, and you run no command.
-
-To have riff only in some repositories, take the entry out, and turn
-riff on in each one:
-
-```sh
-riff disable --global
-riff enable
-```
-
-### When the riff server is turned off in /mcp
-
-The `/mcp` dialog of Claude Code can turn the riff server off. Claude
-Code keeps that for the project, so each new session there has no
-riff tools. The start hook tells the session, and the status line
-shows it:
-
-```text
-riff 2a880834 (no tools: the riff server is off, turn it on in /mcp)
-```
-
-To turn it on, run `/mcp` in a session of the project, and turn the
-server `riff` on. A worker with no riff tools tells the lead with the
-`riff tell` command.
-
-### Use another claude command
-
-`riff connect claude` runs the `claude` command on your `PATH`.
-`--claude` names another one:
-
-```sh
-riff connect claude --claude ~/.local/bin/claude
-```
+`riff-server --help` lists the settings of the server.
 
 ## The riff that riff uses
 
@@ -471,88 +252,13 @@ When the note says "Run riff update", update riff on this machine:
 riff update
 ```
 
-`riff watch`, `riff tail`, `riff top`, `riff chat` and the riff tools of
-each session (`riff mcp`) see the new `riff` on disk, and run it.
+`riff relay watch`, `riff tail`, `riff top` and `riff chat` see the
+new `riff` on disk, and run it.
 They go on with no restart, in the same repository and worktree. This
-is also true when you removed their worktree. You do not run `/mcp`.
+is also true when you removed their worktree.
 
 - `riff chat` keeps its lines on the screen, and draws its prompt
   again. Text that you typed but did not send is lost.
-- The riff tools of a session run the new `riff` when no tool call
-  runs. The session keeps its tools and its claims. First they run the
-  new `riff` once as a check. When the check fails, the tools keep the
-  old `riff` and wait for the next new one. Claude Code keeps no log of
-  the error. After 2 minutes, the session gets a line with the fix. See
-  [When the riff tools cannot start again](#when-the-riff-tools-cannot-start-again).
-
-```mermaid
-flowchart LR
-    N["a new riff on disk"] --> F{"a tool call runs?"}
-    F -- yes --> F
-    F -- no --> C{"the new riff passes its check?"}
-    C -- yes --> R["the tools run the new riff"]
-    C -- no --> K["the tools keep the old riff"]
-    K --> N
-```
-
-### When the riff tools of a session are gone
-
-The riff tools of a session can stop while the session goes on, for
-example after a crash. Claude Code does not start them again. Then
-the status line of the session says it:
-
-```text
-riff 2a880834 (no tools: riff mcp stopped, reconnect riff in /mcp)
-```
-
-Each end of `riff watch` says it to the session too. To get the tools
-back, run `/mcp` in the session, and reconnect the server `riff`. Or
-start the session again. Until then, the session can use the riff
-commands in a shell, for example:
-
-```sh
-riff read
-```
-
-### When Claude Code lists no riff tools
-
-The riff tools of a session can run, but Claude Code can list none of
-them. Then the session has no riff tool, and Claude Code shows no
-error. `riff mcp` sees it: the tools refused the `tools/list` of
-Claude Code. It keeps a mark, and the hooks tell the session in one
-line. The start hook tells it at each start of a context, also after
-`/clear`. After a tool call, the session gets the line once.
-
-```mermaid
-flowchart LR
-    C["Claude Code: tools/list"] --> T{"the riff tools list?"}
-    T -- yes --> OK["the session has the tools"]
-    T -- no --> M["riff mcp keeps a mark"]
-    M --> H["the hooks tell the session"]
-    H --> W["a worker: the riff commands, and riff tell lead"]
-    H --> P["other sessions: /mcp, reconnect riff"]
-```
-
-A worker cannot run `/mcp`. It tells the lead, and does its work with
-the riff commands in a shell:
-
-```sh
-riff tell lead "this session has no riff tools"
-riff whoami
-riff read
-riff claim issue-12
-riff status "write the tests"
-riff release issue-12
-```
-
-The commands have no `move`. In each other session, run `/mcp`, and
-reconnect the server `riff`. The reconnect frees the claims of the
-session: claim them again after it.
-
-One cause is a slow first answer. Claude Code waits only a short time
-for the first answer of `riff mcp`. So `riff mcp` answers it at once,
-and calls riff-server after it. Each tool call waits for that first
-call.
 
 ### When riff cannot read its directory
 
@@ -583,7 +289,7 @@ riff-server, for example
 `no riff build in the reply: status 200 OK from https://…/v1/who`.
 
 A new session gets the same error at its start. It tells you, and it
-does not use the riff. `riff watch` and `riff tail` print the error
+does not use the riff. `riff tail` prints the error
 once, try again every 5 seconds, and go on when the versions can
 talk.
 [`riff server`](#show-the-riffs) shows both builds.
@@ -596,7 +302,8 @@ Update the older side:
 - **The shared server:** an admin pushes a release tag at the end of
   each wave, and CI deploys it. A push to `main` does not deploy it.
   See
-  [Deploy the shared server at the end of a wave](development.md#deploy-the-shared-server-at-the-end-of-a-wave).
+  [Deploy the shared server at the end of a
+  wave](development.md#deploy-the-shared-server-at-the-end-of-a-wave).
 
 Then start your Claude Code sessions again.
 
@@ -714,7 +421,7 @@ sequenceDiagram
     S-->>P: reply, release v0.4.0 (newer)
     P->>U: start: riff update --tag v0.4.0
     U->>U: take the update lock of the machine
-    U->>U: install v0.4.0, update the plugin
+    U->>U: install v0.4.0
     U->>L: "riff on pangolin updated itself from v0.3.0 to v0.4.0."
     U->>D: start again on the new riff
 ```
@@ -810,12 +517,7 @@ flowchart TD
   changes nothing.
 - The daemon logs one line for its gate and one line for each step.
   See them with `journalctl --user -u riff.service`.
-- A step that needs you shows in the status line of each session, with
-  its fix, until it is in step:
-
-  ```text
-  riff 3.2.0 como-technologies/riff a6cf2205 lead needs you: the init of podman: install catatonit, the init of podman, for example: sudo apt install catatonit
-  ```
+- A step that needs you shows in the log, with its fix.
 
 The update and the daemon say what they did in their logs:
 
@@ -824,15 +526,10 @@ The update and the daemon say what they did in their logs:
 
   ```text
   riff downloads the static riff and riff-server of v1.7.0 (x86_64-unknown-linux-musl) into /home/mike/.cargo/bin.
-  Added the riff plugin from /home/mike/.local/share/riff/claude-plugin to Claude Code.
-  riff is on in 1 repository on this machine: /home/mike/src/riff. To turn it on in another repository: cd REPO && riff enable
-  riff is up to date. Start your Claude Code sessions again.
   riff: riff on pangolin updated itself from v1.6.0 to v1.7.0.
   ```
 
-  The third line names each repository of Claude Code where riff is
-  on. It says `riff is installed but off` only when riff is off in each
-  of them. The update shows no note that `riff-server` runs another
+  The update shows no note that `riff-server` runs another
   build: the update installed that build.
 - The log of the riff daemon has one line when the daemon starts again
   on a new riff:
@@ -872,8 +569,7 @@ in step  cgroup v2: user@1000.service has cpu and memory
   `failed`. A line that is not in step names its fix.
 - It also shows the image of the repository of the current folder.
 - It exits with 1 when a step is not in step.
-- After you do the fix of a step that needs you, run it again. The tag
-  in the status line goes when the step is in step.
+- After you do the fix of a step that needs you, run it again.
 
 #### Which processes start again
 
@@ -883,9 +579,8 @@ idle, so no work stops:
 
 | Process | What it does | When |
 |---|---|---|
-| `riff watch`, `riff tail`, `riff top` | runs the new `riff` in its place | at once |
+| `riff relay watch`, `riff tail`, `riff top` | runs the new `riff` in its place | at once |
 | `riff chat` | runs the new `riff` in its place | between two lines |
-| `riff mcp` | checks the new `riff`, then runs it in its place | when no tool call runs |
 | The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session, else after its last session |
 
 You still start `riff-server` again yourself. `riff update` tells you
@@ -937,64 +632,18 @@ again. Its sessions go on:
 riff daemon install
 ```
 
-#### When the riff tools cannot start again
-
-The riff tools of a session (`riff mcp`) run the new `riff` a few
-seconds after an update. Claude Code starts each connection with
-`server/discover`, not with an initialize request. `riff mcp` gives
-the new process `--client modern` for such a connection, so the
-connection stays. Two cases stay where `riff mcp` cannot start again
-by itself:
-
-- A `riff mcp` of v1.7.0 or older. It waits for an initialize request
-  that never comes.
-- A new `riff` that fails the check of `riff mcp`.
-
-```mermaid
-flowchart LR
-    N["a new riff on disk"] --> I{"riff mcp idle?"}
-    I -- yes --> R["riff mcp runs the new riff"]
-    I -- "no: still the old riff<br/>after 2 minutes" --> L["one line to the session<br/>after its next tool"]
-    L --> M["/mcp, reconnect riff"]
-```
-
-When `riff mcp` still runs the old `riff` 2 minutes after the update,
-the hook of the session adds one line after the next tool call. It
-comes once for each new `riff`:
-
-```text
-riff: the riff tools of this session (riff mcp, pid 2183628) still run the old riff. The new riff is in /home/mike/.cargo/bin/riff, but this riff mcp cannot start again on it by itself. To get the new tools, tell your user to run /mcp in this session, select riff, and select Reconnect. The reconnect frees the claims of this session: claim them again after it.
-```
-
-`riff top` marks such a session with `↑` (see
-[Update a session that runs an old riff](#update-a-session-that-runs-an-old-riff)).
-To find these sessions:
-
-```sh
-riff top --once
-```
-
-To get the new tools in such a session, type `/mcp` in the session,
-select `riff`, and select Reconnect. The reconnect ends the riff
-session of the old tools, so its claims are free. Claim them again
-after the reconnect. A worker gets no line: it ends after its item.
-
 ### A new machine asks about the update by itself
 
 On a machine with no `update.auto` key, for example a new or rebuilt
-machine, `riff login` and `riff connect claude` ask you once:
+machine, `riff login` asks you once:
 
 ```text
 Update riff by itself when the riff gets a new release? [Y/n]
 ```
 
-Press Enter to turn it on, or type `n` to keep it off. They do not ask
-again. With no terminal, for example in a script, they do not ask.
-To ask again, remove the key, then run:
-
-```sh
-riff connect claude
-```
+Press Enter to turn it on, or type `n` to keep it off. It does not ask
+again. With no terminal, for example in a script, it does not ask.
+To ask again, remove the key, then run `riff login`.
 
 ## Versions
 
@@ -1011,7 +660,7 @@ can notice:
 
 - a fix that restores the intended behavior;
 - the docs, an output format, the tests;
-- words of the skill or of a requirement that make a rule clearer,
+- words of a requirement that make a rule clearer,
   with no change in behavior.
 
 ### Minor
@@ -1022,9 +671,9 @@ notice:
 - the wire: a route or a field that a client needs, a removed one, or
   a new meaning;
 - the saved state of `riff-server`;
-- the plugin contract: the hook input, and the names and arguments of
+- the names and arguments of
   the riff tools;
-- the behavior: a change of the skill or of a requirement that changes
+- the behavior: a change of a requirement that changes
   what a session does, for example the pull request flow, the verify,
   the claims, the waves or the pause.
 
@@ -1056,39 +705,7 @@ flowchart LR
     Q -- no --> P[patch]
 ```
 
-A wave release is a patch unless the wave has a minor change. Most
-waves change the skill, so most wave releases are a minor.
-
-## A clone that is behind
-
-A session reads `CLAUDE.md` and the project settings from its clone.
-When the clone was not pulled, the session uses old rules. So at each
-session start, the start hook fetches `origin` for at most 2 seconds.
-When the default branch is behind, the session tells you, through the
-lead. The hook does not pull.
-
-```mermaid
-sequenceDiagram
-    participant H as start hook
-    participant O as origin
-    participant S as session
-    H->>O: git fetch (2 seconds at most)
-    O-->>H: main has 3 new commits
-    H-->>S: "This clone is 3 commits behind origin/main ..."
-    S->>S: tells you, through the lead
-```
-
-With no remote, a remote that cannot be reached, or a slow fetch, the
-session gets no line. The session start does not stop.
-
-### Pull a clone that is behind
-
-Run this in the main worktree of the clone. The line of the session
-names the path. Then start your Claude Code sessions again:
-
-```sh
-git pull --ff-only
-```
+A wave release is a patch unless the wave has a minor change.
 
 ## Sign-in
 
@@ -1110,8 +727,8 @@ The token acts only as that session. `riff` keeps it in memory, not
 in the keyring.
 
 A session token has no refresh token. Each `riff` process of a session
-swaps the person token for a session token of its own: `riff mcp`,
-`riff watch`, each hook, the status line and each `riff` command. A
+swaps the person token for a session token of its own: `riff relay mcp`,
+`riff relay watch` and each `riff` command. A
 new session token ends no other token. A process that runs for a long
 time swaps the person token again before its session token expires.
 
@@ -1122,7 +739,7 @@ server writes the object, and which reply waits for the write.
 
 ```mermaid
 sequenceDiagram
-    participant M as riff mcp
+    participant M as riff relay mcp
     participant C as riff claim
     participant S as riff-server
     M->>S: swap the person token, session a6cf
@@ -1162,8 +779,8 @@ flowchart TD
 
 ### Get back into the riff
 
-`riff watch`, `riff tail` and each tool of `riff mcp` show the error
-of a lost sign-in. Find it in this table, and do the step.
+`riff relay watch`, `riff tail` and each tool of `riff relay mcp` show
+the error of a lost sign-in. Find it in this table, and do the step.
 
 | Error | What it means | Step |
 |---|---|---|
@@ -1180,9 +797,9 @@ riff login
 ```
 
 `riff login` works also when the versions do not match. After it,
-each session of the machine goes on by itself: a running `riff watch`,
-`riff tail` and `riff mcp` need no restart. A watch says once that the
-sign-in ended, and tries again every 5 seconds.
+each session of the machine goes on by itself: a running
+`riff relay watch`, `riff tail` and `riff relay mcp` need no restart. A
+watch says once that the sign-in ended, and tries again every 5 seconds.
 
 `riff` asks `riff-server` one time only with a sign-in that ended. It
 keeps on the machine that the sign-in ended. Until `riff login`, each
@@ -1199,8 +816,7 @@ riff://mike@pangolin/como-technologies/riff?session=a6cf&claim=issue-6#issue-6
 The URI shows three things:
 
 - **Who:** the user and the session ID of the agent tool. They never
-  change. A resumed session keeps its ID. After `/clear`, the session
-  keeps its ID too (see [After /clear](#after-clear)).
+  change. A resumed session keeps its ID.
 - **Where:** the host, the repository and the worktree. They change when
   the session moves.
 - **What:** the claims that the session holds, and `lead=true` when
@@ -1470,7 +1086,8 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
   these tags has no kind. In the example, thelio has 4 sessions: 2
   leads, and 2 sessions with no kind. After the kinds, a host
   line counts the sessions that run an old riff: `1 to update`. See
-  [Update a session that runs an old riff](#update-a-session-that-runs-an-old-riff).
+  [Update a session that runs an old
+  riff](#update-a-session-that-runs-an-old-riff).
 - A line with only one line under it takes that line, after a `›`. In
   the example, brett has one host and one repository, so the person,
   the host and the repository are on one line. So a small riff stays
@@ -1553,13 +1170,13 @@ The mark shows one of two facts:
   `riff update`, and the session still runs the old file.
 
 The process that lives as long as the session tells the server its
-riff in each keep-alive: `riff mcp` for a session of Claude Code, the
-riff daemon for a session in a container. A session of a riff from
+riff in each keep-alive: `riff relay mcp` for a session, the
+riff daemon for the daemon. A session of a riff from
 before the mark tells no riff, so it gets no mark.
 
 ```mermaid
 flowchart LR
-    P["riff mcp, the riff daemon"] -- "keep-alive: build, replaced" --> S["riff-server"]
+    P["riff relay mcp, the riff daemon"] -- "keep-alive: build, replaced" --> S["riff-server"]
     S -- "who" --> T{"riff top: replaced, or<br/>older than the server?"}
     T -- yes --> M["↑ on the session,<br/>N to update on the host"]
     T -- no --> N["no mark"]
@@ -1576,19 +1193,12 @@ See [Which processes start again](#which-processes-start-again) and
 [When the builds differ](#when-the-builds-differ). The mark goes in a
 minute. A session in a container keeps the mark until the riff daemon
 starts again, after its last session. When the mark stays, do the
-step for the session:
+step for the session: install the riff daemon again. It starts again
+on the new riff at once:
 
-- A session in a container: install the riff daemon again. It starts
-  again on the new riff at once:
-
-  ```sh
-  riff daemon install
-  ```
-
-- Your own session: run `/mcp` in the session, and reconnect the
-  server `riff`. Or start the session again. The reconnect frees the
-  claims of the session: claim them again. See
-  [When the riff tools cannot start again](#when-the-riff-tools-cannot-start-again).
+```sh
+riff daemon install
+```
 
 ### When riff cannot reach the server
 
@@ -1687,7 +1297,7 @@ that cause friction.
 ```mermaid
 sequenceDiagram
     participant C as Claude Code
-    participant H as riff hook denied
+    participant H as riff relay denied
     participant S as riff-server
     C->>H: auto mode refused a tool call
     H-->>C: exit 0 at once
@@ -1695,12 +1305,10 @@ sequenceDiagram
     Note over H,S: the session leaves the thread after the post
 ```
 
-Each session gets the hook: a session with the plugin runs `riff hook
-denied`, and the lead and each container session of the riff daemon
-run `/opt/riff/riff relay denied`. The hook never waits for
+Each session of the riff daemon, the lead too, runs
+`/opt/riff/riff relay denied`. The command never waits for
 `riff-server`. When `riff-server` does not answer, the record waits in
-a local file, and the next refusal posts it first. A session that left
-the riff sends no record, on the host and in a container.
+a local file, and the next refusal posts it first.
 
 One record is one line, the tags first:
 
@@ -1755,7 +1363,7 @@ lead does not count while it is gone.
 ```mermaid
 sequenceDiagram
     participant A as agent tool
-    participant M as riff mcp
+    participant M as riff relay mcp
     participant S as riff-server
     loop each minute
         M->>S: keep-alive
@@ -1770,87 +1378,17 @@ sequenceDiagram
 - A session that stops with no end, for example after `kill -9` or a
   network fault, is gone after 3 minutes. Its claims and its lead end
   together, 5 minutes after its last sign of life.
-- A sign of life is a call or a keep-alive. `riff mcp` and `riff watch`
-  each send a keep-alive each minute. An open watch is no sign of life:
-  the server cannot see that the process of a watch died.
+- A sign of life is a call or a keep-alive. `riff relay mcp` and
+  `riff relay watch` each send a keep-alive each minute. An open watch
+  is no sign of life: the server cannot see that the process of a watch
+  died.
 - A gone session gets no messages. A `tell` to it fails.
 - When a gone session calls again, it comes back with the same ID and
   threads. After a stop with no end, it also gets back each claim that
   no other session took. After an end, it has no claims.
-- `/clear` does not end the session.
 - A lead that comes back after an end or a resume is the lead again,
-  unless another session became the lead meanwhile. `/clear` keeps the
+  unless another session became the lead meanwhile.
   lead.
-
-### A new start is blank
-
-A session that starts again comes back blank: after `/clear`, after a
-resume, and in a new Claude Code process. It keeps its ID, its threads
-and its lead, but its claims are free at once. The start hook tells
-the session which claims it lost. A message of the server wakes the
-session too, so a process of the session that still works hears of it
-(see [When riff ends your claim](#when-riff-ends-your-claim)).
-Another session can take them.
-
-```mermaid
-sequenceDiagram
-    participant C as Claude Code
-    participant H as start hook
-    participant S as riff-server
-    participant B as other session
-    Note over C: /clear, resume or a new process
-    C->>H: start
-    H->>S: start
-    S-->>H: freed: issue-12
-    H-->>C: "This new start freed your claims: issue-12 ..."
-    B->>S: claim issue-12
-    S-->>B: granted
-    B->>B: finds branch worktree-issue-12, goes on from it
-```
-
-A session that takes an item looks for the work of an earlier session
-first: a pushed branch, or a worktree on its machine. It goes on from
-that work (see [A branch with WIP commits](#a-branch-with-wip-commits)).
-A compaction is not a new start: the session keeps its claims.
-
-To see that a new start freed the claims, run this after `/clear`:
-
-```sh
-riff who
-```
-
-The riff plugin runs the end hook for you. To end a session by hand,
-for example one that runs with no plugin, run this in its directory
-with its `RIFF_SESSION`:
-
-```sh
-echo '{"reason":"other"}' | riff hook session-end
-```
-
-### Run an agent inside a session
-
-A session can start a second agent in a Bash command, for example to
-try a prompt. That agent is not a riff session. Its start does not
-free the claims of the session, and its end does not end the session.
-It gets no riff context and no riff tools:
-
-```sh
-claude -p "Say ok."
-```
-
-riff knows the agent from its processes. A `riff mcp` of another
-agent runs above it.
-
-```mermaid
-flowchart LR
-    S["the session: claude"] --> M["riff mcp"]
-    S --> B["Bash command"] --> N["claude -p"]
-    N --> H["start hook"]
-    H -- "a riff mcp runs above my agent" --> X["no start call: the claims stay"]
-```
-
-Do not use `riff` commands in that agent. They act for the session
-above it.
 
 ### Start an item again
 
@@ -1929,7 +1467,7 @@ Earlier work on issue-12: the pushed branch origin/worktree-issue-12 at 1a2b3c4 
   squash merge, the branch is gone, but `main` holds the work. riff
   then counts no commit as not pushed.
 - A verify claim gets no such line: a verify worktree holds no work.
-- The start hook lists the earlier work of the clone that no live
+- riff lists the earlier work of the clone that no live
   session owns, at most 8 items. So a new session sees it before it
   picks an item.
 
@@ -1966,81 +1504,6 @@ You released issue-12 in como-technologies/riff for the session 068a2cc2. The it
 - The next session claims the item, and goes on from the pushed
   branch. See
   [See the earlier work on an item](#see-the-earlier-work-on-an-item).
-
-## Leave and join the riff
-
-Each Claude Code session joins the riff when it starts. You can take
-one session out of the riff, and put it back later. Your other
-sessions keep riffing.
-
-```mermaid
-sequenceDiagram
-    participant P as you
-    participant A as session
-    participant S as riff-server
-    P->>A: /riff:leave
-    A->>A: WIP commit and push, when it holds a claim
-    A->>S: end: not in who, claims free
-    Note over A: watch stops, tools refuse, no wakes
-    P->>A: /riff:join
-    A->>S: register, same session ID
-    A->>A: start the watch, start routine
-```
-
-- A session that holds a claim pushes its work first, as a WIP commit
-  on its branch. On the default branch it refuses, and stays in the
-  riff. It also refuses in a dir that is not the top of a git worktree,
-  so it never commits to a repository above that dir.
-- A session that left makes no call to `riff-server`. Its riff tools
-  refuse, except `join`. The hooks add no riff context. The status line
-  shows `(left)`. The watch, the hooks and each `riff` command of the
-  session stop too.
-- The leave holds over `/clear`, a resume, and a restart of the
-  machine. A new session joins as usual.
-- You can also say it in plain words: "leave the riff" or "join the
-  riff".
-
-### Leave the riff
-
-In the Claude Code session, run:
-
-```sh
-/riff:leave
-```
-
-To see that the session left, run this in a shell:
-
-```sh
-riff who
-```
-
-The list does not show the session. The status line of the session
-shows `(left)` after its ID.
-
-### Check that a session stays out
-
-The leave is a mark on your machine: an empty file `left-ID`, where ID
-is the session ID. Each riff process of the session reads the mark
-before each request, and sends nothing. To see the marks, run:
-
-```sh
-ls "${XDG_STATE_HOME:-$HOME/.local/state}"/riff/left-*
-```
-
-Then run `riff who` again after 3 minutes. If the list shows the
-session, a process of the session sent a request: that is a fault of
-riff.
-
-### Join the riff again
-
-In the same session, run:
-
-```sh
-/riff:join
-```
-
-The session comes back with the same session ID, starts its watch, and
-looks for work.
 
 ## Join the work
 
@@ -2255,13 +1718,12 @@ the user in the repository: each live session with no claim. Each other
 session sees it at its next read. A verify request is free work: a
 session picks it like any other item.
 
-A live check of new code runs in a dev session (see
-[Test a change without the shared riff](development.md#test-a-change-without-the-shared-riff)).
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The pull request then has `Refs #N`,
 so the merge leaves the issue open until that check passes. The rules
 of GitHub are in
-[Merge by pull request on GitHub](development.md#merge-by-pull-request-on-github).
+[Merge by pull request on
+GitHub](development.md#merge-by-pull-request-on-github).
 
 Each step on GitHub is one `riff` command, a thin wrapper around the
 `gh` of your machine. A session runs one command for one step, with no
@@ -2279,11 +1741,11 @@ The issue is the claim `issue-N` of the session. Give `--issue 12`
 when the session holds no claim or more than one. The body gets the
 link line `Closes #12`, the summary of `summary.md`, and the trailers
 of the issue and its wave, in the form of
-[Check a pull request on GitHub](development.md#check-a-pull-request-on-github).
-The pull request gets the wave of the issue. Then `riff pr open`
-turns on auto-merge with a squash at once. It opens nothing when the
-pull request breaks a rule of the hygiene check, for example a title
-that ends with `(#12)`.
+[Check a pull request on
+GitHub](development.md#check-a-pull-request-on-github). The pull request
+gets the wave of the issue. Then `riff pr open` turns on auto-merge with
+a squash at once. It opens nothing when the pull request breaks a rule
+of the hygiene check, for example a title that ends with `(#12)`.
 
 `summary.md` can also hold the link line and the trailers. Then
 `riff pr open` adds only the lines that are missing. It opens nothing
@@ -2315,8 +1777,8 @@ see
 
 ### When a pull request stops
 
-A pull request can stop with no sign. The `riff mcp` of the lead looks
-at the open pull requests each minute, and sends a message in two
+A pull request can stop with no sign. The `riff relay mcp` of the lead
+looks at the open pull requests each minute, and sends a message in two
 cases:
 
 ```mermaid
@@ -2354,8 +1816,8 @@ Then send a new verify request for the new commit.
 A pull request merges when the Gate of its own head passed, also when
 `main` moved after that. So two pull requests that each pass their
 Gate can break `main` together. Then the Gate of each later pull
-request fails too. The `riff mcp` of the lead looks at the Gate of the
-head of `main` each minute:
+request fails too. The `riff relay mcp` of the lead looks at the Gate of
+the head of `main` each minute:
 
 ```mermaid
 flowchart TD
@@ -2488,53 +1950,10 @@ gives it to a free session:
 riff post --to user=mike,repo=como-technologies/riff,lead=true "verify request: issue-6, branch issue-6, commit 1a2b3c4"
 ```
 
-## After /clear
-
-`/clear` gives a Claude Code session a new session ID. Riff keeps the
-old ID. The session keeps its threads, its lead and its watch. Its
-claims are free: see [A new start is blank](#a-new-start-is-blank).
-
-```mermaid
-sequenceDiagram
-    participant C as Claude Code
-    participant M as riff mcp
-    participant F as file on the machine
-    participant H as start hook
-    participant W as riff watch
-    C->>M: start, session ID a6cf
-    M->>F: write a6cf, lock while riff mcp runs
-    Note over C: /clear: new session ID 9b2e
-    C->>H: start, session ID 9b2e
-    H->>F: read a6cf
-    H-->>C: "this session is ...?session=a6cf"
-    C->>W: start, session ID 9b2e
-    W->>F: read a6cf
-    W->>W: watch as a6cf
-```
-
-- `riff mcp` does not restart after `/clear`. It keeps the old ID, and
-  the riff tools act as that ID.
-- `riff mcp` writes its ID to a file in
-  [the local folder](#the-local-folder). It locks the file while it
-  runs.
-- `riff watch`, the start hook and each `riff` command of the session
-  read the file. So each part of the session uses the old ID.
-- The watch from before `/clear` keeps running. The start hook tells
-  the session to keep it.
-- One `riff watch` runs for each session. A second watch for the same
-  session stops at once and says why.
-
-To see that the session is in the riff one time, with no claims,
-run:
-
-```sh
-riff who
-```
-
 ## The local folder
 
 riff keeps the files of this machine in its local folder: the session
-ID of each `riff mcp`, the locks, the last status line, the log of
+locks, the log of
 the update. The folder is the first of these that is set:
 
 1. `$RIFF_HOME/state`
@@ -2730,7 +2149,8 @@ como-technologies/riff
 
 The `read` tool of an agent session shows the same order. Only its
 part of the messages to you after a page comes before it. See
-[One read after a wake shows the message of the wake](#one-read-after-a-wake-shows-the-message-of-the-wake).
+[One read after a wake shows the message of the
+wake](#one-read-after-a-wake-shows-the-message-of-the-wake).
 
 ### A message that came before the start of a session
 
@@ -2821,8 +2241,8 @@ When the connection ends, the chat connects again by itself. Then it
 shows each line that came while it was away, once, as `riff tail`
 does (see "See the messages of a break"). When the first connect
 fails, it tries once more at once. While it cannot connect, it shows
-`(reconnecting…)`, then `(back)`. `riff tail` connects again in the same
-way.
+`(reconnecting…)`, then `(back)`. `riff tail` connects again in the
+same way.
 
 The chat on a phone is a design, and not built yet: see
 [riff on a phone](riff-mobile.md).
@@ -2908,7 +2328,8 @@ sequenceDiagram
 - A message is verified when its signature is valid, and its key is
   the key of a live sign-in of the sender.
 - A message that is not verified never counts as from the lead. See
-  [When a message of the lead counts](#when-a-message-of-the-lead-counts).
+  [When a message of the lead
+  counts](#when-a-message-of-the-lead-counts).
 - Without sign-in, `riff-server` keeps no signature. See the next
   part.
 
@@ -2930,15 +2351,17 @@ flowchart LR
 This holds only for a riff with no sign-in, on a network that you
 trust. Each program that can reach the riff can send a message with
 any name, also as your lead (see
-[When a message of the lead counts](#when-a-message-of-the-lead-counts)).
+[When a message of the lead
+counts](#when-a-message-of-the-lead-counts)).
 
 So a riff with no sign-in listens only on a loopback address, for
 example `127.0.0.1`. To listen on your network, give it an OAuth
 client (see
-[Run the server in a terminal](development.md#run-the-server-in-a-terminal)).
-For a network that you
-trust, see
-[A riff on your network with no sign-in](development.md#a-riff-on-your-network-with-no-sign-in).
+[Run the server in a
+terminal](development.md#run-the-server-in-a-terminal)). For a network
+that you trust, see
+[A riff on your network with no
+sign-in](development.md#a-riff-on-your-network-with-no-sign-in).
 
 `riff-server` has no TLS. On a network, the traffic is plain HTTP. For
 TLS, put a proxy in front of it, or run it on a platform that gives
@@ -2979,34 +2402,11 @@ names them. Give more of the ID.
 
 ## Wake a session
 
-A Claude Code session runs the watch as a background task of its
-Bash tool. The task ends at the first wake, and its end wakes the
-session. The session reads and
-starts the watch again in the same response, also in the middle of
-a turn. So a wake costs one request.
-
-```mermaid
-sequenceDiagram
-    participant S as session
-    participant W as riff watch --once
-    participant E as riff-server
-    S->>W: start (background task)
-    W->>E: watch
-    E-->>W: new message
-    W-->>S: one line, then exit (wakes the session)
-    S->>E: read
-    S->>W: start again
-```
-
-To see the wake line yourself, run the watch in a terminal. It prints
-one line at the next wake, then exits:
-
-```sh
-riff watch --once
-```
-
-Without `--once`, `riff watch` prints one line for each wake until
-you stop it.
+A session wakes when a message for it comes. A session in a container
+has no watch of its own: the riff daemon watches its wakes for it (see
+[How a container session gets a
+message](#how-a-container-session-gets-a-message)). The lead starts one
+watch (see below).
 
 ### Wake the lead in a container with no restart
 
@@ -3063,70 +2463,6 @@ One read after a wake is enough: the next watch does not wake again
 for the messages of that part. Later pages show them again in their
 place.
 
-### The watch ends before the limit of a background task
-
-Claude Code stops a background task after 2 hours at most. Its notice
-tells the session not to start the task again. A session with no watch
-gets no wake, and `riff who` shows it `offline`.
-
-So `riff watch --once` ends by itself when no wake came in 100
-minutes. It prints one line and exits with status 0:
-
-```text
-riff: no wake came in 100 minutes. This watch ends before the time limit of a background task. It is a normal end. Call the riff read tool with no thread and start the watch again at once, in the same response.
-```
-
-The session reads and starts the watch again, as after a wake. The new
-watch starts at once, so the session stays live. No wake is lost: a new
-watch wakes the session when an addressed message is unread.
-
-```mermaid
-sequenceDiagram
-    participant S as session
-    participant W as riff watch --once
-    participant E as riff-server
-    S->>W: start (background task)
-    W->>E: watch
-    Note over W: no wake in 100 minutes
-    W-->>S: one line, then exit 0
-    S->>E: read
-    S->>W: start again
-    E-->>W: new message
-    W-->>S: one line, then exit (wakes the session)
-```
-
-When Claude Code stops the watch at its own limit, the session does
-the same: it reads and starts the watch again, also when the notice
-says not to. Only a line of the watch itself, "Do not start the watch
-again now", stops a new start.
-
-Without `--once`, the watch has no limit. An update of riff does not
-start the time again.
-
-### Change the limit of the watch
-
-Show the limit:
-
-```sh
-riff watch limit
-```
-
-```text
-watch.limit  6000  (/home/mike/.config/riff/config.toml)
-riff watch --once ends after 6000 seconds with no wake. Set it with: riff watch limit SECONDS
-```
-
-Set another limit in seconds, for a harness with a shorter limit. This
-sets 50 minutes:
-
-```sh
-riff watch limit 3000
-```
-
-0 turns the limit off. The setting is the key `watch.limit` in
-`~/.config/riff/config.toml` (`$XDG_CONFIG_HOME/riff/config.toml`). A
-watch reads it when it starts.
-
 ### Post a note
 
 A wake costs the woken session a read of its whole context. So a post
@@ -3138,7 +2474,7 @@ their next read:
 riff post --kind note --to repo=como-technologies/riff "Board: Wave 4 starts."
 ```
 
-The skill tells each session which posts wake:
+These posts wake:
 
 | Post | Wakes |
 |---|---|
@@ -3223,13 +2559,10 @@ A claim stays while its session works. Only these steps end it:
 | The session releases the item. | At once. | It made the step. |
 | The lead frees it (see [Free the claim of another session](#free-the-claim-of-another-session)). | At once. | A message wakes it. |
 | The session ends, for example with `/exit`. | At once. | No: it is gone. |
-| The session starts again: `/clear`, a resume, a new Claude Code process (see [A new start is blank](#a-new-start-is-blank)). | At once. | A message wakes it. |
 | The session stops with no end, for example after `kill -9`. | 5 minutes after its last sign of life. | No: it is gone. |
 
 Each other step keeps the claim: `move`, a keep-alive, `status`, a
-read, a post, a compaction, a pause, and an agent that the session
-runs (see
-[Run an agent inside a session](#run-an-agent-inside-a-session)).
+read, a post, a compaction and a pause.
 To see the claims of your session after a step, look at its URI:
 
 ```sh
@@ -3506,20 +2839,17 @@ The facts come from three places:
 
 ```mermaid
 flowchart LR
-    H["the hooks of the session:<br/>each tool call, the end of each turn"] --> F[(a file on the machine)]
-    F --> K["riff mcp: the keep-alive"]
+    K["riff relay mcp: the keep-alive"]
     G["riff pr open, riff verify, riff pr wait,<br/>the look of the lead (gh)"] --> S
     K --> S["riff-server"]
     C["claims, pauses, clears"] --> S
     S --> W["the state in riff who and riff top"]
 ```
 
-- The hooks see each tool call, each prompt of the person and the end
-  of each turn. A hook writes the newest fact to a file on the
-  machine, and makes no call. The
-  keep-alive of `riff mcp` carries it to the server, each minute, and
-  each 10 seconds in a worker. A riff tool and `riff watch` are no
-  work. The text of a Bash call is its description, never its command.
+- The keep-alive of `riff relay mcp` carries the newest fact of the
+  session to the server, each minute, and each 10 seconds in a worker.
+  A riff tool and `riff relay watch` are no work. The text of a Bash
+  call is its description, never its command.
 - The server has no credential of GitHub. `riff pr open`, `riff
   verify`, `riff pr wait` and the look of the lead each minute tell it
   the state of each pull request, and the open items of each `Needs:`
@@ -3571,7 +2901,7 @@ matches wins:
 | `busy` | green | the session holds a claim. Or the lead is in a turn | `working on #7`, or `reviewing #7` for a verify claim, then the work, then the step |
 | `idle` | dim | each other session | `ready for work for 6m`, then a current step. The lead: `monitoring work for 6m`.. The session of the riff daemon: `hosts containers for 6m` |
 
-The work is the newest fact of the hooks: `runs Bash: run just ci for
+The work is the newest fact of the session: `runs Bash: run just ci for
 12m`, `works, 5s ago` between two tools, or `turn ended 5m ago`.
 
 The author of an item waits for the verify, then for the merge. The
@@ -3628,7 +2958,7 @@ The lead has no claims. riff makes its state from what it does:
 
 | State | When | Detail |
 |---|---|---|
-| `busy` | the hooks see a turn that runs | the work, for example `runs Bash: deploy the stage for 2m` |
+| `busy` | a turn runs | the work, for example `runs Bash: deploy the stage for 2m` |
 | `waiting` | the lead said `blocked` and waits for its person | `waiting for mike: run riff owner --take (3m ago)` |
 | `idle` | the turn ended, and nothing waits | `monitoring work for 6m` |
 
@@ -3641,7 +2971,7 @@ stateDiagram-v2
     waiting --> busy: the next prompt of the person
 ```
 
-A lead that calls only the command line, with no `riff watch` open,
+A lead that calls only the command line
 still shows in `riff who` and `riff top` while it calls. Each `riff`
 call, `riff status` too, is a sign of life. After 3 minutes with no
 call, the lead is gone.
@@ -3738,8 +3068,8 @@ sequenceDiagram
     Note over P: riff top: the lead gave no answer
 ```
 
-The `riff mcp` of the lead looks each minute. The notification holds
-the session, its item and the reason, and no text of a message. It
+The `riff relay mcp` of the lead looks each minute. The notification
+holds the session, its item and the reason, and no text of a message. It
 needs a desktop: a display and `notify-send`, as on GNOME. A machine
 with no desktop gets no notification, and nothing fails. The keys
 `lead.wake` (minutes, 15 by default) and `lead.notify` (true by
@@ -3917,7 +3247,8 @@ flowchart TB
 - The first session of the person in the repository becomes the lead,
   when it starts. The person does nothing. A later session does not
   become the lead. A worker never becomes the lead: see
-  [When your only session is a worker](#when-your-only-session-is-a-worker).
+  [When your only session is a
+  worker](#when-your-only-session-is-a-worker).
 - The URI of the lead has `lead=true`. `riff who` shows it.
 - A lead that ends, stops for more than 5 minutes, or works in another
   repository, is not the lead until it comes back. A lead that leaves
@@ -4015,109 +3346,8 @@ You look only at your lead. So a session that is not the lead never
 asks you in its own terminal. When a permission refusal stops it, for
 example `riff pr open`, it tells the lead the pull request, the commit
 and the verify result. You decide. No session pushes to `main` (see
-[Merge by pull request on GitHub](development.md#merge-by-pull-request-on-github)).
-
-### Find the pane of a session
-
-Show each session in the status line of Claude Code: its short session
-ID, `lead`, its claims, and `blocked`. For example:
-
-```text
-riff 3.2.0 como-technologies/riff 2a880834 lead
-riff dceb0b68 issue-82 blocked
-```
-
-The line of a lead starts with the build of riff and the repository.
-So when you lead in more than one repository, you can see which lead
-is which. The build is the build of the `riff mcp` of the session, else
-of the installed riff. After an update, the line shows the build that
-the session still runs, and the tag `v3.3.0 installed` says that a new
-build waits. The repository is the `origin` of the working folder, as
-`OWNER/REPO`. Both come from this machine, not from riff-server. The
-line of a worker stays short.
-
-The short ID is the same as in `riff who`. `riff connect claude` sets
-this status line for you, when your Claude Code settings have no other
-`statusLine`. When they have one, riff leaves it, and says so. To use
-the riff status line then, put this in `~/.claude/settings.json` in
-place of your `statusLine`:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "riff statusline"
-  }
-}
-```
-
-Claude Code runs the status line after each change of the
-conversation. The reply of riff-server to the call `GET /v1/me` makes
-the line. The reply holds only this session and the build of the
-server, not the whole riff. The call changes nothing on the server.
-
-The `riff mcp` of the session asks for the reply and keeps it: after
-each `claim`, `release`, `lead`, `blocked` and `join`, and at its
-keep-alive, at most each 30 seconds. The status line shows a kept
-reply that is less than 90 seconds old, and asks riff-server nothing.
-So a claim of the session shows at once, and a change by another
-session, for example a release by the lead, can show up to 60 seconds
-late. Only when no reply is kept does the status line ask riff-server
-itself. That call costs a swap for a session token (see
-[Sign-in](#sign-in)), and a call to the OS keyring (see
-[Count the calls to the keyring](development.md#count-the-calls-to-the-keyring)).
-
-```mermaid
-sequenceDiagram
-    participant C as Claude Code
-    participant M as riff mcp
-    participant S as riff statusline
-    participant R as riff-server
-    M->>R: GET /v1/me, after a claim and at the keep-alive
-    R-->>M: this session, the build
-    Note over M: keeps the reply
-    C->>S: the session ID on stdin
-    alt a reply less than 90 s old is kept
-        S-->>C: the line of the kept reply
-    else no reply is kept
-        S->>R: GET /v1/me
-        R-->>S: this session, the build
-        Note over S: keeps the reply
-        S-->>C: riff 3.2.0 como-technologies/riff 2a880834 lead issue-82
-    end
-```
-
-Then find the session of `riff who` by its short ID:
-
-```sh
-riff who
-```
-
-### See a new release in the status line
-
-When the riff runs a newer release than your session, the status line
-adds a tag. For example:
-
-```text
-riff 0.5.0 como-technologies/riff 2a880834 lead update v0.6.0: riff update
-```
-
-| Tag | What it means | What to do |
-|---|---|---|
-| `update v0.6.0: riff update` | This machine has an older release. | Run `riff update`. |
-| `updating to v0.6.0` | With `update.auto` on, riff installs the release now, in the background. | Wait. |
-| `v0.6.0 installed` | The release is installed. The session still runs the old one. | Wait. The riff tools of the session run the new release when no tool call runs. |
-
-To update this machine:
-
-```sh
-riff update
-```
-
-A dev build or another commit of the same release shows no tag. The
-status line asks the riff nothing more for the tag. When the riff does
-not answer in time, the status line shows no tag. To update by itself,
-see [Update riff by itself](#update-riff-by-itself).
+[Merge by pull request on
+GitHub](development.md#merge-by-pull-request-on-github)).
 
 ### The lead conducts your sessions
 
@@ -4289,9 +3519,9 @@ checkpoint, then exits.
 When a write fails for 10 seconds, the server stops, and a new
 instance replays the log without the lost change. The call of that
 change got an error, and `riff` tries it again. A restart loses the open
-streams. `riff watch` and `riff tail` connect again. The session then
-gets one wake if an addressed message is unread. Cloud Run also ends
-each stream after 60 minutes. The streams then connect again in the
+streams. `riff relay watch` and `riff tail` connect again. The session
+then gets one wake if an addressed message is unread. Cloud Run also
+ends each stream after 60 minutes. The streams then connect again in the
 same way. `riff tail` and `riff chat` then show each message that came
 while they were not connected.
 
@@ -4332,7 +3562,8 @@ refreshes one time by itself.
 The people are not in that object. Who may join, the owner, the
 admins, the members and the riff ID are records of the log. So they
 stay after a restart, and the log shows who changed them. See
-[Find who changed the people](development.md#find-who-changed-the-people).
+[Find who changed the
+people](development.md#find-who-changed-the-people).
 
 A removal ends each sign-in of the person. The server writes the
 record first, and then ends the sign-ins. Each sign-in keeps the
@@ -4392,7 +3623,7 @@ sequenceDiagram
     participant O as old instance
     participant S as Cloud Storage
     participant N as new instance
-    participant W as riff watch
+    participant W as riff relay watch
     N->>S: load the sign-ins, the checkpoint and the log
     alt the load fails
         Note over N: exits: no open port, no lease
@@ -4435,10 +3666,9 @@ At an instance change, `riff` sees this:
   the text `The request was aborted because there was no available
   instance`. That reply names no build, so `riff` knows that it comes
   from Cloud Run, and tries the call again as after a 503. Each
-  command, `riff mcp`, `riff watch`, `riff tail`, `riff chat` and the
-  daemon do this. The status line shows `(not in the riff)` for one
-  refresh. `riff server` and `riff update` say that the server does not
-  answer: run them again.
+  command, `riff relay mcp`, `riff relay watch`, `riff tail`,
+  `riff chat` and the daemon do this. `riff server` and `riff update`
+  say that the server does not answer: run them again.
 - At a deploy, Cloud Run can start a second instance of the old
   revision while the new instance waits. The lease holds the number of
   the revision of its instance, so the second old instance does not
@@ -4537,10 +3767,10 @@ and shows the line below it.
 A server on one machine with `--dir` opens its port after its load,
 and replies 503 in the gap. Before the end of the load, each connect is
 refused. A `riff` that got a reply from the server before waits in the
-same way: `riff mcp`, `riff watch`, `riff chat` and `riff top` go on
-after a restart. A new `riff` command cannot tell a server on this
-machine that starts from no server, so a refused connect to
-`127.0.0.1` or `localhost` ends it at once. Wait for the line
+same way: `riff relay mcp`, `riff relay watch`, `riff chat` and
+`riff top` go on after a restart. A new `riff` command cannot tell a
+server on this machine that starts from no server, so a refused connect
+to `127.0.0.1` or `localhost` ends it at once. Wait for the line
 `riff-server listens on` in the log of the server, then run the
 command again. The line `riff-server serves` comes after the gap.
 
@@ -4563,7 +3793,7 @@ has time limits:
 
 The server sends a keep-alive line on each stream each 15 seconds. So
 a stream that is alive never meets the limit of 45 seconds. A stream
-of `riff watch`, `riff tail`, or `riff chat` that
+of `riff relay watch`, `riff tail`, or `riff chat` that
 died comes back in at most 45 seconds. The calls also send an HTTP/2
 ping each 10 seconds, and drop a connection with no answer in 5
 seconds.
@@ -4606,8 +3836,6 @@ its first try to its end.
 |---|---|
 | A short command, for example `riff who` or `riff post` | 60 seconds |
 | A tool call of an agent session, a line of `riff chat`, a look of `riff top` | 60 seconds |
-| The start of a Claude Code session | 3 seconds |
-| The status line | 2 seconds, one try |
 | The end of a session | 3 seconds |
 
 When a try gets no reply, riff tries again after a short wait, while
@@ -4642,7 +3870,8 @@ Error: cannot reach riff-server at http://127.0.0.1:7878
 
 Start tmux in your repository, then start the lead with Remote
 Control (see
-[Answer your lead from the Claude app](#answer-your-lead-from-the-claude-app)):
+[Answer your lead from the Claude
+app](#answer-your-lead-from-the-claude-app)):
 
 ```sh
 tmux new -s riff
@@ -4684,7 +3913,7 @@ the main clone.
 
 When the riff runs and the current wave has free work, riff asks the
 riff daemon to run the wave. You do not ask, and the lead does not
-remember a step. The `riff mcp` of your lead does it, once each 10
+remember a step. The lead does it, once each 10
 seconds. The daemon runs each item and each verify in a container. riff
 starts no worker in tmux.
 
@@ -4724,11 +3953,11 @@ flowchart TD
 - **The wave.** riff asks only the daemon of the machine of the lead,
   and only when no wave of the repository runs there. The daemon runs
   each item in a container, in its own limit (see
-  [Let the rollout of the lead run the wave](development.md#let-the-rollout-of-the-lead-run-the-wave)).
-  While the wave runs, the rollout asks nothing. The claims on
-  riff-server keep the sessions from one item. A second machine runs
-  its own wave (see
-  [Use a second machine](development.md#use-a-second-machine)).
+  [Let the rollout of the lead run the
+  wave](development.md#let-the-rollout-of-the-lead-run-the-wave)). While
+  the wave runs, the rollout asks nothing. The claims on riff-server
+  keep the sessions from one item. A second machine runs its own wave
+  (see [Use a second machine](development.md#use-a-second-machine)).
 - **A daemon that does not answer.** Each look waits at most 5 seconds
   for the answer of the daemon. A daemon that gives no answer in that
   time runs no wave. The lead gets one note with the reason.

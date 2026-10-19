@@ -311,7 +311,6 @@ fn start(dir: &Path, tag: &str, url: &str) -> Result<()> {
 /// [`DEFAULT_SERVER`](riff_client::api::DEFAULT_SERVER) as `local`.
 pub async fn run(
     cargo: &Path,
-    claude: &Path,
     tag: &str,
     server: &str,
     local: &str,
@@ -333,7 +332,7 @@ pub async fn run(
     let done = match identity::working_dir() {
         Ok(_) => {
             local::set_tried(&dir, &mark)?;
-            lifecycle::update(cargo, claude, Some(tag), server, local).await
+            lifecycle::update(cargo, Some(tag), server, local).await
         }
         Err(e) => Err(e),
     };

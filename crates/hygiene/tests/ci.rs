@@ -373,7 +373,5 @@ fn the_text_recipe_of_the_justfile_runs_no_code_check() {
     assert!(full.ends_with("{{just_executable()}} ci-checks"), "{full}");
     assert!(justfile.contains("recipe=$(cargo run -q -p hygiene -- ci)"));
     assert!(justfile.contains("cargo run -q -p hygiene -- wrap docs/src"));
-    assert!(
-        justfile.contains("cargo run -q -p hygiene -- blank docs/src crates/riff/claude-plugin")
-    );
+    assert!(justfile.contains("cargo run -q -p hygiene -- blank docs/src"));
 }

@@ -36,7 +36,7 @@ flowchart TB
     subgraph T["in a terminal: the crate riff"]
         CLI["riff COMMAND<br/>the CLI: plain lines, --format json"]
         TUI["riff<br/>the TUI: ratatui"]
-        MCP["riff mcp<br/>the riff tools of a session"]
+        MCP["riff relay mcp<br/>the riff tools of a session"]
     end
     subgraph G["the graphical UIs: Slint"]
         PH["the phone app<br/>Android"]
@@ -119,8 +119,8 @@ session.
 
 ## The CLI
 
-The CLI stays simple and complete. It serves scripts, agents (through
-the MCP server) and hooks.
+The CLI stays simple and complete. It serves scripts and agents (through
+the MCP server).
 
 - Each command prints plain lines that are easy to `grep`.
 - Each command that prints data takes `--format text` (the default) or

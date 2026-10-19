@@ -97,58 +97,6 @@ fn top(sessions: &[SessionInfo]) -> String {
     anstream::adapter::strip_str(&top.view()).to_string()
 }
 
-/// The hooks write the facts, and the keep-alive carries them: `who`
-/// shows the work with no `status` call (01M41FZNTPXQNCZ1S99HE42PYQ).
-#[tokio::test(flavor = "multi_thread")]
-async fn the_hooks_and_the_keep_alive_show_the_work() {
-    let server = start_server().await;
-    let (api, lead, worker) = riff(&server).await;
-    api.claim(&worker, &repo(), "issue-12").await.unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let input = r#"{"session_id":"x","tool_name":"Bash","tool_input":{"command":"just ci","description":"Run just ci"}}"#;
-    riff_cmd(&server, dir.path(), "w1")
-        .args(["hook", "tool"])
-        .write_stdin(input)
-        .assert()
-        .success();
-
-    // `riff mcp` reads the file at each keep-alive.
-    let state = dir.path().join("state");
-    let activity = riff::activity::read(&state, "w1", riff::activity::now_ms()).unwrap();
-    assert_eq!(activity.tool.as_deref(), Some("Bash: Run just ci"));
-    api.alive_with(&worker, Some(activity), None).await.unwrap();
-    let _watch = api.watch(&worker).await.unwrap();
-    let w1 = info(&api, &lead, &worker).await;
-    assert_eq!(w1.state, Some(SessionState::Busy));
-    let lines: Vec<String> = riff::state::detail(&w1, &|_| None)
-        .into_iter()
-        .map(|(line, _)| line)
-        .collect();
-    assert!(
-        lines[1].starts_with("runs Bash: Run just ci for "),
-        "{lines:?}"
-    );
-
-    // A riff tool is no work: the fact stays.
-    let read = r#"{"tool_name":"mcp__riff__read","tool_input":{}}"#;
-    riff_cmd(&server, dir.path(), "w1")
-        .args(["hook", "tool", "--done"])
-        .write_stdin(read)
-        .assert()
-        .success();
-    let activity = riff::activity::read(&state, "w1", riff::activity::now_ms()).unwrap();
-    assert_eq!(activity.tool.as_deref(), Some("Bash: Run just ci"));
-
-    // The end of the turn.
-    riff_cmd(&server, dir.path(), "w1")
-        .args(["hook", "stop"])
-        .write_stdin(r#"{"session_id":"x"}"#)
-        .assert()
-        .success();
-    let activity = riff::activity::read(&state, "w1", riff::activity::now_ms()).unwrap();
-    assert!(!activity.turn && activity.tool.is_none(), "{activity:?}");
-}
-
 /// The facts of the forge make `waiting`, with no `status` call
 /// (01M41FZP2C4Z4J6WKRXZ5B31EH, 01M41FZP9A50CH4A2VX344DW49).
 #[tokio::test(flavor = "multi_thread")]

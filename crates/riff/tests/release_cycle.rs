@@ -63,8 +63,6 @@ impl Machine {
         git(&origin, &["init", "-q", "--bare", "-b", "main"]);
         let clone = root.path().join("clone");
         std::fs::create_dir_all(clone.join("deploy")).unwrap();
-        std::fs::create_dir_all(clone.join("crates/riff/claude-plugin/riff/.claude-plugin"))
-            .unwrap();
         std::fs::create_dir_all(root.path().join("bin")).unwrap();
         git(&clone, &["init", "-q", "-b", "main"]);
         for args in [
@@ -80,10 +78,6 @@ impl Machine {
             "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"3.2.0\"\n",
         );
         write("Cargo.lock", LOCK);
-        write(
-            riff::cycle::PLUGIN,
-            "{\n  \"name\": \"riff\",\n  \"version\": \"3.2.0\"\n}\n",
-        );
         std::fs::copy(
             top().join("deploy/release-check.sh"),
             clone.join("deploy/release-check.sh"),
@@ -230,11 +224,6 @@ async fn cut_pushes_the_branch_and_opens_the_release_pull_request() {
         lock.contains("name = \"serde\"\nversion = \"1.0.229\""),
         "{lock}"
     );
-    let plugin = git(
-        &machine.origin(),
-        &["show", &format!("release-v3.3.0:{}", riff::cycle::PLUGIN)],
-    );
-    assert!(plugin.contains("\"version\": \"3.3.0\""), "{plugin}");
     let subject = git(
         &machine.origin(),
         &["log", "-1", "--format=%s", "release-v3.3.0"],
@@ -502,12 +491,11 @@ impl Machine {
 async fn merged_release() -> (Machine, String) {
     let machine = Machine::new().await;
     let clone = machine.clone();
-    for name in ["Cargo.toml", "Cargo.lock", riff::cycle::PLUGIN] {
+    for name in ["Cargo.toml", "Cargo.lock"] {
         let file = clone.join(name);
         let new = std::fs::read_to_string(&file)
             .unwrap()
-            .replace("version = \"3.2.0\"", "version = \"3.3.0\"")
-            .replace("\"version\": \"3.2.0\"", "\"version\": \"3.3.0\"");
+            .replace("version = \"3.2.0\"", "version = \"3.3.0\"");
         std::fs::write(file, new).unwrap();
     }
     git(&clone, &["commit", "-q", "-am", "Release v3.3.0 (#1140)"]);
@@ -1036,39 +1024,6 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         "{start}"
     );
     assert!(book::commands_in(&start).contains(&"riff release approve v3.3.0".to_owned()));
-}
-
-/// The skill drives the release cycle only with the riff commands, and
-/// has no tag line, no `gh release`, no `gh api` and no `gh workflow`
-/// line.
-#[test]
-fn the_skill_makes_a_release_with_the_riff_commands() {
-    let skill =
-        std::fs::read_to_string(top().join("crates/riff/claude-plugin/riff/skills/riff/SKILL.md"))
-            .unwrap();
-    for command in [
-        "riff release cut",
-        "riff release publish",
-        "riff release status",
-        "riff release test",
-        "riff release approve",
-        "riff release check",
-        "riff release retry",
-        "riff release rollback",
-        "just real-session",
-        "riff wave end N --no-release TEXT",
-    ] {
-        assert!(skill.contains(command), "{command}");
-    }
-    for raw in [
-        "gh release",
-        "git tag",
-        "git push origin v",
-        "gh api",
-        "gh workflow",
-    ] {
-        assert!(!skill.contains(raw), "{raw} in the skill");
-    }
 }
 
 /// Signs in `email` with a new device key, kept in the secret files of

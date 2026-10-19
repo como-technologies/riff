@@ -1,7 +1,7 @@
-//! Waves (R213-R225): the skill, the requirements and the book page
+//! Waves (R213-R225): the requirements and the book page
 //! "Waves" agree. Only their parts "on GitHub" name the objects of the
 //! forge that hold a wave (R222). `riff/CLAUDE.md` has no wave rule:
-//! the skill teaches it.
+//! the book teaches it.
 
 use isolated::Isolated;
 use std::fs;
@@ -13,10 +13,6 @@ fn repo() -> PathBuf {
 
 fn read(path: &str) -> String {
     fs::read_to_string(repo().join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
-}
-
-fn skill() -> String {
-    read("crates/riff/claude-plugin/riff/skills/riff/SKILL.md")
 }
 
 /// The level of a Markdown heading line, for example 2 for `## Waves`.
@@ -89,8 +85,7 @@ fn the_book_has_the_page_waves_with_a_diagram() {
 
 #[test]
 fn only_the_forge_parts_name_milestones() {
-    let mut texts = vec![("SKILL.md".to_owned(), skill())];
-    texts.extend(book());
+    let texts = book();
     let mut forge = 0;
     for (name, text) in &texts {
         let rest = without_forge_parts(text);
@@ -98,16 +93,15 @@ fn only_the_forge_parts_name_milestones() {
         assert!(!words.contains("milestone"), "{name} names milestones");
         forge += usize::from(rest.len() < text.len());
     }
-    // The skill, the requirements, the page "Waves", the page
+    // The requirements, the page "Waves", the page
     // "Development" (check a pull request), the page "Start a Riff"
     // (the rules of gh) and the design of the plan each have a forge
     // part.
-    assert_eq!(forge, 6);
+    assert_eq!(forge, 5);
 }
 
 #[test]
 fn the_skill_the_requirements_and_the_page_agree() {
-    let skill = flat(&skill());
     let requirements = flat(&read("docs/src/requirements.md"));
     let page = flat(&read("docs/src/waves.md"));
     for text in [
@@ -132,11 +126,7 @@ fn the_skill_the_requirements_and_the_page_agree() {
         "merge each item, make a release, deploy the release to the shared server, stop the workers, update each machine, start the sessions again, run the checks after the release, close each item.",
         "A riff with no shared server of its own code skips the release and the deploy.",
     ] {
-        for (name, doc) in [
-            ("SKILL.md", &skill),
-            ("requirements.md", &requirements),
-            ("waves.md", &page),
-        ] {
+        for (name, doc) in [("requirements.md", &requirements), ("waves.md", &page)] {
             assert!(doc.contains(text), "{name} does not say {text:?}");
         }
     }
@@ -148,13 +138,11 @@ fn the_skill_the_requirements_and_the_page_agree() {
 /// check.
 #[test]
 fn a_check_of_the_shared_riff_waits_for_the_release() {
-    let skill = flat(&skill());
     let requirements = flat(&read("docs/src/requirements.md"));
     let verify = flat(&read("docs/src/how-it-works.md"));
     let development = flat(&read("docs/src/development.md"));
     let page = flat(&read("docs/src/waves.md"));
     for (name, doc) in [
-        ("SKILL.md", &skill),
         ("requirements.md", &requirements),
         ("how-it-works.md", &verify),
         ("development.md", &development),
@@ -165,7 +153,6 @@ fn a_check_of_the_shared_riff_waits_for_the_release() {
         );
     }
     for (name, doc) in [
-        ("SKILL.md", &skill),
         ("requirements.md", &requirements),
         ("how-it-works.md", &verify),
         ("development.md", &development),
@@ -175,9 +162,10 @@ fn a_check_of_the_shared_riff_waits_for_the_release() {
         assert!(!doc.contains("check after the merge"), "{name}");
         assert!(!doc.contains("checks after the merge"), "{name}");
     }
-    for (name, doc) in [("SKILL.md", &skill), ("requirements.md", &requirements)] {
-        assert!(doc.contains("runs in a dev session"), "{name}");
-    }
+    assert!(
+        requirements.contains("runs in a dev session"),
+        "requirements.md"
+    );
 }
 
 #[test]
@@ -210,13 +198,11 @@ fn a_milestone_closes_only_with_no_open_issue() {
         );
         assert!(!doc.contains("stay in"), "{doc}");
     }
-    assert!(flat(&skill()).contains("Close it only when it has no open issue."));
 }
 
 #[test]
 fn no_text_says_a_wave_ends_when_its_items_are_merged() {
-    let mut texts = vec![("SKILL.md".to_owned(), skill())];
-    texts.extend(book());
+    let texts = book();
     for (name, text) in &texts {
         let text = flat(text);
         for old in [

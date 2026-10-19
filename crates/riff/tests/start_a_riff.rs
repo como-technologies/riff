@@ -8,10 +8,7 @@
 
 use crate::book;
 
-use isolated::Isolated;
 use std::fs;
-use std::path::Path;
-use std::process::Output;
 
 use book::{commands_of, commands_of_part, each_is_real, page, part};
 
@@ -82,86 +79,6 @@ fn the_install_command_installs_riff_and_its_server_from_the_repository() {
     assert_eq!(words[git + 2..], [env!("CARGO_PKG_NAME"), "riff-server"]);
 }
 
-#[test]
-fn each_riff_command_of_the_page_is_real_and_none_signs_in() {
-    let riff: Vec<String> = commands()
-        .into_iter()
-        .filter(|c| c.starts_with("riff "))
-        .collect();
-    assert_eq!(riff, ["riff connect claude"]);
-    each_is_real(&riff);
-}
-
-/// A fake `claude` command in `dir`. It fails `mcp remove`, as `claude`
-/// does when there is no old entry.
-fn fake_claude(dir: &Path) -> std::path::PathBuf {
-    let path = dir.join("claude");
-    isolated::write_program(&path, "#!/bin/sh\n[ \"$1\" = mcp ] && exit 1\nexit 0\n");
-    path
-}
-
-/// Runs `riff ARGS` for the riff at `server`, away from the runtime of
-/// the riff. The Claude Code settings go to `dir`, never to the real
-/// home.
-async fn riff(server: &str, dir: &Path, args: &[&str]) -> Output {
-    let mut cmd = Isolated::shared().riff();
-    cmd.args(args)
-        .current_dir(dir)
-        .env("RIFF_SERVER", server)
-        .env("RIFF_USER", "ada")
-        .env("XDG_DATA_HOME", dir)
-        .env("RIFF_HOME", dir)
-        .env("HOME", dir.join("home"))
-        .env_remove("CLAUDE_CONFIG_DIR")
-        .env_remove("RIFF_SESSION")
-        .env_remove("CLAUDE_CODE_SESSION_ID");
-    tokio::task::spawn_blocking(move || cmd.output().unwrap())
-        .await
-        .unwrap()
-}
-
-/// Step 3 of "Just this machine": at the riff of this machine, with no
-/// sign-in, `riff connect claude` installs the plugin and signs in to
-/// nothing. Then `riff who` works with no sign-in. The installed
-/// `riff` of the home stays the same (01M3MRDEVR5VPPV6B1BDDVYSBG).
-#[tokio::test]
-async fn step_3_connects_to_the_riff_of_this_machine_with_no_sign_in() {
-    assert_eq!(commands()[2], "riff connect claude");
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let server = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
-    let dir = tempfile::tempdir().unwrap();
-    let claude = fake_claude(dir.path());
-    let installed = dir.path().join("home/.cargo/bin/riff");
-    fs::create_dir_all(installed.parent().unwrap()).unwrap();
-    isolated::write_program(&installed, "#!/bin/sh\necho riff 0.1.0 release\n");
-
-    let connect = riff(
-        &server,
-        dir.path(),
-        &["connect", "claude", "--claude", claude.to_str().unwrap()],
-    )
-    .await;
-    let stdout = String::from_utf8_lossy(&connect.stdout);
-    let stderr = String::from_utf8_lossy(&connect.stderr);
-    assert!(connect.status.success(), "{stdout}{stderr}");
-    assert!(stdout.starts_with("Added the riff plugin"), "{stdout}");
-    assert!(!stdout.contains("sign"), "{stdout}");
-    assert_eq!(stderr, "");
-
-    let who = riff(&server, dir.path(), &["who"]).await;
-    assert!(
-        who.status.success(),
-        "{}",
-        String::from_utf8_lossy(&who.stderr)
-    );
-    assert_eq!(
-        fs::read_to_string(&installed).unwrap(),
-        "#!/bin/sh\necho riff 0.1.0 release\n"
-    );
-    assert!(!installed.is_symlink());
-}
-
 /// "Update riff" of "Start a Riff" is one command.
 #[test]
 fn a_person_updates_riff_with_riff_update() {
@@ -225,7 +142,6 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff cloud delete NAME",
             "riff cloud list",
             "riff login",
-            "riff enable --shared",
             "riff invite EMAIL",
             "riff tail",
             "riff owner --take",
@@ -251,4 +167,17 @@ fn no_book_page_names_a_cloud_run_url() {
         let text = fs::read_to_string(&path).unwrap();
         assert!(!text.contains(".run.app"), "{}", path.display());
     }
+}
+
+#[test]
+fn the_page_has_no_command_of_the_plugin_and_signs_in_nowhere() {
+    let text = page(PAGE);
+    for word in ["riff connect", "riff enable", "riff disable", "riff watch"] {
+        assert!(!text.contains(word), "{PAGE} names {word}");
+    }
+    let riff: Vec<String> = commands()
+        .into_iter()
+        .filter(|c| c.starts_with("riff "))
+        .collect();
+    each_is_real(&riff);
 }

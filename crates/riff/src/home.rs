@@ -16,7 +16,7 @@
 //! | The local files | `DIR/state` |
 //! | The secrets | one file for each secret in `DIR/secrets` |
 //!
-//! Only the tests and `just dev` set it, so that they never touch the
+//! Only the tests set it, so that they never touch the
 //! riff of the machine (01M3MY2KWKBJCQ0BCNC6533RBW). An empty value
 //! counts as unset.
 //!

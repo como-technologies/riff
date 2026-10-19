@@ -13,7 +13,7 @@
 //! | Part | Method | What `riff` gives |
 //! |---|---|---|
 //! | The store of the tokens and of the device key | [`Platform::open_store`] | The OS keyring: the Secret Service on Linux, the Keychain on macOS |
-//! | The secret files of a test or of `just dev` | [`Platform::secret_files`] | `$RIFF_HOME/secrets` |
+//! | The secret files of a test | [`Platform::secret_files`] | `$RIFF_HOME/secrets` |
 //! | The folder of the local files: the refresh lock of the sign-in | [`Platform::local_dir`] | The local folder of riff |
 //! | The folder of the leave marks of the sessions | [`Platform::marks`] | The state folder of riff |
 //! | The name of this machine, in the error of a locked keyring | [`Platform::host`] | The host of the session URI |
@@ -69,7 +69,7 @@ pub trait Platform: Send + Sync {
     }
 
     /// The folder of the secret files, in place of the store: only for
-    /// the tests and `just dev`. The default is `None`.
+    /// the tests. The default is `None`.
     fn secret_files(&self) -> Option<PathBuf> {
         None
     }

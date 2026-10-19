@@ -6,8 +6,8 @@
 //! the short help (`about`) of one subcommand. The long help of each
 //! subcommand stays for `riff help CMD`.
 //!
-//! A hidden subcommand, for example the plumbing that only the plugin
-//! runs, is in no group. `riff help CMD` still shows it.
+//! A hidden subcommand, for example a step that only riff runs, is in no
+//! group. `riff help CMD` still shows it.
 //!
 //! ```
 //! use clap::Command;
@@ -50,9 +50,7 @@ pub struct Group {
 pub const GROUPS: &[Group] = &[
     Group {
         heading: "Get started",
-        commands: &[
-            "connect", "enable", "disable", "setup", "login", "logout", "update", "server",
-        ],
+        commands: &["setup", "login", "logout", "update", "server"],
     },
     Group {
         heading: "Work in the riff",
