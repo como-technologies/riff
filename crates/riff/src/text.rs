@@ -4704,6 +4704,12 @@ pub fn no_program(program: &str) -> String {
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff 3.0 runs on Linux only.";
 
+/// `riff build` in a container with no `--host` (#1204).
+pub const BUILD_NEEDS_HOST: &str = "riff build in a container needs --host HOST: a container has no podman, so the daemon of a host with podman builds. riff daemon status --host lists the hosts.";
+
+/// A worker runs `riff build --host` (#1204).
+pub const BUILD_WORKER: &str = "riff: a worker never runs riff build --host. riff build changed nothing. next: the lead runs riff build --host HOST";
+
 /// The daemon pulls the image of the session, for `riff run` or
 /// `riff init`.
 pub fn run_pulling(image: &str) -> String {

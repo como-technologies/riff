@@ -447,6 +447,22 @@ To use another `just`, give its path:
 riff build --just ~/bin/just
 ```
 
+### Build riff from a container
+
+A container has no podman and no writable `~/.cache`, so `just static`
+fails there. The lead in a container asks the riff daemon of a host with
+podman. The daemon builds in its check clone, and replies with the path
+of the new riff on that host:
+
+```sh
+riff build --host thelio
+```
+
+Name the host as `riff daemon status --host HOST` does. The host needs
+`riff daemon host` in its main clone of the repository. The daemon
+refuses a work session. In a container, `riff build` with no `--host`
+fails.
+
 ### Keep the crates of the static build in a folder
 
 The static build keeps the crates that it downloads in the volume
@@ -3807,8 +3823,9 @@ riff release publish v3.3.0
 
 The lead in a container (`riff lead start`) publishes too, with the
 same line. A work session in a container never publishes. The lead in
-a container builds the riff of main with `riff build` in its own
-folder `RIFF_CHECK`, and its riff commands know their user from
+a container builds the riff of main with `riff build --host HOST` (see
+[Build riff from a container](#build-riff-from-a-container)), and
+its riff commands know their user from
 `RIFF_USER`: the daemon sets both.
 
 riff checks each fact first, and names the check that fails:

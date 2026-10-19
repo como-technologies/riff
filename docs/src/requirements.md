@@ -7977,6 +7977,13 @@ items of Wave C that end riff-server in the Backlog
   checks after the release, close each item. The work goes on while the
   deploy waits for a person. The lead stops the workers after the
   deploy, before the update of each machine.
+- **01M5A5YJ8PKBAWWG6KW2MBK5Z3** `riff build --host HOST` asks the riff
+  daemon of HOST to build the default branch of `origin` in its check
+  clone, as `riff build` does on a host. The daemon replies with the
+  path of the new riff on HOST. A lead in a container needs the flag,
+  because a container has no podman. The daemon refuses each session
+  that is not the person or the lead of its user, and the client refuses
+  a worker.
 
 ### The real-session test
 

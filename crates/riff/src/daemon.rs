@@ -372,6 +372,7 @@ use crate::wave::{Job, Wave, World};
 use crate::{text, usage};
 use riff_client::sessions::{Live, Phase};
 
+pub mod build;
 pub mod facts;
 pub mod release_test;
 pub mod remote;

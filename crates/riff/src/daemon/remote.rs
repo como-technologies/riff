@@ -280,6 +280,9 @@ pub enum Request {
     /// `riff release test` on the commit: the real-session test
     /// (01M5924C8BTT6CW05Q0YZJ1GCY).
     ReleaseTest(String),
+    /// `riff build`: the build of the default branch in the check clone
+    /// of the host (#1204).
+    Build,
     /// `riff lead move`: start the lead here, and make it the lead
     /// (01M596DH8G4A5XQFHJFBX1X379).
     LeadMove,
@@ -325,6 +328,7 @@ impl FromStr for Request {
             ["wave", "run"] => Ok(Request::WaveRun),
             ["wave", "stop"] => Ok(Request::WaveStop),
             ["lead", "move"] => Ok(Request::LeadMove),
+            ["build"] => Ok(Request::Build),
             ["release", "test", commit] if super::release_test::is_commit(commit) => {
                 Ok(Request::ReleaseTest(commit.to_owned()))
             }
@@ -394,6 +398,7 @@ impl fmt::Display for Request {
             Request::WaveRun => write!(f, "wave run"),
             Request::WaveStop => write!(f, "wave stop"),
             Request::LeadMove => write!(f, "lead move"),
+            Request::Build => write!(f, "build"),
             Request::ReleaseTest(commit) => write!(f, "release test {commit}"),
         }
     }
@@ -668,6 +673,13 @@ pub async fn answer(
         Request::Restart => lines_of(dir, Ask::Restart).await,
         Request::WaveRun => wave_run(dir, &served.wave).await,
         Request::LeadMove => crate::lead::take(dir, &served.wave).await,
+        Request::Build => {
+            let main = served.wave.main.clone();
+            tokio::task::spawn_blocking(move || super::build::run(&main))
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|done| done)
+        }
         Request::ReleaseTest(commit) => {
             let (dir, served, commit) = (dir.to_owned(), served.clone(), commit.clone());
             tokio::task::spawn_blocking(move || super::release_test::start(&dir, &served, &commit))

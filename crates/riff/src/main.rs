@@ -472,13 +472,19 @@ enum Command {
     /// in the one check clone of the machine, ~/.cache/riff/check. When
     /// the folder is not there, riff clones the origin of the repository
     /// of this folder into it. Then it fetches origin, puts the clone on
-    /// the default branch, and runs just static. It prints the path of
+    /// the default branch, and runs just static. With --host, the riff
+    /// daemon of HOST does it: use it in a container. It prints the path of
     /// the riff of the build. A session in a worktree runs this command
     /// in place of git steps on the check clone.
     Build {
         /// The just command.
         #[arg(long, default_value = "just")]
         just: std::path::PathBuf,
+        /// Ask the riff daemon of HOST to build. A container has no
+        /// podman: the lead in a container needs this flag. The reply
+        /// is the path of the new riff on HOST.
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Get this machine ready for riff run: check, install, pull
     ///
@@ -1507,7 +1513,19 @@ async fn main() -> Result<()> {
     if let Command::Setup { check } = cli.command {
         return setup(check);
     }
-    if let Command::Build { just } = &cli.command {
+    if let Command::Build { just, host } = &cli.command {
+        if let Some(host) = host {
+            if release_caller(&server, false).await.test_step().is_some() {
+                eprintln!("{}", text::BUILD_WORKER);
+                std::process::exit(1);
+            }
+            let here = identity::place(&identity::working_dir()?)?;
+            let request = riff::daemon::remote::Request::Build;
+            return ask_daemon(host, &request, &here, &server).await;
+        }
+        if riff::cycle::in_container() {
+            anyhow::bail!("{}", text::BUILD_NEEDS_HOST);
+        }
         let home = std::env::var_os("HOME")
             .filter(|h| !h.is_empty())
             .context("riff cannot find your home: HOME is not set")?;

@@ -779,3 +779,84 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     let seen = std::fs::read_to_string(&log).unwrap_or_default();
     assert!(!seen.contains("real-session"), "{seen}");
 }
+
+/// #1204: the lead asks the daemon of a host to build riff. The daemon
+/// builds in its check clone with its own `just`, and replies with the
+/// path of the new riff. A work session gets the refusal.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_daemon_builds_riff_for_the_lead_and_refuses_a_work_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let just = isolated::write_program(tmp.path().join("just"), "#!/bin/sh\necho \"$*\" > built\n");
+    let check = tmp.path().join("check");
+    let extra = vec![
+        (
+            riff::daemon::build::JUST_VAR.to_owned(),
+            just.display().to_string(),
+        ),
+        (riff::check::VAR.to_owned(), check.display().to_string()),
+    ];
+    let r = riff_env(300, 300, &extra).await;
+    let git = |dir: &Path, args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    };
+    let bare = tmp.path().join("origin.git");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &r.main.display().to_string(),
+            "origin.git",
+        ],
+    );
+    git(
+        &r.main,
+        &["remote", "add", "origin", &bare.display().to_string()],
+    );
+    git(&bare, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+    let reply = remote::ask(
+        &r.api,
+        &r.lead,
+        "a",
+        &remote::Request::Build,
+        Duration::from_secs(60),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        reply,
+        riff::check::riff_of(&check).display().to_string(),
+        "{reply}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(check.join("built")).unwrap(),
+        "static\n"
+    );
+
+    let worker = SessionUri::new(
+        Who::new("mike", Some("w3")).unwrap(),
+        r.lead.place().clone(),
+    );
+    r.api.register(&worker).await.unwrap();
+    let err = remote::ask(
+        &r.api,
+        &worker,
+        "b",
+        &remote::Request::Build,
+        Duration::from_secs(30),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        format!("{err:#}").contains("which is not the lead of mike in"),
+        "{err:#}"
+    );
+}
