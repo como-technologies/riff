@@ -75,6 +75,10 @@ reqs:
 rid:
     @cargo run -q -p reqs -- rid
 
+# Add a requirement to the end of a section: just req "Sessions" "The text."
+req $SECTION $TEXT:
+    @cargo run -q -p reqs -- req "$SECTION" "$TEXT"
+
 # Check the form of a pull request (needs gh), or of a commit: just hygiene pr 90
 hygiene *ARGS:
     @cargo run -q -p hygiene -- {{ARGS}}

@@ -4928,7 +4928,7 @@ pub fn run_start(
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
          Find its \"Done when:\" line. When the line is missing, or you cannot test it, stop \
          and say why.\n\
-         2. Read CLAUDE.md, and obey its rules.\n\
+         2. Read CLAUDE.md, and obey its rules. To add a requirement, run just req SECTION \"text\". Never edit requirements.md by hand to add one.\n\
          3. Do the work on the branch {branch}. Give each commit this trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n\
          4. Before each push, run the checks that CLAUDE.md names.\n\

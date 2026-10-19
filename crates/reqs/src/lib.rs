@@ -20,9 +20,16 @@
 //! | `duplicate-id` | error | Two requirements with the same ID. |
 //! | `unknown-id` | error | A cited ID that no requirement has. |
 //! | `id-format` | warning | A requirement ID that is not an old ID (`R1` to `R232`) and not a valid ULID. |
+//! | `block-end` | error | A requirement block whose last line does not end with a full stop. A new requirement in the middle of another one causes it. |
 //!
-//! A requirement is a line of the form `- **ID** text`. A citation is a
-//! word that has the form of an old ID or of a ULID.
+//! A requirement is a line of the form `- **ID** text`. Its block is
+//! that line and the indented lines under it. A citation is a word that
+//! has the form of an old ID or of a ULID.
+//!
+//! `just req SECTION "text"` adds a requirement ([`add`]): it gets an ID
+//! like `just rid`, wraps the text at 72 characters, and writes it after
+//! the last requirement of the section, never inside one. Nobody edits
+//! `requirements.md` by hand to add a requirement.
 //!
 //! ```
 //! let id = reqs::new_id();
@@ -139,7 +146,8 @@ pub const REQUIREMENTS: &str = "docs/src/requirements.md";
 pub fn check(requirements: &str, sources: &[(&str, &str)]) -> Report {
     let mut report = Report::default();
     let mut ids: BTreeMap<&str, usize> = BTreeMap::new();
-    for (n, line) in requirements.lines().enumerate() {
+    let lines: Vec<&str> = requirements.lines().collect();
+    for (n, line) in lines.iter().enumerate() {
         let Some(id) = defined(line) else {
             continue;
         };
@@ -154,6 +162,19 @@ pub fn check(requirements: &str, sources: &[(&str, &str)]) -> Report {
         if !is_legacy(id) && !is_ulid(id) {
             report.warnings.push(format!(
                 "{REQUIREMENTS}:{n}: id-format: {id} is not a ULID (run just rid)"
+            ));
+        }
+    }
+    for (n, line) in lines.iter().enumerate() {
+        if defined(line).is_none() {
+            continue;
+        }
+        let end = block_end(&lines, n);
+        if !lines[end].trim_end().ends_with('.') {
+            report.errors.push(format!(
+                "{REQUIREMENTS}:{}: block-end: the requirement on line {} does not end with a full stop (a new requirement inside it?)",
+                end + 1,
+                n + 1
             ));
         }
     }
@@ -178,6 +199,73 @@ pub fn check(requirements: &str, sources: &[(&str, &str)]) -> Report {
         cite(path, text, false);
     }
     report
+}
+
+/// The last line (0-based) of the requirement block that starts on line
+/// `start`: the indented lines under it, up to a blank or other line.
+fn block_end(lines: &[&str], start: usize) -> usize {
+    let mut end = start;
+    while lines
+        .get(end + 1)
+        .is_some_and(|l| l.starts_with(' ') && !l.trim().is_empty())
+    {
+        end += 1;
+    }
+    end
+}
+
+/// The text of `requirements` with a new requirement `text`, with the
+/// ID `id`, after the last requirement of the section `section` (the
+/// text of a heading, with no `#`). The lines of the new requirement
+/// are at most 72 characters wide. Other lines stay as they are.
+///
+/// ```
+/// let book = "# T\n\n## A\n\n- **R1** One,\n  two.\n\n## B\n\n- **R2** Two.\n";
+/// let id = reqs::new_id();
+/// let out = reqs::add(book, "A", &id, "New.").unwrap();
+/// assert_eq!(out, format!("# T\n\n## A\n\n- **R1** One,\n  two.\n- **{id}** New.\n\n## B\n\n- **R2** Two.\n"));
+/// assert!(reqs::add(book, "C", &id, "New.").is_err());
+/// ```
+pub fn add(requirements: &str, section: &str, id: &str, text: &str) -> Result<String, String> {
+    if !text.trim_end().ends_with('.') {
+        return Err("the text of a requirement must end with a full stop".to_string());
+    }
+    let lines: Vec<&str> = requirements.lines().collect();
+    let heading = lines
+        .iter()
+        .position(|l| l.starts_with('#') && l.trim_start_matches('#').trim() == section)
+        .ok_or_else(|| format!("no section {section:?} in {REQUIREMENTS}"))?;
+    let mut last = None;
+    for (n, line) in lines.iter().enumerate().skip(heading + 1) {
+        if line.starts_with('#') {
+            break;
+        }
+        if defined(line).is_some() {
+            last = Some(block_end(&lines, n));
+        }
+    }
+    let last = last.ok_or_else(|| format!("section {section:?} has no requirement"))?;
+    let mut block = Vec::new();
+    let mut line = format!("- **{id}**");
+    let mut words_on_line = 0;
+    for word in text.split_whitespace() {
+        if words_on_line > 0 && line.len() + 1 + word.len() > 72 {
+            block.push(line);
+            line = String::from(" ");
+            words_on_line = 0;
+        }
+        line.push(' ');
+        line.push_str(word);
+        words_on_line += 1;
+    }
+    block.push(line);
+    let mut out: Vec<String> = lines.iter().map(|l| (*l).to_string()).collect();
+    out.splice(last + 1..last + 1, block);
+    let mut out = out.join("\n");
+    if requirements.ends_with('\n') {
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 /// The ID of a requirement line `- **ID** text`.
@@ -237,6 +325,41 @@ mod tests {
         assert_eq!(
             report.errors,
             ["docs/src/requirements.md:2: unknown-id: R3 is not in docs/src/requirements.md"]
+        );
+    }
+
+    #[test]
+    fn a_requirement_split_by_a_new_one_is_an_error() {
+        let id = new_id();
+        let requirements = format!("- **R1** One,\n- **{id}** New.\n  and two.\n");
+        let report = check(&requirements, &[]);
+        assert_eq!(
+            report.errors,
+            [format!(
+                "{REQUIREMENTS}:1: block-end: the requirement on line 1 does not end with a full stop (a new requirement inside it?)"
+            )]
+        );
+    }
+
+    #[test]
+    fn add_wraps_and_keeps_the_other_lines() {
+        let book = "## A\n\n- **R1** One.\n\n## B\n\n- **R2** Two.\n";
+        let id = new_id();
+        let text = format!("{}end.", "word ".repeat(40));
+        let out = add(book, "A", &id, &text).unwrap();
+        assert!(add(book, "A", &id, "No stop").is_err());
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[..3], ["## A", "", "- **R1** One."]);
+        assert_eq!(lines.last(), Some(&"- **R2** Two."));
+        assert!(lines[3].starts_with(&format!("- **{id}** word")));
+        assert!(lines[3..lines.len() - 5].iter().all(|l| l.len() <= 72));
+        assert!(lines[4].starts_with("  word"));
+        assert_eq!(
+            check(&out, &[]),
+            Report {
+                errors: vec![],
+                warnings: vec![]
+            }
         );
     }
 

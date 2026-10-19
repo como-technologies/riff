@@ -10,6 +10,14 @@ fn reqs(args: &[&str]) -> Output {
         .unwrap()
 }
 
+fn reqs_in(dir: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_reqs"))
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
 fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
@@ -101,4 +109,46 @@ fn this_repository_passes() {
     let out = check(&root);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stderr(&out), "", "no warnings");
+}
+
+#[test]
+fn req_adds_a_requirement_at_the_end_of_a_section() {
+    let old = "# R\n\n## A\n\n- **R1** One,\n  two.\n\n## B\n\n- **R2** Two.\n";
+    let dir = repo(old, "// R1");
+    let out = reqs_in(
+        dir.path(),
+        &["req", "A", &format!("{}end.", "word ".repeat(30))],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let id = String::from_utf8(out.stdout).unwrap();
+    assert!(reqs::is_ulid(id.trim()));
+    let new = std::fs::read_to_string(dir.path().join("docs/src/requirements.md")).unwrap();
+    let (head, tail) = new.split_once("  two.\n").unwrap();
+    assert_eq!(head, "# R\n\n## A\n\n- **R1** One,\n");
+    assert!(tail.starts_with(&format!("- **{}** word", id.trim())));
+    assert!(
+        tail.ends_with("word.\n\n## B\n\n- **R2** Two.\n")
+            || tail.ends_with("\n\n## B\n\n- **R2** Two.\n")
+    );
+    assert!(new.lines().all(|l| l.len() <= 72));
+    assert!(check(dir.path()).status.success());
+}
+
+#[test]
+fn req_fails_for_an_unknown_section() {
+    let dir = repo("## A\n\n- **R1** One.\n", "");
+    let out = reqs_in(dir.path(), &["req", "Z", "Text."]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("no section"), "{}", stderr(&out));
+}
+
+#[test]
+fn check_finds_a_split_requirement() {
+    let dir = repo(
+        "- **R1** One,\n- **R2** Two.\n  and more.\n- **R3** Three.\n",
+        "",
+    );
+    let out = check(dir.path());
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("block-end"), "{}", stderr(&out));
 }

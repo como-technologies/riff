@@ -1,4 +1,5 @@
-//! `reqs rid` prints a new requirement ID. `reqs check [ROOT]` checks
+//! `reqs rid` prints a new requirement ID. `reqs req SECTION TEXT` adds a
+//! requirement. `reqs check [ROOT]` checks
 //! the requirement IDs of a repository. See the library docs.
 
 use std::path::{Path, PathBuf};
@@ -21,11 +22,35 @@ fn main() -> ExitCode {
             println!("{}", reqs::new_id());
             ExitCode::SUCCESS
         }
+        ["req", section, text] => run_req(Path::new("."), section, text),
         ["check"] => run_check(Path::new(".")),
         ["check", root] => run_check(Path::new(root)),
         _ => {
-            eprintln!("usage: reqs rid | reqs check [ROOT]");
+            eprintln!("usage: reqs rid | reqs req SECTION TEXT | reqs check [ROOT]");
             ExitCode::from(2)
+        }
+    }
+}
+
+/// Adds a requirement to the end of a section of the requirements.
+fn run_req(root: &Path, section: &str, text: &str) -> ExitCode {
+    let path = root.join(reqs::REQUIREMENTS);
+    let result = std::fs::read_to_string(&path)
+        .map_err(|e| format!("{}: {e}", reqs::REQUIREMENTS))
+        .and_then(|old| {
+            let id = reqs::new_id();
+            let new = reqs::add(&old, section, &id, text)?;
+            std::fs::write(&path, new).map_err(|e| format!("{}: {e}", reqs::REQUIREMENTS))?;
+            Ok(id)
+        });
+    match result {
+        Ok(id) => {
+            println!("{id}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
         }
     }
 }

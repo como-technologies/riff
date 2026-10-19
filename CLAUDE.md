@@ -16,7 +16,9 @@ The book in `docs/src/` holds the requirements and the big picture.
 - Each change has unit tests, integration tests and doc tests.
 - Update the book in the same commit as the change. See "User docs".
 - A new decision is a new requirement statement. Do not write the
-  reasoning. A new requirement gets its ID from `just rid`. Never
+  reasoning. Add it with `just req SECTION "text"`: it gets
+  the ID, wraps the text and writes it after the last requirement of
+  the section. Never edit `requirements.md` by hand to add one. Never
   renumber a requirement.
 - No users yet. Change any interface freely. No compatibility shims.
 - Work on a branch. Merge by pull request with auto-merge. Never push
