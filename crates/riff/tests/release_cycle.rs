@@ -1181,3 +1181,76 @@ async fn publish_refuses_a_member_and_the_lead_of_a_member() {
         text(&out.stderr)
     );
 }
+
+/// A socket that answers as the daemon does for a container session
+/// (01M59269HHZ5C82DR3RG3QHAM3): the line `answer` to each ask. It
+/// keeps the folder of the socket.
+fn daemon_socket(answer: &'static str) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("riff.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, Write};
+        for conn in listener.incoming().flatten() {
+            let mut line = String::new();
+            let _ = std::io::BufReader::new(&conn).read_line(&mut line);
+            let _ = (&conn).write_all(format!("{answer}\n").as_bytes());
+        }
+    });
+    let path = path.to_string_lossy().into_owned();
+    (dir, path)
+}
+
+#[tokio::test]
+async fn the_lead_container_of_the_owner_publishes_the_release() {
+    let (machine, merge) = merged_release().await;
+    let (_dir, socket) =
+        daemon_socket(r#"{"say":"caller","lead":true,"role":null,"role_unknown":false}"#);
+    let vars = [("RIFF_SOCKET", socket.as_str()), ("RIFF_SESSION", "c1")];
+    let out = machine.ok(&vars, &["release", "publish", "v3.3.0"]).await;
+    assert!(
+        out.starts_with(
+            "Published v3.3.0: https://github.com/como-technologies/riff/releases/tag/v3.3.0\n"
+        ),
+        "{out}"
+    );
+    assert_eq!(git(&machine.origin(), &["tag"]), "v3.2.0\nv3.3.0");
+    assert_eq!(
+        git(&machine.origin(), &["rev-parse", "v3.3.0^{commit}"]),
+        merge
+    );
+    assert!(machine.log().contains("gh release create v3.3.0"));
+}
+
+#[tokio::test]
+async fn publish_refuses_a_work_container_a_lead_of_a_member_and_an_unknown_role() {
+    let machine = Machine::new().await;
+    let cases: [(&'static str, Refusal); 3] = [
+        (
+            r#"{"say":"caller","lead":false,"role":null,"role_unknown":false}"#,
+            Refusal::Container,
+        ),
+        (
+            r#"{"say":"caller","lead":true,"role":"member","role_unknown":false}"#,
+            Refusal::Member,
+        ),
+        (
+            r#"{"say":"caller","lead":true,"role":null,"role_unknown":true}"#,
+            Refusal::RoleUnknown,
+        ),
+    ];
+    for (answer, refusal) in cases {
+        let (_dir, socket) = daemon_socket(answer);
+        let vars = [("RIFF_SOCKET", socket.as_str()), ("RIFF_SESSION", "c1")];
+        let out = machine
+            .run(&vars, &["release", "publish", "v3.3.0"], "")
+            .await;
+        assert_eq!(out.status.code(), Some(1), "{answer}");
+        assert_eq!(
+            text(&out.stderr),
+            format!("{}\n", riff::text::release_refused("publish", refusal)),
+            "{answer}"
+        );
+    }
+    assert_eq!(machine.log(), "");
+}

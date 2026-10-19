@@ -940,6 +940,24 @@ async fn ask_denied(socket: &Path, denials: &[crate::denied::Denial]) -> Result<
     anyhow::bail!("the daemon went away")
 }
 
+/// Asks the daemon on the socket at `socket` who this session is for
+/// the release cycle ([`SessionAsk::Caller`]). The answer is
+/// [`Say::Caller`].
+pub async fn ask_caller(socket: &Path) -> Result<Say> {
+    let conn = connect(socket).await?;
+    let (read, mut write) = conn.into_split();
+    let mut lines = BufReader::new(read).lines();
+    send(&mut write, &SessionAsk::Caller { protocol: PROTOCOL }).await?;
+    while let Some(line) = lines.next_line().await? {
+        match serde_json::from_str::<Say>(&line) {
+            Ok(say @ Say::Caller { .. }) => return Ok(say),
+            Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
+            _ => {}
+        }
+    }
+    anyhow::bail!("the daemon went away")
+}
+
 /// The error answer to the request `id` of `claude`: `message`.
 ///
 /// ```

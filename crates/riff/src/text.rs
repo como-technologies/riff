@@ -2034,7 +2034,9 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
             format!("the lead runs {step}"),
         ),
         Refusal::Container => (
-            format!("riff: a container session never runs {step}. {step} changed nothing."),
+            format!(
+                "riff: a work session in a container never runs {step}. {step} changed nothing."
+            ),
             format!("the lead runs {step}"),
         ),
         Refusal::NotTheLead => (
