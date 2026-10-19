@@ -50,7 +50,6 @@
 //!     participant G as the API of GitHub
 //!     participant F as the riff of riff
 //!     participant C as cargo
-//!     participant R as the new riff
 //!     participant S as riff-server of this machine
 //!     alt --tag vX.Y.Z
 //!         Note over U: that release
@@ -67,7 +66,6 @@
 //!         end
 //!     end
 //!     U->>C: install --locked --git REPOSITORY --tag vX.Y.Z riff riff-server
-//!     U->>R: connect claude
 //!     U->>U: the unit of the riff daemon: the new riff
 //!     U->>S: probe
 //!     alt it answers with another build than the new riff-server
@@ -127,9 +125,6 @@ pub struct View {
     /// The facts of the riff that `riff` uses, when it gives them
     /// (01M3TJWJ12WEDCXW3W0529KRP2).
     pub facts: Option<ServerFacts>,
-    /// Whether riff is on in the working directory
-    /// (01M3XY2SYKG91SAB2FS1QNCZ2H).
-    pub here: Option<crate::enable::State>,
 }
 
 /// Asks the riff of `api` about itself, within [`PROBE_WAIT`].
@@ -182,7 +177,6 @@ pub async fn view(server: &str, local: &str, source: Source) -> View {
         used,
         local,
         facts,
-        here: Some(crate::enable::State::here()),
     }
 }
 
@@ -360,9 +354,7 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// that `server` runs ([`server_release`]). When that riff names no
 /// build that riff can read, it prints
 /// [`text::latest_instead`](crate::text::latest_instead) and installs
-/// the Latest release. Then it updates the plugin with the new
-/// `riff connect claude --claude CLAUDE`, which gets no terminal and so
-/// asks nothing. On a machine with a limit of workers it installs
+/// the Latest release. On a machine with a limit of workers it installs
 /// the pinned `sccache` ([`crate::sccache::ensure`]). Then it looks for
 /// an old riff with
 /// [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
@@ -371,13 +363,7 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// Then the caller runs [`daemon_after_update`], so the update in the
 /// background tells the lead before the daemon starts again
 /// (01M58AVFM0D62R48HKK8CFY4VW).
-pub async fn update(
-    cargo: &Path,
-    claude: &Path,
-    tag: Option<&str>,
-    server: &str,
-    local: &str,
-) -> Result<String> {
+pub async fn update(cargo: &Path, tag: Option<&str>, server: &str, local: &str) -> Result<String> {
     let tag = match tag {
         Some(tag) => tag.to_owned(),
         None if same_riff(server, local) => crate::release::latest().await?,
@@ -400,17 +386,6 @@ pub async fn update(
             "cargo install",
         )?;
     }
-    // An update asks nothing: a machine updates itself with no person.
-    // So the connect of the update has no terminal, and it keeps the
-    // choice of the person (01M3XY2SR3VJZAKEPC6CBCS292).
-    run(
-        Command::new("riff")
-            .args(["connect", "claude", "--claude"])
-            .arg(claude)
-            .stdin(std::process::Stdio::null())
-            .current_dir(&dir),
-        "riff connect claude",
-    )?;
     let out = Command::new("riff-server")
         .arg("--version")
         .current_dir(&dir)

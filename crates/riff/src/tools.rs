@@ -1,83 +1,29 @@
-//! `riff mcp`: the tools that a session uses, over stdio.
+//! The riff tools of a session in a container, over MCP.
 //!
-//! The tools keep the URI of their session. `move` changes its place
-//! (R64). Each other tool sends the URI with its request.
+//! The daemon serves these tools to the session of `riff run` and to the
+//! lead through `riff relay mcp` ([`crate::daemon`],
+//! [`crate::session_relay`]). The tools keep the URI of their session.
+//! Each tool sends the URI with its request.
 //!
-//! # Life
+//! # A session in a container
 //!
-//! `riff mcp` runs as long as its agent process. So it tells the server
-//! that the session runs, and when it ends:
+//! The daemon runs on the host, outside the container. So a session gets
+//! only the tools of [`CONTAINER_TOOLS`]: they only talk, and act on no
+//! folder of the host and no claim (01M4ZV3B6T2KB09WJ59F07HXET). They act
+//! on the riff-server of the session. `riff run` does the claim, the
+//! release and the verify request. The tools do not list each other
+//! tool, and refuse a call of it with [`text::not_in_a_container`]. The
+//! instructions of the server are [`text::MCP_CONTAINER`].
 //!
-//! ```mermaid
-//! sequenceDiagram
-//!     participant A as agent tool
-//!     participant M as riff mcp
-//!     participant S as riff-server
-//!     M->>S: register
-//!     S-->>M: done
-//!     Note over M: in tmux, the lead gets its tail pane
-//!     loop each ALIVE_EVERY, also while no turn runs
-//!         M->>S: alive
-//!     end
-//!     A-->>M: stdin closes, or SIGTERM, SIGINT or SIGHUP
-//!     M->>S: end
+//! The lead in a container ([`crate::lead`]) also gets the tools of a
+//! lead that only talk: [`LEAD_TOOLS`]. Its instructions are
+//! [`text::MCP_LEAD`]: they say how the lead gets its wakes, the steps
+//! of the waves, and the rules of the lead.
+//!
 //! ```
-//!
-//! The register runs beside the MCP handshake, and each tool call waits
-//! for its end (01M5512RG2TTTS85VY8CEFF8R4). So a slow riff-server does
-//! not make the first answer late. See [`serve`].
-//!
-//! `riff mcp` looks for the lead mark of its session only after its
-//! register ends (01M3XM68N5M5DKB86W5079X2G9). A query makes the server
-//! know a session, and makes no lead. So a session in `who` with no
-//! lead mark can be a session whose register is not done. The rollout and
-//! the other tasks start after the register.
-//!
-//! The `riff mcp` of the lead also runs the free work of the wave by
-//! itself: it asks the riff daemon to run the wave (see
-//! [`crate::rollout`]).
-//!
-//! A keep-alive is not a call: `who` still shows the time since the
-//! last call (R204). After the end call, the session leaves `who`, and
-//! its claims are free at once (R205). A session that stops with no end
-//! call is gone after 3 minutes with no keep-alive.
-//!
-//! A session that left the riff makes no call (see [`crate::leave`]).
-//! Each tool except `join` refuses, and the keep-alive, the rollout and
-//! the reap wait. The client of the tools refuses each request too
-//! ([`riff_client::api`], 01M3XQVJXWBC3DKAVWBPXPSGZS).
-//!
-//! After `riff update`, `riff mcp` runs the new binary in place at the
-//! first moment with no request in flight, with no end call, so that
-//! the claims of the session stay. Claude Code keeps its connection: the
-//! new process answers the next request with no new handshake
-//! (01M3NT6WZTKAFKGDWGCFKC8TB5). See [`crate::relay`]. Claude Code
-//! sends no initialize request: it starts with `server/discover` (MCP
-//! `2026-07-28`). The old process then gives the new one
-//! `--client modern` ([`Client`], 01M53QQR7J7DG86SMAERKMYSAF).
-//!
-//! ```mermaid
-//! flowchart LR
-//!     H["the handshake ends"] --> P{"peer info?"}
-//!     P -- "yes: initialize" --> J["--client JSON"]
-//!     P -- "no: server/discover" --> M["--client modern"]
-//!     J --> N["the new riff mcp: serve_directly with the peer info"]
-//!     M --> O["the new riff mcp: serve_directly with no peer info"]
+//! assert!(riff::tools::LEAD_TOOLS.contains(&"notes"));
+//! assert!(!riff::tools::CONTAINER_TOOLS.contains(&"notes"));
 //! ```
-//!
-//! A `riff mcp` that runs a replaced riff for longer than
-//! [`crate::binary::STUCK_AFTER`] cannot start again by itself, for
-//! example a `riff mcp` of v1.7.0 or older with Claude Code. The hook of
-//! the session then tells the session the fix (see
-//! [`crate::binary::stuck_mcp`], 01M53QQRAJMB24B0804YHPMN18).
-//!
-//! # The tokens of a claim
-//!
-//! A granted `claim` records the start time of the claim on this
-//! machine. A `release` of the claim of the session, and a `leave`, end
-//! it, sum its tokens, and put the sum on the issue of the claim
-//! (01M3Y1YP1ZA5TBRA01MKWM3VC6). The result of the tool has one line
-//! with the sum. The sum never fails the tool. See [`crate::usage`].
 //!
 //! # The step of the lead
 //!
@@ -113,22 +59,12 @@
 //! words come from [`text::told_step`], [`text::posted_step`],
 //! [`text::riff_step`] and [`text::LEAD_STEP`].
 //!
-//! # A session in a container
+//! # The tokens of a claim
 //!
-//! The daemon serves the tools of a session of `riff run`
-//! ([`crate::daemon`]). The daemon runs on the host, outside the
-//! container. So that session gets only the tools of
-//! [`CONTAINER_TOOLS`]: they only talk, and act on no folder of the host
-//! and no claim (01M4ZV3B6T2KB09WJ59F07HXET). They act on the
-//! riff-server of the session. `riff run` does the claim, the release
-//! and the verify request. The tools do not list each
-//! other tool, and refuse a call of it with [`text::not_in_a_container`].
-//! The instructions of the server are [`text::MCP_CONTAINER`].
-//!
-//! The lead in a container ([`crate::lead`]) also gets the tools of a
-//! lead that only talk: [`LEAD_TOOLS`]. Its instructions
-//! are [`text::MCP_LEAD`]: they say how the lead gets its wakes, and
-//! the steps of the waves.
+//! A granted `claim` records the start time of the claim on this
+//! machine. A `release` of the claim of the session, and a `leave`, end
+//! it, sum its tokens, and put the sum on the issue of the claim
+//! (01M3Y1YP1ZA5TBRA01MKWM3VC6). See [`crate::usage`].
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -136,25 +72,15 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{ALIVE_EVERY, Kind, RiffState, Status, WORKER_ALIVE_EVERY};
+use riff_core::wire::{Kind, RiffState, Status};
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
+use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::binary::{Follow, with_last, with_place};
 use crate::usage::{self, Meter};
-use crate::{dropped, identity, leave, relay, text};
+use crate::{dropped, identity, leave, text};
 use riff_client::api::{Api, PauseScope};
-
-/// The hidden option that gives a new `riff mcp` the client of its
-/// connection after an update (01M3NT6WZTKAFKGDWGCFKC8TB5): the
-/// initialize request as JSON, or [`MODERN`] (see [`Client`]).
-pub const CLIENT: &str = "--client";
-
-/// The value of [`CLIENT`] for a client that sent no initialize request
-/// (01M53QQR7J7DG86SMAERKMYSAF).
-pub const MODERN: &str = "modern";
 
 #[derive(Clone)]
 pub struct Tools {
@@ -176,24 +102,7 @@ pub struct Tools {
     /// container, it gets only the tools of [`CONTAINER_TOOLS`]
     /// (01M4ZV3B6T2KB09WJ59F07HXET), or of [`LEAD_TOOLS`] for the lead.
     reach: Reach,
-    /// The folder where the tools keep the answer of riff-server for
-    /// the status line of the session ([`Tools::with_statusline`]).
-    /// `None` keeps nothing.
-    statusline: Option<PathBuf>,
-    /// True when the register of the session ended: each tool call
-    /// waits for it ([`Tools::after_register`]). `None` waits for
-    /// nothing.
-    registered: Option<tokio::sync::watch::Receiver<bool>>,
 }
-
-/// The tools after which the tools keep a new answer for the status
-/// line: the line shows the claims, the lead and a block
-/// (01M547VMMDPB4DXBMWVERF60C4).
-const STATUSLINE_TOOLS: [&str; 5] = ["claim", "release", "lead", "blocked", "join"];
-
-/// The shortest time between two answers for the status line that the
-/// keep-alive keeps (01M547VMMDPB4DXBMWVERF60C4).
-pub const STATUSLINE_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Where a session runs, for its tools.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -367,54 +276,6 @@ impl Tools {
             worker: false,
             meter: None,
             reach: Reach::Host,
-            statusline: None,
-            registered: None,
-        }
-    }
-
-    /// Makes each tool call wait until `registered` is true: the end of
-    /// the register of the session, also of a register that failed
-    /// (01M5512RG2TTTS85VY8CEFF8R4). The handshake does not wait. A
-    /// sender that is gone ends the wait too.
-    pub fn after_register(mut self, registered: tokio::sync::watch::Receiver<bool>) -> Self {
-        self.registered = Some(registered);
-        self
-    }
-
-    /// Keeps the answer of riff-server for the status line of the
-    /// session in the folder `dir` (01M547VMMDPB4DXBMWVERF60C4). `riff
-    /// mcp` turns it on with the local folder of riff, and a test only
-    /// with a folder of its own.
-    pub fn with_statusline(mut self, dir: Option<PathBuf>) -> Self {
-        self.statusline = dir;
-        self
-    }
-
-    /// Asks riff-server for this session, and keeps the line of the
-    /// answer for `riff statusline` (01M547VMMDPB4DXBMWVERF60C4). The
-    /// tools hold their token, so `riff statusline` then shows the line
-    /// with no call of its own: no call to riff-server and no call to
-    /// the OS keyring (#1003). It keeps nothing when the call fails.
-    pub async fn keep_statusline(&self) {
-        let me = self.me();
-        let (Some(dir), Some(id)) = (&self.statusline, me.who().session()) else {
-            return;
-        };
-        if self.left() {
-            return;
-        }
-        let Ok(reply) = self.api.me(&me).await else {
-            return;
-        };
-        let kept = crate::local::Kept {
-            server: self.api.base().to_owned(),
-            at_ms: crate::activity::now_ms(),
-            build: riff_client::link::server_build().map(|b| b.to_string()),
-            lead: reply.session.as_ref().is_some_and(|s| s.uri.lead()),
-            line: text::statusline_answer(reply.session.as_ref()),
-        };
-        if let Err(e) = crate::local::keep_statusline(dir, id, &kept) {
-            eprintln!("riff: cannot keep the status line: {e}");
         }
     }
 
@@ -902,66 +763,12 @@ impl ServerHandler for Tools {
                     .into(),
             );
         }
-        if let Some(mut registered) = self.registered.clone() {
-            let _ = registered.wait_for(|done| *done).await;
-        }
-        let line = STATUSLINE_TOOLS.contains(&request.name.as_ref());
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        let result = self.router().call(call).await;
-        // The status line shows the change at once
-        // (01M547VMMDPB4DXBMWVERF60C4). The reply does not wait for it.
-        if line && self.statusline.is_some() {
-            let tools = self.clone();
-            tokio::spawn(async move { tools.keep_statusline().await });
-        }
-        result
+        self.router().call(call).await
     }
-}
-
-/// The server of `riff mcp` with no tool. Its instructions say why: in
-/// a directory where riff is off, they name `riff enable`
-/// (01M3XY2ST8R67SKTXJECAYJZRX).
-struct Off(String);
-
-impl ServerHandler for Off {
-    fn get_info(&self) -> rmcp::model::ServerConfig {
-        let mut info = rmcp::model::ServerConfig::default();
-        info.instructions = Some(self.0.clone());
-        info
-    }
-}
-
-/// `riff mcp` in a directory where riff is off. It serves a server with
-/// no tool, whose instructions are [`text::MCP_OFF`], over stdio until
-/// the agent tool closes the stream. It makes no call to
-/// `riff-server`, and keeps no file of the session.
-pub async fn serve_off() -> Result<()> {
-    serve_no_tools(text::MCP_OFF.into()).await
-}
-
-/// `riff mcp` of an agent that runs inside the riff session `outer`
-/// (01M517N75C0Z5BAFQAWRN3YTYB). As [`serve_off`], with the
-/// instructions [`crate::hook::nested_line`]. It registers no session,
-/// and sends no keep-alive and no end call.
-pub async fn serve_nested(outer: &str) -> Result<()> {
-    serve_no_tools(crate::hook::nested_line(outer)).await
-}
-
-async fn serve_no_tools(instructions: String) -> Result<()> {
-    let service = Off(instructions).serve(rmcp::transport::stdio()).await?;
-    service.waiting().await?;
-    Ok(())
 }
 
 impl Tools {
-    /// The arguments of the new binary after an update: the arguments of
-    /// this process, with the place of the session and `client`
-    /// (01M3NT6WZTKAFKGDWGCFKC8TB5).
-    fn args(&self, client: &str) -> Vec<std::ffi::OsString> {
-        let args = with_place(std::env::args_os().skip(1), self.me().place());
-        with_last(args, CLIENT, client)
-    }
-
     /// Pauses or resumes the repository of the session, or with
     /// `whole` the whole riff (01M3XAHZBGSSJB3YX23K88W01K).
     async fn set_riff(&self, whole: bool, state: RiffState) -> ToolResult {
@@ -1037,396 +844,4 @@ fn err(e: impl std::fmt::Display) -> String {
     format!("{e:#}")
 }
 
-impl Tools {
-    /// Sends a keep-alive each [`ALIVE_EVERY`] for as long as the tools
-    /// run (R204), in a worker each [`WORKER_ALIVE_EVERY`]. A failed
-    /// keep-alive is not reported: the next one tries again. When the
-    /// reply asks this idle worker to stop, it stops its wrapper
-    /// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
-    pub fn keep_alive(&self) -> tokio::task::JoinHandle<()> {
-        self.keep_alive_every(if self.worker {
-            WORKER_ALIVE_EVERY
-        } else {
-            ALIVE_EVERY
-        })
-    }
-
-    /// [`Tools::keep_alive`] with another period, for tests.
-    pub fn keep_alive_every(&self, every: std::time::Duration) -> tokio::task::JoinHandle<()> {
-        let tools = self.clone();
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(every);
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            tick.tick().await;
-            let mut kept = None;
-            loop {
-                tick.tick().await;
-                if tools.left() {
-                    continue;
-                }
-                // A hung request must not stop the next keep-alive.
-                let me = tools.me();
-                let (activity, prompt_secs) = me
-                    .who()
-                    .session()
-                    .zip(crate::local::dir())
-                    .map(|(id, dir)| {
-                        let now_ms = crate::activity::now_ms();
-                        (
-                            crate::activity::read(&dir, id, now_ms),
-                            crate::activity::prompt_secs(&dir, id, now_ms),
-                        )
-                    })
-                    .unwrap_or_default();
-                let alive = tools.api.alive_with(&me, activity, prompt_secs);
-                let _ = tokio::time::timeout(every, alive).await;
-                // A new answer for the status line, at most each
-                // STATUSLINE_EVERY (01M547VMMDPB4DXBMWVERF60C4).
-                if kept.is_none_or(|at: tokio::time::Instant| at.elapsed() >= STATUSLINE_EVERY) {
-                    kept = Some(tokio::time::Instant::now());
-                    let _ = tokio::time::timeout(every, tools.keep_statusline()).await;
-                }
-            }
-        })
-    }
-
-    /// Runs the rollout for as long as the tools run
-    /// (01M3Q5QE01DB0FJQJWFKR450KQ, 01M53NGVE839TRH7XB7CDPQNZE). It acts
-    /// only while this session is the lead. See [`crate::rollout`].
-    pub fn rollout(&self) -> tokio::task::JoinHandle<()> {
-        let tools = self.clone();
-        let env = crate::rollout::Live {
-            api: self.api.clone(),
-            me: move || tools.me(),
-            // The calls of `gh` share one token (01M54510SFK1Z9VPFYBYYSV10F).
-            gh: Arc::new(crate::pr::Gh::default().with_one_token()),
-        };
-        tokio::spawn(crate::rollout::run(env))
-    }
-
-    /// Runs the look of the lead for as long as the tools run: the facts
-    /// of the forge, and the blocks with no answer. It acts only while
-    /// this session is the lead. See [`crate::look`].
-    pub fn look(&self) -> tokio::task::JoinHandle<()> {
-        let tools = self.clone();
-        tokio::spawn(crate::look::run(self.api.clone(), move || tools.me(), None))
-    }
-
-    /// Tells the server that the session ended (R205). It waits at most
-    /// [`END_WAIT`].
-    pub async fn end(&self) {
-        if self.left() {
-            return;
-        }
-        let me = self.me();
-        match tokio::time::timeout(END_WAIT, self.api.end(&me)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => eprintln!("riff: {e:#}"),
-            Err(_) => eprintln!("riff: the end call took too long"),
-        }
-    }
-}
-
-/// The hidden flag of the check of a new binary
-/// (01M43F5F9AQ9S39E1JZF8EBJEH).
-pub const CHECK: &str = "--check";
-
-/// The longest wait for the check of a new binary.
-pub const CHECK_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
-
-/// The client of the connection of `riff mcp`, that an old process gives
-/// the new one in [`CLIENT`] after an update.
-///
-/// A client of the MCP protocol `2025-11-25` or older starts with an
-/// initialize request. A client of `2026-07-28`, as Claude Code is,
-/// starts with `server/discover`, and sends its version, its name and
-/// its capabilities with each request. rmcp then knows no peer info. The
-/// new process serves such a connection with no peer info too
-/// (01M53QQR7J7DG86SMAERKMYSAF).
-#[derive(Debug, Clone)]
-pub enum Client {
-    /// The initialize request of the client.
-    Initialized(Box<rmcp::model::InitializeRequestParams>),
-    /// A client that sent no initialize request: [`MODERN`].
-    Modern,
-}
-
-impl Client {
-    /// The client of a connection whose peer info is `peer`: the
-    /// initialize request, or [`Client::Modern`] with none.
-    pub fn of(peer: Option<&rmcp::model::InitializeRequestParams>) -> Client {
-        match peer {
-            Some(peer) => Client::Initialized(Box::new(peer.clone())),
-            None => Client::Modern,
-        }
-    }
-
-    /// The value of [`CLIENT`] for this client.
-    ///
-    /// ```
-    /// use riff::mcp::{Client, given_client};
-    ///
-    /// assert_eq!(Client::of(None).arg()?, "modern");
-    /// let json = r#"{"protocolVersion":"2025-06-18","capabilities":{},
-    ///     "clientInfo":{"name":"claude-code","version":"2"}}"#;
-    /// let client = given_client(Some(json))?.expect("a client");
-    /// let again = given_client(Some(&client.arg()?))?.expect("a client");
-    /// assert_eq!(again.peer().unwrap().client_info.name, "claude-code");
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
-    pub fn arg(&self) -> Result<String> {
-        Ok(match self {
-            Client::Initialized(peer) => serde_json::to_string(peer)?,
-            Client::Modern => MODERN.to_owned(),
-        })
-    }
-
-    /// The peer info of the new process: the initialize request, or
-    /// none for [`Client::Modern`].
-    pub fn peer(self) -> Option<rmcp::model::InitializeRequestParams> {
-        match self {
-            Client::Initialized(peer) => Some(*peer),
-            Client::Modern => None,
-        }
-    }
-}
-
-/// The client that an old `riff mcp` gave in [`CLIENT`]. `None` with no
-/// `arg`. The check of a new binary (01M43F5F9AQ9S39E1JZF8EBJEH) reads
-/// it too, so a binary that cannot read it fails the check.
-///
-/// ```
-/// use riff::mcp::{Client, given_client};
-///
-/// assert!(given_client(None)?.is_none());
-/// let json = r#"{"protocolVersion":"2025-06-18","capabilities":{},
-///     "clientInfo":{"name":"claude-code","version":"2"}}"#;
-/// let client = given_client(Some(json))?.expect("a client");
-/// assert_eq!(client.peer().unwrap().client_info.name, "claude-code");
-/// assert!(matches!(given_client(Some("modern"))?, Some(Client::Modern)));
-/// assert!(given_client(Some("{}")).is_err());
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn given_client(arg: Option<&str>) -> Result<Option<Client>> {
-    Ok(match arg {
-        None => None,
-        Some(MODERN) => Some(Client::Modern),
-        Some(json) => Some(Client::Initialized(serde_json::from_str(json)?)),
-    })
-}
-
-/// Runs the new binary at `binary` with `args` and [`CHECK`], in `dir`,
-/// for at most [`CHECK_WAIT`] (01M43F5F9AQ9S39E1JZF8EBJEH). It serves
-/// nothing: stdin is empty. The error is the last line of its stderr.
-async fn check(
-    binary: std::path::PathBuf,
-    mut args: Vec<std::ffi::OsString>,
-    dir: PathBuf,
-) -> std::result::Result<(), String> {
-    args.push(CHECK.into());
-    let mut cmd = tokio::process::Command::new(binary);
-    cmd.args(args)
-        .current_dir(&dir)
-        .env("PWD", &dir)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    let out = tokio::time::timeout(CHECK_WAIT, cmd.output())
-        .await
-        .map_err(|_| text::check_too_long(CHECK_WAIT))?
-        .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        return Ok(());
-    }
-    let err = String::from_utf8_lossy(&out.stderr);
-    Err(err
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .map_or_else(|| out.status.to_string(), str::to_owned))
-}
-
-/// The longest wait for the end call. The agent tool stops a slow
-/// process.
-pub const END_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
-
-/// Serves the tools on stdin and stdout until the session ends. It
-/// sends keep-alives while it runs, and the end call when its stdin
-/// closes or a signal stops it (R204, R205). On a new binary that
-/// passes its check (01M43F5F9AQ9S39E1JZF8EBJEH), it runs it in place,
-/// with no end call (01M3NT6WZTKAFKGDWGCFKC8TB5), also for a client
-/// with no initialize request (01M53QQR7J7DG86SMAERKMYSAF). With
-/// `client`, the [`Client`] of the old process, it skips the
-/// handshake.
-///
-/// The handshake does not wait for the register: the register runs
-/// beside it, and each tool call waits for its end
-/// (01M5512RG2TTTS85VY8CEFF8R4). A client of `2026-07-28` waits only a
-/// short time for its first answer. It sends `registered` when its
-/// register ends, also when the register fails
-/// (01M3XM68N5M5DKB86W5079X2G9). A session that left the riff does not
-/// register: it drops `registered` with no value. The keep-alive and the
-/// other tasks start after the register.
-///
-/// ```mermaid
-/// sequenceDiagram
-///     participant C as Claude Code
-///     participant M as riff mcp
-///     participant S as riff-server
-///     C->>M: server/discover
-///     M-->>C: the answer, at once
-///     M->>S: register
-///     C->>M: tools/list
-///     M-->>C: the tools
-///     C->>M: tools/call whoami
-///     S-->>M: done
-///     Note over M: the call waits for the register
-///     M->>S: who
-///     M-->>C: the URI
-/// ```
-///
-/// When the tools refuse a `tools/list`, the session has no riff tools.
-/// `riff mcp` keeps a mark for its agent process, and the hooks tell the
-/// session (01M5512RKABQ70QPGC48S5F67W, [`crate::local::set_no_tools`]).
-pub async fn serve(
-    api: Api,
-    me: SessionUri,
-    client: Option<&str>,
-    registered: tokio::sync::oneshot::Sender<()>,
-) -> Result<()> {
-    use tokio::signal::unix::{SignalKind, signal};
-    let worker = std::env::var("RIFF_WORKER").is_ok_and(|v| v == "1");
-    let (open, gate) = tokio::sync::watch::channel(false);
-    let tools = Tools::new(api.clone(), me.clone())
-        .with_earlier_work()
-        .with_meter(Meter::here())
-        .with_statusline(crate::local::dir())
-        .as_worker(worker)
-        .after_register(gate);
-    // Start even if the server is down: each tool call reports the error.
-    let begin = {
-        let tools = tools.clone();
-        tokio::spawn(async move {
-            if tools.left() {
-                drop(registered);
-            } else {
-                if let Err(e) = api.register_as(&me, worker).await {
-                    eprintln!("riff: {e:#}");
-                }
-                // The receiver can be gone: nothing waits for the register.
-                let _ = registered.send(());
-            }
-            open.send_replace(true);
-            Background::start(&tools, worker)
-        })
-    };
-    let mut term = signal(SignalKind::terminate())?;
-    let mut int = signal(SignalKind::interrupt())?;
-    let mut hup = signal(SignalKind::hangup())?;
-    let follow = Follow::this();
-    // An update waits for the end of the handshake: before it, the new
-    // process cannot take the connection. A client with no initialize
-    // request ends it too (01M53QQR7J7DG86SMAERKMYSAF).
-    let ready = tokio::sync::Notify::new();
-    let known = Mutex::new(None::<String>);
-    let update = async {
-        ready.notified().await;
-        let Some(client) = known.lock().unwrap_or_else(|p| p.into_inner()).clone() else {
-            return std::future::pending().await;
-        };
-        follow
-            .new_one_that(|binary| {
-                let args = tools.args(&client);
-                let dir = tools.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
-                check(binary, args, dir)
-            })
-            .await;
-    };
-    let (outside, inside) = tokio::io::duplex(relay::PIPE);
-    let agent = std::os::unix::process::parent_id();
-    let marks = crate::local::dir();
-    let listed = |list: bool| {
-        if let Some(dir) = &marks
-            && let Err(e) = crate::local::set_no_tools(dir, agent, !list)
-        {
-            eprintln!("riff: cannot keep the mark of the riff tools: {e}");
-        }
-    };
-    let relay = relay::run(outside, update, listed);
-    tokio::pin!(relay);
-    let given = given_client(client)?;
-    let service = async {
-        match given {
-            Some(client) => Ok(rmcp::service::serve_directly(
-                tools.clone(),
-                inside,
-                client.peer(),
-            )),
-            None => tools.clone().serve(inside).await,
-        }
-    };
-    // The relay runs while the tools make the handshake. Each way out
-    // but an update ends with the end call.
-    let mut result = Ok(());
-    let service = tokio::select! {
-        service = service => service.map_err(|e| result = Err(e.into())).ok(),
-        ended = &mut relay => {
-            result = ended.map(|_| ()).map_err(Into::into);
-            None
-        }
-        _ = term.recv() => None,
-        _ = int.recv() => None,
-        _ = hup.recv() => None,
-    };
-    if let Some(service) = &service {
-        let client = Client::of(service.peer().peer_info().as_deref());
-        *known.lock().unwrap_or_else(|p| p.into_inner()) = Some(client.arg()?);
-    }
-    ready.notify_one();
-    let ended = match &service {
-        Some(_) => tokio::select! {
-            ended = &mut relay => ended.map_err(|e| result = Err(e.into())).ok(),
-            _ = term.recv() => None,
-            _ = int.recv() => None,
-            _ = hup.recv() => None,
-        },
-        None => None,
-    };
-    let client = known.lock().unwrap_or_else(|p| p.into_inner()).take();
-    Background::stop(begin).await;
-    if ended == Some(relay::Ended::Update)
-        && let Some(client) = client
-    {
-        let dir = tools.dir.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        let _ = std::env::set_current_dir(dir);
-        follow.run(tools.args(&client));
-        anyhow::bail!("riff mcp cannot run the new riff");
-    }
-    tools.end().await;
-    result
-}
-
-/// The tasks of `riff mcp` beside the tools. They start after the
-/// register. A worker is never the lead, so it runs only the keep-alive.
-struct Background(Vec<tokio::task::JoinHandle<()>>);
-
-impl Background {
-    fn start(tools: &Tools, worker: bool) -> Self {
-        let mut tasks = vec![tools.keep_alive()];
-        if !worker {
-            tasks.extend([tools.rollout(), tools.look()]);
-        }
-        Self(tasks)
-    }
-
-    /// Stops the register of `begin`, or each task that it started.
-    async fn stop(begin: tokio::task::JoinHandle<Self>) {
-        begin.abort();
-        if let Ok(started) = begin.await {
-            for task in started.0 {
-                task.abort();
-            }
-        }
-    }
-}
+impl Tools {}

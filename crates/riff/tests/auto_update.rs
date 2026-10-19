@@ -240,10 +240,6 @@ async fn one_update_runs_for_the_machine_with_the_release_of_the_server() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     assert_eq!(log(machine.bin.path(), "cargo"), install(&newer_tag()));
-    assert_eq!(
-        log(machine.bin.path(), "riff"),
-        "connect claude --claude claude\n"
-    );
     let messages = machine.lead_messages("lead").await;
     let words = format!(
         "riff on pangolin updated itself from {} to {}.",
@@ -408,10 +404,6 @@ async fn the_riff_of_the_bin_folder_puts_the_static_files_of_its_release_in_plac
     assert_eq!(std::fs::read(bin.join("riff-server")).unwrap(), new_server);
     assert_eq!(log(machine.bin.path(), "cargo"), "");
     assert_eq!(
-        log(machine.bin.path(), "riff"),
-        "connect claude --claude claude\n"
-    );
-    assert_eq!(
         riff::local::tried(&machine.state()),
         Some(format!("{} static", this_tag()))
     );
@@ -464,9 +456,6 @@ fn the_book_shows_how_to_update_riff_by_itself() {
 /// 01M53NEE536G72QMVXCVTS28ES, 01M53NEE7W0ZC8B7EV9ET6QHBB).
 #[test]
 fn the_book_shows_the_log_lines_of_an_update() {
-    use riff::enable::{Scoped, State};
-    use riff::plugin::{Connected, Statusline};
-
     let book = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
     )
@@ -477,40 +466,18 @@ fn the_book_shows_the_log_lines_of_an_update() {
     let rest = &book[start + 1..];
     let part = &rest[..rest[5..].find("\n#").map_or(rest.len(), |i| i + 5)];
 
-    let connected = Connected {
-        dir: "/home/mike/.local/share/riff/claude-plugin".into(),
-        removed_old: false,
-        statusline: Statusline::Set,
-    };
-    let off = State {
-        on: false,
-        by: None,
-        forced: false,
-        repo: None,
-    };
-    let scoped = Scoped {
-        answer: None,
-        moved: None,
-        state: off,
-        global: false,
-        kept: false,
-        on_in: vec!["/home/mike/src/riff".into()],
-    };
-    let connect = riff::text::connected(&connected, &scoped);
     let updated = format!(
         "riff: {}",
         riff::text::auto_updated("pangolin", "v1.6.0", "v1.7.0")
     );
     let no_restart = riff::text::daemon_no_restart("");
     let no_restart = no_restart.split(':').next().unwrap();
-    for line in connect.lines().chain([
-        riff::text::updated(None).as_str(),
+    for line in [
         updated.as_str(),
         riff::text::DAEMON_NEW_RIFF,
         no_restart,
-        "riff is installed but off",
         "riff daemon install",
-    ]) {
+    ] {
         assert!(part.contains(line), "{line:?} is not in the section");
     }
 }

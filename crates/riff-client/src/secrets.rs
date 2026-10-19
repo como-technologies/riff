@@ -63,7 +63,7 @@
 //!
 //! With `RIFF_HOME`, riff keeps each secret in a file of
 //! `$RIFF_HOME/secrets` and never opens the OS keyring
-//! (01M3MY2KSV73WS8D902YCH2PRX). Only the tests and `just dev` set it.
+//! (01M3MY2KSV73WS8D902YCH2PRX). Only the tests set it.
 //! The file name is the name of the secret in hex ([`file_of`]). Only the
 //! owner can read the files.
 //!
@@ -630,7 +630,7 @@ fn fail(what: &str, name: &str, e: Error) -> anyhow::Error {
 }
 
 /// A secret file that riff may not read or write stands for a locked
-/// keyring, so that `just dev` and the tests can lock it.
+/// keyring, so that the tests can lock it.
 fn file_locked(error: anyhow::Error) -> anyhow::Error {
     let denied = error
         .downcast_ref::<std::io::Error>()

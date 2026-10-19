@@ -143,21 +143,15 @@ async fn server_shows_the_riff_that_riff_uses_from_riff_server_as_a_table() {
     // not. So the test takes the answer that `riff server` saw: a second
     // look can see another (#294).
     let after = 4 + FACTS.len();
-    if lines[after].starts_with("local ") {
+    if lines.get(after).is_some_and(|l| l.starts_with("local ")) {
         assert_eq!(
             lines[after], "local       http://127.0.0.1:7878",
             "{stdout}"
         );
         assert!(lines[after + 1].starts_with("  release   "), "{stdout}");
     } else {
-        assert_eq!(lines.len(), after + 1, "{stdout}");
+        assert_eq!(lines.len(), after, "{stdout}");
     }
-    // The last line: whether riff is on here (01M3XY2SYKG91SAB2FS1QNCZ2H).
-    assert_eq!(
-        lines.last(),
-        Some(&"repository  riff on (RIFF_ON=1)"),
-        "{stdout}"
-    );
 }
 
 /// The label of each line of facts in `riff server`, in order.
@@ -468,28 +462,20 @@ fn update(bin: &Path, cargo_status: u8, server: &str) -> Command {
         0,
     );
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let mut cmd = riff(&["update", "--claude", "/opt/claude", "--server", server]);
+    let mut cmd = riff(&["update", "--server", server]);
     cmd.arg("--cargo").arg(cargo).env("PATH", path);
     cmd
 }
 
 #[tokio::test]
-async fn update_installs_both_binaries_then_updates_the_plugin() {
+async fn update_installs_both_binaries() {
     let bin = tempfile::tempdir().unwrap();
     let addr = real().await;
     let out = run(update(bin.path(), 0, &addr)).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(log(bin.path(), "cargo"), install(&release()));
-    assert_eq!(
-        log(bin.path(), "riff"),
-        "connect claude --claude /opt/claude\n"
-    );
     let stdout = text(&out.stdout);
-    assert!(stdout.contains("Installed the riff plugin."), "{stdout}");
-    assert!(
-        stdout.ends_with("riff is up to date. Start your Claude Code sessions again.\n"),
-        "{stdout}"
-    );
+    assert!(stdout.ends_with("riff is up to date.\n"), "{stdout}");
 }
 
 #[tokio::test]
@@ -856,10 +842,6 @@ async fn update_downloads_the_static_binaries_of_the_release() {
         }
         assert_eq!(names(&dir), ["riff", "riff-server"], "no new file stays");
         assert_eq!(log(bin.path(), "cargo"), "");
-        assert_eq!(
-            log(bin.path(), "riff"),
-            "connect claude --claude /opt/claude\n"
-        );
         let stdout = text(&out.stdout);
         assert!(
             stdout.contains(&format!(

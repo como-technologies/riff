@@ -61,11 +61,11 @@ check:
 # Run only the checks for text: the book, the requirement IDs, the wrap
 ci-text: book reqs wrap
 
-# 01M51K1VMWTNZGD6PT1BYDGWM3: the book and the plugin, with its skill.
+# 01M51K1VMWTNZGD6PT1BYDGWM3: the book.
 # Check the wrap of the book, and that no page has two blank lines in a row
 wrap:
     @cargo run -q -p hygiene -- wrap docs/src
-    @cargo run -q -p hygiene -- blank docs/src crates/riff/claude-plugin
+    @cargo run -q -p hygiene -- blank docs/src
 
 # Check the requirement IDs: no duplicate, and each cited ID exists
 reqs:
@@ -162,36 +162,6 @@ install:
 # Run riff-server on this machine (memory only, no sign-in)
 serve:
     cargo run -p riff-server
-
-# 01M3JY12HASECNN6SFQ880JT5H, 01M3K0QM89E2XM1NWSPT4KXSTC, 01M3MRDESPG8VGMQ1F6KFJXBC5.
-# The installed riff and plugin stay the same. The trap stops the server also on Ctrl-C.
-# RIFF_HOME keeps the settings, local files and secrets of the tree in target/dev-home
-# (01M3MY2KWKBJCQ0BCNC6533RBW), never in the riff of the machine.
-# RIFF_ON=1 turns riff on for the dev session: the settings of the installed plugin do not
-# count for the plugin of the tree (01M3XY2SWEK0N8MC3MY4TMYTD3).
-# Test this tree without the shared riff: its riff-server on a free port, Claude Code with its plugin. It loads .env
-dev *ARGS:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -f .env ]; then set -a; . ./.env; set +a; fi
-    cargo build --workspace
-    tree="{{justfile_directory()}}"
-    listens() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-    port=7900
-    while listens "$port"; do port=$((port + 1)); done
-    export RIFF_LISTEN="127.0.0.1:$port" RIFF_SERVER="http://127.0.0.1:$port"
-    export RIFF_HOME="$tree/target/dev-home" RIFF_ON=1
-    log="$tree/target/dev-server.log"
-    "$tree/target/debug/riff-server" {{ARGS}} > "$log" 2>&1 &
-    server=$!
-    trap 'kill "$server" 2>/dev/null || true' EXIT
-    until listens "$port"; do
-        if ! kill -0 "$server" 2>/dev/null; then cat "$log"; exit 1; fi
-        sleep 0.1
-    done
-    echo "The riff of this tree: $RIFF_SERVER. The log of its server: $log"
-    PATH="$tree/target/debug:$PATH" claude --plugin-dir "$tree/crates/riff/claude-plugin/riff" \
-        --settings '{"enabledPlugins":{"riff@riff":false}}'
 
 # The static riff and riff-server of this tree (01M4ZPJ04D9MJHNPAV0WN1KCES,
 # 01M4ZPJ06QYVA23N9SQ45T8WQC): a build in rust:CHANNEL-alpine with podman

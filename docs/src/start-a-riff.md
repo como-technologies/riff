@@ -46,41 +46,18 @@ flowchart TD
    riff-server
    ```
 
-3. In a second terminal, go to your project. Add riff to Claude Code.
-   You do not sign in: riff uses the name that you log in with on
-   this machine. The command also shows each session and its claims
-   in the status line of Claude Code:
-
-   ```sh
-   riff connect claude
-   ```
-
-   It asks where you want riff on. Press Enter: riff is on only in
-   this project. On a new machine, it also asks once whether riff
-   updates itself. Press Enter for yes.
-
-## Turn riff on in a project
-
-riff is off in a project until you turn it on there. To use riff in
-another project, run this in that project:
-
-```sh
-riff enable
-```
-
-To turn it off again, run `riff disable` there. See
-[Turn riff on or off for a repository](how-it-works.md#turn-riff-on-or-off-for-a-repository).
+3. In a second terminal, go to your project. Get ready for riff, and
+   start your lead. You do not sign in: riff uses the name that you
+   log in with on this machine. See
+   [Get ready for riff 3.0](#get-ready-for-riff-30) and
+   [Let the lead start the work](#let-the-lead-start-the-work).
 
 ## Use it
 
-Start Claude Code in your project. Then start a second Claude Code
-session in the same project. Ask one of them: *"Who else is in the
-riff?"* Then ask it: *"Say hello to the other session."* The other
-session wakes and reads the message.
-
-The first session that you start in a project is your lead. Work
-there. The other sessions ask their questions there. See
-[The lead](how-it-works.md#the-lead).
+In your project, run `riff lead start`. Your lead runs in a container.
+The riff daemon starts the other sessions in containers too. Ask the
+lead: *"Who else is in the riff?"* The sessions ask their questions
+there. See [The lead](how-it-works.md#the-lead).
 
 ## Resume the new riff
 
@@ -118,8 +95,7 @@ with status 1 when a rule is missing:
 riff setup --check
 ```
 
-When rules are missing, the start hook tells your lead. The lead
-tells you to run `riff setup`.
+When rules are missing, `riff setup` adds them. Run it again.
 
 `riff setup` writes the rules of one project. `riff init` adds the
 rules of your sessions to your own Claude Code settings, for each
@@ -129,7 +105,7 @@ project: see
 ## Update riff
 
 Update riff on your machine. It installs `riff` and `riff-server` of
-a release, and updates the plugin in Claude Code. On Linux x86-64, it
+a release. On Linux x86-64, it
 downloads the static binaries of the release from GitHub. On another
 machine, or for a release with no static binaries, `cargo` builds them
 (see
@@ -155,9 +131,6 @@ start of the riff forgets its messages and its claims, and the riff is
 paused again. Run `riff resume --riff` when you want the sessions to
 work.
 
-Then start your Claude Code sessions again. Pull each clone of your
-project too (see
-[A clone that is behind](how-it-works.md#a-clone-that-is-behind)).
 A riff of another version can refuse `riff` (see
 [Builds](how-it-works.md#builds)). When you joined a riff, see
 [Update riff](join-a-riff.md#update-riff) of Join a Riff.
@@ -283,7 +256,7 @@ other key. Then start Claude Code again. The rules of riff:
 
 | Rules | Allow |
 |---|---|
-| `mcp__plugin_riff_riff`, `mcp__riff` | the riff tools |
+| `mcp__riff` | the riff tools |
 | `Bash(riff)`, `Bash(riff *)` | each `riff` command |
 | `Bash(~/.cache/riff/check/target/static/release/riff *)`, and the same rule with the full path of your home | the riff of a new build in a check: see [Build riff for a check](development.md#build-riff-for-a-check) |
 | `Bash(riff release cut *)`, `Bash(riff release publish *)`, `Bash(riff release status)`, `Bash(riff release check *)`, `Bash(riff release retry *)`, `Bash(riff release rollback *)` | the steps of the lead in the release cycle: see [The release cycle](development.md#the-release-cycle). No rule names `riff release approve`: only you approve |

@@ -98,7 +98,7 @@ item.
 
 | Step | riff 1.x | riff 3.0.0 |
 |---|---|---|
-| Get a machine ready | `riff connect claude` | Also `riff init` one time: podman, the daemon and the session image. See [Get ready for riff 3.0](start-a-riff.md#get-ready-for-riff-30). |
+| Get a machine ready | The plugin of Claude Code | Also `riff init` one time: podman, the daemon and the session image. See [Get ready for riff 3.0](start-a-riff.md#get-ready-for-riff-30). |
 | Pin a session image | No image | `riff.toml` of each repository pins one. A repository with no image of its own pins the image of riff: `riff image` prints it. |
 | Start the lead | `claude` in the clone | `riff lead start`, or `claude` in the clone as before. See [Start the lead](development.md#start-the-lead). |
 | Start the work | The rollout starts workers in tmux | The rollout runs the wave of the daemon. See [Let the rollout of the lead run the wave](development.md#let-the-rollout-of-the-lead-run-the-wave). |
@@ -195,9 +195,6 @@ the daemon: `daemon` in the data folder of riff.
 ### What stays in riff 3.0.0
 
 - riff-server, `riff cloud`, the sign-in, the deploy and the stage.
-- The plugin of Claude Code, its skill and its hooks, `riff connect`,
-  `riff enable`, `riff disable` and the status line, for a session on
-  the host.
 - Each command of riff-server: `riff who`, `riff chat`, `riff pause`,
   `riff resume`, `riff plan`, `riff claim`, `riff release` and the
   member commands `riff invite EMAIL`, `riff remove EMAIL` and

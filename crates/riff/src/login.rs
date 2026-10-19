@@ -50,7 +50,7 @@ pub const BROWSER_WAIT: Duration = Duration::from_secs(5 * 60);
 /// a riff that is gone does not count: it is removed first
 /// (01M3JNVBRS35B3CD67367JF7SJ). Returns the new sign-in, or `None` when
 /// the riff has no sign-in or this device has one. A sign-in that ended
-/// ([`SignIn::ended`]) does not count. `riff connect claude` runs it.
+/// ([`SignIn::ended`]) does not count. `riff login` runs it.
 pub async fn ensure(api: &Api, open: impl FnOnce(&str)) -> Result<Option<SignIn>> {
     if !api.has_sign_in().await? {
         return Ok(None);

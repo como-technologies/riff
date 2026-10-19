@@ -340,12 +340,6 @@ sequenceDiagram
   the caller acts as its token, and gets a direct thread only when it
   is one of its two sessions. Each path has a given/when/then test.
 
-## The status line
-
-The status line of each session calls `GET /v1/me`. The reply holds only
-the session of the caller: its state, claims, status, and the build. It
-does not call `who` for the whole riff.
-
 ## The sign-ins
 
 - A refresh token names its chain and a generation:
@@ -563,7 +557,7 @@ one after another, in this order. They change the same code.
    of the state, and the p50 and p99 of a GCS write from Cloud Run.
    Take 8 live sessions and 20 new session IDs each day for each
    person. Update the cost table.
-2. The status line calls `GET /v1/me`.
+2. Removed in 4.0 (#1173).
 3. `just book` fails on a missing include or anchor.
 4. The log: `handle`, `apply` and the given/when/then tests; the
    records as JSON lines; the writer with a group commit outside the

@@ -7,41 +7,18 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use chrono::TimeZone;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use riff::{
-    activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, lifecycle,
-    local, login, mcp, permissions, plugin, pr, settings, text, usage, view,
+    audit, binary, claude_settings, cloud, dropped, help, identity, lifecycle, local, login,
+    permissions, pr, settings, text, usage, view,
 };
 use riff_client::api::{self, Api, DEFAULT_SERVER, PauseScope, follow};
 use riff_client::link::STREAM_RETRY;
 use riff_client::sessions::Sessions;
-use riff_core::build::{Build, Mismatch};
+
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{
-    Freed, Kind, PullState, RiffReply, RiffState, SessionInfo, StartReason, Status, StepChange,
-};
-
-/// The budget of the one try of `riff statusline`
-/// (01M4A803Z4Q0KX6NT1KC6QR43H).
-const STATUSLINE_WAIT: Duration = Duration::from_secs(2);
-
-/// How long `riff statusline` keeps the answer of riff-server
-/// (01M53TZ0RBSJQ9ZZRXKMBM5R3E, 01M547VMQ5PCJ1GGC4M0GDCT31). Claude Code
-/// runs the status line after each change of the conversation, and each
-/// call swaps the person token for a session token, and opens a session
-/// of the OS keyring (#1003). The `riff mcp` of the session keeps a new
-/// answer at least each 60 seconds, its keep-alive, so the status line
-/// makes no call while it runs ([`riff::mcp::Tools::keep_statusline`]).
-const STATUSLINE_KEEP: Duration = Duration::from_secs(90);
-
-/// How often a watch looks for a leave of its session
-/// (01M3MEEFETT9A0DRWBKQTG77Z2).
-const LEFT_POLL: Duration = Duration::from_millis(250);
-
-/// The hidden option in which a watch gives the end of its wait to the
-/// new binary of an update (01M3Z64J08GW6N1H42AR2FZQZ4).
-const UNTIL_ARG: &str = "--until";
+use riff_core::wire::{Kind, PullState, RiffState, Status, StepChange};
 
 /// The local client that finds sessions and wakes yours.
 #[derive(Parser)]
@@ -328,39 +305,6 @@ enum Command {
         #[arg(long, value_name = "OWNER/REPO")]
         repo: Option<String>,
     },
-    /// Print one line for each wake of this session
-    ///
-    /// The plugin runs it. One watch runs for each session: a second one
-    /// stops at once.
-    #[command(hide = true, args_conflicts_with_subcommands = true)]
-    Watch {
-        /// Exit after the first wake, or after the time of `riff watch
-        /// limit` with no wake. For a runner that wakes the session
-        /// when the command exits.
-        #[arg(long)]
-        once: bool,
-        /// The time at which the watch of before an update ends with no
-        /// wake, in seconds since 1970. Only riff gives it.
-        #[arg(long, hide = true)]
-        until: Option<u64>,
-        #[command(subcommand)]
-        command: Option<WatchCommand>,
-    },
-    /// Serve the riff tools to an agent session over stdio
-    ///
-    /// The plugin runs it.
-    #[command(hide = true)]
-    Mcp {
-        /// The initialize request of the client, as JSON, after an
-        /// update. Only riff gives it (01M3NT6WZTKAFKGDWGCFKC8TB5).
-        #[arg(long, hide = true)]
-        client: Option<String>,
-        /// Check that this binary can take the session of an old
-        /// riff mcp, and serve nothing. Only riff gives it
-        /// (01M43F5F9AQ9S39E1JZF8EBJEH).
-        #[arg(long, hide = true)]
-        check: bool,
-    },
     /// Sign out of the riff on this device
     ///
     /// It removes the sign-in at riff-server from this device. With
@@ -425,29 +369,6 @@ enum Command {
         #[arg(long)]
         deny: bool,
     },
-    /// Print the status line of a Claude Code session
-    ///
-    /// It shows the short session ID, the claims, and `lead` or
-    /// `blocked`. Claude Code runs it with the session on stdin. It always
-    /// exits with status 0.
-    #[command(hide = true)]
-    Statusline,
-    /// Run a Claude Code hook
-    ///
-    /// The riff plugin calls it.
-    #[command(hide = true)]
-    Hook {
-        #[command(subcommand)]
-        event: HookEvent,
-    },
-    /// Install the riff plugin in an agent tool
-    ///
-    /// When the riff has sign-in and this machine has none, it signs you
-    /// in. Run it again to update the plugin.
-    Connect {
-        #[command(subcommand)]
-        tool: Tool,
-    },
     /// Add the Claude Code permission rules of riff to this project
     ///
     /// It adds each missing rule to .claude/settings.json at the top of
@@ -461,28 +382,6 @@ enum Command {
         /// when a rule is missing.
         #[arg(long)]
         check: bool,
-    },
-    /// Turn riff on in this repository
-    ///
-    /// riff is off in a Claude Code session until you turn it on for
-    /// the repository of the session. This command writes the entry
-    /// `riff@riff` to the key `enabledPlugins` of a Claude Code settings
-    /// file. It keeps each other key. A new session in the repository
-    /// then has riff.
-    Enable {
-        #[command(flatten)]
-        place: PlaceArgs,
-    },
-    /// Turn riff off in this repository
-    ///
-    /// It removes the entry that `riff enable` wrote. When another file
-    /// still turns riff on, for example after `riff enable --global`,
-    /// it writes a no for this repository to the local settings. No
-    /// other repository changes. A session that runs keeps riff until
-    /// it ends.
-    Disable {
-        #[command(flatten)]
-        place: PlaceArgs,
     },
     /// Show the riff that riff uses
     ///
@@ -498,8 +397,7 @@ enum Command {
     Server,
     /// Update riff on this machine
     ///
-    /// It installs riff and riff-server of a release, then updates the
-    /// plugin with `riff connect claude`. On Linux x86-64 it downloads
+    /// It installs riff and riff-server of a release. On Linux x86-64 it downloads
     /// the static binaries of the GitHub release, checks them, and puts
     /// them in the bin folder of cargo. On another machine, or for a
     /// release with no static binaries, cargo builds them. It installs
@@ -539,9 +437,6 @@ enum Command {
         /// The cargo command.
         #[arg(long, default_value = "cargo")]
         cargo: std::path::PathBuf,
-        /// The claude command.
-        #[arg(long, default_value = "claude")]
-        claude: std::path::PathBuf,
     },
     /// Open a pull request, and wait for its merge
     ///
@@ -912,7 +807,7 @@ impl From<VerdictArg> for riff::pr::Verdict {
 enum ReleaseCommand {
     /// Make the release pull request from origin/main
     ///
-    /// It sets the version in Cargo.toml, plugin.json and Cargo.lock,
+    /// It sets the version in Cargo.toml and Cargo.lock,
     /// runs deploy/release-check.sh, and pushes the branch
     /// release-vX.Y.Z. The pull request has the label release, the
     /// current wave, auto-merge on, and the items of each wave since the
@@ -1390,21 +1285,6 @@ enum RelayCommand {
 }
 
 #[derive(Subcommand)]
-enum WatchCommand {
-    /// Show or set the longest wait of riff watch --once
-    ///
-    /// Claude Code stops a background task after 2 hours at most. So
-    /// riff watch --once ends by itself after this time with no wake,
-    /// and the session starts it again. The default is 6000 seconds. It
-    /// is in $XDG_CONFIG_HOME/riff/config.toml, key watch.limit.
-    Limit {
-        /// The seconds. 0 is no limit. Leave it out to show the
-        /// setting.
-        seconds: Option<u64>,
-    },
-}
-
-#[derive(Subcommand)]
 enum PlanCommand {
     /// Hold a work item, so that no worker claims it
     ///
@@ -1517,119 +1397,6 @@ enum StepCommand {
     },
 }
 
-#[derive(Subcommand)]
-enum HookEvent {
-    /// Run the SessionStart hook
-    ///
-    /// It reads the SessionStart input on stdin, and prints the context
-    /// that starts the watch. It always exits with status 0.
-    SessionStart,
-    /// Run the SessionEnd hook
-    ///
-    /// It reads the SessionEnd input on stdin, and tells riff-server that
-    /// the session ended, unless the reason is clear. It always exits
-    /// with status 0.
-    SessionEnd,
-    /// Run the Stop hook
-    ///
-    /// It reads the Stop input on stdin. In a worker that released its
-    /// last claim, riff then gives its pane `/clear` and the start
-    /// prompt. It always exits with status 0.
-    Stop,
-    /// Run the PreToolUse or the PostToolUse hook
-    ///
-    /// It reads the hook input on stdin, and writes the newest fact of
-    /// the session on this machine: the tool that runs. It makes no
-    /// call. After a tool, it tells a session whose riff mcp still runs
-    /// a replaced riff how to reconnect, once for each new riff. It
-    /// always exits with status 0.
-    Tool {
-        /// The tool ended: the PostToolUse hook.
-        #[arg(long)]
-        done: bool,
-    },
-    /// Run the UserPromptSubmit hook
-    ///
-    /// It reads the hook input on stdin, and writes the time of the
-    /// prompt of the person on this machine. A prompt after a block ends
-    /// the block. It makes no call. It always exits with status 0.
-    Prompt,
-    /// Run the PermissionDenied hook
-    ///
-    /// It reads the hook input on stdin: a refusal of the auto mode
-    /// checker. It keeps one record with no secret on this machine, and
-    /// starts the send to the thread denials, detached. It never waits
-    /// for riff-server. It always exits with status 0.
-    Denied,
-    /// Post the refusals of auto mode that this machine keeps
-    ///
-    /// The PermissionDenied hook starts it, detached.
-    #[command(hide = true)]
-    DeniedSend {
-        /// The riff session ID.
-        #[arg(long)]
-        session: String,
-    },
-    /// Report the tokens of each claim that a start or an end freed
-    ///
-    /// It ends each open claim in the marks of the session. The start
-    /// hook starts it at a new start, and the end hook starts it,
-    /// detached.
-    #[command(hide = true)]
-    Usage {
-        /// The riff session ID.
-        #[arg(long)]
-        session: String,
-        /// The time of the hook, in milliseconds since the Unix epoch.
-        #[arg(long)]
-        before: u64,
-    },
-}
-
-impl HookEvent {
-    /// True for a hook that the agent tool runs. riff starts the others
-    /// itself.
-    fn of_the_agent(&self) -> bool {
-        match self {
-            HookEvent::SessionStart
-            | HookEvent::SessionEnd
-            | HookEvent::Stop
-            | HookEvent::Tool { .. }
-            | HookEvent::Prompt
-            | HookEvent::Denied => true,
-            HookEvent::Usage { .. } | HookEvent::DeniedSend { .. } => false,
-        }
-    }
-}
-
-/// The settings file of `riff enable` and `riff disable`.
-#[derive(clap::Args)]
-#[group(multiple = false)]
-struct PlaceArgs {
-    /// Only for you: .claude/settings.local.json at the top of the
-    /// repository (the default).
-    #[arg(long)]
-    local: bool,
-    /// For the team: .claude/settings.json at the top of the
-    /// repository. Commit the file.
-    #[arg(long)]
-    shared: bool,
-    /// For each repository on this machine: the user settings of
-    /// Claude Code.
-    #[arg(long)]
-    global: bool,
-}
-
-impl PlaceArgs {
-    fn place(&self) -> enable::Place {
-        match (self.shared, self.global) {
-            (true, _) => enable::Place::Shared,
-            (_, true) => enable::Place::Global,
-            _ => enable::Place::Local,
-        }
-    }
-}
-
 /// The output of `riff denials`.
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum DenialsFormat {
@@ -1637,45 +1404,6 @@ enum DenialsFormat {
     Text,
     /// Each record as JSON.
     Json,
-}
-
-/// Where `riff connect claude` turns riff on.
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum ScopeArg {
-    /// Only in the repository of this directory.
-    Repo,
-    /// In each repository on this machine.
-    Global,
-    /// Nowhere now. Run `riff enable` later.
-    None,
-}
-
-impl From<ScopeArg> for enable::Scope {
-    fn from(scope: ScopeArg) -> Self {
-        match scope {
-            ScopeArg::Repo => enable::Scope::Repo,
-            ScopeArg::Global => enable::Scope::Global,
-            ScopeArg::None => enable::Scope::None,
-        }
-    }
-}
-
-#[derive(Subcommand)]
-enum Tool {
-    /// Add the riff plugin to Claude Code.
-    ///
-    /// riff stays off in a session until you turn it on for a
-    /// repository. In a terminal, the command asks one time where you
-    /// want riff on. With no terminal, it turns riff on nowhere, and
-    /// keeps an earlier choice.
-    Claude {
-        /// The claude command.
-        #[arg(long, default_value = "claude")]
-        claude: std::path::PathBuf,
-        /// Where to turn riff on, with no question.
-        #[arg(long, value_enum)]
-        scope: Option<ScopeArg>,
-    },
 }
 
 #[tokio::main]
@@ -1687,36 +1415,6 @@ async fn main() -> Result<()> {
     // The local folder is private (01M56RB1FZ575KQYHW9FF716CZ).
     if let Err(line) = local::secure_here() {
         eprintln!("{line}");
-    }
-    // Each entry of the plugin does nothing where riff is off
-    // (01M3XY2ST8R67SKTXJECAYJZRX). A `riff mcp` that an update started
-    // again serves a session that runs: it goes on.
-    match &cli.command {
-        Command::Hook { .. } | Command::Statusline if !enable::State::here().on => return Ok(()),
-        Command::Mcp { client: None, .. } if !enable::State::here().on => {
-            return mcp::serve_off().await;
-        }
-        _ => {}
-    }
-    // An agent inside a riff session, for example a `claude -p` of a
-    // Bash command of the session, is no session: its hooks and its
-    // `riff mcp` act for no session (01M517N75C0Z5BAFQAWRN3YTYB).
-    match &cli.command {
-        Command::Hook { event } if event.of_the_agent() => {
-            if let Some(outer) = hook::outer_session() {
-                if matches!(event, HookEvent::SessionStart) {
-                    println!("{}", hook::start_output(&hook::nested_line(&outer)));
-                }
-                return Ok(());
-            }
-        }
-        Command::Mcp { client: None, .. } => {
-            let agent = std::os::unix::process::parent_id();
-            if let Some(outer) = local::dir().and_then(|dir| local::outer(&dir, agent)) {
-                return mcp::serve_nested(&outer).await;
-            }
-        }
-        _ => {}
     }
     if let Command::ClaudeToken = cli.command {
         println!("{}", riff::claude_token::run(&riff::daemon::dir()?)?);
@@ -1779,7 +1477,6 @@ async fn main() -> Result<()> {
         check,
         background,
         cargo,
-        claude,
     } = &cli.command
     {
         if *check {
@@ -1797,143 +1494,18 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         if let (true, Some(tag)) = (background, tag) {
-            return riff::auto_update::run(
-                cargo,
-                claude,
-                tag,
-                &server,
-                DEFAULT_SERVER,
-                cli.place.as_ref(),
-            )
-            .await;
+            return riff::auto_update::run(cargo, tag, &server, DEFAULT_SERVER, cli.place.as_ref())
+                .await;
         }
-        let words =
-            lifecycle::update(cargo, claude, tag.as_deref(), &server, DEFAULT_SERVER).await?;
+        let words = lifecycle::update(cargo, tag.as_deref(), &server, DEFAULT_SERVER).await?;
         for line in lifecycle::daemon_after_update().await {
             println!("{line}");
         }
         println!("{words}");
         return Ok(());
     }
-    if let Command::Hook {
-        event: HookEvent::SessionStart,
-    } = cli.command
-    {
-        let output = session_start(&server).await;
-        if !output.is_empty() {
-            println!("{output}");
-        }
-        return Ok(());
-    }
-    if let Command::Hook {
-        event: HookEvent::SessionEnd,
-    } = cli.command
-    {
-        session_end(&server).await;
-        return Ok(());
-    }
-    if let Command::Hook {
-        event: HookEvent::Stop,
-    } = cli.command
-    {
-        stop_hook();
-        return Ok(());
-    }
-    if let Command::Hook {
-        event: HookEvent::Tool { done },
-    } = cli.command
-    {
-        let mut stdin = String::new();
-        let _ = std::io::stdin().read_to_string(&mut stdin);
-        let hook = if done {
-            activity::Hook::Post
-        } else {
-            activity::Hook::Pre
-        };
-        activity::run(hook, &stdin, None);
-        // A riff mcp that cannot start again on the new riff by itself
-        // (01M53QQRAJMB24B0804YHPMN18), and a session with no riff tools
-        // (01M5512RKABQ70QPGC48S5F67W).
-        if done
-            && let Some(dir) = local::dir()
-            && let Some(out) = hook::tool_lines([
-                hook::stuck_line(&dir, identity::is_worker(), std::time::SystemTime::now()),
-                hook::no_tools_line(&dir, identity::is_worker(), true),
-            ])
-        {
-            println!("{out}");
-        }
-        return Ok(());
-    }
-    if let Command::Hook {
-        event: HookEvent::Prompt,
-    } = cli.command
-    {
-        let mut stdin = String::new();
-        let _ = std::io::stdin().read_to_string(&mut stdin);
-        activity::run_prompt(&stdin);
-        return Ok(());
-    }
-    if let Command::Hook {
-        event: HookEvent::Denied,
-    } = cli.command
-    {
-        denied_hook();
-        return Ok(());
-    }
-    if let Command::Hook {
-        event: HookEvent::DeniedSend { session },
-    } = &cli.command
-    {
-        if let Err(e) = denied_send(session, &server).await {
-            eprintln!("riff: cannot send the refusals of auto mode: {e:#}");
-        }
-        return Ok(());
-    }
-    if let Command::Hook {
-        event: HookEvent::Usage { session, before },
-    } = &cli.command
-    {
-        if let Some(meter) = usage::Meter::here() {
-            meter.release_all(session, *before);
-        }
-        return Ok(());
-    }
     if let Command::Usage { issue, wave, total } = &cli.command {
         print!("{}", usage_text(issue.as_deref(), wave.as_deref(), *total)?);
-        return Ok(());
-    }
-    if let Command::Watch {
-        command: Some(WatchCommand::Limit { seconds }),
-        ..
-    } = &cli.command
-    {
-        let path = settings::path()?;
-        if let Some(seconds) = seconds {
-            settings::set_watch_limit(&path, *seconds)?;
-        }
-        let limit = settings::watch_limit(&path)?;
-        anstream::println!("{}", view::watch_limit(limit, &path));
-        return Ok(());
-    }
-    if let Command::Statusline = cli.command {
-        println!("{}", statusline(&server).await);
-        return Ok(());
-    }
-    if let Command::Connect {
-        tool: Tool::Claude { claude, scope },
-    } = &cli.command
-    {
-        let settings = plugin::user_settings();
-        let connected = plugin::connect(claude, &plugin::dir()?, settings.as_deref())?;
-        let scoped = connect_scope(settings.as_deref(), scope.map(Into::into))?;
-        println!("{}", text::connected(&connected, &scoped));
-        match login::ensure(&Api::new(&server), open_browser).await {
-            Ok(Some(_)) => println!("{}", text::connect_signed_in(&server)),
-            Ok(None) => {}
-            Err(e) => anstream::eprintln!("riff: {}", text::connect_no_sign_in(&server, &e)),
-        }
-        ask_auto_update();
         return Ok(());
     }
     if let Command::Setup { check } = cli.command {
@@ -1949,11 +1521,6 @@ async fn main() -> Result<()> {
         );
         let riff = riff::check::build(&identity::working_dir()?, &check, just)?;
         println!("{}", riff.display());
-        return Ok(());
-    }
-    if let Command::Enable { place } | Command::Disable { place } = &cli.command {
-        let on = matches!(cli.command, Command::Enable { .. });
-        println!("{}", text::enabled(&set_enabled(place.place(), on)?, on));
         return Ok(());
     }
     if let Command::Cloud { command } = &cli.command {
@@ -2182,18 +1749,10 @@ async fn main() -> Result<()> {
     }
     let me = identity::me(&here, api.base())?;
     // A session that left makes no call (01M3MEEFETT9A0DRWBKQTG77Z2).
-    // `riff mcp` still runs: its `join` tool brings the session back.
     if let Some(id) = me.who().session()
         && local::left_here(id)
     {
-        match cli.command {
-            Command::Mcp { .. } => {}
-            Command::Watch { .. } => {
-                println!("{}", text::WATCH_LEFT);
-                return Ok(());
-            }
-            _ => anyhow::bail!(riff_client::text::LEFT_COMMAND),
-        }
+        anyhow::bail!(riff_client::text::LEFT_COMMAND);
     }
     let api = api.signed_in(me.who().session())?;
     match cli.command {
@@ -2452,32 +2011,9 @@ async fn main() -> Result<()> {
             };
             top(&api, &me, here.default_thread(), &show, once).await?;
         }
-        Command::Watch { once, until, .. } => {
-            let me = identity::session(&here, api.base())?;
-            let Some(_lock) = lock_watch(&me) else {
-                println!("{}", text::WATCH_RUNS);
-                std::process::exit(1);
-            };
-            watch(&api, &me, once, watch_limit(once), until).await
-        }
-        Command::Mcp { client, check } => {
-            let me = identity::session(&here, api.base())?;
-            if check {
-                mcp::given_client(client.as_deref())?;
-                return Ok(());
-            }
-            let _record = record_session(&me);
-            let (registered, _) = tokio::sync::oneshot::channel();
-            mcp::serve(api.clone(), me.clone(), client.as_deref(), registered).await?
-        }
-        Command::Hook { .. }
-        | Command::Usage { .. }
-        | Command::Statusline
-        | Command::Connect { .. }
+        Command::Usage { .. }
         | Command::Setup { .. }
         | Command::Build { .. }
-        | Command::Enable { .. }
-        | Command::Disable { .. }
         | Command::Server
         | Command::Update { .. }
         | Command::Cloud { .. }
@@ -3374,88 +2910,6 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
     Ok(())
 }
 
-/// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It counts the usage of the
-/// session. It never fails.
-fn stop_hook() {
-    let mut stdin = String::new();
-    let _ = std::io::stdin().read_to_string(&mut stdin);
-    let input: hook::StopInput = serde_json::from_str(&stdin).unwrap_or_default();
-    let Some(id) = identity::agent_session(input.session_id) else {
-        return;
-    };
-    activity::run(activity::Hook::Stop, &stdin, Some(id.clone()));
-    count_usage(&id, input.transcript_path.as_deref(), false);
-}
-
-/// Records the transcript of the session `id`. With `ends`, it starts
-/// `riff hook usage`, detached, when the marks of the session have an
-/// open claim: a new start and the end of a session free each claim
-/// (01M3Y1YP1ZA5TBRA01MKWM3VC6). A hook never waits for the report, and
-/// a failure goes to stderr.
-fn count_usage(id: &str, transcript: Option<&std::path::Path>, ends: bool) {
-    use std::os::unix::process::CommandExt;
-    let Some(meter) = usage::Meter::here() else {
-        return;
-    };
-    if let Some(transcript) = transcript {
-        meter.saw(id, transcript);
-    }
-    if !ends || !meter.holds(id) {
-        return;
-    }
-    let started = std::env::current_exe().and_then(|exe| {
-        std::process::Command::new(exe)
-            .args(["hook", "usage", "--session", id, "--before"])
-            .arg(usage::now_ms().to_string())
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .process_group(0)
-            .spawn()
-    });
-    if let Err(e) = started {
-        eprintln!("riff: cannot report the tokens of the claims: {e}");
-    }
-}
-
-/// The PermissionDenied hook of a session on the host
-/// (01M57XY3Q6HEYQG27FE0CEQ7HB): it keeps the refusal on this machine,
-/// with no secret, and starts `riff hook denied-send`, detached. It does
-/// nothing when the session left the riff. It never fails.
-fn denied_hook() {
-    let mut stdin = String::new();
-    let _ = std::io::stdin().read_to_string(&mut stdin);
-    let input: riff::denied::Input = serde_json::from_str(&stdin).unwrap_or_default();
-    let Some(id) = identity::agent_session(input.session_id) else {
-        return;
-    };
-    if local::left_here(&id) {
-        return;
-    }
-    let Some(queue) = riff::denied::Queue::here() else {
-        return;
-    };
-    if let Err(e) = riff::denied::keep_input(&stdin, &queue, identity::is_worker()) {
-        eprintln!("riff: cannot keep the refusal of auto mode: {e:#}");
-        return;
-    }
-    start_detached(&["hook", "denied-send", "--session", &id]);
-}
-
-/// Posts the refusals of auto mode that this machine keeps, as the
-/// session `id` ([`riff::denied::send_here`]).
-async fn denied_send(id: &str, server: &str) -> Result<()> {
-    let Some(queue) = riff::denied::Queue::here() else {
-        return Ok(());
-    };
-    let here = identity::place(&identity::working_dir()?)?;
-    let api = Api::new(server);
-    let me = identity::agent(&here, id, api.base())?;
-    let api = api.signed_in(Some(id))?;
-    riff::denied::send_here(&api, &me, &queue).await?;
-    Ok(())
-}
-
 /// Starts this riff with `args`, detached, so that a hook returns at
 /// once. A failure goes to stderr.
 fn start_detached(args: &[&str]) {
@@ -3581,156 +3035,12 @@ fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> 
     }
 }
 
-/// The SessionStart hook output. It has no URI when riff cannot find the
-/// session, and no riff state when it cannot read it in
-/// [`hook::STATE_WAIT`], but it always has the context (R69). It has a
-/// line when the clone is behind `origin` ([`hook::behind`]), and a line
-/// at a new start in a linked worktree ([`hook::Linked`]).
-async fn session_start(server: &str) -> String {
-    let mut stdin = String::new();
-    let _ = std::io::stdin().read_to_string(&mut stdin);
-    let input: hook::StartInput = serde_json::from_str(&stdin).unwrap_or_default();
-    let id = identity::agent_session(input.session_id);
-    // A session that left gets no riff context (01M3MEEFETT9A0DRWBKQTG77Z2).
-    if id.as_deref().is_some_and(local::left_here) {
-        return String::new();
-    }
-    if let Some(id) = &id {
-        let transcript = input.transcript_path.as_deref();
-        count_usage(id, transcript, input.source.is_new_start());
-    }
-    let api = Api::new(server).with_budget(hook::STATE_WAIT);
-    let cwd = std::env::current_dir().ok();
-    let uri = id.as_deref().zip(cwd.as_deref()).and_then(|(id, cwd)| {
-        let here = identity::place(cwd).ok()?;
-        identity::agent(&here, id, api.base()).ok()
-    });
-    let facts = async {
-        match uri {
-            Some(uri) => {
-                let facts = start_facts(api, &uri, input.source.reason());
-                match tokio::time::timeout(hook::STATE_WAIT, facts).await {
-                    Ok(Ok((lead, pauses, freed, who))) => (
-                        Some(uri.with_lead(lead)),
-                        Some(pauses),
-                        freed,
-                        Some(who),
-                        None,
-                    ),
-                    Ok(Err(e)) => (
-                        Some(uri),
-                        None,
-                        Vec::new(),
-                        None,
-                        e.downcast::<Mismatch>().ok(),
-                    ),
-                    Err(_) => (Some(uri), None, Vec::new(), None, None),
-                }
-            }
-            None => (None, None, Vec::new(), None, None),
-        }
-    };
-    let behind = async {
-        match &cwd {
-            Some(cwd) => hook::behind(cwd, hook::FETCH_WAIT).await,
-            None => None,
-        }
-    };
-    let linked = async {
-        match &cwd {
-            Some(cwd) if input.source.is_new_start() => hook::linked(cwd).await,
-            _ => None,
-        }
-    };
-    let ((uri, riff, freed, who, mismatch), behind, linked) = tokio::join!(facts, behind, linked);
-    let others = uri
-        .as_ref()
-        .zip(who.as_ref())
-        .map(|(me, who)| hook::others_here(me, who));
-    let watching = id
-        .as_deref()
-        .zip(local::dir())
-        .is_some_and(|(id, dir)| local::watching(&dir, id));
-    let mismatch_free = mismatch.is_none();
-    let mut context = match mismatch {
-        Some(mismatch) => hook::mismatch_context(uri.as_ref(), &mismatch),
-        None => hook::start_context(uri.as_ref(), input.source, watching, riff.as_ref(), &freed),
-    };
-    if let Some(behind) = behind {
-        context.push_str(&behind.line());
-    }
-    if let Some(linked) = linked.filter(|_| mismatch_free) {
-        context.push_str(&linked.line(others.as_deref()));
-    }
-    // After the fetch of `behind`, so the list has the pushed branches
-    // of now (01M3WFYETKXPWWE0R0EAKGCD1E).
-    if let (Some(cwd), Some(me), Some(who)) = (&cwd, &uri, &who)
-        && input.source.is_new_start()
-        && mismatch_free
-    {
-        let free = dropped::without_owner(dropped::all(cwd), me, who);
-        if let Some(lines) = dropped::start_lines(&free) {
-            context.push_str(&lines);
-        }
-    }
-    if identity::is_worker() {
-        context.push_str(hook::WORKER_LINE);
-    }
-    if let Some(line) = hook::on_line(&enable::State::here()) {
-        context.push_str(&line);
-    }
-    if mcp_off_here() {
-        context.push_str(hook::MCP_OFF_LINE);
-    }
-    if let Some(line) =
-        local::dir().and_then(|dir| hook::no_tools_line(&dir, identity::is_worker(), false))
-    {
-        context.push_str(&format!("- {line}\n"));
-    }
-    if let Some(cwd) = cwd
-        .as_deref()
-        .filter(|_| uri.as_ref().is_some_and(SessionUri::lead))
-    {
-        let project = permissions::Project::of(cwd);
-        let user = plugin::settings_from(
-            std::env::var_os("CLAUDE_CONFIG_DIR"),
-            std::env::var_os("HOME"),
-        );
-        if let Some(line) = hook::rules_line(&project.missing(user.as_deref()), &project.top) {
-            context.push_str(&line);
-        }
-    }
-    hook::start_output(&context)
-}
-
-/// Whether the server names `me` as the lead, the pauses of the riff
-/// (01M3JCG48QPCNNTKW34FTR0AMR), the claims that a new start freed
-/// (01M3JEE1QQCFS5TMZW5N2DAD2D), and the sessions of the riff. With a
-/// `reason`, it sends the start call first, with the reason and the
-/// worker mark of the session (01M3X9X9M079WGFPJZHNXH9VEP). A compaction has no reason,
-/// and sends no start.
-async fn start_facts(
-    api: Api,
-    me: &SessionUri,
-    reason: Option<StartReason>,
-) -> Result<(bool, RiffReply, Vec<Freed>, Vec<SessionInfo>)> {
-    let api = api.signed_in(me.who().session())?;
-    let freed = match reason {
-        Some(reason) => api.start(me, reason, identity::is_worker()).await?,
-        None => Vec::new(),
-    };
-    let riff = api.pauses(me).await?;
-    let who = api.who(me, false).await?;
-    let lead = who.iter().any(|s| s.uri.who() == me.who() && s.uri.lead());
-    Ok((lead, riff, freed, who))
-}
-
 /// `riff setup`: adds the missing permission rules of riff to the
 /// project settings, or with `check`, names them
 /// (01M3Q53RNDJBDHVDFHJ9HCX9S1).
 fn setup(check: bool) -> Result<()> {
     let project = permissions::Project::of(&identity::working_dir()?);
-    let user = plugin::settings_from(
+    let user = claude_settings::settings_from(
         std::env::var_os("CLAUDE_CONFIG_DIR"),
         std::env::var_os("HOME"),
     );
@@ -3745,259 +3055,6 @@ fn setup(check: bool) -> Result<()> {
     let added = permissions::add(&project.settings(), &left)?;
     println!("{}", text::setup_added(&project.settings(), &added));
     Ok(())
-}
-
-/// `riff enable` (`on` true) or `riff disable` for the working
-/// directory (01M3XY2SKQ27K3TE4NV28FHTVV). A change of the user
-/// settings is a choice of the person, so riff keeps it as the answer
-/// to the scope question: an update then keeps it.
-fn set_enabled(place: enable::Place, on: bool) -> Result<enable::Changed> {
-    let dir = identity::working_dir()?;
-    let user = plugin::user_settings();
-    let done = if on {
-        enable::enable(&dir, place, user.as_deref())?
-    } else {
-        enable::disable(&dir, place, user.as_deref())?
-    };
-    if place == enable::Place::Global {
-        let scope = if on {
-            enable::Scope::Global
-        } else {
-            enable::Scope::None
-        };
-        settings::set_connect_scope(&settings::path()?, scope)?;
-    }
-    Ok(done)
-}
-
-/// The scope step of `riff connect claude` ([`enable::scope`]). It asks
-/// the scope question only in a terminal.
-fn connect_scope(
-    user: Option<&std::path::Path>,
-    flag: Option<enable::Scope>,
-) -> Result<enable::Scoped> {
-    use std::io::IsTerminal;
-    let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let riff = settings::path()?;
-    let claude = enable::claude_state();
-    let files = enable::Files {
-        user,
-        riff: &riff,
-        claude: claude.as_deref(),
-    };
-    enable::scope(&identity::working_dir()?, files, flag, || {
-        enable::ask_scope(
-            terminal,
-            &mut std::io::stdin().lock(),
-            &mut std::io::stdout(),
-        )
-    })
-}
-
-/// True when a person turned the riff server off for the project of
-/// the working directory in `/mcp` (01M3XY2T0R2Q39XYX8AYV7T0RK).
-fn mcp_off_here() -> bool {
-    let Ok(dir) = std::env::current_dir() else {
-        return false;
-    };
-    let repo = enable::Repo::of(&dir);
-    enable::mcp_off_in(enable::claude_state().as_deref(), &dir, repo.as_ref())
-}
-
-/// The status line of the Claude Code session on stdin
-/// ([`text::statusline`]). It finds the session like a hook does, and
-/// asks riff-server for only that session with `GET /v1/me`, not `who`
-/// (01M3T5GFVS8NMA992KHZN4VE17). It never fails, and it waits at most
-/// [`STATUSLINE_WAIT`] for riff-server. It keeps a good answer for
-/// [`STATUSLINE_KEEP`], and asks riff-server nothing while it has one
-/// (01M53TZ0RBSJQ9ZZRXKMBM5R3E). The `riff mcp` of the session keeps new
-/// answers too (01M547VMMDPB4DXBMWVERF60C4).
-async fn statusline(server: &str) -> String {
-    let mut stdin = String::new();
-    let _ = std::io::stdin().read_to_string(&mut stdin);
-    let input: hook::StartInput = serde_json::from_str(&stdin).unwrap_or_default();
-    let Some(id) = identity::agent_session(input.session_id) else {
-        return "riff: no session".into();
-    };
-    if local::left_here(&id) {
-        return text::statusline_left(&id);
-    }
-    if mcp_off_here() {
-        return text::statusline_mcp_off(&id);
-    }
-    if local::dir().is_some_and(|dir| local::mcp_gone_above(&dir)) {
-        return text::statusline_mcp_gone(&id);
-    }
-    let dir = local::dir();
-    let now = riff::activity::now_ms();
-    let kept = dir.as_deref().and_then(|dir| {
-        local::kept_statusline(
-            dir,
-            &id,
-            riff_client::link::base_of(server),
-            now,
-            STATUSLINE_KEEP,
-        )
-    });
-    let (lead, answer, build) = match kept {
-        Some(kept) => (
-            kept.lead,
-            kept.line,
-            kept.build.and_then(|b| b.parse().ok()),
-        ),
-        None => statusline_of(server, &id, dir.as_deref(), now).await,
-    };
-    let here = if lead {
-        statusline_here(dir.as_deref())
-    } else {
-        text::Here::default()
-    };
-    let mut line = text::statusline_kept(&id, lead, &answer, &here);
-    if let Some(tag) = build.and_then(|build| update_tag(&build)) {
-        line = format!("{line} {}", text::update_tag(&tag));
-    }
-    // A step of an update that only the person can do
-    // (01M51QFPW37EXVH4AXH70MSXBT). It reads only a local file.
-    if let Some(step) = local::dir().as_deref().and_then(local::needs_you) {
-        line = format!("{line} {}", text::needs_you_tag(&step));
-    }
-    line
-}
-
-/// The part of the status line of the session `id` that comes from the
-/// answer of `server`: lead or not, and the words of
-/// [`text::statusline_answer`]. And the build of the server. A good answer is
-/// kept in `dir` (01M53TZ0RBSJQ9ZZRXKMBM5R3E).
-async fn statusline_of(
-    server: &str,
-    id: &str,
-    dir: Option<&std::path::Path>,
-    now: u64,
-) -> (bool, String, Option<Build>) {
-    let find = async {
-        let here = identity::place(&identity::working_dir()?)?;
-        let api = Api::new(server).one_try(STATUSLINE_WAIT);
-        let me = identity::agent(&here, id, api.base())?;
-        anyhow::Ok(api.signed_in(me.who().session())?.me(&me).await?.session)
-    };
-    let found = tokio::time::timeout(STATUSLINE_WAIT, find).await;
-    // The build of the server comes with its answer: no extra call
-    // (01M3NJCWDN5APKZ3Z53XQR8P0B).
-    let build = match &found {
-        Ok(Err(e)) => e.downcast_ref::<Mismatch>().and_then(|m| m.server.clone()),
-        _ => riff_client::link::server_build(),
-    };
-    let answered = matches!(found, Ok(Ok(_)));
-    let info = found.ok().and_then(Result::ok).flatten();
-    let lead = info.as_ref().is_some_and(|info| info.uri.lead());
-    let line = text::statusline_answer(info.as_ref());
-    if let Some(dir) = dir.filter(|_| answered) {
-        let kept = local::Kept {
-            server: riff_client::link::base_of(server).to_owned(),
-            at_ms: now,
-            build: build.as_ref().map(Build::to_string),
-            lead,
-            line: line.clone(),
-        };
-        let _ = local::keep_statusline(dir, id, &kept);
-    }
-    (lead, line, build)
-}
-
-/// The local facts of the status line of a lead
-/// (01M58ASFT4VBG13X5TXPHS67AQ): the build of the `riff mcp` of the
-/// session, else of this riff, and the repository of the working
-/// folder. It reads only local files.
-fn statusline_here(dir: Option<&std::path::Path>) -> text::Here {
-    let build = dir
-        .and_then(local::recorded_build_above)
-        .flatten()
-        .unwrap_or_else(Build::this);
-    let repo = identity::working_dir()
-        .and_then(|dir| identity::place(&dir))
-        .ok()
-        .and_then(|place| place.default_thread())
-        .map(|thread| thread.to_string());
-    text::Here {
-        build: Some(build.version),
-        repo,
-    }
-}
-
-/// The tag of the status line for a riff of `server`
-/// (01M3NT6X22A4GNFTNKRYV8Z4N1): the build of the `riff mcp` of the
-/// session, else of this riff, against the server. It reads only local
-/// files.
-fn update_tag(server: &Build) -> Option<auto_update::Tag> {
-    let installed = Build::this();
-    let dir = local::dir();
-    let session = match dir.as_deref().and_then(local::recorded_build_above) {
-        Some(recorded) => recorded,
-        None => Some(installed.clone()),
-    };
-    let tried = dir.as_deref().and_then(local::tried);
-    let machine = auto_update::Machine {
-        auto: settings::path().is_ok_and(|p| settings::update_auto(&p).unwrap_or(false)),
-        updating: dir.as_deref().is_some_and(local::updating),
-        tried: tried.as_deref(),
-    };
-    auto_update::tag(session.as_ref(), &installed, server, machine)
-}
-
-/// The SessionEnd hook: the end call for the session (R205). It never
-/// fails: an error goes to stderr.
-async fn session_end(server: &str) {
-    let mut stdin = String::new();
-    let _ = std::io::stdin().read_to_string(&mut stdin);
-    let input: hook::EndInput = serde_json::from_str(&stdin).unwrap_or_default();
-    if !input.ends_the_session() {
-        return;
-    }
-    let Some(id) = identity::agent_session(input.session_id) else {
-        return;
-    };
-    if local::left_here(&id) {
-        return;
-    }
-    count_usage(&id, input.transcript_path.as_deref(), true);
-    let ended = async {
-        let here = identity::place(&identity::working_dir()?)?;
-        let api = Api::new(server).with_budget(mcp::END_WAIT);
-        let me = identity::agent(&here, &id, api.base())?;
-        api.signed_in(me.who().session())?.end(&me).await
-    };
-    match tokio::time::timeout(mcp::END_WAIT, ended).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => eprintln!("riff: {e:#}"),
-        Err(_) => eprintln!("riff: the end call took too long"),
-    }
-}
-
-/// Takes the watch lock of the session `me` (R169). `None` when another
-/// watch holds it. Without the lock file, the watch runs with no lock.
-fn lock_watch(me: &SessionUri) -> Option<Option<local::Held>> {
-    let (Some(dir), Some(id)) = (local::dir(), me.who().session()) else {
-        return Some(None);
-    };
-    match local::watch(&dir, id) {
-        Ok(Some(lock)) => Some(Some(lock)),
-        Ok(None) => None,
-        Err(e) => {
-            eprintln!("riff: the watch runs with no lock: {e}");
-            Some(None)
-        }
-    }
-}
-
-/// Records the session ID of `riff mcp` for its agent process, the
-/// parent (R167). The record lasts while the result lives. Without it,
-/// the tools still work.
-fn record_session(me: &SessionUri) -> Option<local::Held> {
-    let (dir, id) = (local::dir()?, me.who().session()?);
-    local::record(&dir, std::os::unix::process::parent_id(), id)
-        .inspect_err(|e| eprintln!("riff: cannot record the session ID: {e}"))
-        .ok()
-        .flatten()
 }
 
 /// Asks the person once about the update by itself on a machine with no
@@ -4320,127 +3377,6 @@ async fn draw_top(
         tokio::select! {
             () = tokio::time::sleep(riff::top::REFRESH) => {}
             () = message => {}
-        }
-    }
-}
-
-/// Runs until stopped, or with `once` until the first wake (R170). It
-/// connects again when the stream ends (R131). It stops when the session
-/// leaves the riff (01M3MEEFETT9A0DRWBKQTG77Z2). It sends a keep-alive
-/// each minute while it runs ([`api::keep_alive`],
-/// 01M3WG240PNMQYZ7TX6Z7ZF6M9). In a worker it sends one each 10
-/// seconds. When the reply asks the worker to stop, it stops the wrapper
-/// of the worker and ends (01M4385Z5BN03E6HTEB5GQVZ8X).
-///
-/// With a `limit`, it ends with one line and status 0 when no wake came
-/// in that time (01M3Z64J08GW6N1H42AR2FZQZ4). On a new binary, it runs
-/// it (01M3MNVTC248YYJJQKFD9H1WY9), and gives it the end of the wait in
-/// `--until`: an update does not start the time again. `until` is that
-/// end, from the watch of before an update.
-async fn watch(
-    api: &Api,
-    me: &riff_core::name::SessionUri,
-    once: bool,
-    limit: Option<Duration>,
-    until: Option<u64>,
-) {
-    let stream = follow(|| api.watch(me), STREAM_RETRY);
-    let left = async {
-        let Some(id) = me.who().session() else {
-            return std::future::pending().await;
-        };
-        while !local::left_here(id) {
-            tokio::time::sleep(LEFT_POLL).await;
-        }
-    };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let until = limit.map(|limit| {
-        let until = until.map_or(now + limit, Duration::from_secs);
-        (limit, until.min(now + limit))
-    });
-    let no_wake = async {
-        match until {
-            Some((limit, until)) => {
-                tokio::time::sleep(until.saturating_sub(now)).await;
-                println!("{}", text::watch_no_wake(limit));
-            }
-            None => std::future::pending().await,
-        }
-    };
-    let update = async {
-        let follow = binary::Follow::this();
-        follow.new_one().await;
-        let mut args = binary::with_place(std::env::args_os().skip(1), me.place());
-        if let Some((_, until)) = until {
-            args = binary::with_last(args, UNTIL_ARG, until.as_secs().to_string());
-        }
-        follow.run(args);
-        std::future::pending().await
-    };
-    let alive = api::keep_alive(api, me, riff_core::wire::ALIVE_EVERY);
-    tokio::select! {
-        () = print_each(stream, text::wake_line, once) => {}
-        () = alive => {}
-        () = left => println!("{}", text::WATCH_LEFT),
-        () = update => {}
-        () = no_wake => {}
-    }
-    if local::dir().is_some_and(|dir| local::mcp_gone_above(&dir)) {
-        println!("{}", text::WATCH_MCP_GONE);
-    }
-}
-
-/// The longest wait of a `riff watch --once`: `watch.limit`
-/// (01M3Z64J08GW6N1H42AR2FZQZ4). `None` is no limit: a watch with no
-/// `--once`, or the setting 0. A settings file that riff cannot read
-/// gives the default, so that the watch still ends before the limit of
-/// the harness.
-fn watch_limit(once: bool) -> Option<Duration> {
-    if !once {
-        return None;
-    }
-    let secs = settings::path()
-        .and_then(|path| settings::watch_limit(&path))
-        .unwrap_or_else(|e| {
-            eprintln!(
-                "riff: the watch uses the limit of {} seconds: {e:#}",
-                settings::WATCH_LIMIT
-            );
-            settings::WATCH_LIMIT
-        });
-    (secs > 0).then(|| Duration::from_secs(secs))
-}
-
-/// Prints one line for each item, or with `once` only the first line.
-/// It reports a failed connect on stderr once, until the next item
-/// comes. A version that it cannot talk to is a failed connect too: the
-/// watch waits for an update (01M3MNVTC248YYJJQKFD9H1WY9).
-async fn print_each<T>(
-    stream: impl Stream<Item = Result<T>>,
-    line: impl Fn(&T) -> String,
-    once: bool,
-) {
-    let mut stream = Box::pin(stream);
-    let mut reported = false;
-    while let Some(item) = stream.next().await {
-        match item {
-            Ok(item) => {
-                reported = false;
-                println!("{}", line(&item));
-                if once {
-                    return;
-                }
-            }
-            Err(e) if !reported => {
-                eprintln!(
-                    "riff: {e:#}. Trying again every {} seconds.",
-                    STREAM_RETRY.as_secs()
-                );
-                reported = true;
-            }
-            Err(_) => {}
         }
     }
 }

@@ -27,9 +27,7 @@
 //! | `workers.cache` | `40G` | The most size of the compile cache of the workers (see [`sccache`](crate::sccache), 01M49237BM12PVBERD6JXDSX5V). |
 //! | `lead.wake` | 15 | The minutes that a block waits for an answer before riff wakes the lead again, and again before riff tells the person (see [`crate::look`], 01M41FZQ545HQ9Q75CSKX8HF8H). |
 //! | `lead.notify` | true | riff shows a block with no answer of the lead in a desktop notification on the machine of the lead (01M41FZQKZKW131Z8822G31T5G). |
-//! | `watch.limit` | 6000 | The longest time in seconds that `riff watch --once` waits for a wake. 0: no limit (01M3Z64J08GW6N1H42AR2FZQZ4). |
-//! | `connect.scope` | none | The answer to the scope question of `riff connect claude`: `repo`, `global` or `none` (see [`enable`](crate::enable), 01M3XY2SNXQJRSH5QX82AFVM2S). With no key, nobody answered yet. |
-//! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` and `riff connect claude` ask a person once when the key is missing (see [`ask_update_auto`]). |
+//! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` asks a person once when the key is missing (see [`ask_update_auto`]). |
 
 use std::path::{Path, PathBuf};
 
@@ -207,78 +205,6 @@ pub fn lead_notify(path: &Path) -> Result<bool> {
         .with_context(|| format!("lead.notify in {} is not true or false", path.display()))
 }
 
-/// The default of `watch.limit`, in seconds: 100 minutes
-/// (01M3Z64J08GW6N1H42AR2FZQZ4). Claude Code stops a background task
-/// after 2 hours at most.
-pub const WATCH_LIMIT: u64 = 6000;
-
-/// The longest time that `riff watch --once` waits for a wake:
-/// `watch.limit`, in seconds (01M3Z64J08GW6N1H42AR2FZQZ4).
-/// [`WATCH_LIMIT`] when the file or the key is missing. With 0, the
-/// watch waits with no limit.
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::watch_limit(&path)?, 6000);
-/// riff::settings::set_watch_limit(&path, 1500)?;
-/// assert_eq!(riff::settings::watch_limit(&path)?, 1500);
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn watch_limit(path: &Path) -> Result<u64> {
-    let doc = read(path)?;
-    let Some(limit) = doc.get("watch").and_then(|w| w.get("limit")) else {
-        return Ok(WATCH_LIMIT);
-    };
-    let Some(limit) = limit.as_integer() else {
-        bail!("watch.limit in {} is not a number", path.display());
-    };
-    u64::try_from(limit)
-        .with_context(|| format!("watch.limit in {} is out of range", path.display()))
-}
-
-/// Sets `watch.limit`. It keeps each other key.
-pub fn set_watch_limit(path: &Path, secs: u64) -> Result<()> {
-    let secs = i64::try_from(secs).context("the limit is too long")?;
-    set(path, "watch", "limit", value(secs))
-}
-
-/// The answer of the person to the scope question of `riff connect
-/// claude`: `connect.scope` (01M3XY2SNXQJRSH5QX82AFVM2S). `None` when
-/// the file or the key is missing: nobody answered yet.
-///
-/// ```
-/// use riff::enable::Scope;
-///
-/// let dir = tempfile::tempdir()?;
-/// let path = dir.path().join("config.toml");
-/// assert_eq!(riff::settings::connect_scope(&path)?, None);
-/// riff::settings::set_connect_scope(&path, Scope::Global)?;
-/// assert_eq!(riff::settings::connect_scope(&path)?, Some(Scope::Global));
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn connect_scope(path: &Path) -> Result<Option<crate::enable::Scope>> {
-    let doc = read(path)?;
-    let Some(scope) = doc.get("connect").and_then(|c| c.get("scope")) else {
-        return Ok(None);
-    };
-    scope
-        .as_str()
-        .and_then(crate::enable::Scope::parse)
-        .map(Some)
-        .with_context(|| {
-            format!(
-                "connect.scope in {} is not repo, global or none",
-                path.display()
-            )
-        })
-}
-
-/// Sets `connect.scope`. It keeps each other key.
-pub fn set_connect_scope(path: &Path, scope: crate::enable::Scope) -> Result<()> {
-    set(path, "connect", "scope", value(scope.as_str()))
-}
-
 /// The question about `update.auto` on a new machine.
 pub const ASK_UPDATE_AUTO: &str = "Update riff by itself when the riff gets a new release? [Y/n] ";
 
@@ -360,12 +286,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("riff/config.toml");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "# mine\nserver = \"x\"\n\n[watch]\nlimit = 1\n").unwrap();
-        set_watch_limit(&path, 3).unwrap();
+        std::fs::write(&path, "# mine\nserver = \"x\"\n\n[update]\nauto = false\n").unwrap();
+        set_update_auto(&path, true).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("# mine"), "{text}");
         assert!(text.contains("server = \"x\""), "{text}");
-        assert_eq!(watch_limit(&path).unwrap(), 3);
+        assert!(update_auto(&path).unwrap());
     }
 
     /// A process that reads the settings while riff writes them reads
@@ -375,22 +301,21 @@ mod tests {
     fn a_reader_never_sees_a_part_of_a_write() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        set_watch_limit(&path, 1).unwrap();
+        set_update_auto(&path, false).unwrap();
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let reader = {
             let (path, done) = (path.clone(), done.clone());
             std::thread::spawn(move || {
                 let mut reads = 0;
                 while !done.load(std::sync::atomic::Ordering::SeqCst) {
-                    let limit = watch_limit(&path).unwrap();
-                    assert!((1..=2).contains(&limit), "read the limit {limit}");
+                    update_auto(&path).unwrap();
                     reads += 1;
                 }
                 reads
             })
         };
         for i in 0..500 {
-            set_watch_limit(&path, 1 + i % 2).unwrap();
+            set_update_auto(&path, i % 2 == 0).unwrap();
         }
         done.store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(reader.join().unwrap() > 0);
@@ -403,46 +328,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let real = dir.path().join("dotfiles/riff.toml");
         std::fs::create_dir_all(real.parent().unwrap()).unwrap();
-        std::fs::write(&real, "[watch]\nlimit = 1\n").unwrap();
+        std::fs::write(&real, "[update]\nauto = false\n").unwrap();
         let link = dir.path().join("config.toml");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        set_watch_limit(&link, 3).unwrap();
+        set_update_auto(&link, true).unwrap();
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
-        assert_eq!(watch_limit(&real).unwrap(), 3);
+        assert!(update_auto(&real).unwrap());
     }
 
     #[test]
     fn a_new_file_gets_its_directory() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a/b/config.toml");
-        set_watch_limit(&path, 2).unwrap();
+        set_update_auto(&path, true).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "[watch]\nlimit = 2\n"
+            "[update]\nauto = true\n"
         );
-    }
-
-    #[test]
-    fn a_bad_limit_is_an_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(&path, "[watch]\nlimit = \"two\"\n").unwrap();
-        assert!(watch_limit(&path).is_err());
-        std::fs::write(&path, "[watch]\nlimit = -1\n").unwrap();
-        assert!(watch_limit(&path).is_err());
-        std::fs::write(&path, "watch = 3\n").unwrap();
-        assert!(set_watch_limit(&path, 1).is_err());
-    }
-
-    #[test]
-    fn update_auto_keeps_the_watch_limit() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        set_watch_limit(&path, 2).unwrap();
-        set_update_auto(&path, true).unwrap();
-        set_update_auto(&path, false).unwrap();
-        assert_eq!(watch_limit(&path).unwrap(), 2);
-        assert!(!update_auto(&path).unwrap());
     }
 
     #[test]

@@ -23,7 +23,7 @@ fn set(path: &Path, mode: u32) {
 /// variables `vars` (`None` removes one). It gives the stderr.
 fn start(env: &Isolated, vars: &[(&str, Option<&Path>)]) -> String {
     let mut cmd = env.riff();
-    cmd.arg("statusline")
+    cmd.arg("server")
         .env("RIFF_ON", "0")
         .stdin(std::process::Stdio::null());
     for (name, value) in vars {

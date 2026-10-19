@@ -76,7 +76,6 @@
 //!
 //! | Rule | Kind | Roles | Places | The step |
 //! |---|---|---|---|---|
-//! | `mcp__plugin_riff_riff` | allow | lead, worker, verifier | project, user | each riff tool of the plugin |
 //! | `mcp__riff` | allow | lead, worker, verifier | project, user, session | each riff tool of a worker, and of a session of the daemon |
 //! | `Bash(riff)` | allow | lead, worker, verifier | project, user | `riff` |
 //! | `Bash(riff *)` | allow | lead, worker, verifier | project, user | each `riff` command of the skill |
@@ -332,7 +331,6 @@ pub const TABLE: &[Row] = {
     use Place::{Project, Session, User};
     use Role::{Lead, Verifier, Worker};
     &[
-        allow("mcp__plugin_riff_riff", ALL, &[Project, User]),
         allow("mcp__riff", ALL, &[Project, User, Session]),
         allow("Bash(riff)", ALL, &[Project, User]),
         allow("Bash(riff *)", ALL, &[Project, User]),
@@ -515,14 +513,13 @@ pub fn rules_of(place: Place, facts: &Facts) -> Rules {
 /// The rules of riff work for a repository with the default branch
 /// `branch`: the project place of [`TABLE`] (01M3Q53RNDJBDHVDFHJ9HCX9S1).
 ///
-/// - Allow: each riff tool (`mcp__plugin_riff_riff` from the plugin,
-///   `mcp__riff` in a worker), each `riff` command, and the steps of the
+/// - Allow: each riff tool
+///   (`mcp__riff` in a session), each `riff` command, and the steps of the
 ///   pull request flow.
 /// - Deny: a push to `branch`, and `gh pr merge --admin`.
 ///
 /// ```
 /// let rules = riff::permissions::rules("trunk");
-/// assert!(rules.allow.contains(&"mcp__plugin_riff_riff".to_owned()));
 /// assert!(rules.allow.contains(&"mcp__riff".to_owned()));
 /// assert!(rules.allow.contains(&"Bash(riff)".to_owned()));
 /// assert!(rules.allow.contains(&"Bash(gh pr merge --auto --squash *)".to_owned()));
@@ -1761,41 +1758,6 @@ mod tests {
         );
     }
 
-    /// 01M5084JXTWZQEG7DJHS2E96NQ: each `riff` and `gh` step of the skill
-    /// matches a rule of the user place, a deny rule (the skill forbids
-    /// the step), or the row of a person.
-    #[test]
-    fn each_step_of_the_skill_matches_a_user_rule() {
-        let (_, skill) = crate::plugin::FILES
-            .iter()
-            .find(|(path, _)| path.ends_with("SKILL.md"))
-            .unwrap();
-        let home = Path::new("/home/mike");
-        let user = user_rules(Some(home));
-        let deny = rules("main").deny;
-        let person: Vec<&str> = TABLE
-            .iter()
-            .filter(|r| r.kind == Kind::Person)
-            .map(|r| r.rule)
-            .collect();
-        let steps = skill_steps(skill);
-        assert!(steps.len() > 40, "{steps:#?}");
-        // The check of a new build is in the skill (01M5084K79M5XJT3MP8FFVQKDX).
-        assert!(
-            steps
-                .iter()
-                .any(|s| s.starts_with("~/.cache/riff/check/target/static/release/riff ")),
-            "{steps:#?}"
-        );
-
-        for step in &steps {
-            let found = user.allow.iter().any(|r| matches(r, step))
-                || deny.iter().any(|r| matches(r, step))
-                || person.iter().any(|r| matches(r, step));
-            assert!(found, "no rule of the table matches the step `{step}`");
-        }
-    }
-
     /// True when the shell line `line` joins a `riff` or `gh` step to
     /// another command with `&&`, `||` or `;`, or names the repository
     /// with `gh -R` before the words of the step. Claude Code matches a
@@ -1838,23 +1800,6 @@ mod tests {
         assert!(!joins_a_step(
             "git diff --cached --quiet || git commit -q -m \"WIP: STEP\""
         ));
-    }
-
-    /// 01M51V0Q5E7MNPWP9T7TSJFT5W: no code line of the skill joins a
-    /// `riff` or `gh` step to another command, and the skill says to run
-    /// each step alone.
-    #[test]
-    fn no_code_line_of_the_skill_joins_a_step_to_another_command() {
-        let (_, skill) = crate::plugin::FILES
-            .iter()
-            .find(|(path, _)| path.ends_with("SKILL.md"))
-            .unwrap();
-        let lines = code_lines(skill);
-        assert!(lines.len() > 100, "{lines:#?}");
-        for line in &lines {
-            assert!(!joins_a_step(line), "the skill joins a step: `{line}`");
-        }
-        assert!(skill.contains("\n## Run each step alone\n"));
     }
 
     /// 01M5084JXTWZQEG7DJHS2E96NQ: each `riff` and `gh` step of the start

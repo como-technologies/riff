@@ -177,40 +177,6 @@ async fn first_lines(mut cmd: Command, n: usize) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn watch_connects_again_when_the_server_ends_the_stream() {
-    let (server, calls) = start_fake().await;
-    let dir = tempfile::tempdir().unwrap();
-
-    let lines = first_lines(riff(&server, dir.path(), &["watch"]), 3).await;
-
-    for (line, seq) in lines.iter().zip(1..) {
-        assert!(line.contains(&format!("(message {seq})")), "{line}");
-    }
-    assert!(calls.watch.load(Ordering::SeqCst) >= 3);
-}
-
-#[tokio::test]
-async fn watch_once_exits_after_the_first_wake() {
-    let (server, calls) = start_fake().await;
-    let dir = tempfile::tempdir().unwrap();
-    let mut cmd = riff(&server, dir.path(), &["watch", "--once"]);
-
-    let out = isolated::in_time(
-        WAIT,
-        tokio::task::spawn_blocking(move || cmd.output().unwrap()),
-    )
-    .await
-    .expect("riff watch --once did not exit")
-    .unwrap();
-
-    assert!(out.status.success(), "{out:?}");
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(stdout.lines().count(), 1, "{stdout}");
-    assert!(stdout.contains("(message 1)"), "{stdout}");
-    assert_eq!(calls.watch.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
 async fn tail_connects_again_when_the_server_ends_the_stream() {
     let (server, calls) = start_fake().await;
     let dir = tempfile::tempdir().unwrap();

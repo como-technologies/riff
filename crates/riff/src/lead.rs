@@ -35,7 +35,7 @@
 //! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change and git can fast-forward it ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z, 01M51JYDHAQDJ3GH2J8DT3AZQS |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM |
 //! | The command | `claude --session-id ID --permission-mode auto START` ([`spec`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4 |
-//! | The riff tools | [`crate::mcp::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
+//! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
 //! | The wakes | `/opt/riff/riff relay watch --follow` in the Monitor tool, started once | 01M501PA04NP79RJQEDP4D7YTM, 01M59235BBXEKPZBRH23C39574 |
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which | 01M51PD7Q24N252V66NFEHY49N |

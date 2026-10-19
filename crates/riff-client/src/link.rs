@@ -35,7 +35,7 @@
 //! | A short command, a tool call of `riff mcp`, a post of `riff chat`, a look of `riff top`, a call of `riff workers host` | [`SHORT_BUDGET`] |
 //! | The start hook | `riff::hook::STATE_WAIT` |
 //! | The status line | `STATUSLINE_WAIT`, with one try ([`Budget::OneTry`]) |
-//! | The end of a session | `riff::mcp::END_WAIT` |
+//! | The end of a session | `riff::tools::END_WAIT` |
 //! | The verify request and the release of `riff run` | `riff::run::END_BUDGET` |
 //! | The open of a stream | [`SHORT_BUDGET`]; then the stream has no limit, and [`crate::api::follow`] connects again |
 //!

@@ -62,19 +62,13 @@ fn the_lead_names_each_part() {
 /// 01M3JD5QCVCB3VEK4KP955JSEA: the skill and the book say it.
 #[test]
 fn the_lead_takes_no_claims_not_even_a_verify() {
-    let skill = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
-    )
-    .unwrap();
-    assert!(skill.contains("As the lead, take no claims: no work item and no verify."));
     let lead = section("how-it-works.md", "The lead");
     assert!(lead.contains("It takes no claims: no work item and no verify."));
 }
 
 #[test]
-fn start_a_riff_says_which_session_is_your_lead() {
+fn start_a_riff_links_the_lead() {
     let page = read("start-a-riff.md");
-    assert!(page.contains("The first session that you start in a project is your lead."));
     assert!(page.contains("(how-it-works.md#the-lead)"));
 }
 
@@ -107,7 +101,7 @@ fn no_other_page_repeats_the_rules_of_the_lead() {
 /// 01M3WG243BW7P6E1ME0DFNQF8C, 01M3WG2460P4GF7GEVBY92Q33W: the book has
 /// the how-to for the release by the lead. The skill tells the lead.
 #[test]
-fn the_book_and_the_skill_say_how_the_lead_frees_a_claim() {
+fn the_book_says_how_the_lead_frees_a_claim() {
     let page = read("how-it-works.md");
     let thread = "como-technologies/riff".parse().unwrap();
     for part in [
@@ -117,46 +111,12 @@ fn the_book_and_the_skill_say_how_the_lead_frees_a_claim() {
     ] {
         assert!(page.contains(part), "how-it-works.md has no {part:?}");
     }
-
-    let skill = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
-    )
-    .unwrap();
-    for part in [
-        "`riff release ITEM --session ID`",
-        "Only the lead frees the\n  claim of another session",
-    ] {
-        assert!(skill.contains(part), "the skill has no {part:?}");
-    }
 }
 
 /// 01M3W8AYDFPZNZ898WAJS7JEZA: the skill and the book name the
 /// automatic step of the lead.
 #[test]
-fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
-    let skill = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("claude-plugin/riff/skills/riff/SKILL.md"),
-    )
-    .unwrap();
-    let start = skill
-        .find("\n## Status\n")
-        .expect("the skill has \"## Status\"");
-    let status = &skill[start..];
-    let status = &status[..status[3..].find("\n## ").map_or(status.len(), |i| i + 3)];
-    for part in [
-        "riff sets your step by itself",
-        "`tell`, `post`, `pause`, `resume` and `lead`",
-        "told 075ff6a7",
-        "posted a note: Waves: new item #314",
-        "The\nstep shows no text of a direct message",
-        "A step does not end your\nblock",
-        "Set your status for\nwork that riff cannot see",
-    ] {
-        assert!(
-            status.contains(part),
-            "\"Status\" of the skill has no {part:?}"
-        );
-    }
+fn the_book_names_the_automatic_step_of_the_lead() {
     let book = section("how-it-works.md", "A status");
     for part in [
         "### See what the lead does",
@@ -187,12 +147,10 @@ fn the_skill_and_the_book_name_the_automatic_step_of_the_lead() {
         assert!(book.contains(&step), "\"A status\" has no {step:?}");
     }
     // 01M3WKCYM623M66ATHCH3QGMKP: no text of a direct message.
-    for (name, text) in [("the skill", status), ("\"A status\"", book.as_str())] {
-        assert!(
-            !text.contains("request: claim issue-302"),
-            "{name} shows the text of a tell in a step"
-        );
-    }
+    assert!(
+        !book.contains("request: claim issue-302"),
+        "\"A status\" shows the text of a tell in a step"
+    );
 }
 
 /// 01M51PD7Q24N252V66NFEHY49N: "Start the lead" in `development.md`

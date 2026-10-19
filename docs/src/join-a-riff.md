@@ -14,7 +14,7 @@ each case:
 ```mermaid
 flowchart LR
     I[install riff] --> C[choose the riff]
-    C --> S["riff connect claude<br/>signs you in"]
+    C --> S["riff login<br/>signs you in"]
     S --> W["riff who<br/>shows each machine"]
 ```
 
@@ -47,28 +47,13 @@ To start a riff with sign-in for your team, see
    echo 'export RIFF_SERVER=ADDRESS' >> ~/.bashrc
    ```
 
-3. Open a new terminal, so that it has `RIFF_SERVER`. Go to your clone
-   of the project. Add riff to Claude Code. It asks where you want
-   riff on: press Enter for this project only. It signs you in: your
+3. Open a new terminal, so that it has `RIFF_SERVER`. Sign in. Your
    browser opens. On a second machine of your own, use the same
    account as on the first machine:
 
    ```sh
-   riff connect claude
+   riff login
    ```
-
-## Turn riff on in your project
-
-riff is off in a project until you turn it on there. When step 3 did
-not run in your clone of the project, or for another project of the
-riff, run this in the clone:
-
-```sh
-riff enable
-```
-
-See
-[Turn riff on or off for a repository](how-it-works.md#turn-riff-on-or-off-for-a-repository).
 
 ## Check it
 
@@ -84,13 +69,8 @@ List the sessions of the riff. It shows the sessions of each machine:
 riff who
 ```
 
-Then start Claude Code from that terminal, in your clone of the
-project. Ask: *"Who else is in the riff?"*
-
-Claude Code gets `RIFF_SERVER` only from the terminal that starts it.
-Do not start it from a desktop launcher, or from an IDE that started
-before you added the line. Such a session uses the riff of this
-machine, not the riff that you joined.
+Then start your lead from that terminal, in your clone of the
+project: `riff lead start`. Ask: *"Who else is in the riff?"*
 
 ## Update riff
 
@@ -103,9 +83,7 @@ runs (see [Releases](how-it-works.md#releases)):
 riff update
 ```
 
-Then start your Claude Code sessions again. Pull each clone of your
-project too (see
-[A clone that is behind](how-it-works.md#a-clone-that-is-behind)).
+Then pull each clone of your project.
 
 To skip this step at each new release, let riff update itself on your
 machine (see
@@ -132,11 +110,11 @@ your team. riff moves no messages and no claims to the new riff.
 2. Open a new terminal. Sign in to the new riff, if it has sign-in:
 
    ```sh
-   riff connect claude
+   riff login
    ```
 
-3. Start your Claude Code sessions again from the new terminal. A
-   session that runs keeps its old riff.
+3. Start your lead again from the new terminal. A session that runs
+   keeps its old riff.
 
 To go back to the riff of this machine, remove the line only, then
 open a new terminal:

@@ -33,7 +33,7 @@ the details go into the rustdoc.
 | done | Merged: the issue is closed, or it has the comment `Merged in #PR (COMMIT)`. |
 | held item | An item that a lead holds, with a reason. No worker can claim it. |
 | waits | An item of the plan with a need that is not done. |
-| look | The task of the `riff mcp` of the lead that reads the forge each minute (#424, `crate::look`). |
+| look | The task of the `riff relay mcp` of the lead that reads the forge each minute (#424, `crate::look`). |
 | stale | A plan that no look saw for `PLAN_TTL` (10 minutes). |
 
 ## The picture
@@ -41,7 +41,7 @@ the details go into the rustdoc.
 ```mermaid
 flowchart LR
     P[person] -->|waves, Needs: lines, merges| G[(GitHub)]
-    G -->|"one gh query each minute"| L["the look of the lead<br/>(riff mcp)"]
+    G -->|"one gh query each minute"| L["the look of the lead<br/>(riff relay mcp)"]
     L -->|"plan, when it changed;<br/>plan_seen, when it did not"| S[riff-server]
     LD[lead] -->|"hold, free"| S
     S -->|"plan_set, plan_ended,<br/>item_held, item_freed"| LOG[(the log)]
@@ -60,7 +60,7 @@ flowchart LR
 | The held items | the server | the commands `hold` and `free` |
 | The plan is on for the repository | the server | the first `plan`; the command `plan_off` |
 
-- A person plans on GitHub, as today. The skill, the book and the
+- A person plans on GitHub, as today. The book and the
   leads keep the waves and the `Needs:` lines.
 - The server has no credential of the forge (#424). So the server never
   reads GitHub. A client tells it the plan.
@@ -154,7 +154,7 @@ sequenceDiagram
 
 - An item is done when it is merged: its issue is closed, or the issue
   has the comment `Merged in #PR (COMMIT)`. This is the rule of the
-  waves in the skill. The look reads it from the forge, and the
+  waves. The look reads it from the forge, and the
   command `plan` carries it.
 - The release of a claim is not done. A worker releases its item at
   the verify request, before the merge.
@@ -351,7 +351,6 @@ The time of the last look is presence, and not in the checkpoint.
 | `riff top` | The board reads the plan of the server, when the plan is on. A held item is in the group `held`, with the reason, never in `free`. An item that waits is in the column `free`, with `waits #416`. A stale plan shows `stale` in the heading of the board. |
 | `riff who`, `whoami` | No change. A session shows its claims. |
 | The rollout | With a plan that is on and not stale, the free work comes from the plan of the server: an item of the plan with no claim, no hold, each need done, and no pull request that waits for a verify or for the merge. Else it reads the forge, as today. |
-| The skill | Step 2 of the start routine runs `riff plan` to find a free item. A refused claim names the reason, so the session picks another item. The lead holds an item with the `hold` tool, not with a claim. |
 | The MCP tools | `hold` and `free` for the lead. The result of `claim` gives the reason of a refusal, or the warning. |
 
 - The CLI has no `riff next`. `riff plan` shows the free items in its
@@ -417,7 +416,7 @@ no forge.
 | P1 (#499) | The plan on the server: the records `plan_set` and `plan_ended`, the commands `plan` and `plan_off` with `base` and `stale_base`, the signal `plan_seen`, the query `plan`, `PLAN_TTL`, the plan in the part `plans` and in the checkpoint. | H1 |
 | P2 (#500) | The checks of a claim of a worker against the plan: `not_in_wave` and `needs_open`, the warning for each other session, the status 409, the stale plan. A client of 1.0.0 shows the reason of a new code. | P1 |
 | P3 (#501) | The look of the lead: one GraphQL query for the plan and the facts of #424, `plan` or `plan_seen` each look, the drop of a need of another repository, the wait of one hour against an old server; `riff plan on`, `riff plan off`, `riff plan sync`. The server makes `waits` from the plan, and `ItemFact` has no `needs`. | P1, #424 |
-| P4 (#503) | `riff plan` (the view); the board of `riff top` from the plan; the rollout from the plan; the start routine of the skill. The book: how-tos. | P2, P3 |
+| P4 (#503) | `riff plan` (the view); the board of `riff top` from the plan; the rollout from the plan. The book: how-tos. | P2, P3 |
 | P5 (#502) | `riff audit`: rule 5 from the `plan_set` records, the new rules 8 and 9, the list of the claims with a warning. | P1, #354 |
 
 ## Decisions

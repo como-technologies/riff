@@ -511,7 +511,7 @@ async fn sync_here(
     runtime: &impl Runtime,
     images: Vec<(String, Result<String, String>)>,
 ) -> Vec<Step> {
-    let user = crate::plugin::user_settings();
+    let user = crate::claude_settings::user_settings();
     let home = home_here();
     let manager = manager_here();
     let facts = first_run::Facts::here(&lifecycle::run_dir());

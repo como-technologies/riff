@@ -221,7 +221,7 @@ pub struct Facts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     /// The file: `$CLAUDE_CONFIG_DIR/settings.json`, else
-    /// `~/.claude/settings.json` ([`crate::plugin::user_settings`]).
+    /// `~/.claude/settings.json` ([`crate::claude_settings::user_settings`]).
     pub path: PathBuf,
     /// The rules of riff that the file does not have.
     pub missing: Rules,
@@ -254,8 +254,8 @@ impl Settings {
     /// The user settings of the person who runs riff, with the rules of
     /// [`permissions::user_rules`].
     fn here() -> Result<Settings, String> {
-        let path =
-            crate::plugin::user_settings().ok_or_else(|| text::INIT_NO_SETTINGS.to_owned())?;
+        let path = crate::claude_settings::user_settings()
+            .ok_or_else(|| text::INIT_NO_SETTINGS.to_owned())?;
         Ok(Settings::of(
             &path,
             &permissions::user_rules(home().as_deref()),
@@ -328,7 +328,7 @@ impl Wide {
     /// the repository of `dir`.
     fn here(dir: &Path) -> Vec<Wide> {
         let project = permissions::Project::of(dir);
-        let paths: Vec<PathBuf> = crate::plugin::user_settings()
+        let paths: Vec<PathBuf> = crate::claude_settings::user_settings()
             .into_iter()
             .chain([project.settings(), project.local_settings()])
             .collect();

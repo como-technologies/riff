@@ -9,12 +9,11 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::time::Duration;
+use std::process::{Command, Output};
 
 use isolated::Isolated;
-use riff::mcp::Tools;
 use riff::pr::Gh;
+use riff::tools::Tools;
 use riff::usage::Meter;
 use riff_client::api::Api;
 use riff_core::name::SessionUri;
@@ -194,41 +193,15 @@ impl Machine {
         text(&out.stdout)
     }
 
-    /// Runs the hook `event` of `session` with `input` on stdin.
-    async fn hook(&self, session: &str, event: &str, input: serde_json::Value) {
-        let mut cmd = self.riff(session, &["hook", event]);
-        let out = tokio::task::spawn_blocking(move || {
-            let mut hook = cmd
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
-            hook.stdin
-                .take()
-                .unwrap()
-                .write_all(input.to_string().as_bytes())
-                .unwrap();
-            hook.wait_with_output().unwrap()
-        })
-        .await
-        .unwrap();
-        assert!(out.status.success(), "{}", text(&out.stderr));
-    }
-
     /// The transcript of `session`.
     fn transcript(&self, session: &str) -> PathBuf {
         self.repo.path().join(format!("{session}.jsonl"))
     }
 
-    /// Starts `session`: its start hook gets the path of its transcript.
+    /// Starts `session`: riff knows the path of its transcript.
     async fn start(&self, session: &str) {
-        let input = json!({
-            "session_id": "claude-1",
-            "source": "startup",
-            "transcript_path": self.transcript(session),
-        });
-        self.hook(session, "session-start", input).await;
+        let marks = self.env.riff_home().join("state");
+        riff::usage::saw(&marks, session, &self.transcript(session)).unwrap();
     }
 
     /// Makes the riff run, with `session` as the lead.
@@ -270,15 +243,6 @@ impl Machine {
 
     fn log(&self) -> String {
         std::fs::read_to_string(self.bin.path().join("gh.log")).unwrap_or_default()
-    }
-}
-
-/// Waits until `done` is true, for at most 20 seconds.
-async fn wait_for(what: &str, done: impl Fn() -> bool) {
-    let span = isolated::Span::start();
-    while !done() {
-        assert!(span.within(Duration::from_secs(20)), "timed out: {what}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -606,49 +570,6 @@ async fn a_claim_with_no_tokens_gets_no_comment() {
         machine.ok("s1", &["usage", "12"]).await,
         "#12 has no comment with tokens.\n"
     );
-}
-
-#[tokio::test]
-async fn a_new_start_reports_the_claim_that_it_frees() {
-    let machine = Machine::new().await;
-    machine.start("s1").await;
-    machine.resume("s1").await;
-    machine.ok("s1", &["claim", "issue-12"]).await;
-    machine.says("s1", &[reply(&now(), "m1", OPUS, [1, 2, 3, 4])]);
-
-    // `/clear`: a new transcript, and the claims of the session are free.
-    let cleared = json!({
-        "session_id": "claude-2",
-        "source": "clear",
-        "transcript_path": machine.repo.path().join("s1-cleared.jsonl"),
-    });
-    machine.hook("s1", "session-start", cleared).await;
-    wait_for("the comment of the freed claim", || {
-        !machine.comments(12).is_empty()
-    })
-    .await;
-    let shown = machine.ok("s1", &["usage", "12"]).await;
-    assert!(
-        shown.starts_with(
-            "#12: 10 tokens (input 1, output 2, cache write 3, cache read 4) in 1 claim\n"
-        ),
-        "{shown}"
-    );
-
-    // A compaction frees no claim.
-    machine.ok("s1", &["claim", "issue-14"]).await;
-    machine.says("s1", &[reply(&now(), "m2", OPUS, [1, 1, 1, 1])]);
-    let compacted = json!({ "session_id": "claude-2", "source": "compact" });
-    machine.hook("s1", "session-start", compacted).await;
-    assert_eq!(machine.comments(14), "");
-    // The end of the session frees it.
-    let ended = json!({ "session_id": "claude-2", "reason": "prompt_input_exit" });
-    machine.hook("s1", "session-end", ended).await;
-    wait_for("the comment at the end of the session", || {
-        !machine.comments(14).is_empty()
-    })
-    .await;
-    assert_eq!(machine.comments(14).lines().count(), 1);
 }
 
 const MERGED: &str = r#"{"state":"MERGED","mergeCommit":{"oid":"9f8e7d6c"}}"#;

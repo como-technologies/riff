@@ -98,9 +98,6 @@ pub const PRODUCTION: &str = "production";
 /// The workflow that runs for a tag.
 pub const WORKFLOW: &str = "CI";
 
-/// The file of the plugin with its version.
-pub const PLUGIN: &str = "crates/riff/claude-plugin/riff/.claude-plugin/plugin.json";
-
 /// The check of a release tag in the tree.
 pub const CHECK: &str = "deploy/release-check.sh";
 
@@ -173,8 +170,7 @@ pub fn issue_body(version: Semver) -> String {
          checks after the deploy passed.\n\n\
          Verify of the release pull request. The pull request has the label `release`. Its \
          verify checks only this, and not the steps after the merge:\n\
-         - The diff is only the change of the version in `Cargo.toml`, `plugin.json` and \
-         `Cargo.lock`.\n\
+         - The diff is only the change of the version in `Cargo.toml` and `Cargo.lock`.\n\
          - The format of the body is right.\n\
          - The Gate passed.\n\n\
          Steps after the merge. The verify of the pull request does not check these:\n\
@@ -244,40 +240,6 @@ pub fn set_cargo(toml: &str, new: Semver) -> Result<String> {
         .collect();
     if !done {
         bail!("Cargo.toml has no line version = \"X.Y.Z\"");
-    }
-    Ok(lines.join("\n"))
-}
-
-/// The `plugin.json` of the plugin with the version `new`.
-///
-/// ```
-/// let json = "{\n  \"name\": \"riff\",\n  \"version\": \"3.2.0\"\n}\n";
-/// let new = riff::cycle::set_plugin(json, riff::cycle::version("3.3.0")?)?;
-/// assert_eq!(new, "{\n  \"name\": \"riff\",\n  \"version\": \"3.3.0\"\n}\n");
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn set_plugin(json: &str, new: Semver) -> Result<String> {
-    let mut done = false;
-    let lines: Vec<String> = json
-        .split('\n')
-        .map(|line| {
-            let key = line.trim_start();
-            if !done && key.starts_with("\"version\": \"") {
-                done = true;
-                let indent = &line[..line.len() - key.len()];
-                let comma = if key.trim_end().ends_with(',') {
-                    ","
-                } else {
-                    ""
-                };
-                format!("{indent}\"version\": \"{new}\"{comma}")
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect();
-    if !done {
-        bail!("{PLUGIN} has no line \"version\"");
     }
     Ok(lines.join("\n"))
 }
@@ -2135,7 +2097,6 @@ impl GitHub {
             std::fs::write(&path, change(&old)?).with_context(|| format!("cannot write {name}"))
         };
         edit("Cargo.toml", &|t| set_cargo(t, version))?;
-        edit(PLUGIN, &|t| set_plugin(t, version))?;
         edit("Cargo.lock", &|t| Ok(set_lock(t, version)))?;
         let check = tree.join(CHECK);
         let out = Command::new(&check)
@@ -4052,15 +4013,6 @@ mod tests {
             new.len(),
             toml.len() + "9.8.7".len() - cargo_version(&toml).unwrap().to_string().len()
         );
-        let plugin = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../",
-            "crates/riff/claude-plugin/riff/.claude-plugin/plugin.json"
-        ))
-        .unwrap();
-        let new: serde_json::Value =
-            serde_json::from_str(&set_plugin(&plugin, v("9.8.7")).unwrap()).unwrap();
-        assert_eq!(new["version"], "9.8.7");
         let lock =
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
                 .unwrap();
