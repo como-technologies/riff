@@ -4076,6 +4076,28 @@ The owner approves each deploy to the shared riff with
 [Approve the deploy](#approve-the-deploy). Do not approve in the GitHub
 app or on the page of the run: they do not pause the riff.
 
+#### Let the lead approve when the owner said so
+
+The lead of the owner may approve too, when the owner said so in riff
+chat. The owner writes one line in the chat, after the lead ran
+`riff release publish`, with the word `approve` or `deploy` and the
+version. riff reads the chat from riff-server, not from the model. The
+message must come from the owner or an admin, as a person, not as a
+session. The lead asks no yes or no. The comment of the approval names
+the number of the message.
+
+```sh
+riff release approve v3.3.0
+```
+
+It refuses, and `gh` does not run, when no such message exists: a
+message of a session, of another version, from before the publish, or
+from a member. It also refuses a worker, a work session in a container
+and a session that is not the lead.
+
+When the auto mode checker blocks a release command, `riff denials`
+has a record. The lead files an issue for it.
+
 #### Let only an approved job deploy
 
 The approval holds only when no other job can sign in as the deploy

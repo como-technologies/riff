@@ -1280,3 +1280,117 @@ async fn test_refuses_a_worker() {
     );
     assert_eq!(machine.log(), "");
 }
+
+const LEAD: [(&str, &str); 1] = [("RIFF_SESSION", "s1")];
+
+impl Machine {
+    /// Posts `body` to riff chat as `who` (`user` or `user:session`).
+    async fn say(&self, who: &str, body: &str) -> u64 {
+        let (user, session) = who.split_once(':').map_or((who, ""), |(u, s)| (u, s));
+        let query = if session.is_empty() {
+            String::new()
+        } else {
+            format!("?session={session}")
+        };
+        let me: riff_core::name::SessionUri =
+            format!("riff://{user}@thelio/como-technologies/riff{query}")
+                .parse()
+                .unwrap();
+        riff_client::api::Api::new(&self.server)
+            .post(
+                &me,
+                Some(&riff_core::name::ThreadName::chat()),
+                &[],
+                body,
+                riff_core::wire::Kind::Message,
+            )
+            .await
+            .unwrap()
+            .seq
+    }
+
+    /// `riff release approve v3.3.0` as the lead.
+    async fn lead_approves(&self) -> Output {
+        self.run(&LEAD, &["release", "approve", "v3.3.0"], "").await
+    }
+}
+
+/// The lead with the lead mark, and the fake `gh` that knows the
+/// release 3.3.0 and a run that waits.
+async fn lead_with_a_waiting_run() -> Machine {
+    let (machine, merge) = merged_release().await;
+    machine.ok(&LEAD, &["lead"]).await;
+    machine.fake_gh(&format!("{WAITS}\n{}", machine.release_cases(&merge, true)));
+    machine
+}
+
+#[tokio::test]
+async fn the_lead_approves_with_the_message_of_the_owner_and_the_comment_names_it() {
+    let machine = lead_with_a_waiting_run().await;
+    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    let seq = machine.say("mike", "Yes, approve v3.3.0 please.").await;
+    let out = machine.lead_approves().await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    assert!(
+        shown.contains(&format!("Approved with message {seq} of the owner")),
+        "{shown}"
+    );
+    let log = machine.log();
+    assert!(
+        log.contains(&format!(
+            r#""comment":"Release v3.3.0, approved by the owner in riff chat, message {seq}""#
+        )),
+        "{log}"
+    );
+}
+
+#[tokio::test]
+async fn the_lead_cannot_approve_without_the_message_of_the_owner() {
+    let machine = lead_with_a_waiting_run().await;
+    // A message before the publish does not count.
+    machine.say("mike", "approve v3.3.0").await;
+    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    let before = machine.log();
+    let refused = riff::text::release_refused("approve", Refusal::OwnerSilent);
+    let check = |label: &str, out: Output| {
+        assert_eq!(out.status.code(), Some(1), "{label}");
+        assert_eq!(text(&out.stderr), format!("{refused}\n"), "{label}");
+        assert_eq!(machine.log(), before, "{label}: gh ran");
+    };
+    check("before the publish", machine.lead_approves().await);
+    machine.say("mike:abc1", "approve v3.3.0").await;
+    check("a session", machine.lead_approves().await);
+    machine.say("mike", "approve v3.3.1").await;
+    check("another version", machine.lead_approves().await);
+    machine.say("mike", "do not approve v3.3.0").await;
+    check("a denial", machine.lead_approves().await);
+    machine.say("bob", "approve v3.3.0").await;
+    check("another person", machine.lead_approves().await);
+}
+
+#[tokio::test]
+async fn approve_for_the_lead_refuses_a_worker_and_a_session_that_is_not_the_lead() {
+    let machine = lead_with_a_waiting_run().await;
+    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    machine.say("mike", "approve v3.3.0").await;
+    let before = machine.log();
+    for vars in [
+        &[("RIFF_SESSION", "s1"), ("RIFF_WORKER", "1")][..],
+        &[("RIFF_SESSION", "s2")],
+        &[("RIFF_SOCKET", "/run/riff/riff.sock")],
+    ] {
+        let out = machine
+            .run(vars, &["release", "approve", "v3.3.0"], "")
+            .await;
+        assert_eq!(out.status.code(), Some(1), "{vars:?}");
+        assert_eq!(
+            text(&out.stderr),
+            format!(
+                "{}\n",
+                riff::text::release_refused("approve", Refusal::Agent)
+            )
+        );
+    }
+    assert_eq!(machine.log(), before);
+}

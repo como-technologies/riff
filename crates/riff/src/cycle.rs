@@ -16,7 +16,7 @@
 //! | `riff release publish vX.Y.Z` | the owner or an admin of the riff, or its lead, with a `gh` of an admin | the tag on the tested commit, the GitHub release, the chat line to the owner ([`publish`], 01M58B0JABCET719T3HFB19NDW) |
 //! | `riff release test vX.Y.Z --host HOST` | the lead or a person; not a worker | the real-session test on the daemon of a host ([`test_target`], [`crate::daemon::release_test`], 01M5924C8BTT6CW05Q0YZJ1GCY) |
 //! | `riff release status` | each session | the versions, what waits, the state and the next step ([`status`], 01M58KMKTE2XC35CNJBFKZWAXF) |
-//! | `riff release approve vX.Y.Z` | a person in a terminal | the pause of the riff, then the approval of `production` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2) |
+//! | `riff release approve vX.Y.Z` | a person in a terminal, or the lead of the owner with a word of the owner in riff chat | the pause of the riff, then the approval of `production` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2) |
 //! | `riff release check vX.Y.Z` | the lead | the checks after the deploy, the result on the release issue ([`check`], 01M58KMM5ZPAQ289S2YJVQ5WW6) |
 //! | `riff release retry vX.Y.Z` | the lead | the failed jobs of the CI run again ([`retry`], 01M58KMM8CV9731AWGVZQBB80D) |
 //! | `riff release rollback vPREV` | the lead | the deploy of an older release ([`rollback`], 01M58KMMAPJ33CQWR8GRX62GMR) |
@@ -1285,6 +1285,96 @@ pub fn approve_run(forge: &dyn Forge, run: &Waiting) -> Result<()> {
     forge.approve(run, &format!("Release {}", run.tag))
 }
 
+/// Approves `run` for the lead, with the comment that names the message
+/// `seq` of the owner in riff chat (01M594XQJMXAXY3JXP66Y8EVQ7).
+pub fn approve_run_said(forge: &dyn Forge, run: &Waiting, seq: u64) -> Result<()> {
+    forge.approve(
+        run,
+        &format!(
+            "Release {}, approved by the owner in riff chat, message {seq}",
+            run.tag
+        ),
+    )
+}
+
+/// The CI run of `tag_text` that waits for [`PRODUCTION`], or `None`.
+pub fn waiting_run(forge: &dyn Forge, tag_text: &str) -> Result<Option<Waiting>> {
+    let tag = tag(tag_version(tag_text)?);
+    Ok(forge.waiting()?.into_iter().find(|w| w.tag == tag))
+}
+
+/// One message of the thread `chat`, as [`owner_said`] reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatLine {
+    /// The number of the message in the thread.
+    pub seq: u64,
+    /// The USER of the sender.
+    pub user: String,
+    /// True when the sender is a session, not a person.
+    pub session: bool,
+    /// True when riff proved the sender.
+    pub verified: bool,
+    /// The text.
+    pub body: String,
+}
+
+/// True when `body` names `tag`, says `approve` or `deploy`, and does
+/// not deny it.
+fn says_approve(body: &str, tag: &str) -> bool {
+    let words: Vec<String> = body
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .collect();
+    let has = |f: &dyn Fn(&str) -> bool| words.iter().any(|w| f(w));
+    has(&|w| w == tag.to_lowercase())
+        && has(&|w| matches!(w, "approve" | "deploy"))
+        && !has(&|w| matches!(w, "not" | "never" | "dont"))
+        && !body.to_lowercase().contains("don't")
+}
+
+/// The number of the message in which the owner said `approve` or
+/// `deploy` for `tag` after the publish (01M594XQJMXAXY3JXP66Y8EVQ7).
+/// `lines` are the messages of the thread `chat`. `may` tells whether a
+/// USER is the owner or an admin. Only a verified message of a person
+/// counts, and only after the verified publish line of the tag.
+///
+/// ```
+/// use riff::cycle::{owner_said, ChatLine};
+///
+/// let line = |seq, session, body: &str| ChatLine {
+///     seq, user: "mike".into(), session, verified: true, body: body.into(),
+/// };
+/// let may = |user: &str| user == "mike";
+/// let lines = [
+///     line(1, true, "riff release v3.3.0 is published. Its deploy waits"),
+///     line(2, false, "ok, approve v3.3.0"),
+/// ];
+/// assert_eq!(owner_said(&lines, "v3.3.0", &may), Some(2));
+/// assert_eq!(owner_said(&lines, "v3.3.1", &may), None);
+/// ```
+pub fn owner_said(lines: &[ChatLine], tag: &str, may: &dyn Fn(&str) -> bool) -> Option<u64> {
+    let published = format!("riff release {tag} is published");
+    let publish = lines
+        .iter()
+        .filter(|l| l.verified && l.session && may(&l.user) && l.body.contains(&published))
+        .map(|l| l.seq)
+        .max()?;
+    lines
+        .iter()
+        .filter(|l| {
+            l.seq > publish
+                && l.verified
+                && !l.session
+                && may(&l.user)
+                && says_approve(&l.body, tag)
+        })
+        .map(|l| l.seq)
+        .max()
+}
+
 /// One line of the log of the Cloud Run service of the shared riff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogLine {
@@ -1855,6 +1945,9 @@ pub enum Refusal {
     RoleUnknown,
     /// An agent session, for a step of a person.
     Agent,
+    /// The lead, for `riff release approve`: riff chat has no verified
+    /// message of the owner that says approve for the version.
+    OwnerSilent,
 }
 
 impl Caller {
