@@ -19,48 +19,16 @@
 //! | `SCCACHE_SERVER_PORT` | a port from the folder ([`port`], 01M49237DWTBSEM6CVFH2BYC4V) |
 //! | `SCCACHE_IGNORE_SERVER_IO_ERROR` | `1`: when the server ends, a compile goes on with no cache |
 //!
-//! The server of the cache is of the machine, not of a worker
-//! (01M49AB2QYGJ73Y19KGAY1WDW7, 01M49AB2TBMHGNXM3GE4NDFYYG).
-//! `riff workers run` starts it before `claude`, with no variable of a
-//! worker and in its own process group ([`Cache::start_server`]). So
-//! the clear, the reap and the stop of the worker that built first do
-//! not see it. When the worker has a systemd scope, the server runs in
-//! a scope of its own, outside the scope of each worker, and it never
-//! ends for idle time ([`Cache::server_command`],
-//! 01M49SVFZS7HTYM3FSCV4ZCS0Q). A server that a build starts again, for
-//! example after a crash, has [`SERVER_MARK`]`=1` in its environment and runs
-//! the binary of [`find`]. [`crate::workload::is_cache_server`] never
-//! counts such a process as a process of a worker. It looks at the
-//! binary in `/proc/PID/exe`, not at the name in `argv[0]`: a process
-//! picks its own name. Another binary with the mark stays of its
-//! worker.
+//! The server of the cache is of the machine, not of a session
+//! (01M49AB2QYGJ73Y19KGAY1WDW7, 01M49AB2TBMHGNXM3GE4NDFYYG). A server
+//! that a build starts again, for example after a crash, has
+//! [`SERVER_MARK`]`=1` in its environment and runs the binary of
+//! [`find`].
 //!
 //! The cache is on the machine only: no cloud store, no network. The
-//! port comes from the folder, so the workers of a machine share one
+//! port comes from the folder, so the sessions of a machine share one
 //! `sccache` server, and that server never mixes with an `sccache` of
-//! the person or of a test. `sccache` takes its jobs from the pool of
-//! cargo (see [`crate::jobserver`]).
-//!
-//! riff installs `sccache` itself (01M4923963S666V9YWTZ46ZZ50): the
-//! start of `riff workers host`, and `riff update` on a machine with a
-//! limit of workers, run `cargo install --locked sccache --version`
-//! [`PINNED`] when `sccache` is missing or older ([`ensure`]). When the
-//! install fails, the workers build with no cache, as before.
-//!
-//! ```mermaid
-//! flowchart TD
-//!     S["riff workers host, riff update"] --> F{"sccache PINNED or newer?"}
-//!     F -- yes --> W
-//!     F -- no --> I["cargo install --locked sccache --version PINNED"]
-//!     I -- ok --> W["riff workers run: RUSTC_WRAPPER, SCCACHE_DIR,<br/>SCCACHE_CACHE_SIZE, SCCACHE_SERVER_PORT"]
-//!     I -- fails --> N["one note to the lead:<br/>the workers build with no cache"]
-//!     W --> C["each build of each worker<br/>reads and writes one cache"]
-//! ```
-//!
-//! `riff workers` shows the size of the cache and its hit rate
-//! ([`Stats`], 01M492398HA0AXX0J8BZCKNGTG). `riff workers cache` shows
-//! and sets the size, and `riff workers cache --clear` empties it
-//! (01M49239AWKEPKEPMZZRRTVRAT).
+//! the person or of a test.
 //!
 //! ```
 //! use riff::sccache::{env, Cache};

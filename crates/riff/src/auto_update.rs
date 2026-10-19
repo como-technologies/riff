@@ -362,7 +362,7 @@ pub async fn run(
         );
     }
     for lead in &leads {
-        let tell = || crate::worker::tell_lead(Some(lead), server, &body);
+        let tell = || crate::lead::tell_lead(Some(lead), server, &body);
         if let Err(e) = tell_until(tell, TELL_EVERY, TELL_FOR).await {
             println!("riff: cannot tell the lead in {}: {e:#}", lead.repo_text());
         }

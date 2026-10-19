@@ -72,7 +72,6 @@ pub const GROUPS: &[Group] = &[
             "plan",
             "pause",
             "resume",
-            "workers",
             "worktrees",
             "audit",
             "denials",

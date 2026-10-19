@@ -81,7 +81,6 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::pr::Gh;
-use crate::workload;
 
 /// The directory of the worktrees of the agent tool in the main
 /// worktree.
@@ -656,7 +655,7 @@ pub fn clean(
     let Ok(list) = git(main, &["worktree", "list", "--porcelain"]) else {
         return Vec::new();
     };
-    let start = |pid| workload::read(pid, "").map(|p| p.start);
+    let start = process_start;
     let running = Running::all();
     parse(&list)
         .into_iter()
@@ -713,7 +712,7 @@ pub fn ownerless(main: &Path, here: &Path, owner: impl Fn(&Tree) -> Option<Owner
     let Ok(list) = git(main, &["worktree", "list", "--porcelain"]) else {
         return Vec::new();
     };
-    let start = |pid| workload::read(pid, "").map(|p| p.start);
+    let start = process_start;
     let running = Running::all();
     parse(&list)
         .into_iter()
@@ -921,6 +920,25 @@ pub async fn clean_as_person(dir: &Path, server: &str) -> Result<Vec<String>> {
     let me = crate::identity::person(&here, server)?;
     let api = riff_client::api::Api::new(server).signed_in(None)?;
     clean_here(&api, &me, dir).await
+}
+
+/// The start of the process `pid` in clock ticks after the boot, or
+/// `None` when it is gone. It reads `/proc/PID/stat`.
+///
+/// ```
+/// let stat = "4242 (just ci) S 4200 4242 4200 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 98765 0 0";
+/// assert_eq!(riff::worktrees::parse_start(stat), Some(98765));
+/// assert_eq!(riff::worktrees::parse_start("4242 (x"), None);
+/// ```
+pub fn parse_start(stat: &str) -> Option<u64> {
+    // The name of the program can hold spaces and parentheses.
+    let (_, rest) = stat.rsplit_once(')')?;
+    rest.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// The start of the process `pid`, or `None` when it is gone.
+fn process_start(pid: u32) -> Option<u64> {
+    parse_start(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
 }
 
 #[cfg(test)]

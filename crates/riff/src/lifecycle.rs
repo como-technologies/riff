@@ -411,19 +411,6 @@ pub async fn update(
             .current_dir(&dir),
         "riff connect claude",
     )?;
-    // The compile cache of the workers of this machine
-    // (01M4923963S666V9YWTZ46ZZ50). A failed install fails no update.
-    let workers = crate::settings::path().and_then(|path| crate::settings::workers_limit(&path));
-    if workers.is_ok_and(|limit| limit > 0)
-        && let Err(e) = crate::sccache::ensure(cargo)
-    {
-        let host = crate::identity::this_host();
-        let pinned = crate::sccache::PINNED;
-        eprintln!(
-            "{}",
-            crate::text::sccache_failed(&host, pinned, &format!("{e:#}"))
-        );
-    }
     let out = Command::new("riff-server")
         .arg("--version")
         .current_dir(&dir)

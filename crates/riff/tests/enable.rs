@@ -1158,30 +1158,6 @@ fn the_how_tos_of_the_book_name_real_commands() {
     }
 }
 
-/// 01M3XY2T542DCHBN95H9PX4AGQ: `riff workers start` starts nothing
-/// where riff is off, and names `riff enable`. After `riff enable`, the
-/// refusal is gone: the next one is that the person is not in tmux.
-#[test]
-fn riff_workers_start_starts_nothing_where_riff_is_off() {
-    let machine = Machine::new();
-    let repo = machine.repo("app");
-    let start = || {
-        let mut cmd = machine.riff(&repo, &["workers", "start", "1"]);
-        let out = cmd.env_remove("TMUX").output().unwrap();
-        assert!(!out.status.success(), "{out:?}");
-        String::from_utf8_lossy(&out.stderr).into_owned()
-    };
-    assert_eq!(
-        start(),
-        "riff starts no worker here: riff off. To turn it on: riff enable\n"
-    );
-    assert_eq!(machine.git_calls(), "", "riff ran git where it is off");
-    machine.run(&repo, &["enable"]);
-    let on = start();
-    assert!(!on.contains("riff enable"), "{on}");
-    assert!(on.contains("tmux"), "{on}");
-}
-
 /// 01M3XY2ST8R67SKTXJECAYJZRX: `riff mcp` has no tool where riff is
 /// off, and makes no call to the server.
 #[tokio::test(flavor = "multi_thread")]

@@ -4,9 +4,7 @@
 //! in [`crate::style`].
 
 use std::fmt::Write;
-use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
-use std::process::ExitStatus;
 
 use chrono::{DateTime, NaiveDate, TimeZone};
 
@@ -954,23 +952,6 @@ pub fn enabled(done: &crate::enable::Changed, on: bool) -> String {
     format!("{first}\n{then}")
 }
 
-/// The refusal of `riff workers start` in a directory where riff is
-/// off: a worker there has no riff (01M3XY2T542DCHBN95H9PX4AGQ).
-///
-/// ```
-/// use riff::enable::{Repo, State};
-///
-/// let repo = Some(Repo { top: "/r".into(), main: None });
-/// let state = State { on: false, by: None, forced: false, repo };
-/// assert_eq!(
-///     riff::text::workers_off(&state),
-///     "riff starts no worker here: riff off. To turn it on: riff enable"
-/// );
-/// ```
-pub fn workers_off(state: &crate::enable::State) -> String {
-    format!("riff starts no worker here: {}", riff_here(state))
-}
-
 /// The note to the lead when the rollout asked the riff daemon of its
 /// machine `host` to run the wave of `repo` (01M53NGVE839TRH7XB7CDPQNZE,
 /// 01M5515CA4CZ6KV4ZD6Y0744Z7).
@@ -1827,30 +1808,6 @@ pub fn waves_open_items(title: &str, open: u64) -> String {
     )
 }
 
-/// The error of `riff workers start` outside tmux
-/// (01M3JD3973J7A9BG8G9EP9TVDP).
-pub const NO_TMUX: &str = "riff: riff workers start needs tmux. It started nothing. Run it in \
-a tmux session, or start each worker by hand: open a terminal in the repository and run claude.";
-
-/// The answer to `riff workers start`.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::workers_started(2, "riff-workers", "/src/riff".as_ref()),
-///     "Started 2 workers in /src/riff, in the tmux window riff-workers. \
-///      To see them: tmux select-window -t riff-workers"
-/// );
-/// assert!(riff::text::workers_started(1, "w", "/r".as_ref()).starts_with("Started 1 worker in"));
-/// ```
-pub fn workers_started(count: u16, window: &str, dir: &std::path::Path) -> String {
-    format!(
-        "Started {} in {}, in the tmux window {window}. \
-         To see them: tmux select-window -t {window}",
-        workers_count(usize::from(count)),
-        dir.display()
-    )
-}
-
 /// The answer to `riff invite` (riff-server 1.x): the address of
 /// the riff and the lines that the person runs to join
 /// (01M3MEF4B33Z6WVJMDP29C7SS2). The lines are the ones of "Join a Riff"
@@ -2065,11 +2022,6 @@ fn workers_count(n: usize) -> String {
     }
 }
 
-/// The refusal of `riff workers start` when the limit of the machine is
-/// 0 (01M3JPQT35BMR7XMAMMFSCDC2B).
-pub const NO_WORKER_LIMIT: &str = "riff: the limit of workers on this machine is 0, so riff \
-workers start started nothing. Your user sets the limit, for example: riff workers limit 2";
-
 /// The refusals of a command that only a person in a plain terminal or
 /// the lead of its user runs (01M558C4VZ2PSMEYPAZBRYW1VV).
 pub struct LeadOnly {
@@ -2080,15 +2032,6 @@ pub struct LeadOnly {
     /// In an agent session when riff cannot ask riff-server for the lead.
     pub lead_unknown: &'static str,
 }
-
-/// The refusals of `riff workers start` (01M3JPQT79FE47518Z8DFFQYYG).
-pub const START_WORKERS: LeadOnly = LeadOnly {
-    worker: "riff: a worker never starts workers. riff workers start started nothing.",
-    not_the_lead: "riff: only the lead of your user starts workers. This session is not the \
-lead, so riff workers start started nothing.",
-    lead_unknown: "riff: cannot check that this session is the lead, so riff workers start \
-started nothing. Check the riff with riff whoami.",
-};
 
 /// The refusal of the command `riff release COMMAND` for `refusal`
 /// (01M58B0JSQMWNCMSNX19536XT8, 01M58KMMF9WMH39ZMD0MKGRVZB), with its
@@ -2154,50 +2097,10 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
     format!("{why} next: {next}")
 }
 
-/// The refusal of `riff workers start` when `run` workers fill the
-/// `limit` (01M3JPQT57PJCRBQYJNDVESS04).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::workers_full(2, 2),
-///     "riff: 2 workers run, and the limit of this machine is 2. riff workers start started \
-///      nothing. riff workers stop ends a worker."
-/// );
-/// ```
-pub fn workers_full(limit: u16, run: usize) -> String {
-    format!(
-        "riff: {} run, and the limit of this machine is {limit}. riff workers start started \
-         nothing. riff workers stop ends a worker.",
-        workers_count(run)
-    )
-}
-
-/// Why `riff workers start` started `left` fewer workers than asked
-/// (01M3JPQT57PJCRBQYJNDVESS04).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::workers_limited(1, 2, 0),
-///     "The limit of this machine is 2, and 0 workers ran before, so 1 worker did not start."
-/// );
-/// ```
-pub fn workers_limited(left: u16, limit: u16, run: usize) -> String {
-    format!(
-        "The limit of this machine is {limit}, and {} ran before, so {} did not start.",
-        workers_count(run),
-        workers_count(usize::from(left))
-    )
-}
-
 /// The line of `riff mcp` when the server asks its idle worker to stop
 /// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
 pub const IDLE_STOP: &str =
     "the server stops this idle worker. riff stops its riff workers run, and claude ends.";
-
-/// The line of `riff mcp` when the server asks it to stop, but no
-/// `riff workers run` wraps it.
-pub const IDLE_STOP_NO_WRAPPER: &str = "the server asks this idle worker to stop, but no riff \
-workers run wraps it. End this session.";
 
 /// The answer of `riff workers idle` (01M3Q5A0TF9K49V8Z1ZY9NDF74).
 ///
@@ -2231,223 +2134,6 @@ pub fn idle_workers(idle: &riff_core::wire::Idle) -> String {
     }
 }
 
-/// The message to the lead for a change of a worker setting: the
-/// setting, the old value, the new value and the host
-/// (01M3X30KHKB6W11C3NBAW7KCGW), and what the change does
-/// (01M3X30R4PSBP3RQWM02BJ6GK3, 01M5515CCV7WNKVZVAMQ375J0M).
-///
-/// ```
-/// use riff::rollout::{Change, Effect};
-/// use riff::text::setting_changed;
-/// use riff_core::wire::Idle;
-///
-/// let limit = |old, new| Change::Limit { host: "pangolin".into(), old, new };
-/// assert_eq!(
-///     setting_changed(&limit(3, 4), &Effect::Waits { count: 1, remote: false }),
-///     "workers: limit 3 to 4 on pangolin: free work waits, and the rollout is off. \
-///      Start workers with: riff workers start 1"
-/// );
-/// assert_eq!(
-///     setting_changed(&limit(4, 2), &Effect::Over(4)),
-///     "workers: limit 4 to 2 on pangolin: 4 workers run there. 2 workers end after their \
-///      item. riff stops no worker in the middle of an item."
-/// );
-/// assert_eq!(setting_changed(&limit(4, 3), &Effect::Nothing), "workers: limit 4 to 3 on pangolin.");
-///
-/// let interval = |old, new| Change::Interval { host: "thelio".into(), old, new };
-/// assert_eq!(
-///     setting_changed(&interval(10, 0), &Effect::Nothing),
-///     "workers: interval 10 to 0 on thelio: the rollout is off, and riff starts no work by \
-///      itself."
-/// );
-/// assert_eq!(
-///     setting_changed(&interval(0, 30), &Effect::Nothing),
-///     "workers: interval 0 to 30 on thelio: the rollout is on. Each 30 seconds it gives free \
-///      work to the idle workers, and runs the wave of the riff daemon for the rest."
-/// );
-/// let mcp = Change::Mcp {
-///     host: "pangolin".into(),
-///     old: vec!["riff".into()],
-///     new: vec!["riff".into(), "github".into()],
-/// };
-/// assert_eq!(
-///     setting_changed(&mcp, &Effect::Nothing),
-///     "workers: mcp [riff] to [riff, github] on pangolin: each new worker there loads them."
-/// );
-/// let idle = Change::Idle {
-///     old: Idle::default(),
-///     new: Idle { per_host: 2, after_secs: 300 },
-/// };
-/// assert_eq!(
-///     setting_changed(&idle, &Effect::Nothing),
-///     "workers: idle on the server: per host 1 to 2, after 60 to 300 seconds."
-/// );
-/// // Only the value that changed.
-/// let idle = Change::Idle {
-///     old: Idle::default(),
-///     new: Idle { per_host: 0, after_secs: 60 },
-/// };
-/// assert_eq!(
-///     setting_changed(&idle, &Effect::Nothing),
-///     "workers: idle on the server: per host 1 to 0."
-/// );
-/// ```
-pub fn setting_changed(change: &crate::rollout::Change, effect: &crate::rollout::Effect) -> String {
-    use crate::rollout::{Change, Effect};
-    match change {
-        Change::Limit { host, old, new } => {
-            let what = format!("workers: limit {old} to {new} on {host}");
-            match effect {
-                Effect::Nothing => format!("{what}."),
-                Effect::Waits { count, remote } => {
-                    let on = if *remote {
-                        format!(" --host {host}")
-                    } else {
-                        String::new()
-                    };
-                    format!(
-                        "{what}: free work waits, and the rollout is off. Start workers with: \
-                         riff workers start {count}{on}"
-                    )
-                }
-                Effect::Over(runs) => format!(
-                    "{what}: {} there. {}. riff stops no worker in the middle of an item.",
-                    if *runs == 1 {
-                        "1 worker runs".to_owned()
-                    } else {
-                        format!("{runs} workers run")
-                    },
-                    end_after_item(*new, *runs).unwrap_or_default()
-                ),
-            }
-        }
-        Change::Interval { host, old, new } => {
-            let what = format!("workers: interval {old} to {new} on {host}");
-            match new {
-                0 => format!("{what}: the rollout is off, and riff starts no work by itself."),
-                _ => format!(
-                    "{what}: the rollout is on. Each {new} seconds it gives free work to the \
-                     idle workers, and runs the wave of the riff daemon for the rest."
-                ),
-            }
-        }
-        Change::Mcp { host, old, new } => format!(
-            "workers: mcp [{}] to [{}] on {host}: each new worker there loads them.",
-            old.join(", "),
-            new.join(", ")
-        ),
-        Change::Idle { old, new } => {
-            let mut parts = Vec::new();
-            if old.per_host != new.per_host {
-                parts.push(format!("per host {} to {}", old.per_host, new.per_host));
-            }
-            if old.after_secs != new.after_secs {
-                parts.push(format!(
-                    "after {} to {} seconds",
-                    old.after_secs, new.after_secs
-                ));
-            }
-            format!("workers: idle on the server: {}.", parts.join(", "))
-        }
-    }
-}
-
-/// The refusal of `riff workers mcp remove riff`.
-pub const WORKERS_MCP_KEEPS_RIFF: &str =
-    "a worker needs the riff MCP server, so riff stays in workers.mcp";
-
-/// The warning of `riff workers start` for a name of `workers.mcp` that
-/// the MCP config of the person does not have.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::worker_mcp_missing("unifi"),
-///     "riff: no MCP server unifi in your Claude Code config, so the workers start without it. \
-/// `claude mcp list` shows the names."
-/// );
-/// ```
-pub fn worker_mcp_missing(name: &str) -> String {
-    format!(
-        "riff: no MCP server {name} in your Claude Code config, so the workers start without it. \
-`claude mcp list` shows the names."
-    )
-}
-
-/// The answer to `riff workers stop` (01M3JPQTDFW3C7QBSZZ2M831MH).
-///
-/// ```
-/// assert_eq!(riff::text::workers_stopped(0), "No worker runs on this machine.");
-/// assert_eq!(riff::text::workers_stopped(2), "Stopped 2 workers. They left riff who, and their claims are free.");
-/// ```
-pub fn workers_stopped(n: usize) -> String {
-    if n == 0 {
-        return "No worker runs on this machine.".into();
-    }
-    format!(
-        "Stopped {}. They left riff who, and their claims are free.",
-        workers_count(n)
-    )
-}
-
-/// The note of the wrapper of a worker to the lead when `claude` exits
-/// on its own (01M493YZVZGA7TSRJH6F67VN0H).
-///
-/// ```
-/// use std::os::unix::process::ExitStatusExt;
-/// use std::process::ExitStatus;
-///
-/// let status = ExitStatus::from_raw(1 << 8);
-/// assert_eq!(
-///     riff::text::worker_stopped(Some("%3"), Some("a6cf"), &status),
-///     "worker stopped: pane %3, session a6cf, exit code 1. The wrapper does not start it \
-///      again: the free work goes to an idle worker or to the wave of the riff daemon."
-/// );
-/// assert!(riff::text::worker_stopped(None, None, &status).starts_with(
-///     "worker stopped: pane unknown, session unknown, exit code 1."
-/// ));
-/// // A kill, for example for the memory of the workers
-/// // (01M3WFZ03Z9Y60HPHJJ9ZE6AQZ).
-/// assert_eq!(
-///     riff::text::worker_stopped(Some("%3"), Some("a6cf"), &ExitStatus::from_raw(9)),
-///     "worker stopped: pane %3, session a6cf, signal 9. A kill ended it, for example when \
-///      the workers took too much memory. Its work that is not committed is in its worktree: \
-///      the next worker of its item goes on from there. The wrapper does not start it again: \
-///      the free work goes to an idle worker or to the wave of the riff daemon."
-/// );
-/// ```
-pub fn worker_stopped(pane: Option<&str>, session: Option<&str>, status: &ExitStatus) -> String {
-    let killed = if status.signal().is_some() {
-        " A kill ended it, for example when the workers took too much memory. Its work that \
-         is not committed is in its worktree: the next worker of its item goes on from there."
-    } else {
-        ""
-    };
-    format!(
-        "worker stopped: pane {}, session {}, {}.{killed} The wrapper does not start it \
-         again: the free work goes to an idle worker or to the wave of the riff daemon.",
-        pane.unwrap_or("unknown"),
-        session.unwrap_or("unknown"),
-        crate::worker::exit_words(status)
-    )
-}
-
-/// The refusal of `riff workers start` while the available memory of
-/// the machine is less than the floor (01M3WFZ01PTAYYKG3T5CFA2W4D).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::workers_low(3, 4),
-///     "riff: 3 GB of memory is available, and the floor of this machine is 4 GB. riff \
-///      workers start started nothing. riff workers floor shows the floor."
-/// );
-/// ```
-pub fn workers_low(avail_gb: u32, floor_gb: u32) -> String {
-    format!(
-        "riff: {} riff workers start started nothing. riff workers floor shows the floor.",
-        low_memory(avail_gb, floor_gb)
-    )
-}
-
 /// Why a machine starts no worker: its available memory and its floor
 /// (01M3WFZ01PTAYYKG3T5CFA2W4D).
 ///
@@ -2459,41 +2145,6 @@ pub fn workers_low(avail_gb: u32, floor_gb: u32) -> String {
 /// ```
 pub fn low_memory(avail_gb: u32, floor_gb: u32) -> String {
     format!("{avail_gb} GB of memory is available, and the floor of this machine is {floor_gb} GB.")
-}
-
-/// What `riff workers start` says one time on a machine with no systemd
-/// (01M3WFYZZENNHVH8Z2BAFSR6TS). `why` is the error of `systemctl`.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::no_systemd("cannot run systemctl: not found"),
-///     "This machine has no systemd user manager (cannot run systemctl: not found), so the \
-///      workers run with no memory limit."
-/// );
-/// ```
-pub fn no_systemd(why: &str) -> String {
-    format!(
-        "This machine has no systemd user manager ({why}), so the workers run with no memory \
-         limit."
-    )
-}
-
-/// What `riff workers run` says one time in its pane when
-/// `systemd-run --user --scope` fails there (01M407J8X25H9AT8M789EG5RQZ).
-/// `why` is the error of `systemd-run`.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::no_scope("Failed to connect to bus"),
-///     "riff: systemd-run cannot make a scope in this pane (Failed to connect to bus), so \
-///      this worker runs with no memory limit."
-/// );
-/// ```
-pub fn no_scope(why: &str) -> String {
-    format!(
-        "riff: systemd-run cannot make a scope in this pane ({why}), so this worker runs with \
-         no memory limit."
-    )
 }
 
 /// What the clear, the reap and the stop say one time when they find
@@ -2512,22 +2163,6 @@ pub fn workers_by_environment(session: &str) -> String {
     format!(
         "riff: the worker {session} has no systemd scope, so riff finds its processes by \
          RIFF_WORKER and RIFF_SESSION. A process that drops them is not found."
-    )
-}
-
-/// What `riff workers run` says in its pane when it runs at a higher
-/// nice value than `workers.nice` (01M407J8R79WVYVABVCSHFAMJ9).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::nice_above(15, 10),
-///     "riff: this wrapper runs at nice 15, more than workers.nice 10. claude runs at nice 15."
-/// );
-/// ```
-pub fn nice_above(here: u8, nice: u8) -> String {
-    format!(
-        "riff: this wrapper runs at nice {here}, more than workers.nice {nice}. claude runs at \
-         nice {here}."
     )
 }
 
@@ -2550,23 +2185,6 @@ pub fn local_mode(dir: &Path, why: &str) -> String {
     )
 }
 
-/// What `riff workers start` says one time when riff cannot make the
-/// pool of build jobs (01M3ZGZMRHXRBP762QPVCV0YX8).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::no_jobserver("Permission denied"),
-///     "riff cannot make the pool of build jobs (Permission denied), so each worker builds \
-///      with a fixed share of the cores.",
-/// );
-/// ```
-pub fn no_jobserver(why: &str) -> String {
-    format!(
-        "riff cannot make the pool of build jobs ({why}), so each worker builds with a fixed \
-         share of the cores."
-    )
-}
-
 /// What riff says when it cannot read the physical cores of the
 /// machine (01M3WFYZRK5CT22GJW6ZHYT9CC): it counts half of the `logical`
 /// CPUs, `physical`.
@@ -2582,87 +2200,6 @@ pub fn no_physical_cores(logical: u16, physical: u16) -> String {
     format!(
         "riff cannot read the physical cores of this machine, so it counts half of the \
          {logical} logical CPUs: {physical}."
-    )
-}
-
-/// The note to the lead for a worker whose pane ended with no end call
-/// of its session (01M3WG2460P4GF7GEVBY92Q33W): the pane, the session,
-/// the items that it held, and the cause when riff found it.
-///
-/// ```
-/// use riff::terminal::WorkerPane;
-///
-/// let pane = WorkerPane { pane: "%3".into(), session: "068a2cc2-11aa".into() };
-/// assert_eq!(
-///     riff::text::worker_gone("pangolin", &pane, &["issue-347".into()], None),
-///     "worker stopped: pane %3, session 068a2cc2-11aa, on pangolin. The pane ended with no \
-///      end call, so riff ended the session. It held issue-347: free now. riff found no cause."
-/// );
-/// assert_eq!(
-///     riff::text::worker_gone("pangolin", &pane, &[], Some("systemd-oomd killed the pane: memory")),
-///     "worker stopped: pane %3, session 068a2cc2-11aa, on pangolin. The pane ended with no \
-///      end call, so riff ended the session. It held no item. Cause: systemd-oomd killed the \
-///      pane: memory."
-/// );
-/// ```
-pub fn worker_gone(
-    host: &str,
-    pane: &crate::terminal::WorkerPane,
-    claims: &[String],
-    cause: Option<&str>,
-) -> String {
-    let held = if claims.is_empty() {
-        "It held no item.".to_owned()
-    } else {
-        format!("It held {}: free now.", claims.join(", "))
-    };
-    let cause = match cause {
-        Some(cause) => format!("Cause: {cause}."),
-        None => "riff found no cause.".to_owned(),
-    };
-    format!(
-        "worker stopped: pane {}, session {}, on {host}. The pane ended with no end call, so \
-         riff ended the session. {held} {cause}",
-        pane.pane, pane.session
-    )
-}
-
-/// The message to the lead when the deaths of the workers of `host`
-/// start a loop (01M493Z02KS82B3CVZEVFA3D6E): `count` workers died in
-/// the last hour.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::death_loop("pangolin", 4),
-///     "workers: 4 workers died in the last hour on pangolin. A loop of deaths is a fault: \
-///      riff starts no worker on pangolin until 3 or fewer died in the last hour. Tell your \
-///      user. On pangolin, look at the panes, and at the memory kills with journalctl -u \
-///      systemd-oomd --since -1h."
-/// );
-/// ```
-pub fn death_loop(host: &str, count: usize) -> String {
-    format!(
-        "workers: {count} workers died in the last hour on {host}. A loop of deaths is a \
-         fault: riff starts no worker on {host} until {} or fewer died in the last hour. Tell \
-         your user. On {host}, look at the panes, and at the memory kills with journalctl -u \
-         systemd-oomd --since -1h.",
-        crate::deaths::LOOP
-    )
-}
-
-/// The end of the note of [`worker_gone`] when the end call failed.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::worker_gone_not_ended("no sign-in"),
-///     " The end call failed (no sign-in): the server frees its claims after 5 minutes, or \
-///      the lead frees one with riff release ITEM --session ID."
-/// );
-/// ```
-pub fn worker_gone_not_ended(error: &str) -> String {
-    format!(
-        " The end call failed ({error}): the server frees its claims after 5 minutes, or the \
-         lead frees one with riff release ITEM --session ID."
     )
 }
 
@@ -4861,224 +4398,6 @@ pub fn steps_check_gate(gate: &crate::update_steps::Gate) -> String {
     }
 }
 
-/// The refusal of `riff workers host` outside tmux
-/// (01M3N7AK8TVYV8S0WR3RP0TN8X).
-pub const HOST_NEEDS_TMUX: &str = "riff workers host needs tmux: it starts the workers in its \
-tmux session. Run it in a tmux pane in the main clone.";
-
-/// The refusal of `riff workers host` with a limit of 0.
-pub const HOST_NEEDS_A_LIMIT: &str = "the limit of workers on this machine is 0, so this machine \
-offers no workers. Set a limit first, for example: riff workers limit 2";
-
-/// The last line of `riff workers host` after Ctrl-C.
-pub const HOST_STOPPED: &str =
-    "riff workers host stopped. Its workers still run. riff workers stop ends them.";
-
-/// The note of a workers host to the lead when its keyring locks
-/// (01M4385CEWGCP31DP5PAMPXZ97).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::host_keyring_locked("pangolin"),
-///     "keyring: the OS keyring of pangolin is locked or does not answer: unlock it at the \
-///      desktop. gh uses the same keyring, so gh stops too. The workers of pangolin cannot \
-///      get a new token. The host looks again each 30 seconds."
-/// );
-/// ```
-pub fn host_keyring_locked(host: &str) -> String {
-    format!(
-        "keyring: {}. The workers of {host} cannot get a new token. The host looks again \
-         each {} seconds.",
-        riff_client::text::keyring_locked(host),
-        riff_client::secrets::KEYRING_RETRY.as_secs()
-    )
-}
-
-/// The note of a workers host to the lead when its keyring answers
-/// again (01M4385CEWGCP31DP5PAMPXZ97).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::host_keyring_back("pangolin"),
-///     "keyring: the OS keyring of pangolin answers again. The host goes on."
-/// );
-/// ```
-pub fn host_keyring_back(host: &str) -> String {
-    format!("keyring: the OS keyring of {host} answers again. The host goes on.")
-}
-
-/// The first line of `riff workers host` (01M3NBV4294DS3WZFEKR7M3PNF).
-///
-/// ```
-/// let me = "riff://mike@pangolin/como-technologies/riff?session=h1".parse()?;
-/// assert_eq!(
-///     riff::text::host_serves(&me, 6),
-///     "riff workers host: pangolin offers 6 workers to the lead of mike in \
-///      como-technologies/riff. Ctrl-C stops it."
-/// );
-/// # Ok::<(), riff_core::name::NameError>(())
-/// ```
-pub fn host_serves(me: &SessionUri, limit: u16) -> String {
-    format!(
-        "riff workers host: {} offers {} to the lead of {} in {}. Ctrl-C stops it.",
-        me.place().host(),
-        workers_count(usize::from(limit)),
-        me.who().user(),
-        me.place().repo_text(),
-    )
-}
-
-/// The refusal of a second `riff workers host` of the same user and
-/// repository on a machine (01M3NBV44GKAX6WS391PN6R72W). `first` is the
-/// PID and the session of the first host.
-///
-/// ```
-/// let me = "riff://mike@pangolin/como-technologies/riff?session=h2".parse()?;
-/// assert_eq!(
-///     riff::text::host_runs(&me, "4242 h1"),
-///     "a workers host of mike in como-technologies/riff runs on pangolin already: \
-///      process 4242, session h1. Use that one, or stop it with Ctrl-C in its pane."
-/// );
-/// # Ok::<(), riff_core::name::NameError>(())
-/// ```
-pub fn host_runs(me: &SessionUri, first: &str) -> String {
-    let (pid, session) = first.split_once(' ').unwrap_or((first, "?"));
-    format!(
-        "a workers host of {} in {} runs on {} already: process {pid}, session {session}. \
-         Use that one, or stop it with Ctrl-C in its pane.",
-        me.who().user(),
-        me.place().repo_text(),
-        me.place().host(),
-    )
-}
-
-/// The reply of a host to a start (01M3N7AKB3KXS2XYK0309C4M18): the
-/// pane and the session of each new worker.
-///
-/// ```
-/// use riff::terminal::WorkerPane;
-/// use riff::worker::Started;
-///
-/// let started = Started {
-///     panes: vec![WorkerPane { pane: "%3".into(), session: "s1".into() }],
-///     window: "riff-workers".into(),
-///     main: "/src/riff".into(),
-///     fresh: None,
-///     limited: Some("The limit of this machine is 1.".into()),
-///     no_scope: None,
-///     no_pool: None,
-///     no_cores: None,
-/// };
-/// assert_eq!(
-///     riff::text::host_started("pangolin", &started),
-///     "pangolin: started 1 worker in /src/riff: %3 s1. The limit of this machine is 1."
-/// );
-/// ```
-pub fn host_started(host: &str, started: &crate::worker::Started) -> String {
-    let panes: Vec<String> = started
-        .panes
-        .iter()
-        .map(|w| format!("{} {}", w.pane, w.session))
-        .collect();
-    let mut line = format!(
-        "{host}: started {} in {}: {}.",
-        workers_count(started.panes.len()),
-        started.main.display(),
-        panes.join(", ")
-    );
-    for more in [
-        &started.limited,
-        &started.no_scope,
-        &started.no_pool,
-        &started.no_cores,
-    ]
-    .into_iter()
-    .flatten()
-    {
-        line.push(' ');
-        line.push_str(more);
-    }
-    line
-}
-
-/// The refusal of a host to a request that is not verified
-/// (01M3N7AKDE7DEA6NXS9ZMECRMH).
-///
-/// ```
-/// use riff::host::Request;
-/// assert_eq!(
-///     riff::text::host_refused_not_verified(&Request::Stop),
-///     "refused: \"workers stop\" is not verified. A host acts only on a verified request."
-/// );
-/// ```
-pub fn host_refused_not_verified(request: &crate::host::Request) -> String {
-    format!("refused: \"{request}\" is not verified. A host acts only on a verified request.")
-}
-
-/// The refusal of a host to a request that is not from the lead of its
-/// user in its repository (01M3N7AKDE7DEA6NXS9ZMECRMH).
-///
-/// ```
-/// use riff::host::Request;
-/// let me = "riff://mike@pangolin/como-technologies/riff?session=h1".parse()?;
-/// assert_eq!(
-///     riff::text::host_refused_not_the_lead(&Request::Start(2), &me),
-///     "refused: \"workers start 2\" is not from the lead of mike in como-technologies/riff. \
-///      Only that lead starts and stops workers on pangolin."
-/// );
-/// # Ok::<(), riff_core::name::NameError>(())
-/// ```
-pub fn host_refused_not_the_lead(request: &crate::host::Request, me: &SessionUri) -> String {
-    format!(
-        "refused: \"{request}\" is not from the lead of {} in {}. Only that lead starts and \
-         stops workers on {}.",
-        me.who().user(),
-        me.place().repo_text(),
-        me.place().host()
-    )
-}
-
-/// The answer to `riff workers start N --host HOST` and
-/// `riff workers stop --host HOST` (01M3N7AKB3KXS2XYK0309C4M18).
-///
-/// ```
-/// use riff::host::Request;
-/// assert_eq!(
-///     riff::text::host_asked("pangolin", &Request::Start(2)),
-///     "Asked the workers host on pangolin: workers start 2. Its reply comes as a note at your next read."
-/// );
-/// ```
-pub fn host_asked(host: &str, request: &crate::host::Request) -> String {
-    format!(
-        "Asked the workers host on {host}: {request}. Its reply comes as a note at your next read."
-    )
-}
-
-/// The line of `riff workers` under the workers of a host whose status
-/// has no room to list `more` of them (01M517W4NP2WKSRCK52ZBVWBD3).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::host_more_workers(7),
-///     "7 more workers: the status of the host has no room to list them.\n"
-/// );
-/// ```
-pub fn host_more_workers(more: usize) -> String {
-    format!("{more} more workers: the status of the host has no room to list them.\n")
-}
-
-/// The error when no workers host of the user runs on `host`.
-///
-/// ```
-/// assert!(riff::text::no_host("pangolin").contains("riff workers host"));
-/// ```
-pub fn no_host(host: &str) -> String {
-    format!(
-        "riff: no workers host of your user runs on {host}. On {host}, run riff workers host \
-         in a tmux pane in the main clone."
-    )
-}
-
 /// The refusal of `--host` in a process that is not an agent session.
 pub const HOST_NEEDS_THE_LEAD: &str = "riff: only the lead session asks a workers host. Run it \
 in the lead, or run riff workers start on that machine.";
@@ -5302,24 +4621,6 @@ pub fn room_for(limit: u16, runs: usize) -> Option<String> {
     Some(format!("room for {}", workers_count(room)))
 }
 
-/// Why a machine with a loop of deaths starts no worker
-/// (01M493YZZEW1FTDBNA090WT2AG).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::deaths_halt(4),
-///     "4 workers died in the last hour. riff workers start starts workers there again when 3 \
-///      or fewer died in the last hour."
-/// );
-/// ```
-pub fn deaths_halt(deaths: usize) -> String {
-    format!(
-        "{deaths} workers died in the last hour. riff workers start starts workers there again \
-         when {} or fewer died in the last hour.",
-        crate::deaths::LOOP
-    )
-}
-
 /// How many of `runs` workers end after their item under `limit`
 /// (01M402VFQHC5PH39DTFV6AH60F), or `None` when they are not more than
 /// the limit.
@@ -5362,26 +4663,6 @@ pub fn worker_over_limit(host: &str, pane: &str, limit: u16, runs: usize) -> Str
     )
 }
 
-/// The note to the lead when the worker in `pane` on `host` ends after
-/// its item, because its `riff workers run` runs an old riff
-/// (01M517BT9WBQ4R79Z9KVY9SG1B).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::worker_old_riff("pangolin", "%3"),
-///     "workers: the worker in the pane %3 on pangolin runs an old riff. It ends after its \
-///      item, in place of a clear. Its free work goes to an idle worker or to the wave of the \
-///      riff daemon."
-/// );
-/// ```
-pub fn worker_old_riff(host: &str, pane: &str) -> String {
-    format!(
-        "workers: the worker in the pane {pane} on {host} runs an old riff. It ends after its \
-         item, in place of a clear. Its free work goes to an idle worker or to the wave of the \
-         riff daemon."
-    )
-}
-
 /// The note to the lead when the worker in `pane` on `host` ends in
 /// place of its clear, because riff added rules to the user settings of
 /// Claude Code after its start (01M51M3ZRKQZ8KDVRGJR3XAY00).
@@ -5399,91 +4680,6 @@ pub fn worker_new_rules(host: &str, pane: &str) -> String {
         "workers: the worker in the pane {pane} on {host} started before riff added rules of \
          Claude Code. It ends after its item, in place of a clear. Its free work goes to an idle \
          worker or to the wave of the riff daemon."
-    )
-}
-
-/// The note to the lead after riff stopped the old context of the
-/// worker in `pane`, just before its clear
-/// (01M3ZV0TJDQ6JCM7XG0036MSV1).
-///
-/// ```
-/// use riff::workload::Proc;
-/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, scope: None, context: true };
-/// assert_eq!(
-///     riff::text::old_context_stopped("%3", &[p]),
-///     "riff stopped 1 process of the old context of the worker in the pane %3, before its \
-///      clear: 4242 just ci."
-/// );
-/// ```
-pub fn old_context_stopped(pane: &str, stopped: &[crate::workload::Proc]) -> String {
-    let n = stopped.len();
-    let list: Vec<String> = stopped.iter().map(proc_words).collect();
-    format!(
-        "riff stopped {n} {} of the old context of the worker in the pane {pane}, before its \
-         clear: {}.",
-        if n == 1 { "process" } else { "processes" },
-        list.join("; ")
-    )
-}
-
-/// A process in words: its ID and its command line, with no control
-/// character.
-fn proc_words(p: &crate::workload::Proc) -> String {
-    format!("{} {}", p.pid, safe(&p.line()))
-}
-
-/// The line of `riff workers reap` for a process that it stopped
-/// (01M3ZV0TKBP201FKY32ZD81G4E).
-///
-/// ```
-/// use riff::workload::Proc;
-/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, scope: None, context: true };
-/// assert_eq!(riff::text::reaped("%3", &p), "pane %3: stopped 4242 just ci");
-/// ```
-pub fn reaped(pane: &str, p: &crate::workload::Proc) -> String {
-    format!("pane {pane}: stopped {}", proc_words(p))
-}
-
-/// The line of `riff workers reap` for a worker with no orphan.
-///
-/// ```
-/// assert_eq!(riff::text::reaped_none("%3"), "pane %3: no orphan process");
-/// ```
-pub fn reaped_none(pane: &str) -> String {
-    format!("pane {pane}: no orphan process")
-}
-
-/// The line of `riff workers reap` for a worker whose start of its
-/// context riff does not know.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::reap_no_start("%3"),
-///     "pane %3: riff knows no start of its context, so it stops nothing"
-/// );
-/// ```
-pub fn reap_no_start(pane: &str) -> String {
-    format!("pane {pane}: riff knows no start of its context, so it stops nothing")
-}
-
-/// The line of `riff workers stop` for each process of a worker that
-/// lived after its pane closed (01M3ZV0TMNQDK9WC3BR1NPGAC2).
-///
-/// ```
-/// use riff::workload::Proc;
-/// let p = Proc { pid: 4242, ppid: 1, start: 0, argv: vec!["just".into(), "ci".into()], worker: None, scope: None, context: true };
-/// assert_eq!(
-///     riff::text::stopped_after_pane("%3", &[p]),
-///     "pane %3: also stopped 1 process that lived after the pane: 4242 just ci"
-/// );
-/// ```
-pub fn stopped_after_pane(pane: &str, stopped: &[crate::workload::Proc]) -> String {
-    let n = stopped.len();
-    let list: Vec<String> = stopped.iter().map(proc_words).collect();
-    format!(
-        "pane {pane}: also stopped {n} {} that lived after the pane: {}",
-        if n == 1 { "process" } else { "processes" },
-        list.join("; ")
     )
 }
 
@@ -5632,32 +4828,6 @@ pub fn workers_disk_low(disk: &riff_client::machines::Disk) -> String {
     )
 }
 
-/// The reply of a workers host to `workers monitor on` or `off`
-/// (01M421QPTQ8BQ0KMG8F7CRHNMX).
-///
-/// ```
-/// use riff::settings::Monitor;
-///
-/// assert_eq!(
-///     riff::text::monitor_set(&Monitor { on: true, every: 15, load: 1.5 }),
-///     "the monitor is on: it looks each 15 seconds."
-/// );
-/// assert_eq!(
-///     riff::text::monitor_set(&Monitor { on: false, every: 15, load: 1.5 }),
-///     "the monitor is off."
-/// );
-/// ```
-pub fn monitor_set(monitor: &crate::settings::Monitor) -> String {
-    if monitor.on {
-        format!(
-            "the monitor is on: it looks each {} seconds.",
-            monitor.every
-        )
-    } else {
-        "the monitor is off.".to_owned()
-    }
-}
-
 /// The line of a monitor that does not look: another monitor holds the
 /// lock of the machine (01M421QQ1K7EFDV2PVPTSTE5FK).
 pub const MONITOR_RUNS: &str =
@@ -5679,78 +4849,6 @@ pub fn clock(at: u64) -> String {
                 .to_string()
         },
     )
-}
-
-/// The message of the monitor of `host` to the lead for `event`
-/// (01M421QPP5QFBB0YN25HY2MG1Z). It names the machine, the number and
-/// the limit. `load` is `monitor.load`, and `physical` the physical
-/// cores.
-///
-/// ```
-/// use riff::monitor::Event;
-/// use riff_client::machines::Kill;
-/// use riff::text::{clock, monitor_event};
-///
-/// let over = Event::LoadOver { load5: 13.2, limit: 12.0 };
-/// assert_eq!(
-///     monitor_event("pangolin", &over, 1.5, 8),
-///     "monitor: pangolin: the 5-minute load is 13.20, over the limit 12.00 (1.5 times 8 physical \
-///      cores). riff changes nothing: you decide."
-/// );
-/// let good = Event::LoadGood { load5: 9.1, limit: 12.0 };
-/// assert_eq!(
-///     monitor_event("pangolin", &good, 1.5, 8),
-///     "monitor: pangolin: the 5-minute load is good again: 9.10, under the limit 12.00."
-/// );
-/// let under = Event::MemoryUnder { avail_gb: 3, floor: 4 };
-/// assert_eq!(
-///     monitor_event("pangolin", &under, 1.5, 8),
-///     "monitor: pangolin: 3 GB of memory is available, under the floor 4 GB. riff starts no \
-///      worker here. riff changes nothing more: you decide."
-/// );
-/// let good = Event::MemoryGood { avail_gb: 10, floor: 4 };
-/// assert_eq!(
-///     monitor_event("pangolin", &good, 1.5, 8),
-///     "monitor: pangolin: the available memory is good again: 10 GB, over the floor 4 GB."
-/// );
-/// let kill = Kill { at: 1727980000, by: "systemd-oomd".into(), what: "tmux-spawn-f089.scope".into() };
-/// assert_eq!(
-///     monitor_event("pangolin", &Event::Killed(kill), 1.5, 8),
-///     format!("monitor: pangolin: systemd-oomd killed tmux-spawn-f089.scope at {}.", clock(1727980000)),
-/// );
-/// ```
-pub fn monitor_event(
-    host: &str,
-    event: &crate::monitor::Event,
-    load: f64,
-    physical: u16,
-) -> String {
-    use crate::monitor::Event;
-    let host = safe(host);
-    match event {
-        Event::LoadOver { load5, limit } => format!(
-            "monitor: {host}: the 5-minute load is {load5:.2}, over the limit {limit:.2} \
-             ({load} times {physical} physical cores). riff changes nothing: you decide."
-        ),
-        Event::LoadGood { load5, limit } => format!(
-            "monitor: {host}: the 5-minute load is good again: {load5:.2}, under the limit \
-             {limit:.2}."
-        ),
-        Event::MemoryUnder { avail_gb, floor } => format!(
-            "monitor: {host}: {avail_gb} GB of memory is available, under the floor {floor} GB. \
-             riff starts no worker here. riff changes nothing more: you decide."
-        ),
-        Event::MemoryGood { avail_gb, floor } => format!(
-            "monitor: {host}: the available memory is good again: {avail_gb} GB, over the floor \
-             {floor} GB."
-        ),
-        Event::Killed(kill) => format!(
-            "monitor: {host}: {} killed {} at {}.",
-            safe(&kill.by),
-            safe(&kill.what),
-            clock(kill.at)
-        ),
-    }
 }
 
 /// The refusals of a write of `riff cloud` (01M558C4VZ2PSMEYPAZBRYW1VV).
@@ -7819,12 +6917,6 @@ pub fn daemon_refused(
 /// in the book (01M588QXAGD3B8BTK7N17M29WM).
 pub const DAEMON_HOST_WHO: &str = "Only you in a terminal and your lead in this repository can \
 use --host. The daemon of HOST refuses each other session, for example a worker.";
-
-/// Who can use `--host` on `riff workers start`, stop and monitor: the
-/// same words in the help of each flag and in the book
-/// (01M588QXAGD3B8BTK7N17M29WM).
-pub const WORKERS_HOST_WHO: &str = "Only your lead in this repository can use --host. riff \
-refuses it in each other session, for example a worker, and in a terminal.";
 
 /// The error when no daemon of the user serves the repository `repo`
 /// on `host`.

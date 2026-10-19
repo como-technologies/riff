@@ -4,11 +4,10 @@
 //!
 //! A container session gets the riff tools from the relay
 //! ([`crate::session_relay::with_tools`]). A person can give each new
-//! session of the host more MCP servers, as `riff workers mcp` does for
-//! the workers in tmux (01M57840K7SNPS243CYMYNYVFX):
+//! session of the host more MCP servers (01M57840K7SNPS243CYMYNYVFX):
 //!
 //! - `riff daemon mcp add NAME` copies the server NAME from the MCP
-//!   config of the person ([`crate::worker_mcp::person_servers`]) into
+//!   config of the person ([`person_servers`]) into
 //!   [`FILE`] in the folder of the daemon. Only the person can read the
 //!   file, because a server config can hold a token. A later change of
 //!   the config of the person counts only after a new `add`.
@@ -34,7 +33,7 @@
 //!     R --> P["claude --mcp-config<br/>riff, github"]
 //! ```
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value, json};
@@ -82,7 +81,7 @@ pub fn read(dir: &Path) -> Result<Map<String, Value>> {
 
 /// Writes `servers` to [`FILE`] in `dir`, readable only by the person.
 fn write(dir: &Path, servers: &Map<String, Value>) -> Result<()> {
-    crate::worker_mcp::write_as(dir, FILE, &json!({ "mcpServers": servers })).map(drop)
+    write_as(dir, FILE, &json!({ "mcpServers": servers })).map(drop)
 }
 
 /// The names of the servers of each session: `riff` first, then each
@@ -239,4 +238,98 @@ pub fn has_program(image: &str, program: &str) -> Result<bool> {
         Some(1 | 127) => Ok(false),
         _ => bail!("podman run of {image}: {status}"),
     }
+}
+
+/// The config file of Claude Code: `$CLAUDE_CONFIG_DIR/.claude.json`,
+/// else `$HOME/.claude.json`. An empty value counts as unset.
+///
+/// ```
+/// use riff::session_mcp::claude_json_from;
+/// use std::path::PathBuf;
+/// assert_eq!(claude_json_from(Some("/c".into()), Some("/h".into())), Some(PathBuf::from("/c/.claude.json")));
+/// assert_eq!(claude_json_from(Some("".into()), Some("/h".into())), Some(PathBuf::from("/h/.claude.json")));
+/// assert_eq!(claude_json_from(None, None), None);
+/// ```
+pub fn claude_json_from(
+    config: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let set = |v: Option<std::ffi::OsString>| v.filter(|v| !v.is_empty()).map(PathBuf::from);
+    set(config)
+        .or_else(|| set(home))
+        .map(|d| d.join(".claude.json"))
+}
+
+/// The config file of Claude Code of this process. See [`claude_json_from`].
+pub fn claude_json() -> Option<PathBuf> {
+    claude_json_from(
+        std::env::var_os("CLAUDE_CONFIG_DIR"),
+        std::env::var_os("HOME"),
+    )
+}
+
+/// The `mcpServers` of a JSON value, or an empty map.
+fn servers_of(value: Option<&Value>) -> Map<String, Value> {
+    value
+        .and_then(|v| v.get("mcpServers"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// A JSON file, or `None` when it is missing or not JSON.
+fn read_json(path: &Path) -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+/// The MCP servers of the person for the repository in `main`: the user
+/// config, then `.mcp.json` of `main`, then the local config. A later
+/// one wins.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let main = dir.path().join("repo");
+/// std::fs::create_dir(&main)?;
+/// let claude = dir.path().join(".claude.json");
+/// std::fs::write(&claude, serde_json::json!({
+///     "mcpServers": {"github": {"command": "gh-mcp"}, "unifi": {"command": "u"}},
+///     "projects": {main.to_str().unwrap(): {"mcpServers": {"unifi": {"command": "u2"}}}},
+/// }).to_string())?;
+/// std::fs::write(main.join(".mcp.json"), r#"{"mcpServers": {"github": {"command": "gh2"}}}"#)?;
+/// let all = riff::session_mcp::person_servers(Some(&claude), &main);
+/// assert_eq!(all["github"]["command"], "gh2");
+/// assert_eq!(all["unifi"]["command"], "u2");
+/// assert!(riff::session_mcp::person_servers(None, &main).contains_key("github"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn person_servers(claude_json: Option<&Path>, main: &Path) -> Map<String, Value> {
+    let config = claude_json.and_then(read_json);
+    let mut all = servers_of(config.as_ref());
+    all.extend(servers_of(read_json(&main.join(".mcp.json")).as_ref()));
+    let local = config
+        .as_ref()
+        .and_then(|c| c.get("projects"))
+        .and_then(|p| p.get(main.to_string_lossy().as_ref()));
+    all.extend(servers_of(local));
+    all
+}
+
+/// Writes `config` to the file `name` in `dir`, readable only by the person.
+pub fn write_as(dir: &Path, name: &str, config: &Value) -> Result<PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    crate::local::make_dir(dir).with_context(|| format!("cannot make {}", dir.display()))?;
+    let path = dir.join(name);
+    let new = dir.join(format!("{name}.{}", std::process::id()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&new)
+        .with_context(|| format!("cannot write {}", new.display()))?;
+    file.write_all(config.to_string().as_bytes())
+        .with_context(|| format!("cannot write {}", new.display()))?;
+    std::fs::rename(&new, &path).with_context(|| format!("cannot write {}", path.display()))?;
+    Ok(path)
 }

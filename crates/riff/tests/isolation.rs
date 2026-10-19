@@ -307,17 +307,21 @@ fn riff_home_keeps_the_settings_out_of_the_config_of_the_person() {
     let env = Isolated::new();
     let config = env.home().join(".config/riff");
     std::fs::create_dir_all(&config).unwrap();
-    std::fs::write(config.join("config.toml"), "[workers]\nlimit = 1\n").unwrap();
+    std::fs::write(config.join("config.toml"), "[update]\nauto = false\n").unwrap();
     let before = snapshot(&config);
 
-    let out = env.riff().args(["workers", "limit", "3"]).output().unwrap();
+    let out = env
+        .riff()
+        .args(["update", "--auto", "on"])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "{out:?}");
-    let out = env.riff().args(["workers", "limit"]).output().unwrap();
-    assert!(stdout(&out).contains('3'), "{out:?}");
+    let out = env.riff().args(["update", "--auto"]).output().unwrap();
+    assert!(stdout(&out).contains("true"), "{out:?}");
 
     assert_eq!(snapshot(&config), before);
     let kept = std::fs::read_to_string(env.riff_home().join("config.toml")).unwrap();
-    assert!(kept.contains("limit = 3"), "{kept}");
+    assert!(kept.contains("auto = true"), "{kept}");
 }
 
 #[test]

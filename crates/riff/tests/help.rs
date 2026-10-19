@@ -55,8 +55,6 @@ fn each_line_of_the_help_fits_in_80_columns() {
         &["--help"][..],
         &["-h"],
         &["help", "invite"],
-        &["workers", "--help"],
-        &["workers", "start", "--help"],
         &["update", "--help"],
         &["help", "server"],
         &["who", "-h"],
@@ -75,9 +73,7 @@ fn the_help_shows_the_groups_in_order() {
     let headings: Vec<_> = groups.iter().map(|(h, _)| h.as_str()).collect();
     assert_eq!(headings, HEADINGS, "{help}");
     let names: Vec<_> = groups.iter().flat_map(|(_, n)| n.clone()).collect();
-    for name in [
-        "connect", "who", "claim", "pr", "verify", "workers", "invite",
-    ] {
+    for name in ["connect", "who", "claim", "pr", "verify", "invite"] {
         assert!(names.contains(&name.to_owned()), "{name}: {help}");
     }
     let mut unique = names.clone();
@@ -112,9 +108,6 @@ fn the_help_hides_the_plumbing() {
         assert!(!riff(&["help", name]).is_empty(), "riff help {name}");
     }
     assert!(riff(&["help", "hook"]).starts_with("Run a Claude Code hook\n"));
-    let workers = riff(&["workers", "--help"]);
-    assert!(!workers.contains("  run "), "{workers}");
-    assert!(riff(&["workers", "help", "run"]).starts_with("Run CLAUDE as a worker"));
 }
 
 #[test]
@@ -291,7 +284,7 @@ fn the_book_shows_how_to_find_a_command() {
 #[test]
 fn the_server_help_is_short_and_riff_help_server_has_the_long_text() {
     let short = "--server <SERVER>  The riff-server (default: RIFF_SERVER, else";
-    for args in [&["--help"][..], &["who", "-h"], &["workers", "start", "-h"]] {
+    for args in [&["--help"][..], &["who", "-h"]] {
         let help = riff(args);
         assert!(help.contains(short), "riff {args:?}: {help}");
         assert!(!help.contains("7878"), "riff {args:?}: {help}");
@@ -352,12 +345,11 @@ fn under(name: &str, heading: &str) -> String {
 }
 
 /// 01M588QXAGD3B8BTK7N17M29WM: the help of each `--host` flag that asks
-/// the daemon or the workers host of another host says who can use it.
+/// the daemon of another host says who can use it.
 /// The how-to of each flag in the book has the same words.
 #[test]
 fn the_help_and_the_book_say_who_can_use_each_host_flag() {
     let daemon = riff::text::DAEMON_HOST_WHO;
-    let workers = riff::text::WORKERS_HOST_WHO;
     for (args, who) in [
         (&["daemon", "status"][..], daemon),
         (&["daemon", "events"], daemon),
@@ -369,9 +361,6 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
         (&["wave", "run"], daemon),
         (&["wave", "stop"], daemon),
         (&["view"], daemon),
-        (&["workers", "start"], workers),
-        (&["workers", "stop"], workers),
-        (&["workers", "monitor"], workers),
     ] {
         for flag in ["--help", "-h"] {
             let help = words(&riff(&[args, &[flag]].concat()));
@@ -390,21 +379,6 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
             "development.md",
             "### See a session on another host",
             daemon,
-        ),
-        (
-            "how-it-works.md",
-            "#### Stop one worker on another machine",
-            workers,
-        ),
-        (
-            "how-it-works.md",
-            "### Watch the health of a machine",
-            workers,
-        ),
-        (
-            "how-it-works.md",
-            "### Offer workers from another machine",
-            workers,
         ),
     ] {
         let text = words(&under(name, heading));

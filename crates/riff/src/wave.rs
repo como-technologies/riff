@@ -173,7 +173,7 @@ use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
-use crate::{identity, pr, rollout, session_image, terminal, text, usage};
+use crate::{identity, pr, rollout, session_image, text, usage};
 use riff_client::api::{self, Api};
 
 /// The file of the waves that the daemon runs, in its folder.
@@ -1522,7 +1522,7 @@ impl World for Live {
                 }
                 Work::Verify { .. } | Work::Rebase { .. } => None,
             };
-            let session = terminal::new_session_id();
+            let session = identity::new_session_id();
             let place = wave.place(Some(&item))?;
             let me = identity::agent(&place, &session, &wave.server)?;
             let thread = wave.thread()?;

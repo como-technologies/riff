@@ -199,8 +199,7 @@ fn the_book_shows_real_tail_commands() {
     }
 }
 
-/// How It Works says that only the lead gets the `riff tail` pane, and
-/// shows how to watch the riff on another machine with a real command
+/// How It Works shows how to watch the riff on another machine with a real command
 /// (01M3JD390F49HZSKEJ3VACX0ZA).
 #[test]
 fn the_book_shows_how_to_watch_the_riff_on_another_machine() {
@@ -208,7 +207,6 @@ fn the_book_shows_how_to_watch_the_riff_on_another_machine() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
     )
     .unwrap();
-    assert!(page.contains("Only the lead gets the `riff tail` pane."));
     let start = page
         .find("\n### Watch the riff on another machine\n")
         .expect("the how-to has its own heading");

@@ -2,7 +2,7 @@
 //!
 //! # Design
 //!
-//! A worker gets a fresh context after each item ([`crate::next`]). A
+//! A worker gets a fresh context after each item (the clear of a worker). A
 //! lead keeps its context over many waves, and the auto-compact of the
 //! agent tool comes late and at any moment. So riff compacts the lead at
 //! a safe point: the end of a wave (01M3Q88G1K7N2EMPBA07X069A7). The
@@ -56,9 +56,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::Result;
 use serde::Deserialize;
 
-use crate::next::{Agent, ClaudeCode};
 use crate::pr::Gh;
-use crate::terminal::{Terminal, Tmux};
 use riff_client::waves::wave_number;
 
 /// The start of the body of a handoff note.
@@ -886,7 +884,7 @@ async fn wait_quiet(transcript: Option<&Path>, quiet: Duration) {
 /// `None` when riff compacts no lead on this machine, the session is
 /// not the lead, or another check acts now.
 pub async fn run(check: &Check, server: &str) -> Result<Option<Step>> {
-    use crate::{identity, local, settings, worker};
+    use crate::{identity, local, settings};
     use riff_client::api::Api;
     use riff_core::wire::RiffState;
 
@@ -950,11 +948,10 @@ pub async fn run(check: &Check, server: &str) -> Result<Option<Step>> {
         facts.note = handoff_note(&messages, me.who(), &wave);
     }
 
-    let tmux = check.pane.as_ref().map(|_| Tmux::machine());
-    if let (Some(tmux), Some(pane)) = (&tmux, &check.pane) {
+    if let Some(pane) = &check.pane {
         // A screen that riff cannot read counts as a person at work.
-        let screen = tmux.screen(pane).unwrap_or_default();
-        facts.input_empty = Some(ClaudeCode.input_empty(&screen));
+        let screen = screen(pane).unwrap_or_default();
+        facts.input_empty = Some(input_empty(&screen));
     }
 
     let step = decide(&facts);
@@ -964,23 +961,100 @@ pub async fn run(check: &Check, server: &str) -> Result<Option<Step>> {
     };
     match &step {
         Step::AskHandoff(wave) => {
-            worker::tell_lead(Some(&place), server, &ask(wave)).await?;
+            crate::lead::tell_lead(Some(&place), server, &ask(wave)).await?;
             save(Record::asked(wave))?;
         }
         Step::TellUser { wave, note } => {
-            worker::tell_lead(Some(&place), server, &tell_user(wave, *note)).await?;
+            crate::lead::tell_lead(Some(&place), server, &tell_user(wave, *note)).await?;
             save(Record::done(wave))?;
         }
         Step::Compact { wave, note } => {
-            if let (Some(tmux), Some(pane)) = (&tmux, &check.pane) {
+            if let Some(pane) = &check.pane {
                 let text = instructions(me.who().user(), &repo, *note);
-                tmux.type_line(pane, &ClaudeCode.compact(&text))?;
+                type_line(pane, &compact_line(&text))?;
                 save(Record::done(wave))?;
             }
         }
         Step::Wait(_) | Step::WaitHandoff(_) => {}
     }
     Ok(Some(step))
+}
+
+/// The input that compacts the context with `instructions`
+/// (01M3Q88G98MKH364WEQGT4ZE7A).
+///
+/// ```
+/// assert_eq!(riff::compact::compact_line("Keep the plan."), "/compact Keep the plan.");
+/// ```
+pub fn compact_line(instructions: &str) -> String {
+    format!("/compact {instructions}")
+}
+
+/// True when the input line of Claude Code on `screen` is empty, so
+/// that riff can type (01M3Q88GEB9NK5P6DNFJG4618Q). False when riff
+/// cannot find the input line. The input box is the prompt mark `❯` (or
+/// `>`) after a rule line, up to the next rule line.
+///
+/// ```
+/// use riff::compact::input_empty;
+/// let screen = |input: &str| format!("Done.\n\n────────\n{input}\n────────\n  riff l1\n");
+/// assert!(input_empty(&screen("❯\u{a0}")));
+/// assert!(input_empty(&screen("> ")));
+/// assert!(!input_empty(&screen("❯ fix the te")));
+/// assert!(!input_empty(&screen("❯ \n  second line")));
+/// assert!(input_empty("╭────╮\n│ >  │\n╰────╯"));
+/// assert!(!input_empty("no input box here"));
+/// ```
+pub fn input_empty(screen: &str) -> bool {
+    let rule = |l: &str| l.trim_start().starts_with(['─', '╭', '╰']);
+    let lines: Vec<&str> = screen.lines().collect();
+    let Some(at) = (1..lines.len()).rev().find(|&i| {
+        rule(lines[i - 1])
+            && lines[i]
+                .trim_start_matches(|c: char| c == '│' || c.is_whitespace())
+                .starts_with(['❯', '>'])
+    }) else {
+        return false;
+    };
+    let text = |l: &str| {
+        l.trim_matches(|c: char| c == '│' || c.is_whitespace())
+            .to_owned()
+    };
+    let first = text(lines[at]);
+    let first = first.trim_start_matches(['❯', '>']).trim();
+    first.is_empty()
+        && lines[at + 1..]
+            .iter()
+            .take_while(|l| !rule(l))
+            .all(|l| text(l).is_empty())
+}
+
+/// The text that the tmux pane `pane` shows now, with no colors.
+fn screen(pane: &str) -> Result<String> {
+    tmux(&["capture-pane", "-p", "-t", pane])
+}
+
+/// Types `text` into the tmux pane `pane`, then Enter.
+fn type_line(pane: &str, text: &str) -> Result<()> {
+    tmux(&["send-keys", "-t", pane, "-l", text])?;
+    tmux(&["send-keys", "-t", pane, "Enter"]).map(drop)
+}
+
+/// Runs `tmux` with `args`, and gives its stdout.
+fn tmux(args: &[&str]) -> Result<String> {
+    use anyhow::Context;
+    let out = std::process::Command::new("tmux")
+        .args(args)
+        .output()
+        .context("cannot run tmux")?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "tmux {} failed: {}",
+            args.first().unwrap_or(&""),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
 #[cfg(test)]

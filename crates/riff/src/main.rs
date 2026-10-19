@@ -8,11 +8,9 @@ use anyhow::{Context, Result};
 use chrono::TimeZone;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::{Stream, StreamExt};
-use riff::terminal::{Program, Terminal, Tmux};
 use riff::{
     activity, audit, auto_update, binary, cloud, dropped, enable, help, hook, identity, lifecycle,
-    local, login, mcp, next, permissions, plugin, pr, settings, terminal, text, usage, view,
-    worker,
+    local, login, mcp, permissions, plugin, pr, settings, text, usage, view,
 };
 use riff_client::api::{self, Api, DEFAULT_SERVER, PauseScope, follow};
 use riff_client::link::STREAM_RETRY;
@@ -758,17 +756,6 @@ enum Command {
     /// riff.toml names a tag. riff run, riff lead start and the waves use
     /// only the merged pin: riff.toml on the default branch of origin.
     Image,
-    /// Start, list and stop the workers of this machine
-    ///
-    /// Workers are agent sessions in tmux. With no subcommand, it lists
-    /// each worker: its pane, its session ID, its claims and its status.
-    Workers {
-        /// Show the full session ID of each worker.
-        #[arg(long)]
-        long: bool,
-        #[command(subcommand)]
-        command: Option<Workers>,
-    },
 }
 
 /// The top level of the tree of `riff top`.
@@ -1091,253 +1078,6 @@ enum Admin {
     Remove {
         /// The email of the admin.
         email: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum Workers {
-    /// Start COUNT workers
-    ///
-    /// It starts them in the tmux window riff-workers, one pane each. Each
-    /// pane runs `claude "Join the riff."` in the main worktree. It
-    /// starts at most the limit minus the workers that run. It refuses in
-    /// a worker, and in an agent session that is not the lead. Outside
-    /// tmux, it starts nothing. With --host, the lead asks the workers
-    /// host on that machine to start them.
-    Start {
-        /// The number of workers.
-        #[arg(value_parser = clap::value_parser!(u16).range(1..))]
-        count: u16,
-        /// The claude command.
-        #[arg(long, default_value = "claude")]
-        claude: std::path::PathBuf,
-        /// Start the workers on HOST, through its `riff workers host`.
-        /// `riff workers` lists the hosts. Only your lead in this
-        /// repository can use --host. riff refuses it in each other
-        /// session, for example a worker, and in a terminal.
-        #[arg(long)]
-        host: Option<String>,
-    },
-    /// Offer the workers of this machine to your lead
-    ///
-    /// Run it in a tmux pane in the main clone, and leave it running. It
-    /// starts and stops workers only on a verified request of the lead of
-    /// your user, at most the limit of this machine. Ctrl-C stops it.
-    Host {
-        /// The claude command.
-        #[arg(long, default_value = "claude")]
-        claude: std::path::PathBuf,
-        /// The session of the host that ran this binary after an update
-        /// (01M3Q55KJ8BKMPE9RADB63X8SP).
-        #[arg(long, hide = true)]
-        session: Option<String>,
-    },
-    /// Show or set the most workers on this machine
-    ///
-    /// The default is 0, so no worker starts until you set it. It is in
-    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.limit.
-    Limit {
-        /// The new limit. Leave it out to show the limit.
-        limit: Option<u16>,
-    },
-    /// Show or set the seconds between two looks of the rollout
-    ///
-    /// Each SECONDS, while the riff runs, the lead gives the free work of
-    /// the current wave to the idle workers, and asks the riff daemon of
-    /// its machine to run the wave for the rest. It starts no worker in
-    /// tmux. The default is 10. 0 turns it off. It is in
-    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.interval, on the
-    /// machine of the lead.
-    Interval {
-        /// The new interval in seconds. Leave it out to show it.
-        seconds: Option<u16>,
-    },
-    /// Show the pool of build jobs, or set the jobs of each worker
-    ///
-    /// With the default 0, all workers of this machine take their compile
-    /// jobs and test threads from one pool: the hardware threads less 2,
-    /// less the limit of workers, and 1 or more. While the memory pressure
-    /// is above 10%, the pool gives out no new token. It shows the size of
-    /// the pool, the tokens in use and the memory pressure. A number N
-    /// turns the pool off: each
-    /// worker gets N in CARGO_BUILD_JOBS and RUST_TEST_THREADS. The next
-    /// worker that starts gets the new number. It is in
-    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.jobs.
-    Jobs {
-        /// The new number of jobs. Leave it out to show it.
-        jobs: Option<u16>,
-    },
-    /// Show or set the nice value of each worker
-    ///
-    /// Each worker runs with this nice value, so its builds give way to
-    /// your other work. The default is 10. 0 turns it off. The next
-    /// worker that starts gets the new value. It is in
-    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.nice.
-    Nice {
-        /// The new nice value, 0 to 19. Leave it out to show it.
-        #[arg(value_parser = clap::value_parser!(u8).range(..=19))]
-        nice: Option<u8>,
-    },
-    /// Show or set the most memory of all workers of this machine
-    ///
-    /// On a machine with systemd, all workers run in the slice
-    /// riff-workers.slice with this memory limit. The default is 0:
-    /// three quarters of the memory of this machine. The next
-    /// `riff workers start` sets the new limit. It is in
-    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.memory.
-    Memory {
-        /// The new limit in GB. Leave it out to show it.
-        gb: Option<u32>,
-    },
-    /// Show or set the available memory that a new worker needs
-    ///
-    /// riff starts no new worker on this machine while less than GB of
-    /// memory is available. The default is 4. 0 turns it off. It is in
-    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.floor.
-    Floor {
-        /// The new floor in GB. Leave it out to show it.
-        gb: Option<u32>,
-    },
-    /// Show or set the folder of the temp files of the workers
-    ///
-    /// Each worker gets a temp folder of its own in DIR, on disk: its
-    /// TMPDIR and CLAUDE_CODE_TMPDIR. riff deletes it when the worker
-    /// ends, and deletes the files of the old context at each clear. The
-    /// default is ~/.cache/riff/tmp. The next worker that starts gets the
-    /// new folder. It is in $XDG_CONFIG_HOME/riff/config.toml, key
-    /// workers.tmp.
-    Tmp {
-        /// The new folder. Leave it out to show the folder and its disk
-        /// use.
-        dir: Option<std::path::PathBuf>,
-    },
-    /// Show, set or empty the compile cache of the workers
-    ///
-    /// The workers of this machine share one compile cache: riff starts
-    /// each worker with RUSTC_WRAPPER=sccache, so a new worktree reads
-    /// each dependency from the cache. riff update and riff workers host
-    /// install sccache. SIZE is the most size of the cache, for example
-    /// 40G (the default). The next worker that starts gets the new size.
-    /// It is in $XDG_CONFIG_HOME/riff/config.toml, key workers.cache.
-    Cache {
-        /// The new most size: a number with K, M, G or T. Leave it out
-        /// to show the cache.
-        size: Option<String>,
-        /// Stop the sccache server and delete the cache. riff refuses it
-        /// while workers run on this machine.
-        #[arg(long, conflicts_with = "size")]
-        clear: bool,
-    },
-    /// Show or set the monitor of this machine
-    ///
-    /// The monitor reads the load, the available memory and the kills of
-    /// systemd-oomd and of the kernel each SECONDS. It tells the lead one
-    /// time when the 5-minute load goes over N times the physical cores,
-    /// or the available memory goes under the floor (riff workers floor),
-    /// and one time when the number is good again. It tells each kill. It
-    /// changes nothing. A workers host runs it, and the riff mcp of the
-    /// lead runs it on the machine of the lead. The default is off, each
-    /// 15 seconds, and a load of 1.5. It is in
-    /// $XDG_CONFIG_HOME/riff/config.toml, keys monitor.on, monitor.every
-    /// and monitor.load. With --host, the lead asks the workers host on
-    /// that machine to turn its monitor on or off.
-    Monitor {
-        /// on or off. Leave it out to show the monitor.
-        #[arg(value_enum)]
-        state: Option<Switch>,
-        /// The seconds between two looks.
-        #[arg(long, value_name = "SECONDS", value_parser = clap::value_parser!(u16).range(1..))]
-        every: Option<u16>,
-        /// The limit of the 5-minute load for each physical core.
-        #[arg(long, value_name = "N")]
-        load: Option<f64>,
-        /// Turn the monitor of HOST on or off, through its
-        /// `riff workers host`. Only your lead in this repository can use
-        /// --host. riff refuses it in each other session, for example a
-        /// worker, and in a terminal.
-        #[arg(long, requires = "state", conflicts_with_all = ["every", "load"])]
-        host: Option<String>,
-    },
-    /// Show or change the MCP servers of each worker
-    ///
-    /// These are the MCP servers that each worker of this machine loads.
-    /// The default is riff only. It is in
-    /// $XDG_CONFIG_HOME/riff/config.toml, key workers.mcp.
-    Mcp {
-        #[command(subcommand)]
-        command: Option<WorkersMcp>,
-    },
-    /// End the workers of this machine
-    ///
-    /// It ends each worker, or only the worker in PANE. Each worker leaves
-    /// `riff who` and frees its claims at once. With --host, the lead asks
-    /// the workers host on that machine to end each of its workers, or
-    /// only the worker in PANE.
-    Stop {
-        /// The tmux pane of one worker, for example %3, or its session ID
-        /// or the first 8 characters of it. `riff workers` shows them.
-        pane: Option<String>,
-        /// Stop the workers on HOST, through its `riff workers host`. Only
-        /// your lead in this repository can use --host. riff refuses it in
-        /// each other session, for example a worker, and in a terminal.
-        #[arg(long)]
-        host: Option<String>,
-    },
-    /// Stop the orphan processes of the workers of this machine
-    ///
-    /// An orphan is a process that an earlier context of the worker
-    /// started, for example a `just ci` in the background before a clear.
-    /// riff keeps `claude`, its MCP servers, the watch and each process
-    /// of the current context. It prints each process that it stopped.
-    /// With PANE, only the worker in PANE.
-    Reap {
-        /// The tmux pane of one worker, for example %3, or its session ID
-        /// or the first 8 characters of it. `riff workers` shows them.
-        pane: Option<String>,
-    },
-    /// Show or set how the server stops idle workers
-    ///
-    /// The server keeps at most PER_HOST idle workers on each host. It
-    /// stops each other worker that holds no claim and makes no call for
-    /// AFTER seconds. The defaults are 1 and 60. Only the owner or an
-    /// admin of the riff can set them.
-    Idle {
-        /// The most idle workers that stay on each host.
-        #[arg(long)]
-        per_host: Option<u16>,
-        /// The idle time in seconds after which the server stops a
-        /// worker.
-        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
-        after: Option<u64>,
-    },
-    /// Run CLAUDE as a worker, and wait
-    ///
-    /// When CLAUDE exits on its own, it posts a note to the lead with the
-    /// pane, the session ID and the exit code, and an exit with a fault
-    /// counts as a death. It never starts CLAUDE again. Each worker pane
-    /// runs it.
-    #[command(hide = true)]
-    Run {
-        /// The claude command.
-        claude: std::path::PathBuf,
-        /// The arguments of CLAUDE.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-    /// Run PROGRAM as the test runner of a worker, and wait
-    ///
-    /// For a test program of cargo, it takes the free tokens of the pool
-    /// of build jobs that MAKEFLAGS names, or RUST_TEST_THREADS tokens when
-    /// it is set. It runs one test thread for each token, and gives the
-    /// tokens back at the end. Each worker gets it in
-    /// CARGO_TARGET_<TRIPLE>_RUNNER.
-    #[command(hide = true)]
-    TestRun {
-        /// The program.
-        program: std::path::PathBuf,
-        /// The arguments of PROGRAM.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
     },
 }
 
@@ -1809,25 +1549,6 @@ enum NotesCommand {
 }
 
 #[derive(Subcommand)]
-enum WorkersMcp {
-    /// Give each new worker an MCP server
-    ///
-    /// NAME is an MCP server of your Claude Code config. `claude mcp list`
-    /// shows the names.
-    Add {
-        /// The name of the MCP server.
-        name: String,
-    },
-    /// Take an MCP server from each new worker
-    ///
-    /// riff stays.
-    Remove {
-        /// The name of the MCP server.
-        name: String,
-    },
-}
-
-#[derive(Subcommand)]
 enum StepCommand {
     /// Start a long step. It replaces your old step
     Start {
@@ -1898,24 +1619,6 @@ enum HookEvent {
         #[arg(long)]
         session: String,
     },
-    /// Check whether riff clears the context of a worker now
-    ///
-    /// The Stop hook starts it, detached, in each worker in tmux.
-    #[command(hide = true)]
-    Clear {
-        /// The riff session ID of the worker.
-        #[arg(long)]
-        session: String,
-        /// The tmux pane of the worker.
-        #[arg(long)]
-        pane: String,
-        /// The transcript of the session.
-        #[arg(long)]
-        transcript: Option<std::path::PathBuf>,
-        /// The prompts that the Stop hook counted in the transcript.
-        #[arg(long)]
-        turns: Option<usize>,
-    },
     /// Check whether riff compacts the lead now
     ///
     /// The Stop hook starts it, detached, in each session that is not a
@@ -1959,10 +1662,9 @@ impl HookEvent {
             | HookEvent::Tool { .. }
             | HookEvent::Prompt
             | HookEvent::Denied => true,
-            HookEvent::Clear { .. }
-            | HookEvent::Compact { .. }
-            | HookEvent::Usage { .. }
-            | HookEvent::DeniedSend { .. } => false,
+            HookEvent::Compact { .. } | HookEvent::Usage { .. } | HookEvent::DeniedSend { .. } => {
+                false
+            }
         }
     }
 }
@@ -2222,8 +1924,8 @@ async fn main() -> Result<()> {
         if done
             && let Some(dir) = local::dir()
             && let Some(out) = hook::tool_lines([
-                hook::stuck_line(&dir, worker::is_worker(), std::time::SystemTime::now()),
-                hook::no_tools_line(&dir, worker::is_worker(), true),
+                hook::stuck_line(&dir, identity::is_worker(), std::time::SystemTime::now()),
+                hook::no_tools_line(&dir, identity::is_worker(), true),
             ])
         {
             println!("{out}");
@@ -2252,21 +1954,6 @@ async fn main() -> Result<()> {
     {
         if let Err(e) = denied_send(session, &server).await {
             eprintln!("riff: cannot send the refusals of auto mode: {e:#}");
-        }
-        return Ok(());
-    }
-    if let Command::Hook {
-        event:
-            HookEvent::Clear {
-                session,
-                pane,
-                transcript,
-                turns,
-            },
-    } = &cli.command
-    {
-        if let Err(e) = clear_check(session, pane, transcript.as_deref(), *turns, &server).await {
-            eprintln!("riff: cannot clear the context of the worker: {e:#}");
         }
         return Ok(());
     }
@@ -2390,9 +2077,6 @@ async fn main() -> Result<()> {
             println!("{line}");
         }
         return Ok(());
-    }
-    if let Command::Workers { command, long } = &cli.command {
-        return workers(command.as_ref(), *long, &server).await;
     }
     if let Command::Cloud { command } = &cli.command {
         return cloud(command, &server).await;
@@ -2905,16 +2589,8 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
             let _record = record_session(&me);
-            let (registered, wait) = tokio::sync::oneshot::channel();
-            let tail = async {
-                // A session that left the riff sends nothing.
-                if wait.await.is_ok() {
-                    tail_beside_lead(&api, &me).await;
-                }
-            };
-            let serve = mcp::serve(api.clone(), me.clone(), client.as_deref(), registered);
-            let (_, served) = tokio::join!(tail, serve);
-            served?
+            let (registered, _) = tokio::sync::oneshot::channel();
+            mcp::serve(api.clone(), me.clone(), client.as_deref(), registered).await?
         }
         Command::Hook { .. }
         | Command::Usage { .. }
@@ -2926,7 +2602,6 @@ async fn main() -> Result<()> {
         | Command::Disable { .. }
         | Command::Server
         | Command::Update { .. }
-        | Command::Workers { .. }
         | Command::Cloud { .. }
         | Command::ClaudeToken
         | Command::Release { .. }
@@ -2985,310 +2660,6 @@ fn print_members_news(news: &Result<Vec<riff_core::wire::Posted>>) {
 fn open_browser(url: &str) {
     eprintln!("riff: sign in with your browser. If it does not open, go to:\n{url}");
     let _ = open::that_detached(url);
-}
-
-/// `riff workers` and its subcommands.
-async fn workers(command: Option<&Workers>, long: bool, server: &str) -> Result<()> {
-    match command {
-        None => list_workers(long, server).await,
-        Some(Workers::Start {
-            count,
-            host: Some(host),
-            ..
-        }) => ask_host(host, riff::host::Request::Start(*count), server).await,
-        Some(Workers::Start { count, claude, .. }) => start_workers(*count, claude, server).await,
-        Some(Workers::Host { claude, session }) => {
-            riff::host::serve(
-                &identity::working_dir()?,
-                claude,
-                server,
-                session.as_deref(),
-            )
-            .await
-        }
-        Some(Workers::Stop {
-            pane,
-            host: Some(host),
-        }) => {
-            let request = match pane {
-                Some(one) => riff::host::Request::StopOne(one.clone()),
-                None => riff::host::Request::Stop,
-            };
-            ask_host(host, request, server).await
-        }
-        Some(Workers::Reap { pane }) => {
-            let dir = local::dir().context("no HOME: riff has no local dir")?;
-            for line in riff::worker::reap(&Tmux::machine(), pane.as_deref(), &dir)? {
-                println!("{line}");
-            }
-            Ok(())
-        }
-        Some(Workers::Idle { per_host, after }) => {
-            let here = identity::place(&identity::working_dir()?)?;
-            // Only a person changes the settings: a change goes as the
-            // person, also inside an agent session
-            // (01M3WRD959DYNZHDKP5ZT9Q1C7). A read goes as the caller.
-            let set = per_host.is_some() || after.is_some();
-            let me = if set {
-                identity::person(&Place::host_only(here.host())?, server)?
-            } else {
-                identity::me(&here, server)?
-            };
-            let api = Api::new(server).signed_in(me.who().session())?;
-            let idle = api.idle(&me, *per_host, *after).await?;
-            println!("{}", text::idle_workers(&idle));
-            Ok(())
-        }
-        Some(Workers::Limit { limit }) => {
-            let path = settings::path()?;
-            if let Some(limit) = limit {
-                settings::set_workers_limit(&path, *limit)?;
-            }
-            anstream::println!(
-                "{}",
-                view::workers_limit(settings::workers_limit(&path)?, &path)
-            );
-            Ok(())
-        }
-        Some(Workers::Interval { seconds }) => {
-            let path = settings::path()?;
-            if let Some(seconds) = seconds {
-                settings::set_workers_interval(&path, *seconds)?;
-            }
-            anstream::println!(
-                "{}",
-                view::workers_interval(settings::workers_interval(&path)?, &path)
-            );
-            Ok(())
-        }
-        Some(Workers::Jobs { jobs }) => {
-            let path = settings::path()?;
-            if let Some(jobs) = jobs {
-                settings::set_workers_jobs(&path, *jobs)?;
-            }
-            let cores = riff::limits::Cores::here(&riff::machine::here());
-            let dir = riff::local::dir().map(|dir| riff::jobserver::dir(&dir));
-            let workers = dir.as_deref().map_or(0, riff::jobserver::workers);
-            let limits = riff::limits::Limits::of(&path, &cores, workers)?;
-            let pool = dir.as_deref().and_then(riff::jobserver::state);
-            anstream::println!(
-                "{}",
-                view::workers_jobs(
-                    settings::workers_jobs(&path)?,
-                    &limits,
-                    &cores,
-                    pool,
-                    riff::jobserver::pressure_here(),
-                    &path
-                )
-            );
-            Ok(())
-        }
-        Some(Workers::Nice { nice }) => {
-            let path = settings::path()?;
-            if let Some(nice) = nice {
-                settings::set_workers_nice(&path, *nice)?;
-            }
-            anstream::println!(
-                "{}",
-                view::workers_nice(settings::workers_nice(&path)?, &path)
-            );
-            Ok(())
-        }
-        Some(Workers::Memory { gb }) => {
-            let path = settings::path()?;
-            if let Some(gb) = gb {
-                settings::set_workers_memory(&path, *gb)?;
-            }
-            let setting = settings::workers_memory(&path)?;
-            let machine = riff::machine::here();
-            anstream::println!(
-                "{}",
-                view::workers_memory(
-                    setting,
-                    riff::limits::memory(machine.mem_gb, setting),
-                    &path
-                )
-            );
-            Ok(())
-        }
-        Some(Workers::Floor { gb }) => {
-            let path = settings::path()?;
-            if let Some(gb) = gb {
-                settings::set_workers_floor(&path, *gb)?;
-            }
-            anstream::println!(
-                "{}",
-                view::workers_floor(
-                    settings::workers_floor(&path)?,
-                    riff::machine::here().avail_gb,
-                    &path
-                )
-            );
-            Ok(())
-        }
-        Some(Workers::Cache { size, clear }) => {
-            let path = settings::path()?;
-            if let Some(size) = size {
-                settings::set_workers_cache(&path, size)?;
-            }
-            let cache = riff::sccache::Cache::here(&path)?;
-            if *clear {
-                let Some(cache) = &cache else {
-                    anyhow::bail!(
-                        "this machine has no sccache, so it has no compile cache to empty"
-                    );
-                };
-                let workers = Tmux::machine().worker_panes()?.len();
-                if workers > 0 {
-                    anyhow::bail!(
-                        "{workers} workers run on this machine. Stop them first: riff workers stop"
-                    );
-                }
-                cache.clear()?;
-                anstream::println!("Emptied the compile cache in {}.", cache.dir.display());
-                return Ok(());
-            }
-            let stats = cache.as_ref().and_then(riff::sccache::Cache::stats);
-            let line = view::cache_line(cache.as_ref().map(|c| (c, stats.as_ref())));
-            anstream::print!(
-                "{}",
-                view::workers_cache(&settings::workers_cache(&path)?, &line, &path)
-            );
-            Ok(())
-        }
-        Some(Workers::Tmp { dir }) => {
-            let path = settings::path()?;
-            if let Some(dir) = dir {
-                settings::set_workers_tmp(&path, &std::path::absolute(dir)?)?;
-            }
-            let root = riff::temp::root(&path)?;
-            anstream::println!(
-                "{}",
-                view::workers_tmp(&root, riff::temp::size(&root), &path)
-            );
-            Ok(())
-        }
-        Some(Workers::Monitor {
-            state: Some(state),
-            host: Some(host),
-            ..
-        }) => {
-            let on = matches!(state, Switch::On);
-            ask_host(host, riff::host::Request::Monitor(on), server).await
-        }
-        Some(Workers::Monitor {
-            state, every, load, ..
-        }) => {
-            let path = settings::path()?;
-            if let Some(state) = state {
-                settings::set_monitor_on(&path, matches!(state, Switch::On))?;
-            }
-            if let Some(every) = every {
-                settings::set_monitor_every(&path, *every)?;
-            }
-            if let Some(load) = load {
-                settings::set_monitor_load(&path, *load)?;
-            }
-            let machine = riff::machine::here();
-            let saved = local::dir().and_then(|dir| riff::monitor::Saved::read(&dir));
-            anstream::print!(
-                "{}",
-                view::workers_monitor(
-                    &settings::monitor(&path)?,
-                    riff::limits::Cores::here(&machine).physical,
-                    settings::workers_floor(&path)?,
-                    saved.as_ref(),
-                    &path
-                )
-            );
-            Ok(())
-        }
-        Some(Workers::Mcp { command }) => {
-            let path = settings::path()?;
-            let mut names = settings::workers_mcp(&path)?;
-            match command {
-                None => {}
-                Some(WorkersMcp::Add { name }) => {
-                    if !names.contains(name) {
-                        names.push(name.clone());
-                    }
-                    settings::set_workers_mcp(&path, &names)?;
-                }
-                Some(WorkersMcp::Remove { name }) => {
-                    if name == settings::RIFF_MCP {
-                        anyhow::bail!(text::WORKERS_MCP_KEEPS_RIFF);
-                    }
-                    names.retain(|n| n != name);
-                    settings::set_workers_mcp(&path, &names)?;
-                }
-            }
-            anstream::println!("{}", view::workers_mcp(&names, &path));
-            Ok(())
-        }
-        Some(Workers::Stop { pane, .. }) => stop_workers(pane.as_deref(), server).await,
-        Some(Workers::Run { claude, args }) => {
-            std::process::exit(worker::run(claude, args, server).await?)
-        }
-        Some(Workers::TestRun { program, args }) => {
-            std::process::exit(riff::jobserver::test_run(program, args).await?)
-        }
-    }
-}
-
-/// Starts `count` workers in tmux (01M3JD392Q5ANX0FPZ51W7B0E3), at most
-/// the limit of the machine minus the workers that run
-/// (01M3JPQT57PJCRBQYJNDVESS04). It refuses in a worker and in an agent
-/// session that is not the lead (01M3JPQT79FE47518Z8DFFQYYG). Outside
-/// tmux, it starts nothing and fails (01M3JD3973J7A9BG8G9EP9TVDP).
-async fn start_workers(count: u16, claude: &std::path::Path, server: &str) -> Result<()> {
-    // A worker in a repository with riff off has no riff
-    // (01M3XY2T542DCHBN95H9PX4AGQ). `worker::start` checks it for each
-    // start; here the refusal comes before each other one.
-    if let Some(why) = worker::off(&identity::working_dir()?) {
-        eprintln!("{why}");
-        std::process::exit(1);
-    }
-    if let Some(why) = lead_only(server, &text::START_WORKERS).await {
-        eprintln!("{why}");
-        std::process::exit(1);
-    }
-    let Some(tmux) = Tmux::from_env() else {
-        eprintln!("{}", text::NO_TMUX);
-        std::process::exit(1);
-    };
-    let started = match worker::start(&tmux, count, claude, server, &identity::working_dir()?)? {
-        Ok(started) => started,
-        Err(why) => {
-            eprintln!("{why}");
-            std::process::exit(1);
-        }
-    };
-    if let Some(line) = &started.fresh {
-        println!("{line}");
-    }
-    let n = u16::try_from(started.panes.len()).unwrap_or(u16::MAX);
-    println!(
-        "{}",
-        text::workers_started(n, &started.window, &started.main)
-    );
-    for line in [
-        &started.limited,
-        &started.no_scope,
-        &started.no_pool,
-        &started.no_cores,
-    ]
-    .into_iter()
-    .flatten()
-    {
-        println!("{line}");
-    }
-    // The worktrees of the sessions that ended (01M3ZV0TM7ANJ1QQ7XTBDJQE1V).
-    match riff::worktrees::clean_as_person(&started.main, server).await {
-        Ok(lines) => lines.iter().for_each(|line| println!("{line}")),
-        Err(e) => eprintln!("riff: cannot clean the worktrees: {e:#}"),
-    }
-    Ok(())
 }
 
 /// `riff daemon` and its subcommands. With `--host`, riff asks the
@@ -3368,8 +2739,8 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
                 None => session_mcp::names(&session_mcp::read(&dir)?),
                 Some(DaemonMcp::Add { name }) => {
                     let here = identity::working_dir()?;
-                    let person = riff::worker_mcp::person_servers(
-                        riff::worker_mcp::claude_json().as_deref(),
+                    let person = riff::session_mcp::person_servers(
+                        riff::session_mcp::claude_json().as_deref(),
                         &here,
                     );
                     session_mcp::add(&dir, name, &person, |program| {
@@ -3745,7 +3116,7 @@ async fn lead_and_role(
 /// lead and the role only when `ask_role` is true: for an agent session
 /// with a session ID, and for a person in a terminal.
 async fn release_caller(server: &str, ask_role: bool) -> riff::cycle::Caller {
-    let worker = std::env::var(riff::worker::WORKER).is_ok_and(|v| v == "1");
+    let worker = std::env::var(riff::identity::WORKER).is_ok_and(|v| v == "1");
     let container = riff::cycle::in_container();
     let agent = riff::cycle::in_agent();
     let mut caller = riff::cycle::Caller {
@@ -4133,77 +3504,23 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
     Ok(())
 }
 
-/// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). In a worker, it starts
-/// the check of the clear of its context
-/// (01M3XV0562D3H3P22CJDBPAZBH). In a session that is not a worker, it
-/// starts the check of the compact of the lead
+/// The Stop hook (01M3JQCCZ5M9VY3RGXWJYJN9Q9). In a session that is not
+/// a worker, it starts the check of the compact of the lead
 /// (01M3Q88G1K7N2EMPBA07X069A7). It never fails.
 fn stop_hook() {
     let mut stdin = String::new();
     let _ = std::io::stdin().read_to_string(&mut stdin);
-    let input: next::StopInput = serde_json::from_str(&stdin).unwrap_or_default();
+    let input: hook::StopInput = serde_json::from_str(&stdin).unwrap_or_default();
     let Some(id) = identity::agent_session(input.session_id) else {
         return;
     };
     activity::run(activity::Hook::Stop, &stdin, Some(id.clone()));
     count_usage(&id, input.transcript_path.as_deref(), false);
-    if !riff::worker::is_worker() {
-        if let Err(e) = start_compact_check(&id, input.transcript_path.as_deref()) {
-            eprintln!("riff: cannot check the compact of the lead: {e:#}");
-        }
-        return;
+    if !identity::is_worker()
+        && let Err(e) = start_compact_check(&id, input.transcript_path.as_deref())
+    {
+        eprintln!("riff: cannot check the compact of the lead: {e:#}");
     }
-    if let Err(e) = start_clear_check(&id, input.transcript_path.as_deref()) {
-        eprintln!("riff: cannot check the clear of the worker: {e:#}");
-    }
-}
-
-/// Starts `riff hook clear` for the worker `id`, detached, so that the
-/// Stop hook returns at once (01M3JQCCZ5M9VY3RGXWJYJN9Q9). It counts the
-/// prompts of the `transcript` first and gives the number to the check
-/// (01M3ZS67FTAC1784GEVEDXJ837). It starts nothing outside tmux, or when
-/// the session left the riff.
-fn start_clear_check(id: &str, transcript: Option<&std::path::Path>) -> Result<()> {
-    use std::os::unix::process::CommandExt;
-    let in_tmux = std::env::var_os("TMUX").is_some_and(|t| !t.is_empty());
-    let pane = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty());
-    let Some(pane) = pane.filter(|_| in_tmux) else {
-        return Ok(());
-    };
-    if local::left_here(id) {
-        return Ok(());
-    }
-    let mut cmd = std::process::Command::new(std::env::current_exe()?);
-    cmd.args(["hook", "clear", "--session", id, "--pane", &pane]);
-    if let Some(transcript) = transcript {
-        let turns = next::prompts(Some(transcript));
-        cmd.arg("--transcript").arg(transcript);
-        cmd.args(["--turns", &turns.to_string()]);
-    }
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .process_group(0)
-        .spawn()?;
-    Ok(())
-}
-
-/// The check of the clear of the worker `id` in the pane `pane`
-/// ([`next::check`], 01M3XV0562D3H3P22CJDBPAZBH).
-async fn clear_check(
-    id: &str,
-    pane: &str,
-    transcript: Option<&std::path::Path>,
-    turns: Option<usize>,
-    server: &str,
-) -> Result<()> {
-    let dir = identity::working_dir()?;
-    let here = identity::place(&dir)?;
-    let api = Api::new(server);
-    let me = identity::agent(&here, id, api.base())?;
-    let api = api.signed_in(Some(id))?;
-    next::check(&api, &me, pane, &dir, transcript, turns).await?;
-    Ok(())
 }
 
 /// Records the transcript of the session `id`. With `ends`, it starts
@@ -4254,7 +3571,7 @@ fn denied_hook() {
     let Some(queue) = riff::denied::Queue::here() else {
         return;
     };
-    if let Err(e) = riff::denied::keep_input(&stdin, &queue, worker::is_worker()) {
+    if let Err(e) = riff::denied::keep_input(&stdin, &queue, identity::is_worker()) {
         eprintln!("riff: cannot keep the refusal of auto mode: {e:#}");
         return;
     }
@@ -4380,164 +3697,6 @@ fn start_compact_check(id: &str, transcript: Option<&std::path::Path>) -> Result
     Ok(())
 }
 
-/// Lists the workers of this machine, with their claims and status in
-/// `riff who` (01M3JPQTBDGT54WN7FZP9CD6B5).
-async fn list_workers(long: bool, server: &str) -> Result<()> {
-    let panes = Tmux::machine().worker_panes()?;
-    let who = async {
-        let here = identity::place(&identity::working_dir()?)?;
-        let api = Api::new(server);
-        let me = identity::me(&here, api.base())?;
-        let api = api.signed_in(me.who().session())?;
-        let riff = api.riff(&me).await?;
-        let mut sessions = api.who(&me, false).await?;
-        riff::state::fill(&mut sessions, riff);
-        Ok::<_, anyhow::Error>(sessions)
-    };
-    // With no worker here, a riff that does not answer only hides the
-    // hosts.
-    let sessions = who.await.unwrap_or_else(|e| {
-        if !panes.is_empty() {
-            eprintln!("riff: cannot read riff who: {e:#}");
-        }
-        Vec::new()
-    });
-    let settings = settings::path()?;
-    let limit = settings::workers_limit(&settings)?;
-    let floor = settings::workers_floor(&settings)?;
-    let me =
-        identity::place(&identity::working_dir()?).and_then(|here| identity::me(&here, server));
-    let host = me
-        .as_ref()
-        .map_or_else(|_| identity::this_host(), |me| me.place().host().to_owned());
-    let machine = riff::machine::here();
-    anstream::println!(
-        "{}",
-        view::host_heading(
-            &host,
-            limit,
-            panes.len(),
-            Some(&machine),
-            floor,
-            riff::deaths::here()
-        )
-    );
-    let disk =
-        identity::main_worktree(&identity::working_dir()?).and_then(|main| riff::disk::here(&main));
-    anstream::print!("{}", view::disk_line(disk.as_ref()));
-    if let Ok(root) = riff::temp::root(&settings)
-        && root.is_dir()
-    {
-        anstream::print!("{}", view::temp_line(&root, riff::temp::size(&root)));
-    }
-    // The compile cache of this machine (01M492398HA0AXX0J8BZCKNGTG).
-    let cache = riff::sccache::Cache::here(&settings)?;
-    let stats = cache.as_ref().and_then(riff::sccache::Cache::stats);
-    anstream::print!(
-        "{}",
-        view::cache_line(cache.as_ref().map(|c| (c, stats.as_ref())))
-    );
-    let workers = u16::try_from(panes.len()).unwrap_or(u16::MAX);
-    let numbers = riff::monitor::numbers_here(&settings, &machine, workers)?;
-    let ago = local::dir()
-        .and_then(|dir| riff::monitor::Saved::read(&dir))
-        .map(|s| riff::monitor::now_secs().saturating_sub(s.at));
-    anstream::print!("{}", view::monitor_line(Some(&numbers), ago));
-    anstream::print!("{}", view::workers(&panes, &sessions, long));
-    let Ok(me) = me else {
-        return Ok(());
-    };
-    for (info, status) in riff::host::hosts(&sessions, me.who().user()) {
-        let host = info.uri.place().host();
-        if host == me.place().host() {
-            continue;
-        }
-        let panes = riff::host::panes(&status, &sessions);
-        anstream::println!(
-            "\n{}",
-            view::host_heading(
-                host,
-                status.limit,
-                status.runs(),
-                status.machine.as_ref(),
-                status.floor,
-                status.deaths
-            )
-        );
-        anstream::print!("{}", view::disk_line(status.disk.as_ref()));
-        anstream::print!("{}", view::monitor_line(status.monitor.as_ref(), None));
-        anstream::print!("{}", view::workers(&panes, &sessions, long));
-        if status.more > 0 {
-            anstream::print!("{}", text::host_more_workers(status.more));
-        }
-    }
-    Ok(())
-}
-
-/// Asks the workers host on `host` for `request`
-/// (01M3N7AKB3KXS2XYK0309C4M18). The host acts only on a request of the
-/// lead of its user (01M3N7AKDE7DEA6NXS9ZMECRMH), so riff sends it only
-/// from an agent session, and a start only from the lead.
-async fn ask_host(host: &str, request: riff::host::Request, server: &str) -> Result<()> {
-    if matches!(request, riff::host::Request::Start(_))
-        && let Some(why) = lead_only(server, &text::START_WORKERS).await
-    {
-        eprintln!("{why}");
-        std::process::exit(1);
-    }
-    let Some(id) = identity::session_id() else {
-        eprintln!("{}", text::HOST_NEEDS_THE_LEAD);
-        std::process::exit(1);
-    };
-    let here = identity::place(&identity::working_dir()?)?;
-    let api = Api::new(server);
-    let me = identity::agent(&here, &id, api.base())?;
-    let api = api.signed_in(Some(&id))?;
-    let sessions = api.who(&me, false).await?;
-    let found = riff::host::hosts(&sessions, me.who().user())
-        .into_iter()
-        .find_map(|(s, _)| (s.uri.place().host() == host).then(|| s.uri.who().session()))
-        .flatten();
-    let Some(to) = found else {
-        eprintln!("{}", text::no_host(host));
-        std::process::exit(1);
-    };
-    api.tell(&me, to, &request.to_string()).await?;
-    println!("{}", text::host_asked(host, &request));
-    Ok(())
-}
-
-/// Ends each worker of this machine, or the one in `pane`: it kills the
-/// pane, then sends the end call of the session
-/// (01M3JPQTDFW3C7QBSZZ2M831MH).
-async fn stop_workers(pane: Option<&str>, server: &str) -> Result<()> {
-    let stopped = worker::stop(&Tmux::machine(), pane, server).await?;
-    println!("{}", text::workers_stopped(stopped));
-    Ok(())
-}
-
-/// In tmux, adds the `riff tail` pane beside the lead
-/// (01M3JD390F49HZSKEJ3VACX0ZA). Call it after the register of
-/// `riff mcp` ends: only that register makes the lead
-/// (01M3XM68N5M5DKB86W5079X2G9). An error goes to stderr: the tools
-/// still work.
-async fn tail_beside_lead(api: &Api, me: &SessionUri) {
-    let Some(tmux) = Tmux::from_env() else {
-        return;
-    };
-    let added = async {
-        let program = Program::tail(
-            &riff::binary::this_on_disk()?,
-            &identity::working_dir()?,
-            api.base(),
-        );
-        terminal::tail_beside_lead(api, me, &tmux, &program).await
-    };
-    if let Err(e) = added.await {
-        eprintln!("riff: cannot add the riff tail pane: {e:#}");
-    }
-}
-
 /// The scope of `riff pause` and `riff resume` from the flags `--riff`
 /// and `--repo` (01M3XAHZBGSSJB3YX23K88W01K).
 fn pause_scope(riff: bool, repo: Option<String>) -> Result<PauseScope> {
@@ -4601,15 +3760,6 @@ async fn session_start(server: &str) -> String {
     if let Some(id) = &id {
         let transcript = input.transcript_path.as_deref();
         count_usage(id, transcript, input.source.is_new_start());
-        // The start of the context, for `riff workers reap`
-        // (01M3ZV0TJX2H77RW6ZA3ERZT9H).
-        if riff::worker::is_worker()
-            && input.source.is_new_start()
-            && let Some(dir) = local::dir()
-            && let Err(e) = riff::workload::mark(&dir, id)
-        {
-            eprintln!("riff: cannot write the start of the context: {e:#}");
-        }
     }
     let api = Api::new(server).with_budget(hook::STATE_WAIT);
     let cwd = std::env::current_dir().ok();
@@ -4685,7 +3835,7 @@ async fn session_start(server: &str) -> String {
             context.push_str(&lines);
         }
     }
-    if worker::is_worker() {
+    if identity::is_worker() {
         context.push_str(hook::WORKER_LINE);
     }
     if let Some(line) = hook::on_line(&enable::State::here()) {
@@ -4695,7 +3845,7 @@ async fn session_start(server: &str) -> String {
         context.push_str(hook::MCP_OFF_LINE);
     }
     if let Some(line) =
-        local::dir().and_then(|dir| hook::no_tools_line(&dir, worker::is_worker(), false))
+        local::dir().and_then(|dir| hook::no_tools_line(&dir, identity::is_worker(), false))
     {
         context.push_str(&format!("- {line}\n"));
     }
@@ -4728,7 +3878,7 @@ async fn start_facts(
 ) -> Result<(bool, RiffReply, Vec<Freed>, Vec<SessionInfo>)> {
     let api = api.signed_in(me.who().session())?;
     let freed = match reason {
-        Some(reason) => api.start(me, reason, worker::is_worker()).await?,
+        Some(reason) => api.start(me, reason, identity::is_worker()).await?,
         None => Vec::new(),
     };
     let riff = api.pauses(me).await?;
@@ -5210,19 +4360,6 @@ async fn top(
     }
 }
 
-/// The loop of [`top`].
-/// The numbers of the machine of `riff top`, when it runs workers: its
-/// limit of workers is more than 0 (01M515KST9Z0B4B1D4HJV3Y2CM).
-fn machine_here(me: &SessionUri) -> Option<riff_client::machines::Host> {
-    let dir = identity::working_dir().ok();
-    let status = riff::host::of_this_machine(dir.as_deref())?;
-    Some(riff_client::machines::Host {
-        user: me.who().user().to_owned(),
-        host: me.place().host().to_owned(),
-        status,
-    })
-}
-
 async fn draw_top(
     api: &Api,
     me: &SessionUri,
@@ -5310,7 +4447,7 @@ async fn draw_top(
         let now = chrono::Local::now();
         let fault = failed.map(|e| text::top_fault(&e.to_string(), api.base(), at, &now));
         let server = riff_client::link::server_build();
-        let machines = riff_client::machines::machines(sessions, machine_here(me));
+        let machines = riff_client::machines::machines(sessions, None);
         let top = riff::top::Top {
             pauses,
             owner: &who.owner,
@@ -5404,19 +4541,7 @@ async fn watch(
         follow.run(args);
         std::future::pending().await
     };
-    // The watch of a worker acts on the ask to stop too, so a worker
-    // whose riff mcp ended stops (01M4385Z5BN03E6HTEB5GQVZ8X).
-    let alive = async {
-        match riff::worker::wrapper_of_worker() {
-            Some(wrapper) => {
-                let every = riff_core::wire::WORKER_ALIVE_EVERY;
-                api::keep_alive_until_stop(api, me, every).await;
-                println!("riff: {}", text::IDLE_STOP);
-                riff::worker::stop_wrapper(wrapper);
-            }
-            None => api::keep_alive(api, me, riff_core::wire::ALIVE_EVERY).await,
-        }
-    };
+    let alive = api::keep_alive(api, me, riff_core::wire::ALIVE_EVERY);
     tokio::select! {
         () = print_each(stream, text::wake_line, once) => {}
         () = alive => {}

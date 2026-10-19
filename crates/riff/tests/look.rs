@@ -196,17 +196,7 @@ async fn each_setting_shows_its_file_and_a_hint_last() {
     let dir = dir.path();
     let file = env.riff_home().join("config.toml");
     let file = file.display();
-    let cases: [(&[&str], String, &str); 4] = [
-        (
-            &["workers", "limit", "2"],
-            format!("workers.limit  2  ({file})"),
-            "Set it with: riff workers limit N",
-        ),
-        (
-            &["workers", "mcp"],
-            format!("workers.mcp  riff  ({file})"),
-            "Change it with: riff workers mcp add NAME, or riff workers mcp remove NAME",
-        ),
+    let cases: [(&[&str], String, &str); 2] = [
         (
             &["update", "--auto", "on"],
             format!("update.auto  true  ({file})"),

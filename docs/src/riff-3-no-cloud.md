@@ -28,7 +28,7 @@ say which of them the re-cut replaces.
 | The sign-in of a person | The OAuth client, its secret in Secret Manager, `riff login` and `riff logout` |
 | The cloud commands | `riff cloud` |
 | The commands that act only on riff-server | `riff who`, `riff whoami`, `riff read`, `riff post`, `riff tell`, `riff status`, `riff blocked`, `riff step`, `riff claim`, `riff audit`, `riff server`, `riff admin`, `riff owner` |
-| The sessions of riff 1.x on the host | The plugin with its skill and its hooks, `riff connect`, `riff enable`, `riff disable`, `riff workers`, `riff worktrees` |
+| The sessions of riff 1.x on the host | The plugin with its skill and its hooks, `riff connect`, `riff enable`, `riff disable`, `riff worktrees` |
 | The GitHub App of riff 2.0 | `riff-como-technologies` in the GitHub organization |
 
 ## What stays
@@ -115,14 +115,8 @@ image = "ghcr.io/como-technologies/riff-session@sha256:DIGEST"
 
 ### Move the work
 
-Let each item of riff 1.x in the repository end, or release it. Stop
-the workers of riff 1.x:
-
-```sh
-riff workers stop
-```
-
-Then, in a clone of the repository:
+Let each item of riff 1.x in the repository end, or release it. Then,
+in a clone of the repository:
 
 ```sh
 riff move

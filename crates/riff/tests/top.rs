@@ -974,9 +974,9 @@ fn the_book_example_has_the_four_level_tree() {
         "\nbrett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim\n",
         "\n├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims\n",
         "\n│  └─ 9c0d1e2f  #issue-9  container  busy\n",
-        "\n└─ thelio  5 sessions: 2 leads, 1 host; 1 to update; 3 idle, 1 blocked, 1 claim\n",
+        "\n└─ thelio  4 sessions: 2 leads; 1 to update; 3 idle, 1 blocked, 1 claim\n",
         "\n   ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim\n",
-        "\n   │  ├─ 6e7f8a9b  ↑  host  idle\n",
+        "\n   │  ├─ 4e54d4e5  ↑  lead  idle\n",
         "\n   └─ strata  1 session: 1 idle\n",
     ] {
         assert!(example.contains(row), "{row}: {example}");
@@ -1449,115 +1449,6 @@ async fn twelve_sessions_fit_in_80_columns() {
     );
     for n in 0..12 {
         assert!(!session(&top, &format!("s{n:02}")).is_empty(), "{top}");
-    }
-}
-
-/// The numbers of pangolin in the test of two machines.
-const PANGOLIN: &str = "cpu 8x3100MHz, mem 64GB, 60GB available, load 0.50";
-
-/// Two machines that run workers. thelio has a `riff workers host`, which
-/// tells the numbers of thelio in its status. pangolin has none: the lead
-/// there starts the workers itself, and its `riff mcp` sends the numbers
-/// of pangolin, also with the monitor off. `riff top --once` on each
-/// machine shows the numbers of both (01M515KST9Z0B4B1D4HJV3Y2CM,
-/// 01M515KSWVGCBS76AWZV74TJQ3).
-#[tokio::test(flavor = "multi_thread")]
-async fn top_on_each_machine_shows_the_numbers_of_both_machines() {
-    let (server, _) = start_server().await;
-    let repo = repo();
-    let dir = repo.path();
-    let bin = bin(true);
-    let homes = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
-    // `riff ARGS` as mike on `host` with the home `home`.
-    let on = |host: &str, home: &Path, session: Option<&str>, args: &[&str]| {
-        let mut cmd = riff(&server, dir, session, bin.path(), args);
-        cmd.env("RIFF_HOST", host)
-            .env("RIFF_HOME", home)
-            .env("RIFF_USER", "mike")
-            .env("RIFF_MACHINE", PANGOLIN);
-        cmd
-    };
-    let pangolin = homes[0].path();
-    for args in [
-        &["workers", "limit", "2"][..],
-        &["workers", "monitor", "off", "--every", "1"],
-    ] {
-        output(on("pangolin", pangolin, None, args)).await;
-    }
-    // The lead on pangolin: its `riff mcp` runs while the test runs.
-    let mut mcp = on("pangolin", pangolin, Some("a1"), &["mcp"]);
-    mcp.stdin(Stdio::piped()).stderr(Stdio::null());
-    let mut mcp = tokio::process::Command::from(mcp);
-    let _mcp = mcp.kill_on_drop(true).spawn().unwrap();
-
-    let api = Api::new(&server);
-    let a1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1"
-        .parse()
-        .unwrap();
-    let start = std::time::Instant::now();
-    let sent = loop {
-        let who = api.who(&a1, false).await.unwrap_or_default();
-        let lead = who.iter().find(|s| s.uri.who() == a1.who() && s.uri.lead());
-        if let Some(machine) = lead.and_then(|s| s.machine.clone()) {
-            break machine;
-        }
-        let waited = start.elapsed();
-        assert!(waited < std::time::Duration::from_secs(60), "{who:?}");
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    };
-    let status = riff_client::machines::HostStatus::parse(&sent.numbers).unwrap();
-    assert_eq!(status.limit, 2, "{}", sent.numbers);
-    assert_eq!(status.workers, [("%3".to_owned(), "c3".to_owned())]);
-    assert!(status.monitor.is_some_and(|m| !m.on), "{}", sent.numbers);
-
-    // A worker on each machine, and the workers host of thelio.
-    let uri = |host: &str, id: &str| -> SessionUri {
-        format!("riff://mike@{host}/como-technologies/riff?session={id}")
-            .parse()
-            .unwrap()
-    };
-    for (host, id) in [("pangolin", "c3"), ("thelio", "w2")] {
-        api.register_as(&uri(host, id), true).await.unwrap();
-        live(&server, host, id).await;
-    }
-    let h1 = uri("thelio", "h1");
-    live_at(&server, h1.clone()).await;
-    let thelio = riff_client::machines::HostStatus {
-        limit: 3,
-        floor: 4,
-        deaths: 0,
-        machine: riff_client::machines::Machine::parse(
-            "cpu 32x5800MHz (now 4100MHz), mem 128GB, 100GB available, load 3.00",
-        ),
-        disk: None,
-        monitor: None,
-        more: 0,
-        workers: vec![("%5".into(), "w2".into())],
-    };
-    let step = riff_core::wire::Status {
-        step: thelio.line(),
-    };
-    api.status(&h1, &step).await.unwrap();
-
-    // thelio has no limit of its own: the numbers of pangolin come from
-    // the server.
-    for (host, home) in [("thelio", homes[1].path()), ("pangolin", pangolin)] {
-        let top = output(on(host, home, None, &["top", "--once"])).await;
-        let rows = rows(&top);
-        let under = |name: &str| {
-            let at = rows
-                .iter()
-                .position(|r| r.contains(&format!("─ {name}  ")))
-                .unwrap_or_else(|| panic!("{name} on {host}: {top}"));
-            rows[at + 1].clone()
-        };
-        let pangolin = under("pangolin");
-        assert!(pangolin.contains("3100MHz"), "on {host}: {top}");
-        assert!(pangolin.contains("workers 1/2"), "on {host}: {top}");
-        let thelio = under("thelio");
-        assert!(thelio.contains("5800MHz now 4100"), "on {host}: {top}");
-        assert!(thelio.contains("workers 1/3"), "on {host}: {top}");
-        assert!(!top.contains(riff::text::NO_NUMBERS), "on {host}: {top}");
     }
 }
 

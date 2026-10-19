@@ -470,16 +470,29 @@ server stops an idle worker when too many wait (01M3Q5A0NKY1FCS0YH6N6YD3GN). You
 item ends at the verify request: write the state on the issue, release the item, and end your \
 turn. Do not wait for the verify.\n";
 
+/// The part of the Stop hook input that riff uses.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct StopInput {
+    /// The session ID of the agent tool.
+    pub session_id: Option<String>,
+    /// The transcript of the session.
+    pub transcript_path: Option<std::path::PathBuf>,
+}
+
+/// The variable that Claude Code gives to each command of its Bash tool
+/// and to each hook, not to `claude` and not to its MCP servers: the PID
+/// of the agent.
+pub const CONTEXT_VAR: &str = "CLAUDE_PID";
+
 /// The riff session that the agent of this hook runs inside, when
 /// there is one (01M517N75C0Z5BAFQAWRN3YTYB): a live `riff mcp` of a
 /// process above the agent ([`crate::local::outer`]). Then the agent is
 /// no session of the riff, and the hook acts for no session. Claude
 /// Code gives the PID of the agent to each hook
-/// ([`crate::next::Agent::context_var`]). With no PID, the agent is no
+/// ([`CONTEXT_VAR`]). With no PID, the agent is no
 /// agent inside a session.
 pub fn outer_session() -> Option<String> {
-    let var = crate::next::Agent::context_var(&crate::next::ClaudeCode);
-    let agent = std::env::var(var).ok()?.parse().ok()?;
+    let agent = std::env::var(CONTEXT_VAR).ok()?.parse().ok()?;
     crate::local::outer(&crate::local::dir()?, agent)
 }
 

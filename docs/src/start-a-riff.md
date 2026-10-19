@@ -95,8 +95,8 @@ See [Pause the riff](how-it-works.md#pause-the-riff).
 
 ## Let riff work in auto mode
 
-In auto mode, Claude Code can block riff work: a riff tool, `riff
-workers start`, or a step of a pull request. A session cannot allow
+In auto mode, Claude Code can block riff work: a riff tool,
+`riff wave run`, or a step of a pull request. A session cannot allow
 this itself. Run this once in each project, then commit the file that
 it names:
 

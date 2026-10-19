@@ -471,9 +471,8 @@ When the note says "Run riff update", update riff on this machine:
 riff update
 ```
 
-`riff watch`, `riff tail`, `riff top`, `riff chat`, `riff workers
-host` and the riff tools of each session (`riff mcp`) see the new
-`riff` on disk, and run it.
+`riff watch`, `riff tail`, `riff top`, `riff chat` and the riff tools of
+each session (`riff mcp`) see the new `riff` on disk, and run it.
 They go on with no restart, in the same repository and worktree. This
 is also true when you removed their worktree. You do not run `/mcp`.
 
@@ -485,8 +484,6 @@ is also true when you removed their worktree. You do not run `/mcp`.
   old `riff` and wait for the next new one. Claude Code keeps no log of
   the error. After 2 minutes, the session gets a line with the fix. See
   [When the riff tools cannot start again](#when-the-riff-tools-cannot-start-again).
-- `riff workers host` runs the new `riff` between two requests of the
-  lead. It keeps its session, and its workers go on.
 
 ```mermaid
 flowchart LR
@@ -766,7 +763,6 @@ your lead once in each repository of the message:
 | The process that starts the update | The repository of the message |
 |---|---|
 | A session, or a `riff` command in a clone | The repository of the session or the clone |
-| `riff workers host` | The repository of its main clone |
 | The riff daemon | Each repository whose wave the daemon runs on the same riff (`riff wave run` or `riff daemon host` in its main clone) |
 
 The riff daemon has no repository of its own. Its working folder can
@@ -890,36 +886,10 @@ idle, so no work stops:
 | `riff watch`, `riff tail`, `riff top` | runs the new `riff` in its place | at once |
 | `riff chat` | runs the new `riff` in its place | between two lines |
 | `riff mcp` | checks the new `riff`, then runs it in its place | when no tool call runs |
-| `riff workers host` | runs the new `riff` in its place, with the same session | between two requests of the lead |
-| A worker | ends: start a new worker on the new `riff` with `riff workers start` | after its item, in place of its clear |
 | The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session, else after its last session |
 
 You still start `riff-server` again yourself. `riff update` tells you
 when it runs the old build.
-
-A worker ends after its item when its `riff workers run` runs the old
-`riff`. A worker that holds a claim never ends. The lead gets a note:
-
-```text
-workers: the worker in the pane %3 on pangolin runs an old riff. It ends after its item, in place of a clear. Its free work goes to an idle worker or to the wave of the riff daemon.
-```
-
-Claude Code reads its permission rules only when it starts. So a worker
-also ends after its item when riff added rules to your user settings
-of Claude Code after its start: `riff init`, or the riff daemon (see
-[Keep the rules in step with each release](start-a-riff.md#keep-the-rules-in-step-with-each-release)).
-The lead gets a note:
-
-```text
-workers: the worker in the pane %3 on pangolin started before riff added rules of Claude Code. It ends after its item, in place of a clear. Its free work goes to an idle worker or to the wave of the riff daemon.
-```
-
-The rollout starts no worker in tmux. To start a new worker on the new
-`riff`, with the new rules:
-
-```sh
-riff workers start 1
-```
 
 The unit of the riff daemon can run another `riff` than the `riff` on
 your `PATH`, for example the build of a check after a release. Then
@@ -1285,30 +1255,25 @@ brett@heron:riff (77e0)            blocked            which of two designs? (1m 
 
 - `lead`: the lead of its user in the repository (see
   [The lead](#the-lead)).
-- `worker`: a worker that `riff workers start` started in tmux. The
-  worker tells the server, so each machine shows the same tag.
+- `worker`: a session that registered as a worker. It tells the server,
+  so each machine shows the same tag.
 - `container`: a session that the riff daemon runs in a container,
   for example for `riff run` or `riff wave run`. It has no watch.
   The daemon keeps it alive, so it shows its state, not `offline`.
   When its container stops, it is gone. The daemon gives it its item,
   so it takes no request from the lead. The lead in a container has
   `lead container`.
-- `host`: the session of `riff workers host` on a machine. It starts
-  and stops the workers of that machine. Its status has the numbers
-  of the machine. It takes no claims, so when it is idle it shows
-  `hosts workers`, not `ready for work`.
 - `daemon`: the session of the riff daemon on a machine, after
   `riff daemon host` or `riff wave run`. It runs the sessions in
   containers. Its status starts with `daemon host:`. It takes no
   claims, so when it is idle it shows `hosts containers`, not
   `ready for work`.
 
-The rows of a daemon and of a host on thelio:
+The row of a daemon on thelio:
 
 ```text
 SESSION                      STATE  ROLE    DETAIL
 mike@thelio:riff (002d404c)  idle   daemon  hosts containers for 2h  25s ago: daemon host: pid 249637, build 3.2.0, 0 sessions
-mike@thelio:riff (5e5b594c)  idle   host    hosts workers for 2h  14s ago: workers host: limit 10, floor 4GB, no workers
 ```
 
 The owner is a person, not a session. So no session has the tag
@@ -1316,8 +1281,8 @@ The owner is a person, not a session. So no session has the tag
 the owner, has it.
 
 STATE is the state of the session, and DETAIL tells more about it. See
-[The state of a session](#the-state-of-a-session). `riff top`,
-`riff workers` and the `who` tool use the same words.
+[The state of a session](#the-state-of-a-session). `riff top`
+and the `who` tool use the same words.
 
 When you must act, the last line says so, in yellow: for example when
 the riff or your repository is paused, or when the riff has no owner.
@@ -1463,26 +1428,21 @@ brett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim
      working on #88 Split the store
 mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 ├─ pangolin  › riff  2 sessions: 1 container, 1 worker; 2 busy, 2 claims
-│  │  load5 9.8 of 12  3000MHz now 2990  20GB avail/4  workers 3/4  pool 10
-│  │  last kill 14:03:12 by systemd-oomd
 │  ├─ 5b1e2a90  #issue-7  worker  busy
 │  │    working on #7 Fix the help
 │  │    runs Bash: run just ci for 12m
 │  │    20m ago: tests
 │  └─ 9c0d1e2f  #issue-9  container  busy
 │       working on #9 Mark the hosts
-└─ thelio  5 sessions: 2 leads, 1 host; 1 to update; 3 idle, 1 blocked, 1 claim
+└─ thelio  4 sessions: 2 leads; 1 to update; 3 idle, 1 blocked, 1 claim
    ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim
    │  ├─ 3a3f8d5d  #issue-8  blocked
    │  │    which of two designs? (32m ago)
    │  │    the lead gave no answer
    │  │    working on #8 Show the plan
-   │  ├─ 4e54d4e5  lead  idle
+   │  ├─ 4e54d4e5  ↑  lead  idle
    │  │    monitoring work for 2h
    │  │    5m ago: plan the next wave
-   │  ├─ 6e7f8a9b  ↑  host  idle
-   │  │    hosts workers for 3h
-   │  │    1m ago: workers host: limit 2, floor 4GB, no workers
    │  └─ 8f1c2d3e  offline
    │       seen 4m ago
    └─ strata  1 session: 1 idle
@@ -1505,10 +1465,10 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
   sessions, then the `busy`, `idle` and `blocked` sessions and the
   claims. A count of 0 is not shown.
 - A host line also counts each kind of session, before the states:
-  `leads`, `containers`, `workers`, `hosts` and `daemons`. A session
+  `leads`, `containers`, `workers` and `daemons`. A session
   counts once, as the first kind that matches. A session with none of
-  these tags has no kind. In the example, thelio has 5 sessions: 2
-  leads, 1 host, and 2 sessions with no kind. After the kinds, a host
+  these tags has no kind. In the example, thelio has 4 sessions: 2
+  leads, and 2 sessions with no kind. After the kinds, a host
   line counts the sessions that run an old riff: `1 to update`. See
   [Update a session that runs an old riff](#update-a-session-that-runs-an-old-riff).
 - A line with only one line under it takes that line, after a `›`. In
@@ -1521,7 +1481,7 @@ mike  owner  online  7 sessions: 2 busy, 3 idle, 1 blocked, 3 claims
 - A session: the first line has the short session ID, the mark `↑`
   when the session runs an old riff, the worktree of
   the session (`#issue-7` in the worktree `issue-7`, nothing in the
-  main worktree), its tags (`lead`, `worker`, `container`, `host` or
+  main worktree), its tags (`lead`, `worker`, `container` or
   `daemon`), and the state of the session in its color. Under it comes
   one line for each fact of the detail of the state. See
   [The state of a session](#the-state-of-a-session). A lead is the
@@ -1547,25 +1507,6 @@ stateDiagram-v2
 The table of each state, its color and its detail is in
 [The state of a session](#the-state-of-a-session).
 
-- A machine that runs workers: under its host comes a line of
-  numbers. `load5 9.8 of 12` is the 5-minute load average and the
-  limit of the monitor: 1.5 times the physical cores (see
-  [Watch the health of a machine](#watch-the-health-of-a-machine)). A
-  host with no monitor numbers shows `load 13.2/16 threads`: the
-  1-minute load against the hardware threads, as in
-  [See the facts of each host](#see-the-facts-of-each-host).
-  `3000MHz now 2990` is the cap of the clock
-  and the clock now. `20GB avail/4` is the available memory and the
-  floor. `workers 3/4` is the workers and the limit. `pool 10` is the
-  tokens of the pool of build jobs, or `jobs 2` the jobs of each
-  worker with no pool (see
-  [See the pool of build jobs](#see-the-pool-of-build-jobs)). A number
-  over its limit is yellow. A second
-  line shows the time and the cause of the last kill that the monitor
-  saw. See
-  [Watch the health of a machine](#watch-the-health-of-a-machine).
-  `riff top` on each machine shows the same numbers. See
-  [The numbers of each machine](#the-numbers-of-each-machine).
 - Each board has the issues of its own repository, and a session shows
   the title of an issue of its own repository. riff reads them with
   `gh` each minute, for each repository with a live session. A
@@ -1592,8 +1533,6 @@ board.
 
 `riff top` only reads. It posts nothing and wakes no session.
 
-The lead can keep it in a tmux pane beside `riff tail`.
-
 ### Update a session that runs an old riff
 
 A session can run an old riff after an update. Then `riff top` puts
@@ -1601,9 +1540,9 @@ the mark `↑`, in yellow, after the short ID of the session, and the
 line of its host counts it:
 
 ```text
-└─ thelio  5 sessions: 2 leads, 1 host; 1 to update; 3 idle, 1 blocked, 1 claim
+└─ thelio  4 sessions: 2 leads; 1 to update; 3 idle, 1 blocked, 1 claim
    ├─ riff  4 sessions: 2 idle, 1 blocked, 1 claim
-   │  ├─ 6e7f8a9b  ↑  host  idle
+   │  ├─ 4e54d4e5  ↑  lead  idle
 ```
 
 The mark shows one of two facts:
@@ -1615,13 +1554,12 @@ The mark shows one of two facts:
 
 The process that lives as long as the session tells the server its
 riff in each keep-alive: `riff mcp` for a session of Claude Code, the
-riff daemon for a session in a container, and `riff workers host` for
-its own session. A session of a riff from before the mark tells no
-riff, so it gets no mark.
+riff daemon for a session in a container. A session of a riff from
+before the mark tells no riff, so it gets no mark.
 
 ```mermaid
 flowchart LR
-    P["riff mcp, the riff daemon,<br/>riff workers host"] -- "keep-alive: build, replaced" --> S["riff-server"]
+    P["riff mcp, the riff daemon"] -- "keep-alive: build, replaced" --> S["riff-server"]
     S -- "who" --> T{"riff top: replaced, or<br/>older than the server?"}
     T -- yes --> M["↑ on the session,<br/>N to update on the host"]
     T -- no --> N["no mark"]
@@ -1640,13 +1578,6 @@ minute. A session in a container keeps the mark until the riff daemon
 starts again, after its last session. When the mark stays, do the
 step for the session:
 
-- A worker with no claim: stop it, and start a new one with
-  `riff workers start 1`. Give the short ID that `riff top` shows:
-
-  ```sh
-  riff workers stop 5b1e2a90
-  ```
-
 - A session in a container: install the riff daemon again. It starts
   again on the new riff at once:
 
@@ -1654,61 +1585,10 @@ step for the session:
   riff daemon install
   ```
 
-- The session of `riff workers host`: stop it with Ctrl-C in its pane,
-  and start it again:
-
-  ```sh
-  riff workers host
-  ```
-
 - Your own session: run `/mcp` in the session, and reconnect the
   server `riff`. Or start the session again. The reconnect frees the
   claims of the session: claim them again. See
   [When the riff tools cannot start again](#when-the-riff-tools-cannot-start-again).
-
-### The numbers of each machine
-
-Each machine that runs workers tells riff-server its numbers. So
-`riff top` on each machine shows the numbers of each machine. The
-numbers of a machine come from the first of these:
-
-1. The `riff workers host` of the machine. It tells them in its status.
-2. The machine where you run `riff top`, when its limit of workers is
-   more than 0.
-3. The `riff mcp` of your lead. Your lead starts the workers of its own
-   machine with no `riff workers host`. So its `riff mcp` sends the
-   numbers of that machine to riff-server each `monitor.every` seconds
-   (15 by default), also with the monitor off. It sends them while its
-   session is the lead and the limit of workers of the machine is more
-   than 0. riff-server keeps the last numbers of each session.
-   `riff top` does not use numbers that are older than 3 minutes.
-
-```mermaid
-flowchart LR
-    H["riff workers host on thelio"] -->|its status| S[riff-server]
-    L["riff mcp of the lead on pangolin"] -->|"the numbers, each monitor.every"| S
-    S -->|who| T1["riff top on thelio"]
-    S -->|who| T2["riff top on pangolin"]
-```
-
-A host with a live worker and no numbers shows the line
-`no numbers` under it:
-
-```text
-└─ pangolin  › riff  2 sessions: 1 lead, 1 worker; 1 busy, 1 idle, 1 claim
-   │  no numbers
-```
-
-Then the machine tells no numbers. When its lead runs a riff of the
-release before, update riff on that machine:
-
-```sh
-riff update
-```
-
-When the lead moved to another machine while the workers run, start
-a workers host on the machine of the workers. See
-[Offer workers from another machine](#offer-workers-from-another-machine).
 
 ### When riff cannot reach the server
 
@@ -2943,8 +2823,8 @@ When the connection ends, the chat connects again by itself. Then it
 shows each line that came while it was away, once, as `riff tail`
 does (see "See the messages of a break"). When the first connect
 fails, it tries once more at once. While it cannot connect, it shows
-`(reconnecting…)`, then `(back)`. `riff tail` and `riff workers host`
-connect again in the same way.
+`(reconnecting…)`, then `(back)`. `riff tail` connects again in the same
+way.
 
 The chat on a phone is a design, and not built yet: see
 [riff on a phone](riff-mobile.md).
@@ -3633,7 +3513,7 @@ flowchart LR
     G["riff pr open, riff verify, riff pr wait,<br/>the look of the lead (gh)"] --> S
     K --> S["riff-server"]
     C["claims, pauses, clears"] --> S
-    S --> W["the state in riff who, riff top, riff workers"]
+    S --> W["the state in riff who and riff top"]
 ```
 
 - The hooks see each tool call, each prompt of the person and the end
@@ -3680,7 +3560,7 @@ riff who
 ### The state of a session
 
 `riff-server` derives the state from the facts, and `riff who`, `riff
-top`, `riff workers` and the `who` tool show it. The first state that
+top` and the `who` tool show it. The first state that
 matches wins:
 
 | State | Color | When | Detail |
@@ -3691,7 +3571,7 @@ matches wins:
 | `must clear` | yellow | a worker released its last claim | `must clear its context before its next claim` |
 | `waiting` | cyan | each claim waits for a verify, a merge, or an item of its `Needs:` line that is open and has no comment `Merged in #`. Or the lead waits for its person | the claims, then `waits for a verify of PR #418`, `waits for the merge of PR #418` or `waits for #12`. The lead: `waiting for mike: REASON` |
 | `busy` | green | the session holds a claim. Or the lead is in a turn | `working on #7`, or `reviewing #7` for a verify claim, then the work, then the step |
-| `idle` | dim | each other session | `ready for work for 6m`, then a current step. The lead: `monitoring work for 6m`. The session of `riff workers host`: `hosts workers for 6m`. The session of the riff daemon: `hosts containers for 6m` |
+| `idle` | dim | each other session | `ready for work for 6m`, then a current step. The lead: `monitoring work for 6m`.. The session of the riff daemon: `hosts containers for 6m` |
 
 The work is the newest fact of the hooks: `runs Bash: run just ci for
 12m`, `works, 5s ago` between two tools, or `turn ended 5m ago`.
@@ -3705,8 +3585,8 @@ The lead takes no claims: it conducts the other sessions. So its
 state comes from its facts. See
 [The state of the lead](#the-state-of-the-lead). An idle lead shows
 `monitoring work`. The time of `idle` counts from the last release of
-the session. For `must clear`, see
-[A worker that must clear its context](#a-worker-that-must-clear-its-context).
+the session. `must clear` is the state of a worker after its last
+release, until its context clears.
 
 A step goes stale when the state of the session changes after the step
 was set: a claim, a release, a pause, a resume, or a new start of
@@ -4710,7 +4590,7 @@ has time limits:
 
 The server sends a keep-alive line on each stream each 15 seconds. So
 a stream that is alive never meets the limit of 45 seconds. A stream
-of `riff watch`, `riff tail`, `riff chat` or `riff workers host` that
+of `riff watch`, `riff tail`, or `riff chat` that
 died comes back in at most 45 seconds. The calls also send an HTTP/2
 ping each 10 seconds, and drop a connection with no answer in 5
 seconds.
@@ -4738,26 +4618,11 @@ sleep, then the new messages:
 riff tail
 ```
 
-## Run the lead and its workers in tmux
+## Run the lead in tmux
 
-In tmux, riff lays out your sessions. The lead gets a `riff tail`
-pane beside it. Your workers get a window of their own, with one pane
-each. Outside tmux, start each session by hand, as in
-[Start a Riff](start-a-riff.md).
-
-```mermaid
-flowchart LR
-    subgraph lead window
-        L["lead<br/>claude --remote-control"]
-        T["riff tail"]
-    end
-    subgraph riff-workers window
-        W1["worker 1<br/>claude"]
-        W2["worker 2<br/>claude"]
-        W3["worker 3<br/>claude"]
-    end
-    L -- "riff workers start 3" --> W1 & W2 & W3
-```
+You can run the lead in tmux. The riff daemon runs the workers in
+containers: you start no worker in tmux. Outside tmux, start the lead
+by hand, as in [Start a Riff](start-a-riff.md).
 
 ### How long a command waits for the server
 
@@ -4767,7 +4632,7 @@ its first try to its end.
 | Call | Budget |
 |---|---|
 | A short command, for example `riff who` or `riff post` | 60 seconds |
-| A tool call of an agent session, a line of `riff chat`, a look of `riff top`, a call of `riff workers host` | 60 seconds |
+| A tool call of an agent session, a line of `riff chat`, a look of `riff top` | 60 seconds |
 | The start of a Claude Code session | 3 seconds |
 | The status line | 2 seconds, one try |
 | The end of a session | 3 seconds |
@@ -4811,14 +4676,8 @@ tmux new -s riff
 claude --remote-control
 ```
 
-When `riff mcp` of the lead starts, it adds a pane with `riff tail` of
-the repository thread beside the lead. It adds the pane once: a restart,
-a `/clear` or a resume of the lead does not add another one.
-
-Only the lead gets the `riff tail` pane. You have one lead in each
-repository, on one machine. It is not one lead for each machine. A
-session that is not the lead gets no pane, also when it is the only
-session on its machine.
+riff adds no pane. To watch the repository thread beside the lead, split
+a pane and start `riff tail` there.
 
 ### Watch the riff on another machine
 
@@ -4848,591 +4707,22 @@ its start context names that session and the main clone. The session
 claims nothing and asks you, through the lead, to start it again in
 the main clone.
 
-### Set the limit of workers
-
-No worker starts until you set a limit. It is the most workers that
-run on this machine at one time. Only you set it: the lead never
-changes it.
-
-```sh
-riff workers limit 3
-```
-
-`riff workers limit` with no number shows the limit. It is in
-`~/.config/riff/config.toml` (`$XDG_CONFIG_HOME/riff/config.toml`),
-key `workers.limit`:
-
-```text
-workers.limit  3  (/home/mike/.config/riff/config.toml)
-Set it with: riff workers limit N
-```
-
-### Change a worker setting while the riff runs
-
-You can change a worker setting at each moment, on the machine of the
-lead or on a workers host:
-
-```sh
-riff workers limit 4
-```
-
-The lead gets one message for each change, with the setting, the old
-value, the new value and the host:
-
-```text
-workers: limit 3 to 4 on pangolin.
-```
-
-```mermaid
-sequenceDiagram
-    participant P as you on pangolin
-    participant H as riff workers host on pangolin
-    participant L as riff mcp of the lead
-    participant A as lead
-    P->>H: riff workers limit 4
-    H->>L: status: limit 4
-    L->>L: the next look: limit 3 to 4
-    L->>A: note: limit 3 to 4 on pangolin
-```
-
-The rollout starts no worker in tmux: a higher limit only gives room
-for the workers that a person starts (see
-[Start workers](#start-workers)).
-The rollout runs the free work in containers: see
-[riff starts the work by itself](#riff-starts-the-work-by-itself).
-
-| You change | The lead gets |
-|---|---|
-| `riff workers limit` on its machine or on a host | `workers: limit 3 to 4 on pangolin.` |
-| `riff workers interval` on its machine | `workers: interval 10 to 0 on thelio: the rollout is off, and riff starts no work by itself.` |
-| `riff workers mcp` on its machine or on a host | `workers: mcp [riff] to [riff, github] on pangolin: each new worker there loads them.` |
-| `riff workers idle` | `workers: idle on the server: per host 1 to 2, after 60 to 300 seconds.` |
-
-The message is a note: it does not wake the lead. One message wakes
-the lead: a higher limit while free work waits and the rollout is off.
-It names the command that starts the workers:
-
-```text
-workers: limit 1 to 3 on pangolin: free work waits, and the rollout is off. Start workers with: riff workers start 2 --host pangolin
-```
-
-### Lower the limit while workers run
-
-A lower limit stops no worker in the middle of an item. When more
-workers run than the limit, each worker that ends its item ends, in
-place of its clear. This goes on until the workers are as many as the
-limit.
-
-```sh
-riff workers limit 2
-```
-
-The lead gets a note with the change:
-
-```text
-workers: limit 4 to 2 on pangolin: 4 workers run there. 2 workers end after their item. riff stops no worker in the middle of an item.
-```
-
-`riff workers` shows how many workers end after their item:
-
-```text
-pangolin  limit 2  runs 4: 2 workers end after their item
-```
-
-For each worker that ends, the lead gets a note:
-
-```text
-workers: limit 2, runs 4 on pangolin: the worker in the pane %3 ends after its item, in place of a clear. 3 workers run there now.
-```
-
-```mermaid
-flowchart TD
-    R["a worker releases its last claim, and its turn ends"] --> C{"more workers than the limit?"}
-    C -- no --> K["riff clears its context: the next item"]
-    C -- yes --> E["the worker ends: riff closes its pane"]
-```
-
-A limit of 0 ends each worker after its item.
-
-To stop a worker at once, also in the middle of an item, see [Stop the
-workers](#stop-the-workers).
-
-### Limit the workers of a machine
-
-Each worker builds and tests. Too many compile jobs at one time fill
-the memory of the machine. The OS then kills a worker with its work.
-So riff limits the workers of a machine. No worker and no lead has to
-remember a limit. Only you set the limits: the lead never changes
-them.
-
-```mermaid
-flowchart TD
-    S["riff workers start"] --> F{"available memory<br/>less than the floor?"}
-    F -- yes --> N["start no worker, say why"]
-    F -- no --> M["give the slice riff-workers.slice<br/>its memory limit and CPU weight"]
-    M --> W["each worker: claude in a scope of the slice,<br/>with nice 10 and the pool of build jobs"]
-    W --> K{"the workers take<br/>too much memory?"}
-    K -- yes --> L["the OS stops work of the workers only.<br/>The lead gets a message"]
-```
-
-| Limit | Default | Command |
-|---|---|---|
-| The most workers | 0 | `riff workers limit` |
-| The compile jobs and test threads of all workers | one pool: hardware threads - 2 - workers (the limit, or the workers that run when they are more), 1 or more; no new token while the memory pressure is above 10 % | `riff workers jobs` |
-| The priority of the workers | nice 10 | `riff workers nice` |
-| The memory of all workers | three quarters of the memory | `riff workers memory` |
-| The available memory that a new worker needs | 4 GB | `riff workers floor` |
-| The folder of the temp files of the workers | `~/.cache/riff/tmp` | `riff workers tmp` |
-| The most size of the compile cache of the workers | `40G` | `riff workers cache` |
-
-riff sets the limits when a worker starts. It does not change them
-while the workers run. Only the pool watches the memory pressure.
-
-#### Choose the limit from the memory
-
-All workers together run at most the hardware threads of the machine
-less 2 compile jobs (see
-[See the pool of build jobs](#see-the-pool-of-build-jobs)). Plan 1 GB
-of memory for each compile job, and 1 GB for each worker:
-
-```text
-memory of the workers in GB = hardware threads - 2 + limit
-```
-
-This number must be less than the memory of the workers: three
-quarters of the memory of the machine. Leave the last quarter for your
-own work. For example, pangolin has 16 hardware threads and 30 GB.
-With 4 workers, the workers need 18 GB of the 23 GB that they get:
-
-```sh
-riff workers limit 4
-```
-
-When the memory gets short, the pool slows the builds down by itself
-(see
-[The pool and the memory pressure](#the-pool-and-the-memory-pressure)).
-`riff workers` shows the hardware threads, the memory and the
-available memory of the machine. When the number does not fit, set
-fewer jobs (see [Set the jobs of a worker](#set-the-jobs-of-a-worker)).
-Each worker also has a worktree with its own build files. In the riff
-repository, they take 23 to 44 GB of disk for each worker.
-
-#### See the pool of build jobs
-
-All workers of a machine take their compile jobs and test threads
-from one pool. When only one worker builds, it gets the full pool. When
-three workers build, they share it. The pool is a named pipe: a
-jobserver of GNU make 4.4, which cargo reads. Each byte in it is a
-token for one job.
-
-```mermaid
-flowchart LR
-    P[("pool of the machine<br/>pangolin: 10 tokens")]
-    A["worker 1: cargo build<br/>1 job of its own + tokens"] <--> P
-    B["worker 2: cargo build<br/>1 job of its own + tokens"] <--> P
-    C["worker 3: cargo test<br/>riff workers test-run takes<br/>each free token:<br/>one test thread for each"] <--> P
-```
-
-Each cargo has one job of its own, with no token. So the pool holds
-the hardware threads less 2, less the workers. The hardware threads
-are the logical CPUs: a compile job also waits for the disk and the
-memory, so the second thread of a core does work too. The workers are
-the limit of workers, or the workers that run when they are more. Then
-all builds together run at most the hardware threads less 2 jobs.
-pangolin has 16 hardware threads and a limit of 4:
-
-```text
-tokens = 16 - 2 - 4 = 10
-one build alone:      10 + 1 = 11 jobs
-four builds at once:  10 + 4 = 14 jobs
-```
-
-A test program runs its tests as threads, and Rust does not read the
-pool. So riff gives each worker a test runner in
-`CARGO_TARGET_<TRIPLE>_RUNNER`. The triple is the `host` of
-`rustc -vV` (or of `$RUSTC -vV`): cargo builds the tests for that
-target. It is not the target of the riff build: a static riff is a
-musl build, and the tests build for the gnu host. For each test
-program, the runner waits for one token, then takes each free token.
-It runs the
-program with one test thread for each token, and gives the tokens back
-at the end, also when the test is killed. When you set
-`RUST_TEST_THREADS` yourself, the runner takes that number of tokens,
-and the test runs with your number:
-
-```sh
-RUST_TEST_THREADS=1 cargo test -p riff --test all limits::
-```
-
-When you lower the limit, the workers that run go on (see
-[Limit the workers of a machine](#limit-the-workers-of-a-machine)). Then
-more workers run than the pool counts. Each worker after the count
-keeps one token out of the pool, and gives it back when other workers
-end. So 4 workers with a limit of 2 do not get twice the jobs:
-
-```text
-pool for 2 workers = 16 - 2 - 2 = 12 tokens
-4 workers run:       2 tokens kept out
-four builds at once: (12 - 2) + 4 = 14 jobs
-```
-
-The first worker makes the pool, and it ends with the last worker. See
-the pool, the tokens in use and the memory pressure:
-
-```sh
-riff workers jobs
-```
-
-```text
-workers.jobs  0  (/home/mike/.config/riff/config.toml)
-The machine has 8 physical cores and 16 hardware threads. All workers take their compile jobs and test threads from one pool of 10 tokens: the hardware threads less 2, less 4 workers (the limit, or the workers that run when they are more). Each build also has one job of its own. A test program takes each free token, and runs one test thread for each. Now 3 tokens are in use. While the memory pressure is above 10%, the pool gives out no new token. Now it is 0.5%. Set it with: riff workers jobs N (N turns the pool off; 0: the pool)
-```
-
-The line of the monitor in `riff workers` shows the pool too (see
-[Watch the health of a machine](#watch-the-health-of-a-machine)):
-
-| The line shows | When |
-|---|---|
-| `pool 10 (3 in use)` | the pool of the workers that run: its tokens, and the tokens that are not in the pool now |
-| `pool 10 (0 in use)` | no worker runs: the pool that the next worker makes |
-| `jobs 2` | no pool: each worker builds with 2 jobs and tests with 2 threads, because `riff workers jobs N` turned the pool off, or riff could not make it |
-
-`riff top` shows only `pool 10` or `jobs 2`, so that its line fits in
-80 columns.
-
-#### The pool and the memory pressure
-
-The memory pressure is the part of the time in which a program waits
-for memory. Linux shows it in `/proc/pressure/memory`. systemd-oomd
-kills a worker when the pressure stays high. So the pool stops the
-new jobs first. The first worker of the machine reads the pressure
-(`some avg10`) each 5 seconds:
-
-```mermaid
-flowchart TD
-    R["the first worker, each 5 s:<br/>read /proc/pressure/memory"] --> Q{"some avg10<br/>above 10 %?"}
-    Q -- yes --> K["keep each free token out of the pool,<br/>also each token that comes back"]
-    Q -- "no, or riff cannot read it" --> G["give the tokens back to the pool"]
-    K --> J["the jobs that run end;<br/>each build goes on with its own job"]
-```
-
-While the pressure is high, each build and each test goes on with its
-own job only. When the pressure is 10 % or less, the builds get their
-tokens again. See the pressure now:
-
-```sh
-cat /proc/pressure/memory
-```
-
-riff reads the physical cores in `/proc/cpuinfo` for the fixed share.
-pangolin has 16 logical CPUs, but 8 physical cores. On a machine where
-riff cannot read them, riff counts half of the logical CPUs. `riff
-workers start` says so one time, and `riff workers jobs` says so each
-time.
-
-When riff cannot make the pool, each worker gets the fixed share in
-`CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`. `riff workers start` says
-so one time. With no pool, a worker gets no `MAKEFLAGS`,
-`CARGO_MAKEFLAGS` or test runner, also when you start it from a
-worker with a pool.
-
-#### Set the jobs of a worker
-
-A number turns the pool off. Each worker then gets the number in
-`CARGO_BUILD_JOBS` and `RUST_TEST_THREADS`: its compile jobs and its
-test threads.
-
-```sh
-riff workers jobs 4
-```
-
-With 0, riff uses the pool again:
-
-```sh
-riff workers jobs 0
-```
-
-The next worker that starts gets the new setting. A worker that runs
-keeps its setting until you stop it.
-
-#### Set the nice value of the workers
-
-Each worker runs with nice 10. So its builds give way to your own
-work on the machine. Set another value from 0 to 19. A higher value
-gives way more. 0 turns it off:
-
-```sh
-riff workers nice 15
-```
-
-`riff workers nice` with no number shows the value. The next worker
-that starts gets the new value.
-
-The value is absolute. A wrapper that runs at nice 5 adds 5, so
-`claude` runs at nice 10. A process cannot lower its own nice value.
-So a wrapper that runs at a higher value, for example 15, keeps 15 for
-`claude`, and says so in its pane.
-
-#### Set the memory of the workers
-
-On a machine with systemd, all workers of the machine run in one
-slice of your systemd user manager, `riff-workers.slice`. The slice
-has a memory limit and half of the CPU weight of other work. When the
-workers take too much memory, the OS slows them, then stops a build or
-a worker. It does not stop your desktop. The default limit is three
-quarters of the memory of the machine. Set another limit in GB:
-
-```sh
-riff workers memory 20
-```
-
-`riff workers memory` with no number shows the setting and the limit.
-With 0, riff makes the limit from the machine again:
-
-```sh
-riff workers memory 0
-```
-
-The next `riff workers start` gives the slice the new limit. To see
-the slice, its memory and its workers:
-
-```sh
-systemctl --user status riff-workers.slice
-```
-
-A dash in the name of a slice makes a tree. So systemd puts
-`riff-workers.slice` below `riff.slice`. `systemd-cgls` shows the
-workers there:
-
-```sh
-systemd-cgls --user-unit riff.slice
-```
-
-On a machine with no systemd, the first `riff workers start` says that
-the workers run with no memory limit. The other limits still apply.
-
-When `systemd-run --user --scope` fails in the pane of a worker, for
-example with no user bus in the environment of the tmux server, the
-worker starts with no scope. Its pane says so one time on the machine.
-
-#### Limit a session that you start by hand
-
-The limits apply only to workers. A session that you start by hand,
-and the lead, get no cap of jobs, no nice value and no scope. Give
-them the same limits when you start `claude`:
-
-```sh
-CARGO_BUILD_JOBS=2 RUST_TEST_THREADS=2 \
-  systemd-run --user --scope --quiet --slice=riff-workers.slice \
-  nice -n 10 claude
-```
-
-Each build and test of the session then runs with 2 jobs, gives way to
-your own work, and counts in the memory limit of the workers.
-
-When a kill ends a worker, your lead gets a direct message with the
-signal (see [How a worker ends](#how-a-worker-ends)). The work of
-the worker that is not committed stays in its worktree.
-
-#### Set the memory that a new worker needs
-
-riff starts no new worker on a machine while less than 4 GB of its
-memory is available. `riff workers start` then says why, and
-`riff workers` shows it:
-
-```text
-pangolin  limit 4  runs 3  cpu 16x4500MHz (now 4400MHz), mem 30GB, 3GB available, load 9.20  score 22.5
-Starts no worker: 3 GB of memory is available, and the floor of this machine is 4 GB.
-```
-
-Set another floor in GB. 0 turns it off:
-
-```sh
-riff workers floor 8
-```
-
-`riff workers floor` with no number shows the floor and the memory
-that is available now. `riff workers start` starts workers again when
-enough memory is available.
-
-### Start workers
-
-The rollout of the lead starts no worker in tmux: it runs the free work
-in containers (see
-[riff starts the work by itself](#riff-starts-the-work-by-itself)). A
-worker in tmux starts only with this command. Ask your lead to start
-workers, or run the command yourself in the repository:
-
-```sh
-riff workers start 3
-```
-
-It opens the tmux window `riff-workers`, with one pane for each
-worker. Each pane runs `claude "Join the riff."` in the main worktree,
-with no Remote Control and no recap. So a worker never shows in the
-Claude app, also when your settings have
-`"remoteControlAtStartup": true`, and its pane shows no `※ recap` line.
-It also gets the settings of [The auto mode settings of a
-session](#the-auto-mode-settings-of-a-session).
-riff gives these settings on the command line of each worker. Your
-settings file does not change. Each worker joins the riff and finds its
-own work. A second `riff workers start` adds panes to the same window.
-Outside tmux, the command says that it needs tmux and starts nothing.
-
-A worker starts in the main clone. Where riff is off in the main
-clone, riff starts no worker: not with this command, and not on a
-workers host. The command then names `riff enable`. See
-[Turn riff on or off for a repository](#turn-riff-on-or-off-for-a-repository).
-
-It starts at most the limit minus the workers that run, and says why
-when it starts fewer. A worker never starts workers. In Claude Code,
-only your lead can start them.
-
-To start a different `claude`, give its path:
-
-```sh
-riff workers start 1 --claude ~/.local/bin/claude
-```
-
-#### The MCP servers of a worker
-
-A worker loads only the riff MCP server. It does not load your other
-MCP servers or the claude.ai connectors, for example mail or your home
-network. So a worker starts faster, uses less context, and cannot reach
-what it does not need.
-
-`riff workers start` runs `claude` with `--strict-mcp-config` and an
-`--mcp-config` file. The file holds only the servers of the setting
-`workers.mcp`. Only you can read the file. Your MCP config does not
-change. In a worker, the riff tools have the names `mcp__riff__*`.
-
-Show the MCP servers of the workers on this machine:
-
-```sh
-riff workers mcp
-```
-
-```text
-workers.mcp  riff  (/home/mike/.config/riff/config.toml)
-Change it with: riff workers mcp add NAME, or riff workers mcp remove NAME
-```
-
-#### The language server of a worker
-
-A plugin of Claude Code can bring a language server, for example
-`rust-analyzer-lsp`. The server lives as long as its `claude`, and a
-worker keeps one `claude` for many items. So each worker kept a server
-of some GB for each worktree that was gone, and filled the memory of
-the machine.
-
-A worker starts with no language server. `riff workers start` turns
-off each installed plugin with a language server, on the command line
-of each worker. Your settings file does not change, and your own
-sessions keep the plugin. You do nothing.
-
-Check that no worker runs a language server. Only your own sessions
-show a line:
-
-```sh
-pgrep -a rust-analyzer
-```
-
-A worker that started before this release keeps its server. Stop it
-with `riff workers stop`, and start new workers with
-`riff workers start`.
-
-#### The auto mode settings of a session
-
-In auto mode, Claude Code can block a normal step. After some blocks,
-when the settings have no `autoMode.environment` entries, Claude Code
-shows the dialog "Teach auto mode about your environment?" at the end
-of a turn. No person answers it in a worker. A wake that riff types
-into the pane can pick a choice. So riff gives each session that it
-starts two Claude Code settings:
-
-| Setting | Value | Why |
-|---|---|---|
-| `skillOverrides` | `{"auto-mode-setup": "off"}` | No dialog, and no `/auto-mode-setup`. |
-| `autoMode.environment` | `"$defaults"`, then the places of riff work | Auto mode blocks fewer normal steps. `"$defaults"` keeps the entries of Claude Code. |
-
-The places of riff work are the GitHub owner of the repository, the
-repository of riff with its releases, `crates.io`, `ghcr.io` and the
-riff server of the session.
-
-```mermaid
-flowchart LR
-    R["riff: the owner of the repository,<br/>the riff server"] --> A["skillOverrides<br/>autoMode.environment"]
-    A -- "riff workers start" --> W["the command line<br/>of each worker"]
-    A -- "the daemon" --> S["settings.json of<br/>each session"]
-```
-
-- A worker gets them on its command line, with `--settings`. Your
-  settings file does not change. A worker also reads your own entries
-  in `~/.claude/settings.json`: Claude Code adds the entries of each
-  place.
-- A session of the daemon gets them in the `settings.json` of its own
-  Claude folder. The lead in a container gets each missing one at each
-  start.
-
-Claude Code does not read `autoMode` from the project settings of a
-repository. So riff does not write them there.
-
-Check that each worker has the settings. Each worker shows two lines:
-its `riff workers run` and its `claude`:
-
-```sh
-pgrep -af '"auto-mode-setup":"off"'
-```
-
-A worker that started before this release shows no line. Stop it with
-`riff workers stop`, and start new workers with `riff workers start`.
-
-See the entries that auto mode uses in your own session:
-
-```sh
-claude auto-mode config
-```
-
-#### Give workers another MCP server
-
-Add a server by its name in your Claude Code config. `claude mcp list`
-shows the names. The next workers that start load it:
-
-```sh
-riff workers mcp add github
-```
-
-riff copies the server from your user config or local config
-(`~/.claude.json`), or from `.mcp.json` of the repository. When it
-finds no server with the name, `riff workers start` warns and starts
-the workers without it.
-
-Take a server away from the next workers:
-
-```sh
-riff workers mcp remove github
-```
-
-`riff` always stays. Each machine has its own list, also a workers
-host. Only you change it: the lead never does.
-
 ### riff starts the work by itself
 
-When the riff runs and the current wave has free work, riff gives it
-to the idle workers in tmux, and asks the riff daemon to run the wave
-for the rest. You do not ask, and the lead does not remember a step.
-The `riff mcp` of your lead does it, once each 10 seconds. It starts no
-worker in tmux: you start those with `riff workers start` (see
-[Start workers](#start-workers)).
+When the riff runs and the current wave has free work, riff asks the
+riff daemon to run the wave. You do not ask, and the lead does not
+remember a step. The `riff mcp` of your lead does it, once each 10
+seconds. The daemon runs each item and each verify in a container. riff
+starts no worker in tmux.
 
 ```mermaid
 flowchart TD
     T["each 10 seconds"] --> R{"the riff runs?"}
     R -- "no: paused" --> T
     R -- yes --> D["ask the riff daemon of this machine, at most 5 s:<br/>does a wave of the repository run?"]
-    D --> W["count the free work with gh"]
-    W --> O["tell each idle worker: request: claim ITEM"]
-    O --> I{"free work, no idle worker,<br/>and no wave runs?"}
+    D -- "it runs" --> T
+    D -- "no" --> W["count the free work with gh"]
+    W --> I{"free work?"}
     I -- no --> T
     I -- yes --> C{"ask the daemon: have the session image<br/>(podman, and a pull when it is missing)"}
     C -- "it cannot" --> N
@@ -5458,41 +4748,17 @@ flowchart TD
   fixes a broken `main`. It comes before each other item, its verify
   first, also when it is not in the current wave (see
   [When main breaks](#when-main-breaks)).
-- **Idle workers.** Workers in tmux with no claim in the repository of
-  your lead. A worker that does a task with no item holds a task
-  claim, so it is busy (see
-  [Give a session a task with no item](#give-a-session-a-task-with-no-item)).
-  A worker in another repository does not count. A new worker counts
-  as idle until it claims an item. The free work goes to the idle
-  workers first. riff asks for the wave only when no worker is idle.
-- **Requests.** riff gives free work to each idle worker of your user
-  that joined the riff. The worker gets a request of the lead, for
-  example `request: claim verify-issue-12`. A verify comes first. Each
-  worker gets one item, and each item goes to one worker. riff never
-  sends the same request to the same worker again. A worker that does
-  not claim in 60 seconds (6 intervals) refused the item. Then the item
-  goes to the wave.
-- **No verify for the author.** A session that held `issue-12` never
-  gets a request for `verify-issue-12`, also after a `/clear`: the
-  session keeps its ID. riff knows the author from two facts: each
-  session that it saw with the claim, and the usage comment that the
-  release of the claim puts on the issue (see
-  [See the tokens of an issue](development.md#see-the-tokens-of-an-issue)).
-  A worker in the worktree `issue-12` gets no request for it either.
-  When the author is the only idle worker, the verify goes to the wave.
-  A verify of the wave is a new session.
 - **The wave.** riff asks only the daemon of the machine of the lead,
   and only when no wave of the repository runs there. The daemon runs
   each item in a container, in its own limit (see
   [Let the rollout of the lead run the wave](development.md#let-the-rollout-of-the-lead-run-the-wave)).
   While the wave runs, the rollout asks nothing. The claims on
-  riff-server keep the wave and the workers in tmux from one item. A
-  second machine runs its own wave (see
+  riff-server keep the sessions from one item. A second machine runs
+  its own wave (see
   [Use a second machine](development.md#use-a-second-machine)).
 - **A daemon that does not answer.** Each look waits at most 5 seconds
   for the answer of the daemon. A daemon that gives no answer in that
-  time runs no wave. The look goes on: the idle workers still get
-  their requests.
+  time runs no wave. The lead gets one note with the reason.
 - **A machine that cannot run a container.** Before it asks for the
   wave, riff asks the daemon to have the session image. podman must
   run, and the image must be on the machine, or the daemon pulls it.
@@ -5507,9 +4773,6 @@ flowchart TD
   started before the pause can ask for the wave one more time. The
   wave starts nothing while the repository is paused. The resume
   starts the rollout again.
-
-Your lead can also give an idle worker a free item with a request. The
-server stops idle workers.
 
 #### See why the rollout runs no wave
 
@@ -5535,9 +4798,8 @@ command.
 
 #### Keep an item from the rollout
 
-Hold the item. riff gives a held item to no idle worker, and the wave
-starts no session for it. A hold names one item: hold
-`verify-issue-12` to keep the verify too (see
+Hold the item. The wave starts no session for a held item. A hold
+names one item: hold `verify-issue-12` to keep the verify too (see
 [Hold an item](#hold-an-item)).
 
 ```sh
@@ -5545,7 +4807,7 @@ riff plan hold issue-12 waits for the word of Mike
 ```
 
 The rollout reads the holds at each look. Free the item, and the next
-look gives it to a worker or to the wave:
+look gives it to the wave:
 
 ```sh
 riff plan free issue-12
@@ -5567,198 +4829,33 @@ While the pull request waits for a verify, the rollout gives
 `verify-issue-N`, not `issue-N`. While it waits for the merge, the
 rollout gives neither.
 
-#### The score of a machine
+### The auto mode settings of a session
 
-Each machine tells six numbers: its hardware threads, its CPU speed, its
-clock now, its memory, its available memory and its 1-minute load
-average. The CPU speed is the cap of the clock: the lowest
-`scaling_max_freq` of the logical CPUs. A cap or a power profile
-lowers it. The clock now is the mean of `scaling_cur_freq` of the
-logical CPUs. From them riff makes a score: the number of workers in
-tmux that the machine runs well. One worker needs one hardware thread
-and 2 GB of memory. A thread at 3000 MHz counts 1:
+In auto mode, Claude Code can block a normal step. After some blocks,
+when the settings have no `autoMode.environment` entries, Claude Code
+shows the dialog "Teach auto mode about your environment?" at the end
+of a turn. No person answers it in a session of the daemon. So riff
+gives each session that the daemon starts two Claude Code settings:
 
-```text
-score = min(threads, memory GB / 2) × MHz / 3000
-```
+| Setting | Value | Why |
+|---|---|---|
+| `skillOverrides` | `{"auto-mode-setup": "off"}` | No dialog, and no `/auto-mode-setup`. |
+| `autoMode.environment` | `"$defaults"`, then the places of riff work | Auto mode blocks fewer normal steps. `"$defaults"` keeps the entries of Claude Code. |
 
-The score counts the cap, not the clock now. So a machine with a cap
-of 3000 MHz gets fewer workers than the same machine with no cap.
-`riff workers` shows both, for example `cpu 16x3000MHz (now 2990MHz)`.
+The places of riff work are the GitHub owner of the repository, the
+repository of riff with its releases, `crates.io`, `ghcr.io` and the
+riff server of the session.
 
-The score less the workers that run there is the free capacity. A
-machine whose load average is more than its threads, or whose available
-memory is less than its floor, has no room (see
-[Set the memory that a new worker needs](#set-the-memory-that-a-new-worker-needs)).
-While the rollout is off, the message of a higher limit names the
-machine with the most free capacity (see
-[Change a worker setting while the riff runs](#change-a-worker-setting-while-the-riff-runs)).
-`riff workers` shows the numbers and the score of each machine (see
-[List the workers](#list-the-workers)).
+The session gets them in the `settings.json` of its own Claude folder.
+The lead in a container gets each missing one at each start. Claude
+Code does not read `autoMode` from the project settings of a
+repository. So riff does not write them there.
 
-#### Change the rate of the rollout
-
-The lead looks for free work each 10 seconds. Set another interval in
-seconds on the machine of the lead:
+See the entries that auto mode uses in your own session:
 
 ```sh
-riff workers interval 30
+claude auto-mode config
 ```
-
-`riff workers interval` with no number shows it. It is in
-`~/.config/riff/config.toml`, key `workers.interval`.
-
-#### Turn the rollout off
-
-Set the interval to 0. Then riff gives no free work to a worker and
-asks for no wave by itself. You or the lead start workers with
-`riff workers start`, or a wave with `riff wave run`:
-
-```sh
-riff workers interval 0
-```
-
-### Take over a worker
-
-Go to the workers window, then pick a pane and type into it:
-
-```sh
-tmux select-window -t riff-workers
-```
-
-In tmux, `Ctrl-b o` goes to the next pane, and `Ctrl-b q` shows the
-number of each pane.
-
-### List the workers
-
-Show each worker of this machine, with its pane, its short session
-ID, its state and the detail of its state. The first line names the
-machine, its limit and the workers that run:
-
-```sh
-riff workers
-```
-
-```text
-thelio  limit 3  runs 1: room for 2 workers  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
-monitor on  load5 2.40 of 24.00 (16 cores)  pool 27 (3 in use)  last look 4s ago
-PANE  ID        STATE  DETAIL
-%3    2a880834  busy   working on #12  1m ago: tests of issue-12
-```
-
-The first line shows the limit, the workers that run, each
-difference between them, and the numbers and the score of this
-machine (see
-[The score of a machine](#the-score-of-a-machine) and
-[Set the workers that a host keeps](#set-the-workers-that-a-host-keeps)).
-The next line shows the monitor (see
-[Watch the health of a machine](#watch-the-health-of-a-machine)).
-
-To see the full session ID of each worker, use `--long`:
-
-```sh
-riff workers --long
-```
-
-### Stop the workers
-
-End each worker of this machine, or one worker by its pane:
-
-```sh
-riff workers stop
-riff workers stop %3
-```
-
-It closes the pane of each worker. Then it stops each process of the
-worker that lives after the pane, for example a `just ci` in the
-background, and prints them. The session leaves `riff who`, and its
-claims are free at once. Another session can take its item from its
-pushed branch. At the end of a wave, the lead stops the workers before
-the deploy and the update, and starts them again after them.
-
-#### Stop one worker on another machine
-
-Give the pane, or the first 8 characters of the session ID, with the
-host. The workers host on that machine stops only that worker. Only
-your lead in this repository can use `--host`. riff refuses it in each
-other session, for example a worker, and in a terminal.
-
-```sh
-riff workers stop %3 --host pangolin
-riff workers stop 2a880834 --host pangolin
-```
-
-### Stop the orphan processes of the workers
-
-A worker starts commands in the background, for example `just ci`. At
-the clear of its context, riff stops each process of the old context
-by itself, and posts a note to the lead. `claude`, its MCP servers and
-the watch stay. An agent never stops a process by its ID: the auto mode
-check refuses it.
-
-```mermaid
-flowchart TD
-    G{"a process in the scope<br/>riff-worker-ID.N.scope?"} -- yes --> I{"in that scope?"}
-    G -- "no: say so one time" --> P{"RIFF_WORKER=1, RIFF_SESSION=ID,<br/>the same RIFF_HOME?"}
-    I -- no --> N["not of the worker"]
-    P -- no --> N
-    I -- yes --> C{"of a context:<br/>CLAUDE_PID set?"}
-    P -- yes --> C
-    C -- "no: claude, its MCP servers" --> K[keep]
-    C -- yes --> W{"riff watch, or the caller?"}
-    W -- yes --> K
-    W -- no --> T{"started before the<br/>current context?"}
-    T -- yes --> S["stop: SIGTERM,<br/>SIGKILL after 3 s"]
-    T -- no --> K
-```
-
-With no scope, riff stops only a process of its own `RIFF_HOME`. A
-riff with another home, for example a test, has its own workers. See
-[How riff finds the processes of a worker](#how-riff-finds-the-processes-of-a-worker).
-
-When a process of an old context still runs, stop it. Give no pane
-for each worker of this machine, or the pane of one worker:
-
-```sh
-riff workers reap
-riff workers reap %3
-```
-
-It prints one line for each process that it stopped:
-
-```text
-pane %3: stopped 41234 just ci
-pane %4: no orphan process
-```
-
-A process of the current context stays. When riff knows no start of
-the context of a worker, it stops nothing and says so.
-
-### How riff finds the processes of a worker
-
-Each worker runs in a systemd scope of its own:
-`riff-worker-ID.PID.scope`, where ID is the session of the worker and
-PID is its wrapper. A process stays in the cgroup of its parent. So
-each command of the worker is in the scope, also a command that drops
-`RIFF_WORKER` and `RIFF_SESSION`. When a process is in a scope of the
-worker, riff uses only the scope. When no process is in one, for
-example on a machine with no systemd, riff uses the environment. It
-says so one time:
-
-```text
-riff: the worker 2a880834 has no systemd scope, so riff finds its processes by RIFF_WORKER and RIFF_SESSION. A process that drops them is not found.
-```
-
-To see the scopes of the workers of this machine, run this. It lists
-`riff-worker-ID.PID.scope` for each worker:
-
-```sh
-systemctl --user list-units 'riff-worker-*.scope'
-```
-
-The `sccache` server of the machine runs in its own scope,
-`riff-sccache-PORT.scope`, outside the scope of each worker. It never
-ends for idle time, so no build of a worker starts it again.
 
 ### Clean the worktrees of sessions that ended
 
@@ -5814,598 +4911,10 @@ too. When the clone does not have the head of the pull request, riff
 fetches it from `origin`. When riff keeps such a worktree, the commit
 that it names is work that only this worktree has.
 
-`riff workers start` and the start of `riff workers host` run it too.
-A workers host and the `riff mcp` of the lead also run it each 10
-minutes. So the worktree of a merged pull request goes away within 10
-minutes of the merge, with no session and no person. riff never
-touches a worktree outside `.claude/worktrees`: a person made it.
-
-### See the free disk of a host
-
-Each worktree has its own `target`, often 30 GB or more. riff watches
-the disk of the main clone. `riff workers` shows it under the line of
-each machine:
-
-```sh
-riff workers
-```
-
-```text
-pangolin  limit 2  runs 1  cpu 16x4500MHz, mem 32GB, 20GB available, load 1.20  score 16.0
-disk 16GB free of 455GB (3%)
-Starts no worker: disk 16GB free of 455GB (3%), under 5%.
-```
-
-Each 10 minutes, a workers host and the `riff mcp` of the lead look at
-the disk:
-
-```mermaid
-flowchart TD
-    L["each 10 minutes"] --> C["riff worktrees clean"]
-    C --> T{"free disk under 15%?"}
-    T -- yes --> R["remove the target of each worktree with no live owner,<br/>a note to the lead"]
-    T -- no --> S
-    R --> S{"free disk under 5%?"}
-    S -- yes --> N["start no worker on this machine,<br/>one note to the lead"]
-```
-
-- Under 15% free, riff removes the `target` of each worktree with no
-  live owner: no lock of a live process, no lock of a person, no live
-  session in it or with its item, and no running process in it. The
-  source and the branch stay. The next build makes the `target` again.
-- Under 5% free, `riff workers start`, the rollout and a workers host
-  start no worker on the machine. The lead gets one note when the disk
-  goes under 5%.
-
-To get space back, remove the worktrees of merged pull requests:
-
-```sh
-riff worktrees clean
-```
-
-### The temp files of the workers
-
-On some machines, `/tmp` is in memory (a tmpfs). Each file there uses
-memory. A worker builds binaries in its scratch directory, often some
-GB. So each worker gets a temp folder of its own on disk:
-`~/.cache/riff/tmp/SESSION`. `riff workers run` gives `claude` this
-folder in `TMPDIR` and in `CLAUDE_CODE_TMPDIR`. The scratch directory
-of Claude Code and the temp files of the tests go there.
-
-```mermaid
-flowchart TD
-    R["riff workers run"] --> M["make ~/.cache/riff/tmp/SESSION"]
-    M --> C["claude works"]
-    C --> X{"the end of the context"}
-    X -- "the clear" --> P["delete the files of the old context"]
-    P --> C
-    X -- "the worker ends" --> D["delete the folder"]
-    X -- "the pane dies" --> T["the next tidy deletes the folder"]
-```
-
-- When the worker ends, riff deletes its folder.
-- At each clear, riff deletes the files of the old context. It keeps
-  the folders `tasks`: the watch writes there.
-- Each 10 minutes, the tidy deletes the folder of each worker that
-  ended.
-- riff never deletes a folder that a live process uses.
-
-`riff workers` shows the disk use under the line of this machine:
-
-```text
-disk 200GB free of 455GB (43%)
-temp 3.1GB in /home/mike/.cache/riff/tmp
-```
-
-#### Show or change the folder of the temp files
-
-Show the folder and its disk use:
-
-```sh
-riff workers tmp
-```
-
-Put the temp folders in a different folder. The next worker that
-starts uses it:
-
-```sh
-riff workers tmp /data/riff-tmp
-```
-
-#### Put /tmp on disk
-
-The other programs of the machine still use `/tmp`. To put `/tmp` on
-disk on Ubuntu, stop its tmpfs, then restart the machine:
-
-```sh
-sudo systemctl mask tmp.mount
-```
-
-### Share the compile cache of a host
-
-Each item gets a new worktree. With no cache, each worker builds each
-dependency again in its own `target` folder. So the workers of a
-machine share one compile cache: `sccache`. A new worktree reads the
-dependencies from the cache. The cache is on the machine only.
-
-```mermaid
-flowchart TD
-    I["riff workers host, riff update"] --> F{"sccache of the pinned version?"}
-    F -- no --> C["cargo install --locked sccache"]
-    F -- yes --> W
-    C --> W["riff workers run: RUSTC_WRAPPER=sccache"]
-    W --> S["start the sccache server of the machine,<br/>with no variable of a worker"]
-    S --> B["each build of each worker<br/>reads and writes ~/.cache/riff/sccache"]
-```
-
-The `sccache` server is of the machine, not of a worker. So the clear,
-`riff workers reap` and `riff workers stop` of a worker never stop it.
-When the server ends, a build goes on with no cache.
-
-riff installs `sccache` itself. The start of `riff workers host`
-installs it, and `riff update` installs it on a machine with a limit of
-workers. When the install fails, the lead gets one note, and the
-workers build with no cache. To try the install again, run:
-
-```sh
-riff update
-```
-
-`riff workers` shows the cache under the temp line: its size, its most
-size and its hit rate:
-
-```text
-temp 3.1GB in /home/mike/.cache/riff/tmp
-cache 12.0GB of 40G in /home/mike/.cache/riff/sccache, hits 85%
-```
-
-#### Show or change the size of the cache
-
-Show the most size and the cache now:
-
-```sh
-riff workers cache
-```
-
-Set the most size. The next worker that starts uses it. The default
-is `40G`:
-
-```sh
-riff workers cache 60G
-```
-
-#### Empty the cache
-
-Stop the workers of the machine first. Then stop the `sccache` server
-and delete the cache:
-
-```sh
-riff workers stop
-riff workers cache --clear
-```
-
-### Watch the health of a machine
-
-The monitor reads the health of a machine that runs workers. It tells
-the lead when a number crosses its limit. Turn it on, on this machine:
-
-```sh
-riff workers monitor on
-```
-
-A workers host runs it on its machine. The `riff mcp` of the lead runs
-it on the machine of the lead. One monitor runs on a machine at a
-time.
-
-```mermaid
-flowchart TD
-    L["each monitor.every seconds"] --> R["read the load, the available memory<br/>and the kills in the journal"]
-    R --> C{"a limit crossed, good again, or a kill?"}
-    C -- yes --> M["one message to the lead"]
-    C -- no --> N["no message"]
-```
-
-The lead gets one message when the number crosses the limit, and one
-when it is good again. It gets no message while nothing changes. Each
-message names the machine, the number and the limit:
-
-- The 5-minute load goes over 1.5 times the physical cores.
-- The available memory goes under the floor of the machine.
-- `systemd-oomd` or the kernel kills a process: one message for each
-  kill.
-
-```text
-monitor: pangolin: the 5-minute load is 13.20, over the limit 12.00 (1.5 times 8 physical cores). riff changes nothing: you decide.
-```
-
-The monitor only reads and tells. It changes no setting and stops no
-worker. You and the lead decide.
-
-The lead turns the monitor of a workers host on or off. Only your lead
-in this repository can use `--host`. riff refuses it in each other
-session, for example a worker, and in a terminal. The host replies
-with a note:
-
-```sh
-riff workers monitor on --host thelio
-riff workers monitor off --host thelio
-```
-
-The monitor looks each 15 seconds. To look each 30 seconds:
-
-```sh
-riff workers monitor --every 15
-riff workers monitor --every 30
-```
-
-The load limit is 1.5 for each physical core. To set 2:
-
-```sh
-riff workers monitor --load 1.5
-riff workers monitor --load 2
-```
-
-The memory limit is the floor of the machine, 4 GB by default. 0 turns
-it off. See
-[Set the memory that a new worker needs](#set-the-memory-that-a-new-worker-needs):
-
-```sh
-riff workers floor 4
-```
-
-To see the settings and the last look of this machine:
-
-```sh
-riff workers monitor
-```
-
-`riff workers` shows a line of the monitor under each machine: on or
-off, the 5-minute load and its limit, the pool of build jobs with its
-tokens in use or the jobs of each worker (see
-[See the pool of build jobs](#see-the-pool-of-build-jobs)), and the
-last kill. `riff top` shows the numbers under each host. See
-[See what each session does](#see-what-each-session-does).
-
-```text
-monitor on  load5 9.80 of 12.00 (8 cores)  pool 10 (3 in use)  last kill 14:03:12 systemd-oomd  last look 4s ago
-```
-
-The settings are in `config.toml`: `monitor.on`, `monitor.every` and
-`monitor.load`.
-
-### Offer workers from another machine
-
-Your lead runs on one machine. Another machine of yours can run
-workers for it too. On that machine, set its limit, then start the
-workers host in a tmux pane. Run it in the main clone of the
-repository of your lead, for example `~/src/riff`, not in your home
-directory. Leave it running:
-
-```sh
-riff workers limit 2
-riff workers host
-```
-
-At once, it prints one line: the host, its limit, the lead that it
-serves and the repository. Check that the repository is the one of
-your lead:
-
-```text
-riff workers host: pangolin offers 2 workers to the lead of mike in como-technologies/riff. Ctrl-C stops it.
-```
-
-The host is a riff session with the status `workers host: limit 2,
-floor 4GB, cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available,
-load 0.40, no workers`. It starts and stops workers only when the
-lead of your user asks, at most its own limit. It
-refuses each other request, and each request that is not verified. One
-host of your user runs on a machine for a repository. A second one
-refuses to start and names the process of the first.
-
-`Ctrl-C` stops the host at once, in each state. Its
-workers keep running. After `riff update`, the host runs the new
-`riff` by itself (see "When the builds differ"). You do not start it
-again. The host reads no keys, so tmux keys work in its
-pane. When the keyring of the machine does not answer in 10 seconds
-at the start, for example because it is locked, the host stops with
-an error that says so. Unlock the keyring and start the host again.
-When the keyring locks while the host runs, the host goes on and
-tells the lead. See "When the keyring is locked" in
-[Development](development.md#when-the-keyring-is-locked).
-
-```mermaid
-sequenceDiagram
-    participant L as lead on thelio
-    participant S as riff-server
-    participant H as riff workers host on pangolin
-    L->>S: riff workers start 2 --host pangolin
-    S->>H: direct message: workers start 2
-    H->>H: 2 worker panes in its tmux
-    H->>S: a note to the lead: panes and sessions
-```
-
-The rollout of the lead starts no worker there. For work in containers
-on that machine, see
-[Use a second machine](development.md#use-a-second-machine). The lead
-starts and stops workers on that machine by its host name. Only your
-lead in this repository can use `--host`. riff refuses it in each
-other session, for example a worker, and in a terminal.
-
-```sh
-riff workers start 2 --host pangolin
-riff workers stop --host pangolin
-```
-
-The reply of the host comes to the lead as a note. A note does not
-wake the lead: it sees the reply at its next read. `riff workers` in
-the lead lists each host after the workers of its own machine, with
-the numbers and the score of the host:
-
-```text
-thelio  limit 3  runs 0: room for 3 workers  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
-
-pangolin  limit 2  runs 1: room for 1 worker  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 0.40  score 24.0
-PANE  ID        STATE  DETAIL
-%3    2a880834  idle   ready for work for 1m
-```
-
-The status of a host also has at most 400 characters. A host with
-many workers makes its status fit. First it gives each worker only
-the first 4 characters of its session ID. When the line is still too
-long, it lists the first workers and ends with the count of the
-others, for example `…, %122 0022, 7 more`. The lead counts each
-worker. `riff workers` lists the workers that the status names, and
-then says how many it does not list:
-
-```text
-7 more workers: the status of the host has no room to list them.
-```
-
-### Set the workers that a host keeps
-
-You say how many workers each machine keeps, and riff does the rest.
-The worker settings of a machine are the wanted state: the limit, the
-jobs, the nice value, the memory floor and the MCP servers. Set them
-on that machine:
-
-```sh
-riff workers limit 3
-riff workers jobs 4
-riff workers floor 4
-```
-
-The limit is the most workers of the machine. The rollout of the lead
-starts no worker in tmux: you or your lead start them with
-`riff workers start` (see [Start workers](#start-workers)). riff keeps
-the running workers in the limit:
-
-- `riff workers start` starts at most the limit minus the workers that
-  run there.
-- When more workers run than a lower limit, a worker ends after its
-  item (see
-  [Lower the limit while workers run](#lower-the-limit-while-workers-run)).
-- When a worker dies, its claims are free. The free item goes to an
-  idle worker, or to the wave of the daemon (see
-  [A worker that dies](#a-worker-that-dies) and
-  [riff starts the work by itself](#riff-starts-the-work-by-itself)).
-- When more than 3 workers of a machine died in the last hour, riff
-  starts no worker there. A loop of deaths is a fault, not a reason to
-  start more (see [A loop of deaths](#a-loop-of-deaths)).
-
-```mermaid
-flowchart TD
-    P["you: riff workers limit 3"] --> W["the wanted state of the machine"]
-    W --> R{"riff workers start, or the end of an item"}
-    R -- "fewer workers than the limit" --> S["riff workers start starts a worker"]
-    R -- "more workers than the limit" --> E["a worker ends after its item: a note to the lead"]
-    R -- "more than 3 deaths in the last hour" --> N["start no worker there"]
-    D["a worker dies"] --> F["its item is free: a note to the lead"]
-    F --> L["an idle worker, or the wave of the daemon"]
-```
-
-To see the wanted and the running state of each machine, and each
-difference, list the workers:
-
-```sh
-riff workers
-```
-
-```text
-thelio  limit 3  runs 1: room for 2 workers  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
-
-pangolin  limit 2  runs 3: 1 worker ends after its item  cpu 16x4500MHz (now 4400MHz), mem 32GB, 24GB available, load 0.40  score 24.0
-Starts no worker: 4 workers died in the last hour. riff workers start starts workers there again when 3 or fewer died in the last hour.
-```
-
-### When the server gives a workers host no reply
-
-Each call of the host to the server has the budget of a short command,
-60 seconds. A try with no reply in 20 seconds gets a new try. When the
-budget ends with no reply, the host prints a line in its pane and goes
-on:
-
-```text
-riff: cannot read the requests: riff-server at https://riff.example.com gave no reply in 60 seconds
-```
-
-You do not start the host again. Each 30 seconds, the host sets its
-status again, and it reads the requests that it did not read. So a
-start request of the lead is not lost: the workers start when the
-server gives a reply again.
-
-```mermaid
-sequenceDiagram
-    participant L as lead
-    participant S as riff-server
-    participant H as riff workers host
-    L->>S: riff workers start 1 --host pangolin
-    S->>H: wake
-    H->>S: read the requests
-    Note over H,S: no reply in 20 seconds: a new try
-    Note over H,S: no reply in 60 seconds
-    H->>H: print "gave no reply", go on
-    H->>S: after 30 seconds: status, read the requests
-    S-->>H: workers start 1
-    H->>S: a note to the lead: 1 worker started
-```
-
-To see that the host answers again, list the hosts in the lead:
-
-```sh
-riff workers
-```
-
-The watch of the host has a connection of its own. So a call of the
-host never waits behind its watch.
-
-### A worker goes to its next item
-
-A worker starts each item with a fresh context. It does not carry the
-file reads, diffs and messages of its last item. riff clears the
-context by itself. The worker runs no command for it, and you do
-nothing.
-
-When a worker releases its last claim, it must clear its context. An
-author releases its item at the verify request, and a verifier
-releases after the steps after the merge. The worker does the steps
-that are left, for example the removal of a worktree,
-and ends its turn. Then riff types `/clear` into the pane of the
-worker, and then "Join the riff.". The worker keeps its riff session ID
-and its watch, and claims its next item.
-
-riff types nothing into a new turn of the worker. When the turn ends,
-riff counts the prompts of the worker. A message that waits can start
-the next turn at once. Just before `/clear`, riff counts again. A
-higher number shows a new turn: riff types nothing, and checks again
-when that turn ends. After `/clear` the context is fresh, so the start
-prompt does no harm when a turn started.
-
-Each turn end starts a check, so two checks of one worker can run at
-one time. Only one check types at a time. A check types nothing and
-stops no process when a new context of the worker started after the
-check. So a check of the old context never clears the new context,
-and the new context keeps its claims.
-
-```mermaid
-sequenceDiagram
-    participant W as worker
-    participant S as riff-server
-    participant R as riff
-    participant T as tmux pane
-    W->>S: release (the last claim)
-    S-->>W: released: riff clears your context when your turn ends
-    Note over S: the worker is in must clear
-    W->>R: the turn ends (Stop hook): count the prompts
-    R->>S: must this worker clear its context?
-    S-->>R: yes
-    R->>R: count again: no new turn
-    R->>T: /clear
-    T->>S: start (clear)
-    Note over S: the worker is ready
-    R->>T: Join the riff.
-    T->>W: start routine, next claim
-```
-
-To see when each worker last started with a fresh context:
-
-```sh
-riff who
-```
-
-```text
-SESSION                  STATE       ROLE    DETAIL
-mike@thelio:riff (5b1e)  must clear  worker  must clear its context before its next claim  fresh start 41m ago
-mike@thelio:riff (9c0d)  idle        worker  ready for work for 6m  fresh start 2m ago
-```
-
-- `fresh start 41m ago` is the time since the worker last started with
-  a fresh context: a new agent process, or a clear. Each worker that
-  is not offline shows it. `riff top` and `riff workers` show the same
-  words.
-- `must clear` is the state of a worker between its last release and
-  its clear. It lasts until the turn of the worker ends.
-- The log has a record for each start of a session, with its reason:
-  a new process, a resume or a clear. So the log shows each clear of
-  each worker, with its time.
-
-#### A worker with subagents that still run
-
-`/clear` does not stop a subagent that runs in the background. So when
-the turn of a worker ends with such a subagent, riff does not type
-`/clear`. It types this prompt one time:
-
-```text
-riff: before the clear of your context, stop each subagent that runs in the background with the TaskStop tool: look 1; look 2. Then end your turn.
-```
-
-When that turn ends, riff clears the context. Processes in the
-background, for example a `just ci`, need no prompt: riff stops them
-just before the clear (see
-[Stop the orphan processes of the workers](#stop-the-orphan-processes-of-the-workers)).
-
-To see the subagents of a worker, go to the tmux window
-`riff-workers` and look at its pane:
-
-```sh
-tmux select-window -t riff-workers
-```
-
-riff never clears the lead: you work in it. It compacts the lead at the
-end of a wave (see
-[riff compacts the lead at the end of a wave](#riff-compacts-the-lead-at-the-end-of-a-wave)).
-To see the context of a worker, type `/context` in its pane.
-
-### A worker that must clear its context
-
-Between its last release and its clear, a worker takes no new work:
-
-- A claim before the clear fails: `clear your context first: end your
-  turn and riff clears it, or type /clear`.
-- `riff-server` sends the worker no wake until the clear. A message to
-  it waits in its thread. After the clear, the worker gets one wake for
-  the message.
-- A resume and a compaction are no fresh context. The worker still
-  must clear.
-
-```mermaid
-sequenceDiagram
-    participant W as worker
-    participant S as riff-server
-    participant L as lead
-    W->>S: release (the last claim)
-    S-->>W: released: riff clears your context when your turn ends
-    Note over S: the worker is in must clear
-    L->>S: tell the worker: request: claim issue-12
-    Note over S: the message waits, no wake
-    W->>S: claim issue-12
-    S-->>W: refused: clear your context first
-    W->>W: the turn ends, riff types /clear
-    W->>S: start (clear)
-    S-->>W: the wake that it missed
-    W->>S: claim issue-12
-    S-->>W: granted
-```
-
-Only the own release of the worker counts. A claim that goes in
-another way leaves the worker ready: a new start, an end, a release by
-the lead, or a claim of another session after the worker was gone for
-5 minutes. So a worker that you resume in the middle of an item claims
-its item again, and goes on.
-
-### Clear a worker by hand
-
-riff types the clear only when the turn of the worker ends. When a
-worker stays in `must clear`, for example because you typed in its
-pane, type `/clear` in its pane. Or stop the worker:
-
-```sh
-riff workers stop %3
-```
-
-`%3` is the pane of the worker in `riff workers`. Its free work goes to
-an idle worker or to the wave of the daemon (see
-[riff starts the work by itself](#riff-starts-the-work-by-itself)). To
-start a new worker with a fresh context, run `riff workers start 1`.
+The `riff mcp` of the lead runs it each 10 minutes. So the worktree of
+a merged pull request goes away within 10 minutes of the merge, with
+no session and no person. riff never touches a worktree outside
+`.claude/worktrees`: a person made it.
 
 ### riff compacts the lead at the end of a wave
 
@@ -6468,277 +4977,3 @@ Change the quiet time, in seconds:
 riff lead compact --quiet 120
 ```
 
-### Workers keep good git hygiene
-
-Workers start in the main clone, and each new worktree branches from
-it. So `riff workers start`, and riff before it clears the context of
-a worker, fast-forward the main clone to `origin` first. You do not
-pull by hand.
-
-```mermaid
-flowchart TD
-    A[riff workers start / the clear of a worker] --> B{main clone on main, no local changes?}
-    B -- yes --> C[git fetch --prune, git merge --ff-only]
-    C --> D["the main clone moved 2 commits forward to origin/main."]
-    B -- no --> E["the main clone stays as it is: WHY"]
-    E --> F[the clear of a worker tells the lead]
-```
-
-When the main clone is on another branch, has local changes, or has
-commits that `origin` does not have, riff changes nothing and says
-why. The clear of a worker tells the lead. With no `origin`, riff says
-nothing. A worker in a dir that is not the top of a git worktree moves
-no clone: riff never acts on a repository above that dir.
-
-Each worker also fetches before it makes a worktree, pushes its work
-as WIP before each long run (see
-[A branch with WIP commits](#a-branch-with-wip-commits)), rebases on a
-fresh `origin/main` before each verify request, and after the merge
-removes its worktree and its branch and prunes. The
-board of the lead lists each worktree and each branch that no live
-session owns.
-
-#### Let riff fast-forward the main clone
-
-When riff says that the main clone stays as it is, look at it. Put the
-main clone back on the default branch with no local changes, then
-start the workers again:
-
-```sh
-git -C ~/src/riff status
-git -C ~/src/riff switch main
-riff workers start 1
-```
-
-### How a worker ends
-
-Each worker pane runs `claude` through `riff workers run`. The wrapper
-waits for `claude`, and never starts it again. The free work goes to an
-idle worker or to the wave of the daemon (see
-[riff starts the work by itself](#riff-starts-the-work-by-itself)).
-
-```mermaid
-flowchart TD
-    W[a worker] --> Q{what happens?}
-    Q -- "claude exits on its own, for example a crash" --> C["the wrapper posts a note to the lead:<br/>pane, session ID, exit code"]
-    C --> R
-    Q -- "no claim and no free item" --> I["it waits idle:<br/>riff shows idle,<br/>its watch runs"]
-    I -- "a request of the lead" --> N[it claims the item]
-    I -- "idle too long, and past the idle limit of its host" --> X["the server stops it:<br/>the pane closes, the lead gets a note"]
-    Q -- "riff workers stop" --> S[the pane closes, no message]
-    Q -- "it sent a verify request" --> K["it releases the item:<br/>riff clears its context"]
-    Q -- "the pane dies: a memory kill, a crash, a closed pane" --> D["riff ends its session:<br/>its claims are free at once,<br/>the lead gets a note"]
-    D --> R[an idle worker or the wave takes the free item]
-```
-
-When `claude` exits on its own, your lead gets a note. It does not
-wake the lead:
-
-```text
-worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, exit code 1.
-The wrapper does not start it again: the free work goes to an idle worker or to the wave of the riff daemon.
-```
-
-When a kill ends `claude`, for example when the workers took too much
-memory, the message names the signal and says where the work is:
-
-```text
-worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, signal 9.
-A kill ended it, for example when the workers took too much memory.
-Its work that is not committed is in its worktree: the next worker of its item goes on from there.
-The wrapper does not start it again: the free work goes to an idle worker or to the wave of the riff daemon.
-```
-
-A worker never ends itself. The server stops idle workers (see
-[The server stops idle workers](#the-server-stops-idle-workers)). The
-lead or you end the other workers with `riff workers stop` (see
-[Stop the workers](#stop-the-workers)).
-
-### A worker that dies
-
-A worker can die at each moment: the system kills it for memory, it
-crashes, or its pane closes. Then no process of the worker is left to
-tell the server. You and your lead do nothing: the work goes on.
-
-`riff workers host` looks at the worker panes of its machine each 5
-seconds. On the machine of your lead, the lead session does the same.
-Each looks after the workers of its own repository only. It acts at
-the second look after the end of a pane, so 5 to 10 seconds after it.
-
-```mermaid
-sequenceDiagram
-    participant T as worker pane
-    participant H as riff workers host, or the lead session
-    participant S as riff-server
-    participant L as lead
-    participant N as an idle worker, or a session of the wave
-    Note over T: the pane dies
-    H->>H: the pane is gone
-    H->>S: end the session of the worker
-    Note over S: its claims are free at once
-    H->>S: a note to the lead
-    S-->>L: at its next read
-    N->>S: claim the free item
-    N->>N: goes on from the pushed branch
-```
-
-The note does not wake your lead. It names the pane, the session, the
-item, and the cause when riff finds it. riff finds a kill by
-`systemd-oomd` in the journal:
-
-```text
-worker stopped: pane %5, session 6072f384-d57d-463c-a837-6df28bc9bc8a, on pangolin.
-The pane ended with no end call, so riff ended the session. It held issue-12: free now.
-Cause: systemd-oomd killed the pane: memory pressure for /user.slice/user-1000.slice/user@1000.service being 66.21% > 50.00% for > 20s with reclaim activity.
-```
-
-To see why the system killed a pane, read the journal:
-
-```sh
-journalctl -u systemd-oomd --since "-10min"
-```
-
-On a machine with no `riff workers host` and no lead session in tmux,
-nobody looks at the panes. There the server frees the claims 5 minutes
-after the last sign of life of the worker, or your lead frees a
-claim. See
-[Free the claim of another session](#free-the-claim-of-another-session).
-
-### A loop of deaths
-
-A fault of a machine can kill each new worker too, for example too
-little memory. Then each new start costs tokens and gives nothing. So
-riff counts the deaths of the workers of each machine: an exit of
-`claude` with a fault, and a pane that ends with no end call. When
-more than 3 workers of a machine died in the last hour,
-`riff workers start` starts no worker there. Your lead gets one
-message, and it wakes:
-
-```text
-workers: 4 workers died in the last hour on pangolin. A loop of deaths is a fault: riff starts no worker on pangolin until 3 or fewer died in the last hour. Tell your user. On pangolin, look at the panes, and at the memory kills with journalctl -u systemd-oomd --since -1h.
-```
-
-Find the cause on that machine. See what killed the workers:
-
-```sh
-journalctl -u systemd-oomd --since -1h
-```
-
-`riff workers` shows the machine with the line `Starts no worker: 4
-workers died in the last hour.` `riff workers start` starts workers
-there again when the old deaths are more than one hour old.
-
-### A worker with no work waits idle
-
-A worker with no claim, and no free item or verify request, waits. It
-keeps its watch running, and ends its turn. An idle session costs
-nothing. riff shows it as idle, with the time since its last release.
-`riff workers` shows it:
-
-```sh
-riff workers
-```
-
-```text
-thelio  limit 3  runs 1  cpu 32x5883MHz (now 4100MHz), mem 124GB, 100GB available, load 2.10  score 62.8
-PANE  ID        STATE  DETAIL
-%3    2a880834  idle   ready for work for 2m
-```
-
-A request of your lead wakes it, and it claims the item (see
-[riff starts the work by itself](#riff-starts-the-work-by-itself)).
-A worker that finished an
-item gets a fresh context first (see
-[A worker goes to its next item](#a-worker-goes-to-its-next-item)). It
-waits idle only when its start routine then finds no work. A worker
-never waits for a verify: its work on an item ends at the verify
-request.
-
-### The server stops idle workers
-
-Your lead starts a worker when it has work for it. So idle workers do
-not pile up, the server looks at the workers each 5 seconds. An idle
-worker is a worker with no claim that makes no call. The server stops
-idle workers past a limit. The limit is a setting of the riff, by
-default 1 on each host: `riff workers idle` shows it. On each host, the
-server keeps that many idle workers, those with the shortest idle
-time. It stops each other worker that is idle for the time of the
-setting, by default 60 seconds. It never stops a lead,
-a session that is not a worker, or a worker with a claim. It also
-does not stop a worker that has an unread request of your lead: a
-direct message from the lead that starts with `request:`.
-
-```mermaid
-sequenceDiagram
-    participant S as riff-server
-    participant M as riff mcp of the worker
-    participant W as riff workers run
-    participant L as lead
-    S->>S: each 5 s: find the idle workers past the limit
-    S->>L: note: the server stops the idle worker
-    M->>S: keep-alive, each 10 s
-    S-->>M: stop
-    M->>W: stop
-    W-->>W: claude ends, the pane closes
-    M->>S: end: the session leaves riff who
-    opt the worker still runs 60 s after the ask
-        S->>L: note: the worker still runs, and how to stop it
-    end
-```
-
-The watch of a worker also sends a keep-alive each 10 seconds, and
-stops the wrapper in the same way. So a worker whose `riff mcp` ended,
-for example at a self-update, also stops.
-
-A worker that the lead wakes, or that claims work, before its next
-keep-alive goes on. Your lead gets one note for each worker that the
-server stops:
-
-```text
-workers: the server stops the idle worker 2a880834 on pangolin. It made no call for 75 seconds. At most 1 idle worker stays on each host.
-```
-
-A pause or a resume wakes the worker and takes the ask back. The
-server then asks again, but it does not send a second note.
-
-#### Stop a worker that the server cannot stop
-
-When the worker still runs 60 seconds after the ask, your lead gets
-one more note:
-
-```text
-workers: the idle worker 2a880834 on pangolin still runs 65 seconds after the ask to stop. Its riff mcp and its watch did not stop its riff workers run: for example, its riff mcp ended and its watch is of an older riff, or no riff workers run wraps it. Stop it on pangolin: riff workers stop 2a880834
-```
-
-Stop it on that machine with the command of the note:
-
-```sh
-riff workers stop 2a880834
-```
-
-When your lead sent a request to the worker after the ask, and the
-worker did not read it, the note names each request:
-
-```text
-... Stop it on pangolin: riff workers stop 2a880834. It did not read 1 request of the lead: "request: claim issue-12". Give it to another session.
-```
-
-Stop the worker, and send the request to another worker.
-
-#### Change the idle workers
-
-Show the settings of the riff:
-
-```sh
-riff workers idle
-```
-
-The owner or an admin of the riff changes them. Keep at most 2 idle
-workers on each host, and stop the others after 5 minutes:
-
-```sh
-riff workers idle --per-host 2 --after 300
-```
-
-With `--per-host 0`, the server stops each worker that is idle for the
-idle time.

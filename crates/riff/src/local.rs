@@ -39,7 +39,6 @@
 //! | `rules-added` | `riff init` and the riff daemon, when they add rules to the user settings of Claude Code (see [`crate::rule_sync`]). | The time of the add, in milliseconds. |
 //! | `rules-sync` | The riff daemon, at each start (see [`crate::rule_sync`]). | The line of its last sync of the rules. |
 //! | `needs-you` | The riff daemon at each start, and `riff update --check` (see [`crate::update_steps`]). | The first step of an update that only a person can do, with its fix. No file when there is none. |
-//! | `host-USER-REPO` | `riff workers host` of USER in REPO (see [`crate::host`]). | Its PID and its session ID. |
 //!
 //! The writers of `mcp-PID`, `watch-ID`, `update.lock` and
 //! `host-USER-REPO` hold a lock on

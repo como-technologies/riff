@@ -12,7 +12,6 @@
 //! | `riff tail` | Prints each new message in one thread, for people. |
 //! | `riff post`, `riff tell`, `riff read`, `riff claim`, `riff release`, `riff lead`, `riff who`, `riff whoami` | Commands for people. |
 //! | `riff connect claude` | Installs the Claude Code plugin, with [`plugin::connect`]. |
-//! | `riff workers` | Starts, lists and stops the worker sessions of this machine in tmux, with [`terminal`]. Its limit is in [`settings`]. The `riff mcp` of the lead gives free work to the idle workers, and asks the riff daemon to run the wave for the rest, with [`rollout`]. [`monitor`] tells the lead about the health of a machine. |
 //! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], [`release`] for the static binaries of a release, and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
 //! | `riff release cut`, `publish`, `status`, `approve` | The release cycle: the release pull request, the tag, the GitHub release and the approval of the deploy. See [`cycle`]. |
@@ -93,7 +92,6 @@ pub mod compact;
 pub mod compile_cache;
 pub mod cycle;
 pub mod daemon;
-pub mod deaths;
 pub mod denied;
 pub mod disk;
 pub mod dropped;
@@ -102,10 +100,7 @@ pub mod first_run;
 pub mod help;
 pub mod home;
 pub mod hook;
-pub mod host;
-pub mod hygiene;
 pub mod identity;
-pub mod jobserver;
 #[cfg(all(
     unix,
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
@@ -114,21 +109,17 @@ pub mod keyring_store;
 pub mod lead;
 pub mod leave;
 pub mod lifecycle;
-pub mod limits;
 pub mod local;
 pub mod login;
 pub mod look;
 pub mod machine;
 pub mod mcp;
-pub mod monitor;
-pub mod next;
 pub mod permissions;
 pub mod platform;
 pub mod plugin;
 #[cfg(target_os = "linux")]
 pub mod podman;
 pub mod pr;
-pub mod reap;
 pub mod relay;
 pub mod release;
 pub mod rollout;
@@ -148,7 +139,6 @@ pub mod state;
 pub mod style;
 pub mod takeover;
 pub mod temp;
-pub mod terminal;
 pub mod text;
 pub mod tidy;
 pub mod top;
@@ -157,8 +147,4 @@ pub mod usage;
 pub mod view;
 pub mod wave;
 pub mod waves;
-pub mod worker;
-pub mod worker_lsp;
-pub mod worker_mcp;
-pub mod workload;
 pub mod worktrees;
