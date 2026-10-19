@@ -156,6 +156,35 @@ pub fn title(version: Semver) -> String {
     format!("Release {}", tag(version))
 }
 
+/// The body of the release issue of `version`. The verify of the
+/// release pull request reads its part "Verify of the release pull
+/// request" (01M593FVJRTCGD1RPWXYJP5BNH).
+///
+/// ```
+/// let body = riff::cycle::issue_body(riff::cycle::version("3.3.0").unwrap());
+/// assert!(body.starts_with("The release v3.3.0.\n"));
+/// assert!(body.contains("Done when: the release is published"));
+/// assert!(body.contains("Verify of the release pull request"));
+/// ```
+pub fn issue_body(version: Semver) -> String {
+    format!(
+        "The release {}.\n\n\
+         Done when: the release is published, the deploy to the shared riff passed, and the \
+         checks after the deploy passed.\n\n\
+         Verify of the release pull request. The pull request has the label `release`. Its \
+         verify checks only this, and not the steps after the merge:\n\
+         - The diff is only the change of the version in `Cargo.toml`, `plugin.json` and \
+         `Cargo.lock`.\n\
+         - The format of the body is right.\n\
+         - The Gate passed.\n\n\
+         Steps after the merge. The verify of the pull request does not check these:\n\
+         - The release is published.\n\
+         - The deploy to the shared riff passed.\n\
+         - The checks after the deploy passed.\n",
+        tag(version)
+    )
+}
+
 /// The level of the release `new` after the release `last`: `major`,
 /// `minor` or `patch`.
 ///
@@ -475,9 +504,9 @@ pub trait Forge {
     /// The title of the current wave: the open wave with the lowest
     /// number.
     fn current_wave(&self) -> Result<String>;
-    /// The open release issue `title`, made in `wave` when there is
+    /// The open release issue `title`, made in `wave` with `body` when there is
     /// none.
-    fn release_issue(&self, title: &str, wave: &str) -> Result<u64>;
+    fn release_issue(&self, title: &str, wave: &str, body: &str) -> Result<u64>;
     /// Each pull request merged to `origin/main` after the tag `since`.
     fn merged_since(&self, since: Option<&str>) -> Result<Vec<Merged>>;
     /// Makes the branch of the release `version` from `origin/main`,
@@ -993,7 +1022,7 @@ pub fn cut(forge: &dyn Forge, new: Semver, skip: Option<&Skip>, why: Option<&str
     }
     let wave = forge.current_wave()?;
     let title = title(new);
-    let issue = forge.release_issue(&title, &wave)?;
+    let issue = forge.release_issue(&title, &wave, &issue_body(new))?;
     let merged = forge.merged_since(Some(&tag(last)))?;
     let summary = summary(issue, last, new, skip, why, &merged);
     let body = pr::body(hygiene::Link::Refs(issue), &summary, &wave)?;
@@ -1599,7 +1628,7 @@ pub fn check(
     let wave = forge.current_wave()?;
     let issue = match forge.issue_of(&title(version))? {
         Some(issue) => issue.number,
-        None => forge.release_issue(&title(version), &wave)?,
+        None => forge.release_issue(&title(version), &wave, &issue_body(version))?,
     };
     match deploy.state {
         DeployState::Failed => {
@@ -1717,7 +1746,7 @@ pub fn rollback(forge: &dyn Forge, tag_text: &str) -> Result<RolledBack> {
     forge.dispatch(&tag(to))?;
     let issue = match forge.issue_of(&title(from))? {
         Some(issue) => issue.number,
-        None => forge.release_issue(&title(from), &forge.current_wave()?)?,
+        None => forge.release_issue(&title(from), &forge.current_wave()?, &issue_body(from))?,
     };
     forge.comment(
         issue,
@@ -2216,7 +2245,7 @@ impl Forge for GitHub {
             .context("riff release cut: the repository has no open wave")
     }
 
-    fn release_issue(&self, title: &str, wave: &str) -> Result<u64> {
+    fn release_issue(&self, title: &str, wave: &str, body: &str) -> Result<u64> {
         let search = format!("\"{title}\" in:title");
         let found: Vec<GhIssue> = self.gh.json(&[
             "issue",
@@ -2233,11 +2262,6 @@ impl Forge for GitHub {
         if let Some(issue) = found.iter().find(|i| i.title == title) {
             return Ok(issue.number);
         }
-        let body = format!(
-            "The release {}.\n\nDone when: the release is published, the deploy to the shared riff \
-             passed, and the checks after the deploy passed.\n",
-            title.trim_start_matches("Release ")
-        );
         let url = self.gh.run(
             &[
                 "issue",
@@ -2251,7 +2275,7 @@ impl Forge for GitHub {
                 "--body-file",
                 "-",
             ],
-            Some(&body),
+            Some(body),
         )?;
         number_of(&url)
     }
@@ -2782,8 +2806,8 @@ mod tests {
         fn current_wave(&self) -> Result<String> {
             Ok("Wave 34: Release".into())
         }
-        fn release_issue(&self, title: &str, wave: &str) -> Result<u64> {
-            self.write(format!("issue {title} in {wave}"));
+        fn release_issue(&self, title: &str, wave: &str, body: &str) -> Result<u64> {
+            self.write(format!("issue {title} in {wave}\n{body}"));
             Ok(7)
         }
         fn merged_since(&self, since: Option<&str>) -> Result<Vec<Merged>> {
@@ -2944,7 +2968,23 @@ mod tests {
         let cut = cut(&forge, v("3.3.0"), None, Some("New commands.")).unwrap();
         assert_eq!((cut.number, cut.issue), (1140, 7));
         let log = forge.log();
-        assert_eq!(log[0], "issue Release v3.3.0 in Wave 34: Release");
+        assert!(
+            log[0].starts_with("issue Release v3.3.0 in Wave 34: Release\nThe release v3.3.0.\n"),
+            "{}",
+            log[0]
+        );
+        assert!(
+            log[0].contains("Done when: the release is published"),
+            "{}",
+            log[0]
+        );
+        assert!(
+            log[0].contains("Verify of the release pull request."),
+            "{}",
+            log[0]
+        );
+        assert!(log[0].contains("The Gate passed."), "{}", log[0]);
+        assert!(log[0].contains("Steps after the merge."), "{}", log[0]);
         assert_eq!(log[1], "merged since Some(\"v3.2.0\")");
         assert_eq!(log[2], "branch 3.3.0");
         let pr = &log[3];
@@ -3585,7 +3625,11 @@ mod tests {
         assert!(matches!(done, Checked::Ran { passed: false, .. }));
         let log = forge.log();
         // No release issue: check makes it.
-        assert_eq!(log[0], "issue Release v3.3.0 in Wave 34: Release");
+        assert!(
+            log[0].starts_with("issue Release v3.3.0 in Wave 34: Release\n"),
+            "{}",
+            log[0]
+        );
         assert!(
             log[1].contains("riff release check v3.3.0: unknown\n"),
             "{log:?}"

@@ -3805,6 +3805,29 @@ refuses while a deploy waits for the approval of `production`. It
 also refuses while the version on `origin/main` has no published
 release: publish that release first.
 
+#### The release issue
+
+The release issue has two parts. Its verify of the pull request reads
+only "Verify of the release pull request". A verifier of a pull request
+with the label `release` checks that part, and not "Done when": the
+release is not published before the merge.
+
+```text
+The release v3.3.0.
+
+Done when: the release is published, the deploy to the shared riff passed, and the checks after the deploy passed.
+
+Verify of the release pull request. The pull request has the label `release`. Its verify checks only this, and not the steps after the merge:
+- The diff is only the change of the version in `Cargo.toml`, `plugin.json` and `Cargo.lock`.
+- The format of the body is right.
+- The Gate passed.
+
+Steps after the merge. The verify of the pull request does not check these:
+- The release is published.
+- The deploy to the shared riff passed.
+- The checks after the deploy passed.
+```
+
 #### Skip a version
 
 Only the owner or an admin skips a version, in a plain terminal: the

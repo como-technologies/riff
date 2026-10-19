@@ -8334,6 +8334,7 @@ pub fn wave_not_rebased(
 /// assert!(text.contains("gh issue view 12 --comments"));
 /// assert!(text.contains("commit 1a2b3c4d5e6f"));
 /// assert!(text.contains("The first line is PASS or FAIL"));
+/// assert!(text.contains("Verify of the release pull request"));
 /// ```
 pub fn wave_verify_start(repo: &str, issue: u64, pull: u64, commit: &str) -> String {
     format!(
@@ -8343,7 +8344,10 @@ pub fn wave_verify_start(repo: &str, issue: u64, pull: u64, commit: &str) -> Str
          change it. riff does the claim, the release and the report of your result. Your riff \
          tools only talk: whoami, who, threads, read, post, tell, status and blocked.\n\n\
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
-         Find its \"Done when:\" line.\n\
+         Find its \"Done when:\" line.\n   \
+         When the pull request has the label `release`, verify it against the part \"Verify of \
+         the release pull request\" of its issue, and not against the line \"Done when:\": the \
+         release is not published before the merge.\n\
          2. Read CLAUDE.md, and obey its rules for a verify.\n\
          3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
          origin/main...HEAD\n\
