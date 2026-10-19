@@ -375,6 +375,7 @@ use crate::{text, usage};
 use riff_client::sessions::{Live, Phase};
 
 pub mod facts;
+pub mod release_test;
 pub mod remote;
 pub mod sweep;
 

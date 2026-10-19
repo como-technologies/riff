@@ -30,6 +30,8 @@ struct Host {
     name: &'static str,
     server: String,
     daemon: Option<Child>,
+    /// More variables for each command and for the daemon.
+    extra: Vec<(String, String)>,
 }
 
 impl Host {
@@ -39,6 +41,7 @@ impl Host {
             name,
             server: server.into(),
             daemon: None,
+            extra: Vec::new(),
         }
     }
 
@@ -65,7 +68,8 @@ impl Host {
             .env("RIFF_DISK", format!("disk {free}GB free of 400GB"))
             .env(facts::EVERY_VAR, LOOK_MS.to_string())
             .env_remove("CLAUDE_CODE_SESSION_ID")
-            .env_remove("RIFF_WORKER");
+            .env_remove("RIFF_WORKER")
+            .envs(self.extra.iter().map(|(k, v)| (k, v)));
         match session {
             Some(id) => cmd.env("RIFF_SESSION", id),
             None => cmd.env_remove("RIFF_SESSION"),
@@ -195,6 +199,11 @@ async fn riff() -> Riff {
 /// As [`riff`], with a sign-in of claude on `a` and on `b` that ends in
 /// these minutes.
 async fn riff_with(a_minutes: i64, b_minutes: i64) -> Riff {
+    riff_env(a_minutes, b_minutes, &[]).await
+}
+
+/// As [`riff_with`], with more variables for each host.
+async fn riff_env(a_minutes: i64, b_minutes: i64, extra: &[(String, String)]) -> Riff {
     let api = start_server().await;
     let root = tempfile::tempdir().unwrap();
     let main = repository(root.path());
@@ -203,6 +212,8 @@ async fn riff_with(a_minutes: i64, b_minutes: i64) -> Riff {
     api.set_riff(&lead, RiffState::Running).await.unwrap();
     let mut a = Host::new("a", api.base());
     let mut b = Host::new("b", api.base());
+    a.extra = extra.to_vec();
+    b.extra = extra.to_vec();
     a.claude_ends_in(a_minutes);
     b.claude_ends_in(b_minutes);
     for host in [&mut a, &mut b] {
@@ -669,4 +680,102 @@ async fn the_replies_of_a_daemon_go_only_to_the_person_and_the_lead() {
             .any(|m| m.message.body.contains("the daemon of b: done")),
         "{read:?}"
     );
+}
+
+/// A `gh` that logs its arguments in `log`, and a test that ends with
+/// the code in `code`, in `dir`. Gives the variables for a host.
+fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String)> {
+    let script = |name: &str, body: String| {
+        isolated::write_program(dir.join(name), format!("#!/bin/sh\n{body}\n"))
+    };
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let gh = script("gh", format!("echo \"$*\" >> {}", log.display()));
+    std::fs::rename(gh, bin.join("gh")).unwrap();
+    let run = script("run", format!("exit $(cat {})", code.display()));
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    vec![
+        ("PATH".into(), path),
+        (
+            riff::daemon::release_test::RUN_VAR.into(),
+            run.display().to_string(),
+        ),
+    ]
+}
+
+/// 01M5924C8BTT6CW05Q0YZJ1GCY: the lead asks the daemon of a host to
+/// run the real-session test on a commit. The daemon sets the status
+/// pending, runs the test in a clone, and sets success on a pass and
+/// failure on a fail. A work session gets the refusal.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (log, code) = (tmp.path().join("gh.log"), tmp.path().join("code"));
+    let extra = fake_real_session(tmp.path(), &log, &code);
+    let r = riff_env(300, 300, &extra).await;
+    // The main clone has an origin that the daemon clones.
+    let git = |dir: &Path, args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        text(&out.stdout).trim().to_owned()
+    };
+    let bare = tmp.path().join("origin.git");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &r.main.display().to_string(),
+            "origin.git",
+        ],
+    );
+    git(
+        &r.main,
+        &["remote", "add", "origin", &bare.display().to_string()],
+    );
+    let commit = git(&r.main, &["rev-parse", "HEAD"]);
+
+    for (host, exit, state) in [("a", "0", "success"), ("b", "1", "failure")] {
+        std::fs::write(&code, exit).unwrap();
+        let asked = remote::Request::ReleaseTest(commit.clone());
+        let reply = remote::ask(&r.api, &r.lead, host, &asked, Duration::from_secs(30))
+            .await
+            .unwrap();
+        assert!(reply.contains("started on"), "{reply}");
+        let want = format!("state={state}");
+        until("the final status", || async {
+            std::fs::read_to_string(&log)
+                .ok()
+                .filter(|l| l.contains(&want))
+        })
+        .await;
+        let seen = std::fs::read_to_string(&log).unwrap();
+        assert!(seen.contains("state=pending"), "{seen}");
+        assert!(seen.contains(&format!("statuses/{commit}")), "{seen}");
+        assert!(seen.contains("context=riff/real-session"), "{seen}");
+        std::fs::remove_file(&log).unwrap();
+    }
+
+    // A work session gets the refusal, and the test does not start.
+    let worker = SessionUri::new(
+        Who::new("mike", Some("w2")).unwrap(),
+        r.lead.place().clone(),
+    );
+    r.api.register(&worker).await.unwrap();
+    let asked = remote::Request::ReleaseTest(commit);
+    let err = remote::ask(&r.api, &worker, "b", &asked, Duration::from_secs(30))
+        .await
+        .unwrap_err();
+    assert!(
+        format!("{err:#}").contains("which is not the lead of mike in"),
+        "{err:#}"
+    );
+    let seen = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(!seen.contains("real-session"), "{seen}");
 }

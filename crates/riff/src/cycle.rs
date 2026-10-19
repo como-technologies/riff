@@ -14,6 +14,7 @@
 //! |---|---|---|
 //! | `riff release cut X.Y.Z` | a lead or a worker; `--skip` only a person | the release pull request from `origin/main` ([`cut`], 01M58B0HZYMAK1B2AJMWKHCXG0) |
 //! | `riff release publish vX.Y.Z` | the owner or an admin of the riff, or its lead, with a `gh` of an admin | the tag on the tested commit, the GitHub release, the chat line to the owner ([`publish`], 01M58B0JABCET719T3HFB19NDW) |
+//! | `riff release test vX.Y.Z --host HOST` | the lead or a person; not a worker | the real-session test on the daemon of a host ([`test_target`], [`crate::daemon::release_test`], 01M5924C8BTT6CW05Q0YZJ1GCY) |
 //! | `riff release status` | each session | the versions, what waits, the state and the next step ([`status`], 01M58KMKTE2XC35CNJBFKZWAXF) |
 //! | `riff release approve vX.Y.Z` | a person in a terminal | the pause of the riff, then the approval of `production` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2) |
 //! | `riff release check vX.Y.Z` | the lead | the checks after the deploy, the result on the release issue ([`check`], 01M58KMM5ZPAQ289S2YJVQ5WW6) |
@@ -25,7 +26,7 @@
 //! stateDiagram-v2
 //!     [*] --> cut: riff release cut
 //!     cut --> merged: verify, merge
-//!     merged --> tested: just real-session
+//!     merged --> tested: riff release test, or just real-session
 //!     tested --> published: riff release publish
 //!     published --> waiting: the jobs before Deploy pass
 //!     waiting --> deploying: riff release approve (a person)
@@ -385,6 +386,85 @@ pub struct ReleaseIssue {
 /// commit that it tested.
 pub const REAL_SESSION: &str = "riff/real-session";
 
+/// The state of the real-session test on a commit: the commit status
+/// [`REAL_SESSION`] (01M5924C8BTT6CW05Q0YZJ1GCY).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestState {
+    /// The daemon of a host runs the test.
+    Running,
+    /// The test passed.
+    Passed,
+    /// The test failed.
+    Failed,
+}
+
+impl TestState {
+    /// The state of a GitHub status `state`, or `None` for one that
+    /// riff does not know.
+    ///
+    /// ```
+    /// use riff::cycle::TestState;
+    ///
+    /// assert_eq!(TestState::of("pending"), Some(TestState::Running));
+    /// assert_eq!(TestState::of("success"), Some(TestState::Passed));
+    /// assert_eq!(TestState::of("error"), Some(TestState::Failed));
+    /// assert_eq!(TestState::of("other"), None);
+    /// ```
+    pub fn of(state: &str) -> Option<TestState> {
+        match state {
+            "pending" => Some(TestState::Running),
+            "success" => Some(TestState::Passed),
+            "failure" | "error" => Some(TestState::Failed),
+            _ => None,
+        }
+    }
+
+    /// The GitHub status state of this state.
+    pub fn github(self) -> &'static str {
+        match self {
+            TestState::Running => "pending",
+            TestState::Passed => "success",
+            TestState::Failed => "failure",
+        }
+    }
+
+    /// The word of the state, as `riff release status` shows it.
+    pub fn word(self) -> &'static str {
+        match self {
+            TestState::Running => "running",
+            TestState::Passed => "passed",
+            TestState::Failed => "failed",
+        }
+    }
+}
+
+/// The `gh` arguments that set the status [`REAL_SESSION`] of `commit`
+/// to `state`, with a `description` cut to fit the limit of GitHub.
+///
+/// ```
+/// use riff::cycle::{TestState, status_args};
+///
+/// let args = status_args("abc", TestState::Running, "on thelio");
+/// assert_eq!(args[..4], ["api", "-X", "POST", "repos/{owner}/{repo}/statuses/abc"]);
+/// assert!(args.contains(&"state=pending".to_owned()));
+/// assert!(args.contains(&"context=riff/real-session".to_owned()));
+/// ```
+pub fn status_args(commit: &str, state: TestState, description: &str) -> Vec<String> {
+    let description: String = description.chars().take(130).collect();
+    vec![
+        "api".into(),
+        "-X".into(),
+        "POST".into(),
+        format!("repos/{{owner}}/{{repo}}/statuses/{commit}"),
+        "-f".into(),
+        format!("state={}", state.github()),
+        "-f".into(),
+        format!("context={REAL_SESSION}"),
+        "-f".into(),
+        format!("description={description}"),
+    ]
+}
+
 /// The steps of the release cycle on a forge. [`GitHub`] runs `gh` and
 /// `git`. A test gives a fake.
 pub trait Forge {
@@ -434,6 +514,9 @@ pub trait Forge {
     /// The status [`REAL_SESSION`] of `commit`: `Some(true)` for a pass,
     /// `Some(false)` for a fail, `None` with no result.
     fn real_session(&self, commit: &str) -> Result<Option<bool>>;
+    /// The state of the test [`REAL_SESSION`] on `commit`: running, passed
+    /// or failed. `None` with no status.
+    fn test_state(&self, commit: &str) -> Result<Option<TestState>>;
     /// `commit` and each newer commit of `origin/main`, the newest first.
     fn commits_since(&self, commit: &str) -> Result<Vec<String>>;
     /// The newest CI run that deploys `tag`, or `None`.
@@ -568,6 +651,38 @@ pub fn tested(forge: &dyn Forge, merge: &str) -> Result<Option<String>> {
     Ok(None)
 }
 
+/// The commit that the real-session test runs on for a merged release:
+/// the newest commit of `origin/main`, which holds the merge commit
+/// (01M5924C8BTT6CW05Q0YZJ1GCY).
+fn test_commit(forge: &dyn Forge, stage: &Stage) -> Result<Option<String>> {
+    let Some(merge) = &stage.merge else {
+        return Ok(None);
+    };
+    Ok(forge.commits_since(merge)?.into_iter().next())
+}
+
+/// The commit for `riff release test TAG`. It refuses a release that is
+/// not merged, and a commit that has a pass or a test that runs.
+pub fn test_target(forge: &dyn Forge, tag_text: &str) -> Result<String> {
+    let tag = tag(tag_version(tag_text)?);
+    let stage = stage(forge, tag_version(&tag)?)?;
+    let Some(stage) = stage.filter(|s| s.state == State::Merged) else {
+        bail!(
+            "riff release test: the release {tag} is not merged and untested. riff changed \
+             nothing. next: riff release status"
+        );
+    };
+    let commit = test_commit(forge, &stage)?
+        .ok_or_else(|| anyhow!("riff release test: origin/main has no commit of {tag}"))?;
+    if forge.test_state(&commit)? == Some(TestState::Running) {
+        bail!(
+            "riff release test: the test runs on {commit} already. riff changed nothing. \
+             next: riff release status"
+        );
+    }
+    Ok(commit)
+}
+
 /// The state of the release `version` in the cycle, or `None` when it
 /// has no release pull request and no tag (01M58KMKTE2XC35CNJBFKZWAXF).
 pub fn stage(forge: &dyn Forge, version: Semver) -> Result<Option<Stage>> {
@@ -665,7 +780,9 @@ pub fn next(stage: &Stage) -> String {
             Some(n) => format!("wait for the verify and the merge of pull request #{n}"),
             None => "wait for the verify and the merge of the release pull request".to_owned(),
         },
-        State::Merged => "just real-session on origin/main".to_owned(),
+        State::Merged => {
+            format!("riff release test {tag} --host HOST, or just real-session on origin/main")
+        }
         State::Tested => format!("riff release publish {tag}"),
         State::Published => match run {
             Some(run) => format!("wait for the jobs of the CI run {run}"),
@@ -1050,6 +1167,9 @@ pub struct Status {
     pub waiting: Vec<Waiting>,
     /// The release that the cycle is at now ([`current`]).
     pub stage: Option<Stage>,
+    /// The newest commit of a merged release, and the state of the
+    /// real-session test on it (01M5924C8BTT6CW05Q0YZJ1GCY).
+    pub test: Option<(String, Option<TestState>)>,
 }
 
 /// The facts of the release cycle.
@@ -1061,12 +1181,20 @@ pub fn status(forge: &dyn Forge) -> Result<Status> {
     } else {
         forge.release_pr(&title(main))?
     };
+    let stage = current(forge)?;
+    let test = match stage.as_ref().filter(|s| s.state == State::Merged) {
+        Some(stage) => test_commit(forge, stage)?
+            .map(|commit| forge.test_state(&commit).map(|state| (commit, state)))
+            .transpose()?,
+        None => None,
+    };
     Ok(Status {
         main,
         last: last(&releases),
         unpublished,
         waiting: forge.waiting()?,
-        stage: current(forge)?,
+        stage,
+        test,
     })
 }
 
@@ -1076,7 +1204,7 @@ pub fn status(forge: &dyn Forge) -> Result<Status> {
 /// use riff::cycle::{Status, render_status, version};
 ///
 /// let status = Status {
-///     main: version("3.3.0")?, last: Some(version("3.2.0")?), unpublished: None, waiting: vec![], stage: None,
+///     main: version("3.3.0")?, last: Some(version("3.2.0")?), unpublished: None, waiting: vec![], stage: None, test: None,
 /// };
 /// assert_eq!(
 ///     render_status(&status),
@@ -1102,6 +1230,10 @@ pub fn render_status(status: &Status) -> String {
             "waits for production: {} {}. A person runs: riff release approve {}\n",
             w.tag, w.url, w.tag
         ));
+    }
+    if let Some((commit, state)) = &status.test {
+        let word = state.map_or("none", TestState::word);
+        out.push_str(&format!("real-session test: {word} on {commit}\n"));
     }
     out.push_str(&stage_lines(status.stage.as_ref()));
     out
@@ -1772,6 +1904,24 @@ impl Caller {
         }
     }
 
+    /// Why this caller may not run `riff release test`, or `None`
+    /// (01M5924C8BTT6CW05Q0YZJ1GCY). The lead runs it in a container,
+    /// where podman does not run: so riff refuses only a worker here,
+    /// and the daemon of the host judges the rest. It acts only on the
+    /// person of its user and the lead of that person.
+    ///
+    /// ```
+    /// use riff::cycle::{Caller, Refusal};
+    ///
+    /// let lead = Caller { container: true, agent: true, ..Caller::default() };
+    /// assert!(lead.test_step().is_none());
+    /// let worker = Caller { worker: true, ..lead };
+    /// assert_eq!(worker.test_step(), Some(Refusal::Worker));
+    /// ```
+    pub fn test_step(&self) -> Option<Refusal> {
+        self.worker.then_some(Refusal::Worker)
+    }
+
     /// Why this caller may not run a step of a person: `riff release
     /// approve`, and `riff release cut --skip`, or `None`
     /// (01M58B0JSQMWNCMSNX19536XT8, 01M58KMMKZ8T11KT3R3Z7D0RE1). Only a
@@ -2398,6 +2548,16 @@ impl Forge for GitHub {
             }))
     }
 
+    fn test_state(&self, commit: &str) -> Result<Option<TestState>> {
+        let path = format!("repos/{{owner}}/{{repo}}/commits/{commit}/status");
+        let status: GhStatuses = self.gh.json(&["api", &path])?;
+        Ok(status
+            .statuses
+            .iter()
+            .find(|s| s.context == REAL_SESSION)
+            .and_then(|s| TestState::of(&s.state)))
+    }
+
     fn commits_since(&self, commit: &str) -> Result<Vec<String>> {
         let range = format!("{commit}^..origin/main");
         let list = self
@@ -2686,6 +2846,15 @@ mod tests {
                 .iter()
                 .find(|(c, _)| *c == commit)
                 .map(|(_, p)| *p))
+        }
+        fn test_state(&self, commit: &str) -> Result<Option<TestState>> {
+            Ok(self.real.iter().find(|(c, _)| *c == commit).map(|(_, p)| {
+                if *p {
+                    TestState::Passed
+                } else {
+                    TestState::Failed
+                }
+            }))
         }
         fn commits_since(&self, _commit: &str) -> Result<Vec<String>> {
             Ok(self.since.iter().map(|c| (*c).to_owned()).collect())
@@ -3017,6 +3186,43 @@ mod tests {
         );
     }
 
+    /// 01M5924C8BTT6CW05Q0YZJ1GCY: the test runs on the newest commit
+    /// of a merged release, and `status` shows its state.
+    #[test]
+    fn test_target_is_the_newest_commit_of_a_merged_release() {
+        let merged = Fake {
+            real: vec![],
+            since: vec!["m3", "m2", "m1"],
+            ..Fake::ready("3.3.0")
+        };
+        assert_eq!(test_target(&merged, "v3.3.0").unwrap(), "m3");
+        assert_eq!(
+            render_status(&status(&merged).unwrap()).lines().nth(4),
+            Some("real-session test: none on m3")
+        );
+        // A failed test on the newest commit can run again.
+        let failed = Fake {
+            real: vec![("m3", false)],
+            ..merged
+        };
+        assert_eq!(test_target(&failed, "v3.3.0").unwrap(), "m3");
+        assert_eq!(
+            render_status(&status(&failed).unwrap()).lines().nth(4),
+            Some("real-session test: failed on m3")
+        );
+        // A tested release and an open pull request refuse.
+        let tested = Fake::ready("3.3.0");
+        let err = test_target(&tested, "v3.3.0").unwrap_err().to_string();
+        assert!(err.contains("not merged and untested"), "{err}");
+        let cut = Fake {
+            open_pr: Some((1140, "3.3.0")),
+            release_pr: None,
+            ..Fake::new()
+        };
+        assert!(test_target(&cut, "v3.3.0").is_err());
+        assert!(test_target(&failed, "3.3.0").is_err());
+    }
+
     /// Each state of the cycle, with its next step
     /// (01M58KMKTE2XC35CNJBFKZWAXF, 01M58KMKWRKSV1DR42FRH2K43X).
     #[test]
@@ -3049,7 +3255,7 @@ mod tests {
                     ..Fake::ready("3.3.0")
                 },
                 State::Merged,
-                "just real-session on origin/main",
+                "riff release test v3.3.0 --host HOST, or just real-session on origin/main",
             ),
             (
                 Fake::ready("3.3.0"),
