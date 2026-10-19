@@ -1332,7 +1332,8 @@ The riff daemon of each host sends the facts of its host to the riff
 server each 30 seconds. It does so after `riff daemon host` or
 `riff wave run` in the main clone on that host. `riff who` shows them
 in its last part, `Hosts`. `riff top` shows them under the row of the
-host:
+host. The `who` tool of a session shows the same part, so the lead sees
+the facts in its session:
 
 ```sh
 riff who

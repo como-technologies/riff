@@ -3385,6 +3385,7 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 /// assert!(!out.contains("owner"), "{out}");
 /// assert!(out.ends_with("\n  ready for work for 1m\n"), "{out}");
 /// assert!(!out.contains('\x1b'), "{out:?}");
+/// assert!(!out.contains("Hosts:"), "{out}");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> String {
@@ -3405,6 +3406,8 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
             let _ = writeln!(out, "  {line}");
         }
     }
+    let hosts = crate::view::hosts(sessions);
+    out.push_str(&anstream::adapter::strip_str(&hosts).to_string());
     out
 }
 
@@ -8816,6 +8819,43 @@ pub fn run_lead_told(item: &str) -> String {
 mod tests {
     use super::*;
     use riff_client::api::Checked;
+
+    /// 01M5923PW9YW5S58RQG5Y532RS
+    #[test]
+    fn who_shows_the_hosts_of_the_facts_in_plain_text() {
+        let facts = riff_client::daemons::Facts {
+            build: "3.1.0".into(),
+            limit: 4,
+            floor_gb: 8,
+            ..Default::default()
+        };
+        let row = |uri: &str, age_secs| {
+            let mut s: SessionInfo = serde_json::from_value(serde_json::json!({
+                "uri": uri, "live": true,
+            }))
+            .unwrap();
+            s.machine = Some(riff_core::wire::MachineInfo {
+                numbers: facts.line(),
+                age_secs,
+            });
+            s
+        };
+        let list = [
+            row("riff://mike@thelio/o/r?session=d1", 12),
+            row("riff://mike@framework/o/r?session=d2", 30),
+        ];
+        let out = who(&list, &Default::default(), &list[0].uri);
+        assert!(out.contains("\nHosts:\n"), "{out}");
+        assert!(
+            out.contains("mike@thelio (12s ago)\n  daemon 3.1.0"),
+            "{out}"
+        );
+        assert!(
+            out.contains("mike@framework (30s ago)\n  daemon 3.1.0"),
+            "{out}"
+        );
+        assert!(!out.contains('\x1b'), "{out:?}");
+    }
 
     /// 01M56Q55SHHJSKJWNHMW79X7HA
     #[test]
