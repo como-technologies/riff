@@ -20,6 +20,8 @@
 //! | `riff wave make TITLE` (01M509TJTV7TC32EKXW0TEQ5NZ) | the list, then `api -X POST repos/{owner}/{repo}/milestones -f title=TITLE` |
 //! | `riff wave rename N NAME` (01M518A0BEQBX9RH9H0CEFYF9Q) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f title=TITLE` |
 //! | `riff wave end N` (01M509TJXE04CTG5D1K751WXJY) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f state=closed` |
+//! | `riff wave move ITEM... --to WAVE` (01M5924014WN63RCHJWGZS4AFZ) | the list, then `issue edit N --milestone TITLE` for each item |
+//! | `riff wave end N --move-open-to-backlog` (01M592403Q4TNZEDNR76C7NK9M) | the list, `api repos/{owner}/{repo}/issues?milestone=NUMBER&state=open&per_page=100`, `issue edit N --milestone Backlog` for each item, then the PATCH of `riff wave end` |
 //! | `--wave WAVE` of `riff usage` and `riff audit` (01M588K2M7G0CV3RNJ4N074FTG) | `api repos/OWNER/REPO/milestones?state=all&per_page=100` |
 //!
 //! - `riff wave list` marks the current wave, the first wave, with
@@ -40,6 +42,9 @@
 //!   milestone. It refuses a wave with an open item: a wave ends only
 //!   when each of its items is closed (R216, R224). On GitHub an open
 //!   pull request of the wave is an open item of its milestone.
+//! - `riff wave move` and `--move-open-to-backlog` refuse an item with a
+//!   claim on riff-server before they change any item. The lead needs
+//!   no `gh issue edit` for the waves.
 //! - `--wave` takes the number of the wave, `33` or `Wave 33`, as each
 //!   other step does ([`title`]). `gh issue list --milestone` matches
 //!   only the full title, for example `Wave 33: Hosts`, so riff finds
@@ -210,6 +215,124 @@ pub fn end(gh: &Gh, number: u64) -> Result<Milestone> {
             "state=closed",
         ],
     )
+}
+
+/// The title of the milestone that `to` names, from the open
+/// `milestones`: `Backlog`, or a wave by its number, `6` or `Wave 6`
+/// (01M5924014WN63RCHJWGZS4AFZ). It refuses a name that no open
+/// milestone has.
+///
+/// ```
+/// use riff::waves::target;
+/// use riff_client::waves::Milestone;
+///
+/// let m = |title: &str| Milestone { number: 1, title: title.into(), open_issues: 0, closed_issues: 0 };
+/// let open = [m("Wave 6: Cloud"), m("Backlog")];
+/// assert_eq!(target(&open, "6").unwrap(), "Wave 6: Cloud");
+/// assert_eq!(target(&open, "Wave 6").unwrap(), "Wave 6: Cloud");
+/// assert_eq!(target(&open, "backlog").unwrap(), "Backlog");
+/// assert!(target(&open, "7").is_err());
+/// ```
+pub fn target(open: &[Milestone], to: &str) -> Result<String> {
+    let to = to.trim();
+    if to.eq_ignore_ascii_case("backlog") {
+        return match open.iter().find(|m| m.title == "Backlog") {
+            Some(m) => Ok(m.title.clone()),
+            None => bail!(text::waves_no_backlog()),
+        };
+    }
+    let number = to.parse().ok().or_else(|| wave_number(to));
+    match open
+        .iter()
+        .find(|m| number.is_some() && wave_number(&m.title) == number)
+    {
+        Some(m) => Ok(m.title.clone()),
+        None => bail!(text::waves_move_target(to)),
+    }
+}
+
+/// The numbers of the items that a session of `repo` (`OWNER/REPO`)
+/// claims, in `who` of riff-server, in order.
+pub fn claimed(who: &[SessionInfo], repo: &str) -> Vec<u64> {
+    let mut items: Vec<u64> = who
+        .iter()
+        .filter(|s| s.uri.place().repo_text() == repo)
+        .flat_map(|s| s.uri.claims().iter())
+        .filter_map(|c| riff_client::waves::issue_of(c))
+        .collect();
+    items.sort_unstable();
+    items.dedup();
+    items
+}
+
+/// Puts the `items` in the milestone `title` with `gh issue edit`. It
+/// refuses an item with a claim, and then it calls nothing.
+fn put(gh: &Gh, items: &[u64], title: &str, claimed: &[u64]) -> Result<()> {
+    let held: Vec<u64> = items
+        .iter()
+        .copied()
+        .filter(|n| claimed.contains(n))
+        .collect();
+    if !held.is_empty() {
+        bail!(text::waves_claimed(&held));
+    }
+    for n in items {
+        gh.run(
+            &["issue", "edit", &n.to_string(), "--milestone", title],
+            None,
+        )?;
+    }
+    Ok(())
+}
+
+/// Moves the `items` to `to`: a wave by its number, or `Backlog`
+/// (01M5924014WN63RCHJWGZS4AFZ). `claimed` holds the items with a claim.
+/// It refuses an item with a claim, and a target that no open milestone
+/// has. It returns the title of the target.
+pub fn move_items(gh: &Gh, items: &[u64], to: &str, claimed: &[u64]) -> Result<String> {
+    let title = target(&open(gh)?, to)?;
+    put(gh, items, &title, claimed)?;
+    Ok(title)
+}
+
+/// Moves the open items of the open wave `number` to the Backlog, then
+/// ends the wave (01M592403Q4TNZEDNR76C7NK9M). It refuses when an open
+/// item has a claim, and then it moves and closes nothing. It returns
+/// the ended wave and the moved items.
+pub fn end_moving_open(gh: &Gh, number: u64, claimed: &[u64]) -> Result<(Milestone, Vec<u64>)> {
+    let milestones = open(gh)?;
+    let Some(wave) = milestones
+        .iter()
+        .find(|m| wave_number(&m.title) == Some(number))
+    else {
+        bail!(text::waves_not_open(number));
+    };
+    let backlog = target(&milestones, "Backlog")?;
+    #[derive(Deserialize)]
+    struct Item {
+        number: u64,
+    }
+    let open_items: Vec<Item> = gh.json(&[
+        "api",
+        &format!(
+            "repos/{{owner}}/{{repo}}/issues?milestone={}&state=open&per_page=100",
+            wave.number
+        ),
+    ])?;
+    let moved: Vec<u64> = open_items.into_iter().map(|i| i.number).collect();
+    put(gh, &moved, &backlog, claimed)?;
+    let ended = milestone(
+        gh,
+        &[
+            "api",
+            "-X",
+            "PATCH",
+            &format!("repos/{{owner}}/{{repo}}/milestones/{}", wave.number),
+            "-f",
+            "state=closed",
+        ],
+    )?;
+    Ok((ended, moved))
 }
 
 /// The full title of the wave `wave`, from `milestones`: the title of
@@ -410,6 +533,8 @@ mod tests {
              'api -X POST '*) printf '%s' '{{\"number\":34,\"title\":\"Wave 29\",\"open_issues\":0,\"closed_issues\":0}}' ;;\n\
              'api -X PATCH '*'-f title='*) printf '%s' '{{\"number\":33,\"title\":\"Wave 28: Fixes\",\"open_issues\":2,\"closed_issues\":0}}' ;;\n\
              'api -X PATCH '*) printf '%s' '{{\"number\":32,\"title\":\"Wave 27: Cloud\",\"open_issues\":0,\"closed_issues\":9}}' ;;\n\
+             'api repos/{{owner}}/{{repo}}/issues?milestone=33&state=open&per_page=100') printf '%s' '[{{\"number\":71}},{{\"number\":72}}]' ;;\n\
+             'issue edit '*) ;;\n\
              *) exit 1 ;;\nesac\n",
             OPEN.replace('\n', ""),
             ALL.replace('\n', "")
@@ -503,6 +628,98 @@ mod tests {
         assert_eq!(calls(dir.path()), [LIST]);
     }
 
+    #[test]
+    fn move_puts_each_item_in_the_wave_by_its_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let title = move_items(&fake_gh(dir.path()), &[71, 72], "27", &[]).unwrap();
+        assert_eq!(title, "Wave 27: Cloud");
+        assert_eq!(
+            calls(dir.path()),
+            [
+                LIST,
+                "issue edit 71 --milestone Wave 27: Cloud",
+                "issue edit 72 --milestone Wave 27: Cloud"
+            ]
+        );
+    }
+
+    #[test]
+    fn move_puts_the_items_in_the_backlog() {
+        let dir = tempfile::tempdir().unwrap();
+        let title = move_items(&fake_gh(dir.path()), &[71], "Backlog", &[]).unwrap();
+        assert_eq!(title, "Backlog");
+        assert_eq!(
+            calls(dir.path()),
+            [LIST, "issue edit 71 --milestone Backlog"]
+        );
+    }
+
+    #[test]
+    fn move_refuses_a_wave_that_is_not_open_and_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = move_items(&fake_gh(dir.path()), &[71], "26", &[]).unwrap_err();
+        assert_eq!(error.to_string(), text::waves_move_target("26"));
+        assert_eq!(calls(dir.path()), [LIST]);
+    }
+
+    #[test]
+    fn move_refuses_an_item_with_a_claim_and_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = move_items(&fake_gh(dir.path()), &[71, 72], "27", &[72]).unwrap_err();
+        assert_eq!(error.to_string(), text::waves_claimed(&[72]));
+        assert_eq!(calls(dir.path()), [LIST]);
+    }
+
+    #[test]
+    fn claimed_reads_the_claims_of_the_repository_only() {
+        let session = |uri: &str| -> SessionInfo {
+            serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap()
+        };
+        let who = vec![
+            session("riff://mike@thelio/o/r?session=a1&claim=issue-12"),
+            session("riff://mike@thelio/o/r?session=a2&claim=verify-issue-9"),
+            session("riff://mike@thelio/o/s?session=a3&claim=issue-5"),
+        ];
+        assert_eq!(claimed(&who, "o/r"), [9, 12]);
+    }
+
+    #[test]
+    fn end_moving_moves_the_open_items_to_the_backlog_then_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ended, moved) = end_moving_open(&fake_gh(dir.path()), 28, &[]).unwrap();
+        assert_eq!(ended.title, "Wave 27: Cloud");
+        assert_eq!(moved, [71, 72]);
+        assert_eq!(
+            calls(dir.path()),
+            [
+                LIST,
+                "api repos/{owner}/{repo}/issues?milestone=33&state=open&per_page=100",
+                "issue edit 71 --milestone Backlog",
+                "issue edit 72 --milestone Backlog",
+                "api -X PATCH repos/{owner}/{repo}/milestones/33 -f state=closed"
+            ]
+        );
+    }
+
+    #[test]
+    fn end_moving_refuses_an_item_with_a_claim_and_closes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = end_moving_open(&fake_gh(dir.path()), 28, &[71]).unwrap_err();
+        assert_eq!(error.to_string(), text::waves_claimed(&[71]));
+        assert!(
+            !calls(dir.path())
+                .iter()
+                .any(|c| c.contains("PATCH") || c.starts_with("issue edit"))
+        );
+    }
+
+    #[test]
+    fn end_moving_refuses_a_number_that_no_open_wave_has() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = end_moving_open(&fake_gh(dir.path()), 26, &[]).unwrap_err();
+        assert_eq!(error.to_string(), text::waves_not_open(26));
+        assert_eq!(calls(dir.path()), [LIST]);
+    }
     #[test]
     fn rename_patches_the_title_of_the_milestone_by_its_own_number() {
         let dir = tempfile::tempdir().unwrap();

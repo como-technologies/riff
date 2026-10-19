@@ -178,6 +178,24 @@ wave that has an open item or an open pull request:
 riff wave end 6
 ```
 
+### Move items to another wave
+
+Give the numbers of the issues, and the wave to move them to: its
+number, or `Backlog`. riff refuses an item that a session claims, and
+a wave that is not open. Then it moves nothing:
+
+```sh
+riff wave move 71 72 --to 7
+riff wave move 73 --to Backlog
+```
+
+To end a wave that still has open items, move them to the Backlog and
+end the wave in one step:
+
+```sh
+riff wave end 6 --move-open-to-backlog
+```
+
 The lead does these steps for you when it plans the waves. They are
 `riff` commands, so the permission rule `Bash(riff *)` covers them.
 
@@ -188,12 +206,6 @@ it. `"Wave 6"` does not find the wave `Wave 6: Cloud`:
 
 ```sh
 gh issue list --milestone "Wave 6: Cloud"
-```
-
-### Move an item to the backlog
-
-```sh
-gh issue edit 71 --milestone Backlog
 ```
 
 ### See the items in the backlog

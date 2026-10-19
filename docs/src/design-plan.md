@@ -148,7 +148,7 @@ sequenceDiagram
 - With no milestone `Wave N`, the items of the plan are the open
   issues with no milestone.
 - The lead moves an item to an open wave with
-  `gh issue edit N --milestone "Wave M"`.
+  `riff wave move N --to M`.
 
 ## 2. When an item is done
 

@@ -84,6 +84,10 @@
 //! | `Bash({HOME}/.cache/riff/check/target/static/release/riff *)` | allow | worker | user | the same riff, by its full path |
 //! | `Bash(/opt/riff/riff relay watch)` | allow | lead | session | the wakes of the lead in a container |
 //! | `Bash(/opt/riff/riff wave *)` | allow | lead | session | the steps of the waves of the lead in a container |
+//! | `Bash(riff wave move *)` | allow | lead | user | move items to another wave or to the Backlog (01M592406KTHSXHTWQWA3RN6Q2) |
+//! | `Bash(riff wave end *)` | allow | lead | user | end a wave, also with --move-open-to-backlog |
+//! | `Bash(/opt/riff/riff wave move *)` | allow | lead | session | the same, in a container |
+//! | `Bash(/opt/riff/riff wave end *)` | allow | lead | session | the same, in a container |
 //! | `Bash(riff release cut *)` | allow | lead | user | the release pull request (01M58KMMF9WMH39ZMD0MKGRVZB) |
 //! | `Bash(riff release publish *)` | allow | lead | user | the tag and the GitHub release |
 //! | `Bash(riff release status)` | allow | lead | user | the state of the release cycle |
@@ -101,7 +105,7 @@
 //! | `Bash(gh issue list *)` | allow | lead, worker, verifier | user, session | find the items of a wave |
 //! | `Bash(gh issue create *)` | allow | lead, worker, verifier | user | file an issue |
 //! | `Bash(gh issue comment *)` | allow | worker, verifier | user | write the state on an issue |
-//! | `Bash(gh issue edit *)` | allow | lead, worker, verifier | user, session | put an item in a wave, write its `Done when:` line |
+//! | `Bash(gh issue edit *)` | allow | lead, worker, verifier | user, session | write the `Done when:` line of an item |
 //! | `Bash(git push * {BRANCH})` | deny | lead, worker, verifier | project | never push to the default branch |
 //! | `Bash(git push * {BRANCH} *)` | deny | lead, worker, verifier | project | the same |
 //! | `Bash(git push *:{BRANCH})` | deny | lead, worker, verifier | project | the same |
@@ -343,6 +347,10 @@ pub const TABLE: &[Row] = {
         ),
         allow("Bash(/opt/riff/riff relay watch)", &[Lead], &[Session]),
         allow("Bash(/opt/riff/riff wave *)", &[Lead], &[Session]),
+        allow("Bash(riff wave move *)", &[Lead], &[User]),
+        allow("Bash(riff wave end *)", &[Lead], &[User]),
+        allow("Bash(/opt/riff/riff wave move *)", &[Lead], &[Session]),
+        allow("Bash(/opt/riff/riff wave end *)", &[Lead], &[Session]),
         allow("Bash(riff release cut *)", &[Lead], &[User]),
         allow("Bash(riff release publish *)", &[Lead], &[User]),
         allow("Bash(riff release status)", &[Lead], &[User]),
@@ -1567,6 +1575,41 @@ mod tests {
         }
     }
 
+    /// 01M592406KTHSXHTWQWA3RN6Q2: `riff init` writes a rule for
+    /// `riff wave move` and `riff wave end` of the lead, in a terminal and
+    /// in a container.
+    #[test]
+    fn riff_init_writes_the_wave_move_and_end_rules_of_the_lead() {
+        let user = user_rules(Some(Path::new("/home/mike")));
+        for (rule, step) in [
+            (
+                "Bash(riff wave move *)",
+                "riff wave move 71 72 --to Backlog",
+            ),
+            (
+                "Bash(riff wave end *)",
+                "riff wave end 6 --move-open-to-backlog",
+            ),
+        ] {
+            assert!(user.allow.iter().any(|r| r == rule), "{rule}");
+            assert!(user.allow.iter().any(|r| matches(r, step)), "{step}");
+        }
+        let session = session_rules();
+        for (rule, step) in [
+            (
+                "Bash(/opt/riff/riff wave move *)",
+                "/opt/riff/riff wave move 71 --to 7",
+            ),
+            (
+                "Bash(/opt/riff/riff wave end *)",
+                "/opt/riff/riff wave end 6 --move-open-to-backlog",
+            ),
+        ] {
+            assert!(session.allow.iter().any(|r| r == rule), "{rule}");
+            assert!(session.allow.iter().any(|r| matches(r, step)), "{step}");
+        }
+    }
+
     /// 01M58KMMF9WMH39ZMD0MKGRVZB: `riff init` writes a rule for each step
     /// of the lead in the release cycle, and no rule that names `approve`.
     /// The guard of riff refuses `approve` in each session.
@@ -1851,6 +1894,12 @@ mod tests {
                 for wave in ["list", "make", "rename", "end"] {
                     let step = format!("/opt/riff/riff wave {wave}");
                     assert!(steps.contains(&step), "{steps:#?}");
+                }
+                for step in [
+                    "/opt/riff/riff wave move ITEM --to WAVE",
+                    "/opt/riff/riff wave end NUMBER --move-open-to-backlog",
+                ] {
+                    assert!(steps.contains(&step.to_owned()), "{steps:#?}");
                 }
             }
             for step in &steps {

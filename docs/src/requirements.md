@@ -586,6 +586,21 @@
   milestone of the wave with the number N. riff refuses when no open
   wave has the number, and when the milestone has an open issue or an
   open pull request. Then it closes nothing.
+- **01M5924014WN63RCHJWGZS4AFZ** `riff wave move ITEM... --to WAVE`
+  puts each issue ITEM in the open wave with the number WAVE, or in the
+  open milestone Backlog when WAVE is `Backlog`. riff makes the `gh`
+  call itself. It refuses an item that a session claims on riff-server,
+  and a target that no open milestone has. Then it moves nothing.
+- **01M592403Q4TNZEDNR76C7NK9M**
+  `riff wave end N --move-open-to-backlog`
+  moves each open issue and open pull request of the wave N to the
+  Backlog, then ends the wave. It refuses an item that a session claims,
+  and then it moves and ends nothing. Without the flag, `riff wave end`
+  refuses a wave with an open item.
+- **01M592406KTHSXHTWQWA3RN6Q2** `riff init` writes the allow rules of
+  the lead for `riff wave move` and `riff wave end`, in a terminal and
+  in a container. `text::MCP_LEAD` names these commands for the steps of
+  the waves, and not `gh issue edit --milestone`.
 - **01M588K2M7G0CV3RNJ4N074FTG** `--wave WAVE` of `riff usage` and
   `riff audit` takes the number of the wave, `N` or `Wave N`, or a full
   title. riff finds the milestone in the open and the closed milestones
