@@ -5972,6 +5972,9 @@ part when they merge.
   than 180 seconds count as none.
 - **01M57D3F7FXTPZB3M72Z1DQ1T7** `riff who` ends with the part `Hosts`:
   the facts of the daemon of each host, with their age.
+- **01M5923PW9YW5S58RQG5Y532RS** The `who` tool of a session ends with
+  the same part `Hosts` as `riff who`, in plain text.
+
 - **01M57D3F9SWMKP22WNRPRY3X5T** `riff top` shows the facts of the
   daemon of a host under the row of that host, with the container
   sessions of that daemon. A host with facts gets no `no numbers`.

@@ -1114,7 +1114,7 @@ riff wave stop --host HOST
   your user.
 - When riff says that no daemon serves the repository on HOST, ask
   your user to run `riff daemon host` once on HOST, in the main clone.
-- `riff who` ends with `Hosts`: the facts of the daemon of each host.
+- `riff who` and the `who` tool end with `Hosts`: the facts of the daemon of each host.
   They are the build, the limit, the sessions, the waves, the load,
   the memory, the disk, podman, the image and the sign-ins. Read them
   before you act on a host.
