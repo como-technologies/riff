@@ -486,30 +486,28 @@ line `riff: cannot tell the lead`.
 
 #### Each step of an update
 
-`riff init` does more than the binary: it adds the rules of Claude
-Code, installs the unit of the riff daemon, and pulls the session
-image. A release can change each of them. Your yes to the update by
-itself is your yes to each step. So the riff daemon of the new release
-does each step that needs no person, at its start:
+`riff init` does more than the binary: it installs the unit of the riff
+daemon, and pulls the session image. A release can change each of
+them. Your yes to the update by itself is your yes to each step. So the
+riff daemon of the new release does each step that needs no person, at
+its start:
 
 ```mermaid
 flowchart TD
     B["the update by itself installs the new riff"] --> D["the riff daemon starts again on it"]
     D --> G{"update.auto on, and its riff<br/>is a release on GitHub?"}
     G -- "no" --> N["it changes nothing"]
-    G -- "yes" --> R["1. the rules of Claude Code"]
-    R --> U["2. the unit of the daemon"]
-    U --> I["3. the session image of each wave"]
-    I --> P["4. the checks of the machine:<br/>it only tells you"]
+    G -- "yes" --> U["1. the unit of the daemon"]
+    U --> I["2. the session image of each wave"]
+    I --> P["3. the checks of the machine:<br/>it only tells you"]
     N --> P
 ```
 
 | Step | In step when | The riff daemon |
 |---|---|---|
-| 1. The rules of Claude Code | your user settings have each rule of riff | adds the missing rules (see [Keep the rules in step with each release](start-a-riff.md#keep-the-rules-in-step-with-each-release)) |
-| 2. The unit of the daemon | `riff.service` is the text that the new riff writes for it, with your riff and your variables | writes it again, and starts again on it when it runs no session |
-| 3. The session image of each wave | podman has the merged pin: the image that `riff.toml` on the default branch of `origin` pins (see [Only a merged pin counts](development.md#only-a-merged-pin-counts)) | pulls it |
-| 4. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
+| 1. The unit of the daemon | `riff.service` is the text that the new riff writes for it, with your riff and your variables | writes it again, and starts again on it when it runs no session |
+| 2. The session image of each wave | podman has the merged pin: the image that `riff.toml` on the default branch of `origin` pins (see [Only a merged pin counts](development.md#only-a-merged-pin-counts)) | pulls it |
+| 3. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
 
 - Only a release does a step: a `riff` whose SHA-256 is in
   `SHA256SUMS` of the GitHub release of its version. A check build or
@@ -555,7 +553,6 @@ riff update --check
 ```text
 update.auto is on, and this riff is the release v1.6.0: at its next start, the riff daemon does each step that is not in step and needs no person
 in step  the riff binary: it is the release v1.6.0
-in step  the rules of Claude Code: /home/mike/.claude/settings.json has each permission rule of riff
 not in step  the unit of the daemon: the unit file is not the text that this riff writes for it. Fix: riff daemon install
 in step  the session image of como-technologies/riff: ghcr.io/como-technologies/riff-session@sha256:…
 in step  podman: podman version 5.7.0

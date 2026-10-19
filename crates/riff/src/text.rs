@@ -3823,7 +3823,7 @@ pub fn not_release_read(tag: &str, error: &str) -> String {
     )
 }
 
-/// Why a riff is not a release for the sync of the rules: the variable
+/// Why a riff is not a release for the steps of an update: the variable
 /// `RIFF_RELEASES` names the place `place` of the release files, and the
 /// sync reads `SHA256SUMS` only from the GitHub release
 /// (01M51QARV45MGEKC6KGWX1N5NS).
@@ -3842,77 +3842,6 @@ pub fn not_release_releases(place: &str) -> String {
         crate::release::SUMS
     )
 }
-
-/// The log line of the riff daemon `build` for each `rule` that its
-/// sync added to the user settings at `path` (01M51M3ZPAEMJ64266QSJBNQ46).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::sync_added_rule("1.5.0 (abc)", "/h/s.json".as_ref(), "allow", "Bash(gh pr view *)"),
-///     "the sync of the rules of riff 1.5.0 (abc) added the allow rule Bash(gh pr view *) to /h/s.json"
-/// );
-/// ```
-pub fn sync_added_rule(build: &str, path: &Path, kind: &str, rule: &str) -> String {
-    format!(
-        "the sync of the rules of riff {build} added the {kind} rule {rule} to {}",
-        path.display()
-    )
-}
-
-/// The line of a sync of the rules by the riff daemon `build`, with the
-/// user settings at `path` (01M51M3ZPAEMJ64266QSJBNQ46). The daemon
-/// logs it, and `riff init` shows it.
-///
-/// ```
-/// use riff::permissions::Rules;
-/// use riff::rule_sync::Synced;
-///
-/// let path = std::path::Path::new("/h/s.json");
-/// let line = |s: &Synced| riff::text::rules_synced("1.5.0 (abc)", path, s);
-/// assert_eq!(
-///     line(&Synced::Off),
-///     "riff 1.5.0 (abc) changed no rule: update.auto is off"
-/// );
-/// assert_eq!(
-///     line(&Synced::NotRelease("it is a dev build".into())),
-///     "riff 1.5.0 (abc) changed no rule: it is not a release: it is a dev build"
-/// );
-/// assert_eq!(line(&Synced::InStep), "riff 1.5.0 (abc) found each rule in /h/s.json");
-/// let added = Rules { allow: vec!["A".into(), "B".into()], deny: vec![] };
-/// assert_eq!(
-///     line(&Synced::Added(added)),
-///     "riff 1.5.0 (abc) added 2 rules to /h/s.json. Each worker starts again at its next clear."
-/// );
-/// ```
-pub fn rules_synced(build: &str, path: &Path, synced: &crate::rule_sync::Synced) -> String {
-    use crate::rule_sync::Synced;
-    match synced {
-        Synced::Off => format!("riff {build} changed no rule: update.auto is off"),
-        Synced::NotRelease(why) => {
-            format!("riff {build} changed no rule: it is not a release: {why}")
-        }
-        Synced::InStep => format!("riff {build} found each rule in {}", path.display()),
-        Synced::Added(rules) => {
-            let count = rules.len();
-            let s = if count == 1 { "" } else { "s" };
-            format!(
-                "riff {build} added {count} rule{s} to {}. Each worker starts again at its next \
-                 clear.",
-                path.display()
-            )
-        }
-    }
-}
-
-/// The line of a sync of the rules by the riff daemon `build` that
-/// failed with `error` (01M51M3ZPAEMJ64266QSJBNQ46).
-pub fn rules_sync_failed(build: &str, error: &str) -> String {
-    format!("riff {build} cannot sync the rules: {error}")
-}
-
-/// The fix of the step of the rules of Claude Code
-/// (01M51QFPYHK0916C5ZN2B55BR0).
-pub const STEP_FIX_RULES: &str = "riff init --yes";
 
 /// The name of the step of the riff binary (01M51QFPYHK0916C5ZN2B55BR0).
 pub const STEP_BINARY: &str = "the riff binary";
@@ -6042,122 +5971,6 @@ pub fn init_riff_not_static(path: &Path, why: &str) -> String {
 /// The fix of a riff binary that is not static.
 pub const INIT_FIX_RIFF: &str = "run riff update. It installs the static riff and riff-server of \
      the release, so riff relay starts in each session image";
-
-/// The name of the check of the permission rules in the user settings
-/// of Claude Code (01M5084K09Z2S7N57315CX2R0F).
-pub const INIT_RULES: &str = "the rules of Claude Code";
-
-/// riff cannot find the user settings of Claude Code.
-pub const INIT_NO_SETTINGS: &str = "riff cannot find the user settings of Claude Code";
-
-/// The fix when riff cannot find the user settings of Claude Code.
-pub const INIT_FIX_SETTINGS: &str = "set HOME or CLAUDE_CONFIG_DIR, then run riff init again";
-
-/// The user settings at `path` have each permission rule of riff.
-pub fn init_rules_there(path: &Path) -> String {
-    format!("{} has each permission rule of riff", path.display())
-}
-
-/// The user settings at `path` lack `count` permission rules of riff.
-///
-/// ```
-/// let found = riff::text::init_rules_missing("/h/.claude/settings.json".as_ref(), 1);
-/// assert_eq!(found, "/h/.claude/settings.json lacks 1 permission rule of riff");
-/// ```
-pub fn init_rules_missing(path: &Path, count: usize) -> String {
-    let s = if count == 1 { "" } else { "s" };
-    format!(
-        "{} lacks {count} permission rule{s} of riff",
-        path.display()
-    )
-}
-
-/// The fix of missing permission rules.
-pub const INIT_FIX_RULES: &str = "answer y to the question of riff init, or run riff init --yes";
-
-/// The missing permission rules of riff in the user settings at `path`,
-/// one line for each (01M5084K09Z2S7N57315CX2R0F).
-///
-/// ```
-/// use riff::permissions::Rules;
-///
-/// let missing = Rules { allow: vec!["Bash(gh issue list *)".into()], deny: vec![] };
-/// let text = riff::text::init_rules("/h/s.json".as_ref(), &missing);
-/// assert!(text.starts_with("These permission rules of riff are not in /h/s.json."), "{text}");
-/// assert!(text.ends_with(":\n  allow Bash(gh issue list *)"), "{text}");
-/// ```
-pub fn init_rules(path: &Path, missing: &Rules) -> String {
-    format!(
-        "These permission rules of riff are not in {}. Your sessions of riff need them, so \
-         that the auto mode check of Claude Code does not refuse a step of riff:{}",
-        path.display(),
-        rule_lines(missing)
-    )
-}
-
-/// The one question of `riff init` about the rules at `path`.
-pub fn init_ask_rules(path: &Path) -> String {
-    format!("Add them to {}? [y/N] ", path.display())
-}
-
-/// `riff init` added `count` rules to the user settings at `path`.
-///
-/// ```
-/// let added = riff::text::init_rules_added("/h/s.json".as_ref(), 2);
-/// assert_eq!(added, "riff added 2 permission rules to /h/s.json. Start Claude Code again to use them.");
-/// ```
-pub fn init_rules_added(path: &Path, count: usize) -> String {
-    let s = if count == 1 { "" } else { "s" };
-    format!(
-        "riff added {count} permission rule{s} to {}. Start Claude Code again to use them.",
-        path.display()
-    )
-}
-
-/// The line of `riff init` about the sync of the rules by the riff
-/// daemon (01M51M3ZPAEMJ64266QSJBNQ46).
-///
-/// ```
-/// use riff::rule_sync::State;
-///
-/// let off = riff::text::init_sync(&State::default());
-/// assert_eq!(
-///     off,
-///     "The sync of the rules is off: update.auto is off. To keep the rules in step with each \
-///      release, run: riff update --auto on"
-/// );
-/// let on = riff::text::init_sync(&State { auto: true, last: None });
-/// assert!(on.starts_with("The sync of the rules is on: at each start, the riff daemon of a \
-///     release adds each rule that is missing."), "{on}");
-/// assert!(on.ends_with("It syncs at its next start."), "{on}");
-/// let last = riff::text::init_sync(&State { auto: true, last: Some("riff 1.5.0 found each rule in /h/s.json".into()) });
-/// assert!(last.ends_with("Its last sync: riff 1.5.0 found each rule in /h/s.json."), "{last}");
-/// ```
-pub fn init_sync(sync: &crate::rule_sync::State) -> String {
-    if !sync.auto {
-        return "The sync of the rules is off: update.auto is off. To keep the rules in step \
-                with each release, run: riff update --auto on"
-            .to_owned();
-    }
-    let last = match &sync.last {
-        Some(line) => format!("Its last sync: {}.", line.trim_end_matches('.')),
-        None => "It syncs at its next start.".to_owned(),
-    };
-    format!(
-        "The sync of the rules is on: at each start, the riff daemon of a release adds each \
-         rule that is missing. {last}"
-    )
-}
-
-/// The person did not answer yes: `riff init` kept the user settings at
-/// `path` as they are.
-pub fn init_rules_kept(path: &Path) -> String {
-    format!("riff changed nothing in {}.", path.display())
-}
-
-/// `riff init` asks its question only in a terminal.
-pub const INIT_NO_TERMINAL: &str =
-    "riff init asks its question only in a terminal. To add the rules, run: riff init --yes";
 
 /// The allow rules of Claude Code that are wider than the steps of riff,
 /// with their files (01M51JCW04FAHZDQ144KDNCCPX).

@@ -8,10 +8,7 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the rules of Claude Code,<br/>the riff binary"] --> Q{"rules<br/>missing?"}
-//!     Q -- "one question:<br/>y, or --yes" --> W["add them to<br/>the user settings"]
-//!     Q -- "no" --> X{"wide<br/>rules?"}
-//!     W --> X
+//!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the riff binary"] --> X{"wide<br/>rules?"}
 //!     X -- "one question:<br/>y in a terminal" --> V["remove them"]
 //!     X -- "no" --> E{"each check<br/>passed?"}
 //!     V --> E
@@ -24,20 +21,7 @@
 //! 1. The checks ([`checks`]). riff reads the [`Facts`] of the machine,
 //!    and prints one line for each check: `pass`, or `fail` with the
 //!    fix (01M4ZJN6TEWCYCB39XTH6BBD9H).
-//! 2. The rules. When the user settings of Claude Code lack a permission
-//!    rule of riff ([`crate::permissions::user_rules`]), riff names each
-//!    rule and asks one question (01M5084K09Z2S7N57315CX2R0F). `--yes`
-//!    answers yes ([`Mode`]). On a yes, riff adds the rules
-//!    ([`crate::permissions::add`]), and that check passes. It marks the
-//!    add, so each worker starts again at its next clear
-//!    (01M51M3ZRKQZ8KDVRGJR3XAY00). Then riff shows whether the riff
-//!    daemon keeps the rules in step with each release, and the line of
-//!    its last sync ([`crate::rule_sync`], 01M51M3ZPAEMJ64266QSJBNQ46).
-//!    riff asks also
-//!    when another check failed (01M5084K2Q3HH4BK7DJMYQD7C1). With no
-//!    terminal and no `--yes`, it asks nothing. `--check` names the rules
-//!    and asks nothing.
-//! 3. The wide rules ([`Wide`]). When the user settings, the project
+//! 2. The wide rules ([`Wide`]). When the user settings, the project
 //!    settings or the local settings of Claude Code have an allow rule
 //!    that is wider than the steps of riff ([`crate::permissions::wide`]),
 //!    riff names each rule with its file (01M51JCW04FAHZDQ144KDNCCPX).
@@ -45,13 +29,13 @@
 //!    terminal removes them ([`crate::permissions::remove`],
 //!    01M51JCW2EKF8H8QFQYSVRSPET). `--yes` and `--check` ask nothing and
 //!    remove nothing. A wide rule fails no check.
-//! 4. When a check still fails, riff installs nothing, pulls nothing, and
+//! 3. When a check still fails, riff installs nothing, pulls nothing, and
 //!    exits with 1. `--check` stops here (01M4ZJN6WR0JJ891R9JMQNPKGD).
-//! 5. The daemon. When a riff daemon answers, riff keeps it: it does
+//! 4. The daemon. When a riff daemon answers, riff keeps it: it does
 //!    not start it again. When no daemon answers, riff installs it as
 //!    `riff daemon install` does ([`crate::daemon::install`],
 //!    01M4ZJN6Z1DGD43CKZ19QPN2NK).
-//! 6. The image. riff asks the daemon for the session image that
+//! 5. The image. riff asks the daemon for the session image that
 //!    `riff.toml` pins. The daemon pulls it when podman does not have
 //!    it (01M4ZJN718EF1PC9YY9GFD0EJ2).
 //!
@@ -65,7 +49,6 @@
 //! | `/etc/subgid` | the same | the same |
 //! | cgroup v2 | `/sys/fs/cgroup/cgroup.controllers`, and `cgroup.controllers` of `user@UID.service` | the file is there, and the controllers of the user have `cpu` and `memory` |
 //! | the session image | `riff.toml` of the repository of the current folder ([`crate::session_image::of_folder`]) | it pins an image by its digest |
-//! | the rules of Claude Code | the user settings of Claude Code: `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json` ([`Settings`]) | they have each rule of [`crate::permissions::user_rules`] |
 //! | the riff binary | the ELF of the riff of this process ([`crate::release::check_file`]) | it has no interpreter, so `riff relay` starts in each session image. The fix is `riff update` (01M510NW68CTZBHHW7ZYFV7Q3X) |
 //!
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
@@ -76,8 +59,7 @@
 //! containers with `cpu.max` (01M4Z60B7MW963MBQAPN2CJEQZ).
 //!
 //! ```
-//! use riff::first_run::{Facts, Settings, checks};
-//! use riff::permissions::Rules;
+//! use riff::first_run::{Facts, checks};
 //!
 //! let mut facts = Facts {
 //!     podman: Ok("podman version 5.7.0".into()),
@@ -89,14 +71,8 @@
 //!     cgroup: Some("cpuset cpu io memory pids\n".into()),
 //!     user_cgroup: Some("cpu memory pids\n".into()),
 //!     image: Ok(format!("ghcr.io/o/i@sha256:{}", "0".repeat(64))),
-//!     settings: Ok(Settings {
-//!         path: "/home/mike/.claude/settings.json".into(),
-//!         missing: Rules::default(),
-//!     }),
 //!     wide: vec![],
 //!     riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
-//!     local: None,
-//!     sync: Default::default(),
 //! };
 //! assert!(checks(&facts).iter().all(|c| c.passed()));
 //!
@@ -199,68 +175,12 @@ pub struct Facts {
     pub user_cgroup: Option<String>,
     /// The session image that `riff.toml` pins, or why riff has none.
     pub image: Result<String, String>,
-    /// The user settings of Claude Code, or why riff cannot find them.
-    pub settings: Result<Settings, String>,
     /// The settings files of Claude Code with allow rules that are wider
     /// than the steps of riff.
     pub wide: Vec<Wide>,
     /// What riff found of its own binary: static, or why it is not
     /// ([`crate::release::check_file`]).
     pub riff: Result<String, String>,
-    /// The local files of riff ([`crate::local::dir`]). After an add of
-    /// rules, riff marks it there, so each worker starts again at its
-    /// next clear (01M51M3ZRKQZ8KDVRGJR3XAY00).
-    pub local: Option<PathBuf>,
-    /// The sync of the rules by the riff daemon
-    /// (01M51M3ZPAEMJ64266QSJBNQ46).
-    pub sync: crate::rule_sync::State,
-}
-
-/// The user settings of Claude Code, and the permission rules of riff
-/// that they lack (01M5084K09Z2S7N57315CX2R0F).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Settings {
-    /// The file: `$CLAUDE_CONFIG_DIR/settings.json`, else
-    /// `~/.claude/settings.json` ([`crate::claude_settings::user_settings`]).
-    pub path: PathBuf,
-    /// The rules of riff that the file does not have.
-    pub missing: Rules,
-}
-
-impl Settings {
-    /// The settings at `path`, with each rule of `rules` that they lack.
-    /// A file that is not there, or that is not JSON, has no rule.
-    ///
-    /// ```
-    /// use riff::first_run::Settings;
-    /// use riff::permissions::Rules;
-    ///
-    /// let dir = tempfile::tempdir()?;
-    /// let path = dir.path().join("settings.json");
-    /// let rules = Rules { allow: vec!["A".into(), "B".into()], deny: vec![] };
-    /// assert_eq!(Settings::of(&path, &rules).missing, rules);
-    /// std::fs::write(&path, r#"{"permissions": {"allow": ["A"]}}"#)?;
-    /// assert_eq!(Settings::of(&path, &rules).missing.allow, ["B"]);
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
-    pub fn of(path: &Path, rules: &Rules) -> Settings {
-        let text = std::fs::read_to_string(path).unwrap_or_default();
-        Settings {
-            path: path.to_owned(),
-            missing: permissions::missing(rules, &[&text]),
-        }
-    }
-
-    /// The user settings of the person who runs riff, with the rules of
-    /// [`permissions::user_rules`].
-    fn here() -> Result<Settings, String> {
-        let path = crate::claude_settings::user_settings()
-            .ok_or_else(|| text::INIT_NO_SETTINGS.to_owned())?;
-        Ok(Settings::of(
-            &path,
-            &permissions::user_rules(home().as_deref()),
-        ))
-    }
 }
 
 /// The home of the person who runs riff.
@@ -397,7 +317,6 @@ impl Facts {
             .unwrap_or_else(|| uid.to_string());
         let uid = uid.as_raw();
         let read = |path: PathBuf| std::fs::read_to_string(path).ok();
-        let local = crate::local::dir();
         let init_dirs: Vec<PathBuf> = match std::env::var_os(INIT_VAR).filter(|v| !v.is_empty()) {
             Some(dir) => vec![PathBuf::from(dir)],
             None => INIT_DIRS.iter().map(PathBuf::from).collect(),
@@ -414,11 +333,8 @@ impl Facts {
             image: crate::session_image::of_folder(dir)
                 .map(|image| image.to_string())
                 .map_err(|e| format!("{e:#}")),
-            settings: Settings::here(),
             wide: Wide::here(dir),
             riff: riff_binary(),
-            sync: crate::rule_sync::State::here(local.as_deref()),
-            local,
         }
     }
 }
@@ -617,7 +533,7 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
         Err(found) => Check::fail(text::INIT_RIFF, found.clone(), text::INIT_FIX_RIFF.into()),
     };
     let mut checks = machine_checks(facts);
-    checks.extend([image, rules_check(&facts.settings), riff]);
+    checks.extend([image, riff]);
     checks
 }
 
@@ -650,68 +566,35 @@ pub fn machine_checks(facts: &Facts) -> Vec<Check> {
     ]
 }
 
-/// The check of the permission rules of riff in the user settings of
-/// Claude Code (01M5084K09Z2S7N57315CX2R0F).
-fn rules_check(settings: &Result<Settings, String>) -> Check {
-    match settings {
-        Ok(s) if s.missing.is_empty() => {
-            Check::pass(text::INIT_RULES, text::init_rules_there(&s.path))
-        }
-        Ok(s) => Check::fail(
-            text::INIT_RULES,
-            text::init_rules_missing(&s.path, s.missing.len()),
-            text::INIT_FIX_RULES.into(),
-        ),
-        Err(why) => Check::fail(
-            text::INIT_RULES,
-            why.clone(),
-            text::INIT_FIX_SETTINGS.into(),
-        ),
-    }
-}
-
 /// What `riff init` may change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     /// `--check`: riff changes nothing and asks nothing.
     Check,
-    /// riff asks one question before it changes the user settings of
-    /// Claude Code.
+    /// riff asks one question before it removes the wide rules.
     Ask,
-    /// `--yes`: riff changes them with no question.
+    /// `--yes`: riff changes what it may, with no question.
     Yes,
 }
 
 /// A question of `riff init`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Question<'a> {
-    /// Add the missing rules of riff to the user settings at this path
-    /// (01M5084K09Z2S7N57315CX2R0F).
-    Add(&'a Path),
+pub enum Question {
     /// Remove the wide allow rules (01M51JCW2EKF8H8QFQYSVRSPET).
     Remove,
 }
 
-impl Question<'_> {
+impl Question {
     /// The question for people, with its `[y/N]`.
     pub fn text(&self) -> String {
         match self {
-            Question::Add(path) => text::init_ask_rules(path),
             Question::Remove => text::INIT_ASK_WIDE.to_owned(),
-        }
-    }
-
-    /// The line when riff has no terminal to ask in, if any.
-    fn no_terminal(&self) -> Option<&'static str> {
-        match self {
-            Question::Add(_) => Some(text::INIT_NO_TERMINAL),
-            Question::Remove => None,
         }
     }
 }
 
 /// Asks the question `question` of `riff init`, when `terminal` is true
-/// (01M5084K09Z2S7N57315CX2R0F, 01M51JCW2EKF8H8QFQYSVRSPET). It writes
+/// (01M51JCW2EKF8H8QFQYSVRSPET). It writes
 /// the question to `out`, and reads one line of `input`: `y` or `yes` is
 /// a yes. Each other answer, the end of the input, and no terminal are a
 /// no.
@@ -719,22 +602,18 @@ impl Question<'_> {
 /// ```
 /// use riff::first_run::{Question, ask};
 ///
-/// let add = Question::Add(std::path::Path::new("/h/s.json"));
 /// let mut out = Vec::new();
-/// assert!(ask(add, true, &mut &b"y\n"[..], &mut out)?);
-/// assert!(ask(add, true, &mut &b"Yes\n"[..], &mut out)?);
-/// assert!(!ask(add, true, &mut &b"\n"[..], &mut out)?);
-/// assert!(!ask(add, true, &mut &b""[..], &mut out)?);
-/// assert_eq!(String::from_utf8(out)?, "Add them to /h/s.json? [y/N] ".repeat(4));
+/// assert!(ask(Question::Remove, true, &mut &b"y\n"[..], &mut out)?);
+/// assert!(ask(Question::Remove, true, &mut &b"Yes\n"[..], &mut out)?);
+/// assert!(!ask(Question::Remove, true, &mut &b"\n"[..], &mut out)?);
+/// assert!(!ask(Question::Remove, true, &mut &b""[..], &mut out)?);
+/// assert!(String::from_utf8(out)?.starts_with("Remove them?"));
 ///
 /// let mut out = Vec::new();
 /// assert!(!ask(Question::Remove, true, &mut &b"n\n"[..], &mut out)?);
 /// assert!(String::from_utf8(out)?.starts_with("Remove them?"));
 ///
 /// // No terminal: no question, and no.
-/// let mut out = Vec::new();
-/// assert!(!ask(add, false, &mut &b"y\n"[..], &mut out)?);
-/// assert!(String::from_utf8(out)?.contains("riff init --yes"));
 /// let mut out = Vec::new();
 /// assert!(!ask(Question::Remove, false, &mut &b"y\n"[..], &mut out)?);
 /// assert!(out.is_empty());
@@ -747,9 +626,6 @@ pub fn ask(
     out: &mut impl Write,
 ) -> Result<bool> {
     if !terminal {
-        if let Some(line) = question.no_terminal() {
-            writeln!(out, "{line}")?;
-        }
         return Ok(false);
     }
     write!(out, "{}", question.text())?;
@@ -761,9 +637,8 @@ pub fn ask(
 
 /// The first run on `facts`, with the daemon in the folder `dir`. It
 /// prints each step, and gives the exit code: 1 when a check failed.
-/// When rules are missing, it names them, and in [`Mode::Ask`] asks
-/// `ask` the question [`Question::Add`]. When settings have wide rules,
-/// it names them, and in [`Mode::Ask`] asks [`Question::Remove`]. With
+/// When settings have wide rules, it names them, and in [`Mode::Ask`]
+/// asks `ask` the question [`Question::Remove`]. With
 /// [`Mode::Check`], it stops after the checks. When no daemon answers,
 /// it installs `unit` with `manager`, and waits up to `wait` for the
 /// daemon.
@@ -777,35 +652,10 @@ pub async fn run(
     wait: Duration,
 ) -> Result<i32> {
     println!("{}", text::INIT_CHECKS);
-    let mut checks = checks(facts);
+    let checks = checks(facts);
     for check in &checks {
         println!("  {}", check.line());
     }
-    if let Ok(settings) = &facts.settings
-        && !settings.missing.is_empty()
-    {
-        println!("{}", text::init_rules(&settings.path, &settings.missing));
-        let yes = match mode {
-            Mode::Check => false,
-            Mode::Ask => ask(Question::Add(&settings.path))?,
-            Mode::Yes => true,
-        };
-        if yes {
-            let added = permissions::add(&settings.path, &settings.missing)?;
-            if !added.is_empty()
-                && let Some(local) = &facts.local
-            {
-                crate::rule_sync::mark_added(local);
-            }
-            println!("{}", text::init_rules_added(&settings.path, added.len()));
-            for check in checks.iter_mut().filter(|c| c.name == text::INIT_RULES) {
-                *check = Check::pass(text::INIT_RULES, text::init_rules_there(&settings.path));
-            }
-        } else if mode == Mode::Ask {
-            println!("{}", text::init_rules_kept(&settings.path));
-        }
-    }
-    println!("{}", text::init_sync(&facts.sync));
     if !facts.wide.is_empty() {
         println!("{}", text::init_wide(&facts.wide));
         if mode == Mode::Ask && ask(Question::Remove)? {
@@ -897,28 +747,8 @@ mod tests {
             cgroup: Some("cpuset cpu io memory hugetlb pids rdma misc\n".into()),
             user_cgroup: Some("cpu memory pids\n".into()),
             image: Ok(IMAGE.into()),
-            settings: Ok(Settings {
-                path: "/home/mike/.claude/settings.json".into(),
-                missing: Rules::default(),
-            }),
             wide: vec![],
             riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
-            local: None,
-            sync: crate::rule_sync::State::default(),
-        }
-    }
-
-    /// The rules that `riff init` writes for the home `/home/mike`.
-    fn user_rules() -> Rules {
-        permissions::user_rules(Some("/home/mike".as_ref()))
-    }
-
-    /// A machine with each part, but with no rule of riff in the user
-    /// settings at `path`.
-    fn no_rules(path: &Path) -> Facts {
-        Facts {
-            settings: Ok(Settings::of(path, &user_rules())),
-            ..ready()
         }
     }
 
@@ -943,8 +773,6 @@ mod tests {
                 "pass  /etc/subgid: 65536 IDs for mike",
                 "pass  cgroup v2: user@1000.service has cpu and memory",
                 &format!("pass  the session image: {IMAGE}"),
-                "pass  the rules of Claude Code: /home/mike/.claude/settings.json has each \
-                 permission rule of riff",
                 "pass  the riff binary: /home/mike/.cargo/bin/riff is static",
             ]
         );
@@ -1032,32 +860,6 @@ mod tests {
                 },
                 "fail  the session image: /tmp is not in a git repository.",
                 "riff.toml",
-            ),
-            (
-                "a missing rule",
-                Facts {
-                    settings: Ok(Settings {
-                        path: "/home/mike/.claude/settings.json".into(),
-                        missing: Rules {
-                            allow: vec!["Bash(gh issue list *)".into()],
-                            deny: vec![],
-                        },
-                    }),
-                    ..ready()
-                },
-                "fail  the rules of Claude Code: /home/mike/.claude/settings.json lacks 1 \
-                 permission rule of riff.",
-                "riff init --yes",
-            ),
-            (
-                "no user settings",
-                Facts {
-                    settings: Err(text::INIT_NO_SETTINGS.into()),
-                    ..ready()
-                },
-                "fail  the rules of Claude Code: riff cannot find the user settings of Claude \
-                 Code.",
-                "CLAUDE_CONFIG_DIR",
             ),
             (
                 "a riff that is not static",
@@ -1242,135 +1044,33 @@ mod tests {
         path
     }
 
-    /// 01M5084K09Z2S7N57315CX2R0F, 01M5084K2Q3HH4BK7DJMYQD7C1: a yes adds
-    /// each missing rule, also when another check failed.
+    /// 01M5084K09Z2S7N57315CX2R0F: `riff init` writes no rule into the user
+    /// settings of Claude Code, with a yes, with `--yes`, with `--check`,
+    /// and with no settings file.
     #[tokio::test]
-    async fn a_yes_adds_the_rules_and_keeps_each_other_key() {
-        let root = tempfile::tempdir().unwrap();
-        let path = settings_in(
-            root.path(),
-            Some(r#"{"model": "opus", "permissions": {"allow": ["Bash(ls)"]}}"#),
-        );
-        // podman fails, so the run stops before the daemon.
-        let facts = Facts {
-            podman: Err(text::INIT_NO_PODMAN.into()),
-            ..no_rules(&path)
-        };
-        assert_eq!(failed(&facts).len(), 2);
-        let manager = Manager::default();
-        let mut asked = None;
-        let question = |q: Question| {
-            let Question::Add(p) = q else {
-                panic!("riff asked: {}", q.text())
-            };
-            asked = Some(p.to_owned());
-            Ok(true)
-        };
-        let dir = dir_in(root.path());
-        let code = run(&facts, Mode::Ask, question, &dir, &manager, &unit(), WAIT)
-            .await
-            .unwrap();
-        assert_eq!(code, 1);
-        assert_eq!(asked.as_deref(), Some(path.as_path()));
-        let value: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(value["model"], "opus");
-        assert_eq!(value["permissions"]["allow"][0], "Bash(ls)");
-        let after = Settings::of(&path, &user_rules());
-        assert!(after.missing.is_empty(), "{after:?}");
-        let now = Facts {
-            settings: Ok(after),
-            ..facts
-        };
-        assert_eq!(failed(&now).len(), 1, "only podman fails now");
-        assert!(manager.0.lock().unwrap().is_empty());
-    }
-
-    /// 01M5084K09Z2S7N57315CX2R0F: `--yes` adds the rules with no
-    /// question. 01M51M3ZRKQZ8KDVRGJR3XAY00: it marks the add for the
-    /// workers.
-    #[tokio::test]
-    async fn yes_adds_the_rules_with_no_question() {
-        let root = tempfile::tempdir().unwrap();
-        let path = settings_in(root.path(), None);
-        let local = root.path().join("local");
-        let facts = Facts {
-            podman: Err(text::INIT_NO_PODMAN.into()),
-            local: Some(local.clone()),
-            ..no_rules(&path)
-        };
-        let dir = dir_in(root.path());
-        let code = run(
-            &facts,
-            Mode::Yes,
-            no_question,
-            &dir,
-            &Manager::default(),
-            &unit(),
-            WAIT,
-        )
-        .await
-        .unwrap();
-        assert_eq!(code, 1);
-        assert!(Settings::of(&path, &user_rules()).missing.is_empty());
-        assert!(crate::local::rules_added(&local).is_some());
-    }
-
-    /// 01M5084K09Z2S7N57315CX2R0F: a no changes nothing, and the check of
-    /// the rules fails, so riff installs no daemon.
-    #[tokio::test]
-    async fn a_no_changes_nothing_and_installs_nothing() {
+    async fn riff_init_writes_no_rule_into_the_user_settings() {
         let root = tempfile::tempdir().unwrap();
         let text = r#"{"model": "opus"}"#;
-        let path = settings_in(root.path(), Some(text));
-        let local = root.path().join("local");
+        let there = settings_in(root.path(), Some(text));
+        let absent = settings_in(&root.path().join("other"), None);
+        // podman fails, so each run stops before the daemon.
         let facts = Facts {
-            local: Some(local.clone()),
-            ..no_rules(&path)
+            podman: Err(text::INIT_NO_PODMAN.into()),
+            ..ready()
         };
-        assert_eq!(failed(&facts).len(), 1);
-        let manager = Manager::default();
-        let dir = dir_in(root.path());
-        let code = run(
-            &facts,
-            Mode::Ask,
-            |_| Ok(false),
-            &dir,
-            &manager,
-            &unit(),
-            WAIT,
-        )
-        .await
-        .unwrap();
-        assert_eq!(code, 1);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
-        assert!(manager.0.lock().unwrap().is_empty());
-        assert!(!dir.exists());
-        assert_eq!(crate::local::rules_added(&local), None);
-    }
-
-    /// 01M5084K09Z2S7N57315CX2R0F: `--check` names the missing rules,
-    /// asks nothing, and fails.
-    #[tokio::test]
-    async fn the_check_only_run_fails_on_missing_rules_and_writes_nothing() {
-        let root = tempfile::tempdir().unwrap();
-        let path = settings_in(root.path(), None);
-        let manager = Manager::default();
-        let dir = dir_in(root.path());
-        let code = run(
-            &no_rules(&path),
-            Mode::Check,
-            no_question,
-            &dir,
-            &manager,
-            &unit(),
-            WAIT,
-        )
-        .await
-        .unwrap();
-        assert_eq!(code, 1);
-        assert!(!path.exists());
-        assert!(manager.0.lock().unwrap().is_empty());
+        for mode in [Mode::Ask, Mode::Yes, Mode::Check] {
+            let manager = Manager::default();
+            let dir = dir_in(root.path());
+            let code = run(&facts, mode, |_| Ok(true), &dir, &manager, &unit(), WAIT)
+                .await
+                .unwrap();
+            assert_eq!(code, 1);
+            assert_eq!(std::fs::read_to_string(&there).unwrap(), text);
+            assert!(!absent.exists());
+            assert!(manager.0.lock().unwrap().is_empty());
+        }
+        let names: Vec<String> = checks(&ready()).into_iter().map(|c| c.name).collect();
+        assert!(!names.iter().any(|n| n.contains("rules")), "{names:?}");
     }
 
     #[tokio::test]

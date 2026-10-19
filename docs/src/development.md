@@ -435,8 +435,7 @@ build. A session in a worktree cannot run git steps in the check
 clone: Claude Code refuses them. `riff build` is one riff command, so
 the session can run it.
 
-Call the riff of the build by its full path. A permission rule of
-`riff init` allows this path:
+Call the riff of the build by its full path:
 
 ```sh
 ~/.cache/riff/check/target/static/release/riff daemon install
@@ -753,8 +752,7 @@ flowchart LR
 1. Use Linux: `riff run` starts nothing on another OS. Install podman,
    and run the first run of riff 3.0 in your clone (see
    [Get ready for riff 3.0](start-a-riff.md#get-ready-for-riff-30)). It
-   checks rootless podman, asks to add the permission rules of riff to
-   your Claude Code settings, starts the riff daemon and gets the
+   checks rootless podman, starts the riff daemon and gets the
    session image. With no daemon, `riff run` stops before the claim:
 
    ```sh
@@ -3602,10 +3600,10 @@ lead at each change of the state. While a deploy waits for a person,
 it reminds the owner in `riff chat` each 4 hours.
 
 The lead may run `riff release cut`, `publish`, `status`, `check`,
-`retry` and `rollback`: `riff init` writes the permission rules of
-Claude Code for them (see
-[Let riff set the permissions of Claude Code](start-a-riff.md#let-riff-set-the-permissions-of-claude-code)).
-It writes no rule for `approve`. `publish`, `check`, `retry` and
+`retry` and `rollback`: the riff daemon gives its session the
+permission rules for `cut` and `status` (see
+[The permission rules of Claude Code](start-a-riff.md#the-permission-rules-of-claude-code)).
+There is no rule for `approve`. `publish`, `check`, `retry` and
 `rollback` refuse a worker, a container session, a session that is not
 the lead, and the lead of a member. `approve` and `cut --skip` refuse
 each agent session.

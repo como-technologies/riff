@@ -97,10 +97,8 @@ riff setup --check
 
 When rules are missing, `riff setup` adds them. Run it again.
 
-`riff setup` writes the rules of one project. `riff init` adds the
-rules of your sessions to your own Claude Code settings, for each
-project: see
-[Let riff set the permissions of Claude Code](#let-riff-set-the-permissions-of-claude-code).
+For the rules of your sessions, see
+[The permission rules of Claude Code](#the-permission-rules-of-claude-code).
 
 ## Update riff
 
@@ -137,7 +135,7 @@ A riff of another version can refuse `riff` (see
 
 With the update by itself on, riff installs each release with no
 command. The riff daemon of the release then does each step of
-`riff init` that needs no person: the rules, its unit and the session
+`riff init` that needs no person: its unit and the session
 images. It tells you each step that needs you. See
 [Each step of an update](how-it-works.md#each-step-of-an-update), and
 [See each step of an update](how-it-works.md#see-each-step-of-an-update)
@@ -176,7 +174,7 @@ riff init
 
 ```mermaid
 flowchart LR
-    C["check this machine"] --> R["ask to add the<br/>missing permission rules,<br/>and to remove wide rules"]
+    C["check this machine"] --> R["ask to remove<br/>wide rules"]
     R -- "each check passes" --> D["install and start<br/>the riff daemon"]
     R -- "a check fails" --> F["print the fix"]
     D --> I["get the session image<br/>of the project"]
@@ -191,7 +189,6 @@ flowchart LR
 | `/etc/subuid`, `/etc/subgid` | Each gives you 65536 IDs or more. The fix adds a free range: it starts after the end of each range in the file, and at 100000 or more. |
 | cgroup v2 | Your user gets `cpu` and `memory`. |
 | The session image | `riff.toml` of the project pins it. |
-| The rules of Claude Code | Your user settings of Claude Code have each permission rule of riff. |
 | The riff binary | It is static, so `riff relay` starts in each session image. |
 
 A line with `fail` also gives the fix. Do each fix, then run
@@ -239,60 +236,54 @@ the riff at each start of a session. With `update.auto` on, riff gets
 the static riff by itself: see
 [Update riff by itself](how-it-works.md#update-riff-by-itself).
 
-### Let riff set the permissions of Claude Code
+### The permission rules of Claude Code
 
-In auto mode, Claude Code can refuse a step of riff. So `riff init`
-checks your user settings of Claude Code: `~/.claude/settings.json`,
-or `settings.json` in `$CLAUDE_CONFIG_DIR`. When a permission rule of
-riff is not there, `riff init` shows each missing rule and asks one
-question. Answer `y`. To add the rules with no question:
+In auto mode, Claude Code can refuse a step of riff. So riff writes the
+permission rules of its steps in two places. `riff init` writes no rule
+into your own Claude Code settings.
 
-```sh
-riff init --yes
-```
+| Place | Written by | Into |
+|---|---|---|
+| The project | `riff setup`: see [Let riff work in auto mode](#let-riff-work-in-auto-mode) | `.claude/settings.json` at the top of the repository |
+| The session | the riff daemon, for each session | the `settings.json` of the own Claude folder of the session |
 
-riff adds only the missing rules. It keeps each other rule and each
-other key. Then start Claude Code again. The rules of riff:
+The project place has these rules:
 
 | Rules | Allow |
 |---|---|
 | `mcp__riff` | the riff tools |
 | `Bash(riff)`, `Bash(riff *)` | each `riff` command |
-| `Bash(~/.cache/riff/check/target/static/release/riff *)`, and the same rule with the full path of your home | the riff of a new build in a check: see [Build riff for a check](development.md#build-riff-for-a-check) |
-| `Bash(riff release cut *)`, `Bash(riff release publish *)`, `Bash(riff release status)`, `Bash(riff release check *)`, `Bash(riff release retry *)`, `Bash(riff release rollback *)` | the steps of the lead in the release cycle: see [The release cycle](development.md#the-release-cycle). No rule names `riff release approve`: only you approve |
-| `Bash(riff wave move *)`, `Bash(riff wave end *)` | the steps of the lead that move items to another wave and end a wave: see [Waves](waves.md) |
+| `Bash(gh pr create *)`, `Bash(gh pr merge --auto --squash *)`, `Bash(gh pr comment *)`, `Bash(gh pr view *)` | the steps of a pull request |
 
 Each rule names its program and its words. Its only `*` is at its
-end, after a space. So a rule allows only the steps that it names. The
-lead plans the waves with `riff wave`: see [Waves](waves.md).
+end, after a space. So a rule allows only the steps that it names.
 
-These rules deny nothing. The deny rules of a project come from
-`riff setup`. The riff daemon gives each of its sessions the rules of
-its steps. The lead in a container calls its riff by the path
-`/opt/riff/riff`, so it gets these rules of its own:
+The project place also denies a push to the default branch and
+`gh pr merge --admin`. The deny rules never leave the project.
+
+The riff daemon gives each session the rules of its steps. The lead in
+a container calls its riff by the path `/opt/riff/riff`, so it gets
+these rules of its own:
 
 | Rules | Allow |
 |---|---|
 | `Bash(/opt/riff/riff relay watch)`, `Bash(/opt/riff/riff relay watch --follow)` | the wakes of the lead |
-| `Bash(/opt/riff/riff wave *)` | the steps of the waves of the lead |
+| `Bash(/opt/riff/riff wave *)` | the steps of the waves of the lead: see [Waves](waves.md) |
 | `Bash(/opt/riff/riff wave move *)`, `Bash(/opt/riff/riff wave end *)` | move items to another wave, end a wave |
-| `Bash(/opt/riff/riff release status)`, `Bash(/opt/riff/riff release cut *)` | the steps of the release cycle of the lead in a container |
+| `Bash(/opt/riff/riff release status)`, `Bash(/opt/riff/riff release cut *)` | the steps of the release cycle of the lead: see [The release cycle](development.md#the-release-cycle). No rule names `riff release approve`: only you approve |
 
 When the auto mode check still refuses a step of riff, the session
 writes the step on its issue and tells your lead. The fix is a new
 rule in the code of riff, not a step that you type.
 
-Run `riff init` in a terminal of your own. Claude Code refuses
-`riff init` from a session, also when you approve it: a session must
-not change its own permissions. The auto mode check gives the reason
-`[Self-Modification]` or `[Unauthorized Persistence]`.
-
 #### The rules of gh on GitHub
+
+The session place has these rules of `gh`, by role:
 
 | Rules | Allow |
 |---|---|
-| `Bash(gh pr create *)`, `Bash(gh pr merge --auto --squash *)`, `Bash(gh pr comment *)`, `Bash(gh pr view *)`, `Bash(gh pr checks *)` | the steps of a pull request |
-| `Bash(gh issue view *)`, `Bash(gh issue list *)`, `Bash(gh issue create *)`, `Bash(gh issue comment *)`, `Bash(gh issue edit *)` | the steps of an issue |
+| `Bash(gh pr create *)`, `Bash(gh pr merge --auto --squash *)`, `Bash(gh pr view *)`, `Bash(gh pr checks *)` | the steps of a pull request |
+| `Bash(gh issue view *)`, `Bash(gh issue list *)`, `Bash(gh issue edit *)` | the steps of an issue |
 
 #### One step in each call
 
@@ -337,68 +328,18 @@ when:
 The old form `Bash(cargo test:*)` is the same as `Bash(cargo test *)`.
 A rule of another tool, for example `Read`, is never wide.
 
-#### Keep the rules in step with each release
+### Run riff init with no question
 
-A new release of riff can add a rule. Turn on the update by itself
-(see [Update riff by itself](how-it-works.md#update-riff-by-itself)),
-and the riff daemon adds the new rules for you:
+This command asks no question. It removes no wide rule:
 
 ```sh
-riff update --auto on
-```
-
-```mermaid
-flowchart LR
-    S["the riff daemon starts"] --> A{"update.auto on?"}
-    A -- "yes" --> R{"its riff is a release<br/>on GitHub?"}
-    R -- "yes" --> W["add each missing rule<br/>to your user settings"]
-    A -- "no" --> N["no change"]
-    R -- "no" --> N
-```
-
-- At each start, the riff daemon adds each rule of its release that
-  your user settings lack. It writes the same file as `riff init`. It
-  removes no rule, and keeps each other rule and key.
-- The daemon starts again on each new release, so each release gets
-  its rules. Your yes to the update by itself is your yes to these
-  rules: the owner approves each release.
-- Only a release changes your settings: a `riff` whose SHA-256 is in
-  `SHA256SUMS` of the GitHub release of its version. A check build or
-  a dev build changes nothing. The daemon reads `SHA256SUMS` only from
-  GitHub: when `RIFF_RELEASES` is set for the daemon, it changes
-  nothing. So a session cannot build a branch with a wide rule and get
-  that rule into your settings.
-- Claude Code reads its rules only when it starts. Each worker starts
-  again after its item (see
-  [Which processes start again](how-it-works.md#which-processes-start-again)).
-  Start your other sessions of Claude Code again yourself.
-- `riff update --auto off` turns it off.
-
-`riff init` and `riff init --check` show whether the sync is on, and
-the last sync of the daemon:
-
-```text
-The sync of the rules is on: at each start, the riff daemon of a release adds each rule that is missing. Its last sync: riff 1.6.0 0a1b2c3 2026-10-20T10:00:00Z added 1 rule to /home/mike/.claude/settings.json. Each worker starts again at its next clear.
-```
-
-The daemon logs each rule that it adds:
-
-```sh
-journalctl --user -u riff.service | grep "the sync of the rules"
-```
-
-When you set `CLAUDE_CONFIG_DIR` after the install of the daemon,
-install it again, so that it writes the same settings file:
-
-```sh
-riff daemon install
+riff init --yes
 ```
 
 ### Check this machine only
 
 This command changes nothing and asks nothing. It prints the fix of
-each check that fails, each missing permission rule, each wide rule,
-and whether the riff daemon keeps the rules in step. It exits with
+each check that fails and each wide rule. It exits with
 status 1 when a check fails:
 
 ```sh

@@ -136,13 +136,12 @@ async fn riff_daemon_install_writes_the_unit_and_starts_the_daemon() {
 }
 
 /// 01M51QARV45MGEKC6KGWX1N5NS, 01M51M3ZKWQYBBPD97R0G9QAX0,
-/// 01M51M3ZPAEMJ64266QSJBNQ46, 01M51M3ZTV61C9BMFT3J1M06NF: a daemon with
-/// `RIFF_RELEASES` and its own SHA-256 in `SHA256SUMS` there changes no
-/// rule, also with `update.auto` on. Its line names the variable, and it
-/// keeps that line. The unit keeps `CLAUDE_CONFIG_DIR`. The add of the
-/// rules has its tests in `rule_sync::tests`.
+/// 01M51M3ZTV61C9BMFT3J1M06NF: a daemon with `RIFF_RELEASES` and its own
+/// SHA-256 in `SHA256SUMS` there changes no user settings of Claude Code,
+/// also with `update.auto` on. Its log names the variable. The unit keeps
+/// `CLAUDE_CONFIG_DIR`.
 #[tokio::test]
-async fn a_daemon_with_riff_releases_and_its_own_sha256_there_changes_no_rule() {
+async fn a_daemon_with_riff_releases_and_its_own_sha256_there_changes_no_user_settings() {
     let Some(target) = riff::release::TARGET else {
         return;
     };
@@ -181,12 +180,7 @@ async fn a_daemon_with_riff_releases_and_its_own_sha256_there_changes_no_rule() 
     wait_for(&log, &why).await;
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), before);
     let logged = std::fs::read_to_string(&log).unwrap();
-    assert!(!logged.contains("the sync of the rules"), "{logged}");
-    let local = here.env.path().join("run/riff");
-    assert_eq!(riff::local::rules_added(&local), None);
-    let last = riff::local::rules_sync(&local).unwrap();
-    assert!(last.contains("changed no rule"), "{last}");
-    assert!(last.ends_with(&why), "{last}");
+    assert!(logged.contains("does no step of an update"), "{logged}");
 
     let pid: u32 = here.read("daemon.pid").trim().parse().unwrap();
     term(pid);
@@ -524,7 +518,7 @@ async fn the_daemon_of_riff_data_is_never_the_daemon_of_the_unit() {
     let (child, log) = start("data.out", Some(&data));
     let socket = data.join("daemon/riff.sock");
     wait_for(&log, &format!("listens on {}", socket.display())).await;
-    wait_for(&log, riff::text::INIT_RULES).await;
+    wait_for(&log, "does no step of an update").await;
     stop(child).await;
     let said = std::fs::read_to_string(&log).unwrap();
     assert!(!said.contains(riff::text::STEP_UNIT), "{said}");
