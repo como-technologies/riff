@@ -5096,6 +5096,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   line, also an answer that riff cannot talk to. With no answer within
   the wait of the status line, it shows no tag.
   Superseded by 4.0 (#1173).
+- **01M5A72C25A1FDZPW3FK2R1F92** The bridge of the lines 1 and 3 ends
+  with the line 4. riff-server 4 talks with the line 4 and the line 3
+  (the line before), and refuses riff 1. riff 4 refuses a server of the
+  line 3 or 1. The bridge tests know the line 4 and fail on each later
+  major with no rule.
 
 ## Code
 
