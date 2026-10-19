@@ -799,10 +799,10 @@ riff claude-token
 
 riff keeps the token in the OS keyring, under the name
 `claude setup-token`, and in no file. If riff 3.3.0 kept the token in
+`~/.local/share/riff/daemon/claude-token`, `riff claude-token`
 removes that file and says so. The token goes to no riff-server, no
 message, no log and no clone. An agent session cannot run `riff
 claude-token`: it refuses when stdin is not a terminal.
-not a terminal.
 
 ```mermaid
 flowchart LR
