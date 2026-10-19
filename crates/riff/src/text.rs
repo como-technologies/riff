@@ -6492,6 +6492,15 @@ pub const WAVE_PAUSED: &str = "paused: starts nothing";
 /// The word of a wave with no free work.
 pub const WAVE_NO_WORK: &str = "no free work now";
 
+/// The reason of the last end of an item whose start failed with `error`.
+pub fn wave_no_start(error: &str) -> String {
+    format!("the session did not start: {error}")
+}
+
+/// The reason of the last end of an item that the daemon has not seen: it
+/// started the session before its last restart.
+pub const WAVE_END_UNKNOWN: &str = "the daemon has no record of it since its restart";
+
 /// The word of a wave that started `item`.
 pub fn wave_started(item: &str) -> String {
     format!("starts {item}")
@@ -6630,13 +6639,55 @@ pub fn wave_host_fault(repo: &str, item: &str, why: &str) -> String {
     format!("The wave of {repo}: riff did not start {item}: {why}. The start does not count.")
 }
 
-/// An item of a wave started `starts` times.
-pub fn wave_spent(item: &str, starts: u32) -> String {
+/// An item of a wave started `starts` times, and the last session ended
+/// for `reason` (01M5A5HXRH4PFQDFA7XPFFRHWS).
+///
+/// ```
+/// let text = riff::text::wave_spent("issue-1", 3, "exit code 1");
+/// assert!(text.contains("The last session ended: exit code 1."));
+/// assert!(text.ends_with("Read why: riff session why issue-1"));
+/// ```
+pub fn wave_spent(item: &str, starts: u32, reason: &str) -> String {
     format!(
         "The riff daemon started {item} {starts} times for the wave, and it is still free work. \
-         It starts no more session for it until riff wave run again. Look at its sessions: riff \
-         daemon status"
+         The last session ended: {reason}. It starts no more session for it until riff wave run \
+         again. Read why: riff session why {item}"
     )
+}
+
+/// `riff session why` for an `item` with no record.
+pub fn session_why_none(item: &str) -> String {
+    format!(
+        "No session of {item} ended with no pull request. The thread {} has no record of it.",
+        crate::ends::THREAD
+    )
+}
+
+/// `riff session why` for `item`: its last record `last` of `count`.
+///
+/// ```
+/// use riff::ends::Record;
+///
+/// let record = Record::parse("ended item=issue-1 session=1a2b3c4d code=1 failed=yes denied=0: exit code 1\nlast", 0).unwrap();
+/// assert_eq!(
+///     riff::text::session_why("issue-1", 3, &record),
+///     "issue-1: 3 sessions ended with no pull request. The last one, 1a2b3c4d, ended: exit code 1.\n\
+///      Its last 1 lines of output:\nlast"
+/// );
+/// ```
+pub fn session_why(item: &str, count: usize, last: &crate::ends::Record) -> String {
+    let mut text = format!(
+        "{item}: {count} sessions ended with no pull request. The last one, {}, ended: {}.\n\
+         Its last {} lines of output:",
+        last.tag("session"),
+        last.reason,
+        last.tail.len()
+    );
+    for line in &last.tail {
+        text.push('\n');
+        text.push_str(line);
+    }
+    text
 }
 
 /// The verify request of a build of a wave (01M4ZV3B6Q0Y6AX0KSKC55S31R).

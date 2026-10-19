@@ -1616,6 +1616,8 @@ pub struct Daemon<R> {
     /// The notes for the lead of each repository that a session of
     /// [`remote::serve`] sends ([`facts::News`]).
     news: facts::News,
+    /// The reason of the last end of each item of a wave ([`crate::ends`]).
+    ends: Mutex<BTreeMap<String, String>>,
 }
 
 /// A wave that runs in the daemon.
@@ -1673,6 +1675,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             again: None,
             serving: Mutex::new(BTreeMap::new()),
             news: facts::News::default(),
+            ends: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -1805,6 +1808,23 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The folder of the daemon.
+    /// Keeps `reason` as the reason of the last end of `item`.
+    pub(crate) fn note_end(&self, item: &str, reason: String) {
+        self.ends
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(item.to_owned(), reason);
+    }
+
+    /// The reason of the last end of `item` that this daemon saw.
+    pub(crate) fn last_end(&self, item: &str) -> Option<String> {
+        self.ends
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(item)
+            .cloned()
+    }
+
     pub fn dir(&self) -> &Path {
         &self.dir
     }
