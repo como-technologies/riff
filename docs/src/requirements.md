@@ -8167,6 +8167,23 @@ that builds it merges.
   host, and a test checks each rule. A rule for each agent of the
   repository goes in `CLAUDE.md` or here. A choice of one person or one
   host, and the running state, go in the notes of the lead.
+- **01M596DH64SQ5AJ4Y6BETGTPSK** `riff lead move HOST` moves the lead
+  of the repository to HOST with no other step by the person. It asks
+  the old lead to write its handover to the notes, and waits at most 5
+  minutes. A lead that writes none in time gets a warning, and the move
+  goes on. It asks the daemon of HOST for the new lead, and then sends
+  the old lead a direct message that it is not the lead any more. It
+  prints where the person attaches. A session that is not the lead
+  refuses it, and so does a HOST with no daemon, and the old lead stays
+  the lead then. The lead itself writes its handover first, because it
+  cannot answer its own message.
+- **01M596DH8G4A5XQFHJFBX1X379** The request `lead move` to the daemon
+  of a host (`remote::Request::LeadMove`) starts the lead of the
+  repository there, as `riff lead start` does and with no attach, when
+  none runs. Its first prompt sends the lead to the handover in the
+  notes (`text::lead_moved`). The daemon then makes the new session the
+  lead (R177) and replies with its session ID. Only the person and the
+  lead of the person act on it.
 
 ## Open
 

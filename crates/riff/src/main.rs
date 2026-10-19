@@ -1754,6 +1754,23 @@ enum LeadCommand {
         #[arg(long)]
         notify: Option<Switch>,
     },
+    /// Move the lead of this repository to another host
+    ///
+    /// riff asks the old lead to write its handover to the notes of the
+    /// lead, and waits for it for 5 minutes. Then riff asks the riff
+    /// daemon of HOST to start the lead there, in a container, with the
+    /// handover in its first prompt. The new lead becomes the lead, and
+    /// riff tells the old lead that it is not the lead any more. The old
+    /// session stays as a plain session: you end it. The lead can run
+    /// this command on your word. Only the lead and you can run it.
+    ///
+    /// On HOST, the daemon must serve this repository: run `riff daemon
+    /// host` in its main clone there. Then `riff lead start` or `riff
+    /// view` on HOST attaches to the new lead.
+    Move {
+        /// The host of the new lead, for example thelio.
+        host: String,
+    },
     /// Show or edit the notes of the lead
     ///
     /// The notes are text that riff-server keeps for your user and the
@@ -2543,6 +2560,22 @@ async fn main() -> Result<()> {
         return riff::lead::start(api, &here, &server).await;
     }
     if let Command::Lead {
+        command: Some(LeadCommand::Move { host }),
+    } = &cli.command
+    {
+        let (api, me) = daemon_asker(&here, api.base())?;
+        match riff::lead::move_to(&api, &me, host, riff::lead::HANDOVER_WAIT).await {
+            Ok(session) => {
+                println!("{}", text::lead_move_done(host, &session));
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("{e:#}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if let Command::Lead {
         command:
             Some(LeadCommand::Notes {
                 command,
@@ -2908,7 +2941,8 @@ async fn main() -> Result<()> {
                     LeadCommand::Compact { .. }
                     | LeadCommand::Blocked { .. }
                     | LeadCommand::Start
-                    | LeadCommand::Notes { .. },
+                    | LeadCommand::Notes { .. }
+                    | LeadCommand::Move { .. },
                 ),
         }
         | Command::View { .. }

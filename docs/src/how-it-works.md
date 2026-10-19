@@ -3978,6 +3978,53 @@ riff lead notes --history
 
 The owner can show the notes of another user with `--user NAME`.
 
+## Move the lead to another host
+
+You can move the lead of a repository from one host to another, for
+example from pangolin to thelio. One command does it all: no `scp`, no
+copy of the Claude memory. The notes of the lead hold the rules and
+the running state, so the new lead has them.
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant O as old lead (pangolin)
+    participant D as riff daemon (thelio)
+    participant N as new lead (thelio)
+    P->>O: riff lead move thelio: write the handover
+    O->>O: handover in the notes
+    P->>D: start the lead
+    D->>N: claude, first prompt: read the notes
+    N->>N: is the lead now
+    P->>O: you are not the lead any more
+```
+
+On thelio, the riff daemon must serve the repository. If it does not,
+run this once in the main clone on thelio:
+
+```sh
+riff daemon host
+```
+
+Then run this on pangolin, in the repository:
+
+```sh
+riff lead move thelio
+```
+
+riff waits at most 5 minutes for the handover of the old lead. If the
+old lead writes none, riff says so and moves the lead with the notes as
+they are. If thelio has no daemon, nothing moves, and the old lead
+stays the lead. Only the lead and you can run this command. The lead
+runs it on your word, and writes its handover to the notes first.
+
+The old session stays as a plain session. End it when you are ready.
+To attach to the new lead, run this on thelio:
+
+```sh
+riff lead start
+```
+
 ## The lead
 
 A person often runs many sessions at once. The person works in one of

@@ -51,7 +51,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use riff_core::name::{Place, SessionUri};
-use riff_core::wire::StartReason;
+use riff_core::wire::{SessionInfo, StartReason};
 
 use crate::daemon::{self, Ask, Say, Status};
 use crate::run::{self, Facts};
@@ -122,7 +122,7 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 ///     gitconfig: None,
 ///     gh_config: None,
 /// };
-/// let spec = riff::lead::spec(&facts, "o/r");
+/// let spec = riff::lead::spec(&facts, "o/r", &riff::text::lead_start("o/r"));
 /// assert_eq!(spec.name, "riff-lead-o-r");
 /// assert_eq!(spec.workdir, facts.clone);
 /// assert_eq!(
@@ -132,7 +132,7 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// assert!(!spec.command.iter().any(|a| a == "-p"));
 /// assert!(spec.env.iter().any(|e| matches!(e, riff::runtime::Env::Value(n, v) if n == "RIFF_CHECK" && v == "/home/mike/.riff-check")));
 /// ```
-pub fn spec(facts: &Facts, repo: &str) -> SessionSpec {
+pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
     let mut spec = run::spec(facts);
     spec.name = name_of(repo);
     // The folder `~/.cache` of the container belongs to root, because
@@ -147,7 +147,7 @@ pub fn spec(facts: &Facts, repo: &str) -> SessionSpec {
         facts.session.clone(),
         "--permission-mode".into(),
         "auto".into(),
-        text::lead_start(repo),
+        start.to_owned(),
     ];
     spec
 }
@@ -323,13 +323,32 @@ pub async fn start_with(
     }
     let work = identity::working_dir()?;
     let (main, common) = run::main_clone(&work)?;
-    let image = session_image::merged(&main, |line| println!("{line}"))?.to_string();
+    let start = text::lead_start(&repo);
+    launch(dir, api, here, server, (&main, &common), &start).await?;
+    attach_here(runtime, &name).await
+}
+
+/// Starts the lead of the repository of `here` on the daemon in the
+/// folder `dir`, from the main clone `main` with the git dir `common`,
+/// with the first prompt `start`. It waits until the container runs,
+/// and gives the session ID of the lead. A failed start ends the new
+/// session.
+async fn launch(
+    dir: &Path,
+    api: Api,
+    here: &Place,
+    server: &str,
+    (main, common): (&Path, &Path),
+    start: &str,
+) -> Result<String> {
+    let repo = here.repo_text();
+    let image = session_image::merged(main, |line| println!("{line}"))?.to_string();
     daemon::image(dir, &image, |line| println!("{line}")).await?;
-    let host = run::host_facts(&main)?;
+    let host = run::host_facts(main)?;
     let folder = folder_of(&run::data_dir()?, &repo);
     let clone = folder.join("clone");
     let claude = folder.join("claude");
-    if let Fresh::Kept(why) = fresh_clone(&main, &clone)? {
+    if let Fresh::Kept(why) = fresh_clone(main, &clone)? {
         println!("{}", text::lead_clone_kept(&clone, &why));
     }
     run::claude_folder(
@@ -362,20 +381,147 @@ pub async fn start_with(
         session: session.clone(),
         item: ITEM.into(),
         folder,
-        spec: spec(&facts, &repo),
-        start: text::lead_start(&repo),
+        spec: spec(&facts, &repo, start),
+        start: start.to_owned(),
         values: host.values(),
         secrets: host.secrets(),
         server: server.to_owned(),
         me: me.clone(),
         terminal: true,
     };
-    println!("{}", text::lead_starts(&repo, &name, &session));
+    println!("{}", text::lead_starts(&repo, &name_of(&repo), &session));
     if let Err(e) = ask_start(dir, start).await {
         let _ = api.end(&me).await;
         return Err(e);
     }
-    attach_here(runtime, &name).await
+    Ok(session)
+}
+
+/// What the daemon in the folder `dir` does for `riff lead move`
+/// (#1163): it starts the lead of the repository of `wave` when none
+/// runs, with the first prompt [`text::lead_moved`], and makes it the
+/// lead (R177). It gives the reply for the caller, with the session ID
+/// ([`session_of`]).
+pub async fn take(dir: &Path, wave: &crate::wave::Wave) -> Result<String> {
+    let here = wave.place(None)?;
+    let repo = here.repo_text();
+    let name = name_of(&repo);
+    let status = daemon::status(dir).await?;
+    let session = match status.sessions.iter().find(|s| s.name == name) {
+        Some(live) => live.session.clone(),
+        None => {
+            let (main, common) = run::main_clone(&wave.main)?;
+            let api = Api::new(&wave.server);
+            let start = text::lead_moved(&repo);
+            launch(dir, api, &here, &wave.server, (&main, &common), &start).await?
+        }
+    };
+    let place = Place::new(here.host(), here.repo().clone(), None)?;
+    let me = identity::agent(&place, &session, &wave.server)?;
+    let api = Api::new(&wave.server).signed_in(Some(&session))?;
+    api.lead(&me).await?;
+    Ok(text::lead_taken(&repo, here.host(), &name, &session))
+}
+
+/// The session ID of the new lead in the reply of the daemon
+/// ([`take`]).
+///
+/// ```
+/// let reply = riff::text::lead_taken("o/r", "thelio", "riff-lead-o-r", "1a2b");
+/// assert_eq!(riff::lead::session_of(&reply), Some("1a2b"));
+/// assert_eq!(riff::lead::session_of("done"), None);
+/// ```
+pub fn session_of(reply: &str) -> Option<&str> {
+    reply.lines().find_map(|l| l.strip_prefix("session "))
+}
+
+/// The longest wait of `riff lead move` for the handover of the old
+/// lead (01M596DH64SQ5AJ4Y6BETGTPSK).
+pub const HANDOVER_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// How often `riff lead move` reads the notes for the handover.
+const HANDOVER_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// `riff lead move HOST` as `me` (#1163, 01M596DH64SQ5AJ4Y6BETGTPSK): the
+/// person, or the lead of the person. It gives the session ID of the new
+/// lead.
+///
+/// ```mermaid
+/// sequenceDiagram
+///     participant M as riff lead move thelio
+///     participant O as old lead
+///     participant D as daemon of thelio
+///     M->>O: write the handover to the notes
+///     O->>M: the notes change (at most `wait`)
+///     M->>D: lead move
+///     D->>D: start the lead, make it the lead
+///     D-->>M: done, session ID
+///     M->>O: you are not the lead any more
+/// ```
+///
+/// A session that is not the lead refuses. A lead that writes no
+/// handover in `wait` gets a warning, and the move goes on with the
+/// notes as they are. A HOST with no daemon fails before the old lead
+/// loses the lead. When the caller is the old lead, it asks nobody for
+/// a handover: it cannot answer its own message, so it writes the
+/// handover first.
+pub async fn move_to(
+    api: &Api,
+    me: &SessionUri,
+    host: &str,
+    wait: std::time::Duration,
+) -> Result<String> {
+    let Some(thread) = me.default_thread() else {
+        bail!("{}", text::RUN_NO_REPO);
+    };
+    let repo = me.place().repo_text();
+    let user = me.who().user();
+    let sessions = api.who(me, false).await?;
+    let leads: Vec<&SessionInfo> = sessions
+        .iter()
+        .filter(|s| s.live && s.uri.lead())
+        .filter(|s| s.uri.who().user() == user && s.uri.place().repo_text() == repo)
+        .collect();
+    let own = me.who().session();
+    if own.is_some() && !leads.iter().any(|s| s.uri.who().session() == own) {
+        bail!("{}", text::LEAD_MOVE_NOT_LEAD);
+    }
+    if leads.iter().any(|s| s.uri.place().host() == host) {
+        bail!("{}", text::lead_move_same_host(host));
+    }
+    if daemon::remote::find(&sessions, user, &repo, host).is_none() {
+        bail!("{}", text::no_daemon_host(host, &repo));
+    }
+    let old = leads.first().and_then(|s| s.uri.who().session());
+    let asked = old.filter(|id| Some(*id) != own);
+    if let Some(old) = asked {
+        let before = api.notes_show(me, &thread, None, false).await?;
+        api.tell(me, old, &text::lead_handover_ask(host)).await?;
+        let start = tokio::time::Instant::now();
+        loop {
+            let now = api.notes_show(me, &thread, None, false).await?;
+            if now.at_ms != before.at_ms || now.text != before.text {
+                break;
+            }
+            if start.elapsed() >= wait {
+                eprintln!("{}", text::lead_move_no_handover(wait));
+                break;
+            }
+            tokio::time::sleep(HANDOVER_EVERY).await;
+        }
+    }
+    let wait = daemon::remote::REPLY_WAIT;
+    let request = daemon::remote::Request::LeadMove;
+    let reply = daemon::remote::ask(api, me, host, &request, wait).await?;
+    let Some(session) = session_of(&reply) else {
+        bail!("riff: the daemon of {host} gave no session for the new lead: {reply}");
+    };
+    if let Some(old) = asked {
+        api.tell(me, old, &text::lead_moved_away(host)).await?;
+    } else if old.is_some() {
+        println!("{}", text::lead_moved_away(host));
+    }
+    Ok(session.to_owned())
 }
 
 /// Starts the wave of the repository of `here` on the daemon in the
