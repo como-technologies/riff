@@ -2349,7 +2349,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 
 /// The kind of a session in `riff who` and `riff top`
 /// (01M510MG2YSETB2CCAS8XDHPZ0): the first that matches of the lead, a
-/// session in a container, a worker in tmux, the session of
+/// session in a container, a worker, the session of
 /// `riff workers host`, and the session of the riff daemon
 /// (01M589HH6HCWYJP1ZC7MRAXZ6E). Each other session has no kind.
 ///

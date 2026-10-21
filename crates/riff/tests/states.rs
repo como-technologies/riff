@@ -55,8 +55,6 @@ fn riff_cmd(server: &str, dir: &Path, session: &str) -> assert_cmd::Command {
         .env("RIFF_HOME", dir)
         .env("RIFF_SESSION", session)
         .env_remove("RIFF_WORKER")
-        .env_remove("TMUX")
-        .env_remove("TMUX_PANE")
         .env_remove("CLAUDE_CODE_SESSION_ID");
     cmd
 }

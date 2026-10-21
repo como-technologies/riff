@@ -197,7 +197,7 @@
 //! # The wakes of a session
 //!
 //! A worker or a verifier gets each `riff tell` to it and each message
-//! that wakes it, as a session in tmux does
+//! that wakes it, as a session in a container does
 //! (01M5792DP1KZR2XGSCMRWDHCGZ). While the session runs, the daemon
 //! watches its wakes on riff-server ([`World::wakes`]). While the input
 //! of `claude` is open, from the start until the first `result`, the

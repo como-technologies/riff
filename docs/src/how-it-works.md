@@ -2214,8 +2214,8 @@ last line names the thread and the number to give to `after`.
 
 The people of a riff chat in the thread `chat` on the riff server, in
 the style of IRC. Only a member can read or post. Your line shows as
-`<USER@HOST>`, from your sign-in. Start the chat in a terminal or a
-tmux pane. Type a line after the prompt `[riff] >` and press Enter.
+`<USER@HOST>`, from your sign-in. Start the chat in a terminal.
+Type a line after the prompt `[riff] >` and press Enter.
 `/quit` or Ctrl-C exits:
 
 ```sh
@@ -2488,8 +2488,8 @@ These posts wake:
 A worker or a verifier of `riff run` or of a wave runs in a container,
 with no watch of its own. The riff daemon watches its wakes for it.
 Until the end of the first turn, the session gets each wake as one
-input, as a session in tmux does. During a takeover, the wake waits
-until the session goes on.
+input, as a session in a container does. During a takeover, the wake
+waits until the session goes on.
 
 Tell a container session, by its session ID:
 
@@ -3819,12 +3819,10 @@ sleep, then the new messages:
 riff tail
 ```
 
-## Run the lead in tmux
+## Run the lead
 
-You can run the lead in tmux. The riff daemon runs the workers in
-containers: you start no worker in tmux. Outside tmux, start the lead
-by hand, as in [Start a Riff](start-a-riff.md).
-
+The riff daemon runs the workers in containers. Start the lead by
+hand, as in [Start a Riff](start-a-riff.md).
 ### How long a command waits for the server
 
 Each call of `riff` to the server has a budget: the longest time from
@@ -3864,20 +3862,18 @@ riff who
 Error: cannot reach riff-server at http://127.0.0.1:7878
 ```
 
-### Start the lead in tmux
+### Start the lead
 
-Start tmux in your repository, then start the lead with Remote
-Control (see
+Start the lead with Remote Control (see
 [Answer your lead from the Claude
 app](#answer-your-lead-from-the-claude-app)):
 
 ```sh
-tmux new -s riff
 claude --remote-control
 ```
 
-riff adds no pane. To watch the repository thread beside the lead, split
-a pane and start `riff tail` there.
+To watch the repository thread beside the lead, start `riff tail` in
+a second terminal.
 
 ### Watch the riff on another machine
 
@@ -3891,16 +3887,8 @@ riff tail como-technologies/riff
 ### Start each session in the main clone
 
 Start each session in the main clone of the repository, never in a
-worktree of a session. tmux opens a new pane in the directory of the
-current pane. When that pane is in a worktree of a session, the new
-session starts in that worktree. It can change the work of the other
-session.
-
-Open a new pane in the main clone, then start the session:
-
-```sh
-tmux split-window -c ~/src/como-technologies/riff
-```
+worktree of a session. A session in a worktree can change the work of
+the other session.
 
 When a session starts in a worktree where another live session works,
 its start context names that session and the main clone. The session
@@ -3913,7 +3901,7 @@ When the riff runs and the current wave has free work, riff asks the
 riff daemon to run the wave. You do not ask, and the lead does not
 remember a step. The lead does it, once each 10
 seconds. The daemon runs each item and each verify in a container. riff
-starts no worker in tmux.
+starts no worker on the host.
 
 ```mermaid
 flowchart TD
