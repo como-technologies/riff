@@ -4,8 +4,8 @@ This page is the design of riff 3.0. riff 3.0 is isolation by
 default: the riff daemon of each machine runs each work item in its
 own container. riff-server stays the server of the riff: the claims,
 the messages, the chat, the sign-in and the update of each machine.
-Each other part of riff 1.x stays as it is. The workers in tmux go: the
-daemon runs all work in containers. The waves stay on GitHub. The
+Each other part of riff 1.x stays as it is. The workers on the host go:
+the daemon runs all work in containers. The waves stay on GitHub. The
 [requirements of the re-cut](requirements.md#the-re-cut-isolation-by-default)
 hold each decision of the plan (#953).
 
@@ -55,7 +55,7 @@ flowchart LR
 - The rollout runs the wave of the daemon. The lead asks the daemon
   to run the wave of the repository. The wave starts one session for
   each free item, in the limit of the machine. The rollout starts no
-  worker in tmux.
+  worker on the host.
 - `riff relay` is the entrypoint of the container. It starts `claude`
   and talks to the daemon through a socket that only that session
   sees.
@@ -101,12 +101,12 @@ item.
 | Get a machine ready | The plugin of Claude Code | Also `riff init` one time: podman, the daemon and the session image. See [Get ready for riff 3.0](start-a-riff.md#get-ready-for-riff-30). |
 | Pin a session image | No image | `riff.toml` of each repository pins one. A repository with no image of its own pins the image of riff: `riff image` prints it. |
 | Start the lead | `claude` in the clone | `riff lead start`, or `claude` in the clone as before. See [Start the lead](development.md#start-the-lead). |
-| Start the work | The rollout starts workers in tmux | The rollout runs the wave of the daemon. See [Let the rollout of the lead run the wave](development.md#let-the-rollout-of-the-lead-run-the-wave). |
+| Start the work | The rollout starts workers on the host | The rollout runs the wave of the daemon. See [Let the rollout of the lead run the wave](development.md#let-the-rollout-of-the-lead-run-the-wave). |
 | Use a second machine | `riff workers host` | `riff wave run` in a clone on that machine. See [Use a second machine](development.md#use-a-second-machine). |
 | Set the limit of a machine | `riff workers limit` | `riff daemon limit` for the sessions in containers. See [Set the limit of the host](development.md#set-the-limit-of-the-host). |
 | Set or empty the compile cache | `riff workers cache` | `riff daemon cache` for the sessions in containers. See [Set or empty the compile cache of the container sessions](development.md#set-or-empty-the-compile-cache-of-the-container-sessions). |
 | See the sessions | `riff top` | `riff view` or `riff top` |
-| Work with a session | Its tmux pane | `riff takeover NAME`, or `t` in `riff view`. See [Take over a session](development.md#take-over-a-session). |
+| Work with a session | Its terminal | `riff takeover NAME`, or `t` in `riff view`. See [Take over a session](development.md#take-over-a-session). |
 | Chat, pause, resume, hold | `riff chat`, `riff pause`, `riff resume`, `riff plan` | The same, on riff-server |
 | Update | `riff update`, or by itself | The same. riff 3.0.0 comes from riff-server. |
 

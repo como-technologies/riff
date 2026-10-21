@@ -726,7 +726,6 @@ impl Top<'_> {
     ///     worker,
     ///     container: false,
     ///     binary: None,
-    ///     stopping: false,
     ///     claims_secs: 600,
     ///     must_clear: false,
     ///     fresh_secs: None,
@@ -1189,7 +1188,7 @@ mod tests {
             worker: false,
             container: false,
             binary: None,
-            stopping: false,
+
             claims_secs: 0,
             must_clear: false,
             fresh_secs: None,

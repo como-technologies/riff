@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use riff_core::name::{Place, ThreadName, Who};
 use riff_core::record::{Change, Record, Scope};
-use riff_core::wire::{Activity, AliveReply, ItemFact, Kind, RiffBinary, Status, StepChange};
+use riff_core::wire::{Activity, ItemFact, Kind, RiffBinary, Status, StepChange};
 use serde::{Deserialize, Serialize};
 
 use super::riff::Riff;
@@ -116,8 +116,8 @@ pub struct Presence {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Signal {
-    /// A call of the session from `place`: a sign of life. It takes
-    /// back an ask to stop. A person takes the place of each call
+    /// A call of the session from `place`: a sign of life. A person takes the place of each
+    /// call
     /// (01M3MWW8KYJ3ZV91X22RBSAF33).
     Called { place: Place },
     /// A keep-alive: a sign of life that is not a call (R204). It
@@ -181,9 +181,6 @@ pub enum Signal {
         all: bool,
         woken: u64,
     },
-    /// The server asks this idle worker to stop
-    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN).
-    AskedToStop,
 }
 // ANCHOR_END: signal
 
@@ -191,10 +188,9 @@ impl Signal {
     /// Sets the signal of the session `who` in `presence`, at `now`.
     /// Only [`Signal::Place`] makes a session that the presence does not
     /// know: each other signal of such a session changes nothing. The
-    /// reply says if the server asks the session to stop. The state adds
-    /// the ask to clear: it is in the riff
+    /// state adds the ask to clear to the reply: it is in the riff
     /// ([`State::signal`](super::State::signal)).
-    pub fn set(self, presence: &mut Presence, who: &Who, now: Instant) -> AliveReply {
+    pub fn set(self, presence: &mut Presence, who: &Who, now: Instant) {
         if let Signal::Read {
             thread,
             seq,
@@ -209,7 +205,7 @@ impl Signal {
             }
             let cursor = presence.cursors.entry(key).or_insert(0);
             *cursor = if all { (*cursor).max(seq) } else { seq };
-            return AliveReply::default();
+            return;
         }
         if let Signal::Facts { thread, items, all } = self {
             let known = presence.items.entry(thread).or_default();
@@ -219,11 +215,11 @@ impl Signal {
             for fact in items {
                 known.insert(fact.item.clone(), fact);
             }
-            return AliveReply::default();
+            return;
         }
         if let Signal::PlanSeen { thread } = self {
             presence.looks.insert(thread, now);
-            return AliveReply::default();
+            return;
         }
         if let Signal::Place { place, .. } = &self
             && !presence.sessions.contains_key(who)
@@ -232,7 +228,7 @@ impl Signal {
             presence.sessions.insert(who.clone(), session);
         }
         let Some(session) = presence.sessions.get_mut(who) else {
-            return AliveReply::default();
+            return;
         };
         match self {
             Signal::Called { place } => {
@@ -307,7 +303,6 @@ impl Signal {
             Signal::WatchStarted => session.watchers += 1,
             Signal::WatchEnded => {
                 session.watchers = session.watchers.saturating_sub(1);
-                session.stopping = false;
                 if !session.gone(now) {
                     session.last_seen = now;
                     session.seen_before_load = None;
@@ -319,18 +314,7 @@ impl Signal {
                 session.seen_before_load = None;
                 session.claims_changed = now;
             }
-            Signal::AskedToStop => {
-                if session.asked().is_none() {
-                    session.asked = Some(now);
-                    session.told_stuck = false;
-                }
-                session.stopping = true;
-            }
             Signal::Read { .. } | Signal::Facts { .. } | Signal::PlanSeen { .. } => {}
-        }
-        AliveReply {
-            stop: session.stopping,
-            clear: false,
         }
     }
 }
@@ -746,15 +730,6 @@ pub(super) struct Session {
     /// The long step of the session, until it is done
     /// (01M48VDGTD40P8RBZMS0XB5M9N).
     pub(super) step: Option<LongStep>,
-    /// True when the server asked this idle worker to stop, and it made
-    /// no call since (01M3Q5A0NKY1FCS0YH6N6YD3GN).
-    pub(super) stopping: bool,
-    /// The first ask to stop. A change of the claims after it ends it
-    /// ([`Session::asked`], 01M4385Z039RCFSKWFPWZAETTX).
-    pub(super) asked: Option<Instant>,
-    /// True when the server told the lead that this worker still runs
-    /// after the ask ([`Session::asked`]).
-    pub(super) told_stuck: bool,
     /// The last change of the claims of the session, or its arrival
     /// (01M3Q551WCMPQRCNJ8FXQEBFY4).
     pub(super) claims_changed: Instant,
@@ -830,20 +805,9 @@ impl Session {
             work: None,
             blocked: None,
             step: None,
-            stopping: false,
-            asked: None,
-            told_stuck: false,
             claims_changed: now,
             machine: None,
         }
-    }
-
-    /// The first ask to stop since the last change of the claims. A
-    /// wake takes the ask back, but not this time: the server tells the
-    /// lead one time for each idle time of a worker
-    /// (01M4385Z039RCFSKWFPWZAETTX).
-    pub(super) fn asked(&self) -> Option<Instant> {
-        self.asked.filter(|asked| *asked >= self.claims_changed)
     }
 
     /// Records a sign of life at `now`. A gone session comes back.
@@ -877,12 +841,10 @@ impl Session {
         }
     }
 
-    /// Records a call at `now`: a sign of life that also takes back an
-    /// ask to stop.
+    /// Records a call at `now`: a sign of life.
     fn called(&mut self, now: Instant) {
         self.last_seen = now;
         self.seen_before_load = None;
-        self.stopping = false;
         self.live(now);
     }
 

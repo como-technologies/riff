@@ -251,7 +251,7 @@ A test runs `riff` and `riff-server` only through the crate
 
 ### Write a fake program
 
-A test that runs a fake program, for example a fake `gh` or `tmux`,
+A test that runs a fake program, for example a fake `gh` or `podman`,
 writes it with `isolated::write_program`. A child process writes the
 file. So no child of another test thread holds the file open to
 write, and the run cannot fail with `ETXTBSY` ("Text file busy"). To
@@ -1291,7 +1291,7 @@ starts again too, also for the same commit (see
 You need no command for this. When the current wave has free work, the
 rollout of your lead asks the riff daemon of its machine to run the
 wave of the repository. It asks only when no wave of the repository
-runs there. The rollout starts no worker in tmux. `riff lead start`
+runs there. `riff lead start`
 starts the wave too.
 
 ```mermaid
@@ -1703,8 +1703,8 @@ In riff 3.0 the lead is a session of the riff daemon too: `claude` in
 a container of the session image, with a terminal. conmon, the monitor
 of podman, holds the terminal. So the lead runs on when you close your
 terminal, and when the daemon stops. `riff view` shows each session of
-the daemon, and attaches your terminal to the lead. The lead in a
-container uses no tmux.
+the daemon, and attaches your terminal to the lead. The lead runs
+in a container.
 
 ```mermaid
 flowchart LR
@@ -3613,7 +3613,7 @@ The gates:
 | Gate | Who | Command | With no answer |
 |---|---|---|---|
 | Verify | a session that did not write the change | the verify of riff | the release pull request waits |
-| Real session | a session that wrote none of the items, in tmux on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses |
+| Real session | a session that wrote none of the items, on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses |
 | HUMAN GATE 1: deploy | the owner or an admin, in a terminal | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
 | HUMAN GATE 3: skip | the owner or an admin, in a terminal | `riff release cut --skip VERSION --reason TEXT` | no skip |
@@ -3780,7 +3780,7 @@ person runs, for example `riff update --tag v3.3.0` when the old
 
 Get the pull request verified and merged as each other change. Then a
 session that wrote none of the items runs the real-session test on
-`origin/main`, in tmux on a machine with podman (see
+`origin/main`, on a machine with podman (see
 [Run the real-session test](#run-the-real-session-test)). The test
 sets the commit status `riff/real-session` of the commit:
 

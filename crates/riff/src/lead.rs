@@ -7,8 +7,7 @@
 //! terminal: `podman run -d -i -t`. conmon holds the terminal, so the
 //! lead runs on when the person detaches with Ctrl-P Ctrl-Q, and when
 //! the daemon stops. `riff lead start` and `riff view` attach to it
-//! ([`crate::runtime::Runtime::attach`]). riff 3.0 uses no tmux.
-//!
+//! ([`crate::runtime::Runtime::attach`]).//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant P as riff lead start (the person)

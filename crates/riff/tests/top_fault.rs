@@ -183,8 +183,6 @@ fn bin() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let git = String::from_utf8(Command::new("which").arg("git").output().unwrap().stdout).unwrap();
     std::os::unix::fs::symlink(git.trim(), dir.path().join("git")).unwrap();
-    let tmux = dir.path().join("tmux");
-    isolated::write_program(&tmux, "#!/bin/sh\n");
     dir
 }
 

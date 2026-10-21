@@ -29,7 +29,6 @@
 //! | [`checkpoint`] | The checkpoint of a state: its write, the load of the newest one, and the prune. |
 //! | [`store`] | The trait [`store::Store`], with [`store::Memory`] and [`store::Dir`]. |
 //! | [`owner`] | The times and the notes of the owner role. |
-//! | [`idle`] | The limits and the notes of idle workers. |
 //!
 //! The crate does no HTTP, and knows no sign-in. The format of the log
 //! and of the checkpoint is the format of riff-server: its format tests
@@ -37,7 +36,6 @@
 //! release against this crate.
 
 pub mod checkpoint;
-pub mod idle;
 pub mod log;
 pub mod owner;
 pub mod state;

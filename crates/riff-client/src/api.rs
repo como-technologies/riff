@@ -115,15 +115,14 @@ use riff_core::selector::Selector;
 use riff_core::wire::SetMachine;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
-    DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Idle, IdleQuery, Invite, Invited,
-    ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
-    Members, MembersReply, Message, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed,
-    PassOwner, Pause, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release,
-    ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery,
-    RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetIdle, SetNotes,
-    SetNotesReply, SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange,
-    Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake,
-    WhoReply, WhoRequest,
+    DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Invite, Invited, ItemFact, ItemFacts,
+    Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
+    Message, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause,
+    PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release, ReleaseFor,
+    ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery, RiffReply,
+    RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetNotes, SetNotesReply, SetStatus,
+    SetStep, SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner, ThreadInfo,
+    Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -1192,27 +1191,6 @@ impl Api {
             all,
         };
         self.call(&facts).await
-    }
-
-    /// Reads the settings of idle workers. With a value, it sets each
-    /// given value first: the command `set_idle`, on a path of its own
-    /// (01M3Q5A0TF9K49V8Z1ZY9NDF74, 01M3WRD9BSBKS9TN66H29TGTBV).
-    pub async fn idle(
-        &self,
-        me: &SessionUri,
-        per_host: Option<u16>,
-        after_secs: Option<u64>,
-    ) -> Result<Idle> {
-        let me = me.clone();
-        if per_host.is_none() && after_secs.is_none() {
-            return self.call(&IdleQuery { me }).await;
-        }
-        let request = SetIdle {
-            me,
-            per_host,
-            after_secs,
-        };
-        self.call(&request).await
     }
 
     /// The session ended (R205).
@@ -2432,23 +2410,6 @@ pub async fn keep_alive_of_host(api: &Api, me: &SessionUri, every: Duration) {
         // A hung request must not stop the next keep-alive.
         let alive = api.alive_as(me, crate::platform::get().binary());
         let _ = tokio::time::timeout(every, alive).await;
-    }
-}
-
-/// [`keep_alive`] that ends when a reply asks this session to stop: the
-/// server stops an idle worker (01M4385Z5BN03E6HTEB5GQVZ8X).
-pub async fn keep_alive_until_stop(api: &Api, me: &SessionUri, every: Duration) {
-    let mut tick = tokio::time::interval(every);
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    tick.tick().await;
-    loop {
-        tick.tick().await;
-        // A hung request must not stop the next keep-alive.
-        if let Ok(Ok(reply)) = tokio::time::timeout(every, api.alive(me)).await
-            && reply.stop
-        {
-            return;
-        }
     }
 }
 

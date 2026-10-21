@@ -54,15 +54,12 @@ fn repo() -> tempfile::TempDir {
     dir
 }
 
-/// A dir for `PATH` with `git`, a fake `tmux` that lists one worker
-/// pane of the session `c3` on this machine, and a fake `gh` when `gh`
-/// is true. The pane does not make `c3` a worker: only the server says
-/// who is a worker (01M3NT4M159EHN5W8JRTQ417N4).
+/// A dir for `PATH` with `git`, and a fake `gh` when `gh` is true. Only
+/// the server says who is a worker (01M3NT4M159EHN5W8JRTQ417N4).
 fn bin(gh: bool) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let git = String::from_utf8(Command::new("which").arg("git").output().unwrap().stdout).unwrap();
     std::os::unix::fs::symlink(git.trim(), dir.path().join("git")).unwrap();
-    script(dir.path(), "tmux", "echo '%3 c3'");
     if gh {
         script(
             dir.path(),
@@ -446,7 +443,7 @@ async fn a_worker_of_another_host_shows_worker() {
     assert!(line("a1").contains("  you lead"), "{who}");
 }
 
-/// A fake server with each kind of session: the lead, a worker in tmux,
+/// A fake server with each kind of session: the lead, a worker,
 /// a session in a container, the session of `riff workers host` and the
 /// session of the riff daemon. Each one has its tag in `riff top` and
 /// `riff who`, and the line of a host counts each kind

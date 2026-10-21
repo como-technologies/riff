@@ -128,7 +128,7 @@ pub struct Denial {
     pub head: String,
     /// The command or the input, at most [`TEXT_MAX`] characters.
     pub text: String,
-    /// True in a worker in tmux.
+    /// True in a worker in a container.
     #[serde(default)]
     pub worker: bool,
     /// True in a subagent.
@@ -355,7 +355,7 @@ fn tag(value: &str) -> String {
 pub enum Role {
     /// The lead of the user.
     Lead,
-    /// A worker in tmux.
+    /// A worker session that has no container.
     Worker,
     /// A worker of the riff daemon, in a container.
     Container,

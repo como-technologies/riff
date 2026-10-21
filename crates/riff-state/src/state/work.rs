@@ -187,10 +187,6 @@ impl View<'_> {
             == Some(who)
     }
 
-    pub(super) fn holds_claim(&self, who: &Who) -> bool {
-        self.riff.work().claims.values().any(|holder| holder == who)
-    }
-
     /// The lead change that makes `who` the lead, when it arrives at
     /// `place` in the repository thread `thread`, its user has no lead
     /// there, and no other session of the user there holds (R176). A
