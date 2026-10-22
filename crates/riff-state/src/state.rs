@@ -186,9 +186,6 @@
 //!   repository ([`Pauses`]). A new state is paused.
 //!   [`State::riff`] reads it, and sets it for a person or a lead
 //!   (01M3JCFTWCR72HQB8CBTQKXJNF, 01M3JCG3T8AJZN31SZQQTP3FAF).
-//! - [`State::stop_idle_workers`] asks each idle worker past the limit
-//!   to stop. The reply to its keep-alive carries the ask. A call of the
-//!   worker takes it back (01M3Q5A0NKY1FCS0YH6N6YD3GN).
 //! - While the riff or the repository of a thread is paused, a claim
 //!   there fails. A held claim stays, and a
 //!   release works (01M3JCG3WBHDF0ZWM06XV94ZDC).
@@ -307,17 +304,6 @@ use presence::{Block, LongStep, Session, SetStatus};
 use sessions::Known;
 use threads::wake;
 
-/// True when `message` to `to` is a request of the lead of its user:
-/// a message of a lead of the same user, not of `to`, that starts with
-/// `request:` (01M49KT28N4B07P4G80Z74GRAH).
-fn is_request(to: &Who, message: &Message) -> bool {
-    let from = message.from.who();
-    from != to
-        && from.user() == to.user()
-        && message.from.lead()
-        && message.body.trim_start().starts_with("request:")
-}
-
 /// A claim stays with a session this long after the session stops (R9).
 pub const CLAIM_GRACE: Duration = Duration::from_secs(5 * 60);
 
@@ -389,36 +375,6 @@ impl Default for State {
             calls: Calls::default(),
         }
     }
-}
-
-/// An idle worker that the server asks to stop
-/// ([`State::stop_idle_workers`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stopping {
-    /// The worker.
-    pub worker: SessionUri,
-    /// Its host.
-    pub host: String,
-    /// The time since its last call.
-    pub idle: Duration,
-    /// True for the first ask since the last change of its claims. Only
-    /// the first ask gives the lead a note (01M4385Z039RCFSKWFPWZAETTX).
-    pub first: bool,
-}
-
-/// An idle worker that still shows life [`crate::idle::STOP_WAIT`] after
-/// the ask to stop ([`State::stuck_workers`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stuck {
-    /// The worker.
-    pub worker: SessionUri,
-    /// Its host.
-    pub host: String,
-    /// The time since the first ask.
-    pub asked: Duration,
-    /// The first line of each unread request of the lead to the worker
-    /// ([`State::unread_requests`]).
-    pub requests: Vec<String>,
 }
 
 /// What a new message causes: sessions to wake and a line for `tail`.
@@ -1285,10 +1241,9 @@ impl State {
     /// session must clear its context (01M3X9XB37TQCXWPNFZRMRGJB4): the written copy has
     /// that mark.
     pub fn signal(&mut self, who: &Who, signal: Signal, now: Instant) -> AliveReply {
-        let reply = signal.set(&mut self.presence, who, now);
+        signal.set(&mut self.presence, who, now);
         AliveReply {
             clear: self.must_clear(who),
-            ..reply
         }
     }
 
@@ -1356,34 +1311,9 @@ impl State {
     }
 
     /// Records that a watch stream closed. The session is idle when it
-    /// has no open stream. A wake ends the watch of a worker, so the end
-    /// takes back an ask to stop, as a call does
-    /// (01M3Q5A0NKY1FCS0YH6N6YD3GN). The close is no sign of life: the
-    /// stream of a dead client can close a long time after its death
+    /// has no open stream. The close is no sign of life: the stream of a
+    /// dead client can close a long time after its death
     /// (01M3WG240PNMQYZ7TX6Z7ZF6M9).
-    ///
-    /// ```
-    /// use std::time::{Duration, Instant};
-    /// use riff_core::name::SessionUri;
-    /// use riff_state::state::State;
-    ///
-    /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=lead".parse()?;
-    /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
-    /// let now = Instant::now();
-    /// let mut state = State::default();
-    /// state.register(&lead, now);
-    /// // Only a person changes the settings.
-    /// let mike: SessionUri = "riff://mike@pangolin".parse()?;
-    /// state.set_idle(&mike, Some(0), None, now).unwrap();
-    /// state.worker(&w1, true, now);
-    /// state.watch_started(&w1, now);
-    ///
-    /// let later = now + Duration::from_secs(80);
-    /// assert_eq!(state.stop_idle_workers(later).len(), 1);
-    /// state.watch_ended(w1.who(), later);
-    /// assert!(!state.alive(&w1, later).stop);
-    /// # Ok::<(), riff_core::name::NameError>(())
-    /// ```
     pub fn watch_ended(&mut self, who: &Who, now: Instant) {
         self.signal(who, Signal::WatchEnded, now);
     }
@@ -1730,7 +1660,6 @@ impl State {
             worker: sessions.worker(who),
             container: session.container,
             binary: session.binary.clone(),
-            stopping: session.stopping,
             claims_secs: now
                 .saturating_duration_since(session.claims_changed)
                 .as_secs(),
@@ -2062,210 +1991,6 @@ impl State {
         };
         self.ask(me, &command, now).map_err(|r| r.reason)?;
         Ok(self.pending.the_riff().idle)
-    }
-
-    /// Each idle worker past the limit (01M3Q5A0NKY1FCS0YH6N6YD3GN). An
-    /// idle worker is a live worker that is not a lead, holds no claim,
-    /// was not asked before, and made no call for a time. On each host
-    /// of each user, the server keeps the [`Idle::per_host`] idle
-    /// workers with the shortest idle time. It asks each other one that
-    /// is idle for [`Idle::after_secs`] or more. It changes nothing: the
-    /// signal [`Signal::AskedToStop`] asks a worker.
-    pub fn idle_workers(&self, now: Instant) -> Vec<Stopping> {
-        let idle = self.written.the_riff().idle;
-        let after = Duration::from_secs(idle.after_secs);
-        // One limit for each user, host and repository
-        // (01M3XAHZMN8P0PRD0Q7881TEF9).
-        type Key = (String, String, Option<ThreadName>);
-        let mut workers: BTreeMap<Key, Vec<(Duration, Who)>> = BTreeMap::new();
-        let view = self.written_view();
-        for (who, session) in &self.presence.sessions {
-            let free = self.written.sessions().worker(who)
-                && session.watching(now)
-                && !session.stopping
-                && !view.holds_claim(who)
-                && !view.is_lead(who, now)
-                && self.unread_requests(who).is_empty();
-            if free {
-                let key = (
-                    who.user().to_owned(),
-                    session.place.host().to_owned(),
-                    session.place.default_thread(),
-                );
-                let time = now.saturating_duration_since(session.last_seen);
-                workers.entry(key).or_default().push((time, who.clone()));
-            }
-        }
-        let mut stopping = Vec::new();
-        for ((_, host, _), mut list) in workers {
-            list.sort();
-            for (time, who) in list.into_iter().skip(usize::from(idle.per_host)) {
-                if time < after {
-                    continue;
-                }
-                let first = self
-                    .presence
-                    .sessions
-                    .get(&who)
-                    .is_none_or(|session| session.asked().is_none());
-                stopping.push(Stopping {
-                    worker: self.uri(&who, now),
-                    host: host.clone(),
-                    idle: time,
-                    first,
-                });
-            }
-        }
-        stopping
-    }
-
-    /// The first line of each unread direct message to `who` from the
-    /// lead of its user that starts with `request:`, oldest first. The
-    /// server does not ask a worker with one to stop
-    /// (01M49KT28N4B07P4G80Z74GRAH).
-    ///
-    /// ```
-    /// use std::time::Instant;
-    /// use riff_core::name::SessionUri;
-    /// use riff_core::selector::Selector;
-    /// use riff_core::wire::Post;
-    /// use riff_state::state::State;
-    ///
-    /// let lead: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=lead".parse()?;
-    /// let w1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1".parse()?;
-    /// let now = Instant::now();
-    /// let mut state = State::default();
-    /// state.register(&lead, now);
-    /// state.register(&w1, now);
-    /// let to = vec![Selector::session("w1")];
-    /// let mut dm = None;
-    /// for body in ["request: claim issue-12\nIt is free.", "hi"] {
-    ///     let delivery = state.post(Post::new(&lead, None, to.clone(), body), now, 0).unwrap();
-    ///     dm = Some(delivery.tailed.thread);
-    /// }
-    /// assert_eq!(state.unread_requests(w1.who()), ["request: claim issue-12"]);
-    ///
-    /// // A read of the direct thread ends it.
-    /// state.read(&w1, &dm.unwrap(), false, now).unwrap();
-    /// assert!(state.unread_requests(w1.who()).is_empty());
-    /// # Ok::<(), riff_core::name::NameError>(())
-    /// ```
-    pub fn unread_requests(&self, who: &Who) -> Vec<String> {
-        let mut requests: Vec<(u64, u64, String)> = self
-            .written
-            .threads()
-            .by_name
-            .iter()
-            .filter(|(thread, _)| thread.is_direct() && may_read(who, thread))
-            .flat_map(|(thread, t)| {
-                let read = self.presence.cursor(who, thread);
-                t.messages
-                    .iter()
-                    .map(|m| &m.message)
-                    .filter(move |m| m.seq > read && is_request(who, m))
-                    .map(|m| {
-                        let line = m.body.trim().lines().next().unwrap_or_default();
-                        (m.at_ms, m.seq, line.to_owned())
-                    })
-            })
-            .collect();
-        requests.sort();
-        requests.into_iter().map(|(_, _, line)| line).collect()
-    }
-
-    /// Asks each idle worker past the limit to stop, and gives each
-    /// ([`State::idle_workers`]). A later call of the worker takes the
-    /// ask back: a worker that claims work goes on.
-    ///
-    /// ```
-    /// use std::time::{Duration, Instant};
-    /// use riff_core::name::SessionUri;
-    /// use riff_state::state::State;
-    ///
-    /// let worker = |id: &str| -> SessionUri {
-    ///     format!("riff://mike@pangolin/como-technologies/riff?session={id}").parse().unwrap()
-    /// };
-    /// let now = Instant::now();
-    /// let mut state = State::default();
-    /// state.register(&worker("lead"), now);
-    /// for (id, at) in [("w1", 10), ("w2", 5), ("w3", 0)] {
-    ///     let w = worker(id);
-    ///     state.worker(&w, true, now);
-    ///     state.watch_started(&w, now + Duration::from_secs(at));
-    /// }
-    /// let later = now + Duration::from_secs(80);
-    /// let stopped: Vec<_> = state.stop_idle_workers(later).iter().map(|s| s.worker.to_string()).collect();
-    /// assert_eq!(stopped, [worker("w2").to_string(), worker("w3").to_string()]);
-    /// assert!(state.stop_idle_workers(later).is_empty(), "asks once");
-    /// # Ok::<(), riff_core::name::NameError>(())
-    /// ```
-    pub fn stop_idle_workers(&mut self, now: Instant) -> Vec<Stopping> {
-        let stopping = self.idle_workers(now);
-        for stop in &stopping {
-            self.signal(stop.worker.who(), Signal::AskedToStop, now);
-        }
-        stopping
-    }
-
-    /// Each worker that still shows life [`crate::idle::STOP_WAIT`] after
-    /// the first ask to stop, while the ask holds. It gives each worker
-    /// one time for each first ask (01M4385Z2QAMEED30JYE81SMBY).
-    ///
-    /// ```
-    /// use std::time::{Duration, Instant};
-    /// use riff_core::name::SessionUri;
-    /// use riff_state::state::State;
-    ///
-    /// let worker = |id: &str| -> SessionUri {
-    ///     format!("riff://mike@pangolin/como-technologies/riff?session={id}").parse().unwrap()
-    /// };
-    /// let (w1, w2) = (worker("w1"), worker("w2"));
-    /// let now = Instant::now();
-    /// let mut state = State::default();
-    /// for (w, at) in [(&w1, 0), (&w2, 10)] {
-    ///     state.worker(w, true, now);
-    ///     state.watch_started(w, now + Duration::from_secs(at));
-    /// }
-    /// let asked = now + Duration::from_secs(80);
-    /// assert_eq!(state.stop_idle_workers(asked).len(), 1, "w1 is asked to stop");
-    ///
-    /// // A worker that stops shows no life after the ask.
-    /// let later = asked + Duration::from_secs(90);
-    /// assert!(state.stuck_workers(later).is_empty());
-    ///
-    /// // A keep-alive after the wait: the worker still runs.
-    /// state.alive(&w1, later);
-    /// let stuck = state.stuck_workers(later);
-    /// assert_eq!(stuck.len(), 1);
-    /// assert_eq!(stuck[0].worker, w1);
-    /// assert_eq!(stuck[0].asked, Duration::from_secs(90));
-    /// assert!(state.stuck_workers(later).is_empty(), "tells one time");
-    /// # Ok::<(), riff_core::name::NameError>(())
-    /// ```
-    pub fn stuck_workers(&mut self, now: Instant) -> Vec<Stuck> {
-        let mut stuck = Vec::new();
-        for (who, session) in &mut self.presence.sessions {
-            let Some(asked) = session.asked() else {
-                continue;
-            };
-            let late = session
-                .alive
-                .is_some_and(|alive| alive >= asked + crate::idle::STOP_WAIT);
-            if session.stopping && late && !session.told_stuck && !session.gone(now) {
-                session.told_stuck = true;
-                let host = session.place.host().to_owned();
-                stuck.push((who.clone(), host, now.saturating_duration_since(asked)));
-            }
-        }
-        stuck
-            .into_iter()
-            .map(|(who, host, asked)| Stuck {
-                worker: self.uri(&who, now),
-                host,
-                asked,
-                requests: self.unread_requests(&who),
-            })
-            .collect()
     }
 
     /// Whether a session of `user` is live, and the seconds since the
@@ -4933,299 +4658,6 @@ mod tests {
         assert!(d.contains("Ask your own user"), "{d}");
     }
 
-    /// A live worker `id` of mike on `host`, with its last call at `at`.
-    fn idle_worker(state: &mut State, host: &str, id: &str, at: Instant) -> SessionUri {
-        let w = uri(&format!(
-            "riff://mike@{host}/como-technologies/riff?session={id}"
-        ));
-        state.worker(&w, true, at);
-        state.watch_started(&w, at);
-        w
-    }
-
-    fn stopped(state: &mut State, now: Instant) -> Vec<String> {
-        state
-            .stop_idle_workers(now)
-            .iter()
-            .map(|s| s.worker.who().session().unwrap().to_owned())
-            .collect()
-    }
-
-    fn running(state: &mut State) -> Result<(), String> {
-        let person = uri("riff://mike@pangolin/como-technologies/riff");
-        state.riff(&person, Some(RiffState::Running), Instant::now())?;
-        Ok(())
-    }
-
-    /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: three idle workers on one host, past
-    /// the idle time: two stop, one stays. A worker with a claim and the
-    /// lead stay.
-    #[test]
-    fn three_idle_workers_on_a_host_leave_one() {
-        let now = Instant::now();
-        let mut state = State::default();
-        running(&mut state).unwrap();
-        let lead = uri("riff://mike@pangolin/como-technologies/riff?session=lead");
-        // The lead became the lead before it got the worker mark.
-        state.register(&lead, now);
-        state.watch_started(&lead, now);
-        state.worker(&lead, true, now);
-        let busy = idle_worker(&mut state, "pangolin", "busy", now);
-        state.claim(&busy, &repo(), "issue-12", now).unwrap();
-        idle_worker(&mut state, "pangolin", "w1", now);
-        idle_worker(&mut state, "pangolin", "w2", now + Duration::from_secs(1));
-        idle_worker(&mut state, "pangolin", "w3", now + Duration::from_secs(2));
-
-        let later = now + Duration::from_secs(90);
-        assert_eq!(stopped(&mut state, later), ["w2", "w1"]);
-        let shown = state.who(later, 90_000, false);
-        let stopping: Vec<_> = shown
-            .iter()
-            .filter(|s| s.stopping)
-            .map(|s| s.uri.who().session().unwrap())
-            .collect();
-        assert_eq!(stopping, ["w1", "w2"]);
-        assert!(state.uri(lead.who(), later).lead());
-        assert!(
-            stopped(&mut state, later).is_empty(),
-            "the server asks once"
-        );
-    }
-
-    /// 01M4385Z039RCFSKWFPWZAETTX: a wake takes the ask back, and the
-    /// server asks again, but only the first ask is for the lead. A claim
-    /// and a release start a new idle time: the next ask is a first ask
-    /// again.
-    #[test]
-    fn only_the_first_ask_of_an_idle_time_is_for_the_lead() {
-        let now = Instant::now();
-        let mut state = State::default();
-        running(&mut state).unwrap();
-        state.register(&lead(api()), now);
-        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
-        let w2 = idle_worker(&mut state, "pangolin", "w2", now);
-        // w2 makes a call one second after `at`, so w1 is the idle
-        // worker past the limit.
-        let w2_calls = |state: &mut State, at: Instant| {
-            let at = at + Duration::from_secs(1);
-            state.watch_ended(w2.who(), at);
-            state.watch_started(&w2, at);
-        };
-        let asks = |state: &mut State, at: Instant| -> Vec<(String, bool)> {
-            let stopping = state.stop_idle_workers(at);
-            let session = |s: &Stopping| s.worker.who().session().unwrap().to_owned();
-            stopping.iter().map(|s| (session(s), s.first)).collect()
-        };
-
-        let mut at = now;
-        w2_calls(&mut state, at);
-        at += Duration::from_secs(70);
-        assert_eq!(asks(&mut state, at), [("w1".into(), true)]);
-        // A pause wakes w1: the end of its watch takes the ask back.
-        state.watch_ended(w1.who(), at);
-        state.watch_started(&w1, at);
-        w2_calls(&mut state, at);
-        at += Duration::from_secs(70);
-        assert_eq!(asks(&mut state, at), [("w1".into(), false)]);
-
-        // w1 claims work and releases it: a new idle time.
-        state.claim(&w1, &repo(), "issue-12", at).unwrap();
-        state.release(&w1, &repo(), "issue-12", at).unwrap();
-        w2_calls(&mut state, at);
-        at += Duration::from_secs(70);
-        assert_eq!(asks(&mut state, at), [("w1".into(), true)]);
-    }
-
-    /// 01M49KT28N4B07P4G80Z74GRAH: the server does not ask an idle
-    /// worker to stop while it has an unread request of its lead. A
-    /// message that is not a request, or a request of a session that is
-    /// not the lead, does not keep it. A read ends the hold.
-    #[test]
-    fn an_idle_worker_with_an_unread_request_of_its_lead_stays() {
-        let now = Instant::now();
-        let mut state = State::default();
-        running(&mut state).unwrap();
-        let the_lead = lead(api());
-        state.register(&the_lead, now);
-        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
-        let w2 = idle_worker(&mut state, "pangolin", "w2", now);
-        let to_w1 = vec![Selector::session("w1")];
-        let w2_calls = |state: &mut State, at: Instant| {
-            let at = at + Duration::from_secs(1);
-            state.watch_ended(w2.who(), at);
-            state.watch_started(&w2, at);
-        };
-        let post = |state: &mut State, from: &SessionUri, body: &str| {
-            let post = Post::new(from, None, to_w1.clone(), body);
-            state.post(post, now, 0).unwrap().tailed.thread
-        };
-
-        post(&mut state, &the_lead, "hi: a message, no request");
-        post(&mut state, &w2, "request: claim issue-7 (not of the lead)");
-        assert!(state.unread_requests(w1.who()).is_empty());
-        let dm = post(&mut state, &the_lead, "request: claim verify-issue-12");
-        assert_eq!(
-            state.unread_requests(w1.who()),
-            ["request: claim verify-issue-12"]
-        );
-
-        let mut at = now;
-        for _ in 0..3 {
-            w2_calls(&mut state, at);
-            at += Duration::from_secs(300);
-            assert!(stopped(&mut state, at).is_empty(), "w1 has a request");
-        }
-
-        state.read(&w1, &dm, false, at).unwrap();
-        w2_calls(&mut state, at);
-        at += Duration::from_secs(70);
-        assert_eq!(stopped(&mut state, at), ["w1"]);
-    }
-
-    /// 01M51TKZSYR7PH629S29JX00ZD: a request of the lead that comes
-    /// between two pages of the start read of a worker. The next page is
-    /// a read of all after a seq of the repository thread, so it shows no
-    /// message of the direct thread. It keeps the cursor: the request
-    /// stays unread, and the server does not ask the worker to stop. The
-    /// next unread read shows the request, and ends the hold.
-    #[test]
-    fn a_read_of_all_after_a_later_seq_keeps_a_request_unread() {
-        let now = Instant::now();
-        let mut state = State::default();
-        running(&mut state).unwrap();
-        let the_lead = lead(api());
-        state.register(&the_lead, now);
-        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
-        let w2 = idle_worker(&mut state, "pangolin", "w2", now);
-        let w2_calls = |state: &mut State, at: Instant| {
-            let at = at + Duration::from_secs(1);
-            state.watch_ended(w2.who(), at);
-            state.watch_started(&w2, at);
-        };
-        let request = "request: claim issue-12";
-        let post = Post::new(&the_lead, None, vec![Selector::session("w1")], request);
-        let dm = state.post(post, now, 0).unwrap().tailed.thread;
-
-        let page = state
-            .read_page(&w1, &dm, true, Some(50), PAGE, now)
-            .unwrap();
-        assert!(page.messages.is_empty(), "{:?}", page.messages);
-        assert_eq!(state.unread_requests(w1.who()), [request]);
-        let mut at = now;
-        for _ in 0..3 {
-            w2_calls(&mut state, at);
-            at += Duration::from_secs(300);
-            assert!(stopped(&mut state, at).is_empty(), "w1 has a request");
-        }
-
-        let page = state.read_page(&w1, &dm, false, None, PAGE, at).unwrap();
-        let bodies: Vec<_> = page.messages.iter().map(|m| m.body.as_str()).collect();
-        assert_eq!(bodies, [request]);
-        assert!(state.unread_requests(w1.who()).is_empty());
-        w2_calls(&mut state, at);
-        at += Duration::from_secs(70);
-        assert_eq!(stopped(&mut state, at), ["w1"]);
-    }
-
-    /// 01M49KT3JXZATXMA4WNTR9BJCK: a request of the lead that comes
-    /// after the ask, to a worker that still runs: the note names it.
-    #[test]
-    fn the_note_of_a_worker_that_still_runs_names_each_unread_request() {
-        let now = Instant::now();
-        let mut state = State::default();
-        running(&mut state).unwrap();
-        let the_lead = lead(api());
-        state.register(&the_lead, now);
-        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
-        // w2 stays: it is the idle worker with the shortest idle time.
-        idle_worker(&mut state, "pangolin", "w2", now + Duration::from_secs(5));
-        let asked = now + Duration::from_secs(70);
-        assert_eq!(stopped(&mut state, asked), ["w1"]);
-
-        for body in ["request: claim issue-12", "request: claim verify-issue-9"] {
-            let post = Post::new(&the_lead, None, vec![Selector::session("w1")], body);
-            state.post(post, asked, 0).unwrap();
-        }
-        let later = asked + crate::idle::STOP_WAIT;
-        state.alive(&w1, later);
-        let stuck = state.stuck_workers(later);
-        assert_eq!(stuck.len(), 1);
-        assert_eq!(stuck[0].worker.who(), w1.who());
-        assert_eq!(
-            stuck[0].requests,
-            ["request: claim issue-12", "request: claim verify-issue-9"]
-        );
-        let news = crate::idle::stuck(&stuck[0]);
-        assert!(
-            news.contains("It did not read 2 requests of the lead"),
-            "{news}"
-        );
-        assert!(news.contains("\"request: claim issue-12\""), "{news}");
-    }
-
-    /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: an idle worker on each of two hosts:
-    /// both stay. A worker that is idle for less than the idle time stays.
-    #[test]
-    fn one_idle_worker_on_each_host_stays() {
-        let now = Instant::now();
-        let mut state = State::default();
-        state.register(&lead(api()), now);
-        idle_worker(&mut state, "pangolin", "w1", now);
-        let w2 = idle_worker(&mut state, "thelio", "w2", now);
-        let ten = now + Duration::from_secs(600);
-        assert!(stopped(&mut state, ten).is_empty());
-
-        state.called(&w2, ten);
-        idle_worker(&mut state, "thelio", "w3", ten);
-        let soon = ten + Duration::from_secs(30);
-        assert!(
-            stopped(&mut state, soon).is_empty(),
-            "w2 is idle for 30 s only"
-        );
-    }
-
-    /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: a worker that claims work just before
-    /// the stop is not stopped. A claim after the ask takes it back, so
-    /// the next keep-alive does not stop it.
-    #[test]
-    fn a_worker_that_claims_is_not_stopped() {
-        let now = Instant::now();
-        let mut state = State::default();
-        running(&mut state).unwrap();
-        state.register(&lead(api()), now);
-        idle_worker(&mut state, "pangolin", "w1", now + Duration::from_secs(5));
-        let w2 = idle_worker(&mut state, "pangolin", "w2", now);
-        let w3 = idle_worker(&mut state, "pangolin", "w3", now);
-
-        let later = now + Duration::from_secs(80);
-        state.claim(&w2, &repo(), "issue-12", later).unwrap();
-        assert_eq!(stopped(&mut state, later), ["w3"]);
-
-        assert!(state.alive(&w3, later).stop);
-        state.claim(&w3, &repo(), "issue-13", later).unwrap();
-        assert!(!state.alive(&w3, later).stop, "the claim wins");
-        assert!(!state.who(later, 80_000, false).iter().any(|s| s.stopping));
-    }
-
-    /// 01M3Q5A0NKY1FCS0YH6N6YD3GN: a wake of the lead ends the watch of
-    /// an idle worker after the ask. The worker is not stopped before it
-    /// reads the request.
-    #[test]
-    fn a_woken_worker_is_not_stopped() {
-        let now = Instant::now();
-        let mut state = State::default();
-        state.register(&lead(api()), now);
-        state
-            .set_idle(&person_of(&api()), Some(0), None, now)
-            .unwrap();
-        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
-        let later = now + Duration::from_secs(80);
-        assert_eq!(stopped(&mut state, later), ["w1"]);
-
-        state.watch_ended(w1.who(), later + Duration::from_secs(1));
-        assert!(!state.alive(&w1, later + Duration::from_secs(5)).stop);
-    }
-
     /// 01M3Q5A0TF9K49V8Z1ZY9NDF74: the settings change the numbers, and
     /// the log keeps them.
     #[test]
@@ -5233,12 +4665,8 @@ mod tests {
         let now = Instant::now();
         let mut state = State::default();
         state.register(&lead(api()), now);
-        for id in ["w1", "w2", "w3"] {
-            idle_worker(&mut state, "pangolin", id, now);
-        }
         let set = state.set_idle(&person_of(&api()), None, Some(120), now);
         assert_eq!(set.unwrap().after_secs, 120);
-        assert!(stopped(&mut state, now + Duration::from_secs(90)).is_empty());
 
         let idle = state
             .set_idle(&person_of(&api()), Some(2), None, now)
@@ -5250,28 +4678,10 @@ mod tests {
                 after_secs: 120
             }
         );
-        assert_eq!(stopped(&mut state, now + Duration::from_secs(130)).len(), 1);
 
         let loaded = State::replay(state.take_queue(), now, 0);
         assert_eq!(loaded.idle(), idle);
         assert_eq!(State::default().idle(), Idle::default());
-    }
-
-    /// A worker with no watch, and a session that is no worker, are not
-    /// idle workers.
-    #[test]
-    fn only_a_live_worker_is_an_idle_worker() {
-        let now = Instant::now();
-        let mut state = State::default();
-        state.register(&lead(api()), now);
-        state
-            .set_idle(&person_of(&api()), Some(0), None, now)
-            .unwrap();
-        let w1 = idle_worker(&mut state, "pangolin", "w1", now);
-        state.watch_ended(w1.who(), now);
-        let agent = uri("riff://mike@pangolin/como-technologies/riff?session=a1");
-        state.watch_started(&agent, now);
-        assert!(stopped(&mut state, now + Duration::from_secs(90)).is_empty());
     }
 
     fn info(state: &State, me: &SessionUri, now: Instant) -> SessionInfo {
@@ -5921,38 +5331,6 @@ mod tests {
                 "{written}"
             );
         }
-    }
-
-    /// 01M3XAHZMN8P0PRD0Q7881TEF9: the idle rule is for each user, host
-    /// and repository. An idle worker in one repository does not stop
-    /// the idle worker of the same user and host in another repository.
-    #[test]
-    fn an_idle_worker_in_one_repository_does_not_stop_one_in_another() {
-        let now = Instant::now();
-        let mut state = State::default();
-        running(&mut state).unwrap();
-        let in_repo = |repo: &str, id: &str| {
-            uri(&format!(
-                "riff://mike@pangolin/como-technologies/{repo}?session={id}"
-            ))
-        };
-        for (repo, id, at) in [("riff", "r1", 0), ("dotfiles", "d1", 1)] {
-            let lead = in_repo(repo, &format!("lead-{repo}"));
-            state.register(&lead, now);
-            let worker = in_repo(repo, id);
-            let at = now + Duration::from_secs(at);
-            state.watch_started(&worker, at);
-            state.worker(&worker, true, at);
-        }
-        let later = now + Duration::from_secs(90);
-        assert!(stopped(&mut state, later).is_empty());
-
-        // A second idle worker in one of the two repositories stops.
-        let second = in_repo("riff", "r2");
-        let at = now + Duration::from_secs(2);
-        state.watch_started(&second, at);
-        state.worker(&second, true, at);
-        assert_eq!(stopped(&mut state, later), ["r1"]);
     }
 
     /// A status of a session from before a pause of its repository is

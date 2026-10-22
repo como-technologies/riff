@@ -23,7 +23,7 @@
 //!   passes the time in, so tests control it.
 //! - The state machine is the crate `riff-state`: the [`state`], the
 //!   [`log`] and its replay, the [`checkpoint`], the [`store`], and the
-//!   rules of the [`owner`] role and of [`idle`] workers. Only
+//!   rules of the [`owner`] role. Only
 //!   riff-server uses it (01M4ZHW1Y1X21ZPV053D0CXWMC). This crate adds
 //!   HTTP, the sign-in, the lease and the engine.
 //! - The writer sends the wakes and the `tail` event of a message to
@@ -63,8 +63,6 @@
 //!   the sign-ins of a removed person is an effect of the writer, and
 //!   a load drops each sign-in from before the last removal of its
 //!   person (01M3XA87A9GGFA89RQXWSKY0V6).
-//! - A task looks for idle workers each [`idle::CHECK_EVERY`], and asks
-//!   each idle worker past the limit to stop. See [`idle`].
 //! - A task looks at the owner role each [`owner::Timing::tick`]: it
 //!   sends the command `grant_owner` for a request whose time ended,
 //!   and checks the owner: the command `end_owner` ends the role of an
@@ -250,7 +248,7 @@ use riff_state::state::{
     Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,
 };
 use riff_state::store::{Memory, SIGN_INS, Store, StoreError, Version};
-use riff_state::{checkpoint, idle, log, owner, state, store};
+use riff_state::{checkpoint, log, owner, state, store};
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
@@ -1216,32 +1214,6 @@ impl Server {
         posts.push(Server::news(Some(chat), Vec::new(), &news, Kind::Message));
         self.announce_each(posts).await;
     }
-
-    /// Asks each idle worker past the limit to stop, and posts a note to
-    /// the lead of its user for the first ask of each. Posts one more
-    /// note for each worker that still runs after the ask (see [`idle`]).
-    async fn stop_idle_workers(&self) {
-        let settings = self.engine.read(State::idle);
-        let mut notes = Vec::new();
-        for stopping in self.engine.stop_idle_workers() {
-            if stopping.first {
-                notes.push((stopping.worker.clone(), idle::news(&stopping, &settings)));
-            }
-        }
-        for stuck in self.engine.stuck_workers() {
-            notes.push((stuck.worker.clone(), idle::stuck(&stuck)));
-        }
-        let mut posts = Vec::new();
-        for (worker, news) in notes {
-            tracing::info!("{news}");
-            let Some(thread) = worker.default_thread() else {
-                continue;
-            };
-            let lead = Selector::lead(worker.who().user(), &thread.to_string());
-            posts.push(Server::news(Some(thread), vec![lead], &news, Kind::Note));
-        }
-        self.announce_each(posts).await;
-    }
 }
 
 /// One `riff-server`: its state, its tokens and its routes. Clones
@@ -1543,7 +1515,6 @@ impl Service {
         service.keep_checkpoints();
         service.forget_sessions();
         service.watch_owner();
-        service.watch_idle_workers();
         service
     }
 
@@ -1730,32 +1701,6 @@ impl Service {
                             tracing::info!("the owner is gone: the riff has no owner");
                         }
                     }
-                }
-            }
-        });
-    }
-
-    /// Starts the task that asks the idle workers past the limit to stop,
-    /// each [`idle::CHECK_EVERY`] (see [`idle`]). A server with no async
-    /// runtime starts no task. The task ends when the service ends.
-    fn watch_idle_workers(&self) {
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        let server = Arc::downgrade(&self.0);
-        runtime.spawn(async move {
-            let mut tick = tokio::time::interval(idle::CHECK_EVERY);
-            tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-            loop {
-                tick.tick().await;
-                let Some(server) = server.upgrade() else {
-                    break;
-                };
-                if server.is_stopped() {
-                    break;
-                }
-                if server.serving() {
-                    server.stop_idle_workers().await;
                 }
             }
         });
@@ -4529,7 +4474,7 @@ mod tests {
         let new: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=c#api"
             .parse()
             .unwrap();
-        let reply = alive(
+        let _ = alive(
             AxumState(service.0.clone()),
             Proof::none(),
             Json(Alive {
@@ -4542,7 +4487,6 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!reply.stop);
         // The join of the repository thread and the start of the
         // session are written. That register makes no lead.
         let chunks = store.chunks().await;
@@ -4996,7 +4940,7 @@ mod tests {
         assert!(traced(&capture).is_empty());
 
         // A signal and a query: no line.
-        let Json(reply) = alive(
+        let _ = alive(
             AxumState(service.0.clone()),
             Proof::none(),
             Json(Alive {
@@ -5009,7 +4953,6 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!reply.stop);
         assert_eq!(claims(&service, &brett()).await, ["issue-7"]);
         assert!(traced(&capture).is_empty());
 

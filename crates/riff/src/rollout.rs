@@ -7,9 +7,7 @@
 //! step. Once each [`INTERVAL`], it looks at the riff, and asks the riff
 //! daemon of its machine to run the wave of the repository
 //! ([`crate::wave`], 01M53NGVE839TRH7XB7CDPQNZE). The daemon runs each
-//! item in a container. The rollout starts no worker in tmux
-//! (01M599XR3NMJD9RAJ6ZAMW6KG5).
-//!
+//! item in a container.//!
 //! ```mermaid
 //! flowchart TD
 //!     T["each interval"] --> L{"this session is the lead?"}
@@ -181,7 +179,7 @@ pub trait Env {
 
 /// Runs the rollout until the task ends. It waits one interval, looks,
 /// and asks the riff daemon for the wave when free work waits, again and
-/// again. It starts no worker in tmux (01M599XR3NMJD9RAJ6ZAMW6KG5). It
+/// again. It
 /// prints an error once, not again until the error changes.
 ///
 /// The lead gets a note for each ask of the wave, and one note for each
@@ -1220,10 +1218,10 @@ mod tests {
 
     /// Free work and no wave on the daemon: the first look asks the
     /// daemon one time to run the wave, and tells the lead. The wave
-    /// runs, so no later look asks again. The rollout offers no work to
-    /// a worker in tmux: it has no such path (01M599XR3NMJD9RAJ6ZAMW6KG5).
+    /// runs, so no later look asks again. The rollout has no other path
+    /// (01M599XR3NMJD9RAJ6ZAMW6KG5).
     #[tokio::test(start_paused = true)]
-    async fn it_asks_the_daemon_one_time_for_the_wave_and_starts_no_tmux_worker() {
+    async fn it_asks_the_daemon_one_time_for_the_wave() {
         let fake = Fake::new(world(3));
         let begin = tokio::time::Instant::now();
         run_for(&fake, 60).await;

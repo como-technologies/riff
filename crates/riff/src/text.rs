@@ -1835,43 +1835,6 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
     format!("{why} next: {next}")
 }
 
-/// The line of `riff mcp` when the server asks its idle worker to stop
-/// (01M3Q5A0QZTSTXHHNYCE8HFJSB).
-pub const IDLE_STOP: &str =
-    "the server stops this idle worker. riff stops its riff workers run, and claude ends.";
-
-/// The answer of `riff workers idle` (01M3Q5A0TF9K49V8Z1ZY9NDF74).
-///
-/// ```
-/// use riff_core::wire::Idle;
-///
-/// assert_eq!(
-///     riff::text::idle_workers(&Idle::default()),
-///     "The server keeps at most 1 idle worker on each host. It stops each other worker \
-/// that is idle for 60 seconds."
-/// );
-/// assert!(riff::text::idle_workers(&Idle { per_host: 0, after_secs: 30 })
-///     .starts_with("The server keeps no idle worker on a host. It stops each worker"));
-/// ```
-pub fn idle_workers(idle: &riff_core::wire::Idle) -> String {
-    let after = idle.after_secs;
-    match idle.per_host {
-        0 => format!(
-            "The server keeps no idle worker on a host. It stops each worker that is idle for \
-             {after} seconds."
-        ),
-        n => format!(
-            "The server keeps at most {} on each host. It stops each other worker that is idle \
-             for {after} seconds.",
-            if n == 1 {
-                "1 idle worker".to_owned()
-            } else {
-                format!("{n} idle workers")
-            }
-        ),
-    }
-}
-
 /// Why a machine starts no worker: its available memory and its floor
 /// (01M3WFZ01PTAYYKG3T5CFA2W4D).
 ///
@@ -2386,7 +2349,7 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 
 /// The kind of a session in `riff who` and `riff top`
 /// (01M510MG2YSETB2CCAS8XDHPZ0): the first that matches of the lead, a
-/// session in a container, a worker in tmux, the session of
+/// session in a container, a worker, the session of
 /// `riff workers host`, and the session of the riff daemon
 /// (01M589HH6HCWYJP1ZC7MRAXZ6E). Each other session has no kind.
 ///
@@ -2403,7 +2366,6 @@ pub fn owner_line(owner: &RiffOwner) -> Option<String> {
 ///     worker,
 ///     container,
 ///     binary: None,
-///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,
 ///     fresh_secs: None,
@@ -2517,7 +2479,6 @@ fn is_host(s: &SessionInfo) -> bool {
 ///     worker,
 ///     container: false,
 ///     binary: None,
-///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,
 ///     fresh_secs: None,
@@ -2597,7 +2558,6 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         worker: false,
 ///         container: false,
 ///         binary: None,
-///         stopping: false,
 ///         claims_secs: 0,
 ///         must_clear: false,
 ///         fresh_secs: None,
@@ -2616,7 +2576,6 @@ pub fn tags(s: &SessionInfo, owner: &RiffOwner) -> Vec<&'static str> {
 ///         worker: true,
 ///         container: false,
 ///         binary: None,
-///         stopping: false,
 ///         claims_secs: 60,
 ///         must_clear: false,
 ///         fresh_secs: None,
@@ -2699,7 +2658,6 @@ pub struct Here {
 ///     worker: false,
 ///     container: false,
 ///     binary: None,
-///     stopping: false,
 ///     claims_secs: 0,
 ///     must_clear: false,
 ///     fresh_secs: None,
@@ -4237,8 +4195,7 @@ pub fn verify_post(verdict: Verdict, number: u64, done: &Reported, result: &str)
 }
 
 /// The room for more workers when fewer than `limit` run
-/// (01M493Z063SSTAJS2KNDFBTEBJ). The rollout starts no worker in tmux
-/// (01M53NGVE839TRH7XB7CDPQNZE): a person starts them with
+/// (01M493Z063SSTAJS2KNDFBTEBJ). A person starts them with
 /// `riff workers start`.
 ///
 /// ```
@@ -7892,7 +7849,7 @@ mod tests {
             worker: false,
             container: false,
             binary: None,
-            stopping: false,
+
             claims_secs: 7200,
             must_clear: false,
             fresh_secs: None,

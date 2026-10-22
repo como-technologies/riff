@@ -186,7 +186,7 @@ use riff_state::log::Written;
 use riff_state::state::{
     Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
     CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, Import, Imported, Key, MakeRiff,
-    NameOwner, OwnerChange, Refused, Role, Signal, State, Stopping, Stuck,
+    NameOwner, OwnerChange, Refused, Role, Signal, State,
 };
 use tokio::sync::{Notify, broadcast, oneshot};
 
@@ -1107,18 +1107,6 @@ impl Engine {
     /// stream is known, and the close is no call of it.
     pub fn watch_ended(&self, who: &Who) {
         self.set(who, Signal::WatchEnded);
-    }
-
-    /// Asks each idle worker past the limit to stop: a signal of the
-    /// server for each ([`State::stop_idle_workers`]). Gives each.
-    pub fn stop_idle_workers(&self) -> Vec<Stopping> {
-        self.core().state.stop_idle_workers(Instant::now())
-    }
-
-    /// Each idle worker that still runs after the ask to stop
-    /// ([`State::stuck_workers`]).
-    pub fn stuck_workers(&self) -> Vec<Stuck> {
-        self.core().state.stuck_workers(Instant::now())
     }
 
     /// A query of a caller: it reads the written copy. The query is a
