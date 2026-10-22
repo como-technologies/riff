@@ -101,9 +101,9 @@ enum Command {
     /// Say that you cannot go on, and wake your lead
     ///
     /// riff shows you as blocked, and tells the lead of your user the
-    /// reason. The block ends at your next work after an answer, or at
-    /// the next prompt of your user. The lead itself shows as waiting
-    /// for its user, and tells nobody.
+    /// reason. The block of a worker ends at its next work after an
+    /// answer. The lead itself shows as waiting for its user, and tells
+    /// nobody. The next prompt of the person ends the block of the lead.
     Blocked {
         /// Why you cannot go on, in one short line.
         #[arg(required = true)]

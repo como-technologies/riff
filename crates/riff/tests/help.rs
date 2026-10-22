@@ -390,3 +390,23 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
         assert!(text.contains(who), "{name} {heading}: {text}");
     }
 }
+
+/// 01M5GVQQ8NK3RD9CM3VTGXEHZQ: `riff blocked --help` and the description
+/// of the `blocked` tool say who ends a block, as the book does: a prompt
+/// of the person ends the block of the lead, and the block of a worker
+/// ends at its next work after an answer.
+#[test]
+fn the_help_of_blocked_says_that_a_prompt_ends_only_the_block_of_the_lead() {
+    let worker = "The block of a worker ends at its next work after an answer.";
+    let lead = "The next prompt of the person ends the block of the lead.";
+    let tool = words(&riff::tools::Tools::description("blocked").unwrap());
+    // -h shows only the first line: the long help says who ends a block.
+    let help = words(&riff(&["blocked", "--help"]));
+    for text in [&help, &tool] {
+        assert!(text.contains(worker), "{text}");
+        assert!(text.contains(lead), "{text}");
+        assert!(!text.contains("next prompt of your user"), "{text}");
+    }
+    let book = words(&under("how-it-works.md", "### End the wait of the lead"));
+    assert!(book.contains("Give the lead a prompt"), "{book}");
+}
