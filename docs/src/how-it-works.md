@@ -499,7 +499,8 @@ flowchart TD
     G -- "no" --> N["it changes nothing"]
     G -- "yes" --> U["1. the unit of the daemon"]
     U --> I["2. the session image of each wave"]
-    I --> P["3. the checks of the machine:<br/>it only tells you"]
+    I --> O["3. the plugin of riff 3"]
+    O --> P["4. the checks of the machine:<br/>it only tells you"]
     N --> P
 ```
 
@@ -507,7 +508,8 @@ flowchart TD
 |---|---|---|
 | 1. The unit of the daemon | `riff.service` is the text that the new riff writes for it, with your riff and your variables | writes it again, and starts again on it when it runs no session |
 | 2. The session image of each wave | podman has the merged pin: the image that `riff.toml` on the default branch of `origin` pins (see [Only a merged pin counts](development.md#only-a-merged-pin-counts)) | pulls it |
-| 3. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
+| 3. The plugin of riff 3 | nothing of it is left: see [Remove the plugin of riff 3](start-a-riff.md#remove-the-plugin-of-riff-3) | removes it |
+| 4. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
 
 - Only a release does a step: a `riff` whose SHA-256 is in
   `SHA256SUMS` of the GitHub release of its version. A check build or
@@ -555,6 +557,7 @@ update.auto is on, and this riff is the release v1.6.0: at its next start, the r
 in step  the riff binary: it is the release v1.6.0
 not in step  the unit of the daemon: the unit file is not the text that this riff writes for it. Fix: riff daemon install
 in step  the session image of como-technologies/riff: ghcr.io/como-technologies/riff-session@sha256:…
+in step  the plugin of riff 3: it is not here
 in step  podman: podman version 5.7.0
 needs you  the init of podman: podman has no init: no catatonit in /usr/local/libexec/podman, /usr/local/lib/podman, /usr/libexec/podman, /usr/lib/podman, so no session can start. Fix: install catatonit, the init of podman, for example: sudo apt install catatonit
 in step  /etc/subuid: 65536 IDs for mike
