@@ -146,6 +146,29 @@ impl Reach {
         crate::cycle::Served { server, hosts }
     }
 
+    /// The state of the riff daemon on the socket of the session, for
+    /// `riff daemon status` in a container (#1239).
+    pub async fn daemon_status(socket: &std::path::Path) -> Result<crate::daemon::Status> {
+        ask(socket, &ServerCall::Status).await
+    }
+
+    /// The reply of the daemon of `host` to `request`, through the
+    /// daemon on the socket (#1239). Only the lead may.
+    pub async fn host(
+        &self,
+        host: &str,
+        request: &crate::daemon::remote::Request,
+    ) -> Result<String> {
+        let Reach::Daemon(socket) = self else {
+            anyhow::bail!("this riff has no socket of a session");
+        };
+        let call = ServerCall::Host {
+            host: host.to_owned(),
+            request: request.to_string(),
+        };
+        ask(socket, &call).await
+    }
+
     /// Resumes the whole riff, and gives the line for the person.
     pub async fn resume_riff(&self) -> Result<String> {
         match self {

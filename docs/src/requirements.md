@@ -6464,6 +6464,14 @@ part when they merge.
   release check` work in the container of the lead. Through the socket,
   each session can read the build of riff-server, the sessions and the
   holds of a thread. Only the lead can resume the whole riff.
+- **01M5GXYC201EFKMGA3ZNJM2J7Z** In a container, a --host request (riff
+  release test --host, riff daemon status --host, riff daemon sweep
+  --host, riff wave run --host, riff build --host) goes through the
+  socket of the session. The daemon posts it to the daemon of the host
+  through riff-server, as the session. Only the lead can send it. riff
+  daemon status with no --host in a container asks the daemon on the
+  socket of the session. It never looks for the socket or the unit of
+  the host.
 
 ### The first run
 

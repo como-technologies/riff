@@ -447,6 +447,19 @@ To use another `just`, give its path:
 riff build --just ~/bin/just
 ```
 
+### Build riff on another host
+
+The lead builds riff on a host with `--host`, through riff-server. The
+daemon of the host builds in its own check clone, and prints the path
+of the riff:
+
+```sh
+riff build --host thelio
+```
+
+Only you in a terminal and your lead can ask. The daemon refuses a
+worker.
+
 ### Keep the crates of the static build in a folder
 
 The static build keeps the crates that it downloads in the volume
@@ -3840,6 +3853,13 @@ riff release status
 COMMIT`, then `passed` or `failed`. Name the host as `riff daemon
 status --host HOST` does. The host needs `riff daemon host` in its main
 clone of the repository.
+
+The lead runs this command, and each other `--host` command, in its
+container: `riff daemon status --host`, `riff daemon sweep --host`,
+`riff wave run --host` and `riff build --host`. In the container, the
+request goes through the riff daemon of the host to the daemon of
+`HOST`. A worker gets a refusal. In a container, `riff daemon status`
+with no `--host` shows the riff daemon of the session.
 
 When the test fails, file the bug in the wave. After its fix merges,
 run the test again on the new `origin/main`.
