@@ -5236,6 +5236,10 @@ pub fn daemon_protocol(theirs: u32, ours: u32) -> String {
     )
 }
 
+/// A session that is not the lead asks the daemon to resume the riff.
+pub const DAEMON_RESUME_ONLY_LEAD: &str =
+    "Only the lead can resume the riff through the riff daemon.";
+
 /// A first line that is not a hello of the protocol.
 pub const DAEMON_NO_HELLO: &str =
     "The riff daemon cannot read the first line: it is not a hello of riff.";

@@ -1009,6 +1009,28 @@ pub async fn ask_caller(socket: &Path) -> Result<Say> {
     anyhow::bail!("the daemon went away")
 }
 
+/// Asks the daemon on the socket at `socket` to make `call` on the
+/// riff-server of this session ([`SessionAsk::Server`]). The answer is
+/// the JSON of [`Say::Served`].
+pub async fn ask_server(socket: &Path, call: &daemon::ServerCall) -> Result<Value> {
+    let conn = connect(socket).await?;
+    let (read, mut write) = conn.into_split();
+    let mut lines = BufReader::new(read).lines();
+    let ask = SessionAsk::Server {
+        protocol: PROTOCOL,
+        call: call.clone(),
+    };
+    send(&mut write, &ask).await?;
+    while let Some(line) = lines.next_line().await? {
+        match serde_json::from_str::<Say>(&line) {
+            Ok(Say::Served { reply }) => return Ok(reply),
+            Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
+            _ => {}
+        }
+    }
+    anyhow::bail!("the daemon went away")
+}
+
 /// The error answer to the request `id` of `claude`: `message`.
 ///
 /// ```

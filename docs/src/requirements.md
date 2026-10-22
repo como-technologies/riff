@@ -6456,6 +6456,14 @@ part when they merge.
   --dangerously-skip-permissions, in place of --permission-mode auto:
   claude --session-id ID --dangerously-skip-permissions START. A worker
   and a verify keep --permission-mode auto.
+- **01M5GVPNAKAPA596K9361HSAAV** In a container, a riff command that
+  needs riff-server, with no `--server` and no `RIFF_SERVER`, asks the
+  riff daemon through the socket of its session (`RIFF_SOCKET`). The
+  daemon makes the call on the riff-server of the session with the
+  sign-in of the person on the host. So `riff wave list` and `riff
+  release check` work in the container of the lead. Through the socket,
+  each session can read the build of riff-server, the sessions and the
+  holds of a thread. Only the lead can resume the whole riff.
 
 ### The first run
 
@@ -8024,6 +8032,10 @@ items of Wave C that end riff-server in the Backlog
   one that has the build when the version of the build of its daemon is
   the version of the release. The commit and the time of the build do
   not count.
+- **01M5GVPND32X3R9MYXYB5SV83W** When the container of the lead has no
+  `gcloud`, each check of `riff release check` that reads the Cloud Run
+  log names the step for a person on the host: `riff release check
+  vX.Y.Z` in a terminal.
 
 ### The real-session test
 

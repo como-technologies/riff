@@ -876,6 +876,69 @@ pub enum SessionAsk {
         /// [`PROTOCOL`] of the session.
         protocol: u32,
     },
+    /// A call on the riff-server of the session. The daemon makes it with
+    /// the sign-in of the person on this machine ([`crate::reach`],
+    /// 01M5GVPNAKAPA596K9361HSAAV). The answer is [`Say::Served`].
+    Server {
+        /// [`PROTOCOL`] of the session.
+        protocol: u32,
+        /// The call.
+        call: ServerCall,
+    },
+}
+
+/// A call of [`SessionAsk::Server`]: the reads of `riff wave list` and
+/// `riff release check`, and the resume of the riff after `riff release
+/// check`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "call", rename_all = "snake_case")]
+pub enum ServerCall {
+    /// The version of the build of riff-server, or `null` when it names
+    /// none.
+    Build,
+    /// The sessions of the riff, as `riff who` reads them. `all` adds
+    /// the gone sessions.
+    Who {
+        /// True for the gone sessions too.
+        all: bool,
+    },
+    /// The holds of the thread `thread`, by their item.
+    Holds {
+        /// The repository thread.
+        thread: riff_core::name::ThreadName,
+    },
+    /// Resume the whole riff. Only the lead may. The answer is the line
+    /// for the person.
+    ResumeRiff,
+}
+
+/// Makes the call `call` of the session of `record` on its riff-server,
+/// and gives the answer as JSON (01M5GVPNAKAPA596K9361HSAAV). A session
+/// that is not the lead cannot resume the riff.
+async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
+    use riff_client::api::{Api, PauseScope};
+    let api = Api::new(&record.server);
+    let signed = || api.clone().signed_in(Some(&record.live.session));
+    Ok(match call {
+        ServerCall::Build => {
+            let probe = api.probe(crate::lifecycle::PROBE_WAIT).await?;
+            serde_json::to_value(probe.build.map(|b| b.version.to_string()))?
+        }
+        ServerCall::Who { all } => serde_json::to_value(signed()?.who(&record.me, *all).await?)?,
+        ServerCall::Holds { thread } => {
+            serde_json::to_value(signed()?.plan_show(&record.me, thread).await?.holds)?
+        }
+        ServerCall::ResumeRiff => {
+            if !record.terminal {
+                bail!(text::DAEMON_RESUME_ONLY_LEAD);
+            }
+            let state = riff_core::wire::RiffState::Running;
+            let (reply, posted) = signed()?
+                .set_pause(&record.me, &PauseScope::Riff, state)
+                .await?;
+            Value::String(text::riff_set(None, state, &reply, &posted))
+        }
+    })
 }
 
 /// The state of the daemon.
@@ -1049,6 +1112,11 @@ pub enum Say {
         role: Option<riff_core::wire::PersonRole>,
         /// True when the daemon could not ask riff-server for the role.
         role_unknown: bool,
+    },
+    /// The answer of riff-server to a [`SessionAsk::Server`], as JSON.
+    Served {
+        /// The answer.
+        reply: Value,
     },
     /// The ask failed.
     Failed {
@@ -2833,6 +2901,18 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let (out, written) = writer(write);
                 let record = owned.lock().record.clone();
                 out.say(self.caller_of(&record).await);
+                drop(out);
+                let _ = written.await;
+            }
+            Ok(SessionAsk::Server { call, .. }) => {
+                let (out, written) = writer(write);
+                let record = owned.lock().record.clone();
+                out.say(match server_call(&record, &call).await {
+                    Ok(reply) => Say::Served { reply },
+                    Err(e) => Say::Failed {
+                        error: format!("{e:#}"),
+                    },
+                });
                 drop(out);
                 let _ = written.await;
             }
@@ -6399,6 +6479,66 @@ mod tests {
             .await;
         }
         hosts
+    }
+
+    /// 01M5GVPNAKAPA596K9361HSAAV: a riff command in the container of the
+    /// lead reaches riff-server through the socket of its session. The
+    /// daemon makes the call on the riff-server of the session. A work
+    /// session reads too, but cannot resume the riff.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_session_reaches_its_riff_server_through_its_socket() {
+        use crate::reach::Reach;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, riff_server::router()).await.unwrap();
+        });
+        let server = format!("http://{addr}");
+        let api = riff_client::api::Api::new(&server);
+        let place = crate::identity::place_from_text(&format!("a/{REPO}")).unwrap();
+        let user = crate::identity::person(&place, &server).unwrap();
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+
+        let mut sockets = Vec::new();
+        for (name, item, terminal) in [
+            ("riff-lead-o-r", "lead", true),
+            ("riff-issue-1-aaaaaaaa", "issue-1", false),
+        ] {
+            let mut start = here.start(name, item);
+            start.server = server.clone();
+            start.me = SessionUri::new(
+                riff_core::name::Who::new(user.who().user(), Some(&start.session)).unwrap(),
+                place.clone(),
+            );
+            start.terminal = terminal;
+            api.register(&start.me).await.unwrap();
+            let (client, name) = here.started(start).await;
+            drop(client);
+            sockets.push(Reach::Daemon(session_dir(&here.dir, &name).join(SOCKET)));
+        }
+        let worker = sockets.pop().unwrap();
+        let lead = sockets.pop().unwrap();
+
+        for reach in [&lead, &worker] {
+            let served = reach.served().await;
+            assert_eq!(served.server, Ok(env!("CARGO_PKG_VERSION").to_owned()));
+            assert_eq!(served.hosts, Ok(vec![]));
+            let who = reach.who(false).await.unwrap();
+            assert!(
+                who.iter()
+                    .any(|s| s.uri.who().session() == Some("riff-lead-o-r-session")),
+                "{who:?}"
+            );
+            let thread: riff_core::name::ThreadName = REPO.parse().unwrap();
+            assert!(reach.holds(&thread).await.unwrap().is_empty());
+        }
+        let refused = worker.resume_riff().await.unwrap_err();
+        assert_eq!(refused.to_string(), text::DAEMON_RESUME_ONLY_LEAD);
+        lead.resume_riff().await.unwrap();
+
+        // With no riff-server, the error names the server of the session.
+        let dead = Reach::Direct("http://127.0.0.1:9".into());
+        assert!(dead.build().await.is_err());
     }
 
     /// Waits until `done` is true.
