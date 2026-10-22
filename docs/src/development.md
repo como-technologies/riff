@@ -1748,6 +1748,10 @@ The lead in the container riff-lead-OWNER-REPO ended. Start it again in a clone:
 The command claude --resume that claude shows works only in the container of the lead. In a new lead, /resume shows the old conversations.
 ```
 
+The lead runs `claude` with `--dangerously-skip-permissions`. The
+container is the sandbox, so the auto mode checker of Claude Code does
+not stop the lead. A worker and a verify keep auto mode.
+
 The lead has a folder of its own: `leads/OWNER-REPO` in the data folder
 of riff, with a clone of the repository and a Claude folder. Both stay
 between the starts of the lead, so the lead keeps the history of its
