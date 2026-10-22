@@ -15,6 +15,7 @@
 //! |---|---|---|
 //! | the unit of the daemon | the unit file is the text that this riff writes for its `ExecStart` and its variables ([`Unit::text`]) | writes it again, and starts again on it when it is idle (01M51QFPQ68JHS08TWXNNWZ0D7) |
 //! | the session image of each wave | podman has the merged pin of the main clone of the wave: the image that `riff.toml` on the default branch of `origin` pins ([`session_image::merged`]) | pulls it (01M51QFPSMDDMFPZXAEYWZYJPV) |
+//! | the plugin of riff 3 | nothing of it is left ([`crate::old_plugin`]) | removes it (01M5JFF7TAVA87TMJXK25HDJ19) |
 //!
 //! The gate ([`gate`]). The daemon changes the machine only when
 //! `update.auto` is on and its own binary is a release: the SHA-256 of
@@ -78,7 +79,7 @@ use crate::first_run::{self, Check};
 use crate::release::{self, Source};
 use crate::runtime::Runtime;
 use crate::service::{ServiceManager, Unit};
-use crate::{lifecycle, local, session_image, settings, text};
+use crate::{lifecycle, local, old_plugin, session_image, settings, text};
 
 /// A riff binary, and the place of its release files.
 #[derive(Debug, Clone, Copy)]
@@ -331,6 +332,45 @@ pub async fn image(runtime: &impl Runtime, repo: &str, image: &str, change: bool
     }
 }
 
+/// The step of the plugin of riff 3 ([`crate::old_plugin`]). It is in
+/// step when nothing of it is left. With `change`, riff removes what is
+/// left ([`old_plugin::Found::remove`]).
+///
+/// ```
+/// use riff::old_plugin::Found;
+/// use riff::update_steps::{old_plugin, State};
+///
+/// let none = old_plugin(&Found::default(), true);
+/// assert_eq!(none.state, State::InStep("it is not here".into()));
+/// let dir = tempfile::tempdir()?;
+/// let found = Found { dir: Some(dir.path().join("claude-plugin")), settings: vec![] };
+/// std::fs::create_dir(dir.path().join("claude-plugin"))?;
+/// assert!(matches!(old_plugin(&found, false).state, State::Behind { .. }));
+/// assert!(dir.path().join("claude-plugin").exists());
+/// assert_eq!(old_plugin(&found, true).state, State::Done("riff removed it".into()));
+/// assert!(!dir.path().join("claude-plugin").exists());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn old_plugin(found: &old_plugin::Found, change: bool) -> Step {
+    let state = if found.is_empty() {
+        State::InStep(text::STEP_OLD_PLUGIN_NONE.to_owned())
+    } else if !change {
+        State::Behind {
+            found: text::step_old_plugin(found),
+            fix: text::STEP_FIX_OLD_PLUGIN.to_owned(),
+        }
+    } else {
+        match found.remove() {
+            Ok(()) => State::Done(text::STEP_OLD_PLUGIN_REMOVED.to_owned()),
+            Err(e) => State::Failed(format!("{e:#}")),
+        }
+    };
+    Step {
+        name: text::STEP_OLD_PLUGIN.to_owned(),
+        state,
+    }
+}
+
 /// The steps of the checks of the machine (01M51QFPW37EXVH4AXH70MSXBT):
 /// a check that passed is in step, and a check that failed needs a
 /// person.
@@ -405,11 +445,14 @@ pub struct Machine<'a, M, R> {
     pub images: Vec<(String, Result<String, String>)>,
     /// The checks of the machine ([`first_run::machine_checks`]).
     pub checks: Vec<Check>,
+    /// What is left of the plugin of riff 3 ([`crate::old_plugin`]).
+    pub old_plugin: old_plugin::Found,
 }
 
-/// Each step on `at`, in order: [`unit()`], [`image`] and
-/// [`machine`]. Only with an open `gate` do the unit and the images
-/// change (01M51QFPJAABDP1V7WFY8NQR60).
+/// Each step on `at`, in order: [`unit()`], [`image`],
+/// [`old_plugin()`] and [`machine`]. Only with an open `gate` do the
+/// unit, the images and the plugin of riff 3 change
+/// (01M51QFPJAABDP1V7WFY8NQR60).
 pub async fn sync<M: ServiceManager, R: Runtime>(gate: &Gate, at: &Machine<'_, M, R>) -> Vec<Step> {
     let change = gate.open();
     let mut steps = Vec::new();
@@ -425,6 +468,7 @@ pub async fn sync<M: ServiceManager, R: Runtime>(gate: &Gate, at: &Machine<'_, M
             },
         });
     }
+    steps.push(old_plugin(&at.old_plugin, change));
     steps.extend(machine(&at.checks));
     steps
 }
@@ -474,12 +518,13 @@ fn manager_here() -> Option<crate::service::Systemd> {
         .filter(|_| crate::run::machine_data())
 }
 
-/// The steps on this machine with `runtime` and the session `images`,
-/// behind `gate`.
+/// The steps on this machine with `runtime`, the session `images` and
+/// the settings of the repository of `here`, behind `gate`.
 async fn sync_here(
     gate: &Gate,
     runtime: &impl Runtime,
     images: Vec<(String, Result<String, String>)>,
+    here: Option<&Path>,
 ) -> Vec<Step> {
     let manager = manager_here();
     let facts = first_run::Facts::here(&lifecycle::run_dir());
@@ -488,6 +533,7 @@ async fn sync_here(
         runtime,
         images,
         checks: first_run::machine_checks(&facts),
+        old_plugin: old_plugin::Found::here(here),
     };
     sync(gate, &at).await
 }
@@ -510,7 +556,7 @@ fn keep_needs_you(steps: &[Step]) {
 pub async fn at_start(runtime: &impl Runtime, daemon: &Path) {
     let gate = gate_here().await;
     println!("{}", text::steps_gate(&Build::this().to_string(), &gate));
-    let steps = sync_here(&gate, runtime, wave_images_here(daemon).await).await;
+    let steps = sync_here(&gate, runtime, wave_images_here(daemon).await, None).await;
     for step in &steps {
         println!("{}", step.line());
     }
@@ -554,7 +600,7 @@ pub async fn check(runtime: &impl Runtime, daemon: &Path, here: &Path) -> i32 {
         }
     }
     let mut steps = vec![binary];
-    steps.extend(sync_here(&Gate::Off, runtime, images).await);
+    steps.extend(sync_here(&Gate::Off, runtime, images, Some(here)).await);
     for step in &steps {
         println!("{}", step.line());
     }
@@ -672,6 +718,14 @@ mod tests {
             let units = Units::default();
             *units.text.lock().unwrap() = Some(old_unit());
             let runtime = Fake::default().with_registry(IMAGE);
+            // The plugin of riff 3, and a user settings file that turns
+            // it on.
+            std::fs::create_dir_all(dir.path().join("claude-plugin/riff")).unwrap();
+            std::fs::write(
+                dir.path().join("settings.json"),
+                r#"{"enabledPlugins":{"riff@riff":true},"model":"opus"}"#,
+            )
+            .unwrap();
             Here {
                 dir,
                 source,
@@ -707,6 +761,10 @@ mod tests {
                     found: "no catatonit".into(),
                     fix: Some("sudo apt install catatonit".into()),
                 }],
+                old_plugin: old_plugin::Found::of(
+                    &self.dir.path().join("claude-plugin"),
+                    &[self.dir.path().join("settings.json")],
+                ),
             };
             sync(&gate, &at).await
         }
@@ -726,6 +784,7 @@ mod tests {
             [
                 text::STEP_UNIT,
                 "the session image of o/r",
+                text::STEP_OLD_PLUGIN,
                 "the init of podman"
             ]
         );
@@ -742,8 +801,19 @@ mod tests {
         // The image of the new pin.
         assert_eq!(steps[1].state, State::Done(text::step_pulled(IMAGE)));
         assert_eq!(here.runtime.calls(), [format!("pull {IMAGE}")]);
+        // The plugin of riff 3: the folder and its key are gone, and the
+        // other keys stay.
+        assert_eq!(
+            steps[2].state,
+            State::Done(text::STEP_OLD_PLUGIN_REMOVED.into())
+        );
+        assert!(!here.dir.path().join("claude-plugin").exists());
+        assert_eq!(
+            std::fs::read_to_string(here.dir.path().join("settings.json")).unwrap(),
+            "{\n  \"model\": \"opus\"\n}\n"
+        );
         // The init of podman needs a person: the daemon only tells.
-        assert!(steps[2].needs_you(), "{steps:?}");
+        assert!(steps[3].needs_you(), "{steps:?}");
         assert_eq!(
             needs_you(&steps).as_deref(),
             Some("the init of podman: sudo apt install catatonit")
@@ -751,7 +821,7 @@ mod tests {
 
         // The next start finds each step in step, and changes nothing.
         let steps = here.start(true).await;
-        for step in &steps[..2] {
+        for step in &steps[..3] {
             assert!(matches!(step.state, State::InStep(_)), "{step:?}");
         }
         assert_eq!(here.units.writes(), 1);
@@ -775,7 +845,7 @@ mod tests {
             ("auto off", Here::new(release, release), false),
         ] {
             let steps = here.start(auto).await;
-            let fixes: Vec<&str> = steps[..2]
+            let fixes: Vec<&str> = steps[..3]
                 .iter()
                 .map(|step| match &step.state {
                     State::Behind { fix, .. } => fix.as_str(),
@@ -783,7 +853,16 @@ mod tests {
                 })
                 .collect();
             let pull = text::step_fix_image(IMAGE);
-            assert_eq!(fixes, [text::STEP_FIX_UNIT, pull.as_str()], "{case}");
+            assert_eq!(
+                fixes,
+                [
+                    text::STEP_FIX_UNIT,
+                    pull.as_str(),
+                    text::STEP_FIX_OLD_PLUGIN
+                ],
+                "{case}"
+            );
+            assert!(here.dir.path().join("claude-plugin").exists(), "{case}");
             assert_eq!(here.units.text(), Some(old_unit()), "{case}");
             assert_eq!(here.units.writes(), 0, "{case}");
             assert!(here.runtime.calls().is_empty(), "{case}");

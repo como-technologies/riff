@@ -141,6 +141,24 @@ images. It tells you each step that needs you. See
 [See each step of an update](how-it-works.md#see-each-step-of-an-update)
 for `riff update --check`.
 
+### Remove the plugin of riff 3
+
+riff 3 put a plugin in Claude Code. riff 4 has no plugin, so each of
+its hooks fails in each session of Claude Code on your machine. Run
+this to remove the plugin:
+
+```sh
+riff init
+```
+
+It removes the folder `~/.local/share/riff/claude-plugin`. In your
+user settings of Claude Code, and in the settings of the project of
+the current folder, it removes `riff@riff` from `enabledPlugins`,
+`riff` from `extraKnownMarketplaces`, and a `statusLine` that runs
+`riff statusline`. Each other setting stays. `riff init --check` only
+names them. With the update by itself on, the riff daemon of the
+release removes them too.
+
 ## Approve a release
 
 The owner or an admin of a riff that deploys its own server gives the

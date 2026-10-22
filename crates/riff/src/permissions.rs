@@ -1111,7 +1111,7 @@ pub fn add_auto_mode(path: &Path, trust: &Trust) -> Result<bool> {
 /// at the same time sees the old text or the new text, never a part. The
 /// file keeps its mode. A settings file that is a symbolic link stays a
 /// link: riff writes the file that it names (01M509TK01PW3RN2YPRJD38RSX).
-fn write(path: &Path, text: &str) -> Result<()> {
+pub(crate) fn write(path: &Path, text: &str) -> Result<()> {
     let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;

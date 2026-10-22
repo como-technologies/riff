@@ -5989,6 +5989,81 @@ pub fn init_wide_removed(path: &Path, count: usize) -> String {
 pub const INIT_WIDE_KEPT: &str =
     "riff removed no rule. To remove them, run riff init in a terminal, and answer y.";
 
+/// What `riff init` found of the plugin of riff 3
+/// ([`crate::old_plugin`]): the folder, and each settings file with its
+/// keys.
+///
+/// ```
+/// use riff::old_plugin::Found;
+///
+/// let found = Found {
+///     dir: Some("/d/claude-plugin".into()),
+///     settings: vec![("/h/s.json".into(), vec!["enabledPlugins.riff@riff", "statusLine"])],
+/// };
+/// assert_eq!(
+///     riff::text::old_plugin(&found),
+///     "The plugin of riff 3 is still here. riff 4 has no plugin, so each of its hooks fails in Claude Code:\n  /d/claude-plugin\n  /h/s.json: enabledPlugins.riff@riff, statusLine"
+/// );
+/// ```
+pub fn old_plugin(found: &crate::old_plugin::Found) -> String {
+    let mut out = String::from(
+        "The plugin of riff 3 is still here. riff 4 has no plugin, so each of its hooks fails in \
+         Claude Code:",
+    );
+    for line in old_plugin_parts(found) {
+        out.push_str("\n  ");
+        out.push_str(&line);
+    }
+    out
+}
+
+/// Each part of the plugin of riff 3 that is left: the folder, and each
+/// settings file with its keys.
+fn old_plugin_parts(found: &crate::old_plugin::Found) -> Vec<String> {
+    found
+        .dir
+        .iter()
+        .map(|dir| dir.display().to_string())
+        .chain(
+            found
+                .settings
+                .iter()
+                .map(|(path, keys)| format!("{}: {}", path.display(), keys.join(", "))),
+        )
+        .collect()
+}
+
+/// `riff init` removed the plugin of riff 3.
+pub const OLD_PLUGIN_REMOVED: &str = "riff removed the plugin of riff 3.";
+
+/// `riff init --check` kept the plugin of riff 3.
+pub const OLD_PLUGIN_KEPT: &str =
+    "riff removed nothing: --check. To remove the plugin of riff 3, run riff init.";
+
+/// The step of the plugin of riff 3 ([`crate::update_steps::old_plugin`]).
+pub const STEP_OLD_PLUGIN: &str = "the plugin of riff 3";
+
+/// The step of the plugin of riff 3: nothing is left.
+pub const STEP_OLD_PLUGIN_NONE: &str = "it is not here";
+
+/// The step of the plugin of riff 3: riff removed it.
+pub const STEP_OLD_PLUGIN_REMOVED: &str = "riff removed it";
+
+/// The fix of the step of the plugin of riff 3.
+pub const STEP_FIX_OLD_PLUGIN: &str = "riff init";
+
+/// The step of the plugin of riff 3: what is left.
+///
+/// ```
+/// use riff::old_plugin::Found;
+///
+/// let found = Found { dir: Some("/d/claude-plugin".into()), settings: vec![] };
+/// assert_eq!(riff::text::step_old_plugin(&found), "it is still here: /d/claude-plugin");
+/// ```
+pub fn step_old_plugin(found: &crate::old_plugin::Found) -> String {
+    format!("it is still here: {}", old_plugin_parts(found).join("; "))
+}
+
 /// Some checks of `riff init` failed.
 ///
 /// ```

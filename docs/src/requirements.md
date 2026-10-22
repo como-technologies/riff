@@ -6691,6 +6691,15 @@ part when they merge.
   update of an older line can finish. When the update from the line
   before stops on the new riff, the book gives the step that a person
   runs by hand.
+- **01M5JFF7TAVA87TMJXK25HDJ19** riff init removes the plugin of riff 3
+  that is left on the machine: the folder claude-plugin in the data
+  folder of riff, and the keys enabledPlugins.riff@riff,
+  extraKnownMarketplaces.riff and a statusLine that runs riff statusline
+  in the user, project and local settings of Claude Code. Each other key
+  stays. riff init --check names them and removes nothing. The riff
+  daemon of a release removes them at its start behind the gate of the
+  update by itself, and riff update --check names them with the fix riff
+  init.
 
 ### riff run
 
