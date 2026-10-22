@@ -8004,6 +8004,10 @@ items of Wave C that end riff-server in the Backlog
   checks after the release, close each item. The work goes on while the
   deploy waits for a person. The lead stops the workers after the
   deploy, before the update of each machine.
+- **01M5GSDJ3YWANWEZNZ6VSDC1BE** `riff release check` counts a host as
+  one that has the build when the version of the build of its daemon is
+  the version of the release. The commit and the time of the build do
+  not count.
 
 ### The real-session test
 

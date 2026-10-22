@@ -3663,7 +3663,9 @@ riff checks that:
 - the Cloud Run log has no run of 503 longer than 20 s, no 500 of
   `riff-server`, and no 401 or 429 of the token store;
 - no old instance takes the lease;
-- each host has the build: the part `Hosts` of `riff who`.
+- each host has the version of the release: the part `Hosts` of
+  `riff who`. The commit and the time of the build of a host do not
+  count.
 
 riff writes the result on the release issue. When each check passes,
 riff closes the release issue and resumes the riff. When a check

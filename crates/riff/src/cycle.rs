@@ -1538,7 +1538,7 @@ pub fn checks(
             Ok(hosts) => {
                 let old: Vec<String> = hosts
                     .iter()
-                    .filter(|(_, build)| *build != want)
+                    .filter(|(_, build)| !same_version(build, &want))
                     .map(|(host, build)| format!("{host} has {build}"))
                     .collect();
                 if old.is_empty() {
@@ -1551,6 +1551,25 @@ pub fn checks(
         },
     ));
     out
+}
+
+/// True when `build`, the build line of the daemon of a host, has the
+/// version `want`. The facts of a daemon give the whole build line; a
+/// line that is only a version still counts. The commit and the time of
+/// the build do not count (01M5GSDJ3YWANWEZNZ6VSDC1BE).
+///
+/// ```
+/// use riff::cycle::same_version;
+///
+/// assert!(same_version("4.0.0 bbf9227fd8cf 2026-10-22T02:02:45Z", "4.0.0"));
+/// assert!(same_version("4.0.0", "4.0.0"));
+/// assert!(!same_version("3.3.0 929605821e54 2026-10-18T23:57:37Z", "4.0.0"));
+/// ```
+pub fn same_version(build: &str, want: &str) -> bool {
+    match build.parse::<riff_core::build::Build>() {
+        Ok(b) => b.version == want,
+        Err(_) => build == want,
+    }
 }
 
 /// The log of the Cloud Run service of an instance of riff, read with
@@ -3566,7 +3585,10 @@ mod tests {
     fn served(build: &str) -> Served {
         Served {
             server: Ok(build.into()),
-            hosts: Ok(vec![("mike@thelio".into(), build.into())]),
+            hosts: Ok(vec![(
+                "mike@thelio".into(),
+                format!("{build} bbf9227fd8cf 2026-10-22T02:02:45Z"),
+            )]),
         }
     }
 
@@ -3644,11 +3666,14 @@ mod tests {
             ),
             (
                 Served {
-                    hosts: Ok(vec![("bob@pangolin".into(), "3.2.0".into())]),
+                    hosts: Ok(vec![(
+                        "bob@pangolin".into(),
+                        "3.2.0 929605821e54 2026-10-18T15:40:18Z".into(),
+                    )]),
                     ..served("3.3.0")
                 },
                 Log(Ok(vec![])),
-                "each host takes the build: failed: bob@pangolin has 3.2.0",
+                "each host takes the build: failed: bob@pangolin has 3.2.0 929605821e54",
             ),
         ];
         for (served, log, want) in cases {
