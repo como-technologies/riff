@@ -839,6 +839,71 @@ async fn riff_wave_list_in_a_container_reads_riff_server_through_the_socket() {
     assert_eq!(*asked.lock().unwrap(), ["who", "holds"]);
 }
 
+/// In the container of the lead, `riff wave move` and `riff wave end N
+/// --move-open-to-backlog` read the claims through the riff daemon, not
+/// straight from riff-server (01M5GVPNAKAPA596K9361HSAAV). A fake
+/// daemon answers `who`, and no riff-server listens at the default URL.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_wave_move_in_a_container_reads_the_claims_through_the_socket() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    wave_gh(bin.path(), &[12, 14]);
+    live(&server, "pangolin", "a1").await;
+    for args in [&["lead"][..], &["resume", "--riff"], &["claim", "issue-12"]] {
+        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
+    }
+    let api = Api::new(&server);
+    let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1"
+        .parse()
+        .unwrap();
+    let who = serde_json::to_value(api.who(&me, false).await.unwrap()).unwrap();
+
+    let sockets = tempfile::tempdir().unwrap();
+    let socket = sockets.path().join("riff.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let asked = Calls::default();
+    let seen = asked.clone();
+    tokio::spawn(async move {
+        while let Ok((conn, _)) = listener.accept().await {
+            let (read, mut write) = conn.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let ask: serde_json::Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            assert_eq!(ask["ask"], "server", "{ask}");
+            let call = ask["call"]["call"].as_str().unwrap().to_owned();
+            assert_eq!(call, "who");
+            seen.lock().unwrap().push(call);
+            let say = serde_json::json!({"say": "served", "reply": who});
+            write
+                .write_all(format!("{say}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let container = |args: &[&str]| {
+        let mut cmd = riff(&server, dir, Some("w9"), bin.path(), args);
+        cmd.env_remove("RIFF_SERVER").env("RIFF_SOCKET", &socket);
+        cmd
+    };
+    let moved = output(container(&["wave", "move", "14", "--to", "3"])).await;
+    assert!(moved.contains("14"), "{moved}");
+    let mut cmd = container(&["wave", "move", "12", "--to", "3"]);
+    let refused = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        !String::from_utf8_lossy(&refused.stderr).contains("cannot reach riff-server"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(*asked.lock().unwrap(), ["who", "who"]);
+}
+
 /// Against a riff-server that needs a sign-in, the calls of `riff wave
 /// list` carry the token of the person, so the list shows the groups of
 /// the wave (01M58ATZ408RBCX0PM0D0ZCY4B). With no token, the server

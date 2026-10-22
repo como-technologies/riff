@@ -7,7 +7,8 @@
 //! on the riff daemon, but no `RIFF_SERVER` and no sign-in: the keyring
 //! of the host is not there. So `http://127.0.0.1:7878`, the default, does
 //! not answer in the container. The riff tools already go through the
-//! socket. [`Reach`] makes `riff wave list` and `riff release check` go
+//! socket. [`Reach`] makes `riff wave list`, `riff wave move`, `riff wave end
+//! --move-open-to-backlog` and `riff release check` go
 //! the same way: the daemon makes the call on the riff-server of the
 //! session, with the sign-in of the person on the host
 //! ([`crate::daemon::ServerCall`]).
