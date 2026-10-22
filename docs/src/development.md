@@ -133,12 +133,12 @@ test in the Gate.
 The Gate on GitHub runs the checks of `just ci-full` as jobs at the
 same time. Each job has a runner of its own:
 
-| Job                        | Runs                                                                       |
-| -------------------------- | -------------------------------------------------------------------------- |
-| `Clippy`                   | `just lint`                                                                |
-| `Tests 1/4` to `Tests 4/4` | `just test-part 1/4` to `just test-part 4/4`, in the session image         |
-| `Checks`                   | `just fmt-check doc book reqs wrap`                                        |
-| `Gate`                     | Starts when each other job ended. It passes only when each of them passed. |
+| Job | Runs |
+|---|---|
+| `Clippy` | `just lint` |
+| `Tests 1/4` to `Tests 4/4` | `just test-part 1/4` to `just test-part 4/4`, in the session image |
+| `Checks` | `just fmt-check doc book reqs wrap` |
+| `Gate` | Starts when each other job ended. It passes only when each of them passed. |
 
 The tests run in a container of the session image, as a session runs
 them (see
@@ -374,12 +374,12 @@ a session image with an older libc, where the daemon runs it as
 machine, and that binary does not start in a session image with an
 older libc.
 
-| Where riff comes from                                                      | What it is                                                                                                                                                                                                                       |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `riff update` on Linux x86-64                                              | The static `riff` and `riff-server` of the GitHub release. riff checks the SHA-256 of each file against `SHA256SUMS` of the release, and that each one is static. Then it puts them in the bin folder of cargo (`~/.cargo/bin`). |
-| `riff update` on another machine, or for a release with no static binaries | A build with `cargo install --git` of the release tag, as before.                                                                                                                                                                |
-| `cargo install`, `just install`                                            | A build that links the libc of your machine. It is not static: `riff init` fails its check of the riff binary, and the riff daemon starts no session with it. Run `riff update` to get the static riff.                          |
-| `just static`                                                              | The static `riff` and `riff-server` of your clone, in `target/static`.                                                                                                                                                           |
+| Where riff comes from | What it is |
+|---|---|
+| `riff update` on Linux x86-64 | The static `riff` and `riff-server` of the GitHub release. riff checks the SHA-256 of each file against `SHA256SUMS` of the release, and that each one is static. Then it puts them in the bin folder of cargo (`~/.cargo/bin`). |
+| `riff update` on another machine, or for a release with no static binaries | A build with `cargo install --git` of the release tag, as before. |
+| `cargo install`, `just install` | A build that links the libc of your machine. It is not static: `riff init` fails its check of the riff binary, and the riff daemon starts no session with it. Run `riff update` to get the static riff. |
+| `just static` | The static `riff` and `riff-server` of your clone, in `target/static`. |
 
 ```mermaid
 flowchart LR
@@ -1748,9 +1748,9 @@ The lead in the container riff-lead-OWNER-REPO ended. Start it again in a clone:
 The command claude --resume that claude shows works only in the container of the lead. In a new lead, /resume shows the old conversations.
 ```
 
-The lead runs `claude` with `--dangerously-skip-permissions`. The container is
-the sandbox, so the auto mode checker of Claude Code does not stop the lead. A
-worker and a verify keep auto mode.
+The lead runs `claude` with `--dangerously-skip-permissions`. The
+container is the sandbox, so the auto mode checker of Claude Code does
+not stop the lead. A worker and a verify keep auto mode.
 
 The lead has a folder of its own: `leads/OWNER-REPO` in the data folder
 of riff, with a clone of the repository and a Claude folder. Both stay
@@ -1803,12 +1803,12 @@ host, see
 later release merges `riff view` and `riff top` into one sessions view
 in each UI: see [Design: the UIs of riff](riff-uis.md).
 
-| Key                | Does                                                                                                       |
-| ------------------ | ---------------------------------------------------------------------------------------------------------- |
-| Up, Down (or k, j) | Select a session.                                                                                          |
-| Enter              | Attach to the lead. Ctrl-P Ctrl-Q, or the end of the lead, comes back to the view.                         |
-| t                  | Stop the turn of the selected session, and take it over (see [Take over a session](#take-over-a-session)). |
-| q, Esc, Ctrl-C     | End the view. The sessions go on.                                                                          |
+| Key | Does |
+|---|---|
+| Up, Down (or k, j) | Select a session. |
+| Enter | Attach to the lead. Ctrl-P Ctrl-Q, or the end of the lead, comes back to the view. |
+| t | Stop the turn of the selected session, and take it over (see [Take over a session](#take-over-a-session)). |
+| q, Esc, Ctrl-C | End the view. The sessions go on. |
 
 After an attach, the note under the rows says that you left the
 terminal of the lead, or that the lead ended. After a takeover, the
@@ -1818,13 +1818,13 @@ container.
 
 The states of a session:
 
-| State                  | Means                                                                       |
-| ---------------------- | --------------------------------------------------------------------------- |
-| `works`                | A turn of `claude` runs.                                                    |
-| `ends`                 | The turn gave its result. `claude` ends, or waits for its background tasks. |
-| `holds for a takeover` | A takeover stops the turn, or waits for its end.                            |
-| `taken over`           | A person has the session in a terminal.                                     |
-| `lead`                 | The lead, with its terminal.                                                |
+| State | Means |
+|---|---|
+| `works` | A turn of `claude` runs. |
+| `ends` | The turn gave its result. `claude` ends, or waits for its background tasks. |
+| `holds for a takeover` | A takeover stops the turn, or waits for its end. |
+| `taken over` | A person has the session in a terminal. |
+| `lead` | The lead, with its terminal. |
 
 `riff daemon status` shows the same state and last step of each
 session.
@@ -1983,22 +1983,22 @@ check makes sure. Before `riff run`, the test keeps two things:
 
 After `riff run`, the test compares your home with them:
 
-| Change                                                                                              | Result         |
-| --------------------------------------------------------------------------------------------------- | -------------- |
-| A new path, outside the folders that the test leaves out                                            | fails the test |
-| A change to a file that riff must not write                                                         | fails the test |
+| Change | Result |
+|---|---|
+| A new path, outside the folders that the test leaves out | fails the test |
+| A change to a file that riff must not write | fails the test |
 | A new, a changed or a removed key in the git config of a clone, outside a section `[branch "NAME"]` | fails the test |
-| A change to each other file                                                                         | does not count |
+| A change to each other file | does not count |
 
 The files that riff must not write:
 
-| Files                                                                                                                                                                                                     | What they are             |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `~/.gitconfig`, `~/.config/git`                                                                                                                                                                           | your git config           |
-| `~/.config/gh`                                                                                                                                                                                            | the config of `gh`        |
-| `~/.profile`, `~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.bash_logout`, `~/.zshenv`, `~/.zprofile`, `~/.zshrc`, `~/.zlogin`, `~/.zlogout`, `~/.config/fish/config.fish`, `~/.config/fish/conf.d` | your shell files          |
-| `~/.claude.json`, `~/.claude/settings.json`                                                                                                                                                               | the config of Claude Code |
-| `.git/hooks` in each git clone of your home                                                                                                                                                               | the hooks of git          |
+| Files | What they are |
+|---|---|
+| `~/.gitconfig`, `~/.config/git` | your git config |
+| `~/.config/gh` | the config of `gh` |
+| `~/.profile`, `~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.bash_logout`, `~/.zshenv`, `~/.zprofile`, `~/.zshrc`, `~/.zlogin`, `~/.zlogout`, `~/.config/fish/config.fish`, `~/.config/fish/conf.d` | your shell files |
+| `~/.claude.json`, `~/.claude/settings.json` | the config of Claude Code |
+| `.git/hooks` in each git clone of your home | the hooks of git |
 
 A line of a git config can run code at your next git command, for
 example `core.hooksPath`, `core.fsmonitor` or an alias. So the test
@@ -2038,16 +2038,16 @@ just real-session --skip ~/.mozilla --skip ~/.config/Code
 
 The test leaves out these paths with no `--skip`:
 
-| Path                                                                                                                                                                                                   | Who writes there                                                                                         |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `~/.config/riff`, `~/.local/share/riff`, `~/.local/state/riff`, `~/.cache/riff`, and `RIFF_HOME`                                                                                                       | riff                                                                                                     |
-| `~/.local/share/containers`, `~/.config/containers`                                                                                                                                                    | podman: the images and the volumes                                                                       |
-| your clone, and the worktree of the test, except the hooks and the config files in their `.git`                                                                                                        | the build of the test, and the fetch of `riff run`                                                       |
-| `~/.cache`                                                                                                                                                                                             | the caches of your tools                                                                                 |
-| `~/snap`                                                                                                                                                                                               | the snap apps, for example the Firefox snap                                                              |
-| `~/.local/state/claude/locks`                                                                                                                                                                          | each `claude` on your machine                                                                            |
+| Path | Who writes there |
+|---|---|
+| `~/.config/riff`, `~/.local/share/riff`, `~/.local/state/riff`, `~/.cache/riff`, and `RIFF_HOME` | riff |
+| `~/.local/share/containers`, `~/.config/containers` | podman: the images and the volumes |
+| your clone, and the worktree of the test, except the hooks and the config files in their `.git` | the build of the test, and the fetch of `riff run` |
+| `~/.cache` | the caches of your tools |
+| `~/snap` | the snap apps, for example the Firefox snap |
+| `~/.local/state/claude/locks` | each `claude` on your machine |
 | `.claude/worktrees` and `.git` in each git clone of your home, except `.git/hooks`, `.git/config` and `.git/config.worktree`. When your home is itself a git clone, this is also `~/.claude/worktrees` | your other sessions: they build and commit in their worktrees, and git writes in the `.git` of the clone |
-| `~/.claude`, `~/.claude.json`, `~/.claude.json.lock`                                                                                                                                                   | your other Claude Code sessions (see [What the home check compares](#what-the-home-check-compares))      |
+| `~/.claude`, `~/.claude.json`, `~/.claude.json.lock` | your other Claude Code sessions (see [What the home check compares](#what-the-home-check-compares)) |
 
 The test uses `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and
 `XDG_CACHE_HOME` in place of `~/.config`, `~/.local/share`,
@@ -2140,12 +2140,12 @@ just book
 It fails on a missing include file, a missing anchor, or an empty code
 block. Each error names its rule and the page:
 
-| Rule         | Finds                                                    |
-| ------------ | -------------------------------------------------------- |
-| `mdbook`     | An `ERROR` line of mdbook, for example a missing file.   |
-| `include`    | An include line that mdbook left in the text.            |
+| Rule | Finds |
+|---|---|
+| `mdbook` | An `ERROR` line of mdbook, for example a missing file. |
+| `include` | An include line that mdbook left in the text. |
 | `empty-code` | A code block with no text, for example a missing anchor. |
-| `tracked`    | A file in git that the build changed.                    |
+| `tracked` | A file in git that the build changed. |
 
 To show an include line as an example, put it in a code block and
 escape it: `\{{#include file.rs:name}}`. The check skips it.
@@ -2231,7 +2231,6 @@ Each error names its rule. The
 GitHub runs no check on a pull request that has a conflict with
 `main`. When `Hygiene` does not run, rebase your branch on `main` and
 push it again.
-
 ## Merge by pull request on GitHub
 
 No session and no person pushes to `main`. Each change goes in by a
@@ -2403,15 +2402,15 @@ the records of the log by their position. Find a record with
 `riff-server log` (see "Print the log"). The command exits with 1 when
 a rule fails.
 
-| Rule | It checks                                                                                                                                                                                    |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | Each item has a claim, a pull request, a verify by another session, a merge and a release. No release comes before the merge or a verify result. A worker can release at its verify request. |
-| 2    | Each verifier held no other claim, and is not the author.                                                                                                                                    |
-| 3    | Each worker had a clear between its last release and its next claim.                                                                                                                         |
-| 4    | No session claimed while the riff or the repository was paused.                                                                                                                              |
-| 5    | No session claimed an item of a later wave, or an item with an open need.                                                                                                                    |
-| 6    | The lead held no claim of a work item.                                                                                                                                                       |
-| 7    | Each request came from the lead of the user of its sender.                                                                                                                                   |
+| Rule | It checks |
+|---|---|
+| 1 | Each item has a claim, a pull request, a verify by another session, a merge and a release. No release comes before the merge or a verify result. A worker can release at its verify request. |
+| 2 | Each verifier held no other claim, and is not the author. |
+| 3 | Each worker had a clear between its last release and its next claim. |
+| 4 | No session claimed while the riff or the repository was paused. |
+| 5 | No session claimed an item of a later wave, or an item with an open need. |
+| 6 | The lead held no claim of a work item. |
+| 7 | Each request came from the lead of the user of its sender. |
 
 ```mermaid
 flowchart LR
@@ -2503,8 +2502,8 @@ The client exists. To make it again, see
    ```
 
    The server log in the terminal must show `sign-in with
-https://accounts.google.com` and `the provider knows the OAuth
-client`. If it shows `nobody can sign in`, the server has no client:
+   https://accounts.google.com` and `the provider knows the OAuth
+   client`. If it shows `nobody can sign in`, the server has no client:
    do step 3 again. If it shows
    `riff-server stops`, Google refused the client. The line says why.
 
@@ -3095,15 +3094,15 @@ riff-server log --dir ~/.local/state/riff-server | grep 'the person ada)'
 21  2026-10-01T12:09:00Z  member_removed  bob@gmail.com  (remove, the person ada)
 ```
 
-| Record                             | Meaning                                                                        |
-| ---------------------------------- | ------------------------------------------------------------------------------ |
-| `riff_made`                        | The riff has its ID.                                                           |
-| `person_joined`                    | An email signed in for the first time. It holds its USER.                      |
+| Record | Meaning |
+|---|---|
+| `riff_made` | The riff has its ID. |
+| `person_joined` | An email signed in for the first time. It holds its USER. |
 | `member_invited`, `member_removed` | An email is a member, or it is not. A removal ends each sign-in of the person. |
-| `admin_set`                        | An email is an admin, or a member again.                                       |
-| `owner_set`                        | An email is the owner. With no email, the owner is gone.                       |
-| `owner_asked`, `owner_denied`      | An admin asks for the owner role, or the owner keeps it.                       |
-| `signins_ended`                    | Each sign-in of a person ended: `riff logout --all`.                           |
+| `admin_set` | An email is an admin, or a member again. |
+| `owner_set` | An email is the owner. With no email, the owner is gone. |
+| `owner_asked`, `owner_denied` | An admin asks for the owner role, or the owner keeps it. |
+| `signins_ended` | Each sign-in of a person ended: `riff logout --all`. |
 
 An email is in a record, and in the answer to a member. It is in no
 line of the log of the server: the line of a refused change of the
@@ -3112,13 +3111,13 @@ people has its `code` and no `reason`.
 A command that changed nothing has no record. `riff-server` writes one
 line to its own log for it, with the field `result`:
 
-| `result`    | Meaning                                                                                                                                                             |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `refused`   | The server refused the command. The line has the `code` and the `reason`. A change of the people has no `reason`.                                                   |
-| `no_change` | The server took the command, and nothing changed.                                                                                                                   |
-| `failed`    | The server did not write the change, and stopped. The severity is `ERROR` when the write failed. It is `WARNING`, with the `reason`, when the server stopped first. |
-| `denied`    | The server refused the token of the call, or the call had none. The line has the `path` of the call.                                                                |
-| `dropped`   | The server refused more calls than it writes `denied` lines for. The line has the `count` of the lines that it did not write, and `counts`: the count of each code. |
+| `result` | Meaning |
+|---|---|
+| `refused` | The server refused the command. The line has the `code` and the `reason`. A change of the people has no `reason`. |
+| `no_change` | The server took the command, and nothing changed. |
+| `failed` | The server did not write the change, and stopped. The severity is `ERROR` when the write failed. It is `WARNING`, with the `reason`, when the server stopped first. |
+| `denied` | The server refused the token of the call, or the call had none. The line has the `path` of the call. |
+| `dropped` | The server refused more calls than it writes `denied` lines for. The line has the `count` of the lines that it did not write, and `counts`: the count of each code. |
 
 ```mermaid
 flowchart LR
@@ -3286,7 +3285,7 @@ stateDiagram-v2
   wait 90 seconds. Then run the command again. It waits 10 seconds
   more, before it reads the log.
 - The server logs the ID of its instance at start: `took the lease
-as`.
+  as`.
 - The command reads the time in the lease with the clock of your
   machine. Your clock can be at most 50 seconds ahead of the clock of
   the server. Check your clock before a cut on the bucket.
@@ -3544,7 +3543,6 @@ slightly different words.
    It shows these steps, then asks for the client ID and the client
    secret. It puts the secret in Secret Manager and the ID in
    `deploy/cloud/shared.env`.
-
 8. Commit `deploy/cloud/shared.env`.
 
 To see who changed the client, and when:
@@ -3616,14 +3614,14 @@ flowchart TD
 
 The gates:
 
-| Gate                   | Who                                                       | Command                                                        | With no answer                                                    |
-| ---------------------- | --------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Verify                 | a session that did not write the change                   | the verify of riff                                             | the release pull request waits                                    |
-| Real session           | a session that wrote none of the items, in tmux on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses                                                 |
-| HUMAN GATE 1: deploy   | the owner or an admin, in a terminal                      | `riff release approve vX.Y.Z`                                  | the release waits; the riff is not paused; the next `cut` refuses |
-| HUMAN GATE 2: rollback | the owner or an admin, in a terminal                      | `riff release approve vPREV`                                   | the new release keeps serving; the riff stays paused              |
-| HUMAN GATE 3: skip     | the owner or an admin, in a terminal                      | `riff release cut --skip VERSION --reason TEXT`                | no skip                                                           |
-| Log access             | a person, when the sign-in of `gcloud` is gone            | `gcloud auth login`                                            | `riff release check` says which check it could not do             |
+| Gate | Who | Command | With no answer |
+|---|---|---|---|
+| Verify | a session that did not write the change | the verify of riff | the release pull request waits |
+| Real session | a session that wrote none of the items, in tmux on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses |
+| HUMAN GATE 1: deploy | the owner or an admin, in a terminal | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
+| HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
+| HUMAN GATE 3: skip | the owner or an admin, in a terminal | `riff release cut --skip VERSION --reason TEXT` | no skip |
+| Log access | a person, when the sign-in of `gcloud` is gone | `gcloud auth login` | `riff release check` says which check it could not do |
 
 `riff release status` shows the state of the current release: `cut`,
 `merged`, `tested`, `published`, `waiting`, `deploying`, `deployed`,
@@ -4151,7 +4149,6 @@ flowchart TD
    last line is `Run riff update`. When an old object does not read,
    the new server does not start, and the old server serves on: the
    line shows `v0.8.0  same build ✓`. The log names the object.
-
 5. Each machine updates itself. No person runs `riff login`. Then
    check the riff ID on each machine:
 
@@ -4165,7 +4162,6 @@ flowchart TD
    `riff server` then shows `v1.0.0  same build ✓` on the `release`
    line and `yes, signed in as USER` on the `sign-in` line, the riff
    ID is the one of before.
-
 6. The whole riff is paused after the import. The owner or an admin
    resumes it. riff then asks the riff daemon to run the wave (see
    [riff starts the work by itself](how-it-works.md#riff-starts-the-work-by-itself)):

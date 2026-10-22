@@ -6342,6 +6342,7 @@ part when they merge.
   first prompt of the lead. The daemon runs it as `/opt/riff/riff relay
   --terminal -- COMMAND`: the relay adds the riff tools, and runs the
   command in its own place, so the command has the terminal.
+  Superseded in part by 01M5GG2X5F1HXCQJ2JJWV6305K.
 - **01M501P9XWXWDBSXP4QRTHTZ4P** The host starts a session of
   riff-server for the lead, not a worker. While the container of the
   lead runs, the daemon keeps that session alive, also after its own
