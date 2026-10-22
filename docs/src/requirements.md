@@ -6654,6 +6654,10 @@ part when they merge.
   with the fix. It changes nothing, except the step that needs a
   person for the status line. It exits with 1 when a step is not in
   step.
+- **01M5GT0QV72BZA4VVWDPR1WG17** riff keeps no command only so that the
+  update of an older line can finish. When the update from the line
+  before stops on the new riff, the book gives the step that a person
+  runs by hand.
 
 ### riff run
 
