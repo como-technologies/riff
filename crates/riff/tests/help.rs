@@ -410,3 +410,19 @@ fn the_help_of_blocked_says_that_a_prompt_ends_only_the_block_of_the_lead() {
     let book = words(&under("how-it-works.md", "### End the wait of the lead"));
     assert!(book.contains("Give the lead a prompt"), "{book}");
 }
+
+#[test]
+fn release_approve_help_says_who_may_approve() {
+    let help = riff(&["release", "approve", "--help"]);
+    for words in [
+        "A person in a plain terminal may approve",
+        "The lead of the owner or of an admin may approve too",
+        "verified message",
+        "says approve or deploy and names the version",
+        "A worker and each other agent session may not",
+    ] {
+        let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains(words), "{words:?} missing in {help}");
+    }
+    assert!(!help.contains("it refuses in each agent"), "{help}");
+}
