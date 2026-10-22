@@ -1774,12 +1774,12 @@ async fn main() -> Result<()> {
             WaveCommand::Run { host: None } => riff::wave::ask_run(&dir, &here, api.base()).await?,
             WaveCommand::Stop { host: None } => riff::wave::ask_stop(&dir, &here).await?,
             WaveCommand::List => wave_list(&reach, &here).await?,
-            WaveCommand::Move { items, to } => wave_move(&api, &here, items, to).await?,
+            WaveCommand::Move { items, to } => wave_move(&reach, &here, items, to).await?,
             WaveCommand::End {
                 number,
                 no_release,
                 move_open_to_backlog: true,
-            } => wave_end_moving(&api, &here, *number, no_release.as_deref()).await?,
+            } => wave_end_moving(&reach, &here, *number, no_release.as_deref()).await?,
             WaveCommand::Make { .. } | WaveCommand::Rename { .. } | WaveCommand::End { .. } => {
                 unreachable!("handled before the identity")
             }
@@ -3227,26 +3227,24 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
 }
 
 /// The items of this repository that a session claims, from
-/// riff-server (01M5924014WN63RCHJWGZS4AFZ).
-async fn claimed_here(api: &Api, here: &riff_core::name::Place) -> Result<Vec<u64>> {
-    let me = identity::me(here, api.base())?;
-    // A riff-server with sign-in takes no call with no token.
-    let api = api.clone().signed_in(me.who().session())?;
+/// riff-server (01M5924014WN63RCHJWGZS4AFZ), straight or through the
+/// riff daemon ([`Reach`], 01M5GVPNAKAPA596K9361HSAAV).
+async fn claimed_here(reach: &Reach, here: &riff_core::name::Place) -> Result<Vec<u64>> {
     let Some(thread) = here.default_thread() else {
         anyhow::bail!(text::waves_no_repo());
     };
-    let who = api.who(&me, false).await?;
+    let who = reach.who(false).await?;
     Ok(riff::waves::claimed(&who, &thread.to_string()))
 }
 
 /// `riff wave move ITEM... --to WAVE` (01M5924014WN63RCHJWGZS4AFZ).
 async fn wave_move(
-    api: &Api,
+    reach: &Reach,
     here: &riff_core::name::Place,
     items: &[u64],
     to: &str,
 ) -> Result<()> {
-    let claimed = claimed_here(api, here).await?;
+    let claimed = claimed_here(reach, here).await?;
     let title = riff::waves::move_items(&pr::Gh::default(), items, to, &claimed)?;
     println!("{}", text::waves_moved(items, &title));
     Ok(())
@@ -3254,12 +3252,12 @@ async fn wave_move(
 
 /// `riff wave end N --move-open-to-backlog` (01M592403Q4TNZEDNR76C7NK9M).
 async fn wave_end_moving(
-    api: &Api,
+    reach: &Reach,
     here: &riff_core::name::Place,
     number: u64,
     no_release: Option<&str>,
 ) -> Result<()> {
-    let claimed = claimed_here(api, here).await?;
+    let claimed = claimed_here(reach, here).await?;
     wave_release_gate(number, no_release)?;
     let (ended, moved) = riff::waves::end_moving_open(&pr::Gh::default(), number, &claimed)?;
     println!("{}", text::waves_ended_moving(&ended.title, &moved));

@@ -196,7 +196,9 @@ end the wave in one step:
 riff wave end 6 --move-open-to-backlog
 ```
 
-The lead does these steps for you when it plans the waves. They are
+The lead plans the waves in its container, and these steps work there:
+the daemon of the host makes the calls on riff-server. The lead does
+them for you when it plans the waves. They are
 `riff` commands, so the permission rule `Bash(riff *)` covers them.
 
 ### See the open items of a wave

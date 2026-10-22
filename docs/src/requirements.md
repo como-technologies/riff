@@ -6473,6 +6473,11 @@ part when they merge.
   socket of the session. It never looks for the socket or the unit of
   the host.
 
+- **01M5GY61WSDXG5G6E2SQQ82AWC** In a container, riff wave move and riff
+  wave end --move-open-to-backlog read the claims of riff-server through
+  the riff daemon, as riff wave list does. No riff wave command calls
+  riff-server straight when RIFF_SOCKET is set and no server is named.
+
 ### The first run
 
 - **01M4ZJN6R68YBD3XMM725ZRJ7W** `riff init` does the first run of riff
