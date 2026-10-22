@@ -1094,6 +1094,22 @@ impl Api {
         self.call(&alive).await
     }
 
+    /// The keep-alive of the riff daemon for `me`, a session in a
+    /// container, at a prompt of its person: the prompt is 0 seconds
+    /// old, so it ends the block of `me` (01M48VDWPDYRPEAXHR1MYDN1M7,
+    /// 01M5GVQQ8NK3RD9CM3VTGXEHZQ). The `UserPromptSubmit` hook of the
+    /// lead gives the daemon the prompt.
+    pub async fn prompted_in_container(&self, me: &SessionUri) -> Result<AliveReply> {
+        let alive = Alive {
+            me: me.clone(),
+            activity: None,
+            prompt_secs: Some(0),
+            container: true,
+            binary: Some(crate::platform::get().binary()),
+        };
+        self.call(&alive).await
+    }
+
     /// A keep-alive that names `binary` as the riff of `me`
     /// (01M514C11BPE93PJT4221PYVHS): `riff workers host` names its own
     /// riff ([`Platform::binary`](crate::platform::Platform::binary)).

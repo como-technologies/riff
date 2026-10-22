@@ -1283,6 +1283,12 @@ enum RelayCommand {
         #[arg(long)]
         send: bool,
     },
+    /// Run the UserPromptSubmit hook of the session
+    ///
+    /// It tells the riff daemon that you gave a prompt. In the lead, the
+    /// prompt ends the block of the lead. It prints nothing, and always
+    /// exits with status 0.
+    Prompt,
 }
 
 #[derive(Subcommand)]
@@ -2317,6 +2323,10 @@ async fn view_command() -> Result<()> {
     }
 }
 
+/// The longest wait of `riff relay prompt` for the daemon: the prompt
+/// of the person waits for the hook.
+const PROMPT_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// `riff relay`: the riff in a session of the riff daemon
 /// ([`riff::session_relay`]). It ends with the exit code of the command
 /// of the session.
@@ -2356,6 +2366,22 @@ async fn relay_command(
                 return Ok(());
             }
             start_detached(&["relay", "denied", "--send"]);
+            Ok(())
+        }
+        Some(RelayCommand::Prompt) => {
+            // The hook input says nothing that riff needs. Each line on
+            // stdout would go into the prompt.
+            let mut stdin = String::new();
+            let _ = std::io::stdin().read_to_string(&mut stdin);
+            let told = async {
+                let socket = riff::session_relay::socket_here()?;
+                riff::session_relay::prompt(&socket).await
+            };
+            match tokio::time::timeout(PROMPT_WAIT, told).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => eprintln!("riff: cannot tell the daemon of the prompt: {e:#}"),
+                Err(_) => eprintln!("riff: the daemon did not take the prompt in time"),
+            }
             Ok(())
         }
         None if terminal => Err(riff::session_relay::terminal(&session)),

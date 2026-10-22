@@ -2989,6 +2989,43 @@ The lead sends no message: you read its terminal. A message of
 another session does not end the wait. Your next prompt in the lead
 ends it. The `blocked` tool does the same.
 
+### End the wait of the lead
+
+Give the lead a prompt in its terminal. The wait ends at once, and the
+row of the lead no longer shows it:
+
+```sh
+riff who
+```
+
+```text
+mike@pangolin:riff (4e54)  idle  lead  monitoring work for 5s
+```
+
+The settings of the lead container run the hook `UserPromptSubmit` at
+each prompt: `/opt/riff/riff relay prompt`. It tells the riff daemon,
+and the daemon tells riff-server. The hook prints nothing, and never
+stops your prompt. When the daemon is away, the wait holds until your
+next prompt.
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant C as claude (the lead)
+    participant H as riff relay prompt
+    participant D as riff daemon
+    participant S as riff-server
+    P->>C: a prompt
+    C->>H: UserPromptSubmit
+    H->>D: prompt, on the socket of the lead
+    D->>S: keep-alive: a prompt now
+    Note over S: the wait of the lead ends
+    D-->>H: done
+```
+
+A prompt in a worker ends no block: the riff daemon gives each input of
+a worker, not a person.
+
 ### Show a long step
 
 A step that runs longer than one tool call, for example a live window
@@ -3040,8 +3077,8 @@ wait as `waiting` by itself.
 
 A message that wakes the blocked session is its answer. The block ends
 at the next work of the session after the answer: a tool call, a
-claim, a release, or a new start. A prompt of your own in the session
-also ends it. The lead is not blocked: it waits for you. See
+claim, a release, or a new start. The lead is not blocked: it waits
+for you, and your next prompt ends the wait. See
 [Say that the lead waits for you](#say-that-the-lead-waits-for-you).
 A note or a status request is no answer. The answer ends the line
 `the lead gave no answer` at once.

@@ -119,7 +119,9 @@
 //! ([`terminal`], 01M501P9VN47QAKZ6B8P39ZSW4). It relays no event.
 //! `riff relay watch` waits for the next wake of the session, through
 //! the daemon ([`watch`], 01M501PA04NP79RJQEDP4D7YTM), as `riff watch
-//! --once` does on the host.
+//! --once` does on the host. At each prompt of the person, the hook
+//! `UserPromptSubmit` runs `riff relay prompt` ([`prompt`]): the daemon
+//! ends the block of the lead (01M5GVQQ8NK3RD9CM3VTGXEHZQ).
 //!
 //! # Versions
 //!
@@ -963,6 +965,25 @@ async fn ask_denied(socket: &Path, denials: &[crate::denied::Denial]) -> Result<
     while let Some(line) = lines.next_line().await? {
         match serde_json::from_str::<Say>(&line) {
             Ok(Say::Posted { count }) => return Ok(count),
+            Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
+            _ => {}
+        }
+    }
+    anyhow::bail!("the daemon went away")
+}
+
+/// `riff relay prompt` (01M5GVQQ8NK3RD9CM3VTGXEHZQ): tells the daemon
+/// on the socket at `socket` that the person of the session gave a
+/// prompt ([`SessionAsk::Prompt`]). The daemon ends the block of the
+/// lead, and says [`Say::Done`].
+pub async fn prompt(socket: &Path) -> Result<()> {
+    let conn = connect(socket).await?;
+    let (read, mut write) = conn.into_split();
+    let mut lines = BufReader::new(read).lines();
+    send(&mut write, &SessionAsk::Prompt { protocol: PROTOCOL }).await?;
+    while let Some(line) = lines.next_line().await? {
+        match serde_json::from_str::<Say>(&line) {
+            Ok(Say::Done) => return Ok(()),
             Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
             _ => {}
         }

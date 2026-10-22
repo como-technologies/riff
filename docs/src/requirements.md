@@ -3065,6 +3065,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   system clears at a logout. So the leave holds over a restart of the
   machine, of `riff mcp` and of `riff-server`.
   Superseded by 4.0 (#1173).
+- **01M5GVQQ8NK3RD9CM3VTGXEHZQ** The settings of each container session
+  have a `UserPromptSubmit` hook, `/opt/riff/riff relay prompt`. It
+  tells the riff daemon of the prompt through the socket of the session,
+  and always exits with status 0. For the lead, the daemon sends a
+  keep-alive with a prompt of age 0 to riff-server: the next prompt of
+  the person ends the block of the lead. A prompt in a worker ends no
+  block.
 
 ## Threads
 
