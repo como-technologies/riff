@@ -6422,6 +6422,10 @@ part when they merge.
   while a takeover waits, `taken over` while a person has it, or `lead`
   for the lead. The last step is the last line that `riff run` shows of
   its events.
+- **01M5GG2X5F1HXCQJ2JJWV6305K** The lead starts claude with
+  --dangerously-skip-permissions, in place of --permission-mode auto:
+  claude --session-id ID --dangerously-skip-permissions START. A worker
+  and a verify keep --permission-mode auto.
 
 ### The first run
 

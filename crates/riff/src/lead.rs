@@ -34,7 +34,7 @@
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
 //! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change and git can fast-forward it ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z, 01M51JYDHAQDJ3GH2J8DT3AZQS |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM |
-//! | The command | `claude --session-id ID --permission-mode auto START` ([`spec`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4 |
+//! | The command | `claude --session-id ID --dangerously-skip-permissions auto START` ([`spec`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4 |
 //! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
 //! | The wakes | `/opt/riff/riff relay watch --follow` in the Monitor tool, started once | 01M501PA04NP79RJQEDP4D7YTM, 01M59235BBXEKPZBRH23C39574 |
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
@@ -127,7 +127,7 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// assert_eq!(spec.workdir, facts.clone);
 /// assert_eq!(
 ///     spec.command[..5],
-///     ["claude", "--session-id", facts.session.as_str(), "--permission-mode", "auto"]
+///     ["claude", "--session-id", facts.session.as_str(), "--dangerously-skip-permissions", "auto"]
 /// );
 /// assert!(!spec.command.iter().any(|a| a == "-p"));
 /// assert!(spec.env.iter().any(|e| matches!(e, riff::runtime::Env::Value(n, v) if n == "RIFF_CHECK" && v == "/home/mike/.riff-check")));
@@ -145,8 +145,7 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
         "claude".into(),
         "--session-id".into(),
         facts.session.clone(),
-        "--permission-mode".into(),
-        "auto".into(),
+        "--dangerously-skip-permissions".into(),
         start.to_owned(),
     ];
     spec
