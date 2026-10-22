@@ -303,6 +303,19 @@ impl Tools {
         }
     }
 
+    /// The description of the tool `name`, or `None` when no tool has
+    /// that name.
+    ///
+    /// ```
+    /// let blocked = riff::tools::Tools::description("blocked").unwrap();
+    /// assert!(blocked.contains("The next prompt of the person ends the block of the lead."));
+    /// assert!(riff::tools::Tools::description("nothing").is_none());
+    /// ```
+    pub fn description(name: &str) -> Option<String> {
+        let tool = Self::tool_router().get(name)?.clone();
+        Some(tool.description?.into_owned())
+    }
+
     /// The tools of the session: each tool, or in a container only the
     /// tools of [`CONTAINER_TOOLS`].
     fn router(&self) -> rmcp::handler::server::router::tool::ToolRouter<Self> {
@@ -513,9 +526,9 @@ wakes you, answer with this tool. Do not post a reply. When you cannot go on, us
     #[tool(
         description = "Say that you cannot go on with no decision of a person. One call does both: \
 riff shows you as blocked, and the message `blocked: REASON` wakes the lead of your user. The block \
-ends at your next work after an answer. Do not use it to wait for a verify, a merge or a need: riff \
-shows that wait by itself. When you are the lead, it sends no message: riff shows you as waiting for \
-your user, and the next prompt of your user ends it."
+of a worker ends at its next work after an answer. Do not use it to wait for a verify, a merge or a \
+need: riff shows that wait by itself. When you are the lead, it sends no message: riff shows you as \
+waiting for your user. The next prompt of the person ends the block of the lead."
     )]
     async fn blocked(&self, Parameters(a): Parameters<BlockedArgs>) -> ToolResult {
         let told = self
