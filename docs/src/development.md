@@ -1370,6 +1370,9 @@ Backlog  61 open, 4 closed
 When the wave says "no free work now" while items are open, look at
 the groups: the items are held, claimed or in verify.
 
+The lead runs the same command in its container. There, riff reads
+the sessions and the holds through the riff daemon of the host.
+
 ### Stop the wave
 
 In your clone of the repository:
@@ -3651,7 +3654,31 @@ riff release status
 
 #### Check the release after the deploy
 
-The lead runs the checks after the job `Deploy` ends:
+The lead runs the checks after the job `Deploy` ends, in its
+container (`riff lead start`):
+
+```sh
+riff release check v3.3.0
+```
+
+In the container, riff reaches riff-server through the riff daemon of
+the host, as the riff tools do:
+
+```mermaid
+sequenceDiagram
+    participant C as riff release check (the lead, in its container)
+    participant D as riff daemon (the host)
+    participant S as riff-server
+    C->>D: the build, the hosts (on RIFF_SOCKET)
+    D->>S: the calls, with the sign-in of the person on the host
+    S-->>D: the answers
+    D-->>C: the answers
+```
+
+The container has no `gcloud`. So riff cannot read the Cloud Run log
+there, and each check of the log names the next step: a person on the
+host runs the same command in a terminal. riff reads the log with the
+`gcloud` of the host:
 
 ```sh
 riff release check v3.3.0

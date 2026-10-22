@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use chrono::TimeZone;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use futures::StreamExt;
+use riff::reach::Reach;
 use riff::{
     audit, binary, claude_settings, cloud, dropped, help, identity, lifecycle, local, login,
     permissions, pr, settings, text, usage, view,
@@ -1481,6 +1482,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let (server, source) = server_of(cli.server.as_deref())?;
+    // In a container, the socket of the session reaches riff-server
+    // (01M5GVPNAKAPA596K9361HSAAV).
+    let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
     if let Command::Server = cli.command {
         let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
         anstream::println!("{}", text::server_view(&view));
@@ -1546,7 +1550,7 @@ async fn main() -> Result<()> {
         ..
     } = &cli.command
     {
-        return release_cycle(command, &server).await;
+        return release_cycle(command, &server, &reach).await;
     }
     if let Command::Pr {
         command: Pr::Wait { number, every },
@@ -1749,7 +1753,7 @@ async fn main() -> Result<()> {
             }
             WaveCommand::Run { host: None } => riff::wave::ask_run(&dir, &here, api.base()).await?,
             WaveCommand::Stop { host: None } => riff::wave::ask_stop(&dir, &here).await?,
-            WaveCommand::List => wave_list(&api, &here).await?,
+            WaveCommand::List => wave_list(&reach, &here).await?,
             WaveCommand::Move { items, to } => wave_move(&api, &here, items, to).await?,
             WaveCommand::End {
                 number,
@@ -2597,36 +2601,6 @@ fn release_me(server: &str) -> Result<(Api, SessionUri, Place)> {
     Ok((api, me, place))
 }
 
-/// The facts of the shared riff for `riff release check`: the build of
-/// the server, and the build of the daemon of each host.
-async fn served(server: &str) -> riff::cycle::Served {
-    let build = Api::new(server)
-        .probe(lifecycle::PROBE_WAIT)
-        .await
-        .map_err(|e| format!("{e:#}"))
-        .and_then(|p| {
-            p.build
-                .map(|b| b.version.to_string())
-                .ok_or_else(|| "the server names no build".to_owned())
-        });
-    let hosts = async {
-        let (api, me, _) = release_me(server)?;
-        let sessions = api.who(&me, true).await?;
-        anyhow::Ok(
-            riff_client::daemons::hosts(&sessions)
-                .into_iter()
-                .map(|h| (format!("{}@{}", h.user, h.host), h.facts.build))
-                .collect(),
-        )
-    }
-    .await
-    .map_err(|e| format!("{e:#}"));
-    riff::cycle::Served {
-        server: build,
-        hosts,
-    }
-}
-
 /// The log of the Cloud Run service of the shared riff, from the cloud
 /// settings `shared` of this repository.
 struct NoLog(String);
@@ -2651,13 +2625,10 @@ fn shared_log(here: &std::path::Path) -> Box<dyn riff::cycle::CloudLog> {
 
 /// Resumes the whole riff after `riff release check`. A failure is a
 /// line: the owner or an admin resumes it by hand.
-async fn resume_after_check(server: &str) {
-    let resumed = async {
-        let (api, me, place) = release_me(server)?;
-        pause(&api, &me, &place, PauseScope::Riff, RiffState::Running).await
-    };
-    if let Err(e) = resumed.await {
-        eprintln!("riff: cannot resume the riff: {e:#}. Run: riff resume --riff");
+async fn resume_after_check(reach: &Reach) {
+    match reach.resume_riff().await {
+        Ok(line) => println!("{line}"),
+        Err(e) => eprintln!("riff: cannot resume the riff: {e:#}. Run: riff resume --riff"),
     }
 }
 
@@ -2682,7 +2653,7 @@ fn wave_release_gate(number: u64, no_release: Option<&str>) -> Result<()> {
 /// and `rollback` (01M58B0HZYMAK1B2AJMWKHCXG0 to
 /// 01M58B0JSQMWNCMSNX19536XT8, 01M58KMKR33P1FSCFDQRZ56A8P to
 /// 01M58KMMP9FKRFYX58ESVRSZQX).
-async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
+async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) -> Result<()> {
     use riff::cycle::{self, Approved, Checked};
     let here = identity::working_dir()?;
     let refuse = |command: &str, why: cycle::Refusal| -> ! {
@@ -2867,7 +2838,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
                 refuse("check", why);
             }
             let forge = forge()?;
-            let served = served(server).await;
+            let served = reach.served().await;
             let log = shared_log(&here);
             match cycle::check(&forge, tag, &served, log.as_ref())? {
                 Checked::DeployFailed { deploy, issue } => {
@@ -2875,7 +2846,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
                         "The deploy of {tag} failed: {}. The old revision still serves. The issue: #{issue}",
                         deploy.url
                     );
-                    resume_after_check(server).await;
+                    resume_after_check(reach).await;
                 }
                 Checked::Ran {
                     lines,
@@ -2886,7 +2857,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str) -> Result<()> {
                     println!("The result is on the release issue #{issue}.");
                     if passed {
                         println!("riff closed the release issue #{issue}.");
-                        resume_after_check(server).await;
+                        resume_after_check(reach).await;
                     }
                 }
             }
@@ -3234,18 +3205,13 @@ async fn wave_end_moving(
 /// the hosts of riff-server (01M58ATZ408RBCX0PM0D0ZCY4B). As in
 /// [`top`], the repository comes from the folder `here`, also for a
 /// person with no session, and each call carries the token of the
-/// caller (`Api::signed_in`). When riff cannot read them, one line on
-/// stderr says why (01M58ATZ6FA5PJMD3D848CEWBJ).
-async fn wave_list(api: &Api, here: &riff_core::name::Place) -> Result<()> {
+/// caller, straight or through the riff daemon ([`Reach`]). When riff
+/// cannot read them, one line on stderr says why
+/// (01M58ATZ6FA5PJMD3D848CEWBJ).
+async fn wave_list(reach: &Reach, here: &riff_core::name::Place) -> Result<()> {
     let gh = pr::Gh::default();
     let milestones = riff::waves::open(&gh)?;
-    let items = async {
-        let me = identity::me(here, api.base())?;
-        // A riff-server with sign-in takes no call with no token.
-        let api = api.clone().signed_in(me.who().session())?;
-        riff::waves::items(&api, &me, here.default_thread(), &gh).await
-    }
-    .await;
+    let items = riff::waves::items(reach, here.default_thread(), &gh).await;
     let items = items
         .inspect_err(|e| eprintln!("{}", text::waves_no_items(&format!("{e:#}"))))
         .ok();

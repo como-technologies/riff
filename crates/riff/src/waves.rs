@@ -63,14 +63,14 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
-use riff_client::api::Api;
 use riff_client::sessions::Sessions;
 use riff_client::waves::{Board, Issues, Milestone};
-use riff_core::name::{SessionUri, ThreadName};
+use riff_core::name::ThreadName;
 use riff_core::wire::{HoldInfo, SessionInfo};
 use serde::Deserialize;
 
 use crate::pr::Gh;
+use crate::reach::Reach;
 use crate::text;
 
 /// An open milestone, as `gh api .../milestones` gives it: a
@@ -477,19 +477,14 @@ impl Items {
 
 /// The items of the repository `thread`, the repository of the folder
 /// (01M58ATZ408RBCX0PM0D0ZCY4B): its open issues and pull requests from
-/// `gh`, and its sessions and holds from riff-server. `me` reads them.
-pub async fn items(
-    api: &Api,
-    me: &SessionUri,
-    thread: Option<ThreadName>,
-    gh: &Gh,
-) -> Result<Items> {
+/// `gh`, and its sessions and holds from riff-server, by the way `reach`.
+pub async fn items(reach: &Reach, thread: Option<ThreadName>, gh: &Gh) -> Result<Items> {
     let Some(thread) = thread else {
         bail!(text::waves_no_repo());
     };
     let repo = thread.to_string();
-    let who = api.who(me, false).await?;
-    let holds = api.plan_show(me, &thread).await?.holds;
+    let who = reach.who(false).await?;
+    let holds = reach.holds(&thread).await?;
     let Some(issues) = crate::top::issues_from_gh(gh, &repo) else {
         bail!(text::waves_no_issues(&repo));
     };

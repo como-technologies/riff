@@ -1484,14 +1484,19 @@ pub fn checks(
             Err(e) => Verdict::Unknown(format!("riff cannot ask the shared riff: {e}")),
         },
     ));
-    let read = |part: &str| {
-        log.lines(&log_filter(at, part))
-            .map_err(|e| format!("{e:#}"))
-    };
-    let unknown = |e: String| {
-        Verdict::Unknown(format!(
-            "riff cannot read the Cloud Run log: {e}. A person signs in: gcloud auth login"
-        ))
+    let read = |part: &str| log.lines(&log_filter(at, part));
+    let unknown = |e: anyhow::Error| {
+        Verdict::Unknown(if e.is::<NoGcloud>() {
+            format!(
+                "riff cannot read the Cloud Run log: {e}. A person on the host runs: riff \
+                 release check {}",
+                tag(version)
+            )
+        } else {
+            format!(
+                "riff cannot read the Cloud Run log: {e:#}. A person signs in: gcloud auth login"
+            )
+        })
     };
     out.push((
         "no run of 503 longer than 20 s",
@@ -1608,10 +1613,30 @@ pub fn log_read_args(service: &str, project: &str, filter: &str) -> Vec<String> 
     ]
 }
 
+/// The error of a [`CloudLog`] when `gcloud` does not run on this
+/// machine, for example in the container of the lead
+/// (01M5GVPND32X3R9MYXYB5SV83W).
+#[derive(Debug)]
+pub struct NoGcloud;
+
+impl std::fmt::Display for NoGcloud {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("gcloud does not run here")
+    }
+}
+
+impl std::error::Error for NoGcloud {}
+
 impl CloudLog for RunLog {
     fn lines(&self, filter: &str) -> Result<Vec<LogLine>> {
         let args = log_read_args(&self.settings.service, &self.settings.project, filter);
-        let out = self.gcloud.run(&args, None)?;
+        let out = self.gcloud.run(&args, None).map_err(|e| {
+            let missing = e.chain().any(|c| {
+                c.downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+            });
+            if missing { anyhow!(NoGcloud) } else { e }
+        })?;
         out.lines()
             .filter(|l| !l.trim().is_empty())
             .map(|l| {
@@ -3724,6 +3749,41 @@ mod tests {
             log[1].contains("- riff server shows the build: passed"),
             "{log:?}"
         );
+    }
+
+    /// 01M5GVPND32X3R9MYXYB5SV83W: in the container of the lead, no
+    /// `gcloud` runs. Each check of the log names the step for a person
+    /// on the host, and the checks of riff-server still run.
+    #[test]
+    fn with_no_gcloud_each_check_of_the_log_names_the_step_on_the_host() {
+        let settings = crate::cloud::Settings::new("shared", "acme", "123", "europe-west1");
+        let log = RunLog {
+            gcloud: crate::cloud::Gcloud::at("/nonexistent/riff-test/gcloud"),
+            settings,
+        };
+        let version = tag_version("v3.3.0").unwrap();
+        let lines = checks(version, "2026-10-22T00:00:00Z", &served("3.3.0"), &log);
+        let step = "riff cannot read the Cloud Run log: gcloud does not run here. A person on \
+                    the host runs: riff release check v3.3.0";
+        let names: Vec<&str> = lines
+            .iter()
+            .filter(|(_, v)| *v == Verdict::Unknown(step.into()))
+            .map(|(name, _)| *name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "no run of 503 longer than 20 s",
+                "no 500 of riff-server",
+                "no 401 or 429 of the token store",
+                "no old instance takes the lease",
+            ],
+            "{lines:?}"
+        );
+        assert!(lines.contains(&("riff server shows the build", Verdict::Passed)));
+        assert!(lines.contains(&("each host takes the build", Verdict::Passed)));
+        let text = check_text("v3.3.0", &lines);
+        assert!(!text.contains("gcloud auth login"), "{text}");
     }
 
     /// The deploy job failed: the old revision still serves. check files
