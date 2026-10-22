@@ -125,9 +125,11 @@ pub enum Signal {
     /// (01M41FZNTPXQNCZ1S99HE42PYQ). A fact of work after an answer
     /// ends a block (01M41FZPT31ATXP75QW965P3JB). A prompt of the
     /// person after the block, `prompt_secs` ago, ends it too
-    /// (01M48VDWPDYRPEAXHR1MYDN1M7). With `container`, the riff daemon
-    /// sends it for a session in a container: the mark stays until the
-    /// session ends (01M510MG0CKDXAKF6YJ768K7E8). A `binary` replaces
+    /// (01M48VDWPDYRPEAXHR1MYDN1M7): the prompt hook of the lead in a
+    /// container gives it (01M5GVQQ8NK3RD9CM3VTGXEHZQ). With
+    /// `container`, the riff daemon sends it for a session in a
+    /// container: the mark stays until the session ends
+    /// (01M510MG0CKDXAKF6YJ768K7E8). A `binary` replaces
     /// the riff of the session; none keeps it
     /// (01M514C11BPE93PJT4221PYVHS).
     Alive {

@@ -2249,3 +2249,55 @@ async fn riff_takeover_of_a_session_that_the_daemon_does_not_own_fails() {
         text(&out.stderr)
     );
 }
+
+/// Runs the hook `riff relay prompt` with the socket `socket`, and the
+/// hook input on its stdin.
+async fn prompt_hook(socket: &Path) -> Output {
+    let mut cmd = Command::new(Isolated::shared().riff_path());
+    cmd.args(["relay", "prompt"])
+        .env("RIFF_SOCKET", socket)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    tokio::task::spawn_blocking(move || {
+        let mut child = cmd.spawn().unwrap();
+        let input = br#"{"hook_event_name":"UserPromptSubmit","prompt":"go on"}"#;
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), input).unwrap();
+        child.wait_with_output().unwrap()
+    })
+    .await
+    .unwrap()
+}
+
+/// 01M5GVQQ8NK3RD9CM3VTGXEHZQ: the prompt hook tells the daemon of the
+/// prompt on the socket of the session. It prints nothing, since its
+/// stdout would go into the prompt. With no daemon, it still exits with
+/// status 0.
+#[tokio::test]
+async fn the_prompt_hook_tells_the_daemon_and_prints_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("riff.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let daemon = tokio::spawn(async move {
+        let (conn, _) = listener.accept().await.unwrap();
+        let (read, mut write) = conn.into_split();
+        let mut lines = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(read));
+        let ask: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        write.write_all(b"{\"say\":\"done\"}\n").await.unwrap();
+        ask
+    });
+    let out = prompt_hook(&socket).await;
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "");
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(daemon.await.unwrap()["ask"], "prompt");
+
+    let away = prompt_hook(&dir.path().join("none.sock")).await;
+    assert_eq!(away.status.code(), Some(0), "{}", text(&away.stderr));
+    assert_eq!(text(&away.stdout), "");
+    assert!(
+        text(&away.stderr).contains("cannot tell the daemon of the prompt"),
+        "{}",
+        text(&away.stderr)
+    );
+}

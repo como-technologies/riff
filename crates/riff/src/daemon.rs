@@ -136,6 +136,7 @@
 //! | [`SessionAsk::Watch`] | says [`Say::Line`] at the next wake of the session, from riff-server ([`World::wake`]) |
 //! | [`SessionAsk::Follow`] | says [`Say::Line`] at each wake of the session, until the relay leaves ([`World::wakes`]) |
 //! | [`SessionAsk::Denied`] | posts the refusals of auto mode of the session, and says [`Say::Posted`] ([`Daemon::post_denials`]) |
+//! | [`SessionAsk::Prompt`] | ends the block of the lead on riff-server, and says [`Say::Done`] ([`Daemon::prompted`]) |
 //!
 //! # A session
 //!
@@ -860,6 +861,12 @@ pub enum SessionAsk {
         protocol: u32,
         /// The refusals, oldest first, with no secret.
         denials: Vec<crate::denied::Denial>,
+    },
+    /// The person of the session gave a prompt: `riff relay prompt`,
+    /// the `UserPromptSubmit` hook (01M5GVQQ8NK3RD9CM3VTGXEHZQ).
+    Prompt {
+        /// [`PROTOCOL`] of the relay.
+        protocol: u32,
     },
     /// Who runs a command of the release cycle in this session: the
     /// lead, or a work session. The socket of the session tells the
@@ -2810,6 +2817,18 @@ impl<R: Runtime + 'static> Daemon<R> {
                 drop(out);
                 let _ = written.await;
             }
+            Ok(SessionAsk::Prompt { .. }) => {
+                let (out, written) = writer(write);
+                let record = owned.lock().record.clone();
+                out.say(match self.prompted(&record).await {
+                    Ok(()) => Say::Done,
+                    Err(e) => Say::Failed {
+                        error: format!("{e:#}"),
+                    },
+                });
+                drop(out);
+                let _ = written.await;
+            }
             Ok(SessionAsk::Caller { .. }) => {
                 let (out, written) = writer(write);
                 let record = owned.lock().record.clone();
@@ -2935,6 +2954,25 @@ impl<R: Runtime + 'static> Daemon<R> {
                 role_unknown: true,
             },
         }
+    }
+
+    /// The person of the session of `record` gave a prompt
+    /// (01M5GVQQ8NK3RD9CM3VTGXEHZQ). For the lead, the session with a
+    /// terminal, it tells riff-server: the prompt ends the block of the
+    /// lead (01M48VDWPDYRPEAXHR1MYDN1M7). A prompt of a worker is a wake
+    /// of the daemon, not of a person: it changes nothing. A session that
+    /// left the riff makes no call ([`World::marks`]).
+    pub async fn prompted(&self, record: &Record) -> Result<()> {
+        let session = &record.live.session;
+        if !record.terminal
+            || (self.world.marks()).is_some_and(|dir| riff_client::marks::left(&dir, session))
+        {
+            return Ok(());
+        }
+        let api =
+            riff_client::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
+        api.prompted_in_container(&record.me).await?;
+        Ok(())
     }
 
     /// Posts each refusal of auto mode of `denials` as the session of
@@ -6748,5 +6786,53 @@ mod tests {
         let record = crate::denied::Record::parse(&bodies[0], 0).unwrap();
         assert_eq!(record.tag("role"), "lead");
         assert_eq!(record.tag("claim"), "-");
+    }
+
+    /// The block of the session `me` on riff-server, as `who` shows it.
+    async fn block_of(api: &riff_client::api::Api, reader: &SessionUri, me: &SessionUri) -> bool {
+        let who = api.roster(reader, false).await.unwrap();
+        let row = who.sessions.iter().find(|s| s.uri.who() == me.who());
+        row.expect("the session is in who").blocked.is_some()
+    }
+
+    /// 01M5GVQQ8NK3RD9CM3VTGXEHZQ, 01M48VDWPDYRPEAXHR1MYDN1M7: the
+    /// prompt hook of the lead ends its block, and `who` no longer shows
+    /// it as blocked.
+    #[tokio::test]
+    async fn a_prompt_in_the_lead_ends_its_block() {
+        let (server, api, reader) = denials_server().await;
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let mut start = here.start("riff-lead-o-r", "lead");
+        start.terminal = true;
+        start.server = server;
+        api.register(&start.me).await.unwrap();
+        let me = start.me.clone();
+        let (client, name) = here.started(start).await;
+        drop(client);
+        api.blocked(&me, "run riff owner --take").await.unwrap();
+        assert!(block_of(&api, &reader, &me).await, "the block holds");
+
+        let socket = session_dir(&here.dir, &name).join(SOCKET);
+        crate::session_relay::prompt(&socket).await.unwrap();
+        assert!(!block_of(&api, &reader, &me).await, "the prompt ended it");
+    }
+
+    /// 01M5GVQQ8NK3RD9CM3VTGXEHZQ: a prompt in a worker is a wake of the
+    /// daemon, and ends no block.
+    #[tokio::test]
+    async fn a_prompt_in_a_worker_ends_no_block() {
+        let (server, api, reader) = denials_server().await;
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let mut start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        start.server = server;
+        api.register(&start.me).await.unwrap();
+        let me = start.me.clone();
+        let (client, name) = here.started(start).await;
+        drop(client);
+        api.blocked(&me, "which of two designs?").await.unwrap();
+
+        let socket = session_dir(&here.dir, &name).join(SOCKET);
+        crate::session_relay::prompt(&socket).await.unwrap();
+        assert!(block_of(&api, &reader, &me).await, "the block holds");
     }
 }
