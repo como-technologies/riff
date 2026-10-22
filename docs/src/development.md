@@ -3923,8 +3923,11 @@ environment `production`. See
 
 A person, the owner or an admin, approves the deploy in a plain
 terminal (HUMAN GATE 1). Exit each Claude Code session first: the
-command refuses in each agent session, also in a `!` command of Claude
-Code:
+command refuses a worker and each other agent session, also in a `!`
+command of Claude Code. The lead of the owner or of an admin may
+approve too, but only after the owner or an admin said it in riff chat:
+see [Let the lead approve when the owner said
+so](#let-the-lead-approve-when-the-owner-said-so).
 
 ```sh
 riff release approve v3.3.0
