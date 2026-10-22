@@ -1861,7 +1861,13 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
     );
     wait_for(&machine.bin.path().join("claude.args"), "--mcp-config").await;
     let claude = machine.read("claude.args");
-    assert!(claude.contains("--permission-mode\nauto\n"), "{claude}");
+    // 01M5GG2X5F1HXCQJ2JJWV6305K: the lead skips the permission checks,
+    // and has no permission mode.
+    assert!(
+        claude.contains("--dangerously-skip-permissions\n"),
+        "{claude}"
+    );
+    assert!(!claude.contains("--permission-mode"), "{claude}");
     assert!(
         claude.contains("You are the lead of como-technologies/riff"),
         "{claude}"
