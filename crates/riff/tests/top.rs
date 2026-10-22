@@ -1598,3 +1598,47 @@ esac"#
     assert_eq!(said, "Moved #13 #14 to Backlog. Ended the wave Wave 3.\n");
     assert!(log().contains("gh api -X PATCH repos/{owner}/{repo}/milestones/3 -f state=closed"));
 }
+
+/// #1239: `riff daemon status` with `RIFF_SOCKET` asks the daemon on the
+/// socket of the session. It looks for no socket and no unit of the host,
+/// and it never says `riff daemon install`.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_daemon_status_in_a_container_asks_the_socket_of_the_session() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let bin = bin(false);
+    let sockets = tempfile::tempdir().unwrap();
+    let socket = sockets.path().join("riff.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    tokio::spawn(async move {
+        while let Ok((conn, _)) = listener.accept().await {
+            let (read, mut write) = conn.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let ask: serde_json::Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            assert_eq!(ask["ask"], "server", "{ask}");
+            assert_eq!(ask["call"]["call"], "status", "{ask}");
+            let status = serde_json::json!({
+                "pid": 4242, "build": "4.0.0", "since_ms": 0, "dir": "/d", "sessions": [],
+            });
+            let say = serde_json::json!({"say": "served", "reply": status});
+            write
+                .write_all(format!("{say}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+    let mut status = riff(
+        &server,
+        dir.path(),
+        Some("w9"),
+        bin.path(),
+        &["daemon", "status"],
+    );
+    status.env_remove("RIFF_SERVER").env("RIFF_SOCKET", &socket);
+    let shown = output(status).await;
+    assert!(shown.contains("4242"), "{shown}");
+    assert!(!shown.contains("daemon install"), "{shown}");
+    assert!(!shown.contains("riff.service"), "{shown}");
+}

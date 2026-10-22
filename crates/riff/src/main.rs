@@ -485,6 +485,12 @@ enum Command {
         /// The just command.
         #[arg(long, default_value = "just")]
         just: std::path::PathBuf,
+        /// Build on the host HOST, through riff-server. Only you in a
+        /// terminal and your lead in this repository can use --host. The
+        /// daemon of HOST refuses each other session, for example a
+        /// worker.
+        #[arg(long)]
+        host: Option<String>,
     },
     /// Get this machine ready for riff run: check, install, pull
     ///
@@ -1536,7 +1542,15 @@ async fn main() -> Result<()> {
     if let Command::Setup { check } = cli.command {
         return setup(check);
     }
-    if let Command::Build { just } = &cli.command {
+    if let Command::Build {
+        host: Some(host), ..
+    } = &cli.command
+    {
+        let request = riff::daemon::remote::Request::Build;
+        let here = identity::place(&identity::working_dir()?)?;
+        return ask_daemon(host, &request, &here, &reach).await;
+    }
+    if let Command::Build { just, .. } = &cli.command {
         let home = std::env::var_os("HOME")
             .filter(|h| !h.is_empty())
             .context("riff cannot find your home: HOME is not set")?;
@@ -1751,11 +1765,11 @@ async fn main() -> Result<()> {
         match command {
             WaveCommand::Run { host: Some(host) } => {
                 let request = riff::daemon::remote::Request::WaveRun;
-                ask_daemon(host, &request, &here, api.base()).await?;
+                ask_daemon(host, &request, &here, &reach).await?;
             }
             WaveCommand::Stop { host: Some(host) } => {
                 let request = riff::daemon::remote::Request::WaveStop;
-                ask_daemon(host, &request, &here, api.base()).await?;
+                ask_daemon(host, &request, &here, &reach).await?;
             }
             WaveCommand::Run { host: None } => riff::wave::ask_run(&dir, &here, api.base()).await?,
             WaveCommand::Stop { host: None } => riff::wave::ask_stop(&dir, &here).await?,
@@ -2113,9 +2127,10 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
         return daemon_events(host, name, &here, &server).await;
     }
     if let Some((host, request)) = command.and_then(remote_request) {
-        let (server, _) = server_of(server)?;
+        let (server, source) = server_of(server)?;
         let here = identity::place(&identity::working_dir()?)?;
-        return ask_daemon(host, &request, &here, &server).await;
+        let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
+        return ask_daemon(host, &request, &here, &reach).await;
     }
     let Some(command) = command else {
         return riff::daemon::serve_here().await;
@@ -2137,6 +2152,9 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             Ok(())
         }
         DaemonCommand::Status { .. } => {
+            if let Ok(socket) = riff::session_relay::socket_here() {
+                return status_in_container(&socket).await;
+            }
             let manager = riff::service::Systemd::here()?;
             let code = riff::daemon::show_status(&dir, &manager).await;
             if code != 0 {
@@ -2195,6 +2213,21 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             let work = identity::working_dir()?;
             let here = identity::place(&work)?;
             riff::daemon::ask_serve(&dir, &work, &here, &server).await
+        }
+    }
+}
+
+/// `riff daemon status` in a container: asks the daemon on the socket of
+/// the session (#1239). It looks for no socket and no unit of the host.
+async fn status_in_container(socket: &std::path::Path) -> Result<()> {
+    match Reach::daemon_status(socket).await {
+        Ok(status) => {
+            print!("{}", text::daemon_status(&status, riff::daemon::now_ms()));
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            std::process::exit(1);
         }
     }
 }
@@ -2267,11 +2300,17 @@ async fn ask_daemon(
     host: &str,
     request: &riff::daemon::remote::Request,
     here: &Place,
-    server: &str,
+    reach: &Reach,
 ) -> Result<()> {
-    let (api, me) = daemon_asker(here, server)?;
-    let wait = riff::daemon::remote::REPLY_WAIT;
-    match riff::daemon::remote::ask(&api, &me, host, request, wait).await {
+    let answer = match reach {
+        Reach::Direct(server) => {
+            let (api, me) = daemon_asker(here, server)?;
+            let wait = riff::daemon::remote::REPLY_WAIT;
+            riff::daemon::remote::ask(&api, &me, host, request, wait).await
+        }
+        Reach::Daemon(_) => reach.host(host, request).await,
+    };
+    match answer {
         Ok(reply) => {
             println!("{reply}");
             Ok(())
@@ -2905,7 +2944,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             let forge = forge()?;
             let commit = cycle::test_target(&forge, tag)?;
             let request = riff::daemon::remote::Request::ReleaseTest(commit);
-            ask_daemon(host, &request, &identity::place(&here)?, server).await?;
+            ask_daemon(host, &request, &identity::place(&here)?, reach).await?;
             next(&forge, tag);
         }
         ReleaseCommand::Rollback { tag } => {

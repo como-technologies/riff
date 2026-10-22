@@ -910,6 +910,19 @@ pub enum ServerCall {
     /// Resume the whole riff. Only the lead may. The answer is the line
     /// for the person.
     ResumeRiff,
+    /// The [`Status`] of this daemon, for `riff daemon status` in a
+    /// container (#1239). A session that is not the lead may ask it.
+    Status,
+    /// A request to the daemon of the host `host` through riff-server, as
+    /// `riff daemon status --host` makes it on a host
+    /// ([`remote::Request`], #1239). Only the lead may. The answer is
+    /// the text of the reply.
+    Host {
+        /// The host.
+        host: String,
+        /// The body of the request, as [`remote::Request`] writes it.
+        request: String,
+    },
 }
 
 /// Makes the call `call` of the session of `record` on its riff-server,
@@ -938,6 +951,18 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
                 .await?;
             Value::String(text::riff_set(None, state, &reply, &posted))
         }
+        ServerCall::Host { host, request } => {
+            if !record.terminal {
+                bail!(text::DAEMON_HOST_ONLY_LEAD);
+            }
+            let request: remote::Request = request
+                .parse()
+                .map_err(|()| anyhow::anyhow!("the request {request:?} is unknown"))?;
+            let wait = remote::REPLY_WAIT;
+            let reply = remote::ask(&signed()?, &record.me, host, &request, wait).await?;
+            Value::String(reply)
+        }
+        ServerCall::Status => bail!("the daemon answers the status itself"),
     })
 }
 
@@ -1174,7 +1199,7 @@ fn writer(mut write: OwnedWriteHalf) -> (Out, JoinHandle<()>) {
 }
 
 /// The time now in milliseconds since the epoch.
-fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
@@ -2907,7 +2932,13 @@ impl<R: Runtime + 'static> Daemon<R> {
             Ok(SessionAsk::Server { call, .. }) => {
                 let (out, written) = writer(write);
                 let record = owned.lock().record.clone();
-                out.say(match server_call(&record, &call).await {
+                let done = match call {
+                    ServerCall::Status => {
+                        serde_json::to_value(self.status().await).map_err(Into::into)
+                    }
+                    _ => server_call(&record, &call).await,
+                };
+                out.say(match done {
                     Ok(reply) => Say::Served { reply },
                     Err(e) => Say::Failed {
                         error: format!("{e:#}"),
@@ -6535,6 +6566,72 @@ mod tests {
         let refused = worker.resume_riff().await.unwrap_err();
         assert_eq!(refused.to_string(), text::DAEMON_RESUME_ONLY_LEAD);
         lead.resume_riff().await.unwrap();
+
+        // #1239: a --host request of the lead goes through its socket and
+        // riff-server to the daemon of the host. A worker is refused.
+        let request = remote::Request::Status;
+        let no_daemon = lead.host("a", &request).await.unwrap_err().to_string();
+        assert!(
+            no_daemon.contains("no daemon of your user on a"),
+            "{no_daemon}"
+        );
+        let host_me = SessionUri::new(
+            riff_core::name::Who::new(user.who().user(), Some("host-daemon")).unwrap(),
+            place.clone(),
+        );
+        api.register(&host_me).await.unwrap();
+        // A watch makes the session live until the test ends.
+        let _watch = api.watch(&host_me).await.unwrap();
+        api.alive(&host_me).await.unwrap();
+        let step = remote::status_line(1, "4.0.0", 0);
+        api.status(&host_me, &riff_core::wire::Status { step })
+            .await
+            .unwrap();
+        // Signals reach the state a moment later.
+        for _ in 0..100 {
+            let sessions = api.who(&host_me, false).await.unwrap();
+            if remote::find(&sessions, user.who().user(), REPO, "a").is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let fake = tokio::spawn({
+            let (api, me) = (api.clone(), host_me.clone());
+            async move {
+                loop {
+                    let inbox = api.inbox(&me, None, false).await.unwrap();
+                    for m in inbox.into_iter().flat_map(|i| i.messages) {
+                        if m.message.body == "daemon status" {
+                            let reply = Ok("Sessions: none.".to_owned());
+                            let body = remote::reply_body(m.message.seq, "a", &reply);
+                            let to = [riff_core::selector::Selector::session(
+                                m.message.from.who().session().unwrap(),
+                            )];
+                            let kind = riff_core::wire::Kind::Note;
+                            api.post(&me, None, &to, &body, kind).await.unwrap();
+                            return;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+        });
+        let reply = lead.host("a", &request).await.unwrap();
+        assert_eq!(reply, "Sessions: none.");
+        fake.await.unwrap();
+        let refused = worker.host("a", &request).await.unwrap_err();
+        assert_eq!(refused.to_string(), text::DAEMON_HOST_ONLY_LEAD);
+
+        // `riff daemon status` in a container asks the daemon of the socket.
+        let Reach::Daemon(socket) = &worker else {
+            unreachable!()
+        };
+        let status = Reach::daemon_status(socket).await.unwrap();
+        assert!(
+            status.build.starts_with(env!("CARGO_PKG_VERSION")),
+            "{}",
+            status.build
+        );
 
         // With no riff-server, the error names the server of the session.
         let dead = Reach::Direct("http://127.0.0.1:9".into());

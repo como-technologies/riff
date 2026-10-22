@@ -225,6 +225,7 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 ///     "wave run",
 ///     "wave stop",
 ///     "release test 0123abc",
+///     "build",
 ///     "lead move",
 /// ] {
 ///     assert_eq!(body.parse::<Request>().unwrap().to_string(), body);
@@ -280,6 +281,9 @@ pub enum Request {
     /// `riff release test` on the commit: the real-session test
     /// (01M5924C8BTT6CW05Q0YZJ1GCY).
     ReleaseTest(String),
+    /// `riff build`: build the default branch in the check clone of the
+    /// host (#1239).
+    Build,
     /// `riff lead move`: start the lead here, and make it the lead
     /// (01M596DH8G4A5XQFHJFBX1X379).
     LeadMove,
@@ -325,6 +329,7 @@ impl FromStr for Request {
             ["wave", "run"] => Ok(Request::WaveRun),
             ["wave", "stop"] => Ok(Request::WaveStop),
             ["lead", "move"] => Ok(Request::LeadMove),
+            ["build"] => Ok(Request::Build),
             ["release", "test", commit] if super::release_test::is_commit(commit) => {
                 Ok(Request::ReleaseTest(commit.to_owned()))
             }
@@ -394,6 +399,7 @@ impl fmt::Display for Request {
             Request::WaveRun => write!(f, "wave run"),
             Request::WaveStop => write!(f, "wave stop"),
             Request::LeadMove => write!(f, "lead move"),
+            Request::Build => write!(f, "build"),
             Request::ReleaseTest(commit) => write!(f, "release test {commit}"),
         }
     }
@@ -674,6 +680,21 @@ pub async fn answer(
                 .await
                 .map_err(anyhow::Error::from)
                 .and_then(|done| done)
+        }
+        Request::Build => {
+            let main = served.wave.main.clone();
+            tokio::task::spawn_blocking(move || {
+                let home = std::env::var_os("HOME")
+                    .filter(|h| !h.is_empty())
+                    .context("HOME is not set")?;
+                let check =
+                    crate::check::dir_from(std::env::var_os(crate::check::VAR), Path::new(&home));
+                let riff = crate::check::build(&main, &check, Path::new("just"))?;
+                Ok(riff.display().to_string())
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|done| done)
         }
         Request::WaveStop => {
             let repo = served.wave.repo.clone();
