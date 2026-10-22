@@ -1094,6 +1094,11 @@
   So a front end that holds a reply until its first body byte lets
   the connect finish at once. `riff chat` shows its history less than
   1 second after the connect.
+- **01M5GVK79HV5KSDE626Z5AS1EG** A test that sets `RIFF_SOCKET` gives it
+  a path in a temp folder of the test, never the socket of a session
+  `/run/riff/riff.sock`. So a test gives the same result in a container
+  session and on the Gate. The helper of the release tests refuses
+  another path.
 
 ## Saved state
 

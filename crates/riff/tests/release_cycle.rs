@@ -173,6 +173,9 @@ impl Machine {
             .env_remove("CLAUDECODE")
             .stdin(Stdio::piped());
         for (key, value) in vars {
+            if *key == riff::daemon::SOCKET_VAR {
+                test_socket(value);
+            }
             cmd.env(key, value);
         }
         let stdin = stdin.to_owned();
@@ -200,6 +203,37 @@ impl Machine {
         assert!(out.status.success(), "riff {args:?}: {}", text(&out.stderr));
         text(&out.stdout)
     }
+
+    /// The socket path of a container session in the temp folder of
+    /// the machine. No daemon listens there.
+    fn no_daemon(&self) -> String {
+        self.root
+            .path()
+            .join("run/riff.sock")
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+/// Refuses a `RIFF_SOCKET` of a test outside the temp folder, for
+/// example the real socket of the daemon in a container session
+/// (01M5GVK79HV5KSDE626Z5AS1EG).
+fn test_socket(path: &str) {
+    let path = Path::new(path);
+    assert!(
+        path != riff::daemon::in_session() && path.starts_with(std::env::temp_dir()),
+        "RIFF_SOCKET of a test is not in a temp folder: {}",
+        path.display()
+    );
+}
+
+#[tokio::test]
+async fn the_helper_refuses_the_socket_of_the_daemon() {
+    let machine = Machine::new().await;
+    test_socket(&machine.no_daemon());
+    let real = riff::daemon::in_session().to_string_lossy().into_owned();
+    let refused = std::panic::catch_unwind(|| test_socket(&real));
+    assert!(refused.is_err());
 }
 
 #[tokio::test]
@@ -407,11 +441,12 @@ async fn approve_with_no_and_with_no_run_changes_nothing() {
 async fn approve_refuses_each_agent_session() {
     let machine = Machine::new().await;
     machine.fake_gh(WAITS);
+    let socket = machine.no_daemon();
     for vars in [
         &[("RIFF_SESSION", "s1")][..],
         &[("CLAUDECODE", "1")],
         &[("RIFF_WORKER", "1")],
-        &[("RIFF_SOCKET", "/run/riff/riff.sock")],
+        &[("RIFF_SOCKET", socket.as_str())],
     ] {
         let out = machine
             .run(vars, &["release", "approve", "v3.3.0"], "yes\n")
@@ -431,16 +466,14 @@ async fn approve_refuses_each_agent_session() {
 #[tokio::test]
 async fn publish_refuses_a_worker_a_container_and_a_session_that_is_not_the_lead() {
     let machine = Machine::new().await;
+    let socket = machine.no_daemon();
     let cases: [(&[(&str, &str)], String); 4] = [
         (
             &[("RIFF_WORKER", "1"), ("RIFF_SESSION", "w1")],
             riff::text::release_refused("publish", Refusal::Worker),
         ),
         (
-            &[
-                ("RIFF_SOCKET", "/run/riff/riff.sock"),
-                ("RIFF_SESSION", "c1"),
-            ],
+            &[("RIFF_SOCKET", socket.as_str()), ("RIFF_SESSION", "c1")],
             riff::text::release_refused("publish", Refusal::Container),
         ),
         (
@@ -810,6 +843,7 @@ async fn rollback_starts_the_deploy_of_an_older_release() {
 async fn check_retry_and_rollback_refuse_a_worker_a_container_and_another_session() {
     let machine = Machine::new().await;
     machine.fake_gh(&deployed("v3.3.0", "failure"));
+    let socket = machine.no_daemon();
     for command in ["check", "retry", "rollback"] {
         for (vars, refusal) in [
             (
@@ -817,10 +851,7 @@ async fn check_retry_and_rollback_refuse_a_worker_a_container_and_another_sessio
                 Refusal::Worker,
             ),
             (
-                &[
-                    ("RIFF_SOCKET", "/run/riff/riff.sock"),
-                    ("RIFF_SESSION", "c1"),
-                ],
+                &[("RIFF_SOCKET", socket.as_str()), ("RIFF_SESSION", "c1")],
                 Refusal::Container,
             ),
             (&[("RIFF_SESSION", "s2")], Refusal::NotTheLead),
@@ -1328,12 +1359,13 @@ async fn the_lead_cannot_approve_without_the_message_of_the_owner() {
 async fn approve_for_the_lead_refuses_a_worker_and_a_session_that_is_not_the_lead() {
     let machine = lead_with_a_waiting_run().await;
     machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    let socket = machine.no_daemon();
     machine.say("mike", "approve v3.3.0").await;
     let before = machine.log();
     for vars in [
         &[("RIFF_SESSION", "s1"), ("RIFF_WORKER", "1")][..],
         &[("RIFF_SESSION", "s2")],
-        &[("RIFF_SOCKET", "/run/riff/riff.sock")],
+        &[("RIFF_SOCKET", socket.as_str())],
     ] {
         let out = machine
             .run(vars, &["release", "approve", "v3.3.0"], "")
