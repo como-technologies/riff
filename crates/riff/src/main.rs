@@ -1438,11 +1438,28 @@ enum DenialsFormat {
     Json,
 }
 
+impl Command {
+    /// True for a command that serves and does not end by itself:
+    /// `riff daemon` and `riff relay`. They keep the default panic hook
+    /// (01M5MRG35BYRGZYD4VQVV8ZTYX).
+    fn serves(&self) -> bool {
+        matches!(
+            self,
+            Command::Daemon { command: None } | Command::Relay { .. }
+        )
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     riff::platform::install();
     let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
+    // A closed pipe on stdout ends a command quietly
+    // (01M5MRG35BYRGZYD4VQVV8ZTYX).
+    if !cli.command.serves() {
+        riff_core::pipe::end_quietly();
+    }
     use_color(cli.color);
     // The local folder is private (01M56RB1FZ575KQYHW9FF716CZ).
     if let Err(line) = local::secure_here() {
@@ -3443,6 +3460,26 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    /// Only `riff daemon` and `riff relay` serve. Each other command
+    /// ends quietly at a closed pipe (01M5MRG35BYRGZYD4VQVV8ZTYX).
+    #[test]
+    fn only_the_daemon_and_the_relay_serve() {
+        use clap::Parser;
+        let serves = |args: &[&str]| {
+            Cli::try_parse_from(args.iter().copied())
+                .unwrap()
+                .command
+                .serves()
+        };
+        assert!(serves(&["riff", "daemon"]));
+        assert!(serves(&["riff", "relay", "--", "claude"]));
+        assert!(serves(&["riff", "relay", "prompt"]));
+        assert!(!serves(&["riff", "daemon", "status"]));
+        assert!(!serves(&["riff", "usage"]));
+        assert!(!serves(&["riff", "who"]));
+        assert!(!serves(&["riff", "run", "12"]));
     }
 
     /// The writes of `riff cloud` are the subcommands of

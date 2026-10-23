@@ -129,6 +129,25 @@ async fn log_prints_the_records_as_text() {
     assert_eq!(positions, ["5", "6"]);
 }
 
+/// 01M5MRG35BYRGZYD4VQVV8ZTYX: `riff-server log | head -1` ends with the
+/// exit 0 and no panic when the reader closed the pipe.
+#[tokio::test]
+async fn log_ends_quietly_at_a_closed_pipe() {
+    let dir = store(&[]).await;
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let out = Isolated::shared()
+        .riff_server()
+        .args(["log", "--dir"])
+        .arg(dir.path())
+        .stdout(writer)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{:?} {stderr}", out.status);
+    assert_eq!(stderr, "");
+}
+
 #[tokio::test]
 async fn log_needs_a_store() {
     let out = Isolated::shared()
