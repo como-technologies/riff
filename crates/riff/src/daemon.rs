@@ -310,10 +310,10 @@
 //! the old one. The daemon runs an old riff when its binary was
 //! replaced, or when its unit names another riff ([`stale`]). Two steps
 //! start it again on the new riff, only when it is idle: it owns no
-//! session, and no job of a wave runs ([`Status::busy`]). A start that
-//! waits for room does not count, also with the limit 0: the wave is in
-//! `waves.json`, so the new daemon waits for room for it again
-//! (01M5MR8D6EBWGC5EY1K067F6J6).
+//! session, no start of `riff run` waits for room, and no job of a wave
+//! runs ([`Status::busy`]). A start of a wave that waits for room does
+//! not count, also with the limit 0: the wave is in `waves.json`, so the
+//! new daemon waits for room for it again (01M5MS1Q78AFEY3ZVXNAQXM1FJ).
 //!
 //! - `riff update` ([`after_update`]): when the `ExecStart` of the unit
 //!   is not the `riff` on `PATH`, it writes the unit again with that riff
@@ -334,7 +334,7 @@
 //!     X -- yes --> O
 //!     W --> O{"the daemon runs an old riff?"}
 //!     O -- no --> N["nothing"]
-//!     O -- yes --> B{"a session or a job of a wave?<br/>(a start that waits does not count)"}
+//!     O -- yes --> B{"a session, a start of riff run that waits,<br/>or a job of a wave?"}
 //!     B -- no --> R["systemctl --user --no-block try-restart riff.service"]
 //!     B -- yes --> L["the daemon starts again<br/>after its last session"]
 //!     L --> E["the end of a session or a job, each minute"]
@@ -1006,24 +1006,41 @@ pub struct Status {
 }
 
 impl Status {
-    /// The work of the daemon: its sessions and the jobs of its waves.
-    /// The daemon starts again on a new riff only at 0
-    /// (01M517BTJ9EV4ZGPYRB6HXJJC9). A start that waits for room does
-    /// not count: with the limit 0 it waits always, and the new daemon
-    /// waits for room for the wave again (01M5MR8D6EBWGC5EY1K067F6J6).
+    /// The work of the daemon: its sessions, the starts of `riff run`
+    /// that wait for room, and the jobs of its waves. The daemon starts
+    /// again on a new riff only at 0 (01M517BTJ9EV4ZGPYRB6HXJJC9).
+    ///
+    /// A start of a wave that waits for room does not count: the wave is
+    /// in `waves.json`, and the new daemon waits for room for it again.
+    /// With the limit 0 it waits always (01M5MS1Q78AFEY3ZVXNAQXM1FJ). A
+    /// start of a wave has the name [`text::wave_slot`] of a wave in
+    /// [`Status::waves`]. An old daemon gives these names too, so
+    /// `riff update` decides the same for it.
     ///
     /// ```
     /// let status: riff::daemon::Status = serde_json::from_value(serde_json::json!({
     ///     "pid": 7, "build": "1.4.0", "since_ms": 0, "dir": "/d", "sessions": [],
     /// }))?;
     /// assert_eq!(status.busy(), 0);
-    /// let waits = riff::daemon::Status { waiting: vec!["riff-issue-12".into()], ..status.clone() };
-    /// assert_eq!(waits.busy(), 0);
+    /// let run = riff::daemon::Status { waiting: vec!["riff-issue-12".into()], ..status.clone() };
+    /// assert_eq!(run.busy(), 1);
+    /// let wave = riff::daemon::Status {
+    ///     waiting: vec![riff::text::wave_slot("o/r")],
+    ///     waves: vec![riff::daemon::WaveShown { repo: "o/r".into(), word: "waits".into() }],
+    ///     ..status.clone()
+    /// };
+    /// assert_eq!(wave.busy(), 0);
     /// assert_eq!(riff::daemon::Status { jobs: 2, ..status }.busy(), 2);
     /// # Ok::<(), serde_json::Error>(())
     /// ```
     pub fn busy(&self) -> usize {
-        self.sessions.len() + self.jobs
+        let of_a_wave = |name: &String| {
+            self.waves
+                .iter()
+                .any(|wave| text::wave_slot(&wave.repo) == *name)
+        };
+        let runs = self.waiting.iter().filter(|name| !of_a_wave(name)).count();
+        self.sessions.len() + runs + self.jobs
     }
 }
 
@@ -5613,11 +5630,31 @@ mod tests {
         );
     }
 
-    /// 01M579Z9SAN24QGN1VV5C7EHM9, 01M5MR8D6EBWGC5EY1K067F6J6: a daemon
-    /// on an old riff starts again after the reply, also while a start
-    /// waits for room with the limit 0.
+    /// With the limit 0, the wave of `o/r` of `daemon` in the folder
+    /// `dir`: it waits for room always (01M5MS1Q78AFEY3ZVXNAQXM1FJ).
+    async fn a_wave_that_waits<R: Runtime + 'static>(daemon: &Arc<Daemon<R>>, dir: &Path) {
+        let none = crate::room::Change {
+            sessions: Some(0),
+            ..crate::room::Change::default()
+        };
+        crate::room::set(dir, none).unwrap();
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: dir.join("r"),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        crate::wave::write_waves(dir, &BTreeMap::from([(wave.repo.clone(), wave)])).unwrap();
+        daemon.run_waves();
+        until(|| daemon.room().waiting().contains(&text::wave_slot("o/r"))).await;
+    }
+
+    /// 01M579Z9SAN24QGN1VV5C7EHM9, 01M5MS1Q78AFEY3ZVXNAQXM1FJ: a daemon
+    /// on an old riff starts again only when no session runs and no
+    /// start of `riff run` waits, after the reply. A start of a wave that
+    /// waits for room with the limit 0 does not keep it.
     #[tokio::test]
-    async fn a_restart_on_an_old_riff_does_not_wait_for_a_start_that_waits_for_room() {
+    async fn a_restart_on_an_old_riff_waits_for_a_start_of_riff_run_and_not_of_a_wave() {
         let root = tempfile::tempdir().unwrap();
         let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = asked.clone();
@@ -5630,17 +5667,25 @@ mod tests {
         };
         let dir = dir_in(root.path());
         std::fs::create_dir_all(&dir).unwrap();
-        let none = crate::room::Change {
-            sessions: Some(0),
-            ..crate::room::Change::default()
-        };
-        crate::room::set(&dir, none).unwrap();
-        let daemon = Daemon::new(Fake::default(), dir).unwrap().with_again(again);
+        let daemon = Arc::new(
+            Daemon::new(Fake::default(), dir.clone())
+                .unwrap()
+                .with_again(again),
+        );
         let build = Build::this().to_string();
-        // A start that waits for room: with the limit 0, always.
+        a_wave_that_waits(&daemon, &dir).await;
+        // A start of `riff run` that waits for room.
         let room = daemon.room().clone();
-        let waits = tokio::spawn(async move { room.admit("a start", || 0, |_| {}).await });
-        until(|| daemon.room().waiting().len() == 1).await;
+        let waits =
+            tokio::spawn(async move { room.admit("riff-issue-12-1a2b3c4d", || 0, |_| {}).await });
+        until(|| daemon.room().waiting().len() == 2).await;
+        assert_eq!(
+            daemon.restart_now().await,
+            text::daemon_restart(remote::Restart::Later(1), &build)
+        );
+        waits.abort();
+        let _ = waits.await;
+        assert_eq!(daemon.room().waiting(), [text::wave_slot("o/r")]);
         assert_eq!(
             daemon.restart_now().await,
             text::daemon_restart(remote::Restart::Now, &build)
@@ -5648,9 +5693,6 @@ mod tests {
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
         tokio::time::sleep(RESTART_DELAY + Duration::from_secs(1)).await;
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(daemon.room().waiting().len(), 1);
-        waits.abort();
-        let _ = waits.await;
     }
 
     /// The result of a turn that an interrupt stopped, as `claude -p`
@@ -6403,21 +6445,14 @@ mod tests {
         assert_eq!(units.calls(), ["rewrite", "try-restart"]);
     }
 
-    /// With the limit 0, a start waits for room always. `riff update`
-    /// and the look of the daemon start the daemon again on the new riff
-    /// all the same (01M517BTJ9EV4ZGPYRB6HXJJC9,
-    /// 01M517BTP6BAGTRBYWPX9GPVE0, 01M5MR8D6EBWGC5EY1K067F6J6).
+    /// With the limit 0, a start of a wave waits for room always. `riff
+    /// update` and the look of the daemon start the daemon again on the
+    /// new riff all the same (01M517BTJ9EV4ZGPYRB6HXJJC9,
+    /// 01M517BTP6BAGTRBYWPX9GPVE0, 01M5MS1Q78AFEY3ZVXNAQXM1FJ).
     #[tokio::test]
-    async fn after_an_update_a_start_that_waits_for_room_does_not_keep_the_old_riff() {
+    async fn after_an_update_a_wave_that_waits_for_room_does_not_keep_the_old_riff() {
         let here = Here::new(Fake::default()).await;
-        let none = crate::room::Change {
-            sessions: Some(0),
-            ..crate::room::Change::default()
-        };
-        crate::room::set(&here.dir, none).unwrap();
-        let room = here.daemon.room().clone();
-        let waits = tokio::spawn(async move { room.admit("a start", || 0, |_| {}).await });
-        until(|| here.daemon.room().waiting().len() == 1).await;
+        a_wave_that_waits(&here.daemon, &here.dir).await;
         assert_eq!(here.daemon.status().await.busy(), 0);
 
         let (check, riff) = check_and_new(&here);
@@ -6447,9 +6482,7 @@ mod tests {
         .await
         .expect("a start that waits does not keep the daemon");
         assert!(asked.load(std::sync::atomic::Ordering::SeqCst));
-        assert_eq!(here.daemon.room().waiting().len(), 1);
-        waits.abort();
-        let _ = waits.await;
+        assert_eq!(here.daemon.room().waiting(), [text::wave_slot("o/r")]);
     }
 
     /// The unit runs the riff on `PATH`, and the daemon runs that riff:

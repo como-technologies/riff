@@ -301,7 +301,7 @@ async fn stop_the_daemon(here: &Here) -> String {
     std::fs::read_to_string(&log).unwrap()
 }
 
-/// 01M5MR8D6EBWGC5EY1K067F6J6: with the limit 0, the start of a wave
+/// 01M5MS1Q78AFEY3ZVXNAQXM1FJ: with the limit 0, the start of a wave
 /// waits for room always. It does not keep the daemon on an old riff:
 /// the daemon asks systemd for its new start, and the wave is still in
 /// `waves.json` for the new daemon.
