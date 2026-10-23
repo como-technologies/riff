@@ -840,6 +840,17 @@ enum ReleaseCommand {
         #[arg(long, value_name = "TEXT")]
         why: Option<String>,
     },
+    /// Verify a release pull request with no model session
+    ///
+    /// For a pull request with the label release. It checks that the
+    /// diff is only Cargo.toml and Cargo.lock, that the body has the
+    /// format of riff release cut, and that the Gate of the head commit
+    /// passed. Then it sets the status riff/verify. Else it refuses and
+    /// sets nothing.
+    Verify {
+        /// The number of the release pull request.
+        number: u64,
+    },
     /// Tag the release, make the GitHub release, and tell the owner
     ///
     /// Only the owner or an admin of the riff in a terminal, or the lead
@@ -2783,6 +2794,14 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 "next: wait for the verify and the merge of pull request #{}",
                 cut.number
             );
+        }
+        ReleaseCommand::Verify { number } => {
+            let forge = forge()?;
+            let head = cycle::verify(&forge, *number)?;
+            println!(
+                "Pull request #{number} passed: the status riff/verify of {head} is a success."
+            );
+            println!("next: the auto-merge merges pull request #{number}");
         }
         ReleaseCommand::Publish { tag } => {
             if let Some(why) = release_caller(server, true).await.lead_step() {

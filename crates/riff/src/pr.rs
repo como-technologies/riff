@@ -961,11 +961,12 @@ pub struct CheckRuns {
 }
 
 /// The state of the [`GATE`] of a commit.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Gate {
     /// Each run of the Gate is completed with `success`.
     Passed,
     /// The commit has no run of the Gate.
+    #[default]
     Missing,
     /// A run of the Gate is not completed.
     Running,

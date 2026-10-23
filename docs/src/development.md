@@ -3797,6 +3797,21 @@ refuses while a deploy waits for the approval of `production`. It
 also refuses while the version on `origin/main` has no published
 release: publish that release first.
 
+#### Verify the release pull request
+
+A release pull request has no code to review. Its diff is the version.
+When the Gate of its head commit passed, run:
+
+```sh
+riff release verify 1140
+```
+
+riff checks the label `release`, the diff (only `Cargo.toml` and
+`Cargo.lock`), the format of the body, and the Gate. Then it sets the
+status `riff/verify`, and the auto-merge merges the pull request. It
+refuses else, and sets nothing. No model session verifies the pull
+request.
+
 #### The release issue
 
 The release issue has two parts. Its verify of the pull request reads

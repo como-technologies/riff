@@ -13,6 +13,7 @@
 //! | Command | Who | What |
 //! |---|---|---|
 //! | `riff release cut X.Y.Z` | a lead or a worker; `--skip` only a person | the release pull request from `origin/main` ([`cut`], 01M58B0HZYMAK1B2AJMWKHCXG0) |
+//! | `riff release verify N` | each session; no model | the status `riff/verify` of a release pull request, after the checks of its label, diff, body and Gate ([`verify`], 01M5ND0ZNFFAPT1AWD3DP1Y77N) |
 //! | `riff release publish vX.Y.Z` | the owner or an admin of the riff, or its lead, with a `gh` of an admin | the tag on the tested commit, the GitHub release, the chat line to the owner ([`publish`], 01M58B0JABCET719T3HFB19NDW) |
 //! | `riff release test vX.Y.Z --host HOST` | the lead or a person; not a worker | the real-session test on the daemon of a host ([`test_target`], [`crate::daemon::release_test`], 01M5924C8BTT6CW05Q0YZJ1GCY) |
 //! | `riff release status` | each session | the versions, what waits, the state and the next step ([`status`], 01M58KMKTE2XC35CNJBFKZWAXF) |
@@ -315,6 +316,28 @@ pub struct ReleasePr {
     pub body: String,
 }
 
+/// A pull request as `riff release verify` reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Candidate {
+    /// Its title.
+    pub title: String,
+    /// Its body.
+    pub body: String,
+    /// Its state: `OPEN`, `CLOSED` or `MERGED`.
+    pub state: String,
+    /// Its labels.
+    pub labels: Vec<String>,
+    /// The title of its wave.
+    pub milestone: Option<String>,
+    /// Its head commit.
+    pub head: String,
+    /// The path of each file that it changes.
+    pub files: Vec<String>,
+}
+
+/// The files that a release pull request may change: the version.
+pub const VERSION_FILES: [&str; 2] = ["Cargo.toml", "Cargo.lock"];
+
 /// A CI run that waits for the approval of [`PRODUCTION`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Waiting {
@@ -482,6 +505,12 @@ pub trait Forge {
     fn release_pr(&self, title: &str) -> Result<Option<ReleasePr>>;
     /// True when the status `riff/verify` of `commit` is a success.
     fn verify_passed(&self, commit: &str) -> Result<bool>;
+    /// The pull request `number`, for its verify.
+    fn candidate(&self, number: u64) -> Result<Candidate>;
+    /// The state of the Gate of `commit`.
+    fn gate(&self, commit: &str) -> Result<pr::Gate>;
+    /// Sets the status `riff/verify` of `commit` to a success.
+    fn pass_verify(&self, commit: &str, description: &str) -> Result<()>;
     /// True when `commit` is on `origin/main`.
     fn on_main(&self, commit: &str) -> Result<bool>;
     /// True when the forge has the tag `tag`.
@@ -1019,6 +1048,68 @@ pub fn cut(forge: &dyn Forge, new: Semver, skip: Option<&Skip>, why: Option<&str
     let branch = forge.push_branch(new)?;
     let (number, url) = forge.open_pr(&branch, &title, &wave, &body)?;
     Ok(Cut { number, url, issue })
+}
+
+/// The verify of the release pull request `number` with no model
+/// session (01M5ND0ZNFFAPT1AWD3DP1Y77N). The pull request is open and
+/// has the label [`LABEL`], the body has the format of [`cut`], the
+/// diff is only [`VERSION_FILES`], and the Gate of the head commit
+/// passed. Then it sets the status `riff/verify` of the head commit.
+/// Else it refuses, and sets nothing. Returns the head commit.
+pub fn verify(forge: &dyn Forge, number: u64) -> Result<String> {
+    let refuse = |why: String| {
+        anyhow!(
+            "riff release verify: pull request #{number} {why}. next: fix it, then riff release \
+             verify {number}"
+        )
+    };
+    let pr = forge.candidate(number)?;
+    if pr.state != "OPEN" {
+        return Err(refuse(format!("is {}, not open", pr.state.to_lowercase())));
+    }
+    if !pr.labels.iter().any(|l| l == LABEL) {
+        return Err(refuse(format!(
+            "has no label {LABEL}. A pull request with code needs the verify of a session"
+        )));
+    }
+    let extra: Vec<&str> = pr
+        .files
+        .iter()
+        .map(String::as_str)
+        .filter(|f| !VERSION_FILES.contains(f))
+        .collect();
+    if !extra.is_empty() || pr.files.is_empty() {
+        let changed = if extra.is_empty() {
+            "no file".to_owned()
+        } else {
+            extra.join(", ")
+        };
+        return Err(refuse(format!(
+            "changes {changed}, and a release changes only {}",
+            VERSION_FILES.join(" and ")
+        )));
+    }
+    let errors = hygiene::check_pr(
+        &hygiene::PullRequest::new(&pr.title, &pr.body, pr.milestone.as_deref()),
+        None,
+    );
+    if !errors.is_empty() {
+        let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
+        return Err(refuse(format!(
+            "breaks issue hygiene:\n{}",
+            lines.join("\n")
+        )));
+    }
+    let gate = forge.gate(&pr.head)?;
+    if gate != pr::Gate::Passed {
+        let short = pr.head.get(..7).unwrap_or(&pr.head);
+        bail!(
+            "riff release verify: the Gate of commit {short} is not a success ({gate:?}). Nothing \
+             is reported. next: wait for the Gate, then riff release verify {number}"
+        );
+    }
+    forge.pass_verify(&pr.head, "pass: release pull request, Gate and diff")?;
+    Ok(pr.head)
 }
 
 /// The notes of a release from the body of its pull request: the body
@@ -2254,6 +2345,15 @@ struct GhPr {
     merge_commit: Option<GhCommit>,
     #[serde(default)]
     head_ref_oid: String,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    files: Vec<GhFile>,
+}
+
+#[derive(Deserialize)]
+struct GhFile {
+    path: String,
 }
 
 #[derive(Deserialize)]
@@ -2557,6 +2657,48 @@ impl Forge for GitHub {
             .statuses
             .iter()
             .any(|s| s.context == pr::VERIFY_CONTEXT && s.state == "success"))
+    }
+
+    fn candidate(&self, number: u64) -> Result<Candidate> {
+        let n = number.to_string();
+        let pr: GhPr = self.gh.json(&[
+            "pr",
+            "view",
+            &n,
+            "--json",
+            "number,title,body,state,labels,milestone,headRefOid,files",
+        ])?;
+        Ok(Candidate {
+            title: pr.title,
+            body: pr.body,
+            state: pr.state,
+            labels: pr.labels.into_iter().map(|l| l.name).collect(),
+            milestone: pr.milestone.map(|m| m.title),
+            head: pr.head_ref_oid,
+            files: pr.files.into_iter().map(|f| f.path).collect(),
+        })
+    }
+
+    fn gate(&self, commit: &str) -> Result<pr::Gate> {
+        pr::gate_of(&self.gh, "{owner}/{repo}", commit)
+    }
+
+    fn pass_verify(&self, commit: &str, description: &str) -> Result<()> {
+        let path = format!("repos/{{owner}}/{{repo}}/statuses/{commit}");
+        self.gh.run(
+            &[
+                "api",
+                &path,
+                "-f",
+                "state=success",
+                "-f",
+                &format!("context={}", pr::VERIFY_CONTEXT),
+                "-f",
+                &format!("description={description}"),
+            ],
+            None,
+        )?;
+        Ok(())
     }
 
     fn on_main(&self, commit: &str) -> Result<bool> {
@@ -2895,6 +3037,8 @@ mod tests {
         release_pr: Option<ReleasePr>,
         open_pr: Option<(u64, &'static str)>,
         verify: bool,
+        candidate: Candidate,
+        gate: pr::Gate,
         on_main: bool,
         tags: Vec<String>,
         admin: bool,
@@ -2987,6 +3131,16 @@ mod tests {
         }
         fn verify_passed(&self, _commit: &str) -> Result<bool> {
             Ok(self.verify)
+        }
+        fn candidate(&self, _number: u64) -> Result<Candidate> {
+            Ok(self.candidate.clone())
+        }
+        fn gate(&self, _commit: &str) -> Result<pr::Gate> {
+            Ok(self.gate.clone())
+        }
+        fn pass_verify(&self, commit: &str, description: &str) -> Result<()> {
+            self.write(format!("verify {commit} {description}"));
+            Ok(())
         }
         fn on_main(&self, _commit: &str) -> Result<bool> {
             Ok(self.on_main)
@@ -3271,6 +3425,83 @@ mod tests {
                 "release v3.3.0 since Some(\"v3.2.0\")\nLevel: minor, 3.3.0.\n".to_owned(),
             ]
         );
+    }
+
+    fn release_candidate() -> Candidate {
+        Candidate {
+            title: "Release v3.3.0".into(),
+            body: "Refs #7\n\nPart of #7: x.\n\nLevel: minor, 3.3.0.\n\nIssue: #7\nMilestone: Wave 34\n"
+                .into(),
+            state: "OPEN".into(),
+            labels: vec!["release".into()],
+            milestone: Some("Wave 34: Release".into()),
+            head: "h1".into(),
+            files: vec!["Cargo.toml".into(), "Cargo.lock".into()],
+        }
+    }
+
+    /// A release pull request with the version files and a passed Gate
+    /// gets the status riff/verify (01M5ND0ZNFFAPT1AWD3DP1Y77N).
+    #[test]
+    fn verify_passes_a_release_pull_request() {
+        let forge = Fake {
+            candidate: release_candidate(),
+            gate: pr::Gate::Passed,
+            ..Fake::new()
+        };
+        assert_eq!(verify(&forge, 1140).unwrap(), "h1");
+        let log = forge.log();
+        assert_eq!(log.len(), 1, "{log:?}");
+        assert!(log[0].starts_with("verify h1 pass"), "{log:?}");
+    }
+
+    #[test]
+    fn verify_refuses_an_extra_file() {
+        let mut candidate = release_candidate();
+        candidate.files.push("crates/riff/src/main.rs".into());
+        let forge = Fake {
+            candidate,
+            gate: pr::Gate::Passed,
+            ..Fake::new()
+        };
+        let e = verify(&forge, 1140).unwrap_err().to_string();
+        assert!(e.contains("crates/riff/src/main.rs"), "{e}");
+        assert!(forge.log().is_empty());
+    }
+
+    #[test]
+    fn verify_refuses_a_failed_gate_and_a_pull_request_with_no_label() {
+        let forge = Fake {
+            candidate: release_candidate(),
+            gate: pr::Gate::Ended("failure".into()),
+            ..Fake::new()
+        };
+        let e = verify(&forge, 1140).unwrap_err().to_string();
+        assert!(e.contains("Gate") && e.contains("failure"), "{e}");
+        let mut candidate = release_candidate();
+        candidate.labels.clear();
+        let forge = Fake {
+            candidate,
+            gate: pr::Gate::Passed,
+            ..Fake::new()
+        };
+        let e = verify(&forge, 1140).unwrap_err().to_string();
+        assert!(e.contains("no label release"), "{e}");
+        assert!(forge.log().is_empty());
+    }
+
+    #[test]
+    fn verify_refuses_a_body_without_the_format() {
+        let mut candidate = release_candidate();
+        candidate.body = "A release.".into();
+        let forge = Fake {
+            candidate,
+            gate: pr::Gate::Passed,
+            ..Fake::new()
+        };
+        let e = verify(&forge, 1140).unwrap_err().to_string();
+        assert!(e.contains("hygiene"), "{e}");
+        assert!(forge.log().is_empty());
     }
 
     /// The real-session test failed on the merge commit, the fix merged,
