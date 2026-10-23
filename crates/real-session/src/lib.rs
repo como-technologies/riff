@@ -570,8 +570,8 @@ impl Env {
 
     /// The folders that the home check leaves out: the folders of riff,
     /// the storage of podman, the cache, the snap apps, the locks of
-    /// `claude`, and `skips` (01M4ZCFGHCS7WJ6CFYBZSX0AT5,
-    /// 01M51MQB46AYY39YSAY18NMD8T). The clones of the test are in
+    /// `claude`, the metadata of GNOME (01M5MR9FGEBKQWHH7RZ9THAHQB), and `skips`
+    /// (01M4ZCFGHCS7WJ6CFYBZSX0AT5, 01M51MQB46AYY39YSAY18NMD8T). The clones of the test are in
     /// [`Home::clones`].
     ///
     /// ```
@@ -593,6 +593,7 @@ impl Env {
     ///         "/h/.cache",
     ///         "/h/snap",
     ///         "/h/.local/state/claude/locks",
+    ///         "/h/.local/share/gvfs-metadata",
     ///         "/h/.mozilla",
     ///     ]
     /// );
@@ -609,6 +610,7 @@ impl Env {
         all.push(self.cache.clone());
         all.push(self.home.join("snap"));
         all.push(self.state.join("claude/locks"));
+        all.push(self.data.join("gvfs-metadata"));
         all.extend(skips.iter().cloned());
         all
     }

@@ -136,6 +136,8 @@ run)
     mkdir -p "$HOME/snap/firefox/common/.mozilla" "$XDG_STATE_HOME/claude/locks"
     touch "$HOME/snap/firefox/common/.mozilla/storage" "$XDG_STATE_HOME/claude/locks/2.1.301.lock"
     touch "$HOME/.claude.json.lock"
+    mkdir -p "$XDG_DATA_HOME/gvfs-metadata"
+    touch "$XDG_DATA_HOME/gvfs-metadata/root-8e702c6e.log"
   fi
   if [ -f "$c/elsewhere" ]; then mkdir -p "$HOME/.config/tool"; touch "$HOME/.config/tool/x"; fi
   m="$HOME/src/main"
@@ -568,12 +570,13 @@ fn a_change_to_the_gitconfig_fails_the_check_of_the_home() {
     assert_clean(&fake);
 }
 
-/// The snap apps, the locks of a `claude` on the host and the lock of
-/// `.claude.json` write while the test runs. With no `--skip`, a new
-/// file there does not fail the home check, and a new file in another
-/// place does (01M51MQB46AYY39YSAY18NMD8T).
+/// The snap apps, the locks of a `claude` on the host, the lock of
+/// `.claude.json` and `gvfsd-metadata` of GNOME write while the test
+/// runs. With no `--skip`, a new file there does not fail the home
+/// check, and a new file in another place does
+/// (01M51MQB46AYY39YSAY18NMD8T, 01M5MR9FGEBKQWHH7RZ9THAHQB).
 #[test]
-fn the_snap_apps_and_the_locks_of_claude_do_not_count_and_another_place_does() {
+fn the_snap_apps_the_locks_of_claude_and_gvfs_metadata_do_not_count_and_another_place_does() {
     let fake = Fake::new();
     fake.set("others");
     let out = fake.run(&[]);
