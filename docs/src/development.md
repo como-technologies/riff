@@ -1916,6 +1916,10 @@ a container. It asks the daemon of a host with podman:
 riff release test v3.3.0 --host thelio
 ```
 
+While the test runs, `riff release status` shows
+`real-session test: running`. The line `next:` tells you to wait for
+it. Do not start it again.
+
 ```mermaid
 flowchart LR
     T["just real-session"] -- "a scratch issue" --> G["GitHub"]

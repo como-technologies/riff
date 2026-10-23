@@ -868,7 +868,7 @@ impl ReleaseWatch {
     ///
     /// let stage = |state| Stage {
     ///     version: version("3.3.0").unwrap(), state, pr: None, merge: None, deploy: None,
-    ///     checks_failed: false, previous: None,
+    ///     checks_failed: false, test: None, previous: None,
     /// };
     /// let now = Instant::now();
     /// let mut watch = ReleaseWatch::default();
@@ -914,7 +914,7 @@ impl ReleaseWatch {
 ///
 /// let stage = Stage {
 ///     version: version("3.3.0")?, state: State::Deployed, pr: None, merge: None, deploy: None,
-///     checks_failed: false, previous: None,
+///     checks_failed: false, test: None, previous: None,
 /// };
 /// assert_eq!(
 ///     release_post(&ReleaseNews::Changed(stage), "mike"),
