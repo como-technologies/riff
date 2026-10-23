@@ -40,7 +40,7 @@
 //!
 //! | Step | Passes when |
 //! |---|---|
-//! | 1. check the host | podman runs rootless, `gh` has a sign-in, and `riff image` names the image of the tree |
+//! | 1. check the host | podman runs rootless, `gh` has a sign-in, `riff image` names the image of the tree, and the riff-server of the tree listens on a free port (see below) |
 //! | 2. list the home | always |
 //! | 3. make the scratch item | `gh issue create` prints the URL of an issue |
 //! | 4. keep its verify from the workers | the issue has the label [`NO_VERIFY`]; a failed hold is a warning |
@@ -88,6 +88,29 @@
 //!     L[the label no-verify] --> O[the rollout and the wave offer no verify]
 //!     L --> R[riff run sends no verify request]
 //!     H[the hold of verify-issue-N] --> C[a claim of a worker fails]
+//! ```
+//!
+//! # The riff-server
+//!
+//! The test never uses the shared riff-server. The shared one can run
+//! another line of riff than the tree: the first release of a new major
+//! line fails against it with "this riff and its riff-server do not
+//! match". So at the end of step 1, the test starts the `riff-server` that
+//! sits beside the riff binary of the tree (`target/static/debug`), in
+//! memory, on a free loopback port. It reads the address from the log of
+//! the server ([`listen_address`]). The test gives it as `RIFF_SERVER`
+//! ([`SERVER_VAR`]) to each `riff` of the test ([`Riff`]), and so to the
+//! daemon of the test. The clean-up stops the server last. A
+//! `RIFF_SERVER` of the person does not count.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     T["real-session"] -- "starts, in memory" --> S["riff-server of the tree<br/>127.0.0.1:free port"]
+//!     T -- "RIFF_SERVER" --> R["riff run"]
+//!     T -- "RIFF_SERVER" --> D["the daemon of the test"]
+//!     R --> S
+//!     D --> S
+//!     X["the shared riff-server"]
 //! ```
 //!
 //! # The daemon
@@ -281,6 +304,9 @@ pub const NO_VERIFY_COLOR: &str = "ededed";
 /// assert_eq!(real_session::DATA_VAR, riff::run::DATA_VAR);
 /// ```
 pub const DATA_VAR: &str = "RIFF_DATA";
+
+/// The variable that names the riff-server of a `riff`.
+pub const SERVER_VAR: &str = "RIFF_SERVER";
 
 /// The name of the data folder of the test, in the data folder of riff.
 pub const TEST_DATA: &str = "real-session";
@@ -1460,17 +1486,25 @@ struct Run {
 ///
 /// ```
 /// use std::path::Path;
-/// use real_session::{DATA_VAR, Riff};
+/// use real_session::{DATA_VAR, Riff, SERVER_VAR};
 ///
 /// let riff = Riff {
 ///     bin: "target/debug/riff".into(),
 ///     data: "/h/.local/share/riff/real-session".into(),
+///     server: None,
 /// };
 /// let command = riff.command(&["daemon", "status"]);
 /// assert_eq!(command.get_program(), "target/debug/riff");
 /// assert_eq!(command.get_args().collect::<Vec<_>>(), ["daemon", "status"]);
 /// let data = command.get_envs().find(|(name, _)| *name == DATA_VAR);
 /// assert_eq!(data, Some((DATA_VAR.as_ref(), Some(riff.data.as_os_str()))));
+/// assert!(command.get_envs().all(|(name, _)| name != SERVER_VAR));
+///
+/// // With the server of the test, each riff gets its address.
+/// let riff = riff.with_server("http://127.0.0.1:4100");
+/// let command = riff.command(&["run", "issue-5"]);
+/// let server = command.get_envs().find(|(name, _)| *name == SERVER_VAR);
+/// assert_eq!(server, Some((SERVER_VAR.as_ref(), Some("http://127.0.0.1:4100".as_ref()))));
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Riff {
@@ -1478,6 +1512,9 @@ pub struct Riff {
     pub bin: PathBuf,
     /// The data folder of the test ([`Env::test_data`]).
     pub data: PathBuf,
+    /// The address of the riff-server of the test (see below),
+    /// when it runs. Each `riff` gets it as `RIFF_SERVER` ([`SERVER_VAR`]).
+    pub server: Option<String>,
 }
 
 impl Riff {
@@ -1486,6 +1523,15 @@ impl Riff {
         Riff {
             bin: bin.to_owned(),
             data: env.test_data(),
+            server: None,
+        }
+    }
+
+    /// The same riff with the address of the riff-server of the test.
+    pub fn with_server(&self, address: &str) -> Riff {
+        Riff {
+            server: Some(address.to_owned()),
+            ..self.clone()
         }
     }
 
@@ -1494,6 +1540,9 @@ impl Riff {
     pub fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(&self.bin);
         command.args(args).env(DATA_VAR, &self.data);
+        if let Some(server) = &self.server {
+            command.env(SERVER_VAR, server);
+        }
         command
     }
 }
@@ -1565,6 +1614,8 @@ struct Made {
     sessions: Option<PathBuf>,
     /// The riff daemon of the test.
     daemon: Option<Child>,
+    /// The riff-server of the test.
+    server: Option<Child>,
 }
 
 /// Runs the test, and cleans up. It gives the exit code: 0 on a pass, 1
@@ -1575,6 +1626,8 @@ pub fn run(options: &Options, stop: &AtomicBool) -> u8 {
     let result = steps(options, stop, &mut made);
     if let Some(issue) = made.issue {
         clean_up(issue, made, stop);
+    } else if let Some(mut server) = made.server {
+        report("stop the riff-server", stop_daemon(&mut server, stop));
     }
     match result {
         Ok(summary) => {
@@ -1596,8 +1649,9 @@ pub fn run(options: &Options, stop: &AtomicBool) -> u8 {
 
 /// Each step, in order. The first one that fails stops the test.
 fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String, Failure> {
-    let (env, image, clones) = step(Step::Host, stop, || host(options, stop))?;
-    let riff = Riff::new(&options.riff, &env);
+    let (env, image, clones, address) =
+        step(Step::Host, stop, || host(options, stop, &mut made.server))?;
+    let riff = Riff::new(&options.riff, &env).with_server(&address);
     made.riff = Some(riff.clone());
     made.sessions = Some(env.sessions());
     let skips: Vec<PathBuf> = options
@@ -1702,10 +1756,15 @@ fn output_of(mut command: Command, stop: &AtomicBool) -> Result<String, String> 
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
-/// Step 1: podman runs rootless, `gh` has a sign-in, and `riff image`
-/// names the image of the tree. It gives the folders, the image, and the
-/// main clone and the worktree of the test.
-fn host(options: &Options, stop: &AtomicBool) -> Result<(Env, String, Vec<PathBuf>), String> {
+/// Step 1: podman runs rootless, `gh` has a sign-in, `riff image`
+/// names the image of the tree, and the riff-server of the tree listens
+/// ([`start_server`]). It gives the folders, the image, the main clone and
+/// the worktree of the test, and the address of the server.
+fn host(
+    options: &Options,
+    stop: &AtomicBool,
+    server: &mut Option<Child>,
+) -> Result<(Env, String, Vec<PathBuf>, String), String> {
     let env = Env::of_process()?;
     let riff = Riff::new(&options.riff, &env);
     let rootless = output(
@@ -1734,7 +1793,110 @@ fn host(options: &Options, stop: &AtomicBool) -> Result<(Env, String, Vec<PathBu
         .to_owned();
     let top = PathBuf::from(output("git", &["rev-parse", "--show-toplevel"], stop)?);
     println!("  image {image}");
-    Ok((env, image, vec![main, top]))
+    let address = start_server(&riff, stop, server)?;
+    Ok((env, image, vec![main, top], address))
+}
+
+/// The riff-server of the tree: the file `riff-server` in the folder of
+/// the riff binary `riff`.
+///
+/// ```
+/// use std::path::Path;
+/// use real_session::{listen_address, server_binary};
+///
+/// assert_eq!(
+///     server_binary(Path::new("target/static/debug/riff")),
+///     Path::new("target/static/debug/riff-server")
+/// );
+/// let line = r#"{"severity":"INFO","message":"riff-server listens on 127.0.0.1:41233"}"#;
+/// assert_eq!(listen_address(line).as_deref(), Some("http://127.0.0.1:41233"));
+/// assert_eq!(listen_address(r#"{"message":"riff-server serves"}"#), None);
+/// ```
+pub fn server_binary(riff: &Path) -> PathBuf {
+    riff.with_file_name("riff-server")
+}
+
+/// The address in a log line of riff-server that says where it listens,
+/// as a URL. The line is JSON: `riff-server listens on ADDR`.
+pub fn listen_address(line: &str) -> Option<String> {
+    const MARK: &str = "riff-server listens on ";
+    let rest = &line[line.find(MARK)? + MARK.len()..];
+    let end = rest.find(['"', ' ']).unwrap_or(rest.len());
+    let address: std::net::SocketAddr = rest[..end].parse().ok()?;
+    Some(format!("http://{address}"))
+}
+
+/// The end of step 1: starts the riff-server of the tree in memory, on a
+/// free loopback port, in a process group of its own, and puts it in
+/// `server`, also when it fails. It waits until the server says where it
+/// listens, and gives its address. The test gives the address to the
+/// daemon and to each `riff` of the test, so the test does not use the
+/// shared riff-server.
+fn start_server(
+    riff: &Riff,
+    stop: &AtomicBool,
+    server: &mut Option<Child>,
+) -> Result<String, String> {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::process::CommandExt;
+    use std::sync::mpsc;
+
+    let bin = server_binary(&riff.bin);
+    let mut child = Command::new(&bin)
+        .args(["--listen", "127.0.0.1:0"])
+        .env_remove("RIFF_DIR")
+        .env_remove("RIFF_BUCKET")
+        .env_remove("RIFF_OIDC_CLIENT_ID")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .map_err(|e| format!("cannot run {}: {e}", bin.display()))?;
+    println!("  riff-server, pid {}, in memory", child.id());
+    let lines = child.stdout.take().map(BufReader::new);
+    let child = server.insert(child);
+    let (send, receive) = mpsc::channel();
+    // The thread reads until the server ends, so the pipe never fills.
+    std::thread::spawn(move || {
+        for line in lines
+            .into_iter()
+            .flat_map(BufRead::lines)
+            .map_while(Result::ok)
+        {
+            if send.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let start = Instant::now();
+    let mut seen = Vec::new();
+    loop {
+        while let Ok(line) = receive.try_recv() {
+            if let Some(address) = listen_address(&line) {
+                println!("  it listens on {address}");
+                return Ok(address);
+            }
+            seen.push(line);
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            child_signal(status, stop);
+            return Err(format!(
+                "riff-server ended with {status} before it listened:\n{}",
+                seen.join("\n")
+            ));
+        }
+        if start.elapsed() >= DAEMON_WAIT {
+            return Err(format!(
+                "riff-server did not listen in {} s:\n{}",
+                DAEMON_WAIT.as_secs(),
+                seen.join("\n")
+            ));
+        }
+        sleep(Duration::from_millis(100), stop);
+        if stop.load(Ordering::SeqCst) {
+            return Err("a signal stopped the wait".into());
+        }
+    }
 }
 
 /// Step 3: the scratch issue. It gives its number.
@@ -2158,6 +2320,9 @@ fn clean_up(issue: u64, made: Made, stop: &AtomicBool) {
         lock.push(".lock");
         let _ = std::fs::remove_file(lock);
     }
+    if let Some(mut server) = made.server {
+        report("stop the riff-server", stop_daemon(&mut server, stop));
+    }
 }
 
 #[cfg(test)]
@@ -2226,6 +2391,7 @@ mod tests {
         let riff = Riff {
             bin: riff,
             data: dir.path().join("data"),
+            server: None,
         };
         let stop = AtomicBool::new(false);
         let failure = step(Step::Run, &stop, || {
