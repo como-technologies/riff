@@ -3692,9 +3692,15 @@ sequenceDiagram
 ```
 
 The container has no `gcloud`. So riff cannot read the Cloud Run log
-there, and each check of the log names the next step: a person on the
-host runs the same command in a terminal. riff reads the log with the
-`gcloud` of the host:
+there. Each check of the log then names the cause and its fix:
+
+- `gcloud` is not on PATH: install it, or add it to PATH (check with
+  `command -v gcloud`);
+- the sign-in of `gcloud` ended: run `gcloud auth login` (check with
+  `gcloud auth list`).
+
+Then a person on the host runs the command in a terminal. riff reads
+the log with the `gcloud` of the host:
 
 ```sh
 riff release check v3.3.0

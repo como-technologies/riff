@@ -1487,6 +1487,24 @@ fn log_filter(at: &str, part: &str) -> String {
     format!("timestamp>=\"{at}\" AND {part}")
 }
 
+/// The step of a check that could not read the Cloud Run log: it names the
+/// cause and its fix. Either `gcloud` is not on PATH (install it), or its
+/// sign-in ended (`gcloud auth login`).
+fn unreadable_log(e: &anyhow::Error, version: Semver) -> String {
+    let again = format!("then run: riff release check {}", tag(version));
+    if e.is::<NoGcloud>() {
+        format!(
+            "riff cannot read the Cloud Run log: gcloud is not on PATH. A person on the host \
+             installs gcloud or adds it to PATH, {again}"
+        )
+    } else {
+        format!(
+            "riff cannot read the Cloud Run log: {e:#}. The sign-in of gcloud may have ended \
+             (check: gcloud auth list). A person on the host runs: gcloud auth login, {again}"
+        )
+    }
+}
+
 /// The checks after the deploy of `version` at `at`
 /// (01M58KMM5ZPAQ289S2YJVQ5WW6, 01M58KMMP9FKRFYX58ESVRSZQX): each check by
 /// its name, and its verdict. A log that riff cannot read gives
@@ -1514,19 +1532,7 @@ pub fn checks(
         .ok()
         .and_then(|lines| lines.last())
         .map(|l| l.revision.clone());
-    let unknown = |e: anyhow::Error| {
-        Verdict::Unknown(if e.is::<NoGcloud>() {
-            format!(
-                "riff cannot read the Cloud Run log: {e}. A person on the host runs: riff \
-                 release check {}",
-                tag(version)
-            )
-        } else {
-            format!(
-                "riff cannot read the Cloud Run log: {e:#}. A person signs in: gcloud auth login"
-            )
-        })
-    };
+    let unknown = |e: anyhow::Error| Verdict::Unknown(unreadable_log(&e, version));
     out.push((
         "no run of 503 longer than 20 s",
         match read("httpRequest.status=503") {
@@ -3808,7 +3814,7 @@ mod tests {
         assert!(
             log[1].contains(
                 "- no 500 of riff-server: riff could not check it: riff cannot read the Cloud Run \
-                 log: gcloud: Reauthentication failed. A person signs in: gcloud auth login"
+                 log: gcloud: Reauthentication failed. The sign-in of gcloud may have ended (check: gcloud auth list). A person on the host runs: gcloud auth login"
             ),
             "{log:?}"
         );
@@ -3830,8 +3836,8 @@ mod tests {
         };
         let version = tag_version("v3.3.0").unwrap();
         let lines = checks(version, "2026-10-22T00:00:00Z", &served("3.3.0"), &log);
-        let step = "riff cannot read the Cloud Run log: gcloud does not run here. A person on \
-                    the host runs: riff release check v3.3.0";
+        let step = "riff cannot read the Cloud Run log: gcloud is not on PATH. A person on the \
+                    host installs gcloud or adds it to PATH, then run: riff release check v3.3.0";
         let names: Vec<&str> = lines
             .iter()
             .filter(|(_, v)| *v == Verdict::Unknown(step.into()))
@@ -3851,6 +3857,18 @@ mod tests {
         assert!(lines.contains(&("each host takes the build", Verdict::Passed)));
         let text = check_text("v3.3.0", &lines);
         assert!(!text.contains("gcloud auth login"), "{text}");
+    }
+
+    /// When the sign-in of gcloud ended, the step names `gcloud auth login`.
+    #[test]
+    fn a_failed_gcloud_names_the_sign_in() {
+        let version = tag_version("v3.3.0").unwrap();
+        let step = unreadable_log(&anyhow!("gcloud: reauthentication needed"), version);
+        assert!(step.contains("gcloud auth list"), "{step}");
+        assert!(
+            step.contains("gcloud auth login, then run: riff release check v3.3.0"),
+            "{step}"
+        );
     }
 
     /// The deploy job failed: the old revision still serves. check files
