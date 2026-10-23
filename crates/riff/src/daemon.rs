@@ -1858,8 +1858,21 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Starts the session on riff-server of each repository of
-    /// [`remote::SERVED_FILE`].
+    /// [`remote::SERVED_FILE`]. A repository whose wave the daemon runs
+    /// ([`crate::wave::WAVES_FILE`]) and that is not there yet goes in
+    /// first, with the server of the wave.
     pub fn serve_repos(&self) {
+        match crate::wave::read_waves(&self.dir) {
+            Ok(waves) => {
+                let served = remote::read_served(&self.dir).unwrap_or_default();
+                for wave in waves.values().filter(|w| !served.contains_key(&w.repo)) {
+                    if let Err(e) = remote::serve_in_file(&self.dir, wave) {
+                        eprintln!("riff daemon: {e:#}");
+                    }
+                }
+            }
+            Err(e) => eprintln!("riff daemon: {e:#}"),
+        }
         match remote::read_served(&self.dir) {
             Ok(served) => served.into_values().for_each(|s| self.spawn_served(s)),
             Err(e) => eprintln!("riff daemon: {e:#}"),
@@ -5733,6 +5746,36 @@ mod tests {
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
         tokio::time::sleep(RESTART_DELAY + Duration::from_secs(1)).await;
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// #1262: a daemon that runs the wave of a repository serves it at
+    /// its start, with the server of the wave, and keeps a repository
+    /// that it serves already.
+    #[tokio::test]
+    async fn the_start_serves_the_repository_of_each_wave() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        let wave = |repo: &str, server: &str| Wave {
+            repo: repo.into(),
+            main: root.path().join(repo),
+            server: server.into(),
+            host: "pangolin".into(),
+        };
+        let waves = [
+            ("o/new".to_owned(), wave("o/new", "http://127.0.0.1:1")),
+            ("o/old".to_owned(), wave("o/old", "http://127.0.0.1:2")),
+        ]
+        .into_iter()
+        .collect();
+        crate::wave::write_waves(&dir, &waves).unwrap();
+        let old = remote::serve_in_file(&dir, &wave("o/old", "http://127.0.0.1:3")).unwrap();
+        Daemon::new(Fake::default(), dir.clone())
+            .unwrap()
+            .serve_repos();
+        let served = remote::read_served(&dir).unwrap();
+        assert_eq!(served["o/new"].wave.server, "http://127.0.0.1:1");
+        assert_eq!(served["o/old"], old);
     }
 
     /// The result of a turn that an interrupt stopped, as `claude -p`

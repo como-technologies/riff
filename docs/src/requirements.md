@@ -3077,6 +3077,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   keep-alive with a prompt of age 0 to riff-server: the next prompt of
   the person ends the block of the lead. A prompt in a worker ends no
   block.
+- **01M5MTWEN9F58X3B0H02DSTQG6** A riff daemon that runs the wave of a
+  repository also serves --host for it with no riff daemon host. At its
+  start it writes served.json from waves.json for each repository that
+  is missing there, with the server of the wave.
 
 ## Threads
 

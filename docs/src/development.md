@@ -1547,8 +1547,9 @@ Do this once on the other host, in the main clone of the repository:
 riff daemon host
 ```
 
-`riff wave run` on that host does it too. The daemon keeps it over its
-restarts.
+`riff wave run` on that host does it too. So does the start of a
+daemon that runs the wave of the repository. The daemon keeps it over
+its restarts.
 
 Then, from the lead, or from a terminal of yours in the clone of the
 repository, add `--host` and the name of the host. Only you in a
@@ -3863,7 +3864,8 @@ riff release status
 
 `riff release status` shows the line `real-session test: running on
 COMMIT`, then `passed` or `failed`. Name the host as `riff daemon
-status --host HOST` does. The host needs `riff daemon host` in its main
+status --host HOST` does. The host needs `riff daemon host` or
+`riff wave run` in its main
 clone of the repository.
 
 The lead runs this command, and each other `--host` command, in its
