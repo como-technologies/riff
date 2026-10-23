@@ -1371,12 +1371,10 @@ async fn a_restart_of_the_daemon_loses_no_event_and_riff_run_goes_on() {
     // A new daemon takes up the session. The relay sends it the kept
     // events, and riff run follows the session again.
     machine.start_daemon().await;
+    // The daemon listens before it takes up the session: wait for the
+    // line.
     let taken = format!("The riff daemon takes up the session in the container {name}");
-    assert!(
-        machine.read("daemon.out").contains(&taken),
-        "{}",
-        machine.read("daemon.out")
-    );
+    wait_for(&machine.bin.path().join("daemon.out"), &taken).await;
     wait_for(&log, "I read the issue.").await;
 
     // riff daemon events shows the session from its start.
