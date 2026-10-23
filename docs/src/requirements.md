@@ -6148,6 +6148,11 @@ part when they merge.
   while systemd says that riff.service is active or activating: the
   daemon listens a short time after its start. With no unit that runs,
   it fails at once.
+- **01M5MS1Q78AFEY3ZVXNAQXM1FJ** A start of a wave that waits for room
+  does not keep the daemon on an old riff: the wave is in `waves.json`,
+  and the new daemon waits for room for it again, also with the limit 0.
+  A start of `riff run` that waits for room keeps the daemon on the old
+  riff, as a session and a job of a wave do.
 
 ### riff relay
 

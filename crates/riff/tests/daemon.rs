@@ -268,6 +268,14 @@ async fn a_daemon_of_a_dev_build_does_no_step_of_an_update() {
 /// the daemon, and gives its log.
 async fn the_daemon_of_an_old_unit_starts_again(mode: &str, line: &str) -> String {
     let here = Here::new();
+    an_old_unit_asks_again(&here, mode, line).await;
+    stop_the_daemon(&here).await
+}
+
+/// Starts the daemon of a unit that names the riff of an older release,
+/// with `mode` in the file `try-restart` of the fake `systemctl`. Waits
+/// for its ask for a new start, and for `line` in its log.
+async fn an_old_unit_asks_again(here: &Here, mode: &str, line: &str) {
     std::fs::write(here.bin.path().join("try-restart"), mode).unwrap();
     let unit = riff::service::Unit {
         exe: "/opt/riff-of-an-older-release/riff".into(),
@@ -292,11 +300,59 @@ async fn the_daemon_of_an_old_unit_starts_again(mode: &str, line: &str) -> Strin
     let ask = "systemctl --user --no-block try-restart riff.service";
     wait_for(&here.bin.path().join("systemctl.log"), ask).await;
     wait_for(&log, line).await;
+}
 
+/// Stops the daemon of the fake `systemctl`, and gives its log.
+async fn stop_the_daemon(here: &Here) -> String {
+    let log = here.bin.path().join("daemon.out");
     let pid: u32 = here.read("daemon.pid").trim().parse().unwrap();
     term(pid);
     wait_for(&log, "The riff daemon stops").await;
     std::fs::read_to_string(&log).unwrap()
+}
+
+/// 01M5MS1Q78AFEY3ZVXNAQXM1FJ: with the limit 0, the start of a wave
+/// waits for room always. It does not keep the daemon on an old riff:
+/// the daemon asks systemd for its new start, and the wave is still in
+/// `waves.json` for the new daemon.
+#[tokio::test]
+async fn a_wave_that_waits_for_room_with_the_limit_0_does_not_keep_the_daemon_on_an_old_riff() {
+    let here = Here::new();
+    let dir = riff::daemon::dir_in(&here.data());
+    std::fs::create_dir_all(&dir).unwrap();
+    let none = riff::room::Change {
+        sessions: Some(0),
+        ..riff::room::Change::default()
+    };
+    riff::room::set(&dir, none).unwrap();
+    let wave = riff::wave::Wave {
+        repo: "como-technologies/riff".into(),
+        main: here.env.home().join("src/riff"),
+        server: "http://127.0.0.1:1".into(),
+        host: "thelio".into(),
+    };
+    let waves = BTreeMap::from([(wave.repo.clone(), wave)]);
+    riff::wave::write_waves(&dir, &waves).unwrap();
+
+    an_old_unit_asks_again(&here, "stop", riff::text::DAEMON_NEW_RIFF).await;
+    let status = here.run(true, &["daemon", "status"]).await;
+    let shown = text(&status.stdout);
+    assert!(
+        shown.contains("Wait for room:\n  the wave of como-technologies/riff\n"),
+        "{shown}"
+    );
+    let log = stop_the_daemon(&here).await;
+    assert!(
+        log.contains(&riff::text::wave_runs("como-technologies/riff")),
+        "{log}"
+    );
+    assert_eq!(
+        riff::wave::read_waves(&dir)
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["como-technologies/riff"]
+    );
 }
 
 /// 01M53NEE2AVNHA8RD8N40FPH03, 01M517BTP6BAGTRBYWPX9GPVE0: the stop of
