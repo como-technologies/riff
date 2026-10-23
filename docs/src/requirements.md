@@ -7999,6 +7999,19 @@ items of Wave C that end riff-server in the Backlog
   that its body has the format of `riff release cut`, and that the Gate
   of its head commit passed. Then it sets the status `riff/verify`. It
   refuses else, and sets nothing.
+- **01M5NCYW06FJ8P5X629VFK1BNR** One message of the owner or of an admin
+  in riff chat approves a whole release: "approved", "approve 4.0.1" or
+  "approve v4.0.1", from a person and not a session, after the line
+  `riff release vX.Y.Z is cut` that `riff release cut` writes in riff
+  chat. A message with no version counts for the version of the last
+  release line of a session before it. With it, the lead runs the
+  real-session test, `riff release publish`, `riff release approve` and
+  `riff release check`. `riff release approve` of the lead accepts this
+  message instead of the publish line, and replaces
+  01M594XQJMXAXY3JXP66Y8EVQ7 in part. A message with `not`, `never` or
+  `don't` does not approve. A message of the owner or of an admin with
+  `stop` or `wait` after the approval cancels it, and the lead stops
+  before the next step.
 
 ### The release cycle
 

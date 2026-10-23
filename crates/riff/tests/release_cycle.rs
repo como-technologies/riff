@@ -1417,3 +1417,30 @@ async fn approve_for_the_lead_refuses_a_worker_and_a_session_that_is_not_the_lea
     }
     assert_eq!(machine.log(), before);
 }
+
+#[tokio::test]
+async fn the_lead_approves_with_one_approved_and_with_a_version_with_no_v() {
+    for said in ["approved", "approve 3.3.0"] {
+        let machine = lead_with_a_waiting_run().await;
+        machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+        let seq = machine.say("mike", said).await;
+        let out = machine.lead_approves().await;
+        assert!(out.status.success(), "{said}: {}", text(&out.stderr));
+        assert!(
+            text(&out.stdout).contains(&format!("Approved with message {seq} of the owner")),
+            "{said}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_lead_stops_at_a_stop_of_the_owner_after_the_approval() {
+    let machine = lead_with_a_waiting_run().await;
+    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    machine.say("mike", "approved").await;
+    machine.say("mike", "stop").await;
+    let before = machine.log();
+    let out = machine.lead_approves().await;
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(machine.log(), before, "gh ran");
+}

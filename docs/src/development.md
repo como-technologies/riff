@@ -3623,7 +3623,7 @@ flowchart TD
     E --> F{just real-session on origin/main}
     F -- FAIL --> F1[Bug issue in the wave, fix merges] --> F
     F -- PASS --> G[riff release publish vX.Y.Z: tag, GitHub release, chat line to the owner]
-    G --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z (pauses the riff, approves production)"}}
+    G --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, or one \"approved\" in riff chat (pauses the riff, approves production)"}}
     H -- no answer --> H1[Waits. Work goes on. The next cut refuses. Reminder in chat each 4 h]
     H1 --> H
     H -- approved --> I{Deploy job}
@@ -3642,7 +3642,7 @@ The gates:
 |---|---|---|---|
 | Verify | a session that did not write the change | the verify of riff | the release pull request waits |
 | Real session | a session that wrote none of the items, on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses |
-| HUMAN GATE 1: deploy | the owner or an admin, in a terminal | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
+| HUMAN GATE 1: deploy | the owner or an admin, in a terminal, or one message "approved" in riff chat | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
 | HUMAN GATE 3: skip | the owner or an admin, in a terminal | `riff release cut --skip VERSION --reason TEXT` | no skip |
 | Log access | a person, when the sign-in of `gcloud` is gone | `gcloud auth login` | `riff release check` says which check it could not do |
@@ -3811,6 +3811,11 @@ riff checks the label `release`, the diff (only `Cargo.toml` and
 status `riff/verify`, and the auto-merge merges the pull request. It
 refuses else, and sets nothing. No model session verifies the pull
 request.
+
+riff also writes a line in riff chat to the owner. One message of the
+owner after it, for example `approved`, lets the lead run the whole
+release: see [Let the lead approve when the owner said
+so](#let-the-lead-approve-when-the-owner-said-so).
 
 #### The release issue
 
@@ -4140,22 +4145,30 @@ app or on the page of the run: they do not pause the riff.
 
 #### Let the lead approve when the owner said so
 
-The lead of the owner may approve too, when the owner said so in riff
-chat. The owner writes one line in the chat, after the lead ran
-`riff release publish`, with the word `approve` or `deploy` and the
-version. riff reads the chat from riff-server, not from the model. The
-message must come from the owner or an admin, as a person, not as a
-session. The lead asks no yes or no. The comment of the approval names
-the number of the message.
+One message of the owner lets the lead run the whole release. After
+`riff release cut` riff writes a line in riff chat that asks the owner.
+The owner answers in riff chat, at any time after that line, with one
+message: `approved`, `approve 3.3.0` or `approve v3.3.0`. The word
+`deploy` works too. A message with no version counts for the version of
+the last release line of a session before it. With it, the lead runs the
+real-session test, `riff release publish`, `riff release approve` and
+`riff release check`, with no other question.
+
+riff reads the chat from riff-server, not from the model. The message
+must come from the owner or an admin, as a person, not as a session. The
+comment of the approval names the number of the message.
 
 ```sh
 riff release approve v3.3.0
 ```
 
-It refuses, and `gh` does not run, when no such message exists: a
-message of a session, of another version, from before the publish, or
-from a member. It also refuses a worker, a work session in a container
-and a session that is not the lead.
+A message with `not`, `never` or `don't` does not approve. A `stop` or a
+`wait` of the owner or of an admin after the approval stops the lead
+before the next step: say `approved` again to go on. `riff release
+approve` refuses, and `gh` does not run, when no such message exists: a
+message of a session, of another version, from before the cut, or from a
+member. It also refuses a worker, a work session in a container and a
+session that is not the lead.
 
 When the auto mode checker blocks a release command, `riff denials`
 has a record. The lead files an issue for it.
