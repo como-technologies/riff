@@ -97,11 +97,14 @@ impl Host {
         self.env.riff_home().join("daemon")
     }
 
-    /// Starts the daemon of this host, and waits until it listens.
+    /// Starts the daemon of this host, and waits until it listens. As a
+    /// systemd unit, it sets no `RIFF_SERVER`: the daemon takes the
+    /// riff-server of each repository from `served.json`.
     async fn start(&mut self) {
         let out = std::fs::File::create(self.log()).unwrap();
         let child = self
             .riff(Path::new("/"), &["daemon"], None)
+            .env_remove("RIFF_SERVER")
             .stdout(out.try_clone().unwrap())
             .stderr(out)
             .stdin(Stdio::null())
@@ -682,8 +685,9 @@ async fn the_replies_of_a_daemon_go_only_to_the_person_and_the_lead() {
     );
 }
 
-/// A `gh` that logs its arguments in `log`, and a test that ends with
-/// the code in `code`, in `dir`. Gives the variables for a host.
+/// A `gh` that logs its arguments in `log`, and a test that writes its
+/// `RIFF_SERVER` in `dir/server` and ends with the code in `code`, in
+/// `dir`. Gives the variables for a host.
 fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String)> {
     let script = |name: &str, body: String| {
         isolated::write_program(dir.join(name), format!("#!/bin/sh\n{body}\n"))
@@ -692,7 +696,14 @@ fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String
     std::fs::create_dir_all(&bin).unwrap();
     let gh = script("gh", format!("echo \"$*\" >> {}", log.display()));
     std::fs::rename(gh, bin.join("gh")).unwrap();
-    let run = script("run", format!("exit $(cat {})", code.display()));
+    let run = script(
+        "run",
+        format!(
+            "printf %s \"$RIFF_SERVER\" > {}\nexit $(cat {})",
+            dir.join("server").display(),
+            code.display()
+        ),
+    );
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     vec![
         ("PATH".into(), path),
@@ -707,6 +718,8 @@ fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String
 /// run the real-session test on a commit. The daemon sets the status
 /// pending, runs the test in a clone, and sets success on a pass and
 /// failure on a fail. A work session gets the refusal.
+/// 01M5MR8CM887EFGMKZM5BQA9JJ: the daemon has no `RIFF_SERVER`, and the
+/// test gets the riff-server of the repository.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     let tmp = tempfile::tempdir().unwrap();
@@ -759,7 +772,10 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
         assert!(seen.contains("state=pending"), "{seen}");
         assert!(seen.contains(&format!("statuses/{commit}")), "{seen}");
         assert!(seen.contains("context=riff/real-session"), "{seen}");
+        let server = tmp.path().join("server");
+        assert_eq!(std::fs::read_to_string(&server).unwrap(), r.api.base());
         std::fs::remove_file(&log).unwrap();
+        std::fs::remove_file(&server).unwrap();
     }
 
     // A work session gets the refusal, and the test does not start.

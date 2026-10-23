@@ -1,5 +1,5 @@
 //! The real-session test on the request of the lead (#1171,
-//! 01M5924C8BTT6CW05Q0YZJ1GCY).
+//! 01M5924C8BTT6CW05Q0YZJ1GCY, 01M5MR8CM887EFGMKZM5BQA9JJ).
 //!
 //! # Design
 //!
@@ -22,7 +22,7 @@
 //!     D->>D: clone origin, detach at COMMIT
 //!     D->>G: status riff/real-session pending
 //!     D-->>L: started
-//!     D->>D: just real-session in the clone
+//!     D->>D: just real-session in the clone, RIFF_SERVER of the repository
 //!     D->>G: status success or failure
 //!     L->>G: riff release status
 //! ```
@@ -35,6 +35,13 @@
 //! `failure`. A test that a signal ended also gets `failure`, so no
 //! status stays `pending`. [`RUN_VAR`] names another program in place
 //! of `just real-session`: a test sets it.
+//!
+//! The daemon runs with its own environment, and a systemd unit sets no
+//! `RIFF_SERVER`. So the test gets `RIFF_SERVER` from the repository of
+//! the request: the `server` of the repository in `served.json`
+//! ([`super::remote::SERVED_FILE`]). `riff run` in the test then reaches
+//! the riff-server of the repository, also when it is not on the host
+//! (01M5MR8CM887EFGMKZM5BQA9JJ). See [`command`].
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -111,8 +118,9 @@ pub fn start(dir: &Path, served: &Served, commit: &str) -> Result<String> {
         Ok(clone) => {
             let owned = commit.to_owned();
             let log = clone.with_extension("log");
+            let server = served.wave.server.clone();
             std::thread::spawn(move || {
-                finish(&clone, &log, &owned);
+                finish(&clone, &log, &owned, &server);
                 *RUNNING.lock().unwrap() = None;
             });
             Ok(format!(
@@ -153,10 +161,10 @@ fn prepare(dir: &Path, served: &Served, commit: &str) -> Result<PathBuf> {
     Ok(clone)
 }
 
-/// Runs the test in `clone`, then sets the final status and removes
-/// the clone.
-fn finish(clone: &Path, log: &Path, commit: &str) {
-    let (state, why) = match run_test(clone, log) {
+/// Runs the test in `clone` on the riff-server `server`, then sets the
+/// final status and removes the clone.
+fn finish(clone: &Path, log: &Path, commit: &str, server: &str) {
+    let (state, why) = match run_test(clone, log, server) {
         Ok(true) => (TestState::Passed, "passed".to_owned()),
         Ok(false) => (
             TestState::Failed,
@@ -170,9 +178,27 @@ fn finish(clone: &Path, log: &Path, commit: &str) {
     let _ = std::fs::remove_dir_all(clone);
 }
 
-fn run_test(clone: &Path, log: &Path) -> Result<bool> {
-    let file = std::fs::File::create(log)?;
-    let mut command = match std::env::var_os(RUN_VAR) {
+/// The command of the test on the riff-server `server`: the program
+/// `run` (the value of [`RUN_VAR`]), else `just real-session`. It has
+/// `RIFF_SERVER` set to `server` (01M5MR8CM887EFGMKZM5BQA9JJ).
+///
+/// ```
+/// use std::ffi::OsStr;
+/// use riff::daemon::release_test::command;
+///
+/// let server = "https://riff.example";
+/// let test = command(None, server);
+/// assert_eq!(test.get_program(), "just");
+/// assert_eq!(test.get_args().collect::<Vec<_>>(), ["real-session"]);
+/// let env: Vec<_> = test.get_envs().collect();
+/// assert_eq!(env, [(OsStr::new("RIFF_SERVER"), Some(OsStr::new(server)))]);
+///
+/// let fake = command(Some("/bin/fake".into()), server);
+/// assert_eq!(fake.get_program(), "/bin/fake");
+/// assert_eq!(fake.get_args().count(), 0);
+/// ```
+pub fn command(run: Option<std::ffi::OsString>, server: &str) -> Command {
+    let mut command = match run {
         Some(program) => Command::new(program),
         None => {
             let mut command = Command::new("just");
@@ -180,7 +206,13 @@ fn run_test(clone: &Path, log: &Path) -> Result<bool> {
             command
         }
     };
-    let status = command
+    command.env("RIFF_SERVER", server);
+    command
+}
+
+fn run_test(clone: &Path, log: &Path, server: &str) -> Result<bool> {
+    let file = std::fs::File::create(log)?;
+    let status = command(std::env::var_os(RUN_VAR), server)
         .current_dir(clone)
         .stdin(Stdio::null())
         .stdout(file.try_clone()?)
@@ -188,4 +220,31 @@ fn run_test(clone: &Path, log: &Path) -> Result<bool> {
         .status()
         .context("cannot start the test")?;
     Ok(status.success())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 01M5MR8CM887EFGMKZM5BQA9JJ: the test runs with `RIFF_SERVER` of
+    /// the repository, not the one of the daemon.
+    #[test]
+    fn the_test_gets_the_riff_server_of_the_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let seen = tmp.path().join("seen");
+        let program = isolated::write_program(
+            tmp.path().join("run"),
+            format!(
+                "#!/bin/sh\nprintf %s \"$RIFF_SERVER\" > {}\n",
+                seen.display()
+            ),
+        );
+        let server = "https://riff-server.example";
+        let status = command(Some(program.into()), server)
+            .current_dir(tmp.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(std::fs::read_to_string(&seen).unwrap(), server);
+    }
 }
