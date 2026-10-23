@@ -184,6 +184,37 @@ impl Reach {
     }
 }
 
+/// The Cloud Run log of an instance of riff, read by the riff daemon of
+/// the host with its `gcloud` (#1247). The container has no `gcloud` and
+/// no Google sign-in. Only the lead may.
+pub struct DaemonLog {
+    /// The socket of the session.
+    pub socket: PathBuf,
+    /// The settings of the instance, for the service and the project.
+    pub settings: crate::cloud::Settings,
+}
+
+impl crate::cycle::CloudLog for DaemonLog {
+    /// Asks the daemon. It needs a multi-thread runtime.
+    fn lines(&self, filter: &str) -> Result<Vec<crate::cycle::LogLine>> {
+        let call = ServerCall::CloudLog {
+            service: self.settings.service.clone(),
+            project: self.settings.project.clone(),
+            filter: filter.to_owned(),
+        };
+        let handle = tokio::runtime::Handle::current();
+        let out: String = tokio::task::block_in_place(|| handle.block_on(ask(&self.socket, &call)))
+            .map_err(|e| {
+                if e.to_string() == text::DAEMON_NO_GCLOUD {
+                    anyhow!(crate::cycle::NoGcloud)
+                } else {
+                    e
+                }
+            })?;
+        crate::cycle::log_lines(&out)
+    }
+}
+
 /// The riff of `server` with the sign-in of this machine, and the sender
 /// of this process: the agent session with its session ID, else the
 /// person on this machine.

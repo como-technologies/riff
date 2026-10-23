@@ -65,7 +65,9 @@
 //!
 //! Each step goes through [`Forge`]. [`GitHub`] runs `gh` and `git`; a
 //! test gives a fake forge. The checks after a deploy read the Cloud Run
-//! log through [`CloudLog`]: [`RunLog`] runs `gcloud`.
+//! log through [`CloudLog`]: [`RunLog`] runs `gcloud`, and in the container
+//! of the lead [`crate::reach::DaemonLog`] asks the riff daemon of the host
+//! to run it (#1247).
 //!
 //! ```
 //! use riff::cycle::{level, version};
@@ -1775,26 +1777,47 @@ impl CloudLog for RunLog {
     fn lines(&self, filter: &str) -> Result<Vec<LogLine>> {
         let args = log_read_args(&self.settings.service, &self.settings.project, filter);
         let out = self.gcloud.run(&args, None).map_err(|e| {
-            let missing = e.chain().any(|c| {
-                c.downcast_ref::<std::io::Error>()
-                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
-            });
-            if missing { anyhow!(NoGcloud) } else { e }
+            if gcloud_missing(&e) {
+                anyhow!(NoGcloud)
+            } else {
+                e
+            }
         })?;
-        out.lines()
-            .filter(|l| !l.trim().is_empty())
-            .map(|l| {
-                let mut parts = l.split_whitespace();
-                let at = parts.next().unwrap_or_default();
-                let at = DateTime::parse_from_rfc3339(at)
-                    .with_context(|| format!("gcloud printed no time: {}", text::forge(l)))?;
-                Ok(LogLine {
-                    at: at.with_timezone(&Utc),
-                    revision: text::forge(parts.next().unwrap_or_default()),
-                })
-            })
-            .collect()
+        log_lines(&out)
     }
+}
+
+/// True when `e` is the error of a `gcloud` that is not on this machine.
+pub fn gcloud_missing(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    })
+}
+
+/// The lines of the output of `gcloud logging read` with the arguments of
+/// [`log_read_args`]: the time and the revision of each line.
+///
+/// ```
+/// let lines = riff::cycle::log_lines("2026-10-22T10:00:00Z riff-00001\n\n")?;
+/// assert_eq!(lines[0].revision, "riff-00001");
+/// assert!(riff::cycle::log_lines("no time\n").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn log_lines(out: &str) -> Result<Vec<LogLine>> {
+    out.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let mut parts = l.split_whitespace();
+            let at = parts.next().unwrap_or_default();
+            let at = DateTime::parse_from_rfc3339(at)
+                .with_context(|| format!("gcloud printed no time: {}", text::forge(l)))?;
+            Ok(LogLine {
+                at: at.with_timezone(&Utc),
+                revision: text::forge(parts.next().unwrap_or_default()),
+            })
+        })
+        .collect()
 }
 
 /// What [`check`] found.

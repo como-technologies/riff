@@ -3645,7 +3645,7 @@ The gates:
 | HUMAN GATE 1: deploy | the owner or an admin, in a terminal | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
 | HUMAN GATE 3: skip | the owner or an admin, in a terminal | `riff release cut --skip VERSION --reason TEXT` | no skip |
-| Log access | a person, when the sign-in of `gcloud` is gone | `gcloud auth login` | `riff release check` says which check it could not do |
+| Log access | a person on the host, when the sign-in of `gcloud` is gone | `gcloud auth login` | `riff release check` says which check it could not do |
 
 `riff release status` shows the state of the current release: `cut`,
 `merged`, `tested`, `published`, `waiting`, `deploying`, `deployed`,
@@ -3696,20 +3696,27 @@ sequenceDiagram
     D-->>C: the answers
 ```
 
-The container has no `gcloud`. So riff cannot read the Cloud Run log
-there. Each check of the log then names the cause and its fix:
+The container has no `gcloud` and no Google sign-in. riff reads the
+Cloud Run log through the daemon of the host, with the `gcloud` and the
+sign-in of the person on the host. Only the lead can ask for it: the
+daemon refuses a worker.
 
-- `gcloud` is not on PATH: install it, or add it to PATH (check with
-  `command -v gcloud`);
-- the sign-in of `gcloud` ended: run `gcloud auth login` (check with
-  `gcloud auth list`).
-
-Then a person on the host runs the command in a terminal. riff reads
-the log with the `gcloud` of the host:
-
-```sh
-riff release check v3.3.0
+```mermaid
+sequenceDiagram
+    participant C as riff release check (the lead, in its container)
+    participant D as riff daemon (the host)
+    participant G as gcloud (the host)
+    C->>D: read the log (on RIFF_SOCKET)
+    D->>G: gcloud logging read
+    G-->>D: the lines
+    D-->>C: the lines
 ```
+
+When the sign-in of `gcloud` on the host is gone, each check of the log
+says that a person on the host runs `gcloud auth login`. The daemon
+also tells the lead in chat. When the host has no `gcloud`, each check
+says to install it, or to add it to PATH. After the fix, the lead runs
+`riff release check` again.
 
 riff checks that:
 
@@ -3728,11 +3735,10 @@ fails, the lead fixes forward with a patch release, or rolls back.
 When the job `Deploy` failed, the old revision still serves: riff files
 an issue with the failed jobs and the run, and resumes the riff.
 
-riff reads the log with the `gcloud` of your machine and the cloud
-settings `shared` (see
-[Read the log of the server](#read-the-log-of-the-server)). When the
-sign-in of `gcloud` is gone, riff says which check it could not do. A
-person signs in again, and the lead runs `riff release check` again:
+riff reads the log with the `gcloud` of the host and the cloud settings
+`shared` (see
+[Read the log of the server](#read-the-log-of-the-server)). A person on
+the host signs in again:
 
 ```sh
 gcloud auth login

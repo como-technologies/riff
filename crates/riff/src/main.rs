@@ -2710,12 +2710,19 @@ impl riff::cycle::CloudLog for NoLog {
 
 /// The log of the shared riff, or a log that names why riff cannot read
 /// it.
-fn shared_log(here: &std::path::Path) -> Box<dyn riff::cycle::CloudLog> {
+fn shared_log(here: &std::path::Path, reach: &Reach) -> Box<dyn riff::cycle::CloudLog> {
     match cloud::dir(here).and_then(|dir| cloud::load(&dir, "shared")) {
-        Ok(settings) => Box::new(riff::cycle::RunLog {
-            gcloud: cloud::Gcloud::default(),
-            settings,
-        }),
+        // The container has no gcloud: the daemon of the host reads the log.
+        Ok(settings) => match reach {
+            Reach::Daemon(socket) => Box::new(riff::reach::DaemonLog {
+                socket: socket.clone(),
+                settings,
+            }),
+            Reach::Direct(_) => Box::new(riff::cycle::RunLog {
+                gcloud: cloud::Gcloud::default(),
+                settings,
+            }),
+        },
         Err(e) => Box::new(NoLog(format!("{e:#}"))),
     }
 }
@@ -2944,7 +2951,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             }
             let forge = forge()?;
             let served = reach.served().await;
-            let log = shared_log(&here);
+            let log = shared_log(&here, reach);
             match cycle::check(&forge, tag, &served, log.as_ref())? {
                 Checked::DeployFailed { deploy, issue } => {
                     println!(

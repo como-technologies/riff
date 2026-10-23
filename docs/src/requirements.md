@@ -8096,6 +8096,13 @@ items of Wave C that end riff-server in the Backlog
   An instance of an older revision that starts in the switch to the new
   one stops before it serves, and its 500 replies do not count. With no
   line "riff-server serves", each 500 reply counts.
+- **01M5ND5B14MXGGK0RJ7R2BREW6** In the container of the lead, riff
+  release check reads the Cloud Run log through the riff daemon of the
+  host, with the gcloud and the sign-in of the person on the host. The
+  container gets no Google credential. The daemon refuses a worker. When
+  the sign-in of gcloud ended, each check of the log says that a person
+  on the host runs gcloud auth login, and the daemon tells the lead in
+  chat.
 
 ### The real-session test
 
