@@ -7579,6 +7579,46 @@ pub fn lead_clone_kept(clone: &Path, why: &str) -> String {
     )
 }
 
+/// The first line of `whoami` in a lead container that is not the lead
+/// (#1301): `lead` is the session that is the lead now.
+///
+/// ```
+/// let lead = "riff://mike@pangolin/como-technologies/riff?session=94adc2ec&lead=true".parse()?;
+/// let line = riff::text::not_lead(Some(&lead));
+/// assert!(line.starts_with("You are not the lead of your repository."));
+/// assert!(line.contains("mike@pangolin:riff (94adc2ec) is the lead."));
+/// assert!(riff::text::not_lead(None).contains("No session is the lead."));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn not_lead(lead: Option<&SessionUri>) -> String {
+    let who = lead.map_or("No session is the lead.".to_owned(), |l| {
+        format!("{} is the lead.", name(l))
+    });
+    format!(
+        "You are not the lead of your repository. {who} Ask your person before you call the lead tool."
+    )
+}
+
+/// `riff lead start`: the new session is the lead. `replaced` is the
+/// session that was the lead before (#1301).
+///
+/// ```
+/// let old = "riff://mike@pangolin/como-technologies/riff?session=94adc2ec".parse()?;
+/// assert_eq!(riff::text::lead_made("o/r", None), "The new session is the lead of o/r.");
+/// assert_eq!(
+///     riff::text::lead_made("o/r", Some(&old)),
+///     "The new session is the lead of o/r. mike@pangolin:riff (94adc2ec) was the lead before."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn lead_made(repo: &str, replaced: Option<&SessionUri>) -> String {
+    let mut out = format!("The new session is the lead of {repo}.");
+    if let Some(old) = replaced {
+        let _ = write!(out, " {} was the lead before.", name(old));
+    }
+    out
+}
+
 /// `riff lead start`: the lead starts.
 pub fn lead_starts(repo: &str, name: &str, session: &str) -> String {
     format!("The lead of {repo} starts in the container {name}: session {session}.")

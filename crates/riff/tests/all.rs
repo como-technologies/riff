@@ -33,6 +33,7 @@ mod lead_clone;
 mod lead_move;
 mod lead_notes;
 mod lead_step;
+mod lead_whoami;
 mod leave;
 mod lifecycle;
 mod link;

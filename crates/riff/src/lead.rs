@@ -365,6 +365,14 @@ async fn launch(
     let me: SessionUri = identity::agent(&place, &session, server)?;
     let api = api.signed_in(Some(&session))?;
     api.start(&me, StartReason::Process, false).await?;
+    let led = match api.lead(&me).await {
+        Ok(reply) => reply,
+        Err(e) => {
+            let _ = api.end(&me).await;
+            return Err(e);
+        }
+    };
+    println!("{}", text::lead_made(&repo, led.replaced.as_ref()));
     let existing = |p: PathBuf| p.exists().then_some(p);
     let facts = Facts {
         session: session.clone(),

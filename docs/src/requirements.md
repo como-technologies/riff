@@ -6514,6 +6514,11 @@ part when they merge.
   wave end --move-open-to-backlog read the claims of riff-server through
   the riff daemon, as riff wave list does. No riff wave command calls
   riff-server straight when RIFF_SOCKET is set and no server is named.
+- **01M5NG4Z0XS1B4QYXFJBW9CWGX** `riff lead start` makes the new lead
+  session the lead of its user in the repository, and prints which
+  session was the lead before; that session is not the lead any more. In
+  a lead container, `whoami` says in its first line when the session is
+  not the lead, and names the lead (#1301).
 
 ### The first run
 
