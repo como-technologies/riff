@@ -710,6 +710,42 @@ async fn check_passes_closes_the_release_issue_and_resumes_the_riff() {
     );
 }
 
+/// 01M5MQHDMBYG187T0Q622XWBMN: a 500 of an instance of the old revision
+/// in the switch does not fail the check. A 500 of the new revision does.
+#[tokio::test]
+async fn check_counts_only_the_500s_of_the_new_revision() {
+    for (revision, passed) in [
+        ("riff-server-00001-old", true),
+        ("riff-server-00002-new", false),
+    ] {
+        let machine = Machine::new().await;
+        let tag = this_tag();
+        machine.fake_gh(&deployed(&tag, "success"));
+        machine.shared_cloud();
+        let body = format!(
+            "#!/bin/sh\ncase \"$*\" in\n\
+             *'riff-server serves'*) printf '2026-10-18T20:00:05Z\\triff-server-00001-old\\n\
+             2026-10-18T20:00:09Z\\triff-server-00002-new\\n' ;;\n\
+             *'status=500'*) printf '2026-10-18T20:00:40Z\\t{revision}\\n' ;;\n\
+             esac\nexit 0\n"
+        );
+        isolated::write_program(machine.bin().join("gcloud"), &body);
+        let lead = [("RIFF_SESSION", "s1")];
+        machine.ok(&lead, &["lead"]).await;
+        let out = machine.ok(&lead, &["release", "check", &tag]).await;
+        let want = if passed {
+            "- no 500 of riff-server: passed\n"
+        } else {
+            "- no 500 of riff-server: failed: 1 replies 500\n"
+        };
+        assert!(out.contains(want), "{revision}: {out}");
+        assert!(
+            out.contains("- no old instance takes the lease: passed\n"),
+            "{revision}: {out}"
+        );
+    }
+}
+
 /// With no cloud settings, check names each check of the log that it
 /// could not do, and keeps the riff and the issue as they are
 /// (01M58KMMP9FKRFYX58ESVRSZQX).
