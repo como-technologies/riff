@@ -1403,6 +1403,12 @@ fn clone_at(main: &Path, clone: &Path, commit: &str) -> Result<()> {
 /// assert_eq!(conflicts[&1], Conflict { pull: 41, commit: "c1".into() });
 /// ```
 pub fn rebases(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, BTreeMap<u64, Conflict>) {
+    let releases: HashSet<u64> = open
+        .issues
+        .iter()
+        .filter(|i| i.release())
+        .map(|i| i.number)
+        .collect();
     let conflicts: BTreeMap<u64, Conflict> = open
         .pulls
         .iter()
@@ -1414,6 +1420,7 @@ pub fn rebases(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, BTreeMa
             };
             Some((p.issue()?, conflict))
         })
+        .filter(|(n, _)| !releases.contains(n))
         .collect();
     let fixes: HashSet<u64> = open
         .issues

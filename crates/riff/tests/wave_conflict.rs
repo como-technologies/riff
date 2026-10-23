@@ -173,3 +173,35 @@ fn a_failed_verify_with_a_conflict_is_a_build() {
         Some(Work::Build { issue: 1 })
     );
 }
+
+/// The release issue (the label `release`) is no work (#1213): the wave
+/// starts no build of it, no verify of its pull request, and no rebase
+/// of it. Issue 1 is a plain item and still free.
+#[test]
+fn the_look_of_the_wave_leaves_out_the_release_issue() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(
+        dir.path(),
+        &[
+            pull(2, "bbbb222", None, "MERGEABLE", true),
+            pull(3, "cccc333", Some("SUCCESS"), "CONFLICTING", true),
+        ],
+    );
+    std::fs::write(
+        dir.path().join("issues"),
+        r#"[
+{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]},
+{"number":3,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]},
+{"number":4,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]}]"#,
+    )
+    .unwrap();
+    let look = look(&gh);
+    assert_eq!(look.free, ["issue-1"]);
+    assert!(look.conflicts.is_empty(), "{:?}", look.conflicts);
+    let none = BTreeSet::new();
+    assert_eq!(
+        wave::pick(&look, &none, &BTreeMap::new()),
+        Some(Work::Build { issue: 1 })
+    );
+}

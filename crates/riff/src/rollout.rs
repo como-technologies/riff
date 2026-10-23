@@ -317,6 +317,13 @@ impl Issue {
         self.labels.iter().any(|l| l.name == NO_VERIFY)
     }
 
+    /// True when the issue is the release issue of a release: it has
+    /// the label [`crate::cycle::LABEL`]. The wave starts no session
+    /// for it, nor for its pull request.
+    pub fn release(&self) -> bool {
+        self.labels.iter().any(|l| l.name == crate::cycle::LABEL)
+    }
+
     /// True when the issue is a fix item: it has the label
     /// [`BROKEN_MAIN`] (01M51QEYPGD6W345MZ4F85C38F).
     pub fn broken_main(&self) -> bool {
@@ -449,6 +456,7 @@ fn free_of(
     let in_verify = in_verify(pulls);
     open.iter()
         .filter(|i| pick(i))
+        .filter(|i| !i.release())
         .filter(|i| !i.merged())
         .filter(|i| !claims.contains(&format!("issue-{}", i.number)))
         .filter(|i| !in_verify.contains(&i.number))
@@ -896,8 +904,9 @@ pub fn free_work(
 /// (`verify-issue-N`), then the free items of the current wave
 /// (`issue-N`). An item counts one time: as a build or as a verify
 /// (01M3Z9N5HHHS1E17NFGMVBKZ0K). The pull request of an issue with the
-/// label [`NO_VERIFY`] is no work (01M5157V0P92EBHF4M7N9K0RGR). An item
-/// in `holds` is no work (01M51A55Q2MDZT38JDCEJ1QECP): a hold names one
+/// label [`NO_VERIFY`] is no work (01M5157V0P92EBHF4M7N9K0RGR). The
+/// release issue of a release (the label `release`) and its pull
+/// request are no work. An item in `holds` is no work (01M51A55Q2MDZT38JDCEJ1QECP): a hold names one
 /// item, so a hold of `issue-N` keeps `verify-issue-N` free.
 ///
 /// A fix item ([`BROKEN_MAIN`], 01M51QEYS538XA58KDRY844T52) comes before
@@ -956,7 +965,7 @@ pub fn free_work_of(
         current_wave(open).map_or_else(Vec::new, |wave| free_items(issues, wave, claims, pulls));
     let kept: HashSet<u64> = issues
         .iter()
-        .filter(|i| i.no_verify())
+        .filter(|i| i.no_verify() || i.release())
         .map(|i| i.number)
         .collect();
     let fixes: HashSet<u64> = issues
