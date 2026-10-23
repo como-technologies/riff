@@ -8201,6 +8201,10 @@ items of Wave C that end riff-server in the Backlog
   riff-server of the repository of the request, from `served.json` of
   the daemon. So `riff run` and `riff plan hold` in the test reach the
   riff-server of the repository, also when it is not on the host.
+- **01M5MR9FGEBKQWHH7RZ9THAHQB** The home check of the real-session test
+  leaves out DATA/gvfs-metadata, for example
+  ~/.local/share/gvfs-metadata: gvfsd-metadata of GNOME writes there
+  when the desktop touches a file.
 
 ## The UIs
 

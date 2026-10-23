@@ -2062,6 +2062,7 @@ The test leaves out these paths with no `--skip`:
 | `~/.cache` | the caches of your tools |
 | `~/snap` | the snap apps, for example the Firefox snap |
 | `~/.local/state/claude/locks` | each `claude` on your machine |
+| `~/.local/share/gvfs-metadata` | GNOME: `gvfsd-metadata` writes there when the desktop touches a file |
 | `.claude/worktrees` and `.git` in each git clone of your home, except `.git/hooks`, `.git/config` and `.git/config.worktree`. When your home is itself a git clone, this is also `~/.claude/worktrees` | your other sessions: they build and commit in their worktrees, and git writes in the `.git` of the clone |
 | `~/.claude`, `~/.claude.json`, `~/.claude.json.lock` | your other Claude Code sessions (see [What the home check compares](#what-the-home-check-compares)) |
 
