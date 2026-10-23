@@ -207,7 +207,12 @@ impl From<std::io::Error> for Stop {
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     let run = match &cli.command {
-        Some(Command::Log(args)) => log_tool(&cli, args).await,
+        Some(Command::Log(args)) => {
+            // A closed pipe on stdout ends the tool quietly. The server
+            // keeps the default hook (01M5MRG35BYRGZYD4VQVV8ZTYX).
+            riff_core::pipe::end_quietly();
+            log_tool(&cli, args).await
+        }
         None => run(cli).await,
     };
     match run {

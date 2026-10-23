@@ -5660,6 +5660,14 @@ part when they merge.
   which starts no container. A session of the fake runtime prints the
   events that the test gives, keeps its input, and ends with the exit 0
   when its input closes. A stop ends it with no exit code.
+- **01M5MRG35BYRGZYD4VQVV8ZTYX** Each command of `riff`, and
+  `riff-server log`, ends with the exit 0 and prints nothing more when
+  its stdout or stderr is a pipe that the reader closed, for example in
+  `riff daemon status | head -1`. A panic hook does it. The process
+  keeps SIGPIPE ignored, so a write to a socket or to the pipe of a
+  child process still fails with an error and does not kill the process.
+  `riff daemon`, `riff relay` and the server of `riff-server` keep the
+  default panic hook.
 
 ### Ship
 
@@ -6135,6 +6143,11 @@ part when they merge.
   the limit. This supersedes the load part of
   01M421QPZ9E01PQ62PDBH378SJ.
   Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
+- **01M5MS2T8VY8NX4VBMQTCKWDKH** A riff command that asks the riff
+  daemon of this machine tries again for 5 s when no daemon answers
+  while systemd says that riff.service is active or activating: the
+  daemon listens a short time after its start. With no unit that runs,
+  it fails at once.
 - **01M5MS1Q78AFEY3ZVXNAQXM1FJ** A start of a wave that waits for room
   does not keep the daemon on an old riff: the wave is in `waves.json`,
   and the new daemon waits for room for it again, also with the limit 0.
@@ -8193,6 +8206,11 @@ items of Wave C that end riff-server in the Backlog
   release. `just real-session` stays for a person. The check of a
   reading that a container cannot do, for example the VmLck reading of
   #1003, is the same mechanism with a name for the check: not built.
+- **01M5MR8CM887EFGMKZM5BQA9JJ** The riff daemon runs the real-session
+  test of `riff release test --host` with `RIFF_SERVER` set to the
+  riff-server of the repository of the request, from `served.json` of
+  the daemon. So `riff run` and `riff plan hold` in the test reach the
+  riff-server of the repository, also when it is not on the host.
 
 ## The UIs
 

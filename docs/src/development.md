@@ -682,8 +682,10 @@ riff daemon status
 ```
 
 It shows the process ID, the build and the sessions of the daemon.
-When no daemon answers, it shows the state of the unit, and exits
-with 1. To see the log of the daemon:
+Just after a start or a restart, the daemon does not listen yet: while
+systemd says that the unit is active, riff tries again for 5 s. When
+no daemon answers, it shows the state of the unit, and exits with 1.
+To see the log of the daemon:
 
 ```sh
 journalctl --user -u riff -f
@@ -3840,7 +3842,9 @@ A lead in a container cannot run the test: podman does not run inside
 a container. The lead asks the riff daemon of a host with podman. The
 daemon clones the newest commit of `origin/main`, runs `just
 real-session` there, and sets the commit status `riff/real-session`:
-`pending`, then `success` or `failure`. The daemon is not the author of
+`pending`, then `success` or `failure`. The test gets `RIFF_SERVER` of
+the repository from the daemon, so riff-server can be on another
+host. The daemon is not the author of
 any item. Only you in a terminal and your lead can ask. The daemon
 refuses a worker:
 

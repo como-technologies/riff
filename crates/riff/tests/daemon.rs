@@ -19,6 +19,16 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
+/// The calls of `systemctl` in `log` that change the unit: each call
+/// but `is-active`, which riff also makes to wait for a daemon that
+/// starts (01M5MS2T8VY8NX4VBMQTCKWDKH).
+fn changes(log: &str) -> String {
+    log.lines()
+        .filter(|l| !l.ends_with("is-active riff.service"))
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
 /// An environment with the fake `systemctl` first in `PATH`.
 pub(crate) struct Here {
     env: Isolated,
@@ -105,7 +115,7 @@ async fn riff_daemon_install_writes_the_unit_and_starts_the_daemon() {
         assert!(unit.lines().any(|l| l == line), "{line}\nnot in\n{unit}");
     }
     assert_eq!(
-        here.read("systemctl.log"),
+        changes(&here.read("systemctl.log")),
         "systemctl --user daemon-reload\n\
          systemctl --user enable riff.service\n\
          systemctl --user restart riff.service\n"

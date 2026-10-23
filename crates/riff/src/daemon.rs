@@ -3423,6 +3423,34 @@ fn session_hello(first: &str) -> Result<SessionAsk, String> {
     serde_json::from_str::<SessionAsk>(first).map_err(|_| text::DAEMON_NO_HELLO.into())
 }
 
+/// The longest time that `riff` waits for the daemon of the unit while
+/// systemd starts it ([`Client::connect`]).
+pub const START_WAIT: Duration = Duration::from_secs(5);
+
+/// True when the state `state` of `systemctl is-active` is of a unit
+/// that runs or starts: its daemon answers soon.
+///
+/// ```
+/// assert!(riff::daemon::starts("active\n"));
+/// assert!(riff::daemon::starts("activating"));
+/// assert!(!riff::daemon::starts("inactive"));
+/// assert!(!riff::daemon::starts("failed"));
+/// ```
+pub fn starts(state: &str) -> bool {
+    matches!(state.trim(), "active" | "activating" | "reloading")
+}
+
+/// True when the daemon of this machine has a unit that runs or starts.
+/// With `RIFF_HOME` or `RIFF_DATA`, the daemon is not the daemon of the
+/// unit: false.
+fn unit_starts() -> bool {
+    use crate::service::ServiceManager;
+    crate::run::machine_data()
+        && crate::service::Systemd::here()
+            .and_then(|unit| unit.state())
+            .is_ok_and(|state| starts(&state))
+}
+
 /// A connection of `riff` to the daemon.
 pub struct Client {
     lines: Lines<BufReader<OwnedReadHalf>>,
@@ -3430,12 +3458,24 @@ pub struct Client {
 }
 
 impl Client {
-    /// Connects to the daemon in the folder `dir`. With no daemon, the
-    /// error says how to start it.
+    /// Connects to the daemon in the folder `dir`. While systemd starts
+    /// the unit of the daemon, it tries again for [`START_WAIT`]: the
+    /// daemon listens a short time after its start (01M5MS2T8VY8NX4VBMQTCKWDKH). With no
+    /// daemon, the error says how to start it.
     pub async fn connect(dir: &Path) -> Result<Client> {
-        let conn = connect_in(dir, SOCKET)
-            .await
-            .map_err(|_| anyhow!("{}", text::daemon_none(&socket(dir))))?;
+        let started = std::time::Instant::now();
+        let mut waits: Option<bool> = None;
+        let conn = loop {
+            match connect_in(dir, SOCKET).await {
+                Ok(conn) => break conn,
+                Err(_)
+                    if started.elapsed() < START_WAIT && *waits.get_or_insert_with(unit_starts) =>
+                {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(_) => bail!("{}", text::daemon_none(&socket(dir))),
+            }
+        };
         let (read, write) = conn.into_split();
         Ok(Client {
             lines: BufReader::new(read).lines(),
@@ -5761,8 +5801,10 @@ mod tests {
     }
 
     /// A fake `gh` in `dir`: a POST of a comment adds its body to the
-    /// file `posted`. With `down`, each call notes itself in the file
-    /// `tried` and fails.
+    /// file `posted`. It writes a new file and renames it, so a test
+    /// that waits for `posted` never reads a part of the body (#1259).
+    /// With `down`, each call notes itself in the file `tried` and
+    /// fails.
     fn usage_gh(dir: &Path, down: bool) -> crate::pr::Gh {
         let script = match down {
             true => {
@@ -5770,7 +5812,11 @@ mod tests {
             }
             false => concat!(
                 "#!/bin/sh\n",
-                "if [ \"$1 $2 $3\" = \"api -X POST\" ]; then cat \"$7\" >> \"$(dirname \"$0\")/posted\"; fi\n",
+                "d=$(dirname \"$0\")\n",
+                "if [ \"$1 $2 $3\" = \"api -X POST\" ]; then\n",
+                "  { cat \"$d/posted\" 2>/dev/null; cat \"$7\"; } > \"$d/posted.new\"\n",
+                "  mv \"$d/posted.new\" \"$d/posted\"\n",
+                "fi\n",
             ),
         };
         crate::pr::Gh::at(isolated::write_program(dir.join("gh"), script))

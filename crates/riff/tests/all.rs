@@ -17,6 +17,7 @@ mod check_build;
 mod claim;
 mod claude_token;
 mod cli;
+mod closed_pipe;
 mod cloud;
 mod compile_cache;
 mod conduct;
