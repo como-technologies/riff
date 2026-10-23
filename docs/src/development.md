@@ -3879,8 +3879,21 @@ request goes through the riff daemon of the host to the daemon of
 `HOST`. A worker gets a refusal. In a container, `riff daemon status`
 with no `--host` shows the riff daemon of the session.
 
-When the test fails, file the bug in the wave. After its fix merges,
-run the test again on the new `origin/main`.
+When the test fails, read why, then file the bug in the wave. After
+its fix merges, run the test again on the new `origin/main`.
+
+#### Read why the real-session test failed
+
+When the test fails, the daemon writes a comment on the release issue
+`Release vX.Y.Z`. The comment names the failed step. It holds the last
+30 lines of the output of the test, with no secret. The status
+`riff/real-session` of the commit has the failed step as its
+description. You need no access to the host. Read the comment in your
+container:
+
+```sh
+gh issue view ISSUE --comments
+```
 
 #### Publish the release
 

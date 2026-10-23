@@ -8230,6 +8230,13 @@ items of Wave C that end riff-server in the Backlog
   says to wait for the test on its commit. After a fail on the newest
   commit, it names the fix. After a pass, it names `riff release
   publish`.
+- **01M5NC1CANKNF7JWVVFPX1X340** When the real-session test of `riff
+  release test` fails, the riff daemon writes the failed step and the
+  last 30 lines of the output of the test, with no secret, as a comment
+  on the release issue. It sets the description of the status
+  `riff/real-session` to the failed step. So the lead in a container
+  reads the reason with no access to the journal of the host. `riff
+  release test` gives the tag to the daemon for the issue.
 
 ## The UIs
 

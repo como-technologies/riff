@@ -224,7 +224,7 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 ///     "daemon restart",
 ///     "wave run",
 ///     "wave stop",
-///     "release test 0123abc",
+///     "release test 0123abc v3.3.0",
 ///     "build",
 ///     "lead move",
 /// ] {
@@ -239,7 +239,8 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 /// assert!("daemon events n --after 7 --notes x".parse::<Request>().is_err());
 /// assert!("daemon cache 20G --clear".parse::<Request>().is_err());
 /// assert!("workers start 2".parse::<Request>().is_err());
-/// assert!("release test main".parse::<Request>().is_err());
+/// assert!("release test main v3.3.0".parse::<Request>().is_err());
+/// assert!("release test 0123abc".parse::<Request>().is_err());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
@@ -278,9 +279,15 @@ pub enum Request {
     WaveRun,
     /// `riff wave stop` in the repository.
     WaveStop,
-    /// `riff release test` on the commit: the real-session test
-    /// (01M5924C8BTT6CW05Q0YZJ1GCY).
-    ReleaseTest(String),
+    /// `riff release test` on the commit of the release `tag`: the
+    /// real-session test (01M5924C8BTT6CW05Q0YZJ1GCY). The daemon writes
+    /// the reason of a fail on the release issue of the tag (#1255).
+    ReleaseTest {
+        /// The commit to test.
+        commit: String,
+        /// The tag of the release, `vX.Y.Z`.
+        tag: String,
+    },
     /// `riff build`: build the default branch in the check clone of the
     /// host (#1239).
     Build,
@@ -330,8 +337,14 @@ impl FromStr for Request {
             ["wave", "stop"] => Ok(Request::WaveStop),
             ["lead", "move"] => Ok(Request::LeadMove),
             ["build"] => Ok(Request::Build),
-            ["release", "test", commit] if super::release_test::is_commit(commit) => {
-                Ok(Request::ReleaseTest(commit.to_owned()))
+            ["release", "test", commit, tag]
+                if super::release_test::is_commit(commit)
+                    && crate::cycle::tag_version(tag).is_ok() =>
+            {
+                Ok(Request::ReleaseTest {
+                    commit: commit.to_owned(),
+                    tag: tag.to_owned(),
+                })
             }
             ["daemon", "limit", ref flags @ ..] => limit_of(flags).map(Request::Limit),
             _ => Err(()),
@@ -400,7 +413,7 @@ impl fmt::Display for Request {
             Request::WaveStop => write!(f, "wave stop"),
             Request::LeadMove => write!(f, "lead move"),
             Request::Build => write!(f, "build"),
-            Request::ReleaseTest(commit) => write!(f, "release test {commit}"),
+            Request::ReleaseTest { commit, tag } => write!(f, "release test {commit} {tag}"),
         }
     }
 }
@@ -674,12 +687,15 @@ pub async fn answer(
         Request::Restart => lines_of(dir, Ask::Restart).await,
         Request::WaveRun => wave_run(dir, &served.wave).await,
         Request::LeadMove => crate::lead::take(dir, &served.wave).await,
-        Request::ReleaseTest(commit) => {
-            let (dir, served, commit) = (dir.to_owned(), served.clone(), commit.clone());
-            tokio::task::spawn_blocking(move || super::release_test::start(&dir, &served, &commit))
-                .await
-                .map_err(anyhow::Error::from)
-                .and_then(|done| done)
+        Request::ReleaseTest { commit, tag } => {
+            let (dir, served) = (dir.to_owned(), served.clone());
+            let (commit, tag) = (commit.clone(), tag.clone());
+            tokio::task::spawn_blocking(move || {
+                super::release_test::start(&dir, &served, &commit, &tag)
+            })
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|done| done)
         }
         Request::Build => {
             let main = served.wave.main.clone();
