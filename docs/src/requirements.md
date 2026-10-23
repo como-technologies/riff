@@ -8196,6 +8196,11 @@ items of Wave C that end riff-server in the Backlog
   release. `just real-session` stays for a person. The check of a
   reading that a container cannot do, for example the VmLck reading of
   #1003, is the same mechanism with a name for the check: not built.
+- **01M5MR8CM887EFGMKZM5BQA9JJ** The riff daemon runs the real-session
+  test of `riff release test --host` with `RIFF_SERVER` set to the
+  riff-server of the repository of the request, from `served.json` of
+  the daemon. So `riff run` and `riff plan hold` in the test reach the
+  riff-server of the repository, also when it is not on the host.
 
 ## The UIs
 

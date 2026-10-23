@@ -3840,7 +3840,9 @@ A lead in a container cannot run the test: podman does not run inside
 a container. The lead asks the riff daemon of a host with podman. The
 daemon clones the newest commit of `origin/main`, runs `just
 real-session` there, and sets the commit status `riff/real-session`:
-`pending`, then `success` or `failure`. The daemon is not the author of
+`pending`, then `success` or `failure`. The test gets `RIFF_SERVER` of
+the repository from the daemon, so riff-server can be on another
+host. The daemon is not the author of
 any item. Only you in a terminal and your lead can ask. The daemon
 refuses a worker:
 
