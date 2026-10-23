@@ -1744,7 +1744,20 @@ Get ready as for `riff run` (see
 
 ### Start the lead
 
-In your clone of the repository:
+The lead needs the claude token of this machine. The lead runs for
+hours, and the next sign-in of `claude` on this machine replaces the
+sign-in file that a lead with no token holds. Then that lead fails, and
+`/login` in it cannot save. So with no token, `riff daemon status`
+says `claude token: not set`, and `riff lead start` starts no lead. Do
+this one time on this machine (see
+[Give the container sessions a long-lived sign-in of claude](#give-the-container-sessions-a-long-lived-sign-in-of-claude)):
+
+```sh
+claude setup-token
+riff claude-token
+```
+
+Then, in your clone of the repository:
 
 ```sh
 riff lead start
@@ -1767,6 +1780,21 @@ and riff prints:
 ```text
 The lead in the container riff-lead-OWNER-REPO ended. Start it again in a clone: riff lead start
 The command claude --resume that claude shows works only in the container of the lead. In a new lead, /resume shows the old conversations.
+```
+
+#### Fix a stale sign-in of the lead
+
+A lead of an older riff can run with no token: it holds the sign-in
+file of `claude` of this machine. When `claude` on this machine signs
+in again, it replaces that file, and the sign-in of the lead is stale.
+riff tells you at each attach of `riff lead start` and `riff view`,
+and the riff daemon tells you once in riff chat. Type `/exit` in the
+lead, then run this on the machine of the lead:
+
+```sh
+claude setup-token
+riff claude-token
+riff lead start
 ```
 
 The lead runs `claude` with `--dangerously-skip-permissions`. The

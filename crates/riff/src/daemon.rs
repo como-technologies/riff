@@ -390,6 +390,10 @@ pub const PROTOCOL: u32 = 4;
 /// reply to the lead of another host goes first.
 pub const RESTART_DELAY: Duration = Duration::from_secs(5);
 
+/// The time between two looks of the daemon at the sign-in of each lead
+/// ([`Daemon::stale_leads`]).
+pub const STALE_EVERY: Duration = Duration::from_secs(60);
+
 /// The first protocol of a relay that takes [`Say::Hold`].
 pub const TAKEOVER_PROTOCOL: u32 = 4;
 
@@ -1754,6 +1758,9 @@ pub struct Daemon<R> {
     ends: Mutex<BTreeMap<String, String>>,
     /// The `gcloud` of the host, for [`ServerCall::CloudLog`].
     gcloud: Arc<crate::cloud::Gcloud>,
+    /// The session of each lead whose stale sign-in the person heard of
+    /// in riff chat ([`Daemon::stale_leads`]).
+    stale: Mutex<std::collections::BTreeSet<String>>,
 }
 
 /// A wave that runs in the daemon.
@@ -1813,6 +1820,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             news: facts::News::default(),
             ends: Mutex::new(BTreeMap::new()),
             gcloud: Arc::default(),
+            stale: Mutex::default(),
         })
     }
 
@@ -2012,6 +2020,53 @@ impl<R: Runtime + 'static> Daemon<R> {
             .values()
             .map(|owned| owned.lock().record.clone())
             .collect()
+    }
+
+    /// Tells the person in riff chat, once for each lead, that the
+    /// sign-in of `claude` in the lead is stale
+    /// (01M5NJ87YEHHGJBANM7CRYV56Z): the lead holds the sign-in file of
+    /// the host, and the host replaced it ([`crate::lead::stale`]).
+    /// `home` is the home of the person. It gives a line for each lead
+    /// that it told of.
+    pub async fn stale_leads(&self, home: &Path) -> Vec<String> {
+        let mut lines = Vec::new();
+        for record in self.records().into_iter().filter(|r| r.terminal) {
+            let session = &record.live.session;
+            if self
+                .stale
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .contains(session)
+                || !crate::lead::stale(&self.runtime, &record.live.name, home).await
+            {
+                continue;
+            }
+            self.stale
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(session.clone());
+            let body = text::lead_sign_in_stale(&record.live.name);
+            self.world.chat(&record, &body).await;
+            lines.push(body);
+        }
+        lines
+    }
+
+    /// Looks at the sign-in of each lead each [`STALE_EVERY`], until the
+    /// daemon stops ([`Daemon::stale_leads`]).
+    pub fn stale_every(self: &Arc<Self>) {
+        let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else {
+            return;
+        };
+        let daemon = self.clone();
+        tokio::spawn(async move {
+            loop {
+                for line in daemon.stale_leads(Path::new(&home)).await {
+                    println!("riff daemon: {line}");
+                }
+                tokio::time::sleep(STALE_EVERY).await;
+            }
+        });
     }
 
     /// Waits until a session ends, or a job of a wave ends.
@@ -3726,6 +3781,7 @@ pub async fn serve_here() -> Result<()> {
         daemon.run_waves();
         daemon.serve_repos();
         daemon.sweep_every();
+        daemon.stale_every();
         // The steps of an update of this release: the rules of Claude
         // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
         let steps = dir.clone();
@@ -5510,6 +5566,10 @@ mod tests {
             Box::pin(async {})
         }
 
+        fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> crate::wave::BoxFuture<'a, ()> {
+            Box::pin(async move { self.note(format!("chat {}: {body}", record.live.name)) })
+        }
+
         fn leave<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, ()> {
             Box::pin(async move { self.note(format!("leave {}", record.live.session)) })
         }
@@ -5751,6 +5811,53 @@ mod tests {
         for why in &none {
             assert!(why.contains("gcloud is not on PATH"), "{why}");
         }
+    }
+
+    /// 01M5NJ87YEHHGJBANM7CRYV56Z
+    #[tokio::test]
+    async fn a_lead_whose_sign_in_file_the_host_replaced_gets_one_line_in_riff_chat() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let home = here.root.path().join("home");
+        let host = home.join(".claude");
+        std::fs::create_dir_all(&host).unwrap();
+        let file = host.join(".credentials.json");
+        std::fs::write(&file, "old").unwrap();
+        let mut start = here.start("riff-lead-o-r", "lead");
+        start.terminal = true;
+        start.spec.binds.push(crate::runtime::Bind {
+            source: crate::runtime::Source::Path(file.clone()),
+            target: crate::lead::credentials_of(&home),
+            write: false,
+        });
+        let (mut client, name) = here.started(start).await;
+        assert_eq!(client.next().await.unwrap(), Some(Say::Done));
+        drop(client);
+
+        // The bind holds the file of the host: no word.
+        assert!(here.daemon.stale_leads(&home).await.is_empty());
+
+        // claude on the host signs in again: it writes a new file.
+        let new = host.join(".credentials.json.new");
+        std::fs::write(&new, "new").unwrap();
+        std::fs::rename(&new, &file).unwrap();
+        let line = text::lead_sign_in_stale(&name);
+        assert_eq!(
+            here.daemon.stale_leads(&home).await,
+            std::slice::from_ref(&line)
+        );
+        assert!(server.said().contains(&format!("chat {name}: {line}")));
+
+        // The person heard of it once.
+        assert!(here.daemon.stale_leads(&home).await.is_empty());
+        let chats = server
+            .said()
+            .iter()
+            .filter(|s| s.starts_with("chat "))
+            .count();
+        assert_eq!(chats, 1);
     }
 
     #[tokio::test]

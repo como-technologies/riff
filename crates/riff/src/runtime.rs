@@ -53,7 +53,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, ready};
@@ -345,6 +345,12 @@ pub trait Runtime: Send + Sync {
     /// Runs `command` in the live session `name` with the terminal of
     /// this process, until the command ends.
     fn exec(&self, name: &str, command: &[String]) -> impl Future<Output = Result<Exit>> + Send;
+
+    /// The count of the links of the file `path` in the live session
+    /// `name`. A file of the host that the session binds has 0 links when
+    /// the host replaced it: the session holds the old file
+    /// (01M5NJ87YEHHGJBANM7CRYV56Z).
+    fn links(&self, name: &str, path: &Path) -> impl Future<Output = Result<u64>> + Send;
 }
 
 /// A runtime with no container, for tests (01M4ZBGK5G3EFXWT61DR2NHMDD).
@@ -419,6 +425,10 @@ struct Played {
     end: Option<oneshot::Sender<Exit>>,
     /// The exit, after the end.
     exit: Option<Exit>,
+    /// Each file of the host that the session binds, open from its
+    /// start, by its path in the session: [`Runtime::links`] reads it as
+    /// a container does.
+    files: BTreeMap<PathBuf, std::fs::File>,
 }
 
 impl Fake {
@@ -600,6 +610,18 @@ impl Runtime for Fake {
             _ => bail!("no session {name} runs"),
         }
     }
+
+    async fn links(&self, name: &str, path: &Path) -> Result<u64> {
+        use std::os::unix::fs::MetadataExt;
+        let book = self.lock();
+        let Some(played) = book.sessions.get(name).filter(|p| p.exit.is_none()) else {
+            bail!("no session {name} runs");
+        };
+        match played.files.get(path) {
+            Some(file) => Ok(file.metadata()?.nlink()),
+            None => bail!("the session {name} has no file {}", path.display()),
+        }
+    }
 }
 
 impl Fake {
@@ -640,6 +662,7 @@ impl Fake {
                 events: Some(events),
                 end: Some(ended),
                 exit: None,
+                files: open_files(spec),
             },
         );
         let name = spec.name.clone();
@@ -649,6 +672,20 @@ impl Fake {
         });
         Ok((read, end))
     }
+}
+
+/// Each file of the host that `spec` binds, open, by its path in the
+/// session.
+fn open_files(spec: &SessionSpec) -> BTreeMap<PathBuf, std::fs::File> {
+    spec.binds
+        .iter()
+        .filter_map(|bind| match &bind.source {
+            Source::Path(source) if source.is_file() => std::fs::File::open(source)
+                .ok()
+                .map(|file| (bind.target.clone(), file)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The input of a session of a [`Fake`]. Its drop or its shutdown
