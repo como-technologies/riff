@@ -6340,6 +6340,10 @@ part when they merge.
   issue does not have it. The folder of a verify that did not pass goes
   at its end, and the folder of a verify of a closed pull request goes
   at a look.
+- **01M5NCZ6CVCSTN3ZZDWNVGFG5S** The wave starts no session for the
+  release issue of a release: the issue with the label `release`, made
+  by `riff release cut`. It starts no build, no verify and no rebase for
+  it.
 
 ### The lead, the view and the takeover
 
