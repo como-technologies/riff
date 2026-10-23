@@ -2964,7 +2964,10 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             }
             let forge = forge()?;
             let commit = cycle::test_target(&forge, tag)?;
-            let request = riff::daemon::remote::Request::ReleaseTest(commit);
+            let request = riff::daemon::remote::Request::ReleaseTest {
+                commit,
+                tag: cycle::tag(cycle::tag_version(tag)?),
+            };
             ask_daemon(host, &request, &identity::place(&here)?, reach).await?;
             next(&forge, tag);
         }

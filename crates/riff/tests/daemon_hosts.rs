@@ -17,6 +17,9 @@ use riff_core::name::{SessionUri, Who};
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, RiffState};
 
+/// The tag of the release that the real-session test checks.
+const TAG: &str = "v9.9.9";
+
 /// The bound of each wait. It only ends a test that hangs.
 const WAIT: Duration = Duration::from_secs(60);
 
@@ -694,12 +697,19 @@ fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String
     };
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    let gh = script("gh", format!("echo \"$*\" >> {}", log.display()));
+    let gh = script(
+        "gh",
+        format!(
+            "echo \"$*\" >> {}\n\nif [ \"$1 $2\" = \"issue list\" ]; then echo '[{{\"number\":7,\"title\":\"Release {TAG}\"}}]'; fi\nif [ \"$1 $2\" = \"issue comment\" ]; then cat >> {}; fi",
+            log.display(),
+            dir.join("comment").display()
+        ),
+    );
     std::fs::rename(gh, bin.join("gh")).unwrap();
     let run = script(
         "run",
         format!(
-            "printf %s \"$RIFF_SERVER\" > {}\nexit $(cat {})",
+            "printf %s \"$RIFF_SERVER\" > {}\necho \"a line\"\necho \"GH_TOKEN=ghp_secret1\"\necho \"real-session: FAIL at step 6 of 10, run the item: exit 1\" >&2\nexit $(cat {})",
             dir.join("server").display(),
             code.display()
         ),
@@ -756,7 +766,10 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
 
     for (host, exit, state) in [("a", "0", "success"), ("b", "1", "failure")] {
         std::fs::write(&code, exit).unwrap();
-        let asked = remote::Request::ReleaseTest(commit.clone());
+        let asked = remote::Request::ReleaseTest {
+            commit: commit.clone(),
+            tag: TAG.to_owned(),
+        };
         let reply = remote::ask(&r.api, &r.lead, host, &asked, Duration::from_secs(30))
             .await
             .unwrap();
@@ -772,6 +785,22 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
         assert!(seen.contains("state=pending"), "{seen}");
         assert!(seen.contains(&format!("statuses/{commit}")), "{seen}");
         assert!(seen.contains("context=riff/real-session"), "{seen}");
+        let comment = std::fs::read_to_string(tmp.path().join("comment")).unwrap_or_default();
+        if state == "failure" {
+            // #1255: the reason is on the release issue and in the status.
+            assert!(seen.contains("issue comment 7"), "{seen}");
+            assert!(seen.contains("description=FAIL at step 6 of 10"), "{seen}");
+            assert!(
+                comment.contains("Failed step: step 6 of 10, run the item: exit 1"),
+                "{comment}"
+            );
+            assert!(comment.contains("a line"), "{comment}");
+            assert!(comment.contains("GH_TOKEN=[secret]"), "{comment}");
+            assert!(!comment.contains("ghp_secret1"), "{comment}");
+            std::fs::remove_file(tmp.path().join("comment")).unwrap();
+        } else {
+            assert!(comment.is_empty(), "{comment}");
+        }
         let server = tmp.path().join("server");
         assert_eq!(std::fs::read_to_string(&server).unwrap(), r.api.base());
         std::fs::remove_file(&log).unwrap();
@@ -784,7 +813,10 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
         r.lead.place().clone(),
     );
     r.api.register(&worker).await.unwrap();
-    let asked = remote::Request::ReleaseTest(commit);
+    let asked = remote::Request::ReleaseTest {
+        commit,
+        tag: TAG.to_owned(),
+    };
     let err = remote::ask(&r.api, &worker, "b", &asked, Duration::from_secs(30))
         .await
         .unwrap_err();
