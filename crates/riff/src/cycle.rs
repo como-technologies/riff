@@ -1437,6 +1437,29 @@ pub fn longest_run(lines: &[LogLine]) -> i64 {
     longest
 }
 
+/// The 500 replies of `lines` that count: the lines of the newest
+/// revision `newest`, the revision of the last line "riff-server
+/// serves". An instance of an older revision that starts in the switch
+/// to the new one sees the lease of the new one and stops before it
+/// serves, so a call that reaches it gets a 500. With no newest
+/// revision, each line counts (01M5MQHDMBYG187T0Q622XWBMN).
+///
+/// ```
+/// use riff::cycle::{LogLine, counted_500s};
+///
+/// let at = |s: i64, r: &str| LogLine { at: chrono::DateTime::from_timestamp(s, 0).unwrap(), revision: r.into() };
+/// let lines = [at(1, "old"), at(2, "new")];
+/// assert_eq!(counted_500s(&lines, Some("new")), 1);
+/// assert_eq!(counted_500s(&lines[..1], Some("new")), 0);
+/// assert_eq!(counted_500s(&lines, None), 2);
+/// ```
+pub fn counted_500s(lines: &[LogLine], newest: Option<&str>) -> usize {
+    lines
+        .iter()
+        .filter(|l| newest.is_none_or(|n| l.revision == n))
+        .count()
+}
+
 /// True when an instance of an older revision took the lease after the
 /// newest revision served: a line "riff-server serves" of another
 /// revision after the first line of the newest one. The newest revision
@@ -1485,6 +1508,12 @@ pub fn checks(
         },
     ));
     let read = |part: &str| log.lines(&log_filter(at, part));
+    let serves = read("jsonPayload.message:\"riff-server serves\"");
+    let newest = serves
+        .as_ref()
+        .ok()
+        .and_then(|lines| lines.last())
+        .map(|l| l.revision.clone());
     let unknown = |e: anyhow::Error| {
         Verdict::Unknown(if e.is::<NoGcloud>() {
             format!(
@@ -1511,8 +1540,10 @@ pub fn checks(
     out.push((
         "no 500 of riff-server",
         match read("httpRequest.status=500 AND NOT textPayload:\"no available instance\"") {
-            Ok(lines) if lines.is_empty() => Verdict::Passed,
-            Ok(lines) => Verdict::Failed(format!("{} replies 500", lines.len())),
+            Ok(lines) => match counted_500s(&lines, newest.as_deref()) {
+                0 => Verdict::Passed,
+                n => Verdict::Failed(format!("{n} replies 500")),
+            },
             Err(e) => unknown(e),
         },
     ));
@@ -1529,7 +1560,7 @@ pub fn checks(
     ));
     out.push((
         "no old instance takes the lease",
-        match read("jsonPayload.message:\"riff-server serves\"") {
+        match serves {
             Ok(lines) if old_took_lease(&lines) => {
                 Verdict::Failed("an older revision served after the new one".to_owned())
             }
@@ -3712,6 +3743,42 @@ mod tests {
             );
             assert!(log[0].contains(want), "{want}: {log:?}");
             assert!(!log.iter().any(|l| l.starts_with("close")), "{want}");
+        }
+    }
+
+    /// 01M5MQHDMBYG187T0Q622XWBMN: a 500 of an instance of the old
+    /// revision that stops in the switch does not fail the check. A 500
+    /// of the newest revision does.
+    #[test]
+    fn check_counts_only_the_500s_of_the_newest_revision() {
+        let forge = || Fake {
+            tags: vec!["v3.3.0".into()],
+            deploy: Some(deploy(DeployState::Passed)),
+            issue: Some(ReleaseIssue {
+                number: 7,
+                open: true,
+                comments: vec![],
+            }),
+            ..Fake::ready("3.3.0")
+        };
+        let serves = vec![line(0, "old"), line(5, "new")];
+        for (on, passed) in [("old", true), ("new", false)] {
+            let log = Log(Ok(vec![
+                ("riff-server serves", serves.clone()),
+                ("status=500", vec![line(40, on)]),
+            ]));
+            let forge = forge();
+            let done = check(&forge, "v3.3.0", &served("3.3.0"), &log).unwrap();
+            assert!(
+                matches!(done, Checked::Ran { passed: p, .. } if p == passed),
+                "a 500 of {on}: {done:?}"
+            );
+            let want = if passed {
+                "no 500 of riff-server: passed"
+            } else {
+                "no 500 of riff-server: failed: 1 replies 500"
+            };
+            assert!(forge.log()[0].contains(want), "{:?}", forge.log());
         }
     }
 

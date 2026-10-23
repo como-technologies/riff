@@ -3701,7 +3701,8 @@ riff checks that:
 
 - `riff server` shows the build of the release;
 - the Cloud Run log has no run of 503 longer than 20 s, no 500 of
-  `riff-server`, and no 401 or 429 of the token store;
+  the new revision of `riff-server`, and no 401 or 429 of the token
+  store;
 - no old instance takes the lease;
 - each host has the version of the release: the part `Hosts` of
   `riff who`. The commit and the time of the build of a host do not
@@ -4059,14 +4060,21 @@ riff server
 
 After each deploy, count the 500s of `riff-server` and the replies of
 Cloud Run apart. Put the time of the deploy in place of `START`, for
-example `2026-10-17T19:30:00Z`.
+example `2026-10-17T19:30:00Z`, and the new revision in place of
+`REVISION`, for example `riff-server-00034-xs6`.
 
-A 500 of `riff-server` is a bug: open an issue with the path and the
-log line. Its count must be 0:
+A 500 of the new revision is a bug: open an issue with the path and
+the log line. Its count must be 0:
 
 ```sh
-riff cloud log shared --limit 1000 --filter 'timestamp>="START" AND httpRequest.status=500 AND NOT textPayload:"no available instance"' | wc -l
+riff cloud log shared --limit 1000 --filter 'timestamp>="START" AND resource.labels.revision_name="REVISION" AND httpRequest.status=500 AND NOT textPayload:"no available instance"' | wc -l
 ```
+
+A 500 of an older revision is not a bug. In the switch, Cloud Run can
+start one more instance of the old revision. It sees that the new
+revision holds the lease, and it stops before it serves, so a call
+that reaches it gets a 500. `riff release check` counts only the 500s
+of the newest revision.
 
 Cloud Run replies 500 or 429 with `no available instance` by itself,
 for a few seconds after the old instance exits. `riff` tries these

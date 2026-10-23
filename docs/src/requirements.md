@@ -8058,6 +8058,12 @@ items of Wave C that end riff-server in the Backlog
   `gcloud`, each check of `riff release check` that reads the Cloud Run
   log names the step for a person on the host: `riff release check
   vX.Y.Z` in a terminal.
+- **01M5MQHDMBYG187T0Q622XWBMN** The check "no 500 of riff-server" of
+  riff release check counts only the 500 replies of the newest revision:
+  the revision of the last line "riff-server serves" after the deploy.
+  An instance of an older revision that starts in the switch to the new
+  one stops before it serves, and its 500 replies do not count. With no
+  line "riff-server serves", each 500 reply counts.
 
 ### The real-session test
 
