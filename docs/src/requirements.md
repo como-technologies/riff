@@ -5660,6 +5660,14 @@ part when they merge.
   which starts no container. A session of the fake runtime prints the
   events that the test gives, keeps its input, and ends with the exit 0
   when its input closes. A stop ends it with no exit code.
+- **01M5MRG35BYRGZYD4VQVV8ZTYX** Each command of `riff`, and
+  `riff-server log`, ends with the exit 0 and prints nothing more when
+  its stdout or stderr is a pipe that the reader closed, for example in
+  `riff daemon status | head -1`. A panic hook does it. The process
+  keeps SIGPIPE ignored, so a write to a socket or to the pipe of a
+  child process still fails with an error and does not kill the process.
+  `riff daemon`, `riff relay` and the server of `riff-server` keep the
+  default panic hook.
 
 ### Ship
 
