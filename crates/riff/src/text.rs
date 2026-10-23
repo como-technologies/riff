@@ -5723,8 +5723,8 @@ pub fn daemon_unit_moved(path: &Path, old: &Path, new: &Path) -> String {
 pub const DAEMON_STARTS_AGAIN: &str =
     "The riff daemon runs no session. It starts again on the new riff now.";
 
-/// `riff update` found the daemon on an old riff with `busy` sessions,
-/// starts that wait or jobs (01M517BTJ9EV4ZGPYRB6HXJJC9).
+/// `riff update` found the daemon on an old riff with `busy` sessions
+/// or jobs (01M517BTJ9EV4ZGPYRB6HXJJC9).
 ///
 /// ```
 /// assert_eq!(
@@ -6414,7 +6414,7 @@ pub fn daemon_no_reply(host: &str, wait: std::time::Duration) -> String {
 /// );
 /// assert_eq!(
 ///     riff::text::daemon_restart(Restart::Later(2), "3.0.1"),
-///     "The riff daemon runs an old riff, build 3.0.1, and 2 sessions, starts or jobs. It \
+///     "The riff daemon runs an old riff, build 3.0.1, and 2 sessions or jobs. It \
 ///      starts again on the new riff after the last one."
 /// );
 /// assert!(riff::text::daemon_restart(Restart::Now, "3.0.1").contains("starts again on the new riff now"));
@@ -6428,7 +6428,7 @@ pub fn daemon_restart(restart: crate::daemon::remote::Restart, build: &str) -> S
             )
         }
         Restart::Later(busy) => format!(
-            "The riff daemon runs an old riff, build {build}, and {busy} sessions, starts or jobs. \
+            "The riff daemon runs an old riff, build {build}, and {busy} sessions or jobs. \
              It starts again on the new riff after the last one."
         ),
         Restart::Now => format!(

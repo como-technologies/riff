@@ -310,8 +310,10 @@
 //! the old one. The daemon runs an old riff when its binary was
 //! replaced, or when its unit names another riff ([`stale`]). Two steps
 //! start it again on the new riff, only when it is idle: it owns no
-//! session, no start waits for room, and no job of a wave runs
-//! ([`Status::busy`]).
+//! session, and no job of a wave runs ([`Status::busy`]). A start that
+//! waits for room does not count, also with the limit 0: the wave is in
+//! `waves.json`, so the new daemon waits for room for it again
+//! (01M5MR8D6EBWGC5EY1K067F6J6).
 //!
 //! - `riff update` ([`after_update`]): when the `ExecStart` of the unit
 //!   is not the `riff` on `PATH`, it writes the unit again with that riff
@@ -332,7 +334,7 @@
 //!     X -- yes --> O
 //!     W --> O{"the daemon runs an old riff?"}
 //!     O -- no --> N["nothing"]
-//!     O -- yes --> B{"a session, a start that waits,<br/>or a job of a wave?"}
+//!     O -- yes --> B{"a session or a job of a wave?<br/>(a start that waits does not count)"}
 //!     B -- no --> R["systemctl --user --no-block try-restart riff.service"]
 //!     B -- yes --> L["the daemon starts again<br/>after its last session"]
 //!     L --> E["the end of a session or a job, each minute"]
@@ -1004,9 +1006,11 @@ pub struct Status {
 }
 
 impl Status {
-    /// The work of the daemon: its sessions, the starts that wait for
-    /// room, and the jobs of its waves. The daemon starts again on a new
-    /// riff only at 0 (01M517BTJ9EV4ZGPYRB6HXJJC9).
+    /// The work of the daemon: its sessions and the jobs of its waves.
+    /// The daemon starts again on a new riff only at 0
+    /// (01M517BTJ9EV4ZGPYRB6HXJJC9). A start that waits for room does
+    /// not count: with the limit 0 it waits always, and the new daemon
+    /// waits for room for the wave again (01M5MR8D6EBWGC5EY1K067F6J6).
     ///
     /// ```
     /// let status: riff::daemon::Status = serde_json::from_value(serde_json::json!({
@@ -1014,12 +1018,12 @@ impl Status {
     /// }))?;
     /// assert_eq!(status.busy(), 0);
     /// let waits = riff::daemon::Status { waiting: vec!["riff-issue-12".into()], ..status.clone() };
-    /// assert_eq!(waits.busy(), 1);
+    /// assert_eq!(waits.busy(), 0);
     /// assert_eq!(riff::daemon::Status { jobs: 2, ..status }.busy(), 2);
     /// # Ok::<(), serde_json::Error>(())
     /// ```
     pub fn busy(&self) -> usize {
-        self.sessions.len() + self.waiting.len() + self.jobs
+        self.sessions.len() + self.jobs
     }
 }
 
@@ -5609,10 +5613,11 @@ mod tests {
         );
     }
 
-    /// 01M579Z9SAN24QGN1VV5C7EHM9: a daemon on an old riff starts again
-    /// only when it runs no session, after the reply.
+    /// 01M579Z9SAN24QGN1VV5C7EHM9, 01M5MR8D6EBWGC5EY1K067F6J6: a daemon
+    /// on an old riff starts again after the reply, also while a start
+    /// waits for room with the limit 0.
     #[tokio::test]
-    async fn a_restart_on_an_old_riff_waits_for_the_last_session() {
+    async fn a_restart_on_an_old_riff_does_not_wait_for_a_start_that_waits_for_room() {
         let root = tempfile::tempdir().unwrap();
         let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = asked.clone();
@@ -5632,16 +5637,10 @@ mod tests {
         crate::room::set(&dir, none).unwrap();
         let daemon = Daemon::new(Fake::default(), dir).unwrap().with_again(again);
         let build = Build::this().to_string();
-        // A start that waits for room.
+        // A start that waits for room: with the limit 0, always.
         let room = daemon.room().clone();
         let waits = tokio::spawn(async move { room.admit("a start", || 0, |_| {}).await });
         until(|| daemon.room().waiting().len() == 1).await;
-        assert_eq!(
-            daemon.restart_now().await,
-            text::daemon_restart(remote::Restart::Later(1), &build)
-        );
-        waits.abort();
-        let _ = waits.await;
         assert_eq!(
             daemon.restart_now().await,
             text::daemon_restart(remote::Restart::Now, &build)
@@ -5649,6 +5648,9 @@ mod tests {
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
         tokio::time::sleep(RESTART_DELAY + Duration::from_secs(1)).await;
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(daemon.room().waiting().len(), 1);
+        waits.abort();
+        let _ = waits.await;
     }
 
     /// The result of a turn that an interrupt stopped, as `claude -p`
@@ -6399,6 +6401,55 @@ mod tests {
             .expect("the end of the session looks")
             .unwrap();
         assert_eq!(units.calls(), ["rewrite", "try-restart"]);
+    }
+
+    /// With the limit 0, a start waits for room always. `riff update`
+    /// and the look of the daemon start the daemon again on the new riff
+    /// all the same (01M517BTJ9EV4ZGPYRB6HXJJC9,
+    /// 01M517BTP6BAGTRBYWPX9GPVE0, 01M5MR8D6EBWGC5EY1K067F6J6).
+    #[tokio::test]
+    async fn after_an_update_a_start_that_waits_for_room_does_not_keep_the_old_riff() {
+        let here = Here::new(Fake::default()).await;
+        let none = crate::room::Change {
+            sessions: Some(0),
+            ..crate::room::Change::default()
+        };
+        crate::room::set(&here.dir, none).unwrap();
+        let room = here.daemon.room().clone();
+        let waits = tokio::spawn(async move { room.admit("a start", || 0, |_| {}).await });
+        until(|| here.daemon.room().waiting().len() == 1).await;
+        assert_eq!(here.daemon.status().await.busy(), 0);
+
+        let (check, riff) = check_and_new(&here);
+        let units = Arc::new(Units::of(&check));
+        let lines = after_update(&*units, &riff, &here.dir).await.unwrap();
+        assert_eq!(
+            lines,
+            [
+                text::daemon_unit_moved(Path::new(UNIT_FILE), &check, &riff),
+                text::DAEMON_STARTS_AGAIN.to_owned()
+            ]
+        );
+        assert_eq!(units.calls(), ["rewrite", "try-restart"]);
+
+        let asked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let restart = {
+            let asked = asked.clone();
+            move || {
+                asked.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        };
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            here.daemon.restart_when_old(|| true, restart),
+        )
+        .await
+        .expect("a start that waits does not keep the daemon");
+        assert!(asked.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(here.daemon.room().waiting().len(), 1);
+        waits.abort();
+        let _ = waits.await;
     }
 
     /// The unit runs the riff on `PATH`, and the daemon runs that riff:

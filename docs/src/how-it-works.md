@@ -607,9 +607,10 @@ The riff daemon runs no session. It starts again on the new riff now.
 ```
 
 The stop of the daemon stops no container. Still, riff starts the
-daemon again only when it owns no session, no start waits for room,
-and no job of a wave runs. The daemon looks at the end of each session
-and each job, and each minute:
+daemon again only when it owns no session and no job of a wave runs. A
+start that waits for room does not stop it, also with the limit 0: the
+new daemon waits for room for the wave again. The daemon looks at the
+end of each session and each job, and each minute:
 
 ```mermaid
 flowchart TD
@@ -618,7 +619,7 @@ flowchart TD
     X -- yes --> O
     W --> O{"the daemon runs an old riff?"}
     O -- no --> N["nothing to do"]
-    O -- yes --> B{"a session, a start that waits,<br/>or a job of a wave?"}
+    O -- yes --> B{"a session or a job of a wave?<br/>(a start that waits for room does not count)"}
     B -- no --> R["systemd starts the daemon again"]
     B -- yes --> L["the daemon waits"]
     L --> E["the end of a session or a job, or a minute"]

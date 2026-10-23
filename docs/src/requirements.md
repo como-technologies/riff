@@ -5973,15 +5973,15 @@ part when they merge.
 - **01M517BTJ9EV4ZGPYRB6HXJJC9** The daemon runs an old riff when its
   binary was replaced, or when its unit names another riff. Then
   `riff update` runs `systemctl --user --no-block try-restart
-  riff.service` only when the daemon owns no session, no start waits
-  for room, and no job of a wave runs. Else it says that the daemon
+  riff.service` only when the daemon owns no session and no job of a
+  wave runs (01M5MR8D6EBWGC5EY1K067F6J6). Else it says that the daemon
   starts again after its last session. A daemon that does not answer
   stays as it is.
 - **01M517BTP6BAGTRBYWPX9GPVE0** The daemon that the unit runs looks
   for an old riff at the end of each session and of each job, and each
-  minute. When it runs an old riff and owns no session, no start
-  waits and no job runs, it asks systemd one time to start the unit
-  again. A failed ask is one line in its log.
+  minute. When it runs an old riff, owns no session and no job runs
+  (01M5MR8D6EBWGC5EY1K067F6J6), it asks systemd one time to start the
+  unit again. A failed ask is one line in its log.
 - **01M53NEE2AVNHA8RD8N40FPH03** The new start of the unit stops the
   `systemctl` child of the daemon that asks for it. When that child
   ends by a signal with no text on stderr, the new start runs: the
@@ -6135,6 +6135,11 @@ part when they merge.
   the limit. This supersedes the load part of
   01M421QPZ9E01PQ62PDBH378SJ.
   Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
+- **01M5MR8D6EBWGC5EY1K067F6J6** A start that waits for room does not
+  keep the daemon on an old riff. The daemon starts again on the new
+  riff when it owns no session and no job of a wave runs, also when a
+  start waits, for example with the limit 0. A wave in `waves.json`
+  waits for room again in the new daemon.
 
 ### riff relay
 
