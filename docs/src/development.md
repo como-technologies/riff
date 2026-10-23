@@ -682,8 +682,10 @@ riff daemon status
 ```
 
 It shows the process ID, the build and the sessions of the daemon.
-When no daemon answers, it shows the state of the unit, and exits
-with 1. To see the log of the daemon:
+Just after a start or a restart, the daemon does not listen yet: while
+systemd says that the unit is active, riff tries again for 5 s. When
+no daemon answers, it shows the state of the unit, and exits with 1.
+To see the log of the daemon:
 
 ```sh
 journalctl --user -u riff -f

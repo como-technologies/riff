@@ -25,6 +25,16 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
+/// The calls of `systemctl` in `log` that change the unit: each call
+/// but `is-active`, which riff also makes to wait for a daemon that
+/// starts (01M5MS2T8VY8NX4VBMQTCKWDKH).
+fn changes(log: &str) -> String {
+    log.lines()
+        .filter(|l| !l.ends_with("is-active riff.service"))
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
 /// The output of `cmd`, away from the runtime of the test.
 async fn output(mut cmd: std::process::Command) -> Output {
     tokio::task::spawn_blocking(move || cmd.output().unwrap())
@@ -214,7 +224,7 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
     }
     assert!(stdout.contains("The riff daemon runs: pid "), "{stdout}");
     assert_eq!(
-        machine.read("systemctl.log"),
+        changes(&machine.read("systemctl.log")),
         "systemctl --user daemon-reload\n\
          systemctl --user enable riff.service\n\
          systemctl --user restart riff.service\n"
@@ -243,7 +253,7 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
     );
     assert!(stdout.contains("riff init keeps it."), "{stdout}");
     // No second install and no second restart.
-    assert_eq!(machine.read("systemctl.log").lines().count(), 3);
+    assert_eq!(changes(&machine.read("systemctl.log")).lines().count(), 3);
     assert_eq!(pulls(&machine.read("podman.log")), 1);
 
     // systemd stops the daemon with a SIGTERM.
@@ -316,6 +326,58 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
     assert_eq!(machine.read("systemctl.log"), "");
     assert_eq!(machine.read("podman.log"), "podman --version\n");
     assert!(!machine.unit().exists());
+}
+
+/// 01M5MS2T8VY8NX4VBMQTCKWDKH: while systemd starts the unit, `riff daemon status` waits for
+/// the daemon and shows it. With no unit that runs, it fails at once.
+#[tokio::test]
+async fn riff_daemon_status_waits_while_the_unit_starts() {
+    let machine = Machine::new();
+    let out = machine
+        .command(&machine.repo, &["daemon", "status"])
+        .output()
+        .unwrap();
+    let all = format!("{}{}", text(&out.stdout), text(&out.stderr));
+    assert!(!out.status.success(), "{all}");
+    assert!(all.contains("No riff daemon answers on"), "{all}");
+
+    // The unit is active, and its daemon listens one second later.
+    let base = machine.command(&machine.repo, &["daemon"]);
+    let mut late = std::process::Command::new("sh");
+    late.args(["-c", "sleep 1; exec \"$@\"", "sh"])
+        .arg(base.get_program())
+        .arg("daemon")
+        .current_dir(&machine.repo)
+        .stdout(std::fs::File::create(machine.bin.join("daemon.out")).unwrap())
+        .stderr(std::process::Stdio::null());
+    for (key, value) in base.get_envs() {
+        match value {
+            Some(value) => late.env(key, value),
+            None => late.env_remove(key),
+        };
+    }
+    let mut daemon = late.spawn().unwrap();
+    std::fs::write(machine.bin.join("daemon.pid"), daemon.id().to_string()).unwrap();
+    let out = output(machine.command(&machine.repo, &["daemon", "status"])).await;
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert!(
+        text(&out.stdout).starts_with("The riff daemon runs: "),
+        "{}",
+        text(&out.stdout)
+    );
+
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(daemon.id() as i32),
+        nix::sys::signal::Signal::SIGTERM,
+    )
+    .unwrap();
+    wait_for(&machine.bin.join("daemon.out"), "The riff daemon stops").await;
+    daemon.wait().unwrap();
 }
 
 #[tokio::test]

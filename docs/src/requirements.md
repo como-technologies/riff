@@ -6135,6 +6135,11 @@ part when they merge.
   the limit. This supersedes the load part of
   01M421QPZ9E01PQ62PDBH378SJ.
   Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
+- **01M5MS2T8VY8NX4VBMQTCKWDKH** A riff command that asks the riff
+  daemon of this machine tries again for 5 s when no daemon answers
+  while systemd says that riff.service is active or activating: the
+  daemon listens a short time after its start. With no unit that runs,
+  it fails at once.
 
 ### riff relay
 
