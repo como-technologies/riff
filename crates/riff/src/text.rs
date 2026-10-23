@@ -5245,6 +5245,18 @@ pub const DAEMON_RESUME_ONLY_LEAD: &str =
 pub const DAEMON_HOST_ONLY_LEAD: &str =
     "Only the lead can send a --host request through the riff daemon.";
 
+/// A session that is not the lead asks the daemon to read the Cloud Run
+/// log.
+pub const DAEMON_LOG_ONLY_LEAD: &str =
+    "Only the lead can read the Cloud Run log through the riff daemon.";
+
+/// The daemon runs on a host with no `gcloud`. [`crate::reach::DaemonLog`]
+/// knows the text.
+pub const DAEMON_NO_GCLOUD: &str = "gcloud does not run on the host of the riff daemon";
+
+/// The note to the lead when the sign-in of `gcloud` on the host ended.
+pub const DAEMON_GCLOUD_SIGNIN: &str = "The sign-in of gcloud on the host ended, so riff cannot read the Cloud Run log. A person on the host runs: gcloud auth login. Then run riff release check again.";
+
 /// A first line that is not a hello of the protocol.
 pub const DAEMON_NO_HELLO: &str =
     "The riff daemon cannot read the first line: it is not a hello of riff.";
