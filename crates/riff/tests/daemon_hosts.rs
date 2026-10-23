@@ -795,3 +795,37 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     let seen = std::fs::read_to_string(&log).unwrap_or_default();
     assert!(!seen.contains("real-session"), "{seen}");
 }
+
+/// #1262: a daemon that runs the wave of a repository serves `--host` for
+/// it at its start, with no `riff daemon host`: it writes `served.json`
+/// from `waves.json`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_daemon_with_a_wave_and_no_served_file_serves_host() {
+    let api = start_server().await;
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let lead = session(&main, "mike", "a", "l1");
+    api.register(&lead).await.unwrap();
+    api.set_riff(&lead, RiffState::Running).await.unwrap();
+    let mut a = Host::new("a", api.base());
+    a.claude_ends_in(300);
+    std::fs::create_dir_all(a.dir()).unwrap();
+    let repo = lead.place().repo_text();
+    let waves = serde_json::json!({repo.clone(): {
+        "repo": repo, "main": main, "server": api.base(), "host": "a",
+    }});
+    std::fs::write(a.dir().join("waves.json"), waves.to_string()).unwrap();
+    assert!(!a.dir().join("served.json").exists());
+    a.start().await;
+
+    let out = until("the status of the host", || async {
+        let out = a
+            .run(&main, &["daemon", "status", "--host", "a"], Some("l1"))
+            .await;
+        out.status.success().then_some(out)
+    })
+    .await;
+    assert!(text(&out.stdout).contains("Its folder:"), "{out:?}");
+    let served = remote::read_served(&a.dir()).unwrap();
+    assert_eq!(served[&repo].wave.server, api.base());
+}

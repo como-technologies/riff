@@ -470,7 +470,7 @@ your lead once in each repository of the message:
 | The process that starts the update | The repository of the message |
 |---|---|
 | A session, or a `riff` command in a clone | The repository of the session or the clone |
-| The riff daemon | Each repository whose wave the daemon runs on the same riff (`riff wave run` or `riff daemon host` in its main clone) |
+| The riff daemon | Each repository whose wave the daemon runs on the same riff (`riff wave run` or `riff daemon host` in its main clone; a daemon start serves the waves it already runs) |
 
 The riff daemon has no repository of its own. Its working folder can
 be in the work tree of another repository, for example a home folder
