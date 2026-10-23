@@ -8225,6 +8225,11 @@ items of Wave C that end riff-server in the Backlog
   leaves out DATA/gvfs-metadata, for example
   ~/.local/share/gvfs-metadata: gvfsd-metadata of GNOME writes there
   when the desktop touches a file.
+- **01M5NBZRJ71MREAJCPNVFYVKCM** While the real-session test of a merged
+  release runs, `next:` of `riff release status` and `riff release test`
+  says to wait for the test on its commit. After a fail on the newest
+  commit, it names the fix. After a pass, it names `riff release
+  publish`.
 
 ## The UIs
 

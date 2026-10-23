@@ -597,6 +597,9 @@ pub struct Stage {
     /// For [`State::Failed`]: true when the checks after the deploy
     /// failed, false when the deploy failed.
     pub checks_failed: bool,
+    /// For [`State::Merged`]: the newest commit of `origin/main` and the
+    /// state of its real-session test, when it has one.
+    pub test: Option<(String, TestState)>,
     /// The newest published release before it.
     pub previous: Option<Semver>,
 }
@@ -645,10 +648,7 @@ pub fn tested(forge: &dyn Forge, merge: &str) -> Result<Option<String>> {
 /// The commit that the real-session test runs on for a merged release:
 /// the newest commit of `origin/main`, which holds the merge commit
 /// (01M5924C8BTT6CW05Q0YZJ1GCY).
-fn test_commit(forge: &dyn Forge, stage: &Stage) -> Result<Option<String>> {
-    let Some(merge) = &stage.merge else {
-        return Ok(None);
-    };
+fn test_commit(forge: &dyn Forge, merge: &str) -> Result<Option<String>> {
     Ok(forge.commits_since(merge)?.into_iter().next())
 }
 
@@ -663,7 +663,7 @@ pub fn test_target(forge: &dyn Forge, tag_text: &str) -> Result<String> {
              nothing. next: riff release status"
         );
     };
-    let commit = test_commit(forge, &stage)?
+    let commit = test_commit(forge, stage.merge.as_deref().unwrap_or_default())?
         .ok_or_else(|| anyhow!("riff release test: origin/main has no commit of {tag}"))?;
     if forge.test_state(&commit)? == Some(TestState::Running) {
         bail!(
@@ -703,6 +703,7 @@ pub fn stage(forge: &dyn Forge, version: Semver) -> Result<Option<Stage>> {
         merge: None,
         deploy: None,
         checks_failed: false,
+        test: None,
         previous,
     };
     if let Some(pr) = forge.release_pr(&title)? {
@@ -728,7 +729,12 @@ pub fn stage(forge: &dyn Forge, version: Semver) -> Result<Option<Stage>> {
     } else if let Some(merge) = &stage.merge {
         match tested(forge, merge)? {
             Some(_) => State::Tested,
-            None => State::Merged,
+            None => {
+                if let Some(commit) = test_commit(forge, merge)? {
+                    stage.test = forge.test_state(&commit)?.map(|state| (commit, state));
+                }
+                State::Merged
+            }
         }
     } else {
         match forge.open_release()? {
@@ -750,7 +756,7 @@ pub fn stage(forge: &dyn Forge, version: Semver) -> Result<Option<Stage>> {
 ///
 /// let mut stage = Stage {
 ///     version: version("3.3.0")?, state: State::Tested, pr: Some(1140), merge: Some("m1".into()),
-///     deploy: None, checks_failed: false, previous: Some(version("3.2.0")?),
+///     deploy: None, checks_failed: false, test: None, previous: Some(version("3.2.0")?),
 /// };
 /// assert_eq!(next(&stage), "riff release publish v3.3.0");
 /// stage.state = State::Waiting;
@@ -771,9 +777,19 @@ pub fn next(stage: &Stage) -> String {
             Some(n) => format!("wait for the verify and the merge of pull request #{n}"),
             None => "wait for the verify and the merge of the release pull request".to_owned(),
         },
-        State::Merged => {
-            format!("riff release test {tag} --host HOST, or just real-session on origin/main")
-        }
+        State::Merged => match &stage.test {
+            Some((commit, TestState::Running)) => {
+                format!("wait for the real-session test on {commit}; riff release status shows it")
+            }
+            Some((_, TestState::Failed)) => {
+                "file the bug in the wave, then just real-session on origin/main \
+                 after its fix merges"
+                    .to_owned()
+            }
+            _ => {
+                format!("riff release test {tag} --host HOST, or just real-session on origin/main")
+            }
+        },
         State::Tested => format!("riff release publish {tag}"),
         State::Published => match run {
             Some(run) => format!("wait for the jobs of the CI run {run}"),
@@ -799,7 +815,7 @@ pub fn next(stage: &Stage) -> String {
 ///
 /// let stage = Stage {
 ///     version: version("3.3.0")?, state: State::Deployed, pr: None, merge: None,
-///     deploy: None, checks_failed: false, previous: None,
+///     deploy: None, checks_failed: false, test: None, previous: None,
 /// };
 /// assert_eq!(stage_lines(Some(&stage)), "release: v3.3.0 deployed\nnext: riff release check v3.3.0\n");
 /// assert_eq!(stage_lines(None), "release: none\nnext: riff release cut X.Y.Z at the end of the wave\n");
@@ -1174,7 +1190,7 @@ pub fn status(forge: &dyn Forge) -> Result<Status> {
     };
     let stage = current(forge)?;
     let test = match stage.as_ref().filter(|s| s.state == State::Merged) {
-        Some(stage) => test_commit(forge, stage)?
+        Some(stage) => test_commit(forge, stage.merge.as_deref().unwrap_or_default())?
             .map(|commit| forge.test_state(&commit).map(|state| (commit, state)))
             .transpose()?,
         None => None,
@@ -1816,6 +1832,7 @@ pub fn check(
                 merge: None,
                 deploy: Some(deploy),
                 checks_failed: false,
+                test: None,
                 previous: None,
             };
             bail!(
@@ -2884,6 +2901,8 @@ mod tests {
         waiting: Vec<Waiting>,
         /// The commits with a pass or a fail of the real-session test.
         real: Vec<(&'static str, bool)>,
+        /// The commits whose real-session test runs.
+        running: Vec<&'static str>,
         /// The commits from the merge commit to origin/main, newest first.
         since: Vec<&'static str>,
         deploy: Option<Deploy>,
@@ -3007,6 +3026,9 @@ mod tests {
                 .map(|(_, p)| *p))
         }
         fn test_state(&self, commit: &str) -> Result<Option<TestState>> {
+            if self.running.contains(&commit) {
+                return Ok(Some(TestState::Running));
+            }
             Ok(self.real.iter().find(|(c, _)| *c == commit).map(|(_, p)| {
                 if *p {
                     TestState::Passed
@@ -3431,6 +3453,23 @@ mod tests {
                 },
                 State::Merged,
                 "riff release test v3.3.0 --host HOST, or just real-session on origin/main",
+            ),
+            (
+                Fake {
+                    real: vec![],
+                    running: vec!["m1"],
+                    ..Fake::ready("3.3.0")
+                },
+                State::Merged,
+                "wait for the real-session test on m1; riff release status shows it",
+            ),
+            (
+                Fake {
+                    real: vec![("m1", false)],
+                    ..Fake::ready("3.3.0")
+                },
+                State::Merged,
+                "file the bug in the wave, then just real-session on origin/main after its fix merges",
             ),
             (
                 Fake::ready("3.3.0"),
