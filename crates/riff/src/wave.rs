@@ -40,6 +40,8 @@
 //!
 //! - an item while the riff or the repository is paused;
 //! - a held item (01M4ZV3B6M7PZRJ39XTXBZP3ZH);
+//! - a tracker issue, its build or its verify: it has no code of its
+//!   own ([`rollout::Issue::tracker`], 01M5ND16V2SVN8A9K7W90VC6X9);
 //! - an item that a session claims, or that a job of the wave runs;
 //! - the verify of an item while a session holds the item: its author
 //!   still works. The verify is a new session: an author never verifies
@@ -1842,6 +1844,10 @@ mod tests {
         no_push: bool,
         /// The work of each claim of a session, in order.
         works: Vec<Work>,
+        /// The title of each item, else `item N`.
+        titles: BTreeMap<u64, String>,
+        /// The labels of each item.
+        labels: BTreeMap<u64, Vec<String>>,
     }
 
     impl Forge {
@@ -1864,8 +1870,29 @@ mod tests {
                 .unwrap_or_else(|| format!("c{issue}"))
         }
 
-        /// The open pull requests, as `gh` gives them.
+        /// The open milestone `Wave 1` with the items, and the open pull
+        /// requests, as `gh` gives them.
         fn open(&self) -> rollout::Open {
+            let wave = || rollout::Milestone {
+                title: "Wave 1".into(),
+            };
+            let issues = self.items.iter().map(|n| rollout::Issue {
+                number: *n,
+                title: self
+                    .titles
+                    .get(n)
+                    .cloned()
+                    .unwrap_or_else(|| format!("item {n}")),
+                milestone: Some(wave()),
+                labels: self
+                    .labels
+                    .get(n)
+                    .into_iter()
+                    .flatten()
+                    .map(|name| rollout::Label { name: name.clone() })
+                    .collect(),
+                ..rollout::Issue::default()
+            });
             let pulls = self.pulls.iter().map(|(n, pr)| rollout::Pull {
                 number: 40 + n,
                 branch: branch_of(*n),
@@ -1882,8 +1909,9 @@ mod tests {
                 ..rollout::Pull::default()
             });
             rollout::Open {
+                milestones: vec![wave()],
+                issues: issues.collect(),
                 pulls: pulls.collect(),
-                ..rollout::Open::default()
             }
         }
     }
@@ -1899,18 +1927,11 @@ mod tests {
         fn look<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<Look>> {
             Box::pin(async move {
                 let forge = lock(&self.forge);
-                let claimed = |item: &str| forge.claims.contains_key(item);
-                let verifies = forge
-                    .pulls
-                    .iter()
-                    .filter(|(n, pr)| **pr == Pr::Asked && !claimed(&format!("verify-issue-{n}")))
-                    .map(|(n, _)| format!("verify-issue-{n}"));
-                let builds = forge
-                    .items
-                    .iter()
-                    .filter(|n| !forge.pulls.contains_key(n) && !claimed(&format!("issue-{n}")))
-                    .map(|n| format!("issue-{n}"));
-                let (free, conflicts) = rebases(&forge.open(), verifies.chain(builds).collect());
+                // The free work of the forge, as `look_on` takes it. The
+                // pick skips a held item.
+                let open = forge.open();
+                let claims: HashSet<String> = forge.claims.keys().cloned().collect();
+                let (free, conflicts) = rebases(&open, open.free_work(&claims, &HashSet::new()));
                 Ok(Look {
                     paused: false,
                     free,
@@ -2301,6 +2322,27 @@ mod tests {
         let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
         assert_eq!(started, ["issue-2"], "no held item and no held verify");
         assert_eq!(forge.pulls.get(&2), Some(&Pr::Asked), "the verify waits");
+    }
+
+    /// A tracker issue, by its label or by its title, gets no build and
+    /// no verify (01M5ND16V2SVN8A9K7W90VC6X9).
+    #[tokio::test]
+    async fn a_tracker_never_starts() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2, 3, 4], 4, free).await;
+        {
+            let mut forge = here.forge();
+            forge.labels.insert(1, vec!["bug".into(), "tracker".into()]);
+            forge.titles.insert(2, "Tracker: the cloud".into());
+            forge.labels.insert(3, vec!["tracker".into()]);
+            forge.pulls.insert(3, Pr::Asked);
+        }
+        here.run();
+        here.until(4, |h| h.running("issue-4").is_some()).await;
+        here.idle(4).await;
+        let forge = here.forge();
+        let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(started, ["issue-4"], "no build and no verify of a tracker");
     }
 
     #[tokio::test]

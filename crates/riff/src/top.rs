@@ -181,6 +181,8 @@ struct GhIssue {
     number: u64,
     #[serde(deserialize_with = "crate::text::forge_de")]
     title: String,
+    #[serde(default)]
+    labels: Vec<crate::rollout::Label>,
     milestone: Option<GhMilestone>,
 }
 
@@ -202,14 +204,16 @@ pub fn issue_args(repo: &str) -> Vec<String> {
         "--limit",
         "1000",
         "--json",
-        "number,title,milestone",
+        "number,title,milestone,labels",
     ]
     .map(String::from)
     .to_vec()
 }
 
 /// The issues ([`Issues`]) in the JSON of `gh issue list --json
-/// number,title,milestone`. `None` for other text.
+/// number,title,milestone,labels`. A tracker issue
+/// ([`riff_client::waves::is_tracker`]) is in [`Issues::trackers`].
+/// `None` for other text.
 ///
 /// ```
 /// use riff::top::parse_issues;
@@ -219,10 +223,12 @@ pub fn issue_args(repo: &str) -> Vec<String> {
 ///   {"number": 13, "title": "Later", "milestone": {"title": "Wave 11"}},
 ///   {"number": 9, "title": "Old", "milestone": {"title": "Wave 9: Cloud"}},
 ///   {"number": 4, "title": "Kept", "milestone": {"title": "Backlog"}},
-///   {"number": 5, "title": "New", "milestone": null}
+///   {"number": 5, "title": "New", "milestone": null},
+///   {"number": 6, "title": "The parts", "milestone": null, "labels": [{"name": "tracker"}]}
 /// ]"#;
 /// let issues = parse_issues(json).unwrap();
 /// assert_eq!(issues.titles[&12], "Show the wave");
+/// assert_eq!(issues.trackers, [6].into());
 /// assert_eq!(issues.wave(), Some(&("Wave 9: Cloud".into(), vec![9])));
 /// assert_eq!(parse_issues("not json"), None);
 /// ```
@@ -231,6 +237,10 @@ pub fn parse_issues(json: &str) -> Option<Issues> {
     Some(Issues::of(
         list.into_iter()
             .map(|i| Issue {
+                tracker: riff_client::waves::is_tracker(
+                    &i.title,
+                    i.labels.iter().map(|l| l.name.as_str()),
+                ),
                 number: i.number,
                 title: i.title,
                 milestone: i.milestone.map(|m| m.title),

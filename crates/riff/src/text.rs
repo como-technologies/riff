@@ -794,6 +794,10 @@ pub fn pull_no_verify(number: u64, item: &str, head: &str, wait: std::time::Dura
 /// ([`crate::rollout::BROKEN_MAIN`], 01M51QEYPGD6W345MZ4F85C38F).
 pub const BROKEN_MAIN_LABEL: &str = "main is broken: the rollout of riff gives this item first";
 
+/// The description of the label of a tracker issue
+/// ([`riff_client::waves::TRACKER`], 01M5ND16V2SVN8A9K7W90VC6X9).
+pub const TRACKER_LABEL: &str = "a tracker: its parts are separate items, and no session does it";
+
 /// The first 7 characters of a commit.
 fn short(commit: &str) -> String {
     commit.chars().take(7).collect()
@@ -1220,6 +1224,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///     held,
 ///     claimed,
 ///     verify: vec![],
+///     tracker: vec![],
 /// };
 /// let items = Items {
 ///     boards: vec![

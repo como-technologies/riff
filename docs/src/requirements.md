@@ -6348,6 +6348,13 @@ part when they merge.
   release issue of a release: the issue with the label `release`, made
   by `riff release cut`. It starts no build, no verify and no rebase for
   it.
+- **01M5ND16V2SVN8A9K7W90VC6X9** A tracker issue is an issue with the
+  label `tracker`, or an issue whose title starts with `Tracker:`. It
+  has no code of its own: its parts are separate items. A wave starts no
+  build session and no verify session for a tracker issue, and it is no
+  free work of the rollout of the lead. `riff wave list` and `riff top`
+  show it in the group `tracker`, never in `free`. `riff wave make`
+  makes the label `tracker` when it is missing.
 
 ### The lead, the view and the takeover
 
