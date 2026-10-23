@@ -1935,7 +1935,9 @@ flowchart LR
 The test does these steps. The messages name them:
 
 1. Check the host: podman runs rootless, `gh` has a sign-in, and
-   `riff image` names the image.
+   `riff image` names the image. Then the test starts its own
+   riff-server. See
+   [Which riff-server the test uses](#which-riff-server-the-test-uses).
 2. List the home: the test lists the files of your home.
 3. Make the scratch item: an issue in the backlog that adds one line
    to the book. No worker takes an item of the backlog.
@@ -1971,6 +1973,32 @@ runs, frees the hold, and removes the folder of the session. It also
 cleans up when you press Ctrl-C. A second Ctrl-C stops it at once: then
 stop the daemon of the test yourself, with the process ID that step 5
 shows.
+
+### Which riff-server the test uses
+
+The test never uses the shared riff-server, and it ignores your
+`RIFF_SERVER`. The shared server can run an older line of riff than
+your clone. Then the first release of a new major line cannot pass: riff
+stops with "this riff and its riff-server do not match". So at the end
+of step 1, the test starts the `riff-server` that `just static dev`
+built beside the static riff (`target/static/debug/riff-server`). It
+runs in memory, on a free port of `127.0.0.1`. The test gives its
+address to the daemon of the test and to each `riff` of the test. The
+clean-up stops it. Nothing runs by hand:
+
+```sh
+just real-session
+```
+
+```mermaid
+flowchart LR
+    T["just real-session"] -- "starts, in memory" --> S["riff-server of your clone<br/>127.0.0.1, free port"]
+    T -- "RIFF_SERVER" --> R["riff run"]
+    T -- "RIFF_SERVER" --> D["the daemon of the test"]
+    R --> S
+    D --> S
+    X["the shared riff-server: not used"]
+```
 
 ### When a riff daemon runs already
 
@@ -3870,9 +3898,9 @@ A lead in a container cannot run the test: podman does not run inside
 a container. The lead asks the riff daemon of a host with podman. The
 daemon clones the newest commit of `origin/main`, runs `just
 real-session` there, and sets the commit status `riff/real-session`:
-`pending`, then `success` or `failure`. The test gets `RIFF_SERVER` of
-the repository from the daemon, so riff-server can be on another
-host. The daemon is not the author of
+`pending`, then `success` or `failure`. The test uses a riff-server of
+its own build, not the `RIFF_SERVER` of the daemon. The daemon is not
+the author of
 any item. Only you in a terminal and your lead can ask. The daemon
 refuses a worker:
 

@@ -8247,6 +8247,14 @@ items of Wave C that end riff-server in the Backlog
   `riff/real-session` to the failed step. So the lead in a container
   reads the reason with no access to the journal of the host. `riff
   release test` gives the tag to the daemon for the issue.
+- **01M5ND3M84D8MHQ66M9P4DFNS1** The real-session test uses a
+  riff-server of its own, never the shared one. At the end of step 1 it
+  starts the riff-server of the tree, from the folder of the riff binary
+  of the tree, in memory, on a free loopback port. It gives the address
+  as RIFF_SERVER to the daemon of the test and to each riff of the test,
+  whatever RIFF_SERVER of the person says. The clean-up stops that
+  server last. So a release of a new major line passes while the shared
+  riff-server runs the line before.
 
 ## The UIs
 

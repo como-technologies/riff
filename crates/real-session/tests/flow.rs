@@ -4,7 +4,9 @@
 //!
 //! Each fake writes its call to the file `log` of its control folder.
 //! The fake `riff` also writes its `RIFF_DATA` to the file `data` there,
-//! or `none`. The fake `riff daemon` with `RIFF_DATA` makes the file
+//! or `none`, and its `RIFF_SERVER` to the file `server`. The fake
+//! `riff-server` says that it listens on [`SERVER_ADDRESS`], and runs
+//! until SIGTERM. Then it writes `TERM riff-server` to the log. The fake `riff daemon` with `RIFF_DATA` makes the file
 //! `daemon-runs` there, and runs until SIGTERM. Then it writes
 //! `TERM riff daemon` to the log, and removes the file. With no
 //! `RIFF_DATA`, it fails: the daemon of the machine is not the daemon of
@@ -33,6 +35,7 @@
 //! | `branch` | `riff run` adds a section `[branch "x"]` to the git config of the other clone and of the clone of the test, as `git push -u` does, and builds in the clone of the test |
 //! | `hooks-path` | `riff run` sets `core.hooksPath` in the git config of the other clone and of the clone of the test |
 //! | `hook-changed` | `riff run` writes to the hook `pre-push` of the other clone, which is there already |
+//! | `server-fails` | `riff-server` ends with 1 at once |
 //! | `no-pull` | `gh pr view` finds no pull request |
 //! | `no-gate` | the head commit has no check run |
 
@@ -96,10 +99,24 @@ echo "podman $*" >> "$c/log"
 if [ -f "$c/rootful" ]; then echo false; else echo true; fi
 "#;
 
+const SERVER: &str = r#"#!/bin/sh
+c='CTL'
+echo "riff-server $*" >> "$c/log"
+if [ -f "$c/server-fails" ]; then echo "riff-server: the fake server cannot start" >&2; exit 1; fi
+trap 'echo "TERM riff-server" >> "$c/log"; exit 0' TERM
+echo '{"severity":"INFO","message":"no RIFF_DIR: the log is in memory only"}'
+echo '{"severity":"INFO","message":"riff-server listens on 127.0.0.1:4100"}'
+while :; do sleep 0.05; done
+"#;
+
+/// The address that the fake `riff-server` gives.
+const SERVER_ADDRESS: &str = "http://127.0.0.1:4100";
+
 const RIFF: &str = r#"#!/bin/sh
 c='CTL'
 echo "riff $*" >> "$c/log"
 echo "${RIFF_DATA:-none}" >> "$c/data"
+echo "${RIFF_SERVER:-none}" >> "$c/server"
 case "$1" in
 image) echo "ghcr.io/o/riff-session@sha256:00ff" ;;
 plan)
@@ -210,7 +227,12 @@ impl Fake {
             ctl,
             clone,
         };
-        for (name, script) in [("gh", GH), ("podman", PODMAN), ("riff", RIFF)] {
+        for (name, script) in [
+            ("gh", GH),
+            ("podman", PODMAN),
+            ("riff", RIFF),
+            ("riff-server", SERVER),
+        ] {
             let text = script
                 .replace("CTL", &fake.ctl.display().to_string())
                 .replace("ID8", ID8);
@@ -320,6 +342,16 @@ impl Fake {
             .collect()
     }
 
+    /// The `RIFF_SERVER` of each call of the fake `riff`, in order, or
+    /// `none`.
+    fn servers(&self) -> Vec<String> {
+        std::fs::read_to_string(self.ctl.join("server"))
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+
     /// The data folder of the test.
     fn test_data(&self) -> PathBuf {
         self.env.home().join(".local/share/riff/real-session")
@@ -355,6 +387,11 @@ fn find(log: &[String], start: &str) -> Option<usize> {
 fn assert_clean(fake: &Fake) {
     let log = &fake.log();
     let stop = find(log, "TERM riff daemon");
+    let server = find(log, "TERM riff-server");
+    assert!(
+        server > stop && server > find(log, "riff plan free"),
+        "{log:#?}"
+    );
     let close = find(log, "gh issue close 801 --reason not planned --comment ");
     let free = find(log, "riff plan free verify-issue-801");
     assert!(stop.is_some() && stop < close && free.is_some(), "{log:#?}");
@@ -826,6 +863,51 @@ fn a_daemon_of_the_test_that_runs_already_fails_the_step_and_the_test_does_not_s
         find(&log, "riff plan free verify-issue-801").is_some(),
         "{log:#?}"
     );
+}
+
+/// The shared riff-server can run another line of riff than the tree
+/// (#1225). So the test starts the riff-server of the tree, and each
+/// `riff` of the test uses it, also when the person sets `RIFF_SERVER`.
+#[test]
+fn each_riff_of_the_test_uses_the_riff_server_of_the_test() {
+    let fake = Fake::new();
+    let out = fake
+        .spawn(&[], |cmd| {
+            cmd.env("RIFF_SERVER", "https://shared.example");
+        })
+        .wait_with_output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let servers = fake.servers();
+    // `riff image` comes first: it runs before the server.
+    assert!(servers.len() > 4, "{servers:?}");
+    assert_eq!(servers[0], "https://shared.example");
+    for server in &servers[1..] {
+        assert_eq!(server, SERVER_ADDRESS, "{servers:?}");
+    }
+    let log = fake.log();
+    let start = find(&log, "riff-server --listen 127.0.0.1:0");
+    assert!(start.is_some(), "{log:#?}");
+    assert!(start < find(&log, "riff plan hold"), "{log:#?}");
+    assert!(start < find(&log, "riff daemon"), "{log:#?}");
+    assert_clean(&fake);
+}
+
+#[test]
+fn a_server_that_ends_before_it_listens_fails_step_1() {
+    let fake = Fake::new();
+    fake.set("server-fails");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(
+            "FAIL at step 1 of 10, check the host: riff-server ended with exit status: 1"
+        ),
+        "{stderr}"
+    );
+    let log = fake.log();
+    assert!(find(&log, "gh issue create").is_none(), "{log:#?}");
 }
 
 #[test]
