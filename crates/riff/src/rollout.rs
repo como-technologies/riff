@@ -38,7 +38,8 @@
 //! - **The issue of a pull request** ([`Pull::issue`],
 //!   01M51BF5S2YKB8JG10DF6YVT42). Its trailer `Issue: #N` names it, as
 //!   for `riff verify`. With no trailer, its branch names it
-//!   (`worktree-issue-N`). So a pull request on a branch that names no
+//!   (`worktree-issue-N`), then the line `Closes #N` of its body. So a
+//!   pull request on a branch that names no
 //!   issue, for example the release branch `release-v1.5.0`, still
 //!   counts for its item: the rollout gives no build of it while the
 //!   pull request waits for a verify or for the merge.
@@ -523,7 +524,7 @@ pub struct Pull {
     #[serde(rename = "autoMergeRequest", default, deserialize_with = "present")]
     pub auto_merge: bool,
     /// The issue of the trailer `Issue: #N` of the body, when it has
-    /// one. riff keeps only the number, not the text of the body.
+    /// one. Else the issue of its line `Closes #N`. riff keeps only the number, not the text of the body.
     #[serde(rename = "body", default, deserialize_with = "trailer")]
     pub trailer: Option<u64>,
 }
@@ -533,11 +534,12 @@ fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
     Ok(Option::<serde::de::IgnoredAny>::deserialize(d)?.is_some())
 }
 
-/// The issue of the trailer `Issue: #N` of a body ([`crate::pr::trailer_issue`]).
+/// The issue of the trailer `Issue: #N` of a body ([`crate::pr::trailer_issue`]),
+/// or else of its line `Closes #N` ([`crate::pr::closes_issue`]).
 fn trailer<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
     Ok(Option::<String>::deserialize(d)?
         .as_deref()
-        .and_then(crate::pr::trailer_issue))
+        .and_then(|b| crate::pr::trailer_issue(b).or_else(|| crate::pr::closes_issue(b))))
 }
 
 /// A status or a check of the head of a pull request. Only a status has
@@ -587,7 +589,7 @@ pub enum Verify {
 impl Pull {
     /// The issue of this pull request (01M51BF5S2YKB8JG10DF6YVT42): its
     /// trailer `Issue: #N`, as for `riff verify`. With no trailer, the
-    /// issue of its branch ([`branch_issue`]).
+    /// issue of its branch ([`branch_issue`]), then its line `Closes #N`.
     ///
     /// ```
     /// use riff::rollout::Pull;
@@ -602,6 +604,7 @@ impl Pull {
     /// assert_eq!(pull("worktree-issue-12", "Closes #12\n\nIssue: #13\n").issue(), Some(13));
     /// assert_eq!(pull("release-2.0.0", "Refs #668\n").issue(), None);
     /// assert_eq!(pull("main", "").issue(), None);
+    /// assert_eq!(pull("fix-12-x", "Closes #12\n\nSummary\n").issue(), Some(12));
     /// ```
     pub fn issue(&self) -> Option<u64> {
         self.trailer.or_else(|| branch_issue(&self.branch))
@@ -1436,6 +1439,25 @@ mod tests {
                     .contains("Release issue-12")
             );
         }
+    }
+
+    /// A pull request on a branch like `fix-12-x` with the line
+    /// `Closes #12` is the pull request of item 12: the wave starts only
+    /// its verify.
+    #[test]
+    fn a_pull_request_that_closes_the_item_on_another_branch_counts() {
+        let issues: Vec<Issue> = serde_json::from_str(
+            r#"[{"number":12,"body":"","comments":[],"milestone":{"title":"Wave 3"}}]"#,
+        )
+        .unwrap();
+        let pulls: Vec<Pull> = serde_json::from_str(
+            r#"[{"number":40,"headRefName":"fix-12-x","body":"Closes #12\n\nSummary\n",
+                 "isDraft":false,"statusCheckRollup":[]}]"#,
+        )
+        .unwrap();
+        let claims = HashSet::new();
+        assert!(free_items(&issues, "Wave 3", &claims, &pulls).is_empty());
+        assert_eq!(waiting_verifies(&pulls, &claims), vec![12]);
     }
 
     /// A held item is no free work (01M51A55Q2MDZT38JDCEJ1QECP): the

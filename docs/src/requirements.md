@@ -554,6 +554,10 @@
   of waves first. Each keeps the form of a forge in one part of its
   own. A new forge needs no change to the concept. Outside these
   parts, no text names the objects of a forge that hold a wave.
+- **01M5NBY42N0ACGG1WAY56ED8CT** A pull request on a branch that names
+  no issue and has no trailer `Issue: #N` still counts for the item of
+  the line `Closes #N` of its body. The wave starts no build of that
+  item.
 
 ## Waves on GitHub
 

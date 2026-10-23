@@ -795,6 +795,21 @@ pub fn trailer_issue(body: &str) -> Option<u64> {
         .and_then(|(_, value)| hygiene::issue_ref(value))
 }
 
+/// The issue of the first line `Closes #N` of a body. A pull request
+/// that closes an issue is the work of that item, on any branch.
+///
+/// ```
+/// assert_eq!(riff::pr::closes_issue("Closes #12\n\nSummary\n"), Some(12));
+/// assert_eq!(riff::pr::closes_issue("Refs #12\n"), None);
+/// ```
+pub fn closes_issue(body: &str) -> Option<u64> {
+    body.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("Closes #")?;
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok()
+    })
+}
+
 /// The issue of pull request `number`: the `Issue:` trailer of its body.
 pub fn issue_of(gh: &Gh, number: u64) -> Result<u64> {
     #[derive(Deserialize)]
