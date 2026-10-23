@@ -7989,6 +7989,12 @@ items of Wave C that end riff-server in the Backlog
   lead has `RIFF_USER`, so the riff commands find their user without
   a keyring, and `RIFF_CHECK` names a folder that it can write for
   `riff build`.
+- **01M5ND0ZNFFAPT1AWD3DP1Y77N** A release pull request needs no model
+  verify. `riff release verify N` checks that the pull request has the
+  label `release`, that its diff is only `Cargo.toml` and `Cargo.lock`,
+  that its body has the format of `riff release cut`, and that the Gate
+  of its head commit passed. Then it sets the status `riff/verify`. It
+  refuses else, and sets nothing.
 
 ### The release cycle
 
