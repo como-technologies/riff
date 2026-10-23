@@ -2800,6 +2800,21 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 "The release pull request #{} for issue #{}, with auto-merge on: {}",
                 cut.number, cut.issue, cut.url
             );
+            let told = async {
+                let (api, me, _) = release_me(server)?;
+                let owner = match api.roster(&me, false).await?.owner {
+                    riff_core::wire::RiffOwner::Owner { user, .. } => user,
+                    _ => String::new(),
+                };
+                let line = cycle::cut_line(&owner, &cycle::tag(version));
+                let to = riff::chat::wakes(&line, me.who().user());
+                api.post(&me, Some(&riff::chat::thread()), &to, &line, Kind::Message)
+                    .await?;
+                anyhow::Ok(())
+            };
+            if let Err(e) = told.await {
+                eprintln!("riff: cannot post the chat line of the cut: {e:#}");
+            }
             println!(
                 "next: wait for the verify and the merge of pull request #{}",
                 cut.number

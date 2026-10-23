@@ -1418,28 +1418,103 @@ pub struct ChatLine {
     pub body: String,
 }
 
-/// True when `body` names `tag`, says `approve` or `deploy`, and does
-/// not deny it.
-fn says_approve(body: &str, tag: &str) -> bool {
-    let words: Vec<String> = body
-        .split_whitespace()
+/// The words of `body`, in lower case, with no mark around them.
+fn words(body: &str) -> Vec<String> {
+    body.split_whitespace()
         .map(|w| {
             w.trim_matches(|c: char| !c.is_alphanumeric())
                 .to_lowercase()
         })
-        .collect();
-    let has = |f: &dyn Fn(&str) -> bool| words.iter().any(|w| f(w));
-    has(&|w| w == tag.to_lowercase())
-        && has(&|w| matches!(w, "approve" | "deploy"))
-        && !has(&|w| matches!(w, "not" | "never" | "dont"))
-        && !body.to_lowercase().contains("don't")
+        .collect()
 }
 
-/// The number of the message in which the owner said `approve` or
-/// `deploy` for `tag` after the publish (01M594XQJMXAXY3JXP66Y8EVQ7).
-/// `lines` are the messages of the thread `chat`. `may` tells whether a
-/// USER is the owner or an admin. Only a verified message of a person
-/// counts, and only after the verified publish line of the tag.
+/// True when `word` is a version: three numbers with dots, and maybe a `v`.
+fn is_version(word: &str) -> bool {
+    let bare = word.strip_prefix('v').unwrap_or(word);
+    let parts: Vec<&str> = bare.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// How `body` approves `tag`: `Some(true)` when it names the version
+/// (with or without the `v`), `Some(false)` when it names no version,
+/// and `None` when it does not approve, names another version, or denies.
+fn approves(body: &str, tag: &str) -> Option<bool> {
+    let words = words(body);
+    let has = |f: &dyn Fn(&str) -> bool| words.iter().any(|w| f(w));
+    if has(&|w| matches!(w, "not" | "never" | "dont"))
+        || body.to_lowercase().contains("don't")
+        || !has(&|w| matches!(w, "approve" | "approved" | "deploy"))
+    {
+        return None;
+    }
+    let tag = tag.to_lowercase();
+    let bare = tag.strip_prefix('v').unwrap_or(&tag);
+    let named: Vec<&str> = words
+        .iter()
+        .map(String::as_str)
+        .filter(|w| is_version(w))
+        .collect();
+    if named.is_empty() {
+        Some(false)
+    } else if named
+        .iter()
+        .any(|w| w.strip_prefix('v').unwrap_or(w) == bare)
+    {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// True when `body` says `stop` or `wait`.
+fn says_stop(body: &str) -> bool {
+    words(body)
+        .iter()
+        .any(|w| matches!(w.as_str(), "stop" | "wait"))
+}
+
+/// The line that `riff release cut` writes in riff chat to the owner
+/// `owner`: the version, and the one message that lets the lead run the
+/// whole release (01M5NCYW06FJ8P5X629VFK1BNR).
+///
+/// ```
+/// let line = riff::cycle::cut_line("mike", "v3.3.0");
+/// assert_eq!(
+///     line,
+///     "@mike riff release v3.3.0 is cut. Say \"approve 3.3.0\" in riff chat, and the lead \
+///      runs the test, the publish, the approval of the deploy and the check."
+/// );
+/// ```
+pub fn cut_line(owner: &str, tag: &str) -> String {
+    let to = if owner.is_empty() {
+        String::new()
+    } else {
+        format!("@{owner} ")
+    };
+    let bare = tag.strip_prefix('v').unwrap_or(tag);
+    format!(
+        "{to}riff release {tag} is cut. Say \"approve {bare}\" in riff chat, and the lead runs \
+         the test, the publish, the approval of the deploy and the check."
+    )
+}
+
+/// The number of the message in which the owner approved the release
+/// `tag` (01M5NCYW06FJ8P5X629VFK1BNR, in part instead of
+/// 01M594XQJMXAXY3JXP66Y8EVQ7). `lines` are the messages of the thread
+/// `chat`. `may` tells whether a USER is the owner or an admin.
+///
+/// The release starts at the first verified line of a session that says
+/// `riff release TAG is cut` or `is published`. After it, a verified
+/// message of a person who `may` and says `approve`, `approved` or
+/// `deploy` counts when it names the version, with or without the `v`.
+/// With no version, it counts when the last such line of a session
+/// before it is of this tag: the owner answers the line of the lead.
+/// A message that denies (`not`, `never`, `don't`) does not count. A
+/// message of the owner or of an admin with `stop` or `wait` after the
+/// approval cancels it.
 ///
 /// ```
 /// use riff::cycle::{owner_said, ChatLine};
@@ -1449,30 +1524,50 @@ fn says_approve(body: &str, tag: &str) -> bool {
 /// };
 /// let may = |user: &str| user == "mike";
 /// let lines = [
-///     line(1, true, "riff release v3.3.0 is published. Its deploy waits"),
-///     line(2, false, "ok, approve v3.3.0"),
+///     line(1, true, "riff release v3.3.0 is cut. Say approve 3.3.0"),
+///     line(2, false, "approve 3.3.0"),
+///     line(3, false, "approved"),
 /// ];
-/// assert_eq!(owner_said(&lines, "v3.3.0", &may), Some(2));
+/// assert_eq!(owner_said(&lines, "v3.3.0", &may), Some(3));
 /// assert_eq!(owner_said(&lines, "v3.3.1", &may), None);
+/// let stopped = [lines[0].clone(), lines[1].clone(), line(3, false, "stop")];
+/// assert_eq!(owner_said(&stopped, "v3.3.0", &may), None);
 /// ```
 pub fn owner_said(lines: &[ChatLine], tag: &str, may: &dyn Fn(&str) -> bool) -> Option<u64> {
-    let published = format!("riff release {tag} is published");
-    let publish = lines
+    let release = |l: &ChatLine, tag: &str| {
+        l.verified
+            && l.session
+            && (l.body.contains(&format!("riff release {tag} is cut"))
+                || l.body.contains(&format!("riff release {tag} is published")))
+    };
+    let start = lines
         .iter()
-        .filter(|l| l.verified && l.session && may(&l.user) && l.body.contains(&published))
+        .filter(|l| release(l, tag))
         .map(|l| l.seq)
-        .max()?;
-    lines
+        .min()?;
+    // The tag of the last line of a session about a release, before `seq`.
+    let asked = |seq: u64| {
+        lines
+            .iter()
+            .filter(|l| l.seq < seq && l.verified && l.session)
+            .filter(|l| l.body.contains(" is cut") || l.body.contains(" is published"))
+            .max_by_key(|l| l.seq)
+            .is_some_and(|l| release(l, tag))
+    };
+    let owner = |l: &ChatLine| l.verified && !l.session && may(&l.user);
+    let approved = lines
         .iter()
-        .filter(|l| {
-            l.seq > publish
-                && l.verified
-                && !l.session
-                && may(&l.user)
-                && says_approve(&l.body, tag)
+        .filter(|l| l.seq > start && owner(l))
+        .filter(|l| match approves(&l.body, tag) {
+            Some(named) => named || asked(l.seq),
+            None => false,
         })
         .map(|l| l.seq)
-        .max()
+        .max()?;
+    let stopped = lines
+        .iter()
+        .any(|l| l.seq > approved && owner(l) && says_stop(&l.body));
+    (!stopped).then_some(approved)
 }
 
 /// One line of the log of the Cloud Run service of the shared riff.
@@ -4483,5 +4578,82 @@ mod tests {
         assert!(new.contains("name = \"riff\"\nversion = \"9.8.7\"\n"));
         assert!(new.contains("name = \"riff-server\"\nversion = \"9.8.7\"\n"));
         assert_eq!(new.lines().count(), lock.lines().count());
+    }
+
+    fn chat(seq: u64, user: &str, session: bool, body: &str) -> ChatLine {
+        ChatLine {
+            seq,
+            user: user.into(),
+            session,
+            verified: true,
+            body: body.into(),
+        }
+    }
+
+    fn mike(user: &str) -> bool {
+        user == "mike"
+    }
+
+    #[test]
+    fn owner_said_takes_a_version_with_and_without_the_v() {
+        let cut = chat(1, "mike", true, "riff release v4.0.1 is cut.");
+        for body in [
+            "approve 4.0.1",
+            "approve v4.0.1",
+            "I approve 4.0.1. proceed",
+        ] {
+            let lines = [cut.clone(), chat(2, "mike", false, body)];
+            assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(2), "{body}");
+            assert_eq!(owner_said(&lines, "v4.0.2", &mike), None, "{body}");
+        }
+    }
+
+    #[test]
+    fn owner_said_takes_approved_as_the_answer_to_the_last_release_line() {
+        let lines = [
+            chat(1, "mike", true, "riff release v4.0.0 is published."),
+            chat(2, "mike", true, "riff release v4.0.1 is cut."),
+            chat(3, "mike", false, "approved"),
+        ];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(3));
+        assert_eq!(owner_said(&lines, "v4.0.0", &mike), None);
+    }
+
+    #[test]
+    fn owner_said_ignores_a_message_before_the_cut_a_member_a_session_and_a_denial() {
+        let cut = chat(2, "mike", true, "riff release v4.0.1 is cut.");
+        let before = [chat(1, "mike", false, "approve 4.0.1"), cut.clone()];
+        assert_eq!(owner_said(&before, "v4.0.1", &mike), None);
+        for (who, session, body) in [
+            ("bob", false, "approve 4.0.1"),
+            ("mike", true, "approve 4.0.1"),
+            ("mike", false, "do not approve 4.0.1"),
+            ("mike", false, "I don't approve 4.0.1"),
+        ] {
+            let lines = [cut.clone(), chat(3, who, session, body)];
+            assert_eq!(owner_said(&lines, "v4.0.1", &mike), None, "{body}");
+        }
+        let mut loud = chat(3, "mike", false, "approved");
+        loud.verified = false;
+        assert_eq!(owner_said(&[cut, loud], "v4.0.1", &mike), None);
+    }
+
+    #[test]
+    fn owner_said_stops_at_a_stop_after_the_approval() {
+        let cut = chat(1, "mike", true, "riff release v4.0.1 is cut.");
+        let said = chat(2, "mike", false, "approved");
+        for body in ["stop", "wait for me"] {
+            let lines = [cut.clone(), said.clone(), chat(3, "mike", false, body)];
+            assert_eq!(owner_said(&lines, "v4.0.1", &mike), None, "{body}");
+        }
+        let again = [
+            cut.clone(),
+            said.clone(),
+            chat(3, "mike", false, "stop"),
+            chat(4, "mike", false, "approved"),
+        ];
+        assert_eq!(owner_said(&again, "v4.0.1", &mike), Some(4));
+        let member = [cut, said, chat(3, "bob", false, "stop")];
+        assert_eq!(owner_said(&member, "v4.0.1", &mike), Some(2));
     }
 }
