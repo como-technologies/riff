@@ -138,7 +138,7 @@ Run this in a clone of the repository. It shows each open wave in
 number order, then the backlog, with the number of the open and the
 closed items. The current wave has the mark `current` and the hosts
 of its loop. The open items of each wave follow in the groups `free`,
-`held`, `claimed` and `verify` (see
+`held`, `claimed`, `verify` and `tracker` (see
 [See which wave runs, and where](development.md#see-which-wave-runs-and-where)):
 
 ```sh
@@ -148,7 +148,9 @@ riff wave list
 ### Make a wave
 
 Give the new wave the last number plus one. A name can follow the
-number. riff refuses a number that an open wave has:
+number. riff refuses a number that an open wave has. riff also makes
+the label `tracker` when it is missing (see
+[Track a group of items](#track-a-group-of-items)):
 
 ```sh
 riff wave make "Wave 6: Cloud"
@@ -200,6 +202,34 @@ The lead plans the waves in its container, and these steps work there:
 the daemon of the host makes the calls on riff-server. The lead does
 them for you when it plans the waves. They are
 `riff` commands, so the permission rule `Bash(riff *)` covers them.
+
+### Track a group of items
+
+A tracker is an issue that lists a group of items. It has no code of
+its own: each part is a separate item. The wave starts no session for
+a tracker: no build and no verify. `riff wave list` and `riff top`
+show it in the group `tracker`, never in `free`.
+
+An issue is a tracker when it has the label `tracker`, or when its
+title starts with `Tracker:`. Add the label to issue 1248:
+
+```sh
+gh issue edit 1248 --add-label tracker
+```
+
+`riff wave make` makes the label. When the repository does not have
+it yet, make it first:
+
+```sh
+gh label create tracker --description "a tracker: its parts are separate items, and no session does it" --force
+```
+
+```mermaid
+flowchart LR
+    I["an open issue of the current wave"] --> T{"label tracker, or<br/>title Tracker: ...?"}
+    T -- "yes" --> G["group tracker: no session"]
+    T -- "no" --> F["free work: the wave starts a session"]
+```
 
 ### See the open items of a wave
 

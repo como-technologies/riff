@@ -13,10 +13,13 @@
 //!   waves, the current wave first, and the items in verify.
 //! - [`Board`]: the board of a wave of a repository, from its
 //!   [`Issues`], the claims of the sessions of riff-server and the holds
-//!   of the lead: `free`, `held`, `claimed` and `verify`
-//!   (01M3Z9N6X92KT051P10CKKV7EK, 01M58ATZ1F42DWNNB24C2HJPEY).
+//!   of the lead: `free`, `held`, `claimed`, `verify` and `tracker`
+//!   (01M3Z9N6X92KT051P10CKKV7EK, 01M58ATZ1F42DWNNB24C2HJPEY,
+//!   01M5ND16V2SVN8A9K7W90VC6X9).
 //!   `riff top` shows the board of the current wave, `riff wave list`
 //!   the board of each wave (01M58ATZ408RBCX0PM0D0ZCY4B).
+//! - [`is_tracker`]: a tracker issue has no code of its own. No session
+//!   does it, so it is never free (01M5ND16V2SVN8A9K7W90VC6X9).
 //! - [`Milestone`]: an open milestone, a line of `riff wave list`
 //!   (01M509TJRBE2J7HYKKHRJ1ZFR0).
 //!
@@ -37,7 +40,7 @@
 //! use riff_client::waves::{Board, Issue, Issues};
 //! use riff_core::wire::{HoldInfo, SessionInfo};
 //!
-//! let issue = |number, title: &str| Issue { number, title: title.into(), milestone: Some("Wave 3".into()) };
+//! let issue = |number, title: &str| Issue { number, title: title.into(), milestone: Some("Wave 3".into()), tracker: false };
 //! let issues = Issues::of(vec![issue(12, "Claimed"), issue(13, "Free"), issue(14, "Asked"), issue(15, "Held")])
 //!     .with_verify([14]);
 //! let claim: SessionInfo = serde_json::from_value(serde_json::json!({
@@ -69,6 +72,9 @@ pub struct Issue {
     pub title: String,
     /// The title of its milestone.
     pub milestone: Option<String>,
+    /// True for a tracker issue ([`is_tracker`]).
+    #[serde(default)]
+    pub tracker: bool,
 }
 
 /// The open issues of a repository: the title of each, the current
@@ -84,6 +90,9 @@ pub struct Issues {
     /// The issues whose pull request waits for a verify or for the
     /// merge (01M3Z9N6X92KT051P10CKKV7EK).
     pub verify: BTreeSet<u64>,
+    /// The tracker issues ([`is_tracker`]).
+    #[serde(default)]
+    pub trackers: BTreeSet<u64>,
 }
 
 impl Issues {
@@ -96,6 +105,7 @@ impl Issues {
     ///     number,
     ///     title: title.into(),
     ///     milestone: milestone.map(Into::into),
+    ///     tracker: riff_client::waves::is_tracker(title, []),
     /// };
     /// let issues = Issues::of(vec![
     ///     issue(12, "Show the wave", Some("Wave 10")),
@@ -103,8 +113,10 @@ impl Issues {
     ///     issue(9, "Old", Some("Wave 9: Cloud")),
     ///     issue(4, "Kept", Some("Backlog")),
     ///     issue(5, "New", None),
+    ///     issue(14, "Tracker: the cloud", Some("Wave 10")),
     /// ]);
     /// assert_eq!(issues.titles[&12], "Show the wave");
+    /// assert_eq!(issues.trackers, [14].into());
     /// assert_eq!(issues.wave(), Some(&("Wave 9: Cloud".into(), vec![9])));
     /// let titles: Vec<&str> = issues.waves.iter().map(|(t, _)| t.as_str()).collect();
     /// assert_eq!(titles, ["Wave 9: Cloud", "Wave 10", "Wave 11"]);
@@ -130,6 +142,11 @@ impl Issues {
             })
             .collect();
         Issues {
+            trackers: list
+                .iter()
+                .filter(|i| i.tracker)
+                .map(|i| i.number)
+                .collect(),
             titles: list.into_iter().map(|i| (i.number, i.title)).collect(),
             waves,
             verify: BTreeSet::new(),
@@ -157,7 +174,7 @@ impl Issues {
     /// ```
     /// use riff_client::waves::{Issue, Issues};
     ///
-    /// let wave = Issue { number: 7, title: "Fix".into(), milestone: Some("Wave 3".into()) };
+    /// let wave = Issue { number: 7, title: "Fix".into(), milestone: Some("Wave 3".into()), tracker: false };
     /// let last = Some(Issues::of(vec![wave]));
     /// // The read failed: the last issues stay.
     /// assert_eq!(Issues::newest(last.clone(), None), last);
@@ -183,6 +200,7 @@ impl Issues {
     ///     number: n,
     ///     title: "a".into(),
     ///     milestone: Some(format!("Wave {n}")),
+    ///     tracker: false,
     /// }]);
     /// let last = BTreeMap::from([("o/r".to_owned(), wave(3)), ("o/old".to_owned(), wave(4))]);
     /// let each = Issues::newest_each(last, vec![("o/r".into(), None), ("o/s".into(), Some(wave(5)))]);
@@ -200,6 +218,28 @@ impl Issues {
             })
             .collect()
     }
+}
+
+/// The label of a tracker issue (01M5ND16V2SVN8A9K7W90VC6X9).
+pub const TRACKER: &str = "tracker";
+
+/// The start of the title of a tracker issue.
+pub const TRACKER_TITLE: &str = "Tracker:";
+
+/// True for a tracker issue: its `labels` have [`TRACKER`], or its
+/// `title` starts with [`TRACKER_TITLE`]. A tracker has no code of its
+/// own: its parts are separate items. No session does it
+/// (01M5ND16V2SVN8A9K7W90VC6X9).
+///
+/// ```
+/// use riff_client::waves::is_tracker;
+///
+/// assert!(is_tracker("Wave 37 parts", ["bug", "tracker"]));
+/// assert!(is_tracker("Tracker: the cloud", []));
+/// assert!(!is_tracker("Fix the tracker", ["bug"]));
+/// ```
+pub fn is_tracker<'a>(title: &str, labels: impl IntoIterator<Item = &'a str>) -> bool {
+    title.trim_start().starts_with(TRACKER_TITLE) || labels.into_iter().any(|l| l == TRACKER)
 }
 
 /// The N of a milestone `Wave N`, or `Wave N: NAME`.
@@ -297,6 +337,10 @@ pub struct Board {
     /// pull request waits for a verify or for the merge: they are no
     /// work for a build.
     pub verify: Vec<u64>,
+    /// The tracker issues with no claim and no pull request in verify
+    /// ([`is_tracker`]). They are never free: no session does them.
+    #[serde(default)]
+    pub tracker: Vec<u64>,
 }
 
 impl Board {
@@ -325,7 +369,7 @@ impl Board {
     /// use riff_client::waves::{Board, Issue, Issues};
     /// use riff_core::wire::{HoldInfo, SessionInfo};
     ///
-    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()) };
+    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()), tracker: false };
     /// let issues = Issues::of(vec![
     ///     issue(12, "Wave 3"), issue(13, "Wave 3"), issue(14, "Wave 3"), issue(20, "Wave 4"),
     /// ]);
@@ -376,6 +420,7 @@ impl Board {
             held: Vec::new(),
             claimed: Vec::new(),
             verify: Vec::new(),
+            tracker: Vec::new(),
         };
         for &n in items {
             let claims: Vec<&String> = sessions
@@ -390,6 +435,8 @@ impl Board {
                 board.verify.push(n);
             } else if !claims.is_empty() {
                 board.claimed.push(n);
+            } else if issues.trackers.contains(&n) {
+                board.tracker.push(n);
             } else if let Some(hold) = holds.get(&format!("issue-{n}")) {
                 board.held.push((n, hold.reason.clone()));
             } else {
@@ -400,7 +447,7 @@ impl Board {
     }
 
     /// One line for each group of the board that is not empty, in the
-    /// order `free`, `held`, `claimed`, `verify`. With `paused`, no
+    /// order `free`, `held`, `claimed`, `verify`, `tracker`. With `paused`, no
     /// group `free`: nobody can claim its items
     /// (01M588G5K0B58QXD35AA5MTZ6E). The reason of each hold follows its
     /// items (01M58ATZ1F42DWNNB24C2HJPEY). The reason is text of the
@@ -416,13 +463,18 @@ impl Board {
     ///     held: vec![(12, "a reading".into()), (13, "a reading".into()), (16, "later".into())],
     ///     claimed: vec![],
     ///     verify: vec![17],
+    ///     tracker: vec![18],
     /// };
     /// assert_eq!(board.groups(false), [
     ///     "free: #14 #15",
     ///     "held: #12 #13 (a reading), #16 (later)",
     ///     "verify: #17",
+    ///     "tracker: #18",
     /// ]);
-    /// assert_eq!(board.groups(true), ["held: #12 #13 (a reading), #16 (later)", "verify: #17"]);
+    /// assert_eq!(
+    ///     board.groups(true),
+    ///     ["held: #12 #13 (a reading), #16 (later)", "verify: #17", "tracker: #18"]
+    /// );
     /// ```
     pub fn groups(&self, paused: bool) -> Vec<String> {
         let list = |items: &[u64]| {
@@ -452,6 +504,7 @@ impl Board {
             ("held", held.join(", ")),
             ("claimed", list(&self.claimed)),
             ("verify", list(&self.verify)),
+            ("tracker", list(&self.tracker)),
         ]
         .into_iter()
         .filter(|(_, items)| !items.is_empty())
@@ -491,6 +544,7 @@ mod tests {
             number,
             title: format!("item {number}"),
             milestone: Some("Wave 3".into()),
+            tracker: false,
         };
         Issues::of((12..=16).map(issue).collect()).with_verify([15])
     }
@@ -547,6 +601,46 @@ mod tests {
                 "claimed: #12",
                 "verify: #13 #15"
             ]
+        );
+    }
+
+    /// A tracker issue with no claim is in `tracker`, never in `free`,
+    /// also with a hold. A claim wins: a session that claims a tracker
+    /// shows (01M5ND16V2SVN8A9K7W90VC6X9).
+    #[test]
+    fn a_tracker_is_in_tracker_and_never_free() {
+        let who: Vec<SessionInfo> = serde_json::from_str(WHO).unwrap();
+        let sessions = Sessions::new(who, vec![]);
+        let issue = |number, title: &str, labels: &[&str]| Issue {
+            number,
+            title: title.into(),
+            milestone: Some("Wave 3".into()),
+            tracker: is_tracker(title, labels.iter().copied()),
+        };
+        let issues = Issues::of(vec![
+            issue(12, "Tracker: claimed anyway", &[]),
+            issue(14, "Tracker: the cloud", &[]),
+            issue(16, "The parts", &["tracker"]),
+            issue(17, "Held parts", &["tracker"]),
+            issue(18, "An item", &["bug"]),
+        ]);
+        let holds = BTreeMap::from([(
+            "issue-17".to_owned(),
+            HoldInfo {
+                reason: "later".into(),
+                by: None,
+                at_ms: 1,
+            },
+        )]);
+        let board = Board::of("o/r", &issues, &sessions, &holds).unwrap();
+        assert_eq!(board.free, [18]);
+        assert_eq!(board.tracker, [14, 16, 17]);
+        assert_eq!(board.claimed, [12]);
+        assert!(board.held.is_empty());
+        assert_eq!(
+            board.groups(true),
+            ["claimed: #12", "tracker: #14 #16 #17"],
+            "a pause hides no tracker"
         );
     }
 

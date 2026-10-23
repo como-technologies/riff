@@ -157,6 +157,7 @@ pub const LOOK_EVERY: Duration = Duration::from_secs(60);
 ///     comments: comments.iter().map(|c| Comment { body: c.to_string() }).collect(),
 ///     milestone: None,
 ///     labels: vec![],
+///     ..Issue::default()
 /// };
 /// let pull = |number, branch: &str, checks| Pull { number, branch: branch.into(), checks, ..Pull::default() };
 /// let facts = item_facts(

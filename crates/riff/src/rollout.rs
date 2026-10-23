@@ -275,10 +275,12 @@ pub const NO_VERIFY: &str = "no-verify";
 pub const BROKEN_MAIN: &str = "broken-main";
 
 /// An open issue, as `gh issue list --json
-/// number,body,comments,milestone,labels` gives it.
+/// number,title,body,comments,milestone,labels` gives it.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Issue {
     pub number: u64,
+    #[serde(default, deserialize_with = "crate::text::forge_de")]
+    pub title: String,
     #[serde(default)]
     pub body: String,
     #[serde(default)]
@@ -329,6 +331,13 @@ impl Issue {
     pub fn broken_main(&self) -> bool {
         self.labels.iter().any(|l| l.name == BROKEN_MAIN)
     }
+
+    /// True when the issue is a tracker: it has no code of its own, so
+    /// it is never free work ([`riff_client::waves::is_tracker`],
+    /// 01M5ND16V2SVN8A9K7W90VC6X9).
+    pub fn tracker(&self) -> bool {
+        riff_client::waves::is_tracker(&self.title, self.labels.iter().map(|l| l.name.as_str()))
+    }
 }
 
 /// The issues of the `Needs:` line of `body`. `Needs: nothing` and no
@@ -369,6 +378,7 @@ pub fn needs(body: &str) -> Vec<u64> {
 ///     comments: if merged { vec![Comment { body: "Merged in #9 (abc)".into() }] } else { vec![] },
 ///     milestone: Some(Milestone { title: wave.into() }),
 ///     labels: vec![],
+///     ..Issue::default()
 /// };
 /// let open = [
 ///     issue(1, "Wave 2", "", false),
@@ -443,9 +453,10 @@ pub fn fix_items(open: &[Issue], claims: &HashSet<String>, pulls: &[Pull]) -> Ve
     free_of(open, claims, pulls, Issue::broken_main)
 }
 
-/// The issues of `open` that `pick` takes and that are free: no claim,
-/// no comment `Merged in #`, no pull request that waits for a verify or
-/// for the merge, and no open need.
+/// The issues of `open` that `pick` takes and that are free: no
+/// tracker ([`Issue::tracker`]), no claim, no comment `Merged in #`, no
+/// pull request that waits for a verify or for the merge, and no open
+/// need.
 fn free_of(
     open: &[Issue],
     claims: &HashSet<String>,
@@ -456,7 +467,7 @@ fn free_of(
     let in_verify = in_verify(pulls);
     open.iter()
         .filter(|i| pick(i))
-        .filter(|i| !i.release())
+        .filter(|i| !i.release() && !i.tracker())
         .filter(|i| !i.merged())
         .filter(|i| !claims.contains(&format!("issue-{}", i.number)))
         .filter(|i| !in_verify.contains(&i.number))
@@ -873,7 +884,7 @@ impl Open {
             "--limit",
             "1000",
             "--json",
-            "number,body,comments,milestone,labels",
+            "number,title,body,comments,milestone,labels",
         ])?;
         Ok(Self {
             milestones,
@@ -907,7 +918,9 @@ pub fn free_work(
 /// label [`NO_VERIFY`] is no work (01M5157V0P92EBHF4M7N9K0RGR). The
 /// release issue of a release (the label `release`) and its pull
 /// request are no work. An item in `holds` is no work (01M51A55Q2MDZT38JDCEJ1QECP): a hold names one
-/// item, so a hold of `issue-N` keeps `verify-issue-N` free.
+/// item, so a hold of `issue-N` keeps `verify-issue-N` free. A tracker
+/// issue ([`Issue::tracker`]) is no work: no build and no
+/// verify (01M5ND16V2SVN8A9K7W90VC6X9).
 ///
 /// A fix item ([`BROKEN_MAIN`], 01M51QEYS538XA58KDRY844T52) comes before
 /// each other item: its verify first, then the item. It is free work in
@@ -953,6 +966,14 @@ pub fn free_work(
 ///     free_work_of(&open, &issues, &pulls, &none, &none),
 ///     ["verify-issue-8", "issue-9", "verify-issue-2", "issue-1"]
 /// );
+///
+/// // A tracker is no work, by its label or by its title: no build, and
+/// // no verify of a pull request that names it.
+/// let tracker = |number, title: &str, labels| Issue { title: title.into(), ..issue(number, "Wave 2", labels) };
+/// let issues = [issue(1, "Wave 2", &[]), tracker(5, "Parts", &["tracker"]), tracker(6, "Tracker: the cloud", &[])];
+/// let pulls = [pull(40, 5), pull(41, 6)];
+/// assert_eq!(free_work_of(&open, &issues, &pulls, &none, &none), ["issue-1"]);
+/// assert_eq!(free_work_of(&open, &issues, &[], &none, &none), ["issue-1"]);
 /// ```
 pub fn free_work_of(
     open: &[Milestone],
@@ -965,7 +986,7 @@ pub fn free_work_of(
         current_wave(open).map_or_else(Vec::new, |wave| free_items(issues, wave, claims, pulls));
     let kept: HashSet<u64> = issues
         .iter()
-        .filter(|i| i.no_verify() || i.release())
+        .filter(|i| i.no_verify() || i.release() || i.tracker())
         .map(|i| i.number)
         .collect();
     let fixes: HashSet<u64> = issues

@@ -1369,21 +1369,23 @@ riff wave list
 
 The current wave has the mark `current`, and `runs on HOST` for each
 host whose daemon runs its loop. Under each wave come its open items
-in the groups of the board of `riff top`: `free`, `held`, `claimed`
-and `verify`. A held item has the reason of the lead, and the wave
-does not start it:
+in the groups of the board of `riff top`: `free`, `held`, `claimed`,
+`verify` and `tracker`. A held item has the reason of the lead, and
+the wave does not start it. The wave never starts a tracker (see
+[Track a group of items](waves.md#track-a-group-of-items)):
 
 ```text
-Wave 33: Hosts  current  runs on thelio  3 open, 21 closed
+Wave 33: Hosts  current  runs on thelio  4 open, 21 closed
   held: #1003 #1008 (VmLck reading at 19:40 UTC)
   claimed: #1103
+  tracker: #1248
 Wave 34  1 open, 0 closed
   free: #1106
 Backlog  61 open, 4 closed
 ```
 
 When the wave says "no free work now" while items are open, look at
-the groups: the items are held, claimed or in verify.
+the groups: the items are held, claimed, in verify or trackers.
 
 The lead runs the same command in its container. There, riff reads
 the sessions and the holds through the riff daemon of the host.

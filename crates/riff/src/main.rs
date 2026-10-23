@@ -1004,13 +1004,16 @@ enum WaveCommand {
     /// the lowest number, has the mark current, and "runs on HOST" for
     /// each host whose riff daemon runs its loop. Under each wave come
     /// its open issues in the groups of riff top: free, held (with the
-    /// reason of the lead), claimed and verify. When riff cannot read
-    /// riff-server, it shows only the waves and their numbers.
+    /// reason of the lead), claimed, verify and tracker. A tracker has
+    /// the label tracker, or a title that starts with "Tracker:". No
+    /// session does it. When riff cannot read riff-server, it shows only
+    /// the waves and their numbers.
     List,
     /// Make a wave
     ///
     /// The title is Wave N, or Wave N: NAME. Give N the last number plus
-    /// one. riff refuses a number that an open wave has.
+    /// one. riff refuses a number that an open wave has. riff also makes
+    /// the label tracker when it is missing.
     Make {
         /// The title, for example "Wave 6" or "Wave 6: Cloud".
         #[arg(required = true)]

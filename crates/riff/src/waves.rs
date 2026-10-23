@@ -17,7 +17,7 @@
 //! | Command | `gh` calls |
 //! |---|---|
 //! | `riff wave list` (01M509TJRBE2J7HYKKHRJ1ZFR0) | `api repos/{owner}/{repo}/milestones?state=open&per_page=100`, then `issue list` and `pr list` for the items ([`items`]) |
-//! | `riff wave make TITLE` (01M509TJTV7TC32EKXW0TEQ5NZ) | the list, then `api -X POST repos/{owner}/{repo}/milestones -f title=TITLE` |
+//! | `riff wave make TITLE` (01M509TJTV7TC32EKXW0TEQ5NZ) | the list, `label create tracker ... --force` (01M5ND16V2SVN8A9K7W90VC6X9), then `api -X POST repos/{owner}/{repo}/milestones -f title=TITLE` |
 //! | `riff wave rename N NAME` (01M518A0BEQBX9RH9H0CEFYF9Q) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f title=TITLE` |
 //! | `riff wave end N` (01M509TJXE04CTG5D1K751WXJY) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f state=closed` |
 //! | `riff wave move ITEM... --to WAVE` (01M5924014WN63RCHJWGZS4AFZ) | the list, then `issue edit N --milestone TITLE` for each item |
@@ -64,7 +64,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
 use riff_client::sessions::Sessions;
-use riff_client::waves::{Board, Issues, Milestone};
+use riff_client::waves::{Board, Issues, Milestone, TRACKER};
 use riff_core::name::ThreadName;
 use riff_core::wire::{HoldInfo, SessionInfo};
 use serde::Deserialize;
@@ -139,6 +139,8 @@ pub fn open(gh: &Gh) -> Result<Vec<Milestone>> {
 
 /// Makes the wave `title` (01M509TJTV7TC32EKXW0TEQ5NZ). It refuses a
 /// title that is not a wave title, and a number that an open wave has.
+/// It makes the label [`TRACKER`] when it is missing
+/// (01M5ND16V2SVN8A9K7W90VC6X9).
 pub fn make(gh: &Gh, title: &str) -> Result<Milestone> {
     let Some(number) = wave_number(title) else {
         bail!(text::waves_bad_title(title));
@@ -149,6 +151,21 @@ pub fn make(gh: &Gh, title: &str) -> Result<Milestone> {
     {
         bail!(text::waves_is_there(&there.title));
     }
+    // A label that is there needs no change, and no label is no reason
+    // to refuse the wave.
+    let _ = gh.run(
+        &[
+            "label",
+            "create",
+            TRACKER,
+            "--color",
+            "5319E7",
+            "--description",
+            text::TRACKER_LABEL,
+            "--force",
+        ],
+        None,
+    );
     milestone(
         gh,
         &[
@@ -443,7 +460,7 @@ impl Items {
     ///     session("riff://mike@pangolin/o/s?session=d2", Some(&runs("o/s"))),
     ///     session("riff://mike@thelio/o/r?session=a1&claim=issue-12", None),
     /// ];
-    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()) };
+    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()), tracker: false };
     /// let issues = Issues::of(vec![issue(12, "Wave 3"), issue(13, "Wave 3"), issue(20, "Wave 4")]);
     /// let holds = BTreeMap::from([(
     ///     "issue-13".to_owned(),
@@ -530,6 +547,7 @@ mod tests {
              'api -X PATCH '*) printf '%s' '{{\"number\":32,\"title\":\"Wave 27: Cloud\",\"open_issues\":0,\"closed_issues\":9}}' ;;\n\
              'api repos/{{owner}}/{{repo}}/issues?milestone=33&state=open&per_page=100') printf '%s' '[{{\"number\":71}},{{\"number\":72}}]' ;;\n\
              'issue edit '*) ;;\n\
+             'label create '*) ;;\n\
              *) exit 1 ;;\nesac\n",
             OPEN.replace('\n', ""),
             ALL.replace('\n', "")
@@ -572,6 +590,10 @@ mod tests {
             calls(dir.path()),
             [
                 LIST,
+                &format!(
+                    "label create tracker --color 5319E7 --description {} --force",
+                    text::TRACKER_LABEL
+                ),
                 "api -X POST repos/{owner}/{repo}/milestones -f title=Wave 29: The view"
             ]
         );
@@ -814,12 +836,17 @@ mod tests {
             number,
             title: "t".into(),
             milestone: Some(wave.into()),
+            tracker: false,
         };
         let issues = Issues::of(vec![
             issue(1003, "Wave 33: Hosts"),
             issue(1008, "Wave 33: Hosts"),
             issue(1103, "Wave 33: Hosts"),
             issue(1106, "Wave 34"),
+            Issue {
+                tracker: true,
+                ..issue(1248, "Wave 33: Hosts")
+            },
         ]);
         let hold = HoldInfo {
             reason: "VmLck reading at 19:40 UTC".into(),
@@ -840,13 +867,14 @@ mod tests {
         let milestones = in_order(vec![
             m("Backlog", 61, 4),
             m("Wave 34", 1, 0),
-            m("Wave 33: Hosts", 3, 21),
+            m("Wave 33: Hosts", 4, 21),
         ]);
         assert_eq!(
             text::waves_list(&milestones, Some(&items)),
-            "Wave 33: Hosts  current  runs on thelio  3 open, 21 closed\n  \
+            "Wave 33: Hosts  current  runs on thelio  4 open, 21 closed\n  \
              held: #1003 #1008 (VmLck reading at 19:40 UTC)\n  \
-             claimed: #1103\n\
+             claimed: #1103\n  \
+             tracker: #1248\n\
              Wave 34  1 open, 0 closed\n  \
              free: #1106\n\
              Backlog  61 open, 4 closed"
@@ -854,7 +882,7 @@ mod tests {
         // With no read of riff-server: the milestones and the mark only.
         assert_eq!(
             text::waves_list(&milestones, None),
-            "Wave 33: Hosts  current  3 open, 21 closed\n\
+            "Wave 33: Hosts  current  4 open, 21 closed\n\
              Wave 34  1 open, 0 closed\n\
              Backlog  61 open, 4 closed"
         );
