@@ -398,7 +398,18 @@ your repository) and who set it."
             ),
             Err(e) => format!("riff cannot read the state of the riff: {e:#}"),
         };
-        Ok(format!("{}\n{now}\n{state}", text::name(&now)))
+        let first = if matches!(self.reach, Reach::Lead) && !now.lead() {
+            let lead = self
+                .api
+                .who(&me, false)
+                .await
+                .ok()
+                .and_then(|list| list.into_iter().find(|s| s.uri.lead()).map(|s| s.uri));
+            format!("{}\n", text::not_lead(lead.as_ref()))
+        } else {
+            String::new()
+        };
+        Ok(format!("{first}{}\n{now}\n{state}", text::name(&now)))
     }
 
     #[tool(

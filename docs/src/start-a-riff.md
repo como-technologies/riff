@@ -229,6 +229,15 @@ project. It also starts the wave of the repository, when none runs:
 riff lead start
 ```
 
+When another session of you is the lead, `riff lead start` makes the
+new session the lead. It prints which session was the lead before. In
+the lead container, `whoami` says in its first line when the session is
+not the lead. To see which session is the lead:
+
+```sh
+riff who
+```
+
 To see the containers:
 
 ```sh
