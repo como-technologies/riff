@@ -5717,8 +5717,10 @@ mod tests {
     }
 
     /// A fake `gh` in `dir`: a POST of a comment adds its body to the
-    /// file `posted`. With `down`, each call notes itself in the file
-    /// `tried` and fails.
+    /// file `posted`. It writes a new file and renames it, so a test
+    /// that waits for `posted` never reads a part of the body (#1259).
+    /// With `down`, each call notes itself in the file `tried` and
+    /// fails.
     fn usage_gh(dir: &Path, down: bool) -> crate::pr::Gh {
         let script = match down {
             true => {
@@ -5726,7 +5728,11 @@ mod tests {
             }
             false => concat!(
                 "#!/bin/sh\n",
-                "if [ \"$1 $2 $3\" = \"api -X POST\" ]; then cat \"$7\" >> \"$(dirname \"$0\")/posted\"; fi\n",
+                "d=$(dirname \"$0\")\n",
+                "if [ \"$1 $2 $3\" = \"api -X POST\" ]; then\n",
+                "  { cat \"$d/posted\" 2>/dev/null; cat \"$7\"; } > \"$d/posted.new\"\n",
+                "  mv \"$d/posted.new\" \"$d/posted\"\n",
+                "fi\n",
             ),
         };
         crate::pr::Gh::at(isolated::write_program(dir.join("gh"), script))
