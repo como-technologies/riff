@@ -285,6 +285,12 @@ pub const PEOPLE: &[&str] = &["brett", "mike", "bob"];
 
 /// Starts a [`Signed`] server on a free port.
 pub async fn start_signed() -> Signed {
+    start_signed_with(|router| router).await
+}
+
+/// As [`start_signed`], with `wrap` applied to the router of the server:
+/// a layer that the test needs, for example a header on each reply.
+pub async fn start_signed_with(wrap: impl FnOnce(axum::Router) -> axum::Router) -> Signed {
     let (listener, url) = listen().await;
     start_signed_at(listener, &url, None).await
 }
@@ -337,6 +343,7 @@ pub async fn start_signed_at(
             }
         },
     ));
+    let router = wrap(router);
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let key = riff_client::device::key(&url).unwrap();
     let mut people = HashMap::new();

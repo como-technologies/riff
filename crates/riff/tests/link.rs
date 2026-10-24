@@ -249,40 +249,45 @@ async fn two_api_of_one_server_share_one_link() {
 
 /// A `riff-server` whose first reply to a post is cut, after it ran the
 /// post.
-async fn cut_first_post() -> (String, Arc<AtomicUsize>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+async fn cut_first_post() -> (crate::common::Signed, Arc<AtomicUsize>) {
     let cuts = Arc::new(AtomicUsize::new(0));
     let posts = cuts.clone();
-    let router = riff_server::router().layer(axum::middleware::from_fn(
-        move |request: axum::extract::Request, next: axum::middleware::Next| {
-            let cuts = cuts.clone();
-            async move {
-                let post = request.uri().path() == riff_core::wire::Post::PATH;
-                let response = next.run(request).await;
-                if !post || cuts.fetch_add(1, Ordering::SeqCst) > 0 {
-                    return response;
+    let server = crate::common::start_signed_with(|router| {
+        router.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let cuts = cuts.clone();
+                async move {
+                    let post = request.uri().path() == riff_core::wire::Post::PATH;
+                    let response = next.run(request).await;
+                    if !post || cuts.fetch_add(1, Ordering::SeqCst) > 0 {
+                        return response;
+                    }
+                    // The server ran the post: the reply breaks in its body.
+                    let (parts, _) = response.into_parts();
+                    let broken = futures::stream::iter([Err::<axum::body::Bytes, _>(
+                        std::io::Error::other("cut"),
+                    )]);
+                    axum::response::Response::from_parts(
+                        parts,
+                        axum::body::Body::from_stream(broken),
+                    )
                 }
-                // The server ran the post: the reply breaks in its body.
-                let (parts, _) = response.into_parts();
-                let broken = futures::stream::iter([Err::<axum::body::Bytes, _>(
-                    std::io::Error::other("cut"),
-                )]);
-                axum::response::Response::from_parts(parts, axum::body::Body::from_stream(broken))
-            }
-        },
-    ));
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    (url, posts)
+            },
+        ))
+    })
+    .await;
+    (server, posts)
 }
 
 /// A post whose first reply is cut makes one message, and the command
 /// gets the reply of its new try (01M48VFX22S4811DYBBD7QDW24).
 #[tokio::test]
 async fn a_post_whose_reply_is_cut_makes_one_message() {
-    let (url, posts) = cut_first_post().await;
-    let api = Api::new(&url).with_limits(fast());
+    let (server, posts) = cut_first_post().await;
     let me = me();
+    let api = server
+        .api(me.who().user(), me.who().session())
+        .with_limits(fast());
     api.register(&me).await.unwrap();
     let thread: ThreadName = "como-technologies/riff".parse().unwrap();
     let posted = api.post(&me, Some(&thread), &[], "hello", Kind::Note).await;

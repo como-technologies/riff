@@ -53,6 +53,7 @@ impl Host {
     /// its machine and its disk. Its daemon sends its facts each
     /// [`LOOK_MS`].
     fn riff(&self, dir: &Path, args: &[&str], session: Option<&str>) -> Command {
+        crate::common::sign_in(&self.server, &self.env.riff_home(), "mike");
         let mut cmd = self.env.riff();
         let (cores, free) = if self.name == "a" {
             (16, 100)
@@ -132,13 +133,8 @@ impl Drop for Host {
     }
 }
 
-async fn start_server() -> Api {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    Api::new(&format!("http://{addr}"))
+async fn start_server() -> crate::common::Signed {
+    crate::common::start_signed().await
 }
 
 /// A repository with a commit, so that it has a main worktree.
@@ -190,7 +186,7 @@ where
 /// The riff-server, the hosts `a` and `b` with their daemons, which
 /// serve the repository `main`, and the lead on `a`.
 struct Riff {
-    api: Api,
+    server: crate::common::Signed,
     a: Host,
     b: Host,
     main: PathBuf,
@@ -210,15 +206,19 @@ async fn riff_with(a_minutes: i64, b_minutes: i64) -> Riff {
 
 /// As [`riff_with`], with more variables for each host.
 async fn riff_env(a_minutes: i64, b_minutes: i64, extra: &[(String, String)]) -> Riff {
-    let api = start_server().await;
+    let server = start_server().await;
     let root = tempfile::tempdir().unwrap();
     let main = repository(root.path());
     let lead = session(&main, "mike", "a", "l1");
-    api.register(&lead).await.unwrap();
-    crate::common::name_lead(&api, &lead).await;
-    api.set_riff(&lead, RiffState::Running).await.unwrap();
-    let mut a = Host::new("a", api.base());
-    let mut b = Host::new("b", api.base());
+    let api = |me: &SessionUri| crate::common::api_of(&server, me);
+    api(&lead).register(&lead).await.unwrap();
+    crate::common::name_lead(&server.api("mike", None), &lead).await;
+    api(&lead)
+        .set_riff(&lead, RiffState::Running)
+        .await
+        .unwrap();
+    let mut a = Host::new("a", &server);
+    let mut b = Host::new("b", &server);
     a.extra = extra.to_vec();
     b.extra = extra.to_vec();
     a.claude_ends_in(a_minutes);
@@ -234,7 +234,7 @@ async fn riff_env(a_minutes: i64, b_minutes: i64, extra: &[(String, String)]) ->
         );
     }
     let riff = Riff {
-        api,
+        server,
         a,
         b,
         main,
@@ -248,10 +248,15 @@ async fn riff_env(a_minutes: i64, b_minutes: i64, extra: &[(String, String)]) ->
 }
 
 impl Riff {
+    /// A client of the server for `me`: the token of its user and session.
+    fn api(&self, me: &SessionUri) -> Api {
+        crate::common::api_of(&self.server, me)
+    }
+
     /// The session ID of the daemon of `host` in `who`.
     async fn daemon_of(&self, host: &str) -> String {
         until("the daemon in who", || async {
-            let who = self.api.who(&self.lead, false).await.ok()?;
+            let who = self.api(&self.lead).who(&self.lead, false).await.ok()?;
             let repo = self.lead.place().repo_text();
             remote::find(&who, "mike", &repo, host).map(str::to_owned)
         })
@@ -406,7 +411,7 @@ async fn only_the_person_and_the_lead_act_on_the_daemon() {
     assert!(text(&out.stdout).contains("6 live sessions"), "{out:?}");
 
     let worker = session(&r.main, "mike", "a", "w1");
-    r.api.register(&worker).await.unwrap();
+    r.api(&worker).register(&worker).await.unwrap();
     let out =
         r.a.run(
             &r.main,
@@ -441,11 +446,11 @@ async fn only_the_person_and_the_lead_act_on_the_daemon() {
 
     // Another user asks the daemon of mike on b.
     let brett = session(&r.main, "brett", "k", "b1");
-    r.api.register(&brett).await.unwrap();
+    r.api(&brett).register(&brett).await.unwrap();
     let daemon = r.daemon_of("b").await;
     // A direct message, as riff sends it (01M57D4FTP2NXAE18XFRXCJ79H).
     let posted = r
-        .api
+        .api(&brett)
         .post(
             &brett,
             None,
@@ -457,7 +462,7 @@ async fn only_the_person_and_the_lead_act_on_the_daemon() {
         .unwrap();
     let reply = until("the reply to brett", || async {
         let read = r
-            .api
+            .api(&brett)
             .read_after(&brett, &posted.thread, posted.seq)
             .await
             .ok()?;
@@ -523,7 +528,11 @@ impl Riff {
     /// with `start`.
     async fn notes(&self, start: &str) -> Vec<String> {
         let thread = self.lead.default_thread().unwrap();
-        let read = self.api.read_after(&self.lead, &thread, 0).await.unwrap();
+        let read = self
+            .api(&self.lead)
+            .read_after(&self.lead, &thread, 0)
+            .await
+            .unwrap();
         read.into_iter()
             .filter(|m| m.message.kind == Kind::Note)
             .map(|m| m.message.body)
@@ -665,15 +674,19 @@ async fn the_replies_of_a_daemon_go_only_to_the_person_and_the_lead() {
     assert!(out.status.success(), "{out:?}");
 
     let brett = session(&r.main, "brett", "k", "b1");
-    r.api.register(&brett).await.unwrap();
+    r.api(&brett).register(&brett).await.unwrap();
     let thread = brett.default_thread().unwrap();
-    let read = r.api.read(&brett, &thread, true).await.unwrap_or_default();
+    let read = r
+        .api(&brett)
+        .read(&brett, &thread, true)
+        .await
+        .unwrap_or_default();
     assert!(
         read.iter()
             .all(|m| !m.message.body.contains("the daemon of b")),
         "{read:?}"
     );
-    let threads = r.api.threads(&brett).await.unwrap();
+    let threads = r.api(&brett).threads(&brett).await.unwrap();
     assert!(threads.iter().all(|t| !t.thread.is_direct()), "{threads:?}");
     // The lead has its direct thread with the daemon of b.
     let daemon = r.daemon_of("b").await;
@@ -681,7 +694,7 @@ async fn the_replies_of_a_daemon_go_only_to_the_person_and_the_lead() {
         r.lead.who(),
         &Who::new("mike", Some(&daemon)).unwrap(),
     );
-    let read = r.api.read(&r.lead, &direct, true).await.unwrap();
+    let read = r.api(&r.lead).read(&r.lead, &direct, true).await.unwrap();
     assert!(
         read.iter()
             .any(|m| m.message.body.contains("the daemon of b: done")),
@@ -771,9 +784,15 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
             commit: commit.clone(),
             tag: TAG.to_owned(),
         };
-        let reply = remote::ask(&r.api, &r.lead, host, &asked, Duration::from_secs(30))
-            .await
-            .unwrap();
+        let reply = remote::ask(
+            &r.api(&r.lead),
+            &r.lead,
+            host,
+            &asked,
+            Duration::from_secs(30),
+        )
+        .await
+        .unwrap();
         assert!(reply.contains("started on"), "{reply}");
         let want = format!("state={state}");
         until("the final status", || async {
@@ -803,7 +822,7 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
             assert!(comment.is_empty(), "{comment}");
         }
         let server = tmp.path().join("server");
-        assert_eq!(std::fs::read_to_string(&server).unwrap(), r.api.base());
+        assert_eq!(std::fs::read_to_string(&server).unwrap(), &*r.server);
         std::fs::remove_file(&log).unwrap();
         std::fs::remove_file(&server).unwrap();
     }
@@ -813,14 +832,20 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
         Who::new("mike", Some("w2")).unwrap(),
         r.lead.place().clone(),
     );
-    r.api.register(&worker).await.unwrap();
+    r.api(&worker).register(&worker).await.unwrap();
     let asked = remote::Request::ReleaseTest {
         commit,
         tag: TAG.to_owned(),
     };
-    let err = remote::ask(&r.api, &worker, "b", &asked, Duration::from_secs(30))
-        .await
-        .unwrap_err();
+    let err = remote::ask(
+        &r.api(&worker),
+        &worker,
+        "b",
+        &asked,
+        Duration::from_secs(30),
+    )
+    .await
+    .unwrap_err();
     assert!(
         format!("{err:#}").contains("which is not the lead of mike in"),
         "{err:#}"
@@ -834,19 +859,20 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
 /// from `waves.json`.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_daemon_with_a_wave_and_no_served_file_serves_host() {
-    let api = start_server().await;
+    let server = start_server().await;
     let root = tempfile::tempdir().unwrap();
     let main = repository(root.path());
     let lead = session(&main, "mike", "a", "l1");
+    let api = crate::common::api_of(&server, &lead);
     api.register(&lead).await.unwrap();
-    crate::common::name_lead(&api, &lead).await;
+    crate::common::name_lead(&server.api("mike", None), &lead).await;
     api.set_riff(&lead, RiffState::Running).await.unwrap();
-    let mut a = Host::new("a", api.base());
+    let mut a = Host::new("a", &server);
     a.claude_ends_in(300);
     std::fs::create_dir_all(a.dir()).unwrap();
     let repo = lead.place().repo_text();
     let waves = serde_json::json!({repo.clone(): {
-        "repo": repo, "main": main, "server": api.base(), "host": "a",
+        "repo": repo, "main": main, "server": &*server, "host": "a",
     }});
     std::fs::write(a.dir().join("waves.json"), waves.to_string()).unwrap();
     assert!(!a.dir().join("served.json").exists());
@@ -861,5 +887,5 @@ async fn a_daemon_with_a_wave_and_no_served_file_serves_host() {
     .await;
     assert!(text(&out.stdout).contains("Its folder:"), "{out:?}");
     let served = remote::read_served(&a.dir()).unwrap();
-    assert_eq!(served[&repo].wave.server, api.base());
+    assert_eq!(served[&repo].wave.server, &*server);
 }
