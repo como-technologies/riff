@@ -5044,6 +5044,7 @@ mod tests {
                 since_ms: 0,
                 phase: Phase::default(),
                 last: String::new(),
+                lead: false,
             },
             folder: root.path().to_owned(),
             server: "http://127.0.0.1:1".into(),
