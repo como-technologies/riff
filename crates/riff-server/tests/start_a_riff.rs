@@ -134,6 +134,16 @@ async fn step_2_runs_the_riff_of_this_machine_in_a_terminal() {
         .await
         .unwrap();
     assert_eq!(register.status(), 200);
+    // No session is the lead by itself. The person names it, as
+    // `riff lead start` does.
+    let person = "riff://ada@pangolin/como-technologies/riff";
+    let lead = common::client()
+        .post(format!("{base}/v1/lead"))
+        .json(&json!({ "me": person, "session": "a1" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(lead.status(), 200);
     let who: WhoReply = common::client()
         .post(format!("{base}/v1/who"))
         .json(&json!({ "me": me }))
@@ -143,7 +153,6 @@ async fn step_2_runs_the_riff_of_this_machine_in_a_terminal() {
         .json()
         .await
         .unwrap();
-    // The first session is the lead, as "Use it" says.
     let uris: Vec<String> = who.sessions.iter().map(|s| s.uri.to_string()).collect();
     assert_eq!(uris, [format!("{me}&lead=true")]);
 

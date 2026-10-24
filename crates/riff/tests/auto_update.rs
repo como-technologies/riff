@@ -152,6 +152,25 @@ impl Machine {
             .unwrap()
     }
 
+    /// The person names the session `session` the lead, in `dir`, after a
+    /// first call of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+    async fn lead_in(&self, dir: &Path, session: &str) {
+        for (id, args) in [
+            (session, &["whoami"][..]),
+            ("", &["lead", "--session", session]),
+        ] {
+            let mut cmd = self.riff(id, args);
+            cmd.current_dir(dir);
+            let out = output(cmd).await;
+            assert!(out.status.success(), "{}", text(&out.stderr));
+        }
+    }
+
+    /// [`Machine::lead_in`] in the repository.
+    async fn lead(&self, session: &str) {
+        self.lead_in(self.repo.path(), session).await;
+    }
+
     /// The local files of riff on this machine.
     fn state(&self) -> PathBuf {
         self.env.riff_home().join("state")
@@ -211,8 +230,7 @@ async fn update_auto_sets_and_shows_the_setting() {
 #[tokio::test(flavor = "multi_thread")]
 async fn one_update_runs_for_the_machine_with_the_release_of_the_server() {
     let machine = Machine::new(0).await;
-    // The first session of mike in the repository is the lead.
-    assert!(machine.run("lead", &["lead"]).await.status.success());
+    machine.lead("lead").await;
     machine.run("w", &["update", "--auto", "on"]).await;
 
     let mut children: Vec<_> = (0..6)
@@ -286,7 +304,7 @@ async fn nothing_runs_with_update_auto_off() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_update_keeps_the_old_riff_and_tells_the_lead_once() {
     let machine = Machine::new(101).await;
-    assert!(machine.run("lead", &["lead"]).await.status.success());
+    machine.lead("lead").await;
     machine.run("w", &["update", "--auto", "on"]).await;
 
     let out = machine.run("w1", &["who"]).await;
@@ -356,7 +374,7 @@ async fn the_riff_of_the_bin_folder_puts_the_static_files_of_its_release_in_plac
     use crate::lifecycle::{fake_binary, put_release};
 
     let machine = Machine::of(0, Build::this()).await;
-    assert!(machine.run("lead", &["lead"]).await.status.success());
+    machine.lead("lead").await;
     machine.run("w", &["update", "--auto", "on"]).await;
     let root = tempfile::tempdir().unwrap();
     let bin = root.path().join("bin");
@@ -539,7 +557,7 @@ async fn output(mut command: Command) -> Output {
 async fn the_update_of_a_process_in_a_removed_directory_runs_in_a_directory_that_exists() {
     let machine = Machine::new(0).await;
     fake_cargo_with_dir(machine.bin.path());
-    assert!(machine.run("lead", &["lead"]).await.status.success());
+    machine.lead("lead").await;
     machine.run("w", &["update", "--auto", "on"]).await;
 
     let gone = machine
@@ -596,7 +614,7 @@ async fn riff_update_by_hand_in_a_removed_directory_runs_in_the_home_directory()
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failure_for_a_missing_directory_leaves_the_release_untried() {
     let machine = Machine::new(0).await;
-    assert!(machine.run("lead", &["lead"]).await.status.success());
+    machine.lead("lead").await;
     let tag = newer_tag();
     let place = "pangolin/como-technologies/riff";
     let args = ["--place", place, "update", "--background", "--tag", &tag];
@@ -622,7 +640,7 @@ async fn a_release_with_no_cargo_is_tried_once() {
     let machine = Machine::new(0).await;
     std::fs::remove_file(machine.bin.path().join("cargo")).unwrap();
     let path = format!("{}:/usr/bin:/bin", machine.bin.path().display());
-    assert!(machine.run("lead", &["lead"]).await.status.success());
+    machine.lead("lead").await;
     machine.run("w", &["update", "--auto", "on"]).await;
 
     for n in 1..4 {
@@ -679,12 +697,10 @@ async fn the_update_of_each_path_on_a_host_tells_the_lead_once() {
     let daemon = None;
     for place in [session, workers_host, daemon] {
         let machine = Machine::new(0).await;
-        assert!(machine.run("lead", &["lead"]).await.status.success());
+        machine.lead("lead").await;
         let home = machine.env.home();
         git_init(&home, "n8behavior/dotfiles");
-        let mut dotfiles = machine.riff("dotfiles-lead", &["lead"]);
-        dotfiles.current_dir(&home);
-        assert!(output(dotfiles).await.status.success());
+        machine.lead_in(&home, "dotfiles-lead").await;
         let wave = riff::wave::Wave {
             repo: "como-technologies/riff".into(),
             main: machine.repo.path().to_owned(),
@@ -748,12 +764,10 @@ async fn the_update_of_a_daemon_that_serves_no_repository_says_why_it_tells_no_l
 #[tokio::test(flavor = "multi_thread")]
 async fn the_daemon_in_a_dotfiles_home_tells_the_lead_of_the_served_repository() {
     let machine = Machine::new(0).await;
-    assert!(machine.run("lead", &["lead"]).await.status.success());
+    machine.lead("lead").await;
     let home = machine.env.home();
     git_init(&home, "n8behavior/dotfiles");
-    let mut dotfiles = machine.riff("dotfiles-lead", &["lead"]);
-    dotfiles.current_dir(&home);
-    assert!(output(dotfiles).await.status.success());
+    machine.lead_in(&home, "dotfiles-lead").await;
     let wave = riff::wave::Wave {
         repo: "como-technologies/riff".into(),
         main: machine.repo.path().to_owned(),

@@ -204,6 +204,23 @@ impl Machine {
         text(&out.stdout)
     }
 
+    /// The person names the session of `vars` the lead, after a first
+    /// call of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). The person has
+    /// the other `vars`.
+    async fn name_lead(&self, vars: &[(&str, &str)]) {
+        let id = vars
+            .iter()
+            .find(|(key, _)| *key == "RIFF_SESSION")
+            .unwrap()
+            .1;
+        self.ok(vars, &["whoami"]).await;
+        let person: Vec<(&str, &str)> = vars
+            .iter()
+            .map(|&(key, value)| (key, if key == "RIFF_SESSION" { "" } else { value }))
+            .collect();
+        self.ok(&person, &["lead", "--session", id]).await;
+    }
+
     /// The socket path of a container session in the temp folder of
     /// the machine. No daemon listens there.
     fn no_daemon(&self) -> String {
@@ -544,7 +561,7 @@ async fn merged_release() -> (Machine, String) {
 async fn publish_tags_the_tested_merge_commit_in_a_running_riff_and_tells_the_chat() {
     let (machine, merge) = merged_release().await;
     let lead = [("RIFF_SESSION", "s1")];
-    machine.ok(&lead, &["lead"]).await;
+    machine.name_lead(&lead).await;
     // The real-session test did not run: publish refuses.
     machine.fake_gh(&machine.release_cases(&merge, false));
     let out = machine
@@ -618,7 +635,7 @@ async fn publish_tags_the_tested_merge_commit_in_a_running_riff_and_tells_the_ch
 async fn publish_refuses_a_version_that_is_not_on_main() {
     let (machine, _) = merged_release().await;
     let lead = [("RIFF_SESSION", "s1")];
-    machine.ok(&lead, &["lead"]).await;
+    machine.name_lead(&lead).await;
     let out = machine
         .run(&lead, &["release", "publish", "v3.4.0"], "")
         .await;
@@ -679,7 +696,7 @@ async fn check_passes_closes_the_release_issue_and_resumes_the_riff() {
     machine.fake_gh(&deployed(&tag, "success"));
     machine.shared_cloud();
     let lead = [("RIFF_SESSION", "s1")];
-    machine.ok(&lead, &["lead"]).await;
+    machine.name_lead(&lead).await;
     machine.ok(&lead, &["pause", "--riff"]).await;
     let out = machine.ok(&lead, &["release", "check", &tag]).await;
     assert!(
@@ -731,7 +748,7 @@ async fn check_counts_only_the_500s_of_the_new_revision() {
         );
         isolated::write_program(machine.bin().join("gcloud"), &body);
         let lead = [("RIFF_SESSION", "s1")];
-        machine.ok(&lead, &["lead"]).await;
+        machine.name_lead(&lead).await;
         let out = machine.ok(&lead, &["release", "check", &tag]).await;
         let want = if passed {
             "- no 500 of riff-server: passed\n"
@@ -755,7 +772,7 @@ async fn check_names_the_checks_that_it_could_not_do() {
     let tag = this_tag();
     machine.fake_gh(&deployed(&tag, "success"));
     let lead = [("RIFF_SESSION", "s1")];
-    machine.ok(&lead, &["lead"]).await;
+    machine.name_lead(&lead).await;
     let out = machine.ok(&lead, &["release", "check", &tag]).await;
     assert!(
         out.starts_with(&format!("riff release check {tag}: unknown\n")),
@@ -786,7 +803,7 @@ async fn check_after_a_failed_deploy_files_an_issue_and_resumes_the_riff() {
         deployed("v3.3.0", "failure")
     ));
     let lead = [("RIFF_SESSION", "s1")];
-    machine.ok(&lead, &["lead"]).await;
+    machine.name_lead(&lead).await;
     machine.ok(&lead, &["pause", "--riff"]).await;
     let out = machine.ok(&lead, &["release", "check", "v3.3.0"]).await;
     assert!(
@@ -818,7 +835,7 @@ async fn retry_runs_the_failed_jobs_again() {
     let machine = Machine::new().await;
     machine.fake_gh(&deployed("v3.3.0", "failure"));
     let lead = [("RIFF_SESSION", "s1")];
-    machine.ok(&lead, &["lead"]).await;
+    machine.name_lead(&lead).await;
     let out = machine.ok(&lead, &["release", "retry", "v3.3.0"]).await;
     assert_eq!(
         out,
@@ -847,7 +864,7 @@ async fn rollback_starts_the_deploy_of_an_older_release() {
     let machine = Machine::new().await;
     machine.fake_gh(&deployed("v3.2.0", "success"));
     let lead = [("RIFF_SESSION", "s1")];
-    machine.ok(&lead, &["lead"]).await;
+    machine.name_lead(&lead).await;
     let out = machine.ok(&lead, &["release", "rollback", "v3.0.0"]).await;
     assert_eq!(
         out,
@@ -1154,7 +1171,7 @@ async fn publish_refuses_a_member_and_the_lead_of_a_member() {
         ("RIFF_SERVER", url.as_str()),
         ("RIFF_USER", "bob"),
     ];
-    member.ok(&lead, &["lead"]).await;
+    member.name_lead(&lead).await;
     let out = member
         .run(&lead, &["release", "publish", "v3.3.0"], "")
         .await;
@@ -1186,7 +1203,7 @@ async fn publish_refuses_a_member_and_the_lead_of_a_member() {
     // The control: the lead of the owner passes the guard, and stops at a
     // later check of publish.
     let lead = [("RIFF_SESSION", "m1"), ("RIFF_SERVER", url.as_str())];
-    owner.ok(&lead, &["lead"]).await;
+    owner.name_lead(&lead).await;
     let out = owner
         .run(&lead, &["release", "publish", "v3.3.0"], "")
         .await;
@@ -1341,7 +1358,7 @@ impl Machine {
 /// release 3.3.0 and a run that waits.
 async fn lead_with_a_waiting_run() -> Machine {
     let (machine, merge) = merged_release().await;
-    machine.ok(&LEAD, &["lead"]).await;
+    machine.name_lead(&LEAD).await;
     machine.fake_gh(&format!("{WAITS}\n{}", machine.release_cases(&merge, true)));
     machine
 }

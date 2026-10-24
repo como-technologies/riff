@@ -432,9 +432,9 @@ impl CommandKind {
     /// place. A caller that the state does not know registers first,
     /// before the command runs ([`State::check`](super::State::check)).
     /// A `register` registers the caller itself, and an `end` of a
-    /// session that the state does not know registers nothing. A
-    /// command of the people and a command of the server have no place
-    /// (01M51JBTEM10W68K6F267BB79N).
+    /// session that the state does not know, or a `lead` of a person,
+    /// registers nothing. A command of the people and a command of the
+    /// server have no place (01M51JBTEM10W68K6F267BB79N).
     ///
     /// ```
     /// use riff_state::state::CommandKind;
@@ -452,7 +452,6 @@ impl CommandKind {
             | CommandKind::Claim
             | CommandKind::Release
             | CommandKind::ReleaseFor
-            | CommandKind::Lead
             | CommandKind::Pause
             | CommandKind::Resume
             | CommandKind::SetIdle
@@ -461,7 +460,10 @@ impl CommandKind {
             | CommandKind::Plan
             | CommandKind::PlanOff
             | CommandKind::Notes => true,
-            CommandKind::Register | CommandKind::End => false,
+            // A `lead` of a person names a session that the state knows.
+            // It does not put the person in the presence: it reads the
+            // place of the call (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+            CommandKind::Register | CommandKind::End | CommandKind::Lead => false,
             CommandKind::Admit
             | CommandKind::Invite
             | CommandKind::Remove
@@ -624,6 +626,11 @@ enum Workers {
     Cannot(&'static str),
 }
 
+/// The refusal of `lead` from a session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+pub const LEAD_BY_PERSON: &str = "a session cannot name the lead, also not itself. Your \
+    person names the lead: riff lead start, or riff lead --session ID in a terminal with no \
+    session ID.";
+
 // ANCHOR: permits
 /// Says if `caller` can send a command of `kind` that needs the role
 /// `needs` (01M3WRD959DYNZHDKP5ZT9Q1C7). It reads only the caller: its
@@ -642,9 +649,8 @@ enum Workers {
 /// // Only the server forgets a session.
 /// let refused = permits(CommandKind::Forget, &session, Role::Member).unwrap_err();
 /// assert_eq!(refused.code, Code::NotAllowed);
-/// // A worker is never the lead.
-/// let worker = session.clone().with_worker(true);
-/// assert!(permits(CommandKind::Lead, &worker, Role::Member).is_err());
+/// // A session cannot name the lead, also not itself.
+/// assert!(permits(CommandKind::Lead, &session, Role::Member).is_err());
 /// // A change of the idle workers needs a person who is an admin.
 /// let person: SessionUri = "riff://mike@pangolin".parse()?;
 /// let person = Caller::of(&person);
@@ -668,10 +674,9 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // `handle` checks that the caller is the lead of the user of
         // the holder.
         CommandKind::ReleaseFor => (&[Session], Can),
-        CommandKind::Lead => (
-            &[Session],
-            Cannot("be the lead. Make another session the lead."),
-        ),
+        // Only a person names the lead (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+        // `handle` refuses a worker as the new lead.
+        CommandKind::Lead => (&[Person], Can),
         // The command gives the role: an admin for the whole riff.
         // `handle` checks that a session is a lead.
         CommandKind::Pause | CommandKind::Resume => (&[Person, Session], Can),
@@ -708,7 +713,7 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
     };
     if !classes.contains(&class) {
         let reason = match (kind, class) {
-            (CommandKind::Lead, Person) => "only an agent session can be the lead".to_owned(),
+            (CommandKind::Lead, Session) => LEAD_BY_PERSON.to_owned(),
             _ => format!("{} cannot send the command {kind}", class.text()),
         };
         return Err(Refused::new(Code::NotAllowed, reason));
@@ -893,7 +898,7 @@ mod tests {
         row(CommandKind::Claim,      PS, true,  false, true),
         row(CommandKind::Release,    PS, true,  false, true),
         row(CommandKind::ReleaseFor, S,  true,  false, true),
-        row(CommandKind::Lead,       S,  false, false, true),
+        row(CommandKind::Lead,       P,  true,  false, false),
         row(CommandKind::MakeRiff,   &[Class::Server], true, false, false),
         row(CommandKind::Pause,      PS, true,  false, true),
         row(CommandKind::Resume,     PS, true,  false, true),
@@ -967,10 +972,7 @@ mod tests {
     fn a_worker_reads_what_it_cannot_do_and_what_to_do() {
         let worker = caller(Class::Session).with_worker(true);
         let reason = |kind| permits(kind, &worker, Role::Member).unwrap_err().reason;
-        assert_eq!(
-            reason(CommandKind::Lead),
-            "a worker cannot be the lead. Make another session the lead."
-        );
+        assert_eq!(reason(CommandKind::Lead), LEAD_BY_PERSON);
         assert_eq!(
             reason(CommandKind::Hold),
             "a worker cannot hold an item. Tell the lead."
@@ -1071,7 +1073,13 @@ mod tests {
                 };
                 of.of(release, kind)
             }
-            CommandKind::Lead => of.of(Lead { me }, kind),
+            CommandKind::Lead => of.of(
+                Lead {
+                    me,
+                    session: "a2".into(),
+                },
+                kind,
+            ),
             CommandKind::MakeRiff => {
                 let riff_id = "r1".to_owned();
                 of.of(MakeRiff { riff_id }, kind)

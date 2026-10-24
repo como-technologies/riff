@@ -86,7 +86,7 @@
 //! - Each call records the session as seen at `now`. A call from a
 //!   session that the server does not know registers it first, in the
 //!   place from its URI ([`State::check`], [`Arrive`]). That register
-//!   makes no lead (01M3X9XA3H6YF0QCYSNB2P0CT2). Only a `register` changes
+//!   makes no lead (01M5NJAY3FTR005TDJJY1TMGNX). Only a `register` changes
 //!   the place of a known session (R55, R64). A person has no session ID, so each call of a
 //!   person gives it the place of that call (01M3MWW8KYJ3ZV91X22RBSAF33).
 //! - A session keeps the user of its first call. [`State::check_user`]
@@ -174,11 +174,9 @@
 //!   A claim of a free item succeeds.
 //! - Each user has at most one lead in each repository thread. Its URI
 //!   has `lead=true` (R175).
-//! - A session with a session ID becomes the lead when it registers or
-//!   starts in a repository, it is not a worker, and no other session
-//!   of its user there holds (R176, 01M3X9XA3H6YF0QCYSNB2P0CT2).
-//!   [`State::lead`] makes a session the lead and replaces the old lead
-//!   (R177).
+//! - No session becomes the lead by itself (01M5NJAY3FTR005TDJJY1TMGNX).
+//!   A person names the lead, and a session cannot: [`State::lead`]. It
+//!   replaces the old lead, and tells it (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
 //! - A lead counts while it holds, as a claim does, and while it works
 //!   in that repository. A lead that leaves the repository thread stops
 //!   being the lead (R178).
@@ -223,7 +221,8 @@
 //! state.register(&brett, now);
 //! let thread = mike.default_thread();
 //!
-//! // A new riff is paused. Mike's session is the lead, so it resumes it.
+//! // A new riff is paused. The person names the lead, so it resumes it.
+//! state.lead(&mike, now).unwrap();
 //! state.riff(&mike, Some(RiffState::Running), now).unwrap();
 //!
 //! // A post without an address wakes nobody, whatever its text.
@@ -287,7 +286,8 @@ pub mod work;
 
 pub use calls::{CALL_KEEP, CALL_KEEP_MOST, Calls, Kept, Key};
 pub use command::{
-    Caller, Cause, Class, Code, Command, CommandKind, Done, Now, Refused, Role, permits,
+    Caller, Cause, Class, Code, Command, CommandKind, Done, LEAD_BY_PERSON, Now, Refused, Role,
+    permits,
 };
 pub use people::{Admit, Admitted, EndOwner, GrantOwner, NameOwner, OwnerChange, People};
 pub use plan::Plans;
@@ -298,7 +298,7 @@ pub use snapshot::Snapshot;
 pub use the_riff::{Forget, Import, MakeRiff, Pauses};
 pub use threads::{Announce, may_read};
 pub use view::{Settings, View};
-pub use work::{Dropped, MUST_CLEAR, dropped, released_for};
+pub use work::{Dropped, MUST_CLEAR, dropped, not_lead, released_for};
 
 use presence::{Block, LongStep, Session, SetStatus};
 use sessions::Known;
@@ -496,6 +496,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&mike, now);
+    /// state.lead(&mike, now).unwrap();
     /// state.riff(&mike, Some(RiffState::Running), now).unwrap();
     /// let thread = mike.default_thread().unwrap();
     /// state.claim(&mike, &thread, "issue-12", now).unwrap();
@@ -587,6 +588,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut old = State::default();
     /// old.register(&mike, now);
+    /// old.lead(&mike, now).unwrap();
     /// old.riff(&mike, Some(RiffState::Running), now).unwrap();
     /// let mut new = State::replay(old.take_queue(), now, 1_000);
     ///
@@ -1378,6 +1380,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&lead, now);
+    /// state.lead(&lead, now).unwrap();
     /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
     /// state.worker(&box1, true, now);
     /// let shown = |state: &State, at: Instant| {
@@ -1454,6 +1457,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&mike, now);
+    /// state.lead(&mike, now).unwrap();
     /// state.riff(&mike, Some(RiffState::Running), now).unwrap();
     /// let thread = mike.default_thread().unwrap();
     /// state.claim(&mike, &thread, "issue-12", now).unwrap();
@@ -1485,6 +1489,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&mike, now);
+    /// state.lead(&mike, now).unwrap();
     /// state.riff(&mike, Some(RiffState::Running), now).unwrap();
     /// let thread = mike.default_thread().unwrap();
     /// state.claim(&mike, &thread, "issue-12", now).unwrap();
@@ -1553,6 +1558,7 @@ impl State {
     /// let mut state = State::default();
     /// state.register(&mike, now);
     /// state.register(&ada, now);
+    /// state.lead(&mike, now).unwrap();
     ///
     /// let me = state.me(mike.who(), now, 0).unwrap();
     /// assert_eq!(me.uri.who(), mike.who());
@@ -1857,6 +1863,7 @@ impl State {
     /// let t0 = Instant::now();
     /// let mut state = State::default();
     /// state.register(&lead, t0);
+    /// state.lead(&lead, t0).unwrap();
     /// state.register(&w1, t0);
     /// state.set_blocked(&w1, "which design?".into(), t0, 0).unwrap();
     /// let after = Duration::from_secs(600);
@@ -1910,6 +1917,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&mike, now);
+    /// state.lead(&mike, now).unwrap();
     /// state.riff(&mike, Some(riff_core::wire::RiffState::Running), now).unwrap();
     /// let thread = mike.default_thread().unwrap();
     /// state.claim(&mike, &thread, "issue-12", now).unwrap();
@@ -1950,7 +1958,7 @@ impl State {
     /// let mut state = State::default();
     /// state.worker(&w1, true, now);
     /// assert!(state.who(now, 0, false)[0].worker);
-    /// // A worker is never the first lead.
+    /// // A worker is never the lead.
     /// assert!(!state.uri(w1.who(), now).lead());
     ///
     /// // The mark is in the log, so a replay has it.
@@ -2031,14 +2039,18 @@ impl State {
         self.written_view().uri(who, now)
     }
 
-    /// Makes `me` the lead of its user in its repository. It replaces
-    /// the old lead (R177). The reply names `me` and the old lead, if
-    /// another session was the lead.
+    /// The person of `session` makes `session` the lead of its user in
+    /// its repository (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). It replaces the old
+    /// lead, and tells the old lead (01M5NJAYMYF50B9WXH5RF9W737). The
+    /// reply names `session` and the old lead, if another session was
+    /// the lead. No session becomes the lead by itself
+    /// (01M5NJAY3FTR005TDJJY1TMGNX), and a session cannot name the lead.
     ///
     /// ```
     /// use std::time::Instant;
     /// use riff_core::name::SessionUri;
-    /// use riff_state::state::State;
+    /// use riff_core::wire::Lead;
+    /// use riff_state::state::{Caller, LEAD_BY_PERSON, State};
     ///
     /// let first: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
     /// let second: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=b2#api".parse()?;
@@ -2046,18 +2058,36 @@ impl State {
     /// let mut state = State::default();
     /// state.register(&first, now);
     /// state.register(&second, now);
-    /// assert!(state.uri(first.who(), now).lead());
-    /// assert!(!state.uri(second.who(), now).lead());
+    /// // The first session is not the lead by itself.
+    /// assert!(!state.uri(first.who(), now).lead());
     ///
+    /// state.lead(&first, now).unwrap();
+    /// assert!(state.uri(first.who(), now).lead());
     /// let reply = state.lead(&second, now).unwrap();
     /// assert!(reply.lead.lead());
     /// assert_eq!(reply.replaced.unwrap().who(), first.who());
     /// assert!(!state.uri(first.who(), now).lead());
+    /// // The old lead has a message.
+    /// assert!(state.missed(first.who()).is_some());
+    ///
+    /// // A session cannot make itself the lead.
+    /// let take = Lead { me: first.clone(), session: "a1".into() };
+    /// let refused = state.run(&Caller::of(&first), &take, now).unwrap_err();
+    /// assert_eq!(refused.reason, LEAD_BY_PERSON);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
-    pub fn lead(&mut self, me: &SessionUri, now: Instant) -> Result<LeadReply, String> {
-        self.ask(me, &Lead { me: me.clone() }, now)
-            .map_err(|r| r.reason)
+    pub fn lead(&mut self, session: &SessionUri, now: Instant) -> Result<LeadReply, String> {
+        let id = session
+            .who()
+            .session()
+            .ok_or("only a session can be the lead")?;
+        let person = Who::new(session.who().user(), None).map_err(|e| e.to_string())?;
+        let me = SessionUri::new(person, session.place().clone());
+        let lead = Lead {
+            me: me.clone(),
+            session: id.to_owned(),
+        };
+        self.ask(&me, &lead, now).map_err(|r| r.reason)
     }
 
     /// The pauses of the written copy: the pause of the whole riff, and
@@ -2125,10 +2155,12 @@ impl State {
     /// let brett: SessionUri = "riff://brett@kadomony/como-technologies/strata?session=b1".parse()?;
     /// let now = Instant::now();
     /// let mut state = State::default();
-    /// // The first session of its user that registers is the lead.
+    /// // The person of each user names its lead.
     /// state.register(&lead, now);
     /// state.register(&brett, now);
+    /// state.lead(&lead, now).unwrap();
     /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
+    /// state.lead(&brett, now).unwrap();
     /// state.pause_repository(&brett, RiffState::Paused, now).unwrap();
     ///
     /// // The session of the other repository goes on.
@@ -2183,6 +2215,7 @@ impl State {
     /// let mut state = State::default();
     /// state.register(&lead, now);
     /// state.register(&other, now);
+    /// state.lead(&lead, now).unwrap();
     /// assert_eq!(state.riff(&other, None, now).unwrap().state, RiffState::Paused);
     ///
     /// assert!(state.riff(&other, Some(RiffState::Running), now).is_err());
@@ -2415,6 +2448,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&mike, now);
+    /// state.lead(&mike, now).unwrap();
     /// assert_eq!(state.live_leads("mike", now), [mike.who().clone()]);
     /// assert!(state.live_leads("brett", now).is_empty());
     /// assert!(state.live_leads("mike", now + GONE).is_empty());
@@ -2701,6 +2735,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&lead, now);
+    /// state.lead(&lead, now).unwrap();
     /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
     /// state.worker(&w1, true, now);
     /// let thread = lead.default_thread().unwrap();
@@ -2748,6 +2783,7 @@ impl State {
     /// let now = Instant::now();
     /// let mut state = State::default();
     /// state.register(&lead, now);
+    /// state.lead(&lead, now).unwrap();
     /// state.riff(&lead, Some(RiffState::Running), now).unwrap();
     /// let thread = lead.default_thread().unwrap();
     /// state.claim(&w1, &thread, "issue-347", now).unwrap();
@@ -2904,7 +2940,7 @@ mod tests {
     }
 
     /// The URI as the lead. In [`setup`], `api` and `tests` are the leads
-    /// of their users: each is the first session of its user.
+    /// of their users: the person of each names it.
     fn lead(u: SessionUri) -> SessionUri {
         u.with_lead(true)
     }
@@ -2919,6 +2955,8 @@ mod tests {
         for n in [api(), tests(), docs()] {
             state.register(&n, now);
         }
+        state.lead(&api(), now).unwrap();
+        state.lead(&tests(), now).unwrap();
         state.riff(&api(), Some(RiffState::Running), now).unwrap();
         state
     }
@@ -4292,6 +4330,7 @@ mod tests {
         let now = Instant::now();
         let mut state = State::with_writer(now, T0);
         state.register(&api(), now);
+        state.lead(&api(), now).unwrap();
         state.riff(&api(), Some(RiffState::Running), now).unwrap();
         let first = state.take_queue();
         state.written(&first);
@@ -4442,7 +4481,7 @@ mod tests {
         assert!(!is_lead(&state, &person, now));
         assert!(!is_lead(&state, &notes, now));
         let error = state.lead(&person, now).unwrap_err();
-        assert!(error.contains("only an agent session"), "{error}");
+        assert!(error.contains("only a session"), "{error}");
         let error = state.lead(&notes, now).unwrap_err();
         assert!(error.contains("git repository"), "{error}");
     }
@@ -4625,14 +4664,16 @@ mod tests {
     }
 
     #[test]
-    fn a_new_first_session_takes_the_lead_of_a_stopped_one() {
+    fn a_new_first_session_does_not_take_the_lead_of_a_stopped_one() {
         let now = Instant::now();
         let mut state = setup(now);
         let next_day = now + DAY;
         let new = uri("riff://mike@pangolin/como-technologies/riff?session=e5");
         state.register(&new, next_day);
-        assert!(is_lead(&state, &new, next_day));
+        assert!(!is_lead(&state, &new, next_day));
         assert!(!is_lead(&state, &api(), next_day));
+        state.lead(&new, next_day).unwrap();
+        assert!(is_lead(&state, &new, next_day));
     }
 
     #[test]
@@ -4650,7 +4691,7 @@ mod tests {
         let mut state = setup(now);
         let other = uri("riff://mike@pangolin/como-technologies/other?session=a1");
         state.register(&other, now);
-        assert!(is_lead(&state, &other, now), "the first of mike in other");
+        assert!(!is_lead(&state, &other, now), "no lead by itself in other");
         let d = state
             .post(Post::new(&tests(), None, mike_lead(), "hi"), now, 0)
             .err()
@@ -5039,6 +5080,8 @@ mod tests {
         for n in [api(), tests(), docs()] {
             state.register(&n, now);
         }
+        state.lead(&api(), now).unwrap();
+        state.lead(&tests(), now).unwrap();
         state.riff(&api(), Some(RiffState::Running), now).unwrap();
         let w1 = uri("riff://mike@pangolin/como-technologies/riff?session=w1#issue-12");
         state.worker(&w1, true, now);
@@ -5196,6 +5239,7 @@ mod tests {
         let mut state = setup(now);
         let brett = strata("b1");
         state.register(&brett, now);
+        state.lead(&brett, now).unwrap();
         state.watch_started(&brett, now);
         state.watch_started(&docs(), now);
         let other = thread("como-technologies/strata");
@@ -5274,6 +5318,8 @@ mod tests {
         for me in [api(), brett.clone()] {
             state.register(&me, now);
         }
+        state.lead(&api(), now).unwrap();
+        state.lead(&brett, now).unwrap();
         let later = now + Duration::from_secs(5);
         state
             .pause_repository(&brett, RiffState::Paused, later)
@@ -5341,6 +5387,7 @@ mod tests {
         let mut state = setup(now);
         let brett = strata("b1");
         state.register(&brett, now);
+        state.lead(&brett, now).unwrap();
         let t = |secs| now + Duration::from_secs(secs);
         set_step(&mut state, &docs(), "tests", t(1));
         set_step(&mut state, &brett, "docs", t(1));

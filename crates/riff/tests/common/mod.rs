@@ -183,3 +183,19 @@ pub fn browser(url: &str) {
     let url = url.to_owned();
     tokio::spawn(async move { reqwest::get(url).await.unwrap().error_for_status().unwrap() });
 }
+
+/// The person of `me` makes the session `me` the lead, as `riff lead
+/// --session` does (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). No session becomes the
+/// lead by itself (01M5NJAY3FTR005TDJJY1TMGNX). `api` must have no
+/// session token.
+pub async fn name_lead(api: &riff_client::api::Api, me: &riff_core::name::SessionUri) {
+    let person = person_of(me);
+    let id = me.who().session().expect("a session");
+    api.lead(&person, id).await.unwrap();
+}
+
+/// The person of the session `me`, at the place of `me`.
+pub fn person_of(me: &riff_core::name::SessionUri) -> riff_core::name::SessionUri {
+    let who = riff_core::name::Who::new(me.who().user(), None).unwrap();
+    riff_core::name::SessionUri::new(who, me.place().clone())
+}

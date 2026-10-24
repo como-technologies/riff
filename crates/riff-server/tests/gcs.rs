@@ -304,7 +304,9 @@ async fn a_new_server_on_the_same_bucket_has_the_same_state() {
     let (old, base) = common::start_on(Arc::new(store(&url))).await;
     call(&base, "register", json!({ "me": mike })).await;
     call(&base, "register", json!({ "me": brett })).await;
-    // Mike's session is the lead: it resumes the new riff.
+    // The person mike names the session the lead: it resumes the new riff.
+    let person = "riff://mike@pangolin/como-technologies/riff";
+    call(&base, "lead", json!({ "me": person, "session": "a" })).await;
     call(&base, "resume", json!({ "me": mike, "riff": true })).await;
     let post = json!({ "me": mike, "thread": repo, "body": "saved" });
     call(&base, "post", post).await;

@@ -206,7 +206,8 @@ impl Machine {
 
     /// Makes the riff run, with `session` as the lead.
     async fn resume(&self, session: &str) {
-        self.ok(session, &["lead"]).await;
+        self.ok(session, &["whoami"]).await;
+        self.ok("", &["lead", "--session", session]).await;
         self.ok(session, &["resume", "--riff"]).await;
     }
 
@@ -825,6 +826,7 @@ async fn the_release_tool_puts_the_tokens_of_its_claim_on_the_issue() {
         .parse()
         .unwrap();
     api.register(&me).await.unwrap();
+    crate::common::name_lead(&api, &me).await;
     api.set_riff(&me, riff_core::wire::RiffState::Running)
         .await
         .unwrap();

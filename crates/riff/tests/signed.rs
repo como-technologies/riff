@@ -82,6 +82,8 @@ async fn session(api: &Api, me: &str) -> Api {
 async fn a_message_from_a_signed_in_client_is_verified() {
     let (_service, api) = start_on(Arc::new(Memory::default())).await;
     let lead = session(&api, LEAD).await;
+    let person = api.clone().signed_in(None).unwrap();
+    crate::common::name_lead(&person, &uri(LEAD)).await;
     let reader = session(&api, READER).await;
     let thread = repo();
     let me = uri(READER);
@@ -96,7 +98,6 @@ async fn a_message_from_a_signed_in_client_is_verified() {
     )
     .await
     .unwrap();
-    let person = api.clone().signed_in(None).unwrap();
     person
         .post(
             &uri("riff://mike@pangolin"),
@@ -133,6 +134,8 @@ async fn a_message_that_claims_to_be_from_the_lead_without_its_signature_is_not(
     let store = Memory::default();
     let (old, api) = start_on(Arc::new(store.clone())).await;
     let lead = session(&api, LEAD).await;
+    let person = api.clone().signed_in(None).unwrap();
+    crate::common::name_lead(&person, &uri(LEAD)).await;
     let other = session(&api, OTHER).await;
     lead.post(
         &uri(LEAD),

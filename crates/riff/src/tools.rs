@@ -29,12 +29,12 @@
 //!
 //! A person sees in `riff who` what the lead does, with no `status`
 //! call of the lead (01M3W8AYDFPZNZ898WAJS7JEZA). After each `tell`,
-//! `post`, `pause`, `resume` or `lead` call that the server accepts,
+//! `post`, `pause` or `resume` call that the server accepts,
 //! the tools set the step of the lead from that call:
 //!
 //! ```mermaid
 //! flowchart LR
-//!     C["tell, post, pause, resume or lead"] --> O{"the call is OK?"}
+//!     C["tell, post, pause or resume"] --> O{"the call is OK?"}
 //!     O -- yes --> L{"this session is the lead?"}
 //!     L -- yes --> S["status: the step of the call"]
 //!     O -- no --> N["no change"]
@@ -46,7 +46,6 @@
 //! | `tell` | `told 075ff6a7` |
 //! | `post` | `posted a note: Waves: new item #314`, `posted a message: …` or `asked for status` |
 //! | `pause`, `resume` | `paused the repository`, `resumed the repository`; with `riff` true, `paused the riff`, `resumed the riff` |
-//! | `lead` | `became the lead` |
 //!
 //! Each member of the riff reads the step, and a direct thread is
 //! private to its two sessions. So the step of a `tell` has no text of
@@ -56,8 +55,8 @@
 //!
 //! The step is a status like each other one: a later `status` call of
 //! the lead replaces it, and the next of these calls replaces that. The
-//! words come from [`text::told_step`], [`text::posted_step`],
-//! [`text::riff_step`] and [`text::LEAD_STEP`].
+//! words come from [`text::told_step`], [`text::posted_step`]
+//! and [`text::riff_step`].
 //!
 //! # The tokens of a claim
 //!
@@ -123,9 +122,9 @@ pub const CONTAINER_TOOLS: [&str; 8] = [
 
 /// The tools of the lead in a container: the tools of
 /// [`CONTAINER_TOOLS`], and the tools of a lead that only talk.
-pub const LEAD_TOOLS: [&str; 14] = [
-    "blocked", "free", "hold", "lead", "notes", "pause", "post", "read", "resume", "status",
-    "tell", "threads", "who", "whoami",
+pub const LEAD_TOOLS: [&str; 13] = [
+    "blocked", "free", "hold", "notes", "pause", "post", "read", "resume", "status", "tell",
+    "threads", "who", "whoami",
 ];
 
 #[derive(Deserialize, JsonSchema)]
@@ -692,18 +691,6 @@ notes."
             .await
             .map_err(err)?;
         Ok(text::notes_shown(&reply, &thread))
-    }
-
-    #[tool(
-        description = "Make this session the lead of your user in your repository. The other \
-sessions of your user send their questions to the lead. It replaces the old lead. Call it only when \
-your user says so."
-    )]
-    async fn lead(&self) -> ToolResult {
-        let me = self.here()?;
-        let reply = self.api.lead(&me).await.map_err(err)?;
-        self.lead_step(&me, text::LEAD_STEP.into()).await;
-        Ok(text::led(&reply))
     }
 
     #[tool(

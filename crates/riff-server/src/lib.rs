@@ -3485,6 +3485,15 @@ mod tests {
         store.store.list(checkpoint::CHECKPOINT).await.unwrap()
     }
 
+    /// The `lead` of the person of `me` that names the session of `me`
+    /// (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+    fn named(me: &SessionUri) -> Lead {
+        Lead {
+            me: SessionUri::new(Who::new(me.who().user(), None).unwrap(), me.place().clone()),
+            session: me.who().session().unwrap().into(),
+        }
+    }
+
     /// Sends a command as a client with no token does: through the one
     /// path. The future owns its engine, so a test can spawn it, and
     /// drop it.
@@ -3542,8 +3551,12 @@ mod tests {
     async fn running_with(config: Config, store: Arc<Gated>) -> Service {
         let service = Service::load(config, store).await.unwrap();
         for me in [mike(), brett()] {
-            let register = Register { me, worker: false };
+            let register = Register {
+                me: me.clone(),
+                worker: false,
+            };
             send(&service, register).await.unwrap();
+            send(&service, named(&me)).await.unwrap();
         }
         send(&service, Resume::whole(mike())).await.unwrap();
         service
@@ -4681,13 +4694,46 @@ mod tests {
         assert_eq!(seqs, [waits.seq, later.seq]);
     }
 
-    /// A worker is never the lead: `permits` refuses the command with
-    /// the code `not_allowed`. The engine adds the worker mark of the
-    /// caller under the lock (01M3WRD959DYNZHDKP5ZT9Q1C7).
+    /// The refusal of `failed`, with the status 403 and the code
+    /// `not_allowed`.
+    fn not_allowed(failed: Failed) -> String {
+        assert_eq!(failed.status(), StatusCode::FORBIDDEN);
+        let Failed::Refused(refused) = failed else {
+            panic!("not a refusal: {failed:?}");
+        };
+        assert_eq!(refused.code, state::Code::NotAllowed);
+        refused.reason
+    }
+
+    /// A session cannot take the lead role, also not for itself: the
+    /// `lead` tool of old and `riff lead` in a session send such a call
+    /// (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). A person cannot name a worker
+    /// either.
     #[tokio::test(start_paused = true)]
-    async fn a_lead_call_of_a_worker_is_refused_as_not_allowed() {
+    async fn a_lead_call_of_a_session_or_for_a_worker_is_refused_as_not_allowed() {
         let store = Arc::new(Gated::default());
         let service = running(store.clone()).await;
+        let other: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=c3"
+            .parse()
+            .unwrap();
+        let register = Register {
+            me: other.clone(),
+            worker: false,
+        };
+        send(&service, register).await.unwrap();
+        let itself = Lead {
+            me: other.clone(),
+            session: "c3".into(),
+        };
+        let reason = not_allowed(send(&service, itself).await.unwrap_err());
+        assert_eq!(reason, state::LEAD_BY_PERSON);
+        let lead = Lead {
+            me: mike(),
+            session: "c3".into(),
+        };
+        let reason = not_allowed(send(&service, lead).await.unwrap_err());
+        assert_eq!(reason, state::LEAD_BY_PERSON, "the lead cannot name one");
+
         let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1"
             .parse()
             .unwrap();
@@ -4696,13 +4742,59 @@ mod tests {
             worker: true,
         };
         send(&service, register).await.unwrap();
-        let failed = send(&service, Lead { me: worker }).await.unwrap_err();
-        assert_eq!(failed.status(), StatusCode::FORBIDDEN);
-        let Failed::Refused(refused) = failed else {
-            panic!("not a refusal: {failed:?}");
+        let reason = not_allowed(send(&service, named(&worker)).await.unwrap_err());
+        assert!(reason.contains("a worker cannot be the lead"), "{reason}");
+        let who = service
+            .0
+            .engine
+            .read(|s| s.uri(mike().who(), Instant::now()));
+        assert!(who.lead(), "mike stays the lead");
+    }
+
+    /// No session is the lead by itself, also the first. The person
+    /// names it, and riff-server tells the old lead
+    /// (01M5NJAY3FTR005TDJJY1TMGNX, 01M5NJAYMYF50B9WXH5RF9W737).
+    #[tokio::test(start_paused = true)]
+    async fn the_first_session_is_no_lead_until_the_person_names_it() {
+        let store = Arc::new(Gated::default());
+        let service = Service::load(config(), store).await.unwrap();
+        let lead = |me: &SessionUri| {
+            let engine = service.0.engine.clone();
+            let who = me.who().clone();
+            async move {
+                sleep(Duration::from_millis(50)).await;
+                engine.read(|s| s.uri(&who, Instant::now())).lead()
+            }
         };
-        assert_eq!(refused.code, state::Code::NotAllowed);
-        assert!(refused.reason.contains("a worker cannot be the lead"));
+        let first = Register {
+            me: mike(),
+            worker: false,
+        };
+        send(&service, first).await.unwrap();
+        let start = Start {
+            me: mike(),
+            reason: riff_core::wire::StartReason::Process,
+            worker: false,
+        };
+        send(&service, start).await.unwrap();
+        assert!(!lead(&mike()).await, "the first session is no lead");
+
+        send(&service, named(&mike())).await.unwrap();
+        assert!(lead(&mike()).await);
+        let second: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=c3"
+            .parse()
+            .unwrap();
+        let register = Register {
+            me: second.clone(),
+            worker: false,
+        };
+        send(&service, register).await.unwrap();
+        let reply = send(&service, named(&second)).await.unwrap();
+        assert!(reply.lead.lead());
+        assert_eq!(reply.replaced.unwrap().who(), mike().who());
+        assert!(!lead(&mike()).await);
+        let told = service.0.engine.read(|s| s.missed(mike().who()));
+        assert!(told.is_some(), "the old lead has a message");
     }
 
     /// The first start of a riff sends `make_riff`: the first record of
@@ -5083,13 +5175,14 @@ mod tests {
             panic!("a refusal: {refused:?}");
         };
         assert_eq!(refused.code, state::Code::NotAllowed);
-        // A command that needs a member goes on. The session is the
+        // A command that needs a member goes on. The person names the
         // lead after its register.
         let register = Register {
             me: mike(),
             worker: false,
         };
         send(&service, register).await.unwrap();
+        send(&service, named(&mike())).await.unwrap();
         assert!(send(&service, Resume::here(mike())).await.is_ok());
     }
 
@@ -5168,7 +5261,10 @@ mod tests {
                 item: item(),
                 session: "a2".into(),
             }),
-            of(Lead { me: me() }),
+            of(Lead {
+                me: me(),
+                session: "a2".into(),
+            }),
             of(Pause::here(me())),
             of(SetIdle {
                 me: me(),
@@ -5392,7 +5488,11 @@ mod tests {
         config.require_sign_in = true;
         let service = Service::new(config);
         let capture = Capture::start();
-        let body = serde_json::to_string(&Lead { me: mike() }).unwrap();
+        let lead = Lead {
+            me: mike(),
+            session: "a".into(),
+        };
+        let body = serde_json::to_string(&lead).unwrap();
         let proof = || Proof {
             signed_in: Some(SignedIn {
                 who: brett().who().clone(),
@@ -5462,7 +5562,11 @@ mod tests {
         config.require_sign_in = true;
         let service = Service::new(config);
         let capture = Capture::start();
-        let body = serde_json::to_string(&Lead { me: mike() }).unwrap();
+        let lead = Lead {
+            me: mike(),
+            session: "a".into(),
+        };
+        let body = serde_json::to_string(&lead).unwrap();
         for _ in 0..1000 {
             let status = call(&service, "POST", Lead::PATH, None, body.clone()).await;
             assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -5547,7 +5651,11 @@ mod tests {
 
         let service = Service::new(config());
         let capture = Capture::start();
-        let body = serde_json::to_string(&Lead { me: mike() }).unwrap();
+        let lead = Lead {
+            me: mike(),
+            session: "a".into(),
+        };
+        let body = serde_json::to_string(&lead).unwrap();
         let request = Request::builder()
             .method("POST")
             .uri(Lead::PATH)

@@ -6939,7 +6939,7 @@ mod tests {
             place,
         );
         api.register(&lead).await.unwrap();
-        api.lead(&lead).await.unwrap();
+        api.lead(&user, "l1").await.unwrap();
         let mut both = Vec::new();
         for host in ["a", "b"] {
             let here = Here::new(Fake::default().with_image(IMAGE)).await;
@@ -7004,6 +7004,10 @@ mod tests {
             );
             start.terminal = terminal;
             api.register(&start.me).await.unwrap();
+            if terminal {
+                // The person names the lead (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+                api.lead(&user, &start.session).await.unwrap();
+            }
             let (client, name) = here.started(start).await;
             drop(client);
             sockets.push(Reach::Daemon(session_dir(&here.dir, &name).join(SOCKET)));

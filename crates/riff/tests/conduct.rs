@@ -42,9 +42,12 @@ async fn riff() -> Riff {
         brett: uri("riff://brett@heron/como-technologies/riff?session=x9"),
         api,
     };
-    // The first session of each user is its lead (R176).
     for me in [&riff.lead, &riff.brett, &riff.a, &riff.b] {
         riff.api.register(me).await.unwrap();
+    }
+    // The person of each user names its lead (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+    for me in [&riff.lead, &riff.brett] {
+        crate::common::name_lead(&riff.api, me).await;
     }
     // A new riff is paused. The lead resumes it.
     riff.api

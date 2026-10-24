@@ -118,7 +118,8 @@ impl Machine {
     /// Makes `session` the lead, resumes the new riff, and claims `item`
     /// as `session`.
     async fn claim(&self, session: &str, item: &str) {
-        self.ok(session, &["lead"]).await;
+        self.ok(session, &["whoami"]).await;
+        self.ok("", &["lead", "--session", session]).await;
         self.ok(session, &["resume", "--riff"]).await;
         self.ok(session, &["claim", item]).await;
     }
@@ -297,7 +298,8 @@ async fn verify_fail_sets_failure() {
 #[tokio::test]
 async fn a_verify_result_wakes_the_lead_when_no_session_holds_the_item() {
     let machine = Machine::new(VERIFY).await;
-    machine.ok("lead", &["lead"]).await;
+    machine.ok("lead", &["whoami"]).await;
+    machine.ok("", &["lead", "--session", "lead"]).await;
     machine.ok("lead", &["resume", "--riff"]).await;
     let result = machine.write("result.md", "1. The wave does not show.\n");
     let verify = [
@@ -360,7 +362,8 @@ async fn a_claim_names_the_pull_request_of_the_item_and_its_verify() {
         ),
     ] {
         let machine = Machine::new(&pulls(&status)).await;
-        machine.ok("lead", &["lead"]).await;
+        machine.ok("lead", &["whoami"]).await;
+        machine.ok("", &["lead", "--session", "lead"]).await;
         machine.ok("lead", &["resume", "--riff"]).await;
 
         // No pushed branch: riff does not ask `gh`.

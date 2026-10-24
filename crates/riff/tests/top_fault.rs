@@ -443,6 +443,7 @@ async fn top_keeps_the_board_when_gh_fails_too() {
     let b2: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2"
         .parse()
         .unwrap();
+    crate::common::name_lead(&gate.direct(), &b2).await;
     gate.direct()
         .set_riff(&b2, riff_core::wire::RiffState::Running)
         .await

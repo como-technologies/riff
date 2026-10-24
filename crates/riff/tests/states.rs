@@ -41,6 +41,7 @@ async fn riff(server: &str) -> (Api, SessionUri, SessionUri) {
     for me in [&lead, &worker] {
         api.register(me).await.unwrap();
     }
+    crate::common::name_lead(&api, &lead).await;
     api.set_riff(&lead, RiffState::Running).await.unwrap();
     (api, lead, worker)
 }

@@ -122,7 +122,7 @@
 //! ```
 //! # #[tokio::main(flavor = "current_thread")] async fn main() {
 //! use std::time::Instant;
-//! use riff_core::wire::{Join, Register, Resume};
+//! use riff_core::wire::{Join, Lead, Register, Resume};
 //! use riff_server::engine::{Engine, Open};
 //! use riff_state::log::{Timing, write};
 //! use riff_state::state::State;
@@ -155,11 +155,13 @@
 //! let call = engine.authenticate(None, join).unwrap();
 //! engine.dispatch(call).await.unwrap();
 //!
-//! // The first session of its user that registers is the lead. In a
-//! // riff with no sign-in it has the role of an admin: it resumes the
-//! // riff.
+//! // The person names the session the lead. In a riff with no sign-in
+//! // the lead has the role of an admin: it resumes the riff.
 //! let register = Register { me: me.clone(), worker: false };
 //! engine.dispatch(engine.authenticate(None, register).unwrap()).await.unwrap();
+//! let person = "riff://mike@pangolin/como-technologies/riff".parse().unwrap();
+//! let lead = Lead { me: person, session: "a6cf".into() };
+//! engine.dispatch(engine.authenticate(None, lead).unwrap()).await.unwrap();
 //! let call = engine.authenticate(None, Resume::whole(me)).unwrap();
 //! assert!(engine.dispatch(call).await.unwrap().changed);
 //! # }

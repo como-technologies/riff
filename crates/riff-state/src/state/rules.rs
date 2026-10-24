@@ -260,9 +260,21 @@ asks! {
     RegisterWorker => wire::Register, |me| wire::Register { me, worker: true };
     Arrive => super::Arrive, |me| super::Arrive { me };
     End => wire::End, |me| wire::End { me };
-    Lead => wire::Lead, |me| wire::Lead { me };
     Pause => wire::Pause, wire::Pause::here;
     Resume => wire::Resume, wire::Resume::here;
+}
+
+/// A `lead` that names the session ID `.0`, or its start.
+struct Lead(&'static str);
+
+impl Ask for Lead {
+    type Command = wire::Lead;
+    fn of(self, me: &SessionUri) -> wire::Lead {
+        wire::Lead {
+            me: me.clone(),
+            session: self.0.into(),
+        }
+    }
 }
 
 /// A start with its reason and its worker mark.
@@ -531,13 +543,17 @@ impl When {
     }
 }
 
+/// No session becomes the lead by itself, also the first
+/// (01M5NJAY3FTR005TDJJY1TMGNX).
 #[test]
-fn a_new_session_joins_its_repository_and_is_the_first_lead() {
+fn a_new_session_joins_its_repository_and_is_not_the_lead() {
     given(&[]).when(&ann(), Register).then(&[
         joined(&ann(), &repo()),
         started(&ann(), StartReason::Join, false),
-        lead_set(&ann()),
     ]);
+    given(&[joined(&ann(), &repo())])
+        .when(&ann(), Start(StartReason::Process, false))
+        .then(&[started(&ann(), StartReason::Process, false)]);
 }
 
 #[test]
@@ -552,14 +568,13 @@ fn a_second_session_of_a_user_is_not_the_lead_while_the_first_holds() {
 }
 
 #[test]
-fn a_second_session_is_the_lead_when_the_first_stopped_long_ago() {
+fn a_second_session_is_not_the_lead_when_the_first_stopped_long_ago() {
     given(&[joined(&ann(), &repo()), lead_set(&ann())])
         .after(CLAIM_GRACE)
         .when(&ann2(), Register)
         .then(&[
             joined(&ann2(), &repo()),
             started(&ann2(), StartReason::Join, false),
-            lead_set(&ann2()),
         ]);
 }
 
@@ -1013,23 +1028,66 @@ fn an_end_and_a_new_start_free_each_claim() {
         ]);
 }
 
+/// The direct message of the server to the old lead `old`: `lead` is
+/// the lead now (01M5NJAYMYF50B9WXH5RF9W737).
+fn told_not_lead(old: &SessionUri, lead: &SessionUri) -> [Change; 2] {
+    let server = crate::owner::server_uri();
+    let thread = ThreadName::direct(server.who(), old.who());
+    let to = format!("session={}", old.who().session().unwrap());
+    let message = Message {
+        at_ms: 0,
+        ..message(server, 1, &[&to], &super::not_lead(lead))
+    };
+    [joined(old, &thread), posted(&thread, message, &[old])]
+}
+
+/// A person names the lead by its session ID. The old lead gets a
+/// message (01M5NJAXTQ0YKN7Q7XN0A7ZMPF, 01M5NJAYMYF50B9WXH5RF9W737).
 #[test]
-fn a_lead_call_makes_the_session_the_lead() {
+fn a_person_makes_a_session_the_lead_and_tells_the_old_lead() {
+    let [join, told] = told_not_lead(&ann(), &ann2());
+    given(&team())
+        .live(&[ann(), ann2()])
+        .when(&person_here(), Lead("a2"))
+        .then(&[lead_set(&ann2()), join, told]);
     given(&team())
         .live(&[ann()])
-        .when(&ann2(), Lead)
-        .then(&[lead_set(&ann2())]);
-    given(&team()).when(&ann(), Lead).then(&[]);
+        .when(&person_here(), Lead("a1"))
+        .then(&[]);
+}
+
+/// A gone old lead gets no message.
+#[test]
+fn a_person_makes_a_lead_with_no_live_lead() {
+    given(&[joined(&ann(), &repo())])
+        .live(&[ann()])
+        .when(&person_here(), Lead("a1"))
+        .then(&[lead_set(&ann())]);
+}
+
+/// A session cannot take the lead role, also not for itself
+/// (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+#[test]
+fn a_session_cannot_name_the_lead() {
+    given(&team())
+        .live(&[ann()])
+        .when(&ann2(), Lead("a2"))
+        .then_refused_as(Code::NotAllowed, LEAD_BY_PERSON);
+    given(&[joined(&ann(), &repo())])
+        .when(&ann(), Lead("a1"))
+        .then_refused_as(Code::NotAllowed, "a session cannot name the lead");
 }
 
 #[test]
-fn a_person_or_a_session_outside_git_is_never_the_lead() {
-    given(&[])
-        .when(&person(), Lead)
-        .then_refused_as(Code::NotAllowed, "only an agent session");
+fn the_new_lead_is_a_session_of_the_user_in_the_repository() {
+    given(&team())
+        .live(&[bob()])
+        .when(&person_here(), Lead("b1"))
+        .then_refused_as(Code::BadRequest, "ann has no session b1 in acme/app");
     let outside: SessionUri = "riff://ann@heron/-?session=a9".parse().unwrap();
     given(&[])
-        .when(&outside, Lead)
+        .live(&[outside])
+        .when(&person(), Lead("a9"))
         .then_refused_as(Code::BadRequest, "needs a git repository");
 }
 
@@ -1409,13 +1467,13 @@ fn a_member_cannot_change_the_idle_settings() {
         .then_refused_as(Code::BadRequest, "at least 1 second");
 }
 
-/// A worker is never the lead (01M3WRD959DYNZHDKP5ZT9Q1C7). The state
-/// adds the worker mark of the caller before `permits`.
+/// A worker is never the lead (01M5NJAXTQ0YKN7Q7XN0A7ZMPF): a person
+/// cannot name it.
 #[test]
-fn a_worker_cannot_send_lead() {
+fn a_worker_cannot_be_the_lead() {
     worker_team()
-        .live(&[ann()])
-        .when(&ann2(), Lead)
+        .live(&[ann(), ann2()])
+        .when(&person_here(), Lead("a2"))
         .then_refused_as(Code::NotAllowed, "a worker cannot be the lead");
 }
 
@@ -1458,7 +1516,7 @@ fn a_call_of_a_new_session_registers_it_first_but_an_end_does_not() {
         .into_iter()
         .map(|record| record.change)
         .collect();
-    // That register makes no lead (01M3X9XA3H6YF0QCYSNB2P0CT2).
+    // That register makes no lead (01M5NJAY3FTR005TDJJY1TMGNX).
     let join_start = started(&ann(), StartReason::Join, false);
     assert_eq!(registered, [joined(&ann(), &repo()), join_start]);
     assert_eq!(check.result.unwrap().0, [joined(&ann(), &design())]);
@@ -1517,7 +1575,7 @@ fn a_register_with_another_worker_mark_makes_session_started_with_the_reason_joi
         .then(&[started(&ann2(), StartReason::Join, false)]);
 }
 
-/// 01M3X9XA3H6YF0QCYSNB2P0CT2: a worker is never the first lead.
+/// 01M5NJAY3FTR005TDJJY1TMGNX: a worker is never the lead.
 #[test]
 fn a_register_of_a_worker_makes_no_lead() {
     given(&[]).when(&ann(), RegisterWorker).then(&[
@@ -1526,7 +1584,7 @@ fn a_register_of_a_worker_makes_no_lead() {
     ]);
 }
 
-/// 01M3X9XA3H6YF0QCYSNB2P0CT2: the register that the engine runs first
+/// 01M5NJAY3FTR005TDJJY1TMGNX: the register that the engine runs first
 /// keeps the mark of the riff, and makes no lead.
 #[test]
 fn the_register_that_the_engine_runs_first_makes_no_lead_and_keeps_the_worker_mark() {
@@ -1565,17 +1623,14 @@ fn a_start_makes_session_started_with_its_reason_and_its_worker_mark() {
     }
 }
 
-/// 01M3X9XA3H6YF0QCYSNB2P0CT2: a start makes the first lead, and never
-/// for a worker.
+/// 01M5NJAY3FTR005TDJJY1TMGNX: a start makes no lead, also for the
+/// first session.
 #[test]
-fn a_start_makes_the_first_lead_but_not_for_a_worker() {
+fn a_start_makes_no_lead() {
     let alone = [joined(&ann(), &repo())];
     given(&alone)
         .when(&ann(), Start(StartReason::Process, false))
-        .then(&[
-            started(&ann(), StartReason::Process, false),
-            lead_set(&ann()),
-        ]);
+        .then(&[started(&ann(), StartReason::Process, false)]);
     given(&alone)
         .when(&ann(), Start(StartReason::Process, true))
         .then(&[started(&ann(), StartReason::Process, true)]);
@@ -1699,6 +1754,7 @@ fn a_worker_that_resumes_in_the_middle_of_an_item_claims_it_again() {
     let now = Instant::now();
     let mut state = State::default();
     state.register(&ann(), now);
+    state.lead(&ann(), now).unwrap();
     state.riff(&ann(), Some(RiffState::Running), now).unwrap();
     state.worker(&ann2(), true, now);
     assert!(state.claim(&ann2(), &repo(), "issue-7", now).unwrap().0);

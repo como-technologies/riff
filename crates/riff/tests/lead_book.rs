@@ -50,8 +50,9 @@ fn the_lead_names_each_part() {
         "(#the-lead-conducts-your-sessions)",
         "(waves.md)",
         "### When a message of the lead counts",
-        "### Make a session the lead",
-        "riff lead",
+        "### Name the lead",
+        "```sh\nriff lead --session 77e0a1b2\n```",
+        "### When you have no lead",
         "not the lead any more",
         "claude --remote-control",
     ] {
@@ -128,7 +129,6 @@ fn the_book_names_the_automatic_step_of_the_lead() {
         "asked for status",
         "paused the riff",
         "resumed the riff",
-        "became the lead",
     ] {
         assert!(book.contains(part), "\"A status\" has no {part:?}");
     }
@@ -142,7 +142,6 @@ fn the_book_names_the_automatic_step_of_the_lead() {
         riff::text::riff_step(false, RiffState::Paused).to_owned(),
         riff::text::riff_step(false, RiffState::Running).to_owned(),
         riff::text::riff_step(true, RiffState::Running).to_owned(),
-        riff::text::LEAD_STEP.to_owned(),
     ] {
         assert!(book.contains(&step), "\"A status\" has no {step:?}");
     }

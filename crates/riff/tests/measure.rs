@@ -106,7 +106,8 @@ async fn a_status_and_a_claim_while_8_sessions_post() {
     let probe = session("probe");
     let thread: ThreadName = probe.default_thread().unwrap();
     api.register(&probe).await.unwrap();
-    // The first session of the user is the lead: it resumes the riff.
+    // The person names the lead: it resumes the riff.
+    crate::common::name_lead(&api, &probe).await;
     api.set_riff(&probe, RiffState::Running).await.unwrap();
 
     let mut posters = Vec::new();

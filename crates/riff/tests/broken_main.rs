@@ -94,6 +94,7 @@ async fn lead(server: &str) -> (Api, SessionUri) {
         .parse()
         .unwrap();
     api.register(&lead).await.unwrap();
+    crate::common::name_lead(&api, &lead).await;
     api.set_riff(&lead, RiffState::Running).await.unwrap();
     api.inbox(&lead, None, false).await.unwrap();
     (api, lead)

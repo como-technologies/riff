@@ -99,6 +99,7 @@ async fn running_riff() -> Api {
     let api = start_server().await;
     let lead = session("pangolin", "l1");
     api.register(&lead).await.unwrap();
+    crate::common::name_lead(&api, &lead).await;
     api.set_riff(&lead, RiffState::Running).await.unwrap();
     api
 }

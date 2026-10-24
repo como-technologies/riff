@@ -536,7 +536,8 @@ impl Machine {
 
     /// A lead runs the riff, so a claim works.
     async fn lead(&self) {
-        self.ok(Some("lead1"), &["lead"]).await;
+        self.ok(Some("lead1"), &["whoami"]).await;
+        self.ok(None, &["lead", "--session", "lead1"]).await;
         self.ok(Some("lead1"), &["resume", "--riff"]).await;
     }
 

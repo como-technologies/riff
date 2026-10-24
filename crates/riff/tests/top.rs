@@ -159,6 +159,20 @@ async fn output(mut cmd: Command) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
+/// The person mike names the session `id` the lead, after a first call
+/// of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+async fn name_lead(server: &str, dir: &Path, path: &Path, id: &str) {
+    output(riff(server, dir, Some(id), path, &["whoami"])).await;
+    output(riff(
+        server,
+        dir,
+        Some(""),
+        path,
+        &["lead", "--session", id],
+    ))
+    .await;
+}
+
 /// Opens a watch for the session `id` of mike on `host`, so that the
 /// session is live until the test ends.
 async fn live(server: &str, host: &str, id: &str) {
@@ -183,9 +197,8 @@ async fn live_at(server: &str, uri: SessionUri) {
 /// session `c3`, all of mike and each live. `b2` registers as a worker
 /// on the host thelio. Each command runs on the host pangolin.
 async fn three_sessions(server: &str, dir: &Path, path: &Path) {
-    for (id, args) in [("a1", &["lead"][..]), ("a1", &["resume", "--riff"][..])] {
-        output(riff(server, dir, Some(id), path, args)).await;
-    }
+    name_lead(server, dir, path, "a1").await;
+    output(riff(server, dir, Some("a1"), path, &["resume", "--riff"])).await;
     let b2: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2"
         .parse()
         .unwrap();
@@ -458,9 +471,15 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
     let dir = repo();
     let dir = dir.path();
     let bin = bin(true);
-    for (id, args) in [("a1", &["lead"][..]), ("a1", &["resume", "--riff"][..])] {
-        output(riff(&server, dir, Some(id), bin.path(), args)).await;
-    }
+    name_lead(&server, dir, bin.path(), "a1").await;
+    output(riff(
+        &server,
+        dir,
+        Some("a1"),
+        bin.path(),
+        &["resume", "--riff"],
+    ))
+    .await;
     live(&server, "pangolin", "a1").await;
     let api = Api::new(&server);
     let uri = |id: &str| -> SessionUri {
@@ -569,9 +588,15 @@ async fn a_session_that_runs_an_old_riff_has_the_mark_and_the_host_line_counts_i
     let dir = repo();
     let dir = dir.path();
     let bin = bin(true);
-    for (id, args) in [("a1", &["lead"][..]), ("a1", &["resume", "--riff"][..])] {
-        output(riff(&server, dir, Some(id), bin.path(), args)).await;
-    }
+    name_lead(&server, dir, bin.path(), "a1").await;
+    output(riff(
+        &server,
+        dir,
+        Some("a1"),
+        bin.path(),
+        &["resume", "--riff"],
+    ))
+    .await;
     live(&server, "pangolin", "a1").await;
     let api = Api::new(&server);
     let binary = |build: &str, replaced| RiffBinary {
@@ -690,9 +715,15 @@ async fn an_item_with_no_claim_and_an_open_pull_request_is_in_verify() {
         ),
     );
     live(&server, "pangolin", "a1").await;
-    for args in [&["lead"][..], &["resume", "--riff"]] {
-        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
-    }
+    name_lead(&server, dir, bin.path(), "a1").await;
+    output(riff(
+        &server,
+        dir,
+        Some("a1"),
+        bin.path(),
+        &["resume", "--riff"],
+    ))
+    .await;
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
@@ -723,9 +754,9 @@ async fn the_board_of_a_paused_repository_has_no_free_items() {
         ),
     );
     live(&server, "pangolin", "a1").await;
+    name_lead(&server, dir, bin.path(), "a1").await;
     for args in [
-        &["lead"][..],
-        &["resume", "--riff"],
+        &["resume", "--riff"][..],
         &["claim", "issue-12"],
         &["pause"],
     ] {
@@ -752,9 +783,9 @@ async fn a_person_sees_the_groups_of_the_wave_in_riff_wave_list() {
     let bin = bin(false);
     wave_gh(bin.path(), &[12, 13, 14]);
     live(&server, "pangolin", "a1").await;
+    name_lead(&server, dir, bin.path(), "a1").await;
     for args in [
-        &["lead"][..],
-        &["resume", "--riff"],
+        &["resume", "--riff"][..],
         &["claim", "issue-12"],
         &["plan", "hold", "issue-13", "a reading at 19:40 UTC"],
     ] {
@@ -785,9 +816,9 @@ async fn riff_wave_list_in_a_container_reads_riff_server_through_the_socket() {
     let bin = bin(false);
     wave_gh(bin.path(), &[12, 13, 14]);
     live(&server, "pangolin", "a1").await;
+    name_lead(&server, dir, bin.path(), "a1").await;
     for args in [
-        &["lead"][..],
-        &["resume", "--riff"],
+        &["resume", "--riff"][..],
         &["claim", "issue-12"],
         &["plan", "hold", "issue-13", "a reading at 19:40 UTC"],
     ] {
@@ -852,7 +883,8 @@ async fn riff_wave_move_in_a_container_reads_the_claims_through_the_socket() {
     let bin = bin(false);
     wave_gh(bin.path(), &[12, 14]);
     live(&server, "pangolin", "a1").await;
-    for args in [&["lead"][..], &["resume", "--riff"], &["claim", "issue-12"]] {
+    name_lead(&server, dir, bin.path(), "a1").await;
+    for args in [&["resume", "--riff"][..], &["claim", "issue-12"]] {
         output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
     }
     let api = Api::new(&server);
@@ -1211,9 +1243,13 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     let release = ["release", "issue-12"];
     output(riff(&server, dir, Some("b2"), bin.path(), &release)).await;
     clear_b2(&server).await;
-    // The first session of mike in strata is its lead.
+    // The person of mike names d4 the lead in strata.
     let strata = "como-technologies/strata";
     session_at(&server, strata, "d4", Some("issue-12")).await;
+    let d4: SessionUri = format!("riff://mike@pangolin/{strata}?session=d4")
+        .parse()
+        .unwrap();
+    crate::common::name_lead(&Api::new(&server), &d4).await;
     session_at(
         &server,
         &format!("{strata}#issue-88"),
@@ -1357,6 +1393,10 @@ async fn two_owners_show_the_owner_of_each_repository() {
     let bin = bin(true);
     three_sessions(&server, dir, bin.path()).await;
     session_at(&server, "acme/strata#issue-88", "d4", Some("issue-88")).await;
+    let d4: SessionUri = "riff://mike@pangolin/acme/strata?session=d4#issue-88"
+        .parse()
+        .unwrap();
+    crate::common::name_lead(&Api::new(&server), &d4).await;
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
@@ -1413,11 +1453,8 @@ async fn a_lead_on_the_command_line_has_a_row() {
     let dir = repo();
     let dir = dir.path();
     let bin = bin(true);
-    for args in [
-        &["lead"][..],
-        &["resume", "--riff"],
-        &["status", "plan the wave"],
-    ] {
+    name_lead(&server, dir, bin.path(), "a1").await;
+    for args in [&["resume", "--riff"][..], &["status", "plan the wave"]] {
         output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
     }
 
@@ -1445,9 +1482,15 @@ async fn top_shows_the_state_of_a_lead_and_its_long_step() {
     let dir = repo();
     let dir = dir.path();
     let bin = bin(true);
-    for args in [&["lead"][..], &["resume", "--riff"]] {
-        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
-    }
+    name_lead(&server, dir, bin.path(), "a1").await;
+    output(riff(
+        &server,
+        dir,
+        Some("a1"),
+        bin.path(),
+        &["resume", "--riff"],
+    ))
+    .await;
     let a1: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1"
         .parse()
         .unwrap();
@@ -1531,7 +1574,7 @@ async fn twelve_sessions_fit_in_80_columns() {
             r#"echo '[{{"number": 12, "title": "{long}", "milestone": {{"title": "Wave 3: A long name"}}}}, {{"number": 13, "title": "{long}", "milestone": {{"title": "Wave 3: A long name"}}}}]'"#
         ),
     );
-    output(riff(&server, dir, Some("s00"), bin.path(), &["lead"])).await;
+    name_lead(&server, dir, bin.path(), "s00").await;
     output(riff(
         &server,
         dir,
@@ -1606,7 +1649,8 @@ esac"#
         .replace("LOG", &bin.path().join("gh.log").display().to_string()),
     );
     live(&server, "pangolin", "a1").await;
-    for args in [&["lead"][..], &["resume", "--riff"], &["claim", "issue-12"]] {
+    name_lead(&server, dir, bin.path(), "a1").await;
+    for args in [&["resume", "--riff"][..], &["claim", "issue-12"]] {
         output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
     }
     let run = |args: &[&str]| {

@@ -1363,6 +1363,8 @@ async fn each_write_refuses_in_a_session_that_is_not_the_lead() {
             .await
             .unwrap();
     }
+    let a1 = SessionUri::new(Who::new("mike", Some("a1")).unwrap(), place.clone());
+    crate::common::name_lead(&api, &a1).await;
     let cloud = cloud
         .var("RIFF_SERVER", api.base())
         .var("RIFF_HOST", "pangolin")
