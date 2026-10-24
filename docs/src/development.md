@@ -1487,6 +1487,26 @@ riff daemon limit --cpus 12 --memory 16
 The values go in `limit.json` with the limit. A new session gets them
 at its start. A session that runs keeps its caps. riff refuses 0.
 
+### Set the effort of the sessions
+
+The daemon starts the lead, each work item and each verify with
+`claude --effort LEVEL`. The levels are `low`, `medium`, `high`,
+`xhigh` and `max`. The default is `xhigh` for the three roles. The
+levels go in `limit.json` with the limit. To set them:
+
+```sh
+riff daemon limit --effort high
+riff daemon limit --effort-verify max
+riff daemon limit --effort-lead xhigh
+riff daemon limit
+```
+
+`--effort` sets work items. With no flag, the command shows the limit
+and the three levels. `riff daemon status` shows them too. A new session
+gets the levels at its start. A session that runs keeps its effort: in
+the lead, use `/effort` to change it. riff refuses a level that Claude
+Code does not know. Add `--host HOST` to set the levels on another host.
+
 ### Set or empty the compile cache of the container sessions
 
 The container sessions of a host share one compile cache of sccache:

@@ -57,7 +57,8 @@ flowchart TD
 In your project, run `riff lead start`. Your lead runs in a container.
 The riff daemon starts the other sessions in containers too. Ask the
 lead: *"Who else is in the riff?"* The sessions ask their questions
-there. See [The lead](how-it-works.md#the-lead).
+there. See [The lead](how-it-works.md#the-lead). The lead starts at
+effort xhigh.
 
 ## Resume the new riff
 

@@ -6227,6 +6227,14 @@ part when they merge.
   (01M4ZDTW00B7N6T9P3MK066KA7), so `riff release check` passes "each
   host takes the build" while the lead runs.
 
+- **01M5P2MG28EE75PPGYAWHTY2S1** The daemon starts the lead, each work
+  item and each verify with claude --effort LEVEL. The effort of the
+  three roles is xhigh by default. The limit of the host holds the three
+  levels in limit.json, and riff daemon limit sets them with --effort
+  for work items, --effort-lead and --effort-verify, also with --host.
+  riff refuses a level that Claude Code does not know: low, medium,
+  high, xhigh and max. A session that runs keeps its effort.
+
 ### riff relay
 
 - **01M4ZHSZZDH0C01A5EVD0KFY14** The daemon binds its own binary at

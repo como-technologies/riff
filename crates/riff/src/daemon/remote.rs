@@ -212,6 +212,7 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 ///     "daemon status",
 ///     "daemon limit",
 ///     "daemon limit --sessions 4 --floor 8 --cpus 6 --memory 12",
+///     "daemon limit --effort high --effort-lead max --effort-verify low",
 ///     "daemon cache",
 ///     "daemon cache 20G",
 ///     "daemon cache --clear",
@@ -234,6 +235,7 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 /// assert_eq!("daemon limit --sessions 4".parse(), Ok(Request::Limit(limit)));
 /// assert!("daemon limit --sessions".parse::<Request>().is_err());
 /// assert!("daemon limit --sessions x".parse::<Request>().is_err());
+/// assert!("daemon limit --effort huge".parse::<Request>().is_err());
 /// assert!("daemon end".parse::<Request>().is_err());
 /// assert!("daemon events n --after x".parse::<Request>().is_err());
 /// assert!("daemon events n --after 7 --notes x".parse::<Request>().is_err());
@@ -362,6 +364,9 @@ fn limit_of(flags: &[&str]) -> Result<Change, ()> {
             "--floor" => change.floor_gb = Some(value.parse().map_err(|_| ())?),
             "--cpus" => change.cpus = Some(value.parse().map_err(|_| ())?),
             "--memory" => change.memory_gb = Some(value.parse().map_err(|_| ())?),
+            "--effort" => change.effort = Some(value.parse().map_err(|_| ())?),
+            "--effort-lead" => change.effort_lead = Some(value.parse().map_err(|_| ())?),
+            "--effort-verify" => change.effort_verify = Some(value.parse().map_err(|_| ())?),
             _ => return Err(()),
         }
     }
@@ -383,6 +388,16 @@ impl fmt::Display for Request {
                 for (flag, value) in flags {
                     if let Some(value) = value {
                         write!(f, " {flag} {value}")?;
+                    }
+                }
+                let efforts = [
+                    ("--effort", change.effort),
+                    ("--effort-lead", change.effort_lead),
+                    ("--effort-verify", change.effort_verify),
+                ];
+                for (flag, level) in efforts {
+                    if let Some(level) = level {
+                        write!(f, " {flag} {level}")?;
                     }
                 }
                 Ok(())
