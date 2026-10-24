@@ -54,7 +54,6 @@ fn the_lead_names_each_part() {
         "```sh\nriff lead --session 77e0a1b2\n```",
         "### When you have no lead",
         "not the lead any more",
-        "claude --remote-control",
     ] {
         assert!(lead.contains(part), "\"The lead\" has no {part:?}");
     }
@@ -152,18 +151,54 @@ fn the_book_names_the_automatic_step_of_the_lead() {
     );
 }
 
+/// The text of the part `### heading`, up to the next `### ` heading.
+fn part(page: &str, heading: &str) -> String {
+    let text = read(page);
+    let start = text
+        .find(&format!("\n### {heading}\n"))
+        .unwrap_or_else(|| panic!("{page} has no \"### {heading}\""));
+    let rest = &text[start + 1..];
+    let end = rest[4..].find("\n### ").map_or(rest.len(), |i| i + 4);
+    rest[..end].to_owned()
+}
+
+/// The names of the book pages, `requirements.md` apart: it keeps the
+/// superseded decisions.
+fn pages() -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(book())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".md") && name != "requirements.md")
+        .collect();
+    names.sort();
+    names
+}
+
+/// 01M5QV9STQF1P9GN65P35E0FJH: the lead has no Remote Control. "Start
+/// the lead" says `riff lead start`, and no page names the flag or the
+/// command of Remote Control.
+#[test]
+fn the_lead_has_no_remote_control() {
+    let part = part("how-it-works.md", "Start the lead");
+    for words in [
+        "```sh\nriff lead start\n```",
+        "(development.md#start-the-lead)",
+    ] {
+        assert!(part.contains(words), "\"Start the lead\" has no {words:?}");
+    }
+    for name in pages() {
+        let text = read(&name);
+        for words in ["--remote-control", "/rc"] {
+            assert!(!text.contains(words), "{name} names {words:?}");
+        }
+    }
+}
+
 /// 01M51PD7Q24N252V66NFEHY49N: "Start the lead" in `development.md`
 /// shows the lines that riff prints at the end of the lead.
 #[test]
 fn start_the_lead_shows_the_lines_of_the_end_of_the_lead() {
-    let page = read("development.md");
-    let start = page
-        .find("\n### Start the lead\n")
-        .expect("development.md has \"### Start the lead\"");
-    let rest = &page[start + 1..];
-    let part = rest[4..]
-        .find("\n### ")
-        .map_or(rest, |end| &rest[..end + 4]);
+    let part = part("development.md", "Start the lead");
     for line in [
         riff::text::lead_ended("riff-lead-OWNER-REPO"),
         riff::text::LEAD_NO_RESUME.to_owned(),

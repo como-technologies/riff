@@ -19,9 +19,9 @@ The first app does four things:
 - It shows a notice on the phone when a line names you.
 
 Later items can add `riff top`, the questions of the lead, and the
-steps of a lead, for example a pause. To answer the questions of your
-own lead today, use Remote Control: see
-[Answer your lead from the Claude app](how-it-works.md#answer-your-lead-from-the-claude-app).
+steps of a lead, for example a pause. The app itself is #963. Until
+then, answer your lead in `riff chat`: see
+[Ask a lead in the chat](how-it-works.md#ask-a-lead-in-the-chat).
 
 ## How the phone reaches the chat
 

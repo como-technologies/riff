@@ -6648,6 +6648,10 @@ part when they merge.
   of the session, as riff release check does: the roster, the chat line,
   the read of the chat and the pause of the riff go through the riff
   daemon.
+- **01M5QV9STQF1P9GN65P35E0FJH** The lead has no Remote Control. A
+  person answers the lead in riff chat (#1363). The book names no flag
+  or command of Remote Control, and the start of the lead is riff lead
+  start.
 
 ### The first run
 

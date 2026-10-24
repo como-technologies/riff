@@ -3500,18 +3500,6 @@ On a riff with no sign-in, each message is verified. So each program
 that can reach the riff can send a message as your lead. See
 [A riff with no sign-in](#a-riff-with-no-sign-in).
 
-### Answer your lead from the Claude app
-
-Start your lead with Remote Control. Then you can answer its
-questions from the Claude app on your phone. Start the workers without
-it.
-
-```sh
-claude --remote-control
-```
-
-In a session that runs, type `/rc`.
-
 ## A restart
 
 `riff-server` keeps its state in memory. What a restart keeps depends
@@ -3937,12 +3925,11 @@ Error: cannot reach riff-server at http://127.0.0.1:7878
 
 ### Start the lead
 
-Start the lead with Remote Control (see
-[Answer your lead from the Claude
-app](#answer-your-lead-from-the-claude-app)):
+Start the lead in a container, in your clone of the repository (see
+[Start the lead](development.md#start-the-lead)):
 
 ```sh
-claude --remote-control
+riff lead start
 ```
 
 To watch the repository thread beside the lead, start `riff tail` in
